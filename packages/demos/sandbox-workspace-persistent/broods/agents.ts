@@ -3,12 +3,9 @@ import { defineAgent, defineSandbox, defineWorkspace, env } from "broods";
 export const reservedSandbox = defineSandbox({
   name: "reserved",
   provider: "sandbox",
-  // Predefined compute size (tiny | xsmall | small | medium | large). xsmall is
-  // the free default; omit `size` to keep the cheap default-create path.
+  // tiny | xsmall | small | medium | large; omit for the free xsmall default.
   size: "small",
-  // Pin a prebuilt image/snapshot to boot from (workdir image id/name, MicroVM
-  // image ARN). Omit to boot the provider's default base image.
-  // snapshot: "img_curated_python",
+  // Optional: snapshot: "img_curated_python" boots a workdir image or MicroVM image ARN.
   network: { mode: "allow-all" },
   permissionMode: "bypass",
   persistent: true,
@@ -19,7 +16,6 @@ export const reservedSandbox = defineSandbox({
   outputLimitBytes: 65536,
   options: {
     mountAwsS3Buckets: true,
-    // workspaceRoot: "/mnt/workspaces",
   },
 });
 

@@ -1,7 +1,3 @@
-/**
- * Codex adapter construction and Broods provider mapping.
- */
-
 import {
   VERSION,
   createCodex,
@@ -18,14 +14,12 @@ import {
 
 export const CODEX_HARNESS_VERSION = VERSION;
 
-/** Builds the Codex adapter from raw settings; `createAiSdkHarnessAdapter` calls it. */
 export function createCodexAdapter(
   settings?: CodexHarnessSettings,
 ): HarnessAgentAdapter {
   return createCodex(settings);
 }
 
-/** Builds the Codex adapter from an agent config; the adapter registry calls it for `harness.type` codex. */
 export function createConfiguredCodexAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {
@@ -41,9 +35,7 @@ export function createConfiguredCodexAdapter(
     );
   }
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
-  // `custom` and `openai` are the same wire contract to codex: an API key and
-  // an optional base URL. The endpoint label a custom provider carries has no
-  // env equivalent, so codex names the route "Agent Bridge OpenAI" itself.
+  // To codex, `custom` is `openai` (key + optional base URL); the custom label has no env to ride.
   const auth =
     providerName === "vercel"
       ? resolveGatewayAuthEnv(provider)

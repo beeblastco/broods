@@ -9,11 +9,6 @@ import {
 const RUN_TIMEOUT_MS = 120_000;
 const STEER_WORD = "PINEAPPLE";
 
-/**
- * A steer sent while a run owns the conversation joins that run at its next
- * model step boundary: the run's bash call keeps a boundary ahead of the
- * steer, the steer settles with the run, and the run's answer uses it.
- */
 export async function steerAtBoundary(context: VerifyContext): Promise<void> {
   if (!context.hasModelKey) {
     console.log(`  skip steer at a step boundary (${MODEL_KEY_HINT})`);

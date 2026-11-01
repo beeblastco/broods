@@ -5,10 +5,6 @@ import {
   isCodeManagedEdge,
 } from "../app/components/canvas/edgeOwnership";
 
-/**
- * The support agent's CLI nodes, an agent the account REST API owns, and resources made on
- * the dashboard.
- */
 const NODES: Record<string, LayoutNode> = {
   "agent-dash": node("agent-dash", "agent", "dashboard"),
   "api-agent-ops": node("api-agent-ops", "agent", "api"),
@@ -73,7 +69,6 @@ describe("isCodeManagedEdge", () => {
       owned("sandbox-dash", "right", "cli-workspace-notes", "left", false),
       "sandbox dragged onto workspace",
     ).toBe(true);
-    // The sandbox end does not decide it: this workspace is editable here.
     expect(
       owned("cli-sandbox-mac", "right", "workspace-dash", "left", false),
     ).toBe(false);

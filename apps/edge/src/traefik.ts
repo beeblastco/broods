@@ -1,11 +1,3 @@
-/**
- * Renders the route table as Traefik configuration: a file-provider config for
- * the local stack and self-hosting, and IngressRoute plus Middleware resources
- * for the cluster. Both share the same routers and middlewares, so every
- * environment routes and stamps headers the same way. Each table router is one
- * Traefik router, so priority follows the table and each router is one
- * rate-limit bucket.
- */
 import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 import { DEFAULT_ORIGINS } from "./origins.ts";
 import {
@@ -21,12 +13,9 @@ const PREFIX = "broods-edge";
 /** Above any default priority Traefik gives the per-host Ingress routers. */
 const PRIORITY_BASE = 1000;
 
-// Bodies of every middleware but `headers`, identical in the file provider and
-// the CRD `spec`.
 const FIXED_MIDDLEWARES = {
-  // 1200 a minute per address, with room for a CLI deploy's burst.
+  // The burst leaves room for a CLI deploy.
   "limit-http": { rateLimit: { average: 20, period: "1s", burst: 200 } },
-  // 120 a minute per address.
   "limit-upgrade": { rateLimit: { average: 2, period: "1s", burst: 60 } },
   "strip-trailing-slash": {
     replacePathRegex: { regex: "^(/.*?)/+$", replacement: "$1" },
@@ -58,14 +47,12 @@ export interface FileConfig {
   };
 }
 
-/** A Kubernetes Service an IngressRoute forwards to. */
 export interface KubeService {
   name: string;
   namespace?: string;
   port: number;
 }
 
-/** One public host in the cluster and the services behind it. */
 export interface KubeStage {
   name: string;
   host: string;
@@ -73,7 +60,6 @@ export interface KubeStage {
   upstreams: Record<Upstream, KubeService>;
 }
 
-/** One route of an IngressRoute: a rendered router for one host. */
 export interface KubeRoute {
   kind: "Rule";
   match: string;
@@ -98,11 +84,7 @@ export type KubeResource = {
     }
 );
 
-/**
- * File-provider config for one host, with each upstream's base URL and the
- * browser origins to allow. No per-address limits: locally every request shares
- * one address, and a self-hosted install mostly serves its owner.
- */
+/** No per-address limits: locally every request shares one address. */
 export function renderFileConfig(
   upstreams: Record<Upstream, string>,
   origins: readonly string[] = DEFAULT_ORIGINS,
@@ -139,10 +121,6 @@ export function renderFileConfig(
   };
 }
 
-/**
- * The shared Middlewares, then one IngressRoute per stage, limited per client
- * address: Traefik binds the node's ports, so it sees each client's own address.
- */
 export function renderKubernetes(
   stages: readonly KubeStage[],
   namespace: string,
@@ -191,10 +169,8 @@ export function renderKubernetes(
   return resources;
 }
 
-// Core and the config plane refuse the in-cluster service token on any request
-// carrying `x-broods-via-gateway`, so every public request must carry it. An
-// empty value removes the header: the service token picks its account from
-// `X-Account-Id`, and only in-cluster callers may send it.
+// Core and the config plane refuse the service token on any request with the via header.
+// The empty value strips `X-Account-Id`, the account pick only in-cluster callers may send.
 function headersMiddleware(origins: readonly string[]): {
   headers: Record<string, unknown>;
 } {
@@ -206,7 +182,6 @@ function headersMiddleware(origins: readonly string[]): {
         "authorization",
         "content-type",
         "x-request-id",
-        // The signed end-user token a browser sends beside the runtime key.
         "x-broods-user-token",
       ],
       accessControlAllowOriginListRegex: origins.map(originRegex),
@@ -230,8 +205,7 @@ function observability(router: EdgeRouter): Pick<FileRouter, "observability"> {
   return router.secretPath ? { observability: { accessLogs: false } } : {};
 }
 
-// Any scheme and port, as the gateway's origin check matches the hostname
-// only; `*` allows every origin, as it does there.
+// Hostname only, any scheme and port, `*` for all: the same as the gateway's origin check.
 function originRegex(hostname: string): string {
   if (hostname === "*") return "^https?://.+$";
   const subdomains = hostname.startsWith("*.");
@@ -264,8 +238,7 @@ function routerRule(router: EdgeRouter): string {
   return router.rules.map((rule) => `(${ruleMatcher(rule)})`).join(" || ");
 }
 
-// The method check comes first: it is cheaper than the path regex. Trailing
-// slashes match here and are stripped by a middleware.
+// Trailing slashes match here; the strip-trailing-slash middleware removes them.
 function ruleMatcher(rule: EdgeRule): string {
   const path = `PathRegexp(\`^${rule.path}/*$\`)`;
   if (!rule.methods) return path;

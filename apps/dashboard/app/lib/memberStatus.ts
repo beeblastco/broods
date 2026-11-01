@@ -1,8 +1,3 @@
-/**
- * The status a sandbox, workspace or MCP server shows, read by its chip or
- * card and by a collapsed frame that sums up its members, so the two never
- * disagree.
- */
 import {
   statusConfig,
   type BaseNodeData,
@@ -15,7 +10,6 @@ import {
   type MachineState,
 } from "@/app/lib/machineConnection";
 
-/** Which member's color a collapsed frame takes: the highest wins. */
 const LEVEL_RANK: Record<MemberLevel, number> = {
   idle: 0,
   ok: 1,
@@ -35,7 +29,6 @@ const RUN_LEVEL: Record<NonNullable<BaseNodeData["status"]>, MemberLevel> = {
   running: "ok",
 };
 
-/** One word per effective-sandbox state. */
 export const WORKSPACE_STATE_LABEL: Record<
   WorkspaceSandboxState["kind"],
   string
@@ -45,23 +38,16 @@ export const WORKSPACE_STATE_LABEL: Record<
   readonly: "read-only",
 };
 
-/** How much a member's state matters: idle covers off, disabled and never connected. */
 export type MemberLevel = "error" | "idle" | "ok" | "warn";
 
-/** A dot color class, its level, and the word the chip shows. */
 export type MemberStatus = { color: string; label: string; level: MemberLevel };
 
-/** An MCP server or skill: enabled is ok, disabled reads as idle, grey like any other off state. */
 export function enabledMemberStatus(enabled: boolean): MemberStatus {
   return enabled
     ? { color: "bg-success", label: "Enabled", level: "ok" }
     : { color: statusConfig.idle.color, label: "Disabled", level: "idle" };
 }
 
-/**
- * A machine sandbox reads its daemon connection once it has loaded: offline
- * warns, never connected is idle. Any other sandbox reads its run state.
- */
 export function sandboxMemberStatus(
   data: BaseNodeData,
   machine: MachineState | undefined,
@@ -82,10 +68,6 @@ export function sandboxMemberStatus(
   };
 }
 
-/**
- * A collapsed frame's dot and line: the color of its highest-level member
- * (the first one on a tie), and each label with its count in slot order.
- */
 export function summarizeMembers(statuses: readonly MemberStatus[]): {
   color: string;
   text: string;
@@ -109,7 +91,6 @@ export function summarizeMembers(statuses: readonly MemberStatus[]): {
   };
 }
 
-/** Mounted reads as active, read-only as a warning, inherited and unwired as idle. */
 export function workspaceMemberStatus(
   state: WorkspaceSandboxState | undefined,
 ): MemberStatus {

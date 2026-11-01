@@ -1,21 +1,3 @@
-/**
- * Browser suites, picked by project name:
- *
- * - `ui`: drives the /ui-gallery fixture on a local `next dev` and asserts
- *   real layout (popup placement, card overflow, tooltips, save pill). No
- *   backend behind it.
- * - `setup`: signs in the probe account through hosted AuthKit once and saves
- *   the session; `app` and `perf` depend on it.
- * - `app`: signed-in behaviour of the real pages against a real Convex and
- *   WorkOS.
- * - `perf`: cold and navigated render times against the budget.
- *
- * The signed-in suites need E2E_EMAIL and E2E_PASSWORD, and run against
- * E2E_BASE_URL: a deployment, or a local server on the self-hosted backend
- * (default http://localhost:3000, PORT moves it, started here when not already running;
- * E2E_SERVER_COMMAND swaps `next dev` for another server, which is how CI
- * runs the standalone build). They skip without the account.
- */
 import { defineConfig, devices } from "@playwright/test";
 import {
   BASE_URL,
@@ -27,10 +9,8 @@ import {
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: false,
-  // On a self-hosted stack (the admin key) the seat billing spec runs, and it
-  // flips the deployment's managed-service flag and the admin's active org,
-  // which every other app and perf spec reads: one spec at a time there.
-  // Against WorkOS that spec skips, so the suites keep their workers.
+  // With the admin key the seat billing spec runs and flips deployment-wide state every
+  // app and perf spec reads; against WorkOS it skips.
   workers: probeAccount.adminKey ? 1 : undefined,
   retries: 0,
   reporter: process.env.CI ? [["list"], ["github"]] : "list",
@@ -42,8 +22,7 @@ export default defineConfig({
     {
       name: "ui",
       testMatch: /ui\/.*\.spec\.ts/,
-      // Traces only here: the signed-in projects must not record one, it
-      // carries the session cookie and the sign-in POST into CI artifacts.
+      // Only here: a signed-in trace carries the session cookie into CI artifacts.
       use: { baseURL: DEV_URL, trace: "retain-on-failure" },
     },
     {
@@ -72,11 +51,8 @@ export default defineConfig({
         url: `${DEV_URL}/healthz`,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
-        // The fixture never talks to Convex or WorkOS; the app only needs
-        // well-formed values to construct its clients and its auth proxy.
-        // A real .env.local wins when present, which is what the signed-in
-        // suites need locally. `||`, not `??`: CI passes an unset secret as
-        // an empty string, and an empty cookie password crashes the server.
+        // Placeholders only build the clients. `||`, not `??`: CI passes an unset secret as "",
+        // and an empty cookie password crashes the server.
         env: {
           NEXT_PUBLIC_CONVEX_URL:
             process.env.NEXT_PUBLIC_CONVEX_URL ||
@@ -90,8 +66,7 @@ export default defineConfig({
           NEXT_PUBLIC_WORKOS_REDIRECT_URI:
             process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI ||
             "http://localhost:3000/auth/callback",
-          // The observability panels open their socket only with a gateway
-          // set. The ui specs answer that socket themselves, so it never dials.
+          // Panels open their socket only with a gateway set; the ui specs answer it.
           NEXT_PUBLIC_BROODS_BASE_URL:
             process.env.NEXT_PUBLIC_BROODS_BASE_URL || "http://localhost:3999",
         },

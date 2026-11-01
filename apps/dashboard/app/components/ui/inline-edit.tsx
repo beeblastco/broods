@@ -4,14 +4,6 @@ import { resolveInlineEdit } from "@/app/lib/inlineEdit";
 import { cn } from "@/app/lib/utils";
 import * as React from "react";
 
-/**
- * A name edited where it is shown. Mount it in place of the text while a
- * rename is open: it takes focus with the text selected, Enter or blur
- * commits, Escape cancels, and Enter on a blank draft is refused. It inherits
- * the text's font, and its border hangs into the line's margin so the row
- * keeps its height. Enter and Escape hand focus back to whatever had it
- * before, the control that started the rename.
- */
 function InlineEdit({
   value,
   label,
@@ -19,13 +11,10 @@ function InlineEdit({
   onCancel,
   className,
 }: {
-  /** The saved text: the draft starts from it, and committing it again changes nothing. */
   value: string;
-  /** The field's accessible name. */
   label: string;
-  /** A trimmed change; the caller closes the field and saves it. */
   onCommit: (value: string) => void;
-  /** Cancelled, or committed with nothing changed; the caller closes the field. */
+  /** Also called for a commit that changed nothing. */
   onCancel: () => void;
   className?: string;
 }) {
@@ -36,6 +25,7 @@ function InlineEdit({
   // Enter and Escape move focus away as the field closes; that blur must not commit again.
   const settledRef = React.useRef(false);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- focuses the DOM input before paint
   React.useLayoutEffect(() => {
     const active = document.activeElement;
     // Strict Mode runs this twice; the second pass finds the field focused.
@@ -92,7 +82,6 @@ function InlineEdit({
         const outcome = resolveInlineEdit(draft, value);
         close(outcome.kind === "commit" ? outcome.value : null, false);
       }}
-      // Clicks in the field are not clicks on the row or card around it.
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
     />

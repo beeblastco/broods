@@ -18,7 +18,6 @@ function project(id: Id<"projects">, name: string): Doc<"projects"> {
   } as Doc<"projects">;
 }
 
-/** A store holding a project list and one project, recording every write by function name. */
 function localStore(
   list: Doc<"projects">[] | undefined,
   byId: Doc<"projects"> | null | undefined,

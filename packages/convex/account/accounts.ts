@@ -1,8 +1,3 @@
-/**
- * Account CRUD + secret-hash lookup. Called by broods's
- * Convex core store (via deploy key) and by the dashboard's org lifecycle.
- */
-
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
@@ -12,9 +7,6 @@ import { accountDoc } from "../model/accountDoc";
 
 const statusValidator = v.union(v.literal("active"), v.literal("disabled"));
 
-/**
- * @returns the complete persisted account document
- */
 export const create = internalMutation({
   args: {
     orgId: v.string(),
@@ -57,10 +49,8 @@ export const create = internalMutation({
   },
 });
 
-// Takes a string, not v.id: the caller is a URL segment. A v.id validator
-// rejects an unissued id by throwing, which reaches the webhook as a 500 and
-// makes a provider retry a webhook that will never work. normalizeId turns
-// "not an account id" into null, so it answers 404 and a real outage still throws.
+// A string, not v.id: an unissued id from a URL must answer 404, not a 500 that makes the
+// webhook provider retry forever.
 export const getById = internalQuery({
   args: { accountId: v.string() },
   returns: v.union(accountDoc, v.null()),
@@ -101,13 +91,7 @@ export const list = internalQuery({
   },
 });
 
-/**
- * Removes an account and cascade-deletes its agents, sandbox/workspace configs,
- * conversations, messages, skills, async results, and cron jobs. Deletes one
- * bounded batch per invocation and reschedules itself until the account row is
- * gone, so a high-volume account never exceeds one transaction. S3 cleanup is
- * the caller's responsibility.
- */
+// One bounded batch per call, rescheduled until gone. S3 cleanup is the caller's job.
 export const remove = internalMutation({
   args: { accountId: v.id("accounts") },
   returns: v.null(),
@@ -131,9 +115,6 @@ export const removeBatch = internalMutation({
   },
 });
 
-/**
- * @returns the updated document, or null when the account does not exist
- */
 export const update = internalMutation({
   args: {
     accountId: v.id("accounts"),

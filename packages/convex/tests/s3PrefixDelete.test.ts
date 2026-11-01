@@ -109,8 +109,7 @@ test("a key the store refuses fails the cleanup and stops it", async () => {
   expect(fake.keys.has(`${PREFIX}00007`)).toBe(true);
 });
 
-// The retry tests check which keys go again, not how long the backoff is, so
-// they run its waits on a fake clock.
+// The retry tests check which keys go again, not the backoff, so they run on a fake clock.
 test("retries only the keys that hit a transient error", async () => {
   vi.useFakeTimers();
   fill(3);

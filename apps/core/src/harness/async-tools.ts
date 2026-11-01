@@ -1,10 +1,3 @@
-/**
- * Async tool coordination: the per-run coordinator that wraps `async: true`
- * tools and feeds their results back, and the recovery sweep over results no
- * live run delivered. Keep tool wrapping and parent-result injection outside
- * individual tool files.
- */
-
 import {
   asyncToolResultDedupeKey,
   SWEPT_HANDBACKS,
@@ -27,19 +20,18 @@ import { lostResultWindows } from "./subagents.ts";
 import { isAsyncIterable, type ToolExecute } from "./tool-execute.ts";
 import {
   modelValueToUserParts,
+  parseToolResultOutput,
   prependTextToUserParts,
+  type ToolContentPart,
 } from "./tools/utils.ts";
 
 const DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
-/** Resumes a conversation with a settled row; the handler's `continueAfterAsyncToolSettlement`. */
 export type AsyncToolSettlementResumer = (
   settled: AsyncToolResultRecord,
 ) => Promise<ContinuationOutcome>;
 
-// Per-call context handed to the run/dispatch helpers. toolCallId rides along for
-// logging only; it is intentionally absent from the stored metadata/completion.
 interface AsyncToolCall extends AsyncToolPendingMetadata {
   toolCallId: string;
   execute: () => ReturnType<ToolExecute>;
@@ -54,7 +46,6 @@ export interface AsyncToolCompletion {
   error?: string;
 }
 
-/** Model-facing names of tools configured `async: true`. */
 export type AsyncToolNames = Set<string>;
 export type RunAsyncToolDispatch = (
   tools: ToolSet,
@@ -74,7 +65,6 @@ export interface AsyncToolPendingResult {
 
 type ToolEntry = ToolSet[string];
 
-/** Runs `async: true` tools in the background for one turn and feeds their results back; the handler builds one per run. */
 export class AsyncToolCoordinator {
   private readonly completions: AsyncToolCompletion[] = [];
   private readonly pending = new Map<string, Promise<void>>();
@@ -90,14 +80,13 @@ export class AsyncToolCoordinator {
       DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS,
   ) {}
 
-  // A getter follows the worker's budget as a yielding run moves to a new slot.
+  // A function follows the worker's budget as a yielding run moves to a new slot.
   private get waitUntilMs(): number {
     return typeof this.waitUntil === "number"
       ? this.waitUntil
       : this.waitUntil();
   }
 
-  /** Wraps the tools named in `asyncToolNames` so they return a statusId and run in the background. */
   dispatch: RunAsyncToolDispatch = (
     tools: ToolSet,
     asyncToolNames: AsyncToolNames,
@@ -114,12 +103,10 @@ export class AsyncToolCoordinator {
     );
   };
 
-  /** Calls still running; the handler checks it before waiting. */
   get pendingCount(): number {
     return this.pending.size;
   }
 
-  /** Waits for in-flight calls up to the wait budget, heartbeating meanwhile; the handler calls it before draining. */
   async waitForIdle(
     options: {
       onHeartbeat?: (pendingCount: number) => void | Promise<void>;
@@ -146,7 +133,6 @@ export class AsyncToolCoordinator {
     return this.pending.size === 0 ? "idle" : "timeout";
   }
 
-  /** Persists finished results into the parent conversation and returns how many; the handler calls it once the wait ends. */
   async drainCompletionsToParent(): Promise<number> {
     if (this.completions.length === 0) {
       return 0;
@@ -158,7 +144,6 @@ export class AsyncToolCoordinator {
     return completions.length;
   }
 
-  /** Like `drainCompletionsToParent`, but also fails and injects calls still pending; the handler uses it when the wait timed out. */
   async drainCompletionsAndTimeoutsToParent(): Promise<number> {
     if (this.completions.length === 0 && this.pending.size === 0) {
       return 0;
@@ -197,13 +182,7 @@ export class AsyncToolCoordinator {
     return batch.length;
   }
 
-  /**
-   * The one write of finished results into the parent conversation, each
-   * under its hand-back key so the insert marks its row stored. When the write
-   * fails every row is detached, best effort, and the recovery sweep delivers
-   * it; a row whose detach fails too is still `pending`, and the sweep takes
-   * it once no live run can hold it.
-   */
+  // On failure the sweep delivers each row: detached, or still pending if the detach fails too.
   private async persistToParent(batch: AsyncToolCompletion[]): Promise<void> {
     try {
       await this.parentSession.persistModelMessages(
@@ -223,7 +202,6 @@ export class AsyncToolCoordinator {
     }
   }
 
-  /** Used by `dispatch`: swaps a tool's execute for one that records a pending row, starts the call, and returns a statusId. */
   private wrapTool(toolName: string, entry: ToolEntry): ToolEntry {
     if (!entry.execute) {
       logWarn("Async tool config ignored because tool has no local execute", {
@@ -271,7 +249,6 @@ export class AsyncToolCoordinator {
     return wrapped as unknown as ToolEntry;
   }
 
-  /** Runs a wrapped call in the background and tracks it as pending until it settles. */
   private startToolCall(options: AsyncToolCall): void {
     const promise = this.runToolCall(options)
       .catch((error) =>
@@ -297,7 +274,6 @@ export class AsyncToolCoordinator {
     });
   }
 
-  /** Body of `startToolCall`: executes the tool, stores its output as completed, and queues it for the parent. */
   private async runToolCall(options: AsyncToolCall): Promise<void> {
     logInfo("Async tool call started", {
       parentEventId: this.parentSession.eventId,
@@ -322,10 +298,10 @@ export class AsyncToolCoordinator {
     });
   }
 
-  /** Records a finished call (marking failures in Convex) and queues it for the parent unless a timeout drain already took it. */
   private async completeToolCall(
     completion: AsyncToolCompletion,
   ): Promise<void> {
+    // No longer pending once a timeout drain has already injected it.
     const shouldInjectToParent = this.pending.has(completion.resultId);
 
     if (completion.status === "failed") {
@@ -355,14 +331,12 @@ export class AsyncToolCoordinator {
     });
   }
 
-  /** Resolves on the next completion or settle; `waitForIdle` races it against the heartbeat. */
   private nextStateChange(): Promise<void> {
     return new Promise((resolve) => {
       this.waiters.add(resolve);
     });
   }
 
-  /** Wakes every `nextStateChange` waiter. */
   private notifyCompletion(): void {
     for (const waiter of this.waiters) {
       waiter();
@@ -371,14 +345,7 @@ export class AsyncToolCoordinator {
   }
 }
 
-/**
- * Resumes each conversation whose async tool result no live run delivered:
- * the run that detached it died with its pod or its resume failed, or the
- * result is still `pending` past any live run's hold, because the run that
- * owed it died before its write and its detach. Each pass walks every page,
- * so rows it must retry never crowd the rest out. The ingress recovery sweep
- * calls it on its timer, after the subagent pass.
- */
+// Each pass walks every page, so rows kept for a retry never crowd the rest out.
 export async function resumeLostAsyncToolResults(
   resumeConversation: AsyncToolSettlementResumer,
 ): Promise<void> {
@@ -401,9 +368,7 @@ export async function resumeLostAsyncToolResults(
             row,
             resumeConversation,
           );
-          // Counted once it is handled: each one is a result a run dropped
-          // without a trace. A row kept for the next pass is not counted
-          // again each pass.
+          // Logged once, when handled: each is a result a run dropped without a trace.
           if (handled && handback === "pending") {
             logInfo("Async tool result left pending past the run's hold", {
               resultId: row.resultId,
@@ -420,16 +385,7 @@ export async function resumeLostAsyncToolResults(
   }
 }
 
-/**
- * One row of `resumeLostAsyncToolResults`: its continuation is admitted under
- * the row, so admission stores it, or refuses it as a duplicate once the
- * conversation has it. A conversation with no room keeps the row for the next
- * pass, and so do a resume that throws and a duplicate: admission already
- * marked a stored result, and a continuation still queued marks it when
- * applied, or is admitted again by a later pass once it expired. A row no
- * resume can ever deliver is marked stored and logged once.
- * @returns whether the row is handled, rather than kept for the next pass
- */
+/** @returns false to keep the row for the next pass. */
 async function resumeLostAsyncToolResult(
   row: AsyncToolResultRecord,
   resumeConversation: AsyncToolSettlementResumer,
@@ -455,6 +411,8 @@ async function resumeLostAsyncToolResult(
 
     return true;
   }
+  // Kept: a duplicate is already marked stored, or its queued continuation marks it
+  // when applied, or expires and a later pass admits it again.
   if (admission === "capacity" || admission === "duplicate") return false;
   await markAsyncToolHandback(row.resultId, "stored");
   logInfo("Gave up on a lost async tool result", {
@@ -465,7 +423,6 @@ async function resumeLostAsyncToolResult(
   return true;
 }
 
-/** Formats an async tool result as the user message injected into the parent; used by the drains and by the handler's continuation run. */
 export function completionToParentMessage(
   completion: AsyncToolCompletion,
 ): UserModelMessage {
@@ -494,22 +451,16 @@ export function completionToParentMessage(
   };
 }
 
-/** Rewrites a binary or URL file part into its JSON form (base64 or href) so it can be stored in Convex. */
-function canonicalizeAsyncToolContentPart(part: unknown): unknown {
-  if (
-    !isRecord(part) ||
-    part.type !== "file" ||
-    typeof part.mediaType !== "string" ||
-    !isRecord(part.data)
-  ) {
+// Binary and URL file parts become their JSON form, which Convex can store.
+function canonicalizeAsyncToolContentPart(
+  part: ToolContentPart,
+): ToolContentPart {
+  if (part.type !== "file") {
     return part;
   }
 
-  const data = part.data;
-  if (
-    data.type === "data" &&
-    (data.data instanceof Uint8Array || data.data instanceof ArrayBuffer)
-  ) {
+  const { data } = part;
+  if (data.type === "data" && typeof data.data !== "string") {
     return {
       type: "file-data",
       data: Buffer.from(
@@ -518,19 +469,19 @@ function canonicalizeAsyncToolContentPart(part: unknown): unknown {
           : data.data,
       ).toString("base64"),
       mediaType: part.mediaType,
-      ...(typeof part.filename === "string" ? { filename: part.filename } : {}),
-      ...(isRecord(part.providerOptions)
+      ...(part.filename !== undefined ? { filename: part.filename } : {}),
+      ...(part.providerOptions
         ? { providerOptions: part.providerOptions }
         : {}),
     };
   }
 
-  if (data.type === "url" && data.url instanceof URL) {
+  if (data.type === "url") {
     return {
       type: "file-url",
       url: data.url.href,
       mediaType: part.mediaType,
-      ...(isRecord(part.providerOptions)
+      ...(part.providerOptions
         ? { providerOptions: part.providerOptions }
         : {}),
     };
@@ -539,23 +490,18 @@ function canonicalizeAsyncToolContentPart(part: unknown): unknown {
   return part;
 }
 
-/** Canonicalizes each part of a `content` tool output before `runToolCall` stores it. */
 function canonicalizeAsyncToolOutput(output: unknown): unknown {
-  if (
-    !isRecord(output) ||
-    output.type !== "content" ||
-    !Array.isArray(output.value)
-  ) {
+  const parsed = parseToolResultOutput(output);
+  if (parsed?.type !== "content") {
     return output;
   }
 
   return {
-    ...output,
-    value: output.value.map(canonicalizeAsyncToolContentPart),
+    ...parsed,
+    value: parsed.value.map(canonicalizeAsyncToolContentPart),
   };
 }
 
-/** Renders a tool input as text for the injected parent message. */
 function formatUnknown(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -567,14 +513,7 @@ function formatUnknown(value: unknown): string {
   }
 }
 
-/** Loose object guard for the tool output canonicalizers. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object";
-}
-
-// Model-facing text for a just-started async tool call. The model already knows
-// which tool it called, so only the statusId (needed to poll async_status) matters.
-// statusId carries the internal resultId value, renamed at the model boundary.
+// `statusId` is the resultId under its model-facing name.
 function pendingResultText(resultId: string, status: string): string {
   return [
     `Started in the background (statusId: ${resultId}, current status: ${status}).`,
@@ -582,7 +521,6 @@ function pendingResultText(resultId: string, status: string): string {
   ].join("\n");
 }
 
-/** Awaits a tool's output; for a streaming tool, keeps only the last chunk. */
 async function resolveToolOutput(
   output: ReturnType<ToolExecute>,
 ): Promise<unknown> {

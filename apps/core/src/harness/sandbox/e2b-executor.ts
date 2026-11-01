@@ -1,12 +1,3 @@
-/**
- * E2B-backed sandbox executor.
- * Keep E2B SDK adaptation here. Commands run in E2B's native sandbox filesystem.
- * Persistent mode reserves one sandbox per key, reconnecting by stored id (E2B
- * auto-pauses it on idle and connect resumes it). `config.snapshot` names the
- * template or snapshot it boots, and the Snapshot action captures a reserved
- * sandbox into a new snapshot.
- */
-
 import type { Sandbox } from "e2b";
 import { Buffer } from "node:buffer";
 import {
@@ -14,7 +5,7 @@ import {
   upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
-import { isPlainObject } from "../../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
@@ -45,7 +36,6 @@ import {
   truncateText,
 } from "./utils.ts";
 
-// How long a size read may take before the size is left unknown.
 const SPECS_READ_TIMEOUT_MS = 3_000;
 
 export class E2BSandboxExecutor implements SandboxExecutor {
@@ -135,8 +125,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     try {
       await Sandbox.kill(externalId, e2bApiOptions(this.#config));
     } catch (err) {
-      // Already gone => safe to forget. Wrong creds / transient => propagate so a
-      // caller iterating multiple configs can try the next one.
+      // Only a gone sandbox is forgotten; wrong creds throw so the caller tries its next config.
       if (!isSandboxGoneError(err)) throw err;
     }
     await deleteSandboxInstance(
@@ -147,11 +136,6 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     ).catch(() => {});
   }
 
-  /**
-   * Captures the reserved sandbox as an E2B snapshot, which any e2b sandbox of
-   * the account can then boot through `config.snapshot`. E2B pauses the sandbox
-   * while it captures.
-   */
   async snapshot(
     request: SandboxReservationRef,
   ): Promise<SandboxSnapshotResult> {
@@ -211,7 +195,6 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           externalId,
           this.#config.controlPlane?.accountId,
         ).catch(() => {});
-        // No size: the row keeps the one E2B reported when this sandbox was made.
         await upsertSandboxInstance(
           this.#config.controlPlane,
           "e2b",
@@ -222,9 +205,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
 
         return sandbox;
       } catch (error) {
-        // Recreate only when the sandbox is really gone; a transient error must
-        // propagate or the still-live sandbox is orphaned at the provider. The
-        // conditional delete keeps a row a concurrent call already re-claimed.
+        // Recreate only when really gone: a transient error would orphan the live sandbox.
         if (!isSandboxGoneError(error)) throw error;
         await deleteSandboxInstance(
           "e2b",
@@ -255,8 +236,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           created.sandboxId,
           request.metadata,
         );
-        // The size is read once, now, off the acquire path, and patched onto
-        // the row; reconnects send none and the row keeps it.
+        // Read once, off the acquire path; reconnects send no size and the row keeps this one.
         const accountId = this.#config.controlPlane?.accountId;
         if (accountId) {
           void e2bSpecs(created).then((specs): void => {
@@ -274,9 +254,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         return created;
       }
     } catch (error) {
-      // The claim may already have committed even when its caller rejects. Tear
-      // down both sides conditionally so a failed acquisition cannot leak the
-      // newly created sandbox or erase a concurrent winner's reservation.
+      // The claim may have committed though it rejected: undo both sides, conditionally.
       await Promise.allSettled([
         Sandbox.kill(created.sandboxId, e2bApiOptions(this.#config)),
         deleteSandboxInstance(
@@ -288,7 +266,6 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       ]);
       throw error;
     }
-    // Lost a concurrent create race: the winner's sandbox is the one to use.
     const winner = await getSandboxExternalId("e2b", ns);
     await Sandbox.kill(created.sandboxId, e2bApiOptions(this.#config)).catch(
       () => {},
@@ -343,7 +320,6 @@ function e2bCreateOptions(
   return {
     ...(apiKey ? { apiKey: apiKey } : {}),
     ...(config.snapshot ? { template: config.snapshot } : {}),
-    // Auto-pause on idle (instead of kill) so a reserved sandbox can be resumed.
     ...(persistent
       ? {
           timeoutMs:
@@ -354,16 +330,13 @@ function e2bCreateOptions(
   };
 }
 
-// e2b's bundle require()s chalk while the pi harness imports that same chalk as
-// ESM, and one eager graph holding both is a race. Load it only when e2b is used.
+// Lazy: e2b require()s the chalk the pi harness imports as ESM; one eager graph with both races.
 async function e2bSandboxApi(): Promise<typeof import("e2b").Sandbox> {
   const { Sandbox } = await import("e2b");
 
   return Sandbox;
 }
 
-// The vCPUs and memory E2B gave the sandbox. E2B reports no disk size. A slow or
-// failed read leaves the size unknown rather than holding up or failing the call.
 async function e2bSpecs(sandbox: Sandbox): Promise<SandboxSpecs | undefined> {
   try {
     const info = await sandbox.getInfo({

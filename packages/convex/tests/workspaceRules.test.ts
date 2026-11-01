@@ -1,8 +1,3 @@
-/**
- * Workspace config validation tests, ported from core's former
- * workspace-config.test.ts when the normalizers moved here.
- */
-
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -87,7 +82,7 @@ describe("workspace config", () => {
       storage: { provider: "s3" },
       harness: { workspace: { enabled: false } },
     });
-    // The legacy top-level harness.enabled flag is gone; unknown harness keys drop.
+    // Unknown harness keys, the old top-level `enabled` among them, are dropped.
     expect(
       normalizeWorkspaceConfig({
         storage: { provider: "s3" },
@@ -106,8 +101,7 @@ describe("workspace config", () => {
       storage: { provider: "s3" },
       harness: { memory: { enabled: false } },
     });
-    // Features default to on, so a redundant `enabled: true` (or an empty
-    // feature object) normalizes away to the omitted form.
+    // Features default to on, so `enabled: true` or `{}` normalizes away to the omitted form.
     expect(
       normalizeWorkspaceConfig({
         storage: { provider: "s3" },
@@ -292,8 +286,7 @@ describe("workspace config", () => {
       description: null,
       config: { harness: { workspace: { enabled: true } } },
     });
-    // Re-enabling a feature restores the default form: the opt-out is removed
-    // rather than replaced with a stored `enabled: true`.
+    // Re-enabling removes the opt-out rather than storing `enabled: true`.
     expect(patched).toEqual({
       name: "renamed",
       description: null,

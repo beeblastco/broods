@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * The copilot's state and its hands. Held above the router so the conversation
- * survives navigation, which is the whole point of a dock over a dialog: the
- * copilot moves you to another page and the thread is still there when you land.
- */
 import { useShortcutRegistry } from "@/app/components/ShortcutProvider";
 import { useDashboardIndex } from "@/app/hooks/useDashboardIndex";
 import { useStage } from "@/app/hooks/useStage";
@@ -30,7 +25,6 @@ import {
   useState,
 } from "react";
 
-/** What the copilot says when an ask lands outside the rules it can resolve on its own. */
 const NO_MODEL_REPLY =
   'I can only run what I can resolve from this project right now. Try a name, "go to <section>", "pause <cron>", "add an agent", or "set KEY to value".';
 
@@ -46,19 +40,18 @@ export interface CopilotState {
   /** Keys of plan steps already run, as `${messageId}:${index}`. */
   completed: ReadonlySet<string>;
   isOpen: boolean;
-  /** What the palette lists and the copilot resolves names against; empty until woken. */
+  /** Empty until `wakeIndex`. */
   items: readonly SearchItem[];
   messages: readonly CopilotMessage[];
-  /** Carry out one action. The palette selects rows through this. */
   runAction: (action: CopilotAction) => void;
   runStep: (messageId: string, index: number, action: CopilotAction) => void;
   setOpen: (open: boolean) => void;
-  /** Start the index's subscriptions; they stay live after. Opening the dock does it too. */
   wakeIndex: () => void;
 }
 
 const CopilotContext = createContext<CopilotState | null>(null);
 
+// Mounted above the router, so the thread survives the navigation the copilot does.
 export function CopilotProvider({
   children,
 }: {
@@ -70,9 +63,7 @@ export function CopilotProvider({
   const router = useRouter();
   const registry = useShortcutRegistry();
 
-  // The palette and the dock are the index's only readers, and most visits
-  // open neither, so it subscribes to nothing until one of them is first
-  // wanted. It stays live after: a second open should not wait again.
+  // Most visits open neither the palette nor the dock, so the index subscribes once wanted.
   const [indexAwake, wakeIndex] = useReducer(() => true, false);
   const indexedProject = indexAwake ? projectId : null;
 
@@ -107,8 +98,6 @@ export function CopilotProvider({
           return;
         case "openNode":
           if (!projectId) return;
-          // `?node=` is how the canvas is told what to select, so a node opens
-          // the same way from the palette, the copilot and a pasted link.
           router.push(
             `${navHref(projectId, "", stageId)}${stageId ? "&" : "?"}node=${action.nodeId}`,
           );
@@ -156,8 +145,6 @@ export function CopilotProvider({
         liveCommands: registry.activeIds,
       });
 
-      // Moving you around is not worth a button, so a plan that only navigates
-      // runs on the spot and reports what it did.
       const unattended = plan !== null && planRunsUnattended(plan);
       if (unattended) {
         for (const action of plan.actions) run(action);
@@ -214,10 +201,7 @@ export function CopilotProvider({
   return <CopilotStateProvider value={value}>{children}</CopilotStateProvider>;
 }
 
-/**
- * The context on its own, for a tree that builds the state itself. The
- * `/ui-gallery` fixture uses it to drive the dock with no Convex or router.
- */
+/** Lets the `/ui-gallery` fixture drive the dock with no Convex or router. */
 export function CopilotStateProvider({
   children,
   value,

@@ -1,12 +1,5 @@
-/**
- * The per-account usage meter, by month and by day, and the pool it also
- * lands in: every account whose org one user owns shares that user's pool
- * (`usagePools`), and the plan's per-resource caps are measured against the
- * pool, so a Pro owner's orgs draw on one allowance. Also turns a sandbox's
- * running and suspended time into usage. The callers are the sandbox mirror
- * (`sandbox/instances.ts`), core's usage writes and the storage snapshot
- * (`account/budget.ts`).
- */
+// Usage lands on the account's month and day meters and on the pool of the user owning its org:
+// plan caps are measured against that pool, so one owner's orgs share one allowance.
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
@@ -31,17 +24,10 @@ import {
 } from "./pricing";
 import { workspaceSandboxLimits } from "./sandboxRules";
 
-/**
- * How long a sandbox runs idle before its provider suspends or stops it, for
- * a row that does not carry its own `lifecycle.idleTimeoutSeconds`: core's
- * `DEFAULT_IDLE_TIMEOUT_SECONDS`. The provider bills it until then, so the
- * meter does too.
- */
+// core's DEFAULT_IDLE_TIMEOUT_SECONDS: the provider bills an idle sandbox until then.
 export const DEFAULT_SANDBOX_IDLE_MS = 15 * 60 * 1000;
 
-// EUR of one hour at each hour-capped resource's default size. A group's cost
-// divided by it is the hours the dashboard shows and the cap counts, so a
-// bigger sandbox, a resume or a stored snapshot all use hours up.
+// Hours are cost over one default-size hour: a bigger sandbox, a resume or a snapshot use more.
 const SANDBOX_HOUR_EUR =
   3600 *
   (MICROVM_BASELINE.vcpu * UNIT_RATES_EUR.sandboxVcpuSeconds +
@@ -50,119 +36,76 @@ const HOSTED_MCP_HOUR_EUR =
   3600 * HOSTED_MCP_MEMORY_GB * UNIT_RATES_EUR.hostedMcpGbSeconds;
 
 const MONTH_SECONDS = DAYS_PER_MONTH * 24 * 60 * 60;
-// A MicroVM lives at most 8 hours (core `MAX_MICROVM_DURATION_SECONDS`), so one
-// used at `lastUsedAt` is gone 8 hours later even if its row still says
-// running or suspended.
+// core's MAX_MICROVM_DURATION_SECONDS: gone 8 h after last use, whatever its row says.
 const MICROVM_MAX_LIFETIME_MS = 8 * 60 * 60 * 1000;
-// Past the longest exec an ephemeral call may run: a MicroVM's own
-// `maximumDuration` is its timeout plus 60 s, and a workdir call also mounts.
+// Covers a MicroVM's `maximumDuration` (its timeout + 60 s) and a workdir call's mount.
 const EPHEMERAL_SANDBOX_GRACE_MS = 2 * 60 * 1000;
 
-// How many months back the billing tab's month picker reaches.
 const MONTHS_SHOWN = 12;
 
-// Statuses where the provider is still running (and billing) the machine.
 const BILLED_STATUSES: ReadonlySet<Doc<"sandboxInstances">["status"]> = new Set(
   ["running", "suspending", "terminating"],
 );
 
-/**
- * One account's budget for the current month, as core reads it: the plan's
- * caps against the pool of the user who owns the account's org.
- */
 export interface BudgetStatus {
-  /** False on a self-hosted install: nothing is limited. */
   enforced: boolean;
   plan: Plan;
   month: string;
-  /** The closest cap's share of the pool used, in percent. Runs stop at 100. */
   usedPercent: number;
-  /** Each capped resource's share of its cap, in percent, over the pool. */
   shares: Record<keyof ResourceCaps, number>;
-  /** Per account, not pooled. */
   runsPerMinute: number;
-  /** The 80% warning already went out to the pool's owner this month. */
   warned: boolean;
 }
 
-/** The pool an org's caps are measured against, and who else draws on it. */
 export interface PoolUsage {
-  /** Orgs drawing on the pool. Absent for a member, who sees only `shared`. */
+  /** Absent for a member: `account/budget.ts` strips it. */
   orgs?: number;
-  /** The owner's other organizations draw on this pool too. */
   shared: boolean;
-  /** The pool's amounts this month, the ones `shares` are measured from. */
   totals: UsageAmounts;
 }
 
 /**
- * What the dashboard shows of an account's month: amounts, caps and
- * percentages, never euros, so the budget behind each plan stays private.
- * `usedPercent`, `shares` and `level` are the pool's, the numbers core
- * enforces (`budgetStatus`): what the dashboard calls used is what stops
- * runs. `totals`, `days`, `projects` and `orgShares` are this org's own.
+ * Never euros, so each plan's budget stays private. `usedPercent`, `shares` and `level` are
+ * the pool's (what core enforces); `totals`, `days`, `projects` and `orgShares` this org's.
  */
 export interface BudgetUsage {
-  /** False on a self-hosted install: nothing is limited. */
   enforced: boolean;
   plan: Plan;
   month: string;
-  /** Months with a meter, newest first, always led by the current one. */
   months: string[];
-  /** The closest cap's share of the pool used. Null when nothing is enforced. */
   usedPercent: number | null;
-  /** The plan's caps. Null when nothing is enforced. */
   caps: ResourceCaps | null;
-  /** Each capped resource's share of its cap over the pool, or of all usage cost when nothing is enforced. */
   shares: Record<keyof ResourceCaps, number>;
-  /** This org's own part of `shares`: its amounts over the same caps or cost. */
   orgShares: Record<keyof ResourceCaps, number>;
-  /** "warning" from 80% of the closest cap, "exhausted" once runs stop at 100%. */
   level: BudgetLevel;
   totals: UsageAmounts;
-  /** Days of the month with usage or a storage snapshot, oldest first. */
   days: Array<UsageAmounts & { day: string }>;
-  /** Each of the org's projects' part of the month, when asked for. */
   projects?: ProjectUsage[];
-  /** The owner's pool the caps are measured against. Absent when nothing is enforced. */
   pool?: PoolUsage;
 }
 
-/** One project's share of an account's month, in the allowance's units. */
 export interface ProjectUsage {
   projectId: Id<"projects">;
   name: string;
   totals: UsageAmounts;
-  /** Days the project used something or the account's snapshot ran, oldest first. */
   days: Array<UsageAmounts & { day: string }>;
 }
 
-/** Usage in the units the billing tab shows. */
 export interface UsageAmounts {
-  /** Hours at the default 1 vCPU / 2 GB size, resumes and suspended snapshots included. */
   sandboxHours: number;
-  /** Invoke hours at the runner's memory size, requests included. */
   hostedMcpHours: number;
-  /** GB stored at the latest snapshot. Null when no snapshot measured this month or day. */
   storageGb: number | null;
   egressGb: number;
   ingressGb: number;
 }
 
-/** vCPU-seconds and GB-seconds a machine used above its baseline since it booted. */
 export type BurstTotals = NonNullable<Doc<"sandboxInstances">["burstBilled"]>;
 
-/** A sandbox instance's unbilled usage up to `now`, and where billing now stands. */
 export interface SandboxAccrual {
   usage: Partial<UsageQuantities>;
   meteredUntil: number;
 }
 
-/**
- * Add usage to the account's meter for the month and the day `now` falls in,
- * to the pool of the user who owns the account's org, and to `projectId`'s
- * day when the usage came from one project.
- */
 export async function addUsage(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -215,10 +158,7 @@ export async function addUsage(
   if (projectId) await addProjectUsage(ctx, accountId, projectId, usage, now);
 }
 
-/**
- * Add usage to one project's day only, for the storage snapshot's split of a
- * size the account's meter already took whole.
- */
+// Project day only: the storage snapshot splits a size the account's meter already took whole.
 export async function addProjectUsage(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -252,14 +192,7 @@ export async function addProjectUsage(
   }
 }
 
-/**
- * Each of the org's projects' part of `usage`'s month, as amounts and days.
- * Storage is what each project's workspaces held at the account's latest
- * snapshot in the month, so the projects add up to the snapshot the allowance
- * shows; before the month's first snapshot it is unknown (null) while the
- * allowance still shows last month's size. What no project used (account-wide resources, deleted projects,
- * usage metered before projects were) is the allowance's total less these.
- */
+// Projects need not sum to the account: account-wide and pre-project usage is in none.
 export async function projectUsage(
   ctx: QueryCtx,
   account: Doc<"accounts">,
@@ -280,7 +213,6 @@ export async function projectUsage(
         .lte("day", `${usage.month}-31`),
     )
     .collect();
-  // Days the account's snapshot ran: a project with no row on one held 0 GB.
   const snapshotDays = usage.days
     .filter((day) => day.storageGb !== null)
     .map((day) => day.day);
@@ -317,7 +249,6 @@ export async function projectUsage(
   });
 }
 
-/** The account's plan and limits, and its owner's pool against them, for the month `now` falls in. */
 export async function budgetStatus(
   ctx: QueryCtx,
   accountId: Id<"accounts">,
@@ -326,13 +257,6 @@ export async function budgetStatus(
   return (await readBudget(ctx, accountId, now)).status;
 }
 
-/**
- * One month of the account's usage for the dashboard's allowance: amounts
- * and a daily series of its own, the plan's caps, and on the managed service
- * each resource's share of its cap over the owner's pool, next to this org's
- * own part of it. A requested month outside the picker's list falls back to
- * the current one.
- */
 export async function budgetUsage(
   ctx: QueryCtx,
   accountId: Id<"accounts">,
@@ -355,7 +279,6 @@ export async function budgetUsage(
     requestedMonth !== undefined && months.includes(requestedMonth)
       ? requestedMonth
       : currentMonth;
-  // Every month in the list is one of `meters` or has no row yet.
   const meter = meters.find((row) => row.month === month) ?? null;
   const usage = pickUsage(meter);
   const totals = toAmounts(
@@ -367,7 +290,7 @@ export async function budgetUsage(
   const enforced = isManagedService();
   const caps = PLAN_LIMITS[plan].caps;
   const orgShares = enforced ? capShares(totals, caps) : costShares(usage);
-  // An account no org owns is its own pool; its shares are already the pool's.
+  // An account no org owns is its own pool.
   const pool =
     enforced && org
       ? await readPool(ctx, accountId, org, month, month === currentMonth)
@@ -422,10 +345,6 @@ export async function budgetUsage(
   };
 }
 
-/**
- * Mark this month's 80% warning as sent to the pool's owner.
- * @returns true for the one caller that should send it
- */
 export async function claimBudgetWarning(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -444,21 +363,14 @@ export async function claimBudgetWarning(
   return true;
 }
 
-/** "YYYY-MM-DD" of the UTC day `now` falls in. */
 export function meterDay(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
 }
 
-/** "YYYY-MM" of the UTC calendar month `now` falls in. */
 export function meterMonth(now: number): string {
   return new Date(now).toISOString().slice(0, 7);
 }
 
-/**
- * How long after its upsert an ephemeral (per-call) sandbox can still be
- * running: the provider's longest exec plus a grace. Its row is billed no
- * further, and the hourly accrual deletes one older than this.
- */
 export function ephemeralSandboxMaxMs(
   provider: Doc<"sandboxInstances">["provider"],
 ): number {
@@ -468,20 +380,8 @@ export function ephemeralSandboxMaxMs(
   );
 }
 
-/**
- * Sandbox time not billed yet, up to `now`. A sandbox is billed running from
- * where billing last stopped (or its last use) until its provider suspends it,
- * its own idle timeout past the last use. From then on a suspended MicroVM is
- * billed for storing its memory snapshot until it resumes or is released, and
- * never past the 8 hours a MicroVM can live after its last use.
- * An ephemeral sandbox never idles or stores a snapshot: it runs until its
- * call ends, and never past `ephemeralSandboxMaxMs`, so a row whose removal
- * was lost stops billing there.
- * Nothing is billed when the platform does not pay: a sandbox on the account's
- * own provider credentials, or a machine (the user's own computer). A
- * worker's row bills nothing either: nothing runs between its commands, and
- * each command is metered as it ends (`workerMs`, `workerRequests`).
- */
+// Billed running until its idle timeout, then a suspended MicroVM stores its snapshot until it
+// dies. A worker is metered per command (`workerMs`) instead, so its row bills nothing.
 export function sandboxAccrual(
   instance: Pick<
     Doc<"sandboxInstances">,
@@ -508,7 +408,6 @@ export function sandboxAccrual(
   const size = billedSize(instance);
   const ephemeral = instance.ephemeral === true;
   const lambda = instance.provider === "lambda";
-  // Past this the machine is gone, running or stored.
   const aliveUntil = Math.min(
     now,
     ephemeral
@@ -543,13 +442,8 @@ export function sandboxAccrual(
   };
 }
 
-/**
- * The burst a machine used since it was last billed, from the running totals
- * its guest reports, and the totals billed after it. Burst is billed at the
- * same rates as the baseline. A report at or below the billed totals is a
- * repeat or arrived late, so it bills nothing; a replaced machine starts from
- * zero because `upsert` clears its billed totals.
- */
+// Reports are running totals: a repeat or late one bills nothing, and `upsert` clears `billed`
+// when a machine is replaced, so the new one starts from zero.
 export function burstUsage(
   billed: BurstTotals | undefined,
   reported: BurstTotals,
@@ -568,7 +462,6 @@ export function burstUsage(
   };
 }
 
-/** How long the sandbox idles before its provider suspends or stops it. */
 export function sandboxIdleMs(
   instance: Pick<Doc<"sandboxInstances">, "idleTimeoutSeconds">,
 ): number {
@@ -577,7 +470,6 @@ export function sandboxIdleMs(
     : instance.idleTimeoutSeconds * 1000;
 }
 
-/** Snapshot GB a MicroVM moves on one launch or resume; nothing for other providers. */
 export function sandboxLaunchUsage(
   instance: Pick<Doc<"sandboxInstances">, "provider" | "specs">,
 ): Partial<UsageQuantities> {
@@ -586,7 +478,7 @@ export function sandboxLaunchUsage(
     : {};
 }
 
-// The size a provider bills: a MicroVM's is fixed by its image.
+// A MicroVM's size is fixed by its image, whatever its specs say.
 function billedSize(
   instance: Pick<Doc<"sandboxInstances">, "provider" | "specs">,
 ): { vcpu: number; memoryGb: number } {
@@ -598,7 +490,6 @@ function billedSize(
   };
 }
 
-// Each capped resource's share of its cap.
 function capShares(
   amounts: UsageAmounts,
   caps: ResourceCaps,
@@ -611,12 +502,10 @@ function capShares(
   };
 }
 
-// The share of the resource closest to its cap, which is what stops runs.
 function closestShare(shares: Record<keyof ResourceCaps, number>): number {
   return Math.max(...Object.values(shares));
 }
 
-// Each resource's share of all usage cost, for an install with no caps.
 function costShares(
   usage: UsageQuantities,
 ): Record<keyof ResourceCaps, number> {
@@ -638,27 +527,14 @@ type MeterRow =
   | Doc<"usageDays">
   | Doc<"usageProjectDays">;
 
-/**
- * What a cap is measured against for one month: the owner's pool, or the
- * account's own meter for an account no org owns. Until the pool has a row
- * for the month, the usage is the sum of the owner's accounts' meters, so
- * usage metered before the pool existed counts from the first read.
- */
 interface PoolRead {
   row: Doc<"usagePools"> | Doc<"usageMeters"> | null;
   usage: UsageQuantities;
-  /** Null when no snapshot has measured any of the accounts yet. */
   storageGb: number | null;
 }
 
-/**
- * Add usage to the pool of the user who owns the account's org, and give its
- * row's id. The month's first write creates the row from the sum of the
- * owner's accounts' meters: this account's meter was patched earlier in the
- * same mutation, so `usage` is in that sum and is not added again. A storage
- * snapshot sets the pool's stored size to the same sum's. An account no org
- * owns has no pool (null): its meter is read in its place.
- */
+// The month's first write seeds the pool from the owner's meters. Callers patch the account's
+// meter first, so `usage` is already in that sum and is not added again.
 async function addPoolUsage(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -697,7 +573,6 @@ async function addPoolUsage(
   });
 }
 
-// The status and the pool it was measured on, so a warning claim patches the row it judged.
 async function readBudget(
   ctx: QueryCtx,
   accountId: Id<"accounts">,
@@ -726,7 +601,6 @@ async function readBudget(
   };
 }
 
-// `current` carries storage over from earlier months, as `latestStorageGb` does.
 async function readPool(
   ctx: QueryCtx,
   accountId: Id<"accounts">,
@@ -774,11 +648,6 @@ async function readPool(
   };
 }
 
-/**
- * The owner's accounts' meters for `month` summed, with the GB they hold at
- * their latest snapshots: what the pool's row starts from, and what is read
- * until it exists. One account per owned org, at most `maxOwnedOrgs` of them.
- */
 async function sumOwnedMeters(
   ctx: QueryCtx,
   ownerAuthId: string,
@@ -851,8 +720,6 @@ function toAmounts(
   };
 }
 
-// Whether there is anything to write: some usage, or a storage snapshot,
-// which counts even at zero bytes.
 function hasUsage(usage: Partial<UsageQuantities>): boolean {
   return (
     usage.storageGbMonths !== undefined ||
@@ -860,9 +727,7 @@ function hasUsage(usage: Partial<UsageQuantities>): boolean {
   );
 }
 
-// A storage snapshot also sets the stored size, zero-byte ones included, so
-// an empty account reads 0 GB for the month and the day. Days with no
-// snapshot and no usage keep no row and read as unknown.
+// Zero-byte snapshots count, so an empty account reads 0 GB for the day rather than unknown.
 function snapshotFields(usage: Partial<UsageQuantities>): {
   storageGb?: number;
 } {
@@ -871,12 +736,10 @@ function snapshotFields(usage: Partial<UsageQuantities>): {
     : { storageGb: usage.storageGbMonths * DAYS_PER_MONTH };
 }
 
-// A share of `base` as a percentage with one decimal; 0 when there is no base.
 function toPercent(part: number, base: number): number {
   return base > 0 ? Math.round((part / base) * 1000) / 10 : 0;
 }
 
-// The row's quantities with `usage` added.
 function withUsage(
   row: MeterRow | null,
   usage: Partial<UsageQuantities>,
@@ -889,10 +752,7 @@ function withUsage(
   return totals;
 }
 
-/**
- * Storage is a size: until this month's first daily snapshot, the latest
- * earlier one still holds, so a new month does not free a full storage cap.
- */
+// Storage is a size: last month's snapshot holds until this month's first, freeing no cap.
 async function latestStorageGb(
   ctx: QueryCtx,
   accountId: Id<"accounts">,

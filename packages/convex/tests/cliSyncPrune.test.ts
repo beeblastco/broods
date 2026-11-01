@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * A CLI prune or single delete terminates the reserved instances of what it
- * drops through core while the rows still exist. A sandbox config whose
- * instance core did not remove is kept; a workspace is deleted regardless.
- */
 
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -33,7 +28,6 @@ interface Seeded {
 
 describe("cli prune and delete terminate reserved instances first", () => {
   beforeEach(() => {
-    // The sync reads stage env values, which are stored encrypted.
     vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
     vi.stubEnv("BROODS_ACCOUNT_MANAGE_URL", CORE_URL);
     vi.stubEnv("SERVICE_AUTH_SECRET", "service-secret");
@@ -162,11 +156,7 @@ async function remainingNames(tt: T): Promise<string[]> {
   });
 }
 
-/**
- * Seeds the account, syncs an empty manifest so the project and stage exist,
- * then writes a CLI sandbox config "box" and a CLI workspace "ws", each holding
- * a running reservation ("ws" through the dashboard config "manual").
- */
+// Seeds CLI sandbox "box" and CLI workspace "ws", both reserved ("ws" via config "manual").
 async function seedStage(tt: T): Promise<Seeded> {
   const secretHash = await sha256Hex(SECRET);
   await tt.run(async (ctx): Promise<void> => {

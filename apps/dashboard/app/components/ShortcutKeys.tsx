@@ -1,20 +1,5 @@
 "use client";
 
-/**
- * A binding's keys, as one `<kbd>` each, looked up by id so no caller has to
- * repeat a combo the registry already holds.
- *
- * Bare hints sit in menu rows, so they match the row's leading icon: symbol
- * keys draw as lucide icons at 16px and letters at the label's 14px, all in
- * the row icon's grey. As font glyphs `⌫` and `↵` were a few pixels of stroke.
- * An icon's `<kbd>` carries the key's name as its label.
- *
- * The server has no platform, so it prints the Ctrl glyphs and the client swaps
- * in the Command ones on hydration. Only the glyph differs, never the number of
- * keys, so each `<kbd>` carries `suppressHydrationWarning` and React replaces
- * the text without calling the page broken. That swap is text only, which is
- * why `⌘` stays a glyph and never becomes an icon.
- */
 import {
   ArrowBigUp,
   CornerDownLeft,
@@ -26,7 +11,7 @@ import { useShortcutRegistry } from "@/app/components/ShortcutProvider";
 import { formatCombo, SHORTCUTS, type ShortcutId } from "@/app/lib/shortcuts";
 import { cn } from "@/app/lib/utils";
 
-/** Glyphs from `formatCombo` that draw as an icon, with the key they name. */
+// No `⌘`: it swaps in for the server's Ctrl on hydration, which only text may do.
 const GLYPH_ICONS: Record<string, { icon: LucideIcon; name: string }> = {
   "↵": { icon: CornerDownLeft, name: "Return" },
   "⇧": { icon: ArrowBigUp, name: "Shift" },
@@ -54,7 +39,7 @@ export function ShortcutKeys({
 
         return (
           <kbd
-            // The glyph is the only thing that varies, so the index is stable.
+            // oxlint-disable-next-line react/no-array-index-key -- a combo's keys are positional
             key={index}
             suppressHydrationWarning
             aria-label={glyph?.name}

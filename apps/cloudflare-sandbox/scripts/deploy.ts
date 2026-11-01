@@ -1,12 +1,3 @@
-/**
- * Deploys the bridge as `$WORKER_NAME`, run by `bun run deploy` from
- * `sst deploy` in this folder. The Container image is built only when the
- * registry lacks `broods-sandbox:<Dockerfile hash>`, shared by every stage,
- * and the deploy points at its digest, so a code-only deploy does no Docker
- * work. The config is a copy named for the stage, because wrangler names the
- * Container application after `name`, not `--name` (workers-sdk#15827).
- */
-
 import { $ } from "bun";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,7 +6,6 @@ import { join } from "node:path";
 const REGISTRY = "registry.cloudflare.com";
 const REPOSITORY = "broods-sandbox";
 
-/** The fields of wrangler.jsonc this script rewrites. */
 interface BridgeConfig {
   name: string;
   containers: [
@@ -31,7 +21,7 @@ const tag = new Bun.CryptoHasher("sha256")
   .digest("hex")
   .slice(0, 16);
 const digest = (await imageDigest()) ?? (await buildImage());
-// Read as data at run time; Bun's require parses JSONC.
+// A per-stage copy: wrangler names the Container app after `name`, not --name (workers-sdk#15827).
 const config: BridgeConfig = require("../wrangler.jsonc");
 config.name = worker;
 config.containers[0].images.sandbox = {
@@ -40,8 +30,7 @@ config.containers[0].images.sandbox = {
 await Bun.write("wrangler.deploy.json", JSON.stringify(config));
 await $`wrangler deploy --config wrangler.deploy.json`;
 
-// Builds and pushes the Dockerfile alone (it copies nothing in, so it is the
-// whole build context), then returns the pushed image's digest.
+// The Dockerfile copies nothing in, so it alone is the build context.
 async function buildImage(): Promise<string> {
   const context = await mkdtemp(join(tmpdir(), "broods-sandbox-"));
   try {
@@ -57,8 +46,6 @@ async function buildImage(): Promise<string> {
   return pushed;
 }
 
-// The digest the registry holds for this Dockerfile's tag, or undefined when it
-// has none. A HEAD needs no Docker, the way wrangler reads digests itself.
 async function imageDigest(): Promise<string | undefined> {
   const image = `${REPOSITORY}:${tag}`;
   const response = await fetch(
@@ -82,7 +69,6 @@ async function imageDigest(): Promise<string | undefined> {
   return digest;
 }
 
-// A short-lived pull password for the account's registry.
 async function registryPassword(): Promise<string> {
   const credentials: { password: string } =
     await $`wrangler containers registries credentials ${REGISTRY} --pull --json`.json();
@@ -90,7 +76,6 @@ async function registryPassword(): Promise<string> {
   return credentials.password;
 }
 
-// The value of a variable `sst deploy` must pass in.
 function required(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} must be set`);

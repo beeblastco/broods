@@ -1,9 +1,3 @@
-/**
- * Code hook tests: per-event mutation sanitization (always) and real isolate
- * hook-mode dispatch (when BROODS_TEST_ISOLATE_RUNNER_PATH points at a runner
- * whose directory has node_modules/isolated-vm installed).
- */
-
 import { describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -83,11 +77,10 @@ describe("sanitizeHookResult", () => {
 });
 
 const runnerPath = process.env.BROODS_TEST_ISOLATE_RUNNER_PATH;
+// skip: needs BROODS_TEST_ISOLATE_RUNNER_PATH, a runner with isolated-vm installed beside it
 const realRunnerIt = runnerPath ? it : it.skip;
 
 describe("isolate runner hook mode", () => {
-  // Hook mode returns { result, state }: the handler's value plus ctx.state read
-  // back out. state is {} here since these handlers do not touch it.
   realRunnerIt(
     "invokes the handler for the fired event and returns its value",
     async () => {

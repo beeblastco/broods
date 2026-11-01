@@ -1,9 +1,3 @@
-/**
- * Node-only isolated-vm runner for uploaded account code (hooks).
- * Core spawns this file because Bun runs on JavaScriptCore and cannot load the
- * V8-native isolated-vm addon.
- */
-
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -15,32 +9,17 @@ import {
 } from "./pinned-fetch.mjs";
 import { WEB_GLOBALS_SOURCE } from "./web-globals.mjs";
 
-// Wall-clock deadline for the whole run; ctx.fetch caps each bridge call at the
-// remaining budget. Declared before the entry dispatch below assigns it.
 let runDeadlineAt = 0;
 
-// A timer sleep resolving after the isolate is disposed (timeout/final) rejects
-// when it tries to re-enter the dead isolate. All real outcomes are already on
-// stdout as frames by then, so that teardown noise must never crash the runner.
+// A timer firing into a disposed isolate rejects; every outcome is already a frame by then.
 process.on("unhandledRejection", () => {});
 
-// Cross-process tool cancellation: the core host forwards the AI SDK abortSignal
-// as SIGUSR2, which fires the in-isolate AbortController of the run in flight.
-// Only the active run sets this; it is cleared when the run settles.
 let activeAbort = null;
 process.on("SIGUSR2", () => {
   try {
     activeAbort?.();
   } catch {}
 });
-
-if (process.argv[2] === "--fetch-bridge") {
-  await runFetchBridgeHelper();
-} else if (process.argv[2] === "--pool") {
-  await runPoolWorker();
-} else {
-  await runToolRequest();
-}
 
 function memoryLimitMb() {
   const value = Number(process.env.ISOLATE_MEMORY_LIMIT_MB);
@@ -55,8 +34,6 @@ function runTimeoutMs() {
   return seconds * 1000;
 }
 
-// One-shot legacy mode: spawn per call, throwaway isolate. Kept as the fallback
-// behind ISOLATE_POOL so the pooled worker can land + soak before it is default.
 async function runToolRequest() {
   let isolate;
   let timedOut = false;
@@ -97,17 +74,10 @@ async function runToolRequest() {
   }
 }
 
-// Persistent pooled worker: a long-lived process the core pool checks out one
-// call at a time (no in-worker multiplexing). It keeps a tenant-keyed isolate
-// cache so same-tenant calls reuse a warm isolate (compile caches stay hot),
-// while every call gets a FRESH context (via runIsolateJob) so no state leaks
-// between calls. Isolates are never shared across tenants; a tripped isolate is
-// disposed and evicted. Mirrors Convex Funrun's per-tenant isolate reuse.
+// A warm isolate per tenant, never shared across tenants; every call still gets a fresh context.
 async function runPoolWorker() {
   const cacheCapRaw = Number(process.env.ISOLATE_TENANT_CACHE_PER_WORKER);
-  // Deliberately small: acquireWorker prefers a worker that already holds the
-  // tenant, so most workers only ever need one, and every cached isolate is
-  // resident memory in a pod that has 1 GiB for everything.
+  // Small: tenant affinity means most workers hold one, and each isolate is resident memory.
   const cacheCap =
     Number.isFinite(cacheCapRaw) && cacheCapRaw > 0
       ? Math.max(1, cacheCapRaw)
@@ -141,7 +111,6 @@ async function handlePoolRun(request, cache, cacheCap) {
         lastCpu: 0n,
       };
     }
-    // LRU touch + bound the per-worker isolate cache.
     cache.delete(tenantId);
     cache.set(tenantId, entry);
     while (cache.size > cacheCap) {
@@ -155,8 +124,7 @@ async function handlePoolRun(request, cache, cacheCap) {
 
     const isolate = entry.isolate;
     runDeadlineAt = Date.now() + timeoutMs;
-    // Watchdog covers the whole job (compile + evaluate + run), not just the run
-    // eval's own timeout: dispose the isolate if it blocks past the deadline.
+    // Covers compile + evaluate + run, not just the run eval's own timeout.
     watchdog = setTimeout(() => {
       poisoned = true;
       try {
@@ -176,8 +144,6 @@ async function handlePoolRun(request, cache, cacheCap) {
     clearTimeout(watchdog);
     watchdog = undefined;
 
-    // Metering: the same CPU counter that bounds the isolate is the billing
-    // signal. cpuTime is cumulative per isolate, so bill the per-call delta.
     const cpuNow = readCpuTimeNs(isolate);
     const cpuMs = Number(cpuNow - entry.lastCpu) / 1e6;
     entry.lastCpu = cpuNow;
@@ -204,9 +170,6 @@ async function handlePoolRun(request, cache, cacheCap) {
   }
 }
 
-// Runs one tool bundle on the given isolate in a FRESH context and returns its
-// result; the caller owns isolate lifetime and terminal frames. Shared by the
-// one-shot and pooled paths so the security-critical setup lives in one place.
 async function runIsolateJob(
   isolate,
   payload,
@@ -223,14 +186,8 @@ async function runIsolateJob(
   let closed = false;
   try {
     await context.global.set("globalThis", context.global.derefInto());
-    // Besides ctx/input, inject the minimal runtime surface tool bundles
-    // reasonably assume in a fresh V8 isolate: timers, queueMicrotask, console
-    // (a log frame, so the host can emit it under the run's tenant context and
-    // it reaches the dashboard and `broods logs`), and a global fetch aliased
-    // to the same SSRF-guarded bridge as ctx.fetch. Timers cannot await the
-    // host (promises do not cross the isolate boundary): the isolate registers
-    // the id, the host arms a real timer, and on expiry re-enters the isolate
-    // through the __fireTimer reference.
+    // Promises do not cross the isolate boundary, so a timer is an id the host arms for real and
+    // fires back through __fireTimer.
     let fireTimer;
     await context.evalClosure(
       `const __fetch = async (url, init) => $2(url, init ?? {});
@@ -274,10 +231,6 @@ async function runIsolateJob(
       };
       globalThis.clearInterval = (id) => { __timers.delete(id); };
       globalThis.queueMicrotask = (fn) => { void Promise.resolve().then(fn); };
-      // String(value) alone renders every object as "[object Object]" and throws
-      // outright on a null-prototype or hostile toString, which would kill the
-      // run from inside a console.log. Serialize structurally, guard cycles, and
-      // bound the line so one log cannot blow the runner's stdout budget.
       const __LOG_MAX = 8192;
       const __fmt = (value) => {
         if (typeof value === "string") return value;
@@ -307,8 +260,6 @@ async function runIsolateJob(
         }
         $4(level, line.length > __LOG_MAX ? line.slice(0, __LOG_MAX) + "... [truncated]" : line);
       };
-      // Every console method Node exposes, so a bundle calling console.trace or
-      // console.table gets a log line instead of "is not a function" mid-run.
       const __noop = () => {};
       globalThis.console = {
         log: __log("log"),
@@ -332,8 +283,6 @@ async function runIsolateJob(
           __log("error")("Assertion failed:", ...args);
         },
       };
-      // Minimal AbortController/AbortSignal (absent in a bare V8 isolate). The run's
-      // signal is exposed as options.abortSignal; the host fires __abort on cancel.
       class AbortSignalPoly {
         constructor() { this.aborted = false; this.reason = undefined; this.onabort = null; this.__listeners = []; }
         addEventListener(type, cb) { if (type === "abort" && typeof cb === "function") this.__listeners.push(cb); }
@@ -363,16 +312,15 @@ async function runIsolateJob(
         new ivm.Callback((url, init) => bridgeFetchSync(url, init), {
           sync: true,
         }),
-        // Tracked so the finally clears them: release() drops only this handle,
-        // and a timer holding fireTimer would keep firing under the next call.
-        // `closed` stops an interval that was mid-fire at the finally from re-arming.
+        // Tracked so the finally clears them: release() frees only this handle, and a live timer
+        // would fire into the next call; `closed` stops one mid-fire at the finally from re-arming.
         new ivm.Callback(
           (id, ms) => {
             if (closed) return;
             const timer = setTimeout(
               () => {
                 timers.delete(timer);
-                // A fire on a released context rejects; nothing is left to tell.
+                // oxlint-disable-next-line eslint/no-useless-call -- fireTimer is an ivm.Reference: its apply calls into the isolate, it is not Function.prototype.apply
                 fireTimer?.apply(undefined, [id]).catch(() => {});
               },
               Math.min(ms, 60_000),
@@ -382,27 +330,16 @@ async function runIsolateJob(
           },
           { ignored: true },
         ),
-        // sync, like __emitChunk: an `ignored` callback is dispatched on a later
-        // host turn, so the log frame could land AFTER this call's terminal
-        // frame. By then the host has detached the sink (line lost) or handed
-        // the worker to the next call (line emitted under that tenant's
-        // observability context). Ordering is the correctness property here.
+        // sync: an `ignored` callback runs on a later host turn, so its log frame could land after
+        // the terminal frame, under the next call's tenant.
         new ivm.Callback((level, line) => emitLog(level, line), { sync: true }),
-        // Mutable per-run scratchpad for hooks (ctx.state); read back out after a
-        // hook runs so the host can thread it into the next fire-point. Empty for
-        // tools, which are stateless single calls.
         new ivm.ExternalCopy(asPlainRecord(payload.state, "state")).copyInto(),
         new ivm.ExternalCopy(payload.toolCallId ?? null).copyInto(),
-        // The AI SDK's own execute options, so an uploaded bundle sees what the
-        // same tool would see in-process. Core bounds messages before it sends.
         new ivm.ExternalCopy(payload.messages ?? null).copyInto(),
         new ivm.ExternalCopy(payload.experimentalContext ?? null).copyInto(),
       ],
       { timeout: 1_000 },
     );
-    // Text codecs, base64, URL and crypto, in a second closure so the host-bridged
-    // setup above stays readable. Installed before the module evaluates: bundles
-    // reach for these at import time, not only inside execute.
     await context.evalClosure(
       WEB_GLOBALS_SOURCE,
       [
@@ -419,8 +356,6 @@ async function runIsolateJob(
       { timeout: 1_000 },
     );
     fireTimer = await context.global.get("__fireTimer", { reference: true });
-    // Expose the run's cancel hook to the SIGUSR2 handler so the core host can
-    // trip the in-isolate AbortController when the AI SDK abortSignal fires.
     const abortRun = await context.global.get("__abort", { reference: true });
     registerAbort?.(() => {
       void abortRun.apply(undefined, [], { timeout: 1_000 }).catch(() => {});
@@ -441,14 +376,10 @@ async function runIsolateJob(
         timeout: 5_000,
       });
     }
-    // Hook bundles export handlers keyed by event name (default[event](ctx, event));
-    // tool bundles export the AI SDK execute(input, options). Resolve accordingly.
     let entry;
     if (typeof payload.hookEvent === "string") {
       entry = await definition.get(payload.hookEvent, { reference: true });
       if (!entry || entry.typeof !== "function") {
-        // No handler for this event: no mutation, state unchanged. Same
-        // { result, state } shape as a real hook run so the host parses one shape.
         return { result: undefined, state: payload.state ?? {} };
       }
     } else {
@@ -472,8 +403,6 @@ async function runIsolateJob(
       new ivm.Callback((output) => emitChunk(output), { sync: true }),
     );
     if (typeof payload.hookEvent === "string") {
-      // A hook returns a single value; also read back ctx.state so the host can
-      // persist any run-scoped state the hook mutated for the next fire-point.
       return await context.eval(
         `(async () => {
           const result = await globalThis.__execute(globalThis.__ctx, globalThis.__input);
@@ -516,15 +445,13 @@ async function runIsolateJob(
   } finally {
     closed = true;
     for (const timer of timers) clearTimeout(timer);
-    // Free the context but keep the isolate warm for the next same-tenant call.
     try {
       context.release();
     } catch {}
   }
 }
 
-// isolated-vm exposes cumulative isolate CPU time; normalize across versions
-// (bigint ns in v7, [seconds, nanoseconds] in older builds) to nanoseconds.
+// isolated-vm v7 reports bigint ns; older builds report [seconds, nanoseconds].
 function readCpuTimeNs(isolate) {
   const value = isolate.cpuTime;
   if (typeof value === "bigint") return value;
@@ -549,9 +476,7 @@ async function* readLines(stream) {
 }
 
 function bridgeFetchSync(url, init) {
-  // spawnSync blocks the event loop, so the runner's own timeout timer cannot
-  // fire mid-fetch. Cap each fetch at the remaining run deadline so ctx.fetch
-  // cannot stretch the run past ISOLATE_RUNNER_TIMEOUT_SECONDS.
+  // spawnSync blocks the event loop, so the run's timeout timer cannot fire mid-fetch.
   const remainingMs =
     runDeadlineAt > 0 ? runDeadlineAt - Date.now() : FETCH_TIMEOUT_MS;
   if (remainingMs <= 0) {
@@ -592,8 +517,6 @@ async function runFetchBridgeHelper() {
     const result = await guardedFetch(url, init);
     process.stdout.write(JSON.stringify({ ok: true, result: result }));
   } catch (error) {
-    // guardedFetch throws neutral messages; the tool author should see which
-    // API failed, so the label is added here at the bridge boundary.
     process.stdout.write(
       JSON.stringify({ ok: false, error: `ctx.fetch ${errorMessage(error)}` }),
     );
@@ -627,9 +550,6 @@ function asPlainRecord(value, name) {
   return value;
 }
 
-// Backs the isolate's URL global. Parsing on the host means bundles get Node's
-// WHATWG parser instead of a hand-rolled one; null is an invalid URL, which the
-// isolate turns back into a TypeError.
 function parseUrl(input, base, setterKey, setterValue) {
   try {
     const url = new URL(input, base ?? undefined);
@@ -657,13 +577,7 @@ function writeFrame(frame) {
   process.stdout.write(`${JSON.stringify(frame)}\n`);
 }
 
-// A tool logging in a tight loop would otherwise walk straight into the host's
-// 1 MiB stdout cap, which kills the worker and fails the call. Spend a per-call
-// budget on console lines, then say so once and stay quiet. The tool still runs.
-// The budget lives in here, not at module scope: the entry dispatch at the top of
-// this file is a top-level await, so a module-level const below it is still in
-// its temporal dead zone while a run is emitting, and reading one would throw a
-// ReferenceError out of the console callback and into the tool.
+// Keeps a chatty tool under the host's 1 MiB stdout cap, which would kill the worker.
 function makeLogEmitter(callId) {
   const budgetBytes = 256 * 1024;
   const budgetLines = 2_000;
@@ -702,4 +616,13 @@ async function readAllStdin() {
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+// Stays last: under this top-level await, a module binding declared below it is in its TDZ.
+if (process.argv[2] === "--fetch-bridge") {
+  await runFetchBridgeHelper();
+} else if (process.argv[2] === "--pool") {
+  await runPoolWorker();
+} else {
+  await runToolRequest();
 }

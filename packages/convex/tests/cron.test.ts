@@ -385,7 +385,6 @@ describe("create/update/remove", () => {
   });
 });
 
-/** One account whose two agents own one cron job each. */
 describe("CLI cron delete", () => {
   test("deletes only the route stage's job of that name", async () => {
     const tt = t();
@@ -475,7 +474,6 @@ describe("CLI cron delete", () => {
   });
 });
 
-/** Seeds an account and returns its agent's cron. */
 async function firstCron(
   tt: T,
 ): Promise<{ accountId: Id<"accounts">; cronId: Id<"crons"> }> {

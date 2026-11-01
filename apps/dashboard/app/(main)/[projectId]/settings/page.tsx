@@ -15,16 +15,12 @@ import {
   loadWebhooksPanel,
 } from "./panels";
 
-/** The line a panel shows while it queries, held while its chunk loads. */
 function PanelLoading(): React.JSX.Element {
   return <p className="text-sm text-muted-foreground">Loading…</p>;
 }
 
-// General is the default tab and ships with the page; the others load the
-// first time they are opened. Each passes `loading`, which is what gives it a
-// Suspense boundary of its own: without one its download suspends up to the
-// route's loading.tsx. The option object is spelled out at each call:
-// Turbopack reads it statically.
+// `loading` gives each its own Suspense boundary instead of the route's loading.tsx.
+// Turbopack reads the options statically, so each call spells them out.
 const EnvironmentVariablesPanel = dynamic(loadEnvironmentVariablesPanel, {
   loading: PanelLoading,
 });

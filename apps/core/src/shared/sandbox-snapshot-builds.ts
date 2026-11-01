@@ -1,10 +1,3 @@
-/**
- * Finishes snapshot images that are still building. A lambda snapshot is an
- * image build that takes minutes, so the snapshot verb records it as building
- * and this watcher asks the provider until the build lands, on whichever pod is
- * up. Started and stopped by server.ts next to the sandbox sweeper.
- */
-
 import { providerExecutor } from "../harness/sandbox/index.ts";
 import { runtime } from "./convex/runtime.ts";
 import { upsertSandboxSnapshot } from "./convex/sandbox-snapshots.ts";
@@ -17,7 +10,6 @@ const DEFAULT_INTERVAL_SECONDS = 60;
 let watcher: ReturnType<typeof setInterval> | undefined;
 let refreshing = false;
 
-/** Starts the periodic check. No-op when it is already running. */
 export function startSnapshotBuildWatcher(): void {
   if (watcher) return;
   const intervalSeconds = positiveIntegerEnv(
@@ -27,22 +19,15 @@ export function startSnapshotBuildWatcher(): void {
   watcher = setInterval((): void => {
     void runRefresh();
   }, intervalSeconds * 1000);
-  // A pending check must not hold the process open past SIGTERM.
   watcher.unref();
 }
 
-/** Stops the periodic check, at shutdown. */
 export function stopSnapshotBuildWatcher(): void {
   if (!watcher) return;
   clearInterval(watcher);
   watcher = undefined;
 }
 
-/**
- * One pass over the building snapshots: each one whose build has landed
- * is marked active or build_failed.
- * @returns the number of snapshots whose build finished
- */
 export async function refreshBuildingSnapshots(): Promise<number> {
   const building = await runtime.query("listBuildingSandboxSnapshots", {});
   let finished = 0;
@@ -61,7 +46,6 @@ export async function refreshBuildingSnapshots(): Promise<number> {
         return "building" as const;
       });
     if (state === "building") continue;
-    // One failed write must not stall every snapshot after it.
     const recorded = await upsertSandboxSnapshot({
       accountId: snapshot.accountId,
       scope: snapshot.scope,
@@ -88,7 +72,6 @@ export async function refreshBuildingSnapshots(): Promise<number> {
   return finished;
 }
 
-// Skips a tick while the previous pass is still running.
 async function runRefresh(): Promise<void> {
   if (refreshing) return;
   refreshing = true;

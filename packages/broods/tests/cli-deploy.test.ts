@@ -3,14 +3,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-/**
- * `broods deploy` writes the stage's user-token signing secret next to the
- * runtime key: a new agent refuses the bare runtime key, so a checkout without
- * the secret could not sign a token. It rotates the secret only when the
- * stage has none or this checkout lacks a non-production stage's, and never
- * prints it. `--region` rides the manifest as Production's region.
- */
-
 const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
 const RESOURCES_MODULE = join(import.meta.dir, "..", "src", "resources.ts");
 const SECRET = "bsig_minted-for-this-test-wxyz";
@@ -29,7 +21,6 @@ type Stage = {
   userTokenSecretHint?: string;
 };
 
-/** A fake control plane for the manifest PUT and the secret rotation. */
 function serveBackend(stage: Stage): {
   baseUrl: string;
   rotations: string[];

@@ -1,8 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * The config HTTP failed-auth limiter counts by source, whatever bearer value
- * each attempt carries, and its table stays bounded however many sources fail.
- */
 
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";

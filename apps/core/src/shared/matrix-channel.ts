@@ -1,16 +1,5 @@
-/**
- * Matrix channel adapter.
- *
- * Matrix delivers nothing over a webhook, so `apps/matrix-forwarder` holds a
- * `/sync` long-poll per account, decrypts what arrives and POSTs each room
- * message here. The forwarder also holds the account's end-to-end encryption
- * keys, which is why every event sent into a room goes back through it.
- * Media never does: an attachment's key rides the decrypted event, so this
- * module downloads, decrypts, encrypts and uploads files against the
- * homeserver itself.
- *
- * The wire shapes shared with the forwarder live in `matrix-wire.ts`.
- */
+// Room events go through `apps/matrix-forwarder`, which holds the E2EE keys. Media does not: its
+// key rides the decrypted event, so this module moves it to and from the homeserver itself.
 
 import { createHash } from "node:crypto";
 import type { Attachment } from "chat";
@@ -43,7 +32,6 @@ import {
 } from "./runtime-keys.ts";
 
 const DEFAULT_REACTION = "👀";
-/** Read by `createMatrixChannelFromConfig`, never by the adapter itself. */
 export const MATRIX_FORWARDER_URL_ENV = "MATRIX_FORWARDER_URL";
 const MATRIX_REQUEST_TIMEOUT_MS = 30_000;
 const MEDIA_MSGTYPES: Record<string, Attachment["type"]> = {
@@ -53,12 +41,10 @@ const MEDIA_MSGTYPES: Record<string, Attachment["type"]> = {
   "m.video": "video",
 };
 const TEXT_MSGTYPES = new Set(["m.emote", "m.text"]);
-/** Stops renewing a run that never replies, so its timer cannot outlive it. */
 const TYPING_CEILING_MS = 10 * 60_000;
-/** Shorter than the timeout the forwarder asks the homeserver for. */
+// Shorter than the typing timeout the forwarder asks the homeserver for.
 const TYPING_REFRESH_MS = 20_000;
 
-/** The `file` object of an encrypted attachment (spec: EncryptedFile). */
 interface EncryptedFile {
   hashes: { sha256: string };
   iv: string;
@@ -73,12 +59,10 @@ interface EncryptedFile {
   v: "v2";
 }
 
-/** Where the account lives, and how core reaches the forwarder that holds it. */
 export interface MatrixConnection {
   accessToken: string;
   apiUrl: string;
   botName?: string;
-  /** `MATRIX_FORWARDER_URL`, resolved once by the caller. */
   forwarderUrl: string;
 }
 
@@ -88,7 +72,6 @@ export interface MatrixChannelOptions extends MatrixConnection {
   mentionText?: string;
 }
 
-/** Where a reply goes: the room, and the thread when the message was in one. */
 export interface MatrixSource {
   encrypted: boolean;
   messageId: string;
@@ -105,24 +88,16 @@ interface MediaLocation {
   sha256?: string;
 }
 
-/** A typing notice this process is renewing, and what it needs to keep or stop it. */
 interface TypingNotice {
   deadlineMs: number;
   key: string;
-  /** The refresh in flight, so a clear cannot overtake it on the wire. */
   pending: Promise<void> | null;
   roomId: string;
   timer: ReturnType<typeof setTimeout> | null;
 }
 
-/**
- * Every room this process is currently showing as typing in, keyed by the
- * account and room the notice belongs to. Process-wide because the notice is
- * server-side state on that pair, and the reply that clears it often comes
- * through a different `ChannelActions` object than the one that set it: a
- * message that arrives mid-run is drained with actions built from its own
- * reply source (`handler.ts` `channelFactory`).
- */
+// Process-wide: a message drained mid-run replies through its own `ChannelActions`, not the
+// one that set the notice (`handler.ts` `channelFactory`).
 const TYPING_NOTICES = new Map<string, TypingNotice>();
 
 export function createMatrixActions(
@@ -278,14 +253,8 @@ async function callForwarder(
   }
 }
 
-/**
- * Clears the typing notice beside the reply rather than before it. The notice
- * is an acknowledgement, and a homeserver that stalls on `/v1/typing` must not
- * hold the answer behind it for the request timeout.
- */
 function clearTyping(connection: MatrixConnection, roomId: string): void {
-  // Safe to drop on the floor: `stopTyping` retires the notice synchronously,
-  // logs its own failure, and never rejects.
+  // Not awaited, so a stalled `/v1/typing` cannot hold the reply; `stopTyping` never rejects.
   void stopTyping(connection, roomId);
 }
 
@@ -356,11 +325,6 @@ async function downloadMedia(
   );
 }
 
-/**
- * Why this event never reaches the agent, or null to keep it. `m.notice` is how
- * other bots talk, and the marker is how this channel's own replies are known:
- * the account sends both the agent's messages and its owner's.
- */
 function droppedReason(
   payload: MatrixForwardedEvent,
   options: MatrixChannelOptions,
@@ -371,6 +335,7 @@ function droppedReason(
   const relation = content["m.relates_to"] as
     | { rel_type?: unknown }
     | undefined;
+  // `m.notice` is how other bots talk.
   if (content[MATRIX_BOT_MARKER] === true || msgtype === "m.notice") {
     return "bot_message";
   }
@@ -380,10 +345,7 @@ function droppedReason(
   if (!TEXT_MSGTYPES.has(msgtype) && !MEDIA_MSGTYPES[msgtype]) {
     return `unsupported_msgtype:${msgtype}`;
   }
-  // Debug, unlike the other channels' allow-list misses. A bot is invited to
-  // the rooms it serves, so an event from elsewhere means a misconfiguration
-  // worth a warning. This account is a person's: it sits in every room they are
-  // in and sees every sender there, so a miss here is the steady state, not news.
+  // Debug, not warn: a person's account sits in every room they are in, so a miss is routine.
   if (!isAllowedId(options.allowedChannelIds, roomId)) {
     logDebug("Matrix room not in allow list", { roomId: roomId });
 
@@ -398,8 +360,6 @@ function droppedReason(
   return null;
 }
 
-// Matrix encrypted attachments: AES-256-CTR, a random 8-byte counter prefix,
-// and a SHA-256 of the ciphertext so the receiver can check it first.
 async function encryptMedia(
   bytes: Buffer,
 ): Promise<{ ciphertext: Buffer; file: Omit<EncryptedFile, "url"> }> {
@@ -437,10 +397,6 @@ async function encryptMedia(
   };
 }
 
-/**
- * Markdown to a Matrix message. With a bot name the reply carries a per-message
- * profile, and a bold "Name: " fallback that clients supporting profiles hide.
- */
 function formatReply(
   markdown: string,
   connection: MatrixConnection,
@@ -462,7 +418,7 @@ function formatReply(
       : html,
     "m.mentions": {},
     "m.relates_to": replyRelation(source),
-    // m.text rather than m.notice: clients strip the profile fallback from m.text only.
+    // Not m.notice: clients strip the profile fallback from m.text only.
     msgtype: "m.text",
     [MATRIX_BOT_MARKER]: true,
   };
@@ -503,7 +459,6 @@ function isAddressed(
   );
 }
 
-/** Media on a message, named and located, with the bytes left for later. */
 function mediaAttachment(
   connection: MatrixConnection,
   content: Record<string, unknown>,
@@ -550,11 +505,8 @@ function mentionPattern(mentionText: string): RegExp {
   );
 }
 
-/**
- * The text a message says, without the quoted reply fallback older clients
- * prepend. A media message's body is its file name unless a separate
- * `filename` makes the body a caption.
- */
+// Drops the quoted reply fallback older clients prepend. A media body is its file name
+// unless a separate `filename` makes it a caption.
 function messageText(content: Record<string, unknown>): string {
   const body = typeof content.body === "string" ? content.body : "";
   const msgtype = typeof content.msgtype === "string" ? content.msgtype : "";
@@ -626,7 +578,6 @@ function parseRoomMessage(
       eventId: `${MATRIX_INTEGRATION_PREFIX}${event.event_id}`,
       conversationKey: `${MATRIX_INTEGRATION_PREFIX}${roomId}${threadRootId ? `${CHANNEL_THREAD_SEPARATOR}${threadRootId}` : ""}`,
       channelName: "matrix",
-      // A command keeps its bare text so the leading token still parses.
       content: [
         {
           type: "text",
@@ -640,20 +591,12 @@ function parseRoomMessage(
         userName: author,
         ...(threadRootId ? { threadId: threadRootId } : {}),
       },
-      // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },
     },
   };
 }
 
-/**
- * Schedules the next refresh of `notice`, or retires it once past its ceiling.
- * The homeserver expires a notice after the timeout the forwarder sends, which
- * is far shorter than most runs.
- */
 function renewTyping(connection: MatrixConnection, notice: TypingNotice): void {
-  // A superseded notice is no longer the map's, so it stops here rather than
-  // refreshing a room a newer lifecycle now owns.
   if (TYPING_NOTICES.get(notice.key) !== notice) return;
   if (Date.now() >= notice.deadlineMs) {
     retireTyping(notice);
@@ -665,8 +608,7 @@ function renewTyping(connection: MatrixConnection, notice: TypingNotice): void {
     notice.pending = sendTypingNotice(connection, notice.roomId, true)
       .then((): void => renewTyping(connection, notice))
       .catch((error: unknown): void => {
-        // One refusal ends the loop: the notice expires on its own, and a
-        // homeserver that refused this call will refuse the next twenty.
+        // One refusal ends the loop; the notice expires on its own.
         retireTyping(notice);
         logWarn("Matrix typing refresh failed", {
           error: error instanceof Error ? error.message : String(error),
@@ -676,10 +618,6 @@ function renewTyping(connection: MatrixConnection, notice: TypingNotice): void {
   }, TYPING_REFRESH_MS);
 }
 
-/**
- * Where a reply hangs: inside the thread when the message it answers was in
- * one, otherwise on the message itself.
- */
 function replyRelation(source: MatrixSource): Record<string, unknown> {
   if (source.threadRootId === undefined) {
     return { "m.in_reply_to": { event_id: source.messageId } };
@@ -693,10 +631,6 @@ function replyRelation(source: MatrixSource): Record<string, unknown> {
   };
 }
 
-/**
- * Drops `notice` and its timer, unless a newer one has already replaced it in
- * the map: a lifecycle only ever retires itself.
- */
 function retireTyping(notice: TypingNotice): void {
   if (notice.timer !== null) {
     clearTimeout(notice.timer);
@@ -729,7 +663,6 @@ async function sendTypingNotice(
   await callForwarder(connection, "/v1/typing", request);
 }
 
-/** Shows the typing notice and renews it until `stopTyping`, or the ceiling. */
 async function startTyping(
   connection: MatrixConnection,
   roomId: string,
@@ -744,21 +677,17 @@ async function startTyping(
     roomId: roomId,
     timer: null,
   };
-  // Registered before the request, not after it: holding the map entry is what
-  // marks this lifecycle current, and two messages landing in one room start
-  // their notices inside each other's round trip.
+  // Before the request: two messages in one room can start inside each other's round trip.
   TYPING_NOTICES.set(key, notice);
   try {
     await sendTypingNotice(connection, roomId, true);
   } catch (error) {
-    // Nothing to renew: the room was never shown a notice.
     retireTyping(notice);
     throw error;
   }
   renewTyping(connection, notice);
 }
 
-/** Clears the notice and stops renewing it. A no-op when none is running. */
 async function stopTyping(
   connection: MatrixConnection,
   roomId: string,
@@ -767,13 +696,10 @@ async function stopTyping(
   const notice = TYPING_NOTICES.get(key);
   if (notice === undefined) return;
   retireTyping(notice);
-  // The in-flight refresh first, or the clear races it and the room keeps
-  // showing the agent as typing for the rest of the homeserver's timeout.
+  // Wait out the in-flight refresh, or the clear races it and the room stays typing.
   await notice.pending;
-  // A message that arrived while that refresh settled owns the room now, and
-  // clearing here would blank the notice it just set.
+  // A message that arrived meanwhile owns the room; clearing would blank its notice.
   if (TYPING_NOTICES.has(key)) return;
-  // Never fails the reply it precedes; a stale notice expires on its own.
   await sendTypingNotice(connection, roomId, false).catch(
     (error: unknown): void => {
       logWarn("Matrix typing clear failed", {
@@ -805,16 +731,11 @@ function toMatrixSource(source: Record<string, unknown>): MatrixSource {
   };
 }
 
-/** Both Matrix URLs this module builds are joined onto the homeserver by hand. */
 function trimSlash(url: string): string {
   return url.replace(/\/+$/, "");
 }
 
-/**
- * A notice belongs to one account in one room: two agents on different accounts
- * can sit in the same room, and each shows as typing under its own user. The
- * account is named by a hash of its token so no key holds the token itself.
- */
+// Per account and room; the account is a hash of its token so no key holds the token.
 function typingKey(connection: MatrixConnection, roomId: string): string {
   const account = createHash("sha256")
     .update(connection.accessToken)
@@ -823,12 +744,8 @@ function typingKey(connection: MatrixConnection, roomId: string): string {
   return `${account}\u0000${roomId}`;
 }
 
-/**
- * A `Buffer` as Web Crypto wants it. `new Uint8Array(buffer)` would copy the
- * whole attachment, twice for an inbound encrypted one, so this views the same
- * bytes instead. The assertion holds because Node never backs a `Buffer` with
- * a `SharedArrayBuffer`, which is the only other member of `ArrayBufferLike`.
- */
+// Views the bytes rather than copy the attachment; the cast holds because a `Buffer` is never
+// backed by a `SharedArrayBuffer`.
 function view(bytes: Buffer): Uint8Array<ArrayBuffer> {
   return new Uint8Array(
     bytes.buffer as ArrayBuffer,
@@ -872,7 +789,6 @@ async function uploadMedia(
         "Content-Type": mimeType,
       },
       method: "POST",
-      // The account's token rides this request and an upload never redirects.
       redirect: "error",
       signal: AbortSignal.timeout(MATRIX_REQUEST_TIMEOUT_MS),
     },

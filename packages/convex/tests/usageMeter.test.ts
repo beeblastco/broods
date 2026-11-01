@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * The monthly usage meter: the sandbox billing math, the price of a meter,
- * the sandbox mirror writing to it, and the budget read core enforces.
- */
-
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
@@ -682,7 +677,6 @@ describe("budget", () => {
   });
 });
 
-// One owner per plan: owners pool their orgs' usage (`usagePool.test.ts`).
 async function seedAccount(t: T, plan: Plan = "free"): Promise<Id<"accounts">> {
   return await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("orgs", {

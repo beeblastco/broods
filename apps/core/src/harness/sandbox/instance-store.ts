@@ -1,5 +1,3 @@
-/** Authoritative Convex mapping from sandbox reservations to provider ids. */
-
 import { runtime } from "../../shared/convex/runtime.ts";
 import type { SandboxProvider, SandboxReleaseTarget } from "./types.ts";
 export function getSandboxExternalId(
@@ -11,10 +9,7 @@ export function getSandboxExternalId(
     reservationKey: reservationKey,
   });
 }
-// The reserved sandbox, when it was claimed and its idle deadline (unix
-// seconds, the sweeper's clock), in one read, for the executors that enforce
-// `lifecycle.maxLifetimeSeconds` themselves and the MCP explorer. Null when
-// unreserved.
+// `expiresAt` is unix seconds, the sweeper's clock.
 export function getSandboxReservationRecord(
   provider: SandboxProvider,
   reservationKey: string,
@@ -28,8 +23,6 @@ export function getSandboxReservationRecord(
     reservationKey: reservationKey,
   });
 }
-// The reserved machine, or `externalId` when the caller already holds it, and
-// the instance row's record of whose credentials it runs on, for a release.
 export function getSandboxReleaseTarget(
   accountId: string,
   provider: SandboxProvider,
@@ -43,11 +36,7 @@ export function getSandboxReleaseTarget(
     externalId: externalId,
   });
 }
-// The reservation key is a hashed namespace, so the owning account can't be
-// derived from it. Callers pass accountId from the sandbox control plane. When
-// it is absent (synthetic/stateless config) the reservation write is skipped so
-// the run degrades to non-persistent instead of failing the tool call.
-// `ttlSeconds` shortens the idle window the sweeper waits before releasing it.
+// No accountId (a synthetic config): skip the write, the run degrades to non-persistent.
 export function claimSandboxInstance(
   provider: SandboxProvider,
   reservationKey: string,
@@ -65,9 +54,7 @@ export function claimSandboxInstance(
     ttlSeconds: ttlSeconds,
   });
 }
-// Drops the reservation row while it still names `expectedExternalId`; with
-// `onlyExpired`, only once its deadline lapsed. True when the caller now owns the
-// teardown of that machine, false when a run refreshed or replaced it first.
+// True when the caller now owns the machine's teardown, false when a run refreshed it first.
 export async function deleteSandboxInstance(
   provider: SandboxProvider,
   reservationKey: string,
@@ -85,8 +72,7 @@ export async function deleteSandboxInstance(
     accountId: accountId,
   });
 }
-// Refreshes the idle deadline of the reservation that still names `externalId`.
-// Never creates or repoints a row: the acquire path owns that through the claim.
+// Only refreshes a row still naming `externalId`; the claim alone creates or repoints rows.
 export async function saveSandboxInstance(
   provider: SandboxProvider,
   reservationKey: string,

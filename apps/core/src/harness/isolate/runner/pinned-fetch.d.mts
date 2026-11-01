@@ -1,9 +1,4 @@
-/**
- * Types for `pinned-fetch.mjs`, which stays plain JS because the runner ships
- * it into isolates. This file is the one home of the helper's contract. TS
- * cannot check it against the implementation, so a change to either file means
- * changing both.
- */
+// pinned-fetch.mjs stays plain JS for the Node runner, and TS cannot check it: change both files.
 
 import type { LookupAddress } from "node:dns";
 import type { ClientRequestArgs } from "node:http";
@@ -19,18 +14,11 @@ export interface GuardedFetchInit {
   method?: string;
 }
 
-/**
- * `allowAddresses`, `ca`, `createConnection`, and `lookup` are test seams:
- * production callers leave them unset so the socket really opens to the
- * validated address and TLS verifies against the system roots.
- * `allowAddresses` exempts exact addresses (the test loopback) from the
- * denylist and deliberately cannot replace the check itself.
- */
+// allowAddresses, ca, createConnection and lookup are test seams; production leaves them unset.
 export interface GuardedFetchOptions {
   allowAddresses?: string[];
   bodyLimitBytes?: number;
   ca?: string;
-  /** 0 refuses redirects; omitted means REDIRECT_LIMIT. */
   redirectLimit?: number;
   createConnection?: ClientRequestArgs["createConnection"];
   lookup?: (

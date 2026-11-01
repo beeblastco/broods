@@ -7,11 +7,6 @@ import {
 } from "../../../packages/broods/src/sync.ts";
 import { assertStep, type VerifyContext } from "../harness.ts";
 
-/**
- * Concurrent SDK deploys leave one complete manifest; a stale revision cannot
- * overwrite it. The runtime key the deploy minted then authenticates on core,
- * and a stage env var name a `${NAME}` ref could not reach is refused.
- */
 export async function manifestSync(context: VerifyContext): Promise<void> {
   const client = new BroodsSyncClient({
     baseUrl: context.edgeUrl,

@@ -1,8 +1,3 @@
-/**
- * Shared skill storage primitives and validation rules.
- * Keep endpoint CRUD in account-manage and prompt loading in harness-processing.
- */
-
 import { MAX_SKILL_METADATA_BYTES } from "@broods/convex/model/skillRules";
 import { readS3Text } from "./s3.ts";
 import { requireEnv } from "./env.ts";
@@ -167,10 +162,7 @@ export function parseSkillMarkdown(
   return { name: name, description: description };
 }
 
-/**
- * Parses a configured skill path and rejects one owned by another account.
- * No S3 call: a caller that needs the skill to exist reads or HEADs it itself.
- */
+// No S3 call: a caller that needs the skill to exist reads or HEADs it itself.
 export function parseOwnedSkillPath(
   accountId: string,
   skillPath: string,
@@ -205,7 +197,6 @@ export function parseSkillPath(
   };
 }
 
-/** A skill file's text, refused before download past `maxBytes`. */
 export async function readSkillText(
   skillPath: string,
   resourcePath: string,

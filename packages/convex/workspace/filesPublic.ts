@@ -1,9 +1,5 @@
 "use node";
-/**
- * Authenticated dashboard actions for mounted workspace files. S3 is the
- * single source of truth for runtime workspace contents; the shared ops live
- * in model/workspaceFs (also used by the config HTTP surface).
- */
+// S3 is the single source of truth for runtime workspace contents.
 
 import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
@@ -35,7 +31,6 @@ type RuntimeWorkspace = WorkspaceFsRef & {
   workspaceId: Id<"workspaceConfigs">;
 };
 
-/** A short-lived presigned URL to one file, for the dashboard's Download and image preview. */
 export const downloadUrl = action({
   args: {
     projectId: v.id("projects"),
@@ -50,7 +45,6 @@ export const downloadUrl = action({
   },
 });
 
-/** Lists files from the S3 namespace mounted by the selected runtime workspace. */
 export const list = action({
   args: { projectId: v.id("projects"), workspaceId: v.string() },
   returns: v.array(fileEntry),
@@ -61,7 +55,6 @@ export const list = action({
   },
 });
 
-/** One file's contents as text, for the dashboard preview. Capped at the upload limit. */
 export const read = action({
   args: {
     projectId: v.id("projects"),
@@ -76,7 +69,6 @@ export const read = action({
   },
 });
 
-/** Deletes a file or folder prefix from the mounted S3 workspace. */
 export const remove = action({
   args: {
     projectId: v.id("projects"),
@@ -92,7 +84,6 @@ export const remove = action({
   },
 });
 
-/** Renames a file or folder prefix inside the mounted S3 workspace. */
 export const rename = action({
   args: {
     projectId: v.id("projects"),
@@ -109,7 +100,6 @@ export const rename = action({
   },
 });
 
-/** Uploads or replaces one file in the mounted S3 workspace. */
 export const upload = action({
   args: {
     projectId: v.id("projects"),

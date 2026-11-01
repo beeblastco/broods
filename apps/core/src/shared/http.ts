@@ -6,32 +6,18 @@ import {
   type GuardedFetchOptions,
 } from "../harness/isolate/runner/pinned-fetch.mjs";
 
-/**
- * The core HTTP contract every handler speaks, plus generic request/response
- * helpers. Handlers take a CoreRequest + RequestContext and return a Web
- * Response; the transport edge (`src/server.ts`) builds the CoreRequest from
- * a real request. Keep route-specific logic out of here.
- */
-
 declare global {
-  // Bun 1.4 reads this and @types/bun 1.3.14 does not declare it yet. `false`
-  // turns off the 300s socket idle timer for that one request.
+  // Bun 1.4 reads it (`false` = no 300s idle timer); @types/bun 1.3.14 does not declare it.
   interface BunFetchRequestInit {
     timeout?: number | boolean;
   }
 }
 
-// How long `publicHostFetch` reuses a validated address before it resolves
-// again. Reuse is safe because the socket is pinned to that address.
 const PUBLIC_HOST_TTL_MS = 30_000;
-// Tenants pick the hostnames, so the cache is emptied before it can grow without end.
 const PUBLIC_HOSTS_MAX = 1_024;
 
 const publicHosts = new Map<string, { address: string; expiresAt: number }>();
 
-// The two fetches `channelApiFetch` hands out, shaped as `typeof fetch` for
-// SDKs that take one. The plain one reads the global per call, so a fetch
-// swapped in later (a test stub) still applies.
 const PUBLIC_HOST_FETCH: typeof fetch = Object.assign(
   (
     input: string | URL | Request,
@@ -39,6 +25,7 @@ const PUBLIC_HOST_FETCH: typeof fetch = Object.assign(
   ): Promise<Response> => publicHostFetch(input, init),
   { preconnect: fetch.preconnect },
 );
+// Reads the global per call, so a fetch stubbed in later (tests) still applies.
 const GLOBAL_FETCH: typeof fetch = Object.assign(
   (
     input: string | URL | Request,
@@ -47,52 +34,27 @@ const GLOBAL_FETCH: typeof fetch = Object.assign(
   { preconnect: fetch.preconnect },
 );
 
-/**
- * A transport-neutral inbound request. The server builds one per HTTP request;
- * handlers never see the underlying runtime. Headers are lowercased and the
- * body is already decoded so consumers do not repeat that work.
- */
 export interface CoreRequest {
   method: string;
-  /** URL pathname as received (no normalization). */
   path: string;
-  /** Raw query string without the leading '?'. */
   search: string;
-  /** Parsed query parameters. */
   query: URLSearchParams;
-  /** Request headers, keys lowercased. */
+  /** Keys lowercased. */
   headers: Record<string, string>;
-  /** Request body decoded to a UTF-8 string. */
   body: string;
-  /** Cookie header split into individual `name=value` pairs. */
   cookies: string[];
-  /**
-   * Client IP from the rightmost X-Forwarded-For hop (the proxy-appended peer),
-   * or the socket address. Feeds security controls and abuse attribution,
-   * so it must not be the spoofable leftmost XFF entry.
-   */
+  /** Rightmost X-Forwarded-For hop or the socket address, never the spoofable leftmost. */
   clientIp: string;
 }
 
-/**
- * Per-request execution context. `waitUntil` registers post-response background
- * work (e.g. a channel webhook that acks then processes) that the server drains
- * before shutdown.
- */
 export interface RequestContext {
   requestId: string;
-  /** Epoch-ms deadline for this request's work budget. */
   deadlineMs: number;
   waitUntil(promise: Promise<unknown>): void;
   /** Aborted when the pod's worker pool reclaims this run's slot. */
   abortSignal?: AbortSignal;
-  /**
-   * Gives this run's worker slot to the next queued run and resolves once the
-   * run holds a slot again, with `deadlineMs` moved to that slot's budget.
-   * Absent outside the worker pool and once the run used its last slot. The
-   * lease is the harness's `LiveOwner`, spelled out so the SDK, which
-   * typechecks this file, does not pull in the harness.
-   */
+  // Resolves once the run holds a slot again, `deadlineMs` moved to it. The lease is the
+  // harness's `LiveOwner`, spelled out so the SDK, which typechecks this file, skips the harness.
   yieldSlot?(
     lease:
       | {
@@ -104,12 +66,7 @@ export interface RequestContext {
   ): Promise<void>;
 }
 
-/**
- * Test seam for any pinned outbound fetch: only `guardedFetch`'s injectable
- * options, never its behavior switches. Production callers pass none, so the
- * socket really opens to the address that was validated and TLS verifies
- * against the system roots.
- */
+/** Test seam: `guardedFetch`'s injectable options, never its switches. Production passes none. */
 export type PinnedFetchTransport = Pick<
   GuardedFetchOptions,
   "allowAddresses" | "ca" | "lookup"
@@ -156,12 +113,7 @@ export function parseJsonBody(request: Pick<CoreRequest, "body">): unknown {
   }
 }
 
-/**
- * Validate a user-configured outbound URL: https only, and the hostname must
- * not be a loopback/private/link-local address or an internal-looking name.
- * This is a config-time string check and cannot catch DNS rebinding, so
- * callers performing the fetch should also pass `redirect: "error"`.
- */
+// A config-time string check that cannot catch DNS rebinding: fetch with `redirect: "error"`.
 export function assertPublicHttpsUrl(value: string, label: string): URL {
   let url: URL;
   try {
@@ -179,25 +131,14 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
   return url;
 }
 
-/**
- * The `fetch` a channel reaches its provider API with. A configured `apiUrl` is
- * the tenant's host, so it takes `publicHostFetch`; the provider's own default
- * host takes plain `fetch`.
- */
 export function channelApiFetch(apiUrl: string | undefined): typeof fetch {
   return apiUrl ? PUBLIC_HOST_FETCH : GLOBAL_FETCH;
 }
 
 /**
- * `fetch` for a tenant-configured endpoint (model base URL, MCP server, its
- * OAuth token URL): resolve the hostname, refuse it when any address is
- * private, link-local or a metadata range, then connect to the validated
- * address with the name pinned into SNI and `Host`. That is what stops a public
- * name that later resolves inward, with no rebind window, since
- * `assertPublicHttpsUrl` only sees the hostname string at config time. Bun's
- * `fetch` keeps the streaming Web `Response` the AI SDK needs and `guardedFetch`
- * does not. `redirect: "error"` because a redirect would leave the pinned
- * address.
+ * For tenant-chosen hosts: refuses any private or metadata address, then connects to the validated
+ * one with the name in SNI and `Host`, so nothing can rebind inward. Not `guardedFetch`: the AI
+ * SDK needs Bun's streaming `Response`. No redirects: they would leave the pinned address.
  */
 export async function publicHostFetch(
   input: string | URL | Request,
@@ -243,14 +184,12 @@ export async function publicHostFetch(
     redirect: "error",
     tls: { serverName: hostname },
   }).catch((error: unknown): never => {
-    // An address that will not connect must not be pinned for the rest of the
-    // TTL: the next call re-resolves and can reach another record.
+    // Unpin an address that will not connect, so the next call can reach another record.
     publicHosts.delete(hostname);
     throw error;
   });
 }
 
-/** Tests only: forget every validated address. */
 export function resetPublicHostsForTests(): void {
   publicHosts.clear();
 }
@@ -266,8 +205,7 @@ function isPrivateHostname(hostname: string): boolean {
     return true;
   }
 
-  // The URL parser rewrites `::ffff:10.0.0.1` to hex groups, a spelling
-  // `isDeniedAddress` does not read, so every mapped literal is refused here.
+  // The URL parser turns `::ffff:10.0.0.1` into hex groups `isDeniedAddress` cannot read.
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":")) {
     return host.startsWith("::ffff:") || isDeniedAddress(host);
   }
@@ -275,10 +213,6 @@ function isPrivateHostname(hostname: string): boolean {
   return false;
 }
 
-/**
- * Resolves a hostname, or rejects as soon as `signal` aborts: a lookup that
- * never returns must not outlive the request that asked for it.
- */
 async function lookupUntilAborted(
   hostname: string,
   signal: AbortSignal | null | undefined,

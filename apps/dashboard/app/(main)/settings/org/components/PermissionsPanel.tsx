@@ -1,15 +1,5 @@
 "use client";
 
-/**
- * Organization › Permissions: every name a rule may use. Built-in ones are
- * the action vocabulary and cannot change; custom ones name something only
- * this org knows, such as a tool an agent may call.
- *
- * Laid out like Monitoring: a toolbar, a flush table whose headers sort on
- * click, and a detail panel with the permission's facts and, for a custom
- * one, the danger zone.
- */
-
 import {
   DataTable,
   DataTableBody,
@@ -62,10 +52,8 @@ type Permission = FunctionReturnType<typeof api.access.listPermissions>[number];
 type Column = "name" | "description" | "resource" | "kind" | "createdAt";
 type Field = (typeof QUERY_FIELDS)[number];
 
-// The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["resource", "kind"] as const;
 
-// Six columns of short text; below this the detail panel would wrap them.
 const TABLE_MIN_WIDTH = 640;
 
 const RESOURCES = ["tool", "agent", "stage", "key", "custom"] as const;
@@ -203,10 +191,6 @@ export function PermissionsPanel(): React.JSX.Element {
   );
 }
 
-/**
- * The selected permission: its facts, and for a custom one the danger zone.
- * A built-in one is the vocabulary itself and has nothing to change.
- */
 function PermissionPanel({
   permission,
   canChange,

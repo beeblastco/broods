@@ -1,27 +1,7 @@
-/**
- * The model providers an agent may name in `config.model.provider`.
- * One plain-data list the Convex runtime, the dashboard and core all read; core
- * pairs each name with its Vercel AI SDK factory in `harness/provider.ts`,
- * where the declared return type of `modelProviderFactories` fails the build if
- * the two ever drift.
- */
-
-/**
- * Provider settings that name an endpoint the factory will call, like
- * `baseURL`, OpenRouter's `baseUrl` or its `decisionsBaseURL`. Convex holds
- * each to a public https URL and core sends that provider's requests through
- * its private-address guard.
- */
+// Settings naming an endpoint (`baseURL`, `baseUrl`, ...): held to a public https URL.
 export const PROVIDER_ENDPOINT_SETTING = /url$/i;
 
-/**
- * Every Vercel AI SDK provider that ships language models, the community
- * providers on the same spec that take an API key (`cloudflare`, `llmgateway`,
- * `ollama`, `openrouter`), `custom` (any OpenAI-compatible endpoint), and
- * `chatgpt` (OpenAI on a Sign in with ChatGPT login instead of an API key).
- * Image-, speech- and transcription-only providers are deliberately absent:
- * they cannot back `config.model`.
- */
+// No image-, speech- or transcription-only providers: they can not back `config.model`.
 export const ACCOUNT_MODEL_PROVIDER_NAMES = [
   "alibaba",
   "anthropic",
@@ -58,16 +38,11 @@ export const ACCOUNT_MODEL_PROVIDER_NAMES = [
 export type AccountModelProviderName =
   (typeof ACCOUNT_MODEL_PROVIDER_NAMES)[number];
 
-/** Display metadata for the dashboard's provider pickers. */
 export interface ModelProviderMeta {
   label: string;
   modelPlaceholder: string;
 }
 
-/**
- * Picker metadata per provider. The `Record` annotation keys it to the name
- * list above, so a provider added to one without the other fails the build.
- */
 export const MODEL_PROVIDERS: Record<
   AccountModelProviderName,
   ModelProviderMeta
@@ -134,20 +109,13 @@ export const MODEL_PROVIDERS: Record<
   zai: { label: "Z.ai GLM", modelPlaceholder: "glm-4.7" },
 };
 
-// Own properties only: `in` would accept "constructor"/"__proto__"/"toString"
-// as provider names, which then reach a registry lookup that has no factory.
+// Not `in`: it would accept "constructor" or "__proto__", which have no factory.
 export function isAccountModelProviderName(
   value: string,
 ): value is AccountModelProviderName {
   return Object.hasOwn(MODEL_PROVIDERS, value);
 }
 
-/**
- * The stage variable a provider's `apiKey` reads by default, `OPENAI_API_KEY`
- * as in the CLI starter's `env("OPENAI_API_KEY")`. A dashboard-created agent
- * stores the same `${NAME}` ref, and the dashboard names it in its hints.
- * Null for `chatgpt`, which runs on the account's ChatGPT login instead.
- */
 export function providerApiKeyEnvName(
   provider: AccountModelProviderName,
 ): string | null {

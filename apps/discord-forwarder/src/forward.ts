@@ -1,18 +1,3 @@
-/**
- * POSTs a gateway event to the channel webhooks that share the bot token it
- * arrived on. `fanOut` is the delivery every forwarder shares; Matrix calls it
- * too, from `apps/matrix-forwarder/src/forward.ts`.
- *
- * The payload is Discord's, unchanged, apart from the `thread` object Discord
- * omits (see `threads.ts`). In particular `author.bot` is left as Discord sent
- * it, absent for human authors, because core's `isGatewayMessage` accepts that
- * shape. Normalizing it here would put the same rule in two places and leave
- * every other forwarder still broken.
- *
- * The POST authenticates with the transport credential `discord-wire.ts`
- * derives from the bot token, so the token itself stays off the public edge.
- */
-
 import {
   DISCORD_GATEWAY_TOKEN_HEADER,
   discordForwarderToken,
@@ -25,8 +10,7 @@ import {
 } from "./discord.ts";
 import { logError, logWarn, type LogFields, tokenHint } from "./log.ts";
 
-// Core dedups a Discord message by its id, so retrying a POST that did land
-// the first time is harmless.
+// Core dedups by message id, so retrying a POST that did land is harmless.
 const DISCORD_FORWARD_ATTEMPTS = 3;
 const RETRY_CEILING_MS = 4_000;
 
@@ -36,31 +20,15 @@ export interface ForwardTarget {
   webhookUrl: string;
 }
 
-/**
- * How a forwarder authenticates itself to the channel webhook, and how hard it
- * tries. `attempts` defaults to 1. Matrix keeps that: its sync loop awaits each
- * delivery, so retries against a dead core would stall every room behind it.
- * It retries from its outbox instead, for the targets `fanOut` resolves.
- */
 export interface ForwardAuth {
+  /** Default 1: Matrix's sync loop awaits each delivery and retries from its outbox. */
   attempts?: number;
   header: string;
   timeoutMs: number;
   token: string;
 }
 
-/**
- * Delivers one body to every target at once. Never throws: a webhook that still
- * rejects or times out on its last attempt is logged and skipped, so one dead
- * agent cannot stall the socket or sync loop waiting on it. `fields` adds
- * channel detail to those two log lines.
- *
- * Resolves the webhook URLs whose target ended on a 5xx, a 408, a 429, a
- * timeout or a network error, which a later delivery of the same body can
- * still get through. Any other 4xx answers the same way every time, so it
- * counts as settled. Discord has no way to ask for an event again and ignores
- * the result; Matrix keeps the event in its outbox for those targets only.
- */
+/** Never throws. Resolves the webhook URLs whose last attempt failed in a retryable way. */
 export async function fanOut(
   targets: readonly ForwardTarget[],
   body: string,
@@ -105,8 +73,6 @@ async function post(
   let retryAfterMs = Number.NaN;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     if (attempt > 1) {
-      // Retry-After is honoured up to the ceiling: past it the socket would
-      // stall on one message, and the backoff stands in when it is absent.
       await Bun.sleep(
         Number.isFinite(retryAfterMs)
           ? Math.min(retryAfterMs, RETRY_CEILING_MS)
@@ -123,14 +89,11 @@ async function post(
           [auth.header]: auth.token,
         },
         body: body,
-        // The forwarder's token rides the header above, and the gateway never
-        // redirects, so a redirect here would hand the token to another host.
+        // The gateway never redirects, so a redirect would hand the token header to another host.
         redirect: "error",
         signal: AbortSignal.timeout(auth.timeoutMs),
       });
       if (response.ok) return true;
-      // A 4xx answers the same way every time, except a timeout and a rate
-      // limit, so only those and a 5xx earn a retry.
       const retryable =
         response.status >= 500 ||
         response.status === 408 ||
@@ -147,7 +110,7 @@ async function post(
 
         return !retryable;
       }
-      // Seconds only. The HTTP-date form parses to NaN and gets the backoff.
+      // Seconds form only; an HTTP-date parses to NaN and falls back to the backoff.
       retryAfterMs =
         Number(response.headers.get("retry-after") ?? Number.NaN) * 1_000;
     } catch (error) {

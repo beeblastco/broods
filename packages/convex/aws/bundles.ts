@@ -1,11 +1,6 @@
 "use node";
 
-/**
- * Node-runtime S3 bundle writers for Convex config-plane resources. Bundles
- * arrive by storage id, never as an argument. See model/bundles.ts for why.
- * The MCP writer also verifies client-uploaded bundles (sha256 and size cap)
- * and decides where they can run, here, where the bytes are read anyway.
- */
+// Bundles arrive by storage id, never as an argument: see model/bundles.ts.
 
 import { createHash } from "node:crypto";
 import { v } from "convex/values";
@@ -20,12 +15,6 @@ import {
 import { writeS3Object } from "../model/s3";
 import { ClientError } from "../model/clientError";
 
-/**
- * @param accountId account id owning the hook
- * @param sha256 hex sha256 of the already-normalized bundle contents
- * @param storageId Convex storage id holding the JavaScript module source
- * @returns the S3 object key written
- */
 export const putHookBundle = internalAction({
   args: {
     accountId: v.id("accounts"),
@@ -41,14 +30,7 @@ export const putHookBundle = internalAction({
     ),
 });
 
-/**
- * Store a hosted MCP server bundle under the account-mcp/ prefix (#331 phase
- * 2). The bundle may be a direct client upload (#190), so the declared sha256
- * and the size cap are verified against the raw bytes first. Failing here
- * turns a corrupt upload into an upload error instead of a broken server.
- * `workersCompatible` marks a bundle Cloudflare Dynamic Workers can run: under
- * the Worker size cap and passing the static scan.
- */
+// A client may upload directly, so the declared sha256 and size cap are checked here.
 export const putMcpBundle = internalAction({
   args: {
     accountId: v.id("accounts"),

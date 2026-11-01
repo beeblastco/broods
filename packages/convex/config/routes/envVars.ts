@@ -1,8 +1,3 @@
-/**
- * Account-level environment variable routes (`/v1/env*`). Values are
- * write-only: list returns names and timestamps, never plaintext.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";

@@ -7,10 +7,6 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-/**
- * A bash call past its sandbox's per-call limit fails with one timeout result
- * that names the limit: a machine sandbox capped at 2s runs `sleep 5`.
- */
 export async function bashTimeout(context: VerifyContext): Promise<void> {
   if (!context.hasModelKey) {
     console.log(`  skip bash past its limit (${MODEL_KEY_HINT})`);

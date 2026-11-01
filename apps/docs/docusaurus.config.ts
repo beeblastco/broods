@@ -1,7 +1,3 @@
-/**
- * Docusaurus configuration for Broods documentation.
- */
-
 import type * as Preset from "@docusaurus/preset-classic";
 import type { Config, LoadContext, Plugin } from "@docusaurus/types";
 import scalarDocusaurus, { type ScalarOptions } from "@scalar/docusaurus";
@@ -14,8 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_REFERENCE: ScalarOptions = {
   label: "API Reference",
   route: "/api-reference",
-  // The navbar already has an "API" item in its own slot. Scalar would
-  // append a second link to the same page.
+  // The navbar has its own "API" item; Scalar would add a second link to the page.
   showNavLink: false,
   configuration: {
     spec: {
@@ -27,8 +22,7 @@ const API_REFERENCE: ScalarOptions = {
   },
 };
 
-// Scalar's plugin as is, minus the 1 MB render-blocking script it injects
-// into every page: its route renders a component that loads the bundle itself.
+// Scalar's plugin minus the 1 MB render-blocking script it puts on every page.
 function apiReferencePlugin(context: LoadContext): Plugin {
   const plugin = scalarDocusaurus(context, API_REFERENCE);
 
@@ -94,7 +88,6 @@ const LEGACY_REDIRECTS: { from: string; to: string }[] = [
   { from: "/guides/cloudflare-mcp", to: "/guides/tools" },
   { from: "/guides/cloudflare-browser", to: "/guides/sandboxes/browsing" },
   { from: "/guides/sandboxes/cloudflare", to: "/guides/sandboxes/providers" },
-  // Removed in #1066; its URL params now sit in each guide.
   { from: "/guides/dashboard-links", to: "/guides/observability" },
 ];
 
@@ -176,8 +169,6 @@ const config: Config = {
     [
       "@docusaurus/plugin-client-redirects",
       {
-        // Pages that moved in the user docs / internals split. Keep old
-        // bookmarks and search results working.
         redirects: LEGACY_REDIRECTS,
       },
     ],

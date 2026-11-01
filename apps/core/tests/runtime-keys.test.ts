@@ -99,8 +99,7 @@ describe("channelScopeKeyFromConversation", () => {
     );
   });
 
-  // The thread separator is only a separator under the Matrix prefix. A public
-  // key may contain it, and two that differ after it are two scopes.
+  // `|` separates a thread only under the Matrix prefix; a public key may contain it.
   it("keeps a public conversation key that contains the thread separator", () => {
     expect(channelScopeKeyFromConversation("customer|a")).toBe("customer|a");
     expect(channelScopeKeyFromConversation("customer|b")).toBe("customer|b");
@@ -161,13 +160,10 @@ describe("subagent task correlation", () => {
   });
 
   it("rejects a task id whose parent segment is not canonical base64url", () => {
-    // Length deliberately not a multiple of 3, so the encoding's final character
-    // carries slack bits and alias spellings exist at all.
+    // Not a multiple of 3 long, so the last base64url character has slack bits and aliases.
     const parent = "acct:acct_1:agent:agent_parent:api:event_10";
     const canonical = Buffer.from(parent, "utf8").toString("base64url");
     const nonce = "019833ce-7f5d-7000-8000-000000000001";
-    // An alias spelling: still [A-Za-z0-9_-], still decodes to the same parent,
-    // but re-encodes differently because its final character carries slack bits.
     const alias =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
         .split("")
@@ -182,7 +178,6 @@ describe("subagent task correlation", () => {
       parent,
     );
     expect(alias).toBeDefined();
-    // Without the round-trip guard one parent would have several task-id spellings.
     expect(subagentParentEventId(`subagent~${alias}~${nonce}`)).toBeNull();
   });
 });

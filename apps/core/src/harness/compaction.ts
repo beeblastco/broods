@@ -1,9 +1,3 @@
-/**
- * Session compaction for persisted conversation context.
- * Keep the auto-compaction threshold and summary generation here; storage
- * stays in session.ts.
- */
-
 import { generateText, type ModelMessage, type SystemModelMessage } from "ai";
 import { DEFAULT_COMPACTION_PROMPT } from "../shared/.generated/compaction-prompt.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
@@ -23,40 +17,28 @@ import {
   type UsageTokenTotals,
 } from "./usage-metering.ts";
 
-// Input tokens of a turn's last model call that start an auto-compaction.
 const DEFAULT_AUTO_COMPACTION_MAX_CONTEXT_LENGTH = 500_000;
-// A single message the summary model still refuses at this size is not cut
-// further; the refusal surfaces instead.
 const MIN_SPLIT_MESSAGE_LENGTH = 1_000;
 export const COMPACTION_MARKER = "<session-compaction-summary>";
 const COMPACTION_MARKER_END = "</session-compaction-summary>";
 const COMPACTION_MESSAGE_SEPARATOR = "\n\n";
 
-/** What a compaction's summary model calls cost, for its span, usage and log. */
 export interface CompactionUsage {
-  /** Summed over every summary call; cache writes include the metadata fallback. */
   usage: UsageTokenTotals;
-  /** One, or more when a history too long for the model was split. */
   modelCalls: number;
-  /** The agent's model, which wrote the summary. */
   modelProvider: string;
   modelId: string;
 }
 
-/** The summary row a compaction persists, and what making it cost. */
 export interface ConversationSummary extends CompactionUsage {
   message: SystemModelMessage;
 }
 
-/** A persisted compaction: how many messages it folded and what it cost. */
 export interface CompactionResult extends CompactionUsage {
   messageCount: number;
 }
 
-/**
- * A compaction that failed after its model was resolved. `spent` is what the
- * summary calls that did finish cost, so a failed split is still metered.
- */
+/** `spent` is what the finished summary calls cost, so a failed split is still metered. */
 export class CompactionError extends Error {
   readonly spent: CompactionUsage;
 
@@ -72,15 +54,9 @@ export interface SummarizeConversationInput {
   priorSummaries: SystemModelMessage[];
   messages: ModelMessage[];
   agentConfig: AgentConfig;
-  // Extra focus for the summary model, from /compact <instructions>.
   instructions?: string;
 }
 
-/**
- * Whether a turn auto-compacts: on unless the agent turns it off, once the
- * turn's last model call read `maxContextLength` input tokens or more, or when
- * the provider refused the turn for context length.
- */
 export function shouldAutoCompact(
   agentConfig: AgentConfig,
   lastInputTokens: number | undefined,
@@ -96,7 +72,6 @@ export function shouldAutoCompact(
   return lastInputTokens >= configuredMax;
 }
 
-/** A compaction's phase span attributes, its tokens named as a model.step's. */
 export function compactionSpanAttributes(
   result: CompactionResult,
 ): Record<string, number> {
@@ -116,11 +91,6 @@ export function isCompactionSummaryMessage(
   );
 }
 
-/**
- * Unconditional summary generation. Callers decide when to compact and which
- * messages fold in; this produces the summary row from them and the token
- * usage of its summary calls.
- */
 export async function summarizeConversation(
   input: SummarizeConversationInput,
 ): Promise<ConversationSummary | null> {
@@ -159,6 +129,7 @@ export async function summarizeConversation(
         recordInputs: false,
         recordOutputs: false,
       },
+      // Per-call data rides the user message so the static system prompt stays cacheable.
       messages: [
         {
           role: "user",
@@ -238,13 +209,8 @@ function stringifyMessageContent(content: ModelMessage["content"]): string {
   return typeof content === "string" ? content : JSON.stringify(content);
 }
 
-// Summarizes every block. The whole history goes first; only when the summary
-// model refuses it for length are the older and newer halves summarized apart
-// and merged, labelled so the merge keeps their order. No whole message is
-// dropped: a single message too long on its own keeps as much of its beginning
-// as the model accepts, and a refused merge fails the compaction and leaves the
-// stored history as it was. Per-call data rides the user message so the static
-// system prompt stays cacheable.
+// Splits only on a length refusal, never dropping a whole message: a lone message keeps its
+// start, and a refused merge fails the compaction so the stored history stays as it was.
 async function summarizeBlocks(
   blocks: string[],
   requestSummary: (blocks: string[]) => Promise<string>,

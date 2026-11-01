@@ -1,13 +1,5 @@
-/**
- * AWS access for the Convex config plane. Convex owns the
- * skills/tool-bundle/workspace S3 objects directly instead of proxying to
- * core. Node-runtime only, import exclusively from `"use node"` actions.
- *
- * Auth: a minimal bootstrap user's static key (Convex deployment env
- * AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) assumes ConvexAwsRole
- * (CONVEX_AWS_ROLE_ARN, created in apps/core/sst.config.ts) for short-lived,
- * scoped credentials. Credentials are cached in-process until near expiry.
- */
+// Node runtime only: import from "use node" actions. A bootstrap user's static key assumes
+// ConvexAwsRole (CONVEX_AWS_ROLE_ARN, from apps/core/sst.config.ts) for scoped credentials.
 
 import { STSClient, AssumeRoleCommand } from "@aws-sdk/client-sts";
 import { S3Client } from "@aws-sdk/client-s3";
@@ -26,11 +18,7 @@ interface AwsAccess {
   secretAccessKey: string;
 }
 
-/**
- * Access to a bucket the config plane does not own. Mirrors core's `S3Access`
- * (apps/core `src/shared/s3.ts`), except credentials are required: a foreign
- * bucket is never reached on the config plane's own role.
- */
+// Core's S3Access, but credentials are required: a foreign bucket never sees our own role.
 export interface S3Access {
   credentials: {
     accessKeyId: string;
@@ -44,15 +32,7 @@ export interface S3Access {
 let cached: { credentials: AssumedCredentials; expiresAt: number } | null =
   null;
 
-/**
- * Assume a workspace's own storage role with a session policy narrowed to
- * `bucket/prefix*`. A faithful port of core's `assumeScopedMountCredentials`, so
- * the config plane never holds broader access to a tenant bucket than the mount.
- * @param params role to assume, the bucket/prefix to scope to, and the
- * account's Broods-assigned external id (`storageTrust.ts`)
- * @returns short-lived credentials for that bucket prefix
- * @throws when STS returns no credentials
- */
+// A port of core's assumeScopedMountCredentials: never broader than the tenant's mount.
 export async function assumeScopedS3Credentials(params: {
   roleArn: string;
   bucket: string;
@@ -76,7 +56,6 @@ export async function assumeScopedS3Credentials(params: {
       Effect: "Allow",
       Action: ["s3:ListBucket"],
       Resource: [`arn:aws:s3:::${params.bucket}`],
-      // Scope the listing to the prefix; an empty prefix lists the whole bucket.
       ...(params.prefix
         ? { Condition: { StringLike: { "s3:prefix": [`${params.prefix}*`] } } }
         : {}),
@@ -111,31 +90,17 @@ export async function assumeScopedS3Credentials(params: {
   };
 }
 
-/**
- * Build an S3 client authenticated as the Convex config plane, or as the scoped
- * session a bring-your-own bucket supplies. Given access with its own region, no
- * platform AWS configuration is read.
- * @param access credentials/region/endpoint for a foreign bucket
- * @returns an S3 client
- */
 export async function s3Client(access?: S3Access): Promise<S3Client> {
   return new S3Client({
     region: access?.region ?? awsAccess().region,
     credentials: access ? access.credentials : await assumeCredentials(),
-    // Path style with a custom endpoint, matching core's awsClient: a non-AWS S3
-    // endpoint rarely resolves virtual-hosted bucket subdomains.
+    // A non-AWS S3 endpoint rarely resolves virtual-hosted bucket subdomains.
     ...(access?.endpoint
       ? { endpoint: access.endpoint, forcePathStyle: true }
       : {}),
   });
 }
 
-/**
- * Assume ConvexAwsRole and return short-lived credentials, reusing a cached set
- * until it is within a minute of expiry.
- * @returns temporary AWS credentials scoped to the Convex config plane
- * @throws when STS returns no credentials
- */
 async function assumeCredentials(): Promise<AssumedCredentials> {
   if (cached && cached.expiresAt - Date.now() > 60_000) {
     return cached.credentials;
@@ -181,11 +146,6 @@ async function assumeCredentials(): Promise<AssumedCredentials> {
   return resolved;
 }
 
-/**
- * Read and validate the AWS access configuration from the environment.
- * @returns the resolved configuration
- * @throws when any required variable is missing
- */
 function awsAccess(): AwsAccess {
   const region = process.env.AWS_REGION;
   const roleArn = process.env.CONVEX_AWS_ROLE_ARN;

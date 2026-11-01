@@ -1,8 +1,3 @@
-/**
- * Version check against the npm registry, and the install command that matches
- * how this copy of the CLI was installed.
- */
-
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -13,8 +8,7 @@ import packageJson from "../../package.json" with { type: "json" };
 const CACHE_PATH = join(dirname(USER_CONFIG_PATH), "update-check.json");
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const REGISTRY_URL = "https://registry.npmjs.org/broods/latest";
-// A version check is never worth stalling a sync behind, so the fetch is capped
-// well under the time a user would notice and a miss just skips the notice.
+// A version check never stalls a sync: past this the notice is just skipped.
 const REGISTRY_TIMEOUT_MS = 2_000;
 // First match wins, so a project that holds two lockfiles picks the same one each run.
 const LOCKFILES: readonly (readonly [string, PackageManager])[] = [
@@ -26,16 +20,12 @@ const LOCKFILES: readonly (readonly [string, PackageManager])[] = [
 
 type PackageManager = "bun" | "npm" | "pnpm" | "yarn";
 
-/** Where this copy of the CLI lives, and therefore how to replace it. */
 export interface UpdateTarget {
   manager: PackageManager;
-  /** False for a copy inside a project's node_modules, which `-g` must not touch. */
   global: boolean;
-  /** Package manager binary to run. */
   command: string;
-  /** Where it runs: the project root for a project install, so a workspace child's manifest is never touched. */
+  /** The project root for a project install, so a workspace child's manifest is untouched. */
   cwd: string;
-  /** Arguments that install the newest release of this major over this copy. */
   args: string[];
 }
 
@@ -44,11 +34,7 @@ interface CachedCheck {
   latest: string;
 }
 
-/**
- * Compares release triples, then treats a stable release as newer than the
- * prerelease of the same triple: `broods@latest` upgrades you off an rc but
- * never onto one, so an rc of the version in hand is not an upgrade.
- */
+// A stable release beats its own prerelease: `broods@latest` takes you off an rc, never onto one.
 export function isNewerVersion(candidate: string, current: string): boolean {
   const left = releaseTriple(candidate);
   const right = releaseTriple(current);
@@ -61,11 +47,7 @@ export function isNewerVersion(candidate: string, current: string): boolean {
   return !isPrerelease(candidate) && isPrerelease(current);
 }
 
-/**
- * Newest published version, cached in `~/.broods` for a day so the check on
- * every `broods dev` costs nothing. Null when the registry cannot be reached
- * and nothing was cached. A version check must never fail a command.
- */
+// Cached for a day so the check on every `broods dev` is free. Never throws.
 export async function latestPublishedVersion(
   options: { maxAgeMs?: number } = {},
 ): Promise<string | null> {
@@ -79,22 +61,13 @@ export async function latestPublishedVersion(
   return fetched;
 }
 
-/** The major of a version string, which `broods update` never moves past. */
 export function majorVersion(version: string): number {
   return releaseTriple(version)[0] ?? 0;
 }
 
-/**
- * Reads the install site off this module's own path. The first `node_modules`
- * in it names the project root, so pnpm's and bun's isolated store
- * (`node_modules/.pnpm/broods@x/node_modules/broods`) resolve to the project
- * too. The install belongs to that project only when the caller is inside
- * that root, so a workspace running the root-installed CLI from `apps/foo`
- * upgrades the dependency instead of installing a second copy on the PATH. A checkout with no `node_modules` in
- * the path falls back to whether the caller is inside the checkout. A project
- * install uses the manager its lockfile names. The install stays on the
- * running major, since a new major can break the project.
- */
+// The first `node_modules` in this module's path is the project root, even in pnpm's and bun's
+// isolated stores. From inside that root, update upgrades the dependency instead of putting a
+// second copy on the PATH. It stays on the running major: a new one can break the project.
 export function updateTarget(
   cwd = resolve(process.cwd()),
   self = fileURLToPath(import.meta.url),
@@ -185,6 +158,6 @@ async function writeCachedCheck(check: CachedCheck): Promise<void> {
     await mkdir(dirname(CACHE_PATH), { recursive: true });
     await writeFile(CACHE_PATH, `${JSON.stringify(check)}\n`, "utf8");
   } catch {
-    // A cache that cannot be written just means the next command re-checks.
+    // An unwritable cache only means the next command re-checks.
   }
 }

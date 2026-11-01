@@ -1,8 +1,3 @@
-/**
- * Agent-configured provider resolution for harness-processing.
- * Keep provider construction and AI SDK setting projection here.
- */
-
 import { createHash } from "node:crypto";
 import { createAlibaba } from "@ai-sdk/alibaba";
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
@@ -68,60 +63,34 @@ import { logInfo, logWarn } from "../shared/log.ts";
 import { unreadableMediaNote } from "../shared/media-types.ts";
 import { chatgptFetch, chatgptMiddleware } from "./chatgpt.ts";
 
-// Providers that answer on OpenAI's Responses API, where a replayed assistant
-// message is a reference to the item the provider still holds rather than the
-// content itself. That reference is only valid while the item resolves and
-// still carries the reasoning item it was produced with, which is why these
-// providers keep reasoning in context and get the retry below.
+// Responses API: a replayed assistant message references the item the provider holds, valid
+// only while it resolves with its reasoning item, so these keep reasoning in context.
 export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
   new Set(["azure", "openai"]);
 
-// Model retries when the agent sets none. The AI SDK's 2 retry for about 6s,
-// shorter than a tokens-per-minute window, so one 429 failed the whole run.
+// The AI SDK's default 2 retries span ~6s, shorter than a tokens-per-minute window.
 const DEFAULT_MODEL_MAX_RETRIES = 5;
 
-// Cloudflare AI Gateway's base URL.
 const CLOUDFLARE_GATEWAY_BASE_URL = "https://gateway.ai.cloudflare.com/v1";
 
 // Ollama's own default is 127.0.0.1, which from core is the container itself.
 const OLLAMA_CLOUD_BASE_URL = "https://ollama.com";
 
-// An OpenAI model id's GPT major and minor version, like `gpt-6-luna`,
-// `gpt-5.6` or the fine-tune `ft:gpt-6-luna:org::id`.
 const GPT_VERSION_PATTERN = /^(?:ft:)?gpt-(\d+)(?:\.(\d+))?(?:[-:]|$)/i;
 
-// A Claude model id after any router prefix like `anthropic/`, Bedrock-style
-// `us.anthropic.claude-` ones included.
 const CLAUDE_MODEL_PATTERN = /(?:^|\.)claude-/i;
 
-// Where a custom endpoint's Claude cache mark lives: Anthropic's `cache_control`
-// on a chat message or content part, the convention Claude proxies such as
-// LiteLLM follow. The compatible provider puts `openaiCompatible` options on
-// the message or part they came with, and sends none of them as a body field.
+// These options ride the message or part, never the body: where Claude proxies read them.
 const CUSTOM_CACHE_PROVIDER = "openaiCompatible";
 const CUSTOM_CACHE_FIELD = "cache_control";
 
-// Longest retry-after-ms the AI SDK honours; it falls back to its own backoff above.
+// The AI SDK ignores a retry header of 60s or more.
 const MAX_RETRY_HEADER_MS = 59_999;
 
-// The wait a 429 body asks for, like OpenAI's "Please try again in 5.248s" or
-// Gemini's RetryInfo `"retryDelay": "35s"`.
 const RATE_LIMIT_WAIT_PATTERN =
   /(?:try again in |"retryDelay":\s*")(\d+(?:\.\d+)?)\s*(ms|s)\b/i;
 
-/**
- * How inbound audio is read, per provider: the factory that ships speech-to-text
- * and the model to ask it for when the account names none. Providers absent
- * here have none, and `config.model.transcriptionModelId` overrides the id.
- *
- * Defaults pick the widest container support, not the cheapest model:
- * `whisper-1` reads the ogg/opus every voice-note channel sends and
- * `gpt-4o-mini-transcribe` does not.
- *
- * Keyed to the factory rather than to an already-built provider so the compiler
- * checks the method still exists: openai and groq declare `transcription` but
- * not `transcriptionModel`, and a rename would otherwise fail in silence.
- */
+// `whisper-1`, not `gpt-4o-mini-transcribe`: only it reads the ogg/opus of voice notes.
 const PROVIDER_TRANSCRIPTION: Partial<
   Record<AccountModelProviderName, TranscriptionSource>
 > = {
@@ -130,22 +99,14 @@ const PROVIDER_TRANSCRIPTION: Partial<
   openai: { factory: createOpenAI, modelId: "whisper-1" },
 };
 
-// How OpenAI names a reference it cannot honour: the item aged out of its 30-day
-// window, it lost the reasoning item it was paired with, or its reasoning was
-// encrypted for a different model.
+// A stored item past its 30-day window, without its reasoning, or encrypted for another model.
 const STALE_STORED_ITEM_PATTERN =
   /without its required (?:'reasoning' item|following item)|Item with id .{0,80}not found|encrypted[_ ]content/i;
 
-// Custom endpoints that refused a tool result's image, by base URL and model id.
-// Their later calls move tool images up front instead of paying a 400 a step.
 const toolImageRefusals = new Set<string>();
 
-// What every AI SDK provider factory has in common: settings in, callable
-// provider out. The settings each one accepts are read off it, never restated.
 type ModelProviderFactory = (settings: never) => ModelProviderInstance;
 
-// Workers AI REST credentials, plus the AI Gateway that carries every request
-// once it is named.
 type CloudflareProviderSettings = Extract<
   Parameters<typeof createWorkersAI>[0],
   { accountId: string }
@@ -154,15 +115,12 @@ type CloudflareProviderSettings = Extract<
   headers?: Record<string, string>;
 };
 
-// One part of a user message as the provider receives it.
 type UserPromptPart = Extract<
   LanguageModelV4Message,
   { role: "user" }
 >["content"][number];
 
 interface ModelProviderInstance {
-  // Never the string form of `LanguageModel`: a constructed provider hands back
-  // a model instance, which is what middleware can wrap.
   (modelId: string): Exclude<LanguageModel, string>;
 }
 
@@ -176,8 +134,6 @@ interface TranscriptionSource {
 export interface ResolvedModelProvider {
   providerName: AccountModelProviderName;
   provider: ModelProviderInstance;
-  // Never the string form: every resolver returns a constructed instance, so
-  // callers can wrap it in middleware.
   model: Exclude<LanguageModel, string>;
 }
 
@@ -187,9 +143,7 @@ export type ModelOutputSpec =
   | ReturnType<typeof Output.choice>
   | ReturnType<typeof Output.json>;
 
-// Name → AI SDK factory; the return type fails the build if a name has no
-// factory. Built per call so each is read off its live binding, keeping it
-// mockable.
+// Built per call so each factory is read off its live binding, keeping it mockable.
 export function modelProviderFactories(): Record<
   Exclude<AccountModelProviderName, "chatgpt">,
   ModelProviderFactory
@@ -231,10 +185,6 @@ export function modelProviderFactories(): Record<
   };
 }
 
-/**
- * The agent's model, ready to wrap. `accountId` is only read by `chatgpt`,
- * whose credential is the account's `chatgpt` connection, not a config setting.
- */
 export function resolveConfiguredModel(
   agentConfig: AgentConfig,
   accountId?: string,
@@ -249,9 +199,6 @@ export function resolveConfiguredModel(
     return resolveOpenAICompatibleModel(providerName, providerConfig, modelId);
   }
 
-  // The registry's value type is a union of factories, so its parameter narrows
-  // to an intersection no single provider's settings satisfy. Settings are
-  // validated by `normalizeProviderSettings` and passed through verbatim.
   const createProvider = modelProviderFactories()[providerName] as (
     settings: AgentProviderSettings & { fetch?: typeof fetch },
   ) => ModelProviderInstance;
@@ -273,12 +220,6 @@ export function resolveConfiguredModel(
   };
 }
 
-/**
- * The speech-to-text model to read inbound audio with, or undefined when this
- * account's provider ships none or its config cannot build one. Undefined
- * rather than a throw: a half-configured account should lose its transcript and
- * keep the message it arrived on.
- */
 export function resolveTranscriptionModel(
   agentConfig: AgentConfig,
 ): Exclude<TranscriptionModel, string> | undefined {
@@ -320,19 +261,7 @@ export function modelSettingsFromModelConfig(
   return { maxRetries: DEFAULT_MODEL_MAX_RETRIES, ...settings };
 }
 
-/**
- * Prompt-cache defaults for a conversation run: Anthropic gets an ephemeral
- * cacheControl (caching there is opt-in per request; the harness also puts it
- * on the ends of the system prompt and the history), OpenAI (and ChatGPT,
- * where a cached prefix spends less of the plan) a promptCacheKey
- * hashed from the conversation key (prefix routing, required from GPT-5.6 on).
- * A custom endpoint serving a GPT model, like a proxy's `openai/gpt-6-luna`, gets
- * that key as `prompt_cache_key` in the request body; without it a long run
- * lands on a server holding only the shared system prompt every few steps.
- * A call without a conversation, like compaction, gets neither: a one-shot
- * request pays the cache write and never reads it back. Explicit account
- * config wins over both defaults.
- */
+// A one-shot call like compaction gets no cache defaults: it pays the write, never reads.
 export function providerOptionsFromModelConfig(
   agentConfig: AgentConfig,
   conversationKey?: string,
@@ -362,17 +291,8 @@ export function providerOptionsFromModelConfig(
   );
 }
 
-/**
- * What one prompt cache breakpoint carries in a conversation run, or undefined
- * when the run's model takes none. The harness marks the ends of the stored
- * system prompt and of the history with it: the prefix the next run sends
- * again. OpenAI's own breakpoint only ever ends the latest message, after the
- * live environment no later run sends again, so without this mark each run
- * started with nothing cached to read. Anthropic's is the run's cacheControl.
- * Only `openai` gets the OpenAI mark: Azure reads its options under its own
- * name and a deployment name, and ChatGPT plan usage documents no such field.
- * Claude behind a custom endpoint gets the run's `cache_control`.
- */
+// OpenAI's own breakpoint ends after the live environment no later run resends. Not Azure:
+// it reads options under its own name; nor ChatGPT, whose plan documents no such field.
 export function cacheBreakpointFromProviderOptions(
   agentConfig: AgentConfig,
   providerOptions: AgentModelProviderOptions | undefined,
@@ -399,8 +319,6 @@ export function cacheBreakpointFromProviderOptions(
     : { anthropic: { cacheControl: cacheControl } };
 }
 
-// Explicit breakpoints start at GPT-5.6, fine-tunes of it included. Earlier
-// models cache at intervals of their own and document no breakpoint field.
 function takesPromptCacheBreakpoints(modelId: string | undefined): boolean {
   const version = GPT_VERSION_PATTERN.exec(modelId ?? "");
   if (!version) {
@@ -412,11 +330,6 @@ function takesPromptCacheBreakpoints(modelId: string | undefined): boolean {
   return major > 5 || (major === 5 && minor >= 6);
 }
 
-/**
- * Which model an agent is configured on right now, as a value that can be
- * stored beside a message and compared later. Undefined only when the config is
- * incomplete, which `resolveConfiguredModel` refuses anyway.
- */
 export function modelIdentityFromModelConfig(
   agentConfig: AgentConfig,
 ): string | undefined {
@@ -440,14 +353,8 @@ export function modelOutputFromModelConfig(
   return createModelOutput(output);
 }
 
-// vLLM-style chat templates often accept only a single system message, and
-// OVH's Qwen endpoints fail SOFT on extras: HTTP 200 with an immediately-empty
-// stream (`data: [DONE]`), which surfaces as "Model returned empty response".
-// The harness legitimately sends two (the base prompt + the dynamic context
-// snapshot), so fold every system message into one before the request leaves.
-// A cache mark (Claude only) ends the stored system prompt: the run's own
-// system text after it stays a second message, so the stored prefix still reads
-// from cache when that text changes.
+// vLLM-style templates take one system message; OVH's Qwen answers more with an empty 200.
+// A cache mark keeps the run's own system text separate so the stored prefix still caches.
 export const mergeSystemMessagesMiddleware: LanguageModelMiddleware = {
   transformParams: async ({ params }): Promise<LanguageModelV4CallOptions> => {
     const systems = params.prompt.filter(
@@ -473,13 +380,7 @@ export const mergeSystemMessagesMiddleware: LanguageModelMiddleware = {
   },
 };
 
-/**
- * Claude behind a custom endpoint caches only the blocks a request marks, and
- * nothing marks the latest one the way Anthropic's own API does. So when the
- * run carries a cache mark, its latest message gets it too, and each step of a
- * run reads the step before it from cache. A call without one, like
- * compaction, stays unmarked.
- */
+// Claude behind a proxy caches only marked blocks, and nothing marks the latest one for it.
 export const cacheLatestMessageMiddleware: LanguageModelMiddleware = {
   transformParams: async ({ params }): Promise<LanguageModelV4CallOptions> => {
     const cacheControl =
@@ -499,7 +400,6 @@ export const cacheLatestMessageMiddleware: LanguageModelMiddleware = {
   },
 };
 
-/** `item` with the breakpoint's options merged into its own, per provider. */
 export function markedForCache<
   T extends { providerOptions?: SharedV4ProviderOptions },
 >(item: T, breakpoint: SharedV4ProviderOptions): T {
@@ -511,11 +411,6 @@ export function markedForCache<
   return { ...item, providerOptions: providerOptions };
 }
 
-/**
- * Marks the item at `index` (the last by default) as a prompt cache
- * breakpoint. Unchanged when the run's model takes no breakpoint or the index
- * names no item.
- */
 export function withCacheBreakpoint<
   T extends { providerOptions?: SharedV4ProviderOptions },
 >(
@@ -531,15 +426,8 @@ export function withCacheBreakpoint<
   return items.with(index, markedForCache(item, breakpoint));
 }
 
-// The same endpoints have two streaming quirks the custom-provider path must
-// absorb. First, `reasoning`/`reasoning_content` chunks may carry a growing
-// snapshot of the whole reasoning text instead of an increment, which every
-// downstream consumer (Slack Thinking card, chat SDK streams, persisted
-// messages) doubles by appending. Second, usage omits
-// `completion_tokens_details.reasoning_tokens`, so reasoning tokens read as 0
-// even when most of the output was thinking. Rewrite snapshot deltas to their
-// new suffix, and when the endpoint reports no reasoning-token split, estimate
-// it from the reasoning/text character share of the reported output total.
+// vLLM-style endpoints may stream growing snapshots instead of deltas, and report no
+// `reasoning_tokens`: estimate the split from the reasoning/text character share.
 export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
   wrapStream: async ({ doStream }) => {
     const { stream, ...rest } = await doStream();
@@ -605,8 +493,6 @@ export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
 
 export type ModelAttempt = { startedAt: number; error?: string };
 
-// One entry per doStream call. The SDK's retry loop re-invokes doStream, so
-// the recorded attempts split retry waste from server wait on the step span.
 export function attemptRecordingMiddleware(
   record: (attempt: ModelAttempt) => void,
   describeError: (error: unknown) => string,
@@ -625,39 +511,22 @@ export function attemptRecordingMiddleware(
   };
 }
 
-// A file part the provider's converter refuses fails the turn during prompt
-// conversion, before any request is sent, so dropping the part and running
-// again costs a local re-convert and no tokens. That is what makes a wrong
-// entry in `PROVIDER_NATIVE_MEDIA` cost one attachment instead of the turn.
+// A refused file part fails prompt conversion before any request, so a retry costs no tokens.
 export const dropUnsupportedMediaMiddleware: LanguageModelMiddleware =
   retryingMiddleware(withoutUnsupportedMedia);
 
-// A text-only model behind a custom endpoint answers a picture with a 400, so a
-// screenshot from an MCP tool would fail every turn after it. Retry once with
-// each picture replaced by a line naming it: the turn loses its images, not the
-// answer.
+// A text-only model behind a custom endpoint answers a picture with a 400.
 export const dropRefusedImagesMiddleware: LanguageModelMiddleware =
   retryingMiddleware(withoutRefusedImages);
 
-// Stored-item references are the provider's own state, so they can go stale for
-// reasons no amount of care on our side prevents: the 30-day window closes, or
-// the agent's model changes and the old reasoning can no longer be decrypted.
-// Retry once with that state dropped. The turn then costs a full re-upload of
-// its history and nothing else, instead of failing in the user's chat.
 export const retryWithoutStoredItemsMiddleware: LanguageModelMiddleware =
   retryingMiddleware(withoutStaleStoredItems);
 
-/**
- * A custom endpoint gets a tool result's image inside the tool message, where
- * vLLM-style servers read it. OpenAI's own chat API answers that with a 400, so
- * the call is retried with each image in a user message after its tool message,
- * and `endpoint` sends them there from then on.
- */
+// OpenAI's chat API 400s on an image in a tool message, where vLLM-style servers read it.
 export function moveRefusedToolImagesMiddleware(
   endpoint: string,
 ): LanguageModelMiddleware {
-  // Remembered once the move is accepted, or refused the same way: a model
-  // that takes no images at all then pays its drop retry, not a move as well.
+  // Also remembered when the move is refused: a model taking no images then pays one retry.
   const retrying = retryingMiddleware(
     withToolImagesMoved,
     (retryError): void => {
@@ -680,12 +549,7 @@ export function moveRefusedToolImagesMiddleware(
   };
 }
 
-/**
- * Strips the id an assistant part is replayed by, leaving the part to be sent
- * as content. Only ever correct alongside dropping the reasoning parts of the
- * same message: an id without its reasoning is the reference the provider
- * refuses.
- */
+// Only correct with the message's reasoning parts dropped: an id without its reasoning is refused.
 export function withoutStoredItemId<
   TPart extends { type: string; providerOptions?: SharedV4ProviderOptions },
 >(part: TPart): TPart {
@@ -701,12 +565,6 @@ export function withoutStoredItemId<
   };
 }
 
-/**
- * A middleware that runs the call again when `recover` recognises the failure
- * and can say what to send instead. `recover` returning undefined rethrows, so
- * a failure it does not know about is never paid for twice. `retried` hears
- * how the retry went: undefined once accepted, else its error.
- */
 function retryingMiddleware(
   recover: (
     error: unknown,
@@ -756,9 +614,6 @@ function retryingMiddleware(
   };
 }
 
-// The same call with every non-image file part replaced by a line naming it,
-// or undefined when this error is not a refused part or there was nothing to
-// drop.
 function withoutUnsupportedMedia(
   error: unknown,
   params: LanguageModelV4CallOptions,
@@ -776,9 +631,6 @@ function withoutUnsupportedMedia(
   return withoutUserMedia(params, isDroppableMedia);
 }
 
-// The same call with every picture, a tool result's too, replaced by a line
-// naming it, or undefined when the endpoint did not refuse the request or there
-// was no picture to drop.
 function withoutRefusedImages(
   error: unknown,
   params: LanguageModelV4CallOptions,
@@ -798,9 +650,6 @@ function withoutRefusedImages(
   return withoutUserMedia(moved, isImage);
 }
 
-// The same call with tool result images moved into user messages, or undefined
-// when the endpoint did not refuse the request or no tool result carries an
-// image.
 function withToolImagesMoved(
   error: unknown,
   params: LanguageModelV4CallOptions,
@@ -820,7 +669,6 @@ function withToolImagesMoved(
   return { ...params, prompt: prompt };
 }
 
-// Whether any user message carries a part `matches` picks out.
 function carriesUserMedia(
   params: LanguageModelV4CallOptions,
   matches: (part: UserPromptPart) => part is LanguageModelV4FilePart,
@@ -830,8 +678,6 @@ function carriesUserMedia(
   );
 }
 
-// Images are the one media kind every provider reads, so a converter that
-// refused something refused something else.
 function isDroppableMedia(
   part: UserPromptPart,
 ): part is LanguageModelV4FilePart {
@@ -842,8 +688,6 @@ function isImage(part: UserPromptPart): part is LanguageModelV4FilePart {
   return part.type === "file" && part.mediaType.startsWith("image/");
 }
 
-// An image a user message can carry: bytes or a URL. A provider reference or
-// inline text stays in the tool result it came in.
 function isMovableImage(
   item: Extract<
     LanguageModelV4ToolResultOutput,
@@ -857,8 +701,7 @@ function isMovableImage(
   );
 }
 
-// A 400 a picture may have caused. A context overflow is a 400 too, and must
-// reach compaction rather than pass once its images are dropped.
+// A context overflow is a 400 too, and must reach compaction.
 function isRefusedRequest(error: unknown): error is APICallError {
   return (
     APICallError.isInstance(error) &&
@@ -867,8 +710,6 @@ function isRefusedRequest(error: unknown): error is APICallError {
   );
 }
 
-// Each tool message followed by one user message holding the images its results
-// carried; the result keeps a line pointing at each one.
 function toolImagesAsUserMessages(
   prompt: LanguageModelV4Message[],
 ): LanguageModelV4Message[] {
@@ -906,8 +747,7 @@ function toolImagesAsUserMessages(
   });
 }
 
-// Each tool result left with only text sent as one string: some endpoints take
-// nothing else in a tool message, and every endpoint takes that.
+// Some endpoints take nothing but a string in a tool message.
 function withTextToolResultsAsText(
   prompt: LanguageModelV4Message[],
 ): LanguageModelV4Message[] {
@@ -934,7 +774,6 @@ function withTextToolResultsAsText(
   });
 }
 
-// The call with every user part `drop` picks out replaced by a line naming it.
 function withoutUserMedia(
   params: LanguageModelV4CallOptions,
   drop: (part: UserPromptPart) => part is LanguageModelV4FilePart,
@@ -978,11 +817,6 @@ function withoutStaleStoredItems(
   return withoutStoredItemState(params);
 }
 
-/**
- * OpenAI on the account's ChatGPT plan. The API key is a placeholder the fetch
- * replaces with the connection's access token on every request; the endpoint is
- * OpenAI's own, so no tenant setting reaches it.
- */
 function resolveChatGPTModel(
   modelId: string,
   accountId: string | undefined,
@@ -1009,13 +843,9 @@ function resolveOpenAICompatibleModel(
 ): ResolvedModelProvider {
   const { base_url: _baseUrl, ...openAIConfig } =
     withModelFetch(providerConfig);
-  // @ai-sdk/openai-compatible instead of @ai-sdk/openai: vLLM-style endpoints
-  // return thinking text in `reasoning`/`reasoning_content` fields, which only
-  // the compatible provider parses into reasoning parts (#115).
+  // Not @ai-sdk/openai: only this one parses vLLM's `reasoning`/`reasoning_content` fields.
   const baseURL = customProviderBaseURL(providerConfig) ?? "";
   const provider = createOpenAICompatible({
-    // A tool result keeps its images, as the tool returned them, unless the
-    // endpoint refuses them there (`moveRefusedToolImagesMiddleware`).
     supportsMultiPartToolContent: true,
     ...openAIConfig,
     baseURL: baseURL,
@@ -1028,9 +858,8 @@ function resolveOpenAICompatibleModel(
     provider: provider,
     model: wrapLanguageModel({
       model: provider(modelId),
-      // Each entry wraps the ones after it: a 400 tries moving tool images first,
-      // and only drops images when that is refused too. The cache mark comes
-      // last, so a retry above marks its own latest message.
+      // Each wraps those after it: a 400 tries the tool image move before the drop, and the
+      // cache mark is last so a retry marks its own latest message.
       middleware: [
         mergeSystemMessagesMiddleware,
         normalizeStreamDeltasMiddleware,
@@ -1043,13 +872,6 @@ function resolveOpenAICompatibleModel(
   };
 }
 
-/**
- * The `cloudflare` provider: Workers AI over REST, through AI Gateway once
- * `gatewayId` is set (`apiKey` rides `cf-aig-authorization`). Workers AI
- * models (`@cf/`, `@hf/`) keep the Workers AI provider; other ids use the
- * gateway's OpenAI-compatible endpoint, where `headers.Authorization` carries an
- * upstream key.
- */
 function createCloudflare({
   gatewayId,
   headers,
@@ -1085,16 +907,11 @@ function createCloudflare({
   };
 }
 
-// The gateway names Workers AI models `workers-ai/@cf/...`; Workers AI itself takes `@cf/...`.
 function workersAIModelId(modelId: string): string {
   return modelId.replace(/^workers-ai\//, "");
 }
 
-/**
- * A 429 whose wait is only in its body gets it as `retry-after-ms`, the header
- * the AI SDK's retry already honours. Without it the SDK retries on its own
- * shorter backoff and burns the attempts before the window resets.
- */
+// A 429 body's wait as `retry-after-ms`, else the SDK burns its retries before the window resets.
 async function withRateLimitRetryHeader(response: Response): Promise<Response> {
   if (
     response.status !== 429 ||
@@ -1108,8 +925,6 @@ async function withRateLimitRetryHeader(response: Response): Promise<Response> {
   const headers = new Headers(response.headers);
   if (amount !== undefined && unit !== undefined) {
     const waitMs = Number(amount) * (unit.toLowerCase() === "s" ? 1000 : 1);
-    // The SDK ignores a retry header of 60s or more, so a longer wait is
-    // spread over the retries at the longest delay it honours.
     headers.set(
       "retry-after-ms",
       String(Math.min(Math.ceil(waitMs), MAX_RETRY_HEADER_MS)),
@@ -1123,14 +938,8 @@ async function withRateLimitRetryHeader(response: Response): Promise<Response> {
   });
 }
 
-/**
- * Every model request goes out with Bun's socket idle timeout off. Bun drops a
- * connection that stays silent for 300s, and a busy provider can hold a stream
- * that long, so a model call ends on the provider's own error or the run's
- * abort signal, which `watchModelStream` in harness.ts fires on a silent
- * stream. A provider with any tenant-supplied endpoint also gets the
- * resolve-then-connect `fetch`.
- */
+// Bun drops a socket silent for 300s, which a busy provider's stream can be; a silent stream
+// is aborted by `watchModelStream` instead. A tenant endpoint gets the resolve-then-connect fetch.
 function withModelFetch<T extends AgentProviderSettings>(
   settings: T,
 ): T & { fetch: typeof fetch } {
@@ -1194,18 +1003,13 @@ function requireProviderSettings(
   return providerConfig;
 }
 
-// A custom endpoint's Claude breakpoint carrying `cacheControl`.
 function customCacheBreakpoint(
   cacheControl: JSONValue,
 ): SharedV4ProviderOptions {
   return { [CUSTOM_CACHE_PROVIDER]: { [CUSTOM_CACHE_FIELD]: cacheControl } };
 }
 
-// A custom endpoint's cache defaults by the model family it serves. GPT gets
-// its key in the request body, where the compatible provider copies the options
-// under its name. Claude gets the cache_control its breakpoints carry, under
-// `openaiCompatible`, which reaches no body. Anything else gets neither, since a
-// strict endpoint refuses a field it does not know.
+// Any other model gets no cache option: a strict endpoint refuses a field it does not know.
 function customCacheOptions(
   agentConfig: AgentConfig,
   conversationKey: string,
@@ -1247,7 +1051,6 @@ function customProviderBaseURL(
   return trimmed || undefined;
 }
 
-// The name a custom endpoint's compatible provider reads its options under.
 function customProviderName(
   providerConfig: AgentProviderSettings | undefined,
 ): string {
@@ -1256,7 +1059,6 @@ function customProviderName(
     : "custom";
 }
 
-// One system message holding `systems` in order, with the last one's options.
 function mergedSystemMessage(
   systems: Extract<LanguageModelV4Message, { role: "system" }>[],
 ): LanguageModelV4Message {
@@ -1269,7 +1071,6 @@ function mergedSystemMessage(
   };
 }
 
-// One conversation's prompt cache key, the same on every call it makes.
 function promptCacheKey(conversationKey: string): string {
   return createHash("sha256")
     .update(conversationKey)
@@ -1277,12 +1078,10 @@ function promptCacheKey(conversationKey: string): string {
     .slice(0, 32);
 }
 
-// The model id the endpoint serves, without a router prefix like `openai/`.
 function servedModelId(modelId: string | undefined): string {
   return modelId?.split("/").at(-1) ?? "";
 }
 
-// `configured` with `value` as `provider`'s `field`, unless the account set it.
 function withDefaultOption(
   configured: AgentModelProviderOptions | undefined,
   provider: string,
@@ -1299,9 +1098,6 @@ function withDefaultOption(
   };
 }
 
-// The message with its last block marked where the compatible provider reads
-// it: a user message's last part, a tool message's last result, and the
-// message itself for the rest.
 function withLatestPartMarked(
   message: LanguageModelV4Message,
   breakpoint: SharedV4ProviderOptions,
@@ -1356,11 +1152,7 @@ function createModelOutput(
   }
 }
 
-// Everything the request says about items the provider is holding: the ids an
-// assistant part is replayed by, the reasoning parts they must be paired with,
-// and any response chain the account pinned through `providerOptions`. They go
-// together. A surviving `previousResponseId` makes the provider skip the very
-// history this retry exists to send in full.
+// A surviving `previousResponseId` would skip the very history this retry sends in full.
 function withoutStoredItemState(
   params: LanguageModelV4CallOptions,
 ): LanguageModelV4CallOptions {

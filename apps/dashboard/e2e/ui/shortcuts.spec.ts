@@ -1,14 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { Locator, Page } from "@playwright/test";
 
-/**
- * The keyboard surfaces against the fixture in `app/ui-gallery/ShortcutsStandIn`.
- * The dispatcher, the palette ranking and the plan rules are the real ones;
- * every action they take lands in `[data-ran]`.
- */
-
-// The app's own dialogs. Plain [role=dialog] would also catch Next's dev error
-// overlay, which is exactly the thing a failing spec needs to stay clear of.
+// Not [role=dialog]: that also catches Next's dev error overlay.
 const DIALOG = '[data-slot="dialog-content"]';
 
 async function openSurfaces(page: Page): Promise<void> {
@@ -16,22 +9,14 @@ async function openSurfaces(page: Page): Promise<void> {
   await page.locator('main[data-hydrated="true"]').waitFor();
 }
 
-/** What the palette is showing, row by row. */
 function rows(page: Page): Locator {
   return page.locator(`${DIALOG} [cmdk-item]`);
 }
 
-/** Everything the surfaces have done, oldest first. */
 function ran(page: Page): Locator {
   return page.locator("[data-ran-entry]");
 }
 
-/**
- * Both of these shipped once and neither broke a visible assertion: the ⌘/Ctrl
- * glyph differed between the server and the client, and `useShortcut` depended
- * on a context value that changes on every registration, so each new binding
- * re-registered every other one. They only ever showed up in the console.
- */
 test("registering bindings and opening the surfaces logs nothing broken", async ({
   page,
 }) => {
@@ -96,12 +81,10 @@ test("a row that leads to a page starts it once highlighted, by key or pointer",
   const warmed = page.locator("[data-warmed]");
   await page.keyboard.press("ControlOrMeta+k");
 
-  // Opening highlights the first row, so Enter's page is already on its way.
   await expect(warmed).toHaveText("/p/scheduler");
   await page.keyboard.press("ArrowDown");
   await expect(warmed).toHaveText("/p/dashboard");
 
-  // A node row opens a node, not a page, so there is nothing to start.
   await page.keyboard.press("ArrowDown");
   await expect(rows(page).nth(2)).toHaveAttribute("data-selected", "true");
   await expect(warmed).toHaveText("/p/dashboard");
@@ -118,7 +101,6 @@ test("the palette lists the bindings the page has claimed, and drops them when i
   await page.keyboard.type("tidy");
   await expect(rows(page).first()).toContainText("Tidy up");
 
-  // Selecting the row runs the same handler the key runs.
   await page.keyboard.press("Enter");
   await expect(ran(page)).toHaveText(["command canvas.tidy"]);
 
@@ -140,7 +122,6 @@ test("a bare key is a command outside a text field and typing inside one", async
   await field.click();
   await page.keyboard.type("tidy");
   await expect(field).toHaveValue("tidy");
-  // Still the one entry from before: nothing fired while typing.
   await expect(ran(page)).toHaveCount(1);
 });
 
@@ -157,7 +138,6 @@ test("Escape closes the panel from a text field, unless the field spends it", as
   await page.keyboard.press("Escape");
   await expect(ran(page)).toHaveCount(1);
 
-  // Escape that cancels an input method's composition is the IME's, not ours.
   await page.locator('[data-fixture="editable"] input').evaluate((field) =>
     field.dispatchEvent(
       new KeyboardEvent("keydown", {
@@ -175,9 +155,7 @@ test("+ types in a field instead of zooming the canvas behind it", async ({
 }) => {
   await openSurfaces(page);
 
-  // Bare `+` is a canvas binding, and `+` is also the separator in a combo
-  // string, so reading the combo text called this a chord and skipped the
-  // guard that keeps a bare key out of a text field.
+  // Bare `+` is a canvas binding and also the separator in a combo string.
   const field = page.locator('[data-fixture="editable"] input');
   await field.click();
   await page.keyboard.type("a+b");
@@ -193,11 +171,8 @@ test("Enter activates a focused button rather than the binding behind it", async
   await page.locator("[data-drop-canvas]").focus();
   await page.keyboard.press("Enter");
 
-  // The canvas binds bare `enter` to rename. Cancelling the press would take
-  // Enter away from every button and link on the page.
   await expect(ran(page)).toHaveCount(0);
 
-  // The button did what it is for, so the press reached it.
   await page.keyboard.press("ControlOrMeta+k");
   await page.keyboard.type("tidy");
   await expect(rows(page).filter({ hasText: "Tidy up" })).toHaveCount(0);
@@ -214,7 +189,6 @@ test("the ? overlay lists every binding and dims what no one has claimed", async
     overlay.getByRole("heading", { name: "Keyboard shortcuts" }),
   ).toBeVisible();
 
-  // Claimed by the fixture; the side panel's bindings are claimed by nobody.
   await expect(
     overlay.locator('[data-shortcut-row="canvas.tidy"]'),
   ).toHaveAttribute("data-live", "true");
@@ -241,7 +215,6 @@ test("the dock opens on its key and answers an ask it can resolve", async ({
   await expect(dock.locator("[data-plan-step]")).toHaveText([
     "Go to Scheduler",
   ]);
-  // Navigation is reversible, so it runs without waiting for a press.
   await expect(ran(page)).toHaveText(["navigate /p/scheduler"]);
 });
 
@@ -262,7 +235,6 @@ test("a write shows its before and after and waits for the press", async ({
   ]);
   await expect(dock.locator("[data-plan-change]")).toContainText("active");
   await expect(dock.locator("[data-plan-change]")).toContainText("paused");
-  // Nothing has run yet: the diff is the approval.
   await expect(ran(page)).toHaveCount(0);
 
   await dock.getByRole("button", { name: "Apply" }).click();

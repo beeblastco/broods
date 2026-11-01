@@ -117,7 +117,6 @@ describe("stream ownership check", () => {
       });
       const checkOwner = ownerCheckForStream(session);
 
-      // No proof yet: the first chunk reads, even this early in the process.
       await checkOwner({ type: "text-delta" });
       expect(reads).toHaveBeenCalledTimes(1);
 
@@ -133,7 +132,6 @@ describe("stream ownership check", () => {
       await checkOwner({ type: "waiting" });
       expect(reads).toHaveBeenCalledTimes(3);
 
-      // That read at 6000 is a proof until the interval passes.
       now.mockReturnValue(6_000 + OWNER_CHECK_INTERVAL_MS - 1);
       await checkOwner({ type: "text-delta" });
       expect(reads).toHaveBeenCalledTimes(3);

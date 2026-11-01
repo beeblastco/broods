@@ -8,12 +8,10 @@ import {
 
 let posthogLoggerProvider: LoggerProvider | null = null;
 
-/** Next.js instrumentation hook: warms the PostHog log provider on the Node runtime. */
 export function register(): void {
   getPostHogLoggerProvider();
 }
 
-/** Emits only log lines purpose-written for this PostHog integration. */
 export function emitPostHogDashboardLog(
   body: string,
   attributes: Record<string, string | number | boolean> = {},
@@ -30,17 +28,15 @@ export function emitPostHogDashboardLog(
   }
 }
 
-/** Best-effort: a failed export never fails the request that logged. */
 export async function flushPostHogDashboardLogs(): Promise<void> {
   try {
     await posthogLoggerProvider?.forceFlush();
   } catch {
-    // Dropped on purpose, same as the OTLP beacon forward.
+    // Best-effort: a failed export never fails the request that logged.
   }
 }
 
-// A dedicated provider, never the global one: existing dashboard loggers are
-// not exported. Null when PostHog is unconfigured or off the Node runtime.
+// Never the global provider: the dashboard's other loggers must not be exported.
 function getPostHogLoggerProvider(): LoggerProvider | null {
   if (process.env.NEXT_RUNTIME !== "nodejs") return null;
   if (posthogLoggerProvider) return posthogLoggerProvider;

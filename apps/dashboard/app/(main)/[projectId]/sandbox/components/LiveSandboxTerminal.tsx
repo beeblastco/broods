@@ -1,17 +1,10 @@
 "use client";
 
-/**
- * One shell in the sandbox dock: mints a sealed terminal ticket through Convex,
- * then bridges xterm.js to the gateway's terminal WebSocket. Raw bytes both
- * ways, no resize protocol. The shell is drawn when it mounts and keeps its
- * scrollback across reconnects; it connects only on the Connect button, which
- * stands over the empty shell and under the output once a session ends.
- */
-
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { toErrorMessage } from "@/app/lib/errors";
+import { observeResize } from "@/app/lib/observeResize";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import type { Terminal } from "@xterm/xterm";
@@ -25,9 +18,7 @@ type TerminalStatus = "idle" | "connecting" | "live" | "ended" | "error";
 interface Props {
   sandboxId: Id<"sandboxConfigs">;
   reservationKey: string;
-  /** Blocks connecting, e.g. while the instance is terminating. */
   disabled: boolean;
-  /** Names the shell under its first Connect button, e.g. "cfbox · Shell 2". */
   label: string;
 }
 
@@ -43,19 +34,15 @@ export function LiveSandboxTerminal({
   const socketRef = useRef<WebSocket | null>(null);
   const [term, setTerm] = useState<Terminal | null>(null);
   const [status, setStatus] = useState<TerminalStatus>("idle");
-  // Whether a session has opened yet: until then Connect stands over the
-  // empty shell, afterwards under its output.
   const [started, setStarted] = useState(false);
 
-  // The disposed flag stops a handleConnect still awaiting its ticket from
-  // opening a live PTY socket (which resumes a suspended instance) that
-  // nothing would close.
+  // A connect awaiting its ticket must not open a socket nothing closes: it resumes the instance.
   const disposedRef = useRef(false);
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- xterm on the DOM and the PTY socket
   useEffect(() => {
     disposedRef.current = false;
     const container = containerRef.current;
-    // Per run, not the ref: a remount clears the ref before the first run's
-    // import settles, and both would draw a terminal.
+    // Per run, not disposedRef: a remount resets the ref before this import settles.
     let cancelled = false;
     let dispose = (): void => {};
     // xterm touches the DOM at import time, so load it only in the browser.
@@ -65,9 +52,7 @@ export function LiveSandboxTerminal({
         import("@xterm/addon-fit"),
       ]);
       if (cancelled || !container) return;
-      // xterm measures its cell on a canvas, where a CSS variable does not
-      // resolve: it would size cells for a fallback font and space the real
-      // glyphs apart. Hand it the concrete stack and colors the classes set.
+      // xterm sizes cells on a canvas, where CSS variables do not resolve: pass concrete values.
       const style = getComputedStyle(container);
       const color = (token: string): string =>
         style.getPropertyValue(`--color-terminal-${token}`).trim();
@@ -87,16 +72,15 @@ export function LiveSandboxTerminal({
       next.loadAddon(fit);
       next.open(container);
       fit.fit();
-      // The dock is user-resizable, so the grid has to follow it.
-      const observer = new ResizeObserver(() => fit.fit());
-      observer.observe(container);
+      // No resize protocol: only the local grid follows the dock, the PTY keeps its size.
+      const stopResize = observeResize(container, () => fit.fit());
       const input = next.onData((data) => {
         const socket = socketRef.current;
         if (socket?.readyState === WebSocket.OPEN) socket.send(data);
       });
       dispose = (): void => {
         input.dispose();
-        observer.disconnect();
+        stopResize();
         next.dispose();
       };
       setTerm(next);
@@ -125,8 +109,7 @@ export function LiveSandboxTerminal({
       });
       if (disposedRef.current) return;
 
-      // The ticket rides the subprotocol, not the query string, which lands
-      // in access logs.
+      // The ticket rides the subprotocol: a query string lands in access logs.
       const socket = new WebSocket(
         `${endpoint.websocketBaseUrl}${ticket.websocketPath}`,
         ["broods.v1", `broods.token.${ticket.token}`],
@@ -213,7 +196,6 @@ export function LiveSandboxTerminal({
   );
 }
 
-// Dim, then reset: a note the dashboard writes between shell output.
 function note(text: string): string {
   return `\r\n\x1b[2m${text}\x1b[0m\r\n`;
 }

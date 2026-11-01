@@ -1,10 +1,6 @@
-/** Runtime-persistence calls shared by the harness and account cleanup. */
-
 import type { FunctionReturnType } from "convex/server";
 import { adminMutation, adminQuery, internal } from "./client.ts";
 
-// Exported so tests can verify each reference against the actual registered
-// Convex module export as well as the exact function path sent to Convex.
 export const runtimeQueries = {
   getAsyncAgentResult: internal.runtime.getAsyncAgentResult,
   getAsyncToolResult: internal.runtime.getAsyncToolResult,
@@ -65,11 +61,7 @@ export const runtimeMutations = {
 type RuntimeQueries = typeof runtimeQueries;
 type RuntimeMutations = typeof runtimeMutations;
 
-/**
- * Mutable call boundary used by focused core tests without a live deployment.
- * Mutations skip the client's process-wide FIFO queue, so concurrent runs never
- * wait on each other; a caller that needs an order awaits it.
- */
+// Mutations skip the client's FIFO so runs never wait on each other; await to keep an order.
 export const runtime = {
   query: function <Name extends keyof RuntimeQueries>(
     name: Name,

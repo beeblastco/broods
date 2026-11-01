@@ -1,5 +1,4 @@
 /// <reference types="vite/client" />
-/** `config.mcp` is keyed by mcp row id at rest, never by server name (#331). */
 
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -35,7 +34,6 @@ const mcpResource = {
 const t = (): TestConvex<typeof schema> => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-/** Seeds the org, account and owner membership a CLI sync writes against. */
 async function seedAccount(tt: T): Promise<Id<"accounts">> {
   return await tt.run(async (ctx) => {
     const now = Date.now();
@@ -70,7 +68,6 @@ async function seedAccount(tt: T): Promise<Id<"accounts">> {
   });
 }
 
-/** The synced mcp row plus the CLI's name → id record for the stage. */
 async function seedMcpServer(
   tt: T,
   accountId: Id<"accounts">,
@@ -141,7 +138,6 @@ const syncMcpServers = (
     },
   });
 
-/** The `config.mcp` core decrypts for a run, with every `${NAME}` resolved. */
 function runtimeMcpServers(
   tt: T,
   accountId: Id<"accounts">,
@@ -163,7 +159,6 @@ function runtimeMcpServers(
 }
 
 describe("cli sync rewrites config.mcp names to mcp row ids", () => {
-  // Agent config is written encrypted; the sync throws without a secret.
   beforeEach(() => {
     vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
   });
@@ -178,8 +173,7 @@ describe("cli sync rewrites config.mcp names to mcp row ids", () => {
 
     await syncMcpServers(tt, { [SERVER_NAME]: { enabled: true } });
 
-    // A name left in place fails normalizeMcpConfig at the next write,
-    // and the harness would never resolve the row.
+    // A leftover name fails normalizeMcpConfig on the next write, and no run resolves it.
     expect(await storedMcpServers(tt)).toEqual({
       [serverId]: { enabled: true },
     });
@@ -244,7 +238,6 @@ describe("cli sync resolves an mcp server's secret headers per agent", () => {
     vi.unstubAllEnvs();
   });
 
-  // The CLI copies a server's headers into each agent that connects it.
   test("bakes a ${NAME} header into the runtime config only", async () => {
     const tt = t();
     const accountId = await seedAccount(tt);

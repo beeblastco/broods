@@ -24,7 +24,6 @@ import {
 } from "./panels";
 import { toErrorMessage } from "@/app/lib/errors";
 
-/** The wait in an observability tab's full-height slot. */
 function ObservabilityLoading(): React.JSX.Element {
   return (
     <div className="flex h-full min-h-64 items-center justify-center">
@@ -33,17 +32,12 @@ function ObservabilityLoading(): React.JSX.Element {
   );
 }
 
-/** The wait in a padded tab column: the line a panel shows while it queries. */
 function ColumnLoading(): React.JSX.Element {
   return <p className="text-sm text-muted-foreground">Loading…</p>;
 }
 
-// Monitoring is the default tab and ships with the page, so the first paint
-// never waits on a second download. The other tabs and the key dialog load
-// the first time they are wanted. Each passes `loading`, which is what gives
-// it a Suspense boundary of its own: without one its download suspends up to
-// the route's loading.tsx. The option object is spelled out at each call:
-// Turbopack reads it statically.
+// `loading` gives each its own Suspense boundary instead of the route's loading.tsx.
+// Turbopack reads the options statically, so each call spells them out.
 const TracingPanel = dynamic(loadTracingPanel, {
   loading: ObservabilityLoading,
 });
@@ -60,8 +54,7 @@ export default function DashboardPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const searchParams = useSearchParams();
   const projectId = params.projectId as Id<"projects">;
-  // The header already holds the project list, so this answers from the
-  // client cache on a navigation instead of waiting one round trip.
+  // The list, not a get: the header's subscription answers it from cache on navigation.
   const projects = useQuery(api.project.list, {});
   const project =
     projects === undefined
@@ -71,15 +64,11 @@ export default function DashboardPage(): React.JSX.Element {
   const tab = pickTab(DASHBOARD_TABS, searchParams.get("tab"));
   const activeTab = tab.id;
 
-  // No panel renders before the project query answers. A cold load onto a
-  // split-out tab fetches its chunk alongside that query, not after it. A
-  // failed fetch stays quiet here; the panel's own load surfaces it.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- warms the tab chunk with the query
   useEffect(() => {
     void DASHBOARD_PANELS[activeTab]?.().catch((): void => {});
   }, [activeTab]);
 
-  // Source of projectSlug, stageSlug and endpointId: the observability WS and
-  // the session-storage key lookup are both keyed on them.
   const activeDeployment = useQuery(
     api.agent.deployments.getForStage,
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
@@ -87,15 +76,11 @@ export default function DashboardPage(): React.JSX.Element {
 
   const ensureKey = useMutation(api.agent.deployments.ensureForStage);
   const rotateKey = useMutation(api.agent.deployments.rotate);
-  // A key just minted in this view, scoped to its endpoint so switching
-  // stages never serves the wrong stage's key.
   const [generated, setGenerated] = useState<{
     endpointId: string;
     key: string;
   } | null>(null);
   const [generatingKey, setGeneratingKey] = useState(false);
-  // Scoped to the stage it occurred in so a stale error never leaks onto another
-  // stage after switching.
   const [keyError, setKeyError] = useState<{
     stageId: string;
     msg: string;
@@ -104,10 +89,7 @@ export default function DashboardPage(): React.JSX.Element {
   const keyDialogWanted = useEverTrue(keyDialogOpen);
   const [keyJustCreated, setKeyJustCreated] = useState(false);
 
-  // Streaming runs on a short-lived stage session any member can mint; null
-  // only for a cloned or older stage with no key yet (the prompt mints one).
   const stageSession = useStageSession(projectId, activeStageId);
-  // The permanent key and its created/last-used metadata; admin-only.
   const revealedKey = useQuery(
     api.agent.deployments.revealKeyForStage,
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
@@ -116,18 +98,14 @@ export default function DashboardPage(): React.JSX.Element {
     generated && generated.endpointId === activeDeployment?.endpointId
       ? generated.key
       : undefined;
-  // Ticket first: core refuses the permanent key a channel-session continue.
+  // Session first: core refuses a channel-session continue on the permanent key.
   const observabilityApiKey = stageSession ?? generatedKey;
   const copyableKey = generatedKey ?? revealedKey?.apiKey;
   const currentKeyError =
     keyError && keyError.stageId === activeStageId ? keyError.msg : null;
 
-  // Mint the stage's runtime key from the dashboard so a dashboard-first user
-  // (project created here, never through the CLI) can stream logs/traces. `ensure`
-  // creates one on first call and recovers it thereafter.
   const generateViewingKey = useCallback(async () => {
     if (!activeStageId) return;
-    // The key dialog opens once the mint answers; its chunk loads meanwhile.
     void loadRuntimeKeyDialog().catch((): void => {});
     setGeneratingKey(true);
     setKeyError(null);
@@ -138,8 +116,6 @@ export default function DashboardPage(): React.JSX.Element {
       });
       if (result.rawApiKey) {
         setGenerated({ endpointId: result.endpointId, key: result.rawApiKey });
-        // Surface the key + SDK usage immediately so a dashboard-first user knows
-        // how to wire it into their code, not just that streaming now works.
         setKeyJustCreated(true);
         setKeyDialogOpen(true);
       } else {
@@ -158,8 +134,7 @@ export default function DashboardPage(): React.JSX.Element {
     }
   }, [activeStageId, projectId, ensureKey]);
 
-  // Surfaces the new plaintext through the same `generated` channel the mint
-  // flow uses. The rejection propagates so the Rotate control shows it inline.
+  // No catch: the Rotate control shows the rejection inline.
   const rotateViewingKey = useCallback(async () => {
     if (!activeStageId) return;
     const result = await rotateKey({
@@ -174,8 +149,6 @@ export default function DashboardPage(): React.JSX.Element {
   const projectSlug = activeDeployment?.projectSlug;
   const stageSlug = activeDeployment?.stageSlug;
 
-  // The same skeleton the route's loading.tsx paints, so a client navigation
-  // does not flash skeleton → bare text → content.
   if (project === undefined) return <DashboardLoading />;
 
   if (project === null) {
@@ -186,8 +159,6 @@ export default function DashboardPage(): React.JSX.Element {
     );
   }
 
-  // Monitoring and tracing are dense, scroll-internally panels that fill the
-  // page edge to edge; billing stays narrow; usage keeps the chart width.
   const isObservabilityTab =
     activeTab === "monitoring" || activeTab === "tracing";
   const contentMaxWidth =
@@ -197,8 +168,6 @@ export default function DashboardPage(): React.JSX.Element {
         ? "max-w-none"
         : "max-w-7xl";
 
-  // While the reveal query is still resolving, hold a quiet loader instead of
-  // flashing the "generate a key" prompt. That prompt is only the true-absence state.
   const keyResolving =
     Boolean(activeStageId) &&
     stageSession === undefined &&
@@ -280,8 +249,6 @@ export default function DashboardPage(): React.JSX.Element {
 
   return (
     <div className="flex h-full">
-      {/* Content area: observability tabs own their internal scroll and fill
-          the height; other tabs scroll the whole column. */}
       <div
         className={cn(
           "flex flex-1 flex-col",

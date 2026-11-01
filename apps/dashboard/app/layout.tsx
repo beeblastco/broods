@@ -11,7 +11,6 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Broods Dashboard",
   description: "",
-  // Everything past sign-in is behind auth; nothing here is for search engines.
   robots: { index: false, follow: false },
 };
 
@@ -21,14 +20,13 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>): Promise<React.JSX.Element> {
   const initialSession = await initialSessionFromRequest();
-  // Resolve the Convex host while the HTML streams. Not preconnect: a WebSocket never reuses a pooled connection.
+  // DNS only, not preconnect: a WebSocket never reuses a pooled connection.
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (convexUrl) prefetchDNS(convexUrl);
 
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
-        {/* View state lives in the URL (app/lib/urlState.ts); writes are shallow. */}
         <NuqsAdapter>
           <ConvexClientProvider initialSession={initialSession}>
             {children}
@@ -39,22 +37,15 @@ export default async function RootLayout({
   );
 }
 
-/**
- * Resolved on the server so the client mounts already signed in, instead of
- * asking a server action who the user is. The token itself stays out of the
- * HTML: the proxy's `eagerAuth` cookie carries it to the browser. Without the
- * proxy header there is no session to read: the not-found page for an asset
- * path the proxy matcher skips renders through this layout too. A self-hosted
- * stack reads its own session cookie, and hands the client the token so the
- * Convex client authenticates without a round trip.
- */
 async function initialSessionFromRequest(): Promise<InitialSession> {
   if (selfHosted) {
     return { kind: "selfHost", session: await currentSession() };
   }
+  // The not-found page of an asset path the proxy matcher skips renders here with no session.
   if (!(await headers()).has("x-workos-middleware")) {
     return { initialAuth: { user: null }, kind: "workos" };
   }
+  // The token stays out of the HTML: the proxy's `eagerAuth` cookie carries it.
   const { accessToken: _accessToken, ...initialAuth } = await withAuth();
 
   return { initialAuth: initialAuth, kind: "workos" };

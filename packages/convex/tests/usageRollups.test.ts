@@ -23,9 +23,8 @@ const DAY_MS = 24 * HOUR_MS;
 const t = () => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-// fetchUsageStats itself needs the WorkOS AuthKit component that convex-test
-// does not register here (see projectScope.test.ts), so the reader test hits
-// the exported grain-selection and row-collection helpers it delegates to.
+// fetchUsageStats needs the WorkOS component convex-test does not register, so the reader
+// test hits the grain-selection and row-collection helpers it delegates to.
 
 async function seedAccount(tt: T): Promise<Id<"accounts">> {
   return await tt.run(async (ctx) => {
@@ -81,8 +80,7 @@ test("recordTaskUsage folds each sample into 5m, hour, and day buckets", async (
     internal.usage.recordTaskUsage,
     taskUsageArgs(accountId, "task-1", FINISHED_AT),
   );
-  // Same hour, different 5-minute window: must open a second 5m bucket but
-  // accumulate into the existing hour and day buckets.
+  // Same hour, new 5-minute window: a second 5m bucket, but the same hour and day buckets.
   await tt.mutation(
     internal.usage.recordTaskUsage,
     taskUsageArgs(accountId, "task-2", FINISHED_AT + 10 * 60 * 1000),

@@ -1,14 +1,8 @@
-/**
- * The in-VM half of a lambda snapshot. AWS cannot capture a running MicroVM, so
- * a snapshot is an image build: the VM tars every file changed since it started,
- * appends `ADD <tar> /` to the Dockerfile of the image it booted from, and
- * uploads the result for core to hand to CreateMicrovmImage.
- */
+// AWS cannot capture a running MicroVM, so a snapshot is an image build: the VM tars what
+// changed since it started and appends `ADD <tar> /` to the Dockerfile of its source image.
 
 import { shellQuote } from "./utils.ts";
 
-// Paths a snapshot never carries: kernel and runtime trees, scratch space, the
-// workspace mount (S3 keeps it), and the snapshot's own work directory.
 const SKIPPED_ROOTS = [
   "/proc",
   "/sys",
@@ -20,12 +14,9 @@ const SKIPPED_ROOTS = [
   "/mnt",
   "/lost+found",
 ];
-// A larger capture is refused: an image that big would boot slowly anyway. The
-// rebuilt zip, which also carries the source image, must fit one presigned PUT.
 export const MAX_SNAPSHOT_BYTES = 4 * 1024 ** 3;
+// The most S3 takes in one presigned PUT.
 const MAX_UPLOAD_BYTES = 5 * 1024 ** 3;
-// Files changed slightly before the reported start still count, and a VM clock
-// further off than this is refused, since it could hide changed files.
 const START_SLACK_SECONDS = 60;
 const MAX_CLOCK_SKEW_SECONDS = 300;
 
@@ -110,11 +101,6 @@ finally:
     shutil.rmtree(work, ignore_errors=True)
 `;
 
-/**
- * The shell command and environment that capture a running VM for one snapshot.
- * `startedAt` is when GetMicrovm says the VM first started; `sourceUrl` reads the
- * zip of the image it booted from and `uploadUrl` takes the rebuilt zip.
- */
 export function snapshotCapture(input: {
   snapshotId: string;
   startedAt: Date;

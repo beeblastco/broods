@@ -1,8 +1,4 @@
-/**
- * Core's publisher for one WebSocket run's response stream.
- * The subject scheme, stream setup and read paths live in `shared/nats.ts`,
- * which the gateway also compiles, so anything that logs stays here.
- */
+// Apart from shared/nats.ts, which the gateway also compiles: anything that logs stays here.
 
 import { headers as natsHeaders } from "nats.ws";
 import {
@@ -21,21 +17,17 @@ import {
   type NatsStreamEvent,
 } from "../shared/nats.ts";
 
-// nats-server's default max_payload, used until the server INFO says otherwise.
 const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024;
-// Shared so token publishing does not allocate an encoder per chunk.
 const ENCODER = new TextEncoder();
-// Room for the Nats-Msg-Id header, which also counts against max_payload.
+// Headers (Nats-Msg-Id) count against max_payload too.
 const HEADER_ALLOWANCE_BYTES = 1024;
-// Kept on a frame whose payload was dropped, so a client can still pair it.
 const TRUNCATED_FRAME_KEPT_FIELDS = [
   "id",
   "toolCallId",
   "toolName",
   "eventId",
 ] as const;
-// The frame's structure: never scrubbed, so a generated id that happens to
-// contain a secret substring still matches its stream. Every other field is.
+// Never scrubbed, so an id that happens to contain a secret still matches its stream.
 const STRUCTURAL_FRAME_FIELDS = new Set<string>([
   "type",
   "approvalId",
@@ -47,15 +39,9 @@ export class LiveNatsPublisher implements NatsPublisher {
   private streamReady: Promise<void> | null = null;
   private readonly subject: string;
   private sequence = 0;
-  // The scrub list and the context secrets it was built from: rebuilt only
-  // when the run swaps its context, not for every token.
   private scrubValues: string[] | null = null;
   private scrubValuesFor: readonly string[] | undefined;
 
-  /**
-   * @param secretValues the run's resolved secrets, as `collectSecretValues`
-   *   gathers them; the stream is retained, so they never reach it in clear
-   */
   constructor(
     private readonly headers: NatsEventHeaders,
     private readonly secretValues: readonly string[] = [],
@@ -67,7 +53,6 @@ export class LiveNatsPublisher implements NatsPublisher {
     );
   }
 
-  /** Flushes this run's publishes. The connection is shared, so it stays open. */
   async close(): Promise<void> {
     if (!this.connectionPromise) return;
     try {
@@ -82,18 +67,14 @@ export class LiveNatsPublisher implements NatsPublisher {
     const connection = await this.getConnection().catch((): null => null);
     if (!connection) return;
     try {
-      // Ensure the stream exists before the first publish so it captures from the
-      // first token; memoized, so later tokens skip straight to publishing.
       if (!this.streamReady) {
         this.streamReady = ensureResponseStream(connection);
       }
       await this.streamReady;
 
       this.sequence++;
-      // Core publish: fire-and-forget at core-NATS speed for live subscribers,
-      // while the bound stream captures the same message for replay. Nats-Msg-Id
-      // makes it idempotent within the stream's duplicate_window so a retry never
-      // stores a duplicate.
+      // Core publish for live-subscriber speed; the bound stream still captures it,
+      // and Nats-Msg-Id dedupes a retry within the stream's duplicate_window.
       const hdrs = natsHeaders();
       hdrs.set("Nats-Msg-Id", `${this.headers.eventId}:${this.sequence}`);
       connection.publish(
@@ -110,12 +91,7 @@ export class LiveNatsPublisher implements NatsPublisher {
     }
   }
 
-  /**
-   * nats.js throws on a frame over max_payload, which publish would swallow.
-   * The same frame type goes out without its payload instead, marked
-   * `truncated`, so a `done` still ends the stream and the full result stays
-   * readable from the run status.
-   */
+  // nats.js throws over max_payload; a payload-less frame still lets `done` end the stream.
   private encodeWithinLimit(
     connection: NatsConnection,
     data: Record<string, unknown>,
@@ -143,11 +119,7 @@ export class LiveNatsPublisher implements NatsPublisher {
     return ENCODER.encode(JSON.stringify(this.envelope(truncated)));
   }
 
-  /**
-   * The frame with everything but its structure scrubbed against the run's
-   * secrets. The run adds its sandbox and workspace secrets to the
-   * observability context once it starts, so those are read at publish time.
-   */
+  // Sandbox and workspace secrets join the context after the run starts: read per publish.
   private redactPayload(
     data: Record<string, unknown>,
   ): Record<string, unknown> {
@@ -175,8 +147,7 @@ export class LiveNatsPublisher implements NatsPublisher {
     };
   }
 
-  // Memoized per run, failure included: re-dialing per chunk would make every
-  // awaited publish wait out a connect timeout. The failure is logged once.
+  // Failure memoized too: re-dialing per chunk would make each publish wait out a timeout.
   private getConnection(): Promise<NatsConnection> {
     if (!this.connectionPromise) {
       const shared = getSharedNatsConn();

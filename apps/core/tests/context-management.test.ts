@@ -1,8 +1,3 @@
-/**
- * Session context: system context, pruning, stored-item persistence and
- * projection, context prepare, and auto-compaction with its summary.
- */
-
 import { APICallError } from "@ai-sdk/provider";
 import {
   afterAll,
@@ -67,7 +62,6 @@ await mock.module("ai", () => ({
   generateText: generateTextMock,
 }));
 
-// Spread the real module first so its other exports keep working for the code under test.
 await mock.module("../src/shared/s3.ts", () => ({
   ...actualS3,
   isMissingS3Error: (error: unknown) =>
@@ -245,8 +239,7 @@ describe("session system context", () => {
     )?.content;
     const environment = session.environmentText();
 
-    // A timestamp in the system prompt would invalidate the prompt cache for
-    // everything after it; the environment block goes last instead.
+    // A timestamp in the system prompt would break the prompt cache; it goes in <environment>.
     expect(schedulerPrompt).toContain("The current time is in <environment>");
     expect(schedulerPrompt).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
     expect(environment).toMatch(
@@ -301,18 +294,15 @@ describe("session system context", () => {
       message.content.includes("<workspace>"),
     )?.content;
     expect(memoryPrompt).toContain("Remember stable project facts.");
-    // No sandbox in this test mock => read-only workspace: only read/glob are advertised.
+    // No sandbox in this mock: a read-only workspace, so no memory_save and no <memory> block.
     expect(workspacePrompt).toContain("read, glob");
     expect(workspacePrompt).toContain("[read-only");
     expect(workspacePrompt).not.toContain("write");
-    // The memory index is loaded as a separate system message, not wired into the workspace guidance.
     expect(workspacePrompt).not.toContain("MEMORY.md");
-    // The index lives inside the memory/ folder, not at the workspace root.
     expect(readS3TextMock).toHaveBeenCalledWith(
       "filesystem",
       expect.stringContaining("/memory/MEMORY.md"),
     );
-    // Read-only workspace => no memory_save => no <memory> guidance block.
     expect(
       enabledContext.system.some((message) =>
         message.content.startsWith("<memory>"),
@@ -348,7 +338,6 @@ describe("session system context", () => {
         },
       }) as never;
 
-    // Sandbox-backed workspace: the block names this conversation's scope as originSessionId.
     setStorageForTests(storageWithSandbox({ storage: { provider: "s3" } }));
     const writable = await newSession(
       {
@@ -373,8 +362,7 @@ describe("session system context", () => {
     )?.content;
     expect(workspacePrompt).toContain("memory_save");
 
-    // harness.memory opt-out is total: no tool guidance, no index in context even
-    // when the file exists, and the workspace guidance stops recommending memory.
+    // harness.memory opt-out drops the guidance and the index, even when the file exists.
     setStorageForTests(
       storageWithSandbox({
         storage: { provider: "s3" },
@@ -472,8 +460,6 @@ describe("session system context", () => {
 });
 
 describe("session pruning", () => {
-  // Old tool calls are pruned, but a screenshot a tool returned stays in view
-  // on every later turn.
   it("keeps an earlier tool's image when its call is pruned", async () => {
     const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
     const screenshot = {
@@ -772,7 +758,6 @@ describe("stored item persistence", () => {
         agentConfig: {},
         ownerGeneration: 3,
       });
-      // The AI SDK harness path hands over a whole run at once.
       const answer = "x".repeat(2 * 1_024 * 1_024);
       const cursors = await session.persistModelMessages(
         Array.from({ length: 6 }, () => ({
@@ -878,8 +863,6 @@ describe("stored item projection", () => {
     content: assistantContent,
   };
 
-  // One stored assistant row, so the assertion is purely on how projection
-  // treats its recorded producer.
   async function projectedMessages(
     model: string | undefined,
   ): Promise<actualAi.ModelMessage[]> {
@@ -1079,12 +1062,10 @@ describe("context prepare", () => {
 
       expect(turnContext.messages).toHaveLength(3);
       expect(turnContext.timings?.phases.historyRows).toBe(3);
-      // One S3 read for the memory index, one for the skill, before the
-      // system prompt was built.
+      // One S3 read for the memory index, one for the skill.
       expect(readS3TextMock).toHaveBeenCalledTimes(2);
 
-      // prepareStep rebuilds the prompt before every step: same reads, no S3.
-      // The run's ephemeral system comes after the stored parts.
+      // prepareStep rebuilds the prompt before every step from the same reads, without S3.
       const refreshed = await session.loadRefreshedSystemPromptParts({
         systemContextSnapshot: turnContext.systemContextSnapshot,
         ephemeralSystem: [{ role: "system", content: "Reply in Dutch." }],
@@ -1204,8 +1185,7 @@ describe("context prepare", () => {
     const { runtime } = await import("../src/shared/convex/runtime.ts");
     const originalQuery = runtime.query.bind(runtime);
     const originalMutate = runtime.mutate.bind(runtime);
-    // A context-only channel message, written without the lease after the
-    // input's cursor was minted but before the input's write landed.
+    // Written without the lease after the input's cursor was minted, before its write landed.
     const newer: StoredConversationEventPage["page"][number] = {
       cursor: "9999-12-31T00:00:00.000Z#context#0000",
       event: {
@@ -1240,8 +1220,7 @@ describe("context prepare", () => {
     }
   });
 
-  // The row cannot hold a base64 picture, but the turn it arrived in must show
-  // it: the context is rebuilt from rows, so the bytes are put back by cursor.
+  // Context is rebuilt from rows, so the turn's own image bytes are put back by cursor.
   it("shows the turn's own base64 image while its row drops it", async (): Promise<void> => {
     const { runtime } = await import("../src/shared/convex/runtime.ts");
     const originalMutate = runtime.mutate.bind(runtime);
@@ -1602,7 +1581,6 @@ describe("conversation summary", () => {
         instructions: "keep the deploy decisions",
       });
 
-      // Every message reached a summary call: nothing was dropped to fit.
       for (const marker of [
         "Earlier summary.",
         "oldest-",
@@ -1625,7 +1603,6 @@ describe("conversation summary", () => {
       expect(summary?.usage.totalTokens).toBe(
         answered * SUMMARY_USAGE.totalTokens,
       );
-      // The older half's summary is labelled older, the newer half's newer.
       const merge = requests.find((request) =>
         request.startsWith("Older part:"),
       );
@@ -1673,7 +1650,6 @@ describe("conversation summary", () => {
         agentConfig: compactingAgentConfig,
       }).catch((error: unknown): unknown => error);
 
-      // Both halves were answered, and billed, before the merge was refused.
       expect(failure).toMatchObject({
         message: expect.stringContaining("prompt is too long"),
         spent: {
@@ -1768,10 +1744,7 @@ describe("conversation summary", () => {
   });
 });
 
-/**
- * A session whose identity fields none of these tests assert on. Imported per
- * call rather than at module scope so the mocks above are installed first.
- */
+// Imported per call so the module mocks above are installed first.
 async function newSession(
   agentConfig: AgentConfig,
   conversationKey: string = "conversation",
@@ -1787,8 +1760,6 @@ async function newSession(
   });
 }
 
-// Replaces the Convex page load with the given rows until restored, so a test
-// controls the history a turn starts from.
 async function stubHistory(
   page: StoredConversationEventPage["page"],
 ): Promise<{ reads: unknown[]; restore: () => void }> {

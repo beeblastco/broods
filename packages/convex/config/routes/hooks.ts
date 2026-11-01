@@ -1,9 +1,3 @@
-/**
- * Hooks CRUD (`/v1/hooks*`): list/create on the collection, get/patch/delete
- * by id. Bundle bytes go to S3 via awsBundles; metadata lives in the
- * accountHooks table.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -67,7 +61,6 @@ export async function handleHookRoute(
   return methodNotAllowed(["GET", "PATCH", "DELETE"]);
 }
 
-/** Collection verbs: list hooks on GET, upload and create on POST. */
 async function handleHookCollectionRoute(
   ctx: ActionCtx,
   req: Request,
@@ -129,7 +122,6 @@ async function handleHookCollectionRoute(
   return methodNotAllowed(["GET", "POST"]);
 }
 
-/** PATCH one hook: optional bundle replacement (skipped when sha matches) plus metadata. */
 async function patchHookRoute(
   ctx: ActionCtx,
   req: Request,
@@ -146,8 +138,7 @@ async function patchHookRoute(
   const upload = await normalizeAccountHookUpload(await req.json(), {
     requireBundle: false,
   });
-  // Skip the S3 round-trip when the uploaded bundle matches what the hook
-  // already stores; the key is content-addressed by sha so nothing changes.
+  // The key is content-addressed by sha, so an unchanged bundle skips the S3 write.
   const bundleStorageKey =
     upload.bundle !== undefined && upload.sha256 !== undefined
       ? upload.sha256 === existing.sha256
@@ -193,10 +184,6 @@ async function patchHookRoute(
     : jsonError(404, "Hook not found");
 }
 
-/**
- * @param record the accountHooks document
- * @returns the public record with hookId and ISO timestamps
- */
 function toPublicAccountHook(
   record: Doc<"accountHooks">,
 ): Record<string, unknown> {

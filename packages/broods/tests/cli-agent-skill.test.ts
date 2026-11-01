@@ -11,12 +11,6 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-/**
- * `broods init` and `broods dev` vendor the broods skill for coding agents
- * into repos that already work with one, and leave everything else alone:
- * no marker file means no install, and an existing install is not rewritten.
- */
-
 const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
 const SKILL_PATH = join(".agents", "skills", "broods", "SKILL.md");
 const ONBOARD_PATH = join(

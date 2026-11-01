@@ -2,11 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Edge, Node } from "@xyflow/react";
 import { focusedNodeIds } from "../app/lib/canvasFocus";
 
-/**
- * One agent over two sandboxes and two workspaces: `mounted` overrides onto
- * `cloud`, `wiki` inherits the agent's first sandbox, and `callee` is a
- * subagent with a resource of its own.
- */
+// wiki has no mount edge: it inherits cloud, the agent's first sandbox.
 const NODES: Node[] = [
   node("agent", "agent", { sandboxOrder: ["cloud", "spare"] }),
   node("callee", "agent"),
@@ -28,8 +24,7 @@ const EDGES: Edge[] = [
 ];
 
 describe("focusedNodeIds", () => {
-  // A sandbox carries on to its other workspaces: they share the disk, so the
-  // whole mount neighbourhood lights up from any card in it.
+  // Workspaces on one sandbox share its disk, so the whole neighbourhood lights up.
   test("a stored mount lights up from either end", () => {
     expect(focusedNodeIds(NODES, EDGES, ["mounted"])).toEqual(
       new Set(["mounted", "cloud", "wiki"]),

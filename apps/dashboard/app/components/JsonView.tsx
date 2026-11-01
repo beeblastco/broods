@@ -5,11 +5,7 @@ import type { JSONValue } from "convex/values";
 import { ChevronRight } from "lucide-react";
 import { memo, useState } from "react";
 
-/**
- * Read-only JSON tree for payload panes. Every object and array folds, and a
- * string with line breaks reads as a text block instead of escaped `\n`.
- * Memoized: a live run re-renders the pane on every stream message.
- */
+// Memoized: a live run re-renders the pane on every stream message.
 export const JsonView = memo(function JsonView({
   value,
 }: {
@@ -22,7 +18,6 @@ export const JsonView = memo(function JsonView({
   );
 });
 
-/** One key and value; objects and arrays carry the fold toggle in the gutter. `index` names an array item. */
 function JsonNode({
   index,
   name,
@@ -119,7 +114,6 @@ function JsonNode({
   );
 }
 
-/** A leaf value in its syntax color; multi-line strings become a text block. */
 function JsonScalar({
   value,
 }: {

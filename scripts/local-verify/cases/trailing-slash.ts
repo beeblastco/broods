@@ -5,11 +5,6 @@ interface Answer {
   body: string;
 }
 
-/**
- * A trailing slash never moves a request to the other plane: the edge matches
- * it on every route and strips it before the upstream call, so config, health
- * and core's refusal of an internal path answer the same with or without it.
- */
 export async function trailingSlash(context: VerifyContext): Promise<void> {
   const send = async (method: string, path: string): Promise<Answer> => {
     const response = await fetch(`${context.edgeUrl}${path}`, {
@@ -43,7 +38,6 @@ export async function trailingSlash(context: VerifyContext): Promise<void> {
   );
 }
 
-/** A failed step's detail: the status and the start of the body. */
 function detail(answer: Answer): string {
   return `${answer.status} ${answer.body.slice(0, 200)}`;
 }

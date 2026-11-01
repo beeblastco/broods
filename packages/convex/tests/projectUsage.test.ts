@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * The usage meter split by project: what lands on a project's day from the
- * sandbox mirror, core's writes and the storage snapshot, and the Usage
- * tab's read of each project's month.
- */
 
 import cronsComponent from "@convex-dev/crons/test";
 import workosTest from "@convex-dev/workos-authkit/test";
@@ -37,8 +32,7 @@ afterEach(() => {
 
 describe("usage lands on its project's day", () => {
   test("a sandbox in a project bills the project and the account; an account-wide one only the account", async () => {
-    // Seed before NOW: each commit moves the next transaction's clock past it,
-    // so the machines would start late.
+    // Seed before NOW: each commit advances the clock, so the machines would start late.
     vi.useFakeTimers({ now: NOW - 1000 });
     const t = meterTest();
     const org = await seedOrg(t, "beeblast", ["Support bot"]);
@@ -314,8 +308,7 @@ describe("projectUsage", () => {
         })),
       });
     };
-    // Sales held 3 GB yesterday; today its workspaces are gone, so the
-    // snapshot sends no share for it.
+    // Sales held 3 GB yesterday and has no workspaces today, so it gets no share.
     await snapshot(NOW - DAY_MS, 8, [
       [support, 4],
       [sales, 3],
@@ -511,7 +504,7 @@ async function readProjects(t: T, org: Org, month: string) {
   });
 }
 
-/** Seed AuthKit's verified user projection without replacing its getAuthUser implementation. */
+// Seeds through AuthKit's webhook so its real getAuthUser finds the user.
 async function seedAuthUser(t: T): Promise<void> {
   const now = new Date().toISOString();
   await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {

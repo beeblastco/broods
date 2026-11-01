@@ -1,10 +1,3 @@
-/**
- * Bash tool. Runs a shell command in the sandbox (real bash + python3 + node).
- * Stateless when no workspace is attached (ephemeral container per call);
- * workspace-backed when one is, with files persisting on the mount. Each
- * workspace runs on its own effective sandbox and inherits its permissionMode.
- */
-
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import { getHarnessPublicUrl } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
@@ -47,14 +40,12 @@ import {
 } from "./filesystem-utils.ts";
 import { toolError, toolText } from "./utils.ts";
 
-// What every no-mount run has in common, so the schema and the notes never drift.
 const THROWAWAY_NOTE =
   "Nothing written there reaches durable storage, so use it for throwaway work";
 
 interface BashInput {
   command: string;
   workspace?: string;
-  // A sandbox name; anything else is refused.
   sandbox?: unknown;
   background?: boolean;
   pty?: boolean;
@@ -82,10 +73,8 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           if (onSandbox !== undefined && selected === undefined) {
             return toolError("Error: sandbox must be the name of a sandbox");
           }
-          // Resolved before the workspace fallback so a name that picks nothing
-          // selectable is refused instead of quietly landing in the default workspace.
+          // Before the workspace fallback: a name that picks nothing must throw, not run elsewhere.
           const picked = resolveAgentSandbox(context, selected);
-          // Same rule as the approval gate and policy input: a named sandbox wins.
           const onAgentSandbox = targetsAgentSandbox(context, {
             workspace: workspace,
             sandbox: selected,
@@ -97,8 +86,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
             onAgentSandbox && workspace !== undefined
               ? `Note: ran on sandbox ${picked?.name} with no workspace mounted; workspace ${workspace} was ignored. Omit sandbox to run in a workspace.\n`
               : "";
-          // A read-only workspace must not fall through to the default sandbox: the
-          // approval gate skipped it expecting this refusal.
+          // A read-only workspace must not fall back to the default sandbox: the gate skipped it.
           const sandbox = ws ? ws.sandbox : picked?.sandbox;
           if (!sandbox) {
             return toolError("Error: no sandbox available for this command");
@@ -115,8 +103,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           if (disallowed) {
             return toolError(disallowed);
           }
-          // The PTY wrapper is applied after the policy guards so they always
-          // inspect the real command, never the `script` wrapper.
+          // PTY-wrapped only after the guards, so they inspect the real command.
           const effective = pty === true ? ptyCommand(trimmed) : trimmed;
           if (background === true) {
             return await dispatchBackground(
@@ -153,8 +140,6 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
   };
 }
 
-// Background jobs need a persistent workspace sandbox (to outlive the request)
-// and a parent session to track the job as an AsyncToolResult.
 function backgroundAvailable(context: SandboxToolContext): boolean {
   return (
     Boolean(context.background) &&
@@ -177,8 +162,6 @@ function description(context: SandboxToolContext): string {
   if (context.workspaces.length === 0) {
     const defaultSandbox = context.sandboxes?.[0]?.sandbox;
     const runtimes = runtimeDescription(defaultSandbox);
-    // A reserved default reconnects every call, so calling it stateless would
-    // contradict what the model sees persist.
     const reserved = isReservedStandalone(defaultSandbox);
     const kind = reserved ? "a reserved" : "an ephemeral";
     const state = reserved
@@ -245,8 +228,7 @@ async function dispatchBackground(
     );
   }
 
-  // Create the tracking row BEFORE launching so a fast job's callback
-  // can never arrive before the row exists.
+  // Row before launch, so a fast job's callback never arrives before it exists.
   await createDetachedAsyncToolResult({
     eventId: context.background.eventId,
     tag: "async-bg",
@@ -260,8 +242,6 @@ async function dispatchBackground(
       jobId: jobId,
       command: command,
     },
-    // Push the result back to the originating channel/WebSocket when known;
-    // otherwise it settles for status polling only.
     delivery: context.background.delivery ?? { kind: "async" },
     completionToken: completionToken,
   });
@@ -278,8 +258,7 @@ async function dispatchBackground(
         ...(callback ? { callback: callback } : {}),
       },
     );
-    // Only the launch knows which machine took the job, so the fence lands after
-    // it, off the tool's return path. A job that reports first settles unfenced.
+    // Only the launch knows the machine; a job that reports before this settles unfenced.
     void bindAsyncToolResultSandbox(resultId, {
       provider: ws.sandbox.provider,
       reservationKey: ws.namespace,
@@ -313,8 +292,6 @@ async function dispatchBackground(
     : `You can use async_status with this statusId to read the completed result after delivery; this sandbox does not support live log tailing or stop controls.`;
 
   return toolText(
-    // statusId is the model-facing name; the stored row keeps resultId, like every
-    // other async tool result.
     `Started background job ${jobId} (statusId: ${resultId}). ${delivery} ` +
       controls,
   );
@@ -353,8 +330,6 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
   };
 }
 
-// A workspace-less run reconnects on options.reservationKey (derived per agent by
-// resolveAgentRuntime, or pinned). No key means nothing survives.
 function isReservedStandalone(
   sandbox: SandboxExecutorConfig | undefined,
 ): boolean {
@@ -364,8 +339,6 @@ function isReservedStandalone(
   );
 }
 
-// Scenario note: these workspaces sit on the agent's OWN reserved sandbox, so the
-// machine around them is the agent's too and the durability guard steps aside.
 function ownSandboxNote(context: SandboxToolContext): string {
   const names = context.workspaces
     .filter((workspace): boolean => writesOutsideAllowed(workspace, context))
@@ -378,16 +351,11 @@ function ownSandboxNote(context: SandboxToolContext): string {
 - Your own reserved sandbox backs ${names.join(", ")}: the whole filesystem there is yours and survives between calls, so writing outside the workspace directory is allowed. It still dies with the reservation — keep anything that must outlive it in the workspace directory.`;
 }
 
-// Attach the command to a real pseudo-terminal inside the guest (util-linux
-// `script`): programs see isatty()=true and a normal terminal line discipline,
-// which is what interactive-only CLIs and TTY-gated output paths check for.
+// util-linux `script` attaches a real TTY, for programs that check isatty().
 function ptyCommand(command: string): string {
   return `script -qec ${shellQuote(command)} /dev/null`;
 }
 
-// Scenario note: a reserved sandbox the agent only borrows. Its filesystem does
-// survive between calls, but the durability bullet above is about what outlives the
-// reservation, and saying nothing here would read as "this resets every call".
 function reservedNote(context: SandboxToolContext): string {
   const names = context.workspaces
     .filter(
@@ -412,9 +380,6 @@ function reservedStandaloneNote(sandbox: SandboxExecutorConfig): string {
   return ` That sandbox is reserved, so its own filesystem does survive between calls until the reservation ends — but only the workspace outlives it.`;
 }
 
-// Scenario note: a mount-s3 workspace refuses rename and append, which in-place
-// editors and `>>` rely on, and the failure ("Function not implemented") reads
-// like a broken tool.
 function s3MountNote(context: SandboxToolContext): string {
   const mounted = context.workspaces.some(
     (workspace): boolean =>
@@ -429,8 +394,6 @@ function s3MountNote(context: SandboxToolContext): string {
 - The workspace is an S3 mount with no rename or append: \`sed -i\`, \`mv\` and \`>>\` on its files fail. Use edit/write, or work in /tmp and \`cp\` back.`;
 }
 
-// Scenario note: the sandboxes a call can pick by name, the default first when
-// nothing mounts it. One list, so `sandbox` never means two different things.
 function sandboxesNote(context: SandboxToolContext): string {
   const choices = sandboxParamChoices(context);
   if (choices.length === 0) {
@@ -439,7 +402,6 @@ function sandboxesNote(context: SandboxToolContext): string {
   const entries = choices.map((choice): string => {
     const isDefault = choice === context.sandboxes?.[0];
     const label = choice.description ?? (isDefault ? "your own sandbox" : "");
-    // With no workspace the description already covers the default's persistence.
     const reserved =
       isDefault && context.workspaces.length > 0
         ? reservedStandaloneNote(choice.sandbox)
@@ -453,10 +415,6 @@ function sandboxesNote(context: SandboxToolContext): string {
 ${entries.map((entry): string => `  - ${entry}`).join("\n")}`;
 }
 
-// What the `sandbox` param offers. A lone default with no workspace is where bash
-// already runs, so it earns no field; beside a workspace or another sandbox it is a
-// choice.
-// `sandbox` names the sandbox to run on.
 function sandboxParamSchema(
   context: SandboxToolContext,
 ): JSONSchema7 | undefined {
@@ -474,8 +432,6 @@ function sandboxParamSchema(
   };
 }
 
-// Scenario note: the per-call limit the model plans around, one figure per
-// distinct limit among the sandboxes a call can reach; none, no note.
 function timeoutNote(context: SandboxToolContext): string {
   const reachable = [
     ...context.workspaces.map(
@@ -498,9 +454,6 @@ function timeoutNote(context: SandboxToolContext): string {
 - Each call is limited to ${limits.map((seconds): string => `${seconds}s`).join(" or ")}; past it the call fails.`;
 }
 
-// The write guard is not on everywhere: it steps aside on the agent's own reserved
-// sandbox, so claiming "writes elsewhere are rejected" there would be a lie the model
-// then works around. Stay silent when every workspace is exempt.
 function writeGuardNote(context: SandboxToolContext): string {
   const guarded = context.workspaces.filter(
     (workspace): boolean => !writesOutsideAllowed(workspace, context),

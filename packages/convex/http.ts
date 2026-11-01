@@ -1,8 +1,3 @@
-/**
- * HTTP route registration: AuthKit, the Stripe webhook, the CLI routes, and the
- * config-plane routes the gateway forwards here.
- */
-
 import { processEvent } from "@convex-dev/stripe";
 import { httpRouter } from "convex/server";
 import Stripe from "stripe";
@@ -25,8 +20,7 @@ import { reconcileSubscription } from "./stripe";
 
 const http = httpRouter();
 
-// A self-hosted stack has no WorkOS, and its AuthKit holds a placeholder
-// webhook secret anyone could sign with, so the webhook is not mounted.
+// Self-hosted AuthKit holds a placeholder webhook secret anyone could sign with.
 if (authProvider() === "workos") authKit.registerRoutes(http);
 
 http.route({
@@ -59,8 +53,6 @@ http.route({
   handler: cliOnboardingHttp,
 });
 
-// Bare `/v1/account/projects` only: the `/v1/account/projects/` prefix routes
-// below carry a project name and belong to the project-key handler.
 http.route({
   path: "/v1/account/projects",
   method: "GET",
@@ -109,9 +101,6 @@ http.route({
   handler: cliHttp,
 });
 
-// Public config-plane surface: account metadata/rotation, connections,
-// agents, skills, mcp, hooks, workspace files, crons, workspaces, sandbox configs,
-// and policies, forwarded here by the gateway.
 http.route({ path: "/v1/account", method: "GET", handler: configHttp });
 http.route({ path: "/v1/account", method: "PATCH", handler: configHttp });
 http.route({
@@ -211,7 +200,6 @@ http.route({
 });
 http.route({ path: "/v1/mcp", method: "GET", handler: configHttp });
 http.route({ path: "/v1/mcp", method: "POST", handler: configHttp });
-// The POST prefix is what /v1/mcp/uploads matches; path: "/v1/mcp" does not.
 http.route({
   pathPrefix: "/v1/mcp/",
   method: "POST",
@@ -259,8 +247,7 @@ http.route({
   method: "DELETE",
   handler: configHttp,
 });
-// Redeeming a workspace download link. GET only, and unauthenticated by design:
-// the token in the path is the credential. Convex serves HEAD off this route.
+// Unauthenticated by design: the path token is the credential. Convex serves HEAD here too.
 http.route({
   pathPrefix: "/v1/downloads/",
   method: "GET",
@@ -301,7 +288,6 @@ http.route({ path: "/v1/crons", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "PATCH", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "DELETE", handler: configHttp });
-// The audit ledger: list, verify, and the one webhook sink per account.
 http.route({ path: "/v1/audit", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/audit/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/audit/", method: "PUT", handler: configHttp });
@@ -347,11 +333,9 @@ async function handleStripeWebhook(
     return Response.json({ received: true });
   }
 
-  // Each branch is safe to run again, so a redelivery or a dashboard Resend
-  // needs no record of handled event ids.
+  // Every branch is idempotent, so redeliveries need no record of handled event ids.
   try {
-    // Plan sync needs no checkout case: Stripe also sends
-    // customer.subscription.created for the subscription a checkout starts.
+    // A checkout also sends customer.subscription.created, so it needs no case of its own.
     if (
       event.type === "customer.subscription.created" ||
       event.type === "customer.subscription.updated" ||

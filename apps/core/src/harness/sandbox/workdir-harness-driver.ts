@@ -1,9 +1,3 @@
-/**
- * Core-owned Workdir driver for the AI SDK Harness sandbox adapter.
- * Reservation ownership stays in WorkdirSandboxExecutor; an exposed port is a
- * workdir preview URL, so a config with no API key cannot publish one at all.
- */
-
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path/posix";
@@ -34,18 +28,13 @@ import type { WorkdirHarnessReservation } from "./workdir-executor.ts";
 const DEFAULT_WORKING_DIRECTORY = "/workspace";
 
 export interface WorkdirHarnessDriverOptions {
-  /** Existing core reservation identity, already scoped to its account/agent. */
   reservationKey: string;
-  /** Optional exact bootstrap identity for callers that precompute one. */
   bootstrapIdentity?: string;
   config: SandboxExecutorConfig & { provider: "sandbox"; persistent: true };
   defaultWorkingDirectory?: string;
-  /** The invoking run's identity, mirrored onto the reserved sandbox. */
   metadata?: SandboxRunMetadata;
-  /** Receives the guest's CPU, memory and disk once the machine is acquired. */
   onUsage?: (usage: SandboxUsage) => void;
   ports?: ReadonlyArray<number>;
-  /** Other conversations use this machine too, so a session ending leaves it running. */
   shared?: boolean;
 }
 
@@ -331,8 +320,7 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
     return exposed.toString();
   }
 
-  // A shared machine idles down on its own; suspending it here would pull it
-  // out from under the other conversations still running on it.
+  // A shared machine idles down on its own; other conversations may still be running on it.
   async stop(): Promise<void> {
     if (this.#shared) return;
     if (!this.#executor.suspend) {

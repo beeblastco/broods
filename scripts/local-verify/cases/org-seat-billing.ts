@@ -13,18 +13,8 @@ interface CliResult {
   output: string;
 }
 
-/**
- * Seat billing on the managed service: a Hobby owner keeps one org, cannot
- * create another and has no developer seats. Pro belongs to the owner: it
- * puts every org they own on Pro, lets them create more, and gives them 2
- * developer seats shared across those orgs, so a developer already seated in
- * one joins another free and a new one past the pool needs a seat the owner
- * paid for. The case turns BROODS_MANAGED_SERVICE on for its own steps only
- * and acts as the stack's admin through the Convex CLI. The stack has no
- * Stripe, so it files a paid subscription the way the webhook does once it
- * has read one back (`stripe:applySubscriptionInternal`); Stripe's side is in
- * the Convex tests.
- */
+// No Stripe here: subscriptions are filed as the webhook files one it read back from Stripe;
+// Stripe's side is in the Convex tests.
 export async function orgSeatBilling(context: VerifyContext): Promise<void> {
   const identity = JSON.stringify({
     subject: SELF_HOST_ADMIN.subject,
@@ -88,7 +78,6 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
         org.includes('"plan": "pro"'),
         org,
       );
-      // What the dashboard's Billing tab and invite dialog read.
       const billing = must(
         asAdmin("stripe:getBillingInfo", {}),
         "read the owner's billing",
@@ -180,9 +169,8 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
       );
     });
   } finally {
-    // Every step runs even when one before it failed. The subscription ends
-    // first, so the admin is no longer billed as Pro, and the orgs go once
-    // the stack is self-hosted again, so their removal calls no Stripe.
+    // Cancel first so the admin is not billed as Pro; remove orgs once self-hosted again so
+    // their removal calls no Stripe. Every step runs even if one fails.
     const cleanup: Array<[string, () => CliResult]> = [
       ["cancel the subscription", () => fileSubscription(context, "canceled")],
       [
@@ -209,7 +197,6 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
   }
 }
 
-/** File the admin's one-unit Pro subscription, as the webhook does after reading it from Stripe. */
 function fileSubscription(
   context: VerifyContext,
   status: "active" | "canceled",
@@ -246,7 +233,6 @@ function fileSubscription(
   ]);
 }
 
-/** Users who signed in once, so an org can invite them by email. */
 function importUsers(context: VerifyContext, emails: string[]): void {
   const path = join(tmpdir(), `broods-seat-users-${context.runId}.jsonl`);
   writeFileSync(
@@ -278,7 +264,6 @@ function must(cli: CliResult, step: string): string {
   return cli.output;
 }
 
-/** The function's result: `convex run` prints it as JSON after any log lines. */
 function result(output: string): unknown {
   return JSON.parse(output.slice(output.search(/^[[{"\d]/m)));
 }

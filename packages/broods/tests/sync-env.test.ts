@@ -130,8 +130,6 @@ test("removeEnv throws on a non-ok response", async () => {
   );
 });
 
-// The backend keys the manifest route off the stage segment and rejects a
-// manifest body carrying the pre-rename `environment` field.
 test("putManifest PUTs to the stage manifest route and sends manifest.stage", async () => {
   const manifest = {
     version: 1 as const,

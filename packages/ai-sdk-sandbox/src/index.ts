@@ -28,13 +28,6 @@ export interface BroodsSandboxWriteFileOptions extends BroodsSandboxFileOptions 
   content: Uint8Array;
 }
 
-/**
- * One live sandbox resource owned by an injected Broods driver.
- *
- * A future core-owned driver delegates provider credentials, reservation,
- * persistence, and cleanup to the existing sandbox runtime. This package only
- * adapts that resource to Harness v1.
- */
 export interface BroodsSandboxDriverSession {
   readonly id: string;
   readonly description: string;
@@ -59,12 +52,9 @@ export interface BroodsSandboxDriverSession {
     ports: ReadonlyArray<number>,
     options?: { abortSignal?: AbortSignal },
   ): PromiseLike<void>;
-  /** Stop compute while retaining any driver-owned resumable resource. */
+  /** Stop compute but keep any resumable resource. */
   stop(): PromiseLike<void>;
-  /**
-   * Permanently release the resource. When supplied, this must accept either a
-   * running or already-stopped resource. The adapter invokes it at most once.
-   */
+  /** Must accept a running or already-stopped resource; the adapter calls it at most once. */
   destroy?(): PromiseLike<void>;
 }
 
@@ -81,21 +71,10 @@ export interface BroodsSandboxDriverResumeOptions {
 
 export interface BroodsSandboxDriverCreateResult {
   readonly session: BroodsSandboxDriverSession;
-  /**
-   * Whether this is the first resource for the requested identity. Drivers
-   * must report `true` at most once per identity so Harness one-time setup is
-   * not repeated on a restored resource.
-   */
+  /** `true` at most once per identity, or Harness reruns one-time setup on a restored one. */
   readonly isFirstCreate: boolean;
 }
 
-/**
- * The only boundary a future core integration needs to implement.
- *
- * That implementation should adapt core's `createSandboxExecutor()` and reuse
- * its existing reservation and cleanup paths, not introduce another provider
- * registry or persistence layer.
- */
 export interface BroodsSandboxDriver {
   /** Rejecting after allocation must clean up that partial resource internally. */
   createSession(
@@ -109,7 +88,6 @@ export interface BroodsSandboxDriver {
 export interface BroodsSandboxProviderOptions {
   driver: BroodsSandboxDriver;
   providerId?: string;
-  /** Ports pre-allocated by a caller that supplies a shared sandbox resource. */
   bridgePorts?: ReadonlyArray<number>;
 }
 
@@ -123,7 +101,6 @@ type CreateSessionOptions = {
   ) => Promise<void>;
 };
 
-/** Create a stable Harness v1 provider backed by an injected Broods driver. */
 export function createBroodsSandbox(
   options: BroodsSandboxProviderOptions,
 ): BroodsSandboxProvider {
@@ -205,8 +182,7 @@ export class BroodsSandboxProvider implements HarnessV1SandboxProvider {
 }
 
 class BroodsSandboxSession implements Experimental_SandboxSession {
-  // Harness narrows leased ports with Object.create(session), so state must be
-  // safe to read through an inherited session object.
+  // Harness narrows leased ports with Object.create(session): state must read through it.
   protected readonly session: BroodsSandboxDriverSession;
 
   constructor(session: BroodsSandboxDriverSession) {
@@ -429,17 +405,14 @@ async function collectStream(
         aborted = true;
         const reason =
           abortSignal.reason ?? new DOMException("Aborted", "AbortError");
+        // The abort reason must reach the caller even if cancel or unlock throws.
         try {
           const cancellation = reader.cancel(reason);
           void cancellation.catch(() => undefined);
-        } catch {
-          // Preserve the signal's abort reason even if stream cancellation fails.
-        }
+        } catch {}
         try {
           reader.releaseLock();
-        } catch {
-          // Preserve the signal's abort reason even if the reader cannot unlock.
-        }
+        } catch {}
         reject(reason);
       };
 

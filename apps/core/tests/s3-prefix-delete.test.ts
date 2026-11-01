@@ -1,7 +1,3 @@
-/**
- * deleteS3Prefix against a fake bucket behind the real S3 client.
- */
-
 import {
   DeleteObjectsCommand,
   ListObjectsV2Command,
@@ -35,7 +31,6 @@ beforeEach(() => {
         calls.push("list");
         expect(command.input.Bucket).toBe(BUCKET);
         expect(command.input.Prefix).toBe(PREFIX);
-        // The token is the last key of the previous page, like S3's cursor.
         const after = command.input.ContinuationToken ?? "";
         const page = [...keys]
           .filter((key) => key.startsWith(PREFIX) && key > after)
@@ -82,8 +77,6 @@ function fill(count: number): void {
   keys.add("acct_cleanup-neighbour/keep");
 }
 
-// The retry tests check which keys go again, not how long the backoff is, so
-// they skip its waits.
 function skipBackoff(): void {
   spyOn(Bun, "sleep").mockResolvedValue(undefined);
 }

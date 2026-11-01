@@ -13,14 +13,7 @@ interface ProjectAmounts {
   totals: { sandboxHours: number; egressGb: number; ingressGb: number };
 }
 
-/**
- * The Usage tab's split by project, through the deployed backend: usage
- * written the way core and the sandbox mirror write it lands on the project
- * it names, usage with no project stays the org's alone, and the dashboard's
- * query reads each of the admin's projects back. Core's own writes need S3 or
- * Lambda, which the stack has none of, so the case sends them as core does
- * (`account/budget:record` with a source); core's side is in its unit tests.
- */
+// The stack has no S3 or Lambda, so usage is written as core writes it; core has unit tests.
 export async function projectUsage(context: VerifyContext): Promise<void> {
   const identity = JSON.stringify({
     subject: SELF_HOST_ADMIN.subject,
@@ -44,15 +37,13 @@ export async function projectUsage(context: VerifyContext): Promise<void> {
 
   asAdmin("user:ensureSynced", {});
   const previous = asAdmin("org/orgs:getActive", {}) as Doc<"orgs"> | null;
-  // An org of the case's own, made active for its steps, so the totals it
-  // reads move only by what it writes.
+  // An org of its own, so the totals move only by what this case writes.
   const orgId = String(
     asAdmin("org/orgs:create", { name: `usage-${context.runId}` }),
   );
   try {
     asAdmin("org/orgs:setActive", { orgId: orgId });
-    // Node warns about these conflicting color flags on stderr. Query the
-    // case's org because Convex prints no output for a null result.
+    // Node warns about conflicting color flags on stderr; stdout must stay JSON.
     const cli = spawnSync(
       "bun",
       [
@@ -127,8 +118,6 @@ export async function projectUsage(context: VerifyContext): Promise<void> {
       record({ egressGb: 0.25 }, { projectId: support });
       record({ ingressGb: 0.5 }, { projectId: sales });
       record({ egressGb: 0.125 });
-      // A sandbox in the support project, launched and released the way the
-      // sandbox mirror sees it.
       const reservationKey = `usage-${context.runId}`;
       convexResult(
         context,

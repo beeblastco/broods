@@ -55,8 +55,7 @@ describe("agent policy input", () => {
       workspaceName: "repo",
     });
 
-    // A `filePaths` prefix rule must see the path the tool resolves, not the
-    // spelling the model chose; grep and glob search from `path`, not the regex.
+    // A `filePaths` prefix rule must see the path the tool resolves, not the model's spelling.
     expect(
       policyInputForTool(
         "write",
@@ -64,7 +63,6 @@ describe("agent policy input", () => {
         workspaces,
       ).filePath,
     ).toBe("secrets/key");
-    // `..` inside a name is a name the tool accepts, so the rule sees it resolved.
     expect(
       policyInputForTool(
         "write",
@@ -79,9 +77,7 @@ describe("agent policy input", () => {
         workspaces,
       ).filePath,
     ).toBe("../etc/passwd");
-    // A search root ends in `/`, so a `secrets/` prefix covers the directory
-    // itself and leaves `secrets-public` alone. The workspace root is "", named
-    // or not, so a deny on any prefix below it can refuse the search.
+    // A search root ends in `/`, so `secrets/` covers the directory but not `secrets-public`.
     for (const [toolName, path, filePath] of [
       ["grep", "secrets", "secrets/"],
       ["grep", "/secrets", "secrets/"],
@@ -99,8 +95,6 @@ describe("agent policy input", () => {
       ).toMatchObject({ filePath: filePath, searchRoot: true });
     }
 
-    // memory_save derives its target path from the title, so the policy input
-    // carries the same workspace.write + filePath surface as write/edit.
     expect(
       policyInputForTool(
         "memory_save",
@@ -157,9 +151,7 @@ describe("agent policy input", () => {
     });
   });
 
-  // An extra sandbox mounts no workspace, so a workspace-scoped rule must not be
-  // handed a workspace the run never touches. Its own permissionMode is what lets
-  // a policy tell one extra from another.
+  // An extra sandbox mounts no workspace, so a workspace-scoped rule must not be handed one.
   it("describes a bash call on an extra sandbox by that sandbox, not a workspace", () => {
     const sandboxes = [
       {
@@ -189,8 +181,6 @@ describe("agent policy input", () => {
     expect(onExtra.workspaceName).toBeUndefined();
     expect(onExtra.sandboxPermissionMode).toBe("bypass");
 
-    // A name that is no extra is a workspace run to the policy, the same as the
-    // tool sees it before refusing the call.
     const unknown = policyInputForTool(
       "bash",
       { command: "ls", sandbox: "nope" },
@@ -198,8 +188,6 @@ describe("agent policy input", () => {
       { sandboxes: sandboxes },
     );
     expect(unknown.workspaceId).toBe("ws_123");
-    // With no sandboxes attached the name resolves to nothing, so it stays a
-    // workspace run.
     const withoutSandboxes = policyInputForTool(
       "bash",
       { command: "ls", sandbox: "browser-sandbox" },
@@ -207,8 +195,7 @@ describe("agent policy input", () => {
     );
     expect(withoutSandboxes.workspaceId).toBe("ws_123");
 
-    // With no workspace an unnamed call runs on the default, so a policy must see
-    // the same mode as when the call names it.
+    // An unnamed call runs on the default sandbox, so it must see the same mode as a named one.
     const unnamed = policyInputForTool("bash", { command: "ls" }, [], {
       sandboxes: sandboxes,
     });

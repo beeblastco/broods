@@ -1,9 +1,4 @@
-/**
- * Tool-execute wrapper tests: a tool.call.started hook can deny or edit args and
- * a tool.result hook can transform output. Real isolate execution + the
- * config→dispatcher→isolate→mutation path are covered in hooks-integration.test.ts
- * and hook-runner.test.ts; here the dispatcher is a local fake.
- */
+// The dispatcher is a local fake; hooks-integration.test.ts runs real isolates.
 
 import { describe, expect, it } from "bun:test";
 import { tool, type ToolSet } from "ai";
@@ -76,8 +71,7 @@ describe("wrapToolsWithHooks", () => {
     expect(result).toBe("ok");
   });
 
-  // The SDK validates the model's args before execute and never sees a hook's
-  // replacement, so the wrapper holds it to the same schema.
+  // The SDK validates args before execute and never sees a hook's replacement.
   it("refuses edited args the tool's input schema rejects", async () => {
     let ran = false;
     const tools: ToolSet = {

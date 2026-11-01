@@ -1,12 +1,3 @@
-/**
- * The self-hosted core server (epic #85), the single entry point.
- *
- * One Bun.serve process builds a transport-neutral CoreRequest per HTTP request
- * and routes by path to the account or harness handler, streaming their Web
- * Response back (SSE included). By path, never Host: Traefik does not pass the
- * client's Host. There is no Lambda runtime.
- */
-
 import {
   errorResponse,
   type CoreRequest,
@@ -29,9 +20,7 @@ import { flushObservabilityNats } from "./shared/nats.ts";
 import { emitPostHogLog, forceFlushOtel, initOtel } from "./shared/otel.ts";
 
 const DEFAULT_REQUEST_BUDGET_MS = 10 * 60 * 1000;
-// How long shutdown waits to hand back the leases of runs it is abandoning.
 const INTERRUPT_BUDGET_MS = 3_000;
-// What a run cut off by a restart reports as its failure.
 const INTERRUPTED_RUN_ERROR =
   "The run was interrupted by a core restart. Send the message again.";
 const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
@@ -39,12 +28,7 @@ const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
   /^\/v1\/mcp-service\/rpc$/,
 ];
 
-/**
- * The handlers the entry point imports lazily, passed in so the router can be
- * built without them. Keeping those imports out of module scope is deliberate:
- * a static import of the harness drags the whole runtime into anything that
- * loads this file.
- */
+// Injected, not imported: a static harness import drags the whole runtime into this file.
 export interface CoreRouteHandlers {
   accountHandler: (request: CoreRequest) => Promise<Response>;
   handleMediaRequest: (request: CoreRequest) => Promise<Response>;
@@ -55,13 +39,7 @@ export interface CoreRouteHandlers {
   routesToMedia: (method: string, pathname: string) => boolean;
 }
 
-/**
- * Build the request router over one set of handlers.
- *
- * Dispatch order is the contract: health check, then media, then the
- * account-manage verbs, then the harness. It takes the client address rather
- * than a `Bun.Server` so a test can call it with nothing but a `Request`.
- */
+// Routes by path, never Host: Traefik does not pass the client's Host.
 export function createRoute(
   handlers: CoreRouteHandlers,
   requestBudgetMs: number,
@@ -146,8 +124,7 @@ export async function toCoreRequest(
     ? (forwardedChain
         .split(",")
         .map((entry) => entry.trim())
-        .filter(Boolean)
-        .pop() ?? "")
+        .findLast(Boolean) ?? "")
     : (socketAddress ?? "");
 
   const cookies =
@@ -189,15 +166,12 @@ if (import.meta.main) {
   const { isMachineUpgrade, machineWebSocketHandler, upgradeMachineSocket } =
     await import("./harness/sandbox/machine-executor.ts");
 
-  // Fail the boot, not the first request that needs one.
   requireEnv("SERVICE_AUTH_SECRET");
   requireEnv("STAGE_TICKET_SECRET");
   requireSecretsEnv("MEDIA_TICKET_SECRET");
   requireSecretsEnv("TERMINAL_TICKET_SECRET");
 
   initOtel();
-  // One warm isolate worker so the first uploaded-tool call does not pay Node
-  // startup. Failure is not fatal: the pool spawns on demand anyway.
   void prewarmIsolatePool().catch(() => undefined);
   startSandboxSweeper();
   startSnapshotBuildWatcher();
@@ -218,7 +192,6 @@ if (import.meta.main) {
     hostname: optionalEnv("HOSTNAME") ?? "0.0.0.0",
     idleTimeout: 255,
     maxRequestBodySize: 10 * 1024 * 1024,
-    // Core's only WebSocket: the machine sandbox daemon, relayed by the gateway.
     fetch: (request, bunServer) =>
       isMachineUpgrade(request)
         ? upgradeMachineSocket(request, bunServer)
@@ -246,8 +219,7 @@ if (import.meta.main) {
     );
     const graceful = (async () => {
       await server.stop();
-      // A channel admission in flight can start a worker, and a finished
-      // worker leaves its usage write in flight, so drain in that order.
+      // An admission in flight can start a worker; a finished worker leaves a usage write.
       await drainInFlight();
       await drainInProcessWorkers();
       await drainInFlight();
@@ -262,10 +234,8 @@ if (import.meta.main) {
     });
     await Promise.race([graceful, deadline]);
     if (!drained) {
-      // A run takes up to ten minutes and the deadline is seconds, so a busy
-      // pod always gets here. Failing the runs and handing their leases back
-      // unlocks each conversation now instead of after the lease TTL, and the
-      // next pod's recovery sweep starts whatever was queued behind them.
+      // Runs outlast the deadline, so fail them and hand their leases back: conversations
+      // unlock now, not after the lease TTL, and the next pod's sweep starts their queues.
       const interrupted = await Promise.race([
         interruptLiveOwners(INTERRUPTED_RUN_ERROR),
         new Promise<number>((resolve): void => {
@@ -282,9 +252,7 @@ if (import.meta.main) {
 
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
-  // Left alone, a stray rejection or throw kills the process mid-run and every
-  // live conversation stays locked until its lease runs out. Drain as a rollout
-  // does instead, then exit non-zero so the pod restarts.
+  // A stray throw would leave every live conversation locked until its lease runs out.
   for (const event of ["unhandledRejection", "uncaughtException"] as const) {
     process.on(event, (error: unknown): void => {
       logError("Core server crashed", {

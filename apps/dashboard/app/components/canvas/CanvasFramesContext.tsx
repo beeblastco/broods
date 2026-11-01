@@ -1,14 +1,5 @@
 "use client";
 
-/**
- * Stage data the canvas node cards and edges read, queried once by the Canvas
- * instead of once per card: each agent's badges, the stage's MCP servers, its
- * machine connections, each wired sandbox's order number and which sandboxes
- * only back a workspace.
- * Also carries the frame collapse toggle, which chip is open, and the mount
- * menu a workspace's edge offers. The UI gallery provides a static value, so
- * cards render with no Convex behind them.
- */
 import type { StageMcpServer } from "@/app/lib/canvasFrameNodes";
 import type { WorkspaceMountTarget } from "@/app/lib/canvasFrameEdits";
 import type { MachineConnection } from "@/app/lib/machineConnection";
@@ -17,33 +8,23 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import { createContext, useContext } from "react";
 
 export type CanvasFramesValue = {
-  /** By agent config id; undefined while loading. */
   agentBadges:
     | Readonly<Record<Id<"agentConfigs">, AgentCanvasBadge>>
     | undefined;
-  /** A reader reads the mount word; only a writer opens its menu. */
   canWrite: boolean;
-  /** The selected chip, drawn as a card in a card's slot; null when none is. */
   expandedMemberId: string | null;
-  /** Undefined while loading. */
   machineConnections: readonly MachineConnection[] | undefined;
-  /** By canvas node id. */
   mcpServers: ReadonlyMap<string, StageMcpServer>;
-  /**
-   * Where a workspace can mount, read when its menu opens rather than held on
-   * this value: the rows depend on every edge, which a drag rewrites.
-   */
+  /** Read on open, not held here: the rows depend on every edge, which a drag rewrites. */
   mountTargetsOf: (workspaceId: string) => WorkspaceMountTarget[];
   onSetWorkspaceMount: (
     workspaceId: string,
     target: WorkspaceMountTarget,
   ) => void;
-  /** Renames a card in place on a double-click of its name; unset where cards are not renamed. */
   onRenameNode?: (nodeId: string, label: string) => void;
   onToggleFrame: (frameId: string) => void;
-  /** Sandbox node id → 1-based place in `sandboxes`, where all its agents agree. */
+  /** 1-based place in `sandboxes`, only where all of a sandbox's agents agree. */
   sandboxOrderNumbers: ReadonlyMap<string, number>;
-  /** Sandbox node ids a workspace mounts and no agent wires. */
   workspaceOnlySandboxIds: ReadonlySet<string>;
 };
 

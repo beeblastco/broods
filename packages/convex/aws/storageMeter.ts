@@ -1,11 +1,6 @@
 "use node";
 
-/**
- * Daily S3 storage snapshot for the usage meter. Sums each account's bytes on
- * the platform buckets (workspaces, chat attachments, skills, hook and MCP
- * bundles) and bills one day of them. A workspace on its own bucket costs the
- * platform nothing, and its managed-bucket prefix is empty, so it adds 0.
- */
+// A workspace on its own bucket has an empty managed-bucket prefix, so it bills 0.
 
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
@@ -23,13 +18,11 @@ const BYTES_PER_GB = 1e9;
 // Core's `ATTACHMENT_STORE_ROOT` (apps/core/src/shared/media-ticket.ts).
 const ATTACHMENT_STORE_ROOT = "attachments/";
 
-/** Daily cron: fan out one snapshot per account. */
 export const snapshotAll = internalAction({
   args: {},
   returns: v.null(),
   handler: async (ctx): Promise<null> => {
-    // Every account's day is billed to the month the snapshot was taken in,
-    // even when its scheduled action runs after midnight.
+    // One timestamp for all: an action that runs after midnight bills the snapshot's month.
     const snapshotAt = Date.now();
     let cursor: string | null = null;
     let isDone = false;
@@ -56,7 +49,6 @@ export const snapshotAll = internalAction({
   },
 });
 
-/** Bill one day of the account's stored bytes. */
 export const snapshotAccount = internalAction({
   args: { accountId: v.id("accounts"), snapshotAt: v.number() },
   returns: v.null(),
@@ -97,7 +89,6 @@ export const snapshotAccount = internalAction({
     for (const [bucket, prefix] of prefixes) {
       bytes += await prefixBytes(bucket, prefix);
     }
-    // A project's share is what its own workspaces hold.
     const projectBytes = new Map<Id<"projects">, number>();
     for (const { workspaceId, projectId } of workspaces) {
       const namespace = await workspaceNamespace(args.accountId, workspaceId);

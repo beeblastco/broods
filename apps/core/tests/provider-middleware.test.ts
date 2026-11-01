@@ -1,16 +1,3 @@
-/**
- * Custom-provider middlewares for openai-compatible endpoint (OVH Qwen)
- * quirks: mergeSystemMessagesMiddleware folds multiple system messages into
- * one (extras return an empty stream), and normalizeStreamDeltasMiddleware
- * rewrites cumulative-snapshot deltas to increments and back-fills missing
- * reasoning-token usage. A tool result's image stays in the tool message, moves
- * to a user message when the endpoint refuses it there, and becomes a note when
- * a text-only model refuses it anywhere.
- * retryWithoutStoredItemsMiddleware covers the OpenAI Responses path, where a
- * replayed item reference can go stale. cacheLatestMessageMiddleware marks the
- * latest message of a prompt the harness marked for Claude's cache.
- */
-
 import {
   APICallError,
   UnsupportedFunctionalityError,
@@ -224,8 +211,6 @@ const apiCallError = (message: string): APICallError =>
     statusCode: 400,
   });
 
-// Drives the middleware with a first call that always throws, so the assertion
-// is on whether a retry happened and what call options it carried.
 async function retryCall(
   error: unknown,
   providerOptions?: LanguageModelV4CallOptions["providerOptions"],
@@ -294,9 +279,7 @@ describe("retryWithoutStoredItemsMiddleware", () => {
     expect(retried).toBe(true);
   });
 
-  // A surviving previousResponseId makes the provider drop replayed history on
-  // the assumption the chain still holds it, so the retry would send less than
-  // the call that just failed.
+  // A kept previousResponseId makes the provider skip replayed history on the retry.
   it("drops a pinned response chain but keeps the rest of the options", async () => {
     const { params } = await retryCall(
       apiCallError("Item with id 'rs_1' not found."),
@@ -345,8 +328,6 @@ describe("attemptRecordingMiddleware", () => {
 });
 
 describe("dropUnsupportedMediaMiddleware", () => {
-  // The prompt shape a voice note produces: a picture the provider reads, an
-  // audio file it does not, and the note naming where both were stored.
   const mediaPrompt: LanguageModelV4Message[] = [
     {
       role: "user",
@@ -419,8 +400,7 @@ describe("dropUnsupportedMediaMiddleware", () => {
     );
   });
 
-  // Without this the middleware would pay for a second identical call every
-  // time a provider refuses something that is not a file part at all.
+  // Retrying with nothing dropped would pay for an identical second call.
   it("rethrows when the prompt carries nothing to drop", async () => {
     expect(
       dropCall(refused, [
@@ -429,8 +409,7 @@ describe("dropUnsupportedMediaMiddleware", () => {
     ).rejects.toThrow("file part media type audio/ogg");
   });
 
-  // A text-only custom model answers a picture with a 400; the turn keeps going
-  // without it instead of failing on every screenshot a tool returns.
+  // A text-only custom model answers a picture with a 400, not a refused capability.
   it("retries a 400 with each picture replaced by a line naming it", async () => {
     const params = await dropCall(
       apiCallError("image input is not supported"),
@@ -496,8 +475,6 @@ describe("tool result images on a custom endpoint", () => {
     image_url: { url: "data:image/jpeg;base64,aGVsbG8=" },
   };
 
-  // Each request the converter builds over `calls` calls to a fresh endpoint,
-  // answered by `statuses` in turn.
   async function requests(
     statuses: number[],
     calls = 1,
@@ -563,8 +540,7 @@ describe("tool result images on a custom endpoint", () => {
   it("skips the tool message for a model that refuses images anywhere", async () => {
     const bodies = await requests([400, 400, 200, 400, 200], 2);
 
-    // Call 1: refused, moved and refused again, then dropped. Call 2 sends the
-    // image in a user message first, so only its drop retry is paid.
+    // Call 1 pays the move and the drop retries; call 2 starts in a user message.
     expect(bodies).toHaveLength(5);
     expect(bodies[3]?.messages.at(-1)?.role).toBe("user");
     expect(JSON.stringify(bodies[4])).not.toContain("image_url");
@@ -586,13 +562,9 @@ describe("tool result images on a custom endpoint", () => {
 });
 
 describe("cache marks on a custom endpoint", () => {
-  // A configured TTL, to show the latest message copies the harness's mark.
   const cacheControl = { type: "ephemeral", ttl: "1h" };
   const mark = { openaiCompatible: { cache_control: cacheControl } };
 
-  // The request body a compatible endpoint receives for `prompt`, sent through
-  // the system merge and the latest-message mark, in a run carrying the mark
-  // or, for a call like compaction, none.
   async function requestFor(
     prompt: LanguageModelV4Message[],
     runMark?: typeof mark,

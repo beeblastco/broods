@@ -8,32 +8,30 @@ import { principalLinkValidator } from "./model/principal";
 import { SANDBOX_PROVIDERS } from "./model/sandboxProviders";
 import { handbackValidator } from "./model/subagentResults";
 
-/** Billing tier. After insert, only the Stripe plan sync (`stripe:applySubscriptionInternal`) changes it. */
 export const planValidator = v.union(v.literal("free"), v.literal("pro"));
 
-/** Synced from WorkOS AuthKit webhooks, with app-specific extensions. */
+// cli: next CLI sync overwrites dashboard edits; api: dashboard locked; dashboard/unset: no prune.
+const managedByValidator = v.optional(
+  v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
+);
+
 export const usersFields = {
   authId: v.string(),
   email: v.string(),
   name: v.string(),
   avatarUrl: v.optional(v.string()),
   accountHandle: v.optional(v.string()),
-  /** Set once the user saves a name in Account settings; WorkOS syncs stop changing `name` after that. */
   nameEdited: v.optional(v.boolean()),
-  /** Pro while the user pays for Pro, which covers every org they own. Display only: limits read `orgs.plan`. */
+  // Display only: limits read `orgs.plan`.
   plan: planValidator,
   deletionScheduledFor: v.optional(v.number()),
-  /** Set when a WorkOS deletion webhook has queued irreversible teardown. */
   workosDeletionRequestedAt: v.optional(v.number()),
-  /** Number of runtime-cleanup retries after a WorkOS deletion webhook. */
   workosDeletionAttempts: v.optional(v.number()),
-  /** Org the user last switched to. Falls back to most recent membership when unset. */
   activeOrgId: v.optional(v.id("orgs")),
 };
 
 export const projectsFields = {
   authId: v.string(),
-  /** Org that owns this project. */
   orgId: v.id("orgs"),
   name: v.string(),
   description: v.optional(v.string()),
@@ -49,29 +47,23 @@ export const stagesFields = {
   authId: v.string(),
   projectId: v.id("projects"),
   name: v.string(),
-  /** Semantic stage role. */
   kind: v.union(
     v.literal("development"),
     v.literal("production"),
     v.literal("custom"),
   ),
-  /** Where Production runs, set by Initialize Production or its first deploy. */
   deploymentRegion: v.optional(deploymentRegionValidator),
   isDefault: v.boolean(),
   updatedAt: v.number(),
 };
 
-/**
- * A stage's manifest revision, bumped by every manifest sync. Its own row, so a
- * sync never invalidates subscriptions on `stages`.
- */
+// Its own table so a manifest sync never invalidates subscriptions on `stages`.
 export const stageSyncsFields = {
   stageId: v.id("stages"),
   revision: v.number(),
   activeUntil: v.optional(v.number()),
 };
 
-/** Minimal agent config fields; extra UI settings are stored as optional fields. */
 export const agentConfigsFields = {
   authId: v.string(),
   name: v.string(),
@@ -95,43 +87,17 @@ export const agentConfigsFields = {
   runtimeVariables: v.optional(
     v.array(v.object({ key: v.string(), value: v.string() })),
   ),
-  /**
-   * Broods AgentConfig branches that don't live as flat columns, the ones
-   * `NESTED_BRANCHES` lists in model/agentConfigCodec.ts plus `publicAccess`
-   * and `allowRunOverrides`.
-   * Stored verbatim so the Config tab can edit the full nested shape. Secrets
-   * should be expressed as `${ENV_NAME}` placeholders resolved from encrypted
-   * runtime secrets.
-   */
+  // Plaintext: secrets only as `${ENV_NAME}` placeholders resolved from runtime secrets.
   extraConfig: v.optional(v.any()),
-  /**
-   * Ownership marker. `"cli"` means a `broods/` project is the source of
-   * truth: the dashboard may still edit it, but those edits are overwritten on
-   * the next CLI sync and deleting it from the dashboard is blocked. `"api"`
-   * means the account REST API owns it. Its config is re-mirrored onto the
-   * canvas on every API write and dashboard edits are locked. Unset (or
-   * `"dashboard"`) means the dashboard owns it and neither sync prunes it.
-   */
-  managedBy: v.optional(
-    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
-  ),
+  managedBy: managedByValidator,
   updatedAt: v.number(),
 };
 
-/**
- * Projection of deployed channel connections, one row per (agent, channel,
- * deployment) that configures a bot token. `model/channelEndpoints.ts` is the
- * single writer; the forwarder's standing `listConnections` subscription reads
- * this instead of every deployment and agent blob. The token is AES-GCM
- * encrypted with the account-config secret, and `digest` is a content hash so
- * an unchanged row is never rewritten (a fresh IV would dirty the
- * subscription on every refresh).
- */
+// `digest` skips rewriting an unchanged row: a fresh IV would dirty the forwarder subscription.
 export const channelEndpointsFields = {
   accountId: v.id("accounts"),
   agentId: v.string(),
   agentName: v.string(),
-  /** Plaintext API base URL, when the channel sets one. Matrix needs its homeserver. */
   apiUrl: v.optional(v.string()),
   digest: v.string(),
   endpointId: v.string(),
@@ -160,13 +126,6 @@ export const canvasLayoutsFields = {
   updatedAt: v.number(),
 };
 
-/**
- * Project + stage scoped runtime key (`bsk_…`). One key per
- * stage invokes ANY deployed agent in it; the agent is selected per request
- * by id. The SHA-256 hash authenticates runtime calls; the plaintext is also kept
- * AES-GCM encrypted at rest so the owner can recover it for dashboard streaming
- * and CLI reconnect without rotating.
- */
 export const agentDeploymentsFields = {
   authId: v.string(),
   accountId: v.id("accounts"),
@@ -178,23 +137,15 @@ export const agentDeploymentsFields = {
   stageSlug: v.string(),
   apiKeyHash: v.string(),
   keyHint: v.string(),
+  // Sealed copy so the owner can recover the key without rotating; the hash authenticates.
   apiKeyCiphertext: v.string(),
   apiKeyIv: v.string(),
   apiKeyTag: v.string(),
-  /** When the current key was minted or last rotated. */
   createdAt: v.optional(v.number()),
-  /** Display name of the user who minted or rotated the current key. */
   createdBy: v.optional(v.string()),
-  /** The member who minted or rotated it from the dashboard, for the key list. */
   createdByUserId: v.optional(v.id("users")),
-  /** Last runtime request the key authenticated, written by core at most every few minutes. */
   lastUsedAt: v.optional(v.number()),
-  /**
-   * The stage's user-token signing secret (`bsig_…`), sealed under the
-   * account's key like the runtime key, because core needs the plaintext to
-   * check an HMAC. Never revealed again after the mint that showed it.
-   * Absent until an owner generates one.
-   */
+  // Sealed, not hashed: core needs the plaintext to check the HMAC. Never revealed after mint.
   userTokenSecretCiphertext: v.optional(v.string()),
   userTokenSecretIv: v.optional(v.string()),
   userTokenSecretTag: v.optional(v.string()),
@@ -203,71 +154,48 @@ export const agentDeploymentsFields = {
   updatedAt: v.number(),
 };
 
-/**
- * Project + stage scoped project key (`bpdk_…`). Authorizes the `broods`
- * CLI against exactly one project/stage, unlike the account key
- * which grants the whole account. Only the SHA-256 hash is stored.
- */
 export const deployKeysFields = {
-  /** Org account this key resolves to (mirrors the project's org account). */
   accountId: v.id("accounts"),
   projectId: v.id("projects"),
   stageId: v.id("stages"),
   name: v.string(),
   description: v.optional(v.string()),
-  /** SHA-256 hex of the plaintext token; the plaintext is shown once at creation. */
   keyHash: v.string(),
-  /** Masked display label (prefix + last four), safe to list without revealing the secret. */
   keyHint: v.string(),
   status: v.union(v.literal("active"), v.literal("revoked")),
   lastUsedAt: v.optional(v.number()),
-  /** The member who made it; a key made over the API has none. */
   createdBy: v.optional(v.id("users")),
   createdAt: v.number(),
   updatedAt: v.number(),
 };
 
-/**
- * A scoped account key (`bask_…`) beside the org's account key: same prefix,
- * but it acts as a role over `policy`, optionally pinned to one project and
- * stage, until `expiresAt`. Made on Organization › API access; revoking
- * deletes the row. Only the SHA-256 hash is stored.
- */
 export const accountApiKeysFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
   name: v.string(),
   description: v.optional(v.string()),
-  /** SHA-256 hex of the plaintext token; the plaintext is shown once at creation. */
   keyHash: v.string(),
-  /** Masked display label (prefix + last four), safe to list without revealing the secret. */
   keyHint: v.string(),
-  /** PolicyDocument (version 1) over the API action namespace, as `accountRoles` stores it. */
   policy: policyDocumentValidator,
-  /** The key stops authenticating at this time; unset never expires. */
   expiresAt: v.optional(v.number()),
   lastUsedAt: v.optional(v.number()),
-  /** The member who made it. */
   createdBy: v.optional(v.id("users")),
   createdAt: v.number(),
   updatedAt: v.number(),
 };
 
-/** One-time WorkOS-backed login code minted by the dashboard for CLI login. */
 export const cliAuthCodesFields = {
   codeHash: v.string(),
   authId: v.string(),
   orgId: v.id("orgs"),
   accountId: v.id("accounts"),
-  /** PKCE S256 challenge the CLI sent; the exchange must present its verifier. */
   codeChallenge: v.string(),
   expiresAt: v.number(),
   usedAt: v.optional(v.number()),
   createdAt: v.number(),
 };
 
-/** Long-lived CLI bearer token created from a one-time WorkOS-backed login code. */
 export const cliTokensFields = {
   tokenHash: v.string(),
   authId: v.string(),
@@ -279,7 +207,6 @@ export const cliTokensFields = {
   lastUsedAt: v.optional(v.number()),
 };
 
-/** Lightweight desired-state snapshots for CLI-managed account-service resources. */
 export const cliExternalResourcesFields = {
   accountId: v.id("accounts"),
   projectId: v.id("projects"),
@@ -292,45 +219,26 @@ export const cliExternalResourcesFields = {
   updatedAt: v.number(),
 };
 
-/**
- * Registered external MCP server (issue #331 phase 1). Core connects over the
- * stateless HTTP transport, spec 2026-07-28 only. Rows are stage-scoped from
- * day one; header values may be ${NAME} env refs resolved into the encrypted
- * agent config at sync time, so secrets never sit on this row.
- */
 export const mcpFields = {
   accountId: v.id("accounts"),
   projectId: v.id("projects"),
   stageId: v.id("stages"),
-  /** Namespace prefix for the server's tools (`name__tool`); unique per stage. */
   name: v.string(),
   description: v.optional(v.string()),
-  /**
-   * "http" connects to an external url; "hosted" runs an uploaded bundle on
-   * Cloudflare Workers or the Lambda host (see `runtime`); "machine" is a stdio
-   * server on the sandbox named in `sandbox`: a machine sandbox's daemon, or a
-   * lambda sandbox's MicroVM.
-   */
   transport: v.union(
     v.literal("http"),
     v.literal("hosted"),
     v.literal("machine"),
   ),
-  /** Required for "http"; absent on "hosted" rows (the platform hosts them). */
   url: v.optional(v.string()),
-  /** Machine-only: name of the sandbox (machine or lambda) that serves it. */
   sandbox: v.optional(v.string()),
-  /** Machine-only: argv of the stdio server, required on a lambda sandbox. */
   command: v.optional(v.array(v.string())),
-  /** Hosted-only: Cloudflare Dynamic Workers can run the bundle; set by aws/bundles.ts putMcpBundle. */
   workersCompatible: v.optional(v.boolean()),
-  /** Hosted-only, the owner's pick: "lambda" never runs on Workers; absent means "auto". */
   runtime: v.optional(v.union(v.literal("auto"), v.literal("lambda"))),
-  /** Hosted-only: S3 key + sha256 of the uploaded server bundle. */
   bundleStorageKey: v.optional(v.string()),
   sha256: v.optional(v.string()),
+  // Values may be `${NAME}` refs resolved at sync, so secrets never sit on this row.
   headers: v.optional(v.record(v.string(), v.string())),
-  /** OAuth 2.0 refresh-token grant for "http" rows; secret fields are ${NAME} refs. */
   oauth: v.optional(
     v.object({
       clientId: v.string(),
@@ -339,13 +247,9 @@ export const mcpFields = {
       tokenUrl: v.optional(v.string()),
     }),
   ),
-  /** Tool names the harness may register from this server; absent means all. */
   allowedTools: v.optional(v.array(v.string())),
-  /** Dashboard enable/disable toggle. `status` is lifecycle, this is intent. */
   disabled: v.optional(v.boolean()),
-  /** Canvas node that owns this row when it was authored on the dashboard. */
   nodeId: v.optional(v.string()),
-  /** Dashboard-authored server source, kept for the editor; CLI rows omit it. */
   sourceCode: v.optional(v.string()),
   status: v.union(v.literal("active"), v.literal("deleted")),
   createdAt: v.number(),
@@ -368,7 +272,6 @@ export const accountHookEventValidator = v.union(
   v.literal("channel.message.sending"),
 );
 
-/** Account-owned code hook metadata; bundle bytes live in the tool bundles S3 bucket. */
 export const accountHooksFields = {
   accountId: v.id("accounts"),
   name: v.string(),
@@ -382,7 +285,6 @@ export const accountHooksFields = {
   deletedAt: v.optional(v.number()),
 };
 
-/** Stage-scoped reusable agent authorization policy. */
 export const agentPoliciesFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
@@ -391,42 +293,25 @@ export const agentPoliciesFields = {
   description: v.optional(v.string()),
   document: policyDocumentValidator,
   status: v.union(v.literal("active"), v.literal("deleted")),
-  /** Ownership marker; see `agentConfigsFields.managedBy`. */
-  managedBy: v.optional(
-    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
-  ),
-  /** The member who made it in the dashboard. */
+  managedBy: managedByValidator,
   createdBy: v.optional(v.id("users")),
   createdAt: v.number(),
   updatedAt: v.number(),
   deletedAt: v.optional(v.number()),
 };
 
-/**
- * Scoped API role assumed via `POST /v1/account/assume-role`. The policy is a
- * version-1 PolicyDocument over the `<resource>:read`/`<resource>:write` API
- * action namespace (model/roleRules.ts validates it). `projectId`/`stageId`
- * bound which runtime keys may assume the role, same shape as deployKeys.
- */
 export const accountRolesFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
-  /** Public role id: "brole_" + random. */
   roleId: v.string(),
   name: v.string(),
   status: v.union(v.literal("active"), v.literal("disabled")),
-  /** PolicyDocument (version 1) over the API action namespace. */
   policy: policyDocumentValidator,
   createdAt: v.number(),
   updatedAt: v.number(),
 };
 
-/**
- * Short-lived assume-role session backing a `bsts_` bearer token. Only the
- * SHA-256 hash is stored, same pattern as cliTokens. Rows die by `expiresAt`;
- * revocation is disabling or deleting the role.
- */
 export const roleSessionsFields = {
   tokenHash: v.string(),
   roleId: v.string(),
@@ -435,50 +320,30 @@ export const roleSessionsFields = {
   createdAt: v.number(),
 };
 
-/**
- * One row per real place a team talks: a Slack channel, a Discord channel, a
- * repository. Binds that place to an agent and carries the instructions,
- * workspaces, policies and roles scoped to it. `config.channels` on an agent
- * still holds the adapter credentials; this row decides who answers where.
- */
 export const channelRecordsFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
-  /** Adapter name: slack, discord, matrix, telegram, github, linear, pancake, zalo, gchat, teams, twilio, whatsapp, instagram, messenger. */
   platform: v.string(),
-  /** Provider id of the place, e.g. a Slack channel id or an owner/repo. */
   externalId: v.string(),
-  /** Team or guild the place sits in, when the provider has one. */
   workspaceRef: v.optional(v.string()),
   name: v.string(),
   description: v.optional(v.string()),
-  /** Plaintext: bindings, instructions, policy and workspace ids, no secrets. */
   config: v.any(),
   status: v.union(v.literal("active"), v.literal("deleted")),
-  /** Ownership marker; see `agentConfigsFields.managedBy`. */
-  managedBy: v.optional(
-    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
-  ),
-  /** The member who made it in the dashboard. */
+  managedBy: managedByValidator,
   createdBy: v.optional(v.id("users")),
   createdAt: v.number(),
   updatedAt: v.number(),
   deletedAt: v.optional(v.number()),
 };
 
-/**
- * Cherry-coke SaaS workspace and billing unit. Owns the per-tenant broods
- * `accounts` row; `orgId` on `accounts` points back to one of these.
- */
 export const orgsFields = {
   name: v.string(),
   slug: v.string(),
   ownerAuthId: v.string(),
-  /** The org's tier: its owner's, pro while the owner's subscription is paid; set at insert and on every change to it (model/orgBilling.ts). */
   plan: planValidator,
   createdAt: v.number(),
-  /** Set the first time a project is created in this org; gates the home-page auto-onboarding. */
   onboardedAt: v.optional(v.number()),
 };
 
@@ -486,29 +351,21 @@ export const orgMembersFields = {
   orgId: v.id("orgs"),
   userId: v.id("users"),
   role: v.union(v.literal("owner"), v.literal("admin"), v.literal("member")),
-  /** A custom role on top of the member tier; its policies grant dashboard permissions. */
   roleId: v.optional(v.id("orgRoles")),
-  /** The member who added them. */
   invitedBy: v.optional(v.id("users")),
   createdAt: v.number(),
 };
 
-/** An org-defined permission name beside the built-in actions, e.g. a tool an agent may call. */
 export const permissionsFields = {
   accountId: v.id("accounts"),
   name: v.string(),
   description: v.optional(v.string()),
-  /** What the name is about: tool, agent, stage, key, custom. */
   resource: v.string(),
   createdBy: v.optional(v.id("users")),
   createdAt: v.number(),
   updatedAt: v.number(),
 };
 
-/**
- * A named set of policies people get. A member holding one keeps the member
- * tier and gains what the policies allow (model/access.ts).
- */
 export const orgRolesFields = {
   orgId: v.id("orgs"),
   name: v.string(),
@@ -519,47 +376,32 @@ export const orgRolesFields = {
   updatedAt: v.number(),
 };
 
-/** Tenant root for broods. One row per dashboard org. The doc id IS the accountId. */
 export const accountsFields = {
   orgId: v.string(),
   username: v.string(),
   description: v.optional(v.string()),
   secretHash: v.string(),
-  /** Masked label of the account key (prefix + last four), safe to list. */
   secretHint: v.optional(v.string()),
-  /** When and by whom the account key was last minted or rotated from the dashboard. */
   secretRotatedAt: v.optional(v.number()),
   secretRotatedBy: v.optional(v.id("users")),
   status: v.union(v.literal("active"), v.literal("disabled")),
-  /** Days an audit ledger row is kept before pruning; 90 when unset. */
   auditRetentionDays: v.optional(v.number()),
-  /**
-   * The sts:ExternalId Broods sends whenever it assumes this account's own
-   * storage role (`model/storageTrust.ts`). Random, minted on first need,
-   * never set by the customer, so no other account can name it.
-   */
+  // sts:ExternalId minted by Broods, never by the customer, so no other account can name it.
   storageExternalId: v.optional(v.string()),
   createdAt: v.number(),
   updatedAt: v.number(),
 };
 
-/**
- * One account's data encryption keys, each wrapped under the KEK that
- * `ACCOUNT_CONFIG_ENCRYPTION_SECRET` derives (`model/envelope.ts`). Blobs name
- * the key they were written under; the newest row without `retiredAt` seals
- * new blobs, and a retired one no longer opens anything.
- */
+// The newest row without `retiredAt` seals new blobs; a retired key opens nothing.
 export const accountKeysFields = {
   accountId: v.id("accounts"),
   keyId: v.string(),
-  /** First 8 hex of SHA-256 of the secret that wrapped this key. */
   kekId: v.string(),
   wrappedKey: v.string(),
   createdAt: v.number(),
   retiredAt: v.optional(v.number()),
 };
 
-/** Agent configuration, stored encrypted so the dashboard cannot read provider secrets. */
 export const agentsFields = {
   accountId: v.id("accounts"),
   name: v.string(),
@@ -567,42 +409,17 @@ export const agentsFields = {
   encryptedConfig: v.optional(v.string()),
   encryptionIv: v.optional(v.string()),
   encryptionTag: v.optional(v.string()),
-  /**
-   * Unresolved account-plane config retaining `${NAME}` placeholders (the
-   * form before account env vars are substituted into `encryptedConfig`).
-   * Kept so an account env-var change can re-resolve `encryptedConfig`
-   * without the client re-syncing this agent. Absent on legacy rows.
-   */
   encryptedSourceConfig: v.optional(v.string()),
   sourceEncryptionIv: v.optional(v.string()),
   sourceEncryptionTag: v.optional(v.string()),
-  /**
-   * Whether a runtime-key (`bsk_`) request must carry a signed user token.
-   * Every agent created from now on gets `true`; an older row has none and
-   * keeps answering without one until its owner turns it on. Not part of the
-   * config, so a CLI or API config sync never flips it.
-   */
+  // Outside the config so a config sync never flips it; unset (older rows) means off.
   requireUserToken: v.optional(v.boolean()),
   createdAt: v.number(),
   updatedAt: v.number(),
 };
 
-/**
- * Account-scoped sandbox config (compute backend + permission mode), referenced
- * by agents via the encrypted agent config. Stored encrypted at rest like agents
- * because `envVars`/`options` may carry provider secrets. Broods (the
- * source of truth for this shared SaaS table) encrypts before writing, so
- * the dashboard only ever persists the opaque blob.
- */
 export const sandboxConfigsFields = {
   accountId: v.id("accounts"),
-  /**
-   * Stage scope. Rows created through the account-management REST API are
-   * account-scoped (stage unset) and shared, while CLI- and dashboard-managed rows are scoped
-   * to one `(projectId, stageId)` so the same name can repeat across stages
-   * and stay isolated. The runtime resolves sandboxes by `_id`, so a
-   * per-stage row already yields a per-stage resource.
-   */
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
   name: v.string(),
@@ -610,72 +427,38 @@ export const sandboxConfigsFields = {
   encryptedConfig: v.optional(v.string()),
   encryptionIv: v.optional(v.string()),
   encryptionTag: v.optional(v.string()),
-  /**
-   * Unresolved config blob retaining `${ENV_NAME}` placeholders (the form
-   * before env vars are substituted into `encryptedConfig`). Kept so a later
-   * `environmentVariables.set` can re-resolve and re-push `encryptedConfig`
-   * without a CLI re-sync, the sandbox equivalent of how `agentConfigs` keeps
-   * its flat columns as the placeholder source. Absent on legacy rows.
-   */
   encryptedSourceConfig: v.optional(v.string()),
   sourceEncryptionIv: v.optional(v.string()),
   sourceEncryptionTag: v.optional(v.string()),
-  /** Masked markers of the `env("NAME")` refs this config uses; see `agentConfigsFields.runtimeVariables`. */
   runtimeVariables: v.optional(
     v.array(v.object({ key: v.string(), value: v.string() })),
   ),
-  /** Prebuilt snapshot/image id this sandbox launches from, when pinned (see `sandboxSnapshotsFields`). */
   snapshotId: v.optional(v.string()),
-  /** Ownership marker; see `agentConfigsFields.managedBy`. */
-  managedBy: v.optional(
-    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
-  ),
+  managedBy: managedByValidator,
   createdAt: v.number(),
   updatedAt: v.number(),
 };
 
-/** Sandbox compute backends a persistent instance / snapshot can target. */
 export const sandboxProviderValidator = v.union(
   ...SANDBOX_PROVIDERS.map((name) => v.literal(name)),
 );
 
-/**
- * A machine's size as its provider reports it. `storageGb` is absent when the
- * provider does not report a disk (e2b, vercel).
- */
 export const sandboxSpecsValidator = v.object({
   vcpu: v.number(),
   memoryMb: v.number(),
   storageGb: v.optional(v.number()),
 });
 
-/**
- * Live persistent-sandbox registry, mirrored from broods so the dashboard can
- * show running/suspended instances and drive suspend/resume/terminate through
- * Convex live queries. broods (the runtime) is authoritative. It owns the
- * provider lifecycle and writes each transition here. Reservation reconnects
- * use the authoritative `sandboxReservations` table.
- * One row per reserved sandbox, keyed by `reservationKey` (the broods
- * reconnection key, globally unique since it embeds the account + workspace).
- */
 export const sandboxInstancesFields = {
   accountId: v.id("accounts"),
-  /** Stage scope; unset for account-scoped sandboxes, like `sandboxConfigsFields`. */
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
   provider: sandboxProviderValidator,
-  /** Stable reservation key used by broods reconnects. */
   reservationKey: v.string(),
-  /** Sandbox config this instance was reserved from; lets the dashboard drive its write-path. */
   sandboxConfigId: v.optional(v.id("sandboxConfigs")),
-  /** Provider-side id: workdir `sbx_…` / MicroVM `microvmId` / daytona id / vercel name. */
   externalId: v.string(),
   name: v.string(),
-  /**
-   * `suspending` is the dashboard-owned transition: the suspend action parks the row
-   * there while broods frees the provider compute, so the UI can lock the toggle until
-   * a terminal state lands. broods only ever writes the terminal states.
-   */
+  // Only the dashboard writes `suspending`; broods writes only the terminal states.
   status: v.union(
     v.literal("running"),
     v.literal("suspending"),
@@ -683,11 +466,8 @@ export const sandboxInstancesFields = {
     v.literal("terminating"),
     v.literal("error"),
   ),
-  /** The provider's own reason while `status` is `error`; cleared on every other status. */
   errorMessage: v.optional(v.string()),
-  /** Snapshot/image this instance launched from, when any. */
   snapshotId: v.optional(v.string()),
-  /** Non-secret egress policy summary (config `network.mode`); powers the dashboard Networking view. */
   egress: v.optional(
     v.union(
       v.literal("allow-all"),
@@ -695,17 +475,10 @@ export const sandboxInstancesFields = {
       v.literal("restricted"),
     ),
   ),
-  /** Tool approval policy (`edit`/`ask`/`bypass`); powers the dashboard Security view. */
   permissionMode: v.optional(
     v.union(v.literal("edit"), v.literal("ask"), v.literal("bypass")),
   ),
-  /** What the meter bills: the size the provider reported, else the config's. */
   specs: sandboxSpecsValidator,
-  /**
-   * `specs` is known to be the machine's real size: reported by the provider, or
-   * one Broods sets itself (workdir, the fixed MicroVM, a cloudflare instance
-   * type). Unset, `specs` is only the config's guess and the dashboard shows `?`.
-   */
   specsVerified: v.optional(v.boolean()),
   createdAt: v.number(),
   lastUsedAt: v.number(),
@@ -718,35 +491,18 @@ export const sandboxInstancesFields = {
   workspaceName: v.optional(v.string()),
   workspaceId: v.optional(v.string()),
   suspendedAt: v.optional(v.number()),
-  /** Idle seconds before the provider suspends it; billing runs until then. */
   idleTimeoutSeconds: v.optional(v.number()),
-  /**
-   * The machine's burst totals (vCPU-s and GB-s above its baseline since boot)
-   * as last billed. The guest reports running totals, so the meter bills the growth.
-   */
+  // The guest reports running totals since boot, so the meter bills the growth past this.
   burstBilled: v.optional(
     v.object({ vcpuSeconds: v.number(), gbSeconds: v.number() }),
   ),
-  /** The account's own provider credentials pay for it, so it is never metered. */
   ownCredentials: v.optional(v.boolean()),
-  /** Running time before this instant is already on the account's usage meter. */
   meteredUntil: v.optional(v.number()),
-  /**
-   * Provider-side guest log stream, when the provider has one. MicroVM (`lambda`):
-   * the CloudWatch stream `<accountId>/<project>/<stage>/<uuid>` core named at
-   * launch; its last segment is the `sandbox_id` the dashboard log tail filters on.
-   */
   logStream: v.optional(v.string()),
-  /**
-   * Set for a create-and-destroy instance that only exists for the length of one
-   * call (its `reservationKey` is the provider id, not a reconnect key). It is shown
-   * so live compute is visible, but nothing can suspend/resume/terminate it,
-   * since broods drops the row itself when the call ends.
-   */
+  // Lives for one call and broods drops the row itself, so nothing may suspend or terminate it.
   ephemeral: v.optional(v.boolean()),
 };
 
-/** A `machine` sandbox's daemon connection as core last saw it, one row per sandbox config; see sandbox/machines.ts. */
 export const machineConnectionsFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
@@ -755,42 +511,22 @@ export const machineConnectionsFields = {
   connectionId: v.string(),
   hostname: v.optional(v.string()),
   platform: v.optional(v.string()),
-  /** The daemon started with --computer. */
   computer: v.boolean(),
-  /** Server names from the daemon's --mcp file. */
   mcp: v.array(v.string()),
-  /** The computer's hardware as the daemon reported it; absent from an older daemon. */
   specs: v.optional(sandboxSpecsValidator),
   connectedAt: v.number(),
   lastSeenAt: v.number(),
   disconnectedAt: v.optional(v.number()),
 };
 
-/**
- * Where a snapshot was taken: the project and stage of the sandbox it came
- * from, or `"account"` for an account-scoped sandbox (no stage). A snapshot
- * holds a copy of that sandbox's disk, so only a sandbox of the same scope
- * boots it (`snapshotBootRefusal` in model/sandboxRules.ts).
- */
+// A snapshot holds its sandbox's disk: only the same scope boots it; an unscoped row boots nowhere.
 export const sandboxSnapshotScopeValidator = v.union(
   v.literal("account"),
   v.object({ projectId: v.id("projects"), stageId: v.id("stages") }),
 );
 
-/**
- * Sandbox snapshot/image registry, mirrored from broods. One row per captured
- * image, locked to the scope of the sandbox it was taken from, so a dev
- * sandbox never boots a copy of a production disk. Names are unique per
- * (account, scope). `status` follows the unified (Daytona-aligned) build model
- * mapped from AWS MicroVM image versions and workdir images; broods owns the
- * build pipeline and dual-writes status here.
- */
 export const sandboxSnapshotsFields = {
   accountId: v.id("accounts"),
-  /**
-   * Absent only on snapshots taken before snapshots were locked to a stage.
-   * No sandbox boots those; they must be taken again.
-   */
   scope: v.optional(sandboxSnapshotScopeValidator),
   name: v.string(),
   provider: sandboxProviderValidator,
@@ -804,27 +540,20 @@ export const sandboxSnapshotsFields = {
     v.literal("error"),
     v.literal("build_failed"),
   ),
-  /** Provider-side image id: workdir image id / MicroVM image ARN. */
   externalImageId: v.string(),
   pulledCount: v.number(),
   createdAt: v.number(),
   lastUsedAt: v.number(),
 };
 
-/**
- * Which account and stage took each provider image. Kept when the snapshot row
- * moves on to a newer capture and when the account is deleted: an image no row
- * names would otherwise boot anywhere as a plain provider image.
- */
+// Outlives the snapshot row and the account: an image no row names would boot anywhere.
 export const sandboxSnapshotImagesFields = {
   externalImageId: v.string(),
   accountId: v.id("accounts"),
-  /** Absent for an image taken before snapshots were locked; it boots nowhere. */
   scope: v.optional(sandboxSnapshotScopeValidator),
   baseImage: v.string(),
 };
 
-/** Sandbox lifecycle action names recorded in the operator audit trail. */
 export const sandboxAuditActionValidator = v.union(
   v.literal("reserve"),
   v.literal("suspend"),
@@ -836,10 +565,7 @@ export const sandboxAuditActionValidator = v.union(
   v.literal("terminal"),
 );
 
-/**
- * Operator audit trail for sandbox lifecycle actions. Stores metadata only:
- * never command text, provider secrets, or terminal credentials.
- */
+// Metadata only: never command text, provider secrets or terminal credentials.
 export const sandboxAuditEventsFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
@@ -868,40 +594,21 @@ export const sandboxAuditEventsFields = {
   createdAt: v.number(),
 };
 
-/**
- * Account-scoped workspace config (persistent S3-backed filesystem), referenced
- * by agents via the encrypted agent config. Holds no secrets, so the config
- * object is stored in plaintext.
- */
 export const workspaceConfigsFields = {
   accountId: v.id("accounts"),
-  /**
-   * Stage scope, unset for account-scoped rows (see `sandboxConfigsFields`).
-   * A per-stage row gives the workspace its own
-   * `_id`, and the runtime filesystem namespace keys off that `_id`
-   * (`accountId:workspaceId`), so two stages never share files.
-   */
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
   name: v.string(),
   description: v.optional(v.string()),
   config: v.any(),
-  /**
-   * The env vars an R2 workspace's keys reference, copied from `config` on
-   * every write (`workspaceEnvRefFields`) so an env var delete finds the
-   * workspaces using it by index.
-   */
+  // Copied from `config` on every write so an env var delete finds its users by index.
   r2AccessKeyEnv: v.optional(v.string()),
   r2SecretAccessKeyEnv: v.optional(v.string()),
-  /** Ownership marker; see `agentConfigsFields.managedBy`. */
-  managedBy: v.optional(
-    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
-  ),
+  managedBy: managedByValidator,
   createdAt: v.number(),
   updatedAt: v.number(),
 };
 
-/** CLI-managed runtime variables scoped to a project stage. */
 export const environmentVariablesFields = {
   projectId: v.id("projects"),
   stageId: v.id("stages"),
@@ -909,12 +616,11 @@ export const environmentVariablesFields = {
   ciphertext: v.string(),
   iv: v.string(),
   tag: v.string(),
-  /** HMAC-SHA256 hex of the plaintext under the account key, so `env set` can skip an unchanged value without a guessable hash at rest. */
+  // HMAC under the account key, not a bare hash, so the value is not guessable at rest.
   valueDigest: v.string(),
   updatedAt: v.number(),
 };
 
-/** Account-scoped runtime variables for the public config plane; values are write-only through the API. */
 export const accountEnvVarsFields = {
   accountId: v.id("accounts"),
   name: v.string(),
@@ -924,50 +630,30 @@ export const accountEnvVarsFields = {
   updatedAt: v.number(),
 };
 
-/**
- * A connection: an external account (today the ChatGPT plan) signed in once
- * per account by `broods connect`, one of each type.
- * Core refreshes it in process and writes the rotated tokens back. Tokens are
- * sealed under the account's envelope key and never leave through the API.
- */
 export const connectionsFields = {
   accountId: v.id("accounts"),
   type: v.union(...CONNECTION_TYPE_NAMES.map((name) => v.literal(name))),
-  /** The OAuth client OpenAI issued at the first sign-in. */
   clientId: v.string(),
-  /** `ext_agent_host_id` of this deployment, kept across sign-ins. */
   hostId: v.string(),
   email: v.optional(v.string()),
   scopes: v.array(v.string()),
-  /** Access-token expiry, epoch ms. */
   expiresAt: v.number(),
-  /** Encrypted `{ accessToken, refreshToken }`. */
   ciphertext: v.string(),
   iv: v.string(),
   tag: v.string(),
   updatedAt: v.number(),
 };
 
-/**
- * Audit record written every time an environment variable's plaintext value is
- * revealed (via the dashboard eye-icon or the CLI `env get`), so reveals of
- * otherwise write-only secrets leave a trail of who read what and when.
- */
 export const environmentVariableRevealsFields = {
   projectId: v.id("projects"),
   stageId: v.id("stages"),
   environmentVariableId: v.id("environmentVariables"),
   name: v.string(),
   source: v.union(v.literal("dashboard"), v.literal("cli")),
-  /** WorkOS authId of the dashboard user who revealed it (when source is "dashboard"). */
   revealedByAuthId: v.optional(v.string()),
-  /** Account that revealed it through a CLI token or project key (when source is "cli"). */
   revealedByAccountId: v.optional(v.id("accounts")),
-  /** CLI token row used for the reveal, when authenticated by `broods login`. */
   revealedByCliTokenId: v.optional(v.id("cliTokens")),
-  /** WorkOS authId attached to the CLI token used for the reveal. */
   revealedByCliAuthId: v.optional(v.string()),
-  /** Project key used for the reveal, when authenticated by one. */
   revealedByDeployKeyId: v.optional(v.id("deployKeys")),
   revealedAt: v.number(),
 };
@@ -1008,19 +694,11 @@ export const auditResourceKindValidator = v.union(
   v.literal("unknown"),
 );
 
-/**
- * The account's hash-chained audit ledger: config mutations, run lifecycle and
- * enforced tool denials. `seq` is per-account and gapless at append time, and
- * `hash` covers the row plus `prevHash`, so a row cannot be edited or removed
- * from the middle without `verifyChain` noticing. Details are capped before
- * insert and must never carry plaintext secrets or config blobs.
- */
+// `hash` chains over `prevHash` so `verifyChain` sees any edit or removal. Details hold no secrets.
 export const auditEventsFields = {
   accountId: v.id("accounts"),
   seq: v.number(),
-  /** Hash of the previous row, "" on the genesis row. */
   prevHash: v.string(),
-  /** sha256 hex over the canonical JSON of every other field (`model/auditEvents.ts`). */
   hash: v.string(),
   at: v.number(),
   actor: v.object({
@@ -1029,7 +707,6 @@ export const auditEventsFields = {
     email: v.optional(v.string()),
     name: v.optional(v.string()),
     agentId: v.optional(v.string()),
-    /** An agent actor's delegation chain: who asked, then each delegating agent. */
     chain: v.optional(v.array(principalLinkValidator)),
   }),
   action: v.string(),
@@ -1045,17 +722,12 @@ export const auditEventsFields = {
   traceId: v.optional(v.string()),
 };
 
-/** One row per account: the ledger tip, so an append is one read and one patch. */
 export const auditChainHeadsFields = {
   accountId: v.id("accounts"),
   seq: v.number(),
   hash: v.string(),
 };
 
-/**
- * Where the ledger is exported to. One webhook per account; the signing secret
- * is sealed under the account's envelope key and never read back.
- */
 export const auditSinksFields = {
   accountId: v.id("accounts"),
   kind: v.literal("webhook"),
@@ -1063,17 +735,12 @@ export const auditSinksFields = {
   encryptedSecret: v.string(),
   secretIv: v.string(),
   secretTag: v.string(),
-  /** Highest `seq` the sink acknowledged; the prune watermark. */
   exportedSeq: v.number(),
   lastError: v.optional(v.string()),
   updatedAt: v.number(),
 };
 
-/**
- * Orders the reads of one Stripe subscription. A webhook claims the next
- * ticket before it reads the subscription from Stripe, and its read lands only
- * when no read with a later ticket has landed already.
- */
+// A webhook claims a ticket before reading Stripe; its read lands only if no later ticket has.
 export const stripeSubscriptionSyncsFields = {
   stripeSubscriptionId: v.string(),
   claimed: v.number(),
@@ -1088,17 +755,11 @@ export const configHttpAuthFailuresFields = {
   updatedAt: v.number(),
 };
 
-/**
- * File/folder entries stored inside a workspace canvas node.
- * Binary content lives in Convex storage; this table tracks metadata and the tree.
- */
 export const workspaceFilesFields = {
   authId: v.string(),
   projectId: v.id("projects"),
   nodeId: v.string(),
-  /** Full path from the workspace root, e.g. "src/components/Button.tsx". */
   path: v.string(),
-  /** Filename or folder name, e.g. "Button.tsx". */
   name: v.string(),
   isFolder: v.boolean(),
   storageId: v.optional(v.id("_storage")),
@@ -1108,11 +769,6 @@ export const workspaceFilesFields = {
   updatedAt: v.number(),
 };
 
-/**
- * One minted storage upload URL. The count of unexpired rows per account is
- * the upload quota (`model/uploads.ts`); nothing links a row to the blob,
- * because the storage id only exists once the client has uploaded.
- */
 export const uploadGrantsFields = {
   accountId: v.id("accounts"),
   kind: v.union(v.literal("mcp"), v.literal("workspace")),
@@ -1120,35 +776,24 @@ export const uploadGrantsFields = {
   expiresAt: v.number(),
 };
 
-/**
- * Capability link for one file in a workspace's S3 namespace, redeemed with no
- * credential of its own. It exists because a presigned S3 URL cannot survive the
- * trip: 1.4 KB of it is an STS token whose `+` characters chat clients mangle.
- */
+// Not a presigned S3 URL: chat clients mangle the `+` characters in its STS token.
 export const workspaceDownloadTokensFields = {
   accountId: v.id("accounts"),
   workspaceId: v.id("workspaceConfigs"),
-  /** Workspace-relative path, already normalized when the token was minted. */
   path: v.string(),
-  /** Name offered to whoever follows the link. */
   filename: v.string(),
-  /** SHA-256 hex of the token; the token itself only ever exists in the URL. */
   tokenHash: v.string(),
   expiresAt: v.number(),
   createdAt: v.number(),
 };
 
-/** Ordered AI SDK events for one runtime conversation. */
 export const runtimeConversationEventsFields = {
   accountId: v.id("accounts"),
   conversationKey: v.string(),
   cursor: v.string(),
-  // Set by a writer that may retry an append whose reply was lost: a row whose
-  // key this conversation already stores is skipped, so it is stored once.
   dedupeKey: v.optional(v.string()),
   event: v.any(),
 };
-/** Resumable checkpoint for one AI SDK Harness conversation. */
 export const runtimeHarnessSessionsFields = {
   accountId: v.id("accounts"),
   conversationKey: v.string(),
@@ -1161,34 +806,22 @@ export const runtimeHarnessSessionsFields = {
   ),
   sessionId: v.string(),
   resumeState: v.any(),
-  /** Reservation the session's sandbox runs on. Unset rows predate it and ran on the conversation key. */
   reservationKey: v.optional(v.string()),
   updatedAt: v.number(),
 };
-/** Context-only webhook event dedupe claims. */
 export const runtimeClaimsFields = {
   accountId: v.id("accounts"),
   key: v.string(),
   kind: v.literal("event"),
   expiresAt: v.number(),
 };
-/**
- * Concurrency policy for one ingress request: the mode a caller asks for, and
- * the mode the coordinator applies once it reaches a runnable boundary.
- */
 export const ingressModeValidator = v.union(
   v.literal("reject"),
   v.literal("followup"),
   v.literal("collect"),
   v.literal("steer"),
 );
-/**
- * The cursor half of Convex's `PaginationResult`, so a paginated internal
- * query declares its `returns` as `v.object({ page: v.array(doc),
- * ...paginationCursorFields })` instead of restating four fields each time.
- * The shape has to match what `.paginate()` returns, optional fields included,
- * or Convex rejects the value at runtime.
- */
+// Must match what `.paginate()` returns, optional fields included, or Convex rejects it.
 export const paginationCursorFields = {
   isDone: v.boolean(),
   continueCursor: v.string(),
@@ -1202,7 +835,6 @@ export const paginationCursorFields = {
   ),
 };
 
-/** Durable lifecycle for accepted ingress. */
 export const ingressStatusValidator = v.union(
   v.literal("accepted"),
   v.literal("queued"),
@@ -1212,22 +844,15 @@ export const ingressStatusValidator = v.union(
   v.literal("failed"),
   v.literal("expired"),
 );
-/**
- * The rows a channel session's config is narrowed by. `credentialAgentId` is
- * the agent whose channel credentials verified the delivery, when it is not
- * the agent that runs the conversation.
- */
+// `credentialAgentId`: whose channel credentials verified the delivery, when not the runner.
 export const channelTargetRefsFields = {
   credentialAgentId: v.optional(v.string()),
   channelRecordId: v.optional(v.string()),
 };
-/** Fenced ownership and FIFO counters for one runtime conversation. */
 export const runtimeConversationCoordinatorsFields = {
   accountId: v.id("accounts"),
   agentId: v.string(),
   conversationKey: v.string(),
-  // Where a channel session replies, and the rows core rebuilds its config
-  // from on re-entry.
   channelTarget: v.optional(
     v.object({
       channelName: v.string(),
@@ -1240,29 +865,18 @@ export const runtimeConversationCoordinatorsFields = {
   ownerEventId: v.optional(v.string()),
   ownerTaskId: v.optional(v.string()),
   stopRequestedGeneration: v.optional(v.number()),
-  // Written with stopRequestedGeneration and read only with it: true when a
-  // parent agent's stop_subagent asked, so that stop is not the user's.
   stopRequestedByParent: v.optional(v.boolean()),
   leaseExpiresAt: v.optional(v.number()),
   queuedCount: v.number(),
   queuedBytes: v.number(),
   updatedAt: v.number(),
 };
-/**
- * What an envelope keeps to rebuild its run config at dispatch, never the
- * resolved config: the request's own model override (call settings only), and
- * for a channel session the channel and rows its config is narrowed by.
- */
 export const ingressConfigRefValidator = v.object({
   model: v.optional(v.record(v.string(), v.any())),
   channel: v.optional(
     v.object({ channelName: v.string(), ...channelTargetRefsFields }),
   ),
 });
-/**
- * Who sent a channel message, in provider-neutral terms: core's
- * `ChannelIdentity` (apps/core/src/shared/channels.ts).
- */
 export const channelIdentityValidator = v.object({
   workspaceRef: v.optional(v.string()),
   channelId: v.optional(v.string()),
@@ -1271,11 +885,6 @@ export const channelIdentityValidator = v.object({
   userName: v.optional(v.string()),
   userRoles: v.optional(v.array(v.string())),
 });
-/**
- * One ephemeral system instruction stored on an envelope: the AI SDK's
- * `SystemModelMessage`. Every core producer parses the message with the SDK's
- * own `systemModelMessageSchema` (or builds it literally) before it is stored.
- */
 export const systemModelMessageValidator = v.object({
   role: v.literal("system"),
   content: v.string(),
@@ -1283,14 +892,12 @@ export const systemModelMessageValidator = v.object({
     v.record(v.string(), v.record(v.string(), v.any())),
   ),
 });
-/** The public deployment scope a run was addressed through, for status URLs. */
 export const publicDeploymentIngressValidator = v.object({
   accountId: v.string(),
   endpointId: v.string(),
   stageSlug: v.string(),
   projectSlug: v.string(),
 });
-/** Where an envelope's run answers once dispatched: core's `IngressDelivery`. */
 export const ingressDeliveryValidator = v.union(
   v.object({
     kind: v.literal("http"),
@@ -1317,25 +924,18 @@ export const ingressDeliveryValidator = v.union(
   v.object({
     kind: v.literal("channel"),
     channel: v.string(),
-    /** Who sent the message, so a queued turn runs as its own sender. */
     identity: v.optional(channelIdentityValidator),
-    /** Opaque reply routing (interaction tokens, response URLs); never typed. */
     source: v.optional(v.record(v.string(), v.any())),
   }),
 );
 
-/** One accepted transport-neutral ingress item in the conversation FIFO. */
 export const runtimeIngressEnvelopesFields = {
   accountId: v.id("accounts"),
   agentId: v.string(),
   conversationKey: v.string(),
   sequence: v.number(),
   eventId: v.string(),
-  /**
-   * Public, account-unique id for this run: what `GET /v1/runs/{runId}`
-   * resolves on. `eventId` cannot serve that purpose because it embeds the
-   * agent, and the caller-supplied part of it is only unique per agent.
-   */
+  // Public id: `eventId` embeds the agent and its caller-supplied part is unique per agent only.
   runId: v.string(),
   identity: v.string(),
   idempotencyKey: v.string(),
@@ -1344,14 +944,10 @@ export const runtimeIngressEnvelopesFields = {
   delivery: ingressDeliveryValidator,
   requestedMode: ingressModeValidator,
   ownerTaskId: v.optional(v.string()),
-  // Per-request execution context so a queued envelope runs with its own
-  // config and one-turn system, never the previous owner's. The config itself
-  // is rebuilt from the ref at dispatch; it never sits here with its secrets.
+  // Rebuilt into the config at dispatch, so the resolved config and its secrets never sit here.
   configRef: v.optional(ingressConfigRefValidator),
   ephemeralSystem: v.optional(v.array(systemModelMessageValidator)),
-  // The subagent or async tool result row a late resume delivers. A queued
-  // resume marks it stored only when it is applied, so one that expires in
-  // the queue leaves it for the recovery sweep.
+  // A queued resume marks its result stored only once applied; an expired one is left to recovery.
   resultEventId: v.optional(v.string()),
   toolResultId: v.optional(v.string()),
   appliedMode: v.optional(ingressModeValidator),
@@ -1365,12 +961,9 @@ export const runtimeIngressEnvelopesFields = {
   expiresAt: v.number(),
   statusExpiresAt: v.number(),
   error: v.optional(v.string()),
-  // Distinguishes a deliberate /stop from a genuine failure; both are terminal
-  // "failed" so pollers keep one terminal bucket, but this reads intent.
   stoppedByUser: v.optional(v.boolean()),
   result: v.optional(v.any()),
 };
-/** Provenance for one steering, follow-up, or collected application. */
 export const runtimeIngressApplicationsFields = {
   accountId: v.id("accounts"),
   conversationKey: v.string(),
@@ -1382,7 +975,6 @@ export const runtimeIngressApplicationsFields = {
   createdAt: v.number(),
   expiresAt: v.number(),
 };
-/** Where a run answers once its async work settles: core's `AsyncToolDelivery`. */
 export const asyncToolDeliveryValidator = v.union(
   v.object({ kind: v.literal("async") }),
   v.object({
@@ -1395,34 +987,20 @@ export const asyncToolDeliveryValidator = v.union(
     kind: v.literal("channel"),
     channelName: v.string(),
     identity: v.optional(channelIdentityValidator),
-    /** Opaque reply routing (interaction tokens, response URLs); never typed. */
     source: v.record(v.string(), v.any()),
   }),
 );
-/**
- * Where a subagent's parent conversation answers, so a result the parent
- * stopped waiting for can still reach it after a restart. The task, the child
- * agent and its key come from the row's own `eventId` and `conversationKey`.
- */
 export const subagentTaskValidator = v.object({
   description: v.optional(v.string()),
   parentConversationKey: v.string(),
   parentDelivery: v.optional(asyncToolDeliveryValidator),
 });
-/**
- * A tool call waiting on a person's approval, as the polling row lists it:
- * core's `ToolApprovalSummary`. `input` is the model-generated tool input.
- */
 const toolApprovalSummaryValidator = v.object({
   approvalId: v.string(),
   toolCallId: v.string(),
   toolName: v.string(),
   input: v.any(),
 });
-/**
- * One open ask_questions prompt while a run is awaiting_input: core's
- * `PendingQuestionSummary` over its `ChannelQuestion` rows.
- */
 const pendingQuestionSummaryValidator = v.object({
   statusId: v.string(),
   questions: v.array(
@@ -1440,13 +1018,11 @@ const pendingQuestionSummaryValidator = v.object({
   ),
   answerBy: v.string(),
 });
-/** Public async-agent polling and approval state. */
 export const runtimeAsyncAgentResultsFields = {
   accountId: v.id("accounts"),
   eventId: v.string(),
   conversationKey: v.string(),
   subagent: v.optional(subagentTaskValidator),
-  // Set when a subagent's row is created; see `handbackValidator`.
   handback: v.optional(handbackValidator),
   status: v.union(
     v.literal("processing"),
@@ -1458,19 +1034,16 @@ export const runtimeAsyncAgentResultsFields = {
   response: v.optional(v.any()),
   error: v.optional(v.string()),
   approvals: v.optional(v.array(toolApprovalSummaryValidator)),
-  // Open ask_questions prompts while status is awaiting_input.
   questions: v.optional(v.array(pendingQuestionSummaryValidator)),
   createdAt: v.string(),
   updatedAt: v.string(),
   expiresAt: v.number(),
 };
-/** A reservation and the machine it names; the id is the fence for writes to the row. */
 export const reservedSandboxValidator = v.object({
   provider: sandboxProviderValidator,
   reservationKey: v.string(),
   externalId: v.string(),
 });
-/** Detached async tool state, including delivery and hashed callback authorization. */
 export const runtimeAsyncToolResultsFields = {
   accountId: v.id("accounts"),
   resultId: v.string(),
@@ -1488,33 +1061,22 @@ export const runtimeAsyncToolResultsFields = {
   error: v.optional(v.string()),
   delivery: v.optional(asyncToolDeliveryValidator),
   completionTokenHash: v.optional(v.string()),
-  // Set once the row finishes; see `handbackValidator`.
   handback: v.optional(handbackValidator),
-  // Set once the launch reports which machine took the job. A settle after the
-  // reservation stopped naming it fails the row instead.
+  // A settle after the reservation stopped naming this machine fails the row.
   sandbox: v.optional(reservedSandboxValidator),
   createdAt: v.string(),
   updatedAt: v.string(),
   expiresAt: v.number(),
 };
-/** Authoritative persistent-sandbox reservation mapping. */
 export const sandboxReservationsFields = {
   accountId: v.id("accounts"),
   provider: sandboxProviderValidator,
   reservationKey: v.string(),
   externalId: v.string(),
   expiresAt: v.number(),
-  /** Idle window this reservation was claimed with; unset means the 7-day default. */
   ttlSeconds: v.optional(v.number()),
 };
 
-/**
- * Per-account scheduled agent runs. Mirrors core's CronRecord
- * (apps/core/src/shared/domain/cron.ts) so the SaaS dashboard can manage them
- * directly via Convex live queries. Recurring jobs are registered with the
- * Convex crons component under the row id; a one-time at(...) job stores the
- * Convex scheduler run that will fire it in `scheduledRunId`.
- */
 export const cronsFields = {
   accountId: v.id("accounts"),
   name: v.string(),
@@ -1531,11 +1093,8 @@ export const cronsFields = {
     v.union(v.literal("started"), v.literal("completed"), v.literal("failed")),
   ),
   lastError: v.optional(v.string()),
-  // The run `lastStatus` mirrors: only that run's settle may change it.
-  // `lastInvokedAt` is that fire's scheduled time, so an older fire never
-  // takes the status back.
+  // Only this run's settle may change `lastStatus`.
   lastRunId: v.optional(v.id("cronRuns")),
-  // The member who made it in the dashboard; a job made over the API has none.
   createdBy: v.optional(v.id("users")),
   createdAt: v.number(),
   updatedAt: v.number(),
@@ -1557,50 +1116,26 @@ export const cronRunsFields = {
   completedAt: v.optional(v.number()),
 };
 
-/**
- * Per-finished-task usage row. Written once per agent task at completion, giving
- * the dashboard a line-item token/compute cost per task. Indexes allow scoping to
- * a specific deployment (`endpointId`) or to the whole account. Pricing is
- * computed at render from the `modelPrices` rates crawled from models.dev.
- * Only raw counts are stored here.
- */
 export const taskUsageFields = {
   accountId: v.id("accounts"),
-  /** Per-deployment id (matches agentDeployments.endpointId); the dashboard join key. */
   endpointId: v.string(),
   agentId: v.string(),
   conversationKey: v.string(),
-  /** `${eventId}#${traceId}`: one row per model pass. */
   taskId: v.string(),
   modelProvider: v.string(),
   modelId: v.string(),
-  /** Epoch ms when the task finished. */
   finishedAt: v.number(),
-  /** Wall-clock duration of the task in ms. */
   durationMs: v.number(),
   status: v.union(v.literal("completed"), v.literal("failed")),
   inputTokens: v.number(),
   outputTokens: v.number(),
   reasoningTokens: v.number(),
-  /** Cache-read tokens (cached input). */
   cachedInputTokens: v.number(),
-  /** Cache-write tokens (cache creation). */
   cacheWriteTokens: v.number(),
   totalTokens: v.number(),
-  /** Harness runtime backend (currently always "lambda"). */
   runtimeKind: v.string(),
-  /** Harness runtime wall-clock ms (GB-seconds proxy when multiplied by memory). */
   runtimeWallMs: v.number(),
-  /** Harness runtime memory size in MB (from AWS_LAMBDA_FUNCTION_MEMORY_SIZE). */
   runtimeMemoryMb: v.number(),
-  /**
-   * CPU consumed in sandboxes during the task, one entry per sandbox context:
-   * the agent's own sandbox (role "agent") and the uploaded-tool runner (role
-   * "tool"), tagged by compute `type` ("sandbox", "lambda", "mcp-sandbox";
-   * retired rows carry "custom-tool-sandbox").
-   * cpuUsec comes from the workdir exec report, the MicroVM getrusage report, and
-   * the tool child's own cpuUsage respectively; others store 0.
-   */
   sandboxUsage: v.array(
     v.object({
       type: v.string(),
@@ -1609,145 +1144,83 @@ export const taskUsageFields = {
       cpuUsec: v.number(),
     }),
   ),
-  /** Number of model steps (model.step.finished events). */
   stepCount: v.number(),
-  /** Number of tool calls across all steps. */
   toolCallCount: v.number(),
-  /**
-   * Start of the latest user message, the same text the trace shows as
-   * `task.input`, so the usage tab can label a task. Absent on older rows.
-   */
   inputPreview: v.optional(v.string()),
 };
 
-/**
- * Pre-aggregated token usage per (deployment, grain, time bucket, model),
- * upserted by the harness so the dashboard usage panel streams live without
- * scanning logs. Each sample folds into a 5-minute, an hour, and a day bucket
- * so long ranges read coarse rows instead of every 5-minute bucket. Buckets
- * are sparse (only active windows exist), so row count tracks real activity,
- * not wall-clock time.
- */
-/** What an account used in a month, in the units `model/pricing.ts` prices. */
 export const usageQuantityFields = {
   sandboxVcpuSeconds: v.number(),
   sandboxGbSeconds: v.number(),
-  /** Memory GB written and read back by sandbox launches and resumes. */
   sandboxSnapshotGb: v.number(),
-  /** Memory GB-months a suspended MicroVM's snapshot is stored for. */
   sandboxSnapshotGbMonths: v.number(),
   hostedMcpGbSeconds: v.number(),
   hostedMcpRequests: v.number(),
-  /** Milliseconds `worker` sandbox commands ran on the Worker, waits included; nothing runs between them. */
   workerMs: v.number(),
   workerRequests: v.number(),
   storageGbMonths: v.number(),
   egressGb: v.number(),
-  /** Channel attachments core received. Free; shown, never priced. */
   ingressGb: v.number(),
 };
 
 export const usageQuantitiesValidator = v.object(usageQuantityFields);
 
-/** The V8 Worker quantities, absent on rows metered before the provider existed. */
 const workerUsageFields = {
   workerMs: v.optional(v.number()),
   workerRequests: v.optional(v.number()),
 };
 
-/**
- * One account's metered usage for one UTC calendar month. Quantities, not
- * euros: `meterCostEur` prices them, so a price change needs no backfill.
- */
+// Quantities, not euros: a price change needs no backfill.
 export const usageMetersFields = {
   accountId: v.id("accounts"),
-  /** "YYYY-MM", UTC. */
   month: v.string(),
   ...usageQuantityFields,
   ...workerUsageFields,
-  /** Absent on months metered before ingress was. */
   ingressGb: v.optional(v.number()),
-  /** Absent on months metered before suspended snapshots were. */
   sandboxSnapshotGbMonths: v.optional(v.number()),
-  /** GB stored at the month's latest snapshot, zero-byte ones included. */
   storageGb: v.optional(v.number()),
-  /** When the 80% warning went out, before `usagePools.warnedAt` took it over. */
   warnedAt: v.optional(v.number()),
   updatedAt: v.number(),
 };
 
-/**
- * The same usage summed over every account whose org one user owns, for one
- * UTC calendar month: the pool the owner's plan caps are measured against
- * (`model/usageMeter.ts`). Written together with each account's meter.
- */
 export const usagePoolsFields = {
-  /** The paying user: `orgs.ownerAuthId` of every org drawing on the pool. */
   ownerAuthId: v.string(),
-  /** "YYYY-MM", UTC. */
   month: v.string(),
   ...usageQuantityFields,
-  /** GB the owner's accounts hold at their latest snapshots, summed. */
   storageGb: v.optional(v.number()),
-  /** When the 80% warning went out; at most once per owner per month. */
   warnedAt: v.optional(v.number()),
   updatedAt: v.number(),
 };
 
-/**
- * The same usage per UTC day, for the dashboard's daily chart. The monthly
- * meter stays the budget's source, so core's admission check reads one row.
- */
 export const usageDaysFields = {
   accountId: v.id("accounts"),
-  /** "YYYY-MM-DD", UTC. */
   day: v.string(),
   ...usageQuantityFields,
   ...workerUsageFields,
-  /** Absent on days metered before suspended snapshots were. */
   sandboxSnapshotGbMonths: v.optional(v.number()),
-  /** GB stored at the day's latest snapshot; absent before one runs. */
   storageGb: v.optional(v.number()),
   updatedAt: v.number(),
 };
 
-/**
- * The same daily usage split by the project it came from, for the Usage tab's
- * per-project view. Usage with no project (account-wide sandboxes and
- * workspaces, chat attachments, skills, bundles) only lands on `usageDays`.
- */
 export const usageProjectDaysFields = {
   accountId: v.id("accounts"),
   projectId: v.id("projects"),
-  /** "YYYY-MM-DD", UTC. */
   day: v.string(),
   ...usageQuantityFields,
   ...workerUsageFields,
-  /** GB the project's workspaces held at the day's latest snapshot. */
   storageGb: v.optional(v.number()),
   updatedAt: v.number(),
 };
 
-/**
- * Ids of core usage writes already on a meter, so a retry after a lost
- * response is not counted twice. Pruned after a day; retries end in seconds.
- */
 export const usageWritesFields = {
   writeId: v.string(),
   createdAt: v.number(),
 };
 
-/**
- * Catalogue token rates in USD per million tokens for one agent provider's
- * models, crawled hourly by `modelPrices/crawl.ts`. `modelRates` in `logs.ts`
- * reads them under the org's own `modelPriceOverrides`.
- */
 export const modelPricesFields = {
-  /** Agent provider name, as usage rows name it, e.g. `bedrock`. */
   provider: v.string(),
   models: v.array(
     v.object({
-      /** `normalizeModelId` of the model id. */
       modelId: v.string(),
       input: v.number(),
       output: v.number(),
@@ -1757,10 +1230,6 @@ export const modelPricesFields = {
   ),
 };
 
-/**
- * The org's own rates from `BROODS_MODEL_PRICES`, one doc per agent provider,
- * mirrored by every crawl. A cache rate left out falls back to the catalogue's.
- */
 export const modelPriceOverridesFields = {
   provider: v.string(),
   models: v.array(
@@ -1777,7 +1246,6 @@ export const modelPriceOverridesFields = {
 export const usageRollupsFields = {
   accountId: v.id("accounts"),
   endpointId: v.string(),
-  /** Epoch ms floored (UTC) to the grain's bucket width. */
   bucketStart: v.number(),
   grain: v.union(v.literal("5m"), v.literal("hour"), v.literal("day")),
   modelProvider: v.string(),
@@ -1786,18 +1254,12 @@ export const usageRollupsFields = {
   outputTokens: v.number(),
   reasoningTokens: v.number(),
   cachedInputTokens: v.number(),
-  /** Cache-write tokens (cache creation) folded into this bucket. */
   cacheWriteTokens: v.number(),
   totalTokens: v.number(),
-  /** Count of model.invocation.finished (agent tasks) in this bucket. */
   invocations: v.number(),
-  /** Count of model.step.finished (individual model calls) in this bucket. */
   modelCalls: v.number(),
-  /** Harness runtime wall-clock ms folded into this bucket. */
   runtimeWallMs: v.number(),
-  /** Sandbox CPU usage_usec folded into this bucket. */
   agentSandboxCpuUsec: v.number(),
-  /** Tool-sandbox CPU usage_usec (hosted MCP servers) folded into this bucket. */
   toolSandboxCpuUsec: v.number(),
   updatedAt: v.number(),
 };
@@ -1807,8 +1269,6 @@ export default defineSchema({
     .index("by_authId", ["authId"])
     .index("by_accountHandle", ["accountHandle"])
     .index("by_email", ["email"]),
-  // Also serves the org's project list, in slug order; the one caller that
-  // needs newest-first sorts by `updatedAt`.
   projects: defineTable(projectsFields).index("by_orgId_and_slug", [
     "orgId",
     "slug",
@@ -1834,8 +1294,6 @@ export default defineSchema({
     ])
     .index("by_apiKeyHash", ["apiKeyHash"])
     .index("by_endpointId", ["endpointId"])
-    // The channel-endpoints reconcile walks every active deployment; a status
-    // range keeps rotated/retired rows out of that read set.
     .index("by_status", ["status"])
     .index("by_accountId_and_status", ["accountId", "status"]),
   channelEndpoints: defineTable(channelEndpointsFields)
@@ -1900,9 +1358,7 @@ export default defineSchema({
     .index("by_expiresAt", ["expiresAt"]),
   channelRecords: defineTable(channelRecordsFields)
     .index("by_accountId_and_status", ["accountId", "status"])
-    // The inbound-webhook lookup: which record owns this place? `status` is in
-    // the key because deleting leaves the row, so a place churned repeatedly
-    // would otherwise make every inbound message read its whole history.
+    // `status` in the key: deleted rows stay, so churn would bloat every inbound lookup.
     .index("by_accountId_platform_external", [
       "accountId",
       "platform",
@@ -2024,13 +1480,9 @@ export default defineSchema({
       "sequence",
     ])
     .index("by_accountId_and_runId", ["accountId", "runId"])
-    // Status leads so maintenance scans only nonterminal rows: terminal rows
-    // keep their stale expiresAt for the whole status retention window, and a
-    // bare expiresAt index would re-read every one of them each sweep.
+    // Status leads: terminal rows keep a stale expiresAt a bare index would reread every sweep.
     .index("by_status_and_expiresAt", ["status", "expiresAt"])
     .index("by_status_and_statusExpiresAt", ["status", "statusExpiresAt"])
-    // Recovery steps one queued conversation at a time, so a long queue costs
-    // one read rather than a page of its own envelopes.
     .index("by_status_and_conversationKey", ["status", "conversationKey"]),
   runtimeIngressApplications: defineTable(runtimeIngressApplicationsFields)
     .index("by_conversationKey_and_createdAt", ["conversationKey", "createdAt"])

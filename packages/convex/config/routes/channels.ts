@@ -1,9 +1,3 @@
-/**
- * Channel record CRUD (`/v1/channels*`). A record binds one real chat channel
- * to an agent; the runtime reads it on the inbound webhook to decide who
- * answers there.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -171,7 +165,6 @@ export async function handleChannelRecordRoute(
   return methodNotAllowed(["GET", "PATCH", "DELETE"]);
 }
 
-/** The stage-scoped resources a channel record config names. */
 function channelConfigRefs(
   config: ChannelRecordConfig | undefined,
 ): StageScopedRef[] {

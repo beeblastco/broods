@@ -1,12 +1,3 @@
-/**
- * `bun run bench` measures the suite and prints it.
- * `bun run bench:check` measures, grades against bench/baselines.json, and exits
- *   1 on a blocking regression. This is what CI runs.
- * `bun run bench:record` overwrites the baselines from a fresh measurement,
- *   or from a result file with `--from <bench-result.json>`. Never called by
- *   CI to commit anything: a baseline moves only through a reviewed commit.
- */
-
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
@@ -43,9 +34,7 @@ const mode = args.has("--record")
     ? "check"
     : "run";
 
-// `--only <prefix>` runs a slice of the suite while iterating on a case; a
-// partial run is never graded or recorded, since the machine ratio needs the
-// whole suite to mean anything.
+// A partial run is never graded or recorded: the machine ratio needs the whole suite.
 const onlyIndex = process.argv.indexOf("--only");
 const only = onlyIndex === -1 ? null : (process.argv[onlyIndex + 1] ?? null);
 const selectedCases =
@@ -59,9 +48,7 @@ if (only !== null && mode !== "run") {
   process.exit(2);
 }
 
-// `--record --from <result.json>` adopts a run already measured, so CI can
-// upload a baselines file from the same numbers it graded instead of running
-// the suite a second time.
+// Lets CI record baselines from the numbers it already graded instead of re-running.
 const fromIndex = process.argv.indexOf("--from");
 const from = fromIndex === -1 ? null : (process.argv[fromIndex + 1] ?? null);
 if (from !== null && mode !== "record") {
@@ -134,8 +121,6 @@ const { comparisons, machineRatio, orphaned } = compareToBaselines(
 );
 printComparisons(result, comparisons, machineRatio);
 
-// A baseline nothing measured is a case that was renamed or deleted with its
-// gate still on the books. Re-recording drops it; until then the check fails.
 if (orphaned.length > 0) {
   console.error(
     `\n${orphaned.length} baseline${orphaned.length === 1 ? "" : "s"} with no case in this run:`,
@@ -220,11 +205,7 @@ function printMeasurements(resultFile: BenchResultFile): void {
   }
 }
 
-/**
- * Build a baselines file from a measurement run, carrying forward each case's
- * existing gate and ceiling so re-recording a number never quietly relaxes the
- * policy that was reviewed with it.
- */
+// Carries each gate and ceiling forward so re-recording never relaxes a reviewed policy.
 function recordBaselines(measured: BenchResultFile): BenchBaselineFile {
   const previous: BenchBaselineFile | null = existsSync(BASELINES_PATH)
     ? (JSON.parse(readFileSync(BASELINES_PATH, "utf8")) as BenchBaselineFile)
@@ -233,8 +214,6 @@ function recordBaselines(measured: BenchResultFile): BenchBaselineFile {
   const cases: BenchBaselineFile["cases"] = {};
   for (const measurement of measured.measurements) {
     const prior = previous?.cases[measurement.name];
-    // A case that could not run here has no number to record. Keep whatever
-    // baseline it already had rather than overwriting it with a zero.
     if (measurement.skipped) {
       if (prior) cases[measurement.name] = prior;
       continue;

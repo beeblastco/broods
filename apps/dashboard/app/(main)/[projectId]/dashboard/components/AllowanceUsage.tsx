@@ -47,7 +47,6 @@ import { UsageChart, UsageLegend } from "./UsageChart";
 
 const DAY_SECONDS = 24 * 60 * 60;
 
-/** Whose month the Resources show: one project's part of the org's, or every project's. */
 export type UsageScope =
   | { scope: "project"; projectId: string }
   | { scope: "all" };
@@ -55,13 +54,6 @@ export type UsageScope =
 const OTHER_USAGE_HELP =
   "Usage no single project made: account-wide sandboxes and workspaces, chat attachments, skills and bundles, deleted projects, and anything metered before usage was split by project.";
 
-/**
- * Resources: the org's month per resource against its caps, with a month
- * picker. A project's Usage tab shows its part of each cap; the org's Usage
- * page shows each project's part and a table of them. Clicking a row charts
- * that resource per day under the table. Holds the last month while another
- * loads, so the table and chart ease to it instead of dropping to a skeleton.
- */
 export function AllowanceUsage({
   view,
 }: {
@@ -72,14 +64,14 @@ export function AllowanceUsage({
     month: month,
     withProjects: true,
   });
+  // The last month stays up while another loads, so the chart eases instead of blanking.
   const [held, setHeld] = useState<BudgetUsage | null | undefined>(usage);
   if (usage !== undefined && usage !== held) {
     setHeld(usage);
   }
   const budget = usage === undefined ? held : usage;
 
-  // The current month leads `months`: leave `month` unset for it, so the
-  // query keeps one set of args while the picker returns to it.
+  // Unset for the current month (months[0]), so the query keeps one set of args for it.
   function handleMonthChange(value: string): void {
     setMonth(value === budget?.months[0] ? undefined : value);
   }
@@ -94,10 +86,6 @@ export function AllowanceUsage({
   );
 }
 
-/**
- * The Resources as drawn, from data: the live pages feed it from Convex, the
- * gallery from fixtures. `budget` undefined is still loading.
- */
 export function AllowanceView({
   budget,
   view,
@@ -171,14 +159,6 @@ export function AllowanceView({
   );
 }
 
-/**
- * The caps per resource and a daily chart of the picked one. Each bar is the
- * owner's pool, what stops runs: this org's slices, then the faded part the
- * owner's other organizations used. For one project: its amount leads, and
- * the solid part of the bar is it and the grey part the other projects. For
- * every project: the bar is split by project, and a table of the projects
- * follows. The chart and the table stay this org's own.
- */
 function ResourcesTable({
   budget,
   view,
@@ -198,7 +178,6 @@ function ResourcesTable({
     [budget, projectId],
   );
   const pool = useMemo(() => otherOrgsSlice(budget), [budget]);
-  // What each bar is cut into: this org's slices, then the other organizations'.
   const bars = useMemo(
     () => (pool ? [...slices, pool] : slices),
     [slices, pool],
@@ -213,7 +192,6 @@ function ResourcesTable({
       })),
     [bars],
   );
-  // One plain line: whose limits these are, then how to read a split bar.
   const notes = [
     poolNote(budget) ??
       (own
@@ -280,8 +258,6 @@ function ResourcesTable({
   );
 }
 
-// One resource: used, its cap, and how close the pool is to it, the bar cut
-// into `bars`. With `own`, its amount leads. Ingress reads Free.
 function AllowanceTableRow({
   budget,
   row,
@@ -315,7 +291,7 @@ function AllowanceTableRow({
       className="cursor-pointer"
       onClick={onPick}
       onKeyDown={(event) => {
-        // A press on a control inside the row, like its help mark, is that control's.
+        // A key press on a control inside the row, like its help mark, is that control's.
         if (event.target !== event.currentTarget) return;
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
@@ -380,10 +356,6 @@ function AllowanceTableRow({
   );
 }
 
-/**
- * A row's color swatch, when it has one, name and help mark, as the first
- * cell of the Resources and plan tables.
- */
 export function ResourceLabel({
   row,
 }: {
@@ -403,11 +375,6 @@ export function ResourceLabel({
   );
 }
 
-/**
- * A cap's bar, `share` percent long, cut into each part's piece of `total`.
- * An unknown amount (a storage day no snapshot measured), in the total or in
- * any part, draws the bar as one piece.
- */
 function SplitBar({
   share,
   total,
@@ -417,8 +384,7 @@ function SplitBar({
   total: number | null;
   parts: Array<{ key: string; amount: number | null; color: string }>;
 }): React.JSX.Element {
-  // The split is unknown as soon as one part is: this org before its first
-  // storage snapshot on a pool another org has measured.
+  // One unknown part (a storage day no snapshot measured) leaves the split unknown.
   const known =
     total !== null && total > 0 && parts.every((part) => part.amount !== null);
 
@@ -449,8 +415,6 @@ function SplitBar({
   );
 }
 
-// The picked resource per day of the month, one stacked part per slice, in
-// one unit from the tallest day.
 function DailyChart({
   budget,
   row,
@@ -460,7 +424,6 @@ function DailyChart({
   row: AllowanceRow;
   slices: UsageSlice[];
 }): React.JSX.Element {
-  // UsageChart eases to each new rows array, so only rebuild on real change.
   const daily = useMemo(
     () => dailySeries(budget.month, slices, row.key),
     [budget.month, slices, row.key],
@@ -508,11 +471,6 @@ function DailyChart({
   );
 }
 
-/**
- * Each project's month side by side, busiest first on the picked resource,
- * with its part of the org's total of it. A project's name opens its own
- * Usage tab.
- */
 function ProjectsTable({
   budget,
   slices,
@@ -524,7 +482,6 @@ function ProjectsTable({
 }): React.JSX.Element {
   const total = budget.totals[picked.key];
   const sorted = [...slices].sort((a, b) => {
-    // "Other usage" closes the list whatever it holds.
     if (a.projectId === null || b.projectId === null) {
       return a.projectId === null ? 1 : -1;
     }
@@ -551,7 +508,6 @@ function ProjectsTable({
           <TableBody>
             {sorted.map((slice) => {
               const amount = slice.totals[picked.key];
-              // Null while storage has no snapshot this month: no share yet.
               const part =
                 amount === null || total === null
                   ? null
@@ -622,7 +578,6 @@ function ProjectsTable({
   );
 }
 
-// "Resets Oct 1" for the current month, nothing for a past one or no limits.
 function resetLabel(budget: BudgetUsage): string {
   if (!budget.enforced) return "No limits";
 

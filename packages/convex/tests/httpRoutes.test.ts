@@ -1,5 +1,3 @@
-/** Every config-plane surface must be mounted, not just parsed. */
-
 import { describe, expect, it } from "vitest";
 import http from "../http";
 import { handle as cliHttp } from "../cli/http";
@@ -7,9 +5,7 @@ import { httpHandle as cliProjectsHttp } from "../cli/projects";
 import { httpHandle as cliStagesHttp } from "../cli/stages";
 import { handle as configHttp } from "../config/http";
 
-// A handler that configHttp knows how to dispatch is still a 404 until the
-// router mounts it. That gap shipped once for /v1/channels and reached dev, so
-// pin the collection and item verbs for every config-plane surface here.
+// configHttp can dispatch a surface the router never mounted, which still answers 404.
 const SURFACES: Array<{
   path: string;
   collection: Array<"GET" | "POST">;
@@ -64,20 +60,18 @@ const SURFACES: Array<{
 ];
 
 describe("config-plane HTTP routes", () => {
-  for (const surface of SURFACES) {
-    it(`mounts ${surface.path}`, () => {
-      for (const method of surface.collection) {
-        expect(
-          http.lookup(surface.path, method),
-          `${method} ${surface.path}`,
-        ).toBeTruthy();
-      }
-      for (const method of surface.item) {
-        const path = `${surface.path}/id_1`;
-        expect(http.lookup(path, method), `${method} ${path}`).toBeTruthy();
-      }
-    });
-  }
+  it.each(SURFACES)("mounts $path", (surface) => {
+    for (const method of surface.collection) {
+      expect(
+        http.lookup(surface.path, method),
+        `${method} ${surface.path}`,
+      ).toBeTruthy();
+    }
+    for (const method of surface.item) {
+      const path = `${surface.path}/id_1`;
+      expect(http.lookup(path, method), `${method} ${path}`).toBeTruthy();
+    }
+  });
 
   it("mounts workspace file and download-link surfaces", () => {
     expect(http.lookup("/v1/workspaces/ws_1/files", "GET")).toBeTruthy();
@@ -87,10 +81,8 @@ describe("config-plane HTTP routes", () => {
     ).toBeTruthy();
   });
 
-  // `/v1/account/projects/` is mounted as a pathPrefix, so a stage route nested
-  // under it would reach cliHttp and 404. Pin the sibling path instead.
-  // Truthiness alone would still pass if a pathPrefix swallowed the path, so
-  // assert which handler actually wins.
+  // `/v1/account/projects/` is a pathPrefix that would swallow a nested stage route, so
+  // assert which handler wins, not just that one matched.
   it("mounts the CLI stage surface on its own handler", () => {
     for (const method of ["GET", "POST"] as const) {
       const route = http.lookup("/v1/account/stages", method);
@@ -99,8 +91,7 @@ describe("config-plane HTTP routes", () => {
     }
   });
 
-  // The bare path sits directly above the `/v1/account/projects/` pathPrefix
-  // that cliHttp owns, so assert which handler wins rather than truthiness.
+  // Sits right above cliHttp's `/v1/account/projects/` pathPrefix: assert the handler.
   it("mounts the CLI project surface on its own handler", () => {
     for (const method of ["GET", "DELETE"] as const) {
       const route = http.lookup("/v1/account/projects", method);
@@ -111,8 +102,6 @@ describe("config-plane HTTP routes", () => {
     }
   });
 
-  // The stage-scoped CLI routes stay on cliHttp, and the old `/environments/`
-  // spelling must not resolve at all after the hard rename.
   it("routes project-scoped stage paths to cliHttp and drops /environments/", () => {
     expect(
       http.lookup("/v1/account/projects/p1/stages/s1/manifest", "GET")?.[0],
@@ -125,7 +114,6 @@ describe("config-plane HTTP routes", () => {
     ).not.toBe(cliStagesHttp);
   });
 
-  // The ledger is read-only; only its sink takes writes, and never a POST.
   it("mounts the audit ledger, its verify leaf and its sink", () => {
     expect(http.lookup("/v1/audit", "GET")).toBeTruthy();
     expect(http.lookup("/v1/audit/verify", "GET")).toBeTruthy();
@@ -136,14 +124,12 @@ describe("config-plane HTTP routes", () => {
     expect(http.lookup("/v1/audit/sink", "POST")).toBeFalsy();
   });
 
-  // Redeeming happens in a browser with no credential, so it must resolve on a
-  // bare GET. Convex serves HEAD from the same route.
+  // Redeemed by a browser with no credential; Convex serves HEAD from the same route.
   it("mounts download redemption for unauthenticated GET", () => {
     expect(http.lookup("/v1/downloads/abcdefghijklmnop", "GET")).toBeTruthy();
   });
 
-  // The exchange sits beside the `/v1/account/projects/` pathPrefix mounts, so
-  // assert the config-plane handler wins rather than truthiness.
+  // Sits beside the `/v1/account/projects/` pathPrefix mounts: assert the handler.
   it("mounts assume-role on the config-plane handler", () => {
     const route = http.lookup("/v1/account/assume-role", "POST");
     expect(route, "POST /v1/account/assume-role").toBeTruthy();

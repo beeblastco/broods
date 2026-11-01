@@ -1,8 +1,3 @@
-/**
- * Edits on the flat canvas graph that frames care about: where cards go when
- * an edit changes which frame they belong to and what a card's menu offers.
- * Pure, so each rule is unit-tested here.
- */
 import {
   connectionEdge,
   isCodeManagedOwner,
@@ -40,13 +35,10 @@ import {
 } from "@broods/convex/model/canvasLayout";
 import type { Edge, Node, XYPosition } from "@xyflow/react";
 
-/** The box every card has, whatever it holds, for the free-spot search. */
 export const CARD_SIZE: FrameSize = { height: NODE_HEIGHT, width: NODE_WIDTH };
 
-/** A frame waiting on a free spot, and the origin it would rather keep. */
 type DeferredFrame = { desired: XYPosition; frame: CanvasFrame };
 
-/** A flat graph as one edit sees it, with the server list its frames depend on. */
 export type FlatGraph = {
   edges: Edge[];
   /** Undefined while loading; MCP nodes are not framed until then. */
@@ -54,24 +46,12 @@ export type FlatGraph = {
   nodes: Node[];
 };
 
-/**
- * What a right-click offers for the group a node is in, or the one it was
- * pulled out of, and the nodes each entry flags. Every entry writes the same
- * `data.ungrouped` flag: the first two set it, `rejoin` clears it.
- */
 export type FrameGroupAction = {
   frameLabel: string;
   kind: "pull-out" | "rejoin" | "ungroup-all";
   nodeIds: string[];
 };
 
-/**
- * What a right-click on a card can do to its links: one `unlink` per stored
- * edge, named after the card at the other end and locked when code owns the
- * edge, plus make default for a sandbox under each agent that wires it.
- * `agentLabel` names the agent only when several do, so the entries differ.
- * Make default carries why it is refused, when the config API would refuse it.
- */
 export type NodeLinkAction =
   | {
       kind: "make-default";
@@ -84,29 +64,16 @@ export type NodeLinkAction =
       edgeId: string;
       label: string;
       locked: boolean;
-      /** A workspace↔sandbox mount reads "Unmount". */
       mount: boolean;
-      /** The linked card's node type, which picks the row's icon. */
       otherType: Node["type"];
     };
 
-/**
- * One row of a workspace's mount menu. `default` drops its mount edges so the
- * agent's first sandbox applies, `sandbox` draws a mount edge, and `readonly`
- * sets the flag that emits a `sandbox: null` ref: an absent mount edge already
- * means inherit, so the graph has no other way to ask for no sandbox at all.
- */
+// `readonly` sets the flag for a `sandbox: null` ref: no mount edge already means inherit.
 export type WorkspaceMountTarget =
   | { current: boolean; kind: "default" }
   | { current: boolean; kind: "readonly" }
   | { current: boolean; kind: "sandbox"; label: string; sandboxId: string };
 
-/**
- * Whether a service added to a frame would land in it. A fresh node carries
- * the group key its defaults give it, so a cloud sandbox frame and an S3
- * workspace frame take one and the machine, hosted and url frames do not:
- * nothing a new node holds puts it in those.
- */
 export function acceptsNewMember(frame: CanvasFrame): boolean {
   const group = frameGroupOf(
     {
@@ -120,13 +87,7 @@ export function acceptsNewMember(frame: CanvasFrame): boolean {
   return group !== null && group.key === frame.key;
 }
 
-/**
- * The agents a card added from the canvas menu wires itself to, out of the
- * ones on offer: a frame's owners, or the nearest agent. A `cli` or `api`
- * agent reads its wiring from the manifest it was deployed from, never from
- * the canvas, so an edge drawn to it here would show a link the agent does not
- * have. The card lands unwired instead.
- */
+// A code-managed agent's wiring comes from its manifest, so a canvas edge would lie.
 export function autoWiredAgentIds(
   nodes: readonly Node[],
   agentIds: readonly string[],
@@ -137,11 +98,7 @@ export function autoWiredAgentIds(
   );
 }
 
-/**
- * The boxes top-level display nodes cover, for the free-spot search. A frame
- * counts at its expanded size even while collapsed, so nothing lands where it
- * opens.
- */
+// A collapsed frame counts at its expanded size, so nothing lands where it opens.
 export function boardRects(
   displayNodes: readonly Node[],
   frames: readonly CanvasFrame[],
@@ -156,17 +113,10 @@ export function boardRects(
     }));
 }
 
-/** The name a card shows, as menus and refusal sentences say it. */
 export function cardLabel(node: Node): string {
   return typeof node.data.label === "string" ? node.data.label : node.id;
 }
 
-/**
- * Group entries for a node's context menu: a member can leave its frame or
- * dissolve it, a node that was pulled out can go back. Rejoining takes the
- * other pulled-out nodes of the same group with it when this node alone would
- * not re-form a frame, so the entry always visibly does something.
- */
 export function frameGroupActions(
   graph: FlatGraph,
   nodeId: string,
@@ -196,7 +146,7 @@ export function frameGroupActions(
     item.memberIds.includes(nodeId),
   );
   if (!home) return [];
-  const alone = framedGroups(
+  const reformsAlone = framedGroups(
     graph,
     setUngrouped(graph.nodes, [nodeId], false),
   ).some((item) => item.memberIds.includes(nodeId));
@@ -210,15 +160,13 @@ export function frameGroupActions(
     {
       frameLabel: home.label,
       kind: "rejoin",
-      nodeIds: alone ? [nodeId] : home.memberIds.filter((id) => pulled.has(id)),
+      nodeIds: reformsAlone
+        ? [nodeId]
+        : home.memberIds.filter((id) => pulled.has(id)),
     },
   ];
 }
 
-/**
- * The frames `nodes` draw with this graph's edges and server list, for the
- * group entries: the same derivation the canvas draws from.
- */
 export function framedGroups(
   graph: FlatGraph,
   nodes: readonly Node[],
@@ -226,12 +174,7 @@ export function framedGroups(
   return framesOf(deriveGroups(nodes, graph.edges, graph.mcpServers));
 }
 
-/**
- * The first runtime-ref problem `after` has that `before` did not, or null.
- * Used to refuse an edit up front: a problem the graph already had is not
- * this edit's to block. Problems match on resource ids, so renaming a sandbox
- * or a workspace does not make an old problem look new.
- */
+// Keyed by resource ids, so renaming a sandbox or workspace makes no old problem look new.
 export function introducedRuntimeRefsProblem(
   before: Pick<FlatGraph, "edges" | "nodes">,
   after: Pick<FlatGraph, "edges" | "nodes">,
@@ -249,7 +192,6 @@ export function introducedRuntimeRefsProblem(
   );
 }
 
-/** Put a sandbox first in an agent's stored `sandboxOrder`, keeping the rest in order. */
 export function makeDefaultSandbox<T extends LayoutNode>(
   nodes: readonly T[],
   edges: readonly LayoutEdge[],
@@ -269,13 +211,6 @@ export function makeDefaultSandbox<T extends LayoutNode>(
   });
 }
 
-/**
- * A card's link entries for its context menu, one per stored edge it has. Make
- * default only where the sandbox is not already first and the agent is not
- * code-managed (code owns its order), and disabled where the new order breaks
- * the runtime rules. An edge code owns is listed locked, so the menu shows the
- * link and that it cannot be cut here.
- */
 export function nodeLinkActions(
   nodes: Node[],
   edges: Edge[],
@@ -327,7 +262,6 @@ export function nodeLinkActions(
     actions.push({
       edgeId: edge.id,
       kind: "unlink",
-      // Subagent links run both ways between two agents, so the row says which.
       label:
         edgeKind(edge) !== "subagent"
           ? cardLabel(other)
@@ -343,20 +277,6 @@ export function nodeLinkActions(
   });
 }
 
-/**
- * Flat nodes of `next` with positions settled after an edit that may change
- * frame membership. A frame that was already drawn keeps its origin whoever
- * joins or leaves it, and its members take its slots. One that gained a member
- * steps clear when its taller box would cover a neighbour: a frame is drawn
- * from its members, so nothing else moves out of its way. A frame that grows
- * out of a lone card starts where that card stood, so the card's box becomes
- * the frame's; any other new frame starts where its members stand. Either steps
- * clear of every other box. A frame that shrinks to one member hands its
- * origin to that member's card. Any other card that left all frames steps
- * clear of the frame it sat in. Frames whose members did not change, and
- * cards that stay cards, are not moved. Returns `next.nodes` itself when
- * nothing moves.
- */
 export function reconcileFramePositions(
   previous: FlatGraph,
   next: FlatGraph,
@@ -391,9 +311,7 @@ export function reconcileFramePositions(
     occupied.push({ ...origin, ...frameSize(frame) });
   };
 
-  // A frame that has to search for its spot is placed after every box that
-  // holds one: the frames nobody joined or left, then the cards in no frame on
-  // either side.
+  // A frame that searches for its spot goes after every box that already holds one.
   const grown: DeferredFrame[] = [];
   const fresh: DeferredFrame[] = [];
   for (const frame of after) {
@@ -409,8 +327,7 @@ export function reconcileFramePositions(
       continue;
     }
     const origin = originOf(kept.memberIds, previousPositions);
-    // A taller box can cover a neighbour. One that shrank still fits where it
-    // stood, and searching would snap it to the grid off a spot nothing wants.
+    // Only a taller box can cover a neighbour; a search would snap a shrunk one to grid.
     if (frameSize(frame).height > frameSize(kept).height) {
       grown.push({ desired: origin, frame: frame });
       continue;
@@ -468,11 +385,6 @@ export function reconcileFramePositions(
   return moved ? nodes : next.nodes;
 }
 
-/**
- * `nodes` with `data.ungrouped` set or cleared on `ids`. The flag is the one
- * stored thing about a group: a node carrying it joins none, so it draws as a
- * card until it is cleared again.
- */
 export function setUngrouped<T extends LayoutNode>(
   nodes: readonly T[],
   ids: readonly string[],
@@ -493,11 +405,6 @@ export function setUngrouped<T extends LayoutNode>(
   });
 }
 
-/**
- * The graph with a workspace mounted where `target` says: its own mount edges
- * dropped, one drawn again for a sandbox, and `readOnly` tracking the
- * no-sandbox row. Mount edges other workspaces hold are left alone.
- */
 export function setWorkspaceMount(
   graph: FlatGraph,
   workspaceId: string,
@@ -538,14 +445,6 @@ export function setWorkspaceMount(
   };
 }
 
-/**
- * The rows a workspace's mount menu lists, with the one it is on now marked:
- * the agent default where an agent wires it, every sandbox it could mount on,
- * and no sandbox at all. Empty for anything but a workspace the canvas owns,
- * since a code-managed ref is re-synced from the project it was deployed from.
- * Machine sandboxes are left out, because the config API refuses a workspace
- * mounted on one.
- */
 export function workspaceMountTargets(
   nodes: readonly Node[],
   edges: readonly Edge[],
@@ -579,6 +478,7 @@ export function workspaceMountTargets(
   }
   for (const node of nodes) {
     const config = (node.data as BaseNodeData).config;
+    // The config API refuses a workspace mounted on a machine sandbox.
     if (node.type !== "sandbox" || config?.provider === "machine") continue;
     targets.push({
       current: mounted.has(node.id),
@@ -592,12 +492,7 @@ export function workspaceMountTargets(
   return targets;
 }
 
-/**
- * Nearest grid point where a box of `size` clears every occupied box.
- * `findFreePosition` places a card, so each occupied box grows up and left by
- * how much bigger this box is than a card: a card clears the grown box exactly
- * when this box clears the original.
- */
+// `findFreePosition` places a card, so grow each box up and left by this box's excess.
 function findFreeBox(
   desired: XYPosition,
   size: FrameSize,
@@ -617,7 +512,6 @@ function findFreeBox(
   );
 }
 
-/** A frame's origin read from its members' positions in `positions`. */
 function originOf(
   memberIds: readonly string[],
   positions: ReadonlyMap<string, XYPosition>,

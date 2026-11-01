@@ -1,13 +1,3 @@
-/**
- * Harness tool registry.
- * Keep static tool imports and agent-configured tool selection here.
- *
- * Sandbox tools (bash/read/write/edit/glob/grep) come from a referenced sandbox
- * + workspaces, with approval produced as AI SDK v7 toolApproval in the harness.
- * Core ships no built-in external tools: config.tools names provider-defined
- * tools (see provider-tool.ts), and remote tools come from config.mcp.
- */
-
 import type { ToolSet } from "ai";
 import { isProviderToolName } from "@broods/convex/model/agentRules";
 import { browserSandboxRefusal } from "@broods/convex/model/sandboxRules";
@@ -98,15 +88,10 @@ interface ResolvedMcpServer {
   remoteTools: RemoteMcpTool[];
 }
 
-// Runtime dependencies shared by tool factories. Model-facing input schemas
-// stay inside each individual tool file.
 export interface ToolContext {
   accountId?: string;
   conversationKey: string;
-  // Each workspace carries its own effective sandbox + permissionMode (or no
-  // sandbox => read-only). See resolveAgentRuntime.
   workspaces?: ResolvedWorkspace[];
-  // Resolved config.sandboxes; the first is the default.
   sandboxes?: ResolvedAgentSandbox[];
   config: AgentToolConfig;
   modelProviderName: AccountModelProviderName;
@@ -114,25 +99,16 @@ export interface ToolContext {
   session?: Session;
   dispatchSubagents?: RunSubagentDispatch;
   subagentWatch?: SubagentWatch;
-  // Set on a persistent subagent's run: asks the parent and waits for its answer.
   askParent?: AskParent;
   dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
-  // Reports each sandbox exec's CPU so the harness attributes usage per sandbox
-  // (agent bash/fs => role "agent"; hosted MCP servers => role "tool").
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
-  // Reports each wait a tool sat out before it retried (a rate-limited MCP
-  // call), so the harness can put it on that call's tool.call span.
   onToolRetry?: (toolCallId: string, waitMs: number) => void;
-  // A blocking ask_questions call, so the loop ends the turn after this step.
   onBlockingQuestion?: (question: PendingQuestionSummary) => void;
-  // Every row a tool leaves to settle later (an open question, a background
-  // job), so the run's trace can close as waiting on it.
   onDetachedResult?: (resultId: string) => void;
   sandboxMetadata?: SandboxRunMetadata;
   approvalRequirements?: Map<string, true>;
-  /** Model-facing tool name → MCP server row id, for per-server policy rules. */
   policyMcpIdsByName?: Map<string, string>;
   channel?: ChannelToolContext;
 }
@@ -147,7 +123,6 @@ export async function createTools(
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
   const sandboxes = context.sandboxes ?? [];
   const defaultSandbox = sandboxes[0]?.sandbox;
-  // bash and browse: every sandbox the agent reaches, metered per exec.
   const sandboxContext: SandboxToolContext = {
     workspaces: workspaces,
     sandboxes: sandboxes,
@@ -158,8 +133,6 @@ export async function createTools(
   const hasSandboxReservation =
     defaultSandbox !== undefined &&
     statelessReservationKeyFor(defaultSandbox) !== undefined;
-  // Persistence keys on the workspace namespace, or without one on the key
-  // resolveAgentRuntime derives per agent; no agent identity leaves runs ephemeral.
   const runsWithoutNamespace = hasStandaloneSandbox(sandboxContext);
   if (
     defaultSandbox?.persistent === true &&
@@ -175,14 +148,9 @@ export async function createTools(
   }
   const sandboxTools: ToolSet = {};
 
-  // Reserved (persistent) workspaces can run detached background jobs; bash then
-  // exposes a `background` flag and records each job under the parent session.
   const hasBackgroundWorkspace = workspaces.some((workspace) =>
     sandboxSupportsBackgroundJobs(workspace.sandbox),
   );
-  // eventId is stored as the async-tool-result parentEventId; conversationKey is
-  // what a future continuation worker resumes; delivery carries the originating
-  // channel/WebSocket so the result is pushed back there, not just polled.
   const backgroundContext =
     hasBackgroundWorkspace && context.session
       ? {
@@ -197,11 +165,7 @@ export async function createTools(
         }
       : undefined;
 
-  // bash: the agent's own sandbox, or any sandbox-backed workspace.
-  // Pass the full workspace list so omitting `workspace` preserves the configured
-  // default; if that default is read-only, the tool returns a clear error instead
-  // of silently selecting the first writable workspace. Background jobs are
-  // bash's alone.
+  // The full list, so an omitted workspace keeps the configured default even when read-only.
   if (sandboxes.length > 0 || sandboxWorkspaces.length > 0) {
     Object.assign(
       sandboxTools,
@@ -211,20 +175,15 @@ export async function createTools(
       }),
     );
   }
-  // computer: every machine in `sandboxes` is a computer target, and an agent that
-  // reaches several names which per call.
   const machines = machineSandboxes(sandboxes);
   if (machines.length > 0) {
     Object.assign(sandboxTools, computerTool(machines));
   }
-  // browse: opt-in, on the agent's first sandbox. A sandbox without Obscura fails
-  // the run here rather than handing the model a tool that cannot work.
   if (agentConfig.browser?.enabled === true) {
     const problem = browserSandboxRefusal(defaultSandbox);
     if (problem) throw new Error(problem);
     Object.assign(sandboxTools, browseTool(sandboxContext));
   }
-  // read/glob: every workspace (sandbox-backed via the mount, read-only via S3).
   if (workspaces.length > 0) {
     Object.assign(
       sandboxTools,
@@ -232,8 +191,6 @@ export async function createTools(
       globTool({ workspaces: workspaces }),
     );
   }
-  // write/edit/grep: require a sandbox at execution time. Pass the full workspace
-  // list to preserve default-workspace semantics; read-only selections fail clearly.
   if (sandboxWorkspaces.length > 0) {
     const fsContext = {
       workspaces: workspaces,
@@ -245,9 +202,6 @@ export async function createTools(
       editTool(fsContext),
       grepTool(fsContext),
     );
-    // memory_save: structured memory on the same sandbox write path. It ships
-    // with the workspace harness (config.harness.memory, default on) rather
-    // than config.tools, and only touches the memory/ folder and its index.
     if (
       sandboxWorkspaces.some((workspace) =>
         workspaceMemoryHarnessEnabled(workspace.config),
@@ -265,8 +219,6 @@ export async function createTools(
   if (context.channel) {
     Object.assign(
       tools,
-      // Both deliver a workspace file, so they take the same workspace list the
-      // sandbox tools read from, plus the account that seals the link.
       sendFilesTool({
         ...context.channel,
         workspaces: workspaces,
@@ -279,8 +231,6 @@ export async function createTools(
       }),
       sendReactionsTool(context.channel),
       sendStickerTool(context.channel),
-      // Every channel can post text, so the progress note is the one channel
-      // tool that is always registered.
       sendUpdateTool(context.channel),
     );
   }
@@ -291,8 +241,6 @@ export async function createTools(
     Object.assign(tools, sendMessageTool(context.dispatchSessionMessage));
   }
 
-  // Subagent execution is orchestrated by the handler/coordinator. The registry
-  // exposes only the model-facing tool when config and runtime dispatcher agree.
   if (agentConfig.subagent?.enabled === true && context.dispatchSubagents) {
     Object.assign(
       tools,
@@ -348,11 +296,7 @@ export async function createTools(
     );
   }
 
-  // schedule writes a cron bound to this conversation, so a scheduled run
-  // resumes the same session and replies wherever this one does.
-  // list/update/cancel reach every task of this agent, whichever conversation
-  // created it. A run the scheduler started gets none of them: it reads its own
-  // stored instructions as a fresh request, so each one acts on its own schedule.
+  // None on a cron run: it reads its instructions as a fresh request and would schedule again.
   if (
     agentConfig.scheduler?.enabled === true &&
     context.accountId &&
@@ -379,8 +323,6 @@ export async function createTools(
     );
   }
 
-  // Provider-defined tools: every config.tools key names a tool the configured
-  // provider executes itself, resolved off its `tools` namespace.
   for (const [toolName, toolConfig] of Object.entries(
     agentConfig.tools ?? {},
   )) {
@@ -403,8 +345,7 @@ export async function createTools(
     if (toolConfig.async === true) asyncToolNames.add(toolName);
   }
 
-  // ask_questions needs a delivery to resume on: a channel or a WebSocket turn.
-  // A subagent session carries none, and a cron-fired run has nobody typing.
+  // Needs a delivery to resume on; a cron-fired run has nobody to answer.
   const session = context.session;
   if (session?.delivery !== undefined && session.trigger !== "cron") {
     Object.assign(
@@ -432,7 +373,6 @@ export async function createTools(
       asyncStatusTool({
         conversationKey: context.conversationKey,
         workspaces: workspaces,
-        // logs/stop only apply when the background provider exposes live controls.
         supportsJobs: workspaces.some((workspace) =>
           sandboxSupportsJobControls(workspace.sandbox),
         ),
@@ -440,8 +380,7 @@ export async function createTools(
     );
   }
 
-  // Withhold last, so a channel's deny list covers sandbox and MCP tools too.
-  // Those are derived from workspaces and server rows, never from config.tools.
+  // Withhold last, so a channel's deny list also covers sandbox and MCP tools.
   withholdTools(tools, agentConfig.denyTools);
 
   return context.dispatchAsyncTools
@@ -460,21 +399,12 @@ function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
   return runtimeConfig;
 }
 
-/**
- * Whether a `config.tools` or `config.mcp` entry is on: present and not
- * `enabled: false`. The MCP explorer asks it which agents use a server.
- */
 export function isToolEnabled<Entry extends { enabled?: boolean }>(
   config: Entry | undefined,
 ): config is Entry {
   return config !== undefined && config.enabled !== false;
 }
 
-/**
- * Register every enabled connected MCP server's tools (#331). Listings come
- * from the per-server TTL cache in mcp/client.ts, so steady-state runs skip
- * the discovery round-trip.
- */
 async function registerMcpTools(
   tools: ToolSet,
   agentConfig: AgentConfig,
@@ -491,8 +421,7 @@ async function registerMcpTools(
     );
   }
 
-  // Resolve rows and listings in parallel; the merge below stays sequential
-  // in config order so name-conflict detection is deterministic.
+  // Resolved in parallel, merged in config order so name conflicts resolve deterministically.
   const resolved = await Promise.all(
     entries.map(
       async ([serverId, serverConfig]): Promise<ResolvedMcpServer | null> => {
@@ -509,12 +438,8 @@ async function registerMcpTools(
           serverConfig.oauth,
           context.session?.principal,
         );
-        // A machine row on a lambda sandbox runs in that VM; on a machine
-        // sandbox the daemon serves it from its own --mcp file.
         connection.sandbox = sandboxMcpTarget(record, context);
-        // An unreachable server degrades to zero tools for this run instead
-        // of killing every agent run that references it; config errors above
-        // (unknown id, unresolved header) still throw.
+        // Unreachable degrades to zero tools for this run; the config errors above still throw.
         let listing: RemoteMcpTool[];
         try {
           listing = await listMcpTools(
@@ -561,8 +486,6 @@ async function registerMcpTools(
       context.onSandboxCpu,
       context.onToolRetry,
     );
-    // Sanitized names collapsing within one server surface here too: the map
-    // then has fewer keys than the listing had tools.
     if (Object.keys(serverTools).length !== server.remoteTools.length) {
       throw new Error(
         `config.mcp.${server.serverId} has remote tools whose sanitized model-facing names collide`,

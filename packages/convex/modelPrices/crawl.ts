@@ -1,13 +1,6 @@
 "use node";
 
-/**
- * Hourly crawl of model rates: the org's own `BROODS_MODEL_PRICES` into
- * `modelPriceOverrides`, then the models.dev catalogue (or
- * `BROODS_MODEL_PRICES_URL`) into `modelPrices`. A self-hosted deployment
- * fetches no catalogue unless it sets the URL, since most cannot reach the
- * internet. Node runtime because the catalogue is one ~6 MB JSON document,
- * past what the default runtime's memory parses comfortably.
- */
+// Node runtime: the models.dev catalogue is one ~6 MB JSON, too big for the default runtime.
 
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
@@ -22,14 +15,9 @@ import { authProvider } from "../model/selfHostAuth";
 import { readCapped } from "../model/skills";
 
 const FETCH_TIMEOUT_MS = 30_000;
-// models.dev is ~6 MB; anything far past that is not a price catalogue.
 const MAX_CATALOGUE_BYTES = 32 * 1024 * 1024;
 
-/**
- * Cron: store the org's rates first, so a catalogue that is down never holds
- * them back, then the catalogue's. A malformed `BROODS_MODEL_PRICES` fails
- * the run only after the catalogue is stored, so it never holds that back.
- */
+// Neither source holds the other back: a bad BROODS_MODEL_PRICES throws only at the end.
 export const run = internalAction({
   args: {},
   returns: v.null(),
@@ -49,7 +37,7 @@ export const run = internalAction({
   },
 });
 
-/** The catalogue to fetch, or "" for none: models.dev on the managed cloud, only an explicit URL when self-hosted. */
+// Self-hosted fetches only an explicit URL: most such deployments cannot reach the internet.
 function catalogueUrl(): string {
   const configured = process.env.BROODS_MODEL_PRICES_URL ?? "";
   if (configured !== "") return configured;
@@ -57,7 +45,6 @@ function catalogueUrl(): string {
   return authProvider() === "self-host" ? "" : MODELS_DEV_API_URL;
 }
 
-/** The catalogue's rates into `modelPrices`, cleared when no catalogue is set. */
 async function storeCatalogue(ctx: ActionCtx): Promise<void> {
   const url = catalogueUrl();
   if (url === "") {

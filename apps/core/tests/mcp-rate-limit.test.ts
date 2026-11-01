@@ -1,8 +1,3 @@
-/**
- * A remote MCP server's rate limit is waited out inside the tool call, so a
- * step's parallel searches do not each come back to the model as failures.
- */
-
 import { afterEach, expect, it } from "bun:test";
 import type { Tool } from "ai";
 import {

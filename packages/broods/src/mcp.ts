@@ -1,16 +1,4 @@
-/**
- * MCP server over the account config plane (#58). `broods mcp` serves this on
- * stdio so Claude Code and other development agents drive an account through
- * typed tools instead of hand-rolled curl.
- *
- * Tool names mirror {@link BroodsAccountClient}'s methods in kebab-case, so
- * `listAgents` is `list-agents` and an agent that knows the SDK already knows
- * this surface. Every call goes through the client, so auth, base-url
- * resolution and error shapes stay identical to the SDK and the CLI. The
- * credential comes from the environment: prefer a role session
- * (`BROODS_SESSION_TOKEN`) so the policy bounds what this server can reach,
- * and fall back to the account key only when there is no role.
- */
+// `broods mcp`: the config plane as tools named after BroodsAccountClient methods in kebab-case.
 
 import { type CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import {
@@ -30,25 +18,16 @@ import {
 import type { CreateCronInput } from "./contracts.ts";
 import type { BroodsSyncClient } from "./sync.ts";
 
-/** Arbitrary JSON object arriving over the wire, before a route types it. */
 type JsonBody = Record<string, unknown>;
 
-/** Default project/stage for scoped calls; explicit arguments win. */
 export interface McpScopeDefaults {
   project?: string;
   stage?: string;
 }
 
 export interface BroodsMcpServerOptions {
-  /**
-   * Registers the tools no role policy bounds (see {@link registerDestructive}).
-   * Off by default; `broods mcp` turns it on only for a shell-exported
-   * BROODS_MCP_ALLOW_DESTRUCTIVE=1.
-   */
   allowDestructive?: boolean;
-  /** Login-scoped client; registers the org/project/stage tools when set. */
   cli?: BroodsSyncClient | null;
-  /** Scope defaults from the runtime config (BROODS_PROJECT / BROODS_STAGE). */
   scope?: McpScopeDefaults;
 }
 
@@ -57,36 +36,47 @@ const SCOPE_FIELDS = {
   stage: z.string().optional(),
 };
 
+const NON_EMPTY_STRING = z.string().min(1);
+
 const LIFECYCLE_FIELDS = {
-  sandboxId: z.string().min(1),
-  reservationKey: z.string().min(1),
+  sandboxId: NON_EMPTY_STRING,
+  reservationKey: NON_EMPTY_STRING,
+};
+
+const ACCOUNT_PATCH_FIELDS = {
+  username: z.string().optional(),
+  description: z.string().nullable().optional(),
 };
 
 const CONFIRM_FIELD = z
   .boolean()
   .describe("Must be true, after the owner has agreed to this delete.");
 
+const BODY_FIELD = z.record(z.string(), z.unknown());
+
+const CLONE_STAGE_FIELD = z
+  .string()
+  .optional()
+  .describe("Stage to clone architecture and env vars from.");
+
+const CRON_RUNS_LIMIT_FIELD = z.number().int().positive().max(100).optional();
+
+const ENV_VAR_VALUE_FIELD = z.string();
+
+const SESSION_TTL_FIELD = z.number().int().positive().max(43200).optional();
+
+const SKILL_NAME_FIELD = NON_EMPTY_STRING.describe("The skillName.");
+
 const SECRET_MERGE_HINT =
   "'********' keeps a stored secret and null deletes a field: never send a placeholder you did not read from a get.";
 
-/**
- * One config-plane resource. The names drive the tool names, so `agent` plus
- * `agents` registers get/create/update/delete-agent and list-agents. A verb
- * left out is a verb the plane does not serve, and no tool is registered for
- * it: skills have no plain update, they have `upload-skill`.
- */
 interface ResourceSpec {
   singular: string;
   plural: string;
-  /** What the id argument names, quoted in its description. */
   key: string;
-  /** Collection routes need a project/stage; MCP servers live in one stage. */
   scoped?: boolean;
-  /** Appended to the create tool's description, naming the fields that trip people up. */
   createHint?: string;
-  /** Appended to the delete tool's description, naming what else goes away. */
   deleteHint?: string;
-  /** Appended to the update tool's description, for resources whose responses redact secrets. */
   updateHint?: string;
   list?: (client: BroodsAccountClient, scope?: StageScope) => Promise<unknown>;
   get?: (client: BroodsAccountClient, id: string) => Promise<unknown>;
@@ -103,7 +93,7 @@ interface ResourceSpec {
   remove?: (client: BroodsAccountClient, id: string) => Promise<boolean>;
 }
 
-/** Wire bodies are untyped JSON; the config plane re-validates each one. */
+// Wire bodies are untyped JSON; the config plane re-validates each one.
 const RESOURCES: ResourceSpec[] = [
   {
     singular: "agent",
@@ -233,13 +223,7 @@ const RESOURCES: ResourceSpec[] = [
   },
 ];
 
-/**
- * Build the server. One instance per stdio connection; the client is
- * constructed once and reused, so the credential is read from the environment
- * at startup and never travels through a tool argument. With only a stored
- * login the account-plane tools stay unregistered instead of failing every
- * call; with no credential at all this throws.
- */
+// The credential is read from the environment at startup, never from a tool argument.
 export function createBroodsMcpServer(
   options: BroodsMcpServerOptions = {},
 ): McpServer {
@@ -268,10 +252,6 @@ export function createBroodsMcpServer(
   return server;
 }
 
-/**
- * Serves `server` the way `broods mcp` does: MCP 2026-07-28 only, so a
- * 2025-era `initialize` gets -32022. On stdio unless a test passes `transport`.
- */
 export function serveBroodsMcp(
   server: McpServer,
   transport?: ServeStdioOptions["transport"],
@@ -282,7 +262,6 @@ export function serveBroodsMcp(
   });
 }
 
-/** The one gate every destructive tool passes; `consequence` names the blast radius. */
 function assertConfirmed(
   confirm: boolean | undefined,
   consequence: string,
@@ -300,24 +279,18 @@ async function attempt(run: () => Promise<unknown>): Promise<CallToolResult> {
   }
 }
 
-/** An API error is the agent's to read and act on, not a transport failure. */
 function failure(error: unknown): CallToolResult {
   const text = error instanceof Error ? error.message : String(error);
 
   return { content: [{ type: "text", text: text }], isError: true };
 }
 
-/** MCP wants one text block; JSON keeps the shape the SDK returned. */
 function reply(value: unknown): CallToolResult {
   return {
     content: [{ type: "text", text: JSON.stringify(value ?? null, null, 2) }],
   };
 }
 
-/**
- * Collection routes on a stage-scoped resource need both halves of the scope;
- * arguments win over the defaults the runtime config supplied at startup.
- */
 function requireScope(
   spec: ResourceSpec,
   defaults: McpScopeDefaults,
@@ -335,13 +308,7 @@ function requireScope(
   return { project: resolvedProject, stage: resolvedStage };
 }
 
-/**
- * Org, project and stage live behind the CLI router, not the config plane, so
- * they need a login token rather than an account key or a role session.
- * They are registered only when `broods login` has stored one: a role session
- * is rejected by that router, so offering the tools without a login would hand
- * the agent calls that can only 401.
- */
+// The CLI router takes only a login token: without one, these tools could only 401.
 function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
   server.registerTool(
     "list-orgs",
@@ -363,7 +330,7 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
     {
       description:
         "Create an organization and switch this login to it. Later calls act in the new org.",
-      inputSchema: { name: z.string().min(1) },
+      inputSchema: { name: NON_EMPTY_STRING },
     },
     async ({ name }) =>
       await attempt(async () => await cli.createOnboardingOrg(name)),
@@ -374,7 +341,7 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
     {
       description:
         "Switch this login to another organization, by an orgId from list-orgs.",
-      inputSchema: { orgId: z.string().min(1) },
+      inputSchema: { orgId: NON_EMPTY_STRING },
     },
     async ({ orgId }) =>
       await attempt(async () => await cli.selectOnboardingOrg(orgId)),
@@ -394,7 +361,7 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
     "list-stages",
     {
       description: "Every stage of one project, by project name.",
-      inputSchema: { project: z.string().min(1) },
+      inputSchema: { project: NON_EMPTY_STRING },
     },
     async ({ project }) =>
       await attempt(async () => await cli.listStages(project)),
@@ -406,12 +373,9 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
       description:
         "Create a stage in a project, optionally cloning another stage's architecture and env vars. A project name that does not exist yet is created with it, which is the only way to make a project without deploying a manifest.",
       inputSchema: {
-        project: z.string().min(1),
-        name: z.string().min(1),
-        from: z
-          .string()
-          .optional()
-          .describe("Stage to clone architecture and env vars from."),
+        project: NON_EMPTY_STRING,
+        name: NON_EMPTY_STRING,
+        from: CLONE_STAGE_FIELD,
       },
     },
     async ({ project, name, from }) =>
@@ -419,12 +383,7 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
   );
 }
 
-/**
- * The tools whose blast radius no role policy bounds: rotating the account
- * key breaks every deployment holding the old one, and a project delete
- * cascades through everything under it. `confirm` is asserted by the calling
- * agent itself, so exposing these is the operator's opt-in, not the agent's.
- */
+// No role policy bounds these and the agent sets `confirm` itself, so the operator opts in.
 function registerDestructive(
   server: McpServer,
   client: BroodsAccountClient | null,
@@ -456,7 +415,7 @@ function registerDestructive(
       {
         description:
           "Delete a project and everything under it: stages, agents, canvas, env vars, crons and workspace files. Takes a projectId from list-projects and requires confirm:true.",
-        inputSchema: { projectId: z.string().min(1), confirm: CONFIRM_FIELD },
+        inputSchema: { projectId: NON_EMPTY_STRING, confirm: CONFIRM_FIELD },
       },
       async ({ projectId, confirm }) =>
         await attempt(async () => {
@@ -471,7 +430,6 @@ function registerDestructive(
   }
 }
 
-/** The calls that do not fit the five-verb shape. */
 function registerExtras(server: McpServer, client: BroodsAccountClient): void {
   server.registerTool(
     "list-cron-runs",
@@ -479,8 +437,8 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
       description:
         "Run history for one cron, newest first. Check this before telling anyone a cron fired.",
       inputSchema: {
-        cronId: z.string().min(1),
-        limit: z.number().int().positive().max(100).optional(),
+        cronId: NON_EMPTY_STRING,
+        limit: CRON_RUNS_LIMIT_FIELD,
       },
     },
     async ({ cronId, limit }) =>
@@ -539,11 +497,7 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     {
       description:
         "Snapshot a sandbox reservation into an image its provider's sandboxes can pin with `snapshot` (sandbox, lambda, daytona, e2b or vercel; lambda builds for a few minutes).",
-      inputSchema: {
-        sandboxId: z.string().min(1),
-        reservationKey: z.string().min(1),
-        name: z.string().min(1),
-      },
+      inputSchema: { ...LIFECYCLE_FIELDS, name: NON_EMPTY_STRING },
     },
     async ({ sandboxId, reservationKey, name }) =>
       await attempt(
@@ -558,8 +512,8 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
       description:
         "Replace one skill's bundle wholesale (PUT, not a merge) by skillName. 'body' is the same source shape create-skill takes.",
       inputSchema: {
-        id: z.string().min(1).describe("The skillName."),
-        body: z.record(z.string(), z.unknown()),
+        id: SKILL_NAME_FIELD,
+        body: BODY_FIELD,
       },
     },
     async ({ id, body }) =>
@@ -585,8 +539,8 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
       description:
         "Create or replace one write-only environment variable. Reference it from a config as ${NAME} rather than inlining the value.",
       inputSchema: {
-        name: z.string().min(1),
-        value: z.string(),
+        name: NON_EMPTY_STRING,
+        value: ENV_VAR_VALUE_FIELD,
       },
     },
     async ({ name, value }) =>
@@ -602,7 +556,7 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     {
       description: "Delete one environment variable.",
       inputSchema: {
-        name: z.string().min(1),
+        name: NON_EMPTY_STRING,
         confirm: CONFIRM_FIELD,
       },
     },
@@ -623,8 +577,8 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
       description:
         "Exchange a role for a short-lived session token (default 1h, max 12h). Hand the returned token to whatever tool needs narrow access, as BROODS_SESSION_TOKEN. It is shown once and is not stored here.",
       inputSchema: {
-        roleId: z.string().min(1),
-        ttlSeconds: z.number().int().positive().max(43200).optional(),
+        roleId: NON_EMPTY_STRING,
+        ttlSeconds: SESSION_TTL_FIELD,
       },
     },
     async ({ roleId, ttlSeconds }) =>
@@ -642,10 +596,7 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     {
       description:
         "Rename this account or change its description. Everything else about an account is derived, not settable.",
-      inputSchema: {
-        username: z.string().optional(),
-        description: z.string().nullable().optional(),
-      },
+      inputSchema: ACCOUNT_PATCH_FIELDS,
     },
     async ({ username, description }) =>
       await attempt(
@@ -668,7 +619,6 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
   );
 }
 
-/** Register list/get/create/update/delete for one resource, skipping absent verbs. */
 function registerResource(
   server: McpServer,
   client: BroodsAccountClient,
@@ -681,8 +631,7 @@ function registerResource(
     : "";
   const { list, get, create, update, remove } = spec;
 
-  // Scoped and unscoped register separately so each handler's arguments stay
-  // typed; a conditional shape widens them to unknown.
+  // Registered apart so handler args stay typed; a conditional schema widens them to unknown.
   if (list) {
     const description = `List every ${spec.singular} on the account.${scopeNote}`;
     if (spec.scoped) {
@@ -721,13 +670,12 @@ function registerResource(
       (spec.createHint ? ` ${spec.createHint}` : "") +
       scopeNote +
       " Prefer changing the broods/ manifest and deploying for anything the project already declares.";
-    const body = z.record(z.string(), z.unknown());
     if (spec.scoped) {
       server.registerTool(
         `create-${spec.singular}`,
         {
           description: description,
-          inputSchema: { body: body, ...SCOPE_FIELDS },
+          inputSchema: { body: BODY_FIELD, ...SCOPE_FIELDS },
         },
         async ({ body, project, stage }) =>
           await attempt(
@@ -742,7 +690,7 @@ function registerResource(
     } else {
       server.registerTool(
         `create-${spec.singular}`,
-        { description: description, inputSchema: { body: body } },
+        { description: description, inputSchema: { body: BODY_FIELD } },
         async ({ body }) =>
           await attempt(async () => await create(client, body)),
       );
@@ -758,7 +706,7 @@ function registerResource(
           (spec.updateHint ? ` ${spec.updateHint}` : ""),
         inputSchema: {
           id: idField,
-          body: z.record(z.string(), z.unknown()),
+          body: BODY_FIELD,
         },
       },
       async ({ id, body }) =>

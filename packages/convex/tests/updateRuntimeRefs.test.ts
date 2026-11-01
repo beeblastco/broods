@@ -1,6 +1,4 @@
 /// <reference types="vite/client" />
-/** Canvas saves write runtime refs. A config only reaches its own agents row. */
-
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
@@ -11,8 +9,7 @@ import schema from "../schema";
 
 const OWNER_AUTH_ID = "auth_owner";
 
-// The mutation reads its caller through the WorkOS component, which the test
-// runtime does not register. The org owner is the caller here.
+// convex-test does not register the WorkOS component the caller is read through.
 vi.mock("../auth", () => ({
   authKit: { getAuthUser: async () => ({ id: OWNER_AUTH_ID }) },
 }));
@@ -271,8 +268,7 @@ describe("updateRuntimeRefs", () => {
       "kept",
       "pruned",
     ]);
-    // The layout save removed the node and deleted its dashboard row; the
-    // canvas draws neither sandbox any more.
+    // The layout save removed the node and its dashboard row; the canvas draws neither sandbox.
     await t.run(async (ctx) => {
       await ctx.db.delete(prunedSandboxId);
     });
@@ -305,10 +301,6 @@ async function extraConfigOf(
   );
 }
 
-/**
- * An org its owner can administer, one stage with an empty canvas, two
- * sandbox rows, and a dashboard agent config storing the named ones.
- */
 async function seed(
   t: T,
   stored: readonly ("kept" | "pruned")[],
@@ -366,8 +358,7 @@ async function seed(
     const keptSandboxId = await sandbox("kept");
     const prunedSandboxId = await sandbox("pruned");
     const ids = { kept: keptSandboxId, pruned: prunedSandboxId };
-    // Created by someone else, so the save provisions no agent row and needs
-    // no encryption secret.
+    // Someone else's, so the save provisions no agent row and needs no encryption secret.
     const configId = await ctx.db.insert("agentConfigs", {
       authId: "auth_creator",
       name: "support",
@@ -389,10 +380,6 @@ async function seed(
   });
 }
 
-/**
- * The seeded org with a runtime secret on its config, and a second dashboard
- * config in the same stage holding its own.
- */
 async function seedSecrets(t: T): Promise<
   Seeded & {
     otherSecretId: Id<"agentRuntimeSecrets">;
@@ -429,7 +416,6 @@ async function seedSecrets(t: T): Promise<
   });
 }
 
-/** Each runtime secret's id while its row exists, null once deleted. */
 async function secretsOf(
   t: T,
   ids: Id<"agentRuntimeSecrets">[],
@@ -439,10 +425,6 @@ async function secretsOf(
   );
 }
 
-/**
- * The seeded org plus a second account's `agents` row, and a config the
- * caller authored that either names that row or names none.
- */
 async function seedForeignLink(
   t: T,
   link: "linked" | "unlinked",

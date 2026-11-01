@@ -1375,9 +1375,8 @@ describe("runtime ingress", () => {
         });
       }
     }
-    // The parent's write stored two results and lost its reply before the
-    // rows were marked: core detached one, and the other's row still reads
-    // processing because its settle has not landed.
+    // The parent's write stored two results and lost its reply before marking them: core
+    // detached one, and the other still reads processing as its settle has not landed.
     await t.mutation(internal.runtime.markAsyncAgentHandback, {
       eventId: "stored",
       handback: "detached",
@@ -2268,8 +2267,7 @@ describe("runtime ingress", () => {
     const accountId = await createActiveAccount(t);
     const keyFor = (name: string): string =>
       `acct:${accountId}:agent:test-agent:api:${name}`;
-    // 120 queued envelopes ahead of the released one, in both expiry and key
-    // order: more than one recovery page used to read.
+    // 120 envelopes ahead of the released one in both expiry and key order: past one page.
     for (const name of ["busy-a", "busy-b"]) {
       for (let index = 0; index <= 60; index += 1) {
         await t.mutation(internal.runtimeIngress.accept, {
@@ -2629,7 +2627,6 @@ describe("harness checkpoints", () => {
   });
 });
 
-// One kind of result a late resume delivers, and how a test drives its row.
 interface LateResultKind {
   name: string;
   mode: "followup" | "steer";
@@ -2645,9 +2642,8 @@ interface LateResultKind {
     id: string,
   ) => Promise<string | undefined>;
   listed: (t: TestConvex<typeof schema>, id: string) => Promise<boolean>;
-  // A stored mark of the row: the parent's status read of a tool result, or
-  // a subagent result the parent is never told. True when a queued resume
-  // keeps the result from it.
+  // Marks the row stored (the parent's status read, or a result the parent is never told);
+  // true when a queued resume keeps the result from it.
   read: (t: TestConvex<typeof schema>, id: string) => Promise<boolean>;
   // The owner `busy` taking the queued resume, as its run does.
   apply: (
@@ -2764,8 +2760,6 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
 ];
 
 describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
-  // A conversation whose owner `busy` is running, its result row, and the
-  // resume admission that carries it.
   async function busyConversation(): Promise<{
     t: TestConvex<typeof schema>;
     conversationKey: string;
@@ -2814,8 +2808,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     };
   }
 
-  // The owner `busy` finishing with nothing queued, which releases the
-  // conversation.
+  // With nothing queued, this releases the conversation.
   async function finishBusy(
     t: TestConvex<typeof schema>,
     conversationKey: string,

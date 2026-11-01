@@ -1,8 +1,3 @@
-/**
- * Configurable client for running deployed agents over direct core SSE.
- * Stream chunks are the Vercel AI SDK's `TextStreamPart` parts that core emits.
- */
-
 import type { ModelMessage, TextStreamPart, ToolSet } from "ai";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import { stripTrailingSlash } from "./config.ts";
@@ -17,19 +12,12 @@ import { USER_TOKEN_HEADER } from "./user-token.ts";
 
 export const DEFAULT_CORE_BASE_URL = "https://gateway.broods.app";
 
-/**
- * Input for a single agent run. The core direct API is event-based (a list of
- * Vercel AI SDK model messages), so `events` is the full-fidelity form. Use it
- * for multimodal content (images/files), ephemeral system messages, or
- * tool-approval responses. `input` is a shorthand for a single user text message
- * and is wrapped into one user event. Provide exactly one of the two.
- */
 type AgentRunInputBase = {
   conversationKey?: string;
   eventId?: string;
-  /** Busy-conversation behavior. Defaults to `steer`: join the live run at its next step boundary (falls back to a FIFO follow-up). */
+  /** When the conversation is busy. Default `steer` joins the live run at its next step. */
   mode?: "reject" | "followup" | "collect" | "steer";
-  /** Stable retry identity within the conversation; defaults to eventId. */
+  /** Defaults to `eventId`. */
   idempotencyKey?: string;
 } & AgentRunOverrides;
 
@@ -40,7 +28,6 @@ export interface AgentRunResult {
   events: TextStreamPart<ToolSet>[];
 }
 
-/** Input for `continue`: the conversation to re-enter. */
 export interface AgentContinueInput {
   /** The key given to `run`, or the scoped key a dashboard trace row shows. */
   conversationKey: string;
@@ -74,12 +61,6 @@ export interface AgentReference<Name extends string = string> {
   readonly id: string;
   readonly project: string;
   readonly stage: string;
-  /**
-   * Authoritative scope of the stage's runtime key, embedded by codegen
-   * from the deploy response. When present the client posts to the scoped URL
-   * `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}` (matching the
-   * dashboard); when absent it falls back to the base URL.
-   */
   readonly endpointId?: string;
   readonly projectSlug?: string;
   readonly stageSlug?: string;
@@ -119,20 +100,12 @@ export interface ResourceApi {
 }
 
 export interface BroodsClientOptions {
-  /**
-   * Base URL of the core service to call directly. Use `https://gateway.broods.app`
-   * for the hosted service. If you only have a domain, use `host` instead.
-   */
   baseUrl?: string;
-  /** Hostname or URL of the core service. `gateway.broods.app` becomes `https://gateway.broods.app`. */
   host?: string;
-  /** Runtime key used as the Bearer token for direct runtime calls. */
   apiKey?: string;
   /**
-   * The signed-in user's token, sent beside the runtime key on every call.
-   * Pass a function to get a fresh one per call (a browser fetches it from
-   * your backend, which signs it with `signUserToken`). An agent that
-   * requires one refuses the runtime key without it.
+   * Sent beside the runtime key; an agent that requires one refuses the key alone.
+   * A function fetches a fresh token per call, e.g. one your backend signs with `signUserToken`.
    */
   userToken?: string | (() => string | Promise<string>);
   fetch?: typeof fetch;
@@ -153,8 +126,6 @@ export class BroodsClient {
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: BroodsClientOptions = {}) {
-    // Loads package-local .env/.env.local files for Node/Bun callers. Dashboard
-    // auth from the returned object is intentionally ignored for runtime calls.
     loadBroodsRuntimeConfig();
     this.baseUrl = normalizeHttpServiceUrl(
       options.baseUrl ||
@@ -168,16 +139,11 @@ export class BroodsClient {
     this.fetchImpl = options.fetch ?? fetch;
   }
 
-  /** Return the public provider webhook URL for a generated channel reference. */
   channelWebhookUrl(ref: ChannelReference): string {
     return `${this.baseUrl}${ref.webhookPath.startsWith("/") ? "" : "/"}${ref.webhookPath}`;
   }
 
-  /**
-   * Return the provider webhook URL for an account's channel. The URL names no
-   * agent, since every channel of one type in an account shares it, so this is
-   * what to paste into the provider when several agents sit behind the same app.
-   */
+  /** Names no agent: paste it into the provider when several agents share one app. */
   accountWebhookUrl(
     accountId: string,
     channelType: ChannelReference["type"],
@@ -187,10 +153,7 @@ export class BroodsClient {
     return `${this.baseUrl}/v1/webhooks/${segments.join("/")}`;
   }
 
-  /**
-   * Return the provider webhook URL pinned to one stage. Production keeps the
-   * bare account URL from `accountWebhookUrl`.
-   */
+  /** Pinned to one non-production stage; production uses `accountWebhookUrl`. */
   stageWebhookUrl(
     accountId: string,
     endpointId: string,
@@ -242,7 +205,6 @@ export class BroodsClient {
     };
   }
 
-  /** Run an agent and accumulate the streamed text and raw parts. */
   async run(ref: AgentReference, input: AgentRunInput): Promise<AgentRunResult>;
   async run(
     input: AgentRunInput & { agentId: string; agentName?: string },
@@ -270,7 +232,6 @@ export class BroodsClient {
     return { text: text, events: events };
   }
 
-  /** Stream an agent run, yielding each AI SDK `TextStreamPart` as it arrives. */
   stream(
     ref: AgentReference,
     input: AgentRunInput,
@@ -313,19 +274,15 @@ export class BroodsClient {
       try {
         part = JSON.parse(data) as TextStreamPart<ToolSet>;
       } catch {
-        // Skip non-JSON lines (e.g. a heartbeat comment that slipped through).
         continue;
       }
-      // A fatal `error` part means the run aborted server-side (model/auth/tool
-      // failure). Surface it instead of yielding it, so callers that only read
-      // `text-delta` parts can never silently swallow a failed run.
+      // Thrown, not yielded, so a caller reading only `text-delta` cannot miss a failed run.
       if (part.type === "error")
         throw new Error(`Agent run failed: ${formatStreamError(part.error)}`);
       yield part;
     }
   }
 
-  /** Start an async agent run and return the status id/URL used for polling. */
   async runAsync(
     ref: AgentReference,
     input: AgentRunInput,
@@ -354,11 +311,7 @@ export class BroodsClient {
     return this.postAcceptedRun(targetUrl, body, "Async run");
   }
 
-  /**
-   * Re-enter a conversation whose last turn stopped short (step cap, provider
-   * fault). Core adds one "continue" user turn on the persisted history and
-   * runs it like a background run; a live channel session answers in its channel.
-   */
+  /** Re-enter a conversation whose last turn stopped short (step cap, provider fault). */
   async continue(
     ref: AgentReference,
     input: AgentContinueInput,
@@ -383,7 +336,6 @@ export class BroodsClient {
     return this.postAcceptedRun(targetUrl, body, "Continue");
   }
 
-  /** Fetch one async status snapshot by status URL or run id. */
   async getAsyncStatus(
     status: AsyncRequestAccepted | string,
   ): Promise<AsyncStatus> {
@@ -402,7 +354,6 @@ export class BroodsClient {
     return (await response.json()) as AsyncStatus;
   }
 
-  /** Poll async status until it reaches completed, failed, awaiting_approval, awaiting_input, or timeout. */
   async waitForAsyncStatus(
     status: AsyncRequestAccepted | string,
     options: AsyncPollOptions = {},
@@ -430,13 +381,7 @@ export class BroodsClient {
     throw new Error("Polling timeout");
   }
 
-  /**
-   * Scoped invoke URL for a deployed agent. When codegen embedded the runtime
-   * key's scope, this is
-   * `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}` (the
-   * same URL the dashboard shows, so core can validate the key against the
-   * path); otherwise it falls back to the single run endpoint.
-   */
+  // The dashboard's URL for the agent, so core can check the runtime key against the path.
   private scopedUrl(ref: AgentReference): string {
     if (ref.projectSlug && ref.stageSlug && ref.endpointId) {
       return (
@@ -462,7 +407,6 @@ export class BroodsClient {
     };
   }
 
-  /** POST a run body that must answer 202 and wrap the accepted run for polling. */
   private async postAcceptedRun(
     targetUrl: string,
     body: { agentId: string; conversationKey: string },
@@ -609,11 +553,6 @@ function directRunBody(
   };
 }
 
-/**
- * Render a streamed `error` part into a single human-readable line. Handles the
- * AI SDK's `APICallError` shape (a nested provider error under `data.error` or a
- * raw `responseBody`) and falls back to `message`/JSON so no failure mode is lost.
- */
 function formatStreamError(error: unknown): string {
   if (typeof error === "string") return error;
   if (!error || typeof error !== "object") return String(error);

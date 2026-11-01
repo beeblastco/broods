@@ -5,13 +5,6 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-/**
- * The cloudflare provider through the config plane: on/off networking only and
- * no workspace. With CLOUDFLARE_SANDBOX_URL on core (a deployed bridge, or
- * `wrangler dev` in apps/cloudflare-sandbox) and a model key, an agent writes a
- * file in one turn and reads it back in the next, so the warm Container is the
- * same one across calls.
- */
 export async function cloudflareSandbox(context: VerifyContext): Promise<void> {
   const key = `cloudflare-${context.runId}`;
   const refused = await context.account
@@ -47,6 +40,7 @@ export async function cloudflareSandbox(context: VerifyContext): Promise<void> {
     JSON.stringify(sandbox),
   );
 
+  // CLOUDFLARE_SANDBOX_URL: a deployed bridge, or `wrangler dev` in apps/cloudflare-sandbox.
   if (!process.env.CLOUDFLARE_SANDBOX_URL || !context.hasModelKey) {
     console.log(
       `  skip agent on a cloudflare container (set CLOUDFLARE_SANDBOX_URL and ${MODEL_KEY_HINT})`,

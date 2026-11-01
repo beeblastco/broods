@@ -5,11 +5,6 @@ import { useReactFlow } from "@xyflow/react";
 import { Trash2 } from "lucide-react";
 import { useCallback } from "react";
 
-/**
- * Hover-to-reveal delete control centered on an edge midpoint, shared by the custom edges.
- * Reports hover state up so the parent can recolor its stroke; `revealed` shows it while the
- * edge's line is hovered. Render inside EdgeLabelRenderer.
- */
 export function EdgeDeleteButton({
   edgeId,
   labelX,
@@ -29,8 +24,6 @@ export function EdgeDeleteButton({
   }, [edgeId, deleteElements]);
 
   return (
-    // 32×32 hit zone centered on the edge midpoint, with no child div intercepting clicks. Small,
-    // so it covers little of a neighbouring line; hovering the edge's own line reveals it too.
     <div
       data-edge-control="delete"
       data-edge-id={edgeId}

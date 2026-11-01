@@ -1,5 +1,3 @@
-/** Google Chat adapter: Google's signed token, event parsing, and the reply send. */
-
 import { GoogleChatAdapter } from "@chat-adapter/gchat";
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { createSign, generateKeyPairSync } from "node:crypto";
@@ -161,7 +159,6 @@ function channelOptions(): GoogleChatChannelOptions {
   };
 }
 
-// A token shaped like the ones Google Chat signs as its system account.
 function chatToken(
   privateKey: string,
   audience: string = PROJECT_NUMBER,
@@ -201,7 +198,6 @@ function serviceAccountJson(): string {
   });
 }
 
-// An add-on message event from a space, the app mentioned in the text.
 function spaceEvent(
   text: string,
   argumentText: string,

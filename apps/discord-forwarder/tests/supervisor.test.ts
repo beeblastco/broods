@@ -66,9 +66,6 @@ function stubbedForwarder(): {
 }
 
 describe("grouping connections", () => {
-  // The reason one process reads every config plane rather than one process per
-  // plane: two planes sharing a bot token have to share its socket, or Discord
-  // delivers every event to both and the message is answered twice.
   it("keeps a token deployed to two planes on a single socket", () => {
     const grouped = groupConnectionsByToken([
       connection({
@@ -142,9 +139,6 @@ describe("reconcile", () => {
     expect(forwarder.status().targets).toBe(2);
   });
 
-  // 4014 (Message Content Intent off) waits on the owner. A change to that
-  // token's own rows is the only signal they may have fixed it; any other
-  // reconcile would spend an IDENTIFY on a bot that is still refused.
   it("keeps a fatal socket parked when only another token changes", (): void => {
     const { forwarder, sockets } = stubbedForwarder();
     forwarder.reconcile([connection()]);
@@ -186,9 +180,6 @@ describe("reconcile", () => {
     expect(forwarder.status().sockets).toHaveLength(0);
   });
 
-  // The thread lookup waits on Discord, so a poll can land mid-delivery. Reading
-  // the targets before that await would post to the webhooks the token had when
-  // the message arrived rather than the ones it has now.
   it("posts where reconcile last pointed the token, not where it started", async () => {
     const posted: string[] = [];
     let releaseLookup: (() => void) | undefined;
@@ -196,9 +187,7 @@ describe("reconcile", () => {
       input: string | URL | Request,
     ): Promise<Response> => {
       const url = input instanceof Request ? input.url : input.toString();
-      // Matched on the parsed host, not a prefix: `startsWith` would also accept
-      // `https://discord.com.example.test`, which is the substring-sanitisation
-      // shape worth never writing, test or not.
+      // Parsed host, not startsWith, which would also accept discord.com.example.test.
       if (new URL(url).hostname === "discord.com") {
         await new Promise<void>((resolve) => {
           releaseLookup = resolve;
@@ -250,8 +239,6 @@ describe("delivery", (): void => {
     globalThis.fetch = realFetch;
   });
 
-  // Without `thread` core keys a threaded message to the parent channel, which
-  // is a different conversation, so dropping it is the lesser harm.
   it("drops a guild message whose thread lookup keeps failing", async (): Promise<void> => {
     const { deliver, lookups, posted } = delivering();
     deliver({ channel_id: "thread-1", guild_id: "guild-1", id: "message-1" });
@@ -272,7 +259,6 @@ describe("delivery", (): void => {
   });
 });
 
-/** Opens one token and returns what its socket would hand the supervisor. */
 function delivering(): {
   deliver: (data: MessageCreate) => void;
   lookups: string[];
@@ -307,7 +293,6 @@ function delivering(): {
   return { deliver: deliver, lookups: lookups, posted: posted };
 }
 
-/** Waits for a fire-and-forget delivery to reach the state under test. */
 async function until(done: () => boolean): Promise<void> {
   for (let tick = 0; tick < 100; tick += 1) {
     if (done()) return;

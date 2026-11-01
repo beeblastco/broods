@@ -1,16 +1,3 @@
-/**
- * Vercel Sandbox executor.
- * Keep @vercel/sandbox adaptation here. Persistent mode reserves one named
- * sandbox per reservation key. Vercel's session `timeout` is a hard limit, not
- * an idle timer, so each call extends the session to one idle window past its
- * own end, and `maxLifetimeSeconds` retires the sandbox at acquire.
- * A workspace run mounts its S3 prefix with mount-s3 before each call, on
- * credentials scoped to that prefix for an hour and kept out of the sandbox
- * env. `config.snapshot` names the image or snapshot it boots, and the
- * Snapshot action captures a reserved sandbox into a new snapshot.
- * `options.networkId` attaches the sandbox to a Secure Compute network.
- */
-
 import { randomUUID } from "node:crypto";
 import type {
   CommandFinished,
@@ -21,7 +8,7 @@ import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts"
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
-import { isPlainObject } from "../../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   MAX_CONCURRENT_BACKGROUND_JOBS,
@@ -80,19 +67,12 @@ import {
 } from "./utils.ts";
 
 const GENERATION_LENGTH = 8;
-// An extension overshoots by this much, so the calls that follow within it
-// need no extendTimeout of their own.
 const KEEP_ALIVE_SLACK_MS = 60_000;
-// An ephemeral session runs its setup (the workdir, a workspace mount) before
-// the command and is stopped when the call ends, so it gets this long past the
-// command's own timeout rather than being cut off mid-command.
 const EPHEMERAL_SETUP_SECONDS = 5 * 60;
 const MOUNT_LOCK = "/tmp/.fp-s3-mount.lock";
-// Mountpoint for S3's release package. The images ship without it, so a sandbox
-// whose snapshot lacks it fetches it once, which needs egress to these hosts.
+// Vercel images lack mount-s3; fetching it needs egress to this host and the apt mirrors.
 const MOUNT_S3_PACKAGE =
   "https://s3.amazonaws.com/mountpoint-s3-release/latest/${arch}/mount-s3.deb";
-// Vercel snapshot ids carry this prefix. Any other `snapshot` names a VCR image.
 const SNAPSHOT_ID_PREFIX = "snap_";
 
 type VercelSandboxClass = typeof import("@vercel/sandbox").Sandbox;
@@ -133,8 +113,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         await this.#shell(sandbox, `mkdir -p ${shellQuote(cwd)}`, { cwd: "/" });
       }
       if (persistent && cwd) {
-        // Before the hooks so they cannot outlast the session, and after them
-        // so the command still gets its full window.
+        // Around the hooks: they cannot outlast the session, and the command keeps its window.
         await this.#keepAlive(sandbox, request.timeoutSeconds);
         await this.#runLifecycle(sandbox, sandboxReservationKey(request)!);
         await this.#keepAlive(sandbox, request.timeoutSeconds);
@@ -255,9 +234,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     if (!name) return;
     try {
       const Sandbox = await this.#Sandbox();
-      // The SDK sends no `resume` of its own, leaving the choice to the API. Say it
-      // here: a teardown never needs a running VM, and booting one to delete it costs
-      // compute and widens the window a concurrent acquire can slip into.
+      // The SDK leaves `resume` to the API; booting a VM to delete it widens the acquire race.
       const sandbox = await Sandbox.get({
         name: name,
         resume: false,
@@ -275,11 +252,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     ).catch(() => {});
   }
 
-  /**
-   * Captures the reserved sandbox as a Vercel snapshot, which any vercel
-   * sandbox of the account can then boot through `config.snapshot`. Vercel stops
-   * the sandbox to capture it; its next call resumes it.
-   */
   async snapshot(
     request: SandboxReservationRef,
   ): Promise<SandboxSnapshotResult> {
@@ -288,7 +260,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       // Vercel expires a snapshot after 30 days by default; a pinned one must not.
       const snapshot = await sandbox.snapshot({ expiration: 0 });
 
-      // The SDK answers a capture that failed with a failed snapshot, not a throw.
       if (snapshot.status !== "created") {
         throw new Error(
           `Vercel snapshot ${snapshot.snapshotId} ended ${snapshot.status}`,
@@ -301,10 +272,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  // Mounts the run's workspace prefix unless a live mount on fresh credentials
-  // is already there. A resumed session lost its FUSE mount, and mount-s3 takes
-  // credentials only at start, so either case replaces the daemon. The check
-  // needs no credentials; STS is only called when a remount is due.
+  // A resumed session loses its FUSE mount, and mount-s3 reads credentials only at start.
   async #ensureS3Mount(
     sandbox: VercelSandbox,
     request: SandboxRunRequest,
@@ -325,8 +293,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         "vercel S3 workspace mounts need SANDBOX_MOUNT_ROLE_ARN in the harness runtime, or a workspace bucket with assumeRole or R2 auth",
       );
     }
-    // A first mount installs mount-s3, so a reserved session near its end
-    // gets its window before the install, not only after.
     if (this.#persistent(request)) {
       await this.#keepAlive(sandbox, request.timeoutSeconds);
     }
@@ -334,8 +300,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       cwd: "/",
       env: {
         ...mount.credentials,
-        // No EC2 metadata service here; without this mount-s3 probes it and
-        // stalls on the connect timeout, as workdir's mount notes.
         AWS_EC2_METADATA_DISABLED: "true",
         ...(mount.region
           ? { AWS_REGION: mount.region, AWS_DEFAULT_REGION: mount.region }
@@ -344,10 +308,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     });
   }
 
-  // Extends the running session to last one idle window past a call of
-  // `callSeconds`. Vercel refuses to extend past the plan's session cap; the
-  // session then stops at the cap and the next call resumes it, so a refusal
-  // only logs.
+  // Vercel's timeout is a hard cap, not an idle timer; past the plan's cap a refusal only logs.
   async #keepAlive(sandbox: VercelSandbox, callSeconds: number): Promise<void> {
     const expiresAt = sandbox.expiresAt?.getTime();
     if (expiresAt === undefined) return;
@@ -365,9 +326,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     });
   }
 
-  // A reserved sandbox whose config names another Secure Compute network moves
-  // to it. Vercel applies the change on the next session, so the running one
-  // keeps its network until the sandbox idles out.
   async #moveNetwork(sandbox: VercelSandbox): Promise<void> {
     const networkId = configString(this.#config.options?.networkId);
     if (sandbox.networkId === networkId) return;
@@ -409,9 +367,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     return `${this.#workspaceRoot()}/${namespace}`;
   }
 
-  // Job and lifecycle markers stay on the sandbox's own disk beside the
-  // workspace, never under its S3 mount: the mount has no append, and a marker
-  // in the bucket would outlive the sandbox and skip onCreate on the next one.
+  // Off the S3 mount: no append there, and a marker in it would skip a new sandbox's onCreate.
   #jobsDir(namespace: string): string {
     return `${this.#workspaceRoot()}/.fp-jobs/${namespace}`;
   }
@@ -464,10 +420,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
 
           return sandbox;
         }
-        // Past maxLifetimeSeconds: retire it here and boot a fresh one below.
-        // Checked at acquire, never on a timer, so it never cuts this call's
-        // command. Background jobs still on the sandbox end with it, as on
-        // workdir.
+        // Retired at acquire, never on a timer, so it never cuts a running command.
         await sandbox.delete();
         await deleteSandboxInstance(
           "vercel",
@@ -476,9 +429,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           storedName,
         ).catch(() => {});
       } catch (error) {
-        // Recreate only when the sandbox is really gone; a transient error must
-        // propagate or the still-live sandbox is orphaned at the provider. The
-        // conditional delete keeps a row a concurrent call already re-claimed.
+        // Only a gone sandbox is recreated; on a transient error the live one would be orphaned.
         if (!isSandboxGoneError(error)) throw error;
         await deleteSandboxInstance(
           "vercel",
@@ -489,9 +440,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       }
     }
 
-    // A fresh generation, so this machine is ours alone. `getOrCreate` on a name
-    // derived from the key would hand back whatever machine already answers to
-    // it, including one a sweeper has taken the row for and is about to delete.
+    // Fresh name: `getOrCreate` on a key-derived one could hand back a machine being swept.
     const name = vercelSandboxName(key);
     await assertSnapshotBootable(
       this.#config.controlPlane,
@@ -522,9 +471,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         return sandbox;
       }
     } catch (error) {
-      // The claim may already have committed even when its caller rejects. Drop the
-      // row while it still names this machine, then the machine itself; passing the
-      // name keeps a concurrent winner's row and machine intact.
+      // The claim may have committed even though it rejected.
       await deleteSandboxInstance(
         "vercel",
         key,
@@ -537,9 +484,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
 
     const winner = await getSandboxExternalId("vercel", key);
     if (!winner) {
-      // The row went away between the refused claim and this read. Nothing maps
-      // the key to this machine, so record it in the mirror and let the sweeper's
-      // orphan adoption be what reaches it again.
+      // The row vanished after the refused claim; the sweeper's orphan adoption reaches it now.
       await upsertSandboxInstance(
         this.#config.controlPlane,
         "vercel",
@@ -559,7 +504,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     });
   }
 
-  // The reserved sandbox, for background jobs and the Snapshot action.
   async #reserved(
     request: SandboxReservationRef,
   ): Promise<{ sandbox: VercelSandbox; jobsDir: string }> {
@@ -574,8 +518,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       name: name,
       ...vercelAuthOptions(this.#config),
     });
-    // A job poll or log read is activity: it holds the session open like a
-    // command does.
     await this.#keepAlive(sandbox, 0);
 
     return { sandbox: sandbox, jobsDir: this.#jobsDir(key) };
@@ -612,12 +554,10 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const script = [
       "set -e",
       `mkdir -p ${shellQuote(workDir)} ${shellQuote(jobsDir)}`,
-      // Parallel calls on one reservation take turns, so onCreate runs once.
       `exec 9>${shellQuote(`${jobsDir}/.fp-lifecycle.lock`)}`,
       "flock 9",
       `cd ${shellQuote(workDir)}`,
-      // The hooks run without fd 9, so a process they leave running cannot
-      // hold the lock after this script ends.
+      // Hooks run without fd 9, so a process they leave behind cannot hold the lock.
       "{",
       `if [ ! -f ${shellQuote(marker)} ]; then`,
       ...createCommands.map((cmd) => `  ${cmd}`),
@@ -661,10 +601,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   }
 }
 
-// The @vercel/sandbox SDK surfaces auth failures as "Status code 403 is not ok",
-// followed by the API's reason when it gives one. Keep that reason (a Secure
-// Compute network the team cannot use answers 401 too); a bare status means
-// the token, so say what to check.
+// A Secure Compute network the team cannot use also answers 401, so keep the API's reason.
 export function classifyVercelError(err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err);
   const numericStatus = [
@@ -672,9 +609,6 @@ export function classifyVercelError(err: unknown): Error {
     (err as { statusCode?: unknown })?.statusCode,
     (err as { response?: { status?: unknown } })?.response?.status,
   ].find((value): value is number => typeof value === "number");
-  // Fall back to the SDK's documented auth-failure phrasing ("Status code 403 is not
-  // ok") rather than scanning for any 401/403 substring, which could match unrelated
-  // numbers (ids, timestamps) in some other error message.
   const matched = /status code (401|403)\b/i.exec(message);
   const status = numericStatus ?? (matched ? Number(matched[1]) : undefined);
   if (status === 401 || status === 403) {
@@ -702,11 +636,7 @@ async function commandError(
   return [stderr, stdout].filter(Boolean).join("\n") || fallback;
 }
 
-// Installs mount-s3 when the image lacks it, then replaces any stale mount with
-// one on the credentials in this command's env. A lock makes parallel calls on
-// a fresh sandbox take turns at apt and the mount. The credentials stay out of
-// the sandbox env and later commands, but the daemon holds them and the agent
-// has sudo, so they are scoped to the prefix and last an hour.
+// The daemon holds the credentials and the agent has sudo, so they are prefix-scoped for an hour.
 function mountScript(
   mount: ResolvedS3Mount,
   mountPath: string,
@@ -747,13 +677,10 @@ function mountScript(
   ].join("\n");
 }
 
-// A workspace run: a vercel sandbox mounts every workspace attached to it.
 function mountsWorkspace(request: { namespace?: string }): boolean {
   return !!request.namespace;
 }
 
-// The hosts mount-s3 talks to: the bucket's virtual host and the regional
-// endpoint on AWS, or the endpoint and its bucket subdomain elsewhere (R2).
 function s3Hosts(mount: S3MountIdentity): string[] {
   const host = mount.endpoint
     ? new URL(mount.endpoint).hostname
@@ -812,22 +739,18 @@ function vercelCreateOptions(
         ? lifecycle.idleTimeoutSeconds
         : request.timeoutSeconds + EPHEMERAL_SETUP_SECONDS) * 1000,
     networkPolicy: vercelNetworkPolicy(config, request),
-    // No run identity here: a sandbox outlives the run that created it, and
-    // every exec lays its own over this env.
+    // No run identity: the sandbox outlives its run, and each exec lays its own on top.
     env: mergeSandboxEnv(config.envVars, request.envVars),
     tags: { app: "broods", provider: "vercel" },
   };
 }
 
-// A mounted workspace's S3 hosts join whatever the config allows, the way a
-// lambda sandbox always reaches its managed bucket.
 function vercelNetworkPolicy(
   config: SandboxExecutorConfig,
   request: SandboxRunRequest,
 ): NetworkPolicy {
   const network = config.network ?? { mode: "deny-all" as const };
   if (network.mode === "allow-all") return "allow-all";
-  // Identity only: no STS call.
   const mountHosts = mountsWorkspace(request)
     ? s3Hosts(resolveS3MountIdentity(executorS3Context(config, request)))
     : [];
@@ -842,16 +765,10 @@ function vercelNetworkPolicy(
   };
 }
 
-// A prefix that reads back to the reservation key, plus a generation nothing can
-// derive from that key. The generation is what makes `externalId` identify a machine,
-// so the conditional writes guarding a reservation refuse a machine some other caller
-// created under the same key.
 function vercelSandboxName(reservationKey: string): string {
   return `${sandboxNamePrefix(reservationKey)}-${randomUUID().slice(0, GENERATION_LENGTH)}`;
 }
 
-// The vCPUs and memory Vercel gave the sandbox. Vercel reports no disk size, and
-// an older session may report neither, which leaves the config's size in place.
 function vercelSpecs(sandbox: VercelSandbox): SandboxSpecs | undefined {
   const { vcpus, memory } = sandbox;
   if (vcpus === undefined || memory === undefined) return undefined;

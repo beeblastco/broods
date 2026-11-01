@@ -1,10 +1,8 @@
 "use client";
 
-/** Shared list of agent config source options used by the empty canvas guide and the source picker dialog. */
 import { Button } from "@/app/components/ui/button";
 import { FileDown, FilePlus, GitBranch, LayoutTemplate } from "lucide-react";
 
-// Only "create" has a flow today; the rest show as coming soon until they do.
 const SOURCE_OPTIONS = [
   {
     key: "github",

@@ -1,12 +1,3 @@
-/**
- * Prints Traefik config generated from the route table.
- *
- *   bun src/generate.ts kubernetes [stage...]
- *     cluster resources for ../infra, limited per client address
- *   bun src/generate.ts file <core> <config> <gateway> [origin...]
- *     file provider for self-hosting; origins are hostnames, `*.` for
- *     subdomains, replacing the broods.app defaults
- */
 import {
   renderFileConfig,
   renderKubernetes,
@@ -15,7 +6,7 @@ import {
 
 const NAMESPACE = "beeblast";
 
-// Service names and ports from ../infra kubernetes/charts/releases.
+// Must match the service names and ports in ../infra kubernetes/charts/releases.
 const STAGES: readonly KubeStage[] = [
   {
     name: "production",
@@ -45,7 +36,6 @@ const HEADER =
 
 const [mode, ...rest] = process.argv.slice(2);
 if (mode === "kubernetes") {
-  // A subset rolls a stage out first, as development was.
   const unknown = rest.filter((name) => !STAGES.some((s) => s.name === name));
   if (unknown.length) throw new Error(`Unknown stage: ${unknown.join(", ")}`);
   const stages = rest.length

@@ -1,10 +1,3 @@
-/**
- * The one invariant every tool-execute wrapper must hold: the AI SDK streams a
- * tool only when execute returns an AsyncIterable, so an `async` wrapper turns a
- * streaming tool into a Promise the SDK hands back unread. Wrappers go through
- * wrapToolExecute rather than re-deriving that branch each time.
- */
-
 import type { ToolSet } from "ai";
 import type { Session } from "./session.ts";
 
@@ -14,7 +7,6 @@ const AsyncGeneratorFunction = Object.getPrototypeOf(
 
 export type ToolExecute = NonNullable<ToolSet[string]["execute"]>;
 
-/** Runs around a tool call: `before` gates/rewrites input, `after` its result. */
 export interface ToolExecuteHooks {
   before?: (input: unknown) => Promise<unknown>;
   after?: (output: unknown) => Promise<unknown>;
@@ -28,20 +20,13 @@ export function isAsyncIterable(
   );
 }
 
-/**
- * Whether wrapping this execute must itself stream. Checked on the function, not
- * on a call's return value, because a wrapper has to pick its own shape before
- * it is allowed to start the tool.
- */
+// The SDK streams only when execute returns an AsyncIterable, and a wrapper must pick its
+// shape before it starts the tool, so this checks the function, not a call's result.
 export function isStreamingExecute(execute: ToolExecute): boolean {
   return execute instanceof AsyncGeneratorFunction;
 }
 
-/**
- * Runs one non-streaming tool's calls one at a time, in the order `reserve` saw
- * them. Hooks and the owner fence run inside the turn; only awaited
- * onToolExecutionStart callbacks can reorder calls, so reserve before those.
- */
+// Only awaited onToolExecutionStart callbacks can reorder calls, so `reserve` before those.
 export function serializeToolCalls(
   tools: ToolSet,
   name: string,
@@ -73,7 +58,6 @@ export function serializeToolCalls(
             if (!abortSignal?.aborted) {
               await Promise.race([turn.after, stopped.promise]);
             }
-            // A stopped run must not fire the actions still waiting their turn.
             abortSignal?.throwIfAborted();
 
             return await call(...args);
@@ -90,7 +74,6 @@ export function serializeToolCalls(
     },
   };
 
-  // Queues a call: `after` settles once the call before it is done.
   function takeTurn(toolCallId: string): {
     after: Promise<void>;
     done: () => void;
@@ -104,8 +87,7 @@ export function serializeToolCalls(
   }
 }
 
-// `after` applies to a streaming tool's last yield, which is the value the SDK
-// takes as its result.
+// The SDK takes a streaming tool's last yield as its result, so `after` maps that one.
 export function wrapToolExecute(
   tools: ToolSet,
   hooks: (name: string) => ToolExecuteHooks,
@@ -150,10 +132,6 @@ export function wrapToolExecute(
   return wrapped;
 }
 
-/**
- * Revalidates the fencing token before any executable tool starts, unless a
- * fenced call proved it within the session's owner check interval.
- */
 export function wrapToolsWithOwnerFence(
   tools: ToolSet,
   session: Pick<Session, "assertRecentOwner">,

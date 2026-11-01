@@ -3,10 +3,8 @@ import type { LayoutEdge, LayoutNode } from "@broods/convex/model/canvasLayout";
 import type { Edge } from "@xyflow/react";
 
 /**
- * The edge a drawn connection becomes. A side-handle connection is a mount, or
- * a sub-agent link between two agents, with its handles encoded in the id so
- * they survive the saved layout; any other gets React Flow's own id (its
- * `getEdgeId`, which `@xyflow/react` does not export).
+ * Side-handle connections encode their handles in the id so they survive the saved layout;
+ * others copy React Flow's id format (its `getEdgeId` is not exported).
  */
 export function connectionEdge(
   connection: Pick<Edge, "source" | "sourceHandle" | "target" | "targetHandle">,
@@ -36,12 +34,8 @@ export function connectionEdge(
 }
 
 /**
- * Whether code owns an edge, so the canvas locks it and refuses to draw it by
- * hand. Ownership sits on the one end whose config holds the link, which
- * {@link owningEnd} picks. Asking about one end rather than both is what makes
- * an `api-` agent's service edge lock the way a `cli-` one does, and what
- * makes a mount read the same whichever way it was dragged. The id prefix
- * stays as a fallback for an edge whose ends have left the graph.
+ * Ownership sits on the one end whose config holds the link, so a mount reads the same
+ * whichever way it was dragged. The id prefix is the fallback once both ends left the graph.
  */
 export function isCodeManagedEdge(
   edge: LayoutEdge,
@@ -54,26 +48,17 @@ export function isCodeManagedEdge(
     : isCliEdgeId(edge.id);
 }
 
-/**
- * True for an ownership marker whose resource is managed by code, either a
- * `broods/` project (`"cli"`) or the account REST API (`"api"`). Both are
- * re-synced from their source of truth, so the dashboard locks them.
- */
 export function isCodeManagedOwner(managedBy: unknown): boolean {
   return managedBy === "cli" || managedBy === "api";
 }
 
-/** A side handle, where mounts and sub-agent links attach. */
 export function isSideHandle(handle: string | null | undefined): boolean {
   return handle === "left" || handle === "right";
 }
 
 /**
- * The end whose config holds `edge`. An agent's manifest lists its sandboxes,
- * workspaces, skills and sub-agents, so the agent end owns a service or
- * sub-agent link, and the parent is the source of a sub-agent link. A mount is
- * the `sandbox` on one of those workspace refs, and `cliSyncCanvas` draws it
- * from the workspace, so the workspace end owns it.
+ * An agent's manifest lists its services and sub-agents (the parent is the source), so the
+ * agent end owns those links; `cliSyncCanvas` draws a mount from its workspace, which owns it.
  */
 function owningEnd(
   edge: LayoutEdge,

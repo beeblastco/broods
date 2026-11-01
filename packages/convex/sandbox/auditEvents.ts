@@ -1,9 +1,3 @@
-/**
- * Sandbox lifecycle audit events. Core writes these through the internal
- * mutation after provider lifecycle calls; the dashboard reads the active org's
- * recent events for one reservation key.
- */
-
 import type { WithoutSystemFields } from "convex/server";
 import { v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
@@ -15,7 +9,6 @@ import {
 import { getActiveAccountForUser } from "../org/orgs";
 import { sandboxAuditEventsFields } from "../schema";
 
-/** A registry row as inserted or as read back; the audit needs no system fields. */
 type SandboxInstanceRow = WithoutSystemFields<Doc<"sandboxInstances">>;
 
 const sandboxAuditEventDoc = v.object({
@@ -24,7 +17,6 @@ const sandboxAuditEventDoc = v.object({
   _creationTime: v.number(),
 });
 
-/** Inserts one sandbox lifecycle audit row, enriching it from the instance row. */
 export const insert = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -65,7 +57,6 @@ export const insert = internalMutation({
   },
 });
 
-/** Lists recent audit events for one sandbox instance in the active org. */
 export const listForInstance = query({
   args: {
     reservationKey: v.string(),
@@ -89,15 +80,8 @@ export const listForInstance = query({
   },
 });
 
-/**
- * The audit row for a lifecycle step the runtime took on its own while
- * mirroring an instance: `reserve` when the registry row is inserted or a
- * replacement machine takes over its key, `resume` when a reconnect brings a
- * suspended machine back. Written in the same transaction as the registry
- * write, so a reconnect can never find the instance without it. Skipped for
- * ephemeral instances: one row per bash call would drown the sandbox's own
- * history.
- */
+// Same transaction as the registry write, so a reconnect never finds the instance without it.
+// Not for ephemeral instances: a row per bash call would drown the sandbox's own history.
 export async function recordRuntimeAction(
   ctx: MutationCtx,
   instance: SandboxInstanceRow,
@@ -133,7 +117,6 @@ export async function recordRuntimeAction(
   });
 }
 
-/** Audit-row identity/outcome columns, enriched from the instance row when the caller omitted them. */
 function auditEventHeadFields(
   args: Pick<
     Doc<"sandboxAuditEvents">,
@@ -167,7 +150,6 @@ function auditEventHeadFields(
   };
 }
 
-/** Actor/trace/metric columns; trace and task ids fall back to the instance's last-used ones. */
 function auditEventTailFields(
   args: Pick<Doc<"sandboxAuditEvents">, "actorSource"> &
     Partial<

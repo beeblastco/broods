@@ -1,9 +1,3 @@
-/**
- * Status route compatibility tests: the durable ingress record merges with the
- * async agent result so approval-required and still-running async runs keep the
- * pre-ingress top-level polling contract.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   hashAccountSecret,

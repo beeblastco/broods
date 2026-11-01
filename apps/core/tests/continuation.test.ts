@@ -33,7 +33,6 @@ const QUESTION: PendingQuestionSummary = {
   answerBy: "2026-10-19T10:00:00.000Z",
 };
 
-/** A clean, answered turn; each case overrides the one field that changes the outcome. */
 function completedTurn(
   overrides: Partial<ParentContinuationResult> = {},
 ): ParentContinuationResult {

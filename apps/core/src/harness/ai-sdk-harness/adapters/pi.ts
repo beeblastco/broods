@@ -1,7 +1,3 @@
-/**
- * Pi adapter construction and Broods provider mapping.
- */
-
 import { VERSION, createPi, type PiHarnessSettings } from "@ai-sdk/harness-pi";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type { HarnessV1AuthenticationEnvironment } from "@ai-sdk/harness";
@@ -18,7 +14,6 @@ import {
 
 export const PI_HARNESS_VERSION = VERSION;
 
-/** Builds the Pi adapter from an agent config; the adapter registry falls back to it for `harness.type` pi. */
 export function createConfiguredPiAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {
@@ -45,18 +40,13 @@ export function createConfiguredPiAdapter(
   });
 }
 
-/** Builds the Pi adapter from raw settings; `createAiSdkHarnessAdapter` calls it. */
 export function createPiAdapter(
   settings?: PiHarnessSettings,
 ): HarnessAgentAdapter {
   return createPi(settings);
 }
 
-/**
- * Auth env for every non-vercel Pi provider. Pi registers a provider per
- * `<PREFIX>_API_KEY` / `<PREFIX>_BASE_URL` pair it finds, so a custom endpoint
- * reaches it as its own label rather than as an OpenAI-compatible override.
- */
+// Pi registers a provider per <PREFIX>_API_KEY/_BASE_URL pair: a custom endpoint keeps its label.
 function resolvePrefixedAuthEnv(
   providerName: string,
   provider: AgentProviderSettings,

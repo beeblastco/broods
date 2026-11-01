@@ -13,7 +13,6 @@ on:
       - "apps/core/src/shared/env.ts"
       - "apps/core/src/shared/machine-socket.ts"
       - "apps/core/src/shared/nats.ts"
-      - "apps/core/src/shared/object.ts"
       - "apps/core/src/shared/paths.ts"
       - "apps/core/src/shared/request-id.ts"
       - "apps/core/src/shared/terminal-ticket.ts"

@@ -1,15 +1,10 @@
-/**
- * Example: the worker sandbox provider (bash in a V8 isolate on Cloudflare
- * Workers) via declarative broods resources. No workspace mount, so only
- * `bash` is exposed, and only just-bash's built-in commands run: no python,
- * no node. A persistent sandbox keeps its files between calls in storage.
- */
+// No workspace mount, so only `bash`, and only just-bash built-ins: no python, no node.
+// A persistent sandbox keeps its files in storage between calls.
 
 import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-// The demo's agents require a signed user token beside the runtime key.
-// Your backend signs one per signed-in user; here one demo user stands in.
+// These agents need a signed user token; your backend signs one per signed-in user.
 const client = new BroodsClient({
   userToken: () => signUserToken({ userId: "demo-user" }),
 });

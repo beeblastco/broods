@@ -1,20 +1,15 @@
-/**
- * Reports upstream releases for the dependencies whose types the repo builds on,
- * and what the audit gate's exceptions need: a release that could retire one,
- * or a review date about to pass.
- * Exits 0 when current, 1 when a release is available, 2 when the check failed.
- */
+// Watches releases of the deps whose types the repo builds on, and audit exceptions a release
+// could retire or whose review date nears. Exit 0 current, 1 release available, 2 failed.
 
 import { readFile } from "node:fs/promises";
 import { EXCEPTIONS, type Exception } from "./audit-gate.ts";
 
 const REGISTRY = "https://registry.npmjs.org";
 
-/** An exception this close to its `expires` date gets a review row. */
 const EXPIRY_WARNING_DAYS = 30;
 
 /** Watched outside the AI SDK family, where a caret bump is not automatic. */
-const EXTRA_WATCHED = ["esbuild"];
+const EXTRA_WATCHED = new Set(["esbuild"]);
 
 const WORKSPACES = [
   "apps/core",
@@ -25,7 +20,6 @@ const WORKSPACES = [
   "packages/convex",
 ];
 
-/** One line of the audit exception table. */
 interface ExceptionRow {
   package: string;
   action: string;
@@ -47,7 +41,6 @@ interface PackageManifest {
 interface WatchedPackage {
   name: string;
   latest: string;
-  /** Exact `ai` the latest release pins, when it pins one. */
   pinnedAi: string | undefined;
   installs: Install[];
 }
@@ -68,11 +61,6 @@ if (import.meta.main) {
   }
 }
 
-/**
- * Rows the watch issue carries for one audit exception: a newer release that
- * may retire it, and a review date within EXPIRY_WARNING_DAYS. Empty while the
- * exception stands as reviewed.
- */
 export function judgeException(
   exception: Exception,
   installed: string | undefined,
@@ -99,10 +87,7 @@ export function judgeException(
   return rows;
 }
 
-/**
- * Judges every audit exception against the registry. The locked version is the
- * one the audit gate judges, so it is the one compared here.
- */
+// The audit gate judges the locked version, so that is the one compared here.
 async function collectExceptionRows(today: string): Promise<ExceptionRow[]> {
   const lock = await readFile("bun.lock", "utf8");
   const rows = await Promise.all(
@@ -204,10 +189,7 @@ async function readLatest(
   };
 }
 
-/**
- * A transitive package has no hoisted copy under an isolated install, so its
- * version comes from the lock text: the lowest one when several are locked.
- */
+// Isolated installs hoist no transitive copy, so read the lock: the lowest locked version.
 function readLockedVersion(lock: string, name: string): string | undefined {
   const marker = `["${name}@`;
   const versions = lock.split("\n").flatMap((line) => {
@@ -245,21 +227,17 @@ function isManifestWithVersion(
   );
 }
 
-/** The one predicate the table and the exit status both read from. */
 function isStale(entry: WatchedPackage): boolean {
   return entry.installs.some((install) => install.version !== entry.latest);
 }
 
 function isWatched(name: string): boolean {
   return (
-    name === "ai" || name.startsWith("@ai-sdk/") || EXTRA_WATCHED.includes(name)
+    name === "ai" || name.startsWith("@ai-sdk/") || EXTRA_WATCHED.has(name)
   );
 }
 
-/**
- * The family installs one copy of `ai` only when every pin agrees, so name the
- * single target rather than leaving N independent bumps to guess at.
- */
+// One `ai` copy installs only when every pin agrees, so name the single target to bump to.
 function renderLockstep(packages: WatchedPackage[]): string {
   const pins = new Map<string, string[]>();
   for (const entry of packages) {

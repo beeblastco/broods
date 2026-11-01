@@ -7,7 +7,7 @@ import { startDesktop, type DesktopDriver } from "../src/cli/desktop.ts";
 import { runMachineDaemon } from "../src/cli/machine.ts";
 import { startFakeCore } from "./fixtures/fake-core.ts";
 
-// These capture the screen and move the pointer. Run them with `test:desktop`.
+// skip: these capture the screen and move the pointer; run them with `test:desktop`.
 const macOnly = test.skipIf(
   process.platform !== "darwin" || process.env.BROODS_TEST_DESKTOP !== "1",
 );

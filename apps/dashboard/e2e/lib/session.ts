@@ -1,26 +1,13 @@
-/**
- * Shared pieces of the signed-in browser suites (`app`, `perf`): the server
- * under test, the probe account from the environment, the hosted AuthKit
- * sign-in, and the project the suites drive. `auth.setup.ts` signs in once
- * and saves the browser state plus the project id; every spec starts from
- * those files.
- */
 import { expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Next reads .env.local for the app; Playwright does not, so the E2E_* values
-// kept there (by scripts/setup-dashboard-e2e.sh) are loaded here, before
-// anything below reads the environment. Absent in CI, where the workflow
-// sets the environment.
+// Playwright does not read .env.local as Next does; without one (CI) the shell's env stands.
 try {
   process.loadEnvFile(join(__dirname, "..", "..", ".env.local"));
-} catch {
-  // No local env file: the suites read whatever the shell provides.
-}
+} catch {}
 
-// PORT moves the local server off 3000 (next dev reads it too), so a worktree's
-// suite does not land on the main checkout's `next dev` and test the wrong tree.
+// next dev reads PORT too, so a worktree's suite never tests the main checkout's server.
 export const DEV_PORT = process.env.PORT ?? "3000";
 export const DEV_URL = `http://localhost:${DEV_PORT}`;
 export const BASE_URL = process.env.E2E_BASE_URL || DEV_URL;
@@ -29,18 +16,13 @@ export const STORAGE_STATE = join(AUTH_DIR, "session.json");
 export const PROJECT_FILE = join(AUTH_DIR, "project.txt");
 export const MISSING_PROBE =
   "E2E_EMAIL and E2E_PASSWORD pick the probe account, or E2E_ADMIN_KEY a self-hosted stack's admin; E2E_BASE_URL the server (default http://localhost:3000)";
-/**
- * ReactFlow's viewport: on the page once the canvas has mounted. The first
- * shown one, since CI runners sometimes catch a second canvas in the DOM.
- */
+// CI runners sometimes catch a second canvas in the DOM: take the first visible one.
 export const CANVAS_READY = ".react-flow__viewport >> visible=true >> nth=0";
-/** A fresh browser context that is already signed in. */
 export const SIGNED_IN_CONTEXT = {
   baseURL: BASE_URL,
   storageState: STORAGE_STATE,
 };
 export const probeAccount = {
-  /** A self-hosted stack's admin key; wins over the WorkOS login when set. */
   adminKey: process.env.E2E_ADMIN_KEY,
   email: process.env.E2E_EMAIL,
   password: process.env.E2E_PASSWORD,
@@ -48,7 +30,7 @@ export const probeAccount = {
 };
 
 const AUTH_TIMEOUT_MS = 60_000;
-// Convex document ids; `/projects` and the other static segments are shorter.
+// Convex ids are 20+ characters; `/projects` and the other static segments are shorter.
 const PROJECT_PATH = /^\/([a-z0-9]{20,})$/;
 
 export function hasProbe(): boolean {
@@ -57,39 +39,26 @@ export function hasProbe(): boolean {
   );
 }
 
-/** The project id `auth.setup.ts` resolved for this run. */
 export function readProjectId(): string {
   return readFileSync(PROJECT_FILE, "utf8").trim();
 }
 
-/**
- * The project the suites drive: `E2E_PROJECT_ID`, else the one the home
- * route opens. Sign-in usually lands there already. A brand-new probe
- * account gets provisioned on its first visit and lands on the empty
- * projects page; the next visit creates the default project, so two visits
- * cover a fresh account with no manual setup.
- */
+// A fresh account is provisioned on one visit and gets its default project on the next.
 export async function resolveProjectId(page: Page): Promise<string> {
   if (probeAccount.projectId) return probeAccount.projectId;
 
   for (let visit = 0; visit < 3; visit++) {
     const match = new URL(page.url()).pathname.match(PROJECT_PATH);
     if (match) return match[1];
-    // The projects page needs only queries every backend has. The home route
-    // creates the first project for a fresh account, but on a pull request
-    // this build runs against the dev backend, which may lack the functions
-    // that route calls until the merge deploys them.
+    // /projects first: on a PR the dev backend may lack the functions the home route calls.
     await page.goto("/projects");
-    // `next dev` adds an "Open Next.js Dev Tools" button; on a fresh account
-    // with no project it would be the only match.
     const card = page
       .getByRole("button", { name: /^Open (?!Next\.js Dev Tools)/ })
       .first();
     const empty = page.getByText("No projects yet");
     await card.or(empty).first().waitFor({ timeout: AUTH_TIMEOUT_MS });
     if (await card.isVisible()) {
-      // The card renders before React hydrates it, and a click that early
-      // does nothing, so click until the project opens.
+      // A click before hydration does nothing, so click until the project opens.
       await expect(async () => {
         await card.click();
         await page.waitForURL((url) => PROJECT_PATH.test(url.pathname), {
@@ -98,8 +67,6 @@ export async function resolveProjectId(page: Page): Promise<string> {
       }).toPass({ timeout: AUTH_TIMEOUT_MS });
       continue;
     }
-    // Home opens the project, or provisions an unprovisioned account and
-    // lands back on the projects page for the next visit.
     await page.goto("/");
     await page.waitForURL(
       (url) => PROJECT_PATH.test(url.pathname) || url.pathname === "/projects",
@@ -112,10 +79,6 @@ export async function resolveProjectId(page: Page): Promise<string> {
   );
 }
 
-/**
- * Sign in with the admin key on a self-hosted stack, else drive the hosted
- * AuthKit form until the app is back on its own origin.
- */
 export async function signIn(page: Page): Promise<void> {
   const origin = new URL(BASE_URL).origin;
   await page.goto("/");
@@ -140,8 +103,7 @@ export async function signIn(page: Page): Promise<void> {
   await page
     .waitForURL((url) => url.origin === origin, { timeout: AUTH_TIMEOUT_MS })
     .catch(async (error: unknown) => {
-      // CI keeps no page snapshot (it records the typed password), so name
-      // the one AuthKit stop the probe cannot pass.
+      // CI keeps no page snapshot (it would record the password), so name the bot check.
       if (await page.getByText(/sure you are human/i).isVisible()) {
         throw new Error(
           "AuthKit showed the probe its bot check: allow the probe email under Radar > Restrictions in this WorkOS environment",

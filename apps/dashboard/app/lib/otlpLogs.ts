@@ -1,15 +1,7 @@
-/**
- * Builds OTLP/HTTP JSON log records for the browser performance beacon. The
- * dashboard has no OTel SDK: one `fetch` of this payload to the collector's
- * `/v1/logs` is the whole exporter, and it keeps core's env-var contract
- * (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`).
- */
 import type { PerfEvent, PerfUnit } from "@/app/lib/perfReport";
 
-/** Fallback when SERVICE_NAME is unset; the pods set it per stage, as core does. */
 const DEFAULT_SERVICE_NAME = "broods-dashboard";
 const SCOPE_NAME = "broods-dashboard-rum";
-/** OTLP severityNumber for INFO. */
 const SEVERITY_INFO = 9;
 
 const MAX_EVENTS = 32;
@@ -17,7 +9,7 @@ const MAX_ATTRIBUTES = 12;
 const MAX_NAME_CHARS = 64;
 const MAX_ROUTE_CHARS = 128;
 const MAX_ATTRIBUTE_CHARS = 128;
-const UNITS: PerfUnit[] = ["ms", "score", "count"];
+const UNITS: ReadonlySet<unknown> = new Set<PerfUnit>(["ms", "score", "count"]);
 
 type OtlpValue =
   | { stringValue: string }
@@ -32,8 +24,7 @@ type OtlpLogRecord = {
   attributes: OtlpAttribute[];
 };
 
-// `service.name` is the only resource attribute, carrying the stage as core does:
-// the collector promotes those to Loki labels, where per-project keys would blow up.
+// Only `service.name`: the collector promotes resource attributes to Loki labels.
 export function buildOtlpLogPayload(
   events: PerfEvent[],
   context: { serviceName?: string },
@@ -60,8 +51,7 @@ export function buildOtlpLogPayload(
   };
 }
 
-// Trust boundary: the beacon is client-supplied, so only this bounded shape is
-// accepted and every string is truncated before it can reach the collector.
+// Client-supplied: accept only this bounded shape and truncate every string.
 export function parseBeaconEvents(body: unknown): PerfEvent[] {
   if (typeof body !== "object" || body === null) return [];
   const list = (body as { events?: unknown }).events;
@@ -81,7 +71,7 @@ export function parseBeaconEvents(body: unknown): PerfEvent[] {
       !Number.isFinite(at) ||
       at <= 0 ||
       at > Number.MAX_SAFE_INTEGER ||
-      !UNITS.includes(unit as PerfUnit)
+      !UNITS.has(unit)
     ) {
       continue;
     }
@@ -99,7 +89,6 @@ export function parseBeaconEvents(body: unknown): PerfEvent[] {
   return events;
 }
 
-/** Parses core's `OTEL_EXPORTER_OTLP_HEADERS` form: `K=V,K2=V2`. */
 export function parseOtlpHeaders(
   raw: string | undefined,
 ): Record<string, string> {
@@ -143,8 +132,7 @@ function toLogRecord(event: PerfEvent): OtlpLogRecord {
   }
 
   return {
-    // BigInt, not string concatenation: a large `at` renders in exponential
-    // notation and would emit a malformed timestamp.
+    // BigInt: a large `at` times 1e6 prints in exponential notation.
     timeUnixNano: (BigInt(Math.round(event.at)) * BigInt(1_000_000)).toString(),
     severityNumber: SEVERITY_INFO,
     severityText: "INFO",

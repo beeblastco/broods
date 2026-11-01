@@ -7,13 +7,7 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-/**
- * Connections end to end, short of the providers: a `chatgpt` run with no
- * connection fails asking for one (core reads it through Convex), `start`
- * answers ChatGPT's consent screen through the gateway, and a disconnect
- * with nothing connected answers false. Signing in needs a real browser and account, so
- * the code exchange is covered by the Convex tests against a stub.
- */
+// Signing in needs a real browser and account; Convex tests cover the code exchange on a stub.
 export async function connections(context: VerifyContext): Promise<void> {
   const key = `connections-${context.runId}`;
   const { agentId } = await context.account.createAgent({

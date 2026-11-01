@@ -9,7 +9,6 @@ interface Props {
   onGenerate: () => void;
 }
 
-/** Shown on the Monitoring/Tracing tabs when a stage has no runtime key yet. */
 export function ObservabilityKeyPrompt({
   generating,
   error,

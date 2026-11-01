@@ -1,12 +1,5 @@
-/**
- * The bearer check every platform Worker core talks to runs first. The bridge,
- * the V8 Worker and the MCP Worker import this file, so the compare is written
- * once.
- */
-
 const encoder = new TextEncoder();
 
-/** True when the request's Authorization header carries exactly `apiKey`. */
 export async function bearerMatches(
   request: Request,
   apiKey: string,

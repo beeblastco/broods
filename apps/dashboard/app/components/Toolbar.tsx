@@ -14,17 +14,12 @@ import {
 import { cn } from "@/app/lib/utils";
 import { ChevronDown } from "lucide-react";
 
-/** One column the Filter button offers: its label and the same filter its header has. */
 export interface FilterColumn {
   label: string;
   filter: HeadFilter;
 }
 
-/**
- * The bar above every list. Slots read left to right: search, facets, range,
- * then Filter, Refresh and the page's one primary action. Pages compose the
- * slots they need and keep the order; the count sits under the table.
- */
+/** Slot order: search, facets, range, Filter, Refresh, then the page's one primary action. */
 export function Toolbar({
   children,
   className,
@@ -44,10 +39,6 @@ export function Toolbar({
   );
 }
 
-/**
- * The toolbar's way into the header menus: pick a column, then a value. It
- * writes the same `field:value` chips the headers and typing do.
- */
 export function FilterButton({
   columns,
 }: {
@@ -84,7 +75,6 @@ export function FilterButton({
   );
 }
 
-/** The refresh button, bound to the `r` shortcut; a failed stream turns it red. */
 export function RefreshButton({
   onRefresh,
   disabled,

@@ -1,9 +1,3 @@
-/**
- * PostHog gets AI Observability spans with no user content: only listed
- * attributes pass, error text is stripped and sessions are keyed tags of the
- * conversation key.
- */
-
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
   BasicTracerProvider,

@@ -9,8 +9,7 @@ const { bucketKeys, mockSend } = vi.hoisted(() => {
     async (
       command: ListObjectsV2Command | DeleteObjectsCommand,
     ): Promise<{ Contents?: { Key: string }[] }> => {
-      // Only the managed bucket holds objects, so a purge aimed at any other
-      // bucket deletes nothing and fails the assertions.
+      // Only the managed bucket holds objects: a purge of any other one fails the assertions.
       if (command.input.Bucket !== "managed-workspace-bucket") return {};
       if (command instanceof ListObjectsV2Command) {
         const prefix = command.input.Prefix ?? "";

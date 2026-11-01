@@ -2,13 +2,6 @@ import { expect, test } from "@playwright/test";
 import type { Locator, Page } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-/**
- * The file preview under the workspace tree, against the fixture in
- * `app/ui-gallery/WorkspaceFilesStandIn`: the selected file shows in one
- * transient tab, Enter keeps it open, and the split between tree and preview
- * can be dragged and is kept.
- */
-
 async function openExplorer(page: Page, fixture: string): Promise<Locator> {
   await openGallery(page, "workspace-files");
 
@@ -37,7 +30,6 @@ test("selecting previews a file in one tab, Enter keeps it open beside the next"
   await expect(tab(writer, "agent.ts")).not.toHaveAttribute("data-pinned");
   await expect(panel(writer)).toContainText("defineAgent");
 
-  // Selection moves the transient tab; nothing piles up.
   await page.keyboard.press("ArrowDown");
   await expect(writer.getByRole("tab")).toHaveCount(1);
   await expect(tab(writer, "assets.zip")).toBeVisible();
@@ -57,7 +49,6 @@ test("selecting previews a file in one tab, Enter keeps it open beside the next"
   await tab(writer, "agent.ts").click();
   await expect(panel(writer)).toContainText("defineAgent");
 
-  // Double-clicking the transient tab keeps it open too.
   await tab(writer, "notes.txt").dblclick();
   await expect(tab(writer, "notes.txt")).toHaveAttribute("data-pinned", "true");
 
@@ -68,7 +59,6 @@ test("selecting previews a file in one tab, Enter keeps it open beside the next"
     "true",
   );
 
-  // A folder selection drops the transient tab, pinned ones stay.
   await row(writer, "docs").click();
   await expect(writer.getByRole("tab")).toHaveCount(1);
 });

@@ -1,5 +1,3 @@
-/** Pagination and error-mapping tests for the Slack channel-directory fetcher. */
-
 import { describe, expect, it } from "vitest";
 import {
   fetchSlackChannelDirectory,
@@ -7,7 +5,7 @@ import {
   SLACK_DIRECTORY_TOTAL_BUDGET_MS,
 } from "../model/slackDirectory";
 
-/** Builds a fetch stub that serves the given responses in order (repeating the last, rebuilt per call since bodies are single-use) and records each requested URL. */
+// Response factories, because a Response body can be read only once.
 function fetchStub(responses: Array<() => Response | Error>): {
   impl: typeof fetch;
   urls: string[];

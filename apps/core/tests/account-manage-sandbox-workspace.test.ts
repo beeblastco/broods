@@ -109,10 +109,7 @@ await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
 
-// The Convex instance registry is what authorizes every lifecycle request: on means the
-// account + config own a reserved instance under that key, off means no such row exists.
 let registryOwnsReservation = true;
-// This month's metered cost the fake budget store reports against a €5 budget.
 let budgetUsedPercent = 0;
 await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   setSandboxInstanceSpecs: mock(async (): Promise<void> => {}),
@@ -123,9 +120,7 @@ await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   upsertSandboxInstance: mock(async () => {}),
 }));
 
-// The MicroVM terminal mint goes through the AWS SDK (GetMicrovm →
-// CreateMicrovmShellAuthToken); answer that sequence and let a test force the
-// shell-token failure seen on VMs launched without SHELL_INGRESS.
+// Lets a test force the shell-token failure of a MicroVM launched without SHELL_INGRESS.
 let microvmShellTokenError: string | null = null;
 const microvmSendMock = mock(async (command: { _type?: string }) => {
   switch (command?._type) {
@@ -279,8 +274,7 @@ describe("account-manage sandbox endpoints", () => {
     process.env.WORKDIR_URL = "https://workdir.example.com";
     process.env.WORKDIR_API_KEY = "tenant-key";
     globalThis.fetch = fetchMock as unknown as typeof fetch;
-    // The config no longer carries `persistent` (e.g. rewritten by a CLI sync), which
-    // must not strand the live instance the registry still binds to this account.
+    // A config without `persistent` (a CLI sync rewrite) must not strand the live instance.
     const created = await seedSandbox({
       provider: "sandbox",
       options: {
@@ -371,8 +365,6 @@ describe("account-manage sandbox endpoints", () => {
         (c) => c.method === "DELETE" && c.path === "/v1/sandboxes/sbx_handler",
       ),
     ).toBe(true);
-    // The route drops the reservation row itself, so the next run creates a
-    // fresh sandbox instead of reconnecting here.
     expect(deleteSandboxInstanceMock.mock.calls).toContainEqual([
       "sandbox",
       reservationKey,
@@ -515,7 +507,6 @@ describe("account-manage sandbox endpoints", () => {
     };
     expect(body.websocketPath).toBe(TERMINAL_WEBSOCKET_PATH);
     expect(body.expiresAt).toBeGreaterThan(Date.now());
-    // The browser-held token is opaque; only the terminal ticket secret opens it.
     expect(body.token).not.toContain("tenant-key");
     expect(openTerminalTicket(body.token, "service-secret")).toBeNull();
     expect(openTerminalTicket(body.token, "terminal-secret")).toMatchObject({
@@ -551,8 +542,6 @@ describe("account-manage sandbox endpoints", () => {
       websocketPath: string;
     };
     expect(body.websocketPath).toBe(TERMINAL_WEBSOCKET_PATH);
-    // The gateway must send the shell token in the MicroVM proxy header, not
-    // a bearer Authorization header.
     expect(openTerminalTicket(body.token, "terminal-secret")).toMatchObject({
       url: "wss://sbx-handler.lambda-microvm.eu-west-1.on.aws",
       authorization: "jwe-shell-token",
@@ -625,7 +614,6 @@ describe("account-manage sandbox endpoints", () => {
       };
       expect(body.token).not.toContain("bridge-key");
       const ticket = openTerminalTicket(body.token, "terminal-secret");
-      // The bearer and the ticket expire together.
       expect(ticket!.expiresAt).toBe(body.expiresAt);
       expect(
         await verifyTerminalToken(
@@ -636,11 +624,9 @@ describe("account-manage sandbox endpoints", () => {
         ),
       ).toBe(true);
       expect(ticket).toMatchObject({
-        // The sandbox's name rides along for the shell prompt.
         url: "wss://bridge.example.com/v1/sandboxes/sbx_handler/terminal?name=persistent",
         accountId: ACCOUNT_ID,
       });
-      // The gateway gets a token for this one terminal, never the bridge key.
       const bearer = ticket!.authorization.replace(/^Bearer /, "");
       expect(bearer).not.toContain("bridge-key");
       expect(
@@ -667,7 +653,6 @@ describe("account-manage sandbox endpoints", () => {
           ticket!.expiresAt,
         ),
       ).toBe(false);
-      // A bridge that has no key yet opens no terminal.
       expect(
         await verifyTerminalToken("", bearer, "sbx_handler", Date.now()),
       ).toBe(false);
@@ -758,7 +743,6 @@ function fakeAccount(): {
   };
 }
 
-/** In-memory sandbox/workspace stores driven by the real normalizers. */
 function createFakeStorage() {
   const sandboxes = new Map<string, SandboxConfigRecord>();
   const workspaces = new Map<string, WorkspaceConfigRecord>();

@@ -1,24 +1,10 @@
-/**
- * What the outbox does when core does not take an event. Each case runs
- * `fixtures/delivery.ts` in its own process; that file says why, and its
- * `SCRIPTS` say what each webhook answers.
- *
- * The sync token on disk never waits on a delivery, the outbox does: a run
- * ends at `s3`, the last sync the homeserver serves, or at `s2` when the
- * account is stopped while it delivers the sync that served the messages.
- */
-
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 
 interface DeliveryRun {
-  /** What each webhook path answered, in order. */
   deliveries: Record<string, Array<number | "hang">>;
-  /** Rows left in the outbox. */
   held: number;
-  /** The event id of every POST, in order. */
   posted: string[];
-  /** The `Matrix event dropped from the outbox` log lines. */
   dropped: Array<Record<string, unknown>>;
   token: string;
 }
@@ -34,8 +20,6 @@ describe("a message core does not take", () => {
     });
   });
 
-  // #1033: core down past the old 5 minute window, and the forwarder
-  // restarting meanwhile, used to lose the message.
   it("survives an outage longer than five minutes and a restart", async () => {
     expect(await run("outage")).toEqual({
       deliveries: { a: [503, 503, 200] },
@@ -56,7 +40,6 @@ describe("a message core does not take", () => {
     });
   });
 
-  // An agent's webhook path can move while an event waits for it.
   it("follows its agent to a new webhook path", async () => {
     expect(await run("moved")).toEqual({
       deliveries: { a: [503], moved: [200] },
@@ -153,7 +136,6 @@ async function run(mode: string): Promise<DeliveryRun> {
   ]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
-  // The account's own log lines share stdout.
   const lines = stdout.split("\n").filter(Boolean);
   const result: Omit<DeliveryRun, "dropped"> = JSON.parse(
     lines.find((line): boolean => line.startsWith('{"deliveries"')) ?? "null",

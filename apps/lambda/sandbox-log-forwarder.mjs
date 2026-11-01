@@ -1,56 +1,27 @@
-/**
- * AWS Lambda entry for the sandbox log bridge. A CloudWatch subscription filter on
- * the per-stage MicroVM runtime log group invokes this with a gzipped batch of guest
- * stdout/stderr lines. Core names every VM's log stream
- * `<accountId>/<project>/<stage>/<uuid>/<mac>` at launch, so the tenant labels
- * Loki indexes come from splitting the stream name: no lookup, no shared state.
- * The mac is core's HMAC over the first four segments, keyed by the OTLP client
- * secret both sides hold; a guest can reach the VM role and create any stream
- * in the group, so only a name core signed earns tenant labels. Lines
- * are redacted with the same string patterns core's log.ts applies, then posted as
- * one OTLP/HTTP request to the cluster collector, whose groupbyattrs processor
- * already routes them by tenant. The collector is reached exactly like core
- * reaches it: OTEL_EXPORTER_OTLP_ENDPOINT plus the OTEL_EXPORTER_OTLP_HEADERS
- * `K=V,K2=V2` line, so one credential serves both. Per-run secret values are
- * unknown here, so only the pattern half of core's redaction runs; the docs say so.
- */
+// Tenant labels come only from a stream name core signed at launch,
+// `<accountId>/<project>/<stage>/<uuid>/<mac>`: a guest can create any stream in the group.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 
 const SERVICE_NAME = "broods-sandbox";
 const PROVIDER = "lambda";
-// Hex chars of the stream-name HMAC. Keep in step with core's microvm-executor.
+// Keep in step with core's microvm-executor.
 const LOG_STREAM_MAC_LENGTH = 16;
-// A "-" segment means the run had no deployment scope (channel, cron). The line
-// still ships for operators, but a "-" is not a tenant, so it is left unlabeled
-// rather than indexed as one.
 const UNSCOPED = "-";
 const REQUEST_TIMEOUT_MS = 10_000;
 
-// Same patterns as apps/core/src/shared/log.ts redactString; keep them in step.
+// Mirrors redactString in apps/core/src/shared/log.ts, keep in step. Per-run secret values
+// are unknown here, so only the patterns run.
 const BEARER_SECRET_PATTERN = /\bBearer\s+[^\s,;]+/gi;
 const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
-// Every Broods credential (b-prefix, long base64url body) at a word start or
-// after an escaped `\n`, `\r`, `\t` or a `%XX` byte, so short ids like `bsk_id`
-// stay readable.
-// Identical in apps/core/src/shared/log.ts; keep them in step.
 const BROODS_CREDENTIAL_PATTERN =
   /(?=b)(?<=^|[^A-Za-z0-9_]|\\[nrt]|%[0-9A-Fa-f]{2})b(?:sk|ask|pdk|cli|code|sts|dts|rt)_[A-Za-z0-9_.-]{20,}/g;
-// GitHub, OpenAI, Anthropic, AWS, Slack (bot, user, session, refresh, app),
-// Google (API key, OAuth access token) and JWT tokens. A prefixed token may
-// follow `-` or `_` (`credential-ghp_...`); a JWT never starts inside a `-`/`_`
-// run, so its branch stays linear.
-// Identical in apps/core/src/shared/log.ts; keep them in step.
 const PROVIDER_CREDENTIAL_PATTERN =
   /(?=[gsAxey])(?:(?<=^|[^A-Za-z0-9]|\\[nrt]|%[0-9A-Fa-f]{2})(?:gh[oprsu]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-[A-Za-z0-9_-]{32,}|A[KS]IA[A-Z0-9]{16}(?![A-Za-z0-9])|xox[abcdeoprs]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35}|ya29\.[A-Za-z0-9_-]{20,})|(?<=^|[^A-Za-z0-9_-]|\\[nrt]|%[0-9A-Fa-f]{2})eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g;
 
-/**
- * Lambda handler for one CloudWatch Logs subscription delivery. Control messages
- * (the filter's own health pings) and empty batches return without a request.
- */
 export async function handler(event) {
   const payload = decodeCloudWatchEvent(event);
   if (payload.messageType !== "DATA_MESSAGE" || payload.logEvents.length === 0)
@@ -72,18 +43,13 @@ export async function handler(event) {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) {
-    // Throwing makes CloudWatch retry the delivery; a 4xx from the collector is a
-    // config problem the retries will surface in this function's own log group.
+    // Throwing makes CloudWatch retry the delivery.
     throw new Error(
       `OTLP push failed with HTTP ${response.status} for ${payload.logStream}`,
     );
   }
 }
 
-/**
- * Parse the OTEL_EXPORTER_OTLP_HEADERS line (`K=V,K2=V2`) the way core's otel.ts
- * does, so the same secret value works on both sides.
- */
 export function otlpHeaders(raw) {
   const headers = {};
   for (const pair of raw.split(",")) {
@@ -94,11 +60,7 @@ export function otlpHeaders(raw) {
   return headers;
 }
 
-/**
- * Build the OTLP/HTTP JSON body for one batch. Tenant labels ride the resource so
- * the collector's groupbyattrs and Loki's index_label config pick them up; the
- * per-VM id is a log attribute so an ephemeral VM never becomes a new Loki stream.
- */
+// The per-VM id is a record attribute: on the resource, every ephemeral VM is a new Loki stream.
 export function otlpLogsRequest(payload, key) {
   const { accountId, project, stage, sandboxId } = parseLogStream(
     payload.logStream,
@@ -133,12 +95,6 @@ export function otlpLogsRequest(payload, key) {
   };
 }
 
-/**
- * Split core's stream name into labels. A stream that does not follow the
- * `<accountId>/<project>/<stage>/<uuid>/<mac>` shape, or whose mac does not
- * verify under `key`, keeps the whole name as its sandbox id and carries no
- * tenant: still visible to operators, never attributed to an account.
- */
 export function parseLogStream(logStream, key) {
   const parts = logStream.split("/");
   if (parts.length !== 5 || !verifyLogStream(parts, key)) {
@@ -159,7 +115,6 @@ export function parseLogStream(logStream, key) {
   };
 }
 
-/** Pattern-only redaction, mirroring core's redactString without secret values. */
 export function redact(line) {
   return line
     .replace(BEARER_SECRET_PATTERN, "Bearer [redacted]")

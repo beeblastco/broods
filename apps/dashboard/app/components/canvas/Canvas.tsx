@@ -158,17 +158,8 @@ import {
   useState,
 } from "react";
 
-// Interaction-only components, loaded the first time they are wanted. They
-// must not render before that: a lazy child that is still loading holds the
-// transition that mounts the canvas, and the stage landing in the URL is
-// such a transition, so the first paint waited for dialog code nobody opened.
-//
-// Every one of them passes `loading`, because that is what buys a chunk its
-// own Suspense boundary. Without one the first open suspends all the way up
-// to the route's `loading.tsx` and the whole canvas blinks to "Loading
-// canvas…" while the chunk downloads. A dialog shows nothing before it opens,
-// so its fallback is null. The option object is spelled out at each call:
-// Turbopack reads it statically and rejects a shared constant.
+// Mounted only once wanted: a loading chunk holds the transition that mounts the canvas.
+// `loading` gives each its own Suspense boundary; Turbopack rejects a shared options object.
 const NodeSidePanel = dynamic(
   () =>
     import("@/app/components/NodeSidePanel").then((mod) => mod.NodeSidePanel),
@@ -210,17 +201,9 @@ const SkillSourcePickerDialog = dynamic(
   { loading: (): null => null },
 );
 
-/**
- * How far from a handle a drop still lands on it. React Flow's default is 20px,
- * which is smaller than the nodes: a drop on the body of a card or a chip sat
- * outside every handle and silently did nothing. 100 reaches every pixel of a
- * 176x44 chip and a 176x96 card's middle from its top handle, so dropping on a
- * node connects to it. Side handles stay the nearest along a card's left and
- * right edges, which is where a mount is aimed.
- */
+// React Flow's 20px misses a drop on a card's body; 100 reaches a 176x96 card's middle.
 export const CONNECTION_RADIUS = 100;
 
-/** Node and edge components by type; the UI gallery draws its canvas fixture with them too. */
 export const CANVAS_NODE_TYPES = {
   agent: AgentNode,
   frame: FrameNode,
@@ -237,26 +220,18 @@ export const CANVAS_EDGE_TYPES = {
   subagent: SubagentEdge,
 };
 
-/** Static ReactFlow options hoisted outside components to avoid object churn on re-renders. */
 const PRO_OPTIONS = { hideAttribution: true } as const;
-/** Drags step along the background dots, the same pitch the tidy layout cells sit on. */
 const SNAP_GRID: [number, number] = [GRID, GRID];
 
-/**
- * Focus-mode dim caches, keyed by source object identity. Reusing the dimmed clone keeps
- * unchanged elements referentially stable across drag frames. Fresh clones each frame
- * would re-render every dimmed node/edge at 60fps. WeakMap entries follow their keys' GC.
- */
+// One dimmed clone per source object, so a drag frame does not re-render every dimmed card.
 const dimmedNodeCache = new WeakMap<Node, Node>();
 const dimmedEdgeCache = new WeakMap<Edge, Edge>();
 
-// Once per document: a later client-side navigation mounts a new canvas, but
-// performance.now() still counts from the first navigation.
+// Once per document: performance.now() counts from the first navigation.
 let firstCanvasReported = false;
 
 type FlowPosition = { x: number; y: number };
 
-/** The stage-scoped queries `Canvas` runs for `CanvasInner`; undefined while loading. */
 type StageData = {
   agentBadges:
     | FunctionReturnType<typeof api.agent.config.canvasBadges>
@@ -282,11 +257,8 @@ export function Canvas({
     stageArgs,
   );
 
-  // Remount per stage: a stage switch with a debounced save pending would
-  // otherwise keep the old stage's graph on screen (hasLocalChanges blocks the
-  // sync) and the next edit would persist it into the new stage. The queries
-  // live out here to keep their subscriptions across that remount; their data
-  // waits for the stage, so no edit lands before a save knows where to go.
+  // Keyed per stage, or a pending save writes the old stage's graph into the new one.
+  // The queries live out here so their subscriptions survive the remount.
   return (
     <ReactFlowProvider>
       <CanvasInner
@@ -301,6 +273,7 @@ export function Canvas({
   );
 }
 
+// Ids read "<type>:{source}-{sourceHandle}-{target}-{targetHandle}"; CLI node ids hold hyphens.
 function hydrateEncodedHandleEdge(
   edge: Edge,
   prefix: "mount:" | "subagent:",
@@ -309,8 +282,6 @@ function hydrateEncodedHandleEdge(
   if (!edge.id.startsWith(prefix)) return edge;
   const payload = edge.id.slice(prefix.length);
   const parts = payload.split("-");
-  // parts: [source, sourceHandle, target, targetHandle]. Works for numeric
-  // dashboard node ids that contain no hyphens.
   if (parts.length === 4) {
     const [source, sourceHandle, target, targetHandle] = parts;
 
@@ -325,9 +296,6 @@ function hydrateEncodedHandleEdge(
     };
   }
 
-  // CLI-synced node ids contain hyphens (e.g. `cli-agent-foo`), so the split
-  // above is ambiguous. The persisted edge still carries source/target, so peel
-  // off the two handle tokens that wrap the target id in the payload.
   const { source, target } = edge;
   if (source && target && payload.startsWith(`${source}-`)) {
     const rest = payload.slice(source.length + 1);
@@ -349,23 +317,14 @@ function hydrateEncodedHandleEdge(
   return edge;
 }
 
-/**
- * Reconstruct mount edge properties from the encoded ID.
- * Format: "mount:{source}-{sourceHandle}-{target}-{targetHandle}"
- */
 function hydrateMountEdge(edge: Edge): Edge {
   return hydrateEncodedHandleEdge(edge, "mount:", "mount");
 }
 
-/**
- * Reconstruct subagent edge properties from the encoded ID.
- * Format: "subagent:{source}-{sourceHandle}-{target}-{targetHandle}"
- */
 function hydrateSubagentEdge(edge: Edge): Edge {
   return hydrateEncodedHandleEdge(edge, "subagent:", "subagent");
 }
 
-/** Mark code-managed edges non-deletable; pass dashboard-owned edges through. */
 function lockCodeManagedEdge(edge: Edge, nodesById: Map<string, Node>): Edge {
   if (!isCodeManagedEdge(edge, (nodeId) => nodesById.get(nodeId))) {
     return edge;
@@ -374,11 +333,7 @@ function lockCodeManagedEdge(edge: Edge, nodesById: Map<string, Node>): Edge {
   return { ...edge, deletable: false, reconnectable: false };
 }
 
-/**
- * Drop nodes that repeat an id. Two nodes sharing an id make ReactFlow apply a
- * drag to both at once (they "move together"); this can happen after a layout
- * carries stale duplicates. Keeps the first occurrence.
- */
+// Two nodes sharing an id make React Flow drag both at once.
 function dedupeNodes(nodes: Node[]): Node[] {
   const seen = new Set<string>();
 
@@ -390,9 +345,7 @@ function dedupeNodes(nodes: Node[]): Node[] {
   });
 }
 
-/** Whether an edge already connects the two nodes, in either direction. */
-/** Drop duplicate edges by id and by node pair, keeping the first of each. Subagent links are
- * directional (A→B and B→A coexist), so they key by ordered pair; everything else by unordered. */
+// Subagent links are directional (A→B and B→A coexist); other edges dedupe by unordered pair.
 function dedupeEdges(edges: Edge[]): Edge[] {
   const seenIds = new Set<string>();
   const seenPairs = new Set<string>();
@@ -412,11 +365,7 @@ function dedupeEdges(edges: Edge[]): Edge[] {
   });
 }
 
-/**
- * Serialize a layout to the exact shape we persist, for change detection. Lets the DB-sync
- * effect skip the echo of our own save. Resetting state to raw DB objects drops measured
- * sizes and selection, which re-measures every node and flickers the whole canvas.
- */
+// Lets the DB sync skip our own save's echo: a reset to raw rows re-measures and flickers.
 function layoutSignature(nodes: Node[], edges: Edge[]): string {
   return JSON.stringify({
     n: nodes.map((n) => [n.id, n.type, n.position.x, n.position.y, n.data]),
@@ -424,7 +373,6 @@ function layoutSignature(nodes: Node[], edges: Edge[]): string {
   });
 }
 
-/** Collapsed frame ids for one project and stage. Per browser, so a failed read is just "none". */
 function readCollapsedFrames(key: string): ReadonlySet<string> {
   try {
     const stored: unknown = JSON.parse(
@@ -445,7 +393,7 @@ function writeCollapsedFrames(key: string, ids: ReadonlySet<string>): void {
   try {
     window.localStorage.setItem(key, JSON.stringify([...ids]));
   } catch {
-    // Storage blocked or full: the toggle still holds for this visit.
+    // Storage blocked or full: the toggle holds for this visit.
   }
 }
 
@@ -488,16 +436,13 @@ function CanvasInner({
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
-  // Arrowheads are rendered per-edge inside each edge component (one shared geometry across
-  // all edge kinds, recolorable on hover), so no markerEnd here.
   const defaultEdgeOptions = useMemo(
     () => ({
       style: {
         stroke: isDark ? AGENT_EDGE_STROKE.dark : AGENT_EDGE_STROKE.light,
         strokeWidth: 1.5,
       },
-      // Never animated: ReactFlow's animated edges run a continuous dash
-      // keyframe that repaints the canvas layer on every frame.
+      // An animated edge repaints the canvas layer on every frame.
       animated: false,
     }),
     [isDark],
@@ -506,26 +451,20 @@ function CanvasInner({
   // Flat state, the shape that is saved. React Flow draws `framedGraph`.
   const [nodes, setNodes] = useNodesState<Node>([]);
   const [edges, setEdges] = useEdgesState<Edge>([]);
-  // The canvas remounts per stage, so the key is fixed for this instance.
   const collapsedKey = `canvas-collapsed-frames:${projectId}:${stageId}`;
   const [collapsedFrames, setCollapsedFrames] = useState(() =>
     readCollapsedFrames(collapsedKey),
   );
-  // The group under the card being dragged, and why it will not take it.
   const [drop, setDrop] = useState<CanvasDrop | null>(null);
   const [focusedFrameId, setFocusedFrameId] = useState<string | null>(null);
   const [menuNodeId, setMenuNodeId] = useState<string | null>(null);
-  // What the right-clicked card offers; null on a frame or the empty canvas,
-  // which get "Add to this group" and "Add service".
   const [nodeMenu, setNodeMenu] = useState<CanvasNodeMenuEntries | null>(null);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [selectedAt, setSelectedAt] = useState(0);
   const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
-  // Bumped to make the DB-sync effect run again when no new layout arrived.
   const [resyncToken, setResyncToken] = useState(0);
-  // The card the delete dialog is confirming. Kept after the dialog closes so
-  // its name does not blank out mid fade-out.
+  // Outlives the dialog's close, so its name does not blank mid fade-out.
   const [deleteNode, setDeleteNode] = useState<Node | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [renameNode, setRenameNode] = useState<{
@@ -552,13 +491,8 @@ function CanvasInner({
   const dropRef = useRef<CanvasDrop | null>(null);
   const didInitialFit = useRef(false);
   const framedGraphRef = useRef<FramedGraph | null>(null);
-  // The last layout the database sent, for telling an edit's ref problems
-  // from ones the saved graph already had.
   const savedLayoutRef = useRef(canvasLayout);
 
-  // Clicking a chip opens it: the selected node, which `buildFramedGraph` draws
-  // as a card in a card's slot while it is a chip in an open frame. Selecting
-  // anything else closes it, so only ever one is open.
   const expandedMemberId = selectedNode?.id ?? null;
   const framedGraph = useMemo(
     () =>
@@ -574,17 +508,13 @@ function CanvasInner({
     [nodes, edges, mcpServers, collapsedFrames, expandedMemberId, drop],
   );
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- refs the flow callbacks read
   useEffect(() => {
     nodesRef.current = nodes;
     edgesRef.current = edges;
     framedGraphRef.current = framedGraph;
   }, [nodes, edges, framedGraph]);
 
-  /**
-   * React Flow reports changes against the drawn graph. A drag moves frames
-   * and their members; a measurement or selection never moves anything, and a
-   * frame's own selection or size never reaches state.
-   */
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {
       setNodes((current) =>
@@ -600,7 +530,6 @@ function CanvasInner({
     [setNodes, mcpServers, collapsedFrames],
   );
 
-  /** Collapsing is a per-browser view choice: stored locally, never saved. */
   const toggleFrame = useCallback(
     (frameId: string) => {
       const next = new Set(collapsedFrames);
@@ -613,10 +542,7 @@ function CanvasInner({
   const saveLayoutMutation = useMutation(
     api.canvas.saveLayout,
   ).withOptimisticUpdate((localStore, args) => {
-    // Keep the cached layout in sync with the pending write so the post-save
-    // snapshot matches what's on screen (local React state is already optimistic).
-    // A bare URL reads the stage-less entry; write it only while this stage is
-    // still the default, as this re-runs on every server change.
+    // A bare URL reads the stage-less entry, which mirrors only the default stage.
     const layout = { nodes: args.nodes, edges: args.edges };
     localStore.setQuery(
       api.canvas.getByProject,
@@ -638,14 +564,11 @@ function CanvasInner({
   const updateSubagentRefs = useMutation(api.agent.config.updateSubagentRefs);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasLocalChanges = useRef(false);
-  // Bumped on every edit. A save that resolves against an older generation must
-  // not clear the dirty flag. The sync effect would then overwrite the newer
-  // local state with the snapshot that write was built from.
+  // A save from an older generation must not clear the dirty flag a newer edit set.
   const editGeneration = useRef(0);
   const lastRuntimeRefs = useRef(new Map<string, string>());
   const lastSubagentRefs = useRef(new Map<string, string>());
 
-  /** Debounced save. Writes current local state to the database after 500ms of inactivity. */
   const scheduleSave = useCallback(() => {
     hasLocalChanges.current = true;
     editGeneration.current += 1;
@@ -655,8 +578,7 @@ function CanvasInner({
       const generation = editGeneration.current;
       const currentNodes = nodesRef.current;
       const currentEdges = edgesRef.current;
-      // The config API would refuse these refs after the layout had already
-      // landed. Save nothing and put the last saved graph back instead.
+      // Config would refuse these refs once the layout landed: save nothing, restore the last.
       const saved = savedLayoutRef.current;
       const problem = introducedRuntimeRefsProblem(
         {
@@ -675,11 +597,7 @@ function CanvasInner({
       }
       setSaveError(null);
       setSaveState("saving");
-      // The layout write is optimistic (withOptimisticUpdate above), so this
-      // latency and its outcome are what a rollback rate is computed from.
       const startedAt = performance.now();
-      // The layout write is optimistic; a reference write is not. Tracking them
-      // apart keeps the rollback rate from counting ref failures as rollbacks.
       let refsFailed = false;
       saveLayoutMutation({
         projectId: projectId,
@@ -708,9 +626,7 @@ function CanvasInner({
         })),
       })
         .then(async (savedLayout) => {
-          // The mutation may materialize runtime resources (assign fresh resourceIds), so
-          // merge only changed node `data` back. Replacing whole node objects would drop
-          // measured sizes and any drag started since the snapshot, the post-save flicker.
+          // Merge back only changed `data` (fresh resourceIds): whole nodes drop sizes and drags.
           const persistedNodes = savedLayout.nodes as Node[];
           const persistedById = new Map(persistedNodes.map((n) => [n.id, n]));
           setNodes((current) => {
@@ -731,8 +647,7 @@ function CanvasInner({
             return changed ? next : current;
           });
 
-          // Both groups always run: awaiting them in sequence let one failed
-          // runtime-ref write skip every subagent allow-list in the same save.
+          // Settled together, so one failed group does not skip the other.
           const refWrites = await Promise.allSettled([
             writeChangedRefs(
               deriveAgentRuntimeRefs(persistedNodes, currentEdges),
@@ -763,9 +678,6 @@ function CanvasInner({
           }
         })
         .then(() => {
-          // Clear the dirty flag only when no edit landed while this write was
-          // in flight: clearing it after a stale success let the DB sync
-          // overwrite the newer local state with no message.
           reportPerf("optimistic-save", performance.now() - startedAt, {
             attributes: { outcome: "committed", nodes: currentNodes.length },
           });
@@ -780,10 +692,7 @@ function CanvasInner({
               nodes: currentNodes.length,
             },
           });
-          // A failed save hands the canvas back to the database: the pill says
-          // what failed, and the next update replaces this graph. Holding the
-          // dirty flag instead kept the sync off for the tab, so a later save
-          // overwrote CLI deploys and other tabs. A newer edit keeps it.
+          // Back to the database: a held dirty flag let a later save overwrite CLI deploys.
           if (editGeneration.current === generation) {
             hasLocalChanges.current = false;
           }
@@ -800,14 +709,14 @@ function CanvasInner({
     updateSubagentRefs,
   ]);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- clears the save timer
   useEffect(() => {
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
     };
   }, []);
 
-  // Sync nodes/edges from the database. Skip when local changes are pending or a drag is in
-  // progress, and skip updates that already match local state (the echo of our own save).
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- Convex layout into flow state
   useEffect(() => {
     savedLayoutRef.current = canvasLayout;
     if (hasLocalChanges.current || isDraggingNode.current) return;
@@ -837,8 +746,7 @@ function CanvasInner({
         nextId.current = maxId + 1;
       }
 
-      // The `fitView` prop only fires on mount, when nodes are still empty (the layout loads
-      // async), so center the whole architecture once the first real layout arrives.
+      // The `fitView` prop fires on mount, before the layout has loaded.
       if (!didInitialFit.current) {
         didInitialFit.current = true;
         if (canvasLayout.nodes.length > 0) {
@@ -846,9 +754,6 @@ function CanvasInner({
             console.error("Failed to fit the canvas view", error);
           });
         }
-        // The cold-load milestone: navigation start to the first frame that
-        // has the real architecture on it. LCP stops at the header, so this
-        // is the number that tracks the whole auth-to-canvas chain.
         if (!firstCanvasReported) {
           firstCanvasReported = true;
           requestAnimationFrame(() =>
@@ -865,11 +770,7 @@ function CanvasInner({
     }
   }, [canvasLayout, resyncToken, setNodes, setEdges, fitView]);
 
-  /**
-   * Apply an edit to the flat graph and save it. Positions settle first, so a
-   * frame an edit joins or leaves stays where it was drawn. The refs update
-   * at once, so a second edit in the same event reads this one.
-   */
+  // The refs update at once, so a second edit in the same event builds on this one.
   const editGraph = useCallback(
     (
       edit: (nodes: Node[], edges: Edge[]) => { edges: Edge[]; nodes: Node[] },
@@ -892,7 +793,6 @@ function CanvasInner({
     [mcpServers, setNodes, setEdges, scheduleSave],
   );
 
-  /** Deleting a bundle edge deletes every agent→member edge it stands for. */
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => {
       const bundles =
@@ -911,11 +811,8 @@ function CanvasInner({
     [setEdges, editGraph],
   );
 
-  // A server gaining or changing its transport moves its node to another
-  // frame. Settle positions as for an edit; the first load moves nothing,
-  // since MCP nodes were not framed before it. Only a writer saves them: a
-  // member's save is refused, so their tab settles the drawing alone.
   const lastMcpServers = useRef(mcpServers);
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- Convex MCP transports re-frame
   useEffect(() => {
     const before = lastMcpServers.current;
     lastMcpServers.current = mcpServers;
@@ -934,9 +831,9 @@ function CanvasInner({
     if (canWrite) scheduleSave();
   }, [mcpServers, canWrite, setNodes, scheduleSave]);
 
-  // Re-center the focused node once the panel has entered: a pan that starts
-  // with it re-renders every card per frame while the panel mounts.
+  // Waits out the panel's enter: a pan during it re-renders every card per frame.
   const lastFocusedNode = useRef<Node | null>(null);
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- timer, React Flow viewport
   useEffect(() => {
     const node = selectedNode ?? lastFocusedNode.current;
     if (selectedNode) lastFocusedNode.current = selectedNode;
@@ -961,10 +858,6 @@ function CanvasInner({
     return () => window.clearTimeout(id);
   }, [selectedNode, setCenter, getZoom]);
 
-  /**
-   * Global connection validator. Controls which connections ReactFlow highlights
-   * and allows visually. Called before onConnect fires.
-   */
   const getConnectionGraph = useCallback(
     (): ConnectionGraph => ({
       edges: edgesRef.current,
@@ -977,8 +870,6 @@ function CanvasInner({
       connectionRefusal(getConnectionGraph(), connection) === null,
     [getConnectionGraph],
   );
-  // The refusal notice keeps its own state (see CanvasRefusal); the canvas only
-  // forwards the two events it cannot see from inside the flow.
   const refusalRef = useRef<CanvasRefusalHandle>(null);
   const clearRefusal = useCallback((): void => refusalRef.current?.clear(), []);
   const onConnectEnd: OnConnectEnd = useCallback(
@@ -989,7 +880,6 @@ function CanvasInner({
 
   const onConnect: OnConnect = useCallback(
     (params) => {
-      // isValidConnection already enforced every rule, on this same edge.
       const edge = connectionEdge(
         params,
         nodesRef.current.find((n): boolean => n.id === params.source)?.type ===
@@ -1004,7 +894,6 @@ function CanvasInner({
     [editGraph],
   );
 
-  /** Compute the current viewport center in flow coordinates. */
   const getViewportCenterPosition = useCallback((): FlowPosition => {
     const bounds = canvasContainerRef.current?.getBoundingClientRect();
     const clientX = bounds
@@ -1021,12 +910,7 @@ function CanvasInner({
     return screenToFlowPosition({ x: clientX, y: clientY });
   }, [screenToFlowPosition]);
 
-  /**
-   * The rows one card's menu offers. Built on demand rather than memoized on
-   * the graph: a memo would rebuild the groups on every frame of a later drag.
-   * The keyboard reads the same rows, so a key and a right-click cannot offer
-   * different things.
-   */
+  // Built on demand: a memo on the graph would rebuild on every frame of a drag.
   const buildNodeMenu = useCallback(
     (nodeId: string): CanvasNodeMenuEntries | null => {
       const menuNode = nodesRef.current.find((node) => node.id === nodeId);
@@ -1073,12 +957,7 @@ function CanvasInner({
     [buildNodeMenu, clearRefusal, screenToFlowPosition],
   );
 
-  /**
-   * Position a manually added node: right under the cursor, stepped along the
-   * dot grid only when that spot would cover another card. The right-click
-   * point is consumed, so a later add that did not come from the context menu
-   * lands in view rather than at a spot the user has since panned away from.
-   */
+  // Consumes the right-click point, so a later add from a key lands in view.
   const getFreeAddPosition = useCallback((): FlowPosition => {
     const requested = lastRightClick.current ?? getViewportCenterPosition();
     lastRightClick.current = null;
@@ -1091,11 +970,6 @@ function CanvasInner({
     );
   }, [getViewportCenterPosition]);
 
-  /**
-   * Add a service node at a position and wire it: to `agentIds` when given,
-   * else to the nearest agent. A frame's own menu passes the agents that own
-   * it, which is what puts the new card in that frame rather than beside it.
-   */
   const addNode = useCallback(
     (
       type: string,
@@ -1114,15 +988,11 @@ function CanvasInner({
         data: { ...defaultRuntimeNodeData(type, nodeLabel, id), ...extraData },
       };
 
-      // A sandbox any of them gets lands last in that agent's order.
       const nearest = findNearestAgentNode(nodesRef.current, position);
       const sources = autoWiredAgentIds(
         nodesRef.current,
         agentIds ?? (nearest ? [nearest.id] : []),
       );
-      // Through `connectionEdge`, so the id carries the `xy-edge__` scheme the
-      // drag path and both syncs mint. Its own format matched none of them,
-      // which left the edge invisible to every check that reads an id prefix.
       const newEdges: Edge[] = sources.map((source) =>
         connectionEdge(
           {
@@ -1134,7 +1004,6 @@ function CanvasInner({
           true,
         ),
       );
-      // A card that joins a frame takes its next slot (see editGraph).
       editGraph((nodes, edges) => ({
         edges: [...edges, ...newEdges],
         nodes: [...nodes, newNode],
@@ -1143,7 +1012,6 @@ function CanvasInner({
     [getFreeAddPosition, editGraph],
   );
 
-  /** Add a service to a frame, wired to every agent that owns it. */
   const addToFrame = useCallback(
     (frame: CanvasFrame) => {
       const template = NODE_TEMPLATES.find((item) => item.type === frame.kind);
@@ -1153,11 +1021,6 @@ function CanvasInner({
     [addNode],
   );
 
-  /**
-   * Re-lay the whole graph: each agent over a row of its services, shared
-   * services between the agents that use them, unwired cards parked below.
-   * Cards you dragged yourself move too. That is the point.
-   */
   const tidyLayout = useCallback(() => {
     setNodes((nds) => applyTidyLayout(nds, edgesRef.current, mcpServersByNode));
     scheduleSave();
@@ -1184,11 +1047,6 @@ function CanvasInner({
     [editGraph],
   );
 
-  /**
-   * Pull nodes out of their group, or put them back. Membership is derived, so
-   * the flag on the node is the only record of it; the frame it leaves closes
-   * over the gap and the card steps clear of it.
-   */
   const setNodesUngrouped = useCallback(
     (nodeIds: readonly string[], ungrouped: boolean) => {
       editGraph((nodes, edges) => ({
@@ -1199,22 +1057,11 @@ function CanvasInner({
     [editGraph],
   );
 
-  /**
-   * Block DB-sync resets while a drag is in flight so remote echoes can't clobber
-   * it, and drop any refusal left over from a connection: the canvas shows one
-   * notice, and this drag is about to own it.
-   */
   const onNodeDragStart: OnNodeDrag = useCallback(() => {
     isDraggingNode.current = true;
     clearRefusal();
   }, [clearRefusal]);
 
-  /**
-   * Offer the group under the card being dragged. One card only: dragging a
-   * selection is a move, not a gesture at a group. The target is worked out on
-   * every move but written only when it changes, so a crossing re-renders the
-   * canvas and a pixel does not.
-   */
   const onNodeDrag: OnNodeDrag = useCallback(
     (_event, grabbed, dragged) => {
       const next =
@@ -1238,16 +1085,7 @@ function CanvasInner({
     [collapsedFrames, expandedMemberId, mcpServers],
   );
 
-  /**
-   * Settle a drop. A card let go over a group it can join is handed to the
-   * group, which lays it out, and this stops there.
-   *
-   * Otherwise ReactFlow snaps the grabbed card to the dot grid and moves the
-   * rest of the selection by the same offset, so nothing stops a card from
-   * landing on top of another. Every dragged card steps to the nearest clear
-   * spot, grabbed card first. A dragged frame stays where it snapped and its
-   * members already moved with it.
-   */
+  // React Flow's grid snap lets cards land on each other: each steps to a clear spot.
   const onNodeDragStop: OnNodeDrag = useCallback(
     (_event, grabbed, dragged) => {
       isDraggingNode.current = false;
@@ -1255,8 +1093,6 @@ function CanvasInner({
       dropRef.current = null;
       setDrop(null);
       if (pending?.refusal === null && pending.nodeId === grabbed.id) {
-        // The group takes it. `editGraph` settles the frame it joins around it,
-        // so the card needs no clear spot of its own.
         editGraph((nodes, edges) =>
           applyCanvasDrop(
             { edges: edges, mcpServers: mcpServers, nodes: nodes },
@@ -1268,8 +1104,7 @@ function CanvasInner({
       }
       const draggedIds = new Set(dragged.map((node) => node.id));
       const graph = framedGraphRef.current;
-      // Dragged frames count where they were dropped, which the graph from the
-      // last render does not know yet.
+      // Dragged frames count where they were dropped, which the last render does not know.
       const occupied = boardRects(
         [
           ...(graph?.nodes ?? []).filter((node) => !draggedIds.has(node.id)),
@@ -1293,25 +1128,20 @@ function CanvasInner({
     [setNodes, scheduleSave, editGraph, mcpServers],
   );
 
-  /** Persist and close side panel when nodes are deleted via keyboard/context actions. */
   const onNodesDelete = useCallback(() => {
     setSelectedNode(null);
     scheduleSave();
   }, [scheduleSave]);
 
-  /** Select a card and open its side panel; a click and the menu's Open both land here. */
   const openNode = useCallback((nodeId: string): void => {
     // The flat node, so the panel and the re-centre read absolute positions.
     const node = nodesRef.current.find((item) => item.id === nodeId);
     if (!node) return;
     setFocusedFrameId(null);
-    // Stamped here so the panel can report how long it took to appear. Most of
-    // that window is its own dynamic import, not React.
     setSelectedAt(performance.now());
     setSelectedNode(node);
   }, []);
 
-  /** Delete, from the card menu or the panel's Danger Zone: confirm over the canvas. */
   const requestNodeDelete = useCallback((nodeId: string): void => {
     const node = nodesRef.current.find((item) => item.id === nodeId);
     if (!node) return;
@@ -1322,7 +1152,6 @@ function CanvasInner({
   const onNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
       clearRefusal();
-      // A frame focuses its members like a selected node, with no panel and no Delete.
       if (node.type === "frame") {
         setSelectedNode(null);
         setFocusedFrameId(node.id);
@@ -1351,10 +1180,7 @@ function CanvasInner({
     if (!open) setAgentCreatePosition(null);
   }, []);
   const onOpenSourcePicker = useCallback(() => {
-    // The empty canvas already shows the source list: point at it, don't
-    // stack the same list in a dialog over it. A frame later, so a closing
-    // context menu has already handed focus back; focusVisible so the ring
-    // shows after a mouse pick too.
+    // The empty guide lists the sources: focus it after a closing menu hands focus back.
     const emptyGuide = emptyGuideRef.current;
     if (emptyGuide) {
       requestAnimationFrame(() =>
@@ -1368,9 +1194,6 @@ function CanvasInner({
     setAgentCreatePosition(getFreeAddPosition());
     setSourcePickerOpen(true);
   }, [getFreeAddPosition]);
-  // Keyboard bindings for the canvas. Registered, not listened for: the palette
-  // lists whatever is registered and runs the same callbacks, so a row and its
-  // key are one code path.
   useShortcut("canvas.addAgent", () => canWrite && onOpenSourcePicker());
   useShortcut("canvas.addSkill", () => canWrite && setSkillPickerOpen(true));
   useShortcut(
@@ -1393,8 +1216,6 @@ function CanvasInner({
   useShortcut("canvas.delete", () => {
     if (canWrite && selectedNode) requestNodeDelete(selectedNode.id);
   });
-  // The card menu's own rows, on a key. Each one reads the menu the right-click
-  // would have built, so a row that is not offered cannot be triggered either.
   useShortcut("canvas.open", () => {
     if (selectedNode) openNode(selectedNode.id);
   });
@@ -1416,13 +1237,9 @@ function CanvasInner({
   useShortcut("canvas.zoomIn", () => zoomIn());
   useShortcut("canvas.zoomOut", () => zoomOut());
 
-  // `?node=` is how every other surface asks for a card: the palette, the
-  // copilot and a pasted link all land here.
   const requestedNodeId = searchParams.get("node");
-  // On a cold load the layout has not arrived yet, so the card the URL asks for
-  // does not exist to open. Waiting on its arrival is what makes a pasted link
-  // work as well as one followed from inside the app.
   const hasRequestedNode = nodes.some((node) => node.id === requestedNodeId);
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- router ?node= opens its card
   useEffect(() => {
     if (requestedNodeId && hasRequestedNode) openNode(requestedNodeId);
   }, [hasRequestedNode, openNode, requestedNodeId]);
@@ -1431,12 +1248,10 @@ function CanvasInner({
     onOpenCreateConfig(agentCreatePosition ?? getFreeAddPosition());
   }, [agentCreatePosition, getFreeAddPosition, onOpenCreateConfig]);
 
-  /** Persist after edges are deleted. */
   const onEdgesDeleteHandler = useCallback(() => {
     scheduleSave();
   }, [scheduleSave]);
 
-  /** Adds a skill node with the chosen source type baked into its config. */
   const onSkillSelect = useCallback(
     (source: "files" | "github" | "json") => {
       addNode("skill", "Skill", { config: { skillSource: source } });
@@ -1444,7 +1259,6 @@ function CanvasInner({
     [addNode],
   );
 
-  /** Remove a node and its connected edges from the canvas. */
   const removeNode = useCallback(
     (nodeId: string) => {
       editGraph((nodes, edges) => ({
@@ -1456,7 +1270,6 @@ function CanvasInner({
     [editGraph],
   );
 
-  /** Update a node's label in the canvas layout. */
   const updateNodeLabel = useCallback(
     (nodeId: string, label: string) => {
       editGraph((nodes, edges) => ({
@@ -1474,10 +1287,8 @@ function CanvasInner({
     [editGraph],
   );
 
-  /** Update a node's persisted data payload. */
   const updateNodeData = useCallback(
     (nodeId: string, patch: Partial<BaseNodeData>) => {
-      // A sandbox's provider or a workspace's storage picks its frame.
       editGraph((nodes, edges) => ({
         edges: edges,
         nodes: nodes.map((n) =>
@@ -1493,11 +1304,6 @@ function CanvasInner({
     [editGraph],
   );
 
-  /**
-   * The rows a workspace's mount menu lists. Read from the refs on the open,
-   * not memoized on the graph: a memo would rebuild them on every frame of a
-   * drag, and hand every card a new context on the way.
-   */
   const mountTargetsOf = useCallback(
     (workspaceId: string): WorkspaceMountTarget[] =>
       canWrite
@@ -1506,7 +1312,6 @@ function CanvasInner({
     [canWrite],
   );
 
-  /** Mount a workspace where its menu says: from the edge's word or a card's menu. */
   const setWorkspaceMountTarget = useCallback(
     (workspaceId: string, target: WorkspaceMountTarget): void => {
       editGraph((nodes, edges) =>
@@ -1523,8 +1328,6 @@ function CanvasInner({
   const isLoading = canvasLayout === undefined;
   const isEmpty = !isLoading && nodes.length === 0;
 
-  // Structural signature (ignores positions) so infra badges only recompute on real graph
-  // changes, not on every drag frame.
   const infraKey = useMemo(
     () =>
       JSON.stringify({
@@ -1545,14 +1348,15 @@ function CanvasInner({
       }),
     [nodes, edges],
   );
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- infraKey has no positions: drags skip
+  const topology = useMemo(() => ({ edges: edges, nodes: nodes }), [infraKey]);
   const { infraAnalysis, orderNumbers, workspaceOnly } = useMemo(
     () => ({
-      infraAnalysis: analyzeCanvasInfra(nodes, edges),
-      orderNumbers: agreedSandboxOrderNumbers(nodes, edges),
-      workspaceOnly: workspaceOnlySandboxIds(nodes, edges),
+      infraAnalysis: analyzeCanvasInfra(topology.nodes, topology.edges),
+      orderNumbers: agreedSandboxOrderNumbers(topology.nodes, topology.edges),
+      workspaceOnly: workspaceOnlySandboxIds(topology.nodes, topology.edges),
     }),
-    // Recompute only when the structural signature changes (positions excluded).
-    [infraKey],
+    [topology],
   );
   const framesContext = useMemo(
     () => ({
@@ -1582,40 +1386,33 @@ function CanvasInner({
       workspaceOnly,
     ],
   );
-  // The right-clicked frame, when a service added to it would land in it.
   const frameMenu = useMemo(() => {
     const frame = framedGraph.frames.find((item) => item.id === menuNodeId);
 
     return frame && acceptsNewMember(frame) ? frame : null;
   }, [menuNodeId, framedGraph]);
 
-  // Commit-to-paint for a topology change: measured from the effect to the next
-  // frame, so it covers ReactFlow's own layout, which is what scales with the
-  // graph. Timing the analysis inside the memo would be an impure render.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- rAF commit-to-paint sample
   useEffect(() => {
     const startedAt = performance.now();
     const frame = requestAnimationFrame(() => {
       reportPerf("canvas.render", performance.now() - startedAt, {
         attributes: {
-          nodes: nodesRef.current.length,
-          edges: edgesRef.current.length,
+          nodes: topology.nodes.length,
+          edges: topology.edges.length,
         },
       });
     });
 
     return () => cancelAnimationFrame(frame);
-    // Keyed on the structural signature: a drag must not produce a sample.
-  }, [infraKey]);
+  }, [topology]);
 
-  // C. Focus mode: selecting any node dims everything `focusedNodeIds` does not
-  // reach from it. A focused frame starts from all of its members at once.
   const focusedFrameMembers = useMemo(
     () =>
       framedGraph.frames.find((frame) => frame.id === focusedFrameId)
         ?.memberIds ?? [],
     [framedGraph.frames, focusedFrameId],
   );
-  // Joined, so the traversal below does not rerun each time a drag rebuilds the frames.
   const focusedFrameKey = focusedFrameMembers.join("\n");
   const focusedIds = useMemo(() => {
     const seeds = selectedNode
@@ -1624,12 +1421,11 @@ function CanvasInner({
         ? focusedFrameKey.split("\n")
         : [];
 
-    // The walk reads only node ids/types and edge endpoints, all captured by
-    // infraKey, so skip the per-drag-frame recompute `nodes` churn would cause.
-    return seeds.length === 0 ? null : focusedNodeIds(nodes, edges, seeds);
-  }, [selectedNode, focusedFrameKey, infraKey]);
+    return seeds.length === 0
+      ? null
+      : focusedNodeIds(topology.nodes, topology.edges, seeds);
+  }, [selectedNode, focusedFrameKey, topology]);
 
-  // Focus runs on flat ids; a frame is lit when any member is.
   const litIds = useMemo(() => {
     if (!focusedIds) return null;
     const lit = new Set(focusedIds);
@@ -1656,8 +1452,6 @@ function CanvasInner({
   }, [framedGraph.nodes, litIds]);
 
   const displayEdges = useMemo(() => {
-    // Dedupe defensively so legacy data with a stale-id edge can't crash the renderer
-    // with duplicate React keys before a reload rewrites it.
     const base = dedupeEdges(framedGraph.edges);
     if (!litIds) return base;
 
@@ -1674,67 +1468,60 @@ function CanvasInner({
   }, [framedGraph.edges, litIds]);
 
   const flow = (
-    <>
-      <ReactFlow
-        nodes={displayNodes}
-        edges={displayEdges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onConnectStart={clearRefusal}
-        onConnectEnd={onConnectEnd}
-        isValidConnection={isValidConnection}
-        onNodeDrag={onNodeDrag}
-        onNodeDragStart={onNodeDragStart}
-        onNodeDragStop={onNodeDragStop}
-        onNodesDelete={onNodesDelete}
-        onEdgesDelete={onEdgesDeleteHandler}
-        onNodeClick={onNodeClick}
-        onPaneClick={onPaneClick}
-        nodesDraggable={canWrite}
-        nodesConnectable={canWrite}
-        snapToGrid
-        snapGrid={SNAP_GRID}
-        nodeTypes={CANVAS_NODE_TYPES}
-        edgeTypes={CANVAS_EDGE_TYPES}
-        connectionMode={ConnectionMode.Loose}
-        connectionRadius={CONNECTION_RADIUS}
-        fitView
-        fitViewOptions={FIT_VIEW_OPTIONS}
-        maxZoom={1.5}
-        deleteKeyCode={null}
-        colorMode={isDark ? "dark" : "light"}
-        proOptions={PRO_OPTIONS}
-        defaultEdgeOptions={defaultEdgeOptions}
-      >
-        <Background
-          bgColor={isDark ? "#000" : undefined}
-          color={isDark ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.16)"}
-          gap={GRID}
-          size={2}
+    <ReactFlow
+      nodes={displayNodes}
+      edges={displayEdges}
+      onNodesChange={onNodesChange}
+      onEdgesChange={onEdgesChange}
+      onConnect={onConnect}
+      onConnectStart={clearRefusal}
+      onConnectEnd={onConnectEnd}
+      isValidConnection={isValidConnection}
+      onNodeDrag={onNodeDrag}
+      onNodeDragStart={onNodeDragStart}
+      onNodeDragStop={onNodeDragStop}
+      onNodesDelete={onNodesDelete}
+      onEdgesDelete={onEdgesDeleteHandler}
+      onNodeClick={onNodeClick}
+      onPaneClick={onPaneClick}
+      nodesDraggable={canWrite}
+      nodesConnectable={canWrite}
+      snapToGrid
+      snapGrid={SNAP_GRID}
+      nodeTypes={CANVAS_NODE_TYPES}
+      edgeTypes={CANVAS_EDGE_TYPES}
+      connectionMode={ConnectionMode.Loose}
+      connectionRadius={CONNECTION_RADIUS}
+      fitView
+      fitViewOptions={FIT_VIEW_OPTIONS}
+      maxZoom={1.5}
+      deleteKeyCode={null}
+      colorMode={isDark ? "dark" : "light"}
+      proOptions={PRO_OPTIONS}
+      defaultEdgeOptions={defaultEdgeOptions}
+    >
+      <Background
+        bgColor={isDark ? "#000" : undefined}
+        color={isDark ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.16)"}
+        gap={GRID}
+        size={2}
+      />
+      <Panel position="top-left">
+        <CanvasControls onTidy={tidyLayout} />
+      </Panel>
+      <CanvasNoticeStrip>
+        <CanvasKeyReady projectId={projectId} stageId={stageId} />
+        <CanvasRefusal ref={refusalRef} getGraph={getConnectionGraph} />
+        <CanvasDropPreview drop={drop} />
+        <CanvasSaveStatus
+          state={saveState}
+          message={saveError}
+          onRetry={scheduleSave}
         />
-        <Panel position="top-left">
-          <CanvasControls onTidy={tidyLayout} />
-        </Panel>
-        {/* One strip at the top centre for everything the canvas raises: a
-            refused connection, a refused drop, a save that failed, a new
-            project's key. */}
-        <CanvasNoticeStrip>
-          <CanvasKeyReady projectId={projectId} stageId={stageId} />
-          <CanvasRefusal ref={refusalRef} getGraph={getConnectionGraph} />
-          <CanvasDropPreview drop={drop} />
-          <CanvasSaveStatus
-            state={saveState}
-            message={saveError}
-            onRetry={scheduleSave}
-          />
-        </CanvasNoticeStrip>
-      </ReactFlow>
-    </>
+      </CanvasNoticeStrip>
+    </ReactFlow>
   );
 
-  // The provider spans the side panel too, so it reads the same traversal the
-  // node cards do instead of walking the graph again for the selected node.
   const sidePanelWanted = useEverTrue(selectedNode !== null);
   const sourcePickerWanted = useEverTrue(sourcePickerOpen);
   const configDialogWanted = useEverTrue(configDialogOpen);
@@ -1747,8 +1534,6 @@ function CanvasInner({
           ref={canvasContainerRef}
           className="relative h-full min-w-0 flex-1 overflow-hidden"
         >
-          {/* The context menu wraps the flow even when the canvas is empty: an
-            empty project is exactly when right-click-to-add needs to work. */}
           <ContextMenu>
             <ContextMenuTrigger
               className="size-full"
@@ -1860,8 +1645,6 @@ function CanvasInner({
         )}
 
         {deleteNode && (
-          // Keyed on the card so the typed confirmation does not carry over
-          // from the last card a delete was asked for.
           <NodeDeleteDialog
             key={deleteNode.id}
             node={deleteNode}
@@ -1876,7 +1659,6 @@ function CanvasInner({
             key={renameNode.id}
             label={renameNode.label}
             nodeId={renameNode.id}
-            // Mounted only while a rename is asked for, so any close clears it.
             open={true}
             onOpenChange={() => setRenameNode(null)}
             onRename={updateNodeLabel}

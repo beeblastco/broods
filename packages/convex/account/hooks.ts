@@ -1,7 +1,3 @@
-/**
- * Internal account hook metadata API consumed by core's Convex storage adapter.
- */
-
 import { v } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";

@@ -28,7 +28,6 @@ const NO_SHARES = {
   egressGb: 0,
 };
 
-// The owner's pool of two orgs on Pro, egress used up and 30% of storage held.
 const EXHAUSTED_POOL: Partial<BudgetUsage> = {
   usedPercent: 100,
   level: "exhausted",
@@ -233,7 +232,6 @@ test("an exhausted pool with nothing used by this org draws the bar destructive 
     color: OTHER_ORGS_COLOR,
     days: [],
   });
-  // The whole 30 GB egress cap is theirs; of 15 GB stored, 5 GB is.
   expect(others?.totals).toEqual({ ...ZERO, egressGb: 30, storageGb: 5 });
   expect(poolNote(usage)).toBe("Limits are shared across 2 organizations.");
 });
@@ -256,9 +254,6 @@ test("no other organizations when the pool is this org's alone or nothing is enf
       }),
     ),
   ).toBeNull();
-  // This org has no snapshot yet while the pool has one: the pool's storage
-  // stays what the All organizations column shows, and the other
-  // organizations' part of it stays unknown, so the bar draws as one piece.
   const unmeasured = budget({ storageGb: null }, [], EXHAUSTED_POOL);
   expect(unmeasured.pool?.totals.storageGb).toBe(15);
   expect(otherOrgsSlice(unmeasured)?.totals.storageGb).toBeNull();

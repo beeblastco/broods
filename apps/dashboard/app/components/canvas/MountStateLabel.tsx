@@ -16,11 +16,6 @@ import { cn } from "@/app/lib/utils";
 import { Box, CornerDownRight, Eye } from "lucide-react";
 import { useState } from "react";
 
-/**
- * What a mount row that names no sandbox says, and the line under it. Shared
- * with the card's right-click menu, which lists the same places and drops the
- * detail line.
- */
 export const FIXED_MOUNT_ROWS = {
   default: {
     detail: "Follows the agent's first sandbox",
@@ -35,15 +30,8 @@ export const FIXED_MOUNT_ROWS = {
 };
 
 /**
- * The word a workspace's mount edge carries, and the menu behind it: every
- * place that workspace can mount. It replaces the trash on a stored mount and
- * the lock on the inherited one, which between them could only delete the
- * mount or refuse. The word shows without a hover, so a glance over the board
- * says which mounts are drawn and which follow an agent. Render inside
- * EdgeLabelRenderer.
- *
- * `opacity` is the edge's own, so focus mode fades the word with the line it
- * labels instead of leaving it lit over a dimmed board.
+ * A mount edge's label and its menu of mount targets. Render inside EdgeLabelRenderer;
+ * `opacity` is the edge's own, so focus mode fades the word with its line.
  */
 export function MountStateLabel({
   edgeId,
@@ -63,22 +51,18 @@ export function MountStateLabel({
   workspaceId: string;
 }): React.JSX.Element {
   const { mountTargetsOf, onSetWorkspaceMount } = useCanvasFrames();
-  // Read when the menu opens: the rows then match the graph as it stands,
-  // without the canvas handing every card a new context on each edit.
+  // Read on open, so the canvas need not hand every card a new context on each edit.
   const [targets, setTargets] = useState<readonly WorkspaceMountTarget[]>([]);
 
   return (
-    // React Flow draws its edges div after the label layer and neither sets a
-    // z-index, so every edge's invisible 20px hit stroke lies over this word.
-    // The label layer is not a stacking context, so one z-index here is enough
-    // to take the click; 32px tall to match the trash and the lock.
+    // React Flow's edges div paints over the label layer, so every edge's 20px hit stroke
+    // covers this word; the label layer is no stacking context, so one z-index wins the click.
     <div
       data-edge-control="mount"
       data-edge-id={edgeId}
       className={cn(
         "nodrag nopan absolute top-(--label-y) left-(--label-x) z-1 flex h-8 -translate-1/2 items-center opacity-(--edge-opacity)",
-        // A faded word is background, not a target: the menu would open over
-        // the card the focus is on.
+        // Faded by focus mode: a click would open the menu over the focused card.
         opacity === undefined ? "pointer-events-auto" : "pointer-events-none",
       )}
       style={{
@@ -94,8 +78,7 @@ export function MountStateLabel({
           if (open) setTargets(mountTargetsOf(workspaceId));
         }}
       >
-        {/* The edge's dashed line runs under this word, so the hover tint needs
-            something opaque behind it or the dashes read straight through. */}
+        {/* Opaque, or the edge's dashes show through the hover tint. */}
         <span className="bg-background rounded-sm">
           <DropdownMenuTrigger
             render={
@@ -114,8 +97,6 @@ export function MountStateLabel({
           <DropdownMenuGroup>
             <DropdownMenuLabel variant="muted">Mounts on</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            {/* A stage with many sandboxes would otherwise run this list off
-                the screen; the rows scroll under the heading instead. */}
             <div className="max-h-48 overflow-y-auto">
               {targets.map((target) => {
                 const row =

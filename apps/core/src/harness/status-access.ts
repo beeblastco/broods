@@ -1,8 +1,3 @@
-/**
- * Deployment-key authorization for status/attach reads. A child subagent read
- * is allowed only through its already-authorized, active, public parent.
- */
-
 import {
   USER_CONVERSATION_PREFIX,
   userOwnsConversation,
@@ -24,9 +19,7 @@ export interface StatusAccessAuth {
   endpointId: string;
   stageSlug: string;
   projectSlug: string;
-  /** A member's ticket, which runs the stage's private agents too. */
   stageTicket?: StageTicketScope;
-  /** The signed end user a runtime key's request speaks for. */
   user?: UserToken;
 }
 
@@ -59,7 +52,6 @@ export interface StatusAccessRequest {
   agentId: string;
   eventId: string;
   publicEventId: string;
-  /** The run's envelope, already resolved by run id before this check runs. */
   ingress: IngressStatusRecord;
 }
 
@@ -93,8 +85,7 @@ async function publicAgentDenial(
   context: StatusAccessContext,
 ): Promise<StatusAccessDenial | null> {
   const agent = await context.agentLoader(request.accountId, request.agentId);
-  // A ticket may POST a run on a private agent of its stage, so it may also
-  // read that run back; publicAccess only opens an agent to the frontend key.
+  // A stage ticket may run its stage's private agents, so it may read those runs back too.
   if (!agent || (agent.config.publicAccess !== true && !auth.stageTicket)) {
     return {
       code: "public_access_disabled",
@@ -146,8 +137,7 @@ async function subagentDenial(
     return accessDenied();
   }
 
-  // The parent must pass the gate its own status read does: an active agent
-  // (public, unless a ticket reads it) on this deployment, with a live ingress row.
+  // The parent must pass the same gate its own status read does.
   const [parentAgent, parentDeployment, parentStatus] = await Promise.all([
     context.agentLoader(request.accountId, parentScope.agentId),
     context.deploymentLoader(request.accountId, parentScope.agentId),
@@ -168,16 +158,9 @@ async function subagentDenial(
     return accessDenied();
   }
 
-  // The child is read through its parent, so the parent's conversation must
-  // be one this caller's user may read.
   return embeddableUserDenial(auth, parentAgent, parentStatus.conversationKey);
 }
 
-/**
- * Whether the embeddable key may touch a direct conversation by its public
- * key: with a user token only that user's own, without one none that lives in
- * any user's namespace. Runs, approvals, steering and reads all go through it.
- */
 export function embeddableKeyReaches(
   user: UserToken | undefined,
   publicConversationKey: string,
@@ -187,11 +170,6 @@ export function embeddableKeyReaches(
     : !publicConversationKey.startsWith(USER_CONVERSATION_PREFIX);
 }
 
-/**
- * The runtime key's user rule for reading one run: an agent that requires a
- * user token answers only with one, and the run's conversation must be one
- * `embeddableKeyReaches` allows. A member's ticket reads the whole stage.
- */
 function embeddableUserDenial(
   auth: StatusAccessAuth,
   agent: AgentRecord,
@@ -204,8 +182,7 @@ function embeddableUserDenial(
       message: `Agent ${agent.agentId} requires a signed user token with the runtime key.`,
     };
   }
-  // A key scoped to another account or agent keeps its prefix here, so it
-  // never reads as a user's namespace.
+  // A key scoped to another account or agent keeps its prefix, so it never reads as a user's.
   const publicKey = publicConversationKeyFromScoped(
     scopedConversationKey,
     auth.account.accountId,

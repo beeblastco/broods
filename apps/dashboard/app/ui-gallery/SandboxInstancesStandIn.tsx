@@ -11,7 +11,6 @@ const PROJECT_ID = "p57cse242n9pww5nknkyzpk1w98fw859" as Id<"projects">;
 const ACCOUNT_ID = "a00000000000000000000000000000001" as Id<"accounts">;
 const CONFIG_ID = "c00000000000000000000000000000001" as Id<"sandboxConfigs">;
 
-/** A cloud instance with the facts a row and its panel read; `patch` sets the rest. */
 function instance(
   id: string,
   patch: Partial<Doc<"sandboxInstances">> & {
@@ -133,12 +132,6 @@ const SNAPSHOTS: Doc<"sandboxSnapshots">[] = [
   },
 ];
 
-/**
- * The sandbox list with cloud instances in every state and a connected
- * computer, so a spec can open the panel and the dock with no provider behind
- * them. Actions that need the backend (connect, snapshot, terminate) fail
- * here, which is fine: the fixture is about layout.
- */
 export function SandboxInstancesStandIn(): React.JSX.Element {
   const hydrated = useHydrated();
 

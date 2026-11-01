@@ -1,9 +1,5 @@
-/**
- * Guards the policy engine: that the rego here is correct, that OPA is running
- * this exact rego, and that it decides the way these cases expect.
- * `--local` evaluates the repo copy, `--drift` diffs the running policy against
- * it, and the default evaluates the deployed decision endpoint.
- */
+// Checks the rego here, that OPA runs it unchanged, and that it decides as these cases expect.
+// `--local` evaluates the repo copy, `--drift` diffs the running policy, default asks OPA.
 
 import { readFile } from "node:fs/promises";
 
@@ -17,9 +13,7 @@ const DECISION_QUERY = "data.broods.authz.decision";
 interface DecisionCase {
   name: string;
   input: Record<string, unknown>;
-  /** Rule ids expected to match. Empty means the rule must not fire. */
   matchedRuleIds: string[];
-  /** Deny rules that fired but only recorded, because their policy is auditing. */
   auditedRuleIds?: string[];
   allow: boolean;
 }
@@ -34,9 +28,8 @@ interface PolicyListing {
   result?: Array<{ id?: string; raw?: string }>;
 }
 
-// Assert on matchedRuleIds, not just `allow`: with no allow rule present the
-// decision is false either way, so `allow` cannot tell a deny that fired from
-// one that silently did nothing, which is the failure these cases exist for.
+// Assert matchedRuleIds, not just `allow`: with no allow rule the decision is false either
+// way, so `allow` alone cannot tell a deny that fired from one that silently did nothing.
 const CASES: DecisionCase[] = [
   ...denyCases("scalar", "oncall"),
   ...denyCases("array", ["oncall"]),
@@ -64,8 +57,7 @@ const CASES: DecisionCase[] = [
     matchedRuleIds: ["r1"],
     allow: true,
   },
-  // A run that carries no identity holds unknown roles, not no roles. An empty
-  // list would satisfy notIn and let an allow rule authorize an anonymous run.
+  // No identity means unknown roles, not none, or notIn would authorize an anonymous run.
   {
     name: "notIn allow, request carries no roles attribute",
     input: policyInput("allow", "userRoles", "notIn", ["banned"], {}),
@@ -120,8 +112,6 @@ const CASES: DecisionCase[] = [
     matchedRuleIds: [],
     allow: false,
   },
-  // Mode rides on the policy: the same deny rule refuses or merely records,
-  // and a place with nothing enforcing must not fall through to default-deny.
   {
     name: "audit policy, deny rule fires but only records",
     input: rolesInput("deny", "notIn", "oncall", ["sales"], "audit"),
@@ -235,8 +225,7 @@ const CASES: DecisionCase[] = [
     auditedRuleIds: ["watch"],
     allow: true,
   },
-  // grep and glob read everything under their root, so a deny on a prefix covers
-  // a search rooted above it. An allowed prefix never opens a wider search.
+  // A search reads its whole root, so a deny on a prefix covers any search rooted above it.
   {
     name: "deny on secrets/, grep from the workspace root",
     input: searchInput("deny", ["secrets/"], ""),
@@ -318,7 +307,7 @@ async function main(): Promise<number> {
   return failed > 0 ? 1 : 0;
 }
 
-/** The running policy, not the configmap: a correct file may not be applied. */
+// The running policy, not the configmap: a correct file may not be applied.
 async function reportDrift(): Promise<number> {
   const response = await fetch(`${OPA_BASE_URL}/v1/policies`, {
     headers: { Authorization: `Bearer ${OPA_API_TOKEN}` },
@@ -427,8 +416,6 @@ function channelInput(
   });
 }
 
-// A notIn deny must fire when the actor lacks the role and stay silent when
-// they hold it, the shape that read the same either way before the fix.
 function denyCases(label: string, value: unknown): DecisionCase[] {
   return [
     {
@@ -492,8 +479,6 @@ function rolesInput(
   );
 }
 
-// A grep as core sends it. The deny sits beside an allow for every read, so a
-// search the deny leaves alone is allowed; the allow-list stands alone.
 function searchInput(
   effect: "allow" | "deny",
   filePaths: string[],

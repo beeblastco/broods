@@ -7,12 +7,6 @@ import { assertStep, type VerifyContext } from "../harness.ts";
 const NO_TEMPO = "Trace history is not configured (TEMPO_URL)";
 const NOT_FOUND = "Trace not found in this stage";
 
-/**
- * `broods trace <id>`'s read: a member's stage ticket opens the observability
- * socket through the edge, sends fetchTrace and gets one answer back, which
- * for an id the stage never produced is a refusal, not a hang or a close.
- * The ticket is sealed with this stack's secret, as `broods login` mints it.
- */
 export async function traceFetch(context: VerifyContext): Promise<void> {
   const project = `trace-${context.runId}`;
   const { deployment } = await context.measure("deploy stage", () =>

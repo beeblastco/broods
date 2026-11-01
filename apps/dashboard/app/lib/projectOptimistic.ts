@@ -1,11 +1,8 @@
-/** Optimistic update for a project rename, so every place that shows the name moves at once. */
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import type { OptimisticLocalStore } from "convex/browser";
 
-// The project list (cards, header switcher) and the project itself (settings).
-// Convex drops this on its own when the mutation fails, so the old name comes
-// back without a rollback here. The slug is the server's to derive.
+// The slug is the server's to derive, so only the name moves here.
 export function applyProjectRename(
   localStore: OptimisticLocalStore,
   args: { projectId: Id<"projects">; name: string },

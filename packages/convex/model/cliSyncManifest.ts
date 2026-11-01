@@ -1,10 +1,3 @@
-/**
- * Manifest read-back for CLI sync: projects the stage's stored rows (agents,
- * policies, channel records, external resources, sandboxes, workspaces, crons)
- * back into manifest resources and name→id maps, with ids rewritten to the
- * resource names the local manifest declares.
- */
-
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { GeneratedIds } from "../cli/types";
@@ -225,9 +218,7 @@ export async function resourcesForStage(
       .map((entry) => [entry._id, entry.name]),
   );
 
-  // sandboxConfigs is stored encrypted (broods contract); decrypt back
-  // into the manifest shape the CLI expects. Without the secret the manifest
-  // still lists the sandbox, with an empty config, as it always has.
+  // Without the encryption secret the manifest still lists each sandbox, with an empty config.
   const cipher = hasEncryptionSecret()
     ? await accountCipher(ctx, accountId)
     : null;

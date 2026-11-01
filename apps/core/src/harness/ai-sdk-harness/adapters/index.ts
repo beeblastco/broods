@@ -1,7 +1,3 @@
-/**
- * Registry for the AI SDK Harness adapters supported by Broods.
- */
-
 import type { ClaudeCodeHarnessSettings } from "@ai-sdk/harness-claude-code";
 import type { CodexHarnessSettings } from "@ai-sdk/harness-codex";
 import type { DeepAgentsHarnessSettings } from "@ai-sdk/harness-deepagents";
@@ -47,7 +43,6 @@ export type AiSdkHarnessSettings =
   | PiHarnessSettings;
 export type AiSdkHarnessSessionParking = "detach" | "stop";
 
-// Adapter package versions; they scope sandbox reservation keys per version.
 const HARNESS_VERSIONS: Record<AiSdkHarnessType, string> = {
   "claude-code": CLAUDE_CODE_HARNESS_VERSION,
   codex: CODEX_HARNESS_VERSION,
@@ -55,8 +50,6 @@ const HARNESS_VERSIONS: Record<AiSdkHarnessType, string> = {
   opencode: OPENCODE_HARNESS_VERSION,
   pi: PI_HARNESS_VERSION,
 };
-// How a successful turn parks the native session: detach keeps the bridge alive,
-// stop shuts it down. Both return the resume state the next turn starts from.
 const HARNESS_SESSION_PARKING: Record<
   AiSdkHarnessType,
   AiSdkHarnessSessionParking
@@ -68,8 +61,7 @@ const HARNESS_SESSION_PARKING: Record<
   pi: "stop",
 };
 
-// Every adapter but Pi starts a bridge that binds one fixed port per machine, so
-// two of its conversations cannot run on one machine at once.
+// Every bridge but Pi's binds one fixed port per machine, so two conversations cannot share one.
 const HARNESS_SHARES_SANDBOX: Record<AiSdkHarnessType, boolean> = {
   "claude-code": false,
   codex: false,
@@ -78,9 +70,6 @@ const HARNESS_SHARES_SANDBOX: Record<AiSdkHarnessType, boolean> = {
   pi: true,
 };
 
-// Adapters whose running turn takes another user message (the prompt control's
-// submitUserMessage). DeepAgents has none, so it reads steering only when the
-// next turn starts.
 const HARNESS_MID_TURN_STEERING: Record<AiSdkHarnessType, boolean> = {
   "claude-code": true,
   codex: true,
@@ -89,8 +78,7 @@ const HARNESS_MID_TURN_STEERING: Record<AiSdkHarnessType, boolean> = {
   pi: true,
 };
 
-// Adapters that refuse a user message with text after an image. Pi hands the
-// text and the images over apart, so its turn carries every text part first.
+// Pi hands text and images over apart, so its prompt must carry every text part first.
 const HARNESS_TEXT_BEFORE_IMAGES: Record<AiSdkHarnessType, boolean> = {
   "claude-code": false,
   codex: false,
@@ -99,7 +87,6 @@ const HARNESS_TEXT_BEFORE_IMAGES: Record<AiSdkHarnessType, boolean> = {
   pi: true,
 };
 
-/** Builds an adapter from raw harness settings; the Workdir and MicroVM agent factories use it, mostly in tests. */
 export function createAiSdkHarnessAdapter(
   type: AiSdkHarnessType,
   settings?: AiSdkHarnessSettings,
@@ -126,7 +113,6 @@ export function createAiSdkHarnessAdapter(
   return createPiAdapter(settings as PiHarnessSettings | undefined);
 }
 
-/** Picks and builds the adapter for an agent's `harness.type`; `createConfiguredHarnessAgent` calls it on every run. */
 export function createConfiguredAiSdkHarnessAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {
@@ -150,29 +136,24 @@ export function createConfiguredAiSdkHarnessAdapter(
   return createConfiguredPiAdapter(agentConfig);
 }
 
-/** The adapter package version; the sandbox layer scopes reservation keys with it. */
 export function harnessAdapterVersion(type: AiSdkHarnessType): string {
   return HARNESS_VERSIONS[type];
 }
 
-/** Whether the running turn takes steering messages; the run loop in `harness.ts` checks it. */
 export function harnessSteersMidTurn(type: AiSdkHarnessType): boolean {
   return HARNESS_MID_TURN_STEERING[type];
 }
 
-/** Whether a successful turn detaches or stops the native session; `parkAiSdkHarnessSession` reads it. */
 export function harnessSessionParking(
   type: AiSdkHarnessType,
 ): AiSdkHarnessSessionParking {
   return HARNESS_SESSION_PARKING[type];
 }
 
-/** Whether conversations can share one machine; `harnessReservationKey` reads it. */
 export function harnessSharesSandbox(type: AiSdkHarnessType): boolean {
   return HARNESS_SHARES_SANDBOX[type];
 }
 
-/** Whether a turn's text must come before its images; `harnessPromptMessages` reads it. */
 export function harnessTextBeforeImages(type: AiSdkHarnessType): boolean {
   return HARNESS_TEXT_BEFORE_IMAGES[type];
 }

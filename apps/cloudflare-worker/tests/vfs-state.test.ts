@@ -1,8 +1,3 @@
-/**
- * The disk codec on its own, under Bun: what a command wrote survives a
- * round trip, nothing else is stored, and a read leaves the packed disk equal.
- */
-
 import { expect, it } from "bun:test";
 import { Bash } from "just-bash/browser";
 import {

@@ -1,8 +1,3 @@
-/**
- * Cron CRUD (`/v1/crons*`) plus the run history at `/v1/crons/{id}/runs`.
- * Table writes and schedule registration happen together in agent/crons.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
@@ -18,10 +13,6 @@ import {
   writeAudit,
 } from "./shared";
 
-/**
- * List/create on the collection, get/patch/delete by id. Mirrors core's former
- * handleCronRoute contract.
- */
 export async function handleCronRoute(
   ctx: ActionCtx,
   req: Request,

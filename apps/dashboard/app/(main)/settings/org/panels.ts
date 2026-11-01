@@ -1,9 +1,4 @@
-/**
- * The organization tabs past General, each in a chunk of its own so the
- * default tab's first load does not carry them. The page renders them through
- * next/dynamic with these loaders, and the sidebar calls the same loader when
- * a tab link is hovered or focused, so the chunk is on its way before the click.
- */
+// Org tab chunks, loaded by the page's next/dynamic and preloaded by the sidebar on hover.
 import type { AllowanceUsage } from "@/app/(main)/[projectId]/dashboard/components/AllowanceUsage";
 import type { ORG_TABS } from "@/app/lib/navigation";
 import type { ApiAccessPanel } from "./components/ApiAccessPanel";
@@ -36,7 +31,6 @@ export const loadApiAccessPanel = (): Promise<typeof ApiAccessPanel> =>
 export const loadOrgDangerPanel = (): Promise<typeof OrgDangerPanel> =>
   import("./components/OrgDangerPanel").then((mod) => mod.OrgDangerPanel);
 
-/** The split-out tabs by id; General has none, it ships with the page. */
 export const ORG_PANELS: Partial<
   Record<(typeof ORG_TABS)[number]["id"], () => Promise<unknown>>
 > = {

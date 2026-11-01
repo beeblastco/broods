@@ -32,7 +32,7 @@ import {
   type VolumePoint,
 } from "./ObservabilityToolbar";
 
-// The `field:value` tokens the search box understands, in the placeholder's order.
+// In the search placeholder's order.
 const LOG_QUERY_FIELDS = [
   "level",
   "source",
@@ -43,7 +43,7 @@ const LOG_QUERY_FIELDS = [
 
 type LogQueryField = (typeof LOG_QUERY_FIELDS)[number];
 
-// One matcher per token. Values arrive lowercased.
+// Values arrive lowercased.
 const QUERY_MATCHERS: Record<
   LogQueryField,
   (entry: ObservabilityLogEntry, value: string) => boolean
@@ -77,8 +77,6 @@ const LEVEL_TONE: Record<ObservabilityLogEntry["level"], StatusTone> = {
   DEBUG: "ended",
 };
 
-// Rows rendered before the "Load more" pager; keeps the DOM bounded even when the
-// live buffer holds thousands of entries.
 const PAGE_SIZE = 100;
 
 interface Props {
@@ -95,12 +93,9 @@ export function MonitoringPanel({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  // The open line's key, not an index (indices drift as logs stream in) or the
-  // object (a refresh swaps it). It resolves against the filtered list below,
-  // so the panel and strip marker close when the line leaves the view.
+  // A key: indices drift as logs stream in, and a refresh swaps the objects.
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  // A key carries no stage, so a stage switch closes the line. Render-time
-  // adjustment, not an effect.
+  // A key carries no stage, so a stage switch closes the line.
   const [prevStageSlug, setPrevStageSlug] = useState(stageSlug);
   if (stageSlug !== prevStageSlug) {
     setPrevStageSlug(stageSlug);
@@ -117,8 +112,6 @@ export function MonitoringPanel({
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const now = useNow();
 
-  // Only the stage and the trace travel: the logs' search and range mean
-  // nothing on Tracing.
   const viewTrace = (traceId: string): void =>
     router.push(
       tabHref(pathname, "tracing", searchParams.toString(), {
@@ -137,19 +130,15 @@ export function MonitoringPanel({
     stageSlug: stageSlug,
     apiKey: apiKey,
     backfill: 200,
-    // Debug lines stay on the server until a `level:debug` token asks for them.
     minLevel: wantsDebug ? "DEBUG" : "INFO",
   });
 
-  // Memoized: the filtered list keys on it, and a fresh object each render
-  // would rebuild the list, and everything downstream of it, every time.
   const bounds = useMemo(
     () => effectiveWindow(timeWindow, range, now),
     [timeWindow, range, now],
   );
 
-  // The CLI line that sends a first run to this stage, shown while it has no
-  // logs. AGENT stands in for the agent name; <agent> would be a shell redirect.
+  // AGENT, not <agent>: a pasted <agent> is a shell redirect.
   const firstRunCommand = `broods run AGENT "hello"${stageSlug ? ` --stage ${stageSlug}` : ""}`;
 
   const filtered = useMemo(
@@ -166,7 +155,6 @@ export function MonitoringPanel({
     () => filtered.find((entry) => entryKey(entry) === selectedKey) ?? null,
     [filtered, selectedKey],
   );
-  // Memoized so the streaming re-renders don't re-parse the open payload.
   const selectedSummary = useMemo(
     () => (selected ? parseLogMessage(selected.message).summary : null),
     [selected],
@@ -180,8 +168,6 @@ export function MonitoringPanel({
     [entries],
   );
 
-  // Reset paging whenever the filters change so "Load more" always starts from
-  // the top of the current view. Render-time adjustment, not an effect.
   const filterSignature = `${filter}|${range}|${timeWindow?.from}|${timeWindow?.to}`;
   const [prevFilterSignature, setPrevFilterSignature] =
     useState(filterSignature);
@@ -315,7 +301,6 @@ export function MonitoringPanel({
   );
 }
 
-/** The copyable rows under Details: where the line came from. The level is in the header. */
 function detailRows(entry: ObservabilityLogEntry): DetailRow[] {
   const rows: DetailRow[] = [];
   if (isTraceId(entry.traceId)) {
@@ -344,7 +329,6 @@ function detailRows(entry: ObservabilityLogEntry): DetailRow[] {
   return rows;
 }
 
-/** Whether a line passes the search box: every field token, then the free text. */
 function matchesLogQuery(
   entry: ObservabilityLogEntry,
   query: Query<LogQueryField>,
@@ -366,7 +350,6 @@ function matchesLogQuery(
   );
 }
 
-/** `pretty` is the raw string unchanged when the message is not JSON. */
 function parseLogMessage(raw: string): {
   summary: string;
   pretty: string;
@@ -386,20 +369,16 @@ function parseLogMessage(raw: string): {
         typeof parsed?.eventType === "string" ? parsed.eventType : undefined;
 
       return { summary: summary, pretty: pretty, eventType: eventType };
-    } catch {
-      // fall through
-    }
+    } catch {}
   }
 
   return { summary: trimmed.slice(0, 200), pretty: trimmed };
 }
 
-/** The region and account suffix is dead weight in a dense table. */
 function shortFunctionName(name: string): string {
   return name.replace(/-ap-[a-z]+-\d+-\d{6,}$/i, "").replace(/^broods-/, "");
 }
 
-/** Where the line came from: service, else endpoint, else agent. */
 function sourceLabel(entry: ObservabilityLogEntry): string {
   if (entry.service) return shortFunctionName(entry.service);
   if (entry.endpointId) return shortFunctionName(entry.endpointId);
@@ -431,11 +410,7 @@ function LogDetails({
   );
 }
 
-/**
- * One log line in the table. Memoized: the stream keeps an entry's object
- * across flushes, so only a new or replaced entry, or a selection change on
- * this row, renders again.
- */
+// The stream keeps an entry's object across flushes, so memo skips unchanged rows.
 const LogRow = memo(function LogRow({
   entry,
   isSelected,

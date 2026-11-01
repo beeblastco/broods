@@ -1,13 +1,5 @@
-/**
- * Microsoft Teams channel adapter, on the Bot Framework. The Chat SDK adapter
- * is the transport that reads the activity and posts the reply; the inbound
- * token is checked with the Teams SDK's JWT validator, set up for Bot Framework
- * connector tokens only, since the Chat SDK only reaches it through a full
- * `Chat` instance.
- */
-
 import { TeamsAdapter } from "@chat-adapter/teams";
-// The validator is not re-exported from the package root.
+// Not re-exported from the package root; the Chat SDK only reaches it through a full `Chat`.
 import { JwtValidator } from "@microsoft/teams.apps/dist/middleware/index.js";
 import { ConsoleLogger, type Attachment, type Message } from "chat";
 import type {
@@ -21,19 +13,16 @@ import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { TEAMS_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
-// Only the Bot Framework connector signs what a Teams bot receives. The SDK's
-// inbound validator also takes Entra tokens, which carry no serviceUrl and
-// which any tenant can mint for a multi-tenant app id.
+// Connector tokens only: the SDK default also takes Entra tokens, which carry no serviceUrl
+// and which any tenant can mint for a multi-tenant app id.
 const BOT_FRAMEWORK_ISSUER = "https://api.botframework.com";
 const BOT_FRAMEWORK_KEYS_URL =
   "https://login.botframework.com/v1/.well-known/keys";
 const BEARER_PREFIX = "Bearer ";
-// Validators cache Microsoft's signing keys, so one is kept per bot. Adapters
-// are rebuilt per request and would otherwise refetch the keys every time.
+// A validator caches the signing keys, and adapters are rebuilt per request.
 const TOKEN_VALIDATOR_CACHE_MAX = 100;
 const tokenValidators = new Map<string, JwtValidator>();
 
-// The fields of a Bot Framework activity this adapter reads.
 interface TeamsActivity {
   channelData?: {
     channel?: { id?: string };
@@ -74,10 +63,6 @@ export interface TeamsSource {
   userName?: string;
 }
 
-/**
- * Builds the Teams adapter from one agent's `config.channels.teams`.
- * `integrations.ts` calls it per request; only the token validator is shared.
- */
 export function createTeamsChannel(
   options: TeamsChannelOptions,
 ): ChannelAdapter {
@@ -104,9 +89,7 @@ export function createTeamsChannel(
       return req.method === "POST" && "authorization" in req.headers;
     },
 
-    // The token must be signed by the Bot Framework, name this app as its
-    // audience, and carry the serviceUrl the activity claims, which is where
-    // attachments are read from with the bot's own credentials.
+    // Attachments are read from serviceUrl with the bot's credentials, so the token must name it.
     authenticate: async function (req): Promise<boolean> {
       const header = req.headers.authorization;
       const body = parseChannelWebhookBody<TeamsActivity>("teams", req.body);
@@ -136,8 +119,6 @@ export function createTeamsChannel(
         return body;
       }
       const activity = body.payload;
-      // An Azure Bot also serves Web Chat and Direct Line, whose replies and
-      // identities are not Teams'.
       if (activity.channelId !== "msteams") {
         return {
           kind: "ignore",
@@ -186,8 +167,6 @@ export function createTeamsChannel(
         sendTyping: function (): Promise<void> {
           return transport.startTyping(source.threadId);
         },
-        // Bot reactions are not generally available in Teams, so an accepted
-        // message shows typing only.
         reactToMessage: async function (): Promise<void> {
           return;
         },
@@ -196,12 +175,7 @@ export function createTeamsChannel(
   };
 }
 
-/**
- * Who sent the activity and where. A channel thread is `19:...;messageid=...`
- * and the channel is the part before it; a chat is its own conversation. The
- * Entra object id names a person the same way in every chat, so it is the user
- * id when Teams sends one.
- */
+// A channel thread is `19:...;messageid=...`. The Entra object id is stable across chats.
 function teamsIdentity(
   activity: TeamsActivity,
   conversationId: string,
@@ -222,8 +196,6 @@ function teamsIdentity(
   };
 }
 
-// The turn one verified message becomes. Replies go to the conversation the
-// message arrived in, which for a channel is the thread.
 function toInboundMessage(
   conversationId: string,
   parsed: Message,
@@ -270,7 +242,6 @@ function toTeamsSource(source: Record<string, unknown>): TeamsSource {
   };
 }
 
-// One validator per bot, least recently used dropped past the cap.
 function tokenValidator(appId: string): JwtValidator {
   const cached = tokenValidators.get(appId);
   if (cached) {
@@ -295,9 +266,7 @@ function tokenValidator(appId: string): JwtValidator {
   return validator;
 }
 
-// The SDK reads an attachment off the connector with the bot token, and any
-// other URL with a bare fetch. Dropping that reader sends the URL through
-// core's guarded read, which refuses private and metadata addresses.
+// The SDK fetches non-connector URLs bare; dropping its reader sends them through guarded read.
 function withGuardedRead(attachment: Attachment): Attachment {
   if (attachment.fetchMetadata?.auth === "bot") {
     return attachment;
@@ -307,8 +276,6 @@ function withGuardedRead(attachment: Attachment): Attachment {
   return guarded;
 }
 
-// In a channel or group chat the message opens with `<at>Bot</at>`, which is
-// the address, not the request. Mentions of anyone else stay in the text.
 function withoutBotMention(activity: TeamsActivity): string {
   const botId = activity.recipient?.id;
 

@@ -1,8 +1,3 @@
-/**
- * Model-facing cooperative stop for a persistent subagent run.
- * Keep shared parent authorization and types in utils.ts.
- */
-
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { runtime } from "../../shared/convex/runtime.ts";
 import {
@@ -14,7 +9,6 @@ import {
   type SubagentToolInput,
 } from "./utils.ts";
 
-// Read by the parent model, so it does not promise the user a report.
 const STOPPING_NOTE =
   "It stops at its next model step and sends no report, so do not promise one. Only a final answer it was already writing can still arrive.";
 
@@ -52,7 +46,6 @@ export default function stopSubagentTool(
           return { status: "not_running" };
         }
 
-        // A follow-up already queued on the child still runs and reports.
         return {
           status: "stopping",
           note:

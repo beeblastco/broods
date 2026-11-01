@@ -12,13 +12,11 @@ const CONFIG: ForwarderConfig = {
 };
 
 const HEARTBEAT_INTERVAL_MS = 40_000;
-// The jittered first beat, the beat that finds it unacknowledged, and the
-// first reconnect backoff, which never exceeds a second.
+// The jittered first beat, the beat that finds it unacked, then the first backoff (<= 1s).
 const UNTIL_REDIAL_MS = HEARTBEAT_INTERVAL_MS * 2 + 1_000;
 
 const realWebSocket = globalThis.WebSocket;
 
-/** Stands in for the global WebSocket. It never delivers close on its own. */
 class FakeWebSocket extends EventTarget {
   static readonly OPEN = 1;
   static opened: FakeWebSocket[] = [];
@@ -53,8 +51,6 @@ beforeEach((): void => {
   FakeWebSocket.opened = [];
   globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
   jest.useFakeTimers();
-  // Heartbeat jitter and backoff both draw from it; pinned so the timing
-  // windows below hold on every run.
   jest.spyOn(Math, "random").mockReturnValue(0.5);
 });
 
@@ -65,8 +61,6 @@ afterEach((): void => {
 });
 
 describe("gateway socket", (): void => {
-  // A partitioned socket may never deliver its close event, so waiting on it
-  // would leave the token silent for the life of the process.
   it("re-dials after an unacknowledged heartbeat without a close event", (): void => {
     const { gateway, first } = readySocket();
 
@@ -135,7 +129,6 @@ describe("gateway socket", (): void => {
   });
 });
 
-/** A socket past READY on its first connection, with its session known. */
 function readySocket(): { gateway: GatewaySocket; first: FakeWebSocket } {
   const gateway = new GatewaySocket({
     botToken: "token-a",

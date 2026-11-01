@@ -1,12 +1,4 @@
-/**
- * Public media route. Serves one file per sealed ticket: a workspace file a
- * channel tool sent out, or an inbound attachment from the attachment store.
- *
- * Chat providers store the URL and fetch it lazily, so this replaces a presigned
- * S3 link: storage stays private, the ticket is the only credential, every fetch
- * is logged. Read-only; anything needing an account identity belongs behind the
- * authenticated routes.
- */
+// Unauthenticated and read-only: the sealed ticket is the only credential.
 
 import { requireEnv, requireSecretsEnv } from "./shared/env.ts";
 import { errorResponse, type CoreRequest } from "./shared/http.ts";
@@ -31,8 +23,6 @@ import {
   workspaceReadContext,
 } from "./harness/sandbox/s3-mount.ts";
 
-// Streaming would buy nothing here: chat pictures are small, and the cap exists
-// to stop a large workspace file from sitting in the pod's 1 GiB alongside a run.
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 
 interface MediaObject {
@@ -78,26 +68,20 @@ export async function handleMediaRequest(
     return errorResponse(413, "Payload too large");
   }
 
-  // Read before the headers, so the cache lifetime below counts from when the
-  // response leaves, not from before a slow read.
+  // Read first, so the cache lifetime counts from when the response leaves, not before a slow read.
   const bytes =
     request.method.toUpperCase() === "HEAD"
       ? null
       : await readMediaObject(object, ticket);
-  // The extension is the only source. An account on a bring-your-own bucket sets
-  // the stored content type itself, so that value is request input, not metadata.
+  // From the extension only: a bring-your-own bucket's stored content type is tenant input.
   const contentType = contentTypeForPath(ticket.path);
   const headers: Record<string, string> = {
     "content-type": contentType,
-    // This route is unauthenticated and answers on our own origin, so a browser
-    // must never sniff its way to a type the extension did not claim, and must
-    // never render an SVG here, which would execute script against that origin.
+    // Our own origin: no sniffing past the extension's type, and an SVG would run script here.
     "x-content-type-options": "nosniff",
     ...(contentType === "image/svg+xml"
       ? { "content-disposition": "attachment" }
       : {}),
-    // The ticket names one immutable file, so a provider CDN may hold it, but
-    // never past the ticket's own expiry.
     "cache-control": `public, max-age=${Math.max(0, Math.floor(ticket.exp - Date.now() / 1000))}, immutable`,
     ...(object.head.contentLength !== undefined
       ? { "content-length": String(object.head.contentLength) }
@@ -114,10 +98,6 @@ export async function handleMediaRequest(
   return new Response(bytes, { status: 200, headers: headers });
 }
 
-// The object a ticket names, or null when it is gone. An attachment ticket reads
-// the managed bucket on the harness's own role; a workspace ticket goes through
-// the workspace's storage, which may be a tenant bucket behind an assumed role.
-// Conversation replay asks the same question before it reads a link's bytes.
 export async function locateMediaObject(
   ticket: MediaTicket,
 ): Promise<MediaObject | null> {
@@ -170,10 +150,7 @@ export async function locateMediaObject(
   return { bucket: target.bucket, key: key, access: target.access, head: head };
 }
 
-// The bytes of an object `locateMediaObject` found, for the media route and for
-// conversation replay, refused past the media cap or with no known length. Core
-// is outside AWS, so bytes from the managed bucket are AWS egress. A tenant's
-// own bucket is the tenant's bill.
+// Core runs outside AWS: managed-bucket reads are billed egress; a tenant bucket bills the tenant.
 export async function readMediaObject(
   object: MediaObject,
   ticket: MediaTicket,
@@ -195,8 +172,7 @@ export async function readMediaObject(
   return bytes;
 }
 
-// One answer for a bad ticket, a deleted workspace and a missing file, so the
-// route never tells an anonymous caller which of the three it hit.
+// One answer for a bad ticket, a deleted workspace and a missing file: never say which.
 function notFound(): Response {
   return errorResponse(404, "Not found");
 }

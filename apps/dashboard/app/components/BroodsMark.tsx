@@ -1,7 +1,4 @@
-/**
- * The Broods mark, inlined so the header paints with no image request. It
- * keeps its own colors in both themes, so no theme branch runs in JS.
- */
+// Inlined so the header paints with no image request.
 export function BroodsMark({
   className,
 }: {

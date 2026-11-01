@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { SELF_HOST_ISSUER } from "../model/selfHostAuth";
 
-// Evaluates auth.config.ts the way the backend does at deploy time: with a
-// `process.env` whose only trap is `get`, where reading an unset variable
-// throws. `variables` is everything a deployment of that kind has, so a branch
-// that reads anything else fails here before it fails the deploy.
+// As the backend at deploy time: a get-only `process.env` that throws on an unset variable.
+// `variables` is all that deployment kind has, so reading anything else fails here first.
 async function evaluateAuthConfig(
   variables: Record<string, string>,
 ): Promise<typeof import("../auth.config").default> {

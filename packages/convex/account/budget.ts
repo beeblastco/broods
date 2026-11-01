@@ -1,13 +1,3 @@
-/**
- * The monthly resource caps, as core and the dashboard reach them: core reads
- * the closest cap's share of the org owner's pool at admission, records the
- * usage only it sees (hosted-MCP invokes, V8 Worker commands, media egress,
- * attachment ingress) and claims the 80% warning; the dashboard reads
- * amounts, caps and percentages. Other sandbox time is metered by the
- * sandbox mirror itself; storage by the daily
- * snapshot in `aws/storageMeter.ts`. Math lives in `model/usageMeter.ts`.
- */
-
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { type Infer, v } from "convex/values";
 import { internal } from "../_generated/api";
@@ -36,7 +26,6 @@ import { planValidator, usageQuantityFields } from "../schema";
 const USAGE_WRITE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const USAGE_WRITE_PRUNE_BATCH = 500;
 
-// Also the shape of each resource's share, keyed like its cap.
 const resourceCapsValidator = v.object({
   sandboxHours: v.number(),
   hostedMcpHours: v.number(),
@@ -95,17 +84,12 @@ const budgetUsageValidator = v.object({
   pool: v.optional(poolUsageValidator),
 });
 
-// Where a usage write came from, as far as the writer knows.
 const usageSourceValidator = v.object({
   projectId: v.optional(v.string()),
   agentId: v.optional(v.string()),
   workspaceId: v.optional(v.string()),
 });
 
-/**
- * Claim this month's 80% warning.
- * @returns true for the one caller that should tell the user
- */
 export const claimWarning = internalMutation({
   args: { accountId: v.string() },
   returns: v.boolean(),
@@ -118,7 +102,7 @@ export const claimWarning = internalMutation({
   },
 });
 
-/** Core's check at run admission and sandbox start. An unknown id reads as unlimited. */
+// Null (an unknown id) reads as unlimited at core's admission check.
 export const get = internalQuery({
   args: { accountId: v.string() },
   returns: v.union(budgetStatusValidator, v.null()),
@@ -129,15 +113,8 @@ export const get = internalQuery({
   },
 });
 
-/**
- * Dashboard allowance and billing plan: the active org's usage for `month`
- * ("YYYY-MM", one of the returned `months`; anything else reads the current
- * month) as amounts, days, caps and percentages (the pool's, as core enforces
- * them, next to this org's own part), and with `withProjects` each of the
- * org's projects' part of that month. Euro figures never leave the backend,
- * so the plan budgets stay private; a member who does not own the org learns
- * that the owner's other organizations share the pool, not how many.
- */
+// Euro figures never leave the backend. A non-owner learns the pool is shared, not by how
+// many of the owner's orgs.
 export const getForActiveOrg = query({
   args: {
     month: v.optional(v.string()),
@@ -145,7 +122,6 @@ export const getForActiveOrg = query({
   },
   returns: v.union(budgetUsageValidator, v.null()),
   handler: async (ctx, args): Promise<BudgetUsage | null> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -162,7 +138,6 @@ export const getForActiveOrg = query({
   },
 });
 
-/** One page of account ids, for the storage snapshot. */
 export const listAccountIds = internalQuery({
   args: { paginationOpts: paginationOptsValidator },
   returns: v.object({
@@ -186,10 +161,6 @@ export const listAccountIds = internalQuery({
   },
 });
 
-/**
- * The account's workspaces, whose S3 namespaces the storage snapshot sums,
- * with the project each belongs to (none for an account-wide one).
- */
 export const listWorkspaces = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -235,14 +206,7 @@ export const listWorkspaces = internalQuery({
   },
 });
 
-/**
- * Add usage core measured to the account's meter, and to the project it came
- * from when the write names one, directly or by the agent or workspace that
- * used it. Unknown ids and deleted accounts are dropped, so a late write
- * never re-creates purged rows; a source outside the account counts for the
- * account alone. The storage snapshot also sends each project's share of the
- * size it measured.
- */
+// Unknown or deleted accounts drop the write, so a late one never re-creates purged rows.
 export const record = internalMutation({
   args: {
     accountId: v.string(),
@@ -255,12 +219,9 @@ export const record = internalMutation({
       egressGb: v.optional(usageQuantityFields.egressGb),
       ingressGb: v.optional(usageQuantityFields.ingressGb),
     }),
-    /** When the usage happened, if not now; picks the meter month. */
     at: v.optional(v.number()),
-    /** Same on every retry of one write, so a retry is applied once. */
     writeId: v.optional(v.string()),
     source: v.optional(usageSourceValidator),
-    /** Storage snapshot only: GB-months of `usage` that each project's workspaces hold. */
     projectStorage: v.optional(
       v.array(
         v.object({
@@ -304,7 +265,6 @@ export const record = internalMutation({
   },
 });
 
-/** Daily cron: forget write ids older than a day, one bounded batch per run. */
 export const pruneUsageWrites = internalMutation({
   args: {},
   returns: v.null(),
@@ -330,9 +290,6 @@ export const pruneUsageWrites = internalMutation({
   },
 });
 
-// The account's project a usage write names, by the first id it carries.
-// Only the project matters here, so an agent deployed to several stages of
-// one project still counts for it.
 async function usageProject(
   ctx: QueryCtx,
   account: Doc<"accounts">,
@@ -344,6 +301,7 @@ async function usageProject(
   } else if (source.agentId !== undefined) {
     const agentId = ctx.db.normalizeId("agents", source.agentId);
     const agent = agentId ? await ctx.db.get(agentId) : null;
+    // Any of the agent's configs will do: all its stages sit in one project.
     const config =
       agent?.accountId === account._id
         ? await ctx.db

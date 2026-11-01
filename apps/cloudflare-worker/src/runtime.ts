@@ -1,12 +1,3 @@
-/**
- * What runs inside each sandbox's isolate: just-bash, a bash written in
- * TypeScript with its own in-memory disk and 81 commands, no processes, no
- * eval. The host Worker loads this module as a Dynamic Worker per sandbox,
- * hands it the stored disk and one command, and takes back the result and
- * the disk after it. Nothing here touches R2 or the network policy: the host
- * owns both.
- */
-
 import { WorkerEntrypoint } from "cloudflare:workers";
 import {
   Bash,
@@ -23,24 +14,18 @@ import {
   samePacked,
 } from "./vfs-state.ts";
 
-// What `curl` may do once the sandbox has internet; the policy is on or off.
-// Private-range checks need DNS pinning, which a Worker has no way to do, and
-// Cloudflare's own egress reaches no private address anyway.
+// Private-range checks need DNS pinning a Worker cannot do; Cloudflare egress reaches none.
 const INTERNET: NetworkConfig = {
   dangerouslyAllowFullInternetAccess: true,
   allowedMethods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   denyPrivateRanges: false,
 };
-// What just-bash exits with at its deadline; before it, a `timeout` command's own.
 const DEADLINE_EXIT_CODE = 124;
-// just-bash's own output cap is total and fatal, so it sits well above the
-// per-stream cut below and only bounds the isolate's memory.
+// just-bash's cap is total and fatal, so it only bounds memory, well above the per-stream cut.
 const MAX_TOTAL_OUTPUT_BYTES = 8 * MAX_OUTPUT_BYTES;
-// A UTF-16 unit never takes more than three UTF-8 bytes.
 const MAX_UTF8_BYTES_PER_UNIT = 3;
 const UTF8_ENCODER = new TextEncoder();
 
-/** The host calls `exec` over RPC, the only thing this module answers. */
 export class Runtime extends WorkerEntrypoint {
   async exec(
     request: WorkerExecRequest,
@@ -59,8 +44,7 @@ export class Runtime extends WorkerEntrypoint {
       },
       ...(request.enableInternet ? { network: INTERNET } : {}),
     });
-    // The clock only advances while the shell waits on something, so the
-    // deadline catches a slow command and the isolate's CPU limit a busy one.
+    // The clock moves only on I/O: the deadline catches a slow command, the CPU limit a busy one.
     const startedAt = Date.now();
     const pastDeadline = (): boolean =>
       Date.now() - startedAt >= request.timeoutMs;
@@ -100,9 +84,7 @@ export class Runtime extends WorkerEntrypoint {
   }
 }
 
-// Keeps the first `limit` bytes of a stream, whole characters only: a
-// streaming decode holds back a character the cut split instead of replacing
-// it, so what is kept re-encodes within the limit.
+// A streaming decode holds back a character the cut split instead of replacing it.
 function capped(
   text: string,
   limit: number,
@@ -118,7 +100,6 @@ function capped(
   };
 }
 
-// One finished command as the exec contract, each stream cut to the request's limit.
 function execResult(
   finished: BashExecResult,
   request: WorkerExecRequest,

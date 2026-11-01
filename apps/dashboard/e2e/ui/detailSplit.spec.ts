@@ -11,13 +11,10 @@ import {
 } from "../../app/lib/detailSplit";
 import { openGallery } from "../lib/gallery";
 
-/** Pointer travel the handle should follow one for one. */
 const DRAG = 100;
 
-/** A drag long enough to show up as jank if the resize forces layout per move. */
 const PERF_STEPS = 60;
 
-/** Subpixel flex layout. */
 const TOLERANCE_PX = 1;
 
 type LongTask = Pick<PerformanceEntry, "startTime" | "duration">;
@@ -30,10 +27,8 @@ test("the detail column opens beside the table, follows the handle, and keeps th
   const group = fixture.locator('[data-slot="resizable-panel-group"]');
   const panels = group.locator('[data-slot="resizable-panel"]');
   const table = panels.first();
-  // The frame the panels share: the group's box inside its own border.
   const frame = await group.evaluate((element) => element.clientWidth);
 
-  // Closed: the table alone fills the frame.
   await expect(panels).toHaveCount(1);
   expectNear(await width(table), frame);
 
@@ -45,7 +40,6 @@ test("the detail column opens beside the table, follows the handle, and keeps th
   const detailBox = (await detail.boundingBox())!;
   const tableBox = (await table.boundingBox())!;
   expectNear(detailBox.width, DETAIL_DEFAULT_WIDTH);
-  // Side by side on one row, the detail to the right of the table.
   expectNear(detailBox.y, tableBox.y);
   expectNear(detailBox.x, tableBox.x + tableBox.width + handleWidth);
 
@@ -53,8 +47,6 @@ test("the detail column opens beside the table, follows the handle, and keeps th
   expectNear(await width(detail), DETAIL_DEFAULT_WIDTH + DRAG);
   expectNear(await width(table), tableBox.width - DRAG);
 
-  // Dragging past the table's floor stops at the floor, and the detail takes
-  // exactly the rest rather than overflowing the frame.
   await dragHandle(page, handle, -frame);
   expectNear(await width(table), TABLE_MIN_WIDTH);
   expectNear(await width(detail), frame - handleWidth - TABLE_MIN_WIDTH);
@@ -76,20 +68,17 @@ test("the handle owns the resize cursor, the group holds it through a drag, and 
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
 
-  // A few pixels off the 1px line still shows the cursor, where a press drags.
   const offLine = await page.evaluate(
     ([px, py]) => getComputedStyle(document.elementFromPoint(px, py)!).cursor,
     [x + 4, y],
   );
   expect(offLine).toBe("col-resize");
   await page.mouse.move(x, y);
-  // The library's `*` rule would reach the group and the body.
+  // The resize library's `*` cursor rule would reach the group and the body.
   await expect(group).toHaveCSS("cursor", "auto");
   const body = page.locator("body");
   await expect(body).toHaveCSS("cursor", "auto");
 
-  // Off the handle mid-drag, the group shows the resize cursor, even over a
-  // child with its own, and the page outside it stays untouched.
   const close = group.getByRole("button", { name: "Close details" });
   await expect(close).toHaveCSS("cursor", "pointer");
   await page.mouse.down();
@@ -115,7 +104,6 @@ test("on a phone the open detail takes the table's place, and closing it brings 
   await fixture.getByRole("button", { name: "Open details" }).click();
   await expect(fixture.getByText("Detail body")).toBeVisible();
   await expect(table).toBeHidden();
-  // No side-by-side split, so no handle to drag.
   await expect(fixture.getByRole("separator")).toHaveCount(0);
 
   await fixture.getByRole("button", { name: "Close details" }).click();
@@ -140,8 +128,7 @@ test("crossing the phone width keeps the table and detail mounted", async ({
 });
 
 test.describe("drag performance", () => {
-  // A long task is anything over 50ms on the main thread. The drag itself is
-  // well under that, but a runner's GC pause can land inside the window.
+  // A runner's GC pause can land a >50ms long task inside the window.
   test.describe.configure({ retries: 1 });
 
   test("a drag resizes live without long tasks and settles once released", async ({
@@ -158,31 +145,25 @@ test.describe("drag performance", () => {
     const x = box.x + box.width / 2;
     const y = box.y + box.height / 2;
     await page.mouse.move(x, y);
-    // Releasing the handle commits the layout once; a slow runner stretches
-    // that past 50ms. The press and the moves in between count; both are the
-    // drag.
+    // Release commits the layout once, past 50ms on a slow runner: only the drag counts.
     const longTasks = await watchLongTasks(page);
     await page.mouse.down();
     await page.mouse.move(x - DRAG / 2, y, { steps: PERF_STEPS / 2 });
-    // Halfway through the drag the panel has already moved: the resize is
-    // live, not deferred to release.
     expectNear(await width(detail), DETAIL_DEFAULT_WIDTH + DRAG / 2);
     await page.mouse.move(x - DRAG, y, { steps: PERF_STEPS / 2 });
     const lastMove = await page.evaluate(() => performance.now());
     await page.mouse.up();
 
-    // Nothing keeps repainting after release: two samples a beat apart agree.
     const settled = await width(detail);
     await page.waitForTimeout(150);
     expect(await width(detail)).toBe(settled);
 
-    // The wait above also lets a task that ended before release reach the observer.
+    // The wait above also lets a task ended before release reach the observer.
     const tasks = await longTasks.evaluate((read) => read());
     expect(tasks.filter((task) => task.startTime < lastMove)).toEqual([]);
   });
 });
 
-/** Press the handle and slide it `dx` pixels along the row. */
 async function dragHandle(
   page: Page,
   handle: Locator,
@@ -202,12 +183,6 @@ function expectNear(actual: number, expected: number): void {
   expect(Math.abs(actual - expected)).toBeLessThanOrEqual(TOLERANCE_PX);
 }
 
-/**
- * Record every long task from now on, its start in the page's
- * `performance.now()` time and its length. Read them back by calling the
- * returned function, which first takes the records the observer has not
- * delivered yet.
- */
 async function watchLongTasks(page: Page): Promise<JSHandle<() => LongTask[]>> {
   return await page.evaluateHandle(() => {
     const tasks: LongTask[] = [];

@@ -25,7 +25,6 @@ beforeEach(() => {
   process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = SECRET;
 });
 
-/** An org, account, project and one stage. */
 async function seedScope(
   tt: T,
   kind: "development" | "production" = "development",
@@ -71,7 +70,6 @@ async function seedScope(
   });
 }
 
-/** An agent row with an encrypted config, wired into the stage by an agentConfig. */
 async function seedAgent(
   tt: T,
   scope: Scope,
@@ -130,11 +128,7 @@ async function seedDeployment(
   });
 }
 
-/**
- * Rebuilds the `channelEndpoints` projection from the raw-seeded rows, then
- * reads it. Seeding bypasses the mutation seams that keep the projection live,
- * which is exactly what the reconcile sweep repairs in production too.
- */
+// Raw seeding skips the mutations that keep the projection live; reconcile rebuilds it.
 async function listConnections(
   tt: T,
   channel: string,
@@ -253,8 +247,7 @@ describe("listConnections", () => {
     await seedDeployment(tt, scope, "endpoint-1");
     expect(await listConnections(tt, "discord")).toHaveLength(1);
 
-    // No active deployment names the account now, so only the pass over
-    // stored rows reaches it.
+    // No active deployment names the account now: only the pass over stored rows reaches it.
     await tt.run(async (ctx) => {
       const deployment = await ctx.db.query("agentDeployments").first();
       await ctx.db.patch(deployment!._id, { status: "revoked" });
@@ -306,8 +299,7 @@ describe("listConnections", () => {
     await seedDeployment(tt, scope, "endpoint-1");
     delete process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
 
-    // The forwarder's subscription fails on this, so it must throw rather than
-    // read as "no agents configure Discord" and quietly close every socket.
+    // Read as "no Discord agents", the forwarder would quietly close every socket.
     await expect(
       tt.query(internal.channel.connections.listConnections, {
         channel: "discord",

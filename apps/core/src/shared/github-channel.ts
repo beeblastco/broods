@@ -1,8 +1,3 @@
-/**
- * GitHub channel adapter. Event filtering and source mapping live here; auth and
- * API calls go through the Chat SDK.
- */
-
 import { GitHubAdapter, type GitHubThreadId } from "@chat-adapter/github";
 import { ConsoleLogger, fromFullStream } from "chat";
 import { createSign } from "node:crypto";
@@ -310,7 +305,6 @@ async function buildCommentMessage(options: {
         options.issueNumber,
         options.payload.sender,
       ),
-      // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },
     },
   };
@@ -674,10 +668,6 @@ function formatTitleAndBody(
   return lines.join("\n");
 }
 
-/**
- * The repository is the channel and an issue or PR is a thread in it, so a
- * policy can scope the agent per repo the same way it scopes per chat channel.
- */
 function githubIdentity(
   repoFullName: string,
   resourceNumber: number,
@@ -1100,9 +1090,8 @@ function parseReviewCommentEvent(
   });
 }
 
-// Thread text is written by anyone on the repo and must not be able to close
-// the context block it is quoted in. Only this tag's `<` is escaped, so code
-// in a comment reads as written.
+// Anyone on the repo writes thread text: it must not close the block it is quoted in. Only
+// this tag's `<` is escaped, so code in a comment reads as written.
 function safeText(value: string | null | undefined): string {
   return (
     value

@@ -1,10 +1,3 @@
-/**
- * Org membership management: list members, add by email, change role, remove.
- * Reads gated on caller being a member; writes on `members:write`, which
- * owners and admins hold by tier and a custom role may grant. Each member
- * takes one of the org owner's developer seats (model/orgBilling.ts).
- */
-
 import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query } from "../_generated/server";
@@ -36,7 +29,6 @@ const memberRow = v.object({
   userId: v.id("users"),
   role: roleValidator,
   roleId: v.optional(v.id("orgRoles")),
-  /** The custom role's name, when the member holds one. */
   roleName: v.optional(v.string()),
   invitedBy: v.optional(actorValidator),
   createdAt: v.number(),
@@ -46,14 +38,12 @@ const memberRow = v.object({
   isOwner: v.boolean(),
 });
 
-/** Lists every member of an org with their user profile, caller must be a member. */
 export const list = query({
   args: { orgId: v.id("orgs") },
   returns: v.array(memberRow),
   handler: async (ctx, args) => {
     const { orgId } = args;
 
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -114,17 +104,11 @@ export const list = query({
   },
 });
 
-/**
- * Adds an existing user to the org by email, on a tier or with a custom
- * role. Errors if the email does not match a synced user row, the user is
- * already a member, or the org has no free seat (`payment_required`).
- */
 export const add = mutation({
   args: {
     orgId: v.id("orgs"),
     email: v.string(),
     role: v.optional(roleValidator),
-    /** A custom role, which puts the member on the member tier. */
     roleId: v.optional(v.id("orgRoles")),
   },
   returns: v.id("orgMembers"),
@@ -132,7 +116,6 @@ export const add = mutation({
     const { orgId, email } = args;
     const role = args.roleId ? "member" : (args.role ?? "member");
 
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -187,12 +170,10 @@ export const add = mutation({
   },
 });
 
-/** Puts a member on a tier, or on a custom role (the member tier). Cannot demote the org owner. */
 export const updateRole = mutation({
   args: {
     membershipId: v.id("orgMembers"),
     role: roleValidator,
-    /** A custom role, which puts the member on the member tier; absent clears it. */
     roleId: v.optional(v.id("orgRoles")),
   },
   returns: v.null(),
@@ -200,7 +181,6 @@ export const updateRole = mutation({
     const { membershipId } = args;
     const role = args.roleId ? "member" : args.role;
 
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -255,14 +235,12 @@ export const updateRole = mutation({
   },
 });
 
-/** Removes a member from the org and gives up their paid seat. Cannot remove the org owner. */
 export const remove = mutation({
   args: { membershipId: v.id("orgMembers") },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const { membershipId } = args;
 
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -311,12 +289,7 @@ export const remove = mutation({
   },
 });
 
-/**
- * A caller grants and touches no more than they hold: the admin tier only
- * from the admin tier, a custom role only when every permission it grants,
- * in every scope it names, is one the caller has. Otherwise `members:write`
- * would be a way up.
- */
+// A caller grants and touches no more than they hold, or `members:write` would be a way up.
 async function assertWithinReach(
   ctx: Parameters<typeof getOrgMembership>[0],
   orgId: Id<"orgs">,
@@ -343,10 +316,7 @@ async function assertWithinReach(
   );
 }
 
-/**
- * Owner memberships can delete the org, so only an owner may grant one, or
- * change or remove one. Without this an admin could promote themselves.
- */
+// Owner memberships can delete the org: without this an admin could promote themselves.
 function assertCanTouchOwnerRole(
   caller: Doc<"orgMembers">,
   role: Doc<"orgMembers">["role"] | undefined,

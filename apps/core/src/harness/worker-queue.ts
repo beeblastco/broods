@@ -1,9 +1,3 @@
-/**
- * The pod's in-process worker pool: every agent run takes a slot here, or
- * waits FIFO with its conversation lease renewed until one frees. What a run
- * does once it has its slot stays with the handler.
- */
-
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   MAX_RUN_SLOTS,
@@ -22,8 +16,6 @@ const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
 const WORKER_SLOT_GRACE_MS = 5_000;
 const MAX_PENDING_WORKER_RUNS = 1000;
 export const WORKER_QUEUE_FULL = "In-process worker queue is full";
-// A queued run holds its lease from admission, so the queue renews it well
-// inside the TTL until a slot starts the run.
 const QUEUED_LEASE_RENEW_INTERVAL_MS = DEFAULT_CONVERSATION_LEASE_TTL_MS / 3;
 const QUEUED_LEASE_RENEW_CONCURRENCY = 16;
 const inProcessWorkers = new Set<Promise<void>>();
@@ -35,7 +27,6 @@ type PendingWorkerRun = [
 const pendingWorkerRuns: PendingWorkerRun[] = [];
 
 let activeInProcessWorkers = 0;
-// Places `withQueuePlace` holds for requests still being admitted.
 let heldQueuePlaces = 0;
 const queuePlace = new AsyncLocalStorage<{ held: boolean }>();
 let queuedLeaseTimer: ReturnType<typeof setInterval> | undefined;
@@ -43,15 +34,6 @@ let renewingQueuedLeases = false;
 
 type InProcessWorkerRun = (context: RequestContext) => Promise<unknown>;
 
-/**
- * Runs one agent turn on the pod's worker pool, or queues it FIFO while every
- * slot is busy. Every background run goes through here, channel turns
- * included, so MAX_INPROCESS_WORKERS bounds what the pod runs at once. A run
- * near its deadline calls `context.yieldSlot` to go to the back of the queue
- * and carry on with a fresh budget, up to MAX_RUN_SLOTS slots.
- * @param kind a label for logs
- * @param lease the conversation lease the run already holds, renewed while it waits
- */
 export function dispatchInProcessWorker(
   kind: string,
   run: InProcessWorkerRun,
@@ -60,14 +42,11 @@ export function dispatchInProcessWorker(
   const runAbort = new AbortController();
   let slotsUsed = 0;
   let releaseSlot: (() => void) | undefined;
-  // Settles the run's tracked promise on an overrun, so a stuck run does not
-  // hold up the shutdown drain.
+  // Settles the tracked promise on an overrun, so a stuck run never blocks the shutdown drain.
   let abandon: (() => void) | undefined;
   const context: RequestContext = {
     requestId: crypto.randomUUID(),
     deadlineMs: Date.now(),
-    // Workers run detached; they never emit an HTTP response, so there is no
-    // post-response tail to defer.
     waitUntil: () => {},
     abortSignal: runAbort.signal,
   };
@@ -76,15 +55,12 @@ export function dispatchInProcessWorker(
     slotsUsed += 1;
     context.deadlineMs = Date.now() + WORKER_TIMEOUT_BUDGET_MS;
     if (slotsUsed >= MAX_RUN_SLOTS) delete context.yieldSlot;
-    // A few stuck workers would otherwise pin every slot for every tenant on
-    // the pod. An overrun frees the slot and aborts the run, so the pod never
-    // runs more than MAX_INPROCESS_WORKERS model passes at once.
+    // An overrun frees the slot and aborts the run, so stuck runs cannot pin the pod's slots.
     const slotTimer = setTimeout((): void => {
       logError("In-process worker exceeded deadline; reclaiming slot", {
         kind: kind,
         budgetMs: WORKER_TIMEOUT_BUDGET_MS,
       });
-      // The reason is what the chat shows; the log line above stays technical.
       runAbort.abort(new Error("I ran out of time on this turn."));
       releaseSlot?.();
       abandon?.();
@@ -100,8 +76,7 @@ export function dispatchInProcessWorker(
   context.yieldSlot = async (heldLease): Promise<void> => {
     if (runAbort.signal.aborted || !releaseSlot) return;
     releaseSlot();
-    // No budget while queued: a coordinator reading the old deadline would
-    // take the parent for out of time.
+    // A coordinator reading the old deadline while queued would take the run for out of time.
     context.deadlineMs = Number.POSITIVE_INFINITY;
     await new Promise<void>((resolve): void => {
       enqueueWorker(
@@ -118,7 +93,6 @@ export function dispatchInProcessWorker(
       );
     });
   };
-  // A run its request held a place for takes that place and is never shed.
   const place = queuePlace.getStore();
   const placed = place?.held === true;
   if (place && placed) {
@@ -156,12 +130,8 @@ export function dispatchInProcessWorker(
   );
 }
 
-/**
- * Holds one queue place while `admit` counts and records a run, so concurrent
- * requests can never admit more runs than the queue takes. The first dispatch
- * inside `admit` takes the place and is never shed; a place no run took is
- * given back. Undefined, with nothing called, when the queue is full.
- */
+// Holds a place while `admit` records its run, so concurrent requests never overfill the
+// queue; the first dispatch inside `admit` takes the place and is never shed.
 export async function withQueuePlace<T>(
   admit: () => Promise<T>,
 ): Promise<T | undefined> {
@@ -178,20 +148,12 @@ export async function withQueuePlace<T>(
   }
 }
 
-/** Awaited by the container bootstrap on shutdown so queued work is not lost. */
 export async function drainInProcessWorkers(): Promise<void> {
   while (inProcessWorkers.size > 0) {
     await Promise.allSettled(inProcessWorkers);
   }
 }
 
-/**
- * The queue's timer: renews every waiting run's lease, so a long wait does not
- * hand its conversation to `maintain`. A few renewals at a time, so a full
- * queue does not fire a thousand mutations at once, and one sweep at a time. A
- * lease that comes back stale or stopped is no longer renewed: the run finds
- * that out on its own first renewal once a slot starts it.
- */
 async function renewQueuedLeases(): Promise<void> {
   if (renewingQueuedLeases) return;
   renewingQueuedLeases = true;
@@ -234,7 +196,6 @@ async function renewQueuedLease(entry: PendingWorkerRun): Promise<void> {
   }
 }
 
-/** True when a new run would neither start nor fit in the queue. */
 export function workerQueueFull(): boolean {
   return (
     activeInProcessWorkers + pendingWorkerRuns.length + heldQueuePlaces >=
@@ -242,7 +203,6 @@ export function workerQueueFull(): boolean {
   );
 }
 
-/** Starts a worker now when a slot is free, else queues it FIFO. */
 function enqueueWorker(entry: PendingWorkerRun, loadShed = true): void {
   if (activeInProcessWorkers < MAX_INPROCESS_WORKERS) {
     entry[1]();
@@ -250,8 +210,6 @@ function enqueueWorker(entry: PendingWorkerRun, loadShed = true): void {
     return;
   }
   if (loadShed && workerQueueFull()) {
-    // Load-shed: the awaiting caller surfaces the error instead of the queue
-    // growing without bound.
     throw new Error(WORKER_QUEUE_FULL);
   }
   pendingWorkerRuns.push(entry);
@@ -264,7 +222,6 @@ function enqueueWorker(entry: PendingWorkerRun, loadShed = true): void {
   }
 }
 
-/** Hands a freed slot to the oldest queued worker. */
 function startNextWorker(): void {
   const next = pendingWorkerRuns.shift();
   if (pendingWorkerRuns.length === 0 && queuedLeaseTimer) {

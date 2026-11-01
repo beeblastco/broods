@@ -1,7 +1,3 @@
-/**
- * Checks every docs diagram against the renderer used by the published site.
- */
-
 import { describe, expect, test } from "bun:test";
 import { Glob } from "bun";
 import { readFileSync } from "node:fs";
@@ -24,26 +20,29 @@ describe("docs diagrams", (): void => {
     expect(diagrams.length).toBeGreaterThan(0);
   });
 
-  for (const diagram of diagrams) {
-    for (const width of WIDTHS) {
-      test(`${diagram.location} at ${width}px`, (): void => {
-        const result = render(diagram.source, {
-          images: false,
-          links: false,
-          maxWidth: width,
-        });
+  test.each(
+    diagrams.flatMap((diagram) =>
+      WIDTHS.map((width) => ({
+        name: `${diagram.location} at ${width}px`,
+        source: diagram.source,
+        width: width,
+      })),
+    ),
+  )("$name", ({ source, width }): void => {
+    const result = render(source, {
+      images: false,
+      links: false,
+      maxWidth: width,
+    });
 
-        expect(result.svg).toStartWith("<svg");
-        expect(Number.isFinite(result.width)).toBe(true);
-        expect(Number.isFinite(result.height)).toBe(true);
-        expect(result.width).toBeGreaterThan(0);
-        expect(result.height).toBeGreaterThan(0);
-      });
-    }
-  }
+    expect(result.svg).toStartWith("<svg");
+    expect(Number.isFinite(result.width)).toBe(true);
+    expect(Number.isFinite(result.height)).toBe(true);
+    expect(result.width).toBeGreaterThan(0);
+    expect(result.height).toBeGreaterThan(0);
+  });
 });
 
-/** Reads the real diagram sources so new docs are covered without a fixture copy. */
 function readDiagrams(): Diagram[] {
   const diagrams: Diagram[] = [];
   const files = ["docs/**/*.{md,mdx}", "src/pages/**/*.{md,mdx}"].flatMap(

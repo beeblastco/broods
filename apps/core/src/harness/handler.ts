@@ -1,8 +1,3 @@
-/**
- * Harness-processing request handler for the Bun container runtime.
- * Keep request orchestration, session setup, and response shaping here.
- */
-
 import type {
   JSONValue,
   SystemModelMessage,
@@ -193,11 +188,8 @@ import {
   type ContinuationDependencies,
 } from "./continuation.ts";
 
-// The one user turn a "Continue" adds; the history it lands on already ends
-// in the tool results of the cut-off step.
 const CONTINUE_TURN_TEXT =
   "Your previous turn was cut off before it finished. Continue the task from where you left off.";
-// Channel admissions that start no run, so they give back their rate count.
 const NO_RUN_OUTCOMES: ReadonlySet<IngressAdmission["outcome"]> = new Set([
   "duplicate",
   "rejected",
@@ -211,11 +203,8 @@ const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
-// Chunks arrive faster than a Convex round trip, so a streamed chunk checks
-// ownership on the session's OWNER_CHECK_INTERVAL_MS clock. A frame the client
-// acts on checks exactly: a stale run must not land one in a stream the next
-// owner is writing to. `waiting` is the heartbeat: it fires on a timer, not per
-// token, so exact costs nothing.
+// A stale run must not land a frame the client acts on in the next owner's stream.
+// `waiting` fires on a timer, not per token, so checking it exactly costs nothing.
 const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
   "done",
   "error",
@@ -225,8 +214,6 @@ const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
   "waiting",
 ]);
 const textEncoder = new TextEncoder();
-// What every parent run's continuation loop takes from the handler: the
-// functions that move conversation ownership.
 const CONTINUATION_DEPENDENCIES: ContinuationDependencies = {
   dispatchAppliedIngress: dispatchAppliedIngress,
   dispatchSessionMessage: dispatchSessionMessage,
@@ -250,8 +237,6 @@ interface CronInvocation {
   kind: "cron";
   accountId: string;
   cronId: string;
-  // The dispatch instant, stamped by agent/crons.dispatch in Convex when the
-  // schedule fires; the run framing tells the agent this is when it fired.
   scheduledTime?: string;
 }
 
@@ -268,23 +253,15 @@ export async function handler(
     | CronInvocation,
   context?: RequestContext,
 ): Promise<Response> {
-  // Each HTTP request or in-process worker gets a request-private observability
-  // scope so concurrent tenants in the shared container process cannot clobber
-  // each other's log redaction secrets or NATS routing tags.
+  // Request-private, so concurrent tenants never share log redaction secrets or NATS tags.
   return runWithObservabilityScope(() => handleRequest(event, context));
 }
 
-/**
- * One per stream. The returned check runs before each frame goes out: exact
- * for `OWNER_CHECK_EXACT_FRAME_TYPES`; for the rest, only when the session's
- * last ownership proof (a read or a fenced write) is older than the interval.
- */
 export function ownerCheckForStream(
   session: Pick<Session, "assertCurrentOwner" | "assertRecentOwner">,
 ): (frame: Record<string, unknown>) => Promise<void> {
   return async (frame): Promise<void> => {
-    // The SDK emits `start` before the first step boundary has proved the
-    // owner, and it carries nothing from the model: every later frame does.
+    // The SDK emits `start` before any step proves the owner, and it carries no model output.
     if (frame.type === "start") return;
     const exact =
       typeof frame.type === "string" &&
@@ -293,11 +270,6 @@ export function ownerCheckForStream(
   };
 }
 
-/**
- * Records a cron run's outcome, and retires a one-time job with it: its
- * scheduled run is spent, so the row can never fire again. A run waiting on
- * approval or input leaves its cron run open.
- */
 export async function settleCronRun(
   accountId: string,
   cronRun: DirectInboundEvent["cronRun"],
@@ -347,8 +319,6 @@ async function handleRequest(
     | CronInvocation,
   context?: RequestContext,
 ): Promise<Response> {
-  // First entry in this execution environment marks the end of the cold-start
-  // init window so the first agent run can surface it as a phase span.
   markHandlerEntry(Date.now());
 
   if (isAsyncWorkerInvocation(event)) {
@@ -376,9 +346,7 @@ async function handleRequest(
   return routeIncomingEvent(
     event,
     {
-      // A full queue turns a run request away before the plan counts it or
-      // ingress records it, so a retry with the same eventId starts it anew.
-      // Only a new streamed run answers in SSE.
+      // Refused before the plan counts it or ingress records it: a same-eventId retry starts anew.
       handleDirectRequest: async (event): Promise<Response> =>
         (await withQueuePlace(() => handleDirectRequest(event))) ??
         queueFullResponse(event.accountId, (): Response =>
@@ -406,11 +374,7 @@ async function handleRequest(
   );
 }
 
-/**
- * The answer to a run request the full queue turned away. The plan's budget
- * comes first, read without counting, so an account out of budget gets its
- * 402 or 429 rather than a 503 it would only retry into; else `full`.
- */
+// A plan refusal (402/429) wins over the queue's 503, which the client would only retry.
 async function queueFullResponse(
   accountId: string,
   full: () => Response,
@@ -450,10 +414,6 @@ async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
     : new Response(null, { status: 204 });
 }
 
-/**
- * Handle scheduled cron jobs dispatched by the Convex crons component.
- * @returns the plan-limit refusal when the fire was not admitted, else null
- */
 async function handleScheduledCron(
   event: CronInvocation,
 ): Promise<PlanRefusal | null> {
@@ -478,7 +438,6 @@ async function handleScheduledCron(
   const firedAt = scheduledFireTime(event.scheduledTime);
   const { refusal } = await admitRun(job.accountId);
   if (refusal) {
-    // A refused fire is spent like a failed one, one-shot included.
     await crons.markFailed(job.accountId, job.cronId, refusal.message, firedAt);
     if (isOneTimeSchedule(job.scheduleExpression)) {
       await removeOneShotCron(job.accountId, job.cronId);
@@ -504,8 +463,6 @@ async function handleScheduledCron(
       agentId: job.agentId,
       error: error,
     });
-    // The schedule is spent whether or not the run started, so retire the job
-    // here too. The settle path never reached it.
     if (isOneTimeSchedule(job.scheduleExpression)) {
       await removeOneShotCron(job.accountId, job.cronId);
     }
@@ -515,12 +472,7 @@ async function handleScheduledCron(
   return null;
 }
 
-/**
- * Handle a background-job completion posted by the detached job itself.
- * Authenticated by the per-job token (matched against the stored row), so the
- * sandbox never needs an account key. Reuses the same settle → continuation
- * path as the account-auth async-tool completion endpoint.
- */
+// Authed by the per-job token on the stored row, so a sandbox never holds an account key.
 async function handleSandboxJobCompletionRequest(
   event: SandboxJobCompletionInboundEvent,
 ): Promise<Response> {
@@ -562,12 +514,7 @@ async function handleSandboxJobCompletionRequest(
   );
 }
 
-/**
- * The secret values the run that started this row scrubbed with: its agent's
- * config and the sandboxes and workspaces that config names. A job callback
- * arrives outside any run, so it resolves them from the row. An agent whose
- * sandbox or workspace no longer resolves still gives its config's values.
- */
+// A job callback arrives outside any run, so rebuild the redaction set that run used.
 async function asyncToolRowSecretValues(
   row: AsyncToolResultRecord,
 ): Promise<string[]> {
@@ -596,19 +543,11 @@ async function asyncToolRowSecretValues(
   }
 }
 
-/**
- * After an async tool row settles, resume the conversation with its result.
- * Derives the account/agent from the (scoped) parentEventId so it serves the
- * account-authed and token-authed completion paths and the recovery sweep.
- * Admitted once per result, under the row as `toolResultId`, so a result the
- * conversation already stores is refused there.
- */
 export async function continueAfterAsyncToolSettlement(
   settled: AsyncToolResultRecord,
 ): Promise<ContinuationOutcome> {
   const scope = parseAccountAgentFromScopedKey(settled.parentEventId);
-  // A result the conversation stores (async_status read it, or the parent's
-  // append wrote it) would be answered twice.
+  // Stored by async_status or the parent's append: resuming would answer it twice.
   if (
     !scope ||
     settled.status === "processing" ||
@@ -625,9 +564,7 @@ export async function continueAfterAsyncToolSettlement(
     publicEventId: publicEventId,
     toolResultId: settled.resultId,
     conversationKey: settled.conversationKey,
-    // An answered question streams under its own id, the one the answer
-    // response names. Any other job keeps the parent's, so a reconnect that
-    // attaches to the parent replays it.
+    // An answer streams under the id its response names; other jobs keep the parent's for replay.
     delivery:
       question && settled.delivery?.kind === "nats"
         ? { ...settled.delivery, publicEventId: publicEventId }
@@ -643,20 +580,11 @@ export async function continueAfterAsyncToolSettlement(
       ...(settled.response !== undefined ? { response: settled.response } : {}),
       ...(settled.error ? { error: settled.error } : {}),
     }),
-    // An answer joins a live run at its next step boundary; a finished job
-    // waits its turn behind the current one.
     requestedMode: question ? "steer" : "followup",
   });
 }
 
-/**
- * Resumes the parent conversation with a subagent result that came in after
- * the parent run stopped waiting for it. The child's task id keeps it to one
- * continuation, which queues behind whatever turn holds the conversation, and
- * none at all once the parent read `resultEventId` itself. The coordinator
- * calls it, and so does the recovery sweep for a result a restart lost, with
- * the `target` it already loaded; the sweep reads the admission it returns.
- */
+// Resumes the parent once per task id, and never once it read `resultEventId` itself.
 export async function resumeAfterSubagentResult(
   parent: SubagentParent,
   taskId: string,
@@ -664,8 +592,7 @@ export async function resumeAfterSubagentResult(
   resultEventId: string,
   target?: ReentryTarget,
 ): Promise<SubagentResumeOutcome> {
-  // The task id's own nonce, under the root event, so a chain of late results
-  // does not nest every earlier id into the next.
+  // Root event + nonce, so a chain of late results never nests each earlier id in the next.
   const nonce = subagentTaskNonce(taskId);
   if (!parent.accountId || !parent.agentId || !nonce) {
     return "skip";
@@ -686,10 +613,6 @@ export async function resumeAfterSubagentResult(
   return outcome.kind === "skip" ? "skip" : outcome.admission;
 }
 
-/**
- * Where a conversation of this agent re-enters, or null once the agent is
- * gone. `resumeConversation` and the subagent recovery sweep load it.
- */
 export async function loadReentryTarget(
   accountId: string,
   agentId: string,
@@ -700,7 +623,6 @@ export async function loadReentryTarget(
     return null;
   }
 
-  // A channel session resumes on its record-narrowed config, as a cron does.
   return await resolveReentryTarget({
     accountId: accountId,
     agentId: agentId,
@@ -713,11 +635,6 @@ export async function loadReentryTarget(
   });
 }
 
-/**
- * Starts a new turn of a conversation with a result that settled after its
- * run stopped waiting: a detached tool row or a late subagent. It is admitted
- * once per `eventId` and answers where the turn that started the work did.
- */
 async function resumeConversation(options: {
   accountId: string;
   agentId: string;
@@ -781,7 +698,6 @@ async function resumeConversation(options: {
     idempotencyKey: options.eventId,
   };
 
-  // Queued behind a socket turn, it still answers on that socket.
   const { admission, owned: ownedContinuation } =
     await admitInternalContinuation(
       continuationEvent,
@@ -815,10 +731,6 @@ async function resumeConversation(options: {
   };
 }
 
-/**
- * Settle open ask_questions prompts from a direct API body and resume the
- * conversation, answering with the last continuation's outcome.
- */
 async function handleDirectAnswers(
   event: DirectInboundEvent,
 ): Promise<Response> {
@@ -865,8 +777,7 @@ async function handleDirectAnswers(
     );
   }
 
-  // A socket turn needs a stream to follow or a terminal status. Only a ready
-  // continuation streams; otherwise the answer is saved and the turn is over.
+  // A socket client needs a stream to follow, or a terminal status when none starts.
   if (event.connectionId && last) {
     return outcome.kind === "ready"
       ? natsStartResponse(event, outcome.publicEventId, null)
@@ -880,11 +791,7 @@ async function handleDirectAnswers(
       });
 }
 
-/**
- * A channel message while a prompt is open is its answer, not a turn. A
- * button click names its prompt; typed text answers the oldest open one.
- * True when a prompt settled and the conversation is resuming.
- */
+// True when the message was an answer: a click names its prompt, typed text takes the oldest.
 async function settleChannelQuestion(
   event: ChannelInboundEvent,
 ): Promise<boolean> {
@@ -1017,28 +924,17 @@ async function handleDirectRequest(
   return directTurnResponse(ownedEvent);
 }
 
-/**
- * The sync SSE answer for a run that owns its conversation. The turn, a queued
- * command's reply or the model streaming, runs on a worker slot like every
- * other run, so MAX_INPROCESS_WORKERS bounds streamed runs too. The stream
- * opens at once and keeps alive while the run waits, the queue renewing its
- * lease. A full queue answered 503 before the run was recorded, and the place
- * held for it since is what it queues in; a client that left before its slot
- * came starts nothing.
- */
+// On a worker slot like any other run, so MAX_INPROCESS_WORKERS bounds streamed runs too.
 async function directTurnResponse(
   ownedEvent: DirectInboundEvent,
 ): Promise<Response> {
-  // A queued run starts from whichever run frees its slot, so it takes this
-  // request's observability context rather than inheriting that one.
+  // A queued run starts inside whichever run frees the slot; it must keep this request's context.
   const observability = getObservabilityContext();
   let keepalive: ReturnType<typeof setInterval> | undefined;
   let cancelled = false;
   const body = new ReadableStream<Uint8Array>({
     start: (controller): void => {
-      // Bun closes a response that writes nothing for its idleTimeout, and a
-      // queued run or one silent bash call can outlast it. A comment line is
-      // ignored by every SSE parser.
+      // Bun closes a silent response after idleTimeout; SSE parsers ignore comment lines.
       keepalive = setInterval((): void => {
         try {
           controller.enqueue(textEncoder.encode(": keepalive\n\n"));
@@ -1066,8 +962,6 @@ async function directTurnResponse(
                 await runCommandTurn({
                   event: ownedEvent,
                   command: command,
-                  // A client that left takes nothing more; the command already
-                  // ran, so its outcome stays the run's own.
                   send: async (chunk): Promise<void> => {
                     try {
                       controller.enqueue(frame(chunk));
@@ -1136,7 +1030,6 @@ async function directTurnResponse(
   });
 }
 
-/** Answer a direct async request with 202 and hand it to an in-process worker. */
 async function handleAsyncRequest(
   event: AsyncDirectInboundEvent,
 ): Promise<Response> {
@@ -1197,13 +1090,7 @@ async function handleAsyncRequest(
   );
 }
 
-/**
- * Re-enter a conversation whose last turn stopped short (step cap, provider
- * fault) with one nudge turn on top of the persisted history, which already
- * ends in the tool results of the cut-off step. Replies where the conversation
- * replies: a live channel session answers in its channel, anything else is an
- * async run polled by its status URL. Always 202, whatever `background` said.
- */
+// Always 202, whatever `background` said: a live channel session replies in its channel.
 async function handleContinueRequest(
   event: DirectInboundEvent,
 ): Promise<Response> {
@@ -1214,8 +1101,7 @@ async function handleContinueRequest(
     agentConfig: event.agentConfig,
     configRef: event.configRef,
   });
-  // The key the caller named must be the session it resolves to: a scoped
-  // channel key with no live session behind it is not something to continue.
+  // A scoped channel key with no live session behind it has nothing to continue.
   if (event.conversationKey !== target.conversationKey) {
     return errorResponse(404, "Conversation not found", {
       code: "conversation_not_found",
@@ -1244,20 +1130,16 @@ async function handleContinueRequest(
   );
 }
 
-/** Run an in-process async worker request and publish its final result to storage. */
 async function handleAsyncWorkerRequest(
   event: DirectInboundEvent,
   context?: RequestContext,
 ): Promise<void> {
   let session: Session | undefined;
   let transferred = false;
-  // The outcome the run produced; once recorded, the catch never overwrites it.
   let outcome: AsyncAgentOutcome | undefined;
   let recorded = false;
   let cronSettled = false;
-  // Records the run's outcome on its envelope and polling rows. The first
-  // outcome wins, as in Convex: an earlier pass's final text replays after a
-  // later pass asks questions, and retries a failed write of those questions.
+  // The first outcome wins, as in Convex; a later call only retries a write that failed.
   const finish = async (result: AsyncAgentOutcome): Promise<void> => {
     if (recorded) {
       return;
@@ -1297,13 +1179,8 @@ async function handleAsyncWorkerRequest(
           {
             onFinalText: async (response, traceId) => {
               await finish({ status: "completed", response: response });
-              // An empty final text means the run already delivered its output
-              // through a channel tool; pushing it would post a blank message.
-              const responseText =
-                typeof response === "string"
-                  ? response
-                  : JSON.stringify(response, null, 2);
-              if (responseText.trim() === "") {
+              const responseText = channelReplyText(response);
+              if (responseText === null) {
                 return;
               }
               await pushReplyToChannel(
@@ -1346,8 +1223,7 @@ async function handleAsyncWorkerRequest(
         );
       }
     }
-    // The harness swallows a callback's throw, so a write that failed there
-    // shows up only as an outcome that was never recorded.
+    // The harness swallows a callback's throw: a failed write shows only as no recorded outcome.
     if (!recorded || !outcome) {
       throw new Error("Async run ended without recording its outcome");
     }
@@ -1365,8 +1241,7 @@ async function handleAsyncWorkerRequest(
       error: error,
     };
     if (!recorded) {
-      // Without the lease the envelope is not ours to settle, but its polling
-      // rows still are.
+      // Without the lease the envelope is not ours to settle, but its polling rows still are.
       await settleAsyncRun(session, event, produced)
         .catch((): Promise<void> => recordAsyncRun(event, produced))
         .catch((writeErr: unknown): void => {
@@ -1400,7 +1275,6 @@ async function handleAsyncWorkerRequest(
   }
 }
 
-/** Run an in-process NATS worker request, publishing stream parts to its subject. */
 async function handleNatsWorkerRequest(
   event: DirectInboundEvent,
   context?: RequestContext,
@@ -1450,8 +1324,6 @@ async function handleNatsWorkerRequest(
   try {
     const turn = await prepareDirectTurn(event);
     if (!turn) {
-      // Both early returns skip the inner finally, so close the request-scoped
-      // publisher here instead of leaking it.
       await publisher.close();
 
       return;
@@ -1508,8 +1380,7 @@ async function handleNatsWorkerRequest(
             .catch(() => {});
         },
         onApprovalRequired: async (approvals) => {
-          // Sent as its own event, on top of the stream part, so the WebSocket
-          // gateway can pick the approvals out without parsing the stream.
+          // Also its own event, so the gateway picks approvals out without parsing the stream.
           fencedPublisher
             .publish({ type: "tool-approval-request", approvals: approvals })
             .catch(() => {});
@@ -1534,8 +1405,7 @@ async function handleNatsWorkerRequest(
       await session.settleIngress(settlement.status, settlement);
       await fencedPublisher.publish({ type: "done" });
       transferred = await dispatchNextIngress(session, event);
-      // Release here, not in the finally: the crash path must settle the
-      // envelope first, and settling requires still holding the lease.
+      // Not in a finally: the crash path must settle first, which needs the lease.
       if (!transferred) {
         await session.releaseConversationLease().catch(() => {});
       }
@@ -1544,8 +1414,7 @@ async function handleNatsWorkerRequest(
     }
   } catch (err) {
     await publisher.close().catch(() => {});
-    // Terminal settlement on the crash path: without it the envelope stays
-    // processing and the queue never drains for this conversation.
+    // Unsettled, the envelope stays processing and this conversation's queue never drains.
     if (session && !transferred) {
       const error =
         err instanceof Error ? err.message : "NATS worker processing failed";
@@ -1565,19 +1434,8 @@ async function handleNatsWorkerRequest(
   }
 }
 
-/**
- * Admit one channel message and hand its turn to the worker pool. Resolves once
- * the message is durably admitted (or answered as a command, an answer, or a
- * refusal), so the webhook can ack after it; the agent run itself happens on a
- * worker slot and replies through the channel's ChannelActions.
- *
- * Like an API run, the message holds a run queue place while it is admitted.
- * A full queue turns it away before the plan counts it or ingress records it:
- * an account out of budget hears its refusal, read without counting; any
- * other rejects with WORKER_QUEUE_FULL, which the webhook answers. A command
- * answered at once (`/stop`, `/new`, `/help`) starts no run and takes no
- * place, so `/stop` still reaches a run while the queue is full.
- */
+// Resolves once durably admitted, so the webhook can ack. An at-once command takes no queue
+// place, so `/stop` still reaches a run while the queue is full.
 export async function handleChannelRequest(
   event: ChannelInboundEvent,
 ): Promise<void> {
@@ -1603,8 +1461,7 @@ export async function handleChannelRequest(
 async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
   const outcome = resolveChannelCommand(event);
   if (outcome.kind === "reply") {
-    // A forwarder retry redelivers the same event, and a second `/clear` would
-    // drop what was said between the two deliveries.
+    // Claimed, so a forwarder retry cannot run `/clear` twice and drop what came between.
     if (
       event.accountId &&
       !(await claimSession(
@@ -1651,8 +1508,7 @@ async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
   if (!command && (await settleChannelQuestion(event))) return;
   const requestedMode =
     outcome.kind === "rewrite" ? outcome.requestedMode : "steer";
-  // A provider redelivery of an admitted message must not store its files a
-  // second time. Only a message with files pays for this read.
+  // A provider redelivery must not store its files twice; only messages with files pay this read.
   if (
     event.attachments?.length &&
     (await getIngressStatusByEventId({
@@ -1669,16 +1525,14 @@ async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
 
     return;
   }
-  // The provider gets its usual ack either way; an error status would only
-  // make it redeliver. The refusal and the 80% notice are said in the channel.
+  // Refusals are said in the channel: an error status would only make the provider redeliver.
   const plan = await admitRun(event.accountId, { claimWarning: true });
   if (plan.refusal) {
     await event.channel.sendText(planRefusalText(plan.refusal));
 
     return;
   }
-  // Best-effort: the notice is already claimed, and failing it here would drop
-  // the message it rode in on.
+  // Best effort: throwing would drop the message the already-claimed notice rode in on.
   if (plan.warning) {
     await event.channel.sendText(plan.warning).catch((err: unknown): void => {
       logWarn("Budget warning delivery failed", {
@@ -1687,9 +1541,7 @@ async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
       });
     });
   }
-  // Before admission, so a turn that lands in the queue still carries its
-  // media: the queued record holds only these events, and the drain loop
-  // replays exactly what was queued.
+  // Before admission: a queued turn replays only its stored events, so they must hold the media.
   const ingested = await ingestChannelAttachments(
     event.events,
     event.attachments,
@@ -1706,7 +1558,6 @@ async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
     accountId: event.accountId,
     agentId: event.agentId,
     eventId: event.eventId,
-    // A channel turn is never polled by run id, but every envelope carries one.
     runId: createRunId(),
     conversationKey: event.conversationKey,
     events: ingested.events,
@@ -1737,8 +1588,7 @@ async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
     stageSlug: event.stageSlug,
   };
   await dispatchRecoveredIngress(scope, admission);
-  // Only a new envelope starts a run; a redelivery or a refusal gives its
-  // count back, so a provider's retries cannot spend the per-minute limit.
+  // A provider's retries must not spend the per-minute run limit.
   if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(plan, event.accountId);
   if (admission.outcome === "rejected") {
     await event.channel.sendText(CONVERSATION_BUSY);
@@ -1801,9 +1651,7 @@ async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
       channelPrincipalChain(event.identity, event.channelName),
     ),
   });
-  // A queued worker starts later, from whichever run frees its slot, so it
-  // takes this message's observability context rather than inheriting that one.
-  // The webhook acked long ago, so a failure outside a turn is said here.
+  // A queued worker starts inside whichever run frees the slot; it must keep this context.
   const observability = getObservabilityContext();
   try {
     dispatchInProcessWorker(
@@ -1845,12 +1693,7 @@ async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
   }
 }
 
-/**
- * The owned channel turn, then every queued follow-up after it, on one worker
- * slot. Each turn settles its envelope before the queue drains on.
- * @param incoming the live turn's events, with the transient byte-backed parts
- *   admission never saw; a follow-up taken off the queue brings its own
- */
+// `incoming` keeps the byte-backed parts admission never stored; queued turns bring their own.
 async function runChannelTurns(
   event: ChannelInboundEvent,
   scope: IngressDispatchScope,
@@ -1869,9 +1712,6 @@ async function runChannelTurns(
 
   try {
     for (;;) {
-      // The turn's outcome, settled in the same mutation that takes the next
-      // message. A thrown turn still settles failed; otherwise accepted work
-      // is stranded in processing.
       let settlement: IngressSettlement | undefined;
       try {
         const command = queuedCommand(incoming, event.channelName);
@@ -1908,9 +1748,7 @@ async function runChannelTurns(
                   ? {
                       streamMessage: async (stream) => {
                         await session.assertCurrentOwner();
-                        // A channel that cannot post a live stream stops reading
-                        // and hands the reply back as text, so the run keeps
-                        // going and the drain below finishes it.
+                        // Falsy: the channel could not stream, so drain and reply as text.
                         const streamedResult = await event.channel.stream!(
                           readAgentFullStream(stream, false),
                         );
@@ -1924,14 +1762,8 @@ async function runChannelTurns(
                   terminal = "completed";
                   finalResult = response;
                   if (streamed && typeof response === "string") return;
-                  // An empty final text means the run already delivered its
-                  // output through a channel tool; sending it would post a
-                  // blank message.
-                  const responseText =
-                    typeof response === "string"
-                      ? response
-                      : JSON.stringify(response, null, 2);
-                  if (responseText.trim() === "") return;
+                  const responseText = channelReplyText(response);
+                  if (responseText === null) return;
                   const formatted = formatChannelFinalText(
                     responseText,
                     traceId,
@@ -1949,8 +1781,6 @@ async function runChannelTurns(
                 onErrorText: async (error, traceId) => {
                   await session.assertCurrentOwner();
                   terminal = "failed";
-                  // The failure goes through the same outbound hook as a reply,
-                  // so it can be rewritten or dropped too.
                   const text = await applyMessageSendingHook(
                     hooks,
                     event.channelName,
@@ -1990,7 +1820,7 @@ async function runChannelTurns(
             }
             if (result.didFail) terminal = "failed";
             if (awaitingInput) {
-              // Settled in the hook; the answer resumes the conversation.
+              // Settled in onQuestionsPending; the answer resumes the conversation.
             } else if (terminal === "failed") {
               settlement = {
                 status: "failed",
@@ -2016,9 +1846,7 @@ async function runChannelTurns(
         };
       }
 
-      // The envelope stores no config: its ref rebuilds one from the live
-      // rows, so a key rotated while it waited applies to this turn. One whose
-      // config cannot load is failed as the queue moves on past it.
+      // Envelopes hold only a config ref; rebuilding from live rows picks up a rotated key.
       let next = await session.takeNextIngress(settlement);
       while (next) {
         try {
@@ -2055,8 +1883,7 @@ async function runChannelTurns(
         next.delivery.kind === "channel"
           ? (next.delivery.source ?? event.source)
           : event.source;
-      // The queued sender, never the first one: policy reads userId and roles
-      // from here, and the envelope is the only place the sender survived.
+      // The queued sender, not the first: policy reads userId and roles from this identity.
       const identity =
         next.delivery.kind === "channel" ? next.delivery.identity : undefined;
       session = new Session({
@@ -2131,8 +1958,7 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
     return;
   }
 
-  // Context is stored, never run, so only the durable parts matter here.
-  // Persistence would drop byte-backed parts anyway.
+  // Context is stored, never run, so only the durable `events` matter.
   await session.appendIngressEvents(
     (
       await ingestChannelAttachments(event.events, event.attachments, {
@@ -2157,15 +1983,10 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
 async function handleStatusRequest(
   event: StatusInboundEvent,
 ): Promise<Response> {
-  // The envelope is already resolved: the route looked it up by run id to
-  // learn which agent owns this run before authorizing the read.
   const result = event.ingress;
   const asyncResult = await getAsyncAgentResult(event.eventId);
 
-  // The async agent record keeps the public approval contract: while it is
-  // nonterminal its status (processing/awaiting_approval) overrides the
-  // envelope's terminal settle so pollers keep waiting and see approvals
-  // top-level, exactly as before durable ingress statuses existed.
+  // Pollers keep waiting while the async record is nonterminal, even past the envelope's settle.
   const status =
     asyncResult &&
     (asyncResult.status === "awaiting_approval" ||
@@ -2207,7 +2028,6 @@ async function handleStatusRequest(
   );
 }
 
-/** Appends a direct run's input and builds its turn context; settles and drains on failure. */
 async function prepareDirectTurn(
   event: DirectInboundEvent,
 ): Promise<DirectTurn | null> {
@@ -2231,11 +2051,8 @@ async function prepareDirectTurn(
   }
 }
 
-/** The owner session a direct, async or WebSocket run works under. */
 function directSession(event: DirectInboundEvent): Session {
-  // A WebSocket-origin turn carries a connectionId; a background job it launches
-  // republishes to the durable conversation stream so a reconnecting client
-  // replays it. Plain direct/async API turns have no delivery target (poll only).
+  // Where a background job this turn launches reports back; plain API turns only poll.
   const delivery: AsyncToolDelivery | undefined = event.connectionId
     ? {
         kind: "nats",
@@ -2304,8 +2121,7 @@ async function failOwnedIngress(
     stageSlug: event.stageSlug,
     ownerGeneration: event.ownerGeneration,
   });
-  // A scheduling failure recurses back through dispatchAppliedIngress; each
-  // level consumes one envelope, so the queue bound terminates it.
+  // A failed schedule recurses via dispatchAppliedIngress, one envelope per level, so it ends.
   await settleFailedIngressAndDrain(session, error, () =>
     dispatchNextIngress(session, event),
   );
@@ -2319,6 +2135,14 @@ async function claimSession(session: Session): Promise<boolean> {
   }
 
   return true;
+}
+
+// Null when a channel tool already delivered the reply, so nothing blank gets posted.
+function channelReplyText(response: JSONValue): string | null {
+  const text =
+    typeof response === "string" ? response : JSON.stringify(response, null, 2);
+
+  return text.trim() === "" ? null : text;
 }
 
 function formatChannelFinalText(
@@ -2365,11 +2189,6 @@ function dashboardTraceUrl(
   return `${dashboardUrl}?${params.toString()}`;
 }
 
-/**
- * Push a continuation's final text back to the chat channel it came from (a
- * background job launched from Telegram/Slack/etc.). Best-effort: the row is
- * already settled, so a delivery failure is logged, not thrown.
- */
 async function pushReplyToChannel(
   session: Session,
   event: DirectInboundEvent,
@@ -2404,7 +2223,6 @@ async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
   await invokeHarnessWorker(invocation);
 }
 
-/** Runs a continuation on the worker kind its original request came in on. */
 async function invokeContinuationWorker(
   event: DirectInboundEvent,
   delivery: AsyncToolDelivery | undefined,
@@ -2418,7 +2236,6 @@ async function invokeContinuationWorker(
   await invokeAsyncWorker(event);
 }
 
-// A continuation of a socket turn streams under that turn's ids on its connection.
 function onSocket(
   event: DirectInboundEvent,
   delivery: AsyncToolDelivery | undefined,
@@ -2443,12 +2260,7 @@ async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
   await invokeHarnessWorker(invocation);
 }
 
-/**
- * Schedules one durably applied envelope on its worker. The envelope's own
- * config ref and ephemeralSystem win over the base event's so a queued
- * request never inherits a previous request's overrides; the config itself is
- * rebuilt from the live rows here, since the envelope never stores it.
- */
+// Only the envelope's own overrides: a queued request must never inherit a previous one's.
 export async function dispatchAppliedIngress(
   base: IngressDispatchScope,
   next: AppliedIngress,
@@ -2463,11 +2275,8 @@ export async function dispatchAppliedIngress(
   const event: DirectInboundEvent = {
     accountId: base.accountId,
     agentId: base.agentId,
-    // This rebuild re-runs an envelope that was already admitted, and its
-    // delivery (status URL included) is the stored one, so this id is never
-    // published. It exists only because every direct event carries one.
+    // Never published: the stored delivery already carries the admitted run's status URL.
     runId: createRunId(),
-    // Loaded below; an envelope whose config cannot load settles on this.
     agentConfig: {},
     configRef: next.configRef,
     ...(base.subagentConfig ? { subagentConfig: base.subagentConfig } : {}),
@@ -2497,8 +2306,6 @@ export async function dispatchAppliedIngress(
       : {}),
   };
   try {
-    // An agent deleted while the envelope waited fails it here, and so does
-    // an envelope with no ref that is not a subagent's.
     event.agentConfig = await loadAppliedIngressConfig({
       accountId: base.accountId,
       agentId: base.agentId,
@@ -2532,12 +2339,7 @@ export async function dispatchAppliedIngress(
   });
 }
 
-/**
- * Transfers the fenced owner to the next durable FIFO application and schedules
- * it. With `settle`, the current event is settled in the same mutation; when
- * that throws, the settle has been retried on its own, so a caller's failure
- * settle normally leaves the real outcome in place.
- */
+// A throwing hand-off has retried `settle` alone, so a caller's failure settle keeps the outcome.
 async function dispatchNextIngress(
   session: Session,
   previous: IngressDispatchScope,
@@ -2552,10 +2354,7 @@ async function dispatchNextIngress(
   return true;
 }
 
-/**
- * Best-effort dispatch of an application that admission recovered from an
- * expired owner. Never throws: the caller's own admission response must win.
- */
+// Never throws: the caller's own admission response must win.
 async function dispatchRecoveredIngress(
   base: Parameters<typeof dispatchAppliedIngress>[0],
   admission: IngressAdmission,
@@ -2607,7 +2406,6 @@ async function dispatchSessionMessage(
       channelName: delivery.channel,
       source: delivery.source ?? {},
     },
-    // The sending run asked, so the run it starts records that agent.
     ...(senderChain ? { principalChain: senderChain } : {}),
   };
   const admission = await acceptIngress(candidate);
@@ -2649,8 +2447,7 @@ async function dispatchSessionMessage(
   };
 }
 
-// `fence` names the result row the continuation delivers, so admission
-// refuses it once the conversation has that result and stores it otherwise.
+// `fence`: admission refuses a result the conversation already has, and stores it otherwise.
 async function admitInternalContinuation(
   event: DirectInboundEvent,
   delivery: IngressDelivery,
@@ -2688,7 +2485,6 @@ async function admitInternalContinuation(
   };
 }
 
-/** Maps an existing run's delivery target onto the durable ingress envelope. */
 function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
   if (event.connectionId) {
     return {
@@ -2720,7 +2516,6 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
   };
 }
 
-/** Fire-and-forget background work on the in-process worker pool. */
 async function invokeHarnessWorker(
   payload: AsyncWorkerInvocation | NatsWorkerInvocation,
 ): Promise<void> {
@@ -2738,20 +2533,13 @@ async function invokeHarnessWorker(
   );
 }
 
-// One continuation per result, under the event a person started: a run's
-// async tool results all share its event id, and a detached row's parent
-// event already names the row.
+// Root event, not parent: a detached row's parent event id already names the row.
 function asyncToolContinuationEventId(
   row: Pick<AsyncToolResultRecord, "parentEventId" | "resultId">,
 ): string {
   return `${rootEventId(row.parentEventId)}:async-tools:${row.resultId}`;
 }
 
-/**
- * Creates the pending result row and hands the owned event to the worker. A
- * replayed event whose row already exists is a no-op, so a retried request
- * never starts a second run.
- */
 async function startOwnedAsyncRun(
   ownedEvent: DirectInboundEvent,
 ): Promise<void> {
@@ -2782,7 +2570,6 @@ async function startScheduledAgentRun(
 ): Promise<{ eventId: string; conversationKey: string }> {
   const { event, run } = await openCronRun(job, firedAt).catch(
     async (err: unknown): Promise<never> => {
-      // With no run row to settle, the failure lands on the cron itself.
       await getStorage().crons.markFailed(
         job.accountId,
         job.cronId,
@@ -2826,20 +2613,14 @@ async function startScheduledAgentRun(
   };
 }
 
-/**
- * When the schedule was meant to fire, falling back to now when the payload
- * carries no usable instant, including the unsubstituted template literal.
- */
+// Now when the payload has no usable instant, e.g. an unsubstituted template literal.
 function scheduledFireTime(scheduledTime: string | undefined): Date {
   const parsed = scheduledTime ? new Date(scheduledTime) : null;
 
   return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
 }
 
-/**
- * Best effort: a stranded cron row is recoverable from the dashboard, whereas a
- * throw here would cost the run its reply.
- */
+// Best effort: a stranded row is fixable in the dashboard; a throw would cost the reply.
 async function removeOneShotCron(
   accountId: string,
   cronId: string,
@@ -2855,7 +2636,6 @@ async function removeOneShotCron(
     });
 }
 
-/** Builds a fire's event and its run row, the row the cron's status follows. */
 async function openCronRun(
   job: CronRecord,
   firedAt: Date,
@@ -2908,13 +2688,6 @@ async function createCronDirectEvent(
   };
 }
 
-/**
- * Where a re-entered conversation (cron, continue, a settled background job)
- * runs and answers. A live channel session keeps its key and reply target, and
- * runs on its record-narrowed config rebuilt from live rows; anything else is
- * the direct `api:` conversation on the given config. The deployment scope is
- * what puts the run's trace on the dashboard stream.
- */
 async function resolveReentryTarget(options: {
   accountId: string;
   agentId: string;
@@ -2974,7 +2747,6 @@ async function resolveReentryTarget(options: {
   };
 }
 
-/** The direct model turn on its worker slot, streamed to the client. */
 async function streamDirectContinuation(
   event: DirectInboundEvent,
   session: Session,
@@ -2994,9 +2766,7 @@ async function streamDirectContinuation(
   let transferred = false;
   let terminalFailureDrained = false;
   const checkOwner = ownerCheckForStream(session);
-  // Once the client is gone the enqueue below throws about its closed
-  // controller, which says nothing about the run. The run's own reason is
-  // the one worth storing and logging.
+  // Wins over the closed-controller error a gone client causes: store the run's own reason.
   let streamFailureText: string | null = null;
 
   try {
@@ -3041,8 +2811,7 @@ async function streamDirectContinuation(
       eventId: event.eventId,
       error: error,
     });
-    // Emit before draining: promoting queued work moves the owner
-    // generation, so a later assertCurrentOwner() would drop this frame.
+    // Before draining: promoting queued work moves the owner generation and would drop the frame.
     await session
       .assertCurrentOwner()
       .then(() => {
@@ -3064,11 +2833,6 @@ async function streamDirectContinuation(
   }
 }
 
-/**
- * A queued command on a sync HTTP or WebSocket run, in place of its model
- * turn: replies through `send`, settles the envelope, and hands the lease on.
- * Never throws; a failure settles the run as failed.
- */
 async function runCommandTurn(options: {
   event: DirectInboundEvent;
   command: QueuedCommand;
@@ -3092,8 +2856,6 @@ async function runCommandTurn(options: {
       .send({ type: "error", error: outcome.error })
       .catch((): void => {});
   }
-  // Settled in the hand-off mutation, which retries the settle on its own
-  // when the hand-off throws.
   const transferred = await dispatchNextIngress(
     session,
     event,
@@ -3114,11 +2876,6 @@ async function runCommandTurn(options: {
   return outcome;
 }
 
-/**
- * Runs a command the queue held until the turn before it ended, in place of a
- * model turn and under the session's lease. Its reply goes to the session's
- * channel and through `send` when given. Never throws; a failure fails the run.
- */
 async function commandOutcome(
   session: Session,
   command: QueuedCommand,
@@ -3156,8 +2913,6 @@ async function commandOutcome(
 function createChannelApprovalDenial(
   approvals: ToolApprovalSummary[],
 ): ToolModelMessage {
-  // TODO: Allow channel webhooks to complete approval requests instead of
-  // auto-denying them once channel-safe approval UX is available.
   return {
     role: "tool",
     content: approvals.map((approval) => ({
@@ -3217,10 +2972,6 @@ function hasRunnableDirectEvents(event: DirectInboundEvent): boolean {
   return event.events.some(isRunnableModelInput);
 }
 
-/**
- * Records an async run's outcome: the envelope and its polling rows settle in
- * one mutation, and without an owned envelope only the rows are written.
- */
 async function settleAsyncRun(
   session: Session | undefined,
   event: DirectInboundEvent,
@@ -3234,7 +2985,6 @@ async function settleAsyncRun(
   if (!settled) await recordAsyncRun(event, outcome);
 }
 
-/** Records an async run's outcome on its polling rows only. */
 async function recordAsyncRun(
   event: DirectInboundEvent,
   outcome: AsyncAgentOutcome,

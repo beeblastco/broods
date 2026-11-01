@@ -1,24 +1,3 @@
-/**
- * Convex wire budget. A page reads its data as query subscriptions on one
- * Convex sync socket, and a cold load pulls every result down it whole: a
- * query that returns more than the page shows, a page that subscribes to one
- * it never renders, or a second Authenticate that re-runs every subscription
- * costs bytes on every visit and shows nothing for it. This pins, per page,
- * the result bytes that socket delivers on a cold load and the queries the
- * page subscribes to, against `wire-budget.json`: more fails the run, fewer
- * asks for a record. Every frame also carries a version envelope of about
- * 200 B, and how many frames the server packs the results into, and how many
- * bare ones it sends as the deployment's clock moves, is timing: the total
- * bytes and the frames are recorded beside the budget but do not gate (on one
- * fixture the canvas total moved 9% between runs, its results not a byte).
- * Bytes are the decoded payloads, the JSON the client parses, so the
- * socket's compression does not move them.
- * `E2E_RECORD_WIRE_BUDGET=1` rewrites the budget from this run. The numbers
- * are the fixture's: only a self-hosted stack (`E2E_ADMIN_KEY`) holds a fixed
- * one, so the budget applies only there. A `next dev` server mounts every
- * component twice (Strict Mode), so a query can subscribe, drop and
- * subscribe again: the budget does not apply there either.
- */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -31,19 +10,12 @@ import {
 import { waitForReady } from "../lib/timing";
 
 const BUDGET_FILE = join(__dirname, "wire-budget.json");
-// The 5% first-load allows. On one fixture the results held to the byte over
-// eight runs; the room is for values that change width when the stack is
-// rebuilt, such as minted tokens and counts.
 const BYTES_HEADROOM = 1.05;
 const RECORD = process.env.E2E_RECORD_WIRE_BUDGET === "1";
-// The client's sync socket: `/api/<version>/sync` on the Convex origin.
 const CONVEX_SYNC = /\/api\/[^/]+\/sync$/;
-// The ready marker is the first content, not the last query: the page has
-// settled once the socket has been quiet this long.
+// The ready marker is the first content, not the last query: settle on a quiet socket.
 const QUIET_MS = 1_500;
 const SETTLE_TIMEOUT_MS = 20_000;
-// The canvas reads every agent's config; Monitoring and Settings the
-// project's shell plus their own; the projects page is the org shell alone.
 const PAGES: ProbePage[] = [
   {
     name: "canvas",
@@ -67,16 +39,15 @@ const PAGES: ProbePage[] = [
   },
 ];
 
+// Only results and subscriptions gate: frame envelopes (~200 B each) and how many frames
+// carry the results move with timing.
 interface WireLoad {
-  /** The query results and responses, without each frame's envelope. */
   resultBytes: number;
   subscriptions: number;
-  /** Every frame the socket delivered, envelopes included. */
   bytesReceived: number;
   framesReceived: number;
 }
 
-/** One query path's share of a page's load. */
 type QueryWire = Pick<WireLoad, "subscriptions" | "resultBytes">;
 
 interface ProbePage {
@@ -85,10 +56,7 @@ interface ProbePage {
   ready: (page: Page) => Locator;
 }
 
-/**
- * The client messages this spec reads. `convex` keeps its protocol types
- * out of its package exports, so the shape is spelled here.
- */
+// `convex` keeps its protocol types out of its package exports, so they are spelled here.
 type SentMessage =
   | {
       type: "ModifyQuerySet";
@@ -99,7 +67,6 @@ type SentMessage =
     }
   | { type: "Connect" | "Authenticate" | "Mutation" | "Action" | "Event" };
 
-/** The server messages this spec reads, to name the queries the bytes went to. */
 type ReceivedMessage =
   | {
       type: "Transition";
@@ -125,7 +92,6 @@ test.skip(
 
 test("a cold load stays within its Convex wire budget", async ({ browser }) => {
   const measured: Record<string, WireLoad> = {};
-  // Per page and query path, so a failure names the query that grew.
   const byQuery: Record<string, Record<string, QueryWire>> = {};
   for (const probe of PAGES) {
     const context = await browser.newContext(SIGNED_IN_CONTEXT);
@@ -167,7 +133,6 @@ test("a cold load stays within its Convex wire budget", async ({ browser }) => {
           query(`(${message.type})`).resultBytes += bytes;
           return;
         }
-        // Each result as the server wrote it, less the frame around it.
         for (const change of message.modifications) {
           query(paths.get(change.queryId) ?? "(unknown query)").resultBytes +=
             Buffer.byteLength(JSON.stringify(change));
@@ -176,8 +141,7 @@ test("a cold load stays within its Convex wire budget", async ({ browser }) => {
     });
 
     await page.goto(probe.path(), { waitUntil: "load" });
-    // The HMR socket opens as the page boots, before any wait below can time
-    // out on a cold `next dev` compile.
+    // HMR opens as the page boots, so this skips before a cold dev compile times a wait out.
     if (devServer) await context.close();
     test.skip(
       devServer,
@@ -194,7 +158,6 @@ test("a cold load stays within its Convex wire budget", async ({ browser }) => {
       .toBeGreaterThanOrEqual(QUIET_MS);
     await context.close();
 
-    // A page whose socket never opened must not pass as a lighter one.
     expect(
       load.subscriptions,
       `${probe.name} subscribes to its queries on the Convex sync socket`,
@@ -243,7 +206,6 @@ test("a cold load stays within its Convex wire budget", async ({ browser }) => {
           `${path} ${wire.subscriptions}x ${wire.resultBytes} B`,
       )
       .join(", ");
-    // Soft, so one run names every page over its budget.
     expect
       .soft(
         load.subscriptions,
@@ -256,7 +218,6 @@ test("a cold load stays within its Convex wire budget", async ({ browser }) => {
         `${name}: Convex result bytes on a cold load, ${allowed.resultBytes} B + ${Math.round((BYTES_HEADROOM - 1) * 100)}% (heaviest: ${heaviest})`,
       )
       .toBeLessThanOrEqual(Math.floor(allowed.resultBytes * BYTES_HEADROOM));
-    // Lower by more than the headroom, so run-to-run noise asks for nothing.
     if (
       load.subscriptions < allowed.subscriptions ||
       load.resultBytes * BYTES_HEADROOM < allowed.resultBytes

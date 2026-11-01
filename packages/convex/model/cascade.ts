@@ -1,9 +1,4 @@
-/**
- * Shared cascade-deletion helpers so every deletion path (project/org/account
- * removal and the WorkOS `user.deleted` webhook) fully purges linked rows instead
- * of leaking orphans. These are plain helpers, not Convex functions, to avoid
- * mutation→mutation calls and to keep one source of truth for the ownership graph.
- */
+// Plain helpers, not Convex functions, so no mutation calls another mutation.
 
 import type { Doc, Id, TableNames } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
@@ -15,9 +10,6 @@ import { isManagedService } from "./planLimits";
 import { lockImage } from "./snapshotLocks";
 
 const ACCOUNT_DELETE_BATCH_SIZE = 100;
-// One bounded read per account-scoped table. Each names the index whose
-// leading field is accountId, which is a composite on the tables that also
-// list by name or status; the reads only exist to find rows to delete.
 const accountScopedReads: ReadonlyArray<
   (
     ctx: MutationCtx,
@@ -39,8 +31,7 @@ const accountScopedReads: ReadonlyArray<
       .query("agentPolicies")
       .withIndex("by_accountId_and_status", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
-  // Account-scoped rows with no stage outlive every project purge, so the
-  // account drain is the only place they are removed.
+  // Rows with no stage outlive every project purge; only this drain removes them.
   (ctx, accountId) =>
     ctx.db
       .query("accountEnvVars")
@@ -112,8 +103,7 @@ const accountScopedReads: ReadonlyArray<
         q.eq("accountId", accountId),
       )
       .take(ACCOUNT_DELETE_BATCH_SIZE),
-  // Each image keeps its lock after its row goes, so it never boots for
-  // another account as a plain provider image.
+  // The image stays locked after its row goes, so it never boots for another account.
   async (ctx, accountId) => {
     const rows = await ctx.db
       .query("sandboxSnapshots")
@@ -219,12 +209,7 @@ const accountScopedReads: ReadonlyArray<
       .take(ACCOUNT_DELETE_BATCH_SIZE),
 ];
 
-/**
- * Deletes one bounded batch of account data. Call repeatedly until it returns
- * true to avoid exceeding Convex transaction limits for high-volume accounts.
- * @param accountId account whose rows are being removed
- * @returns true once the account row itself has been deleted
- */
+// Call until it returns true: one batch per transaction keeps within Convex limits.
 export async function deleteAccountContentsBatch(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -232,10 +217,8 @@ export async function deleteAccountContentsBatch(
   const account = await ctx.db.get(accountId);
   if (!account) return true;
 
-  // Cron rows own a live schedule and go first: deleting their agents while
-  // a registration is live would let a fire race the teardown, and deleting
-  // the row alone would leave the schedule firing at a job that no longer
-  // exists.
+  // Crons go first, schedule and row together: a live schedule could fire into the
+  // teardown, and a row deleted alone would leave its schedule firing at nothing.
   const crons = await ctx.db
     .query("crons")
     .withIndex("by_accountId_and_agentId", (q) => q.eq("accountId", accountId))
@@ -298,11 +281,7 @@ export async function deleteAccountContentsBatch(
   return true;
 }
 
-/**
- * Deletes a workspace file row and its stored blob. Used by every path that
- * removes workspace files. A blob that is already gone is skipped, so one stale
- * row cannot block the deletion of a whole project, org or user.
- */
+// A blob already gone is skipped, so one stale row cannot block a whole purge.
 export async function deleteWorkspaceFile(
   ctx: MutationCtx,
   file: Doc<"workspaceFiles">,
@@ -313,16 +292,10 @@ export async function deleteWorkspaceFile(
   await ctx.db.delete(file._id);
 }
 
-/**
- * Delete a project, its stages + their contents, its crons, and its workspace
- * files (including stored blobs).
- * @param projectId the project to purge
- */
 export async function purgeProject(
   ctx: MutationCtx,
   projectId: Id<"projects">,
 ): Promise<void> {
-  // Each stage's cascade deletes its agents, and each agent its crons.
   const stages = await ctx.db
     .query("stages")
     .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
@@ -343,13 +316,6 @@ export async function purgeProject(
   await ctx.db.delete(projectId);
 }
 
-/**
- * Delete an org and everything beneath it: its projects, its account, and its
- * memberships, and cancel its subscription. Account contents can exceed one
- * transaction, so each account is drained in bounded batches by
- * `accounts.remove` after this commits.
- * @param orgId the org to purge
- */
 export async function purgeOrg(
   ctx: MutationCtx,
   orgId: Id<"orgs">,
@@ -364,6 +330,7 @@ export async function purgeOrg(
     .query("accounts")
     .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
     .collect();
+  // Account contents can outgrow one transaction, so `accounts.remove` drains them in batches.
   for (const account of accounts) {
     await ctx.scheduler.runAfter(0, internal.account.accounts.remove, {
       accountId: account._id,
@@ -376,18 +343,11 @@ export async function purgeOrg(
     .collect();
   for (const member of members) await ctx.db.delete(member._id);
 
-  // Its developers' seats go back to the owner's pool; the owner's Pro stays
-  // for their other orgs (model/orgBilling.ts).
   await releaseSeat(ctx, orgId);
   await ctx.db.delete(orgId);
 }
 
-/**
- * Purge a user: fully delete the orgs they solely own, drop their membership from
- * any shared org (ownership transfer is intentionally out of scope), then delete
- * the user row. Used by the WorkOS `user.deleted` webhook.
- * @param user the user document to purge
- */
+// Purges only orgs the user solely owns; shared orgs keep going without ownership transfer.
 export async function purgeUser(
   ctx: MutationCtx,
   user: Doc<"users">,
@@ -396,7 +356,6 @@ export async function purgeUser(
     .query("orgs")
     .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", user.authId))
     .collect();
-  // Only the managed service bills users: a deleted user stops paying for Pro.
   if (isManagedService()) {
     await ctx.scheduler.runAfter(
       0,
@@ -418,9 +377,6 @@ export async function purgeUser(
     }
   }
 
-  // Drop the user's memberships in any org that wasn't fully purged (shared orgs
-  // they owned, plus orgs owned by others), so no membership dangles on the
-  // deleted user.
   const memberships = await ctx.db
     .query("orgMembers")
     .withIndex("by_userId", (q) => q.eq("userId", user._id))
@@ -431,8 +387,6 @@ export async function purgeUser(
     await releaseSeat(ctx, membership.orgId);
   }
 
-  // Personal CLI credentials must be revoked even when their org survives
-  // because it has other members.
   const cliAuthCodes = await ctx.db
     .query("cliAuthCodes")
     .withIndex("by_authId", (q) => q.eq("authId", user.authId))
@@ -445,7 +399,7 @@ export async function purgeUser(
     .collect();
   for (const token of cliTokens) await ctx.db.delete(token._id);
 
-  // Remove personal identifiers from retained shared-org audit records.
+  // Shared orgs keep their audit records; strip this user's identity from them.
   const dashboardReveals = await ctx.db
     .query("environmentVariableReveals")
     .withIndex("by_revealedByAuthId", (q) =>

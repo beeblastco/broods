@@ -38,9 +38,9 @@ export function McpToolsTab({
   const [tools, setTools] = useState<RemoteTool[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  // Loading is derived: a refresh clears both states in its event handler.
   const isListing = tools === null && listError === null;
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- lists tools via a Convex action
   useEffect(() => {
     if (!projectId || !stageId) return;
 

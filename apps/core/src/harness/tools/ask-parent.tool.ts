@@ -1,8 +1,3 @@
-/**
- * Model-facing question from a persistent subagent to the run that started it.
- * The coordinator queues the question for the parent and routes its answer back.
- */
-
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { toolError, type AskParent } from "./utils.ts";
 

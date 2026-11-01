@@ -1,9 +1,3 @@
-/**
- * The sandbox log forwarder turns one CloudWatch subscription delivery into one
- * OTLP/HTTP push. These pin the two contracts it sits between: the stream name
- * core writes, and the attributes the collector and Loki index on.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { createHmac } from "node:crypto";
 import { gzipSync } from "node:zlib";
@@ -19,8 +13,7 @@ import {
   redact,
 } from "../../lambda/sandbox-log-forwarder.mjs";
 
-// The OTLP client line doubles as the stream-name signing key on both sides.
-// A minted credential body: 43 base64url chars.
+// A 43-char base64url credential body; KEY, the OTLP client line, also signs stream names.
 const BODY = `${"aB3-_xYz".repeat(5)}abc`;
 const KEY = "Authorization=Basic dXNlcjpwYXNz";
 const STREAM = signed("acct-1/proj/dev/0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b");
@@ -86,8 +79,7 @@ describe("parseLogStream", () => {
     });
   });
 
-  // A guest holds the VM role and can name a stream after any tenant; without
-  // core's signature the name is just an operator-visible id.
+  // A guest with the VM role can name a stream after any tenant, so only signed names count.
   it("refuses tenant labels for a stream core did not sign", () => {
     const unlabeled = (
       sandboxId: string,
@@ -155,7 +147,6 @@ describe("redact", () => {
   });
 
   it("redacts third-party credentials and leaves ids that contain a prefix", () => {
-    // Fake tokens; none is a real credential.
     const id = `task-${"0f1e2d3c".repeat(4)}`;
     expect(
       redact(

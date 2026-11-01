@@ -1,8 +1,3 @@
-/**
- * The per-run principal: how the delegation chain is built for each way a
- * run starts, and the run token that carries it into a sandbox.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   channelPrincipalChain,
@@ -31,8 +26,6 @@ describe("principal chain", () => {
     expect(
       directPrincipalChain({ cronRun: { cronId: "cron_1", runId: "run_1" } }),
     ).toEqual([{ kind: "api", keyKind: "cron" }]);
-    // No chain from the router, no cron, no stored sender: the requester is
-    // unknown, and the ledger row carries no chain rather than a guess.
     expect(directPrincipalChain({})).toBeUndefined();
     expect(
       directPrincipalChain({ replyTarget: { channelName: "slack" } }),
@@ -97,8 +90,7 @@ describe("run token", () => {
   });
 
   it("opens what it sealed, and signs the account, the agent and an expiry only", () => {
-    // A whole principal goes in; its chain, with a user id and a display
-    // name, stays out of a payload the sandbox can read.
+    // The chain (user id, display name) stays out of a payload the sandbox can read.
     const token = sealRunToken(
       runPrincipal(RUN, [
         { kind: "user", id: "U1", name: "Ada Lovelace", channel: "slack" },

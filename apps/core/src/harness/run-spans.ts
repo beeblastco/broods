@@ -1,11 +1,3 @@
-/**
- * One run's child spans under its root: model.step, tool.call and phase. Each
- * is an OTel span for Tempo and a live NATS row for the dashboard trace stream
- * that reuses the OTel ids. runAgentLoop mints the root and the trace identity
- * and feeds this from the stream callbacks; the exporters and the request
- * context both handlers share stay in shared/otel.ts.
- */
-
 import {
   trace as otelTraceApi,
   SpanStatusCode,
@@ -17,15 +9,12 @@ import type { ObservabilitySpanRow } from "../../../../packages/broods/src/obser
 import { mintSpanId, observabilityAttributes } from "../shared/otel.ts";
 
 type SpanAttributes = Record<string, string | number | boolean>;
-/** What a close adds to a span; a conditional spread may type a key as undefined. */
 type ClosingAttributes = Record<string, string | number | boolean | undefined>;
 
-/** An open model.step or tool.call span plus the ids its live NATS rows reuse. */
 export type TrackedSpan = {
   otelSpan: Span;
   otelContext: OtelContext;
   name: "model.step" | "tool.call";
-  /** What `open` kept it under; a late span has none. */
   key?: TrackedSpanKey;
   traceId: string;
   spanId: string;
@@ -34,36 +23,23 @@ export type TrackedSpan = {
   attributes: SpanAttributes;
 };
 
-/** A model.step is keyed by its step number, a tool.call by its call id. */
 export type TrackedSpanKey = number | string;
 
-/** The trace one run's spans land on; nothing in it changes during the run. */
 export interface RunSpanIdentity {
   tracer: Tracer;
   scope: Parameters<typeof observabilityAttributes>[0];
-  /** The root's ids and context: parents for every span, and the fallback when a noop tracer hands out zero ids. */
   traceId: string;
   rootSpanId: string;
   rootOtelContext: OtelContext;
-  /** The session fields every row carries. */
   session: Pick<
     ObservabilitySpanRow,
     "endpointId" | "agentId" | "conversationKey"
   >;
-  /** Publishes one row to the live trace stream; best-effort, never awaited here. */
   publish: (row: ObservabilitySpanRow) => Promise<void>;
 }
 
-/**
- * One run's open spans. The OTel span always ends before its row publishes,
- * so Tempo never trails the dashboard.
- */
+// The OTel span always ends before its row publishes, so Tempo never trails the dashboard.
 export interface RunSpanTracker {
-  /**
-   * Ends the span and publishes its closed row with `attributes` laid over the
-   * ones it opened with. A failed span records `error` as its exception; a
-   * tool.call also gets its duration and success stamped on the OTel span.
-   */
   close: (
     tracked: TrackedSpan,
     endMs: number,
@@ -71,33 +47,20 @@ export interface RunSpanTracker {
     attributes: ClosingAttributes,
     error?: string,
   ) => void;
-  /**
-   * Finalize: ends every span still open at `endMs` with the run's status,
-   * tool calls first. `stepAttributes` adds a step's attempt attributes, since
-   * a step whose every attempt failed never reaches onStepEnd.
-   */
+  // `stepAttributes`: a step whose every attempt failed never reaches onStepEnd.
   closeOrphans: (
     endMs: number,
     status: "completed" | "failed",
     error: string | undefined,
     stepAttributes: (stepNumber: number) => Record<string, string | number>,
   ) => void;
-  /** The open span kept under `key`, if any. */
   get: (key: TrackedSpanKey) => TrackedSpan | undefined;
-  /**
-   * A span whose start hook never ran: opened under the root for `close` to
-   * end at once, so it is never kept and no running row goes out.
-   */
+  // A span whose start hook never ran, for `close` to end at once: never kept, no running row.
   late: (
     name: TrackedSpan["name"],
     startMs: number,
     attributes: SpanAttributes,
   ) => TrackedSpan;
-  /**
-   * Opens a span under `parent` (the root when undefined), publishes its
-   * running row and keeps it under `key` until `close` or `closeOrphans`.
-   * A model.step is keyed by its step number, a tool.call by its call id.
-   */
   open: ((
     name: "model.step",
     key: number,
@@ -112,12 +75,6 @@ export interface RunSpanTracker {
       parent: TrackedSpan | undefined,
       attributes: SpanAttributes,
     ) => TrackedSpan);
-  /**
-   * Emits a closed phase span under the root for work outside the model steps
-   * (cold start, context prepare, compaction), so a slow turn can be
-   * attributed. A phase that calls the model, like compaction, carries its
-   * `model.*` tokens. Best-effort.
-   */
   phase: (
     phaseName: string,
     label: string,
@@ -125,20 +82,16 @@ export interface RunSpanTracker {
     endMs: number,
     extraAttributes?: Record<string, number>,
   ) => void;
-  /** Passed to the tool registry as `onToolRetry`; tallies each wait on the call's open span. */
   retry: (toolCallId: string, waitMs: number) => void;
 }
 
-/** Built once per run by runAgentLoop after it mints the root span; the stream callbacks and finalize drive it. */
 export function createRunSpanTracker(
   identity: RunSpanIdentity,
 ): RunSpanTracker {
   const scopeAttributes = observabilityAttributes(identity.scope);
-  // Child OTel spans remain open until the corresponding AI SDK finish hook.
-  // Their real OTel IDs are reused in the live NATS trace rows.
   const kept = new Map<TrackedSpanKey, TrackedSpan>();
 
-  /** The ids a span's rows carry: its OTel ones, or the root trace and a minted span id under a noop tracer. */
+  // A noop tracer hands out all-zero ids.
   const rowIds = (span: Span): { traceId: string; spanId: string } => {
     const spanContext = span.spanContext();
 
@@ -152,7 +105,6 @@ export function createRunSpanTracker(
     };
   };
 
-  /** Opens a model.step or tool.call OTel span and keeps the ids its live NATS row reuses. */
   const start = (
     name: TrackedSpan["name"],
     startTimeMs: number,
@@ -222,7 +174,7 @@ export function createRunSpanTracker(
       if (tracked.key !== undefined) kept.delete(tracked.key);
     },
     closeOrphans: (endMs, status, error, stepAttributes): void => {
-      // Tool calls close before the steps that parent them.
+      // Tool calls (string keys) close before the steps (number keys) that parent them.
       const orphans = [...kept.entries()].sort(
         ([a], [b]) =>
           Number(typeof a === "number") - Number(typeof b === "number"),
@@ -337,9 +289,7 @@ export function createRunSpanTracker(
           conversationKey: identity.session.conversationKey,
           attributes: attributes,
         });
-      } catch {
-        // Best-effort: a telemetry failure must not affect the run.
-      }
+      } catch {}
     },
     retry: (toolCallId, waitMs): void => {
       const tracked = kept.get(toolCallId);

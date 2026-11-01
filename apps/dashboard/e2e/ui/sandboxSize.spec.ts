@@ -18,7 +18,6 @@ test("an unknown sandbox size is a ? that says why on hover", async ({
     "E2B does not report a sandbox's disk size.",
   );
 
-  // A row written before sizes were verified shows no guess.
   await expect(section.locator('[data-provider="lambda"]')).not.toContainText(
     "vCPU",
   );

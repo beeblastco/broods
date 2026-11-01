@@ -1,9 +1,3 @@
-/**
- * Account management HTTP API: account create and delete, the mcp-service rpc
- * and sandbox lifecycle verbs. Other account CRUD lives in the Convex config
- * plane.
- */
-
 import { LIVE_TERMINAL_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import { isUnreachableError } from "../shared/errors.ts";
 import {
@@ -72,7 +66,7 @@ import {
   type CoreRequest,
 } from "../shared/http.ts";
 import { logDebug, logError, logWarn } from "../shared/log.ts";
-import { isPlainObject } from "../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
 import { getStorage } from "../shared/storage.ts";
@@ -101,9 +95,6 @@ import {
   deleteAccountBundles,
 } from "./cleanup.ts";
 
-// Verbs that run or wake a machine. The executor below is built from the
-// stored config with no control plane, so the budget check its wrapper does
-// for agent runs never fires here; the handler checks instead.
 const COMPUTE_ACTIONS: ReadonlySet<SandboxLifecycleAction> = new Set([
   "exec",
   "resume",
@@ -127,7 +118,6 @@ interface SandboxAuditDetails {
   truncated?: boolean;
 }
 
-/** Everything one lifecycle action needs, resolved once by the router. */
 interface SandboxLifecycleContext {
   accountId: string;
   audit: (
@@ -137,44 +127,31 @@ interface SandboxLifecycleContext {
   body: Record<string, unknown>;
   config: SandboxConfig;
   executor: SandboxExecutor;
-  /** The sandbox config's name, shown in a Cloudflare terminal's prompt. */
   name: string;
   provider: SandboxProvider;
   ref: { reservationKey: string };
   reservationKey: string;
-  /** The sandbox config's stage, or the account; a snapshot is locked to it. */
   scope: SandboxScope;
 }
 
-/** Thrown by requireAccountAuth for a principal that gets a 401. */
 class AccountEndpointUnauthorizedError extends Error {
   constructor() {
     super("Unauthorized");
   }
 }
 
-/**
- * A sandbox provider call that never reached the provider (answered as 502).
- * The message stays fixed so provider hosts never leak to the caller; the
- * socket error is kept as `cause` and already recorded in the audit row.
- */
+// A fixed message so provider hosts never leak to the caller; the audit row has the cause.
 class SandboxProviderUnreachableError extends Error {
   constructor(provider: SandboxProvider, cause: unknown) {
     super(`Sandbox provider "${provider}" is unreachable`, { cause: cause });
   }
 }
 
-/** Entry point for account-manage requests, called from src/server.ts. */
 export async function handler(request: CoreRequest): Promise<Response> {
-  // Request-private observability scope so concurrent tenants in the shared
-  // container process cannot clobber each other's log redaction/routing.
+  // Concurrent tenants share this process; each request needs its own log redaction.
   return runWithObservabilityScope(() => handleAccountRequest(request));
 }
 
-/**
- * Routes one account-manage request (health, self or admin account delete,
- * mcp-service rpc, sandbox verbs, account create) behind bearer auth.
- */
 async function handleAccountRequest(request: CoreRequest): Promise<Response> {
   const method = request.method;
   const rawPath = normalizePath(request.path);
@@ -193,9 +170,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
     const isAccountSelfDelete =
       method === "DELETE" && rawPath === "/v1/account";
     const auth = await resolveBearerAuth(headers, {
-      // Cleanup can fail after the account is disabled. Permit only the
-      // owning secret to retry self-deletion; all normal ingress remains
-      // subject to the active-account requirement.
+      // Cleanup can fail after the account is disabled; only its own secret may retry.
       allowDisabledAccountSecret: isAccountSelfDelete,
     });
     if (!auth) {
@@ -212,9 +187,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
 
       return deleteAccountResponse(account);
     }
-
-    // Other account CRUD lives in the Convex config plane
-    // (packages/convex/config/http.ts); Traefik routes those paths there.
 
     const mcpServiceResponse = await handleMcpServiceRoute(
       auth,
@@ -280,11 +252,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
   }
 }
 
-/**
- * Dashboard explorer + save-time probe, via the Convex mcpService actions
- * (service token scoped by X-Account-Id, like the sandbox verbs). Null when
- * the request is not an mcp-service route.
- */
 async function handleMcpServiceRoute(
   auth: AuthContext,
   method: string,
@@ -292,8 +259,7 @@ async function handleMcpServiceRoute(
   request: CoreRequest,
 ): Promise<Response | null> {
   if (method !== "POST" || rawPath !== "/v1/mcp-service/rpc") return null;
-  // Only the config plane calls this, with the service token, which is never
-  // valid on a request that came through the edge.
+  // Config plane only: the service token is never valid on a request through the edge.
   const token = extractBearerToken(request.headers.authorization);
   if (
     auth.kind !== "account" ||
@@ -306,11 +272,6 @@ async function handleMcpServiceRoute(
   return await handleMcpServiceRpc(auth.account.accountId, request);
 }
 
-/**
- * Auth gate for the sandbox lifecycle verbs: loads the sandbox config, then a
- * role session must be allowed `sandboxes:write` on it by its own policy,
- * which also holds a stage-pinned role to the record's stage.
- */
 async function handleSandboxLifecycleRoute(
   auth: AuthContext,
   method: string,
@@ -318,8 +279,6 @@ async function handleSandboxLifecycleRoute(
   action: SandboxLifecycleAction,
   request: CoreRequest,
 ): Promise<Response> {
-  // Driven by the dashboard via the sandboxPublic Convex actions, which
-  // authenticate with the shared service token.
   const accountId =
     auth.kind === "role"
       ? auth.account.accountId
@@ -332,8 +291,7 @@ async function handleSandboxLifecycleRoute(
     accountId,
     sandboxId,
   );
-  // A role is judged before a missing record answers 404, so the status never
-  // tells it which ids exist where it may not act.
+  // Judge the role before any 404, so the status never reveals ids it may not act on.
   const denial =
     auth.kind === "role"
       ? roleDenial(rolePrincipal(auth.role), method, {
@@ -351,10 +309,6 @@ async function handleSandboxLifecycleRoute(
   return await handleSandboxLifecycle(accountId, record, action, request);
 }
 
-/**
- * Checks reservation ownership and budget for a loaded sandbox config, then
- * dispatches the lifecycle action to its handler below.
- */
 async function handleSandboxLifecycle(
   accountId: string,
   record: SandboxConfigRecord,
@@ -379,9 +333,7 @@ async function handleSandboxLifecycle(
   if (!reservationKey) {
     return errorResponse(400, "reservationKey is required");
   }
-  // The registry row core wrote when it reserved the instance is the ownership record.
-  // Deriving it from the config instead would strand a live sandbox the moment that
-  // config changes (a CLI sync dropping `persistent`, a new `options.reservationKey`).
+  // The registry row owns it: a key derived from config strands a live sandbox once it changes.
   if (
     !(await sandboxInstanceIsControllable(accountId, sandboxId, reservationKey))
   ) {
@@ -419,8 +371,7 @@ async function handleSandboxLifecycle(
     body: body,
     config: record.config,
     name: record.name,
-    // The control plane names the record's stage, so a machine this action
-    // creates may boot the record's own snapshot.
+    // Names the record's stage, so a machine created here may boot the record's own snapshot.
     executor: createSandboxExecutor({
       ...record.config,
       controlPlane: sandboxControlPlane(accountId, record),
@@ -440,11 +391,6 @@ async function handleSandboxLifecycle(
   return terminateSandbox(context);
 }
 
-/**
- * Runs one provider call, auditing and rethrowing its failure. A socket-level
- * failure is rethrown as SandboxProviderUnreachableError so the caller sees a
- * 502 naming the provider instead of a 400.
- */
 async function auditedSandboxCall<T>(
   context: SandboxLifecycleContext,
   call: () => Promise<T>,
@@ -459,10 +405,6 @@ async function auditedSandboxCall<T>(
   }
 }
 
-/**
- * The `exec` verb: runs code on the reserved instance with bounded timeout and
- * output, for the dashboard sandbox console.
- */
 async function execSandbox(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
@@ -523,16 +465,9 @@ async function execSandbox(
   });
 }
 
-/**
- * The `terminal` verb: resumes the instance if needed and seals a terminal
- * ticket the gateway opens as a PTY or MicroVM shell WebSocket.
- */
 async function openSandboxTerminal(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
-  // workdir exposes an in-guest PTY WebSocket; AWS MicroVMs expose the native
-  // shell endpoint (SHELL_INGRESS); the cloudflare bridge opens a PTY in its
-  // Container. Other providers keep the bounded `exec` terminal.
   if (!LIVE_TERMINAL_SANDBOX_PROVIDERS.has(context.provider)) {
     return unsupportedSandboxAction(context, "a live terminal");
   }
@@ -550,8 +485,7 @@ async function openSandboxTerminal(
       "No reserved sandbox instance for this reservation key",
     );
   }
-  // The PTY endpoint requires a running guest, so opening a terminal
-  // resumes a suspended instance the same way an exec would.
+  // The PTY needs a running guest.
   if (context.executor.getInstanceInfo && context.executor.resume) {
     const info = await context.executor.getInstanceInfo(context.ref);
     if (info?.state === "suspended") {
@@ -570,15 +504,13 @@ async function openSandboxTerminal(
     authorization: string;
     authorizationHeader?: string;
   };
-  // Set when the bearer itself expires, so the ticket expires with it.
   let bearerExpiresAt: number | undefined;
   if (context.provider === "lambda") {
     try {
       const shell = await microvmShellConnection(externalId);
       target = { ...shell, authorizationHeader: MICROVM_SHELL_AUTH_HEADER };
     } catch (error) {
-      // Most likely a VM launched before SHELL_INGRESS was attached at
-      // RunMicrovm; connectors cannot be added to a live VM.
+      // Likely launched before SHELL_INGRESS: connectors cannot be added to a live VM.
       const message = errorText(error);
       await context.audit("error", { errorMessage: message });
 
@@ -604,8 +536,7 @@ async function openSandboxTerminal(
     }
     const { baseURL, apiKey } = cloudflareConnection();
     bearerExpiresAt = Date.now() + TERMINAL_TICKET_TTL_MS;
-    // A token for this one terminal, so the gateway never holds the bridge
-    // key that reaches every sandbox.
+    // A per-terminal token, so the gateway never holds the bridge key to every sandbox.
     target = {
       url: `${baseURL.replace(/^http/, "ws")}/v1/sandboxes/${externalId}/terminal?name=${encodeURIComponent(context.name)}`,
       authorization: `Bearer ${await signTerminalToken(
@@ -635,10 +566,6 @@ async function openSandboxTerminal(
   });
 }
 
-/**
- * The `refresh` verb: reads the provider's instance state into the Convex
- * mirror, dropping the row when the instance is gone.
- */
 async function refreshSandboxStatus(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
@@ -655,14 +582,11 @@ async function refreshSandboxStatus(
     return jsonResponse(200, { status: "terminated" });
   }
   const status = info.state === "unknown" ? "error" : info.state;
-  // An unrecognised state lands as `error` too; say so rather than show a bare badge.
   const errorMessage =
     info.errorMessage ??
     (info.state === "unknown"
       ? "provider reported an unrecognised state"
       : undefined);
-  // A refresh reads the provider's state; it does not use the sandbox, and
-  // it earns an activity row only when the provider disagreed with the mirror.
   const changed = await setSandboxInstanceStatus(
     context.accountId,
     context.reservationKey,
@@ -679,12 +603,6 @@ async function refreshSandboxStatus(
   return jsonResponse(200, { status: status, externalId: info.externalId });
 }
 
-/**
- * The `snapshot` verb: snapshots the instance and saves it as a named account
- * sandbox snapshot. A lambda snapshot is an image build, saved as building
- * until core's snapshot build watcher sees it land. Its base image is the
- * variant the sandbox ran, so pinning it keeps that image's tools.
- */
 async function snapshotSandbox(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
@@ -698,13 +616,12 @@ async function snapshotSandbox(
 
     return errorResponse(400, "name is required");
   }
-  // The assertion is safe under the guard above; calling through the executor
-  // keeps its `this` binding.
   const result = await auditedSandboxCall(context, async () =>
     context.executor.snapshot!(context.ref),
   );
   const externalImageId = result.externalImageId ?? result.snapshotId;
   const status = result.status ?? "active";
+  // The variant the sandbox ran, so a sandbox pinned to this snapshot keeps that image's tools.
   const baseImage =
     context.provider === "lambda"
       ? await lambdaBaseImage(context)
@@ -720,15 +637,13 @@ async function snapshotSandbox(
       status: status,
     });
   } catch (err) {
-    // Only a refusal (a name another provider's snapshot holds) is the caller's.
     const refusal = clientErrorData(err);
     if (!refusal) throw err;
     await context.audit("error", { errorMessage: refusal.message });
 
     return errorResponse(CLIENT_ERROR_STATUS[refusal.code], refusal.message);
   }
-  // A Vercel capture stops the instance, but its next call resumes it on its
-  // own, so the row stays running rather than offering a Resume Vercel lacks.
+  // Running even after a Vercel capture stops it: Vercel lacks Resume, its next call resumes it.
   await context.audit("ok", { status: "running" });
 
   return jsonResponse(200, {
@@ -738,10 +653,6 @@ async function snapshotSandbox(
   });
 }
 
-/**
- * The `suspend` and `resume` verbs: calls the provider and records the new
- * instance status.
- */
 async function suspendOrResumeSandbox(
   context: SandboxLifecycleContext,
   action: "suspend" | "resume",
@@ -757,8 +668,7 @@ async function suspendOrResumeSandbox(
     else await context.executor.resume?.(context.ref);
   });
   const status = action === "suspend" ? "suspended" : "running";
-  // Queued behind the machine's in-flight exec upserts, or one of those could
-  // land after the suspend and mark a suspended machine running.
+  // Queued behind in-flight exec upserts, or one could land after and mark it running.
   const externalId = await getSandboxExternalId(
     context.provider,
     context.reservationKey,
@@ -771,18 +681,13 @@ async function suspendOrResumeSandbox(
   return jsonResponse(200, { status: status });
 }
 
-/**
- * The `terminate` verb: releases the instance and removes its reservation and
- * registry rows.
- */
 async function terminateSandbox(
   context: SandboxLifecycleContext,
 ): Promise<Response> {
   if (!context.executor.release) {
     return unsupportedSandboxAction(context, "terminate");
   }
-  // Read before the reservation goes: the registry row is removed behind the
-  // machine's in-flight exec upserts, or one could recreate it for a dead machine.
+  // Read before the reservation goes, to queue behind exec upserts that could recreate the row.
   const externalId = await getSandboxExternalId(
     context.provider,
     context.reservationKey,
@@ -790,9 +695,6 @@ async function terminateSandbox(
   await auditedSandboxCall(context, async () => {
     await context.executor.release?.(context.ref);
   });
-  // The executor was built from the stored config and carries no control-plane
-  // account, so its own reservation delete is a no-op. Drop the row here like the
-  // sweeper does, or the next run reconnects to the deleted machine.
   await deleteSandboxInstance(
     context.provider,
     context.reservationKey,
@@ -806,7 +708,6 @@ async function terminateSandbox(
   return jsonResponse(200, { status: "terminated" });
 }
 
-/** Audits and answers 409 for a verb the provider does not support. */
 async function unsupportedSandboxAction(
   context: SandboxLifecycleContext,
   capability: string,
@@ -817,10 +718,6 @@ async function unsupportedSandboxAction(
   return errorResponse(409, message);
 }
 
-/**
- * Disables the account, sweeps all its data and storage, then removes it.
- * Serves both DELETE /v1/account and admin DELETE /v1/accounts/{id}.
- */
 async function deleteAccountResponse(
   account: Extract<AuthContext, { kind: "account" }>["account"],
 ): Promise<Response> {
@@ -834,8 +731,7 @@ async function deleteAccountResponse(
     });
   }
 
-  // Cron rows and their registered schedules go with the Convex account
-  // cascade (deleteAccountContentsBatch). Nothing to sweep from core.
+  // Cron rows and their schedules go with the Convex account cascade.
   const [
     runtime,
     agentsDeleted,
@@ -872,10 +768,6 @@ async function deleteAccountResponse(
   });
 }
 
-/**
- * Parses an optional exec limit from the request body, falling back to the
- * default when missing or outside 1..max.
- */
 function boundedInteger(
   value: unknown,
   defaultValue: number,
@@ -892,10 +784,6 @@ function boundedInteger(
   return parsed;
 }
 
-/**
- * Maps an error thrown in handleAccountRequest to its response: 401
- * unauthorized, 502 unreachable provider, else 400.
- */
 function errorResponseForError(err: unknown): Response {
   if (err instanceof AccountEndpointUnauthorizedError) {
     return errorResponse(401, err.message);
@@ -910,11 +798,7 @@ function errorResponseForError(err: unknown): Response {
   );
 }
 
-/**
- * Refuses a stored config that still sets an image option `snapshot` replaced.
- * The refusal names the migration step; any other error is logged and answered
- * generically so its text stays out of the response.
- */
+// Any error but the refusal is answered generically, so its text stays out of the response.
 function retiredImageOptionsRefusal(
   accountId: string,
   sandboxId: string,
@@ -937,15 +821,10 @@ function retiredImageOptionsRefusal(
   }
 }
 
-/** An error's message, or the value as a string, for logs and audit rows. */
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/**
- * The image variant a lambda snapshot is built from: the config's `image`, else
- * the variant of the snapshot it booted from, else the default image.
- */
 async function lambdaBaseImage(
   context: SandboxLifecycleContext,
 ): Promise<string> {
@@ -957,10 +836,6 @@ async function lambdaBaseImage(
   return pinned?.accountId === context.accountId ? pinned.baseImage : "default";
 }
 
-/**
- * Narrows auth to an account principal for account endpoints, throwing for
- * role, deployment, admin, or a disallowed service token.
- */
 function requireAccountAuth(
   auth: AuthContext,
   options: { allowServiceToken?: boolean } = {},
@@ -982,10 +857,6 @@ function requireAccountAuth(
   return auth.account;
 }
 
-/**
- * Normalizes the request body's `actor` into the SandboxAuditActor recorded on
- * each sandbox audit event.
- */
 function sandboxAuditActor(value: unknown): SandboxAuditActor {
   if (!isPlainObject(value)) {
     return { source: "unknown" };
@@ -1011,7 +882,6 @@ function sandboxAuditActor(value: unknown): SandboxAuditActor {
   };
 }
 
-/** The public account fields returned by POST /v1/accounts. */
 function toCreateAccountResponse(
   account: AccountRecord,
 ): Record<string, unknown> {

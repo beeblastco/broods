@@ -1,8 +1,3 @@
-/**
- * Harness-managed skill loader tool.
- * Keep the model-facing tool schema here; prompt loading lives in harness skills.
- */
-
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { logError, logInfo } from "../../shared/log.ts";
 import type { Session } from "../session.ts";

@@ -9,7 +9,6 @@ import { stubPublicDns } from "./helpers/http.ts";
 const ORIGINAL_FETCH = globalThis.fetch;
 const TENANT_API_URL = "https://api.tenant.example";
 
-// Every call a channel makes to a tenant `apiUrl` with the bot's credentials.
 const TENANT_CALLS: Array<{
   name: string;
   send: (actions: () => ChannelActions) => Promise<void>;
@@ -84,8 +83,9 @@ afterEach((): void => {
 });
 
 describe("tenant channel apiUrl", () => {
-  for (const call of TENANT_CALLS) {
-    it(`${call.name} refuses a host that resolves to a private address`, async (): Promise<void> => {
+  it.each(TENANT_CALLS)(
+    "$name refuses a host that resolves to a private address",
+    async (call): Promise<void> => {
       const restoreDns = stubPublicDns("10.0.0.5");
       let requests = 0;
       globalThis.fetch = Object.assign(
@@ -103,12 +103,13 @@ describe("tenant channel apiUrl", () => {
       }
 
       expect(requests).toBe(0);
-    });
+    },
+  );
 
-    it(`${call.name} refuses a redirect to a private address`, async (): Promise<void> => {
-      // The tenant host passes the address check, then redirects inward, to
-      // loopback. The pinned request reaches this server for real, so a
-      // followed redirect would show up as a second path.
+  it.each(TENANT_CALLS)(
+    "$name refuses a redirect to a private address",
+    async (call): Promise<void> => {
+      // Passes the address check, then redirects to loopback: a followed one shows a second path.
       const paths: string[] = [];
       const server = Bun.serve({
         port: 0,
@@ -146,8 +147,8 @@ describe("tenant channel apiUrl", () => {
 
       expect(paths).toHaveLength(1);
       expect(paths).not.toContain("/internal");
-    });
-  }
+    },
+  );
 });
 
 function discordActions(): ChannelActions {
@@ -173,8 +174,6 @@ function message(
   };
 }
 
-// The error the send failed with. It must fail: a send that went through is
-// the bug these tests exist to catch.
 async function refusal(call: (typeof TENANT_CALLS)[number]): Promise<Error> {
   const outcome = await call.send(call.actions).then(
     (): Error => new Error("send went through"),

@@ -1,9 +1,3 @@
-/**
- * The `chatgpt` provider against a stubbed OpenAI: the connection's token rides
- * every request, plan usage only ever sees a stored-nothing stream, and a
- * rotated refresh token is saved back exactly once.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { generateText, streamText } from "ai";
 import { resetConnectionsForTests } from "../src/harness/connections.ts";
@@ -64,7 +58,6 @@ const responseEvents = [
   },
 ];
 
-/** The request body fields these tests assert on. */
 interface SentBody {
   stream?: boolean;
   temperature?: unknown;
@@ -306,7 +299,6 @@ describe("chatgpt provider", () => {
   });
 });
 
-/** The account's agent model on the chatgpt provider. */
 function chatgptModel(): ReturnType<typeof resolveConfiguredModel> {
   return resolveConfiguredModel(
     { model: { provider: "chatgpt", modelId: "gpt-5.5" } },
@@ -314,7 +306,6 @@ function chatgptModel(): ReturnType<typeof resolveConfiguredModel> {
   );
 }
 
-/** A stored ChatGPT connection, valid for an hour unless overridden. */
 function credential(
   overrides: Partial<StoredConnection> = {},
 ): StoredConnection {

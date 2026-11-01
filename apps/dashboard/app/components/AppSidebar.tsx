@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * The signed-in sidebar, under the header: the current scope's sections, the
- * open section's tabs, and the account at the foot. Inside a project it walks
- * the project's sections, everywhere else the account's. Collapsed, it is an
- * icon rail that opens over the page while the pointer is on it.
- */
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import {
   Sidebar,
@@ -62,8 +56,7 @@ export function AppSidebar(): React.JSX.Element {
       : null;
   const stageParam = searchParams.get("stage");
 
-  // Only the URL's own `?stage=`, never the derived default, so each href is
-  // stable from the first render and no prefetch wave is thrown away.
+  // The URL's own `?stage=`, not the derived default, so hrefs are stable from first render.
   const itemHref = (item: NavItem): string =>
     projectId ? navHref(projectId, item.segment, stageParam) : item.segment;
 
@@ -75,8 +68,7 @@ export function AppSidebar(): React.JSX.Element {
   );
   useShortcut("sidebar.toggle", toggleSidebar);
 
-  // On a phone the sidebar is a sheet over the page: close it once a link,
-  // here or in the account menu, has moved to another page or tab.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- router: close the phone sheet
   useEffect(() => {
     setOpenMobile(false);
   }, [pathname, searchParams, setOpenMobile]);
@@ -97,8 +89,7 @@ export function AppSidebar(): React.JSX.Element {
                 <SidebarMenuItem key={item.segment}>
                   <SidebarMenuButton
                     isActive={isActive && item.tabs.length === 0}
-                    // Prefetched on intent, not on viewport entry, which
-                    // loaded every route's chunks and data after each cold load.
+                    // Prefetch on intent: viewport prefetch loaded every route after a cold load.
                     render={
                       <Link
                         href={itemHref(item)}

@@ -1,11 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * A disabled account is read-only on the direct Convex surface, as it is on
- * the config HTTP surface: no skill writes, upload URLs, workspace storage
- * changes, MCP calls, crons, connections, access, project, stage, agent, key,
- * env, policy, webhook, canvas or workspace file changes, removals included.
- * Reads stay open, and deleting the org stays open.
- */
 
 import cronsComponent from "@convex-dev/crons/test";
 import workosTest from "@convex-dev/workos-authkit/test";
@@ -29,8 +22,7 @@ const storageCalls = vi.hoisted(() => ({
   writeObject: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Only the external S3 boundary is replaced; auth, key lookup, validation
-// and every database write stay real.
+// Only the S3 boundary is mocked; auth, key lookup, validation and writes stay real.
 vi.mock("../model/s3", async (importOriginal) => {
   const original = await importOriginal<typeof import("../model/s3")>();
 
@@ -59,7 +51,6 @@ test("a disabled account cannot write skills or mint upload URLs", async (): Pro
     content: "Fixture instructions.",
   };
 
-  // While active, the same key and caller write.
   expect(
     await caller.mutation(api.workspace.files.generateUploadUrl, {}),
   ).toBeTruthy();
@@ -105,7 +96,6 @@ test("a disabled account cannot write skills or mint upload URLs", async (): Pro
     }),
   ).rejects.toThrow("Invalid Bearer token");
 
-  // Anonymous callers and unknown keys stay refused.
   await expect(
     t.action(api.skillsPublic.createFromJson, skill),
   ).rejects.toThrow("not authenticated");
@@ -266,7 +256,6 @@ test("a disabled account cannot change or remove project config, and can still r
   const variable = { variableId: ids.variableId };
   const file = { fileId: ids.fileId };
 
-  // While active, the same caller writes.
   await caller.mutation(api.project.update, { ...project, name: "renamed" });
   await disable(t, accountId);
 
@@ -375,7 +364,6 @@ test("a disabled account cannot change or remove project config, and can still r
     name: "renamed",
   });
 
-  // Reads stay open so the owner can still see what the account holds.
   expect(await caller.query(api.agent.config.getById, config)).toMatchObject({
     _id: ids.configId,
     name: "planner",
@@ -471,20 +459,17 @@ test("a disabled account cannot change crons, connections or access, and can sti
   ];
   for (const call of refused) await expect(call()).rejects.toThrow(NOT_ACTIVE);
 
-  // Reads stay open so the dashboard can show the account and its state.
   expect(await caller.query(api.org.orgs.getActiveAccount, {})).toMatchObject({
     accountId: accountId,
     status: "disabled",
   });
 
-  // The owner can still delete the org, which takes the account with it.
   vi.useFakeTimers();
   await caller.mutation(api.org.orgs.remove, { orgId: orgId });
   await t.finishAllScheduledFunctions(() => vi.runAllTimers());
   expect(await t.run(async (ctx) => ctx.db.get(accountId))).toBeNull();
 });
 
-/** A signed-in owner of an org whose account is active until `disable`. */
 async function setup(): Promise<{
   t: T;
   caller: ReturnType<T["withIdentity"]>;
@@ -528,7 +513,7 @@ async function seedProject(t: T, orgId: Id<"orgs">): Promise<Id<"projects">> {
   );
 }
 
-/** Seed AuthKit's verified user projection without replacing its getAuthUser implementation. */
+// Seeds through AuthKit's webhook so its real getAuthUser finds the user.
 async function seedAuthUser(t: T): Promise<void> {
   const now = new Date().toISOString();
   await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {

@@ -1,15 +1,7 @@
-/**
- * Example: a workspace-backed self-hosted `sandbox` (workdir) via declarative broods
- * resources. Demonstrates the shared S3 workspace mount: the file tools
- * (write/read/edit/glob/grep) operate on workspace-relative paths and the files persist
- * across calls, even though the compute container is ephemeral.
- */
-
 import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-// The demo's agents require a signed user token beside the runtime key.
-// Your backend signs one per signed-in user; here one demo user stands in.
+// These agents need a signed user token; your backend signs one per signed-in user.
 const client = new BroodsClient({
   userToken: () => signUserToken({ userId: "demo-user" }),
 });

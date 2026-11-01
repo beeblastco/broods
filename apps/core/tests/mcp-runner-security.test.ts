@@ -1,11 +1,3 @@
-/**
- * Hosted-MCP runner handler regressions, driven under real Node (handler.mjs
- * spawns process.execPath). Containment: a warm execution environment is reused
- * across calls (and across accounts when tenant isolation is off), so a run
- * must leave nothing on disk and no live process behind. Delivery: the terminal
- * frame must arrive even under backpressure or a leaked grandchild pipe.
- */
-
 import { describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -24,8 +16,7 @@ interface HostedResponse {
   body: string;
 }
 
-// cpuUsec rides the terminal frame for usage metering and is inherently
-// variable, so it is dropped here and the frame bodies stay exactly assertable.
+// cpuUsec varies run to run, so it is dropped to keep frame bodies exactly assertable.
 function parseFrames(
   stdout: string | undefined,
 ): Array<Record<string, unknown> & { t: string }> {
@@ -43,7 +34,6 @@ function parseFrames(
     });
 }
 
-// The single request's tagged final frame; the batch then closes on `end`.
 function finalBody(stdout: string | undefined): unknown {
   const frames = parseFrames(stdout) as Array<{
     t: string;
@@ -56,8 +46,7 @@ function finalBody(stdout: string | undefined): unknown {
   return JSON.parse(finals[0]!.result!.body);
 }
 
-// Signal 0 only asks whether the pid exists. A killed process its parent has not
-// reaped yet still does, as a zombie (stat `Z`), so that counts as gone too.
+// Signal 0 only checks the pid exists; an unreaped zombie (stat `Z`) passes, so it counts as gone.
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -69,15 +58,12 @@ function isAlive(pid: number): boolean {
   return !stat.toString().trim().startsWith("Z");
 }
 
-// A bundle the runner will accept: sha256 must match what the child recomputes.
 async function invokeHandler(
   bundle: string,
   parentEnv: Record<string, string> = {},
-  // Read the response slowly against a small buffer to force the handler's
-  // backpressure path, where a paused stdout can outlive the child's exit.
+  // Slow reads against a small buffer force the handler's backpressure path.
   throttleMs = 0,
-  // Address the bundle the way core does in production, a presigned GET the
-  // handler resolves, instead of inlining the bytes in the invoke event.
+  // As core does in production: a presigned GET the handler resolves, not inline bytes.
   bundleAddress?: "served" | { url: string },
 ): Promise<{ stdout?: string; arrivalsMs?: number[] }> {
   const dir = await mkdtemp(join(tmpdir(), "broods-handler-drv-"));
@@ -102,9 +88,7 @@ async function invokeHandler(
     await writeFile(
       driver,
       [
-        // The handler streams NDJSON into a response stream instead of returning
-        // it, so the driver collects the stream and re-emits it as { stdout },
-        // timestamping each write so a test can tell streaming from buffering.
+        // The driver collects the handler's NDJSON stream, timestamping each write.
         `import { createHash } from "node:crypto";`,
         `import { PassThrough } from "node:stream";`,
         `import { handler } from ${JSON.stringify(handlerPath)};`,
@@ -160,8 +144,7 @@ async function invokeHandler(
 
 describe("mcp-runner containment", () => {
   it("never writes the tenant bundle to disk", async () => {
-    // The bundle hunts its own source through TMPDIR/HOME. Nothing should match:
-    // /tmp survives in a warm sandbox, so a bundle on disk outlives its run.
+    // /tmp survives in a warm sandbox, so a bundle on disk would outlive its run.
     const marker = "b7f2b1e4c0a94f8e_bundle_marker";
     const bundle = [
       `import { readdirSync, readFileSync } from "node:fs";`,
@@ -212,8 +195,7 @@ describe("mcp-runner containment", () => {
   }, 30_000);
 
   it("reaps a process the tenant bundle leaves running", async () => {
-    // A survivor in a warm sandbox outlives the invocation and sees the next
-    // tenant's run. handler.mjs kills the child's whole process group.
+    // A survivor in a warm sandbox would see the next tenant's run: the whole group is killed.
     const dir = await mkdtemp(join(tmpdir(), "broods-survivor-"));
     try {
       const marker = join(dir, "survived.txt");
@@ -250,8 +232,7 @@ describe("mcp-runner containment", () => {
 
 describe("mcp-runner bundle addressing", () => {
   it("resolves a bundle the event only addresses by URL", async () => {
-    // Core spends its 6 MB invoke quota on a presigned GET rather than the
-    // bytes; the handler fetches so the per-invocation child does not.
+    // Core spends its 6 MB invoke quota on a presigned GET rather than the bytes.
     const bundle = `export default () => new Response(JSON.stringify({ ok: true }));`;
 
     const result = await invokeHandler(bundle, {}, 0, "served");
@@ -260,8 +241,7 @@ describe("mcp-runner bundle addressing", () => {
   }, 30_000);
 
   it("fails loudly when the bundle URL is refused", async () => {
-    // What an expired presigned URL looks like: the run has to end on an error
-    // frame rather than hang or report an empty result.
+    // An expired presigned URL must end on an error frame, not hang or report an empty result.
     const result = await invokeHandler("export default {};", {}, 0, {
       url: "https://example.invalid/expired-bundle.mjs",
     });
@@ -277,8 +257,7 @@ describe("mcp-runner bundle addressing", () => {
 
 describe("mcp-runner response delivery", () => {
   it("loses nothing when the reader is slower than the response", async () => {
-    // Backpressure pauses child stdout, and a paused pipe still holds data when
-    // the child exits, so finalizing on "exit" silently truncates the run.
+    // A paused pipe still holds data when the child exits, so finalizing on "exit" truncates.
     const bundle = [
       `export default () => new Response(JSON.stringify({`,
       `  pad: "x".repeat(600_000),`,
@@ -292,13 +271,11 @@ describe("mcp-runner response delivery", () => {
   }, 30_000);
 
   it("settles promptly when a grandchild inherits the stdout pipe", async () => {
-    // The grandchild holds the pipe's write end open, so stdout never ends on
-    // its own. Waiting for it without reaping the group first would stall the
-    // run until the 30s kill, turning a fast request into a timeout.
+    // The grandchild holds the stdout write end open: unless the group is reaped first, the run
+    // waits for the 30s kill.
     const bundle = [
       `import { spawn } from "node:child_process";`,
       `export default () => {`,
-      // inherit: the grandchild gets this process's stdout, not a fresh pipe.
       `  spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)"], {`,
       `    stdio: "inherit",`,
       `  });`,

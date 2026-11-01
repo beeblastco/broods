@@ -1,8 +1,3 @@
-/**
- * A turn that dies before the agent loop opens its root span still leaves a
- * failed task on the trace id its log lines carry, so "View trace" finds it.
- */
-
 import { afterEach, beforeEach, expect, it } from "bun:test";
 import {
   context as otelContextApi,

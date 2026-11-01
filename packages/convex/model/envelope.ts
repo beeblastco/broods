@@ -1,24 +1,6 @@
-/**
- * Envelope encryption for account secrets, the one codec core and the config
- * plane share. Every account owns a data encryption key (DEK) stored wrapped
- * under the key encryption key (KEK) derived from
- * `ACCOUNT_CONFIG_ENCRYPTION_SECRET`. A row's blob is AES-256-GCM under the
- * DEK with `${accountId}:${table}:${field}` as additional data, so a
- * ciphertext cannot be moved to another tenant, row kind or column.
- *
- * Web Crypto by default: Convex mutations run in a V8 isolate without
- * `node:crypto`. The cipher itself is an `AeadPrimitive`, so core passes the
- * synchronous `node:crypto` one and keeps a per-turn decrypt off a thread hop;
- * the format, the additional data and the key ids stay in this one file.
- * Key rows live in `accountKeys`; the Convex side reads them in
- * `./accountKeys.ts`, core caches them in
- * `apps/core/src/shared/convex/account-keys.ts`.
- */
-
 import { hexFromBytes, sha256Hex } from "./accountSecrets";
 import { isPlainObject } from "./objects";
 
-/** Marks a blob encrypted under an account key; anything else is refused. */
 const BLOB_VERSION_PREFIX = "v2:";
 const DEK_BYTES = 32;
 const GCM_IV_BYTES = 12;
@@ -28,12 +10,7 @@ const KEK_ID_HEX_LENGTH = 8;
 const TEXT_DECODER = new TextDecoder();
 const TEXT_ENCODER = new TextEncoder();
 
-/**
- * Every encrypted column. The scope type, the table list and the
- * re-encryption walk all derive from this one list, so nothing can be
- * encrypted under a scope that a rotation does not rewrite.
- * `scope` is what binds a blob to its column through the GCM additional data.
- */
+// Scopes, tables and the rotation walk derive from this list, so a rotation rewrites every scope.
 export const ENVELOPE_COLUMNS = [
   {
     table: "agents",
@@ -121,16 +98,14 @@ export const ENVELOPE_COLUMNS = [
   },
 ] as const;
 
-/** Every table with an encrypted column, in the order a full walk visits them. */
 export const ENVELOPE_TABLES = [
   ...new Set(ENVELOPE_COLUMNS.map((column) => column.table)),
 ];
 
-/** Keys Web Crypto has imported, remembered per key object so a keyring imports each once. */
 const WEB_AES_KEYS = new WeakMap<Uint8Array, Promise<CryptoKey>>();
 const WEB_HMAC_KEYS = new WeakMap<Uint8Array, Promise<CryptoKey>>();
 
-/** Web Crypto, the only crypto a Convex isolate has. */
+// The default: a Convex isolate has no `node:crypto`. Core passes a synchronous one.
 const WEB_CRYPTO: AeadPrimitive = {
   hmac: async (key, data): Promise<Uint8Array> =>
     new Uint8Array(
@@ -166,21 +141,15 @@ const WEB_CRYPTO: AeadPrimitive = {
     ),
 };
 
-/**
- * The three columns every encrypted row stores. `ciphertext` reads
- * `v2:<keyId>:<base64url>`.
- */
 export interface EncryptedBlob {
   ciphertext: string;
   iv: string;
   tag: string;
 }
 
-/** An `accountKeys` row without Convex system fields. */
 export interface WrappedAccountKey {
   keyId: string;
   kekId: string;
-  /** `<iv>.<ciphertext+tag>` base64url, AES-GCM under the KEK `kekId` names. */
   wrappedKey: string;
   retiredAt?: number;
 }
@@ -189,24 +158,17 @@ type EnvelopeColumn = (typeof ENVELOPE_COLUMNS)[number];
 
 export type EnvelopeTable = EnvelopeColumn["table"];
 
-/** `table:field` of the column a blob is bound to through the GCM additional data. */
 export type BlobScope = EnvelopeColumn["scope"];
 
-/**
- * The cipher and MAC the codec runs on, over raw 32-byte keys. An
- * implementation may answer synchronously; the codec awaits either way.
- */
+// HMAC-SHA256 and AES-256-GCM over raw 32-byte keys; `sealed` is `ciphertext || tag`.
 export interface AeadPrimitive {
-  /** HMAC-SHA256 of `data`. */
   hmac(key: Uint8Array, data: Uint8Array): Uint8Array | Promise<Uint8Array>;
-  /** AES-256-GCM open of `ciphertext || tag`; throws when the tag does not verify. */
   open(
     key: Uint8Array,
     iv: Uint8Array,
     aad: Uint8Array,
     sealed: Uint8Array,
   ): Uint8Array | Promise<Uint8Array>;
-  /** AES-256-GCM seal, answering `ciphertext || tag`. */
   seal(
     key: Uint8Array,
     iv: Uint8Array,
@@ -215,12 +177,7 @@ export interface AeadPrimitive {
   ): Uint8Array | Promise<Uint8Array>;
 }
 
-/**
- * One account's keyring for one request: encrypts under the newest live key,
- * decrypts whatever key a blob names, and never caches past its own lifetime.
- * Build it through `accountCipher*` on the Convex side or `accountCipherFor`
- * in core; the constructor only wires a wrapped key list to the KEK secrets.
- */
+// One account's keyring for one request: it caches unwrapped keys, so never hold it longer.
 export class AccountCipher {
   private readonly accountId: string;
   private readonly secrets: string[];
@@ -229,7 +186,6 @@ export class AccountCipher {
   private readonly primitive: AeadPrimitive;
   private readonly dataKeys = new Map<string, Promise<Uint8Array>>();
 
-  /** @param options.primitive the cipher to run on; Web Crypto when omitted. */
   constructor(
     accountId: string,
     secrets: string[],
@@ -240,17 +196,16 @@ export class AccountCipher {
     this.secrets = secrets;
     this.primitive = options.primitive ?? WEB_CRYPTO;
     this.keys = new Map(keys.map((key) => [key.keyId, key]));
-    // The newest key that is not retired seals new blobs.
+    // Rows come in creation order, so the last live key is the newest.
     this.currentKeyId =
-      keys.filter((key) => key.retiredAt === undefined).at(-1)?.keyId ?? null;
+      keys.findLast((key) => key.retiredAt === undefined)?.keyId ?? null;
   }
 
-  /** The key id new blobs are written under, or null when the account has none yet. */
   get keyId(): string | null {
     return this.currentKeyId;
   }
 
-  /** HMAC-SHA256 hex of `value` under the current key, so a stored digest cannot be guessed offline. */
+  // Keyed, so a stored digest cannot be guessed offline.
   async digest(value: string): Promise<string> {
     const mac = await this.primitive.hmac(
       await this.dataKey(this.requireCurrentKeyId()),
@@ -260,11 +215,6 @@ export class AccountCipher {
     return hexFromBytes(mac);
   }
 
-  /**
-   * Decrypts a blob bound to `scope`. Null on any failure: a blob without
-   * the `v2:` key id, unknown or retired key, wrong tenant or column, or
-   * tampered bytes.
-   */
   async decrypt(
     scope: BlobScope,
     blob: EncryptedBlob,
@@ -281,7 +231,6 @@ export class AccountCipher {
     }
   }
 
-  /** Encrypts `value` under the current key, bound to `scope`. */
   async encrypt(
     scope: BlobScope,
     value: Record<string, unknown>,
@@ -303,23 +252,21 @@ export class AccountCipher {
     };
   }
 
-  /** True when this keyring holds the key a blob names, retired included. */
   hasKey(blob: Pick<EncryptedBlob, "ciphertext">): boolean {
     const keyId = blobKeyId(blob);
 
     return keyId !== null && this.keys.has(keyId);
   }
 
-  /** True when `blob` was not written under the current key, so a rotation must rewrite it. */
   needsRewrite(blob: Pick<EncryptedBlob, "ciphertext">): boolean {
     return blobKeyId(blob) !== this.currentKeyId;
   }
 
+  // GCM additional data: a ciphertext cannot be moved to another tenant or column.
   private aad(scope: BlobScope): string {
     return `${this.accountId}:${scope}`;
   }
 
-  /** The key `keyId` names, unwrapped once per keyring. A retired key opens nothing. */
   private dataKey(keyId: string): Promise<Uint8Array> {
     const cached = this.dataKeys.get(keyId);
     if (cached) return cached;
@@ -368,7 +315,6 @@ export class AccountCipher {
   }
 }
 
-/** A fresh random DEK wrapped under the first secret, the one that seals. */
 export async function createWrappedAccountKey(
   accountId: string,
   secrets: string[],
@@ -381,12 +327,10 @@ export async function createWrappedAccountKey(
   return await wrapAccountKey(accountId, secrets, keyId, dek);
 }
 
-/** The id of the KEK a secret derives, as stored on `accountKeys.kekId`. */
 export async function kekIdOf(secret: string): Promise<string> {
   return (await sha256Hex(secret)).slice(0, KEK_ID_HEX_LENGTH);
 }
 
-/** The columns to patch so the key's DEK sits under the first secret, or null when it already does. */
 export async function rewrapAccountKey(
   accountId: string,
   secrets: string[],
@@ -413,7 +357,6 @@ function base64UrlToBytes(value: string): Uint8Array {
   return out;
 }
 
-/** The key id a blob names, or null when it carries no `v2:` key id. */
 function blobKeyId(blob: Pick<EncryptedBlob, "ciphertext">): string | null {
   if (!blob.ciphertext.startsWith(BLOB_VERSION_PREFIX)) return null;
   const end = blob.ciphertext.indexOf(":", BLOB_VERSION_PREFIX.length);
@@ -424,8 +367,7 @@ function blobKeyId(blob: Pick<EncryptedBlob, "ciphertext">): string | null {
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {
-  // Native where the runtime has it: building the string by hand costs
-  // several times the cipher itself.
+  // Native where it exists: building the string by hand costs several times the cipher.
   if (typeof bytes.toBase64 === "function") {
     return bytes.toBase64({ alphabet: "base64url", omitPadding: true });
   }
@@ -447,7 +389,6 @@ function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
   return out;
 }
 
-/** The KEK is a domain-separated hash of the secret. */
 async function keyEncryptionKey(secret: string): Promise<Uint8Array> {
   return new Uint8Array(await sha256(`broods-kek:${secret}`));
 }

@@ -1,9 +1,3 @@
-/**
- * Gateway per-upgrade work: match the WebSocket shapes and charge the
- * failed-login limit. They run before the token check reaches core, so their
- * cost is pure added latency. Traefik routes everything else.
- */
-
 import { RateLimiter } from "../../apps/gateway/src/rate-limiter.ts";
 import {
   matchAgentWebSocketPath,
@@ -18,8 +12,6 @@ const WEBSOCKET_MIX: readonly string[] = [
   "/v1/agents/agt_7f3c9d21/invoke",
 ];
 
-// Wide enough that the steady-state path is "existing window, still under the
-// limit", the branch a healthy production request takes.
 const RATE_LIMIT_KEYS: readonly string[] = Array.from(
   { length: 64 },
   (_unused, index) => `203.0.113.${index}:agt_7f3c9d21`,
@@ -42,9 +34,7 @@ export const gatewayCases: readonly BenchCase[] = [
     name: "gateway/rate-limiter-allow",
     iterations: 200_000,
     setup: (): void => {
-      // A window long enough to never roll over mid-run, and a limit high
-      // enough to never trip: this measures the steady-state accept, not the
-      // eviction sweep, which is what the overwhelming majority of calls hit.
+      // Never rolls over or trips: the steady-state accept most calls hit, not the eviction.
       limiter = new RateLimiter(Number.MAX_SAFE_INTEGER, 60 * 60 * 1000);
       for (const key of RATE_LIMIT_KEYS) limiter.allow(key);
     },

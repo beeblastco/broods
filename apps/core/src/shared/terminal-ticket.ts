@@ -1,42 +1,35 @@
-/**
- * Short-lived sandbox terminal tickets. account-manage mints one when the
- * dashboard opens a live terminal; the public gateway decrypts it to learn the
- * upstream PTY WebSocket target. The provider credential rides inside the
- * AES-256-GCM ciphertext, so the browser only ever holds an opaque token.
- */
-
 import {
   createCipheriv,
   createDecipheriv,
   createHash,
   randomBytes,
 } from "node:crypto";
-import { isPlainObject } from "./object.ts";
+import { z } from "zod";
 
 const TICKET_ALGORITHM = "aes-256-gcm";
 const TICKET_AUTH_TAG_LENGTH = 16;
 const TICKET_VERSION = "st1";
+const SEALED_TICKET = z.object({
+  url: z.string(),
+  authorization: z.string(),
+  authorizationHeader: z.string().optional(),
+  accountId: z.string(),
+  expiresAt: z.number(),
+});
 
 export const TERMINAL_TICKET_TTL_MS = 2 * 60 * 1000;
 export const TERMINAL_WEBSOCKET_PATH = "/v1/sandboxes/terminal/ws";
 
 export interface TerminalTicket {
-  /** Upstream PTY WebSocket URL (ws:// or wss://). */
   url: string;
-  /** Authorization header value for the upstream connection. */
   authorization: string;
-  /** Header the credential is sent in; defaults to `authorization` (workdir). MicroVM shells use `X-aws-proxy-auth`. */
+  /** Defaults to `authorization`; MicroVM shells use `X-aws-proxy-auth`. */
   authorizationHeader?: string;
-  /** Owning account, kept for gateway-side logging/limits. */
   accountId: string;
-  /** Unix ms after which the ticket is rejected. */
   expiresAt: number;
 }
 
-/**
- * Decrypts and validates a ticket. Returns null (never throws) on any tamper,
- * wrong-secret, or expiry failure so callers can try their other live secrets.
- */
+// Null, never a throw, so a caller can try its other live secrets.
 export function openTerminalTicket(
   token: string,
   secret: string,
@@ -51,9 +44,8 @@ export function openTerminalTicket(
     extra !== undefined
   )
     return null;
-  // Node decodes base64url leniently, so one ticket has many spellings. Only
-  // the one sealTerminalTicket writes opens, or the gateway's single-use
-  // check, keyed on the token, could be dodged by re-spelling it.
+  // Node decodes base64url leniently; only the canonical spelling opens, or a re-spelled token
+  // would dodge the gateway's single-use check.
   const ivBytes = Buffer.from(iv, "base64url");
   const tagBytes = Buffer.from(tag, "base64url");
   const ciphertextBytes = Buffer.from(ciphertext, "base64url");
@@ -75,32 +67,13 @@ export function openTerminalTicket(
       decipher.update(ciphertextBytes),
       decipher.final(),
     ]).toString("utf-8");
-    const parsed: unknown = JSON.parse(plaintext);
-    if (!isPlainObject(parsed)) return null;
-    const { url, authorization, authorizationHeader, accountId, expiresAt } =
-      parsed;
-    if (
-      typeof url !== "string" ||
-      typeof authorization !== "string" ||
-      typeof accountId !== "string"
-    )
-      return null;
-    if (
-      authorizationHeader !== undefined &&
-      typeof authorizationHeader !== "string"
-    )
-      return null;
-    if (typeof expiresAt !== "number" || expiresAt <= now) return null;
+    const sealed = SEALED_TICKET.safeParse(JSON.parse(plaintext));
+    if (!sealed.success || sealed.data.expiresAt <= now) return null;
+    const { authorizationHeader, ...ticket } = sealed.data;
 
-    return {
-      url: url,
-      authorization: authorization,
-      accountId: accountId,
-      expiresAt: expiresAt,
-      ...(authorizationHeader
-        ? { authorizationHeader: authorizationHeader }
-        : {}),
-    };
+    return authorizationHeader
+      ? { ...ticket, authorizationHeader: authorizationHeader }
+      : ticket;
   } catch {
     return null;
   }
@@ -127,7 +100,6 @@ export function sealTerminalTicket(
   ].join(".");
 }
 
-// The purpose label keeps this key distinct from every other ticket kind's.
 function ticketKey(secret: string): Buffer {
   return createHash("sha256")
     .update(`sandbox-terminal-ticket:${secret}`)

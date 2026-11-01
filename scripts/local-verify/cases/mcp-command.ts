@@ -2,11 +2,6 @@ import type { CliManifest } from "../../../packages/broods/src/contracts.ts";
 import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
 import { assertStep, type VerifyContext } from "../harness.ts";
 
-/**
- * An MCP server on a sandbox carries the stdio `command` its host spawns, and
- * the config plane refuses a `command` on a server that has none to spawn.
- * Config only, so it needs no model key and no MicroVM.
- */
 export async function mcpCommand(context: VerifyContext): Promise<void> {
   const sync = new BroodsSyncClient({
     baseUrl: context.edgeUrl,

@@ -1,25 +1,5 @@
-/**
- * Account config-plane client for the broods public account REST API.
- *
- * This is the DYNAMIC counterpart to the config-first `broods dev` / `broods
- * deploy` flow: `broods dev` syncs the predefined resources declared in your
- * `broods/` folder, while `BroodsAccountClient` creates and mutates the full
- * account config plane at runtime: agents, sandboxes (config + lifecycle),
- * workspaces (config + files), tools, policies, skills, crons, and the account
- * itself. One caller is a multi-tenant app provisioning one agent per customer
- * from its own backend.
- *
- * Kept intentionally standalone (import from `broods/account`): pure fetch,
- * no Node built-ins, no `.env` file loading, so it runs in edge/worker
- * runtimes such as Convex actions, Cloudflare Workers, and the browser-less
- * server runtimes, as well as Node and Bun.
- *
- * Auth: every call sends `Authorization: Bearer {accountSecret}` to
- * `{baseUrl}/v1/...`, or a short-lived `bsts_` role session token from
- * `assumeRole()`, limited to what the role's policy allows. Secrets inside
- * agent configs are encrypted at rest by the platform and come back redacted
- * (`********`) on reads.
- */
+// Edge-safe (`broods/account`): fetch only, no Node built-ins or .env loading, so it runs in
+// Convex actions and Cloudflare Workers as well as Node and Bun.
 
 import type {
   ChannelPartition,
@@ -40,15 +20,11 @@ import type {
   ConnectionType,
 } from "../../convex/model/connections.ts";
 
-/**
- * Managed gateway host, matching the OpenAPI `servers` entry and
- * `DEFAULT_CORE_BASE_URL` in `client.ts`. Not imported from there, because that
- * module pulls in Node-only .env loading and this one must stay edge-safe.
- */
+// Copy of `DEFAULT_CORE_BASE_URL`: importing client.ts would pull in Node-only code.
 const DEFAULT_ACCOUNT_BASE_URL = "https://gateway.broods.app";
 const ACCOUNT_ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 
-/** A config PATCH body: objects merge key by key, `null` deletes a key, arrays and scalars replace. */
+/** Objects merge key by key, `null` deletes a key, arrays and scalars replace. */
 export type ConfigPatch<T> = T extends readonly unknown[]
   ? T
   : T extends object
@@ -56,30 +32,23 @@ export type ConfigPatch<T> = T extends readonly unknown[]
     : T;
 
 export interface BroodsAccountClientOptions {
-  /** Base URL of the broods gateway. Falls back to `BROODS_BASE_URL`, then `https://gateway.broods.app`. */
   baseUrl?: string;
-  /** Account key used as the Bearer token. Falls back to `BROODS_ACCOUNT_SECRET`. */
   accountSecret?: string;
-  /**
-   * Short-lived `bsts_` role session token (from {@link BroodsAccountClient.assumeRole})
-   * used as the Bearer instead of the account key. The session can only do
-   * what its role's policy allows. Falls back to `BROODS_SESSION_TOKEN`.
-   */
+  /** From {@link BroodsAccountClient.assumeRole}; wins over `accountSecret`. */
   sessionToken?: string;
   fetch?: typeof fetch;
 }
 
-/** Public account record returned by `GET /v1/account`. */
 export interface BroodsAccount {
   accountId: string;
   username: string;
   status: string;
-  /** Days an audit row is kept; absent means the 90 day default. */
+  /** Absent means the 90 day default. */
   auditRetentionDays?: number;
   [key: string]: unknown;
 }
 
-/** Public agent record; `config` comes back with secret values redacted. */
+/** `config` secrets come back redacted as `********`. */
 export interface AccountAgent {
   accountId: string;
   agentId: string;
@@ -98,14 +67,11 @@ export interface CreateAgentResult {
   description?: string;
 }
 
-/** Write-only account environment variable metadata. */
 export interface AccountEnvVar {
   name: string;
-  /** ISO 8601, like every other timestamp in the API. */
   updatedAt: string;
 }
 
-// The connection wire types live with the server so they cannot drift.
 export type {
   Connection,
   ConnectionCode,
@@ -114,14 +80,12 @@ export type {
   ConnectionType,
 };
 
-/** Fields accepted by `PATCH /v1/agents/{id}`. `config` is deep-merged; `null` values delete keys. */
 export interface UpdateAgentInput {
   name?: string;
   description?: string | null;
   config?: ConfigPatch<AgentConfig>;
 }
 
-/** Public workspace record returned by the workspaces routes. */
 export interface AccountWorkspace {
   accountId: string;
   workspaceId: string;
@@ -132,7 +96,6 @@ export interface AccountWorkspace {
   updatedAt: string;
 }
 
-/** One entry of a workspace file listing (`GET /v1/workspaces/{id}/files`). */
 export interface WorkspaceFileEntry {
   path: string;
   name: string;
@@ -141,7 +104,7 @@ export interface WorkspaceFileEntry {
   updatedAt?: string;
 }
 
-/** Public sandbox config record; `config` comes back with secret values (e.g. `envVars`) redacted. */
+/** `config` secrets such as `envVars` come back redacted. */
 export interface AccountSandbox {
   accountId: string;
   sandboxId: string;
@@ -153,7 +116,6 @@ export interface AccountSandbox {
   [key: string]: unknown;
 }
 
-/** Public agent-policy record returned by the policies routes. */
 export interface AccountPolicy {
   accountId: string;
   policyId: string;
@@ -165,11 +127,7 @@ export interface AccountPolicy {
   updatedAt: string;
 }
 
-/**
- * Public account-role record returned by the roles routes. The policy uses the
- * API action namespace (`"agents:read"`, `"crons:write"`, ...); `projectId` and
- * `stageId` bound which runtime keys may assume the role.
- */
+/** `policy` uses API actions (`agents:read`); `projectId` + `stageId` bound who may assume it. */
 export interface AccountRole {
   accountId: string;
   roleId: string;
@@ -182,17 +140,14 @@ export interface AccountRole {
   updatedAt: string;
 }
 
-/** One link of an agent actor's delegation chain: who asked, or an agent that delegated. */
 export type AuditPrincipalLink =
   | { kind: "user"; id: string; name?: string; channel?: string }
   | { kind: "api"; keyKind: "account" | "deployment" | "cron" }
   | { kind: "agent"; agentId: string };
 
 /**
- * One row of the account's hash-chained audit ledger, as `GET /v1/audit`
- * serves it. `hash` is sha256 over the canonical JSON of every field but
- * `hash` itself (an absent optional field is left out, not null), with
- * `prevHash` linking it to the row before.
+ * `hash` is sha256 of the canonical JSON of every other field (an absent optional is left
+ * out, not null); `prevHash` is the previous row's `hash`.
  */
 export interface AuditEvent {
   accountId: string;
@@ -219,15 +174,12 @@ export interface AuditEvent {
   traceId?: string;
 }
 
-/** A page of ledger rows plus the chain head to compare the last row against. */
 export interface AuditPage {
   events: AuditEvent[];
-  /** Pass as `since` to read the rows after this page. */
   nextSince: number;
   head: { seq: number; hash: string } | null;
 }
 
-/** Result of `GET /v1/audit/verify`: the chain recomputed over the checked range. */
 export interface AuditVerification {
   ok: boolean;
   brokenAtSeq?: number;
@@ -235,29 +187,19 @@ export interface AuditVerification {
   checkedTo?: number;
 }
 
-/** The account's audit export target. The signing secret never comes back. */
 export interface AuditSink {
   kind: "webhook";
   url: string;
-  /** Highest seq the receiver acknowledged. */
   exportedSeq: number;
   lastError?: string;
   updatedAt: string;
 }
 
-/** Short-lived role session minted by `POST /v1/account/assume-role`. */
 export interface AssumeRoleResult {
-  /** `bsts_` bearer token; pass it as `sessionToken` to a new client. */
   token: string;
-  /** ISO timestamp when the session stops working. */
   expiresAt: string;
 }
 
-/**
- * One real place a team talks, bound to an agent: a Slack channel, a Discord
- * channel, a repo. The runtime reads it on the inbound webhook to decide who
- * answers there and with what instructions, workspaces and policies.
- */
 export interface AccountChannel {
   accountId: string;
   channelId: string;
@@ -278,38 +220,25 @@ export interface ChannelRecordConfig {
   instructions?: string;
   agentBindings: Array<{ agentId: string; isDefault?: boolean }>;
   workspaces?: Array<{ name: string; workspaceId: string }>;
-  /** Added to whatever the agent already carries. Each policy holds its own mode. */
   policies?: string[];
-  /**
-   * Tool names withheld in this channel, applied after the tool set is built,
-   * so it also covers sandbox tools (`bash`, `read`, …) that `config.tools`
-   * cannot name. Narrowing only; unknown names are ignored.
-   */
+  /** Also covers sandbox tools (`bash`, `read`, …); unknown names are ignored. */
   denyTools?: string[];
-  /**
-   * Where the reply lands. `source` answers wherever the message came from, and
-   * threads only when the message already did. Slack only. No other provider
-   * gives the runtime a second place to reply.
-   */
+  /** Slack only. `source` replies where the message came from, threading only if it was. */
   replyIn?: ChannelReplyIn;
   partition?: ChannelPartition;
-  /** Images the agent may stand a sandbox up from for a thread here. */
   sandboxImages?: string[];
-  /** Named groups of people, readable from policy conditions as `userRoles`. */
+  /** Readable from policy conditions as `userRoles`. */
   tagRoles?: Array<{ roleId: string; userIds: string[] }>;
 }
 
-/** The stage a resource belongs to. Same name in two stages = two resources. */
 export interface StageScope {
   project: string;
   stage: string;
 }
 
 /**
- * OAuth 2.0 refresh-token grant on an external MCP row. The runtime mints and
- * refreshes access tokens and sends `Authorization: Bearer <token>` itself.
- * `clientSecret` and `refreshToken` must be `${NAME}` account env refs;
- * `tokenUrl` defaults to https://oauth2.googleapis.com/token.
+ * Refresh-token grant; the runtime mints the Bearer itself. `clientSecret` and `refreshToken`
+ * must be `${NAME}` env refs; `tokenUrl` defaults to https://oauth2.googleapis.com/token.
  */
 export interface McpOauthInput {
   clientId: string;
@@ -318,10 +247,9 @@ export interface McpOauthInput {
   tokenUrl?: string;
 }
 
-/** Where a hosted MCP server may run. */
+/** `auto` (the default) runs a hosted bundle on Cloudflare Workers when it can, else Lambda. */
 export type McpRuntime = "auto" | "lambda";
 
-/** Public MCP server registration returned by the `/v1/mcp` routes (#331). */
 export interface AccountMcp {
   accountId: string;
   serverId: string;
@@ -329,16 +257,12 @@ export interface AccountMcp {
   stageId: string;
   name: string;
   description?: string;
+  /** `http` sets `url`, `hosted` sets `sha256`/`runtime`, `machine` sets `sandbox`/`command`. */
   transport: "http" | "hosted" | "machine";
-  /** External servers only; a hosted row has no endpoint of its own. */
   url?: string;
-  /** Machine servers only: the sandbox (by name) that serves it. */
   sandbox?: string;
-  /** Machine servers only: argv of the stdio server a lambda sandbox runs. */
   command?: string[];
-  /** Hosted servers only: content hash of the uploaded bundle. */
   sha256?: string;
-  /** Hosted servers only: "auto" or "lambda". */
   runtime?: McpRuntime;
   headers?: Record<string, string>;
   oauth?: McpOauthInput;
@@ -350,11 +274,7 @@ export interface AccountMcp {
   deletedAt?: string;
 }
 
-/**
- * Fields accepted by `POST /v1/mcp`: `url` connects, `bundle` uploads inline
- * (≤10 MB); a larger bundle goes through `uploadMcpBundle` first; `sandbox`
- * runs it on that sandbox: a machine's daemon, or `command` on a lambda VM.
- */
+/** `bundle` inline is ≤10 MB, a larger one goes through `uploadMcpBundle` first. */
 export interface CreateMcpInput {
   name: string;
   description?: string;
@@ -367,15 +287,9 @@ export interface CreateMcpInput {
   headers?: Record<string, string>;
   oauth?: McpOauthInput;
   allowedTools?: string[];
-  /**
-   * Hosted servers only. "auto" (the default) runs it on Cloudflare Workers
-   * when its bundle can run there, on Lambda otherwise; "lambda" always runs
-   * it on Lambda.
-   */
   runtime?: McpRuntime;
 }
 
-/** Fields accepted by `PATCH /v1/mcp/{serverId}`; every field is optional. */
 export interface UpdateMcpInput {
   name?: string;
   description?: string;
@@ -388,20 +302,11 @@ export interface UpdateMcpInput {
   headers?: Record<string, string>;
   oauth?: McpOauthInput;
   allowedTools?: string[];
-  /**
-   * Hosted servers only. "auto" (the default) runs it on Cloudflare Workers
-   * when its bundle can run there, on Lambda otherwise; "lambda" always runs
-   * it on Lambda.
-   */
   runtime?: McpRuntime;
   disabled?: boolean;
 }
 
-/**
- * Body of a skill upload (`POST /v1/skills`, `PUT /v1/skills/{skillName}`).
- * `json` needs `name`/`description`/`content`; `files` needs base64 `files`
- * including a root `SKILL.md`; `github` needs a tree `url`.
- */
+/** `json` needs name, description, content; `files` a root `SKILL.md`; `github` a tree `url`. */
 export interface SkillUploadInput {
   source: "json" | "files" | "github";
   name?: string;
@@ -411,51 +316,42 @@ export interface SkillUploadInput {
   url?: string;
 }
 
-/** Result of `POST /v1/account/rotate-secret`. The returned `secret` is the new account key, shown once; the old key stops working immediately. */
 export interface RotateSecretResult {
   account: BroodsAccount;
   secret: string;
 }
 
 /**
- * Result of `GET /v1/account/storage-trust`: what a workspace's own AWS role
- * must trust. Broods assigns `externalId` per account and sends it on every
- * AssumeRole of an `assumeRole` workspace's role; it is never set in config.
+ * `externalId` is per account and sent on every AssumeRole; it is never set in config.
+ * `principalArn` and `trustPolicy` are absent on a deployment with no AWS.
  */
 export interface StorageTrust {
   externalId: string;
-  /** The Broods AWS principal to trust; absent on a deployment with no AWS. */
   principalArn?: string;
-  /** A ready-to-paste trust policy JSON; absent on a deployment with no AWS. */
   trustPolicy?: string;
 }
 
-/** Result of `DELETE /v1/account`: the account and all account-scoped data are removed; `cleanup` reports per-resource deletion counts. */
 export interface DeleteAccountResult {
   deleted: boolean;
   cleanup?: Record<string, number>;
 }
 
-/** Result of a suspend/resume/terminate sandbox lifecycle action. */
 export interface SandboxLifecycleResult {
   status: string;
 }
 
-/** Result of `POST /v1/sandboxes/{id}/snapshot`. */
 export interface SandboxSnapshotResult {
   status: string;
   snapshotId?: string;
   externalImageId?: string;
 }
 
-/** Sealed ticket from `POST /v1/sandboxes/{id}/terminal`; hand `token` to the gateway terminal WebSocket at `websocketPath`. */
 export interface SandboxTerminalTicket {
   token: string;
   expiresAt: number;
   websocketPath: string;
 }
 
-/** Non-2xx response from the account API (404s on id routes return null instead). */
 export class BroodsAccountApiError extends Error {
   readonly status: number;
   readonly body: string;
@@ -470,7 +366,6 @@ export class BroodsAccountApiError extends Error {
 
 declare const process: { env?: Record<string, string | undefined> } | undefined;
 
-/** Build a validated account env-var reference for use in an agent config. */
 export function envPlaceholder(name: string): string {
   if (!ACCOUNT_ENV_VAR_NAME_PATTERN.test(name) || name.length > 64) {
     throw new Error(
@@ -481,21 +376,14 @@ export function envPlaceholder(name: string): string {
   return `\${${name}}`;
 }
 
-/**
- * The credential the environment supplies, with a role session winning over
- * the account key. The constructor throws through this same resolution, so
- * callers that can run without an account credential (`broods mcp` with only a
- * stored login) probe here instead of catching the constructor.
- */
+/** The constructor's env fallback, for callers that must not throw without one. */
 export function resolveEnvCredential(): string | undefined {
   return envVar("BROODS_SESSION_TOKEN") ?? envVar("BROODS_ACCOUNT_SECRET");
 }
 
 /**
- * Typed client for the broods account config API. All `get`/`update`/`delete`
- * methods return `null`/`false` when the resource does not exist (HTTP 404) so
- * callers can implement upsert flows without try/catch; every other non-2xx
- * status throws {@link BroodsAccountApiError}.
+ * Lookups, updates and deletes return `null`/`false` on a 404, so upserts need no try/catch.
+ * Any other failure throws {@link BroodsAccountApiError}.
  */
 export class BroodsAccountClient {
   private readonly baseUrl: string;
@@ -519,7 +407,6 @@ export class BroodsAccountClient {
     this.fetchImpl = options.fetch ?? fetch;
   }
 
-  /** The account this secret belongs to. Its `accountId` is the first segment of channel webhook URLs. */
   async getAccount(): Promise<BroodsAccount> {
     const result = await this.request<{ account: BroodsAccount }>(
       "GET",
@@ -536,7 +423,6 @@ export class BroodsAccountClient {
     return result.account;
   }
 
-  /** The external id and Broods principal this account's own storage roles must trust. */
   async getStorageTrust(): Promise<StorageTrust> {
     const result = await this.request<{ storageTrust: StorageTrust }>(
       "GET",
@@ -553,11 +439,10 @@ export class BroodsAccountClient {
     return result.storageTrust;
   }
 
-  /** Update account metadata (username/description). Returns null when the account is gone. Runtime config is managed through the agent endpoints. */
   async updateAccount(patch: {
     username?: string;
     description?: string | null;
-    /** 1 to 3650 days, or null to return to the 90 day default. */
+    /** 1 to 3650 days, or null for the 90 day default. */
     auditRetentionDays?: number | null;
   }): Promise<BroodsAccount | null> {
     const result = await this.request<{ account: BroodsAccount }>(
@@ -570,10 +455,8 @@ export class BroodsAccountClient {
   }
 
   /**
-   * Exchange a role for a short-lived `bsts_` session token. Callable with
-   * the account key, a CLI login token, or a runtime key (the latter
-   * only into roles scoped to the key's own project/stage). Construct a new
-   * client with `{ sessionToken: result.token }` to act as the role.
+   * A runtime key may assume only roles scoped to its own project and stage.
+   * Act as the role with `new BroodsAccountClient({ sessionToken: result.token })`.
    */
   async assumeRole(
     roleId: string,
@@ -600,7 +483,7 @@ export class BroodsAccountClient {
     return result;
   }
 
-  /** Rotate the account key. The returned `secret` is the new key, shown once, and the current key stops working immediately, so persist it before the process exits. */
+  /** The old key dies at once and `secret` is shown only once: persist it before exiting. */
   async rotateSecret(): Promise<RotateSecretResult> {
     const result = await this.request<RotateSecretResult>(
       "POST",
@@ -617,7 +500,6 @@ export class BroodsAccountClient {
     return result;
   }
 
-  /** Delete this account and cascade-clean every account-scoped resource. `cleanup` reports per-resource deletion counts. */
   async deleteAccount(): Promise<DeleteAccountResult> {
     const result = await this.request<DeleteAccountResult>(
       "DELETE",
@@ -627,13 +509,7 @@ export class BroodsAccountClient {
     return result ?? { deleted: false };
   }
 
-  /**
-   * Provider webhook URL for one of the account's channels. Paste this into the
-   * provider's webhook settings (Slack Event Subscriptions, Zalo OA webhook,
-   * Pancake page webhook). Routing is per account + channel: the credentials
-   * that verify the request pick the receiving agent, and a channel record
-   * binds each place to the agent that should answer there.
-   */
+  /** One URL per account and channel type; the credentials that verify a request pick the agent. */
   webhookUrl(accountId: string, channelType: string): string {
     const segments = [accountId, channelType].map(encodeURIComponent);
 
@@ -672,7 +548,6 @@ export class BroodsAccountClient {
     );
   }
 
-  /** PATCH an agent. `config` deep-merges into the stored config; `null` leaves delete keys. Returns null when the agent is gone. */
   async updateAgent(
     agentId: string,
     patch: UpdateAgentInput,
@@ -693,7 +568,6 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
-  /** List account environment variable names and update timestamps; values are never returned. */
   async listEnvVars(): Promise<AccountEnvVar[]> {
     const result = await this.request<{ env: AccountEnvVar[] }>(
       "GET",
@@ -703,7 +577,6 @@ export class BroodsAccountClient {
     return result?.env ?? [];
   }
 
-  /** Create or replace one write-only account environment variable. */
   async setEnvVar(name: string, value: string): Promise<void> {
     await this.request<{ name: string }>(
       "PUT",
@@ -712,7 +585,6 @@ export class BroodsAccountClient {
     );
   }
 
-  /** Delete one account environment variable. Returns false when it is already absent. */
   async deleteEnvVar(name: string): Promise<boolean> {
     const result = await this.request<{ deleted: boolean }>(
       "DELETE",
@@ -722,7 +594,6 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
-  /** The account's connections (`broods connect`), never their tokens. */
   async listConnections(): Promise<Connection[]> {
     const result = await this.request<{ connections: Connection[] }>(
       "GET",
@@ -732,7 +603,6 @@ export class BroodsAccountClient {
     return result?.connections ?? [];
   }
 
-  /** The account's connection of one type, or null when there is none. */
   async getConnection(type: ConnectionType): Promise<Connection | null> {
     return await this.request<Connection>(
       "GET",
@@ -740,7 +610,6 @@ export class BroodsAccountClient {
     );
   }
 
-  /** Starts a sign-in: the provider's consent screen for `broods connect` to open. */
   async startConnection(
     type: ConnectionType,
     start: ConnectionStart,
@@ -761,7 +630,6 @@ export class BroodsAccountClient {
     return result;
   }
 
-  /** Finishes a sign-in with the code the browser brought back; the deployment keeps the tokens. */
   async connect(
     type: ConnectionType,
     code: ConnectionCode,
@@ -782,7 +650,6 @@ export class BroodsAccountClient {
     return result;
   }
 
-  /** Forget a connection and revoke it at the provider. False when there was none. */
   async disconnect(type: ConnectionType): Promise<boolean> {
     const result = await this.request<{ deleted: boolean }>(
       "DELETE",
@@ -833,7 +700,7 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
-  /** Run history for a cron, newest first. Returns [] when the cron is gone. */
+  /** Newest first. */
   async listCronRuns(
     cronId: string,
     options: { limit?: number } = {},
@@ -908,7 +775,6 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
-  /** Flat listing of every file in the workspace's S3-backed filesystem. Returns [] when the workspace is gone. */
   async listWorkspaceFiles(workspaceId: string): Promise<WorkspaceFileEntry[]> {
     const result = await this.request<{ files: WorkspaceFileEntry[] }>(
       "GET",
@@ -918,7 +784,6 @@ export class BroodsAccountClient {
     return result?.files ?? [];
   }
 
-  /** Short-lived download URL for one workspace file. Returns null when the workspace or file is gone. */
   async getWorkspaceFileUrl(
     workspaceId: string,
     path: string,
@@ -932,7 +797,6 @@ export class BroodsAccountClient {
     return result?.url ?? null;
   }
 
-  /** Upload or replace one workspace file from base64 content. Throws when the workspace is gone (404). */
   async uploadWorkspaceFile(
     workspaceId: string,
     input: { path: string; contentBase64: string; contentType?: string },
@@ -949,7 +813,6 @@ export class BroodsAccountClient {
     return result.file;
   }
 
-  /** Rename a workspace file or folder. Returns how many objects moved; throws when the workspace or source path is gone. */
   async renameWorkspaceFile(
     workspaceId: string,
     path: string,
@@ -971,7 +834,6 @@ export class BroodsAccountClient {
     return result.renamed;
   }
 
-  /** Delete a workspace file or folder. Returns how many objects were deleted, 0 when the workspace or path is gone. */
   async deleteWorkspaceFile(
     workspaceId: string,
     path: string,
@@ -1022,7 +884,6 @@ export class BroodsAccountClient {
     );
   }
 
-  /** PATCH a sandbox config. `config` deep-merges into the stored config; `null` leaves delete keys. Returns null when the sandbox is gone. */
   async updateSandbox(
     sandboxId: string,
     patch: {
@@ -1047,7 +908,6 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
-  /** Suspend a persistent sandbox reservation. Throws on 404/403/409 (missing sandbox, foreign reservation, or unsupported provider). */
   async suspendSandbox(
     sandboxId: string,
     reservationKey: string,
@@ -1059,7 +919,6 @@ export class BroodsAccountClient {
     );
   }
 
-  /** Resume a persistent sandbox reservation. Throws on 404/403/409. */
   async resumeSandbox(
     sandboxId: string,
     reservationKey: string,
@@ -1071,7 +930,6 @@ export class BroodsAccountClient {
     );
   }
 
-  /** Terminate a persistent sandbox reservation and drop its live-instance row. Throws on 404/403/409. */
   async terminateSandbox(
     sandboxId: string,
     reservationKey: string,
@@ -1083,7 +941,10 @@ export class BroodsAccountClient {
     );
   }
 
-  /** Snapshot a persistent sandbox reservation into an image any sandbox of that provider on the same stage can pin with `snapshot` (`sandbox`, `daytona`, `e2b`, `vercel`, or `lambda`, which answers `building` until its image build lands). The snapshot is locked to the stage of the sandbox it was taken from: pinning it on another stage throws a 400. Throws on 404/403/409. */
+  /**
+   * Providers `sandbox`, `daytona`, `e2b`, `vercel` and `lambda` (`building` until its image
+   * lands). Only the source stage may pin the snapshot; any other stage gets a 400.
+   */
   async snapshotSandbox(
     sandboxId: string,
     reservationKey: string,
@@ -1096,7 +957,7 @@ export class BroodsAccountClient {
     );
   }
 
-  /** Mint a short-lived sealed ticket for an interactive PTY session on a persistent sandbox (`sandbox`/`lambda`/`cloudflare` providers). Throws on 404/403/409. */
+  /** Providers `sandbox`, `lambda` and `cloudflare` only. */
   async openSandboxTerminal(
     sandboxId: string,
     reservationKey: string,
@@ -1108,7 +969,6 @@ export class BroodsAccountClient {
     );
   }
 
-  /** MCP servers live in one stage, so the collection routes need a scope. */
   async listMcp(scope: StageScope): Promise<AccountMcp[]> {
     const path = `/v1/mcp${stageScopeQuery(scope)}`;
     const result = await this.request<{ servers: AccountMcp[] }>("GET", path);
@@ -1129,10 +989,6 @@ export class BroodsAccountClient {
     return result;
   }
 
-  /**
-   * Upload a hosted MCP bundle too large for the JSON body; returns the
-   * `bundleStorageId` + `sha256` pair `createMcp`/`updateMcp` accept.
-   */
   async uploadMcpBundle(
     bundle: string,
   ): Promise<{ bundleStorageId: string; sha256: string }> {
@@ -1166,7 +1022,6 @@ export class BroodsAccountClient {
         502,
         "upload response omitted storageId",
       );
-    // Web crypto, not node:crypto: this module stays edge-runtime pure.
     const digestBytes = await crypto.subtle.digest(
       "SHA-256",
       new TextEncoder().encode(bundle),
@@ -1237,7 +1092,6 @@ export class BroodsAccountClient {
     );
   }
 
-  /** PATCH a policy. `description: null` clears it. Returns null when the policy is gone. */
   async updatePolicy(
     policyId: string,
     patch: {
@@ -1263,7 +1117,7 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
-  /** Roles are account-secret only: a session cannot list, mint, or edit roles. */
+  /** Roles need the account key: a session cannot list, mint, or edit them. */
   async listRoles(): Promise<AccountRole[]> {
     const result = await this.request<{ roles: AccountRole[] }>(
       "GET",
@@ -1273,7 +1127,6 @@ export class BroodsAccountClient {
     return result?.roles ?? [];
   }
 
-  /** Create a role whose policy uses the API action namespace. `projectId`/`stageId` must be provided together. */
   async createRole(input: {
     name: string;
     policy: PolicyDocument;
@@ -1294,7 +1147,7 @@ export class BroodsAccountClient {
     );
   }
 
-  /** PATCH a role. `status: "disabled"` kills every live session of the role. Returns null when the role is gone. */
+  /** `status: "disabled"` kills every live session of the role. */
   async updateRole(
     roleId: string,
     patch: {
@@ -1319,9 +1172,8 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
-  /** The audit ledger: rows since a seq, chain verification, and the webhook sink. */
   readonly audit = {
-    /** Rows with `seq > since`, oldest first, at most `limit` (default 100, max 500). */
+    /** Rows with `seq > since`, oldest first; `limit` defaults to 100, max 500. */
     list: async (
       options: { since?: number; limit?: number } = {},
     ): Promise<AuditPage> => {
@@ -1335,9 +1187,8 @@ export class BroodsAccountClient {
       return result;
     },
     /**
-     * Recompute the chain over `[fromSeq, toSeq]`, from the oldest kept row by
-     * default, at most 1000 rows per call. `ok` covers only `checkedFrom` to
-     * `checkedTo`; on a longer ledger call again with `fromSeq: checkedTo + 1`.
+     * At most 1000 rows per call: `ok` covers only `checkedFrom` to `checkedTo`, so on a longer
+     * ledger call again with `fromSeq: checkedTo + 1`.
      */
     verify: async (
       options: { fromSeq?: number; toSeq?: number } = {},
@@ -1356,11 +1207,10 @@ export class BroodsAccountClient {
 
       return result;
     },
-    /** The account's sink, or null when none is set. */
     getSink: async (): Promise<AuditSink | null> => {
       return await this.request<AuditSink>("GET", "/v1/audit/sink");
     },
-    /** Set the one webhook sink. `url` must be public https; `secret` signs each batch. */
+    /** `url` must be public https; `secret` signs each batch. */
     setSink: async (input: {
       url: string;
       secret: string;
@@ -1380,7 +1230,6 @@ export class BroodsAccountClient {
 
       return result;
     },
-    /** Remove the sink; exports stop and rows age out on retention alone. Returns whether one existed. */
     deleteSink: async (): Promise<boolean> => {
       const result = await this.request<{ deleted: boolean }>(
         "DELETE",
@@ -1400,7 +1249,6 @@ export class BroodsAccountClient {
     return result?.channels ?? [];
   }
 
-  /** Bind one real chat channel to an agent. One active record per place. */
   async createChannel(input: {
     platform: string;
     externalId: string;
@@ -1427,7 +1275,6 @@ export class BroodsAccountClient {
     );
   }
 
-  /** PATCH a channel. `description: null` clears it. Returns null when it is gone. */
   async updateChannel(
     channelId: string,
     patch: {
@@ -1454,14 +1301,12 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
-  /** All skills for the account, each with its `<accountId>/<name>` path. */
   async listSkills(): Promise<Skill[]> {
     const result = await this.request<{ skills: Skill[] }>("GET", "/v1/skills");
 
     return result?.skills ?? [];
   }
 
-  /** Upload a new skill from JSON content, a base64 file bundle, or a GitHub tree URL. Every bundle must include a root `SKILL.md`. */
   async createSkill(input: SkillUploadInput): Promise<Skill> {
     const result = await this.request<Skill>("POST", "/v1/skills", input);
     if (!result)
@@ -1477,7 +1322,6 @@ export class BroodsAccountClient {
     );
   }
 
-  /** Replace a skill's bundle in place (`PUT`). Throws when the skill is gone (404). */
   async uploadSkill(
     skillName: string,
     input: SkillUploadInput,
@@ -1499,7 +1343,6 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
-  /** POST a sandbox lifecycle action, throwing on any non-2xx (including 404, since these are not upsert flows). */
   private async sandboxAction<T>(
     sandboxId: string,
     action: string,
@@ -1544,7 +1387,6 @@ function envVar(name: string): string | undefined {
   return typeof process !== "undefined" ? process?.env?.[name] : undefined;
 }
 
-/** `?a=1&b=2` from the defined entries, or "" when none is set. */
 function optionalQuery(params: Record<string, number | undefined>): string {
   const query = new URLSearchParams();
   for (const [name, value] of Object.entries(params)) {

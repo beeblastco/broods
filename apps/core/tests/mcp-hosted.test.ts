@@ -1,12 +1,3 @@
-/**
- * Hosted MCP transport tests (#331 phase 2, micro-batching #397): the fetch
- * adapter serializes one web request into a runner request, the batcher
- * folds the calls that arrive inside one window into one invoke, and every
- * call is rebuilt from the frame tagged with its id. The full chain against a
- * real child-runner + createMcpHandler bundle runs in the local-stack E2E,
- * not here, because the repo has no SDK fixture bundles.
- */
-
 import {
   InvokeWithResponseStreamCommand,
   LambdaClient,
@@ -44,9 +35,8 @@ interface SentBatch {
 
 const savedEnv = { ...process.env };
 const recorded: { accountId: string; usage: unknown; source: unknown }[] = [];
-// Every invoke meters usage, so the meter is stubbed for the whole file: the
-// real Convex one retries for 36 s on the shared waitUntil set and stalls any
-// later test file's drain.
+// Every invoke meters usage; the real Convex meter retries for 36 s on the shared waitUntil
+// set and stalls any later test file's drain.
 const meter = spyOn(getStorage().budgets, "record");
 beforeEach(() => {
   process.env.MCP_BATCH_WINDOW_MS = "10";
@@ -225,7 +215,6 @@ describe("hosted MCP metering", () => {
       {
         accountId: "acct_test",
         usage: { hostedMcpGbSeconds: expect.any(Number), hostedMcpRequests: 1 },
-        // Billed to the server's own project.
         source: { projectId: "proj" },
       },
     ]);
@@ -794,7 +783,6 @@ describe("hosted MCP micro-batching", () => {
   });
 });
 
-/** Stub the invoke with a per-request answer and record every batch as sent. */
 function stubBatches(
   answer: (request: HostedMcpBatchRequest["mcpRequest"]) => HostedMcpResponse,
 ): SentBatch[] {
@@ -815,7 +803,6 @@ function stubBatches(
   return sent;
 }
 
-/** A closed FrameQueue holding the given NDJSON lines. */
 function framesOf(...lines: string[]): AsyncIterable<RunnerFrame> {
   const queue = new FrameQueue();
   queue.push(`${lines.join("\n")}\n`);
@@ -824,7 +811,6 @@ function framesOf(...lines: string[]): AsyncIterable<RunnerFrame> {
   return queue.frames();
 }
 
-/** Outcomes as one readable string per id, so a test asserts the whole map at once. */
 function outcomeSummary(
   outcomes: Map<string, HostedMcpResponse | Error>,
 ): Record<string, string> {
@@ -838,7 +824,6 @@ function outcomeSummary(
   );
 }
 
-/** The message a promise rejects with; fails the test if it resolves. */
 async function rejectionOf(promise: Promise<unknown>): Promise<string> {
   try {
     await promise;
@@ -872,7 +857,6 @@ function hostedRecord(): McpRecord {
   };
 }
 
-/** One call by agent_1 through a Workers-capable row; the response body as text. */
 async function callWorkersRow(): Promise<string> {
   const response = await hostedMcpFetch({
     record: { ...hostedRecord(), workersCompatible: true },
@@ -882,7 +866,6 @@ async function callWorkersRow(): Promise<string> {
   return await response.text();
 }
 
-/** Point core at a stub Worker that answers with `reply`; restore the spy after. */
 function mockBridge(
   reply: () => Promise<Response>,
 ): ReturnType<typeof spyOn<typeof globalThis, "fetch">> {
@@ -892,7 +875,6 @@ function mockBridge(
   return spyOn(globalThis, "fetch").mockImplementation(workerFetch(reply));
 }
 
-/** A Lambda that answers every batch with one final frame carrying `body`. */
 function mockLambda(
   body: string,
 ): ReturnType<typeof spyOn<LambdaClient, "send">> {

@@ -1,9 +1,3 @@
-/**
- * Writes what `modelPrices/crawl.ts` gathers: the catalogue's rates into
- * `modelPrices` and the org's `BROODS_MODEL_PRICES` into `modelPriceOverrides`,
- * one doc per agent provider, writing only the ones that changed.
- */
-
 import type { WithoutSystemFields } from "convex/server";
 import { v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
@@ -13,11 +7,7 @@ import { modelPriceOverridesFields, modelPricesFields } from "../schema";
 
 type PriceTable = "modelPrices" | "modelPriceOverrides";
 
-/**
- * Crawl: the catalogue's rates. A provider the catalogue stops listing keeps
- * its last rates unless `mirror`, which the crawl sets with no catalogue to
- * clear them.
- */
+// A provider the catalogue stops listing keeps its last rates unless `mirror`.
 export const storeCatalogue = internalMutation({
   args: {
     providers: v.array(v.object(modelPricesFields)),
@@ -31,7 +21,6 @@ export const storeCatalogue = internalMutation({
   },
 });
 
-/** Crawl: mirror the org's `BROODS_MODEL_PRICES`, so a removed rate goes. */
 export const storeOverrides = internalMutation({
   args: { providers: v.array(v.object(modelPriceOverridesFields)) },
   returns: v.null(),
@@ -42,7 +31,6 @@ export const storeOverrides = internalMutation({
   },
 });
 
-/** Insert, patch or (when `mirror`) delete one doc per provider, skipping unchanged ones. */
 async function syncProviders<Table extends PriceTable>(
   ctx: MutationCtx,
   table: Table,

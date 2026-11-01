@@ -1,16 +1,8 @@
-/**
- * What the copilot is allowed to do, and which of those it may do on its own.
- *
- * The line is reversibility, not importance. Moving around the app is `safe`
- * and happens immediately. Anything that writes shows its before and after and
- * waits for a press. Deploys, deletes and key rotations are `blocked` outright:
- * the copilot describes them and hands over the button.
- */
+// Tiers follow reversibility: navigation runs at once, a write waits, a deploy is handed over.
 import type { ShortcutId } from "@/app/lib/shortcuts";
 
 export type CopilotTier = "safe" | "approval" | "blocked";
 
-/** The before and after an approval-tier action prints before it runs. */
 export interface CopilotChange {
   after: string;
   before: string;
@@ -51,7 +43,6 @@ const TIERS: Record<CopilotAction["type"], CopilotTier> = {
   setEnvVar: "approval",
 };
 
-/** The before/after card an action shows, or undefined when it only moves you around. */
 export function actionChange(action: CopilotAction): CopilotChange | undefined {
   return "change" in action ? action.change : undefined;
 }
@@ -60,7 +51,6 @@ export function actionTier(action: CopilotAction): CopilotTier {
   return TIERS[action.type];
 }
 
-/** True when every step runs without a press, so the dock can skip the approval row. */
 export function planRunsUnattended(plan: CopilotPlan): boolean {
   return plan.actions.every((action) => actionTier(action) === "safe");
 }

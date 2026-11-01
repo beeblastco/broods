@@ -2,12 +2,6 @@ import type { CliManifest } from "../../../packages/broods/src/contracts.ts";
 import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
 import { assertStep, convexResult, type VerifyContext } from "../harness.ts";
 
-/**
- * An automated deploy chooses where Production runs: the first manifest PUT
- * pins the region it names, a later one naming another region is refused
- * with 409 and leaves it, an unknown one is a 400, and one naming none keeps
- * it. Config only.
- */
 export async function productionRegion(context: VerifyContext): Promise<void> {
   const sync = new BroodsSyncClient({
     baseUrl: context.edgeUrl,
@@ -41,7 +35,6 @@ export async function productionRegion(context: VerifyContext): Promise<void> {
     `region ${String(pinned)}`,
   );
 
-  // A refused deploy's error text, or "deployed".
   const outcome = (body: CliManifest): Promise<string> =>
     sync.putManifest(body, true).then(
       (): string => "deployed",

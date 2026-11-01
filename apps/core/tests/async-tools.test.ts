@@ -273,7 +273,6 @@ describe("AsyncToolCoordinator", () => {
       response: { answer: "result for alpha" },
       onlyWhenProcessing: true,
     });
-    // Written under its hand-back key, so the insert marks the row stored.
     expect(persistModelMessages.mock.calls[0]?.[2]).toEqual([
       asyncToolResultDedupeKey(resultId, "completed"),
     ]);
@@ -431,7 +430,6 @@ describe("AsyncToolCoordinator", () => {
 
 describe("resumeLostAsyncToolResults", () => {
   const longAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  // A finished row no run delivered, `name` apart.
   const lostRow = (
     name: string,
     row: Partial<AsyncToolResultRecord>,
@@ -506,8 +504,6 @@ describe("resumeLostAsyncToolResults", () => {
         invoked: false,
         publicEventId: "async-tools-async_tool_resumed",
       },
-      // Its continuation still waits in the queue, which stores it when
-      // applied, or admits the next pass's retry once it expired.
       async_tool_queued: {
         kind: "ready",
         admission: "duplicate",
@@ -541,7 +537,6 @@ describe("resumeLostAsyncToolResults", () => {
         },
       );
 
-      // Detached rows first, then pending, completed before failed in each.
       expect(windows.map((window) => [window.handback, window.status])).toEqual(
         [
           ["detached", "completed"],
@@ -550,8 +545,7 @@ describe("resumeLostAsyncToolResults", () => {
           ["pending", "failed"],
         ],
       );
-      // A pending result waits out the run's whole hold, longer than the
-      // grace a detached one gets.
+      // A pending result waits out the run's whole hold, longer than a detached one's grace.
       expect(windows[2]!.updatedBefore < windows[0]!.updatedBefore).toBe(true);
       expect(resumed).toEqual([
         "async_tool_resumed",
@@ -560,9 +554,7 @@ describe("resumeLostAsyncToolResults", () => {
         "async_tool_pending",
         "async_tool_gone",
       ]);
-      // Only the row nothing can resume is given up; a full conversation and
-      // a queued continuation keep their rows for the next pass, and the
-      // others are stored by their admission.
+      // Only the unresumable row is given up; full and queued keep theirs for the next pass.
       expect(marked.mock.calls).toEqual([["async_tool_gone", "stored"]]);
       expect(
         info.mock.calls
@@ -601,7 +593,6 @@ describe("async_status", () => {
       asyncToolResults,
       "getAsyncToolResult",
     ).mockResolvedValue(row);
-    // Queued first, so the read leaves it to the continuation; then not.
     const marked = spyOn(asyncToolResults, "markAsyncToolHandback")
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(false);

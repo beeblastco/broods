@@ -9,28 +9,20 @@ import {
 } from "@xyflow/react";
 import { useCallback, useMemo, useState } from "react";
 
-/** A refusal the canvas is showing: its sentence and the card it is about. */
 export type ShownRefusal = {
   message: string;
   nodeId: string;
-  /** False while the line is still in the air, true once the drop was refused. */
   dropped: boolean;
 };
 
-/**
- * Why the connection being drawn is refused, for the notice at the top of the
- * canvas. It follows the handle the line is aimed at, then a refused drop keeps
- * its reason until `clear`, since the line that explained it is gone.
- */
+/** Why the line being drawn is refused; a refused drop keeps its reason until `clear`. */
 export function useConnectionRefusal(getGraph: () => ConnectionGraph): {
   clear: () => void;
   onConnectEnd: OnConnectEnd;
   refusal: ShownRefusal | null;
 } {
-  // The handle the line is aimed at, refused or not: React Flow only asks
-  // `isValidConnection` about a connectable handle, and a drop beside a side
-  // handle that takes no agent is refused just the same. A card's own handles
-  // are skipped, or every drag would open on "can't connect to itself".
+  // React Flow only validates connectable handles, so this asks about any aimed handle. A
+  // card's own handles are skipped, or every drag would open on "can't connect to itself".
   const aimed = useConnection((connection): Connection | null =>
     connection.inProgress &&
     connection.toNode &&

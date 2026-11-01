@@ -42,7 +42,7 @@ import {
 import { useMutation, useQuery } from "convex/react";
 import { ChevronDown, Circle, Copy, Plus } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type StageKind = Doc<"stages">["kind"];
 
@@ -56,13 +56,11 @@ const regionEntries: Array<{
   { value: "us-east-1", label: "US East (N. Virginia)", flag: "🇺🇸" },
 ];
 
-// A region is selectable once it is live, the same list a deploy checks.
 const regionOptions = regionEntries.map((option) => ({
   ...option,
   enabled: LIVE_DEPLOYMENT_REGIONS.includes(option.value),
 }));
 
-/** Color dot indicating stage type: green for Development, purple for Production. */
 export function StageDot({ kind }: { kind: StageKind }): React.JSX.Element {
   return (
     <Circle
@@ -78,13 +76,6 @@ export function StageDot({ kind }: { kind: StageKind }): React.JSX.Element {
   );
 }
 
-/**
- * Dropdown to list, switch, and create project stages. The Initialize
- * Production panel opens only from the Production entry shown while the
- * project has no Production stage. A stage an automated deploy created
- * (`broods deploy --stage production`) carries no region and opens like any
- * other stage.
- */
 export function StageSelector(): React.JSX.Element | null {
   const { canWrite } = useOrgRole();
   const params = useParams<{ projectId?: string }>();
@@ -104,6 +95,7 @@ export function StageSelector(): React.JSX.Element | null {
   const [productionRegion, setProductionRegion] =
     useState<DeploymentRegion>("eu-west-1");
   const [newName, setNewName] = useState("");
+  const nameInput = useRef<HTMLInputElement>(null);
   const [createMode, setCreateMode] = useState<"empty" | "duplicate">("empty");
   const [duplicateFromId, setDuplicateFromId] = useState<Id<"stages"> | null>(
     null,
@@ -111,18 +103,16 @@ export function StageSelector(): React.JSX.Element | null {
   const [isCreating, setIsCreating] = useState(false);
   const [isInitializingProduction, setIsInitializingProduction] =
     useState(false);
-  // The last create or initialize failure, shown in whichever dialog is open.
   const [error, setError] = useState<string | null>(null);
 
   const developmentStage = stages?.find(
     (stage) => stage.kind === "development",
   );
   const productionStage = stages?.find((stage) => stage.kind === "production");
-  // Production appeared while the dialog was open (a deploy landed): close it
-  // for good, so removing Production later does not reopen it unasked.
+  // Close for good once Production exists, so deleting it later never reopens this.
   if (productionOpen && productionStage) setProductionOpen(false);
 
-  // Create the default Development stage on load when the project has none.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- Convex: create the default stage
   useEffect(() => {
     if (!projectId || stages === undefined) return;
     const defaultStage = stages.find((stage) => stage.isDefault);
@@ -137,8 +127,7 @@ export function StageSelector(): React.JSX.Element | null {
     return null;
   }
 
-  // Its divider is already painted on a project route: hold the slot instead of
-  // letting the header snap wider when the stages arrive.
+  // Hold the slot: the header divider beside this is already painted.
   if (stages === undefined) {
     return <Skeleton className="h-4 w-20 bg-muted" />;
   }
@@ -270,7 +259,7 @@ export function StageSelector(): React.JSX.Element | null {
       </DropdownMenu>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="sm:max-w-sm" initialFocus={nameInput}>
           <DialogHeader>
             <DialogTitle>New stage</DialogTitle>
             <DialogDescription>
@@ -287,11 +276,11 @@ export function StageSelector(): React.JSX.Element | null {
               <div className="grid gap-2">
                 <Label htmlFor="stage-name">Stage name</Label>
                 <Input
+                  ref={nameInput}
                   id="stage-name"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="staging"
-                  autoFocus
                 />
               </div>
 

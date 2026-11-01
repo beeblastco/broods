@@ -1,9 +1,5 @@
-/**
- * Live state of the machine a run works on, for the <environment> block: its size,
- * what the guest reports for CPU, memory and disk on a harness turn, and which other
- * runs hold it right now. Occupancy is in memory because core runs one replica. The
- * lines are built per run and ride after the cached prompt prefix, never in it.
- */
+// Occupancy lives in memory: core runs one replica. These <environment> lines ride after the
+// cached prompt prefix, never in it.
 
 import type { BroodsSandboxDriverSession } from "@broods/ai-sdk-sandbox";
 import type { SandboxInstanceInfo } from "./types.ts";
@@ -11,11 +7,7 @@ import { configString, configuredSandboxSpecs } from "./utils.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import type { ResolvedAgentSandbox } from "../../shared/workspaces.ts";
 
-// A run that never settled (a crashed pod keeps nothing, but a leaked entry would
-// read as a neighbour forever) stops counting after this long.
 const OCCUPANT_STALE_MS = 6 * 60 * 60 * 1000;
-// Probing the guest must not hold a turn up when it is slow; past this the status
-// goes without usage.
 const USAGE_TIMEOUT_MS = 3_000;
 // One exec, one fixed key per line, so a missing tool only blanks its own field.
 const USAGE_PROBE = [
@@ -25,7 +17,6 @@ const USAGE_PROBE = [
   "df -Pk / 2>/dev/null | awk 'NR==2{print \"disk\", $2, $3}'",
 ].join("; ");
 
-/** What the guest reported about itself. Every field is absent when it could not be read. */
 export interface SandboxUsage {
   cpus?: number;
   diskTotalGb?: number;
@@ -35,7 +26,6 @@ export interface SandboxUsage {
   memoryUsedMb?: number;
 }
 
-/** One run holding a machine. */
 export interface SandboxOccupant {
   agentId?: string;
   conversationKey: string;
@@ -46,22 +36,14 @@ export interface SandboxStatus {
   name: string;
   provider: string;
   specs?: SandboxSpecs;
-  /** Known only when the run holds the machine; the provider is never asked per turn. */
   state?: SandboxInstanceInfo["state"];
-  /** Whether other conversations may land on the same machine. */
   shared: boolean;
   usage?: SandboxUsage;
-  /** The other runs on it, this one excluded. */
   neighbours: SandboxOccupant[];
 }
 
 const occupants = new Map<string, Map<string, SandboxOccupant>>();
 
-/**
- * Status of the persistent sandbox a bash-only run defaults to: its size and the
- * runs on it, with no I/O so the turn never waits on the provider. Undefined when
- * that sandbox reserves nothing.
- */
 export function agentSandboxStatus(
   entry: ResolvedAgentSandbox | undefined,
   eventId: string,
@@ -74,15 +56,12 @@ export function agentSandboxStatus(
   return {
     name: entry.name,
     provider: entry.sandbox.provider,
-    // Only a size known before the machine runs; a provider that sizes itself
-    // reports it to the instance row, and the line leaves it out.
     specs: configuredSandboxSpecs(entry.sandbox),
     shared: true,
     neighbours: sandboxNeighbours(reservationKey, eventId),
   };
 }
 
-/** The <environment> lines for one machine. */
 export function formatSandboxStatus(status: SandboxStatus): string[] {
   const disk =
     status.specs?.storageGb === undefined
@@ -115,10 +94,6 @@ export function formatSandboxStatus(status: SandboxStatus): string[] {
   ];
 }
 
-/**
- * Registers a run on a machine until the returned release is called. The same
- * event registering twice replaces its own entry.
- */
 export function occupySandbox(
   reservationKey: string,
   eventId: string,
@@ -136,7 +111,6 @@ export function occupySandbox(
   };
 }
 
-/** Parses the probe's `key value...` lines. Exported for tests. */
 export function parseSandboxUsage(stdout: string): SandboxUsage {
   const fields = new Map<string, number[]>();
   for (const line of stdout.split("\n")) {
@@ -162,11 +136,6 @@ export function parseSandboxUsage(stdout: string): SandboxUsage {
   return usage;
 }
 
-/**
- * Runs the usage probe on a freshly acquired harness session and hands the
- * result over. Best effort and bounded: a failed, slow or cancelled probe only
- * leaves the usage out, and the caller checks its own signal afterwards.
- */
 export async function reportSandboxUsage(
   session: BroodsSandboxDriverSession,
   onUsage: ((usage: SandboxUsage) => void) | undefined,
@@ -188,18 +157,16 @@ export async function reportSandboxUsage(
     ]);
     if (result.exitCode === 0) onUsage(parseSandboxUsage(result.stdout));
   } catch {
-    // The status block just goes without usage.
+    // Usage is best effort: the status block goes without it.
   }
 }
 
-/** The runs on a machine other than `eventId`, oldest first. */
 export function sandboxNeighbours(
   reservationKey: string,
   eventId: string,
 ): SandboxOccupant[] {
   const holders = occupants.get(reservationKey);
   if (!holders) return [];
-  // A run that never released is dropped here, so leaked entries cannot pile up.
   const staleBefore = Date.now() - OCCUPANT_STALE_MS;
   for (const [id, one] of holders) {
     if (one.since <= staleBefore) holders.delete(id);

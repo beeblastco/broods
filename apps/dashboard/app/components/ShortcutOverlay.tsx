@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * The `?` sheet. Reads the same registry the dispatcher does, and dims what the
- * page you are on has not claimed, so the list is never a promise the app
- * cannot keep.
- */
 import {
   useShortcut,
   useShortcutRegistry,

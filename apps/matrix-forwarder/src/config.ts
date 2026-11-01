@@ -1,8 +1,3 @@
-/**
- * Environment for the Matrix forwarder. The config-plane list and its deploy
- * keys are the ones `apps/discord-forwarder` reads, so that module parses them.
- */
-
 import { positiveIntegerEnv, requireEnv } from "../../core/src/shared/env.ts";
 import {
   configPlanesEnv,
@@ -10,13 +5,9 @@ import {
 } from "../../discord-forwarder/src/config.ts";
 
 interface ForwarderConfig {
-  /** Every config plane this process serves. One process, not one per stage. */
   planes: ConfigPlane[];
   port: number;
-  /**
-   * Root of every account's crypto store and sync token. Required, not defaulted:
-   * a store that silently lands on ephemeral disk loses its keys on restart.
-   */
+  // Required: a store on ephemeral disk would lose the device's keys on restart.
   storeDir: string;
 }
 

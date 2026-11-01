@@ -2,13 +2,9 @@ import type { Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { ClientError } from "../model/clientError";
 
-/**
- * A custom stage name is an identifier, not a label: it rides the public
- * runtime URL, the WebSocket paths and the Loki/Tempo labels as-is.
- */
+// An identifier, not a label: it rides the runtime URL, WebSocket paths and Loki/Tempo labels.
 export const STAGE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 
-/** Trim a custom stage name and refuse anything that is not already a slug. */
 export function assertStageName(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) throw new ClientError("Stage name is required.");
@@ -32,7 +28,6 @@ export function slugifyName(name: string, fallback = "project"): string {
   return slug.length > 0 ? slug : fallback;
 }
 
-/** The org is the namespace a project slug is unique in. */
 export async function uniqueProjectSlug(
   ctx: QueryCtx,
   orgId: Id<"orgs">,

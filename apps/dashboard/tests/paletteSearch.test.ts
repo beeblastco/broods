@@ -41,8 +41,7 @@ describe("palette ranking", () => {
     };
     const ranked = rankItems([page, node("traces-collector")], "traces");
 
-    // The node's title match outranks the page's keyword match, and groups keep
-    // their own heading order regardless.
+    // Groups keep their heading order even though the node outranks the page.
     expect(ranked.map((group) => group.group)).toEqual(["Go to", "Nodes"]);
     expect(ranked[1].items[0].title).toBe("traces-collector");
   });

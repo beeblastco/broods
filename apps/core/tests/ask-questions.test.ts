@@ -164,9 +164,7 @@ describe("ask_questions tool", () => {
     expect(mutations).toHaveLength(0);
   });
 
-  // The SDK runs this validation before `execute` and hands a failure back to
-  // the model. Stored as-is, any of these would fail
-  // `pendingQuestionSummaryValidator` on the run's outcome write instead.
+  // Stored as-is, these would fail `pendingQuestionSummaryValidator` on the outcome write.
   it("refuses at the input schema any shape the outcome validator would refuse", async () => {
     const schema = asSchema(
       askQuestionsTool({
@@ -226,8 +224,7 @@ describe("question answers", () => {
   });
 
   it("takes any other typed reply as the person's own answer", () => {
-    // Otherwise the reply runs as a new turn while the question stays open,
-    // and the agent asks again instead of reading the answer.
+    // Else it runs as a new turn while the question stays open, and the agent asks again.
     expect(answersFromText(PENDING, "staging please")?.answers).toEqual({
       deploy_target: ["staging please"],
     });

@@ -1,9 +1,5 @@
 "use client";
 
-/**
- * The copilot dock. Takes its width from the page rather than floating over it,
- * so what it is about to change stays on screen while you read the plan.
- */
 import { CopilotPlanCard } from "@/app/components/copilot/CopilotPlanCard";
 import { useCopilot } from "@/app/components/copilot/CopilotProvider";
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
@@ -24,19 +20,16 @@ const EXAMPLES = [
   "pause nightly-digest",
 ] as const;
 
+// Takes its width from the page, not floating, so what the plan changes stays on screen.
 export function CopilotDock(): React.JSX.Element | null {
   const { ask, completed, isOpen, messages, runStep, setOpen } = useCopilot();
 
   const [input, setInput] = useState("");
-  const composer = useRef<HTMLTextAreaElement>(null);
   const thread = useRef<HTMLDivElement>(null);
 
   useShortcut("copilot.open", () => setOpen(!isOpen));
 
-  useEffect(() => {
-    if (isOpen) composer.current?.focus();
-  }, [isOpen]);
-
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- scrolls the thread DOM node
   useEffect(() => {
     thread.current?.scrollTo({ top: thread.current.scrollHeight });
   }, [messages]);
@@ -115,7 +108,8 @@ export function CopilotDock(): React.JSX.Element | null {
       <div className="px-3 pb-3">
         <InputGroup className="rounded-lg">
           <InputGroupTextarea
-            ref={composer}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- the user just opened the dock
+            autoFocus
             aria-label="Message"
             value={input}
             onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) =>

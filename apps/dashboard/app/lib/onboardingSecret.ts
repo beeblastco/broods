@@ -1,19 +1,7 @@
-/**
- * Cross-route handoff for a freshly-provisioned one-time account key. The
- * publisher (home bootstrap or org switcher) keeps the plaintext in memory so
- * the onboarding dialog rendered in the persistent main layout can surface it
- * after client navigation. The secret never enters browser storage and is
- * cleared once the flow completes or the page reloads.
- */
-
+// The one-time account key stays in memory only: it must never reach browser storage.
 const EVENT_NAME = "fp:onboarding-secret";
 let pendingSecret: string | null = null;
 
-/**
- * Publishes a one-time secret so the onboarding dialog can show it on the next
- * (or current) route, then notifies any mounted listener.
- * @param secret the plaintext bask_ account key to surface once
- */
 export function publishOnboardingSecret(secret: string): void {
   if (typeof window === "undefined") return;
 
@@ -21,17 +9,12 @@ export function publishOnboardingSecret(secret: string): void {
   window.dispatchEvent(new CustomEvent(EVENT_NAME));
 }
 
-/**
- * Reads the currently pending one-time secret, or null when none is queued.
- * @returns the pending plaintext secret, or null
- */
 export function readOnboardingSecret(): string | null {
   if (typeof window === "undefined") return null;
 
   return pendingSecret;
 }
 
-/** Clears the pending one-time secret and notifies listeners. */
 export function clearOnboardingSecret(): void {
   if (typeof window === "undefined") return;
 
@@ -39,11 +22,6 @@ export function clearOnboardingSecret(): void {
   window.dispatchEvent(new CustomEvent(EVENT_NAME));
 }
 
-/**
- * Subscribes to onboarding-secret changes (publish or clear).
- * @param listener invoked whenever the pending secret changes
- * @returns an unsubscribe function
- */
 export function subscribeOnboardingSecret(listener: () => void): () => void {
   if (typeof window === "undefined") {
     return () => {};

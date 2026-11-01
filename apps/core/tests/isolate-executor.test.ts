@@ -1,8 +1,3 @@
-/**
- * Real isolated-vm runner tests run when BROODS_TEST_ISOLATE_RUNNER_PATH points
- * at a runner.mjs whose directory has node_modules/isolated-vm installed.
- */
-
 import { afterEach, describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -11,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const runnerPath = process.env.BROODS_TEST_ISOLATE_RUNNER_PATH;
+// skip: without BROODS_TEST_ISOLATE_RUNNER_PATH, a runner.mjs beside node_modules/isolated-vm
 const realRunnerIt = runnerPath ? it : it.skip;
 
 describe("isolate runner", () => {
@@ -49,8 +45,6 @@ describe("isolate runner", () => {
     },
   );
 
-  // Parity with the sandbox tier: a bundle sees the AI SDK's own options, and
-  // ctx no longer advertises the env/asyncTool fields that were always empty.
   realRunnerIt("passes the full AI SDK execution options through", async () => {
     const result = await runRealRunner(
       `export default { name: 'opts', execute(input, options) {
@@ -132,8 +126,7 @@ describe("isolate runner", () => {
   });
 
   realRunnerIt("provides the web globals a bare V8 isolate lacks", async () => {
-    // A zod-shaped bundle reaches for TextDecoder and URL at import time, so
-    // these are what stands between the isolate tier and a ReferenceError.
+    // zod-shaped bundles reach for TextDecoder and URL at import time.
     const result = await runRealRunner(
       `export default { name: "web_globals", execute() {
           const url = new URL("/a?x=1#f", "https://Example.com:8443");
@@ -175,8 +168,7 @@ describe("isolate runner", () => {
   realRunnerIt(
     "reports a truncated encodeInto and refuses an oversized random buffer",
     async () => {
-      // Both silent-corruption shapes: encodeInto claiming it consumed input it
-      // did not write, and getRandomValues zero-filling past the host's quota.
+      // Silent-corruption cases: encodeInto overclaiming `read`, getRandomValues past the quota.
       const result = await runRealRunner(
         `export default { name: "edges", execute() {
           const encoder = new TextEncoder();
@@ -200,8 +192,7 @@ describe("isolate runner", () => {
             partial: { read: 2, written: 2 },
             exact: { read: 2, written: 2 },
             quota: "QuotaExceededError",
-            // Raw bytes in a float array are not uniform values, so the spec
-            // rejects the view rather than hand back misleading numbers.
+            // The spec rejects float views: raw bytes there are not uniform values.
             floats: "TypeMismatchError",
           },
         },
@@ -253,8 +244,7 @@ describe("isolate runner", () => {
           },
         },
       ]);
-      // Console now rides the frame protocol. Writing to stderr instead is what
-      // lost the pooled worker's logs, so the old channel must stay empty.
+      // The pooled worker discards stderr, so console must ride the frame protocol only.
       expect(result.stderr).not.toContain("hello from the isolate");
     },
   );
@@ -348,8 +338,7 @@ describe("isolate pooled worker (--pool)", () => {
         },
       ]);
 
-      // Same tenant reuses the isolate, but the fresh context resets globals, so
-      // the second call must NOT observe the first call's write.
+      // Same tenant reuses the isolate, but its fresh context must not see the first call's write.
       expect(byCall.get("1")!.find((f) => f.t === "final")).toEqual({
         t: "final",
         callId: "1",
@@ -415,12 +404,10 @@ describe("isolate pooled worker (--pool)", () => {
   );
 });
 
-// Runs against a stub runner (no isolated-vm), so it exercises the core-side
-// forwarding of the AI SDK abortSignal into the runner process on every CI run.
+// Stub runner, no isolated-vm: this runs on every CI run.
 describe("streamIsolatePayload cross-process abort", () => {
   const created: string[] = [];
-  // Every knob these tests set, put back as it was (or unset) after each one,
-  // so a later test file never inherits a stub runner or a shrunken pool.
+  // Restored after each test so a later file never inherits a stub runner or a shrunken pool.
   const savedEnv = [
     "ISOLATE_RUNNER_PATH",
     "ISOLATE_POOL",
@@ -434,8 +421,7 @@ describe("streamIsolatePayload cross-process abort", () => {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    // Never hand a worker spawned against this file's stub runner to whatever
-    // runs next: the pool outlives the file that filled it.
+    // The pool outlives this file: never hand its stub-runner workers to the next one.
     const { shutdownIsolatePool } =
       await import("../src/harness/isolate/executor.ts");
     shutdownIsolatePool();
@@ -491,8 +477,6 @@ describe("streamIsolatePayload cross-process abort", () => {
   });
 
   it("forwards the abortSignal on the pooled path too", async () => {
-    // The pooled path is the default, so this is the forwarding that runs in
-    // production; the worker is checked out of the shared pool, not spawned here.
     const dir = await mkdtemp(join(tmpdir(), "broods-pool-stub-"));
     created.push(dir);
     const stubPath = join(dir, "stub-pool-runner.mjs");
@@ -524,10 +508,8 @@ describe("streamIsolatePayload cross-process abort", () => {
 
     const { shutdownIsolatePool, streamIsolatePayload } =
       await import("../src/harness/isolate/executor.ts");
-    // The pool is module-global and acquireWorker takes any idle worker, but
-    // ISOLATE_RUNNER_PATH is only read when one is spawned. Without this, a
-    // worker some earlier test left behind serves the call on the real runner,
-    // which rejects this stub bundle instead of answering the abort.
+    // ISOLATE_RUNNER_PATH is read only at spawn and acquireWorker takes any idle worker, so drop
+    // any real-runner worker an earlier test left before this stub call.
     shutdownIsolatePool();
     const controller = new AbortController();
     const aborted = abortWhenReady(readyPath, controller);
@@ -548,8 +530,6 @@ describe("streamIsolatePayload cross-process abort", () => {
         outputs.push(output);
       }
     } finally {
-      // A stub worker surviving the abort would hold a child process for the
-      // rest of the run: the pool outlives this file.
       shutdownIsolatePool();
     }
     await aborted;
@@ -626,8 +606,7 @@ describe("streamIsolatePayload cross-process abort", () => {
   });
 
   it("serves sequential calls from one worker instead of filling the pool", async () => {
-    // What makes the pool safe to have on by default: core's pod budgets memory
-    // for one process, not for ISOLATE_WORKER_POOL_SIZE resident Node runtimes.
+    // Core's pod budgets memory for one process, not a pool of resident Node runtimes.
     const dir = await mkdtemp(join(tmpdir(), "broods-pool-count-"));
     created.push(dir);
     const marker = join(dir, "spawns.txt");
@@ -683,8 +662,6 @@ describe("streamIsolatePayload cross-process abort", () => {
   });
 
   it("queues past the pool cap instead of spawning past it", async () => {
-    // The cap is what keeps resident memory bounded, so concurrent demand above
-    // it has to wait for a worker rather than grow the pool or fail.
     const dir = await mkdtemp(join(tmpdir(), "broods-pool-cap-"));
     created.push(dir);
     const marker = join(dir, "spawns.txt");
@@ -746,8 +723,7 @@ describe("streamIsolatePayload cross-process abort", () => {
   });
 
   it("fails calls whose runner never starts after three spawns, then recovers once it does", async () => {
-    // A missing addon or broken runner exits before `ready`; the pool used to
-    // respawn it forever and the hook waiting on it never settled.
+    // A missing addon or broken runner exits before `ready`; the hook waiting on it must settle.
     const dir = await mkdtemp(join(tmpdir(), "broods-pool-start-"));
     created.push(dir);
     const marker = join(dir, "spawns.txt");
@@ -779,8 +755,7 @@ describe("streamIsolatePayload cross-process abort", () => {
       return outputs;
     };
     try {
-      // The second call queues behind the first on the one-worker pool, so it
-      // also proves a queued call is not left waiting on the failed slot.
+      // Queued behind the first on a one-worker pool: must not be left waiting on the failed slot.
       const failures = await Promise.all(
         [call(), call()].map((pending) =>
           pending.then(String, (error: Error) => error.message),
@@ -809,8 +784,6 @@ describe("streamIsolatePayload cross-process abort", () => {
   }, 10_000);
 
   it("gives up on a runner that never says ready after its start deadline, not the run timeout", async () => {
-    // The start deadline used to be the 30 s run timeout, so each hook fire
-    // waited three of them (~90 s) on a hung runner before skipping the hook.
     const dir = await mkdtemp(join(tmpdir(), "broods-pool-hang-"));
     created.push(dir);
     const marker = join(dir, "spawns.txt");
@@ -848,8 +821,7 @@ describe("streamIsolatePayload cross-process abort", () => {
         "isolate worker failed to start: isolate worker did not become ready",
       );
       expect(await readFile(marker, "utf8")).toBe("xxx");
-      // Three 1 s start deadlines plus 300 ms of backoff, about 3.3 s. The bound
-      // leaves room for a loaded runner and still sits far under one 60 s run timeout.
+      // Three 1 s start deadlines plus 300 ms backoff is about 3.3 s, far under a 60 s run timeout.
       expect(performance.now() - started).toBeLessThan(10_000);
     } finally {
       shutdownIsolatePool();
@@ -857,8 +829,7 @@ describe("streamIsolatePayload cross-process abort", () => {
   }, 15_000);
 });
 
-// A fixed timer here raced the runner's startup: abort before the stub installs
-// its SIGUSR2 handler and the default disposition kills it, so no final frame.
+// Abort only once the stub is ready: before its SIGUSR2 handler, the signal kills it unanswered.
 async function abortWhenReady(
   readyPath: string,
   controller: AbortController,

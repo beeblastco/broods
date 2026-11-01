@@ -47,8 +47,8 @@ cd packages/demos/basic-stream && bun run start
 ## Code conventions
 
 - **TypeScript + ESM.** Apps run their TypeScript directly on Bun; `packages/broods` builds to `dist/` for npm.
-- File header comments use a block docstring (`/** ... */`) with one blank line before the first import.
-- Keep docstrings short. Describe the file boundary, not a function inventory.
+- **Comments.** Default to none. Write one only for a constraint, an external quirk, or an invariant the code can't show: one line where you can, four at most. Don't restate names, narrate steps, or record history (the PR carries that), and skip the file-header docstring unless the path and exports leave the file's role unclear.
+- `broods/no-low-value-comments` lints comments, and CI holds them to 2.5% of JS/TS lines (4% per workspace) with `bun run comments:check`. The full rule is in the root `AGENTS.md`.
 - Use `key: value` object syntax instead of shorthand.
 - Put one blank line before a function's final `return`.
 - Prefer reusing existing interfaces from the Vercel AI SDK or other libraries rather than creating new ones.

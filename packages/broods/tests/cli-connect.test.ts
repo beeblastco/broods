@@ -1,9 +1,3 @@
-/**
- * `broods connect` against a stubbed deployment: the browser redirect is
- * played by the test, the CLI keeps the PKCE verifier, state and nonce, and
- * only the code the redirect brought back goes to the deployment.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import type {
@@ -77,7 +71,6 @@ describe("connectInBrowser", () => {
   });
 });
 
-/** Plays the deployment and the browser: start answers a consent URL, the browser redirects back. */
 async function runConnect(type: ConnectionType): Promise<Connection> {
   let redirectUri = "";
   let state = "";

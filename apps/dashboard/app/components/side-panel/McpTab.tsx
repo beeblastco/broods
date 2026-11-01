@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Server tab for MCP nodes. Hosted mode edits Node source the dashboard
- * bundles and core probes in the sandboxed Lambda before the row is written;
- * external mode registers a pre-existing server by url + headers.
- */
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
@@ -177,8 +172,7 @@ export function McpTab({
     server.transport === "hosted" &&
     server.sourceCode === undefined
   ) {
-    // A CLI-uploaded hosted row carries no source: editing this tab's
-    // template over the real bundle would overwrite it, so the editor gives way.
+    // A CLI-uploaded row carries no source; saving this template would overwrite its bundle.
     return <BundleManagedNotice server={server} />;
   }
 
@@ -267,7 +261,6 @@ export function McpTab({
   );
 }
 
-/** CLI-owned hosted rows: the source lives in the user's project, not here. */
 function BundleManagedNotice({
   server,
 }: {
@@ -291,7 +284,6 @@ function BundleManagedNotice({
   );
 }
 
-/** Machine rows run on a person's computer, which the dashboard cannot reach. */
 function MachineManagedNotice({
   server,
 }: {
@@ -389,7 +381,6 @@ function TransportToggle({
   );
 }
 
-/** Form state seeded from the saved row; synced during render, not an effect. */
 function useServerForm(server: Doc<"mcp"> | null | undefined): {
   activeTransport: "hosted" | "http";
   headersJson: string;
@@ -408,7 +399,6 @@ function useServerForm(server: Doc<"mcp"> | null | undefined): {
   if (server !== undefined && server !== syncedServer) {
     setSyncedServer(server);
     if (server) {
-      // A machine row has no editor; the form only ever edits the other two.
       setTransport(server.transport === "machine" ? null : server.transport);
       setSourceCode(server.sourceCode ?? DEFAULT_SOURCE);
       setUrl(server.url ?? "");

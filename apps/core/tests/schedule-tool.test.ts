@@ -1,8 +1,3 @@
-/**
- * The schedule tools' input schemas, run the way the SDK runs them before
- * `execute`: a call the schema refuses goes back to the model to retry.
- */
-
 import { describe, expect, it } from "bun:test";
 import { asSchema, type ToolSet } from "ai";
 import {
@@ -30,8 +25,7 @@ describe("schedule tool input", () => {
       false,
     );
     expect((await validate({ ...TASK, name: "" })).success).toBe(false);
-    // The config plane stores instructions as they come, so blank ones would
-    // fire as an empty task.
+    // The config plane stores instructions as given, so blank ones would fire as an empty task.
     expect((await validate({ ...TASK, instructions: "   " })).success).toBe(
       false,
     );
@@ -65,7 +59,6 @@ describe("schedule tool input", () => {
   });
 });
 
-/** The SDK's own check for one tool's input. */
 function validator(
   tools: ToolSet,
   name: string,

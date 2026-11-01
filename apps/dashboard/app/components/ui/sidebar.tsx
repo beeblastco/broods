@@ -72,8 +72,6 @@ function SidebarProvider({
   const [openMobile, setOpenMobile] = React.useState(false);
   const [peek, setPeek] = React.useState(false);
 
-  // This is the internal state of the sidebar.
-  // We use openProp and setOpenProp for control from outside the component.
   const [_open, _setOpen] = React.useState(defaultOpen);
   const open = openProp ?? _open;
   const setOpen = React.useCallback(
@@ -86,19 +84,15 @@ function SidebarProvider({
         _setOpen(openState);
       }
 
-      // This sets the cookie to keep the sidebar state.
       document.cookie = `${SIDEBAR_COOKIE}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`;
     },
     [setOpenProp, open],
   );
 
-  // Helper to toggle the sidebar.
   const toggleSidebar = React.useCallback(() => {
     return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open);
   }, [isMobile, setOpen, setOpenMobile]);
 
-  // We add a state so that we can do data-state="expanded" or "collapsed".
-  // This makes it easier to style the sidebar with Tailwind classes.
   const state = open ? "expanded" : "collapsed";
 
   const contextValue = React.useMemo<SidebarContextProps>(
@@ -165,11 +159,10 @@ function Sidebar({
     useSidebar();
   const containerRef = React.useRef<HTMLDivElement>(null);
   const peeking = peek && state === "collapsed" && collapsible === "icon";
-  // Off canvas: out of view, so out of the tab order too.
   const hidden = state === "collapsed" && collapsible === "offcanvas";
 
-  // Inert drops focus to the page, so focus inside hands over to the trigger
-  // that brings the sidebar back. Before paint, while focus is still inside.
+  // Inert drops focus to the body: hand it to the trigger before paint, while it is still inside.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- moves DOM focus to the trigger
   React.useLayoutEffect(() => {
     if (!hidden || !containerRef.current?.contains(document.activeElement)) {
       return;
@@ -177,14 +170,13 @@ function Sidebar({
     document.querySelector<HTMLElement>('[data-sidebar="trigger"]')?.focus();
   }, [hidden]);
 
-  // Close again once the pointer is past the sidebar's width or out of the
-  // window, unless a menu opened from inside (the account menu) is still up.
-  // Measured only once the width has finished growing, and again when it does,
-  // so a pointer that outruns the opening edge never counts as leaving.
+  // Close once the pointer is past the rail or out of the window, unless a menu from inside is
+  // up. Measured once the width stops growing, so a pointer outrunning the edge is not leaving.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- document pointer listeners
   React.useEffect(() => {
     const container = containerRef.current;
     if (!peeking || !container) return;
-    // Null until the first move; then the pointer's x, or null once it is out.
+    // undefined until the first move, null once the pointer left the window.
     let pointerX: number | null | undefined;
     const check = (): void => {
       if (pointerX === undefined || container.getAnimations().length > 0) {
@@ -202,7 +194,7 @@ function Sidebar({
       pointerX = event.clientX;
       check();
     };
-    // No element to go to: the pointer left the window, with no move after.
+    // No element to go to: the pointer left the window.
     const onOut = (event: PointerEvent): void => {
       if (event.relatedTarget) return;
       pointerX = null;
@@ -269,7 +261,6 @@ function Sidebar({
       data-side={side}
       data-slot="sidebar"
     >
-      {/* This is what handles the sidebar gap on desktop */}
       <div
         data-slot="sidebar-gap"
         className={cn(
@@ -288,14 +279,9 @@ function Sidebar({
         inert={hidden}
         data-slot="sidebar-container"
         data-side={side}
-        // A collapsed icon rail opens over the page once a mouse or pen is on
-        // it. Not on touch: no pointer moves away to close it again.
-        // Pointerover, not pointerenter: React builds pointerenter from the
-        // pointerout of the node the pointer left, and Chrome sends none when
-        // that node was removed under a resting pointer, so the rail stayed shut.
-        // Only an over that comes in from outside counts: one from item to
-        // item (the sidebar collapsed under the pointer) or one React bubbled
-        // up from a portal (the account menu) is not the pointer arriving.
+        // Not on touch: no pointer moves away to close it. Pointerover, not pointerenter: Chrome
+        // sends no pointerout for a node removed under a resting pointer, so React's enter never
+        // fires. Only an over from outside counts, not item to item nor bubbled from a portal.
         onPointerOver={({
           currentTarget,
           target,
@@ -316,8 +302,8 @@ function Sidebar({
           }
         }}
         className={cn(
+          // oxlint-disable-next-line broods/no-layout-transition -- fixed: relays out only itself
           "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] md:flex",
-          // Adjust the padding for floating and inset variants.
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
@@ -694,7 +680,6 @@ function SidebarMenuSkeleton({
 }: React.ComponentProps<"div"> & {
   showIcon?: boolean;
 }) {
-  // Random width between 50 to 90%.
   const [width] = React.useState(() => {
     return `${Math.floor(Math.random() * 40) + 50}%`;
   });
@@ -764,7 +749,6 @@ function SidebarMenuSubButton({
   React.ComponentProps<"a"> & {
     size?: "sm" | "md";
     isActive?: boolean;
-    // Destructive, for a Danger Zone tab.
     variant?: "default" | "destructive";
   }) {
   return useRender({

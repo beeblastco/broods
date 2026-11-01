@@ -1,8 +1,3 @@
-/**
- * WebSocket client for deployed-agent endpoints.
- * Uses the gateway URL when configured, or derives one from the core service URL.
- */
-
 import { DEFAULT_CORE_BASE_URL, normalizeHttpServiceUrl } from "./client.ts";
 import type { AgentReference } from "./client.ts";
 import { stripTrailingSlash } from "./config.ts";
@@ -61,12 +56,10 @@ export type WebSocketAttachInput = Omit<
 
 export interface WebSocketHandlers {
   /**
-   * Receives every server message with durable output envelopes unwrapped:
-   * stream parts arrive as themselves (`message.type === "text-delta"`), never
-   * nested under `data`. Use `onOutput` when the envelope cursor is needed.
+   * Every server message with output envelopes unwrapped: a stream part arrives as itself
+   * (`message.type === "text-delta"`), never under `data`. `onOutput` gets the cursor.
    */
   onMessage?(message: WebSocketServerMessage): void;
-  /** Receives the raw durable output envelope (cursor, replay flag, part). */
   onOutput?(output: WebSocketOutputMessage): void;
   onMeta?(meta: Extract<WebSocketServerMessage, { type: "meta" }>): void;
   onDone?(): void;
@@ -82,15 +75,14 @@ export interface WebSocketSubscription {
 export interface BroodsWebSocketClientOptions {
   /** Base URL of the core service. Use `https://...`; the client converts it to `wss://...`. */
   baseUrl?: string;
-  /** Hostname or URL of the core service. `gateway.broods.app` becomes `https://gateway.broods.app`. */
+  /** Hostname or URL of the core service, e.g. `gateway.broods.app`; `https://` is added. */
   host?: string;
-  /** Runtime key used as the WebSocket token. Defaults to BROODS_API_KEY from the environment or local .env files. */
+  /** Runtime key sent as the WebSocket token. Defaults to BROODS_API_KEY (env or .env files). */
   apiKey?: string;
   /**
-   * The signed-in user's token (from `signUserToken` on your backend). Each
-   * socket carries it from its upgrade on; an agent that requires one refuses
-   * the runtime key without it. Tokens are short-lived, so a long-lived client
-   * passes a fresh one per run as `userToken` on the input instead.
+   * The signed-in user's token from `signUserToken`; an agent that requires one refuses the
+   * runtime key without it. Tokens are short-lived: a long-lived client passes a fresh one
+   * per run as the input's `userToken` instead.
    */
   userToken?: string;
   WebSocket?: WebSocketConstructorLike;
@@ -423,12 +415,8 @@ export function toWebSocketBaseUrl(url: string): string {
   return stripTrailingSlash(parsed.toString());
 }
 
-/**
- * The credential travels as a `Sec-WebSocket-Protocol` entry rather than in
- * the URL, so it never lands in proxy or access logs, and so does the user
- * token. The gateway answers with `broods.v1`, which is what completes a
- * handshake that offered subprotocols.
- */
+// Credentials ride in `Sec-WebSocket-Protocol`, never the URL, so they stay out of proxy and
+// access logs. The gateway answers `broods.v1`, which completes the subprotocol handshake.
 export function webSocketSubprotocols(
   apiKey: string,
   userToken?: string,
@@ -512,7 +500,6 @@ function resolveEndpointId(
   return endpointId;
 }
 
-/** Unwraps durable output envelopes and forwards them to onOutput. */
 function unwrapServerMessage(
   payload: WebSocketServerMessage,
   handlers: WebSocketHandlers,

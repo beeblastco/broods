@@ -1,11 +1,5 @@
 "use node";
 
-/**
- * Node-runtime internal actions for S3 workspace file operations, called by
- * the default-runtime config HTTP surface (config/http). Dashboard actions use
- * model/workspaceFs directly via workspaceFilesPublic instead.
- */
-
 import { v } from "convex/values";
 import { internalAction } from "../_generated/server";
 import { workspaceStorageValidator } from "../workspace/files";
@@ -20,8 +14,7 @@ import {
   type WorkspaceFileEntry,
 } from "../model/workspaceFs";
 
-// Every op takes the workspace's own storage block so a bring-your-own bucket is
-// read and written where the sandbox mounts it, not in the managed bucket.
+// Per-workspace storage, so a bring-your-own bucket is used where the sandbox mounts it.
 const workspaceRef = {
   accountId: v.id("accounts"),
   workspaceId: v.id("workspaceConfigs"),
@@ -36,11 +29,6 @@ const fileEntry = v.object({
   updatedAt: v.optional(v.string()),
 });
 
-/**
- * @param accountId account owning the workspace
- * @param workspaceId workspace config id
- * @returns files plus synthesized folder entries
- */
 export const list = internalAction({
   args: workspaceRef,
   returns: v.array(fileEntry),
@@ -49,13 +37,6 @@ export const list = internalAction({
   },
 });
 
-/**
- * Upload or replace one workspace file.
- * @param accountId account owning the workspace
- * @param workspaceId workspace config id
- * @param path file path, contentBase64 contents, contentType optional
- * @returns the stored file entry
- */
 export const upload = internalAction({
   args: {
     ...workspaceRef,
@@ -73,12 +54,6 @@ export const upload = internalAction({
   },
 });
 
-/**
- * @param accountId account owning the workspace
- * @param workspaceId workspace config id
- * @param path the file path
- * @returns a short-lived S3 GET URL
- */
 export const downloadUrl = internalAction({
   args: { ...workspaceRef, path: v.string() },
   returns: v.string(),
@@ -90,13 +65,6 @@ export const downloadUrl = internalAction({
   },
 });
 
-/**
- * Delete a workspace file or folder prefix.
- * @param accountId account owning the workspace
- * @param workspaceId workspace config id
- * @param path the file or folder path
- * @returns the number of objects deleted
- */
 export const removePath = internalAction({
   args: { ...workspaceRef, path: v.string() },
   returns: v.number(),
@@ -108,12 +76,6 @@ export const removePath = internalAction({
   },
 });
 
-/**
- * Purge all files in a managed workspace filesystem namespace.
- * @param accountId account owning the workspace
- * @param workspaceId workspace config id
- * @returns the number of objects deleted
- */
 export const purge = internalAction({
   args: workspaceRef,
   returns: v.number(),
@@ -122,13 +84,6 @@ export const purge = internalAction({
   },
 });
 
-/**
- * Rename a workspace file or folder prefix.
- * @param accountId account owning the workspace
- * @param workspaceId workspace config id
- * @param path source path, newPath destination path
- * @returns the number of objects moved
- */
 export const renamePath = internalAction({
   args: { ...workspaceRef, path: v.string(), newPath: v.string() },
   returns: v.number(),

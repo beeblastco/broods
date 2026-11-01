@@ -1,7 +1,6 @@
 import { defineAgent, defineSandbox, env } from "broods";
 
-// One persistent VM on the Obscura image. `browse` runs a fresh `obscura fetch`
-// there for each call, so no page state carries between calls.
+// `browse` runs a fresh `obscura fetch` per call, so no page state carries between calls.
 export const web = defineSandbox({
   name: "obscura-web",
   provider: "lambda",

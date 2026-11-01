@@ -1,13 +1,5 @@
-/**
- * SSRF-guarded pinned fetch: resolve the name, validate every address, then
- * connect to the address that was validated. Backs the isolate fetch bridge
- * and the attachment fetches in `channel-media.ts` and `shared/channels.ts`.
- *
- * Error messages are neutral. Every caller shows them to a different
- * audience, so the isolate bridge adds its own "ctx.fetch" label at its
- * boundary in `runner.mjs`. Types live in the sibling `pinned-fetch.d.mts`;
- * keep the two in sync.
- */
+// SSRF guard: validate every resolved address, then connect to the validated one.
+// Messages stay neutral: each caller labels them for its audience (runner.mjs adds "ctx.fetch").
 
 import http from "node:http";
 import https from "node:https";
@@ -35,18 +27,7 @@ export const DENY_CIDRS = [
   "240.0.0.0/4",
 ];
 
-// Resolve -> validate all resolved IPs -> pick one -> connect to that pinned IP.
-// Tests may inject lookup/createConnection/allowAddresses/ca through opts;
-// production callers should leave those unset so Node opens the socket directly
-// to the validated address and verifies TLS against the system roots.
-// `allowAddresses` exempts exact addresses (the test loopback) from the
-// denylist and cannot replace the check itself.
-// `binary: true` returns the body as bytes in `bodyBytes` instead of decoded
-// text in `bodyText`, and skips the body of a non-2xx answer entirely;
-// `bodyLimitBytes` overrides the default body cap. `redirectLimit: 0` refuses
-// redirects outright, for callers that must reach the host they named and no
-// other: every hop is revalidated, but http is a valid hop, so a redirect can
-// still move a request off TLS.
+// Each redirect hop is revalidated, but http is a valid hop: redirectLimit 0 keeps a caller on TLS.
 export async function guardedFetch(url, init, opts = {}) {
   const timeoutMs = Number.isFinite(opts.timeoutMs)
     ? Math.max(0, Number(opts.timeoutMs))
@@ -160,9 +141,8 @@ function requestPinned(parsed, pinned, init, state) {
         path: `${parsed.pathname}${parsed.search}`,
         headers: headers,
         servername: parsed.hostname,
-        // Under Bun a pooled socket the server already closed fails the call
-        // with "socket hang up", so each request opens its own. An injected
-        // connection is unpooled already, and an agent would bypass it.
+        // No agent: Bun fails a pooled socket the server already closed ("socket hang up"),
+        // and an agent would bypass an injected createConnection.
         agent: state.createConnection ? undefined : false,
         signal: state.signal,
         createConnection: state.createConnection,
@@ -172,10 +152,6 @@ function requestPinned(parsed, pinned, init, state) {
       async (response) => {
         try {
           const status = response.statusCode ?? 0;
-          // A redirect's body is never surfaced, and a binary caller keeps
-          // only bytes it can use: skip the download instead of buffering up
-          // to the cap just to throw it away. Text callers still read error
-          // bodies, which ctx.fetch hands back to the tool.
           const skipBody =
             isRedirect(status) ||
             (state.binary && (status < 200 || status >= 300));
@@ -325,9 +301,6 @@ function isRedirect(status) {
   );
 }
 
-// A declared Content-Length past the cap fails before any byte is read; a
-// missing or lying one fails the moment the read crosses the cap, and the
-// connection is torn down so the rest of the body is never downloaded.
 async function readBodyBytes(response, limitBytes) {
   const limit = Number.isFinite(limitBytes) ? limitBytes : BODY_LIMIT_BYTES;
   const declared = Number(response.headers["content-length"]);
@@ -365,7 +338,6 @@ function concatBytes(chunks, total) {
   return result;
 }
 
-// Like fetch, credentials never follow a redirect to another origin.
 function withoutCredentials(init) {
   const headers = normalizeRequestHeaders(init.headers);
   for (const key of Object.keys(headers)) {

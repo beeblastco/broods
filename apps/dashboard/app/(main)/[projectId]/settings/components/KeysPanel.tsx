@@ -1,13 +1,6 @@
 "use client";
 
-/**
- * Project › Settings › Keys: two lists with two purposes. Runtime keys are
- * minted with the stage, one each; the only actions are rotate and reveal
- * (on the Runtime key tab). API keys are made by people for deploys and
- * integrations and carry a name and a description. Each stage answers for
- * itself: `keys:read` shows its rows, `keys:write` unlocks Rotate, Revoke and
- * New key for it; a member without either sees a lock.
- */
+// Per stage: `keys:read` shows its rows, `keys:write` unlocks Rotate, Revoke and New key.
 
 import { ConfirmDialog } from "@/app/components/ConfirmDialog";
 import { CopyButton } from "@/app/components/CopyButton";
@@ -79,10 +72,8 @@ type ApiColumn =
   | "createdBy";
 type ApiField = (typeof API_QUERY_FIELDS)[number];
 
-// The `field:value` tokens the API key search box understands.
 const API_QUERY_FIELDS = ["stage"] as const;
 
-// The runtime list has no search box.
 const NO_FIELDS: readonly never[] = [];
 
 const RUNTIME_SORT: Record<RuntimeColumn, (key: RuntimeKey) => SortKey> = {
@@ -133,7 +124,6 @@ export function KeysPanel({ projectId, stageId }: Props): React.JSX.Element {
   );
 }
 
-/** One row per stage: the key minted with it, when it was rotated and by whom. Rotate is for the stages in `writable`. */
 function RuntimeKeysTable({
   projectId,
   keys,
@@ -261,7 +251,6 @@ function RuntimeKeysTable({
   );
 }
 
-/** Keys people make: name, description, the stage they reach, and who made them. Revoke and New key are for the stages in `writable`. */
 function ApiKeysTable({
   projectId,
   keys,
@@ -454,7 +443,6 @@ function ApiKeysTable({
   );
 }
 
-/** Name, description and stage for a new API key. */
 function NewKeyDialog({
   projectId,
   stages,
@@ -587,7 +575,6 @@ function NewKeyDialog({
   );
 }
 
-/** The one-time plaintext, with the deploy line that uses it. */
 function RevealedKeyDialog({
   token,
   stageName,

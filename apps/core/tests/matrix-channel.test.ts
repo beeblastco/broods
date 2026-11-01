@@ -26,7 +26,6 @@ const API_ADDRESS = "93.184.216.34";
 const FORWARDER_URL = "http://forwarder.test";
 const ROOM_ID = "!room:example.org";
 const TOKEN = "syt_token";
-/** Comfortably past the adapter's own refresh interval. */
 const PAST_REFRESH_MS = 60_000;
 
 const originalFetch = globalThis.fetch;
@@ -38,7 +37,6 @@ interface CapturedCall {
   url: string;
 }
 
-/** A forwarder whose responses a test releases by hand. */
 interface HeldForwarder {
   calls: CapturedCall[];
   /** Answers every request taken so far, then drains what they resume. */
@@ -346,8 +344,7 @@ describe("matrix channel actions", () => {
       jest.advanceTimersByTime(PAST_REFRESH_MS);
       await settle();
       await actions.sendText("done");
-      // Nothing is left ticking, so the room is not told the agent is typing
-      // again after it answered.
+      // Nothing is left ticking, so the room is not told the agent is typing after it answered.
       jest.advanceTimersByTime(PAST_REFRESH_MS * 3);
       await settle();
     } finally {
@@ -363,8 +360,7 @@ describe("matrix channel actions", () => {
 
     jest.useFakeTimers();
     try {
-      // Both starts are in flight before either notice is answered, which is
-      // what two mentions landing together in one room look like.
+      // Both starts in flight before either notice answers: two mentions landing in one room.
       const first = actions.sendTyping();
       const second = actions.sendTyping();
       await held.release();
@@ -404,14 +400,12 @@ describe("matrix channel actions", () => {
       jest.useRealTimers();
     }
 
-    // Start, refresh, restart, and only the second reply's clear: the first
-    // reply must not blank the notice the second message just set.
+    // The first reply must not blank the notice the second message just set.
     expect(typingFlags(held.calls)).toEqual([true, true, true, false]);
   });
 
-  // A message that arrives mid-run is drained with actions built from its own
-  // reply source, so the object that answers is rarely the one that set the
-  // notice. Per-object state would leave the first one renewing on its own.
+  // A mid-run message is drained with actions from its own reply source, so the object that
+  // answers is rarely the one that set the notice.
   it("clears a typing notice another actions object started", async () => {
     const sent = captureForwarder();
 
@@ -529,10 +523,6 @@ function forwarded(
   };
 }
 
-/**
- * A forwarder that answers nothing until `release`, so a test can hold a request
- * on the wire and start another lifecycle underneath it.
- */
 function holdForwarder(): HeldForwarder {
   const calls: CapturedCall[] = [];
   const waiting: Array<() => void> = [];
@@ -600,7 +590,6 @@ function source(): MatrixSource {
   };
 }
 
-/** The `typing` flag of every `/v1/typing` call, in order. */
 function typingFlags(calls: readonly CapturedCall[]): boolean[] {
   return calls
     .filter((call): boolean => call.url.endsWith("/v1/typing"))

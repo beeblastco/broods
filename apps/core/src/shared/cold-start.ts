@@ -1,37 +1,15 @@
-/**
- * Container cold-start timing. The module graph loads before the first handler
- * entry, so the first handler entry marks the boundary between init and request
- * work. The first agent run in this process consumes the window to emit it as a
- * phase span; warm requests and later runs see nothing.
- */
-
-// Process spawn approximated from uptime at module load.
 const PROCESS_START_MS = Date.now() - Math.round(process.uptime() * 1000);
 
-// Upper bound on a real init window. A larger gap means the container initialized,
-// then idled before its first request. That idle is not this request's latency,
-// so clamp it. Otherwise the cold-start span balloons the whole trace.
+// A longer init window is idle time before the first request, not this request's latency.
 const MAX_COLD_START_MS = 60_000;
 
 let coldStartWindow: { startMs: number; endMs: number } | undefined;
 let coldStartConsumed = false;
 
-/**
- * Record the first handler entry of this execution environment. Only the first
- * call wins, capturing the init window [process start, first handler entry].
- */
 export function markHandlerEntry(now: number): void {
   coldStartWindow ??= { startMs: PROCESS_START_MS, endMs: now };
 }
 
-/**
- * Read and clear the cold-start window so the first agent run can emit it as a
- * single phase span. `runStartedMs`, when the agent loop began, gates the window
- * so a container born long ago (it first handled a webhook ack, then ran this loop
- * minutes later) never stamps a stale init window onto this request's trace.
- * Returns null on warm runs, on runs that began too long after process start, and
- * after the first consumption.
- */
 export function consumeColdStart(
   runStartedMs: number,
 ): { startMs: number; durationMs: number } | null {
@@ -40,9 +18,7 @@ export function consumeColdStart(
   }
   coldStartConsumed = true;
 
-  // A run that begins well after process start did not pay the init cost as part
-  // of its own latency. Attributing it here would anchor the span minutes before
-  // the request and balloon the whole trace window, so drop it instead.
+  // A run that began long after process start did not pay for init.
   if (runStartedMs - PROCESS_START_MS > MAX_COLD_START_MS) {
     return null;
   }
@@ -53,8 +29,6 @@ export function consumeColdStart(
   );
   const durationMs = Math.min(rawDurationMs, MAX_COLD_START_MS);
 
-  // Anchor the (possibly clamped) window to the handler entry so the span never
-  // starts before the request and inflate the trace duration.
   return {
     startMs: coldStartWindow.endMs - durationMs,
     durationMs: durationMs,

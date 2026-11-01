@@ -10,12 +10,6 @@ import {
   DialogTitle,
 } from "@/app/components/ui/dialog";
 
-/**
- * One question before an action that cannot be taken back without a cost:
- * rotate a key, suspend a sandbox, pay for a seat. The verb is the button,
- * destructive unless the action only costs money; a typed phrase is
- * `DeleteConfirmDialog`'s job.
- */
 export function ConfirmDialog({
   title,
   description,
@@ -28,7 +22,6 @@ export function ConfirmDialog({
 }: {
   title: string;
   description: string;
-  /** The button's word, and with "…" the word while it runs. */
   verb: string;
   variant?: "default" | "destructive";
   pending: boolean;

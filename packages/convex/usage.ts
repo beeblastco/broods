@@ -1,11 +1,4 @@
-/**
- * Usage write path: records one finished task row and folds its token/compute
- * counts into the matching 5-minute, hour, and day rollup buckets. Called by
- * core via the deploy-key admin client at task completion; never blocks the
- * agent reply. Pricing is intentionally absent, only raw counts are stored;
- * the dashboard computes cost at render from the rates `modelPrices/crawl.ts`
- * crawls hourly from models.dev.
- */
+// Raw counts only: the dashboard prices them at render from `modelPrices/crawl.ts` rates.
 
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
@@ -17,20 +10,16 @@ import { principalLinkValidator } from "./model/principal";
 const TASK_USAGE_PRUNE_BATCH_SIZE = 100;
 const TASK_USAGE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
-/** Fixed base bin for usage rollups: 5 minutes in ms, shared with telemetry.ts. */
 export const USAGE_BIN_MS = 5 * 60 * 1000;
 
-/** Bucket width per rollup grain; bucketStart = floor(ts / width) * width (UTC). */
 export const USAGE_GRAIN_MS: Record<UsageGrain, number> = {
   "5m": USAGE_BIN_MS,
   hour: 60 * 60 * 1000,
   day: 24 * 60 * 60 * 1000,
 };
 
-/** Rollup grain. */
 export type UsageGrain = "5m" | "hour" | "day";
 
-/** The two halves of a `${eventId}#${traceId}` task id; `traceId` is undefined when it has none. */
 export function taskIdParts(taskId: string): {
   eventId: string;
   traceId: string | undefined;
@@ -44,7 +33,6 @@ export function taskIdParts(taskId: string): {
   };
 }
 
-/** Counter fields folded into a rollup bucket, summed identically per grain. */
 type RollupCounters = {
   inputTokens: number;
   outputTokens: number;
@@ -59,12 +47,7 @@ type RollupCounters = {
   modelCalls: number;
 };
 
-/**
- * Deletes raw task usage samples older than the retention window, one bounded
- * batch per invocation. Samples exist for retry dedup (a window of minutes)
- * and are folded into `usageRollups` at write time, so old rows are pure
- * storage growth. The creation-index range reads nothing when nothing is due.
- */
+// Rows only serve retry dedup (minutes); their counts already live in `usageRollups`.
 export const pruneExpiredTaskUsage = internalMutation({
   args: {},
   returns: v.number(),
@@ -83,21 +66,11 @@ export const pruneExpiredTaskUsage = internalMutation({
   },
 });
 
-/**
- * Record one finished agent task: insert a `taskUsage` row, fold its
- * token/compute counts into the 5-minute, hour, and day `usageRollups`
- * buckets, and append the run's `run.completed` audit row in the same
- * transaction, so the per-turn path pays one mutation for both.
- * Deduplicated by `(accountId, taskId)` so a retried write never
- * double-counts without allowing one tenant's task identifier to suppress
- * another tenant's usage.
- */
 export const recordTaskUsage = internalMutation({
   args: {
     accountId: v.id("accounts"),
     endpointId: v.string(),
     agentId: v.string(),
-    /** Who asked and which agents delegated; lands on the `run.completed` row. */
     principalChain: v.optional(v.array(principalLinkValidator)),
     conversationKey: v.string(),
     taskId: v.string(),
@@ -129,8 +102,8 @@ export const recordTaskUsage = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    // The harness run finalizer settles one run once in memory; a mutation the
-    // client retried after a lost reply would otherwise double-fold the rollups.
+    // A retry after a lost reply must not double-fold the rollups. Keyed by account too,
+    // so one tenant's taskId cannot suppress another's usage.
     const already = await ctx.db
       .query("taskUsage")
       .withIndex("by_accountId_and_taskId", (q) =>
@@ -141,7 +114,6 @@ export const recordTaskUsage = internalMutation({
       return null;
     }
 
-    // Split sandbox CPU by role so the flat rollup keeps the agent/tool breakdown.
     let agentSandboxCpuUsec = 0;
     let toolSandboxCpuUsec = 0;
     for (const s of args.sandboxUsage) {
@@ -178,8 +150,6 @@ export const recordTaskUsage = internalMutation({
       inputPreview: args.inputPreview,
     });
 
-    // Fold the same task's counts into one bucket per grain so long dashboard
-    // ranges read hour/day rows instead of every 5-minute bucket.
     const counters: RollupCounters = {
       inputTokens: args.inputTokens,
       outputTokens: args.outputTokens,
@@ -207,8 +177,7 @@ export const recordTaskUsage = internalMutation({
       });
     }
 
-    // The run is the resource, the trace the correlation key. Tool input and
-    // the prompt preview stay off the row.
+    // Same transaction as the usage: one mutation per turn. Input and preview stay off it.
     const { eventId, traceId } = taskIdParts(args.taskId);
     await appendAuditEvent(ctx.db, {
       accountId: args.accountId,
@@ -239,11 +208,6 @@ export const recordTaskUsage = internalMutation({
   },
 });
 
-/**
- * Upsert one usage rollup bucket: add `counters` onto the row keyed by
- * (account, endpoint, grain, bucketStart, provider, model), inserting it when
- * absent.
- */
 export async function foldRollupBucket(
   ctx: MutationCtx,
   target: {

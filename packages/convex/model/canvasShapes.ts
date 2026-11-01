@@ -1,8 +1,4 @@
-/**
- * Canvas node and edge shapes stored in `canvasLayouts`, shared by the schema,
- * the dashboard mutations in canvas.ts and the CLI / API canvas syncs. They
- * live here because schema.ts cannot import canvas.ts (a mutation module).
- */
+// Here, not in canvas.ts: schema.ts cannot import a mutation module.
 
 import { type Infer, v } from "convex/values";
 
@@ -28,8 +24,7 @@ export const canvasNodeValidator = v.object({
 
 export type CanvasEdge = Infer<typeof canvasEdgeValidator>;
 
-// `data` is `v.any()` (which infers `any`); every consumer treats it as an
-// unknown-valued record, so the override keeps type checking without casts.
+// `v.any()` infers `any`; every consumer reads `data` as an unknown-valued record.
 export type CanvasNode = Omit<Infer<typeof canvasNodeValidator>, "data"> & {
   data: Record<string, unknown>;
 };

@@ -1,10 +1,3 @@
-/**
- * Sandbox config CRUD scoped to an account. Mirrors agents.ts: the doc _id is
- * the public sandboxId, every mutation revalidates the doc's accountId against
- * the caller-supplied accountId, and the config blob is stored encrypted
- * (broods encrypts before writing; the dashboard never reads it).
- */
-
 import { v } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -19,11 +12,7 @@ const sandboxConfigDoc = v.object({
   _creationTime: v.number(),
 });
 
-/**
- * Look up a sandbox config by the public string id. The validator accepts
- * `v.string()` (not `v.id`) so unknown / non-Convex-id values resolve to `null`
- * (= "not found") instead of throwing at the adapter boundary.
- */
+// `v.string()`, not `v.id`: an unknown id reads as not found instead of failing validation.
 export const getById = internalQuery({
   args: {
     accountId: v.id("accounts"),

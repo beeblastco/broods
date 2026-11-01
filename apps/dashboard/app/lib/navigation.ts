@@ -1,9 +1,3 @@
-/**
- * The sidebar's sections, in order: a project's under `/{projectId}`, the
- * account's everywhere else. The sidebar, the pages' `?tab=` panels, the
- * palette's "Go to" rows and the `[` / `]` shortcuts all walk these lists, so
- * a new section or tab shows up in all of them at once.
- */
 import {
   Box,
   Building2,
@@ -17,11 +11,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-/** Cookie the sidebar writes when pinned or hidden, read by the signed-in layout so a reload keeps it. */
 export const SIDEBAR_COOKIE = "sidebar_state";
 
 export interface NavTab {
-  /** Drawn in the destructive color, for irreversible actions. */
   danger?: boolean;
   id: string;
   label: string;
@@ -29,12 +21,9 @@ export interface NavTab {
 
 export interface NavItem {
   icon: LucideIcon;
-  /** What the palette matches on beyond the label. */
   keywords: readonly string[];
   label: string;
-  /** Appended to the scope's base: `/{projectId}`, or nothing for the account. */
   segment: string;
-  /** Panels picked by `?tab=`; the first is the default. */
   tabs: readonly NavTab[];
 }
 
@@ -116,7 +105,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
   },
 ];
 
-/** Sections outside a project: the project list and the settings above it. */
 export const ACCOUNT_NAV_ITEMS: readonly NavItem[] = [
   {
     icon: FolderOpen,
@@ -148,7 +136,6 @@ export const ACCOUNT_NAV_ITEMS: readonly NavItem[] = [
   },
 ];
 
-/** The section a pathname is in, or the scope's first section when none matches. */
 export function activeNavItem(
   items: readonly NavItem[],
   pathname: string,
@@ -162,7 +149,7 @@ export function activeNavItem(
   return match ?? items[0];
 }
 
-/** A section's href, carrying the stage param so the next page does not refetch under a new key. */
+// Carries the stage param so the next page does not refetch under a new key.
 export function navHref(
   projectId: string,
   segment: string,
@@ -171,7 +158,6 @@ export function navHref(
   return `/${projectId}${segment}${stageId ? `?stage=${stageId}` : ""}`;
 }
 
-/** The `?tab=` a page is on, or its first tab when the param names none of them. */
 export function pickTab<T extends readonly NavTab[]>(
   tabs: T,
   value: string | null,
@@ -179,7 +165,6 @@ export function pickTab<T extends readonly NavTab[]>(
   return tabs.find((tab) => tab.id === value) ?? tabs[0];
 }
 
-/** The section `offset` steps away, wrapping at both ends. */
 export function stepNavItem(
   items: readonly NavItem[],
   current: NavItem,
@@ -191,12 +176,7 @@ export function stepNavItem(
   return items[next];
 }
 
-/**
- * A tab's href on `path`. Only `?stage=` carries over from `search`, so it
- * survives a share or a new browser tab while one tab's search, range or
- * selection never leaks into another; `params` adds the view to open there
- * (e.g. `{ trace }`).
- */
+// Only `?stage=` carries over, so one tab's search, range or selection never leaks into another.
 export function tabHref(
   path: string,
   tabId: string,
