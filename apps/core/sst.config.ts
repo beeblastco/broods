@@ -26,6 +26,14 @@ const OTEL_EXPORTER_OTLP_ENDPOINT =
   process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim() || "https://otel.beeblast.co";
 const OTEL_EXPORTER_OTLP_HEADERS =
   process.env.OTEL_EXPORTER_OTLP_HEADERS?.trim();
+// Comma-separated public IPs the self-hosted runtime reaches AWS from (the infra
+// repo's cluster node). On production stages the static-key users deny every
+// call from anywhere else, so a leaked key is useless off the cluster. Unset =
+// no lock. Change it before the cluster gets a new address, or runtime AWS calls fail.
+const RUNTIME_EGRESS_IPS = (process.env.RUNTIME_EGRESS_IPS ?? "")
+  .split(",")
+  .map((ip) => ip.trim())
+  .filter((ip) => ip.length > 0);
 
 // How long to let a freshly created IAM role's trust policy propagate before another
 // AWS service is asked to assume it. Measured: the connector create failed 8s after the
@@ -1157,6 +1165,30 @@ export default $config({
         }),
       ),
     });
+    // Both users above hold static keys that live on the cluster. Off-cluster
+    // calls are denied; sessions from the roles they assume are not affected.
+    if (isProduction && RUNTIME_EGRESS_IPS.length > 0) {
+      const sourceIpLock = JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Deny",
+            Action: "*",
+            Resource: "*",
+            Condition: {
+              NotIpAddress: { "aws:SourceIp": RUNTIME_EGRESS_IPS },
+              Bool: { "aws:ViaAWSService": "false" },
+            },
+          },
+        ],
+      });
+      for (const [id, user] of [
+        ["CoreRuntimeSourceIpLock", coreRuntimeUser],
+        ["ConvexBootstrapSourceIpLock", convexBootstrapUser],
+      ] as const) {
+        new aws.iam.UserPolicy(id, { user: user.name, policy: sourceIpLock });
+      }
+    }
 
     // The Cloudflare Workers, named per stage, when the deploy has a
     // Cloudflare token (they are optional). The infra repo puts each one's
