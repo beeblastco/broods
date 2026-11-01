@@ -112,14 +112,7 @@ export default function askQuestionsTool(
 
 The tool returns a statusId at once and the answer is delivered into this conversation automatically when it arrives ("no_answer" if nobody answers in time). With blocking false (default) keep working on what does not depend on the answer. With blocking true, end your turn right after this call with no further tool calls; the answer will resume the conversation. Never ask the same question twice or poll async_status for it.`,
       inputSchema: askQuestionsInput,
-      execute: async function (args, options): Promise<AskQuestionsOutput> {
-        // A tool.call.started hook can replace the args after the SDK checked
-        // them, so the schema runs again here.
-        const parsed = askQuestionsInput.safeParse(args);
-        if (!parsed.success) {
-          return toolError(`Error: ${z.prettifyError(parsed.error)}`);
-        }
-        const input = parsed.data;
+      execute: async function (input, options): Promise<AskQuestionsOutput> {
         const invalid = validateQuestions(input.questions);
         if (invalid) {
           return toolError(`Error: ${invalid}`);

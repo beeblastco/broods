@@ -12,8 +12,8 @@ import {
   createHash,
   randomBytes,
 } from "node:crypto";
+import { z } from "zod";
 import { positiveIntegerEnv } from "./env.ts";
-import { isPlainObject } from "./object.ts";
 
 const TICKET_ALGORITHM = "aes-256-gcm";
 const TICKET_VERSION = "ml2";
@@ -32,6 +32,23 @@ export const DEFAULT_MEDIA_TICKET_TTL_SECONDS = 30 * 24 * 60 * 60;
 // mounts are keyed by an `fs-` namespace, so nothing under here is ever mounted
 // and no sandbox tool can delete it.
 const ATTACHMENT_STORE_ROOT = "attachments/";
+
+// What a ticket seals: one of the two `MediaTicket` shapes plus its expiry in
+// epoch seconds.
+const ticketPayload = z.union([
+  z.strictObject({
+    accountId: z.string(),
+    workspaceId: z.string(),
+    namespace: z.string(),
+    path: z.string(),
+    exp: z.number(),
+  }),
+  z.strictObject({
+    accountId: z.string(),
+    path: z.string(),
+    exp: z.number(),
+  }),
+]);
 
 /** A file in the attachment store: inbound media, kept for the conversation. */
 export interface AttachmentMediaTicket {
@@ -52,6 +69,9 @@ export interface WorkspaceMediaTicket {
 
 export type MediaTicket = AttachmentMediaTicket | WorkspaceMediaTicket;
 
+/** A ticket the media route opened, with its expiry in epoch seconds. */
+export type OpenedMediaTicket = z.infer<typeof ticketPayload>;
+
 export function attachmentStoreKey(ticket: AttachmentMediaTicket): string {
   return `${ATTACHMENT_STORE_ROOT}${encodeURIComponent(ticket.accountId)}/${ticket.path}`;
 }
@@ -70,7 +90,7 @@ export function openMediaTicket(
   token: string,
   secrets: string[],
   now = Date.now(),
-): MediaTicket | null {
+): OpenedMediaTicket | null {
   for (const secret of secrets) {
     const ticket = openWithSecret(token, secret, now);
     if (ticket) {
@@ -110,7 +130,7 @@ function openWithSecret(
   token: string,
   secret: string,
   now: number,
-): MediaTicket | null {
+): OpenedMediaTicket | null {
   const [version, iv, tag, ciphertext, extra] = token.split(".");
   if (
     version !== TICKET_VERSION ||
@@ -131,29 +151,9 @@ function openWithSecret(
       decipher.update(Buffer.from(ciphertext, "base64url")),
       decipher.final(),
     ]).toString("utf-8");
-    const parsed: unknown = JSON.parse(plaintext);
-    if (!isPlainObject(parsed)) return null;
-    const { accountId, workspaceId, namespace, path, exp } = parsed;
-    if (
-      typeof accountId !== "string" ||
-      typeof path !== "string" ||
-      typeof exp !== "number" ||
-      exp * 1000 <= now
-    )
-      return null;
-    if (workspaceId === undefined && namespace === undefined) {
-      return { accountId: accountId, path: path };
-    }
-    if (typeof workspaceId !== "string" || typeof namespace !== "string") {
-      return null;
-    }
+    const parsed = ticketPayload.safeParse(JSON.parse(plaintext));
 
-    return {
-      accountId: accountId,
-      workspaceId: workspaceId,
-      namespace: namespace,
-      path: path,
-    };
+    return parsed.success && parsed.data.exp * 1000 > now ? parsed.data : null;
   } catch {
     return null;
   }

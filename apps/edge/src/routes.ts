@@ -106,14 +106,24 @@ export const ROUTERS: readonly EdgeRouter[] = [
     ],
   },
   // Channel providers post from shared egress addresses, so no per-address
-  // limit. Pancake signs nothing and carries its webhook secret as a `?secret=`
-  // query parameter, and the access log records the full URI, so the router is
-  // unlogged like the other credential-bearing URLs.
+  // limit. Two kinds of webhook URL carry a credential in the query string the
+  // access log would record: every Pancake delivery (`?secret=`) and a Meta or
+  // WhatsApp verification GET (`hub.verify_token`). Deliveries are POSTs, so
+  // every other webhook request stays logged.
+  {
+    name: "secret-webhooks",
+    upstream: "core",
+    limit: "none",
+    secretPath: true,
+    rules: [
+      { path: `/v1/webhooks/${SEGMENT}(?:/dev/${SEGMENT})?/pancake` },
+      { path: "/v1/webhooks/.*[^/]", methods: ["GET"] },
+    ],
+  },
   {
     name: "webhooks",
     upstream: "core",
     limit: "none",
-    secretPath: true,
     rules: [{ path: "/v1/webhooks/.*[^/]" }],
   },
   // A media link's sealed ticket is the path and carries its own expiry.

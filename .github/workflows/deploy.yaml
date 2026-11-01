@@ -94,6 +94,7 @@ jobs:
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       PROJECT_OWNER_EMAIL: ${{ vars.PROJECT_OWNER_EMAIL }}
+      RUNTIME_EGRESS_IPS: ${{ vars.RUNTIME_EGRESS_IPS }}
       INPUT_STAGE: ${{ inputs.stage }}
       CI: "true"
       ACCOUNT_MODEL_PROVIDER: ${{ vars.ACCOUNT_MODEL_PROVIDER || 'google' }}

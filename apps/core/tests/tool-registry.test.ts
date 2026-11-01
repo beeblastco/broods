@@ -941,7 +941,7 @@ describe("createTools", () => {
     ).toEqual({});
   });
 
-  it("schedules a one-time task and rejects a malformed expression", async () => {
+  it("schedules a one-time task in this conversation", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const create = mock(async function (): Promise<CronRecord> {
       return {
@@ -967,15 +967,6 @@ describe("createTools", () => {
       conversationKey: "slack:T1:C1",
       scheduleExpression: "at(2027-01-01T09:00:00)",
     });
-
-    expect(
-      channelToolExecute(tools.schedule, {
-        name: "broken",
-        instructions: "Never mind.",
-        schedule: "every monday",
-      }),
-    ).rejects.toThrow(/cron\(\.\.\.\), rate\(\.\.\.\), or at\(\.\.\.\)/);
-    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("lists only the calling agent's scheduled tasks", async () => {
@@ -1127,7 +1118,9 @@ describe("createTools", () => {
     });
   });
 
-  it("validates its own input because the AI SDK does not enforce the schema", async () => {
+  // The input schema (schedule-tool.test.ts) holds the shape; what the config
+  // plane's normalizer refuses still fails here, before any write.
+  it("refuses a timezone the config plane would refuse", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const update = mock(async function (): Promise<CronRecord> {
       return cronSummary();
@@ -1144,17 +1137,6 @@ describe("createTools", () => {
       scheduler: { enabled: true },
     });
 
-    // The model can emit anything: inputSchema is a hint, so an absent required
-    // field must not reach the tool body as a TypeError.
-    expect(channelToolExecute(tools.update_schedule, {})).rejects.toThrow(
-      "cronId is required",
-    );
-    expect(
-      channelToolExecute(tools.update_schedule, {
-        cronId: "cron_mine",
-        status: "cancelled",
-      }),
-    ).rejects.toThrow("status must be active or paused");
     expect(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_mine",

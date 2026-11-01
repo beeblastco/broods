@@ -20,6 +20,7 @@ import { useTween } from "@/app/hooks/useTween";
 import { formatNumber } from "@/app/lib/formatNumber";
 import {
   formatUsd,
+  isModelCallSpan,
   modelKey,
   numberAttribute,
   runModel,
@@ -882,7 +883,7 @@ function formatMs(ms: number): string {
 /**
  * In-progress overlay taken straight off the live trace stream: Convex usage is
  * only written when a task finalizes, so a long run would otherwise show nothing
- * until it ends. Each model step is scoped to its own root span (a task, a cron
+ * until it ends. Each model call (a step or a compaction) is scoped to its own root span (a task, a cron
  * run, or a subagent subtask, which share the parent's traceId) so a finished
  * subtask stops counting the moment its usage row lands in Convex, with no double
  * counting.
@@ -906,10 +907,11 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
     const root = span.parentSpanId
       ? runningRootsById.get(span.parentSpanId)
       : undefined;
-    if (span.kind !== "model.step" || !root) continue;
+    if (!isModelCallSpan(span) || !root) continue;
     const usage = stepTokens(span);
     const model = runModel(root);
-    totals.modelCalls += 1;
+    // Calls are steps, as on the usage row (`stepCount`); a compaction only adds tokens.
+    if (span.kind === "model.step") totals.modelCalls += 1;
     totals.inputTokens += usage.inputTokens;
     totals.outputTokens += usage.outputTokens;
     totals.reasoningTokens += numberAttribute(span, "model.reasoning_tokens");

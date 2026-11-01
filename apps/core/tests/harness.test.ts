@@ -20,6 +20,7 @@ import type {
   AgentLoopOptions,
   AgentLoopStream,
 } from "../src/harness/harness.ts";
+import type { CompactionResult } from "../src/harness/compaction.ts";
 import { pruneSessionMessages } from "../src/harness/pruning.ts";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
@@ -96,7 +97,8 @@ type StreamTextScenario =
   | "tool-run"
   | "delivery-tool-then-empty"
   | "multi-step-text"
-  | "real-two-step";
+  | "real-two-step"
+  | "silent-endpoint";
 let streamTextScenario: StreamTextScenario = "empty";
 // Scenarios whose first model call fails before any step finishes, by error.
 const NO_FINISH_ERRORS: Partial<Record<StreamTextScenario, string>> = {
@@ -108,6 +110,8 @@ let twoStepModelInUse: MockLanguageModelV4 | undefined;
 // How long the "real-two-step" second model call and weather tool take.
 let twoStepAnswerDelayMs = 20;
 let weatherDelayMs = 0;
+// The real compatible chat model the "silent-endpoint" run streams from.
+let silentEndpointModel: LanguageModel | undefined;
 
 const weatherTool = actualAi.tool({
   inputSchema: actualAi.jsonSchema<{ city: string }>({
@@ -214,6 +218,14 @@ const streamTextMock = mock(
       return realStreamText({
         ...(options as Parameters<typeof realStreamText>[0]),
         model: twoStepModelInUse,
+        tools: { weather: weatherTool },
+      });
+    }
+
+    if (streamTextScenario === "silent-endpoint" && silentEndpointModel) {
+      return realStreamText({
+        ...(options as Parameters<typeof realStreamText>[0]),
+        model: silentEndpointModel,
         tools: { weather: weatherTool },
       });
     }
@@ -1011,6 +1023,48 @@ describe("runAgentLoop", () => {
     expect(stream.didFail()).toBe(false);
     expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
   });
+
+  const silenceFailure =
+    "The model sent no output for 1s, so the run was stopped";
+  // A stream error is the run's failure; the watchdog only ends the stream.
+  it.each([
+    ["nothing", "", silenceFailure],
+    ["only keep-alive comments", ": keep-alive\n\n", silenceFailure],
+    [
+      "only empty deltas",
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "" } }] })}\n\n`,
+      silenceFailure,
+    ],
+    [
+      "only events that are not chat chunks",
+      'data: {"type":"ping"}\n\n',
+      "Type validation failed",
+    ],
+  ])(
+    "fails the run when an endpoint answers a tool step, then streams %s",
+    async (_shape, beat, failure): Promise<void> => {
+      process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "300";
+      process.env.MODEL_CHUNK_TIMEOUT_MS = "300";
+      const endpoint = await silentEndpoint(beat);
+      try {
+        const stream = await startTwoStepTurn(
+          undefined,
+          {},
+          undefined,
+          "silent-endpoint",
+        );
+        await stream.consumeStream();
+
+        expect(stream.failureText()).toStartWith(failure);
+        // The stalled request was cancelled, not left holding its socket.
+        expect(endpoint.calls()).toBe(2);
+        await endpoint.cancelled;
+      } finally {
+        await endpoint.close();
+      }
+    },
+    5_000,
+  );
 
   it("keeps the run alive when a reader that drains on its own leaves early", async () => {
     const { readAgentFullStream } = await import("../src/harness/harness.ts");
@@ -3265,12 +3319,27 @@ describe("runAgentLoop", () => {
 });
 
 describe("auto-compaction after a turn", () => {
+  const compaction: CompactionResult = {
+    messageCount: 4,
+    modelCalls: 1,
+    modelProvider: "google",
+    modelId: "gemini-test",
+    usage: {
+      inputTokens: 100,
+      outputTokens: 20,
+      reasoningTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 5,
+      totalTokens: 120,
+    },
+  };
+
   // Runs a turn on the real SDK loop with a session that records, in order,
   // every final reply and auto-compaction the harness asks for.
   async function runCompactingTurn(options: {
     scenario: "real-two-step" | "approval-request" | "context-overflow";
     autoCompaction: { enabled?: boolean; maxContextLength?: number };
-    compactConversation?: () => Promise<number>;
+    compactConversation?: () => Promise<CompactionResult | null>;
   }): Promise<{ stream: AgentLoopStream; order: string[] }> {
     installHarnessEnv();
     streamTextScenario = options.scenario;
@@ -3298,10 +3367,13 @@ describe("auto-compaction after a turn", () => {
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
         }),
-        compactConversation: async (): Promise<number> => {
+        compactConversation: async (): Promise<CompactionResult | null> => {
           order.push("compact");
 
-          return (options.compactConversation ?? (async () => 4))();
+          return (
+            options.compactConversation ??
+            (async (): Promise<CompactionResult> => compaction)
+          )();
         },
       } as never,
       {
@@ -3341,6 +3413,29 @@ describe("auto-compaction after a turn", () => {
 
     expect(stream.didFail()).toBe(false);
     expect(order).toEqual(["final", "compact"]);
+  });
+
+  it("counts the summary's tokens in the run's usage row", async (): Promise<void> => {
+    const writes: TaskUsageInput[] = [];
+    setStorageForTests(usageStorage(writes));
+    await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 11 },
+    });
+    await runCompactingTurn({
+      scenario: "real-two-step",
+      autoCompaction: { maxContextLength: 10 },
+    });
+    const [plain, compacted] = writes;
+
+    expect(writes).toHaveLength(2);
+    expect(compacted).toMatchObject({
+      inputTokens: plain!.inputTokens + 100,
+      outputTokens: plain!.outputTokens + 20,
+      cacheWriteTokens: plain!.cacheWriteTokens + 5,
+      totalTokens: plain!.totalTokens + 120,
+      stepCount: plain!.stepCount,
+    });
   });
 
   it("does not compact below the threshold or when turned off", async () => {
@@ -3671,6 +3766,99 @@ function twoStepModel(): MockLanguageModelV4 {
   return new MockLanguageModelV4({
     doStream: [{ stream: step0 }, { stream: step1 }],
   });
+}
+
+/**
+ * A loopback chat-completions endpoint whose first stream calls the weather
+ * tool and whose second answers 200, then repeats `beat` every 50ms (or sends
+ * nothing when empty) without a word of model output. Installs the real
+ * compatible model the "silent-endpoint" run streams from.
+ */
+async function silentEndpoint(beat: string): Promise<{
+  calls: () => number;
+  cancelled: Promise<void>;
+  close: () => Promise<void>;
+}> {
+  const { normalizeStreamDeltasMiddleware } =
+    await import("../src/harness/provider.ts");
+  const encoder = new TextEncoder();
+  const toolStep = [
+    {
+      delta: {
+        role: "assistant",
+        tool_calls: [
+          {
+            index: 0,
+            id: "call-1",
+            type: "function",
+            function: {
+              name: "weather",
+              arguments: JSON.stringify({ city: "Hanoi" }),
+            },
+          },
+        ],
+      },
+    },
+    { delta: {}, finish_reason: "tool_calls" },
+  ]
+    .map(
+      (choice): string =>
+        `data: ${JSON.stringify({ choices: [{ index: 0, ...choice }] })}\n\n`,
+    )
+    .join("");
+  const cancelled = Promise.withResolvers<void>();
+  let calls = 0;
+  const server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch: (): Response => {
+      calls += 1;
+      let timer: ReturnType<typeof setInterval> | undefined;
+      const body = new ReadableStream<Uint8Array>({
+        start: (controller): void => {
+          if (calls === 1) {
+            controller.enqueue(encoder.encode(`${toolStep}data: [DONE]\n\n`));
+            controller.close();
+
+            return;
+          }
+          if (beat) {
+            timer = setInterval((): void => {
+              controller.enqueue(encoder.encode(beat));
+            }, 50);
+          }
+        },
+        cancel: (): void => {
+          clearInterval(timer);
+          cancelled.resolve();
+        },
+      });
+
+      return new Response(body, {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  });
+  silentEndpointModel = actualAi.wrapLanguageModel({
+    model: new actualOpenAICompatible.OpenAICompatibleChatLanguageModel(
+      "silent-model",
+      {
+        provider: "custom.chat",
+        url: ({ path }): string => `${server.url.origin}/v1${path}`,
+        includeUsage: true,
+      },
+    ),
+    middleware: [normalizeStreamDeltasMiddleware],
+  });
+
+  return {
+    calls: (): number => calls,
+    cancelled: cancelled.promise,
+    close: async (): Promise<void> => {
+      silentEndpointModel = undefined;
+      await server.stop(true);
+    },
+  };
 }
 
 describe("system prompt trace attributes", () => {
