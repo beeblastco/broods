@@ -4,6 +4,7 @@ import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
+import { useRouteIntent } from "@/app/hooks/useRouteIntent";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,6 +31,7 @@ export function ProjectSelector(): React.JSX.Element {
     | undefined;
   const currentUser = useQuery(api.user.getCurrent, queryArgs);
   const router = useRouter();
+  const { handlers } = useRouteIntent();
   const params = useParams<{ projectId?: string }>();
   const [dialogOpen, setDialogOpen] = useState(false);
   const prefetchProject = useCallback(
@@ -125,9 +127,7 @@ export function ProjectSelector(): React.JSX.Element {
               {projects.map((project: Doc<"projects">) => (
                 <DropdownMenuItem
                   key={project._id}
-                  onClick={() => router.push(`/${project._id}`)}
-                  onMouseEnter={() => prefetchProject(project._id)}
-                  onFocus={() => prefetchProject(project._id)}
+                  {...handlers(`/${project._id}`)}
                   data-active={project._id === currentProjectId}
                   className="cursor-pointer"
                 >

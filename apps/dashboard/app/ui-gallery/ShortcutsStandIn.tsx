@@ -139,6 +139,8 @@ function Surfaces(): React.JSX.Element {
   const [completed, setCompleted] = useState<ReadonlySet<string>>(new Set());
   const [isOpen, setOpen] = useState(false);
   const [liveCanvas, setLiveCanvas] = useState(true);
+  // The last row the palette would have started, in place of a prefetch.
+  const [warmed, setWarmed] = useState("");
 
   const { activeIds } = useShortcutRegistry();
 
@@ -215,6 +217,10 @@ function Surfaces(): React.JSX.Element {
                 setOpen(true);
                 ask(query);
               }}
+              onHighlight={(item) => {
+                if (item.target.type === "navigate")
+                  setWarmed(item.target.href);
+              }}
               onSelect={(item) => run(itemAction(item))}
             />
             <button
@@ -240,6 +246,10 @@ function Surfaces(): React.JSX.Element {
               }}
             />
           </section>
+
+          <p data-warmed className="font-mono text-2xs text-muted-foreground">
+            {warmed}
+          </p>
 
           {/* Every action the surfaces took, oldest first. */}
           <ol data-ran className="font-mono text-2xs text-muted-foreground">
