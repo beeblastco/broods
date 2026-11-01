@@ -4,6 +4,11 @@
  * asks the Worker Loader for a worker under a name never used before, so
  * nothing (module state, caches, connections) carries over from one task to
  * the next. The loaded worker gets the same flags and env as core on workerd.
+ *
+ * ROUTER_KEY=agent instead keeps one worker per agent: a task for an agent
+ * that already has a loaded worker reuses it, so only an agent's first task
+ * pays the load. The agent comes from the run request's JSON body; anything
+ * else (health checks, callbacks) gets a fresh worker as before.
  */
 
 import BUNDLE from "bundle";
@@ -38,11 +43,26 @@ const FLAGS = [
 
 let loaded = 0;
 
+/** The agent a run request is for, or undefined. */
+async function agentOf(request) {
+  if (request.method !== "POST") return undefined;
+  try {
+    const body = await request.clone().json();
+
+    return typeof body?.agentId === "string" ? body.agentId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export default {
   fetch: async function (request, env) {
     loaded += 1;
-    const id = `task-${loaded}-${crypto.randomUUID()}`;
-    const { LOADER, ...vars } = env;
+    const { LOADER, ROUTER_KEY, ...vars } = env;
+    const agent = ROUTER_KEY === "agent" ? await agentOf(request) : undefined;
+    const id = agent
+      ? `agent-${agent}`
+      : `task-${loaded}-${crypto.randomUUID()}`;
     const worker = LOADER.get(id, () => ({
       compatibilityDate: "2026-09-30",
       compatibilityFlags: FLAGS,

@@ -118,3 +118,45 @@ const floorRouter :Workerd.Worker = (
     (name = "SERVICE_NAME", text = "floor"),
   ],
 );
+
+# The slim router keeping one loaded worker per agent (ROUTER_KEY=agent), on
+# 4351 (`workerd serve workerd.capnp slimWarmConfig`).
+const slimWarmConfig :Workerd.Config = (
+  services = [
+    (name = "router", worker = .slimWarmRouter),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4351", http = (), service = "router") ],
+);
+
+const slimWarmRouter :Workerd.Worker = (
+  modules = [
+    (name = "router.js", esModule = embed "per-task/router.js"),
+    (name = "bundle", text = embed "dist-slim/entry.js"),
+  ],
+  compatibilityDate = "2026-09-30",
+  compatibilityFlags = ["nodejs_compat"],
+  globalOutbound = "net",
+  bindings = .warmBindings,
+);
+
+const warmBindings :List(Workerd.Worker.Binding) = [
+    (name = "ROUTER_KEY", text = "agent"),
+    (name = "LOADER", workerLoader = ()),
+    (name = "ACCOUNT_CONFIG_ENCRYPTION_SECRET", fromEnvironment = "ACCOUNT_CONFIG_ENCRYPTION_SECRET"),
+    (name = "ADMIN_ACCOUNT_SECRET", fromEnvironment = "ADMIN_ACCOUNT_SECRET"),
+    (name = "ANTHROPIC_BASE_URL", fromEnvironment = "ANTHROPIC_BASE_URL"),
+    (name = "CLOUDFLARE_WORKER_URL", fromEnvironment = "CLOUDFLARE_WORKER_URL"),
+    (name = "CLOUDFLARE_WORKER_API_KEY", fromEnvironment = "CLOUDFLARE_WORKER_API_KEY"),
+    (name = "BENCH_SCRIPTED_MODEL", fromEnvironment = "BENCH_SCRIPTED_MODEL"),
+    (name = "BENCH_MODEL_DELAY_MS", fromEnvironment = "BENCH_MODEL_DELAY_MS"),
+    (name = "MAX_INPROCESS_WORKERS", fromEnvironment = "MAX_INPROCESS_WORKERS"),
+    (name = "CONVEX_DEPLOY_KEY", fromEnvironment = "CONVEX_DEPLOY_KEY"),
+    (name = "CONVEX_URL", fromEnvironment = "CONVEX_URL"),
+    (name = "MEDIA_TICKET_SECRET", fromEnvironment = "MEDIA_TICKET_SECRET"),
+    (name = "PUBLIC_BASE_URL", fromEnvironment = "PUBLIC_BASE_URL"),
+    (name = "SERVICE_AUTH_SECRET", fromEnvironment = "SERVICE_AUTH_SECRET"),
+    (name = "SERVICE_NAME", fromEnvironment = "SERVICE_NAME"),
+    (name = "STAGE_TICKET_SECRET", fromEnvironment = "STAGE_TICKET_SECRET"),
+    (name = "TERMINAL_TICKET_SECRET", fromEnvironment = "TERMINAL_TICKET_SECRET"),
+  ];

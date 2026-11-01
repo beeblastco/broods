@@ -49,6 +49,9 @@ const { values: args } = parseArgs({
     label: { type: "string" },
     "agent-per-task": { type: "boolean", default: false },
     "shared-files": { type: "boolean", default: false },
+    // One warmup task per agent, all at once, so a router that keeps a
+    // worker per agent is measured warm.
+    "warmup-each": { type: "boolean", default: false },
   },
 });
 const runtime = args.runtime as Runtime;
@@ -313,6 +316,14 @@ for (let i = 0; i < Number(args.warmup); i++) {
     `warmup ${i}: ${warm.ms.toFixed(0)} ms ok=${warm.ok} ${warm.problems.join("; ")}`,
   );
 }
+if (args["warmup-each"]) {
+  const warm = await Promise.all(
+    agents.map((_, slot) => task(`warm-${runId}-each-${slot}`, slot)),
+  );
+  console.log(
+    `warmup each: ${warm.filter((w) => w.ok).length}/${warm.length} ok, slowest ${Math.max(...warm.map((w) => w.ms)).toFixed(0)} ms`,
+  );
+}
 // Let the warmup's tail writes settle before counting Convex calls.
 await Bun.sleep(1000);
 
@@ -405,6 +416,7 @@ for (const level of args.levels!.split(",").map(Number)) {
 // work (say, an isolate torn down before its waitUntil finished) shows here.
 const tasksStarted =
   Number(args.warmup) +
+  (args["warmup-each"] ? agents.length : 0) +
   args
     .levels!.split(",")
     .map(Number)

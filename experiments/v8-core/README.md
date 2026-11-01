@@ -28,6 +28,27 @@ core builds some channel helpers at load. The bundle drops from 20.7 MB to
 use it. `bench/bundle-sizes.mjs` sums a bundle's bytes per source package from
 its source map (build with `sourcemap: "external"`).
 
+## Faster variants
+
+Two levers on top of the slim core, each switchable on its own:
+
+- **A warm worker per agent.** `slimWarmConfig` (4351) runs the same router
+  with `ROUTER_KEY=agent`: it reads `agentId` from a POST body and asks the
+  Worker Loader for `agent-<id>`, so every task of one agent reuses one loaded
+  isolate while different agents still get separate ones. Requests without an
+  agent id still get a fresh isolate. `PER_TASK_CONFIG=slimWarmConfig` selects it.
+- **A real-shell sandbox over HTTP.** `bench/native-sandbox.ts` serves the
+  same API as `apps/cloudflare-worker` but runs each command in real bash in
+  the sandbox's own folder, so core's `worker` provider reaches it unchanged
+  through `CLOUDFLARE_WORKER_URL`. It stands in for a microVM or container
+  pool and isolates nothing: loopback and benchmarks only. `SANDBOX=native`
+  makes `run-isolate.sh` start it on 8791; in `run-real.sh` an
+  `isolate:native` arm does the same.
+
+`WARMUP_EACH=1` (all three run scripts) runs one task per agent before the
+timed rounds, so a warm worker is measured warm; without it the first task of
+each agent pays the load.
+
 Core needed two patches to load in a V8 isolate: `shared/cache-digest.ts`
 draws its key on first use, and `shared/http.ts` fetches by hostname on
 workerd. The second weakens the SSRF guard and is for this experiment only.

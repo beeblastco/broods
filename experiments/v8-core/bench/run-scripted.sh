@@ -27,6 +27,7 @@ restart_sandbox() {
 # AGENT_PER_TASK=1 gives each task slot its own agent and sandbox files.
 per_task=()
 if [ "${AGENT_PER_TASK:-0}" = 1 ]; then per_task=(--agent-per-task); fi
+if [ "${WARMUP_EACH:-0}" = 1 ]; then per_task+=(--warmup-each); fi
 cd "$here"
 for round in $(seq 1 "$rounds"); do
   for arm in ${ARMS:-bun:machine workerd:v8 bun:v8}; do

@@ -3,7 +3,9 @@
 # on 4321). The router and the V8 sandbox are restarted before every level:
 # workerd keeps each uniquely named loaded worker (about 110 MB apiece) and was
 # not seen to evict any, so without a restart memory grows by the task count.
-# PER_TASK_CONFIG=slimConfig runs the SLIM=1 bundle (dist-slim/) instead.
+# PER_TASK_CONFIG=slimConfig runs the SLIM=1 bundle (dist-slim/) instead;
+# slimWarmConfig keeps one loaded worker per agent. SANDBOX=native swaps the
+# V8 sandbox for bench/native-sandbox.ts (real bash, same HTTP API) on 8791.
 # Usage: [LOG_SUFFIX=-iso] [PER_TASK_CONFIG=...] run-isolate.sh <out.jsonl> <log-dir> <rounds> <levels> [label-suffix]
 # Expects core on Bun (4301) up with BENCH_SCRIPTED_MODEL=1 logging to
 # <log-dir>/bun-core$LOG_SUFFIX.log, and the bench env (BENCH_SCRIPTED_MODEL,
@@ -13,6 +15,19 @@ out=$1 logs=$2 rounds=$3 levels=$4 suffix=${5:-} log_suffix=${LOG_SUFFIX:-}
 config=${PER_TASK_CONFIG:-perTaskConfig}
 here=$(cd "$(dirname "$0")" && pwd)
 restart_sandbox() {
+  if [ "${SANDBOX:-v8}" = native ]; then
+    local old
+    old=$(pgrep -f "[n]ative-sandbox.ts" || true)
+    if [ -n "$old" ]; then kill $old; while pgrep -f "[n]ative-sandbox.ts" >/dev/null; do sleep 0.2; done; fi
+    rm -rf "$logs/native-state"
+    env -u BUN_OPTIONS nohup bun "$here/native-sandbox.ts" 8791 "$logs/worker-sandbox.key" "$logs/native-state" >> "$logs/native-sandbox.log" 2>&1 &
+    for _ in $(seq 1 50); do
+      [ "$(curl -s -m 1 -o /dev/null -w '%{http_code}' http://127.0.0.1:8791/v1/sandboxes/x)" = "401" ] && break
+      sleep 0.2
+    done
+    sandbox_pids=$(pgrep -f "[n]ative-sandbox.ts" | paste -sd, -)
+    return
+  fi
   local leader
   leader=$(pgrep -f "[w]rangler dev --port 8790" | head -1 || true)
   if [ -n "$leader" ]; then
@@ -24,12 +39,13 @@ restart_sandbox() {
 }
 restart_router() {
   local old
-  old=$(pgrep -f "[v]8-core/workerd.capnp (perTaskConfig|slimConfig)" || true)
+  old=$(pgrep -f "[v]8-core/workerd.capnp (perTaskConfig|slimConfig|slimWarmConfig)" || true)
   if [ -n "$old" ]; then
     kill $old
-    while pgrep -f "[v]8-core/workerd.capnp (perTaskConfig|slimConfig)" >/dev/null; do sleep 0.2; done
+    while pgrep -f "[v]8-core/workerd.capnp (perTaskConfig|slimConfig|slimWarmConfig)" >/dev/null; do sleep 0.2; done
   fi
   export CLOUDFLARE_WORKER_URL=http://127.0.0.1:8790
+  if [ "${SANDBOX:-v8}" = native ]; then CLOUDFLARE_WORKER_URL=http://127.0.0.1:8791; fi
   CLOUDFLARE_WORKER_API_KEY=$(cat "$logs/worker-sandbox.key")
   export CLOUDFLARE_WORKER_API_KEY
   nohup "$here/../start-per-task.sh" 4321 bench-isolate "$config" >> "$logs/isolate-core$log_suffix.log" 2>&1 &
@@ -42,6 +58,9 @@ restart_router() {
 # AGENT_PER_TASK=1 gives each task slot its own agent and sandbox files.
 per_task=()
 if [ "${AGENT_PER_TASK:-0}" = 1 ]; then per_task=(--agent-per-task); fi
+# WARMUP_EACH=1 runs one task per agent before measuring, so a router that
+# keeps workers per agent (slimWarmConfig) is measured warm.
+if [ "${WARMUP_EACH:-0}" = 1 ]; then per_task+=(--warmup-each); fi
 cd "$here"
 for round in $(seq 1 "$rounds"); do
   for level in ${levels//,/ }; do
