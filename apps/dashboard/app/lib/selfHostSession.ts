@@ -12,22 +12,14 @@ import { NextResponse } from "next/server";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { SessionUser } from "@/app/lib/session";
 
-/** httpOnly cookie holding the session token, which only the dashboard accepts. */
 export const SESSION_COOKIE = "broods-session";
 export const SESSION_TTL_SECONDS = 12 * 60 * 60;
-// The session token's audience. Convex trusts only SELF_HOST_AUDIENCE, so the
-// cookie's token is useless to it; the browser gets short Convex tokens.
+// Convex trusts only SELF_HOST_AUDIENCE, so the cookie's token is useless to it.
 const SESSION_AUDIENCE = "broods-dashboard-session";
 // A Convex token copied before sign-out dies within this.
 const CONVEX_TOKEN_TTL_SECONDS = 15 * 60;
-// Long enough that guessing it through the sign-in form is hopeless.
 const MIN_ADMIN_SECRET_LENGTH = 32;
 
-/**
- * Self-hosted when the stack hands the dashboard a session signing key
- * (`BROODS_SESSION_SIGNING_KEY`, a private ES256 JWK). The admin then signs
- * in with ADMIN_ACCOUNT_SECRET instead of WorkOS.
- */
 export const selfHosted = Boolean(process.env.BROODS_SESSION_SIGNING_KEY);
 
 const ADMIN: SessionUser = {
@@ -40,8 +32,7 @@ const ADMIN: SessionUser = {
 
 const ADMIN_SECRET = process.env.ADMIN_ACCOUNT_SECRET?.trim() ?? "";
 
-// Checked at startup, so a malformed key or a guessable secret fails the
-// server loudly instead of every sign-in.
+// Checked at startup, so a bad key or a guessable secret fails the server, not each sign-in.
 const SIGNING_JWK: JWK | null = selfHosted
   ? JSON.parse(process.env.BROODS_SESSION_SIGNING_KEY ?? "")
   : null;
@@ -57,20 +48,12 @@ let signingKeys:
   | Promise<{ privateKey: SigningKey; publicKey: SigningKey }>
   | undefined;
 
-/**
- * Whether `key` is the stack's admin secret, both trimmed: a pasted key often
- * carries a newline. Compares digests, in constant time.
- */
 export function adminKeyMatches(key: string): boolean {
   if (!ADMIN_SECRET) return false;
 
   return timingSafeEqual(digest(key.trim()), digest(ADMIN_SECRET));
 }
 
-/**
- * The signed-in admin from this request's session cookie, with a fresh
- * short-lived token for Convex, or null when signed out.
- */
 export async function currentSession(): Promise<{
   token: string;
   user: SessionUser;
@@ -84,7 +67,6 @@ export async function currentSession(): Promise<{
   };
 }
 
-/** The admin-key page, coming back to `returnTo`; `rejected` shows the wrong-key error. */
 export function keyPagePath(returnTo: string, rejected = false): string {
   const query = new URLSearchParams({ returnTo: returnTo });
   if (rejected) query.set("error", "1");
@@ -92,10 +74,7 @@ export function keyPagePath(returnTo: string, rejected = false): string {
   return `/auth/key?${query}`;
 }
 
-/**
- * A redirect to a same-origin `path`, as a relative Location: behind a proxy
- * the request URL can carry the server's bind host, not the public one.
- */
+// Relative Location: behind a proxy the request URL can carry the bind host, not the public one.
 export function redirectToPath(path: string, status = 307): NextResponse {
   return new NextResponse(null, {
     headers: { Location: path },
@@ -103,12 +82,10 @@ export function redirectToPath(path: string, status = 307): NextResponse {
   });
 }
 
-/** A session token for the cookie, signed with the stack's key. */
 export async function signSessionToken(): Promise<string> {
   return signToken(SESSION_AUDIENCE, SESSION_TTL_SECONDS);
 }
 
-/** Whether `token` is an unexpired session token signed with the stack's key. */
 export async function verifySessionToken(
   token: string | undefined,
 ): Promise<boolean> {
@@ -125,12 +102,11 @@ export async function verifySessionToken(
   }
 }
 
-// SHA-256, so `timingSafeEqual` compares equal lengths whatever was typed.
+// `timingSafeEqual` throws on unequal lengths, so compare fixed-size digests.
 function digest(value: string): Buffer {
   return createHash("sha256").update(value).digest();
 }
 
-// The imported signing key and its public half, once per process.
 function keys(): Promise<{ privateKey: SigningKey; publicKey: SigningKey }> {
   signingKeys ??= (async () => {
     const jwk = SIGNING_JWK ?? {};
@@ -144,7 +120,6 @@ function keys(): Promise<{ privateKey: SigningKey; publicKey: SigningKey }> {
   return signingKeys;
 }
 
-// An admin token for `audience`, valid for `ttlSeconds`.
 async function signToken(
   audience: string,
   ttlSeconds: number,

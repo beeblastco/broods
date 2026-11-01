@@ -14,14 +14,7 @@ const TRANSPORT_SUBTITLE: Record<StageMcpServer["transport"], string> = {
   machine: "your computer · stdio",
 };
 
-/**
- * MCP server node: one registered server exposing its tools to wired agents.
- * Reads its row from the stage's server list the Canvas queries once. Inside
- * a frame it draws as a chip naming the computer a machine server runs on.
- * A disabled server reads as idle, the same grey its collapsed frame shows. A
- * machine server's card names the computer it runs on.
- * The card keeps side handles, unconnectable, for its runs-on edge.
- */
+/** A machine server's card keeps unconnectable side handles for its runs-on edge. */
 export function McpNode({ id, data, parentId }: NodeProps): React.JSX.Element {
   const nodeData = data as BaseNodeData;
   const { expandedMemberId, mcpServers } = useCanvasFrames();
@@ -39,7 +32,6 @@ export function McpNode({ id, data, parentId }: NodeProps): React.JSX.Element {
         label={nodeData.label}
         mountable={false}
         nodeType="mcp"
-        // Open, the computer moves to the line under the name, as on its card.
         status={{
           color: status.color,
           text:
@@ -64,7 +56,6 @@ export function McpNode({ id, data, parentId }: NodeProps): React.JSX.Element {
   );
 }
 
-/** Where the server runs: the computer a machine server is on, else its transport. */
 function transportSubtitle(
   server: StageMcpServer | undefined,
 ): string | undefined {

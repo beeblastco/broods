@@ -12,18 +12,12 @@ import {
 const convex = new ConvexReactClient(
   process.env.NEXT_PUBLIC_CONVEX_URL as string,
   {
-    // Keep the token the server just confirmed. Off, the client fetches a
-    // fresh one at once (a server action on every cold load) and sends a
-    // second Authenticate that re-runs every subscribed query.
+    // Off, the client fetches a fresh token at once (a server action on every cold load)
+    // and re-authenticates, which re-runs every subscribed query.
     initialAuthTokenReuse: true,
   },
 );
 
-/**
- * Wraps the app with theme, session, and Convex providers. `initialSession`
- * is the session the root layout resolved on the server; with it the app
- * mounts signed in and skips an auth round trip on load.
- */
 export function ConvexClientProvider({
   children,
   initialSession,

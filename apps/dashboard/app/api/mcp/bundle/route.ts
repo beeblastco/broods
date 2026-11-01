@@ -1,8 +1,4 @@
-/**
- * Bundles dashboard-authored MCP server source with the same esbuild flags
- * the CLI uses at deploy; validation, upload and the sandboxed probe live in
- * the Convex mcp service. AuthKit's proxy gates this path.
- */
+// Same esbuild flags as the CLI's deploy bundle. AuthKit's proxy gates this path.
 import type { BuildFailure, Metafile, Plugin } from "esbuild";
 import { build } from "esbuild";
 import { builtinModules } from "node:module";
@@ -13,12 +9,8 @@ const NODE_BUILTINS = new Set(builtinModules);
 const SOURCE_FILE = "mcp-server.ts";
 const IMPORT_RULE = `hosted MCP source may import ${[...ALLOWED_PACKAGES].join(", ")} and node builtins`;
 
-/**
- * Source imports are limited to the allowlist plus node builtins; default
- * resolution would inline any file the server process can read. Imports
- * resolved from inside node_modules stay open so allowed packages can reach
- * their own deps.
- */
+// Default resolution would inline any file the server can read; imports from inside
+// node_modules stay open so allowed packages reach their own deps.
 const importAllowlist: Plugin = {
   name: "import-allowlist",
   setup: function (builder): void {
@@ -26,8 +18,7 @@ const importAllowlist: Plugin = {
       if (args.kind === "entry-point") return null;
       if (args.importer.includes("node_modules")) return null;
       const bare = args.path.replace(/^node:/, "");
-      // A "." or ".." segment on an allowed package (e.g. "zod/../../secret")
-      // escapes node_modules and inlines arbitrary server files into the bundle.
+      // "zod/../../secret" would escape node_modules and inline server files.
       const traverses =
         args.path.includes("\\") ||
         args.path
@@ -143,10 +134,6 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
-/**
- * Inputs outside the source and node_modules, plus source imports that are
- * computed paths or resolve outside the allowed packages.
- */
 function foreignInputs(metafile: Metafile): string[] {
   const foreign = Object.keys(metafile.inputs).filter(
     (input) =>

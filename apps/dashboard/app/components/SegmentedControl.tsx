@@ -5,14 +5,9 @@ import { cn } from "@/app/lib/utils";
 export interface SegmentedOption<T extends string> {
   id: T;
   label?: string;
-  /** Shown after the label in mono, for status counts. */
   count?: number;
 }
 
-/**
- * A row of exclusive buttons in one frame: the time range on list pages, the
- * status counts on the sandbox list. One is always pressed.
- */
 export function SegmentedControl<T extends string>({
   options,
   value,

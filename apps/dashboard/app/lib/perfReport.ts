@@ -1,43 +1,19 @@
 "use client";
 
-/**
- * Client-side performance beacon. Buffers marks and posts them to
- * `/api/telemetry`, which forwards to the OTLP collector. The collector's
- * credentials stay server-side and never reach the browser.
- */
-
+// Posts through `/api/telemetry` so the collector's credentials never reach the browser.
 const ENDPOINT = "/api/telemetry";
-// sendBeacon caps a body at ~64 KB; these bounds keep a batch far under it and
-// stop a runaway loop (a long-task storm) from beaconing without limit.
+// sendBeacon caps a body at ~64 KB, and a long-task storm must not beacon without limit.
 const MAX_BATCH = 32;
 const MAX_BUFFERED = 128;
 const FLUSH_DELAY_MS = 10_000;
 
-/**
- * Every page has to be fully on screen within this, on a cold load and on a
- * client-side navigation alike. The probe (e2e/perf) fails a page over it,
- * and `first-load.canvas` below flags the same measurement in the field.
- *
- * Measured on the CI runner with the document served locally: every page's
- * cold load is 850 to 1000 ms (JavaScript, then one Convex round trip for
- * auth and one for data, socket already open). 1 s is the bar a user
- * notices, the same as FIELD_RENDER_BUDGET_MS; it leaves little margin, so a
- * page that needs another round trip fails here.
- */
+// e2e/perf fails a page over this. CI cold loads take 850 to 1000 ms (JS, then one Convex
+// round trip for auth and one for data), so a page needing another round trip fails.
 export const PAGE_RENDER_BUDGET_MS = 1000;
 
-/**
- * What a real user's paint and navigation are held to. Tighter than the
- * probe budget on purpose: that one carries runner noise, and loosening it
- * must not loosen the `over_budget` flag Grafana alerts on.
- */
+// Kept apart from the probe budget: loosening that must not loosen the Grafana alert.
 export const FIELD_RENDER_BUDGET_MS = 1000;
 
-/**
- * Budget per metric, in the metric's own unit. Every event carries
- * `over_budget`, so a Grafana alert is a filter rather than a threshold
- * duplicated in the query.
- */
 export const PERF_BUDGETS: Record<string, number> = {
   "canvas.render": 200,
   "first-load.canvas": PAGE_RENDER_BUDGET_MS,
@@ -52,7 +28,6 @@ export const PERF_BUDGETS: Record<string, number> = {
   "web-vital.TTFB": 800,
 };
 
-/** Every static path segment the dashboard routes to; anything else is an id. */
 const KNOWN_SEGMENTS = new Set([
   "account",
   "auth",
@@ -72,14 +47,11 @@ const KNOWN_SEGMENTS = new Set([
 export type PerfUnit = "ms" | "score" | "count";
 
 export type PerfEvent = {
-  /** Metric key, e.g. `web-vital.LCP`. Matches a `PERF_BUDGETS` entry. */
   name: string;
   value: number;
   unit: PerfUnit;
-  /** Route the mark was taken on, with ids replaced by their segment name. */
   route: string;
   attributes?: Record<string, string | number | boolean>;
-  /** Epoch milliseconds. */
   at: number;
 };
 
@@ -87,10 +59,6 @@ let buffer: PerfEvent[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let listenersBound = false;
 
-/**
- * Queue one measurement. Safe to call from anywhere in the client. It no-ops
- * during SSR and never throws into the caller's path.
- */
 export function reportPerf(
   name: string,
   value: number,
@@ -115,8 +83,6 @@ export function reportPerf(
     at: Date.now(),
   });
 
-  // Drop the oldest rather than grow without bound; the newest marks are the
-  // ones a session is judged on.
   if (buffer.length > MAX_BUFFERED) buffer = buffer.slice(-MAX_BUFFERED);
   if (buffer.length >= MAX_BATCH) {
     flushPerf();
@@ -126,7 +92,6 @@ export function reportPerf(
   if (!flushTimer) flushTimer = setTimeout(flushPerf, FLUSH_DELAY_MS);
 }
 
-/** Ship whatever is buffered. Called on a full batch, on idle, and on unload. */
 export function flushPerf(): void {
   if (flushTimer) {
     clearTimeout(flushTimer);
@@ -138,8 +103,7 @@ export function flushPerf(): void {
   buffer = buffer.slice(MAX_BATCH);
   const body = JSON.stringify({ events: batch });
 
-  // sendBeacon survives the page going away; fetch is the fallback when the
-  // browser refuses the beacon (quota exceeded).
+  // sendBeacon survives unload; fetch covers a beacon the browser refuses over quota.
   if (
     navigator.sendBeacon?.(
       ENDPOINT,
@@ -156,8 +120,7 @@ export function flushPerf(): void {
   }).catch(() => {});
 }
 
-// Collapse ids out of a pathname (`/j97a.../dashboard` → `/[projectId]/dashboard`)
-// at any depth, so no raw tenant id ever reaches the collector.
+// No raw tenant id may reach the collector.
 export function routePattern(pathname: string): string {
   const segments = pathname.split("/").filter(Boolean);
   if (segments.length === 0) return "/";
@@ -177,8 +140,7 @@ function bindFlushListeners(): void {
   if (listenersBound) return;
   listenersBound = true;
 
-  // `visibilitychange` is the reliable end-of-session signal; `pagehide` covers
-  // the bfcache path Safari takes instead.
+  // `pagehide` covers the bfcache path Safari takes instead of `visibilitychange`.
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") flushPerf();
   });

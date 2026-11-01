@@ -1,14 +1,3 @@
-/**
- * Streaming-chat probe for the agent Test tab. A long markdown answer is
- * replayed over the chat socket, paced the way a model streams it, and the
- * socket is answered here, so no model or core is involved and the numbers
- * are the page's own: how long until the last words are on screen, how long
- * the main thread was blocked, and how often React committed while the
- * answer streamed. Production React reports every commit to the DevTools
- * hook, so a stand-in hook installed before the page loads counts them. The
- * session and project come from `auth.setup.ts`; on a self-hosted stack an
- * agent is seeded when the project's canvas has none.
- */
 import { expect, test } from "@playwright/test";
 import type { UIMessageChunk } from "ai";
 import type { FunctionArgs, FunctionReturnType } from "convex/server";
@@ -29,34 +18,23 @@ import {
   readProjectId,
   SIGNED_IN_CONTEXT,
 } from "../lib/session";
-import { waitForReady, watchLongTasks } from "../lib/timing";
+import {
+  LONG_TASK_SETTLE_MS,
+  waitForReady,
+  watchLongTasks,
+} from "../lib/timing";
 
-// Sections of a long, varied answer: headings, wrapped prose, lists, a code
-// block, a table and a quote each, the markdown a real answer makes the
-// renderer parse. 24 of them come to about 26 KB.
 const SECTIONS = 24;
-// A fast model's text deltas: a few tokens each, about this many characters,
-// this often.
 const DELTA_CHARS = 18;
 const DELTA_INTERVAL_MS = 8;
-/**
- * The most often a streamed answer needs to reach the screen: one commit per
- * 50 ms of stream, 20 a second, is as fast as anyone reads, so a render per
- * delta is work no reader sees. The budget allows half as many again for the
- * commits that are not the stream's own: the user's message and the status,
- * each code block highlighting once it lands, Convex updates elsewhere on
- * the page.
- */
+// 20 commits a second is as fast as anyone reads. The headroom is for commits not from the
+// stream: the user's message, the status, code highlighting, Convex updates.
 const COMMIT_WINDOW_MS = 50;
 const COMMIT_HEADROOM = 1.5;
-// The page-clock mark the stand-in DevTools hook leaves on every commit.
 const COMMIT_MARK = "e2e-react-commit";
-// The answer's final delta, on screen only once the last text frame has.
 const ANSWER_END = "END-OF-STREAM";
 const ANSWER_ID = "chat-stream-answer";
-// Longer than a cold canvas takes to show its nodes, even on a deployment.
 const AGENT_WAIT_MS = 10_000;
-// The agent seeded on a self-hosted stack whose canvas has none.
 const SEEDED_AGENT = "chat-stream-probe";
 
 const ANSWER = Array.from(
@@ -92,7 +70,6 @@ const DELTAS: UIMessageChunk[] = [
   ),
   `Done. ${ANSWER_END}`,
 ].map((delta) => ({ type: "text-delta", id: ANSWER_ID, delta: delta }));
-// The AI SDK stream parts core sends around one text answer.
 const STREAM_START: UIMessageChunk[] = [
   { type: "start", messageId: ANSWER_ID },
   { type: "start-step" },
@@ -105,7 +82,6 @@ const STREAM_END: UIMessageChunk[] = [
 ];
 
 interface SentStream {
-  // Node's clock, when the first frame went out and when the last one did.
   startedAt: number;
   endedAt: number;
 }
@@ -118,7 +94,7 @@ test("a long streamed answer on the agent Test tab reaches the screen without a 
   const projectId = readProjectId();
   const context = await browser.newContext(SIGNED_IN_CONTEXT);
   const page = await context.newPage();
-  // In place before React loads: it reads the hook once, as it starts.
+  // Production React reports each commit to the DevTools hook, which it reads once at start.
   await page.addInitScript((mark) => {
     Object.assign(window, {
       __REACT_DEVTOOLS_GLOBAL_HOOK__: {
@@ -134,8 +110,6 @@ test("a long streamed answer on the agent Test tab reaches the screen without a 
       },
     });
   }, COMMIT_MARK);
-  // The route is in place before the page loads, like the burst test's, and
-  // answers the chat's execute with the whole paced stream.
   const sent = Promise.withResolvers<SentStream>();
   await page.routeWebSocket(/\/agents\/[^/]+\/ws$/, (socket) => {
     const send = (frame: WebSocketServerMessage): void =>
@@ -162,8 +136,7 @@ test("a long streamed answer on the agent Test tab reaches the screen without a 
 
   await page.goto(`/${projectId}`, { waitUntil: "commit" });
   const agentNode = page.locator(".react-flow__node-agent").first();
-  // The canvas shows its empty state for a render before its nodes land, so
-  // only an agent that never shows means the project has none.
+  // The canvas renders empty once before its nodes land, so wait before deciding it has none.
   const hasAgent = await agentNode.waitFor({ timeout: AGENT_WAIT_MS }).then(
     () => true,
     () => false,
@@ -207,9 +180,7 @@ test("a long streamed answer on the agent Test tab reaches the screen without a 
   const stream = await sent.promise;
   await waitForReady(page.getByText(ANSWER_END));
   const visibleMs = performance.now() - stream.endedAt;
-  // A task still running when the text lands is reported when it ends, and
-  // the last code block highlights after it.
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(LONG_TASK_SETTLE_MS);
   const tasks = await longTasks.jsonValue();
   const commits = await page.evaluate(
     ({ mark, from }) =>
@@ -241,8 +212,7 @@ test("a long streamed answer on the agent Test tab reaches the screen without a 
     body: JSON.stringify(result, null, 2),
     contentType: "application/json",
   });
-  // The frames are paced, so no backlog rides the browser protocol and the
-  // page's own budget holds: the end of the answer is content on screen.
+  // Paced frames leave no backlog on the browser protocol, so the page's own budget holds.
   expect(
     visibleMs,
     "end of the answer on screen after its last frame",

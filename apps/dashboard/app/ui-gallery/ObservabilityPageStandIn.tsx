@@ -15,13 +15,6 @@ import { NAV_ITEMS } from "@/app/lib/navigation";
 import { MonitoringPanel } from "../(main)/[projectId]/dashboard/components/MonitoringPanel";
 import { TracingPanel } from "../(main)/[projectId]/dashboard/components/TracingPanel";
 
-/**
- * The dashboard page around the real Monitoring and Tracing panels: the app
- * shell's header with its sidebar toggle, its collapsed sidebar rail, and the
- * full-bleed content column, with the classes those layouts use. A spec
- * answers the panels' observability socket, so View trace runs the real
- * navigation and focus scroll with no backend behind it.
- */
 export function ObservabilityPageStandIn({
   tab,
 }: {

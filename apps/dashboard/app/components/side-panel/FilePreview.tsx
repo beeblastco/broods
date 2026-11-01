@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Read-only file preview under the workspace file tree. The selected file shows
- * in one transient tab; Enter keeps it open as a pinned tab, so several files
- * can be reviewed side by side. Data-free: the caller loads contents.
- */
 import type { CodeLanguage } from "@/app/components/side-panel/CodeEditor";
 import type { FileRecord } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { IconTooltip } from "@/app/components/IconTooltip";
@@ -15,8 +10,7 @@ import { Check, Copy, Download, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 
-// Both are heavy (CodeMirror, and Streamdown's Shiki and Mermaid), so they load
-// only once a file is opened.
+// Heavy (CodeMirror; Streamdown's Shiki and Mermaid), so they load once a file is opened.
 const CodeEditor = dynamic(
   () =>
     import("@/app/components/side-panel/CodeEditor").then((m) => m.CodeEditor),
@@ -43,7 +37,6 @@ type LoadState =
 
 type PreviewKind = "text" | "image" | "tooLarge" | "binary";
 
-// The dashboard upload limit; larger files only offer Download.
 const MAX_PREVIEW_BYTES = 512 * 1024;
 // Holding an arrow key walks many rows; only the one it stops on loads.
 const LOAD_DELAY_MS = 150;
@@ -84,10 +77,7 @@ const CODE_LANGUAGES: Record<string, CodeLanguage> = {
   tsx: "typescript",
 };
 
-/**
- * The preview's tabs, driven by the tree's selection. Call `show` when a file
- * is selected, `pin` when it is opened with Enter, and `rename` after a rename.
- */
+/** Call `show` when the tree selects a file, `pin` on Enter, and `rename` after a rename. */
 export function usePreviewTabs(
   files: FileRecord[] | undefined,
   selected: string | null,
@@ -101,7 +91,6 @@ export function usePreviewTabs(
 } {
   const [pinned, setPinned] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
-  // The transient tab the user closed; it reopens on the next selection.
   const [dismissed, setDismissed] = useState<string | null>(null);
 
   const byPath = new Map((files ?? []).map((file) => [file.path, file]));
@@ -142,7 +131,6 @@ export function usePreviewTabs(
       setDismissed(path);
     },
     rename: (path, newPath) => {
-      // A folder rename moves every open file under it as well.
       const move = (p: string): string =>
         p === path || p.startsWith(`${path}/`)
           ? `${newPath}${p.slice(path.length)}`
@@ -153,7 +141,6 @@ export function usePreviewTabs(
   };
 }
 
-/** The tab strip and the active file's contents, read-only. */
 export function FilePreview({
   tabs,
   activePath,
@@ -250,6 +237,7 @@ function FileBody({
   const extension = extensionOf(file.name);
   const isMarkdown = MARKDOWN_EXTENSIONS.has(extension);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- debounce timer and file fetch
   useEffect(() => {
     if (kind !== "text" && kind !== "image") return;
     let cancelled = false;
@@ -372,7 +360,6 @@ function FileBody({
   );
 }
 
-/** What a previewable file shows: loading, its error, an image, rendered Markdown or code. */
 function PreviewContent({
   file,
   state,
@@ -393,7 +380,7 @@ function PreviewContent({
   if (state.content.kind === "image") {
     return (
       <div className="flex h-full items-center justify-center overflow-auto p-3">
-        {/* oxlint-disable-next-line nextjs/no-img-element -- a short-lived presigned URL next/image cannot optimise */}
+        {/* oxlint-disable-next-line nextjs/no-img-element -- a short-lived presigned URL */}
         <img
           src={state.content.url}
           alt={file.name}
@@ -448,7 +435,6 @@ function PreviewNotice({
   );
 }
 
-/** Whether the preview shows a file as an image, from a URL rather than its text. */
 export function isImageFile(name: string): boolean {
   return IMAGE_EXTENSIONS.has(extensionOf(name));
 }

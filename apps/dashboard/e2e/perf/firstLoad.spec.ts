@@ -1,14 +1,3 @@
-/**
- * First-load budget. A cold load fetches every JS chunk the page needs before
- * its load event, all at once; on a lossy link that burst is the wait (a prod
- * load once took a minute on 40 chunks). This pins how many chunks and how
- * many bytes of JS that burst may cost per page, against
- * `first-load-budget.json`: more fails the run, fewer asks for a record.
- * Bytes are counted decoded: Chrome's encoded size counts the response
- * headers on a CDN's HTTP/2 responses, about 1 kB a chunk.
- * `E2E_RECORD_FIRST_LOAD=1` rewrites the budget from this run. A `next dev`
- * server ships unbundled dev chunks, so there the budget does not apply.
- */
 import {
   expect,
   test,
@@ -28,11 +17,8 @@ import {
 import { waitForReady } from "../lib/timing";
 
 const BUDGET_FILE = join(__dirname, "first-load-budget.json");
-// Chunk hashes and minifier output move the gzip size a little per build.
 const BYTES_HEADROOM = 1.05;
 const RECORD = process.env.E2E_RECORD_FIRST_LOAD === "1";
-// The canvas carries React Flow; the projects page is the shell alone; the
-// dashboard opens on Monitoring, its other tabs load when they are opened.
 const PAGES: ProbePage[] = [
   {
     name: "canvas",
@@ -83,14 +69,11 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     });
 
     await page.goto(probe.path(), { waitUntil: "load" });
-    // The HMR socket opens as the page boots, before any wait below can time
-    // out on a cold `next dev` compile.
+    // HMR opens as the page boots, so this skips before a cold dev compile times a wait out.
     if (devServer) await context.close();
     test.skip(devServer, "next dev ships dev chunks; run against a build");
     await waitForReady(probe.ready(page));
     await waitForReady(page.locator('[data-hydrated="true"]'));
-    // Only the chunks asked for before the load event: what loads after it
-    // (analytics, prefetches) no longer holds the page up.
     const loadedAt = await page.evaluate((): number => {
       const navigation = performance
         .getEntriesByType("navigation")
@@ -112,7 +95,6 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     );
     await context.close();
 
-    // A chunk that failed or errored must not pass as a lighter page.
     expect(
       firstLoad
         .filter((_, index) => !responses[index]?.ok())
@@ -131,6 +113,7 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     ).toEqual([]);
     measured[probe.name] = {
       jsRequests: firstLoad.length,
+      // Decoded: Chrome's encoded size counts a CDN's HTTP/2 headers, about 1 kB a chunk.
       jsBytes: bodies.reduce((sum, body) => sum + body.byteLength, 0),
     };
   }
@@ -181,7 +164,6 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
   }
 });
 
-/** A JS chunk from the build, served by the app or from an asset prefix. */
 function isStaticScript(url: string): boolean {
   const { pathname } = new URL(url);
 

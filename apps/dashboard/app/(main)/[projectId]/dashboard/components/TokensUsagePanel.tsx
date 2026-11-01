@@ -70,16 +70,12 @@ type CounterKey = Exclude<
   | "agentSandboxCpuUsec"
   | "toolSandboxCpuUsec"
 >;
-/** One time bin summed over the models shown. */
 type Counters = Record<CounterKey, number> & { bucketStart: number };
-/** The per-task average a tile shows and the big chart can draw. */
 type PerTaskMetric = keyof PerTaskAverages;
 
 interface Props {
   projectId: Id<"projects">;
-  /** Active stage to scope usage to, or null for the whole project. */
   stageId: Id<"stages"> | null;
-  /** Scope + key for the live trace overlay. Omitted = Convex-only (no overlay). */
   projectSlug?: string | undefined;
   stageSlug?: string | undefined;
   apiKey?: string | undefined;
@@ -91,10 +87,8 @@ interface LiveOverlay {
   reasoningTokens: number;
   cachedInputTokens: number;
   cacheWriteTokens: number;
-  // Running roots (tasks + subagent subtasks) and the model steps beneath them.
   invocations: number;
   modelCalls: number;
-  // Each step's tokens under its root's model, priced like a usage row.
   modelUsage: ModelUsage[];
 }
 
@@ -107,8 +101,7 @@ const RANGE_SECONDS: Record<Range, number> = {
   "1y": 365 * 24 * 60 * 60,
 };
 
-// Mirrors the server's bin sizing so the chart can render an empty (zero-bin)
-// grid across the window before the first query resolves.
+// Mirrors the server's bin sizing, for the empty grid before the first result.
 const RANGE_BIN_SECONDS: Record<Range, number> = {
   "1h": 5 * 60,
   "3h": 15 * 60,
@@ -127,9 +120,7 @@ const RANGES: Array<{ id: Range }> = [
   { id: "1y" },
 ];
 
-// The panel's view in the URL, so a link opens it: the `range`, the
-// `models` filter (null shows every model) and the clicked `bin`, keyed by
-// its start so it survives the window sliding.
+// `bin` is keyed by its start, so it survives the window sliding.
 const USAGE_VIEW = {
   range: parseAsStringLiteral(RANGES.map((option) => option.id)).withDefault(
     "1h",
@@ -153,8 +144,6 @@ const COUNTER_KEYS: CounterKey[] = [
 const TASK_HELP =
   "A task is one model pass; a run that waited on your answer and resumed counts twice.";
 
-// The per-task tiles under the totals, in order; each also names the line the
-// big chart draws when its tile is picked.
 const PER_TASK_SERIES: Record<
   PerTaskMetric,
   UsageChartSeries & { format: (n: number) => string; help: string }
@@ -193,17 +182,9 @@ const EMPTY_LIVE_OVERLAY: LiveOverlay = {
   modelUsage: [],
 };
 
-// A task still "running" past this likely never reported its terminal span
-// (crash/freeze), so excluding it keeps a dead task from inflating the live total
-// forever.
+// A task "running" this long likely died before its terminal span, so it stops counting.
 const STALE_RUNNING_TASK_MS = 20 * 60 * 1000;
 
-/**
- * The dashboard Usage tab: the project's Resources against the org's caps, then the
- * stage's tokens: range and model filter, the numbers row, and the token
- * chart that splits to list a clicked bin's traces. Everything below the
- * toolbar follows the clicked bin.
- */
 export function TokensUsagePanel({
   projectId,
   stageId,
@@ -215,11 +196,9 @@ export function TokensUsagePanel({
   const { range, models: modelFilter, bin: selectedStart } = view;
   const setSelectedStart = (bin: number | null): void =>
     void setView({ bin: bin });
-  // The per-task tile picked for the big chart; none draws the token area.
   const [metric, setMetric] = useState<PerTaskMetric | null>(null);
 
-  // Convex only records usage at task finalize, so a run in flight needs the
-  // trace stream to show anything at all. See liveOverlayFromTraces.
+  // Convex records usage only at task finalize: a run in flight shows through the traces.
   const { entries: liveSpans } = useObservabilityStream({
     stream: "traces",
     projectSlug: projectSlug,
@@ -231,19 +210,15 @@ export function TokensUsagePanel({
     () => liveOverlayFromTraces(liveSpans),
     [liveSpans],
   );
-  // Reactive subscription: usage totals update live as the harness meters tokens.
   const data = useQuery(api.logs.fetchUsageStats, {
     projectId: projectId,
     stageId: stageId ?? undefined,
     range: range,
   });
-  // Rates for the running models, which have no usage row yet.
   const { rates: liveRates, loading: liveRatesLoading } = useModelRates(
     liveOverlay.modelUsage,
   );
-  // Hold the last result while another range loads, so the chart morphs from
-  // it instead of collapsing to an empty grid first. Only for the same
-  // project and stage: another stage's numbers never show under this one.
+  // Held across a range switch so the chart morphs, never across a project or stage.
   const scopeKey = `${projectId}:${stageId ?? ""}`;
   const [held, setHeld] = useState<{ key: string; stats: UsageStats } | null>(
     null,
@@ -253,7 +228,6 @@ export function TokensUsagePanel({
   }
   const stats = data ?? (held?.key === scopeKey ? held.stats : null);
 
-  // Rates for the models in the buckets and the ones running live.
   const rates = useMemo(
     () =>
       new Map<string, ModelTokenRates>(
@@ -269,8 +243,6 @@ export function TokensUsagePanel({
   const binSeconds = stats?.binSeconds ?? RANGE_BIN_SECONDS[range];
   const binMs = binSeconds * 1000;
   const modelColors = useMemo(() => colorModels(stats?.buckets ?? []), [stats]);
-  // The filter applied to what this range and stage have: models that did not
-  // run here drop out, and none or all left reads as the unfiltered view.
   const activeFilter = useMemo(() => {
     const kept = (modelFilter ?? []).filter((key) => modelColors.has(key));
 
@@ -310,9 +282,6 @@ export function TokensUsagePanel({
     () => sumCounters(selected === null ? bins : [bins[selected]]),
     [bins, selected],
   );
-  // Priced per model, since each model has its own rates, then summed per
-  // bin so the cost trend line lines up with the chart. The live overlay's
-  // cost joins the newest bin whenever the tokens include it.
   const { binCosts, estimatedCost, unpriced } = useMemo(() => {
     const byStart = new Map<number, number>();
     const unpricedModels = new Set<string>();
@@ -358,7 +327,6 @@ export function TokensUsagePanel({
     () => perTaskAverages(bins, binCosts),
     [bins, binCosts],
   );
-  // What the big chart draws: the token area, or the picked per-task line.
   const chart = useMemo(
     () =>
       metric === null
@@ -383,7 +351,6 @@ export function TokensUsagePanel({
 
   const selectBin = (index: number): void =>
     setSelectedStart(index === selected ? null : bucketStarts[index]);
-  // Checkbox semantics: a click adds or removes one model.
   const toggleModel = (key: string): void => {
     const shown = activeFilter ?? [...modelColors.keys()];
     void setView({
@@ -410,7 +377,7 @@ export function TokensUsagePanel({
               onShowAll={() => void setView({ models: null })}
             />
           }
-          // Only while that bin is still on the chart; the live window slides.
+          // The live window slides, so a selected bin can drop off the chart.
           selectedStart={selected === null ? null : selectedStart}
           binSeconds={binSeconds}
           onClearSelection={() => setSelectedStart(null)}
@@ -468,7 +435,6 @@ export function TokensUsagePanel({
   );
 }
 
-/** Model filter as one checkbox menu, so the toolbar never wraps however many models ran. */
 function ModelMenu({
   modelColors,
   allShown,
@@ -523,10 +489,6 @@ function ModelMenu({
   );
 }
 
-/**
- * A small trend line for one number across the range, marking the clicked
- * bin. A null bin is a gap, for an average over no tasks.
- */
 function Sparkline({
   values,
   selected,
@@ -594,14 +556,7 @@ function Sparkline({
   );
 }
 
-/**
- * The numbers row for the range or the clicked bin: four evenly spaced
- * columns, each a large value over a trend line in the chart's colours and
- * one detail line. Laid out by its own width, not the window's; values count
- * to their new number here, so only this row repaints during the tween. A
- * column whose number is not what its label suggests carries a "?" with
- * what it counts.
- */
+// The tween lives here, so only this row repaints while the values count.
 function UsageStats({
   bins,
   binCosts,
@@ -621,7 +576,6 @@ function UsageStats({
   scope: Counters;
   estimatedCost: number;
   unpriced: number;
-  /** Model keys shown, or null for every model. */
   modelFilter: string[] | null;
   modelsTotal: number;
   averages: PerTaskAverages;
@@ -730,7 +684,6 @@ function UsageStats({
           </div>
         ))}
       </div>
-      {/* The per-task row: each tile is a button that puts its line on the big chart. */}
       <div className="grid grid-cols-3 border-b border-border">
         {perTaskColumns.map((column) => {
           const series = PER_TASK_SERIES[column.metric];
@@ -780,7 +733,6 @@ function UsageStats({
   );
 }
 
-/** Range buttons, the model menu, and a chip that clears the clicked bin. */
 function UsageToolbar({
   range,
   onRangeChange,
@@ -792,7 +744,6 @@ function UsageToolbar({
   range: Range;
   onRangeChange: (range: Range) => void;
   modelMenu: React.ReactNode;
-  /** Start of the clicked bin, or null when none is selected. */
   selectedStart: number | null;
   binSeconds: number;
   onClearSelection: () => void;
@@ -820,12 +771,10 @@ function UsageToolbar({
   );
 }
 
-/** What a per-task line's bin averaged over, for its tooltip. */
 function binDetail(bin: Counters): string {
   return `${formatNumber(bin.invocations)} tasks · ${formatNumber(bin.modelCalls)} calls · ${formatNumber(bin.totalTokens)} tok`;
 }
 
-/** Stable color per model: models sorted by key take the palette in order. */
 function colorModels(buckets: Bucket[]): Map<string, string> {
   const keys = [...new Set(buckets.map(modelKey))].sort();
 
@@ -834,7 +783,6 @@ function colorModels(buckets: Bucket[]): Map<string, string> {
   );
 }
 
-/** A zeroed bin, for gaps in the range and as the start of a sum. */
 function emptyCounters(bucketStart: number): Counters {
   return {
     bucketStart: bucketStart,
@@ -850,11 +798,6 @@ function emptyCounters(bucketStart: number): Counters {
   };
 }
 
-/**
- * Fill the selected time window with zero-valued bins so the X-axis spans
- * the full range (1h shows the whole hour, 1d shows the whole day, etc.).
- * Existing populated bins are merged in at their aligned timestamps.
- */
 function fillBucketsAcrossRange(
   merged: Counters[],
   binSeconds: number,
@@ -873,21 +816,14 @@ function fillBucketsAcrossRange(
   return out;
 }
 
-/** Milliseconds → compact duration (ms / s). */
 function formatMs(ms: number): string {
   if (ms >= 1_000) return `${(ms / 1_000).toFixed(2)}s`;
 
   return `${Math.round(ms)}ms`;
 }
 
-/**
- * In-progress overlay taken straight off the live trace stream: Convex usage is
- * only written when a task finalizes, so a long run would otherwise show nothing
- * until it ends. Each model call (a step or a compaction) is scoped to its own root span (a task, a cron
- * run, or a subagent subtask, which share the parent's traceId) so a finished
- * subtask stops counting the moment its usage row lands in Convex, with no double
- * counting.
- */
+// A call counts under its running root span, not the trace a subtask shares, so a
+// finished subtask stops counting once its usage row lands: no double count.
 function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
   const freshAfter = Date.now() - STALE_RUNNING_TASK_MS;
   const runningRoots = spans.filter(
@@ -924,7 +860,6 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
   return totals;
 }
 
-/** Merge per-(model, provider) rows into one aggregate per time bucket. */
 function mergeByBucket(buckets: Bucket[]): Counters[] {
   const map = new Map<number, Counters>();
   for (const b of buckets) {
@@ -939,8 +874,6 @@ function mergeByBucket(buckets: Bucket[]): Counters[] {
   return Array.from(map.values()).sort((a, b) => a.bucketStart - b.bucketStart);
 }
 
-/** Whole-number share for the numbers row, 0% when empty. */
-/** `n` averaged over `tasks`, or 0 with no tasks. */
 function perTask(n: number, tasks: number): number {
   return tasks > 0 ? n / tasks : 0;
 }
@@ -949,7 +882,6 @@ function percent(part: number, whole: number): string {
   return whole > 0 ? `${Math.round((part / whole) * 100)}%` : "0%";
 }
 
-/** Totals across bins: the whole range, or the one clicked bin. */
 function sumCounters(bins: Counters[]): Counters {
   const total = emptyCounters(bins[0]?.bucketStart ?? 0);
   for (const b of bins) {
@@ -959,11 +891,7 @@ function sumCounters(bins: Counters[]): Counters {
   return total;
 }
 
-/**
- * Fold in-progress tokens and task/model counts into the most
- * recent bin so the charts and tiles grow while a run is in flight. The SDK's
- * outputTokens already includes reasoning, so the total is input + output.
- */
+// The SDK's outputTokens already includes reasoning, so the total is input + output.
 function withLiveOverlay(bins: Counters[], live: LiveOverlay): Counters[] {
   if (bins.length === 0 || live.invocations === 0) return bins;
   const last = bins[bins.length - 1];

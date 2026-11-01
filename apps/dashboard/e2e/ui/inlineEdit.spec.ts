@@ -1,12 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-/**
- * Renames in place and links that go on the press, against the fixture in
- * `app/ui-gallery/InlineEditStandIn`. Every committed rename lands in
- * `[data-renamed]`; `?opened=` names the link that was followed.
- */
-
 function fixture(page: Page, name: string): Locator {
   return page.locator(`[data-fixture="${name}"]`);
 }
@@ -15,7 +9,6 @@ function renamed(page: Page): Locator {
   return page.locator("[data-renamed-entry]");
 }
 
-/** Whether the field's whole text is selected, so typing replaces it. */
 async function selectsAll(field: Locator): Promise<boolean> {
   return field.evaluate(
     (input: HTMLInputElement) =>
@@ -131,7 +124,6 @@ test.describe("a canvas card", () => {
     await expect(field).toBeFocused();
     expect(await selectsAll(field)).toBe(true);
 
-    // A press and drag in the field selects its text and leaves the card put.
     const before = await card.boundingBox();
     const box = await field.boundingBox();
     if (!before || !box) throw new Error("The card or its field has no box.");
@@ -199,7 +191,6 @@ test.describe("a project card", () => {
       section.getByRole("button", { name: "Rename alpha-2" }),
     ).toBeFocused();
     await expect(renamed(page)).toHaveText(["project alpha-2"]);
-    // Renaming opened nothing.
     await expect(page).not.toHaveURL(/opened=/);
   });
 
@@ -299,7 +290,6 @@ test.describe("links on the shared handlers", () => {
     await expect(page).toHaveURL(/opened=link/);
 
     await pressAndHold(page, links.getByRole("link", { name: "Reset" }));
-    // Held: nothing yet. Released: the click goes there.
     await expect(links.locator("[data-opened]")).toHaveText("link");
     await page.mouse.up();
     await expect(page).not.toHaveURL(/opened=/);
@@ -318,7 +308,6 @@ test.describe("links on the shared handlers", () => {
   });
 });
 
-/** Moves onto `target` and presses the left button without releasing it. */
 async function pressAndHold(page: Page, target: Locator): Promise<void> {
   const box = await target.boundingBox();
   if (!box) throw new Error("The target has no box.");

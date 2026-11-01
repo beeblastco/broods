@@ -68,8 +68,7 @@ describe("buildOtlpLogPayload", () => {
       resource: { attributes: Attribute[] };
     };
 
-    // The collector promotes resource attributes to Loki index labels, so a
-    // per-project key here would be unbounded cardinality.
+    // The collector makes resource attributes Loki labels: a per-project key is unbounded.
     expect(resource.resource.attributes).toEqual([
       {
         key: "service.name",

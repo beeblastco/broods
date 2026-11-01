@@ -3,12 +3,6 @@ import { timeWindow, windowParams, type LOG_VIEW } from "@/app/lib/urlState";
 import { useQueryStates } from "nuqs";
 import { useCallback, useMemo } from "react";
 
-/**
- * The logs or tracing panel's search box, range preset and strip window, kept
- * in the URL (`q`, `range`, `from`, `to`) so a link opens the same view. Pass
- * `LOG_VIEW` or `TRACE_VIEW`. Writes are shallow; the window keeps its
- * identity until `from` or `to` change, so the filters memoized on it hold.
- */
 export function useObservabilityView(parsers: typeof LOG_VIEW): {
   query: string;
   setQuery: (query: string) => void;

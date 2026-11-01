@@ -1,11 +1,3 @@
-/**
- * A Production stage made by an automated deploy (`broods deploy --stage
- * production` from CI, a deploy script, the SDK) already exists, so picking it
- * in the header opens it rather than the first-time "Initialize Production"
- * dialog. The deploy is staged through the same Convex mutation the CLI's
- * manifest PUT runs first, with the org account's stored key hash, so only a
- * self-hosted stack can run it.
- */
 import { expect, test } from "@playwright/test";
 import type { Doc, Id } from "../../../../packages/convex/_generated/dataModel";
 import { activeOrg, idOf, run, STACK_ADMIN } from "../lib/localStack";
@@ -18,7 +10,6 @@ test.skip(
 
 const PROJECT = `auto-prod-${Date.now().toString(36)}`;
 let projectId: string;
-// A project only the dashboard has touched, with no Production stage yet.
 let freshProjectId: string;
 
 test.beforeAll(() => {
@@ -26,7 +17,6 @@ test.beforeAll(() => {
     orgId: activeOrg()._id,
   }) as Doc<"accounts"> | null;
   if (!account) throw new Error("The admin's org has no API account");
-  // A deploy claims the stage, writes its manifest, then releases the claim.
   const scope = run(null, "cli/sync:ensureScopeBySecretHash", {
     secretHash: account.secretHash,
     project: PROJECT,
@@ -43,7 +33,6 @@ test.beforeAll(() => {
 });
 
 test.afterAll(() => {
-  // Each removal runs even when the one before it failed.
   const failures = [projectId, freshProjectId].flatMap((id) => {
     try {
       if (id) run(STACK_ADMIN, "project:remove", { projectId: id });
@@ -80,7 +69,6 @@ test("a project with no Production stage still offers to initialize it", async (
   await expect(
     page.getByRole("heading", { name: "Initialize Production" }),
   ).toBeVisible();
-  // Only live regions can be picked, the same list a deploy is held to.
   await expect(
     page.getByRole("button", { name: /Europe \(Ireland\)/ }),
   ).toBeEnabled();

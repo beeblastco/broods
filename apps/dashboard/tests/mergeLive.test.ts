@@ -33,8 +33,7 @@ function log(message: string, ts: number): ObservabilityLogEntry {
 const time = (entry: Entry): number =>
   "spanId" in entry ? entry.startTimeMs : entry.ts;
 
-// The per-message fold the hook ran before live entries were batched, kept
-// verbatim as the reference a batch must reproduce.
+// Reference oracle: the one-entry-at-a-time fold a batched mergeLive must match.
 function applyOne<T extends Entry>(prev: T[], entry: T): T[] {
   const key = entryKey(entry);
   const existingIndex = prev.findIndex(
@@ -53,7 +52,6 @@ function applyOne<T extends Entry>(prev: T[], entry: T): T[] {
   return next.length > 2_000 ? next.slice(0, 2_000) : next;
 }
 
-// The hook's span preference: a finished copy beats a running one.
 function preferReference<T extends Entry>(existing: T, incoming: T): T {
   if (!("spanId" in existing) || !("spanId" in incoming)) return incoming;
   const rank = (entry: Entry): number =>
@@ -62,7 +60,6 @@ function preferReference<T extends Entry>(existing: T, incoming: T): T {
   return rank(incoming) >= rank(existing) ? incoming : existing;
 }
 
-// Deterministic, so a failure replays.
 function random(seed: number): () => number {
   let state = seed;
 

@@ -1,9 +1,6 @@
 "use client";
 
-/**
- * An agent registers its outbound webhooks under `config.hooks.webhooks`. Edits
- * here write straight to the agent config the harness delivers from.
- */
+// Edits write straight to `config.hooks.webhooks`, the agent config the harness delivers from.
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import { IconTooltip } from "@/app/components/IconTooltip";
@@ -89,10 +86,8 @@ export function WebhooksPanel({
 
   async function handleDeleteWebhook(): Promise<void> {
     if (!deletingWebhook) return;
-    // The mutation addresses webhooks by index only, so re-resolve the index
-    // against the live list at confirm time. Another session may have
-    // reordered it since the dialog opened, and a stale index deletes the
-    // wrong webhook. URL is the only identity the list carries.
+    // The mutation takes an index and another session may have reordered the list since the
+    // dialog opened: re-resolve it by URL, the only identity the list carries.
     const liveWebhooks = agents?.find(
       (agent) => agent.agentConfigId === deletingWebhook.agentConfigId,
     )?.webhooks;
@@ -144,8 +139,7 @@ export function WebhooksPanel({
           </p>
         )}
 
-        {/* The pill flips optimistically, so a rejected toggle snaps back on
-            its own. This says why it moved. */}
+        {/* The pill flips optimistically and snaps back on rejection; this says why. */}
         {toggleError && (
           <p className="text-sm text-destructive">{toggleError}</p>
         )}
@@ -357,6 +351,7 @@ function AddWebhookForm({
         placeholder="https://your-service.example/hooks"
         aria-label="Webhook URL"
         className="text-sm"
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the user's Add click
         autoFocus
       />
       <Input

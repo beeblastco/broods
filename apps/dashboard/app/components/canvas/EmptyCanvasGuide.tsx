@@ -3,11 +3,6 @@
 import { AgentSourceOptions } from "@/app/components/AgentSourceOptions";
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
 
-/**
- * Shown over an empty canvas so the first agent config can be created from it.
- * The footer teaches the shortcuts that open the same list later. While it is
- * up, Add agent focuses this card through `ref` instead of opening the picker.
- */
 export function EmptyCanvasGuide({
   onCreateConfig,
   ref,

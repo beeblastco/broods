@@ -16,7 +16,6 @@ import {
   SpecsValue,
 } from "./sandboxFormat";
 
-/** A user's computer: what its daemon last reported, and how to start it. */
 export function MachinePanel({
   machine,
   now,

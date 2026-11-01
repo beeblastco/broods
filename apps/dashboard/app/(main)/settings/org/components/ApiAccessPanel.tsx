@@ -1,13 +1,6 @@
 "use client";
 
-/**
- * Organization › API access: the keys whose home is the organization, laid
- * out like Roles. The account key reaches everything and rotates. A scoped
- * key holds no access, read, or read and write per config area, an optional
- * stage pin and an optional expiry, and each of them changes inline and saves
- * on pick: the access preset in its table row, each area, the scope and the
- * expiry in its panel. Needs `keys:read`; `keys:write` unlocks every change.
- */
+// Needs `keys:read`; `keys:write` unlocks every change, and each one saves on pick.
 
 import { ConfirmDialog } from "@/app/components/ConfirmDialog";
 import {
@@ -82,16 +75,13 @@ import { createdRows } from "./createdRows";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** An expiry inside this window shows in the warning color. */
 const EXPIRY_WARNING_MS = 7 * DAY_MS;
 
-/** The expiry picks, in days from now; "never" sits after them. */
 const EXPIRY_DAYS = ["30", "90", "365"] as const;
 
-/** How long a "Saved" note stays beside the control that saved. */
 const SAVED_NOTE_MS = 2000;
 
-/** One row per config area, in the order the API action list names them. */
+// In the order the API action list names the areas: AREAS reads its keys.
 const AREA_LABELS: Record<ApiResourceType, string> = {
   account: "Account",
   agents: "Agents",
@@ -137,13 +127,11 @@ const PRESET_ACTIONS: Record<
   read: READ_ACTIONS,
 };
 
-/** Write on sandboxes reaches into running machines, not just their config. */
 const SANDBOX_WRITE_WARNING = "Can run commands and open a terminal in them.";
 
-// The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["access"] as const;
 
-// Six columns of short text; below this the detail panel would wrap them.
+// Below this the detail panel would wrap the six columns.
 const TABLE_MIN_WIDTH = 600;
 
 const NO_ROWS: OrgKey[] = [];
@@ -184,9 +172,6 @@ interface Props {
 }
 
 export function ApiAccessPanel({ org }: Props): React.JSX.Element {
-  // `keys:write` for the organization makes, edits and revokes keys and
-  // rotates the account key: the admin tier holds it, and a role may be
-  // granted it.
   const { can } = usePermissions();
   const canWrite = can("keys:write");
   const now = useNow();
@@ -194,8 +179,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   const listed = useQuery(api.apiKeys.listForOrg, {});
   const [selectedId, setSelectedId] = useQueryState("sel", parseAsName);
   const [creating, setCreating] = useState(false);
-  // A secret to show once. It lives here, so provisioning's reveal outlasts
-  // the empty state it was minted from.
+  // Held here so provisioning's reveal outlasts the empty state it was minted from.
   const [revealed, setRevealed] = useState<Revealed | null>(null);
   const list = useListState({
     rows: listed?.keys ?? NO_ROWS,
@@ -370,7 +354,6 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   );
 }
 
-/** A scoped key's Access cell: its preset as a menu that saves on pick. */
 function AccessCell({
   orgId,
   orgKey,
@@ -402,10 +385,6 @@ function AccessCell({
   );
 }
 
-/**
- * The account key: where to call it from and what it is, with Rotate on the
- * title line. Rotating hands the new secret to `onRotated` to show once.
- */
 function AccountKeyPanel({
   account,
   orgId,
@@ -488,7 +467,6 @@ function AccountKeyPanel({
   );
 }
 
-/** A labeled full-width Select in the key dialog. */
 function DialogSelect({
   id,
   label,
@@ -531,7 +509,6 @@ function DialogSelect({
   );
 }
 
-/** "never", the expiry date, or "Expired"; a date within a week is a warning. */
 function ExpiryLabel({
   expiresAt,
   now,
@@ -557,7 +534,6 @@ function ExpiryLabel({
   );
 }
 
-/** The expiry as an inline pick: keep it, a number of days from now, or never. */
 function ExpiryMenu({
   expiresAt,
   now,
@@ -595,11 +571,6 @@ function ExpiryMenu({
   );
 }
 
-/**
- * A value edited in place: a quiet button that shows it, and a menu of
- * choices that saves on pick. Clicks stop here, so a menu inside a clickable
- * table row never also toggles the row.
- */
 function InlineMenu<V extends string>({
   label,
   value,
@@ -613,11 +584,11 @@ function InlineMenu<V extends string>({
   value: V;
   items: MenuItem<V>[];
   muted?: boolean;
-  /** While an earlier pick is still saving, so picks never overlap. */
   disabled?: boolean;
   className?: string;
   onPick: (value: V) => void;
 }): React.JSX.Element {
+  // So a menu inside a clickable table row never also toggles the row.
   const stop = (event: React.MouseEvent): void => event.stopPropagation();
 
   return (
@@ -660,10 +631,6 @@ function InlineMenu<V extends string>({
   );
 }
 
-/**
- * New key: name, description, scope, expiry and a starting preset. Edit:
- * name and description; everything else changes inline in the panel.
- */
 function KeyDialog({
   orgId,
   stages,
@@ -817,7 +784,6 @@ function KeyDialog({
   );
 }
 
-/** The empty state before the org has an API account, with Provision. */
 function ProvisionAccount({
   orgId,
   canWrite,
@@ -858,7 +824,6 @@ function ProvisionAccount({
   );
 }
 
-/** A secret shown once: the account key, or a scoped key named as just a key. */
 function RevealKey({
   revealed,
   onClose,
@@ -878,7 +843,6 @@ function RevealKey({
   );
 }
 
-/** The note beside a control whose change just saved. */
 function Saved(): React.JSX.Element {
   return (
     <span className="flex items-center gap-1 text-2xs text-muted-foreground">
@@ -888,11 +852,6 @@ function Saved(): React.JSX.Element {
   );
 }
 
-/**
- * The selected scoped key. Edit (name and description) sits on the title
- * line; scope, expiry and each config area's access change in place and save
- * on pick, with "Saved" beside the control; Revoke ends the panel.
- */
 function ScopedKeyPanel({
   orgId,
   orgKey,
@@ -1100,7 +1059,6 @@ function ScopedKeyPanel({
   );
 }
 
-/** The actions a set of area levels grants; write carries read with it. */
 function actionsOf(levels: Record<ApiResourceType, Level>): ApiPolicyAction[] {
   return API_POLICY_ACTIONS.filter((action) => {
     const [area, verb] = action.split(":") as [ApiResourceType, string];
@@ -1111,7 +1069,6 @@ function actionsOf(levels: Record<ApiResourceType, Level>): ApiPolicyAction[] {
   });
 }
 
-/** The expiry picks: days from now, then never. */
 function expiryItems(): MenuItem<string>[] {
   return [
     ...EXPIRY_DAYS.map((days) => ({
@@ -1126,7 +1083,6 @@ function isScoped(key: OrgKey): key is ScopedKey {
   return key._id !== undefined && key.actions !== undefined;
 }
 
-/** Each config area's level from the actions a key holds. */
 function levelsOf(actions: ApiPolicyAction[]): Record<ApiResourceType, Level> {
   const held = new Set(actions);
   const levels = {} as Record<ApiResourceType, Level>;
@@ -1145,7 +1101,7 @@ function matchesField(key: OrgKey, _field: Field, value: string): boolean {
   return presetOf(key) === value;
 }
 
-/** Full when a key holds every action, read when exactly the reads; the account key is full. */
+// The account key carries no actions list: it holds everything.
 function presetOf(key: OrgKey): Preset {
   if (!key.actions || key.actions.length === API_POLICY_ACTIONS.length) {
     return "full";
@@ -1157,7 +1113,6 @@ function presetOf(key: OrgKey): Preset {
     : "restricted";
 }
 
-/** The presets; Restricted is a pick only where it can open the key's areas. */
 function presetItems(restrictable: boolean): MenuItem<Preset>[] {
   return [
     { value: "full", label: PRESET_WORDS.full },
@@ -1170,7 +1125,6 @@ function presetItems(restrictable: boolean): MenuItem<Preset>[] {
   ];
 }
 
-/** The selection id in `?sel=`: a scoped key's id, or "account". */
 function rowId(key: OrgKey): string {
   return key._id ?? "account";
 }
@@ -1200,12 +1154,8 @@ function stageLabel(stage: StageOption): string {
   return `${stage.projectName} / ${stage.stageName}`;
 }
 
-/**
- * One inline save of a scoped key at a time, and which control saved last,
- * so its "Saved" note shows beside that control for a moment. A save builds
- * on the key as last rendered, so `pending` locks the controls until the
- * query reflects it; a pick made meanwhile is dropped.
- */
+// A save builds on the key as last rendered, so `pending` locks the controls until the
+// query reflects it; a pick made meanwhile is dropped.
 function useKeySave(
   orgId: Id<"orgs">,
   keyId: Id<"accountApiKeys">,
@@ -1219,6 +1169,7 @@ function useKeySave(
   const { pending, error, run } = useSubmit();
   const [saved, setSaved] = useState<string | null>(null);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- timer that clears the Saved note
   useEffect(() => {
     if (saved === null) return;
     const timer = setTimeout(() => setSaved(null), SAVED_NOTE_MS);

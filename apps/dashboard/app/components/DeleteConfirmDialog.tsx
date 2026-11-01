@@ -12,7 +12,7 @@ import {
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { toErrorMessage } from "@/app/lib/errors";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 
 export const CRITICAL_SAFETY_PHRASE =
   "I understand that it will delete all data and can't undo";
@@ -20,21 +20,14 @@ export const CRITICAL_SAFETY_PHRASE =
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The name of the resource being deleted (used as 'delete <resourceName>'). */
   resourceName: string;
-  /** Shown in the dialog title as 'Delete <resourceType>'. */
   resourceType: string;
-  /** When true, the confirmation phrase includes an extra irreversible-delete acknowledgement. */
   critical?: boolean;
-  /** Called only when all required inputs match. A rejection shows under the input. */
   onConfirm: () => Promise<void>;
   isDeleting?: boolean;
-  /** The verb the title, the phrase and the button use when it is not Delete: "Remove" for a member. */
   verb?: string;
 }
 
-/** Typed-confirm delete dialog. Shows 'Delete <resourceType>' as title; requires typing
- * 'delete <resourceName>' (and, when critical, the safety phrase) before enabling confirm. */
 export function DeleteConfirmDialog({
   open,
   onOpenChange,
@@ -47,6 +40,7 @@ export function DeleteConfirmDialog({
 }: Props): React.JSX.Element {
   const [phrase, setPhrase] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const phraseInput = useRef<HTMLInputElement>(null);
   const deletePhrase = critical
     ? `${verb.toLowerCase()} ${resourceName}, ${CRITICAL_SAFETY_PHRASE}`
     : `${verb.toLowerCase()} ${resourceName}`;
@@ -75,7 +69,7 @@ export function DeleteConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" initialFocus={phraseInput}>
         <form className="grid gap-4" onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>
@@ -95,11 +89,11 @@ export function DeleteConfirmDialog({
                 {deletePhrase}
               </div>
               <Input
+                ref={phraseInput}
                 id="delete-confirm-primary"
                 value={phrase}
                 onChange={(e) => setPhrase(e.target.value)}
                 placeholder={deletePhrase}
-                autoFocus
                 autoComplete="off"
               />
               {error ? (

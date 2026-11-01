@@ -4,11 +4,7 @@ import { appOrigin } from "@/app/lib/authConfig";
 
 const RETRY_COOKIE_NAME = "wos-callback-retry";
 
-/**
- * On callback failure (e.g. expired PKCE cookie) restarts the sign-in flow
- * once, guarded by a one-shot cookie so a broken setup cannot redirect-loop.
- * @returns Redirect response after successful authentication
- */
+// Restarts sign-in once on failure (e.g. expired PKCE cookie); the cookie stops a loop.
 export const GET = handleAuth({
   returnPathname: "/",
   baseURL: appOrigin,

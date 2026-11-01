@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Raw JSON editor for the connected agent's `skills` branch, matching the Agent
- * and Workspace cards' Config tabs so the whole slice (enabled, allowed) can be
- * edited in one place.
- */
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
 import {
@@ -24,7 +19,7 @@ export function SkillConfigTab({
       agentConfig as FlatAgentConfig | undefined,
       "skills",
     ) as Record<string, unknown>;
-    // Strip stale keys from previous schema versions
+    // `publish` is a retired key: never show or save it.
     const clean = { ...raw };
     delete (clean as Record<string, unknown>).publish;
 

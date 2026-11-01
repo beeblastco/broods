@@ -8,7 +8,6 @@ import {
   writeChangedRefs,
 } from "../app/lib/canvasRuntimeRefs";
 
-/** Minimal canvas node; `data` carries the same fields BaseNode reads. */
 function node(
   id: string,
   type: string,
@@ -38,7 +37,6 @@ describe("analyzeCanvasInfra workspace state", () => {
       node("sb", "sandbox"),
       node("ws", "workspace", { readOnly: true }),
     ];
-    // Mount edge ws<->sb means another agent can write here.
     const edges = [edge("agent", "ws"), edge("ws", "sb")];
 
     const { workspaceStates } = analyzeCanvasInfra(nodes, edges);
@@ -117,7 +115,6 @@ describe("deriveAgentRuntimeRefs", () => {
     const nodes = [
       node("agent", "agent", {
         agentConfigId: "cfg",
-        // "gone" lost its edge, so it no longer counts.
         sandboxOrder: ["mac", "gone", "cloud"],
       }),
       node("cloud", "sandbox", { resourceId: "sb_cloud" }),
@@ -222,7 +219,6 @@ describe("deriveSubagentRefs", () => {
   });
 });
 
-/** Minimal ref shape: `writeChangedRefs` only reads `configId`. */
 function ref(
   configId: string,
   value: string,
@@ -285,7 +281,6 @@ describe("writeChangedRefs caching", () => {
       ),
     ).rejects.toThrow("mutation failed");
 
-    // Both were attempted; only the successful one is remembered.
     expect(attempts).toEqual(["cfg_ok", "cfg_bad"]);
     expect(cache.get("cfg_ok")).toBe("a");
     expect(cache.has("cfg_bad")).toBe(false);
@@ -299,7 +294,6 @@ describe("writeChangedRefs caching", () => {
       },
     );
 
-    // The retry re-sends the failed ref only.
     expect(attempts).toEqual(["cfg_ok", "cfg_bad", "cfg_bad"]);
   });
 });
@@ -311,7 +305,6 @@ describe("analyzeCanvasInfra agent reachability", () => {
       node("sb", "sandbox"),
       node("ws", "workspace"),
     ];
-    // The workspace only reaches the agent through the sandbox it mounts into.
     const edges = [edge("agent", "sb"), edge("ws", "sb")];
 
     const { connectedToAgent } = analyzeCanvasInfra(nodes, edges);
@@ -340,7 +333,6 @@ describe("analyzeCanvasInfra agent reachability", () => {
     const edges = [
       edge("agent", "ws"),
       edge("agent", "wired"),
-      // A node hanging off a wired workspace is still not wired to the agent.
       edge("indirect", "ws"),
     ];
 

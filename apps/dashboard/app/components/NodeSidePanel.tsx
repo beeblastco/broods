@@ -117,7 +117,6 @@ const McpToolsTab = dynamic(loadMcpToolsTab, {
   ),
 });
 
-/** A tab this node shows; `warms` preloads a dynamic tab on hover. */
 interface PanelTab {
   label: string;
   value: string;
@@ -147,10 +146,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   onUpdateNodeData,
 }: {
   node: Node | null;
-  /** `performance.now()` of the click that selected this node, for the open-latency mark. */
+  /** `performance.now()` of the selecting click. */
   selectedAt: number;
   onClose: () => void;
-  /** Hands the delete to the canvas, which confirms it without this panel. */
   onRequestDelete: (nodeId: string) => void;
   onUpdateNodeLabel: (nodeId: string, label: string) => void;
   onUpdateNodeData: (nodeId: string, patch: Partial<BaseNodeData>) => void;
@@ -172,9 +170,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const resourceId = nodeData?.resourceId;
   const canQueryMcpStatus = isMcp && !!projectId && !!stageId && !!nodeId;
 
-  // Time from the canvas click to this panel being on screen, mostly its own
-  // dynamic import. Keyed on the click stamp so reselecting a node re-measures.
   const measuredSelection = useRef(0);
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- perf beacon, click to commit
   useEffect((): void => {
     if (!nodeId || !selectedAt || measuredSelection.current === selectedAt)
       return;
@@ -187,14 +184,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
   const healthStatus = useAgentHealth(isAgent ? agentConfigId : undefined);
 
-  // Connected agent config for skill nodes, so the header status badge mirrors
-  // the same Enabled/Disabled state shown on the node card.
   const { agentConfig: connectedAgentConfig } = useConnectedAgentConfig(
     isSkill ? nodeId : undefined,
   );
 
-  // Read the canvas's single graph traversal rather than walking the edges
-  // again here; BaseNode reads the same map for its unwired badge.
   const infraAnalysis = useInfraAnalysis();
   const isConnectedToAgent =
     nodeType === "agent" ||
@@ -209,9 +202,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const ensureDeployment = useMutation(api.agent.deployments.ensureForStage);
   const rotateDeployment = useMutation(api.agent.deployments.rotate);
 
-  // The stage's runtime key (shared by every agent in it). The agent
-  // itself is selected per request by its Agent ID. Created on demand here or on
-  // the first `broods deploy`.
   const activeDeployment =
     useQuery(
       api.agent.deployments.getForStage,
@@ -245,13 +235,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   );
   const [activeTab, setActiveTab] = useState("details");
 
-  // Sync the editable name and reset panel state when the selected node, its
-  // config, or its deployment changes. Handled during render (each guarded by
-  // the previously-synced value) instead of in effects to avoid cascading
-  // re-renders. See https://react.dev/learn/you-might-not-need-an-effect.
-
-  // Editable name follows the agent config (agents) or canvas label (others).
-  // `undefined` sentinel forces the initial sync since nameSource is never undefined.
+  // nameSource is never undefined, so the first render syncs the name too.
   const nameSource = isAgent ? (agentConfig ?? null) : (nodeData ?? null);
   const [syncedNameSource, setSyncedNameSource] = useState<unknown>(undefined);
   if (nameSource !== syncedNameSource) {
@@ -269,8 +253,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     setActiveTab("details");
   }
 
-  // Clear a freshly generated key when the active deployment changes. The
-  // authoritative stored key is recovered reactively from Convex below.
   const deploymentKeySync = activeDeployment?.endpointId ?? "";
   const [syncedDeploymentKey, setSyncedDeploymentKey] =
     useState(deploymentKeySync);
@@ -388,8 +370,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       if (!agentConfigId || !agentConfig) return;
 
       const edited = (value as Record<string, unknown>) ?? {};
-      // Preserve all existing branches (tools, skills, workspace, etc.);
-      // only replace the branches the Config tab exposes.
       const base = toNestedAgentConfig(agentConfig) as Record<string, unknown>;
       const merged: Record<string, unknown> = { ...base };
       for (const branch of CONFIG_TAB_BRANCHES) {
@@ -432,8 +412,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const currentProvider = readAgentBranch<
       Partial<Record<AgentProvider, Record<string, unknown>>>
     >(agentConfig, "provider");
-    // A provider picked here without a key yet reads the same `${NAME}` stage
-    // variable a newly created agent does.
+    // No key yet: read the `${NAME}` stage variable, as a newly created agent does.
     const keyVariable = providerApiKeyEnvName(next.provider);
     const nextProviderConfig = {
       ...currentProvider,
@@ -463,9 +442,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     });
   }
 
-  // Warn when a dashboard-owned node is named the same as a code-managed resource
-  // of the same kind: the next `broods deploy` resolves by (stage,
-  // name) and would adopt + overwrite this resource with the code definition.
   const cliManagedNames = useQuery(
     api.canvas.cliManagedResourceNames,
     (isAgent || isWorkspace || isSandbox) && projectId && stageId
@@ -498,14 +474,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     [agentConfigId, updateConfig],
   );
 
-  // Mint the stage's runtime key on demand, or rotate it. Both return the
-  // plaintext once; we remember it locally so the panel can reveal/copy it until
-  // the key is rotated again. `rotate` also lands here via `handleRotateKey`.
+  // The plaintext comes back once: keep it so the panel can reveal it until the next rotation.
   const ensureRuntimeKey = useCallback(
     async (rotate: boolean) => {
-      // Returns whether the key was actually minted. The caller needs to tell a
-      // real rotation apart from this early return, or a no-op reads as success
-      // and the user redeploys with a key that never changed.
+      // false tells the caller nothing was minted, so a no-op never reads as a rotation.
       if (!isAgent || !projectId || !stageId) return false;
 
       setIsSavingKey(true);
@@ -564,8 +536,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     [agentConfigId, agentConfig, updateConfig],
   );
 
-  // One top-level extraConfig entry, such as the public-endpoint opt-in (issue #65)
-  // or the browser switch, so it rides through the codec to the harness.
   const handleUpdateExtraEntry = useCallback(
     async (
       key: "publicAccess" | "browser",
@@ -600,9 +570,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     [agentConfigId, agentConfig, updateConfig],
   );
 
-  // Reasoning config. Maps the budget/effort knobs to the selected provider's
-  // Vercel AI SDK providerOptions (model.providerOptions.<provider>.*), the only
-  // reasoning shape the core accepts. See applyModelReasoning in the config codec.
   const handleUpdateModelReasoning = useCallback(
     async (next: { budgetTokens?: number; effort?: string }) => {
       if (!agentConfigId || !agentConfig) return;
@@ -651,9 +618,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     [agentConfigId, agentConfig, updateConfig],
   );
 
-  // Warmed from the tab trigger only. Preloading on open cost every panel view
-  // the test bundle (Streamdown, Mermaid, KaTeX, Shiki) whether or not the tab
-  // was ever used; intent to open it lands early enough to hide the fetch.
+  // Tab intent only: warming on open fetches the heavy chat bundle for every panel view.
   const warmTestTab = useCallback(() => {
     if (isAgent) {
       void loadAgentTestTab();
@@ -666,8 +631,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     }
   }, [isAgent, isMcp]);
 
-  // One list drives the triggers and the number keys, so `3` always lands on
-  // the third tab this node actually has.
   const visibleTabs = useMemo((): readonly PanelTab[] => {
     const hasSkillFiles =
       isSkill && (nodeData?.config?.skillSource ?? "") === "files";
@@ -761,7 +724,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             ))}
           </TabsList>
 
-          {/* Details tab */}
           <TabsContent
             value="details"
             className="flex flex-col overflow-y-auto"
@@ -850,7 +812,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             ) : null}
           </TabsContent>
 
-          {/* Files tab for workspace nodes */}
           {isWorkspace && node && (
             <TabsContent
               value="files"
@@ -864,7 +825,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             </TabsContent>
           )}
 
-          {/* Files tab for skill nodes */}
           {isSkill && node && (
             <TabsContent
               value="files"
@@ -882,7 +842,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             </TabsContent>
           )}
 
-          {/* Config tab for agent and tool */}
           {isAgent && (
             <TabsContent
               value="config"
@@ -965,7 +924,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             </TabsContent>
           )}
 
-          {/* Settings tab, all node types, admins only */}
           {canWrite && (
             <TabsContent
               value="settings"

@@ -11,26 +11,20 @@ import {
   type ReactNode,
 } from "react";
 
-/** How long the check mark stays before the copy icon returns. */
 const COPIED_MS = 1500;
 
 interface Props {
-  /** The text written to the clipboard. */
   value: string;
-  /** What the button copies, for the accessible name. */
   label: string;
 }
 
 interface RowProps {
-  /** The text written to the clipboard. */
   value: string;
   /** Sets the display (`flex`, `grid …`) and padding; the row has none of its own. */
   className: string;
-  /** What the row shows; it also names the control, so `value` can truncate. */
   children: ReactNode;
 }
 
-/** Icon button that copies `value` and shows a check mark for a moment. */
 export function CopyButton({ value, label }: Props): React.JSX.Element {
   const { copied, copy } = useCopied(value);
 
@@ -49,7 +43,6 @@ export function CopyButton({ value, label }: Props): React.JSX.Element {
   );
 }
 
-/** A small outline button with text that copies `value`, its icon turning to a check once copied. */
 export function CopyTextButton({
   value,
   label,
@@ -58,7 +51,6 @@ export function CopyTextButton({
   children,
 }: {
   value: string;
-  /** The accessible name; it contains the visible text. */
   label: string;
   title: string;
   className?: string;
@@ -88,11 +80,6 @@ export function CopyTextButton({
   );
 }
 
-/**
- * A whole-row copy target: click anywhere on it to copy `value`. The copy icon
- * only shows on hover or keyboard focus, and the full value is the hover title,
- * so the row can truncate what it shows.
- */
 export function CopyRow({
   value,
   className,
@@ -120,10 +107,6 @@ export function CopyRow({
   );
 }
 
-// Clipboard write plus the short "copied" state, shown only once the write
-// succeeded (a denied clipboard rejects). One timer per control: a second
-// click restarts it, and unmount clears it so a closed panel does not set
-// state later.
 export function useCopied(value: string): {
   copied: boolean;
   failed: boolean;
@@ -133,6 +116,7 @@ export function useCopied(value: string): {
   const [failedValue, setFailedValue] = useState<string | null>(null);
   const attempt = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- copied timer, write in flight
   useEffect(
     () => () => {
       attempt.current += 1;
@@ -157,8 +141,7 @@ export function useCopied(value: string): {
       setFailedValue(value);
       return;
     }
-    // Credential export is intentional on Copy. Never copy in the background,
-    // read the user's clipboard, or clear a later clipboard entry with a timer.
+    // Copy only on the user's click: never in the background, never read or clear the clipboard.
     void navigator.clipboard.writeText(value).then(
       () => {
         if (currentAttempt !== attempt.current) return;

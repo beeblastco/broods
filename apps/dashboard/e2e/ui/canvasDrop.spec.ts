@@ -1,26 +1,15 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-/** A spot on screen, which is where every drag in here is aimed. */
 type Point = { x: number; y: number };
 
-/**
- * How many steps a drag takes. The drop target is read off mousemove, so one
- * jump from start to finish never crosses the group it lands on.
- */
+// The drop target is read off mousemove: one jump never crosses the group it lands on.
 const DRAG_STEPS = 12;
 
-/** The gap between two slots, added to the frame along with the slot. */
 const SLOT_GAP = 8;
 
-/** A chip's slot, the height a pending slot adds to the frame. */
 const SLOT_HEIGHT = 44;
 
-/**
- * Nothing used to happen when a card was dragged onto a group: membership is
- * derived, so the card sat on top of the frame and the next layout pass moved it
- * away. The frame now opens the slot the card would take and takes it on release.
- */
 test("a card dragged onto a frame opens a slot and lands in it", async ({
   page,
 }) => {
@@ -30,16 +19,13 @@ test("a card dragged onto a frame opens a slot and lands in it", async ({
   const frame = fixture.locator('[data-slot="canvas-frame"]');
   const slot = fixture.locator('[data-slot="frame-drop-slot"]');
   const closedHeight = (await frame.boundingBox())?.height ?? 0;
-  // The gallery fits the graph to its box, so every length on screen carries
-  // that zoom. A chip is SLOT_HEIGHT flow pixels tall, which recovers it.
   const chip = await nodeOf(fixture, "box-one").boundingBox();
   if (!chip) throw new Error("box-one has no box");
   const zoom = chip.height / SLOT_HEIGHT;
 
   await aim(page, fixture, "spare", await aboveMiddleOf(fixture, "box-one"));
   await expect(slot).toBeVisible();
-  // The box grew by exactly the slot it opened, so the chips have room. Its
-  // height is a transition, so this polls until it has finished growing.
+  // The height is a transition: poll until it has finished growing.
   await expect
     .poll(async () =>
       Math.round(((await frame.boundingBox())?.height ?? 0) - closedHeight),
@@ -51,7 +37,6 @@ test("a card dragged onto a frame opens a slot and lands in it", async ({
     "joined Cloud sandbox at 0",
   );
   await expect(slot).toHaveCount(0);
-  // It is a chip now, which is what being in a group looks like.
   await expect(
     fixture.locator(
       '.react-flow__node[data-id="spare"] [data-slot="resource-chip"]',
@@ -59,10 +44,6 @@ test("a card dragged onto a frame opens a slot and lands in it", async ({
   ).toBeVisible();
 });
 
-/**
- * A group takes only its own kind, and a card dropped on one that will not have
- * it used to be silently returned. The frame says why instead, and opens no slot.
- */
 test("a workspace over a sandbox group is refused and opens no slot", async ({
   page,
 }) => {
@@ -71,8 +52,7 @@ test("a workspace over a sandbox group is refused and opens no slot", async ({
   await fixture.scrollIntoViewIfNeeded();
 
   const log = fixture.locator('[data-testid="drop-log"]');
-  // A drop that works first, so the log has something a refused drop could
-  // wrongly overwrite.
+  // A good drop first, so the log has a line a refused drop could wrongly overwrite.
   await aim(page, fixture, "spare", await belowMiddleOf(fixture, "box-two"));
   await page.mouse.up();
   await expect(log).toHaveText("joined Cloud sandbox at 2");
@@ -85,16 +65,11 @@ test("a workspace over a sandbox group is refused and opens no slot", async ({
 
   await page.mouse.up();
   await expect(log).toHaveText("joined Cloud sandbox at 2");
-  // Still a card, still out of every group.
   await expect(
     fixture.locator('.react-flow__node[data-id="notes"] [data-slot="card"]'),
   ).toBeVisible();
 });
 
-/**
- * Two loose cards have no frame to grow, so the group they would form is drawn
- * around them, already named.
- */
 test("two loose cards outline the group they would form", async ({ page }) => {
   await openGallery(page);
   const fixture = page.locator('[data-fixture="canvas-drop"]');
@@ -104,8 +79,6 @@ test("two loose cards outline the group they would form", async ({ page }) => {
   await aim(page, fixture, "spare", await centreOf(nodeOf(fixture, "solo")));
   await expect(preview).toBeVisible();
   await expect(preview).toContainText("Cloud sandbox");
-  // The box is the frame that will form, one chip wide, not a box drawn around
-  // wherever the two cards happen to be sitting.
   const box = await preview.boundingBox();
   const card = await nodeOf(fixture, "solo").boundingBox();
   expect(box?.width ?? 0).toBeLessThan((card?.width ?? 0) * 1.4);
@@ -118,7 +91,6 @@ test("two loose cards outline the group they would form", async ({ page }) => {
     "joined Cloud sandbox",
   );
   await expect(preview).toHaveCount(0);
-  // Both are chips in the frame the two of them now make.
   await expect(
     nodeOf(fixture, "solo").locator('[data-slot="resource-chip"]'),
   ).toBeVisible();
@@ -127,7 +99,6 @@ test("two loose cards outline the group they would form", async ({ page }) => {
   ).toBeVisible();
 });
 
-/** A point in a chip's top half, where a card's middle lands above that chip. */
 async function aboveMiddleOf(fixture: Locator, nodeId: string): Promise<Point> {
   const box = await nodeOf(fixture, nodeId).boundingBox();
   if (!box) throw new Error(`${nodeId} has no box`);
@@ -135,7 +106,6 @@ async function aboveMiddleOf(fixture: Locator, nodeId: string): Promise<Point> {
   return { x: box.x + box.width / 2, y: box.y + 4 };
 }
 
-/** Press a card's middle and hold it over a point, without releasing. */
 async function aim(
   page: Page,
   fixture: Locator,
@@ -145,9 +115,8 @@ async function aim(
   const from = await centreOf(nodeOf(fixture, nodeId));
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
-  // React Flow counts the card's travel from the first move past its 1px
-  // threshold, so nudge 3px before the real steps: a coarse first one would
-  // leave the card that far behind the cursor for the whole drag.
+  // React Flow counts travel from the first move past its 1px threshold: nudge first,
+  // or a coarse first step leaves the card that far behind the cursor all drag.
   await page.mouse.move(from.x, from.y + 3);
   for (let step = 1; step <= DRAG_STEPS; step++) {
     await page.mouse.move(
@@ -157,7 +126,6 @@ async function aim(
   }
 }
 
-/** A point in a chip's bottom half, where a card's middle lands below that chip. */
 async function belowMiddleOf(fixture: Locator, nodeId: string): Promise<Point> {
   const box = await nodeOf(fixture, nodeId).boundingBox();
   if (!box) throw new Error(`${nodeId} has no box`);

@@ -64,23 +64,18 @@ import {
 } from "./sandboxFormat";
 import type { SandboxObservabilityScope } from "./SandboxLogTail";
 
-// The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["provider", "status", "agent"] as const;
 
-// Rows shown before the footer offers more; the live query holds them all.
 const PAGE_SIZE = 50;
 
-// Nine columns of short text; below this the detail panel would wrap them.
+// Below this the detail panel would wrap the nine columns.
 const TABLE_MIN_WIDTH = 840;
 
-// How often the visible rows re-sync their status from the provider.
 const REFRESH_EVERY_MS = 60_000;
 
-// The dock's height when it opens, and the least it can be dragged to.
 const DOCK_DEFAULT_HEIGHT = 300;
 const DOCK_MIN_HEIGHT = 160;
 
-// The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
 const ROW_ID = parseAsId<"machineConnections" | "sandboxInstances">();
 
 type Instance = Doc<"sandboxInstances">;
@@ -96,7 +91,6 @@ type Column =
   | "created"
   | "running";
 
-/** One row of the table: a connected computer, or a cloud instance, with the facts the list sorts and filters by derived once. */
 type TableRow =
   | {
       kind: "machine";
@@ -111,7 +105,6 @@ type TableRow =
       id: Id<"sandboxInstances">;
       instance: Instance;
       status: string;
-      /** The agent it ran, when that agent still exists in the project. */
       agent: Agent | null;
     };
 
@@ -135,25 +128,13 @@ const SORT_KEY: Record<Column, (row: TableRow) => SortKey> = {
 
 interface Props {
   instances: Instance[];
-  /** The stage's computers that connected through `broods machine`. */
   machines: MachineConnection[];
-  /** The project's agents, so an instance's agent reads as a name. */
   agents: Agent[];
-  /** The account's snapshots, so an instance's snapshot reads as a name. */
   snapshots: Doc<"sandboxSnapshots">[];
-  /** Builds the trace deep links. */
   projectId: Id<"projects">;
-  /** Stage-scoped observability WS inputs, handed to the dock's log tail. */
   observability: SandboxObservabilityScope | null;
 }
 
-/**
- * The stage's sandboxes and computers as one list, laid out like Monitoring:
- * a search box, a flush table whose headers sort on click, a running switch,
- * a detail panel for the selected row, and a dock under it all for the
- * shells and logs opened from the rows. The visible instances refresh from the
- * provider on their own as they scroll in.
- */
 export function SandboxInstancesTable({
   instances,
   machines,
@@ -168,14 +149,11 @@ export function SandboxInstancesTable({
   const refresh = useAction(api.sandbox.public.refreshSandbox);
   const now = useNow();
 
-  // Only the id is held, so the open panel follows the live row instead of a
-  // stale copy once a refresh or suspend moves its status.
+  // Only the id: the open panel follows the live row, not a stale copy.
   const [selectedId, setSelectedId] = useQueryState("sel", ROW_ID);
   const [rawDock, setDock] = useState<DockState | null>(null);
-  // Hidden, not closed: the backtick keeps every shell connected.
   const [dockHidden, setDockHidden] = useState(false);
   const dockOpener = useRef<HTMLElement | null>(null);
-  // A click on the open row closes its panel.
   const select = (id: TableRow["id"]): void => {
     void setSelectedId(selectedId === id ? null : id);
   };
@@ -185,8 +163,6 @@ export function SandboxInstancesTable({
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const lastRefresh = useRef<string | null>(null);
 
-  // Computers and instances filter and sort as one list, so the count under
-  // the table matches what is on screen.
   const rows = useMemo((): TableRow[] => {
     const agentById = new Map<string, Agent>(
       agents.map((agent) => [agent._id, agent]),
@@ -227,7 +203,6 @@ export function SandboxInstancesTable({
   });
   const visible = list.shown.slice(0, visibleCount);
   const selected = rows.find((row) => row.id === selectedId) ?? null;
-  // The dock follows the live rows too: a session leaves once its row is gone.
   const dock = pruneDock(rawDock, instances);
   const shellCount = (id: Id<"sandboxInstances">): number =>
     dock?.sessions.filter(
@@ -238,9 +213,7 @@ export function SandboxInstancesTable({
       visible.flatMap((row) => (row.kind === "instance" ? [row.instance] : [])),
     [visible],
   );
-  // The rows on screen plus the clock's minute, so a new row and a new
-  // minute each trigger one sync. Null before the stage deploys, when no
-  // instance has a provider to ask (and in the gallery fixture).
+  // A new visible row or a new minute each trigger one sync; null before the stage deploys.
   const refreshKey =
     observability === null
       ? null
@@ -280,8 +253,7 @@ export function SandboxInstancesTable({
     setDockHidden(false);
   };
 
-  // Hiding takes focus out of the dock, so focus inside it goes back to what
-  // opened it (the panel's Terminal button) rather than dropping to the page.
+  // Focus inside the dock goes back to its opener rather than dropping to the page.
   const hideDock = (): void => {
     const focusInDock =
       document.activeElement?.closest("[data-sandbox-dock]") != null;
@@ -291,8 +263,6 @@ export function SandboxInstancesTable({
     }
   };
 
-  // The backtick toggles the dock, like an editor's terminal: it opens a
-  // shell on the selected instance, and with the dock open it hides it.
   useShortcut("sandbox.terminal", () => {
     if (dock) {
       if (dockHidden) setDockHidden(false);
@@ -305,8 +275,6 @@ export function SandboxInstancesTable({
     }
   });
 
-  // Resuming is cheap and reversible, so it runs straight from the toggle; suspending
-  // discards the instance's live state and goes through `confirming` first.
   async function toggle(
     instance: Instance,
     nextRunning: boolean,
@@ -328,8 +296,7 @@ export function SandboxInstancesTable({
     }
   }
 
-  // A background sync; the rows keep their last known status when the
-  // provider does not answer, so a failure here has nothing to tell the user.
+  // Rows keep their last status when the provider does not answer: nothing to report.
   const refreshVisible = useCallback(async (): Promise<void> => {
     const targets = visibleInstances.filter(controllable);
     if (targets.length === 0) return;
@@ -343,6 +310,7 @@ export function SandboxInstancesTable({
     );
   }, [visibleInstances, refresh]);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- provider status sync via Convex
   useEffect(() => {
     if (refreshKey === null || lastRefresh.current === refreshKey) return;
     lastRefresh.current = refreshKey;
@@ -376,7 +344,6 @@ export function SandboxInstancesTable({
         />
       </Toolbar>
 
-      {/* The dock opens as a second panel under the list; the list stays mounted. */}
       <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1">
         <ResizablePanel
           minSize={DOCK_MIN_HEIGHT}
@@ -504,7 +471,6 @@ export function SandboxInstancesTable({
                 onCloseSession={(key) => {
                   const next = closeDockSession(dock, key);
                   setDock(next);
-                  // The last session closes the dock; focus goes back to its opener.
                   if (!next && dockOpener.current?.isConnected) {
                     dockOpener.current.focus();
                   }
@@ -535,7 +501,6 @@ export function SandboxInstancesTable({
   );
 }
 
-/** A cloud instance: its facts, a trace link on hover, its open shells, and the running switch. */
 function InstanceRow({
   row,
   projectId,
@@ -550,7 +515,6 @@ function InstanceRow({
   projectId: Id<"projects">;
   now: number;
   selected: boolean;
-  /** Shells open on this instance in the dock. */
   shells: number;
   canToggle: boolean;
   onSelect: () => void;
@@ -655,7 +619,6 @@ function InstanceRow({
   );
 }
 
-/** A computer: its reported size and when it was seen; it has no agent, trace or switch. */
 function MachineRow({
   row,
   now,
@@ -698,7 +661,6 @@ function MachineRow({
   );
 }
 
-/** Whether a `field:value` token matches the row. A computer has no agent. */
 function matchesField(row: TableRow, field: Field, value: string): boolean {
   if (field === "provider") return providerOf(row).toLowerCase() === value;
   if (field === "status") return row.status.toLowerCase() === value;
@@ -712,7 +674,6 @@ function providerOf(row: TableRow): string {
     : formatProvider(row.instance.provider);
 }
 
-/** The free text a row answers to: name, ids, conversation and trace. */
 function searchText(row: TableRow): string {
   if (row.kind === "machine") {
     return `${row.machine.name} ${row.machine.hostname ?? ""}`;

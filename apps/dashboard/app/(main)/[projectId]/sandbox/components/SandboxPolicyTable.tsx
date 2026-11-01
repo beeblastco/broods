@@ -1,9 +1,6 @@
 "use client";
 
-/**
- * Read-only. broods mirrors each sandbox config's tool-approval and egress mode
- * onto its instance rows; edit them on the config, from the canvas or the CLI.
- */
+// Read-only: broods mirrors each config's approval and egress mode onto its instance rows.
 
 import {
   DataTable,
@@ -28,7 +25,6 @@ import {
   permissionModeBadge,
 } from "./sandboxFormat";
 
-// The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["provider", "status"] as const;
 
 type Instance = Doc<"sandboxInstances">;
@@ -52,7 +48,6 @@ const COPY = {
   },
 } as const;
 
-// What a column sorts an instance by; the policy column reads the dimension's field.
 const SORT_KEY: Record<
   Dimension,
   Record<Column, (instance: Instance) => SortKey>

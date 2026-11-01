@@ -50,11 +50,7 @@ import { Eye, EyeOff, KeyRound, RefreshCw, Wifi } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 
-/**
- * Public (hash-free) view of a stage's runtime deployment, as returned by
- * `agentDeployments.getForStage`. The key is stage-wide; the agent is
- * selected per request by its Agent ID.
- */
+/** `agentDeployments.getForStage` minus the key hash. One key per stage, not per agent. */
 export type StageDeployment = {
   _id: Id<"agentDeployments">;
   endpointId: string;
@@ -156,8 +152,6 @@ export function DetailsTab({
   const [showApiKey, setShowApiKey] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
   const [rotateError, setRotateError] = useState<string | null>(null);
-  // Reveal a freshly generated/rotated key the moment it arrives (render-time
-  // sync, not an effect); hide again once the plaintext is cleared.
   const [syncedApiKey, setSyncedApiKey] = useState(deploymentApiKey);
   if (deploymentApiKey !== syncedApiKey) {
     setSyncedApiKey(deploymentApiKey);
@@ -176,7 +170,6 @@ export function DetailsTab({
   );
   const schemaFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Built-in tool configs derived from agentConfig (reads extraConfig.tools, falls back to flat columns)
   const allTools = agentConfig
     ? (readAgentBranch(
         agentConfig as unknown as FlatAgentConfig,
@@ -188,7 +181,6 @@ export function DetailsTab({
     : { enabled: agentConfig?.searchToolEnabled };
   const googleSearchEnabled = googleSearchCfg.enabled === true;
 
-  // Reasoning lives under model.providerOptions.<provider>.* (Vercel AI SDK shape).
   const modelBranch = agentConfig
     ? (readAgentBranch(
         agentConfig as unknown as FlatAgentConfig,
@@ -203,7 +195,6 @@ export function DetailsTab({
   const [reasoningBudgetText, setReasoningBudgetText] = useState(() =>
     reasoningBudget !== undefined ? String(reasoningBudget) : "",
   );
-  // Follow a budget saved elsewhere (a deploy, another tab) during render.
   const [syncedReasoningBudget, setSyncedReasoningBudget] =
     useState(reasoningBudget);
   if (!Object.is(reasoningBudget, syncedReasoningBudget)) {
@@ -227,12 +218,9 @@ export function DetailsTab({
       ? `${coreEndpoint.websocketBaseUrl}/v1${scopePrefix}/agents/${activeDeployment.endpointId}/ws`
       : "";
 
-  // Per-agent public-endpoint opt-in (issue #65). Stored as a top-level scalar
-  // in extraConfig; off by default so the agent is secured until enabled.
   const publicAccess =
     (agentConfig?.extraConfig as Record<string, unknown> | undefined)
       ?.publicAccess === true;
-  // The `browse` tool switch, `config.browser.enabled` in extraConfig.
   const browserEnabled =
     readAgentBranch<{ enabled?: boolean }>(agentConfig, "browser").enabled ===
     true;
@@ -248,8 +236,7 @@ export function DetailsTab({
   const displayOutputSchemaText = hasEditedOutputSchema
     ? outputSchemaText
     : schemaFromConfigText;
-  // The provider key is a `${NAME}` ref to a stage variable (or, before one is
-  // written, the default name); warn until the stage has that variable.
+  // The key is a `${NAME}` stage-variable ref (the default name until set): warn until it exists.
   const stageVariables = useQuery(
     api.environmentVariables.list,
     projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
@@ -369,7 +356,6 @@ export function DetailsTab({
     reader.readAsText(file);
   }
 
-  /** Auto-saves provider/model/base-URL settings; no-ops when required values are empty. */
   function saveModel(
     provider: AgentProvider,
     modelId: string,
@@ -393,7 +379,6 @@ export function DetailsTab({
 
   return (
     <div className="flex flex-1 flex-col gap-5 p-4">
-      {/* Editable name, auto-saves on blur or Enter */}
       <div className="flex flex-col gap-1.5">
         <SectionHeader>Name</SectionHeader>
         <Input
@@ -407,7 +392,6 @@ export function DetailsTab({
         />
       </div>
 
-      {/* Agent info */}
       {agentConfig && (
         <>
           {agentConfig.description && (
@@ -483,8 +467,6 @@ export function DetailsTab({
             )}
           </div>
 
-          {/* Reasoning: budget tokens (Anthropic/MiniMax/Google) + effort (OpenAI/Anthropic),
-                        written to model.providerOptions.<provider> for the selected provider. */}
           {onUpdateModelReasoning && (
             <div className="flex flex-col gap-2">
               <ToggleRow
@@ -493,7 +475,6 @@ export function DetailsTab({
                 checked={reasoningEnabled}
                 onCheckedChange={(next) => {
                   if (next) {
-                    // Seed a provider-appropriate default so the toggle has effect:
                     // OpenAI reasons by effort, the others by a thinking-token budget.
                     if (selectedProvider === "openai") {
                       void onUpdateModelReasoning({ effort: "medium" });
@@ -582,7 +563,6 @@ export function DetailsTab({
 
       <Separator />
 
-      {/* Public access controls */}
       <div className="flex flex-col gap-3">
         <SectionHeader>Public API</SectionHeader>
         {onUpdatePublicAccess && (
@@ -733,7 +713,6 @@ export function DetailsTab({
         )}
       </div>
 
-      {/* Built-in Tools */}
       {agentConfig && onUpdateToolConfig && (
         <>
           <Separator />
@@ -749,7 +728,6 @@ export function DetailsTab({
               />
             )}
 
-            {/* Google Search */}
             <ToggleRow
               label="Google Search"
               description={
@@ -784,7 +762,6 @@ export function DetailsTab({
         </>
       )}
 
-      {/* Output format schema */}
       {agentConfig && (
         <>
           <Separator />
@@ -863,7 +840,6 @@ export function DetailsTab({
         </>
       )}
 
-      {/* Channels: inbound webhook integrations on the agent's `channels` branch */}
       {agentConfig && onUpdateChannelConfig && (
         <>
           <Separator />
@@ -904,9 +880,7 @@ export function DetailsTab({
               onClick={async () => {
                 setRotateError(null);
                 try {
-                  // Close only on a confirmed rotation. A rejected mutation or
-                  // an unconfigured stage must not read as success. The
-                  // user would redeploy against a key that never changed.
+                  // Close only once rotated, or the user redeploys with a key that never changed.
                   const rotated = await onRotateKey?.();
                   if (rotated === false) {
                     setRotateError(

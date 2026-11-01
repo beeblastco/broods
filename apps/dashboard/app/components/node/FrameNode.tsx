@@ -1,17 +1,5 @@
 "use client";
 
-/**
- * A frame around two or more sandbox, workspace or MCP chips an agent reaches.
- * Expanded, it is only the dashed box and header; the member chips render
- * themselves inside it. Collapsed, it is one compact card that names its
- * members and sums up their state.
- *
- * While a card is being dropped on it, the box takes the colour a mount wears,
- * grows by one row and marks the slot that card will take. Collapsed it only
- * takes the colour: it draws no chips, so it has no gap to open. The growth and
- * the chips sliding to their new slots are the frame's own transitions, so
- * nothing here animates by hand.
- */
 import {
   useCanvasFrames,
   type CanvasFramesValue,
@@ -36,6 +24,10 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 
 const HANDLE_CLASS = "bg-transparent! w-2.5! h-2.5! border-transparent!";
 
+/**
+ * Expanded, only the box and header: member chips render themselves inside. Drop growth and
+ * chip slides are the frame's own transitions, so nothing here animates by hand.
+ */
 export function FrameNode({
   id,
   data,
@@ -57,18 +49,14 @@ export function FrameNode({
         "relative flex size-full flex-col rounded-md border",
         collapsed
           ? "border-border bg-card hover:border-foreground/25"
-          : // Dashed and lighter than a card's, so a group reads as one box without
-            // drawing harder than the cards inside it.
-            "border-dashed border-muted-foreground/45 bg-transparent hover:border-muted-foreground/70",
-        // Mount teal, the colour the slot below wears too: this group is taking it.
+          : "border-dashed border-muted-foreground/45 bg-transparent hover:border-muted-foreground/70",
         drop !== undefined && "border-canvas-mount",
       )}
     >
       {drop?.slotY != null && (
         <div
           data-slot="frame-drop-slot"
-          // h-11 by w-44 is FRAME_CHIP_HEIGHT by FRAME_CHIP_WIDTH, the slot the
-          // geometry left. It takes no clicks: the chip it sits over keeps them.
+          // h-11 w-44 = FRAME_CHIP_HEIGHT × FRAME_CHIP_WIDTH; the chip under it keeps the clicks.
           className="pointer-events-none absolute top-(--drop-slot-y) left-(--drop-slot-x) h-11 w-44 rounded-md border border-dashed border-canvas-mount bg-canvas-mount/10"
           style={{
             "--drop-slot-x": `${FRAME_PADDING}px`,
@@ -76,8 +64,7 @@ export function FrameNode({
           }}
         />
       )}
-      {/* Bundle edges from the agent land on top; mount and runs-on edges
-          re-point to the sides while the frame is collapsed. */}
+      {/* Bundle edges land on top; mount and runs-on edges move to the sides when collapsed. */}
       <Handle
         id="top"
         type="target"
@@ -138,7 +125,6 @@ export function FrameNode({
   );
 }
 
-/** The status a member's chip shows, from the same stage data the chip reads. */
 function memberStatus(
   member: Node,
   frames: CanvasFramesValue,

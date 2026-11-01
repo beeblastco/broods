@@ -1,10 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-/**
- * False in the server HTML, true once React owns the page. Rendered as
- * `data-hydrated`, a spec waits on it so its first interaction lands on a
- * listener, not on static markup.
- */
+// Rendered as `data-hydrated`: a spec waits on it so its first click lands on a listener.
 export function useHydrated(): boolean {
   return useSyncExternalStore(
     subscribeNever,

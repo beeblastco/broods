@@ -3,13 +3,6 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import { agentCanvasBadge } from "@broods/convex/model/agentConfigCodec";
 import type { OptimisticLocalStore } from "convex/browser";
 
-/**
- * Shallow-merges an `agentConfig.update` patch onto the cached `getById` result
- * so node side-panel edits render instantly before the server round-trip. Mirrors
- * the mutation's own semantics of ignoring `undefined` fields. The canvas cards
- * draw from `canvasBadges`, so the edited agent's badge is redrawn from the
- * merged config too.
- */
 export function applyAgentConfigUpdate(
   localStore: OptimisticLocalStore,
   args: { configId: Id<"agentConfigs"> } & Record<string, unknown>,

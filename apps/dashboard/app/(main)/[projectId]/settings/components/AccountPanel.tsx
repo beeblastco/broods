@@ -20,9 +20,14 @@ import { useSession } from "@/app/lib/session";
 import { useMutation, useQuery } from "convex/react";
 import { ArrowRight, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 const HANDLE_REGEX = /^[a-z0-9_-]{3,32}$/;
+
+interface Profile {
+  name: string;
+  accountHandle: string;
+}
 
 export function AccountPanel(): React.JSX.Element {
   const { theme, setTheme } = useTheme();
@@ -54,44 +59,22 @@ export function AccountPanel(): React.JSX.Element {
     (`${authFirstName} ${authLastName}`.trim() || authUser?.email) ?? "User";
   const claimEmail = authUser?.email ?? "Not available";
   const claimAvatar = authUser?.profilePictureUrl ?? null;
-  const claimNameRef = useRef(claimName);
 
-  // Keep the latest claim name in a ref for the sync effect below without
-  // re-triggering it (refs must not be written during render).
-  useEffect(() => {
-    claimNameRef.current = claimName;
-  }, [claimName]);
-
-  const [name, setName] = useState("");
-  const [accountHandle, setAccountHandle] = useState("");
-  const [savedProfile, setSavedProfile] = useState<{
-    name: string;
-    accountHandle: string;
-  } | null>(null);
-  const [isDirty, setIsDirty] = useState(false);
+  const [draft, setDraft] = useState<Profile | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (currentUser === undefined || isDirty) return;
-    const nextName = currentUser?.name ?? claimNameRef.current;
-    const nextHandle = currentUser?.accountHandle ?? "";
-    setName(nextName);
-    setAccountHandle(nextHandle);
-    setSavedProfile({
-      name: nextName.trim(),
-      accountHandle: nextHandle.trim().toLowerCase(),
-    });
-  }, [currentUser, isDirty]);
-
+  const savedName = currentUser?.name ?? claimName;
+  const savedHandle = currentUser?.accountHandle ?? "";
+  const name = draft?.name ?? savedName;
+  const accountHandle = draft?.accountHandle ?? savedHandle;
   const normalizedHandle = accountHandle.trim().toLowerCase();
   const hasHandleError =
     normalizedHandle.length > 0 && !HANDLE_REGEX.test(normalizedHandle);
   const hasProfileChanges =
-    savedProfile !== null &&
-    (name.trim() !== savedProfile.name ||
-      normalizedHandle !== savedProfile.accountHandle);
+    name.trim() !== savedName.trim() ||
+    normalizedHandle !== savedHandle.trim().toLowerCase();
   const avatarUrl = currentUser?.avatarUrl ?? claimAvatar;
   const accountId = currentUser?._id ?? authUser?.id ?? "";
   const email = currentUser?.email ?? claimEmail;
@@ -118,10 +101,7 @@ export function AccountPanel(): React.JSX.Element {
         name: trimmedName,
         accountHandle: normalizedHandle || undefined,
       });
-      setName(trimmedName);
-      setAccountHandle(normalizedHandle);
-      setSavedProfile({ name: trimmedName, accountHandle: normalizedHandle });
-      setIsDirty(false);
+      setDraft(null);
       setSaveNotice("Changes saved.");
     } catch (error) {
       setSaveError(toErrorMessage(error));
@@ -151,8 +131,10 @@ export function AccountPanel(): React.JSX.Element {
               id="account-display-name"
               value={name}
               onChange={(event) => {
-                setName(event.target.value);
-                setIsDirty(true);
+                setDraft({
+                  name: event.target.value,
+                  accountHandle: accountHandle,
+                });
                 setSaveError(null);
                 setSaveNotice(null);
               }}
@@ -165,8 +147,7 @@ export function AccountPanel(): React.JSX.Element {
               id="account-handle"
               value={accountHandle}
               onChange={(event) => {
-                setAccountHandle(event.target.value);
-                setIsDirty(true);
+                setDraft({ name: name, accountHandle: event.target.value });
                 setSaveError(null);
                 setSaveNotice(null);
               }}
@@ -294,11 +275,7 @@ export function AccountPanel(): React.JSX.Element {
   );
 }
 
-/**
- * Your plan covers every org you own: each one with the plan it runs on, and
- * a way to its Billing tab, where you upgrade or add seats. Nothing on a
- * self-hosted install, which has no plans.
- */
+// A self-hosted install has no plans, so no enforced budget.
 function OwnedOrgsBilling(): React.JSX.Element | null {
   const owned = useQuery(api.stripe.listOwnedOrgs, {});
   const budget = useQuery(api.account.budget.getForActiveOrg, {});

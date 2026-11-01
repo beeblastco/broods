@@ -17,11 +17,9 @@ import { api } from "@broods/convex/_generated/api";
 import { useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
 import { analytics } from "@/app/lib/analytics";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-/** Generate a random project name like "bold-panda-427". */
 export async function randomProjectName(): Promise<string> {
-  // Load the name dictionaries only when the dialog is opened.
   const { uniqueNamesGenerator, adjectives, animals, NumberDictionary } =
     await import("unique-names-generator");
   const numberDict = NumberDictionary.generate({ min: 100, max: 999 });
@@ -33,11 +31,6 @@ export async function randomProjectName(): Promise<string> {
   });
 }
 
-/**
- * Dialog that creates a new project and navigates to its Development canvas on
- * success. Initializing Production is left to the stage selector, since a
- * project this new has no Development configuration to copy into it.
- */
 export function CreateProjectDialog({
   open,
   onOpenChange,
@@ -52,7 +45,9 @@ export function CreateProjectDialog({
   const [name, setName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const nameInput = useRef<HTMLInputElement>(null);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- async name dictionary import
   useEffect(() => {
     if (!open) return;
 
@@ -107,7 +102,7 @@ export function CreateProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="sm:max-w-sm" initialFocus={nameInput}>
         <DialogHeader>
           <DialogTitle>Create project</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -121,10 +116,10 @@ export function CreateProjectDialog({
           <div className="grid gap-3 py-4">
             <Label htmlFor="create-project-name">Project name</Label>
             <Input
+              ref={nameInput}
               id="create-project-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              autoFocus
             />
             {error ? <p className="text-xs text-destructive">{error}</p> : null}
           </div>

@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * The keyboard surfaces, with fixtures where Convex and the router would be.
- *
- * Everything below the seam is the real thing: the dispatcher in
- * `ShortcutProvider`, the palette's ranking, `planFromQuery`, the plan card and
- * its tiers. Only the rows and the hands are stubbed, and every action the page
- * takes is written to `[data-ran]` for a spec to read back.
- */
 import { CommandPalette } from "@/app/components/CommandPalette";
 import { CopilotDock } from "@/app/components/copilot/CopilotDock";
 import {
@@ -85,7 +77,6 @@ const ITEMS: readonly SearchItem[] = [
 
 const CRONS = [{ id: "c1", name: "nightly-digest", status: "active" as const }];
 
-/** How an action reads in `[data-ran]`, short enough for an exact assertion. */
 function describe(action: CopilotAction): string {
   switch (action.type) {
     case "navigate":
@@ -116,17 +107,11 @@ export function ShortcutsStandIn(): React.JSX.Element {
   );
 }
 
-/**
- * Stands in for the canvas: claims the bindings a real canvas claims, so the
- * palette lists them and the copilot is allowed to plan them. Unmount it and
- * both should forget they exist.
- */
 function CanvasBindings({ onRun }: { onRun: (entry: string) => void }): null {
   useShortcut("canvas.addAgent", () => onRun("command canvas.addAgent"));
   useShortcut("canvas.tidy", () => onRun("command canvas.tidy"));
   useShortcut("canvas.fitView", () => onRun("command canvas.fitView"));
-  // Bare `enter` and bare `+`: the two that collide with typing and with the
-  // press that activates a focused control.
+  // Bare `enter` and `+` collide with typing and with activating a focused control.
   useShortcut("canvas.rename", () => onRun("command canvas.rename"));
   useShortcut("canvas.zoomIn", () => onRun("command canvas.zoomIn"));
 
@@ -134,17 +119,19 @@ function CanvasBindings({ onRun }: { onRun: (entry: string) => void }): null {
 }
 
 function Surfaces(): React.JSX.Element {
-  const [ran, setRan] = useState<readonly string[]>([]);
+  const [ran, setRan] = useState<ReadonlyArray<{ id: number; entry: string }>>(
+    [],
+  );
   const [messages, setMessages] = useState<readonly CopilotMessage[]>([]);
   const [completed, setCompleted] = useState<ReadonlySet<string>>(new Set());
   const [isOpen, setOpen] = useState(false);
   const [liveCanvas, setLiveCanvas] = useState(true);
-  // The last row the palette would have started, in place of a prefetch.
   const [warmed, setWarmed] = useState("");
 
   const { activeIds } = useShortcutRegistry();
 
-  const record = (entry: string): void => setRan((prev) => [...prev, entry]);
+  const record = (entry: string): void =>
+    setRan((prev) => [...prev, { id: prev.length, entry: entry }]);
   const run = (action: CopilotAction): void => record(describe(action));
   useShortcut("panel.toggle", () => record("command panel.toggle"));
 
@@ -186,8 +173,7 @@ function Surfaces(): React.JSX.Element {
     }
   };
 
-  // Rebuilt every render on purpose: these close over the state they read, and
-  // a fixture has nothing to gain from a stable identity.
+  // Rebuilt every render on purpose: a fixture gains nothing from a stable identity.
   const copilot: CopilotState = {
     ask: ask,
     completed: completed,
@@ -201,7 +187,6 @@ function Surfaces(): React.JSX.Element {
       setCompleted((prev) => new Set(prev).add(`${messageId}:${index}`));
     },
     setOpen: setOpen,
-    // The fixture's rows are fixed, so there is nothing to subscribe to.
     wakeIndex: () => {},
   };
 
@@ -237,7 +222,6 @@ function Surfaces(): React.JSX.Element {
             <Input placeholder="A text field, where a bare letter is typing" />
           </section>
 
-          {/* Spends Escape on itself, the way an inline rename cancels. */}
           <section data-fixture="consumes-escape" className="max-w-xs">
             <Input
               placeholder="An inline rename, where Escape cancels"
@@ -251,10 +235,9 @@ function Surfaces(): React.JSX.Element {
             {warmed}
           </p>
 
-          {/* Every action the surfaces took, oldest first. */}
           <ol data-ran className="font-mono text-2xs text-muted-foreground">
-            {ran.map((entry, index) => (
-              <li key={`${entry}-${index}`} data-ran-entry>
+            {ran.map(({ id, entry }) => (
+              <li key={id} data-ran-entry>
                 {entry}
               </li>
             ))}

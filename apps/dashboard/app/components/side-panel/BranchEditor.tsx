@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * JSON editor for a single nested branch of an AgentConfig. Owns its own
- * dirty/error/saved state so the side panel can stack multiple editors that
- * each save an isolated slice.
- */
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Textarea } from "@/app/components/ui/textarea";
@@ -43,8 +38,6 @@ export function BranchEditor({
   const [saved, setSaved] = useState(false);
   const [syncedSource, setSyncedSource] = useState(serialized);
 
-  // Reset the draft when the upstream serialized value changes (set during
-  // render rather than in an effect to avoid a cascading re-render).
   if (serialized !== syncedSource) {
     setSyncedSource(serialized);
     setDraft(serialized);

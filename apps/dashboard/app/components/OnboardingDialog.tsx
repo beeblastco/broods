@@ -1,6 +1,5 @@
 "use client";
 
-/** Three-step first-login onboarding dialog: welcome, one-time account key, first CLI project. */
 import { CopyButton } from "@/app/components/CopyButton";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -15,8 +14,7 @@ import { cn } from "@/app/lib/utils";
 import { ArrowUpRight, Eye, EyeOff } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-// The starter agent reads env("OPENAI_API_KEY"); `broods dev` pushes it from
-// .env.local, as in the docs quickstart.
+// The starter agent reads env("OPENAI_API_KEY"); `broods dev` pushes it from .env.local.
 const CLI_COMMANDS = [
   "npm install -g broods && mkdir broods-demo && cd broods-demo",
   `echo 'OPENAI_API_KEY="sk-..."' >> .env.local`,
@@ -24,17 +22,11 @@ const CLI_COMMANDS = [
 ];
 
 interface Props {
-  /** The one-time plaintext account key to hand over on step two. */
   secret: string;
-  /** Called when the user finishes the flow; the caller clears the secret and routes to /projects. */
   onDone: () => void;
 }
 
-/**
- * Modal onboarding flow shown once after first-login provisioning. It cannot be
- * dismissed by Escape or outside clicks: step two holds the unrecoverable
- * one-time secret, so the only way out is forward.
- */
+/** Not dismissable: step two holds the one-time secret, so the only way out is forward. */
 export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
   const [step, setStep] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -170,11 +162,9 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
   );
 }
 
-/** A shell command block, one prompt per line, with a corner control that copies them all. */
 function CommandBlock({ commands }: { commands: string[] }): React.JSX.Element {
   return (
-    // min-w-0: as a grid item this would otherwise grow to the command's
-    // intrinsic width and push the whole card past its edge.
+    // min-w-0: a grid item otherwise grows to the command's width and overflows the card.
     <div className="relative min-w-0">
       <pre className="overflow-x-auto rounded-md border bg-muted/50 px-3 py-2.5 pr-12 font-mono text-xs leading-relaxed text-foreground">
         {commands.map((command) => (
@@ -211,7 +201,6 @@ function DocsLink({
   );
 }
 
-/** Honeycomb progress: one hex cell per step, filled for the current, dimmed for the done, hollow for the rest. */
 function HexSteps({
   step,
   count,
@@ -241,7 +230,6 @@ function HexSteps({
   );
 }
 
-/** Inline `<code>` styling for prose mentions of commands and names. */
 function Mono({ children }: { children: ReactNode }): React.JSX.Element {
   return (
     <code className="rounded bg-muted px-1 py-0.5 font-mono text-2xs text-foreground">

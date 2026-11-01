@@ -13,7 +13,6 @@ import {
 import { Input } from "@/app/components/ui/input";
 import type { ReactNode } from "react";
 
-/** A secret shown exactly once, with a copy button; `children` adds how to use it. */
 export function RevealSecretDialog({
   title,
   label,
@@ -22,7 +21,6 @@ export function RevealSecretDialog({
   onClose,
 }: {
   title: string;
-  /** What the copy button says it copied. */
   label: string;
   secret: string;
   children?: ReactNode;

@@ -1,12 +1,5 @@
 "use client";
 
-/**
- * The agent's Policies tab: the org policies this agent runs under, with
- * attach and detach. Core's OPA checks the agent's tool calls, sandbox
- * actions and subagent runs against them; a policy's audit or enforce mode
- * is set on the policy under Organization › Policies.
- */
-
 import {
   DataTable,
   DataTableBody,
@@ -26,9 +19,8 @@ import { api } from "@broods/convex/_generated/api";
 import { useQuery } from "convex/react";
 
 interface Props {
-  /** The policy ids attached to the agent's config. */
   assignedPolicyIds: string[];
-  /** Writes the new list; null clears it. Absent when the viewer cannot write. */
+  /** `null` clears the list. Absent when the viewer cannot write. */
   onUpdatePolicyConfig?: (policies: string[] | null) => Promise<void>;
 }
 

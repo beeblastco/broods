@@ -1,10 +1,6 @@
 import type { ShortcutId } from "@/app/lib/shortcuts";
 import { Bot, Box, FolderOpen, Plug, Sparkles } from "lucide-react";
 
-/**
- * The card types the canvas can add, in "Add service" order, with the icon each
- * one wears. The card menu reads the same icons for its link rows.
- */
 export const NODE_TEMPLATES = [
   { type: "agent", label: "Agent", icon: Bot },
   { type: "sandbox", label: "Sandbox", icon: Box },
@@ -13,13 +9,8 @@ export const NODE_TEMPLATES = [
   { type: "mcp", label: "MCP", icon: Plug },
 ] as const;
 
-/** The card types the canvas knows, as `NODE_TEMPLATES` lists them. */
 export type NodeType = (typeof NODE_TEMPLATES)[number]["type"];
 
-/**
- * The key that adds each type. The add menu prints it, the canvas binds it and
- * the copilot plans it, all from here.
- */
 export const NODE_TYPE_SHORTCUTS: Record<NodeType, ShortcutId> = {
   agent: "canvas.addAgent",
   mcp: "canvas.addMcp",

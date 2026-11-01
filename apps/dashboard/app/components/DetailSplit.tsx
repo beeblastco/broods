@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * The table-plus-detail split the monitoring, tracing, and sandbox tables
- * share: the table on the left, an optional detail column on the right with a
- * drag handle between them. On a phone the detail takes the whole width while
- * a row is open, and its close brings the table back.
- */
 import {
   ResizableHandle,
   ResizablePanel,
@@ -23,28 +17,18 @@ import type { ReactNode } from "react";
 interface DetailPanelProps {
   title: ReactNode;
   meta?: ReactNode;
-  /** Buttons on the title line, between the title and the close button. */
   actions?: ReactNode;
   onClose: () => void;
   children: ReactNode;
 }
 
 interface DetailSplitProps {
-  /** The table. Scrolls on its own inside the left panel. */
   children: ReactNode;
-  /** The detail column's content, or nothing while no row is selected. */
   detail: ReactNode;
-  /** Drop the card frame, for a panel that fills the page edge to edge. */
   flush?: boolean;
-  /** The table panel's narrowest width, for tables wider than the default. */
   tableMinWidth?: number;
 }
 
-/**
- * The detail column's header, then a scrollable body. The title line holds
- * the title, the panel's actions and the close button, at the toolbar's
- * height when there are actions; `meta` is a second line under it.
- */
 export function DetailPanel({
   title,
   meta,
@@ -87,9 +71,8 @@ export function DetailSplit({
   const frame = cn(
     "relative min-h-0 flex-1 overflow-hidden bg-card",
     !flush && "rounded-lg border border-border",
-    // On a phone the open detail covers the table, which stays laid out
-    // (invisible, not removed) so closing the detail keeps its scroll. CSS
-    // only, so the same tree renders at every width and nothing remounts.
+    // On a phone the table stays laid out under the open detail, so closing keeps its
+    // scroll; CSS only, so nothing remounts across widths.
     detail &&
       "max-md:[&>[data-panel]:first-child]:invisible max-md:[&>[data-panel]:first-child]:absolute max-md:[&>[data-panel]:first-child]:inset-0",
   );

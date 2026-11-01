@@ -1,15 +1,5 @@
 "use client";
 
-/**
- * The panel docked under the sandbox list, like an editor's terminal. It holds
- * any number of sessions, grouped by sandbox: numbered shells and, for a
- * MicroVM, its guest log tail. The shown session fills the left; the list on
- * the right switches, opens and closes them. When the dock itself is narrow
- * (a phone, or a narrow window) the list becomes one scrolling row above the
- * shell, so the shell keeps the whole width. Every session stays mounted while
- * another one is shown, so switching keeps a shell connected.
- */
-
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
 import { Button } from "@/app/components/ui/button";
 import { Textarea } from "@/app/components/ui/textarea";
@@ -21,7 +11,7 @@ import { useAction } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { ChevronDown, Play, Plus, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { LIVE_TERMINAL_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import {
   dockSessionName,
@@ -36,13 +26,13 @@ import {
   type SandboxObservabilityScope,
 } from "./SandboxLogTail";
 
-// Command results kept on screen; older ones drop off the bottom.
 const COMMAND_HISTORY = 20;
 
 type Instance = Doc<"sandboxInstances">;
 type Controllable = Instance & { sandboxConfigId: Id<"sandboxConfigs"> };
 
 interface CommandEntry {
+  id: number;
   command: string;
   result?: FunctionReturnType<typeof api.sandbox.public.runSandboxCommand>;
   error?: string;
@@ -50,10 +40,8 @@ interface CommandEntry {
 
 interface Props {
   state: DockState;
-  /** The live rows of the sandboxes the sessions belong to. */
   instances: Instance[];
   projectId: Id<"projects">;
-  /** Stage-scoped observability WS inputs for the log tail; null before the stage deploys. */
   observability: SandboxObservabilityScope | null;
   onActivate: (key: string) => void;
   onNewShell: (instanceId: Id<"sandboxInstances">) => void;
@@ -92,6 +80,7 @@ export function SandboxDock({
           {state.sessions.map((session) => {
             const instance = byId.get(session.instanceId);
 
+            // Hidden, not unmounted, so switching keeps each shell connected.
             return (
               instance && (
                 <div
@@ -202,7 +191,6 @@ export function SandboxDock({
   );
 }
 
-/** A bounded command for providers without a PTY: one textarea, Run, and the results under it. */
 function CommandRunner({
   instance,
   runnable,
@@ -215,9 +203,13 @@ function CommandRunner({
   const [command, setCommand] = useState("pwd && ls -la");
   const [pending, setPending] = useState(false);
   const [entries, setEntries] = useState<CommandEntry[]>([]);
+  const nextEntryId = useRef(0);
 
-  const push = (entry: CommandEntry): void => {
-    setEntries((prev) => [entry, ...prev].slice(0, COMMAND_HISTORY));
+  const push = (entry: Omit<CommandEntry, "id">): void => {
+    const id = nextEntryId.current++;
+    setEntries((prev) =>
+      [{ ...entry, id: id }, ...prev].slice(0, COMMAND_HISTORY),
+    );
   };
 
   async function handleRun(): Promise<void> {
@@ -267,9 +259,9 @@ function CommandRunner({
           ? "Runs in the reserved sandbox with a 30s timeout and 64 KiB output cap."
           : "This instance cannot run commands from the dashboard in its current state."}
       </p>
-      {entries.map((entry, index) => (
+      {entries.map((entry) => (
         <div
-          key={`${entry.command}-${index}`}
+          key={entry.id}
           className="rounded-lg border border-border bg-terminal-background p-3 text-xs text-terminal-foreground"
         >
           <div className="mb-2 flex items-center justify-between gap-3 text-2xs text-terminal-muted">
@@ -316,7 +308,6 @@ function CommandRunner({
   );
 }
 
-/** One session's content: a live shell, or a card holding a log tail, the bounded runner or a note. */
 function SessionBody({
   session,
   instance,
@@ -374,14 +365,12 @@ function SessionBody({
   );
 }
 
-// Nothing runs while the provider is mid-change: a connect would race the
-// suspend in flight, and a terminating instance is gone.
+// A connect would race a suspend in flight, and a terminating instance is gone.
 function isRunnable(instance: Instance): boolean {
   return instance.status !== "terminating" && instance.status !== "suspending";
 }
 
-// Moves focus from a session's close button to the next session (or the one
-// before), the one the dock shows next, so closing does not drop it to the page.
+// Focus the session the dock shows next, so closing does not drop focus to the page.
 function focusNeighbour(close: HTMLElement): void {
   const switches = [
     ...(close

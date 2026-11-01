@@ -9,12 +9,7 @@ import {
 import type { FlatGraph } from "../app/lib/canvasFrameEdits";
 import { deriveGroups } from "../app/lib/canvasFrameNodes";
 
-/**
- * One dashboard agent over a cloud frame (alpha, bravo), a workspace mounted on
- * alpha, and a lone cloud sandbox nothing wires yet. The frame's box runs from
- * (240, 144) to (432, 276): two chips, a header and its padding.
- */
-/** Just right of the frame, close enough to be offered it, level with its first chip. */
+// The cloud frame holding alpha and bravo spans (240, 144) to (432, 276).
 const BESIDE_FIRST_CHIP = { x: 460, y: 144 };
 
 const CLOUD_FRAME = "frame:agent:sandbox:cloud";
@@ -33,7 +28,6 @@ const NODES: Node[] = [
   node("lone", "sandbox", { x: 960, y: 480 }),
 ];
 
-/** No frame in these graphs is collapsed. */
 const NONE: ReadonlySet<string> = new Set();
 
 describe("canvasDropTarget", () => {
@@ -59,7 +53,7 @@ describe("canvasDropTarget", () => {
       expandedMemberId: null,
       graph: { edges: EDGES, mcpServers: [], nodes: NODES },
       nodeId: "lone",
-      // Nearer, since a collapsed frame is one card wide and one card tall.
+      // Nearer, since a collapsed frame is one card wide and tall.
       position: { x: 450, y: 144 },
     });
 
@@ -103,8 +97,7 @@ describe("canvasDropTarget", () => {
   });
 
   test("a link into a `broods/` project's group is refused in its own words", () => {
-    // The `cli-` node id is what marks the edge as the project's, the way the
-    // CLI sync writes every edge it owns.
+    // A `cli-` node id marks the edge as the project's, as the CLI sync writes it.
     const drop = canvasDropTarget({
       collapsedFrames: NONE,
       expandedMemberId: null,
@@ -152,8 +145,7 @@ describe("canvasDropTarget", () => {
   });
 
   test("a slot that would strand a mounted workspace is refused, not saved", () => {
-    // `notes` is mounted on alpha, legal only because alpha is the agent's first
-    // sandbox. Dropping `lone` above alpha would make lone first instead.
+    // notes may mount on alpha only while alpha is the agent's first sandbox.
     const graph = {
       edges: [
         edge("agent", "alpha"),
@@ -199,14 +191,12 @@ describe("canvasDropTarget", () => {
 
     expect(top?.slot).toBe(0);
     expect(top?.refusal).toContain("notes");
-    // Below both chips it changes no default, so it is taken.
     expect(bottom?.slot).toBe(2);
     expect(bottom?.refusal).toBeNull();
   });
 
   test("a card pulled out of a drawn frame is no partner for a new group", () => {
-    // Dropping onto `gamma` would clear its flag and drag it back into the frame
-    // it was pulled out of, which is not the pair the preview would promise.
+    // Pairing with gamma would clear its flag and pull it back into alpha's frame.
     const drop = canvasDropTarget({
       collapsedFrames: NONE,
       expandedMemberId: null,
@@ -276,7 +266,6 @@ describe("canvasDropTarget", () => {
 
   test("where code owns the order, the slot offered is the one the rules give", () => {
     const graph = codeManagedGraph();
-    // The cursor is on the first chip, but a `broods/` project owns the order.
     const drop = canvasDropTarget({
       collapsedFrames: NONE,
       expandedMemberId: null,
@@ -386,7 +375,6 @@ describe("applyCanvasDrop", () => {
       })),
       nodes: nodes,
     };
-    // Aimed at the first chip, which for this group is not the canvas's call.
     const drop = canvasDropTarget({
       collapsedFrames: NONE,
       expandedMemberId: null,
@@ -399,7 +387,6 @@ describe("applyCanvasDrop", () => {
     expect(drop?.refusal).toBeNull();
     expect(dataOf(after.nodes, "srv-three").frameSlot).toBeUndefined();
     expect(dataOf(after.nodes, "srv-one").frameSlot).toBeUndefined();
-    // Still the order the labels and the computer give it.
     expect(
       deriveGroups(after.nodes, after.edges, graph.mcpServers).find((group) =>
         group.memberIds.includes("srv-three"),
@@ -463,10 +450,6 @@ describe("sameCanvasDrop", () => {
   });
 });
 
-/**
- * A `broods/` project's agent over a cloud frame, with a third sandbox it wires
- * that was pulled out of the group by hand.
- */
 function codeManagedGraph(): FlatGraph {
   return {
     edges: [
@@ -493,7 +476,6 @@ function dataOf(nodes: readonly Node[], id: string): Node["data"] {
   return nodes.find((item) => item.id === id)?.data ?? {};
 }
 
-/** What the rules answer for a card dragged to this spot on the graph above. */
 function dropAt(nodeId: string, position: Node["position"]): CanvasDrop | null {
   return canvasDropTarget({
     collapsedFrames: NONE,
@@ -508,7 +490,6 @@ function edge(source: string, target: string): Edge {
   return { id: `xy-edge__${source}-${target}`, source: source, target: target };
 }
 
-/** The group a node sits in once a drop has been applied, in slot order. */
 function memberIdsOf(
   graph: { edges: readonly Edge[]; nodes: readonly Node[] },
   nodeId: string,

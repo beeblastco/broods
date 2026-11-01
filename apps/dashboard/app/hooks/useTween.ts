@@ -6,16 +6,12 @@ import { useEffect, useRef, useState } from "react";
 
 const TWEEN_MS = 600;
 
-/**
- * Eases displayed rows from what is on screen to `target` over one short
- * ease-in-out pass, resampling first when the row count changes. Used by the
- * usage charts and tiles so a range switch or live update morphs instead of
- * jumping. `target` must be memoized; a new identity starts a new pass.
- */
+// `target` must be memoized: a new identity starts a new pass.
 export function useTween(target: number[][]): number[][] {
   const [shown, setShown] = useState(target);
   const shownRef = useRef(target);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- requestAnimationFrame loop
   useEffect(() => {
     const from = resampleRows(shownRef.current, target.length);
     const reduced = prefersReducedMotion();

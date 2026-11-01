@@ -1,18 +1,10 @@
-/**
- * How the dashboard reads a machine sandbox's daemon connection
- * (packages/convex/sandbox/machines.ts). Core stamps `lastSeenAt` every minute,
- * so a row quiet for longer reads as offline even when its disconnect never
- * landed.
- */
-
 import type { StatusTone } from "@/app/components/StatusDot";
 import type { api } from "@broods/convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
 
-// Two missed heartbeats plus slack.
+// Core stamps `lastSeenAt` every minute: two missed heartbeats plus slack means offline.
 const HEARTBEAT_GRACE_MS = 150_000;
 
-/** What a machine sandbox is called wherever a provider name is shown. */
 export const MACHINE_LABEL = "broods machine";
 
 export const MACHINE_STATE_LABEL: Record<MachineState, string> = {
@@ -21,10 +13,6 @@ export const MACHINE_STATE_LABEL: Record<MachineState, string> = {
   offline: "Offline",
 };
 
-/**
- * Offline warns: that computer ran the daemon before and has stopped. Never
- * connected is only idle.
- */
 export const MACHINE_TONE: Record<MachineState, StatusTone> = {
   connected: "ok",
   never: "ended",
@@ -37,7 +25,6 @@ export type MachineConnection = FunctionReturnType<
 
 export type MachineState = "connected" | "never" | "offline";
 
-/** The command to run on that computer, with the flags it last started with. */
 export function machineStartCommand(
   name: string,
   connection: MachineConnection | null | undefined,
@@ -62,10 +49,6 @@ export function machineState(
     : "offline";
 }
 
-/**
- * State of the machine sandbox named `name` in a stage's connection list, or
- * undefined while that list is still loading.
- */
 export function machineStateByName(
   connections: readonly MachineConnection[] | undefined,
   name: string,

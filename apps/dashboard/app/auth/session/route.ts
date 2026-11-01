@@ -11,10 +11,7 @@ import {
   signSessionToken,
 } from "@/app/lib/selfHostSession";
 
-/**
- * A fresh short-lived Convex token for the signed-in admin, for the client's
- * refresh before the one from the page expires; `null` once signed out.
- */
+// The client's Convex token refresh; `null` once signed out.
 export async function GET(): Promise<NextResponse<{ token: string | null }>> {
   const session = selfHosted ? await currentSession() : null;
 
@@ -24,11 +21,7 @@ export async function GET(): Promise<NextResponse<{ token: string | null }>> {
   );
 }
 
-/**
- * The self-hosted session. POST is the admin-key form, DELETE signs out. Both
- * end in a full page load, so the root layout renders the new session.
- * @returns 303 to `returnTo` with the session cookie, or back to the form with the error
- */
+// Both end in a full page load, so the root layout renders the new session.
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const form = await request.formData();
   const key = form.get("key");
@@ -57,7 +50,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   return response;
 }
 
-/** Signs out: drops the session cookie; the client then loads the key page. */
 export async function DELETE(): Promise<NextResponse> {
   const response = new NextResponse(null, { status: 204 });
   response.cookies.delete(SESSION_COOKIE);

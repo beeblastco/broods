@@ -1,6 +1,5 @@
 "use client";
 
-/** Top header bar above the sidebar, rendered once by the signed-in layout. */
 import { BroodsMark } from "@/app/components/BroodsMark";
 import { CommandMenu } from "@/app/components/CommandMenu";
 import { OrgSwitcher } from "@/app/components/header/OrgSwitcher";
@@ -9,8 +8,7 @@ import { useSidebar } from "@/app/components/ui/sidebar";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Lock } from "lucide-react";
 
-// Shipped with the header, not behind a second request: the stage selector
-// lives here, and every page's first query waits on the stage it picks.
+// Not lazy: the stage selector lives here, and every page's first query waits on its stage.
 
 export function Header(): React.JSX.Element {
   const { role } = useOrgRole();
@@ -30,8 +28,6 @@ export function Header(): React.JSX.Element {
         <BroodsMark className="size-6" />
       </button>
 
-      {/* Scrolls sideways inside the header when a phone is too narrow for
-          every switcher, so the page itself never does. */}
       <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-3 overflow-x-auto">
         <div className="h-4 w-px shrink-0 bg-border" />
         <OrgSwitcher />

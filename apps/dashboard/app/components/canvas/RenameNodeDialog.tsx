@@ -14,10 +14,8 @@ import { Label } from "@/app/components/ui/label";
 import { useState } from "react";
 
 /**
- * Rename one canvas card from its right-click menu. Key it on the card, so the
- * field starts on that card's name rather than the last one renamed. The label
- * is canvas text: what an agent's workspace or sandbox is called in its refs is
- * its mount name, which the side panel owns.
+ * Key it on the card: the field seeds from `label` once. This renames canvas text only;
+ * an agent's refs use the mount name, which the side panel owns.
  */
 export function RenameNodeDialog({
   label,

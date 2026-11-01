@@ -1,11 +1,7 @@
 "use client";
 
-/**
- * Derives agent health status from core service reachability.
- * Uses a shared module-level cache so multiple agent nodes don't duplicate health requests.
- */
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 export type AgentHealthStatus = "healthy" | "deploying" | "idle" | "unhealthy";
 
@@ -20,36 +16,26 @@ let listenerCount = 0;
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
 const listeners = new Set<() => void>();
 
-/**
- * Returns the health status of an agent based on core service reachability.
- * @param agentConfigId agent config to check health for
- * @returns AgentHealthStatus: healthy, deploying, idle, or unhealthy
- */
 export function useAgentHealth(
   agentConfigId: Id<"agentConfigs"> | undefined,
 ): AgentHealthStatus {
-  const [, forceUpdate] = useState(0);
-
-  useEffect(() => {
-    if (!agentConfigId) return;
-
-    const unsubscribe = subscribe(() => forceUpdate((n) => n + 1));
-
-    return unsubscribe;
-  }, [agentConfigId]);
+  const healthy = useSyncExternalStore(
+    agentConfigId ? subscribe : subscribeNone,
+    () => healthCache.healthy,
+    () => null,
+  );
 
   if (!agentConfigId) {
     return "idle";
   }
 
-  if (healthCache.healthy === null) {
+  if (healthy === null) {
     return "deploying";
   }
 
-  return healthCache.healthy ? "healthy" : "unhealthy";
+  return healthy ? "healthy" : "unhealthy";
 }
 
-/** Fetch core service health, deduplicating concurrent requests. */
 async function checkServiceHealth(): Promise<boolean> {
   const now = Date.now();
   if (
@@ -84,7 +70,7 @@ async function checkServiceHealth(): Promise<boolean> {
   return pendingCheck;
 }
 
-/** Browser-safe fetch timeout helper (works even when AbortSignal.timeout is unavailable). */
+// Not AbortSignal.timeout, which older browsers lack.
 async function fetchHealthWithTimeout(
   url: string,
   timeoutMs: number,
@@ -105,7 +91,10 @@ function notifyListeners(): void {
   }
 }
 
-/** Start shared polling when the first hook mounts. */
+function subscribeNone(): () => void {
+  return () => {};
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   listenerCount++;

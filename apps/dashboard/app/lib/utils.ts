@@ -1,6 +1,6 @@
 export { cn } from "cn";
 
-/** Narrows a value to a plain (non-array, non-null) object. */
+// Not the convex copy: importing it pulls the agent-config model into 3 more chunks (+9 KB).
 export function isPlainObject(
   value: unknown,
 ): value is Record<string, unknown> {

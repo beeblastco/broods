@@ -182,7 +182,6 @@ export function McpDetailsTab({
   );
 }
 
-/** Agents opt in through their config's `mcp` branch. */
 function AgentWireRow({
   nodeId,
   server,

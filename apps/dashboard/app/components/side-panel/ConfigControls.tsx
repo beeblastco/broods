@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Shared side-panel config primitives reused across the Workspace and Skill
- * Details tabs so each feature reads as a single labelled toggle that reveals
- * its extra configuration inline, matching the Agent card's design.
- */
 import { Switch } from "@/app/components/ui/switch";
 import type { ReactNode } from "react";
 

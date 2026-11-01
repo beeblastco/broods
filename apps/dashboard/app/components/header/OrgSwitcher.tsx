@@ -48,16 +48,12 @@ export function OrgSwitcher(): React.JSX.Element {
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  // The server's refusal when creating an org needs Pro (model/orgBilling.ts).
   const [needsPro, setNeedsPro] = useState<string | null>(null);
   const openBilling = useOpenBilling();
-  // The Hobby org the user owns, which Upgrade opens.
   const hobbyOrg = orgs?.find(
     (org) => org.plan === "free" && org.ownerAuthId === currentUser?.authId,
   );
 
-  // Switching org invalidates whatever project the URL points at: send the user
-  // to the gallery when the new org has none, so they can create their first.
   async function handleSwitch(orgId: Id<"orgs">): Promise<void> {
     if (active?._id === orgId) return;
     try {
@@ -86,8 +82,7 @@ export function OrgSwitcher(): React.JSX.Element {
       const orgId = await createOrg({ name: name });
       await setActive({ orgId: orgId });
 
-      // Auto-provision the new org's backend account and surface its one-time
-      // secret. `provision` throws if already provisioned, which we ignore.
+      // `provision` throws when the org is already provisioned; that is fine.
       try {
         const result = await provision({ orgId: orgId });
         publishOnboardingSecret(result.secret);
@@ -97,7 +92,6 @@ export function OrgSwitcher(): React.JSX.Element {
 
       setCreateOpen(false);
       setNewName("");
-      // A fresh org has no projects yet, so the gallery is the only useful landing.
       router.replace("/projects");
       router.refresh();
     } catch (err) {

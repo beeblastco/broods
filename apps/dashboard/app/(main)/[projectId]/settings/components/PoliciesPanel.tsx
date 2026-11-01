@@ -21,8 +21,7 @@ interface Props {
 
 const DEFAULT_POLICY_DOCUMENT = {
   version: 1,
-  // Starts watching rather than blocking, so a new policy cannot break a live
-  // agent the moment it is attached. Flip to "enforce" once the log looks right.
+  // Audit first, so a new policy cannot break a live agent the moment it is attached.
   mode: "audit",
   rules: [
     {

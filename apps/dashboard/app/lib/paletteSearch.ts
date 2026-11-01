@@ -1,13 +1,5 @@
-/**
- * Ranking for the command palette. Pure on purpose: the index hook gathers the
- * rows from Convex, this decides which ones a query deserves, and the copilot's
- * intent parser reuses both so "open triage" resolves the same node the palette
- * would have shown.
- */
-
 import type { ShortcutId } from "@/app/lib/shortcuts";
 
-/** How many rows one heading may contribute before the next heading starts. */
 const PER_GROUP_LIMIT = 5;
 
 const SCORE_EXACT = 1000;
@@ -31,11 +23,9 @@ export type SearchTarget =
   | { commandId: ShortcutId; type: "command" };
 
 export interface SearchItem {
-  /** Muted text on the right of the row. */
   detail?: string;
   group: SearchGroup;
   id: string;
-  /** Matched at a lower weight than the title, and never shown. */
   keywords?: readonly string[];
   target: SearchTarget;
   title: string;
@@ -46,12 +36,6 @@ export interface RankedGroup {
   items: readonly SearchItem[];
 }
 
-/**
- * Items grouped in `GROUP_ORDER`, best first inside each group, capped so one
- * noisy source cannot push every other heading off the list. An empty query
- * keeps the natural order, which is what makes the palette useful before you
- * type anything.
- */
 export function rankItems(
   items: readonly SearchItem[],
   query: string,
@@ -73,10 +57,6 @@ export function rankItems(
   })).filter((entry) => entry.items.length > 0);
 }
 
-/**
- * How well one item answers a lowercased query. Zero means it does not, so the
- * caller drops it.
- */
 export function scoreItem(item: SearchItem, query: string): number {
   const title = item.title.toLowerCase();
 
@@ -107,7 +87,6 @@ const GROUP_ORDER: readonly SearchGroup[] = [
   "Actions",
 ];
 
-/** Shorter titles win ties, so `api` beats `api-gateway-worker` on "api". */
 function lengthBonus(title: string): number {
   return Math.max(0, 50 - title.length);
 }

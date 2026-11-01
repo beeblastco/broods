@@ -1,24 +1,16 @@
 "use client";
 
-/**
- * Mounts the browser performance beacon: Core Web Vitals, long tasks, and
- * route-transition duration. App-specific marks (canvas render, side-panel
- * open, optimistic-save latency) call `reportPerf` from where they happen.
- */
 import { reportPerf, routePattern } from "@/app/lib/perfReport";
 import { useReportWebVitals } from "next/web-vitals";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
 
-// Below this a "long task" is just scheduling noise, and the observer fires
-// often enough during a drag to flood the buffer.
+// Long tasks start at 50 ms, but below 100 they are noise that floods the buffer on a drag.
 const LONG_TASK_FLOOR_MS = 100;
 
-/** Derived from the hook rather than Next's internal compiled path. */
 type WebVitalsMetric = Parameters<Parameters<typeof useReportWebVitals>[0]>[0];
 
-// Hoisted so the callback identity never changes. A new function would make
-// useReportWebVitals replay every metric collected so far.
+// Module scope: a new callback identity makes useReportWebVitals replay every metric.
 function reportWebVital(metric: WebVitalsMetric): void {
   reportPerf(`web-vital.${metric.name}`, metric.value, {
     unit: metric.name === "CLS" ? "score" : "ms",
@@ -34,6 +26,7 @@ export function PerfReporter(): null {
   const pathname = usePathname();
   const transitionFrom = useRef<{ path: string; at: number } | null>(null);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- perf beacon, route commit time
   useEffect(() => {
     const previous = transitionFrom.current;
     transitionFrom.current = { path: pathname, at: performance.now() };
@@ -44,6 +37,7 @@ export function PerfReporter(): null {
     });
   }, [pathname]);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- PerformanceObserver subscription
   useEffect(() => {
     if (typeof PerformanceObserver === "undefined") return;
 
@@ -55,7 +49,7 @@ export function PerfReporter(): null {
           reportPerf("long-task", entry.duration);
         }
       });
-      // Not every browser ships the longtask entry type; treat it as optional.
+      // Not every browser ships the longtask entry type.
       observer.observe({ type: "longtask", buffered: true });
     } catch {
       return;
