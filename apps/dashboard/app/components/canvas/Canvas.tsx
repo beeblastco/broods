@@ -934,37 +934,31 @@ function CanvasInner({
     if (canWrite) scheduleSave();
   }, [mcpServers, canWrite, setNodes, scheduleSave]);
 
-  // Re-center the focused node once React Flow has measured the canvas at its
-  // new width (the side panel takes its column in one step), two frames later.
+  // Re-center the focused node once the panel has entered: a pan that starts
+  // with it re-renders every card per frame while the panel mounts.
   const lastFocusedNode = useRef<Node | null>(null);
   useEffect(() => {
     const node = selectedNode ?? lastFocusedNode.current;
     if (selectedNode) lastFocusedNode.current = selectedNode;
     if (!node) return;
 
-    let second = 0;
-    const first = window.requestAnimationFrame(() => {
-      second = window.requestAnimationFrame(() => {
-        const width = node.measured?.width ?? node.width ?? 0;
-        const height = node.measured?.height ?? node.height ?? 0;
-        void setCenter(
-          node.position.x + width / 2,
-          node.position.y + height / 2,
-          {
-            zoom: getZoom(),
-            duration: prefersReducedMotion() ? 0 : MOTION_MS.slow,
-          },
-        ).catch((error: unknown): void => {
-          console.error("Failed to center the selected canvas node", error);
-        });
-        if (!selectedNode) lastFocusedNode.current = null;
+    const id = window.setTimeout(() => {
+      const width = node.measured?.width ?? node.width ?? 0;
+      const height = node.measured?.height ?? node.height ?? 0;
+      void setCenter(
+        node.position.x + width / 2,
+        node.position.y + height / 2,
+        {
+          zoom: getZoom(),
+          duration: prefersReducedMotion() ? 0 : MOTION_MS.slow,
+        },
+      ).catch((error: unknown): void => {
+        console.error("Failed to center the selected canvas node", error);
       });
-    });
+      if (!selectedNode) lastFocusedNode.current = null;
+    }, MOTION_MS.base);
 
-    return () => {
-      window.cancelAnimationFrame(first);
-      window.cancelAnimationFrame(second);
-    };
+    return () => window.clearTimeout(id);
   }, [selectedNode, setCenter, getZoom]);
 
   /**
