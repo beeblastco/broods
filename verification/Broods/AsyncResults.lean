@@ -17,17 +17,22 @@ so a run is the program plus the index of the await that throws, if any, and the
 block then runs as `recover`.
 
 A subagent's row also carries `handback`: whether its parent has the result (`stored`).
-A `stored` mark (`markAsyncAgentHandback`, for a result the parent is never told), its
-own append of the result (`insertConversationEvents`) and a late result's resume reaching
-its owner (`runtimeIngress.accept` with `resultEventId` as owner, or the apply of the
-envelope it queued) all store it, and the resume is admitted only while it is not stored
-and no resume of it is queued, so the parent is told a result once. A stored mark gives
-way to a resume already queued: it stores nothing, so the resume tells it. A queued
-resume that expires leaves the row as it was, for the sweep to resume again. Only the sweep reads `pending`, which the row carries from its creation, past the
-parent's hold. A tool row's `handback` moves the same way: its settle writes `pending`,
-the parent's append, `async_status` and the continuation reaching its owner (`accept`
-with `toolResultId`) store it, and `markHandback` here stands for either move of
-`markAsyncToolHandback`, which never touches the status the proofs are about.
+`stored` means the parent's saved history holds the result, so the writes that save it
+store it: the parent's own append of the result (`insertConversationEvents`), the save of
+a step whose status read handed the result over (the row's `handbacks`, in the same
+`insertConversationEvents`), and a late result's resume reaching its owner
+(`runtimeIngress.accept` with `resultEventId` as owner, or the apply of the envelope it
+queued). A status read itself writes nothing; the save that carries it also completes a
+resume of the result still queued in that conversation. A resume is admitted only while
+the row is not stored and no resume of it is queued, so the parent is told a result once,
+and a turn that dies between its read and its save leaves the result to a resume. A
+`stored` mark (`markAsyncAgentHandback`) is for a result the parent is never told. A
+queued resume that expires leaves the row as it was, for the sweep to resume again. Only
+the sweep reads `pending`, which the row carries from its creation, past the parent's
+hold. A tool row's `handback` moves the same way: its settle writes `pending`, the
+parent's append, a saved `async_status` read and the continuation reaching its owner
+(`accept` with `toolResultId`) store it, and `markHandback` here stands for either move
+of `markAsyncToolHandback`, which never touches the status the proofs are about.
 -/
 
 namespace Broods.AsyncResults
@@ -238,11 +243,20 @@ inductive HandbackCall where
   a pass's last write fails, for each result it did not save and each child still
   working; those then resume. -/
   | detach
-  /-- `markAsyncAgentHandback` with `stored`, for a result the parent is never told.
-  `finished` is whether the row has its outcome yet. It leaves a row whose resume is
-  queued to that resume (`isResumeQueued`). The model counts a mark that stores the row
-  as telling the parent, so the at-most-once bound covers it too. -/
+  /-- `markAsyncAgentHandback` with `stored`, for a result the parent is never told
+  (its finish hook hid it, or the sweep gives it up). `finished` is whether the row has
+  its outcome yet. It tells the parent nothing. -/
   | store (finished : Bool)
+  /-- A status read (`async_status`) in the parent's live turn: it hands the model the
+  result when the row is `finished` and writes nothing, only the turn's read ledger
+  (`Session.recordHandbackRead`). -/
+  | read (finished : Bool)
+  /-- The write that saves the read's step (`stepBoundary` or the turn's last append,
+  with the read's key in `handbacks`): stores the row and completes a resume of it still
+  queued, in one transaction (`storeReadHandback`). -/
+  | save
+  /-- The parent's turn dies between the read and the save: its read ledger is gone. -/
+  | crash
   /-- The parent's own append of the result (`insertConversationEvents`), which
   stores the row in the same transaction. -/
   | append
@@ -260,21 +274,26 @@ inductive HandbackCall where
   | expire
   deriving DecidableEq, Repr
 
-/-- The row's state, and whether a resume of it waits in the conversation's queue. -/
+/-- The row's state, whether a resume of it waits in the conversation's queue, and
+whether the parent's live turn holds a read of it that no save has carried yet. -/
 structure Handback where
   state : HandbackState
   queued : Bool
+  read : Bool
   deriving DecidableEq, Repr
 
 /-- One call in its own transaction: the new state, and whether it told the parent the
-result, as a stored mark, a resume admitted as owner or a queued one applied. A mark of
-a stored row tells nothing new. A resume is admitted only while
-the row is not stored and none of it is queued. A resume of a result the conversation
-already stores is refused and marks the row stored. -/
+result, as a saved read, a resume admitted as owner or a queued one applied. A save of
+a stored row tells nothing new. A resume is admitted only while the row is not stored
+and none of it is queued. A resume of a result the conversation already stores is
+refused and marks the row stored. -/
 def Handback.step (h : Handback) : HandbackCall → Handback × Bool
   | .detach => (if h.state == .stored then h else { h with state := .detached }, false)
-  | .store finished =>
-    if finished && !h.queued then ({ h with state := .stored }, h.state != .stored) else (h, false)
+  | .store finished => (if finished then { h with state := .stored } else h, false)
+  | .read finished => (if finished then { h with read := true } else h, false)
+  | .save =>
+    if h.read then (⟨.stored, false, false⟩, h.state != .stored) else (h, false)
+  | .crash => ({ h with read := false }, false)
   | .append => ({ h with state := .stored }, false)
   | .resume room stored busy =>
     if h.state == .stored || h.queued then (h, false)
@@ -282,7 +301,7 @@ def Handback.step (h : Handback) : HandbackCall → Handback × Bool
     else if !busy then ({ h with state := .stored }, true)
     else if room then ({ h with queued := true }, false)
     else (h, false)
-  | .apply => if h.queued then (⟨.stored, false⟩, true) else (h, false)
+  | .apply => if h.queued then ({ h with state := .stored, queued := false }, true) else (h, false)
   | .expire => ({ h with queued := false }, false)
 
 /-- How many times `cs` tells the parent the result from state `h`. -/
@@ -375,68 +394,112 @@ theorem tool_settles_once (row : ToolRow) (cs : List ToolCall) : row.changes cs 
 
 /-- Telling the parent leaves the row stored with nothing queued. -/
 theorem step_tells_stored (h : Handback) (c : HandbackCall) (ht : (h.step c).2 = true) :
-    (h.step c).1 = ⟨.stored, false⟩ := by
-  rcases h with ⟨o, q⟩
-  cases o <;> cases q <;> cases c <;> simp_all [Handback.step] <;>
+    (h.step c).1.state = .stored ∧ (h.step c).1.queued = false := by
+  rcases h with ⟨o, q, r⟩
+  cases o <;> cases q <;> cases r <;> cases c <;> simp_all [Handback.step] <;>
     (repeat' split at ht) <;> simp_all
 
-/-- A stored row with nothing queued never moves, and tells the parent nothing. -/
-theorem stored_step (c : HandbackCall) :
-    (Handback.mk .stored false).step c = (⟨.stored, false⟩, false) := by
-  cases c <;> simp [Handback.step] <;> split <;> rfl
+/-- A stored row with nothing queued stays so, and tells the parent nothing. -/
+theorem stored_step (r : Bool) (c : HandbackCall) :
+    ((Handback.mk .stored false r).step c).2 = false ∧
+      ((Handback.mk .stored false r).step c).1.state = .stored ∧
+      ((Handback.mk .stored false r).step c).1.queued = false := by
+  cases r <;> cases c <;> simp [Handback.step] <;> (repeat' split) <;> simp
 
 /-- Nothing tells the parent a result its row marks stored, once no resume is queued. -/
-theorem stored_tells_none : ∀ cs : List HandbackCall, (Handback.mk .stored false).told cs = 0
-  | [] => rfl
-  | c :: cs => by
-    simp only [Handback.told, stored_step]
-    simp [stored_tells_none cs]
+theorem stored_unqueued_told (cs : List HandbackCall) :
+    ∀ h : Handback, h.state = .stored → h.queued = false → h.told cs = 0 := by
+  induction cs with
+  | nil => intro _ _ _; rfl
+  | cons c cs ih =>
+    intro h hs hq
+    rcases h with ⟨o, q, r⟩
+    simp only at hs hq
+    subst hs hq
+    obtain ⟨h2, hs', hq'⟩ := stored_step r c
+    simp only [Handback.told, h2, Bool.false_eq_true, ite_false, Nat.zero_add]
+    exact ih _ hs' hq'
 
-/-- However the stored marks, appends, detaches, resumes, applies and expiries
-interleave, the parent is told a late result at most once, by a stored mark or by a
-resume. -/
+/-- `stored_unqueued_told` for a row built stored with nothing queued. -/
+theorem stored_tells_none (r : Bool) (cs : List HandbackCall) :
+    (Handback.mk .stored false r).told cs = 0 :=
+  stored_unqueued_told cs _ rfl rfl
+
+/-- However the reads, saves, crashes, stored marks, appends, detaches, resumes,
+applies and expiries interleave, the parent is told a late result at most once, by a
+saved read or by a resume. -/
 theorem told_at_most_once (h : Handback) (cs : List HandbackCall) : h.told cs ≤ 1 := by
   induction cs generalizing h with
   | nil => simp [Handback.told]
   | cons c cs ih =>
     simp only [Handback.told]
     by_cases ht : (h.step c).2 = true
-    · simp [ht, step_tells_stored h c ht, stored_tells_none]
+    · obtain ⟨hs, hq⟩ := step_tells_stored h c ht
+      simp [ht, stored_unqueued_told cs _ hs hq]
     · simp [ht, ih]
+
+/-- A status read writes nothing: a turn that dies before the read's step is saved
+leaves the row exactly as it found it. -/
+theorem read_crash_writes_nothing (h : Handback) (f : Bool) (hr : h.read = false) :
+    ((h.step (.read f)).1.step .crash).1 = h ∧ (h.step (.read f)).2 = false := by
+  rcases h with ⟨o, q, r⟩
+  simp at hr
+  subst hr
+  cases f <;> simp [Handback.step]
+
+/-- #1183: the parent's turn reads a finished result that no one has told it, and dies
+before the step is saved. The sweep's resume then tells the parent exactly once, whether
+it runs at once or queues behind another run and is applied. -/
+theorem read_crash_resume_tells_once (o : HandbackState) (room : Bool) (ho : o ≠ .stored) :
+    (Handback.mk o false false).told [.read true, .crash, .resume room false false] = 1 ∧
+      (Handback.mk o false false).told [.read true, .crash, .resume true false true, .apply] =
+        1 := by
+  cases o <;> cases room <;> simp_all [Handback.told, Handback.step]
+
+/-- A read whose step is saved while a resume of the result waits in the queue tells the
+parent once: the save completes the queued resume, so its apply tells nothing, and a
+later resume is refused as the row is stored. -/
+theorem saved_read_completes_queued_resume (o : HandbackState) (room : Bool)
+    (ho : o ≠ .stored) :
+    (Handback.mk o true false).told [.read true, .save, .apply] = 1 ∧
+      (Handback.mk o true false).told [.read true, .save, .expire, .resume room false false] =
+        1 := by
+  cases o <;> cases room <;> simp_all [Handback.told, Handback.step]
 
 /-- A stored mark of a finished result with no resume queued shuts out every later
 resume. -/
-theorem store_shuts_out_resume (o : HandbackState) (cs : List HandbackCall) :
-    ((Handback.mk o false).step (.store true)).1.told cs = 0 := by
-  cases o <;> simp [Handback.step, stored_tells_none]
+theorem store_shuts_out_resume (o : HandbackState) (r : Bool) (cs : List HandbackCall) :
+    ((Handback.mk o false r).step (.store true)).1.told cs = 0 := by
+  simp [Handback.step, stored_tells_none]
 
 /-- A resume refused because the conversation already stores its result shuts out every
 later resume too, so the recovery sweep stops retrying it. -/
-theorem stored_shuts_out_resume (o : HandbackState) (room busy : Bool) (cs : List HandbackCall) :
-    ((Handback.mk o false).step (.resume room true busy)).1.told cs = 0 := by
+theorem stored_shuts_out_resume (o : HandbackState) (r room busy : Bool)
+    (cs : List HandbackCall) :
+    ((Handback.mk o false r).step (.resume room true busy)).1.told cs = 0 := by
   cases o <;> simp [Handback.step, stored_tells_none]
-
-/-- A stored mark while a resume of the result waits in the queue stores nothing, so
-the resume still tells the parent, and when it expires, the sweep's next resume does. -/
-theorem store_defers_to_queued_resume (o : HandbackState) (f room : Bool) (ho : o ≠ .stored) :
-    (Handback.mk o true).step (.store f) = (⟨o, true⟩, false) ∧
-      (Handback.mk o true).told [.store f, .apply] = 1 ∧
-      (Handback.mk o true).told [.store f, .expire, .resume room false false] = 1 := by
-  cases o <;> cases f <;> simp_all [Handback.told, Handback.step]
 
 /-- A queued resume that expires writes nothing to the row, so a row the parent never
 got stays the sweep's, and the sweep's next resume tells the parent. -/
 theorem expired_resume_told_again (o : HandbackState) (room : Bool) (ho : o ≠ .stored) :
-    (Handback.mk o true).step .expire = (⟨o, false⟩, false) ∧
-      (Handback.mk o true).told [.expire, .resume room false false] = 1 := by
+    (Handback.mk o true false).step .expire = (⟨o, false, false⟩, false) ∧
+      (Handback.mk o true false).told [.expire, .resume room false false] = 1 := by
   cases o <;> simp_all [Handback.told, Handback.step]
 
 /-! ## Witnesses -/
 
-/-- A stored mark while a resume of the result waits in the queue: the mark stores
-nothing and the apply tells the parent, so it sees the result once. -/
+/-- A status read while a resume of the result waits behind the turn: the saved step
+completes the resume, so the parent sees the result once. -/
 example :
-    (Handback.mk .detached false).told [.resume true false true, .store true, .apply] = 1 := by
+    (Handback.mk .detached false false).told
+        [.resume true false true, .read true, .save, .apply] = 1 := by
+  decide
+
+/-- The turn reads the result and dies before the save: nothing is lost, the sweep's
+resume tells the parent. -/
+example :
+    (Handback.mk .detached false false).told [.read true, .crash, .resume true false false] =
+      1 := by
   decide
 
 /-- The run completes and its cron settle throws: both rows stay completed. -/

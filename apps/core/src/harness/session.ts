@@ -252,10 +252,13 @@ interface StoredConversationEntry {
 
 // A row this session appends. A writer that retries a failed append sets
 // `dedupeKey`, and Convex stores a row once per key in the conversation.
+// `handbacks` are the results a status read in the row handed the model; the
+// write that saves the row stores them.
 interface AppendedConversationEvent {
   cursor: string;
   dedupeKey?: string;
   event: StoredConversationEvent;
+  handbacks?: string[];
 }
 
 export interface StoredConversationEventPage {
@@ -343,6 +346,9 @@ export class Session {
   // Rows a fenced turn still has to write. They ride the next fenced mutation
   // (a step boundary, the settle or takeNext) instead of an append of their own.
   private pendingStoredEvents: AppendedConversationEvent[] = [];
+  // This turn's status reads: tool call id to the hand-back key of the result
+  // it returned. A read stores nothing; the row of its tool result does.
+  private readonly handbackReads = new Map<string, string>();
   private hasLoggedMissingMemoryFile = false;
   private loadedSkillPrompts: SystemModelMessage[] = [];
   private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
@@ -937,6 +943,11 @@ export class Session {
     return this.resolvedRuntime?.workspaces ?? [];
   }
 
+  /** Records that tool call `toolCallId` handed the model the result `handbackKey` names. */
+  recordHandbackRead(toolCallId: string, handbackKey: string): void {
+    this.handbackReads.set(toolCallId, handbackKey);
+  }
+
   /** The agent's own secret values, which every log line and span of its runs drops. */
   secretValues(): string[] {
     return collectSecretValues([
@@ -1408,6 +1419,20 @@ export class Session {
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
   }
 
+  /** The hand-back keys of the status reads whose results a tool message carries. */
+  private handbacksOf(message: ModelMessage): string[] {
+    if (message.role !== "tool" || this.handbackReads.size === 0) return [];
+
+    return message.content.flatMap((part): string[] => {
+      const key =
+        part.type === "tool-result"
+          ? this.handbackReads.get(part.toolCallId)
+          : undefined;
+
+      return key === undefined ? [] : [key];
+    });
+  }
+
   /**
    * The rows a persisting session writes for these messages, cursors minted
    * here. Media carried as bytes is stored first, so the row keeps its link.
@@ -1433,6 +1458,7 @@ export class Session {
         producer,
       );
       const dedupeKey = dedupeKeys?.[index];
+      const handbacks = this.handbacksOf(message);
 
       return event
         ? [
@@ -1440,6 +1466,7 @@ export class Session {
               cursor: this.nextCreatedAt(),
               ...(dedupeKey !== undefined ? { dedupeKey: dedupeKey } : {}),
               event: event,
+              ...(handbacks.length > 0 ? { handbacks: handbacks } : {}),
             },
           ]
         : [];

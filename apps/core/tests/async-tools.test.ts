@@ -497,7 +497,7 @@ describe("resumeLostAsyncToolResults", () => {
     const marked = spyOn(
       asyncToolResults,
       "markAsyncToolHandback",
-    ).mockResolvedValue(false);
+    ).mockResolvedValue(undefined);
     const info = spyOn(log, "logInfo");
     const outcomes: Record<string, ContinuationOutcome> = {
       async_tool_resumed: {
@@ -581,58 +581,128 @@ describe("resumeLostAsyncToolResults", () => {
 });
 
 describe("async_status", () => {
-  it("hands a settled result over unless its continuation already waits in the queue", async (): Promise<void> => {
-    const conversationKey = "acct:account_1:agent:agent_1:api:chat";
-    const row: AsyncToolResultRecord = {
-      resultId: "async_tool_read",
-      parentEventId: "acct:account_1:agent:agent_1:api:event_parent",
-      conversationKey: conversationKey,
-      toolName: "lookup",
-      toolCallId: "call-read",
-      input: {},
-      status: "completed",
-      response: "the answer",
-      handback: "pending",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      expiresAt: Date.now() + 60_000,
-    };
+  const conversationKey = "acct:account_1:agent:agent_1:api:chat";
+  const settledRow = (): AsyncToolResultRecord => ({
+    resultId: "async_tool_read",
+    parentEventId: "acct:account_1:agent:agent_1:api:event_parent",
+    conversationKey: conversationKey,
+    toolName: "lookup",
+    toolCallId: "call-read",
+    input: {},
+    status: "completed",
+    response: "the answer",
+    handback: "detached",
+    createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    expiresAt: Date.now() + 60_000,
+  });
+
+  it("always hands a settled result over, stores nothing, and records the read for the step save", async (): Promise<void> => {
+    const row = settledRow();
     const read = spyOn(
       asyncToolResults,
       "getAsyncToolResult",
     ).mockResolvedValue(row);
-    // Queued first, so the read leaves it to the continuation; then not.
-    const marked = spyOn(asyncToolResults, "markAsyncToolHandback")
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false);
+    const marked = spyOn(
+      asyncToolResults,
+      "markAsyncToolHandback",
+    ).mockResolvedValue(undefined);
+    const reads: Array<[string, string]> = [];
     const { default: asyncStatusTool } =
       await import("../src/harness/tools/async-status.tool.ts");
     const tools = asyncStatusTool({
       conversationKey: conversationKey,
       supportsJobs: false,
+      onHandbackRead: (toolCallId: string, key: string): void => {
+        reads.push([toolCallId, key]);
+      },
     });
-    const check = (): Promise<unknown> =>
-      (tools.async_status as unknown as TestToolExecute).execute(
-        { statusId: row.resultId },
-        { toolCallId: "tool-call-read", messages: [], context: undefined },
-      );
 
     try {
-      expect(await check()).toEqual({
-        status: "completed",
-        delivery: "automatic",
-      });
-      expect(await check()).toEqual({
-        status: "completed",
-        response: "the answer",
-      });
-      expect(marked.mock.calls).toEqual([
-        [row.resultId, "stored"],
-        [row.resultId, "stored"],
+      expect(
+        await (tools.async_status as unknown as TestToolExecute).execute(
+          { statusId: row.resultId },
+          { toolCallId: "tool-call-read", messages: [], context: undefined },
+        ),
+      ).toEqual({ status: "completed", response: "the answer" });
+      expect(marked).not.toHaveBeenCalled();
+      expect(reads).toEqual([
+        ["tool-call-read", asyncToolResultDedupeKey(row.resultId, "completed")],
       ]);
     } finally {
       read.mockRestore();
       marked.mockRestore();
+    }
+  });
+
+  it("leaves a result read by a turn that died before its step was saved to the sweep, which delivers it", async (): Promise<void> => {
+    const row = settledRow();
+    const read = spyOn(
+      asyncToolResults,
+      "getAsyncToolResult",
+    ).mockResolvedValue(row);
+    const marked = spyOn(
+      asyncToolResults,
+      "markAsyncToolHandback",
+    ).mockResolvedValue(undefined);
+    runtime.mutate = mutationMock as never;
+    const { default: asyncStatusTool } =
+      await import("../src/harness/tools/async-status.tool.ts");
+    const { resumeLostAsyncToolResults } =
+      await import("../src/harness/async-tools.ts");
+    const tools = asyncStatusTool({
+      conversationKey: conversationKey,
+      supportsJobs: false,
+      // The turn's ledger, lost with the turn.
+      onHandbackRead: (): void => {},
+    });
+    const pages = spyOn(
+      asyncToolResults,
+      "listOwedAsyncToolResults",
+    ).mockImplementation(
+      async (options: {
+        handback: string;
+        status: string;
+      }): Promise<{
+        page: AsyncToolResultRecord[];
+        cursor: string;
+        isDone: boolean;
+      }> => ({
+        page:
+          options.handback === row.handback && options.status === row.status
+            ? [row]
+            : [],
+        cursor: "end",
+        isDone: true,
+      }),
+    );
+    const resumed: string[] = [];
+
+    try {
+      await (tools.async_status as unknown as TestToolExecute).execute(
+        { statusId: row.resultId },
+        { toolCallId: "tool-call-read", messages: [], context: undefined },
+      );
+      // The read wrote nothing to Convex, so the row is still the sweep's.
+      expect(marked).not.toHaveBeenCalled();
+      expect(mutationMock).not.toHaveBeenCalled();
+      await resumeLostAsyncToolResults(
+        async (owed: AsyncToolResultRecord): Promise<ContinuationOutcome> => {
+          resumed.push(owed.resultId);
+
+          return {
+            kind: "ready",
+            admission: "owner",
+            invoked: true,
+            publicEventId: `async-tools-${owed.resultId}`,
+          };
+        },
+      );
+      expect(resumed).toEqual([row.resultId]);
+    } finally {
+      read.mockRestore();
+      marked.mockRestore();
+      pages.mockRestore();
     }
   });
 });

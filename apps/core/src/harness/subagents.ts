@@ -603,7 +603,7 @@ export class SubagentCoordinator {
     await Promise.all(
       detaching
         .filter(({ eventId }): boolean => !this.handled.has(eventId))
-        .map(({ eventId }): Promise<boolean> =>
+        .map(({ eventId }): Promise<void> =>
           markAsyncAgentHandback(eventId, "detached"),
         ),
     );

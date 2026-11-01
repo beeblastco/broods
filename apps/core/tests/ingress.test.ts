@@ -328,6 +328,71 @@ describe("step boundary", (): void => {
     });
   });
 
+  it("carries a status read's hand-back key on the row of its tool result only", async (): Promise<void> => {
+    const calls: [string, Record<string, unknown>][] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push([name, args]);
+
+      return { renewal: "renewed", steering: null };
+    }) as typeof runtime.mutate;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      agentConfig: {},
+      ownerGeneration: 1,
+    });
+    session.recordHandbackRead(
+      "call-read",
+      "async-tool:async_tool_1:completed",
+    );
+
+    await session.stepBoundary([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-read",
+            toolName: "async_status",
+            input: { statusId: "async_tool_1" },
+          },
+          {
+            type: "tool-call",
+            toolCallId: "call-other",
+            toolName: "bash",
+            input: {},
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-read",
+            toolName: "async_status",
+            output: { type: "json", value: { status: "completed" } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-other",
+            toolName: "bash",
+            output: { type: "text", value: "ok" },
+          },
+        ],
+      },
+    ]);
+
+    const rows = calls[0]?.[1].events as { handbacks?: string[] }[];
+    expect(rows.map((row): string[] | undefined => row.handbacks)).toEqual([
+      undefined,
+      ["async-tool:async_tool_1:completed"],
+    ]);
+  });
+
   it("keeps the rows of a boundary that threw for the next one, keyed by cursor", async (): Promise<void> => {
     const calls: [string, Record<string, unknown>][] = [];
     runtime.mutate = (async (

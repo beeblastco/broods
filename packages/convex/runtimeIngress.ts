@@ -361,8 +361,7 @@ export const appendConversationEvent = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const coordinator = await requireOwner(ctx, args);
-    await insertOwnedEvents(ctx, coordinator, args.events);
+    await insertOwnedEvents(ctx, await requireOwner(ctx, args), args.events);
 
     return null;
   },
@@ -856,9 +855,9 @@ export const settle = internalMutation({
   },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
-    const coordinator = await requireOwner(ctx, args);
+    let coordinator = await requireOwner(ctx, args);
     if (args.events && args.events.length > 0) {
-      await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
     if (args.asyncResult && settled.ownerFinished) {
@@ -900,7 +899,7 @@ export const stepBoundary = internalMutation({
       return { renewal: "stale" as const, steering: null };
     }
     if (args.events && args.events.length > 0) {
-      await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
       return { renewal: "stopped" as const, steering: null };
@@ -978,9 +977,9 @@ export const takeNext = internalMutation({
     args,
   ): Promise<Infer<typeof appliedEnvelopeValidator> | null> => {
     const now = Date.now();
-    const coordinator = await requireOwner(ctx, { ...args, now: now });
+    let coordinator = await requireOwner(ctx, { ...args, now: now });
     if (args.events && args.events.length > 0) {
-      await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     if (args.settle) {
       await settleAppliedEnvelopes(ctx, coordinator, {
@@ -1370,18 +1369,27 @@ function ingressStatusResult(
 }
 
 /** Inserts history rows for an owner the fence just accepted, all or none. */
+/**
+ * The owner's append of `events`.
+ * @returns the coordinator, read again when the insert settled a queued resume
+ *   of a result a status read handed over, so the caller's counters are current
+ */
 async function insertOwnedEvents(
   ctx: MutationCtx,
   coordinator: Doc<"runtimeConversationCoordinators">,
   events: Infer<typeof conversationEventsValidator>,
-): Promise<void> {
+): Promise<Doc<"runtimeConversationCoordinators">> {
   await requireActiveAccount(ctx, coordinator.accountId);
-  await insertConversationEvents(
+  const settled = await insertConversationEvents(
     ctx,
     coordinator.accountId,
     coordinator.conversationKey,
     events,
   );
+
+  return settled === 0
+    ? coordinator
+    : ((await ctx.db.get(coordinator._id)) ?? coordinator);
 }
 
 /**

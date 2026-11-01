@@ -42,6 +42,13 @@ const DAY_SECONDS = 24 * 60 * 60;
 // The most queued envelopes a conversation holds (core's
 // `DEFAULT_INGRESS_MAX_COUNT`), all read to find a queued resume.
 const QUEUED_RESUME_SCAN = 100;
+// What a queued envelope keeps once it is terminal; `runtimeIngress`'s
+// RELEASED_PAYLOAD, which runtime cannot import without a cycle.
+const RELEASED_RESUME_PAYLOAD = {
+  events: [],
+  configRef: undefined,
+  ephemeralSystem: undefined,
+};
 // One recovery sweep's page of late subagent or async tool results.
 const OWED_RESULT_PAGE_SIZE = 100;
 
@@ -55,12 +62,17 @@ const RUNTIME_DELETE_BATCH_SIZE = 100;
 // without deleting the sandbox first strands the machine.
 export const SANDBOX_RESERVATION_TTL_SECONDS = 7 * DAY_SECONDS;
 
-/** A whole step's history rows in one write, in cursor order. */
+/**
+ * A whole step's history rows in one write, in cursor order. `handbacks` are
+ * the hand-back keys of the results a status read in this row handed the
+ * model; saving the row stores them. They are never kept on the row.
+ */
 export const conversationEventsValidator = v.array(
   v.object({
     cursor: v.string(),
     dedupeKey: runtimeConversationEventsFields.dedupeKey,
     event: v.any(),
+    handbacks: v.optional(v.array(v.string())),
   }),
 );
 
@@ -197,15 +209,20 @@ export const appendConversationEvent = internalMutation({
  * already stores is skipped: its first append committed and only the reply
  * was lost, so the retry must not store it again. A row keyed as a subagent
  * or async tool result marks that result's hand-back stored in the transaction
- * that inserts it, so the row and the flag can never disagree.
+ * that inserts it, so the row and the flag can never disagree. So does each of
+ * a row's `handbacks`, the results a status read handed the model in it, and
+ * the resume of one still queued here is settled: the history tells it now.
+ * @returns how many queued resumes it settled, which moved the coordinator's
+ *   queue counters
  */
 export async function insertConversationEvents(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
   conversationKey: string,
   events: Infer<typeof conversationEventsValidator>,
-): Promise<void> {
-  for (const entry of events) {
+): Promise<number> {
+  let settled = 0;
+  for (const { handbacks, ...entry } of events) {
     if (
       entry.dedupeKey !== undefined &&
       (await ctx.db
@@ -241,7 +258,98 @@ export async function insertConversationEvents(
         await asyncToolResultRow(ctx, handback.resultId),
       );
     }
+    for (const key of handbacks ?? []) {
+      settled += await storeReadHandback(ctx, accountId, conversationKey, key);
+    }
   }
+
+  return settled;
+}
+
+/**
+ * Stores the result a status read handed the model, now that the read's row
+ * is in `conversationKey`'s history, and completes every resume of it still
+ * queued there, with the queue counters. Only a finished result of this
+ * conversation, of `accountId`, moves.
+ * @returns how many queued resumes it completed
+ */
+async function storeReadHandback(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  conversationKey: string,
+  key: string,
+): Promise<number> {
+  const handback = parseHandbackDedupeKey(key);
+  if (handback === undefined) return 0;
+  let fence: { resultEventId: string } | { toolResultId: string };
+  let row: Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults">;
+  if (handback.kind === "subagent") {
+    const agentRow = await asyncAgentResultRow(ctx, handback.eventId);
+    if (agentRow?.subagent?.parentConversationKey !== conversationKey) {
+      return 0;
+    }
+    fence = { resultEventId: agentRow.eventId };
+    row = agentRow;
+  } else {
+    const toolRow = await asyncToolResultRow(ctx, handback.resultId);
+    if (toolRow?.conversationKey !== conversationKey) return 0;
+    fence = { toolResultId: toolRow.resultId };
+    row = toolRow;
+  }
+  if (row.accountId !== accountId || row.status === "processing") return 0;
+  await markResultStored(ctx, accountId, row);
+
+  return settleQueuedResumes(ctx, conversationKey, fence);
+}
+
+/**
+ * Completes each resume of one result queued in `conversationKey`, expired or
+ * not, and takes it off the coordinator's queue counters.
+ * @returns how many it completed
+ */
+async function settleQueuedResumes(
+  ctx: MutationCtx,
+  conversationKey: string,
+  fence: { resultEventId: string } | { toolResultId: string },
+): Promise<number> {
+  const queued = (
+    await ctx.db
+      .query("runtimeIngressEnvelopes")
+      .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+        q.eq("conversationKey", conversationKey).eq("status", "queued"),
+      )
+      .take(QUEUED_RESUME_SCAN)
+  ).filter((row): boolean =>
+    "resultEventId" in fence
+      ? row.resultEventId === fence.resultEventId
+      : row.toolResultId === fence.toolResultId,
+  );
+  if (queued.length === 0) return 0;
+  const now = Date.now();
+  let bytes = 0;
+  for (const row of queued) {
+    bytes += row.sizeBytes;
+    await ctx.db.patch(row._id, {
+      ...RELEASED_RESUME_PAYLOAD,
+      status: "completed",
+      updatedAt: now,
+    });
+  }
+  const coordinator = await ctx.db
+    .query("runtimeConversationCoordinators")
+    .withIndex("by_conversationKey", (q) =>
+      q.eq("conversationKey", conversationKey),
+    )
+    .unique();
+  if (coordinator) {
+    await ctx.db.patch(coordinator._id, {
+      queuedCount: Math.max(0, coordinator.queuedCount - queued.length),
+      queuedBytes: Math.max(0, coordinator.queuedBytes - bytes),
+      updatedAt: now,
+    });
+  }
+
+  return queued.length;
 }
 
 /**
@@ -530,42 +638,31 @@ export const listOwedAsyncAgentResults = internalQuery({
 
 /**
  * Moves a subagent result's hand-back: `detached` when the parent's run gives
- * up delivering it, `stored` when the parent is never told. A
- * stored row stays stored, and a running row is never marked stored. The
- * parent's own append and a late result's admission mark `stored` inside
- * their own transactions instead. A row whose resume waits in the parent's
- * queue is that resume's to deliver, so `stored` leaves it alone.
- * @returns true when a resume of the result waits in the parent's queue, so
- * the caller must not hand the result over itself
+ * up delivering it, `stored` when the parent is never told. A stored row stays
+ * stored, and a running row is never marked stored. The parent's own append,
+ * a status read's saved step and a late result's admission mark `stored`
+ * inside their own transactions instead.
+ * @returns null after the move, or when there is nothing to move
  */
 export const markAsyncAgentHandback = internalMutation({
   args: {
     eventId: v.string(),
     handback: handbackMoveValidator,
   },
-  returns: v.boolean(),
-  handler: async (ctx, args): Promise<boolean> => {
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
     const row = await asyncAgentResultRow(ctx, args.eventId);
     if (
       !row ||
       row.handback === "stored" ||
       (args.handback === "stored" && row.status === "processing")
     ) {
-      return false;
+      return null;
     }
     await requireActiveAccount(ctx, row.accountId);
-    if (
-      args.handback === "stored" &&
-      row.subagent !== undefined &&
-      (await isResumeQueued(ctx, row.subagent.parentConversationKey, {
-        resultEventId: row.eventId,
-      }))
-    ) {
-      return true;
-    }
     await ctx.db.patch(row._id, { handback: args.handback });
 
-    return false;
+    return null;
   },
 });
 
@@ -635,34 +732,6 @@ export async function markResultStored(
   if (row?.accountId === accountId && row.handback !== "stored") {
     await ctx.db.patch(row._id, { handback: "stored" });
   }
-}
-
-/**
- * Whether a resume carrying this result waits, unexpired, in
- * `conversationKey`'s queue. A stored mark then leaves the result to it, so
- * the parent is told once and a status read whose step is never saved loses
- * nothing.
- */
-async function isResumeQueued(
-  ctx: QueryCtx,
-  conversationKey: string,
-  fence: { resultEventId: string } | { toolResultId: string },
-): Promise<boolean> {
-  const now = Date.now();
-  const queued = await ctx.db
-    .query("runtimeIngressEnvelopes")
-    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
-      q.eq("conversationKey", conversationKey).eq("status", "queued"),
-    )
-    .take(QUEUED_RESUME_SCAN);
-
-  return queued.some(
-    (row): boolean =>
-      row.expiresAt > now &&
-      ("resultEventId" in fence
-        ? row.resultEventId === fence.resultEventId
-        : row.toolResultId === fence.toolResultId),
-  );
 }
 
 /**
@@ -939,42 +1008,32 @@ export const updateAsyncToolResult = internalMutation({
 
 /**
  * Moves a finished async tool result's hand-back: `detached` when the run that
- * started it gives up delivering it, `stored` when the model reads it with
- * async_status. A stored row stays stored, and a row still running is left
- * alone. The parent's own append and the continuation's admission mark
- * `stored` inside their own transactions instead. A row whose continuation
- * waits in the conversation's queue is that continuation's to deliver, so
- * `stored` leaves it alone.
- * @returns true when a continuation of the result waits in the
- * conversation's queue, so the caller must not hand the result over itself
+ * started it gives up delivering it, `stored` when nothing will ever tell the
+ * conversation. A stored row stays stored, and a row still running is left
+ * alone. The parent's own append, an `async_status` read's saved step and the
+ * continuation's admission mark `stored` inside their own transactions
+ * instead.
+ * @returns null after the move, or when there is nothing to move
  */
 export const markAsyncToolHandback = internalMutation({
   args: {
     resultId: v.string(),
     handback: handbackMoveValidator,
   },
-  returns: v.boolean(),
-  handler: async (ctx, args): Promise<boolean> => {
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
     const row = await asyncToolResultRow(ctx, args.resultId);
     if (!row || row.status === "processing" || row.handback === "stored") {
-      return false;
+      return null;
     }
     await requireActiveAccount(ctx, row.accountId);
-    if (
-      args.handback === "stored" &&
-      (await isResumeQueued(ctx, row.conversationKey, {
-        toolResultId: row.resultId,
-      }))
-    ) {
-      return true;
-    }
     await ctx.db.patch(row._id, {
       handback: args.handback,
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     });
 
-    return false;
+    return null;
   },
 });
 

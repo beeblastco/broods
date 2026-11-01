@@ -13,13 +13,13 @@
  * `supportsJobs` to keep the prompt from drifting.
  */
 
+import { asyncToolResultDedupeKey } from "@broods/convex/model/subagentResults";
 import { jsonSchema, tool, type JSONValue, type ToolSet } from "ai";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import {
   getAsyncToolResult,
   markAsyncToolResultCompleted,
   markAsyncToolResultFailed,
-  markAsyncToolHandback,
   type AsyncToolResultRecord,
 } from "../async-tool-result.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
@@ -41,6 +41,9 @@ export interface AsyncStatusContext {
   // `logs`/`stop` actions, which have no meaning for async tool calls (there is
   // no live process to tail or kill, and those are delivered automatically).
   supportsJobs: boolean;
+  // Records that this call handed the model a finished result, under the
+  // result's hand-back key; the session stores it with the call's saved step.
+  onHandbackRead?: (toolCallId: string, handbackKey: string) => void;
 }
 
 interface AsyncStatusInput {
@@ -93,23 +96,27 @@ The result is delivered back into the conversation automatically when it finishe
         required: ["statusId"],
         additionalProperties: false,
       }),
-      execute: async function (input): Promise<JSONValue> {
+      execute: async function (input, { toolCallId }): Promise<JSONValue> {
         const { statusId, action = "status" } = input;
+        const handedOver = (status: "completed" | "failed"): void =>
+          context.onHandbackRead?.(
+            toolCallId,
+            asyncToolResultDedupeKey(statusId, status),
+          );
         const record = await getAsyncToolResult(statusId);
         // Resolve only within the caller's own conversation (both missing and
         // foreign rows return the same not-found, so it is not an oracle).
         if (!record || record.conversationKey !== context.conversationKey) {
           return toolError(`Error: no async result found for ${statusId}`);
         }
-        // The model is consuming the terminal result here, so mark it stored,
-        // awaited, since the resume gate reads this row the moment the turn
-        // ends. A failed mark only logs: the row keeps the result, and the
-        // sweep may then deliver it once more. A continuation already queued
-        // tells the conversation next, so this read hands nothing over.
+        // The model gets the terminal result here. Nothing is stored yet: the
+        // row is stored, and a continuation of it still queued completed, by
+        // the write that saves this call's step, so a turn that dies before
+        // that save leaves the result for the continuation or the sweep.
         if (record.status !== "processing") {
-          return (await markAsyncToolHandback(statusId, "stored"))
-            ? { status: record.status, delivery: "automatic" }
-            : settledResult(record, action);
+          handedOver(record.status);
+
+          return settledResult(record, action);
         }
 
         // Still processing. A sandbox-job row can be polled live; any other async
@@ -152,7 +159,13 @@ The result is delivered back into the conversation automatically when it finishe
               namespace: job.namespace,
             });
 
-            return settleTerminalJob(statusId, executor, job, stopped);
+            return settleTerminalJob(
+              statusId,
+              executor,
+              job,
+              stopped,
+              handedOver,
+            );
           }
 
           if (!executor.jobStatus) {
@@ -174,7 +187,7 @@ The result is delivered back into the conversation automatically when it finishe
             return { status: "unknown", jobId: job.jobId };
           }
 
-          return settleTerminalJob(statusId, executor, job, status);
+          return settleTerminalJob(statusId, executor, job, status, handedOver);
         } catch (cause) {
           return toolError(
             cause instanceof Error ? cause.message : String(cause),
@@ -240,6 +253,7 @@ async function settleTerminalJob(
   executor: SandboxExecutor,
   job: SandboxJobRef,
   status: SandboxJobStatus,
+  handedOver: (status: "completed" | "failed") => void,
 ): Promise<JSONValue> {
   const logs = executor.jobLogs
     ? (
@@ -265,11 +279,8 @@ async function settleTerminalJob(
       error: `Job exited with code ${status.exitCode ?? "unknown"}.${logs ? `\n${logs}` : ""}`,
     });
   }
-  // Consumed through the poll, so the auto-delivery resume must not re-inject
-  // it, unless one already waits in the queue: that one tells it next.
-  if (await markAsyncToolHandback(resultId, "stored")) {
-    return { status: status.state, delivery: "automatic" };
-  }
+  // Handed over through the poll; the saved step stores it.
+  handedOver(status.state === "completed" ? "completed" : "failed");
 
   return {
     status: status.state,
