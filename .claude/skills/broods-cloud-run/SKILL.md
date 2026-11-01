@@ -55,9 +55,8 @@ Run perf and bench at least 3 times per side; report median and spread.
 
 Every session acts as the shared probe account and works in its own project,
 `$BROODS_CLOUD_PROJECT` (`cloud-<session id>`), on its default `development` stage. Never touch another `cloud-*` project: a
-parallel session owns it. The session-start hook installs `broods-dev` (dev, read and
-write) and `broods-prod` (prod) on PATH. Prod is read-only by rule: its token can write, so never
-run a command there that changes anything. Both run this checkout's CLI from
+parallel session owns it. The session-start hook installs `broods-dev` on PATH: this checkout's CLI from source,
+pointed at dev. Sessions have no prod access. It runs from
 source, so every edit is live with no build, and read the token only when they run.
 
 ```bash
@@ -68,7 +67,6 @@ broods-dev init
 echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env.local   # dev pushes env() values from .env.local only
 broods-dev dev --once                             # first sync creates the project
 broods-dev whoami
-broods-prod whoami                                # prod: whoami, list, read only
 cd "$CLAUDE_PROJECT_DIR"                          # back: later steps run in the checkout
 ```
 
@@ -81,7 +79,6 @@ Capture exact commands and output.
   `E2E_ADMIN_KEY=$(bun ../../scripts/local-stack.ts status --key) E2E_BASE_URL=<printed url> bun run test:app` (and `perf`).
 - dev: `E2E_BASE_URL=https://dashboard.dev.broods.app E2E_PROJECT_ID=<id of $BROODS_CLOUD_PROJECT>`
   with `E2E_EMAIL`, `E2E_PASSWORD` (the probe). The id is in the dashboard URL of the project.
-- prod: browse read-only with the same user. No writes.
 
 Keep screenshots and traces as evidence.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SessionStart hook (.claude/settings.json), Claude Code cloud sessions only:
-# names this session's dev project, installs broods-dev / broods-prod, then
+# names this session's dev project, installs broods-dev, then
 # starts dockerd, installs deps when bun.lock moved and fetches origin/dev.
 # Exits at once anywhere else. The toolchain comes from the setup script that
 # scripts/cloud-setup.sh writes.
@@ -12,21 +12,16 @@ cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "${CLAUDE_CODE_REMOTE_SESSION_ID:-}" ]; then
   # One project per session, so parallel sessions never share a stage.
   id=$(printf %s "${CLAUDE_CODE_REMOTE_SESSION_ID#cse_}" | tr -cd 'A-Za-z0-9' | tr 'A-Z' 'a-z' | tail -c 12)
-  # This checkout's CLI from source, pointed at one server; the token is read
-  # when the command runs, never written down. The prod token can write: prod
-  # is read-only only because AGENTS.md says so.
+  # This checkout's CLI from source, pointed at dev; the token is read when the
+  # command runs, never written down. Sessions get no prod access at all.
   bin="$HOME/.local/bin"
   mkdir -p "$bin"
-  for target in dev:gateway.dev.broods.app:dashboard.dev.broods.app:BROODS_DEV_TOKEN \
-    prod:gateway.broods.app:dashboard.broods.app:BROODS_PROD_TOKEN; do
-    IFS=: read -r name gateway dashboard token <<<"$target"
-    cat >"$bin/broods-$name" <<EOF
+  cat >"$bin/broods-dev" <<EOF
 #!/bin/sh
-BROODS_BASE_URL=https://$gateway BROODS_DASHBOARD_URL=https://$dashboard BROODS_TOKEN="\$$token" \\
+BROODS_BASE_URL=https://gateway.dev.broods.app BROODS_DASHBOARD_URL=https://dashboard.dev.broods.app BROODS_TOKEN="\$BROODS_DEV_TOKEN" \\
   exec bun "$CLAUDE_PROJECT_DIR/packages/broods/src/cli/index.ts" "\$@"
 EOF
-    chmod +x "$bin/broods-$name"
-  done
+  chmod +x "$bin/broods-dev"
   # Not BROODS_PROJECT: the CLI and its tests read that one from the shell.
   printf 'export BROODS_CLOUD_PROJECT=cloud-%s\nexport PATH="%s:$PATH"\n' "$id" "$bin" >>"$CLAUDE_ENV_FILE"
 fi

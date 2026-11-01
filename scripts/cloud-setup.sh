@@ -3,7 +3,7 @@
 # ~/.broods-cloud/ (0600, outside the repo). Root AGENTS.md, Cloud Sessions,
 # says how they are used and why there are no network secrets.
 #
-#   --login  sign the probe user in to dev and prod (open each printed URL in
+#   --login  sign the probe user in to dev (open the printed URL in
 #            a private window). Logins live in ~/.broods-cloud/test-account and
 #            last 90 days. Only the probe's login is ever written to env.txt.
 #
@@ -21,7 +21,6 @@ mkdir -p "$out"
 out=$(cd "$out" && pwd)
 test_home="$out/test-account"
 dev_gateway=gateway.dev.broods.app
-prod_gateway=gateway.broods.app
 login=false
 for arg in "$@"; do
   case "$arg" in
@@ -40,11 +39,9 @@ if $login; then
   printf '#!/bin/sh\nexit 0\n' >"$shim/xdg-open"
   cp "$shim/xdg-open" "$shim/open"
   chmod +x "$shim/xdg-open" "$shim/open"
-  for dashboard in dashboard.dev.broods.app dashboard.broods.app; do
-    echo "== $dashboard: open the URL below in a private window, sign in as the test user"
-    # From $test_home: login writes .env.local defaults into the current dir.
-    (cd "$test_home" && HOME="$test_home" PATH="$shim:$PATH" "$broods_bin" login --dashboard-url "https://$dashboard")
-  done
+  echo "Open the URL below in a private window and sign in as the probe user."
+  # From $test_home: login writes .env.local defaults into the current dir.
+  (cd "$test_home" && HOME="$test_home" PATH="$shim:$PATH" "$broods_bin" login --dashboard-url https://dashboard.dev.broods.app)
   rm -rf "$shim"
 fi
 
@@ -89,7 +86,6 @@ if [ "$e2e_email" != "$probe_email" ]; then
 fi
 e2e_password=$(pick E2E_PASSWORD "$(from_dotenv E2E_PASSWORD)")
 dev_token=$(from_login "$dev_gateway")
-prod_token=$(from_login "$prod_gateway")
 anthropic_key="${ANTHROPIC_API_KEY:-}"
 openai_key="${OPENAI_API_KEY:-}"
 
@@ -137,7 +133,6 @@ EOF
 
 cat >"$out/env.txt" <<EOF
 BROODS_DEV_TOKEN=${dev_token}
-BROODS_PROD_TOKEN=${prod_token}
 E2E_EMAIL=${e2e_email}
 E2E_PASSWORD=${e2e_password}
 CLOUD_ANTHROPIC_API_KEY=${anthropic_key}
@@ -149,9 +144,9 @@ chmod 600 "$out/setup.sh" "$out/env.txt"
 
 echo "Wrote $out/{setup.sh,env.txt}"
 missing=()
-for pair in "BROODS_DEV_TOKEN:$dev_token" "BROODS_PROD_TOKEN:$prod_token" "E2E_EMAIL:$e2e_email" \
+for pair in "BROODS_DEV_TOKEN:$dev_token" "E2E_EMAIL:$e2e_email" \
   "E2E_PASSWORD:$e2e_password" "ANTHROPIC_API_KEY:$anthropic_key" "OPENAI_API_KEY:$openai_key"; do
   [ -n "${pair#*:}" ] || missing+=("${pair%%:*}")
 done
 [ ${#missing[@]} -eq 0 ] || echo "Empty: ${missing[*]}. Tokens come from --login, the rest from the shell; rerun after."
-[ -n "$dev_token$prod_token" ] || echo "No test-account login yet: run bash scripts/cloud-setup.sh --login"
+[ -n "$dev_token" ] || echo "No test-account login yet: run bash scripts/cloud-setup.sh --login"
