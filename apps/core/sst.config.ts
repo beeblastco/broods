@@ -26,6 +26,15 @@ const OTEL_EXPORTER_OTLP_ENDPOINT =
   process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim() || "https://otel.beeblast.co";
 const OTEL_EXPORTER_OTLP_HEADERS =
   process.env.OTEL_EXPORTER_OTLP_HEADERS?.trim();
+// Comma-separated public IPs of the infra repo's cluster. Unset = no lock. Change
+// it before the cluster gets a new address, or production AWS calls fail.
+const RUNTIME_EGRESS_IPS_RAW = process.env.RUNTIME_EGRESS_IPS?.trim() ?? "";
+const RUNTIME_EGRESS_IPS = RUNTIME_EGRESS_IPS_RAW.split(",")
+  .map((ip) => ip.trim())
+  .filter((ip) => ip.length > 0);
+if (RUNTIME_EGRESS_IPS_RAW && RUNTIME_EGRESS_IPS.length === 0) {
+  throw new Error("RUNTIME_EGRESS_IPS is set but lists no IP address");
+}
 
 // How long to let a freshly created IAM role's trust policy propagate before another
 // AWS service is asked to assume it. Measured: the connector create failed 8s after the
@@ -178,7 +187,7 @@ interface PermissionStatement {
   effect?: "Allow" | "Deny";
   actions: string[];
   resources: $util.Input<string>[];
-  conditions?: Record<string, Record<string, string>>;
+  conditions?: Record<string, Record<string, string | string[]>>;
 }
 
 // SST's `permissions` shorthand -> a raw IAM policy doc, for the container
@@ -1157,6 +1166,29 @@ export default $config({
         }),
       ),
     });
+    // Static keys of both users live only on the cluster: deny calls from
+    // anywhere else. Sessions from the roles they assume are not affected.
+    if (isProduction && RUNTIME_EGRESS_IPS.length > 0) {
+      const sourceIpLock = permissionsPolicy([
+        {
+          effect: "Deny",
+          actions: ["*"],
+          resources: ["*"],
+          conditions: {
+            NotIpAddress: { "aws:SourceIp": RUNTIME_EGRESS_IPS },
+            Bool: { "aws:ViaAWSService": "false" },
+          },
+        },
+      ]);
+      new aws.iam.UserPolicy("CoreRuntimeSourceIpLock", {
+        user: coreRuntimeUser.name,
+        policy: sourceIpLock,
+      });
+      new aws.iam.UserPolicy("ConvexBootstrapSourceIpLock", {
+        user: convexBootstrapUser.name,
+        policy: sourceIpLock,
+      });
+    }
 
     // The Cloudflare Workers, named per stage, when the deploy has a
     // Cloudflare token (they are optional). The infra repo puts each one's
