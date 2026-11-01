@@ -1,5 +1,6 @@
 "use client";
 
+import { BroodsMark } from "@/app/components/BroodsLogo";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import {
   Avatar,
@@ -107,14 +108,7 @@ export function ActorAvatar({ actor }: { actor: Actor }): React.JSX.Element {
   if ("kind" in actor) {
     return (
       <Avatar size="xs">
-        <svg viewBox="0 0 64 64" aria-hidden="true" className="size-full">
-          <circle
-            cx="32"
-            cy="32"
-            r="32"
-            className="fill-brand-ink dark:fill-white"
-          />
-        </svg>
+        <BroodsMark className="size-full" />
       </Avatar>
     );
   }
