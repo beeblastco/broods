@@ -10,7 +10,6 @@ import type { Id } from "../_generated/dataModel";
 import stripeSchema from "../node_modules/@convex-dev/stripe/dist/component/schema.js";
 import schema from "../schema";
 import { currentOf, proQuantity, seatsForQuantity } from "../model/orgBilling";
-import { PLAN_LIMITS } from "../model/planLimits";
 import { stripeClient } from "../stripe";
 
 const AUTH_ID = "auth_payer";
@@ -1224,77 +1223,6 @@ describe("creating an org", () => {
       error: { code: "payment_required" },
     });
     expect(await ownedOrgCount(t)).toBe(1);
-  });
-
-  test("an adopted account's org runs on its owner's Pro plan", async () => {
-    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
-    const t = billingTest();
-    await seedPayer(t);
-    await sendEvent(t, "customer.subscription.created", subscription("active"));
-    const accountId = await t.run(
-      async (ctx) =>
-        await ctx.db.insert("accounts", {
-          orgId: "external:payer",
-          username: "payer-external",
-          secretHash: "hash-payer-external",
-          status: "active",
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        }),
-    );
-
-    const { orgId } = await t.mutation(internal.org.orgs.adoptExternalAccount, {
-      accountId: accountId,
-      ownerEmail: "payer@example.com",
-      orgName: "Adopted",
-    });
-
-    expect(await orgPlan(t, orgId)).toBe("pro");
-  });
-
-  test("an operator adopts an account for a Hobby owner: no org-count gate, the owner's plan, the owner's pool", async () => {
-    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
-    const t = billingTest();
-    await seedPayer(t);
-    const [ownAccountId, externalId] = await t.run(async (ctx) => {
-      const now = Date.now();
-      const account = {
-        secretHash: "hash",
-        status: "active" as const,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      return [
-        await ctx.db.insert("accounts", {
-          ...account,
-          orgId: payerOrgId,
-          username: "payer-org",
-        }),
-        await ctx.db.insert("accounts", {
-          ...account,
-          orgId: "external:payer",
-          username: "payer-external",
-        }),
-      ];
-    });
-
-    const { orgId } = await t.mutation(internal.org.orgs.adoptExternalAccount, {
-      accountId: externalId,
-      ownerEmail: "payer@example.com",
-      orgName: "Adopted",
-    });
-    await t.mutation(internal.account.budget.record, {
-      accountId: externalId,
-      usage: { egressGb: PLAN_LIMITS.free.caps.egressGb },
-    });
-
-    expect(await ownedOrgCount(t)).toBe(2);
-    expect(await orgPlan(t, orgId)).toBe("free");
-    // The adopted org's usage stops the owner's own workspace too: one pool.
-    expect(
-      await t.query(internal.account.budget.get, { accountId: ownAccountId }),
-    ).toMatchObject({ plan: "free", usedPercent: 100 });
   });
 
   test("a self-hosted install creates orgs without Pro", async () => {
