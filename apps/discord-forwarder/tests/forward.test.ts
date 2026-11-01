@@ -84,6 +84,15 @@ describe("forwarding a gateway message", () => {
     expect(Object.values(calls[0]!.headers)).not.toContain("token-a");
   });
 
+  it("settles a 401 without retrying it on the raw bot token", async () => {
+    const calls = captureFetch(401);
+    await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
+
+    expect(
+      calls.map((call) => call.headers["x-discord-gateway-token"]),
+    ).toEqual([discordForwarderToken("token-a")]);
+  });
+
   it("adds the thread object Discord leaves out", async () => {
     const calls = captureFetch();
     await forwardMessageCreate(
