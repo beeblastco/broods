@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Core with a fresh V8 isolate per request (per-task/router.js) on workerd.
 # Usage: start-per-task.sh <port> <service-name> [config] (perTaskConfig, or
-# slimConfig for the SLIM=1 bundle in dist-slim/)
+# slimConfig for the SLIM=1 bundle in dist-slim/, or slimWarmConfig for one
+# warm worker per agent on that bundle)
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 source "$here/env.sh"
