@@ -168,7 +168,7 @@ broods dev [--once] [--level <lvl>] [--all] [--region <region>]
 | `--all`             | Tail `INFO` and up. DEBUG lines are only in the dashboard              |
 | `--region <region>` | Region preference used when `dev` onboards a new project               |
 
-The first run in an empty folder does the setup. It opens the browser like `login`, asks for an organization, project, stage and service region, creates `broods/` like `init`, pushes referenced secrets from `.env.local`, syncs, and writes `BROODS_API_KEY` and `BROODS_USER_TOKEN_SECRET` to `.env.local`.
+The first run in an empty folder does the setup. It opens the browser like `login`, asks for an organization, project, stage and service region, creates `broods/` like `init`, asks for each `env("NAME")` value that neither `.env.local` nor the stage holds yet (the starter's `OPENAI_API_KEY`, typed hidden and saved to `.env.local`), pushes referenced secrets from `.env.local`, syncs, and writes `BROODS_API_KEY` and `BROODS_USER_TOKEN_SECRET` to `.env.local`. Only a terminal is asked; a piped or CI run fails the sync and names the missing variables.
 
 On every sync `dev`:
 

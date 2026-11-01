@@ -2,7 +2,11 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, sep } from "node:path";
-import { isNewerVersion, updateTarget } from "../src/cli/update.ts";
+import {
+  isInstalledPackage,
+  isNewerVersion,
+  updateTarget,
+} from "../src/cli/update.ts";
 
 const tempDirs: string[] = [];
 
@@ -172,4 +176,17 @@ test("a pnpm workspace updates the root dependency from the root", async () => {
 
   expect(target.cwd).toBe(root);
   expect(target.args).toEqual(["add", "-w", "broods@1"]);
+});
+
+test("only an installed copy, not a monorepo build, counts as a release", () => {
+  expect(
+    isInstalledPackage(
+      join(sep, "app", "node_modules", "broods", "dist", "cli", "index.js"),
+    ),
+  ).toBe(true);
+  expect(
+    isInstalledPackage(
+      join(sep, "repo", "packages", "broods", "dist", "cli", "index.js"),
+    ),
+  ).toBe(false);
 });

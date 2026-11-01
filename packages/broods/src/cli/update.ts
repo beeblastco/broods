@@ -13,6 +13,7 @@ import packageJson from "../../package.json" with { type: "json" };
 const CACHE_PATH = join(dirname(USER_CONFIG_PATH), "update-check.json");
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const REGISTRY_URL = "https://registry.npmjs.org/broods/latest";
+const NODE_MODULES_SEGMENT = `${sep}node_modules${sep}`;
 // A version check is never worth stalling a sync behind, so the fetch is capped
 // well under the time a user would notice and a miss just skips the notice.
 const REGISTRY_TIMEOUT_MS = 2_000;
@@ -85,6 +86,16 @@ export function majorVersion(version: string): number {
 }
 
 /**
+ * True when this CLI runs from an installed package, not a monorepo build,
+ * whose workspace version is never the released one.
+ */
+export function isInstalledPackage(
+  self = fileURLToPath(import.meta.url),
+): boolean {
+  return self.includes(NODE_MODULES_SEGMENT);
+}
+
+/**
  * Reads the install site off this module's own path. The first `node_modules`
  * in it names the project root, so pnpm's and bun's isolated store
  * (`node_modules/.pnpm/broods@x/node_modules/broods`) resolve to the project
@@ -100,8 +111,7 @@ export function updateTarget(
   self = fileURLToPath(import.meta.url),
   version = packageJson.version,
 ): UpdateTarget {
-  const marker = `${sep}node_modules${sep}`;
-  const markerAt = self.indexOf(marker);
+  const markerAt = self.indexOf(NODE_MODULES_SEGMENT);
   const projectRoot = markerAt === -1 ? null : self.slice(0, markerAt);
   const local =
     projectRoot === null
