@@ -236,17 +236,22 @@ async function link(
   slug: string,
 ): Promise<Imported> {
   const { context, github, asAdmin } = run;
-  await run.refused("github:linkRepo", {
-    projectId: projectId,
-    target: {
-      installationId: ORG_INSTALLATION,
-      repoId: ORG_REPO,
-      rootDirectory: "apps/agents",
-      baseUrl: context.edgeUrl,
-      developmentBranch: "main",
-    },
-  });
-  // That refusal released its claim on the repo, so the real link goes through.
+  // A development branch equal to the default, or a folder with no broods/, is refused.
+  for (const target of [
+    { rootDirectory: "apps/agents", developmentBranch: "main" },
+    { rootDirectory: "apps/missing" },
+  ]) {
+    await run.refused("github:linkRepo", {
+      projectId: projectId,
+      target: {
+        installationId: ORG_INSTALLATION,
+        repoId: ORG_REPO,
+        baseUrl: context.edgeUrl,
+        ...target,
+      },
+    });
+  }
+  // Those refusals released their claim on the repo, so the real link goes through.
   const linked = (await context.measure("link the repo", async () =>
     asAdmin("github:linkRepo", {
       projectId: projectId,
@@ -345,6 +350,16 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
       deploys[0]?.branch === "dev" &&
       deploys[0]?.conclusion === "success",
     JSON.stringify(deploys),
+  );
+  // A late in-progress event for that finished attempt changes nothing; a rerun does.
+  await github.deliver(hook, "workflow_run", workflowRun(2, null));
+  const late = (await run.status(imported.projectId)).deploys[0];
+  await github.deliver(hook, "workflow_run", workflowRun(2, null, 2));
+  const rerun = (await run.status(imported.projectId)).deploys[0];
+  assertStep(
+    "a late event keeps the finished result, a rerun shows as deploying",
+    late?.conclusion === "success" && rerun?.status === "in_progress",
+    JSON.stringify({ late: late, rerun: rerun }),
   );
 
   // A second project cannot take over the repo's one workflow and its keys.
@@ -596,12 +611,17 @@ async function setAppEnv(run: Run, env: Record<string, string>): Promise<void> {
   );
 }
 
-function workflowRun(id: number, conclusion: string | null): unknown {
+function workflowRun(
+  id: number,
+  conclusion: string | null,
+  attempt = 1,
+): unknown {
   return {
     action: conclusion ? "completed" : "in_progress",
     repository: { id: ORG_REPO },
     workflow_run: {
       id: id,
+      run_attempt: attempt,
       path: WORKFLOW,
       head_branch: "dev",
       head_sha: "abc123",

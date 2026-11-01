@@ -996,6 +996,8 @@ export const githubDeploysFields = {
   projectId: v.id("projects"),
   branch: v.string(),
   runId: v.number(),
+  /** A rerun keeps `runId` and raises this. */
+  runAttempt: v.optional(v.number()),
   sha: v.string(),
   status: v.string(),
   /** Set once `status` is `completed`: `success`, `failure`, `cancelled`, ... */

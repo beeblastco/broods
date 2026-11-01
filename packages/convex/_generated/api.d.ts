@@ -1141,6 +1141,7 @@ export declare const api: {
       { projectId?: Id<"projects"> },
       {
         canConnect: boolean;
+        canLink: boolean;
         configured: boolean;
         deploys: Array<{
           branch: string;
@@ -5585,6 +5586,7 @@ export declare const internal: {
         branch: string;
         conclusion?: string;
         repoId: number;
+        runAttempt?: number;
         runId: number;
         sha: string;
         status: string;

@@ -6,7 +6,6 @@ import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
-import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { toErrorMessage } from "@/app/lib/errors";
 import { formatDateTime } from "@/app/lib/formatTime";
@@ -61,7 +60,6 @@ function LinkedRepo({
   projectId: Id<"projects">;
   status: GitStatus;
 }): React.JSX.Element {
-  const { canWrite } = useOrgRole();
   const unlink = useMutation(api.github.unlinkRepo);
   const [confirming, setConfirming] = useState(false);
   const [isUnlinking, setIsUnlinking] = useState(false);
@@ -133,7 +131,7 @@ function LinkedRepo({
           . Merge it to deploy on push.
         </p>
       )}
-      {canWrite && (
+      {status.canLink && (
         <div>
           <Button
             variant="outline"

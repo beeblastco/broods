@@ -226,14 +226,19 @@ export async function listUserInstallations(
   app: GitHubApp,
   userToken: string,
 ): Promise<UserInstallation[]> {
-  const body = await githubRequest<{ installations: RawInstallation[] }>(
-    app,
-    userToken,
-    "GET",
-    "/user/installations?per_page=100",
-  );
+  const all: RawInstallation[] = [];
+  for (let page = 1; ; page += 1) {
+    const body = await githubRequest<{ installations: RawInstallation[] }>(
+      app,
+      userToken,
+      "GET",
+      `/user/installations?per_page=100&page=${page}`,
+    );
+    all.push(...body.installations);
+    if (body.installations.length < 100) break;
+  }
 
-  return body.installations.flatMap((installation) =>
+  return all.flatMap((installation) =>
     installation.account
       ? [
           {
@@ -594,68 +599,22 @@ export async function createRepo(
     private: repo.private,
     auto_init: true,
   });
-  // An install on selected repos does not reach a new one until it is added.
-  await githubRequest(
-    app,
-    userToken,
-    "PUT",
-    `/user/installations/${installation.installationId}/repositories/${created.id}`,
-  );
-  const files = await prepare(toRepo(installation.installationId, created));
-  const token = await installationToken(app, installation.installationId);
-  const fullName = created.full_name;
-  const branch = created.default_branch;
-  const head = await githubRequest<{ object: { sha: string } }>(
-    app,
-    token,
-    "GET",
-    `/repos/${fullName}/git/ref/heads/${encodeURIComponent(branch)}`,
-  );
-  const parent = await githubRequest<{ tree: { sha: string } }>(
-    app,
-    token,
-    "GET",
-    `/repos/${fullName}/git/commits/${head.object.sha}`,
-  );
-  const tree = await githubRequest<{ sha: string }>(
-    app,
-    token,
-    "POST",
-    `/repos/${fullName}/git/trees`,
-    {
-      base_tree: parent.tree.sha,
-      tree: Object.entries(files).map(([path, content]) => ({
-        path: path,
-        mode: "100644",
-        type: "blob",
-        content: content,
-      })),
-    },
-  );
-  const commit = await githubRequest<{ sha: string }>(
-    app,
-    token,
-    "POST",
-    `/repos/${fullName}/git/commits`,
-    {
-      message: "feat: start a Broods project",
-      tree: tree.sha,
-      parents: [head.object.sha],
-    },
-  );
-  await githubRequest(
-    app,
-    token,
-    "PATCH",
-    `/repos/${fullName}/git/refs/heads/${encodeURIComponent(branch)}`,
-    { sha: commit.sha },
-  );
-  await githubRequest(app, token, "POST", `/repos/${fullName}/git/refs`, {
-    ref: `refs/heads/${developmentBranch}`,
-    sha: commit.sha,
-  });
-
-  return toRepo(installation.installationId, created);
+  try {
+    return await startRepo(
+      app,
+      userToken,
+      installation,
+      created,
+      prepare,
+      developmentBranch,
+    );
+  } catch (error) {
+    // The repo exists now, and a retry with its name would be refused.
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new ClientError(
+      `Created ${created.full_name}, but setting it up failed (${reason}). Link it with Import repo once it has broods/, or delete it on GitHub and try again.`,
+    );
+  }
 }
 
 /** The files a new repo starts with: a `broods/` project that deploys green. */
@@ -953,6 +912,79 @@ async function setSecret(
     encrypted_value: sealSecret(key.key, value),
     key_id: key.key_id,
   });
+}
+
+// Everything after the repo exists: reach it, seal the keys, commit the starter, cut the development branch.
+async function startRepo(
+  app: GitHubApp,
+  userToken: string,
+  installation: UserInstallation,
+  created: RawRepo,
+  prepare: (created: GitHubRepo) => Promise<Record<string, string>>,
+  developmentBranch: string,
+): Promise<GitHubRepo> {
+  // An install on selected repos does not reach a new one until it is added.
+  await githubRequest(
+    app,
+    userToken,
+    "PUT",
+    `/user/installations/${installation.installationId}/repositories/${created.id}`,
+  );
+  const files = await prepare(toRepo(installation.installationId, created));
+  const token = await installationToken(app, installation.installationId);
+  const fullName = created.full_name;
+  const branch = created.default_branch;
+  const head = await githubRequest<{ object: { sha: string } }>(
+    app,
+    token,
+    "GET",
+    `/repos/${fullName}/git/ref/heads/${encodeURIComponent(branch)}`,
+  );
+  const parent = await githubRequest<{ tree: { sha: string } }>(
+    app,
+    token,
+    "GET",
+    `/repos/${fullName}/git/commits/${head.object.sha}`,
+  );
+  const tree = await githubRequest<{ sha: string }>(
+    app,
+    token,
+    "POST",
+    `/repos/${fullName}/git/trees`,
+    {
+      base_tree: parent.tree.sha,
+      tree: Object.entries(files).map(([path, content]) => ({
+        path: path,
+        mode: "100644",
+        type: "blob",
+        content: content,
+      })),
+    },
+  );
+  const commit = await githubRequest<{ sha: string }>(
+    app,
+    token,
+    "POST",
+    `/repos/${fullName}/git/commits`,
+    {
+      message: "feat: start a Broods project",
+      tree: tree.sha,
+      parents: [head.object.sha],
+    },
+  );
+  await githubRequest(
+    app,
+    token,
+    "PATCH",
+    `/repos/${fullName}/git/refs/heads/${encodeURIComponent(branch)}`,
+    { sha: commit.sha },
+  );
+  await githubRequest(app, token, "POST", `/repos/${fullName}/git/refs`, {
+    ref: `refs/heads/${developmentBranch}`,
+    sha: commit.sha,
+  });
+
+  return toRepo(installation.installationId, created);
 }
 
 function toBase64(bytes: Uint8Array): string {

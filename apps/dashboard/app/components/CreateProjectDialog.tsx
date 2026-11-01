@@ -29,7 +29,7 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { analytics } from "@/app/lib/analytics";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /** Generate a random project name like "bold-panda-427". */
 export async function randomProjectName(): Promise<string> {
@@ -72,6 +72,8 @@ export function CreateProjectDialog({
   const [source, setSource] = useState<Source>("empty");
   // The project a failed link or GitHub hop already made, reused on retry.
   const [createdId, setCreatedId] = useState<Id<"projects"> | null>(null);
+  // Advances on every close, so a GitHub hop that resolves after Cancel stays put.
+  const closes = useRef(0);
   const [repo, setRepo] = useState<RepoChoice | null>(null);
   const [owner, setOwner] = useState<string | null>(null);
   const [isPrivate, setIsPrivate] = useState(true);
@@ -104,6 +106,7 @@ export function CreateProjectDialog({
 
   function handleOpenChange(next: boolean): void {
     if (!next) {
+      closes.current += 1;
       setName("");
       setError(null);
       setSource("empty");
@@ -118,6 +121,7 @@ export function CreateProjectDialog({
     setIsCreating(true);
     setError(null);
     const endpoint = resolveCoreEndpoint();
+    const session = closes.current;
     try {
       if (source !== "empty" && !endpoint.ok) throw new Error(endpoint.message);
       const id =
@@ -142,7 +146,7 @@ export function CreateProjectDialog({
             baseUrl: baseUrl,
           },
         });
-        window.location.assign(url);
+        if (session === closes.current) window.location.assign(url);
 
         return;
       }

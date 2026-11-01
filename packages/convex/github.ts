@@ -23,7 +23,10 @@ import {
 } from "./_generated/server";
 import { authKit } from "./auth";
 import { insertDeployKey } from "./deployKeys";
-import { requireDashboardPermission } from "./model/access";
+import {
+  hasDashboardPermission,
+  requireDashboardPermission,
+} from "./model/access";
 import { randomToken } from "./model/accountSecrets";
 import { ensureStage } from "./model/cliSync";
 import { ClientError } from "./model/clientError";
@@ -103,6 +106,8 @@ const statusValidator = v.object({
   configured: v.boolean(),
   /** Whether the caller may connect GitHub accounts: an org admin. */
   canConnect: v.boolean(),
+  /** Whether the caller may link or unlink this project's repo (`keys:write`), or, with no project, create one (org admin). */
+  canLink: v.boolean(),
   /** GitHub's web root for repo links; absent without an App. */
   webUrl: v.optional(v.string()),
   installations: v.array(installationValidator),
@@ -138,6 +143,7 @@ interface WorkflowRunEvent {
   repository: { id: number };
   workflow_run: {
     id: number;
+    run_attempt?: number;
     path: string;
     head_branch: string;
     head_sha: string;
@@ -177,12 +183,16 @@ export const status = query({
     const empty = {
       configured: githubApp() !== null,
       canConnect: false,
+      canLink: false,
       webUrl: githubApp()?.webUrl,
       installations: [],
       deploys: [],
     };
     if (!member || !org) return empty;
     const membership = await getOrgMembership(ctx, org._id, member._id);
+    const isAdmin =
+      org.ownerAuthId === user.id ||
+      Boolean(membership && orgRoleMeets(membership.role, "admin"));
     const project = projectId ? await ctx.db.get(projectId) : null;
     const linked = project?.orgId === org._id ? project : null;
     const deploys = linked
@@ -196,9 +206,12 @@ export const status = query({
 
     return {
       ...empty,
-      canConnect:
-        org.ownerAuthId === user.id ||
-        Boolean(membership && orgRoleMeets(membership.role, "admin")),
+      canConnect: isAdmin,
+      canLink: linked
+        ? await hasDashboardPermission(ctx, org._id, member, "keys:write", {
+            projectId: linked._id,
+          })
+        : isAdmin,
       installations: (await orgInstallations(ctx, org._id)).map(toInstallation),
       repo: linked?.repo,
       deploys: deploys.map((deploy) => ({
@@ -520,6 +533,7 @@ export const webhook = httpAction(async (ctx, request): Promise<Response> => {
         repoId: payload.repository.id,
         branch: run.head_branch,
         runId: run.id,
+        runAttempt: run.run_attempt,
         sha: run.head_sha,
         status: run.status,
         conclusion: run.conclusion ?? undefined,
@@ -760,6 +774,7 @@ export const recordDeploy = internalMutation({
     repoId: v.number(),
     branch: v.string(),
     runId: v.number(),
+    runAttempt: v.optional(v.number()),
     sha: v.string(),
     status: v.string(),
     conclusion: v.optional(v.string()),
@@ -778,8 +793,7 @@ export const recordDeploy = internalMutation({
           q.eq("projectId", project._id).eq("branch", run.branch),
         )
         .unique();
-      // GitHub may deliver an older run's event after a newer one.
-      if (row && row.runId > run.runId) continue;
+      if (row && isStaleRun(row, run)) continue;
       const fields = { ...run, projectId: project._id, updatedAt: Date.now() };
       if (row) await ctx.db.replace(row._id, fields);
       else await ctx.db.insert("githubDeploys", fields);
@@ -868,6 +882,23 @@ async function clearLink(
     .collect();
   for (const deploy of deploys) await ctx.db.delete(deploy._id);
   await ctx.db.patch(project._id, { repo: undefined, updatedAt: Date.now() });
+}
+
+/**
+ * Whether a delivery is older than the stored run: an earlier run, an earlier
+ * attempt of the same run, or a late in-progress event for an attempt that
+ * already finished. A rerun is a higher attempt, so it shows while it runs.
+ */
+function isStaleRun(
+  row: Doc<"githubDeploys">,
+  run: { runId: number; runAttempt?: number; status: string },
+): boolean {
+  if (row.runId !== run.runId) return row.runId > run.runId;
+  const stored = row.runAttempt ?? 0;
+  const incoming = run.runAttempt ?? 0;
+  if (stored !== incoming) return stored > incoming;
+
+  return row.status === "completed" && run.status !== "completed";
 }
 
 // A dashboard path, or undefined when a URL parser resolves it to another origin (`//x`, `/\\x`).
@@ -1007,11 +1038,13 @@ async function setUpRepo(
   );
   const root = roots.find(
     (entry) => entry.rootDirectory === target.rootDirectory,
-  ) ?? {
-    rootDirectory: target.rootDirectory,
-    installDirectory: target.rootDirectory,
-    manager: "npm" as const,
-  };
+  );
+  // A workflow for a folder with no broods/ would fail every push.
+  if (!root) {
+    throw new ClientError(
+      `${repo.fullName} has no broods/ in ${target.rootDirectory || "its root"} on ${repo.defaultBranch}.`,
+    );
+  }
   const developmentBranch =
     target.developmentBranch?.trim() || DEFAULT_DEVELOPMENT_BRANCH;
   // On one branch every push would go to Production and Development would never deploy.
