@@ -41,6 +41,14 @@ const COUNTER_BUNDLE = [
   `};`,
 ].join("\n");
 
+// Without the Lambda vars the handler never reaps strays, so a shell that
+// exported them cannot arm the reaper against this machine's processes.
+const {
+  AWS_LAMBDA_FUNCTION_NAME: _functionName,
+  AWS_EXECUTION_ENV: _executionEnv,
+  ...hostEnv
+} = process.env;
+
 // One driver process invokes the handler once per event, the way a warm
 // Lambda environment serializes invocations, and reports each invocation's
 // NDJSON alongside how many times the bundle was actually fetched.
@@ -104,7 +112,7 @@ async function invokeSequence(
     const result = await new Promise<{ runs: string[] }>((resolve, reject) => {
       const child = spawn("node", [driver], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, ...parentEnv },
+        env: { ...hostEnv, ...parentEnv },
       });
       let out = "";
       let err = "";
