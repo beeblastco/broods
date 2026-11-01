@@ -54,6 +54,8 @@ tpm_engine = per_minute(final, "workerd+native")
 tpm_today_shell = per_minute(final, "bun+native")
 tpm_warm_only = per_minute(levers, "isolate+v8-warm")
 tpm_shell_only = per_minute(levers, "isolate+v8-slim-native")
+tpm_same_run_old = per_minute(levers, "isolate+v8-slim")
+tpm_both_no_queue = per_minute(levers, "isolate+v8-warm-native")
 
 cpu_last = cpu_per_task(old, "isolate+v8-slim")
 cpu_now = cpu_per_task(final, "isolate+v8-fast")
@@ -74,6 +76,8 @@ start_slim = cold["slim core, fresh isolate per request"]["p50Ms"] / 1000
 real = [r for r in rows("real-fast.jsonl") if r.get("kind") == "batch"]
 real_today = statistics.median(t for r in real if r["label"].startswith("bun+machine") for t in r["taskMs"]) / 1000
 real_now = statistics.median(t for r in real if r["label"].startswith("isolate") for t in r["taskMs"]) / 1000
+earlier = [r for r in rows("real-slim.jsonl") if r.get("kind") == "batch" and r["label"].startswith("bun+machine")]
+real_today_earlier = statistics.median(t for r in earlier for t in r["taskMs"]) / 1000
 real_passed = sum(r["ok"] for r in real)
 real_total = sum(r["level"] for r in real)
 analysis = json.loads((RESULTS / "real-fast.analysis.json").read_text())
@@ -131,7 +135,7 @@ IDEA = (
         arrow(85 + i * 155, 42, 62)
         + f'<rect x="{15 + i * 155}" y="62" width="140" height="64" rx="8" class="worker"/>'
         + t(85 + i * 155, 89, f"agent {'ABC'[i]}", "t b")
-        + t(85 + i * 155, 112, "own worker, kept ready", "t s")
+        + t(85 + i * 155, 112, "own worker, ready", "t s")
         for i in range(3)
     )
     + '<rect x="15" y="136" width="450" height="40" rx="8" class="shared"/>'
@@ -248,7 +252,7 @@ page = f"""<title>Broods task isolates</title>
 <h1>Your idea: one small worker per task</h1>
 <div class="answer">
 <p>Yes, it got a lot faster: {speedup:.1f} times faster than last time.</p>
-<p>With 10 users at once it keeps up with today ({share_10 * 100:.0f}% of today's speed); with 20 users it does {share_20 * 100:.0f}%. Put today's server on the same sandbox and your idea is only {same_sandbox_gap * 100:.0f}% behind it. With the real AI model a task takes {real_now:.0f} s, against {real_today:.0f} s today.</p>
+<p>With 10 users at once it is close to today ({share_10 * 100:.0f}% of today's speed); with 20 users it does {share_20 * 100:.0f}%. On the same sandbox as today's server it is only {same_sandbox_gap * 100:.0f}% behind. With the real AI model the two are now level.</p>
 </div>
 </section>
 
@@ -263,9 +267,9 @@ page = f"""<title>Broods task isolates</title>
 <ol>
 <li><strong>Keep each agent's worker ready.</strong> Before, every task started a new worker from zero ({start_slim:.2f} s of work each time). Now each agent gets its own worker, which stays ready for that agent's next task. Computer time per task went from {cpu_last:.0f} ms to {cpu_now:.0f} ms.</li>
 <li><strong>Run commands in a real shell.</strong> The old sandbox imitated bash in JavaScript. A real shell does the same commands with {sbx_js / sbx_shell:.0f} times less computer time ({sbx_js:.0f} ms down to {sbx_shell:.0f} ms per task).</li>
-<li><strong>One shared line for usage writes.</strong> When many workers finished at once, they fought over the same usage record and up to {lost_before * 100:.0f}% of the usage rows were lost. Now they queue for it, and {kept_now * 100:.0f}% of rows arrive, with no speed cost.</li>
+<li><strong>One shared line for usage writes.</strong> When many workers finished at once, they fought over the same usage record and about {lost_before * 100:.0f}% of the usage rows were lost at 20 users. Now they queue for it and every row arrives ({kept_now * 100:.0f}%), at the same speed.</li>
 </ol>
-<p>Each change helps on its own (keeping workers ready: {tpm_warm_only:.0f} a minute; real shell: {tpm_shell_only:.0f}), but only together do they get close to today.</p>
+<p>In one test run with 20 users, the old setup did {tpm_same_run_old:.0f} tasks a minute. Keeping workers ready alone gave {tpm_warm_only:.0f}, the real shell alone {tpm_shell_only:.0f}, and both together {tpm_both_no_queue:.0f}.</p>
 </section>
 
 <section>
@@ -280,7 +284,7 @@ page = f"""<title>Broods task isolates</title>
 <h2>Why 20 users is still a bit slower</h2>
 <p>Mostly the sandbox route, not your idea. I ran two checks on the same real-shell sandbox, with 20 users:</p>
 <ul>
-<li>Today's server: {tpm_today_shell:.0f} tasks a minute, down from {tpm_today:.0f}. Reaching a sandbox this way costs {convex_shell - convex_today:.0f} more database calls per task to book it.</li>
+<li>Today's server: {tpm_today_shell:.0f} tasks a minute, against {tpm_today:.0f} with the always-connected test machine it normally uses here. Reaching a sandbox this way costs {convex_shell - convex_today:.0f} more database calls per task to book it.</li>
 <li>One always-on copy of the worker engine, with no per-agent workers: {tpm_engine:.0f}.</li>
 <li>Your idea, one worker per agent: {tpm_now:.0f}.</li>
 </ul>
@@ -302,7 +306,7 @@ page = f"""<title>Broods task isolates</title>
 <div class="num"><b>{real_today:.0f} s</b><span>per task today</span></div>
 <div class="num"><b>{real_now:.0f} s</b><span>per task with your idea, now</span></div>
 </div>
-<p>About {model_share * 100:.0f}% of every task is waiting for the AI to answer, and the AI is almost the whole bill (about ${usd_per_task:.3f} per task).</p>
+<p>Call this a tie, not a win: the AI's own speed swings more than the gap from run to run (today took {real_today_earlier:.0f} s in my last test), and in these runs the AI happened to write a bit less. About {model_share * 100:.0f}% of every task is waiting for the AI to answer, and the AI is almost the whole bill (about ${usd_per_task:.3f} per task).</p>
 </section>
 
 <section>
