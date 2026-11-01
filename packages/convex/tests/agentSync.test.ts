@@ -220,7 +220,7 @@ describe("backSyncCanvasFromAgentRow", () => {
     });
   });
 
-  test("no-ops for an account whose org has not been adopted yet", async () => {
+  test("no-ops for an account bound to no org", async () => {
     const tt = t();
     const accountId = await tt.run(
       async (ctx) =>
@@ -236,53 +236,8 @@ describe("backSyncCanvasFromAgentRow", () => {
 
     const agentId = await createAgent(tt, accountId, "agent-one");
 
-    // The agent still exists and runs; it just has no project. This is the
-    // state the two pre-adoption dev agents were in.
+    // The agent still exists and runs; it just has no project.
     expect(await configFor(tt, agentId)).toBeNull();
-  });
-
-  test("an agent recreated after adoption lands in the project", async () => {
-    const tt = t();
-    const accountId = await tt.run(
-      async (ctx) =>
-        await ctx.db.insert("accounts", {
-          orgId: "external:service-dev",
-          username: "service-dev",
-          secretHash: "hash-x",
-          status: "active" as const,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        }),
-    );
-    const stranded = await createAgent(tt, accountId, "agent-one");
-    expect(await configFor(tt, stranded)).toBeNull();
-
-    // Adopt the account, then delete and re-create the agent the way the
-    // owning app's sync does when it finds its agent gone.
-    const { orgId } = await seedOrg(tt, {
-      orgName: "beeblast",
-      slug: "beeblast",
-      username: "placeholder",
-      email: "owner@example.com",
-    });
-    await tt.run(async (ctx) => {
-      const placeholder = await ctx.db
-        .query("accounts")
-        .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-        .unique();
-      await ctx.db.delete(placeholder!._id);
-      await ctx.db.patch(accountId, { orgId: orgId });
-      await ctx.db.delete(stranded);
-    });
-
-    const recreated = await createAgent(tt, accountId, "agent-one");
-
-    const config = await configFor(tt, recreated);
-    expect(config).not.toBeNull();
-    await tt.run(async (ctx) => {
-      const project = await ctx.db.get(config!.projectId);
-      expect(project?.orgId).toBe(orgId);
-    });
   });
 });
 

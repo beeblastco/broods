@@ -5503,12 +5503,6 @@ export declare const internal: {
   };
   org: {
     orgs: {
-      adoptExternalAccount: FunctionReference<
-        "mutation",
-        "internal",
-        { accountId: Id<"accounts">; orgName: string; ownerEmail: string },
-        { membershipId: Id<"orgMembers">; orgId: Id<"orgs">; slug: string }
-      >;
       getByIdForKeyWriter: FunctionReference<
         "query",
         "internal",
