@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import {
-  installedPackage,
+  isInstalledPackage,
   isNewerVersion,
   updateTarget,
 } from "../src/cli/update.ts";
@@ -180,12 +180,12 @@ test("a pnpm workspace updates the root dependency from the root", async () => {
 
 test("only an installed copy, not a monorepo build, counts as a release", () => {
   expect(
-    installedPackage(
+    isInstalledPackage(
       join(sep, "app", "node_modules", "broods", "dist", "cli", "index.js"),
     ),
   ).toBe(true);
   expect(
-    installedPackage(
+    isInstalledPackage(
       join(sep, "repo", "packages", "broods", "dist", "cli", "index.js"),
     ),
   ).toBe(false);
