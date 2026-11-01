@@ -45,6 +45,19 @@ Two levers on top of the slim core, each switchable on its own:
   makes `run-isolate.sh` start it on 8791; in `run-real.sh` an
   `isolate:native` arm does the same.
 
+- **One shared queue for usage writes.** Every finished run writes its usage
+  and its `run.completed` audit row in one Convex mutation that moves the
+  account's audit chain head. Today's core sends those from one queued
+  ConvexHttpClient; separate task workers race on the head and Convex drops
+  the losers (up to a quarter of the rows at 20 users with the fast sandbox).
+  `slimFastConfig` (4361) is `slimWarmConfig` plus `per-task/write-queue.js`
+  as every task worker's outbound fetch: one shared worker that sends
+  `usage:recordTaskUsage` one at a time and passes everything else through.
+
+`restart-cores.sh` with `SANDBOX_PORT=8791` points both long-lived cores at the
+real-shell sandbox, and `run-scripted.sh` then takes `bun:native` and
+`workerd:native` arms, the controls for how much of the gap is the sandbox.
+
 `WARMUP_EACH=1` (all three run scripts) runs one task per agent before the
 timed rounds, so a warm worker is measured warm; without it the first task of
 each agent pays the load.

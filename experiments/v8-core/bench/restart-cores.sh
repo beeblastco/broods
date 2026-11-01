@@ -11,7 +11,8 @@ if [ -n "$old" ]; then
   kill $old
   while pgrep -f "^bun (--preload \S+ )?src/server.ts|[v]8-core/workerd.capnp config" >/dev/null; do sleep 0.2; done
 fi
-export CLOUDFLARE_WORKER_URL=http://127.0.0.1:8790
+# SANDBOX_PORT=8791 points both cores at bench/native-sandbox.ts instead of the V8 sandbox.
+export CLOUDFLARE_WORKER_URL=http://127.0.0.1:${SANDBOX_PORT:-8790}
 CLOUDFLARE_WORKER_API_KEY=$(cat "$logs/worker-sandbox.key")
 export CLOUDFLARE_WORKER_API_KEY
 nohup "$here/start-bun.sh" 4301 bench-bun > "$logs/bun-core$suffix.log" 2>&1 &

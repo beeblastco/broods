@@ -10,7 +10,8 @@
 set -euo pipefail
 out=$1 logs=$2 rounds=$3 levels=$4
 # PER_TASK_CONFIG=slimConfig runs the isolate arm on the SLIM=1 bundle (dist-slim/);
-# slimWarmConfig keeps one loaded worker per agent. An arm "isolate:native"
+# slimWarmConfig keeps one loaded worker per agent, and slimFastConfig adds one
+# shared queue for their Convex writes. An arm "isolate:native"
 # uses bench/native-sandbox.ts (real bash, same HTTP API) on 8791.
 config=${PER_TASK_CONFIG:-perTaskConfig}
 : "${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY}"
@@ -41,10 +42,10 @@ restart_sandbox() {
 }
 restart_router() {
   local old
-  old=$(pgrep -f "[v]8-core/workerd.capnp (perTaskConfig|slimConfig|slimWarmConfig)" || true)
+  old=$(pgrep -f "[v]8-core/workerd.capnp [a-zA-Z]+Config" || true)
   if [ -n "$old" ]; then
     kill $old
-    while pgrep -f "[v]8-core/workerd.capnp (perTaskConfig|slimConfig|slimWarmConfig)" >/dev/null; do sleep 0.2; done
+    while pgrep -f "[v]8-core/workerd.capnp [a-zA-Z]+Config" >/dev/null; do sleep 0.2; done
   fi
   CLOUDFLARE_WORKER_URL=http://127.0.0.1:$sandbox_port CLOUDFLARE_WORKER_API_KEY=$(cat "$logs/worker-sandbox.key") \
     BENCH_SCRIPTED_MODEL=0 BENCH_MODEL_DELAY_MS=0 \

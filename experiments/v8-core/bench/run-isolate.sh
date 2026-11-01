@@ -4,7 +4,8 @@
 # workerd keeps each uniquely named loaded worker (about 110 MB apiece) and was
 # not seen to evict any, so without a restart memory grows by the task count.
 # PER_TASK_CONFIG=slimConfig runs the SLIM=1 bundle (dist-slim/) instead;
-# slimWarmConfig keeps one loaded worker per agent. SANDBOX=native swaps the
+# slimWarmConfig keeps one loaded worker per agent, and slimFastConfig adds
+# one shared queue for their Convex writes. SANDBOX=native swaps the
 # V8 sandbox for bench/native-sandbox.ts (real bash, same HTTP API) on 8791.
 # Usage: [LOG_SUFFIX=-iso] [PER_TASK_CONFIG=...] run-isolate.sh <out.jsonl> <log-dir> <rounds> <levels> [label-suffix]
 # Expects core on Bun (4301) up with BENCH_SCRIPTED_MODEL=1 logging to
@@ -39,10 +40,10 @@ restart_sandbox() {
 }
 restart_router() {
   local old
-  old=$(pgrep -f "[v]8-core/workerd.capnp (perTaskConfig|slimConfig|slimWarmConfig)" || true)
+  old=$(pgrep -f "[v]8-core/workerd.capnp [a-zA-Z]+Config" || true)
   if [ -n "$old" ]; then
     kill $old
-    while pgrep -f "[v]8-core/workerd.capnp (perTaskConfig|slimConfig|slimWarmConfig)" >/dev/null; do sleep 0.2; done
+    while pgrep -f "[v]8-core/workerd.capnp [a-zA-Z]+Config" >/dev/null; do sleep 0.2; done
   fi
   export CLOUDFLARE_WORKER_URL=http://127.0.0.1:8790
   if [ "${SANDBOX:-v8}" = native ]; then CLOUDFLARE_WORKER_URL=http://127.0.0.1:8791; fi

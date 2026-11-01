@@ -9,6 +9,9 @@
  * that already has a loaded worker reuses it, so only an agent's first task
  * pays the load. The agent comes from the run request's JSON body; anything
  * else (health checks, callbacks) gets a fresh worker as before.
+ *
+ * An OUTBOUND service binding becomes every loaded worker's outbound fetch,
+ * so one shared worker (per-task/write-queue.js) can queue their writes.
  */
 
 import BUNDLE from "bundle";
@@ -58,7 +61,7 @@ async function agentOf(request) {
 export default {
   fetch: async function (request, env) {
     loaded += 1;
-    const { LOADER, ROUTER_KEY, ...vars } = env;
+    const { LOADER, ROUTER_KEY, OUTBOUND, ...vars } = env;
     const agent = ROUTER_KEY === "agent" ? await agentOf(request) : undefined;
     const id = agent
       ? `agent-${agent}`
@@ -69,6 +72,7 @@ export default {
       mainModule: "entry.js",
       modules: { "entry.js": BUNDLE },
       env: { ...vars, SERVICE_NAME: `${vars.SERVICE_NAME}-${loaded}` },
+      ...(OUTBOUND ? { globalOutbound: OUTBOUND } : {}),
     }));
     const response = await worker.getEntrypoint().fetch(request);
     const headers = new Headers(response.headers);
