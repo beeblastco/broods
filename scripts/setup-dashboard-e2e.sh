@@ -239,7 +239,7 @@ stage "WorkOS staging: create the probe user"
 say "A dedicated user, not a personal one: its password lives in GitHub."
 open_url "https://dashboard.workos.com/"
 step "User Management → Users → Create user."
-step "Email: the shared probe, cloud-agent@beeblast.co."
+step "Email: something like cloud-agent@beeblast.co (a mailbox you can open once)."
 step "Set a password. If the form offers 'email verified', tick it; otherwise"
 step "  open the verification email WorkOS sends before the next stage."
 step "Do not add the user to an organization: the first sign-in creates its own org,"
@@ -255,6 +255,8 @@ say "app suite. It proves the account before anything goes to GitHub."
 if confirm "Run bun run test:app against $DEV_DASHBOARD now?"; then
   if (cd "$REPO_ROOT/apps/dashboard" && E2E_BASE_URL="$DEV_DASHBOARD" bun run test:app); then
     say "${GREEN}Suite passed.${RESET}"
+    # CI drives this project, not whichever one home opens (it opens the latest).
+    step "Pin it for CI: gh variable set DASHBOARD_E2E_PROJECT_ID --env development --body $(cat "$REPO_ROOT/apps/dashboard/e2e/.auth/project.txt")"
   else
     warn "Suite failed. Check the login (password auth, verified email) before continuing."
   fi
@@ -290,16 +292,14 @@ pause
 
 stage "GitHub 'production' environment: optional"
 say "After a main rollout the suites run against dashboard.broods.app, which"
-say "signs in through the WorkOS Production environment: a separate user."
-if confirm "Create a production probe now?"; then
+say "signs in through the WorkOS Production environment: the same probe, made again there."
+if confirm "Create the probe in production now?"; then
   open_url "https://dashboard.workos.com/"
-  step "Switch the environment to Production, then User Management → Users → Create user,"
-  step "  the same way as staging."
+  step "Switch the environment to Production, then User Management → Users → Create user"
+  step "  with the same email and password as staging."
   step "Radar → Restrictions: allow that email. Production shows CI a bot check otherwise."
-  ask PROD_E2E_EMAIL "Production probe email:"
-  ask_secret PROD_E2E_PASSWORD "Production probe password:"
-  set_env_secret production DASHBOARD_E2E_EMAIL "$PROD_E2E_EMAIL"
-  set_env_secret production DASHBOARD_E2E_PASSWORD "$PROD_E2E_PASSWORD"
+  set_env_secret production DASHBOARD_E2E_EMAIL "$E2E_EMAIL"
+  set_env_secret production DASHBOARD_E2E_PASSWORD "$E2E_PASSWORD"
 else
   note "Skipped. The 'deployed' job on main fails on its first step until these exist."
 fi

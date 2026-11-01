@@ -66,6 +66,7 @@ import {
 } from "../runtime-config.ts";
 import {
   fetchObservabilityTrace,
+  StageSessionRefusedError,
   subscribeObservabilityLogs,
   type ObservabilityClientOptions,
 } from "../observability-client.ts";
@@ -1464,12 +1465,17 @@ async function dev(args: string[]): Promise<void> {
   // the developer sees activity while editing. Tried after each sync until the
   // stream opens: a new stage has no deployment, so no logs, before one lands.
   const logController = new AbortController();
-  let logs: "off" | "opening" | "on" = "off";
+  let logs: "off" | "on" | "failed" = "off";
+  let hinted = false;
   const startLogs = (): void => {
     if (logs !== "off") return;
-    logs = "opening";
-    void streamDevLogs(args, logController.signal).then((opened) => {
-      logs = opened ? "on" : "off";
+    logs = "on";
+    void streamDevLogs(args, logController.signal).then((outcome) => {
+      if (outcome === "refused" && !hinted) {
+        hinted = true;
+        console.log("· live logs start after the first sync lands.");
+      }
+      logs = outcome === "failed" ? "failed" : "off";
     });
   };
   let lastSyncFailed = false;
@@ -1528,26 +1534,24 @@ async function dev(args: string[]): Promise<void> {
   });
 }
 
-// Live-tail logs during `dev`, mirroring `convex dev`. Best-effort: if the
-// stage has no deployment yet, print a hint and return false rather than
-// breaking the watch loop, so the caller tries again after the next sync.
+// Live-tail logs during `dev`, mirroring `convex dev`. Best-effort, so it never
+// breaks the watch loop: "refused" when the stage has no deployment (or no
+// access) yet and "dropped" when the stream died, both worth another try
+// after the next sync; "failed" for anything else, already printed.
 async function streamDevLogs(
   args: string[],
   signal: AbortSignal,
-): Promise<boolean> {
+): Promise<"refused" | "dropped" | "failed"> {
   let session: ObservabilityClientOptions;
   try {
     session = await openStageSession(args);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    // A stage before its first sync: logs start once one lands.
+    if (error instanceof StageSessionRefusedError) return "refused";
     console.log(
-      message.includes("has no deployment")
-        ? "· live logs start after the first sync lands."
-        : `· live logs off. ${message}`,
+      `· live logs off. ${error instanceof Error ? error.message : String(error)}`,
     );
 
-    return false;
+    return "failed";
   }
 
   const minLevel = resolveMinLevel(args);
@@ -1569,7 +1573,7 @@ async function streamDevLogs(
     }
   }
 
-  return true;
+  return "dropped";
 }
 
 async function ensureDevOnboarding(args: string[]): Promise<void> {
@@ -2048,8 +2052,8 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
         new Error(
           // The child already printed why; say what happens next.
           signal
-            ? `Sync stopped (${signal}). Watching for changes: save a file to retry.`
-            : "Sync failed. Watching for changes: fix it and save a file to retry.",
+            ? `Sync stopped (${signal}). Watching for changes: save a file in broods/ to retry.`
+            : "Sync failed. Watching for changes: fix it, then save a file in broods/ to retry.",
         ),
       );
     });

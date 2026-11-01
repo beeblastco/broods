@@ -269,7 +269,11 @@ export async function promptSecret(
       if (terminal) break;
     }
     const value = lines.join("\n");
-    if (!value && !options.optional) throw new Error(`${label} is required`);
+    // An optional prompt takes an empty line as "skip"; input that ends
+    // without one (Ctrl+D, Ctrl+C) still stops, so a user can always abort.
+    if (!value && (!options.optional || lines.length === 0)) {
+      throw new Error(`${label} is required`);
+    }
 
     return value;
   } finally {
