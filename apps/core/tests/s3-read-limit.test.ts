@@ -1,8 +1,3 @@
-/**
- * readS3Bytes' byte limit and readS3TextHead's ranged read against the real
- * S3 client.
- */
-
 import { S3Client } from "@aws-sdk/client-s3";
 import { expect, mock, spyOn, test } from "bun:test";
 import { readS3Bytes, readS3TextHead } from "../src/shared/s3.ts";

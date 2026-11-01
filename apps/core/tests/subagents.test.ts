@@ -37,7 +37,6 @@ interface TestCompletion {
   visibleResult?: unknown;
 }
 
-// The two streamText callbacks the ephemeral test drives.
 interface StreamTextStandInOptions {
   prepareStep(args: {
     messages: ModelMessage[];
@@ -135,12 +134,10 @@ describe("SubagentCoordinator", () => {
       }
 
       expect(task.taskId.startsWith("subagent~")).toBe(true);
-      // A persistent virtual child is named by its key, not its task.
       const keyUuid = /^subagent-persistent-([0-9a-f-]{36})-/.exec(
         task.conversationKey,
       )?.[1];
       expect(task.agentId).toBe(`virtual_subagent_${keyUuid}`);
-      // The dispatch hands the parent a run id, not the task's own event id.
       expect(task.statusPath).toMatch(/^\/v1\/runs\/run_[0-9a-f]{32}$/);
       expect(timeline.slice(0, 3)).toEqual([
         "persist:createAsyncAgentResult",
@@ -414,7 +411,6 @@ describe("SubagentCoordinator", () => {
     expect(coordinator.pendingCount).toBe(0);
 
     expect(coordinator.drainCompletionsToParent()).resolves.toBe(2);
-    // Both results go in one transcript write.
     expect(persistModelMessages).toHaveBeenCalledTimes(1);
     const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
     expect(messages).toHaveLength(2);
@@ -530,7 +526,6 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
     internals.completions.push(completion("subagent_1", "finished"));
 
-    // A step boundary's write: the next step retries what it did not save.
     expect(coordinator.takeParentMessages()).rejects.toThrow("convex down");
     expect(coordinator.takeParentMessages()).resolves.toHaveLength(1);
     expect(messageText(persistModelMessages.mock.calls[1]?.[0]?.[0])).toContain(
@@ -568,7 +563,6 @@ describe("SubagentCoordinator", () => {
     internals.completions.push(completion("subagent_1", "first"));
     internals.completions.push(completion("subagent_2", "second"));
 
-    // A step boundary's write: the next step retries what it did not save.
     expect(coordinator.takeParentMessages()).rejects.toThrow("convex down");
     expect(persistModelMessages.mock.calls[0]?.[0]).toHaveLength(2);
     expect(coordinator.takeParentMessages()).resolves.toHaveLength(1);
@@ -652,7 +646,6 @@ describe("SubagentCoordinator", () => {
         _onSaved?: (saved: number) => void,
       ): Promise<never[]> => [],
     );
-    // The expiry write saves its first append, then fails.
     persistModelMessages.mockImplementationOnce(
       async (_messages, onSaved): Promise<never[]> => {
         onSaved?.(1);
@@ -697,15 +690,13 @@ describe("SubagentCoordinator", () => {
           .drainCompletionsAndDetachToParent()
           .catch((error: unknown): string => String(error)),
       ).toBe("Error: convex down");
-      // The still-running child reports back on its own when it finishes.
       await coordinator["completeTask"]({
         ...running,
         status: "completed",
         response: "late report",
       });
 
-      // No pass drains after the expiry write: every result not saved reaches
-      // the parent as its own turn, once, fenced by its own result row.
+      // No pass drains after the expiry write: each unsaved result resumes the parent once.
       expect(
         resumeParent.mock.calls.map(
           ([parent, taskId, message, resultEventId]) => [
@@ -720,7 +711,6 @@ describe("SubagentCoordinator", () => {
         [true, "subagent_3", "event_subagent_3", "unsaved failure"],
         [true, "subagent_4", "event_subagent_4", "late report"],
       ]);
-      // Each unsaved result is left for the recovery sweep should its resume fail.
       for (const eventId of ["event_subagent_2", "event_subagent_3"]) {
         expect(mutate).toHaveBeenCalledWith("markAsyncAgentHandback", {
           eventId: eventId,
@@ -731,7 +721,6 @@ describe("SubagentCoordinator", () => {
         eventId: "event_subagent_1",
         handback: "detached",
       });
-      // Nothing is left queued to be written or resumed again.
       expect(await coordinator.drainCompletionsToParent()).toBe(0);
       expect(persistModelMessages).toHaveBeenCalledTimes(1);
     } finally {
@@ -766,7 +755,6 @@ describe("SubagentCoordinator", () => {
       status: "completed",
       response: "idle report",
     });
-    // A child that asked a question and is still working.
     const asking = {
       taskId: "subagent_2",
       eventId: "event_subagent_2",
@@ -783,9 +771,7 @@ describe("SubagentCoordinator", () => {
           .drainCompletionsToParent()
           .catch((error: unknown): string => String(error)),
       ).toBe("Error: convex down");
-      // No pass follows to answer the question it did not save.
       expect(await question).toBeNull();
-      // The working child is detached, so its result resumes the parent too.
       await coordinator["completeTask"]({
         ...asking,
         status: "completed",
@@ -837,8 +823,6 @@ describe("SubagentCoordinator", () => {
     process.on("unhandledRejection", onUnhandled);
 
     try {
-      // Only the append's own error surfaces; the detach write and the
-      // refused resume are logged and swallowed.
       expect(
         await coordinator
           .drainCompletionsToParent()
@@ -853,7 +837,6 @@ describe("SubagentCoordinator", () => {
       ]);
       expect(resumeParent).toHaveBeenCalledTimes(1);
       expect(unhandled).toEqual([]);
-      // Nothing is left queued here: the row, still pending, is the sweep's.
       expect(await coordinator.drainCompletionsToParent()).toBe(0);
     } finally {
       process.off("unhandledRejection", onUnhandled);
@@ -878,8 +861,6 @@ describe("SubagentCoordinator", () => {
           finish = resolve;
         }),
     );
-    // The child finishes, and leaves the coordinator, while the detach awaits
-    // its hand-back write.
     const mutate = spyOn(runtime, "mutate").mockImplementation(
       async (name): Promise<true> => {
         if (name === "markAsyncAgentHandback") {
@@ -991,7 +972,6 @@ describe("SubagentCoordinator", () => {
     try {
       expect(await coordinator.drainCompletionsAndDetachToParent()).toBe(1);
       expect(coordinator.pendingCount).toBe(0);
-      // The parent's run still ends waiting on it.
       expect(coordinator.runningCount).toBe(1);
 
       await coordinator["completeTask"]({ ...late, status: "completed" });
@@ -1005,7 +985,6 @@ describe("SubagentCoordinator", () => {
       expect(resultEventId).toBe(late.eventId);
       expect(messageText(message)).toContain("status: completed");
       expect(messageText(message)).toContain("the late answer");
-      // Nothing queues for a parent pass that will never drain it.
       expect(await coordinator.drainCompletionsToParent()).toBe(0);
     } finally {
       mutate.mockRestore();
@@ -1036,12 +1015,10 @@ describe("SubagentCoordinator", () => {
     }
 
     try {
-      // The first turn's result goes in; the same task then drains a follow-up.
       await coordinator["completeTask"]({ ...answered, status: "completed" });
       expect(await coordinator.drainCompletionsToParent()).toBe(1);
       await coordinator.drainCompletionsAndDetachToParent();
 
-      // Only the child the parent has nothing from is left to the sweep.
       expect(markHandback.mock.calls).toEqual([["event_2", "detached"]]);
     } finally {
       markHandback.mockRestore();
@@ -1094,9 +1071,7 @@ describe("SubagentCoordinator", () => {
       },
     });
     const info = spyOn(log, "logInfo");
-    // The first conversation's queue is full on the first pass, and on the
-    // second its resume is a duplicate of one still queued, which stores the
-    // row when applied or is admitted again once it expired.
+    // The first row is refused for capacity, then as a duplicate of a resume still queued.
     const refusals: SubagentResumeOutcome[] = ["capacity", "duplicate"];
     const resumed: Array<{ eventId: string; message: string }> = [];
     const resumeParent = async (
@@ -1131,14 +1106,12 @@ describe("SubagentCoordinator", () => {
       expect(resumed).toHaveLength(1);
       await resumeLostSubagentResults(lostParent, resumeParent);
 
-      // The retry carries the first pass's rewrite; the hook ran once a row.
       expect(hookRuns).toBe(2);
       expect(resumed[1]).toEqual({
         eventId: lostRow("event_full").eventId,
         message: expect.stringContaining("rewritten 1"),
       });
       expect(markHandback).not.toHaveBeenCalled();
-      // A resume is logged only once a conversation admitted it.
       expect(
         info.mock.calls.filter(
           ([message]): boolean =>
@@ -1227,8 +1200,7 @@ describe("SubagentCoordinator", () => {
     const now = Date.now();
     const minutes = (count: number): string =>
       new Date(now - count * 60 * 1000).toISOString();
-    // Both rows finished with no run detaching them. The young one's parent
-    // may still be draining it; the old one has no live parent run left.
+    // Neither row was detached; only the young one's parent may still be draining it.
     const rows: AsyncAgentResultRecord[] = [
       { ...lostRow("event_young"), handback: "pending", updatedAt: minutes(5) },
       { ...lostRow("event_old"), handback: "pending", updatedAt: minutes(30) },
@@ -1291,14 +1263,11 @@ describe("SubagentCoordinator", () => {
 
       expect(resumed).toEqual([lostRow("event_old").eventId]);
       expect(markHandback).not.toHaveBeenCalled();
-      // A pending result waits out the parent's whole hold, longer than the
-      // grace a detached one gets.
       const before = (handback: SweptHandback): string =>
         windows.find((window): boolean => window.handback === handback)!
           .updatedBefore;
       expect(before("pending") < before("detached")).toBe(true);
       expect(before("pending") < minutes(15)).toBe(true);
-      // Each one is counted: a parent run dropped it without a trace.
       expect(
         info.mock.calls
           .filter(
@@ -1324,8 +1293,7 @@ describe("SubagentCoordinator", () => {
     const now = Date.now();
     const minutes = (count: number): string =>
       new Date(now - count * 60 * 1000).toISOString();
-    // Both parents and their pod died before any detach: the young child may
-    // still be running on its budget, the old one cannot be.
+    // Parents and pod died before any detach; only the young child may still be running.
     const rows: AsyncAgentResultRecord[] = [
       {
         ...lostRow("event_young"),
@@ -1397,13 +1365,11 @@ describe("SubagentCoordinator", () => {
         },
       );
 
-      // The pending window covers processing rows like the others.
       expect(windows).toContainEqual({
         handback: "pending",
         status: "processing",
       });
-      // Failed and detached in one write, so a crash between the two never
-      // leaves a failed row waiting out another hold.
+      // One write, so a crash never leaves a failed row waiting out another hold.
       expect(record.mock.calls).toEqual([
         [
           lostRow("event_dead").eventId,
@@ -1501,7 +1467,6 @@ describe("SubagentCoordinator", () => {
             .map(({ eventId }): [string, "stored"] => [eventId, "stored"]),
         ),
       );
-      // An outcome that lands after the list is never overwritten.
       expect(record.mock.calls).toEqual([
         [
           rows[3]!.eventId,
@@ -1602,15 +1567,13 @@ describe("SubagentCoordinator", () => {
       [],
     );
     expect(resumed.publicConversationKey).toBe(created.publicConversationKey);
-    // The resumed virtual child is the same child, on the same history.
     expect(resumed.taskId).not.toBe(created.taskId);
     expect(resumed.agentId).toBe(created.agentId);
     expect(resumed.conversationKey).toBe(created.conversationKey);
     expect(resumed.persistent).toBe(true);
     expect(resumed.resuming).toBe(true);
 
-    // A key the runtime never minted could name another caller's direct-API
-    // conversation with the child agent.
+    // An unminted key could name another caller's direct-API conversation with the child.
     expect(
       internals.resolveTask(
         { prompt: "recount", conversationKey: "user-123" },
@@ -1618,8 +1581,7 @@ describe("SubagentCoordinator", () => {
         [],
       ),
     ).rejects.toThrow("must be one run_subagent returned to this agent");
-    // The minted form alone is a name any direct-API caller can pick: only
-    // core's tag over this account and parent makes it resumable.
+    // A minted-form key is pickable too: only core's tag over account and parent resumes it.
     const forged = created.publicConversationKey.replace(
       /-[0-9a-f]{32}$/,
       `-${"0".repeat(32)}`,
@@ -1867,8 +1829,7 @@ describe("SubagentCoordinator", () => {
     } as never);
 
     try {
-      // Rejecting here would reach runTask's failure path, which marks the
-      // already durable completed result failed and erases its response.
+      // Rejecting would let runTask mark the durable completed result failed, erasing it.
       expect(
         internals.completeTask({
           taskId: "subagent~task_1",
@@ -1879,7 +1840,6 @@ describe("SubagentCoordinator", () => {
           response: "finished",
         }),
       ).resolves.toBeUndefined();
-      // A broken hook loses its override, never the child's answer.
       expect(internals.completions).toHaveLength(1);
       expect(internals.completions[0]?.response).toBe("finished");
       expect(mutations).not.toContain("updateAsyncAgentResult");
@@ -1920,8 +1880,7 @@ describe("SubagentCoordinator", () => {
       unknown,
       { ownerGeneration: number; events: unknown[] },
     ];
-    // Same taskId keeps the follow-up attached to the parent's pending task, so
-    // completeTask still injects its result back into the parent.
+    // Same taskId: the follow-up stays on the parent's pending task, so its result returns.
     expect(followUp.taskId).toBe("subagent~task_1");
     expect(followUp.eventId).toBe("queued-event");
     expect(followUp.resuming).toBe(true);
@@ -2010,7 +1969,6 @@ describe("SubagentCoordinator", () => {
         expect(await coordinator.drainCompletionsToParent()).toBe(0);
       }
 
-      // A genuine failure is still reported, so the parent can react to it.
       internals.pending.set("subagent~task_1", Promise.resolve());
       await internals.completeTask({ ...failure, error: "provider exploded" });
 
@@ -2076,7 +2034,6 @@ describe("SubagentCoordinator", () => {
       conversationKey:
         "acct:account_1:agent:agent_child:api:subagent-persistent-1",
       publicConversationKey: "subagent-persistent-1",
-      // A queued control carries no config ref: it runs on the child's config.
       subagentConfig: persistentChildTask().agentConfig,
     });
     // No live parent turn to inject into, so it must not run in-process.
@@ -2173,13 +2130,11 @@ describe("SubagentCoordinator", () => {
     setStorageForTests({
       taskUsage: { record: async (): Promise<void> => {} },
     } as never);
-    // No call may leave the process if the streamText stand-in is bypassed.
     globalThis.fetch = mock(async () => {
       throw new Error("network is blocked in this test");
     }) as never;
-    // harness.test.ts leaves its own fake streamText on the shared "ai" module,
-    // so the real one is out of reach here. This one runs the loop's first
-    // prepareStep, where the hand-built child used to throw.
+    // harness.test.ts leaves its fake streamText on the shared "ai" module, so the real one is
+    // out of reach; this stand-in runs the loop's first prepareStep.
     const previousStreamText = ai.streamText;
     const streamText = mock((options: StreamTextStandInOptions) => {
       const stream = new ReadableStream({
@@ -2316,7 +2271,6 @@ describe("SubagentCoordinator", () => {
       Date.now() + 50,
     );
     coordinator["pending"].set("subagent_1", new Promise((): void => {}));
-    // The heartbeat ends this wait; a stopped child leaves on its own.
     coordinator["childStop"].signal.addEventListener("abort", (): void => {
       coordinator["pending"].delete("subagent_1");
       coordinator["notifyCompletion"]();
@@ -2371,7 +2325,6 @@ function completion(taskId: string, response: unknown): TestCompletion {
   };
 }
 
-// A child's identity and the result it finishes with, typed for the coordinator.
 function lateChild(): {
   taskId: string;
   eventId: string;
@@ -2390,8 +2343,6 @@ function lateChild(): {
 
 const LOST_TASK_IDS = new Map<string, string>();
 
-// A finished subagent row a parent stopped waiting on, the same for each
-// `name`: its task, and so its parent conversation, is its own.
 function lostRow(name: string): AsyncAgentResultRecord {
   const taskId =
     LOST_TASK_IDS.get(name) ??
@@ -2425,7 +2376,6 @@ function lostRow(name: string): AsyncAgentResultRecord {
   };
 }
 
-// Every lost result's parent agent still exists.
 async function lostParent(
   _accountId: string,
   _agentId: string,

@@ -1,17 +1,9 @@
-/**
- * Generic provider-defined tool resolution. Every config.tools key resolves
- * against the configured AI SDK provider's `tools` namespace, so every
- * provider-executed tool a provider ships is configurable without core code.
- */
-
 import type { ToolSet } from "ai";
 import { isPlainObject } from "../../shared/object.ts";
 import type { ToolContext } from "./index.ts";
 
-// A provider tool built by the AI SDK and serialized into config by the SDK
-// (`google.tools.googleSearch({...})`) arrives as this descriptor. Its lazy
-// input/output schemas do not survive JSON, so only `args` is carried over and
-// the provider factory rebuilds the tool with its schemas intact.
+// How the AI SDK serializes a provider tool. Its lazy schemas do not survive JSON, so only
+// `args` is kept and the provider factory rebuilds the tool.
 const PROVIDER_TOOL_DESCRIPTOR_TYPES = new Set([
   "provider",
   "provider-defined",
@@ -55,8 +47,7 @@ function providerToolArgs(
   return config;
 }
 
-// AI SDK providers are callable factories with a `tools` namespace hanging off
-// them, so this reads the property off a function as well as a plain object.
+// AI SDK providers are callable factories, so `tools` can hang off a function.
 function providerToolFactories(
   modelProvider: unknown,
 ): Record<string, ProviderToolFactory> {

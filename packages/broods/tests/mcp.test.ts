@@ -1,9 +1,3 @@
-// Every `broods mcp` tool is generated from one registry table, so a single
-// wrong entry ships dozens of wrong tools. These tests drive the server
-// through a real MCP client over an in-memory transport: the tool list is the
-// drift check, and the guards must reject before any network call happens.
-// The server is served exactly as `broods mcp` serves it, 2026-07-28 only.
-
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { MCP_PROTOCOL_VERSION } from "../../../apps/core/src/shared/mcp-protocol.ts";
@@ -106,11 +100,6 @@ for (const { tool, args, refusal } of GUARD_CASES) {
   });
 }
 
-/**
- * Serve a fresh server over a linked in-memory pair, as `broods mcp` serves
- * it, and hand back the connected client. `pinned: false` is a client still on
- * a 2025-era revision.
- */
 async function connect(
   options: BroodsMcpServerOptions,
   pinned = true,
@@ -145,7 +134,6 @@ function resultText(result: { content?: unknown }): string {
   return content.map((block) => block.text ?? "").join("\n");
 }
 
-/** Refuses in-process; no CLI-scope tool is ever called in these tests. */
 function syncClient(): BroodsSyncClient {
   return new BroodsSyncClient({
     baseUrl: "http://stub.invalid",

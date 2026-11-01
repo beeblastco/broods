@@ -1,16 +1,4 @@
-/**
- * Project listing and deletion for the `broods project` commands, plus the
- * HTTP endpoints for project management and CLI onboarding (org/project
- * selection, which bootstraps projects and stages).
- *
- * Deletion reuses the dashboard's `purgeProject`, so a project removed from the
- * CLI leaves exactly what the dashboard's danger panel leaves: no stages, no
- * agent configs, no canvas, no env vars, no crons, no workspace files or blobs.
- *
- * Project management spans every stage of a project, so the HTTP endpoints
- * authenticate with a `broods login` token rather than a stage-scoped project
- * key, exactly as the stage endpoint does.
- */
+// Spans every stage of a project, so it takes a `broods login` token, not a stage-scoped key.
 
 import { v } from "convex/values";
 import {
@@ -27,17 +15,13 @@ import { getProjectForRole } from "../model/ownership/project";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { clientErrorResponse } from "../model/clientError";
 
-// Counts stop at this many rows per table so an org full of large projects
-// cannot push `listByAccount` past Convex's per-transaction read limits. A
-// capped count still reads correctly: it only ever understates a project that
-// is far too full to be a cleanup target anyway.
+// Caps reads under Convex's per-transaction limit; it only understates a project too full to clean.
 const COUNT_LIMIT = 1000;
 
 const projectValidator = v.object({
   id: v.id("projects"),
   name: v.string(),
   slug: v.string(),
-  /** No stage, agent, variable, deployment or workspace file: safe to delete without reading further. */
   empty: v.boolean(),
   stageCount: v.number(),
   agentCount: v.number(),
@@ -47,7 +31,6 @@ const projectValidator = v.object({
   updatedAt: v.number(),
 });
 
-/** HTTP endpoint for `broods project list` and `broods project delete`. */
 export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
   try {
     const tokenHash = await cliLoginTokenHash(req);
@@ -106,7 +89,6 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
   }
 });
 
-/** HTTP onboarding endpoint for CLI project/org selection. */
 export const httpOnboarding = httpAction(async (ctx, req) => {
   try {
     const tokenHash = await cliLoginTokenHash(req);
@@ -172,10 +154,6 @@ export const httpOnboarding = httpAction(async (ctx, req) => {
   }
 });
 
-/**
- * Every project in the account's org, each with the counts that say whether it
- * still holds anything. Sorted empty-last so a cleanup pass reads top-down.
- */
 export const listByAccount = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.union(v.null(), v.array(projectValidator)),
@@ -204,19 +182,7 @@ export const listByAccount = internalQuery({
   },
 });
 
-/**
- * Delete one project of the account's org and everything under it.
- *
- * Takes the project id, never a name: names are not unique, and resolving one
- * here could purge a different project than the one the CLI showed the user.
- * Deletion re-checks the caller's org role the way the dashboard's
- * `project.remove` does, so a token minted by a since-demoted admin answers
- * "forbidden" rather than deleting.
- *
- * Returns null when the id matches no project of the account's org, so the
- * caller can answer 404 rather than reporting a deletion that never happened.
- * The counts come from before the purge; they are what the CLI prints back.
- */
+// By id, never name: names are not unique. Re-checks the role: a demoted admin is refused.
 export const removeByAccount = internalMutation({
   args: {
     accountId: v.id("accounts"),

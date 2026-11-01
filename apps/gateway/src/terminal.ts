@@ -18,17 +18,14 @@ import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge
 export const MAX_PENDING_TERMINAL_BYTES = 64 * 1024;
 // Two of the largest machine frames, so one still in flight never trips it.
 const MAX_UPSTREAM_BUFFERED_BYTES = 2 * MACHINE_MAX_FRAME_BYTES;
-// JetStream's error code for a KV create on a key that already holds a value.
 const KV_KEY_EXISTS = 10071;
 const SPENT_TICKET_BUCKET = "TERMINAL_TICKETS_SPENT";
 
 export type TerminalGatewayData = {
   kind: "terminal";
-  /** Null when the ticket did not verify: the socket is closed on open with `TERMINAL_TICKET_REJECTED`. */
   ticket: TerminalTicket | null;
 };
 
-/** A `broods machine` daemon, relayed to core, which checks its bearer. */
 export type MachineGatewayData = {
   kind: "machine";
   ticket: Pick<TerminalTicket, "url" | "authorization" | "authorizationHeader">;
@@ -36,22 +33,12 @@ export type MachineGatewayData = {
 
 export type RelayGatewayData = MachineGatewayData | TerminalGatewayData;
 
-/**
- * Where the gateway records used terminal tickets. It spends a ticket before
- * the upgrade and releases it when the upgrade fails.
- */
 export interface SpentTickets {
-  /** True when this call spent the ticket, false when it was already spent. */
   spend(token: string): Promise<boolean>;
-  /** Makes a ticket whose socket never opened usable again. */
   release(token: string): Promise<void>;
 }
 
-/**
- * Application close code for a ticket the gateway could not open. A refused
- * HTTP upgrade reaches the browser as a bare 1006 with no reason, so the
- * rejection is delivered on the socket instead, where the client can read it.
- */
+// A refused HTTP upgrade reaches the browser as a bare 1006, so the rejection rides the socket.
 export const TERMINAL_TICKET_REJECTED = {
   code: 4401,
   reason: "Invalid, expired or already used terminal ticket",
@@ -82,11 +69,7 @@ export function openTerminalTicketWithSecrets(
   return null;
 }
 
-/**
- * Spent terminal tickets in a JetStream KV bucket, shared by every gateway
- * replica and kept across restarts, so a ticket copied out of a log cannot open
- * a second shell. Keys live as long as a ticket can, then NATS drops them.
- */
+// Shared by replicas and kept across restarts, so a ticket copied from a log opens one shell.
 export function natsSpentTickets(
   connection: () => Promise<NatsConnection>,
 ): SpentTickets {
@@ -105,8 +88,7 @@ export function natsSpentTickets(
 
         return true;
       } catch (error: unknown) {
-        // `connectNats` dials `nats://` with the TCP client, whose errors are
-        // their own class.
+        // `connectNats` dials `nats://` with the TCP client, whose errors are their own class.
         if (
           (error instanceof NatsError || error instanceof NatsTcpError) &&
           error.api_error?.err_code === KV_KEY_EXISTS
@@ -125,8 +107,7 @@ export function natsSpentTickets(
 export function isSessionInitFrame(frame: string): boolean {
   if (!frame.startsWith("{")) return false;
 
-  // Parsed here, not with utils.ts `parseJson`: core's machine relay test
-  // compiles this file under core's tsconfig, which utils.ts does not pass.
+  // Not utils.ts `parseJson`: core's machine relay test compiles this file under core's tsconfig.
   try {
     const parsed: unknown = JSON.parse(frame);
 
@@ -206,7 +187,6 @@ export function openTerminalUpstream(
 
   upstream.onclose = (event): void => {
     if (socket.readyState !== WebSocket.OPEN) return;
-    // A daemon reads core's close code to decide whether to reconnect.
     if (socket.data.kind === "machine") {
       socket.close(relayCloseCode(event.code), event.reason);
     } else {
@@ -215,9 +195,7 @@ export function openTerminalUpstream(
   };
 
   upstream.onerror = (): void => {
-    // An error arrives with the close that follows it, and a daemon decides
-    // whether to reconnect from that close code, so leave machine sockets to
-    // `onclose` rather than closing them with one it does not read.
+    // A close follows, and a daemon picks reconnect from its code: leave machine sockets to it.
     if (socket.readyState !== WebSocket.OPEN || socket.data.kind === "machine")
       return;
     socket.close(1011, "sandbox terminal transport error");
@@ -236,7 +214,6 @@ export function relayTerminalInput(
       ? rawMessage
       : (new Uint8Array(rawMessage) as Uint8Array<ArrayBuffer>);
   if (state.upstream && state.upstream.readyState === WebSocket.OPEN) {
-    // An upstream that stopped draining would otherwise buffer without end.
     if (state.upstream.bufferedAmount > MAX_UPSTREAM_BUFFERED_BYTES) {
       socket.close(1009, "terminal upstream is not draining");
 
@@ -279,8 +256,7 @@ function relayCloseCode(code: number): number {
   return code === 1000 || (code >= 4000 && code <= 4999) ? code : 1011;
 }
 
-// A sealed ticket holds characters a KV key cannot, and the bucket should not
-// hold the ticket itself, so the key is its SHA-256.
+// A sealed ticket holds characters a KV key cannot, and the bucket must not hold the ticket.
 function spentTicketKey(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }

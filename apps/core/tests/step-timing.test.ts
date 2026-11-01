@@ -1,9 +1,3 @@
-/**
- * The run's step timing tracker: how one model.step splits into ttft,
- * streaming and tool wait, the per-kind streaming windows, and the attempt
- * attributes a retried stream start leaves on the span.
- */
-
 import { describe, expect, it } from "bun:test";
 import { createStepTimingTracker } from "../src/harness/usage-metering.ts";
 

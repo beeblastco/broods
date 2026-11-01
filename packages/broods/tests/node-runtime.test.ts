@@ -4,15 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 
-/**
- * The CLI ships for Node as well as Bun, and Node only erases type syntax: an
- * `enum` in a `broods/` file throws there unless the compiler hooks esbuild in,
- * and it resolves no `.ts` file for `./prompts` or `./prompts.js`. These run the real compile path in a `node` child, because a `bun` runner
- * loads TypeScript natively and would pass either way.
- */
-
-// File URLs, not paths: a Windows path interpolated into a module specifier
-// turns its separators into string escapes.
+// Run in a `node` child: Bun loads TypeScript natively and would pass either way.
+// File URLs: a Windows path in a module specifier turns its separators into escapes.
 const MANIFEST_MODULE = pathToFileURL(
   join(import.meta.dir, "..", "src", "manifest.ts"),
 ).href;
@@ -105,8 +98,6 @@ export const support = defineAgent({
   const result = await compileWithNode(cwd);
 
   expect(result.exitCode).toBe(0);
-  // Transpiling to a scratch file would report the scratch directory instead,
-  // which silently breaks a resource that reads a prompt next to itself.
   expect(result.stdout).toContain(join(cwd, "broods"));
 });
 

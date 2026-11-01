@@ -1,17 +1,3 @@
-/**
- * The agent loop end to end: the real harness, the real AI SDK provider, the
- * real tool registry, streaming the real way. The model is the one thing
- * faked, and it is faked at `globalThis.fetch`: a provider on its default
- * endpoint reads that at call time, so an in-process canned response reaches
- * it with no network and without touching the private-host guards that a
- * configured base URL would bring in.
- *
- * Three numbers a user feels. Time to first token: how long from "run" until
- * the first streamed part. A text turn: one model call, no tools. A tool turn:
- * the model asks for `list_schedules`, the harness runs it and calls the model
- * again, which is the shape of almost every useful turn.
- */
-
 import {
   runAgentLoop,
   type AgentLoopStream,
@@ -32,8 +18,8 @@ const ACCOUNT_ID = "acct_bench";
 const AGENT_ID = "agt_bench";
 const CONVERSATION_KEY = `acct:${ACCOUNT_ID}:agent:${AGENT_ID}:api:conv_bench`;
 
-// Groq speaks OpenAI chat completions on its default endpoint and adds no
-// base URL, which is exactly the path a fetch override can serve.
+// Groq on its default endpoint reads globalThis.fetch at call time, so the fake model
+// serves it without the private-host guards a configured base URL brings in.
 const AGENT_CONFIG: AgentConfig = {
   agent: {
     system: "You are the on-call assistant. Be brief.",
@@ -41,8 +27,7 @@ const AGENT_CONFIG: AgentConfig = {
   },
   model: { provider: "groq", modelId: "bench-model" },
   provider: { groq: { apiKey: "gsk_bench_0000" } },
-  // The tool turn calls list_schedules, which the registry only offers to an
-  // agent with the scheduler on.
+  // The registry only offers list_schedules to an agent with the scheduler on.
   scheduler: { enabled: true },
 };
 
@@ -102,9 +87,7 @@ export const coreAgentRunCases: readonly BenchCase[] = [
       const drained = await drain(
         await runAgentLoop(session(), turnContext(), AGENT_CONFIG),
       );
-      // The harness feeds a missing tool back to the model as an error and
-      // calls it again, so the call count alone cannot tell a tool run from a
-      // tool-not-found round trip. A tool result can.
+      // A missing tool also costs two model calls (the error goes back), so count tool results.
       if (drained.toolResults !== 1 || modelCalls !== 2) {
         throw new Error(
           `tool turn produced ${drained.toolResults} tool results over ${modelCalls} model calls, expected 1 over 2`,
@@ -128,7 +111,6 @@ let originalFetch: typeof fetch | null = null;
 let savedEnv: Record<string, string | undefined> = {};
 let scenario: Scenario = "text";
 
-/** Read every part and settle the run; what was read comes back so it is observably used. */
 async function drain(stream: AgentLoopStream): Promise<Drained> {
   const drained: Drained = { text: 0, toolResults: 0 };
   for await (const part of stream.fullStream) {
@@ -142,10 +124,6 @@ async function drain(stream: AgentLoopStream): Promise<Drained> {
   return drained;
 }
 
-/**
- * The model, as an OpenAI chat completions stream. The tool scenario answers
- * the first call with a `list_schedules` call and the second with text.
- */
 function fakeModelFetch(input: string | URL | Request): Promise<Response> {
   const url =
     typeof input === "string"
@@ -213,7 +191,6 @@ function chunk(
   })}\n\n`;
 }
 
-/** Everything the loop reads from storage on a run with no sandbox, hooks or MCP. */
 function fakeStorage(): Storage {
   const none = async (): Promise<null> => null;
   const empty = async (): Promise<never[]> => [];
@@ -315,11 +292,6 @@ function restoreFakes(): void {
   unmuteCoreLogs();
 }
 
-/**
- * The session surface the loop touches on a plain API turn, shaped the way the
- * harness tests shape it. Persistence is a no-op: what the loop writes back
- * is the config plane's cost, measured by the convex cases.
- */
 function session(): Session {
   return {
     accountId: ACCOUNT_ID,

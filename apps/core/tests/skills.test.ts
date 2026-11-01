@@ -122,7 +122,6 @@ describe("validateSkillBundle", () => {
       "SKILL.md",
       "scripts/run.sh",
     ]);
-    // The caller's objects are left untouched; normalization happens on a copy.
     expect(input[0]?.path).toBe("  SKILL.md  ");
   });
 

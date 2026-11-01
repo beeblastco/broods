@@ -1,7 +1,3 @@
-/**
- * Shared model-provider resolution for AI SDK Harness adapters.
- */
-
 import type { HarnessV1AuthenticationEnvironment } from "@ai-sdk/harness";
 import type {
   AgentConfig,
@@ -12,7 +8,6 @@ type HarnessProviderName = NonNullable<
   NonNullable<AgentConfig["model"]>["provider"]
 >;
 
-/** Returns `config.model.modelId` or throws; `createConfiguredHarnessAgent` passes it to the agent. */
 export function requireHarnessModelId(agentConfig: AgentConfig): string {
   const modelId = agentConfig.model?.modelId;
   if (!modelId) {
@@ -22,7 +17,6 @@ export function requireHarnessModelId(agentConfig: AgentConfig): string {
   return modelId;
 }
 
-/** Returns `config.model.provider` or throws; every configured adapter calls it first. */
 export function requireHarnessProviderName(
   agentConfig: AgentConfig,
 ): HarnessProviderName {
@@ -34,7 +28,6 @@ export function requireHarnessProviderName(
   return providerName;
 }
 
-/** Returns the chosen provider's settings with an API key, or throws; every configured adapter calls it before building auth. */
 export function requireHarnessProviderSettings(
   agentConfig: AgentConfig,
   providerName: HarnessProviderName,
@@ -54,11 +47,7 @@ export function requireHarnessProviderSettings(
   return settings;
 }
 
-/**
- * Anthropic credentials for the `auth` option. Every adapter here passes an
- * isolated env, which replaces the host env for credential discovery, so
- * nothing leaks in from the core container.
- */
+// Adapters pass an isolated env that replaces the host env, so no core credential leaks in.
 export function resolveAnthropicAuthEnv(
   provider: AgentProviderSettings,
 ): HarnessV1AuthenticationEnvironment {
@@ -70,7 +59,6 @@ export function resolveAnthropicAuthEnv(
   };
 }
 
-/** Picks Anthropic or Vercel AI Gateway credentials; the Claude Code and Deep Agents adapters use it. */
 export function resolveAnthropicOrVercelAuthEnv(
   providerName: "anthropic" | "vercel",
   provider: AgentProviderSettings,
@@ -80,11 +68,7 @@ export function resolveAnthropicOrVercelAuthEnv(
     : resolveGatewayAuthEnv(provider);
 }
 
-/**
- * Vercel AI Gateway credentials. Adapters pick the gateway route whenever
- * `AI_GATEWAY_API_KEY` is present in the supplied environment, so this record
- * needs no accompanying mode string.
- */
+// Adapters take the gateway route whenever AI_GATEWAY_API_KEY is set; no mode flag needed.
 export function resolveGatewayAuthEnv(
   provider: AgentProviderSettings,
 ): HarnessV1AuthenticationEnvironment {
@@ -96,17 +80,12 @@ export function resolveGatewayAuthEnv(
   };
 }
 
-/** The provider's base URL under either config spelling, used by every auth env builder. */
 export function resolveHarnessProviderBaseUrl(
   provider: AgentProviderSettings,
 ): string | undefined {
   return provider.base_url ?? provider.baseURL;
 }
 
-/**
- * OpenAI and OpenAI-compatible credentials. `codex` copies `OPENAI_API_KEY`
- * into the `CODEX_API_KEY` its bridge reads; `opencode` reads it directly.
- */
 export function resolveOpenAiAuthEnv(
   provider: AgentProviderSettings,
 ): HarnessV1AuthenticationEnvironment {

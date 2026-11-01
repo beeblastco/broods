@@ -1,8 +1,3 @@
-/**
- * The sealed media ticket's own contract: a fresh ticket opens, an expired,
- * tampered or legacy pre-expiry token is refused.
- */
-
 import { afterEach, describe, expect, it } from "bun:test";
 import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import {
@@ -91,8 +86,6 @@ describe("sealMediaTicket / openMediaTicket", (): void => {
   });
 });
 
-// Seals an arbitrary payload under an arbitrary version with the real key
-// derivation, to forge what older code (or no code) would have written.
 function sealRaw(version: string, payload: object, secret: string): string {
   const key = createHash("sha256")
     .update(`workspace-media-link:${secret}`)

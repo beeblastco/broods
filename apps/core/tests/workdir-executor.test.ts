@@ -1,10 +1,4 @@
-/**
- * Drive the REAL @mv37/workdir SDK with a mocked global fetch so the SDK's own
- * request serialization + response parsing are exercised against the documented
- * wire shapes (docs/API.md): create/exec/delete, network + S3-mount mapping,
- * persistent reserve/reconnect, background jobs, snapshot/suspend/resume, all with
- * no real workdir host. A separate *.integration.test.ts hits a live server.
- */
+// Drives the real @mv37/workdir SDK over a mocked fetch, so its own wire handling is tested.
 
 import {
   afterEach,
@@ -20,8 +14,6 @@ import { drainInFlight } from "../src/shared/in-flight.ts";
 import type { WorkdirSandboxExecutor as WorkdirExecutor } from "../src/harness/sandbox/workdir-executor.ts";
 import type { SandboxSnapshotRecord } from "../src/shared/convex/sandbox-snapshots.ts";
 
-// Captured before any test mutates it, so we can restore the native fetch and
-// not leak the mock into other test files (e.g. the live integration test).
 const realFetch = globalThis.fetch;
 
 interface FetchCall {
@@ -32,18 +24,13 @@ interface FetchCall {
 }
 
 let fetchCalls: FetchCall[] = [];
-// GET /v1/sandboxes/:id returns this state (drives reconnect/resume).
 let reconnectState = "running";
 let execResult = { exit_code: 0, stdout: "workdir ok\n", stderr: "" };
-// HTTP status the next POST /v1/sandboxes answers with; null means created.
 let createRefusal: number | null = null;
 let execRefusal: number | null = null;
-// Exit code of the credential-free mount check; 0 means live and fresh.
 let mountCheckExitCode = 0;
-// When set, DELETE requests hang until the test settles it; a rejection fails them.
 let pendingDelete: Promise<void> | null = null;
 
-// The documented sandbox object shape (docs/API.md:124-152), trimmed.
 function sandboxObject(id: string, state: string): Record<string, unknown> {
   return {
     id: id,
@@ -61,8 +48,6 @@ function sandboxObject(id: string, state: string): Record<string, unknown> {
   };
 }
 
-// The mount check is the one mountpoint probe that carries no credentials; the
-// remount runs the same probe with AWS keys in its env.
 function isMountCheck(body: Record<string, unknown> | undefined): boolean {
   const env = body?.env;
   const carriesCredentials =
@@ -171,8 +156,6 @@ const removeSandboxInstanceMock = mock(
     _externalId?: string,
   ): Promise<void> => {},
 );
-// Epoch ms the stored reservation was claimed; drives the max-lifetime check.
-// Defaults to "just now" so the reserved-sandbox tests are not accidentally expired.
 let storedReservedAt = Date.now();
 const getSandboxReservationRecordMock = mock(
   async (
@@ -195,9 +178,8 @@ await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   saveSandboxInstance: saveSandboxInstanceMock,
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
-// mock.module replaces the whole module, so every export the executor's own imports
-// reach for has to be here. The sandbox index pulls the microvm executor in too, and
-// a missing name is a SyntaxError at import time, not an undefined at call time.
+// mock.module replaces the whole module: a missing export the executor or the microvm
+// executor imports is a SyntaxError at import time.
 await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   setSandboxInstanceSpecs: mock(async (): Promise<void> => {}),
   upsertSandboxInstance: upsertSandboxInstanceMock,
@@ -207,8 +189,7 @@ await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   removeSandboxInstance: removeSandboxInstanceMock,
 }));
 
-// The snapshot registry row the boot check reads for an image; null is a
-// provider image no account registered.
+// null is a provider image no account registered.
 let snapshotRow: SandboxSnapshotRecord | null = null;
 const findSandboxSnapshotMock = mock(
   async (
@@ -221,8 +202,6 @@ await mock.module("../src/shared/convex/sandbox-snapshots.ts", () => ({
   upsertSandboxSnapshot: mock(async (): Promise<void> => {}),
 }));
 
-// Assume-role S3 mount path: stub STS so it returns fixed temporary credentials
-// and capture the scoped session policy the executor builds.
 let lastAssumeRoleInput: Record<string, unknown> | undefined;
 const assumeRoleSendMock = mock(async () => ({
   Credentials: {
@@ -256,12 +235,10 @@ function execCalls(): FetchCall[] {
   return fetchCalls.filter((c) => c.path.endsWith("/exec"));
 }
 
-// The exec bodies in order, so a test can assert the whole probe/mount/command sequence.
 function execCommands(): string[] {
   return execCalls().map((c): string => String(c.body?.cmd));
 }
 
-// The parsed body of the most recent create call.
 function createBody(): Record<string, unknown> {
   const create = fetchCalls.find(
     (c) => c.method === "POST" && c.path === "/v1/sandboxes",
@@ -375,7 +352,6 @@ describe("WorkdirSandboxExecutor.run", () => {
       outputLimitBytes: 4096,
     });
 
-    // exit_code:0 from the documented ExecResult, parsed by the real SDK.
     expect(result).toMatchObject({
       ok: true,
       provider: "sandbox",
@@ -389,7 +365,6 @@ describe("WorkdirSandboxExecutor.run", () => {
       cmd: "timeout -k 5 30 bash -c 'echo hi && ls'",
       cwd: `/mnt/workspaces/${NS}`,
     });
-    // Ephemeral sandboxes are torn down after the call.
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(true);
   });
 
@@ -490,7 +465,6 @@ describe("WorkdirSandboxExecutor.run", () => {
 
     expect(result).toMatchObject({ ok: true, stdout: "workdir ok\n" });
     expect(fetchCalls.some((c): boolean => c.method === "DELETE")).toBe(true);
-    // Shutdown still waits for it: the drain stays open until the delete settles.
     const drained = drainInFlight().then((): "drained" => "drained");
     const pending = tick().then((): "pending" => "pending");
     expect(await Promise.race([drained, pending])).toBe("pending");
@@ -522,7 +496,6 @@ describe("WorkdirSandboxExecutor.run", () => {
         outputLimitBytes: 4096,
       });
       expect(result).toMatchObject({ ok: true, stdout: "workdir ok\n" });
-      // The delete settles off the run's clock: fail it, let its catch log.
       failDelete(new Error("host busy"));
       await tick();
 
@@ -582,7 +555,6 @@ describe("WorkdirSandboxExecutor.run", () => {
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
     });
-    // The SDK converts memoryMb -> memory_mb, diskGb -> disk_gb.
     expect(createBody().resources).toEqual({
       cpu: 2,
       memory_mb: 4096,
@@ -780,7 +752,6 @@ describe("WorkdirSandboxExecutor.run", () => {
 
     expect(result).toMatchObject({ ok: true, provider: "sandbox" });
     const body = createBody();
-    // mounts[] is top-level (sibling of startup), with no credentials in the spec.
     expect(body.mounts).toEqual([
       {
         type: "s3",
@@ -792,8 +763,7 @@ describe("WorkdirSandboxExecutor.run", () => {
         region: "us-east-1",
       },
     ]);
-    // Creds come from the guest secret env: mount-s3 reads spec.secret_env, which
-    // workdir populates from these named org secrets at boot.
+    // mount-s3 reads spec.secret_env, which workdir fills from these named org secrets.
     expect((body.startup as Record<string, unknown>).secrets).toEqual([
       "AWS_ACCESS_KEY_ID",
       "AWS_SECRET_ACCESS_KEY",
@@ -835,16 +805,13 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
 
     expect(result).toMatchObject({ ok: true, provider: "sandbox" });
-    // Role mode: the host does NOT mount declaratively (no per-namespace creds in
-    // the org secret store), so there is no mounts[] / startup.secrets on create.
+    // Role mode: the org secret store holds no per-namespace creds, so nothing mounts on create.
     const body = createBody();
     expect(body.mounts).toBeUndefined();
     expect(
       (body.startup as Record<string, unknown> | undefined)?.secrets,
     ).toBeUndefined();
 
-    // Instead the workspace is mounted via exec with short-lived, namespace-scoped
-    // credentials (including the session token) handed in as per-call env.
     const mount = execCalls().find((c) =>
       String(c.body?.cmd).includes("mount-s3"),
     );
@@ -852,15 +819,13 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(String(mount!.body?.cmd)).toContain(`'--prefix' '${NS}/'`);
     expect(String(mount!.body?.cmd)).toContain("'--allow-delete'");
     expect(String(mount!.body?.cmd)).toContain("'--allow-overwrite'");
-    // The guard clears a wedged FUSE endpoint before retaking the path, and stamps
-    // the mount so a later call can tell the credentials have aged out.
+    // Clears a wedged FUSE endpoint first, and stamps the mount so aged credentials show.
     expect(String(mount!.body?.cmd)).toContain("fusermount -u");
     expect(String(mount!.body?.cmd)).toContain("umount -l");
     expect(String(mount!.body?.cmd)).toContain(".mounted-at");
     expect(String(mount!.body?.cmd)).toContain(`-lt ${45 * 60}`);
-    // The stamp sits on disk the agent can write, so a non-numeric value must fall
-    // back to "unknown age" instead of reaching the arithmetic, which would abort
-    // the mount and strand the workspace.
+    // The stamp is on agent-writable disk: a non-numeric one must read as unknown age, not
+    // abort the mount arithmetic and strand the workspace.
     expect(String(mount!.body?.cmd)).toContain(
       `case "$stamp" in '' | *[!0-9]* | 0?* | ???????????*) stamp=0 ;; esac;`,
     );
@@ -870,7 +835,6 @@ describe("WorkdirSandboxExecutor.run", () => {
       AWS_SECRET_ACCESS_KEY: "temp-secret",
       AWS_SESSION_TOKEN: "temp-token",
     });
-    // The assumed session is scoped to this namespace's bucket prefix only.
     expect(String(lastAssumeRoleInput?.Policy)).toContain(
       `workspace-bucket/${NS}/`,
     );
@@ -879,7 +843,6 @@ describe("WorkdirSandboxExecutor.run", () => {
   it("mounts a managed workspace (no storage block) whenever the run has a namespace", async () => {
     process.env.SANDBOX_MOUNT_ROLE_ARN =
       "arn:aws:iam::123456789012:role/sandbox-mount";
-    // No `storage` and no `mountAwsS3Buckets`: the managed-workspace shape.
     const executor = await newExecutor({
       provider: "sandbox",
       options: { workdirUrl: BASE, workspaceRoot: "/mnt/workspaces" },
@@ -955,7 +918,6 @@ describe("WorkdirSandboxExecutor.run", () => {
     const executor = await newExecutor({
       provider: "sandbox",
       options: { workdirUrl: BASE, workspaceRoot: "/mnt/workspaces" },
-      // Storage identity drives the mount, no SANDBOX_MOUNT_ROLE_ARN, no option flag.
       storage: {
         provider: "s3",
         bucket: "acme-bucket",
@@ -978,7 +940,6 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
 
     expect(result).toMatchObject({ ok: true, provider: "sandbox" });
-    // No declarative mount; the developer's bucket is mounted via exec.
     expect(createBody().mounts).toBeUndefined();
     const mount = execCalls().find((c) =>
       String(c.body?.cmd).includes("mount-s3"),
@@ -991,7 +952,6 @@ describe("WorkdirSandboxExecutor.run", () => {
       AWS_ACCESS_KEY_ID: "ASIA_TEMP",
       AWS_SESSION_TOKEN: "temp-token",
     });
-    // The developer's role is assumed with the account's Broods-assigned ExternalId.
     expect(lastAssumeRoleInput?.RoleArn).toBe(
       "arn:aws:iam::222222222222:role/byo",
     );
@@ -1146,7 +1106,6 @@ describe("WorkdirSandboxExecutor.run", () => {
       options: { workdirUrl: BASE },
     });
 
-    // First call: no stored id => create + claim.
     await executor.run({
       code: "echo one",
       reservationKey: "tool:acct_1",
@@ -1162,7 +1121,6 @@ describe("WorkdirSandboxExecutor.run", () => {
     );
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
 
-    // Second call: stored + idled => GET then resume, no new create.
     fetchCalls = [];
     reconnectState = "stopped";
     await executor.run({
@@ -1193,8 +1151,6 @@ describe("WorkdirSandboxExecutor.run", () => {
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
     });
-    // The failed sandbox is deleted at workdir and its row dropped, then a new
-    // one is created and the exec lands there; nothing tries to resume a corpse.
     expect(
       fetchCalls.some(
         (c) => c.method === "DELETE" && c.path === "/v1/sandboxes/sbx_stored",
@@ -1223,9 +1179,7 @@ describe("WorkdirSandboxExecutor.run", () => {
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
     });
-    // workdir keeps the deleted record and refuses a second delete, so release only
-    // drops the row; the exec then lands on a fresh sandbox instead of the deleted
-    // one's 409.
+    // workdir keeps a deleted record and refuses a second delete, so release only drops the row.
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
     expect(deleteSandboxInstanceMock).toHaveBeenCalled();
     expect(
@@ -1312,7 +1266,6 @@ describe("WorkdirSandboxExecutor.run", () => {
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
     });
-    // A month-old reservation is still reused, because no max lifetime bounds it.
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
     expect(
       fetchCalls.some((c) => c.method === "POST" && c.path === "/v1/sandboxes"),
@@ -1320,8 +1273,7 @@ describe("WorkdirSandboxExecutor.run", () => {
   });
 
   it("clamps auto_stop_seconds into the range workdir accepts", async (): Promise<void> => {
-    // The account-facing idle timeout allows up to a week; workdir 400s anything
-    // over an hour, which would fail every create rather than degrade.
+    // Accounts may set up to a week; workdir 400s anything over an hour, failing every create.
     const executor = await newExecutor({
       provider: "sandbox",
       persistent: true,

@@ -24,10 +24,6 @@ interface ContextPreparedLog {
   subagentsMs: number;
 }
 
-/**
- * A cold run, then a warm turn on the same conversation. The warm turn's
- * context prepare, read from the core log, must stay under budget.
- */
 export async function agentRun(context: VerifyContext): Promise<void> {
   const key = `smoke-${context.runId}`;
   const { agentId } = await context.measure(

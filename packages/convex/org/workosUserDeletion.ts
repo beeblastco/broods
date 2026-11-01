@@ -1,14 +1,8 @@
-/**
- * Convex-side queries and mutations for a WorkOS-triggered user teardown.
- * The Node action performs runtime cleanup before calling `finalize` here.
- */
-
 import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { purgeUser } from "../model/cascade";
 
-/** Returns accounts belonging to orgs the user solely owns and can safely purge. */
 export const listSoleOwnedAccounts = internalQuery({
   args: { authId: v.string() },
   returns: v.array(v.id("accounts")),
@@ -42,7 +36,6 @@ export const listSoleOwnedAccounts = internalQuery({
   },
 });
 
-/** Completes the database portion of a WorkOS deletion; missing users are a no-op. */
 export const finalize = internalMutation({
   args: { authId: v.string() },
   returns: v.null(),
@@ -59,7 +52,6 @@ export const finalize = internalMutation({
   },
 });
 
-/** Increments the cleanup retry count and returns a capped exponential delay. */
 export const scheduleRetry = internalMutation({
   args: { authId: v.string() },
   returns: v.union(v.null(), v.number()),

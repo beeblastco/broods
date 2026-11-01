@@ -16,9 +16,7 @@ export async function getProjectForRole(
 ): Promise<Doc<"projects"> | null> {
   const project = await ctx.db.get(projectId);
   if (!project) return null;
-  // The org owner and the membership rows are the sole authority, so a
-  // removed or demoted project creator loses access the moment their role
-  // changes.
+  // Owner and memberships only: a removed or demoted project creator loses access at once.
   const org = await ctx.db.get(project.orgId);
   if (!org) return null;
   if (org.ownerAuthId === authId) return project;
@@ -33,11 +31,7 @@ export async function getProjectForRole(
   return project;
 }
 
-/**
- * `getProjectForRole` for a write, upload or compute call: a suspended
- * account stays readable but takes no change, as on the config HTTP API.
- * @throws when the project's account is disabled.
- */
+// A suspended account stays readable but takes no change, as on the config HTTP API.
 export async function getProjectForWrite(
   ctx: QueryCtx | MutationCtx,
   authId: string,

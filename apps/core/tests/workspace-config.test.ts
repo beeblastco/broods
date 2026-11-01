@@ -1,8 +1,3 @@
-/**
- * Config validation moved to the config plane and is covered by
- * packages/convex/tests/workspaceRules.test.ts.
- */
-
 import { describe, expect, it } from "bun:test";
 import {
   workspaceGuidanceEnabled,
@@ -19,7 +14,6 @@ describe("workspace harness toggles", () => {
       true,
     );
     expect(workspaceGuidanceEnabled(undefined)).toBe(true);
-    // The toggles are orthogonal: turning one feature off leaves the other on.
     const workspacePromptOff = {
       storage: { provider: "s3" as const },
       harness: { workspace: { enabled: false } },

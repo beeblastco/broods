@@ -1,9 +1,3 @@
-/**
- * Writes a stage's runtime variable and re-resolves every agent and sandbox
- * config that reads it. Above the reader (`environmentValues.ts`) and the
- * refreshes, so neither of those imports back into the write.
- */
-
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import {
@@ -19,12 +13,6 @@ interface EnvironmentVariableWrite {
   change: "created" | "updated" | "unchanged";
 }
 
-/**
- * Stores a stage variable and re-resolves every agent and sandbox that reads
- * it. The dashboard and the CLI both write through here. A value whose digest
- * already matches writes nothing, so re-running `env set` does not rewrite
- * every config in the stage.
- */
 export async function upsertEnvironmentVariable(
   ctx: MutationCtx,
   args: {

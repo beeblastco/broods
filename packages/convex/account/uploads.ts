@@ -1,8 +1,3 @@
-/**
- * Upload URL minting for the HTTP routes and orphan cleanup for `crons.ts`.
- * The dashboard mutation in `workspace/files.ts` calls the model helper.
- */
-
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
@@ -24,10 +19,6 @@ export const grant = internalMutation({
     await grantUpload(ctx, args.accountId, args.kind),
 });
 
-/**
- * Delete blobs older than a day that no workspace file references, one page
- * per invocation, oldest first, rescheduling itself up to the age cutoff.
- */
 export const pruneOrphans = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.object({ deleted: v.number(), isDone: v.boolean() }),

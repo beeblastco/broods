@@ -204,8 +204,7 @@ function blockActionsRequest(payload: Record<string, unknown>): ChannelRequest {
   };
 }
 
-// Web API calls are form encoded with JSON-encoded blocks; response_url
-// calls are JSON.
+// Web API calls are form encoded with JSON-encoded blocks; response_url calls are JSON.
 function slackBody(raw: string): unknown {
   if (raw.startsWith("{")) return JSON.parse(raw);
   const params = Object.fromEntries(new URLSearchParams(raw));
@@ -214,8 +213,7 @@ function slackBody(raw: string): unknown {
   return { ...params, ...(blocks ? { blocks: blocks } : {}) };
 }
 
-// Captures every Slack call made while `run` executes, including the
-// fire-and-forget answer update, which a timer tick lets land.
+// A timer tick lets the fire-and-forget answer update land before the calls return.
 async function withSlackApi(run: () => Promise<void>): Promise<SlackCall[]> {
   const calls: SlackCall[] = [];
   const respond = async (

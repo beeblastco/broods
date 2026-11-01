@@ -8,8 +8,7 @@ import { sha256Hex } from "../model/accountSecrets";
 import { ClientError } from "../model/clientError";
 import schema from "../schema";
 
-// The WorkOS component is not registered in the test runtime; the org admin
-// below is the caller.
+// The WorkOS component is not registered in the test runtime; the org admin is the caller.
 vi.mock("../auth", () => ({
   authKit: {
     getAuthUser: async () => ({ id: "auth_admin" }),

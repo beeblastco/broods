@@ -43,7 +43,6 @@ export function coreRequest(
   };
 }
 
-/** Read the text field from multipart data captured by a fetch mock. */
 export function formDataText(formData: FormData, key: string): string {
   const value = formData.get(key);
   if (typeof value !== "string") {
@@ -53,7 +52,6 @@ export function formDataText(formData: FormData, key: string): string {
   return value;
 }
 
-/** Read a serialized request body captured by a fetch mock. */
 export function requestBodyText(body: RequestInit["body"] | undefined): string {
   if (typeof body !== "string") {
     throw new TypeError("Expected request body to contain text");
@@ -62,7 +60,6 @@ export function requestBodyText(body: RequestInit["body"] | undefined): string {
   return body;
 }
 
-/** Normalize every input accepted by fetch to its URL string. */
 export function requestUrl(input: string | URL | Request): string {
   if (typeof input === "string") return input;
 
@@ -73,10 +70,6 @@ export async function responseJson(response: Response): Promise<any> {
   return await response.json();
 }
 
-/**
- * Resolve every name `publicHostFetch` looks up to `address`, so a test can
- * reach a tenant host with no DNS. The returned function undoes it.
- */
 export function stubPublicDns(address = "93.184.216.34"): () => void {
   const lookup = spyOn(dns, "lookup").mockResolvedValue([
     { address: address, family: 4, ttl: 30 },

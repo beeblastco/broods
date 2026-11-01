@@ -1,8 +1,3 @@
-/**
- * Audit sink rules shared by the config route and the export action: what a
- * `PUT /v1/audit/sink` body must look like, and how an export batch is signed.
- */
-
 import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { hexFromBytes } from "./accountSecrets";
@@ -20,11 +15,6 @@ export type AuditSinkInput = {
   secret: string;
 };
 
-/**
- * The one sink row an account may have, or null.
- * @param db Convex database reader.
- * @param accountId the account whose sink to read.
- */
 export async function auditSinkRow(
   db: QueryCtx["db"],
   accountId: Id<"accounts">,
@@ -35,12 +25,6 @@ export async function auditSinkRow(
     .unique();
 }
 
-/**
- * Validate a sink body: https to a public host (the same rule core applies to
- * lifecycle webhooks) and a non-empty signing secret.
- * @param value raw request body
- * @returns the url and secret to store
- */
 export function normalizeAuditSinkInput(value: unknown): AuditSinkInput {
   if (!isPlainObject(value)) throw new ClientError("Body must be an object");
   const { url, secret } = value;
@@ -57,14 +41,7 @@ export function normalizeAuditSinkInput(value: unknown): AuditSinkInput {
   return { url: url.trim(), secret: secret };
 }
 
-/**
- * HMAC-SHA256 of the export body, as the `X-Broods-Signature` header value.
- * Same shape as core's lifecycle webhook signature so a receiver can verify
- * both with one routine.
- * @param secret the sink's signing secret
- * @param body the exact bytes being posted
- * @returns `sha256=<hex>`
- */
+// Must match core's lifecycle webhook signature: a receiver verifies both with one routine.
 export async function signAuditExport(
   secret: string,
   body: string,

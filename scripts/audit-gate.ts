@@ -1,9 +1,5 @@
-/**
- * Fails CI on a high or critical advisory in bun.lock that nobody has reviewed.
- * Exits 0 when clean, 1 on an unreviewed or expired advisory or a stale
- * exception, 2 when the audit did not produce a report (so a registry outage
- * never reads as "clean").
- */
+// Exit 1 on an unreviewed or expired high/critical advisory or a stale exception; exit 2 when
+// bun audit produced no report, so a registry outage never reads as clean.
 
 const SEVERITIES = ["low", "moderate", "high", "critical"] as const;
 
@@ -17,7 +13,6 @@ interface Advisory {
 export interface Exception {
   package: string;
   advisory: string;
-  /** Last day the exception holds; review it again before then. */
   expires: string;
   reason: string;
 }
@@ -25,11 +20,7 @@ export interface Exception {
 /** Reviewed, time-limited exceptions. Each one needs a reachability note. */
 export const EXCEPTIONS: Exception[] = [];
 
-/**
- * Judges one `bun audit --json` run. bun audit exits 0 when clean and 1 when it
- * found advisories; anything else, or output that is not an advisory map, is a
- * failed audit.
- */
+// bun audit exits 0 when clean and 1 on advisories; any other exit or report is a failed audit.
 export function judgeAudit(
   exitCode: number | null,
   stdout: string,

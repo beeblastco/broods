@@ -1,10 +1,3 @@
-/**
- * The "machine" provider: bash, the computer tool and local MCP servers run on
- * the user's own computer through the WebSocket its `broods machine` daemon
- * keeps open. Live daemons are held in memory; each connection is mirrored to
- * Convex for the dashboard.
- */
-
 import {
   authorize,
   rolePrincipal,
@@ -42,16 +35,12 @@ import type {
 } from "./types.ts";
 import { configString, mergeSandboxEnv, truncateText } from "./utils.ts";
 
-// The helper bounds a desktop action; a wait or hold adds its own duration.
 const COMPUTER_REPLY_MS = 30_000;
-// The dashboard reads a computer as offline once its heartbeat goes quiet.
 const HEARTBEAT_MS = 60_000;
 // Codex's per-tool default; a local server slower than that is hung.
 const MCP_REPLY_MS = 60_000;
-// The daemon kills the process at timeoutSeconds; this covers the round trip.
 const REPLY_GRACE_MS = 5_000;
-// Keyed by registryKey; a record's daemon holds it until it disconnects, reconnects
-// with the same instance, or is taken over with --force.
+// Live daemon sockets exist only here; Convex just mirrors them for the dashboard.
 const connections = new Map<string, MachineConnection>();
 let heartbeat: ReturnType<typeof setInterval> | undefined;
 
@@ -79,25 +68,15 @@ interface MachineConnection {
 }
 
 export interface MachineSocketData {
-  /** Unset for a bearer with no account. */
   accountId?: string;
-  /** The bearer it upgraded with, resolved again every heartbeat. */
   authorization?: string;
   claimed?: boolean;
-  /** Set once the socket closes, so a claim still awaiting its lookup drops it. */
   closed?: boolean;
-  /**
-   * Unix ms a stage ticket dies at, and the timer that closes the socket then.
-   * A credential frame with a fresh ticket moves both.
-   */
   expiresAt?: number;
   expiry?: ReturnType<typeof setTimeout>;
   key?: string;
-  /** Set for a role session, whose policy decides what it may claim. */
   role?: RolePrincipal;
-  /** The sandbox a role session claimed, checked again on every heartbeat. */
   claim?: ApiResource;
-  /** Set for a stage ticket or a stage-pinned role, which claim only their own stage's records. */
   stage?: { projectId: string; stageId: string };
 }
 
@@ -261,7 +240,6 @@ export async function runMachineComputerAction(
   return reply;
 }
 
-/** The server's CallToolResult as JSON; the MCP client parses it. */
 export async function runMachineMcpCall(
   record: McpRecord,
   tool: string,
@@ -288,7 +266,6 @@ export async function runMachineMcpCall(
   return reply.result;
 }
 
-/** The server's tools as JSON; the MCP client parses them. */
 export async function runMachineMcpList(
   record: McpRecord,
 ): Promise<Record<string, unknown>[]> {
@@ -309,10 +286,7 @@ export async function runMachineMcpList(
   return reply.tools;
 }
 
-/**
- * Upgrades even a bearer with no account, so the daemon reads a 4401 close
- * through the gateway relay instead of a bare 1006.
- */
+// Upgrades even a bearer with no account, so the daemon reads a 4401 close, not a bare 1006.
 export async function upgradeMachineSocket(
   request: Request,
   server: Bun.Server<MachineSocketData>,
@@ -320,13 +294,8 @@ export async function upgradeMachineSocket(
   const auth = await resolveBearerAuth({
     authorization: request.headers.get("authorization") ?? "",
   });
-  // A claim receives every exec frame, env secrets included, for the sandbox.
-  // So the embeddable runtime key is refused (it sits in frontends), and so
-  // is a stage ticket any org member can mint in the dashboard: only one
-  // minted for a member who may write the stage's sandboxes gets through.
-  // The bearer stays with the socket so each heartbeat resolves it again: a
-  // revoked key, an ended role session or a suspended account loses the
-  // claim within a minute, and a ticket closes the socket when it expires.
+  // A claim gets every exec's env secrets: the frontend runtime key and a ticket without
+  // sandboxWrite are refused, and each heartbeat re-resolves the bearer to drop a revoked one.
   const authorization = request.headers.get("authorization") ?? "";
   let data: MachineSocketData = {};
   if (auth?.kind === "account") {
@@ -337,7 +306,6 @@ export async function upgradeMachineSocket(
       accountId: auth.account.accountId,
       authorization: authorization,
       role: auth.role,
-      // A stage-pinned role claims like a ticket for its stage.
       ...(projectId && stageId
         ? { stage: { projectId: projectId, stageId: stageId } }
         : {}),
@@ -383,12 +351,9 @@ async function claimSandbox(
     (entry) =>
       entry.name === hello.sandbox && entry.config.provider === "machine",
   );
-  // A socket that closed during the lookup already ran its close handler, so
-  // registering it now would leave a dead holder that refuses the next daemon.
+  // Closed during the lookup: registering it now would leave a dead holder refusing the next one.
   if (socket.data.closed) return;
-  // A stage ticket reaches its own stage's record, else an account-level one
-  // of that name, never another stage's: a ticket for development must not
-  // take over the production machine that shares its name.
+  // A ticket claims its own stage's record or an account-level one, never another stage's.
   const record = stage
     ? (named.find(
         (entry) =>
@@ -399,8 +364,7 @@ async function claimSandbox(
         (entry) => entry.projectId === undefined && entry.stageId === undefined,
       ))
     : named[0];
-  // Claiming a machine is a write on that sandbox, so a role session needs
-  // sandboxes:write for it. The name only arrives in the hello, hence here.
+  // Checked here, not at upgrade: the sandbox name only arrives in the hello.
   const claim: ApiResource | undefined = record && {
     type: "sandboxes",
     id: record.sandboxId,
@@ -429,10 +393,7 @@ async function claimSandbox(
   }
   const key = registryKey(accountId, record.sandboxId);
   const previous = connections.get(key);
-  // The same daemon process reconnecting after a network drop reclaims its
-  // record. Any other daemon, on any computer, is refused unless it passes
-  // --force, or the holder would lose the machine in silence. A daemon that
-  // sends no instance counts as another daemon.
+  // Only the same daemon instance reclaims silently; any other needs --force.
   if (
     previous &&
     hello.force !== true &&
@@ -497,7 +458,6 @@ async function claimSandbox(
   });
 }
 
-/** Whether a machine sandbox's daemon holds its socket right now. */
 export function isMachineConnected(config: SandboxExecutorConfig): boolean {
   const plane = config.controlPlane;
 
@@ -524,7 +484,6 @@ function connectedMachine(config: SandboxExecutorConfig): MachineConnection {
   return connection;
 }
 
-// An MCP row names its sandbox rather than the record id, so this scans the registry.
 function machineServingMcp(record: McpRecord): MachineConnection {
   const sandbox = record.sandbox ?? "";
   const connection = [...connections.values()].find(
@@ -546,7 +505,6 @@ function machineServingMcp(record: McpRecord): MachineConnection {
   return connection;
 }
 
-// Status is for display only: a failed write never touches the daemon's socket.
 function mirrorConnection(write: () => Promise<void>): void {
   Promise.resolve()
     .then(write)
@@ -557,10 +515,6 @@ function mirrorConnection(write: () => Promise<void>): void {
     });
 }
 
-// Only a ticket socket's own account and stage, still allowed to write its
-// sandboxes, moves the deadline: anything else closes, so a refresh never
-// reaches what the socket could not claim. An outage keeps the old deadline
-// and the daemon tries again.
 async function refreshCredential(
   socket: Bun.ServerWebSocket<MachineSocketData>,
   token: string,
@@ -631,8 +585,7 @@ function sendFrame(
   timeoutMs: number,
 ): Promise<MachineReply> {
   return new Promise((resolve, reject): void => {
-    // Timers run late under load, so a frame never waits on the expiry one: a
-    // daemon past its credential gets no exec, env or anything else.
+    // The expiry timer runs late under load: never send a frame past the credential's deadline.
     const expiresAt = connection.socket.data.expiresAt;
     if (expiresAt !== undefined && expiresAt <= Date.now()) {
       connection.socket.close(
@@ -673,9 +626,6 @@ function sendHeartbeats(): void {
   }
 }
 
-// An outage keeps the daemon: only a bearer that no longer resolves to the
-// socket's account closes it, and an expired ticket closes as expired so the
-// daemon reconnects with a fresh one instead of stopping.
 async function revalidate(
   socket: Bun.ServerWebSocket<MachineSocketData>,
 ): Promise<void> {
@@ -695,7 +645,6 @@ async function revalidate(
   if (socket.data.closed || socket.data.authorization !== authorization) {
     return;
   }
-  // A role keeps its claim only while its policy still lets it write there.
   const claim = socket.data.claim;
   if (
     auth &&
@@ -707,6 +656,7 @@ async function revalidate(
   )
     return;
   const expiresAt = socket.data.expiresAt;
+  // Closing as expired makes the daemon reconnect with a fresh ticket instead of stopping.
   const close =
     expiresAt !== undefined && expiresAt <= Date.now()
       ? MACHINE_CLOSE.expired
@@ -714,7 +664,6 @@ async function revalidate(
   socket.close(close.code, close.reason);
 }
 
-// A ticket socket learns how long it has, so the daemon refreshes in time.
 function sendReady(
   socket: Bun.ServerWebSocket<MachineSocketData>,
   sandboxId: string,

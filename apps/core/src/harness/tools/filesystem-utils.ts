@@ -1,14 +1,3 @@
-/**
- * Shared helpers for the sandbox tool set
- * (bash/read/write/edit/glob/grep). Keep run plumbing, workspace selection,
- * path normalization, quoting, approval policy, and result formatting here.
- *
- * Each workspace carries its own effective sandbox (see ResolvedWorkspace): a
- * sandbox-backed workspace compiles tools to a bash `code` string run through its
- * provider; a sandbox-less workspace is read-only (read/glob only), served through
- * its `readMount` or, when the ref opts out with `sandbox: null`, straight from S3.
- */
-
 import type { JSONSchema7 } from "ai";
 import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
@@ -57,17 +46,11 @@ import { isFatalSandboxSetupError, toolError, toolText } from "./utils.ts";
 
 export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 
-// Writing here is a deliberate "this does not need to survive", so it is left alone.
-// Everything else outside the workspace mount looks like work about to be lost.
 const EPHEMERAL_WRITE_ROOTS = ["/tmp/", "/var/tmp/", "/dev/"];
 
-// `..` as a whole path segment, in the literal text only (see outsideWorkspaceCommand
-// for what that does not cover). The separator before it counts, so `a/../b` is caught
-// as surely as `../b`; word characters do not, so `{1..10}` and `main..dev` are left alone.
+// `..` as a whole segment: `a/../b` matches, `{1..10}` and `main..dev` do not.
 const PARENT_TRAVERSAL = /(?:^|[\s"'=:{([<>,/])\.\.(?=[/\s;&|)"'\]}>,]|$)/;
 
-// Absolute write targets, by construct: redirection, tee, dd, and the file-producing
-// commands whose destination is an argument. `path` is the captured destination.
 const ABSOLUTE_WRITE_PATTERNS = [
   /(?:^|[\s;&|()])\d*>>?\|?\s*(?<path>\/[^\s"'`;&|)<>]*)/g,
   /(?:^|[\s;&|()])tee\s+(?:-\S+\s+)*(?<path>\/[^\s"'`;&|)<>]*)/g,
@@ -75,47 +58,29 @@ const ABSOLUTE_WRITE_PATTERNS = [
   /(?:^|[\s;&|()])(?:cp|mv|ln|install|rsync)\s[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)(?=\s*(?:$|[;&|]))/g,
   /(?:^|[\s;&|()])(?:mkdir|touch|rm|rmdir|truncate|unlink)\s+(?:-\S+\s+)*(?<path>\/[^\s"'`;&|)<>]*)/g,
   /(?:^|[\s;&|()])sed\s+[^;&|]*-i[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)/g,
-  // Fetch and unpack: the destination is a flag argument, not a redirection.
   /(?:^|[\s;&|()])(?:curl|wget|tar|unzip)\s(?:[^;&|]*?\s)?-(?:o|O|C|d|-output|-directory|-output-document)[\s=]+(?<path>\/[^\s"'`;&|)<>]*)/g,
-  // git clone's destination is its last positional argument.
   /(?:^|[\s;&|()])git\s+clone\s[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)(?=\s*(?:$|[;&|]))/g,
 ];
 
-// What a bash call picked to run on. The two are orthogonal, not two spellings of
-// one field: `workspace` names a mount, `sandbox` names an agent-level sandbox to
-// run on with no mount.
 export interface BashTarget {
   workspace?: string;
   sandbox?: string;
 }
 
-// Per-tool runtime context. `workspaces` is the (registry-filtered) set this tool
-// may operate on.
 export interface SandboxToolContext {
   workspaces: ResolvedWorkspace[];
-  // Present when the tool needs the account's model settings rather than the
-  // workspace alone. `read` transcribes audio with them.
   agentConfig?: AgentConfig;
   // Resolved config.sandboxes; the first is the default.
   sandboxes?: ResolvedAgentSandbox[];
-  // Set when the parent session can track background jobs: bash exposes a
-  // `background` flag for persistent workspaces and records each job as an
-  // AsyncToolResult keyed by these ids so `async_status` can find it. `delivery`
-  // carries the originating channel/WebSocket so a finished job is pushed back
-  // there; absent => the result is only retrievable by polling.
   background?: {
     eventId: string;
     conversationKey: string;
     delivery?: AsyncToolDelivery;
     onDetachedResult?: (resultId: string) => void;
   };
-  // Reports each sandbox exec's CPU so the harness can attribute usage per
-  // sandbox type. The agent's bash/fs tools always report role "agent".
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   sandboxMetadata?: SandboxRunMetadata;
-  // The run's identity for a blocking `bash` exec env. The file tools run the
-  // harness's own scripts and a background job outlives its run, so they get
-  // none. A function, so the run token is only minted once a command runs.
+  // Blocking bash only, minted when a command runs: file tools and background jobs get none.
   principal?: () => SandboxRunPrincipal | undefined;
 }
 
@@ -128,11 +93,6 @@ export function workspaceRootFor(config: SandboxExecutorConfig): string {
     : DEFAULT_WORKSPACE_ROOT;
 }
 
-/**
- * The exec timeout a run on `config` gets: its own, within the provider's
- * limits. One with none gets `defaultSeconds` (bash's default unless a caller,
- * like the MCP relay, names its own), never past the provider's maximum.
- */
 export function sandboxTimeoutSeconds(
   config: SandboxExecutorConfig,
   defaultSeconds?: number,
@@ -149,7 +109,6 @@ export function sandboxTimeoutSeconds(
   );
 }
 
-/** The workspace mounted in the agent's own (first) sandbox, if any. bash, browse and lambda MCP rows run there. */
 export function agentOwnWorkspace(
   context: SandboxToolContext,
 ): ResolvedWorkspace | undefined {
@@ -158,16 +117,11 @@ export function agentOwnWorkspace(
   );
 }
 
-/** Whether bash reaches the default sandbox by name: it exists and no workspace mounts it. */
 export function hasStandaloneSandbox(context: SandboxToolContext): boolean {
   return Boolean(context.sandboxes?.[0]) && !agentOwnWorkspace(context);
 }
 
-/**
- * Whether this workspace is mounted in the agent's OWN sandbox rather than
- * borrowing a different one. Identity is the sandbox record, so a workspace that
- * inherits the agent default and one that names it explicitly are the same case.
- */
+// By sandbox record, so inheriting the agent default and naming it explicitly match alike.
 export function isAgentOwnSandbox(
   workspace: ResolvedWorkspace,
   context: SandboxToolContext,
@@ -191,12 +145,6 @@ export function sandboxSupportsJobControls(
   return sandboxSupportsBackgroundJobs(config) && config?.provider !== "e2b";
 }
 
-/**
- * The agent-level sandbox a no-mount call runs on: the selectable one a name picks,
- * else the default. Undefined when nothing is named and the agent has no sandbox.
- * Throws when a name picks nothing selectable, the way an unknown workspace name
- * does, so a mounted default never silently runs in its workspace instead.
- */
 export function resolveAgentSandbox(
   context: SandboxToolContext,
   requested?: string,
@@ -223,11 +171,6 @@ export function resolveAgentSandbox(
   throw new Error(`unknown sandbox ${requested}`);
 }
 
-/**
- * Resolve the workspace a call targets. Returns undefined when no workspace is
- * configured (stateless / ephemeral run). The first workspace is the default.
- * Throws when a requested workspace name is unknown.
- */
 export function resolveWorkspace(
   workspaces: ResolvedWorkspace[],
   requested?: string,
@@ -291,11 +234,8 @@ export async function runSandbox(
   try {
     result = await runSandboxOn(config, namespace, code, options);
   } catch (error) {
-    // `options` (URL, key, template) and `snapshot` (workdir image name vs
-    // MicroVM image ARN) are the primary provider's; the fallback runs on the
-    // platform's own defaults for that provider, so the platform pays for it
-    // even when the primary ran on the account's own credentials, and bills the
-    // specs the fallback provider creates without those options.
+    // The primary's options and snapshot do not fit the fallback: it runs on the platform's
+    // defaults and credentials, and bills the specs the fallback provider creates.
     const {
       fallbackProvider,
       options: _options,
@@ -344,11 +284,6 @@ export async function runSandbox(
   return result;
 }
 
-/**
- * The work runs inside the sandbox (not the harness), so it survives the request.
- * The caller supplies the jobId (so the tracking row exists before the job can
- * finish) and an optional completion callback the job POSTs when it exits.
- */
 export async function runSandboxBackground(
   config: SandboxExecutorConfig,
   namespace: string,
@@ -381,19 +316,13 @@ export async function runSandboxBackground(
   });
 }
 
-// Approval policy is evaluated per call so workspaces with different
-// sandboxes/permissionModes resolve independently:
-//   - read/glob/grep: always auto (handled by omitting needsApproval).
-//   - write/edit: auto in edit/bypass, ASK in ask.
-//   - bash: ASK in ask + edit, auto only in bypass.
 export function editNeedsApproval(
   workspaces: ResolvedWorkspace[],
   requested?: string,
 ): boolean {
   try {
     const workspace = resolveWorkspace(workspaces, requested);
-    // Read-only workspace (no sandbox): nothing to approve. Skip the gate so the
-    // call falls through to the tool's clean "workspace is read-only" rejection.
+    // Read-only: no gate, so the call reaches the tool's own refusal.
     if (workspace && !workspace.sandbox) {
       return false;
     }
@@ -409,16 +338,13 @@ export function bashNeedsApproval(
   selection: BashTarget = {},
 ): boolean {
   try {
-    // A name that picks nothing selectable throws here, so the gate stays closed on
-    // a call the tool will refuse anyway.
     const picked = resolveAgentSandbox(context, selection.sandbox);
     if (!targetsAgentSandbox(context, selection)) {
       const workspace = resolveWorkspace(
         context.workspaces,
         selection.workspace,
       );
-      // Read-only workspace (no sandbox): nothing to approve. Skip the gate so the
-      // call falls through to the tool's clean "no sandbox available" rejection.
+      // Read-only: no gate, so the call reaches the tool's own refusal.
       if (workspace && !workspace.sandbox) {
         return false;
       }
@@ -432,23 +358,12 @@ export function bashNeedsApproval(
   }
 }
 
-/**
- * Narrows a stored `sandbox` field to the name resolved downstream. The tool and
- * the policy layer both read it here, and both refuse a present non-name.
- */
 export function bashSandboxTarget(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-/**
- * The machine a `computer` call lands on. A name always decides, even when only
- * one computer is reachable: the schema drops the field in that case, but a
- * replayed approval still carries the input as it was stored, so a name from when
- * the list was longer can arrive after it shrank. Honouring it there is what stops
- * a click landing on whichever machine happens to be left. Only an unnamed call
- * falls back, and only when there is no choice to make; anything else resolves to
- * nothing, which the tool refuses and the approval gate reads as "ask".
- */
+// A name always decides, even with one machine left: a replayed approval can carry a name
+// from a longer list, and it must not land on whichever machine remains.
 export function computerSandboxTarget(
   machines: ResolvedAgentSandbox[],
   requested: unknown,
@@ -460,11 +375,6 @@ export function computerSandboxTarget(
   return machines.length <= 1 ? machines[0] : undefined;
 }
 
-/**
- * The computers this agent can drive, in config order. Only a machine has a
- * screen, so this is both what registers the `computer` tool and the list a call
- * picks from.
- */
 export function machineSandboxes(
   sandboxes: ResolvedAgentSandbox[] = [],
 ): ResolvedAgentSandbox[] {
@@ -473,14 +383,7 @@ export function machineSandboxes(
   );
 }
 
-/**
- * Where a bash call can run, one line each, for the agent's environment block.
- * A machine says whether its daemon is connected, since a call to an offline one
- * only fails.
- */
 export function bashTargetLines(context: SandboxToolContext): string[] {
-  // A lone workspace or sandbox has no argument to name it: bash leaves the
-  // field out of its schema, so the line says to omit it instead.
   const namesWorkspace = workspaceParamSchema(context.workspaces) !== undefined;
   const namesSandbox = sandboxParamChoices(context).length > 0;
   const workspaces = context.workspaces.map(
@@ -500,7 +403,6 @@ export function bashTargetLines(context: SandboxToolContext): string[] {
   return [...workspaces, ...sandboxes];
 }
 
-/** The sandboxes bash's `sandbox` field offers; none when the default is the only one. */
 export function sandboxParamChoices(
   context: SandboxToolContext,
 ): ResolvedAgentSandbox[] {
@@ -511,7 +413,6 @@ export function sandboxParamChoices(
   return onlyTheDefault ? [] : choices;
 }
 
-/** Every sandbox a bash call can name: the default while standalone, then the rest. */
 export function selectableSandboxes(
   context: SandboxToolContext,
 ): ResolvedAgentSandbox[] {
@@ -520,13 +421,6 @@ export function selectableSandboxes(
   return hasStandaloneSandbox(context) ? sandboxes : sandboxes.slice(1);
 }
 
-/**
- * Whether this call runs on an agent-level sandbox with no workspace mounted: the
- * agent has no workspaces at all, or it named a selectable sandbox. Any other name
- * resolves to a workspace run here, and both the tool and the approval gate refuse
- * it (see resolveAgentSandbox). `sandbox` wins over `workspace`; the two never both
- * apply.
- */
 export function targetsAgentSandbox(
   context: SandboxToolContext,
   selection: BashTarget = {},
@@ -543,11 +437,6 @@ export function targetsAgentSandbox(
   );
 }
 
-// S3-direct read-only path (workspaces with neither a sandbox nor a readMount).
-// Reads/lists straight from the workspace's storage bucket under the same prefix the
-// mount uses, so it sees the same tree. A bring-your-own bucket resolves its own
-// bucket/prefix and short-lived assume-role credentials; the managed bucket reads on
-// the harness's own role (no per-read STS) under `<namespace>/`.
 const READ_DEFAULT_LIMIT = 2000;
 
 export async function s3ReadNumbered(
@@ -629,11 +518,8 @@ export async function s3Glob(
   );
 }
 
-// A workspace file as a URL an outside service can fetch, for the chat providers
-// that pull media themselves instead of taking an upload. A presigned S3 link
-// cannot be used: Zalo stores the URL and re-fetches it whenever a viewer opens
-// the picture, so any expiry turns into a broken image in chat history. The
-// sealed ticket points at the file for as long as the file exists.
+// Not a presigned link: Zalo re-fetches the URL whenever a viewer opens the picture, so
+// any expiry breaks chat history. The sealed ticket lasts as long as the file.
 export async function workspaceMediaUrl(
   ws: ResolvedWorkspace,
   rel: string,
@@ -668,13 +554,7 @@ export async function workspaceMediaUrl(
   return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
 }
 
-// The same workspace file as bytes, for the providers that upload instead of
-// fetching. Slack and Discord ignore an outbound URL entirely. Both take a
-// multipart upload and nothing else, so the media link the other channels are
-// handed is worthless to them and the object has to be read here. Reading S3
-// directly rather than fetching our own /media route keeps it to one hop and
-// off the 25 MB the public route caps at. `maxBytes` refuses a larger file
-// before reading it, as browse does for a screenshot.
+// Slack and Discord take uploads only. S3 directly, not /media, skips a hop and its 25 MB cap.
 export async function workspaceMediaBytes(
   ws: ResolvedWorkspace,
   rel: string,
@@ -692,9 +572,6 @@ export async function workspaceMediaBytes(
   );
 }
 
-// Bash and browse result text: stdout then stderr, with a trailing `[exit code N]`
-// when the run failed so a silent failure never reads as success. A run past
-// `timeoutSeconds` throws, so the call fails with whatever output came back.
 export function formatRunText(
   result: SandboxRunResult,
   timeoutSeconds: number,
@@ -757,25 +634,16 @@ export function disallowedRuntimeCommand(
   return undefined;
 }
 
-// The workspace mount is the only storage that outlives the sandbox; the rest of the
-// filesystem dies with the VM, or with the reservation when there is one. So writes
-// are what this guard is about. Reading a sandbox's own system files risks nothing
-// and is often how a task gets done.
 export function outsideWorkspaceCommand(
   command: string,
   options: { persistentOwnSandbox?: boolean } = {},
 ): string | undefined {
   const scanned = unescapeShellChars(stripHereDocBodies(command));
-  // Traversal is a containment concern, not a durability one: read/write/edit reject
-  // `..`, and bash should not be the trivial way around them. This only sees the
-  // literal text. Bash expands `$'\x2e\x2e'`, `$(printf ..)` and variables after
-  // this runs, so it is a guardrail, not a boundary. The boundary is the VM plus the
-  // prefix-scoped mount credentials, which no amount of traversal escapes.
+  // A guardrail, not a boundary: bash expands `$'\x2e\x2e'`, `$(...)` and variables after this.
+  // The VM and the prefix-scoped mount credentials are the boundary.
   if (PARENT_TRAVERSAL.test(scanned)) {
     return "Error: parent directory traversal is not allowed";
   }
-  // A reserved sandbox the agent owns keeps its whole filesystem between calls, so
-  // writing outside the mount there loses nothing until the reservation ends.
   if (options.persistentOwnSandbox === true) {
     return undefined;
   }
@@ -792,11 +660,6 @@ export function outsideWorkspaceCommand(
   return undefined;
 }
 
-/**
- * Whether the write guard steps aside for this workspace. One predicate for both
- * callers on purpose: the bash description promises exactly what the guard enforces,
- * and two copies of this condition would drift into the tool lying to the model.
- */
 export function writesOutsideAllowed(
   workspace: ResolvedWorkspace,
   context: SandboxToolContext,
@@ -807,11 +670,7 @@ export function writesOutsideAllowed(
   );
 }
 
-/**
- * Normalize a model-supplied path to a workspace-relative path. The sandbox run
- * is rooted at the workspace directory, so a leading `/` means "workspace root",
- * not the container root. Directory traversal is rejected.
- */
+// A leading `/` is the workspace root, not the container root.
 export function toWorkspaceRelative(path: string): string {
   const trimmed = (path ?? "").trim();
   if (!trimmed || trimmed === "." || trimmed === "/") {
@@ -854,13 +713,8 @@ export function boundedInteger(
   return value;
 }
 
-// The first absolute path the command would write to, ignoring roots that are
-// ephemeral by convention. Shell semantics are not parseable with a regex, so this
-// covers the constructs that actually lose an agent's work: redirections and the
-// common file-producing commands. Three classes are knowingly out of reach and are
-// left to the durability rule in the bash tool description: interpreter writes
-// (`python -c "open(...)"`), a write through a symlink, and the open-ended tail of
-// package-manager install prefixes. Adding one of those is not a bug fix.
+// Regex cannot parse shell: interpreter writes, symlink writes and install prefixes are
+// knowingly left to the bash description's durability rule.
 function absoluteWriteTarget(command: string): string | undefined {
   for (const pattern of ABSOLUTE_WRITE_PATTERNS) {
     for (const match of command.matchAll(pattern)) {
@@ -940,8 +794,6 @@ async function runSandboxOn(
       ),
     })
     .catch((error: unknown): SandboxRunResult => {
-      // The client deadline fired before any executor's guest answered: a
-      // timeout with no output, the same as one the guest stopped itself.
       if (!isTimeoutError(error)) throw error;
 
       return {
@@ -964,9 +816,6 @@ function runtimeList(config: SandboxExecutorConfig): SandboxRuntime[] {
     : ["bash", "python", "node"];
 }
 
-// The reservation key a namespace-less run reconnects on, normally derived per
-// agent by resolveAgentRuntime rather than written by the author. Lambda-hosted
-// MCP rows (tools/index.ts) reserve on it too, so they share bash's VM.
 export function statelessReservationKeyFor(
   config: SandboxExecutorConfig,
 ): string | undefined {
@@ -994,14 +843,10 @@ function stripHereDocBodies(command: string): string {
   return kept.join("\n");
 }
 
-// Bash reads `\.\./x` as `../x`, so the escapes have to come off before anything is
-// matched. Otherwise the two dots are never adjacent and no pattern can see them.
 function unescapeShellChars(command: string): string {
   return command.replace(/\\(.)/g, "$1");
 }
 
-// Name a concrete relative path in the error so the retry is obvious rather than
-// something the model has to invent.
 function workspaceRelativeSuggestion(target: string): string {
   const basename = target.split("/").filter(Boolean).pop();
 

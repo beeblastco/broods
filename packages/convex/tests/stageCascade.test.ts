@@ -29,9 +29,7 @@ type StageScopedTable = Extract<
 
 const AUTH_ID = "auth_owner";
 
-// Every table `deleteStageContents` owns. Runtime and audit tables
-// (sandboxInstances, sandboxAuditEvents, auditEvents) are swept at the
-// account level instead and are deliberately absent.
+// Runtime and audit tables are swept per account, so they are absent on purpose.
 const STAGE_SCOPED_TABLES: StageScopedTable[] = [
   "agentConfigs",
   "canvasLayouts",
@@ -228,12 +226,9 @@ async function rowsForStage(
   });
 }
 
-// `deleteStageContents` is the single cascade both `stage.remove` and
-// `cascade.purgeProject` call, so a table missing from it orphans rows on
-// every deletion path at once.
+// Both `stage.remove` and `cascade.purgeProject` run this, so a missed table orphans rows.
 describe("deleteStageContents", () => {
-  // The cascade schedules runtime and S3 cleanup. Fake timers keep those
-  // actions from firing after a test ends, where their logs race worker teardown.
+  // Fake timers keep the scheduled runtime and S3 cleanup from logging past teardown.
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -331,9 +326,8 @@ describe("deleteStageContents", () => {
     });
   });
 
-  // The webhook lookup ignores stageId, so an orphaned record both routes
-  // inbound messages into the dead stage and permanently squats the
-  // (accountId, platform, externalId) slot that `create` guards.
+  // The webhook lookup ignores stageId: an orphaned record routes messages into the dead
+  // stage and squats the (accountId, platform, externalId) slot `create` guards.
   test("frees the channel place so it can be rebound after deletion", async () => {
     const t = cascadeTest();
     const { accountId, stageId } = await seedFullStage(t);

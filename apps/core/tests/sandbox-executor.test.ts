@@ -41,7 +41,6 @@ const e2bRunMock = mock(
   },
 );
 const e2bKillMock = mock(async (_sandboxId: string) => {});
-// The size each fake provider reports for its sandbox.
 const E2B_INFO = { cpuCount: 2, memoryMB: 2048 };
 const DAYTONA_SIZE = { cpu: 2, memory: 4, disk: 10 };
 const VERCEL_SIZE = { vcpus: 2, memory: 4096 };
@@ -84,7 +83,6 @@ const daytonaCreateSnapshotMock = mock(
   async (_id: string, _name: string, _timeout?: number) => {},
 );
 const daytonaStartMock = mock(async () => {});
-// What a reconnected Daytona sandbox reports; an idle reservation is "stopped".
 let daytonaState = "started";
 let daytonaClientOptionsSeen: Record<string, unknown>[] = [];
 const daytonaCreateMock = mock(async (_options: Record<string, unknown>) => ({
@@ -108,8 +106,6 @@ const vercelSnapshotMock = mock(async (_options?: { expiration?: number }) => ({
   snapshotId: "snap_captured",
   status: "created",
 }));
-// What the next sandbox the mocks hand out reports: its session and its
-// Secure Compute network.
 let vercelSession: { createdAt: Date; expiresAt?: Date; networkId?: string } = {
   createdAt: new Date(),
 };
@@ -217,8 +213,6 @@ const stsSendMock = mock(async (_command: unknown) => ({
     SessionToken: "scoped-session-token",
   },
 }));
-// AWS Lambda MicroVM mocks: RunMicrovm/auth-token/lifecycle go through the SDK
-// client; the exec request itself is an HTTPS POST to the VM endpoint (fetch).
 let microvmExecPayload = {
   ok: true,
   runtime: "bash",
@@ -230,10 +224,8 @@ let microvmExecPayload = {
   truncated: false,
 };
 let microvmGetResponses: Array<Record<string, unknown> | Error> = [];
-// What the image calls answer: the version a VM booted, and one image's state.
 let microvmImageVersion: Record<string, unknown> = {};
 let microvmImageState: Record<string, unknown> = {};
-// The image the mocked VM booted, which GetMicrovm reports like the real API.
 let microvmBootedImage = "";
 const microvmSendMock = mock(
   async (command: { _type?: string; input?: { imageIdentifier?: string } }) => {
@@ -280,13 +272,11 @@ const microvmSendMock = mock(
 );
 const originalFetch = globalThis.fetch;
 let microvmMountLive = true;
-// Checks that must report "not mounted" before the mount comes up, mirroring a VM
-// that answers /exec while its `/run` hook is still mounting.
+// Mount checks that answer "not mounted" first, as from a VM still running its `/run` hook.
 let microvmMountPendingChecks = 0;
 const microvmFetchMock = mock(
   async (_url: string, init?: { body?: string }) => {
-    // The create-time mount assertion is infrastructure every workspace run pays for,
-    // so it answers "mounted" here and tests keep asserting on their own exec payload.
+    // The create-time mount assertion answers "mounted", so tests assert on their own payload.
     const body = init?.body;
     const mounted = typeof body === "string" && body.includes("mountpoint -q ");
     let live = microvmMountLive;
@@ -318,18 +308,14 @@ function microvmCommand(type: string) {
     }
   };
 }
-// Every POST the MicroVM got, parsed: /exec requests and the credential refresh.
 const microvmPosts = (): Partial<SandboxExecRequest>[] =>
   microvmFetchMock.mock.calls.map((call): Partial<SandboxExecRequest> =>
     JSON.parse(call[1]?.body ?? "{}"),
   );
-// The `code` of every /exec POST, in order. Skips the credential-refresh POST,
-// which carries scoped keys rather than a script.
 const execBodies = (): string[] =>
   microvmPosts()
     .map((post): string | undefined => post.code)
     .filter((code): code is string => typeof code === "string");
-// The env of the first /exec POST whose `code` contains `marker`.
 const execEnv = (marker: string): Record<string, string> | undefined =>
   microvmPosts().find((post): boolean => post.code?.includes(marker) === true)
     ?.env;
@@ -340,8 +326,7 @@ const microvmRunInput = (): Record<string, unknown> => {
 
   return (call![0] as { input: Record<string, unknown> }).input;
 };
-// The MicroVM log stream is `<accountId>/<project>/<stage>/<uuid>/<mac>`; the
-// mac is absent when core has no OTLP client secret to sign with.
+// `<accountId>/<project>/<stage>/<uuid>/<mac>`; the mac needs an OTLP client secret to sign.
 const logStreamPattern = (
   accountId: string,
   project: string,
@@ -366,8 +351,6 @@ await mock.module("@daytona/sdk", () => ({
     }
 
     create = daytonaCreateMock;
-    // Release reaches an existing sandbox by id; it deletes through the same
-    // handle shape create returns.
     get = mock(async (id: string) => ({
       state: daytonaState,
       start: daytonaStartMock,
@@ -434,8 +417,7 @@ await mock.module("@aws-sdk/client-sts", () => ({
   },
 }));
 
-// The boot check's registry read. Null by default: a provider image no account
-// registered, which every provider boots.
+// Null by default: an unregistered provider image, which every provider boots.
 let findSnapshotSpy: ReturnType<
   typeof spyOn<typeof sandboxSnapshots, "findSandboxSnapshot">
 >;
@@ -542,11 +524,9 @@ function persistentVercelRun(): SandboxRunRequest {
   };
 }
 
-// The MicroVM endpoint and auth-token caches are process-wide by design (an executor
-// is constructed per request, so an instance field would never hit), which makes the
-// reservation key shared state. Every reserved-VM test takes a namespace of its own.
+// The MicroVM endpoint and token caches are process-wide (an executor is built per request),
+// so every reserved-VM test takes a namespace of its own.
 let microvmNamespaceSeq = 0;
-// A typed fetch stand-in: `respond` answers every request.
 function stubFetch(
   respond: (
     url: string | URL | Request,
@@ -556,7 +536,6 @@ function stubFetch(
   return Object.assign(respond, { preconnect: originalFetch.preconnect });
 }
 
-// A ready guest: its /healthz probe answers ok and `respond` answers the rest.
 function guestFetch(
   respond: (
     url: string | URL | Request,
@@ -618,8 +597,6 @@ describe("createSandboxExecutor", () => {
       provider: "lambda",
       stdout: "shell ok\n",
     });
-    // RunMicrovm carries the image identifier + a run-hook payload describing the
-    // workspace mount (namespace + scoped, short-lived assume-role creds).
     const runInput = microvmRunInput();
     expect(runInput.imageIdentifier).toBe(
       "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox",
@@ -627,8 +604,7 @@ describe("createSandboxExecutor", () => {
     expect(runInput.executionRoleArn).toBe(
       "arn:aws:iam::123456789012:role/microvm-execution",
     );
-    // The stream name carries the tenant (none here: no observability scope and
-    // no control plane) so the log forwarder can label lines without a lookup.
+    // The stream name carries the tenant, so the log forwarder labels lines without a lookup.
     expect(runInput.logging).toEqual({
       cloudWatch: {
         logGroup: "/broods/dev/microvms",
@@ -645,8 +621,7 @@ describe("createSandboxExecutor", () => {
       prefix: `${NS}/`,
       env: { AWS_ACCESS_KEY_ID: "scoped-access-key" },
     });
-    // A namespaced ephemeral VM must prove the run-hook mount is live before the
-    // user's code reaches /exec, or a fast exec writes to local disk and is lost.
+    // The run-hook mount must be live before user code runs, or its writes land on local disk.
     const calls = microvmFetchMock.mock.calls;
     expect(JSON.parse((calls[0]![1] as { body: string }).body).code).toBe(
       `mountpoint -q '/mnt/workspaces/${NS}'`,
@@ -757,11 +732,9 @@ describe("createSandboxExecutor", () => {
 
     expect(result.ok).toBe(true);
     expect(upsertSandboxInstanceMock).toHaveBeenCalledTimes(1);
-    // The mirror row remembers the stream so the dashboard can tail it.
     expect(upsertSandboxInstanceMock.mock.calls[0]?.[5]).toEqual({
       ephemeral: true,
       logStream: expect.stringMatching(logStreamPattern("account-1", "-", "-")),
-      // A MicroVM's size is the one Broods knows, so the row is verified.
       specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
     });
     expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
@@ -775,8 +748,7 @@ describe("createSandboxExecutor", () => {
     );
   });
 
-  // e2b's size needs a read, so its row is written without one and the size
-  // is patched in once the read answers.
+  // e2b's size needs a read, so its row is written without one and patched once it answers.
   for (const [provider, sandboxId, specs, patched] of [
     [
       "daytona",
@@ -796,7 +768,6 @@ describe("createSandboxExecutor", () => {
         name: "ephemeral",
         specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
       };
-      // Platform keys come from the harness env, not the config options.
       process.env.VERCEL_TOKEN = "platform-token";
       process.env.VERCEL_TEAM_ID = "team_1";
       process.env.VERCEL_PROJECT_ID = "prj_1";
@@ -814,7 +785,6 @@ describe("createSandboxExecutor", () => {
           sandboxId,
           sandboxId,
           undefined,
-          // The row carries the size the provider reported, not the config's.
           { ephemeral: true, specs: patched ? undefined : specs },
         ],
       ]);
@@ -889,8 +859,7 @@ describe("createSandboxExecutor", () => {
 
     expect(claimSandboxInstanceMock.mock.calls[0]?.[1]).toBe(CHILD_NS);
     const runInput = microvmRunInput();
-    // Persistent (reserved) VMs attach the managed shell-ingress connector at
-    // launch so the dashboard terminal can mint shell tokens later.
+    // A reserved VM attaches shell ingress at launch so the dashboard terminal can mint tokens.
     expect(runInput.ingressNetworkConnectors).toEqual([
       "arn:aws:lambda:us-east-1:aws:network-connector:aws-network-connector:HTTP_INGRESS",
       "arn:aws:lambda:us-east-1:aws:network-connector:aws-network-connector:SHELL_INGRESS",
@@ -904,8 +873,6 @@ describe("createSandboxExecutor", () => {
       bucket: "workspace-bucket",
       prefix: `${CHILD_NS}/`,
     });
-    // A fresh workspace VM is checked for a live mount before it runs anything, so
-    // a failed `/run` hook can never pass as a working workspace.
     const calls = microvmFetchMock.mock.calls;
     const assertion = calls[0]![1] as { body: string };
     expect(JSON.parse(assertion.body).code).toBe(
@@ -1010,7 +977,6 @@ describe("createSandboxExecutor", () => {
     const runInput = microvmRunInput();
     expect(runInput.runHookPayload).toBeUndefined();
     expect(runInput.egressNetworkConnectors).toBeUndefined();
-    // Ephemeral VMs never serve a terminal, so no shell ingress is attached.
     expect(runInput.ingressNetworkConnectors).toBeUndefined();
     const init = microvmFetchMock.mock.calls[0]![1] as { body: string };
     expect(JSON.parse(init.body).namespace).toBeUndefined();
@@ -1160,7 +1126,6 @@ describe("createSandboxExecutor", () => {
     const types = microvmSendMock.mock.calls.map(
       (c) => (c[0] as { _type?: string })?._type,
     );
-    // Reconnected via GetMicrovm; no fresh RunMicrovm and no Terminate (persistent).
     expect(types).toContain("GetMicrovm");
     expect(types).not.toContain("RunMicrovm");
     expect(types).not.toContain("TerminateMicrovm");
@@ -1254,8 +1219,7 @@ describe("createSandboxExecutor", () => {
       image: "obscura",
     }).run(request);
 
-    // The cached VM booted the default image, so the run goes back to the
-    // reservation, where reconnect stops it before launching the new image.
+    // The cached VM booted the default image: reconnect stops it before the new launch.
     expect(getSandboxExternalIdMock.mock.calls.length).toBe(lookups + 1);
     const types = microvmSendMock.mock.calls.map(
       (c) => (c[0] as { _type?: string })?._type,
@@ -1347,7 +1311,6 @@ describe("createSandboxExecutor", () => {
     };
     const STARTED_AT = new Date("2026-10-07T08:00:00.000Z");
 
-    // Spies on the S3 helpers a snapshot calls, recording each copy and delete.
     function stubS3(): {
       copies: string[][];
       deletes: string[];
@@ -1434,7 +1397,6 @@ describe("createSandboxExecutor", () => {
           `workspace-bucket/sandbox-snapshots/${id}/image.zip`,
           `workspace-bucket/sandbox-snapshots/${id}/source.zip`,
         ]);
-        // The capture ran in the VM, told when the VM started.
         const execBody = microvmFetchMock.mock.calls
           .map((call) => JSON.stringify(call[1] ?? null))
           .find((body) => body.includes("BROODS_STARTED_AT"));
@@ -1754,15 +1716,13 @@ describe("createSandboxExecutor", () => {
     const types = microvmSendMock.mock.calls.map(
       (c) => (c[0] as { _type?: string })?._type,
     );
-    // The endpoint survives suspend and #exec retries the proxy's 502/503 while the
-    // snapshot restores, so the resume is fired without a second status poll.
+    // #exec retries the proxy's 502/503 while the snapshot restores: no second status poll.
     expect(types).toContain("ResumeMicrovm");
     expect(types.filter((type) => type === "GetMicrovm")).toHaveLength(1);
   });
 
   it("reuses one auth token across execs on the same MicroVM", async () => {
     const ns = microvmNamespace();
-    // A microvmId no other test touches: the token cache is process-wide by design.
     storedSandboxExternalId = "microvm-token";
     microvmGetResponses = [
       {
@@ -1857,7 +1817,6 @@ describe("createSandboxExecutor", () => {
     await createSandboxExecutor({ provider: "lambda", persistent: true }).run(
       request,
     );
-    // A second executor: the caches are module-scoped because one is built per request.
     const controlPlaneCalls = microvmSendMock.mock.calls.length;
     const lookups = getSandboxExternalIdMock.mock.calls.length;
     const posts = microvmFetchMock.mock.calls.length;
@@ -1865,13 +1824,10 @@ describe("createSandboxExecutor", () => {
       request,
     );
 
-    // The whole point of the cache: the second call's only network operation is the
-    // POST that runs the code. No reservation lookup, no GetMicrovm, no token mint.
-    // (The first call also paid for the create-time mount assertion.)
+    // The cached call's only network operation is the POST that runs the code.
     expect(microvmFetchMock.mock.calls.length - posts).toBe(1);
     expect(microvmSendMock.mock.calls.length).toBe(controlPlaneCalls);
     expect(getSandboxExternalIdMock.mock.calls.length).toBe(lookups);
-    // ...and the first call is what paid for it: lookup + GetMicrovm + token mint.
     expect(lookups).toBe(1);
     expect(
       microvmSendMock.mock.calls.map(
@@ -1907,9 +1863,8 @@ describe("createSandboxExecutor", () => {
     };
 
     await settleOnFakeClock(executor.run(request));
-    // The cached VM is gone, so every POST to it 503s until the short cached budget
-    // runs out. It never ran the code, which is what makes re-exec'ing safe: the
-    // reservation now resolves to a live VM and only that one sees the request.
+    // The stale VM 503s until its short budget runs out without running the code, so
+    // re-exec on the live VM the reservation now names is safe.
     storedSandboxExternalId = "microvm-1";
     const posted: string[] = [];
     globalThis.fetch = (async (url: string) => {
@@ -1947,8 +1902,7 @@ describe("createSandboxExecutor", () => {
       timeoutMs: 1_000,
     });
 
-    // The VM bash reaches next must already carry the workspace mount, or bash
-    // writes to local disk for the VM's whole life.
+    // The VM bash reaches next must already carry the mount, or bash writes to local disk.
     const payload = JSON.parse(String(microvmRunInput().runHookPayload));
     expect(payload.workspace).toMatchObject({
       namespace: ns,
@@ -1988,7 +1942,6 @@ describe("createSandboxExecutor", () => {
     });
     await executor.postReserved(request);
 
-    // The second request skips the reservation, like a cached bash exec.
     expect(getSandboxExternalIdMock).toHaveBeenCalledTimes(1);
     expect(posts.map((post) => post.url)).toEqual([
       "https://microvm-1.lambda-microvm.us-east-1.on.aws/mcp",
@@ -2067,8 +2020,7 @@ describe("createSandboxExecutor", () => {
           (error: unknown): string => String(error),
         );
 
-      // The guest answers its own errors with 200, so a 502/503 after the VM was
-      // ready may be a lost answer to a call that already ran.
+      // The guest answers its own errors with 200, so a late 502/503 may hide a call that ran.
       expect(failure).toContain(`MicroVM /mcp failed (${status})`);
       expect(calls).toBe(1);
     },
@@ -2383,8 +2335,7 @@ describe("createSandboxExecutor", () => {
       (c) => (c[0] as { _type?: string })?._type,
     );
     expect(types).toContain("RunMicrovm");
-    // The stale row is dropped conditionally on the dead id, so a concurrent
-    // re-claim with a fresh VM is never deleted out from under it.
+    // Dropped only on the dead id, so a concurrent re-claim with a fresh VM survives.
     expect(deleteSandboxInstanceMock).toHaveBeenCalledWith(
       "lambda",
       ns,
@@ -2397,8 +2348,6 @@ describe("createSandboxExecutor", () => {
     jest.useFakeTimers();
     const ns = microvmNamespace();
     storedSandboxExternalId = null;
-    // The VM answers /exec the moment it boots, well before mount-s3 has finished,
-    // so the first checks legitimately report an unmounted directory.
     microvmMountPendingChecks = 3;
     const {
       createSandboxExecutor,
@@ -2453,11 +2402,9 @@ describe("createSandboxExecutor", () => {
       (error: Error): string => error.message,
     );
     expect(failure).toContain("mount is not live");
-    // It gives up only once the hook's whole 30 s budget has run out.
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(30_000);
 
-    // A VM that never mounted must not stay reserved: the next call would take the
-    // cached endpoint and write to its local disk instead of S3.
+    // A VM that never mounted must not stay reserved, or the next call writes to its disk.
     const types = microvmSendMock.mock.calls.map(
       (c) => (c[0] as { _type?: string })?._type,
     );
@@ -2469,8 +2416,7 @@ describe("createSandboxExecutor", () => {
   it("recreates the reserved MicroVM when its reservation points at a terminated one", async () => {
     const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-dead";
-    // GetMicrovm still answers for a TERMINATED VM, so "not found" never fires and
-    // the reservation used to 502 forever instead of being replaced.
+    // GetMicrovm still answers for a TERMINATED VM, so "not found" never fires.
     microvmGetResponses = [{ microvmId: "microvm-dead", state: "TERMINATED" }];
     const {
       createSandboxExecutor,
@@ -2607,15 +2553,12 @@ describe("createSandboxExecutor", () => {
     });
 
     expect(handle.jobId).toBe("job_test");
-    // The launch script is POSTed to the VM /exec as a detached setsid session; the
-    // marker files live beside the workspace mount (not under the S3 mount). It is
-    // not necessarily the first POST. A reconnect pushes mount credentials first.
+    // Not necessarily the first POST: a reconnect pushes mount credentials first.
     const launched = execBodies().find((code) => code.includes("setsid bash"))!;
     expect(launched).toContain("setsid bash");
     expect(launched).toContain("job_test.running");
     expect(launched).toContain(`.fp-jobs/${ns}`);
-    // The job and the hook get the persistent workspace as HOME, the same `~` as a
-    // foreground exec, not a throwaway dir the guest deletes once they return.
+    // HOME is the persistent workspace, not a throwaway dir the guest deletes on return.
     for (const marker of ["setsid bash", "uv sync"]) {
       expect(execEnv(marker)).toMatchObject({
         HOME: `/mnt/workspaces/${ns}`,
@@ -2672,8 +2615,6 @@ describe("createSandboxExecutor", () => {
       jobId: "job_mounted",
     });
 
-    // Background work used to skip this check, so a create whose mount never came up
-    // ran the job against the VM's own disk and lost every byte it wrote.
     const bodies = execBodies();
     const assertion = bodies.findIndex((code) =>
       code.includes("mountpoint -q "),
@@ -2885,9 +2826,7 @@ describe("createSandboxExecutor", () => {
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
       `mountpoint -q '/mnt/workspaces/${NS}' || sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' '${NS}/' '--region' 'us-east-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
     );
-    // The account's env reaches the command itself, not only sandbox creation:
-    // the reconnect path never builds create options, so an edited env would
-    // otherwise never apply to an existing persistent sandbox.
+    // The env reaches the command too: reconnect builds no create options to carry an edit.
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
       "echo hi && ls",
       `/mnt/workspaces/${NS}`,
@@ -3026,7 +2965,6 @@ describe("createSandboxExecutor", () => {
       outputLimitBytes: 4096,
     });
 
-    // The developer's bucket/prefix/region/endpoint drive the mount, not the managed defaults.
     expect(daytonaCreateMock).toHaveBeenCalledWith(
       expect.objectContaining({
         envVars: expect.objectContaining({
@@ -3146,7 +3084,6 @@ describe("createSandboxExecutor", () => {
       outputLimitBytes: 4096,
     });
 
-    // A deny-all sandbox reaches the workspace bucket and nothing else.
     const create = vercelCreateMock.mock.calls[0]?.[0];
     expect(create).toHaveProperty("networkPolicy", {
       allow: [
@@ -3178,7 +3115,6 @@ describe("createSandboxExecutor", () => {
       "input.Policy",
       expect.stringContaining(`workspace-bucket/${NS}/`),
     );
-    // The agent's own command never carries them.
     expect(vercelRunCommandMock.mock.calls.at(-1)?.[0]).not.toHaveProperty(
       "env.AWS_SESSION_TOKEN",
       "scoped-session-token",
@@ -3388,9 +3324,8 @@ describe("createSandboxExecutor", () => {
     expect(vercelCommandIncludes("echo resume >> hook.txt")).toBe(true);
   });
 
-  // The sweeper takes the reservation row before it deletes the machine. A run
-  // acquiring in that window must not be handed the machine being torn down, and
-  // the only thing standing between the two is a name the key cannot derive.
+  // The sweeper takes the row before deleting the machine; only a name the key cannot derive
+  // keeps a run acquiring in that window off the machine being torn down.
   it("names each reserved sandbox with a generation the reservation key cannot derive", async () => {
     const { VercelSandboxExecutor } =
       await import("../src/harness/sandbox/vercel-executor.ts");
@@ -3428,8 +3363,7 @@ describe("createSandboxExecutor", () => {
     expect(vercelGetMock.mock.calls.at(-1)?.[0]?.name).toBe("fp-p-winner");
   });
 
-  // Vercel's session timeout is a hard stop, so a busy sandbox would be cut
-  // mid-command one idle window after it woke.
+  // Vercel's session timeout is a hard stop, so a busy sandbox would be cut mid-command.
   it("extends the session to one idle window past each call", async () => {
     const { VercelSandboxExecutor } =
       await import("../src/harness/sandbox/vercel-executor.ts");
@@ -3442,16 +3376,13 @@ describe("createSandboxExecutor", () => {
 
     await executor.run(persistentVercelRun());
 
-    // Default idle 900 s plus the call's 30 s, less the 60 s left, plus the
-    // time the run took to reach the extension, plus 60 s of slack so the
-    // calls right after it need no extension of their own.
+    // 900 s idle + the 30 s call - the 60 s left + 60 s slack, plus the run's own time.
     const extension = Number(vercelExtendTimeoutMock.mock.calls[0]?.[0]);
     expect(extension).toBeGreaterThanOrEqual(930_000);
     expect(extension).toBeLessThanOrEqual(930_000 + Date.now() - startedAt);
   });
 
-  // onResume runs on every call, so a slow hook could outlast a session that
-  // was about to expire.
+  // onResume runs on every call, so a slow hook could outlast a session about to expire.
   it("extends the session before the lifecycle hooks run", async () => {
     const { VercelSandboxExecutor } =
       await import("../src/harness/sandbox/vercel-executor.ts");
@@ -3595,12 +3526,10 @@ describe("background job scripts", () => {
       "echo hi",
       { maxConcurrentJobs: 10 },
     );
-    // The running marker records the boot id so a recreated sandbox is detectable.
     expect(launch).toContain("/proc/sys/kernel/random/boot_id");
     expect(launch).toContain("'/home/node/.jobs/job_x.running'");
     expect(launch).toContain("background job limit reached (10 concurrent)");
     expect(launch).toContain("setsid bash -c");
-    // No callback => no completion POST baked into the wrapper.
     expect(launch).not.toContain("x-job-token");
     expect(statusScript("/home/node/.jobs", "job_x")).toContain("job_x.exit");
     expect(parseJobStatus("job_x", "done 0")).toEqual({
@@ -3639,8 +3568,7 @@ describe("background job scripts", () => {
         },
       },
     );
-    // The wrapper (and its callback) is base64-encoded so user code passes the
-    // shell untouched, so decode it to assert the callback is wired in.
+    // The wrapper is base64-encoded so user code passes the shell untouched.
     const encoded = launch.match(/printf %s '([A-Za-z0-9+/=]+)'/)?.[1];
     expect(encoded).toBeTruthy();
     const wrapper = Buffer.from(encoded!, "base64").toString("utf8");
@@ -3688,7 +3616,6 @@ describe("background job scripts", () => {
   it("reports a job killed by sandbox recreation as failed, not running forever", async () => {
     const { statusScript } = await import("../src/harness/sandbox/jobs.ts");
     const status = statusScript("/home/node/.jobs", "job_x");
-    // Boot-id mismatch or a dead pid (no exit recorded) both resolve to a failure code.
     expect(status).toContain("boot_id");
     expect(status).toContain("done 137");
     expect(status).toContain("kill -0");
@@ -3800,8 +3727,7 @@ describe("MicroVM capacity refusal", () => {
     );
 
     expect(result.provider).toBe("lambda");
-    // Neither the primary's `snapshot` (a Daytona snapshot name, not an image
-    // ARN) nor its `options` reach the MicroVM: it boots the harness default.
+    // A Daytona snapshot name is no image ARN, so the MicroVM boots the harness default.
     expect(microvmRunInput().imageIdentifier).toBe(
       process.env.MICROVM_IMAGE_IDENTIFIER,
     );
@@ -3873,8 +3799,7 @@ describe("MicroVM capacity refusal", () => {
     });
 
     try {
-      // The account's own Daytona key skips the budget; the MicroVM fallback
-      // runs on the platform's AWS account, so it does not.
+      // Own Daytona key skips the budget; the MicroVM fallback runs on the platform's AWS.
       expect(
         runSandbox(
           {
@@ -3910,7 +3835,6 @@ describe("classifyVercelError", () => {
     expect(
       classifyVercelError(new Error("Status code 403 is not ok")).message,
     ).toContain("VERCEL_TOKEN");
-    // A numeric status field on the thrown object.
     expect(classifyVercelError({ statusCode: 401 }).message).toContain(
       "HTTP 401",
     );
@@ -3951,9 +3875,7 @@ describe("classifyVercelError", () => {
 });
 
 describe("persistent acquire teardown", () => {
-  // workdir and microvm already tear down on a failed claim; these three did
-  // not, so a rejected persistence call left a live sandbox nobody could reach
-  // and no reservation row pointing at it.
+  // A refused claim must tear down the new sandbox, or it lives on with no row to reach it.
   const cases = [
     {
       provider: "e2b",
@@ -4003,9 +3925,7 @@ describe("persistent acquire teardown", () => {
 });
 
 describe("conditional release", () => {
-  // The sweeper reads a reservation, then releases it later. The release tears
-  // down the machine it was given, never the one the key points at now, and the
-  // row delete is conditional on that same id.
+  // The release tears down the machine it was given, never the one the key names now.
   const cases = [
     {
       provider: "lambda",

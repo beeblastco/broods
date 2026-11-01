@@ -1,12 +1,3 @@
-/**
- * Re-resolves CLI-synced sandbox configs when an environment variable changes,
- * mirroring `refreshAgentConfigsForEnvironmentVariable`. Sandbox configs bake
- * resolved env values into `encryptedConfig` (core reads it verbatim), so a
- * value change would otherwise stay stale until the next CLI sync. The
- * placeholder source lives in `encryptedSourceConfig`; we re-substitute it with
- * the stage's current values and re-push `encryptedConfig`.
- */
-
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { accountCipherForWrite, hasEncryptionSecret } from "./accountKeys";
@@ -14,11 +5,6 @@ import { substituteEnvPlaceholders } from "./agentConfigCodec";
 import { loadEnvironmentVariableValues } from "./environmentValues";
 import { assertSnapshotInScope } from "../sandbox/snapshots";
 
-/**
- * No-ops on rows without a stored source (legacy rows synced before
- * placeholder retention) or when the encryption secret is absent.
- * @param value the variable's new value, or `undefined` when it was removed
- */
 export async function refreshSandboxConfigsForEnvironmentVariable(
   ctx: MutationCtx,
   projectId: Id<"projects">,
@@ -37,8 +23,7 @@ export async function refreshSandboxConfigsForEnvironmentVariable(
   );
   if (referencing.length === 0) return;
 
-  // Read the full value map once: a sandbox may reference several vars, and a
-  // partial substitution would leave the others as literal `${OTHER}`.
+  // Substitute every var at once, or the sandbox's other refs stay literal `${OTHER}`.
   const values = await loadEnvironmentVariableValues(ctx, projectId, stageId);
   if (value === undefined) delete values[name];
 
@@ -62,7 +47,6 @@ export async function refreshSandboxConfigsForEnvironmentVariable(
     if (!source) continue;
 
     const resolved = substituteEnvPlaceholders(source, values);
-    // A snapshot named through an env var must stay on this stage too.
     if (resolved.snapshot !== source.snapshot) {
       await assertSnapshotInScope(
         ctx,

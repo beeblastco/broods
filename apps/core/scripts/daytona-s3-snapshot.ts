@@ -1,14 +1,8 @@
-/**
- * Builds the Daytona snapshot used for AWS S3 FUSE mounts.
- */
-
 import { Daytona, Image } from "@daytona/sdk";
 
 const snapshotName = process.env.DAYTONA_S3_SNAPSHOT_NAME!;
 const baseImage = process.env.DAYTONA_S3_SNAPSHOT_BASE_IMAGE!;
-// Bun preloads `.env`, and since `@daytona/sdk` 0.211 the client refuses an
-// endpoint it cannot attribute to the caller rather than send the API key to a
-// host nobody chose. Naming it here is what makes it attributable.
+// Bun preloads .env, and @daytona/sdk >= 0.211 refuses an endpoint the caller did not name.
 const apiUrl = process.env.DAYTONA_API_URL;
 const image = Image.base(baseImage).runCommands(
   "sudo apt-get update " +

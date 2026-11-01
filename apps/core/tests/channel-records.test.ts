@@ -18,12 +18,8 @@ import {
 import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
 import { coreRequest, requestBodyText, requestUrl } from "./helpers/http.ts";
 
-// The invoke gate reads assigned policy documents; without a stub the routing
-// tests would reach the real Convex client. Scoped to this file, because bun shares the
-// module registry across test files, so a module-scope override would leak.
-// The Slack mention looks its sender up with users.info through the adapter's
-// axios WebClient, which no fetch stub sees and which retries a refused socket
-// past the test timeout, so the lookup answers "unknown user" here.
+// Slack users.info goes through axios, which no fetch stub sees and which retries past the
+// timeout. Storage is stubbed in beforeAll: bun shares the module registry across test files.
 const getSlackUser = spyOn(SlackAdapter.prototype, "getUser");
 beforeAll(() => {
   getSlackUser.mockResolvedValue(null);
@@ -77,10 +73,7 @@ const SUPPORT_AGENT: AgentRecord = {
   updatedAt: "2026-07-20T00:00:00.000Z",
 };
 
-// Sales configures telegram but with a different secret, so only Support's
-// credentials verify the incoming request. That is the real shape: one provider
-// app has one credential set, and the record, not the credentials, decides
-// which agent answers in a given place.
+// Only Support's secret verifies; the record, not the credentials, picks the agent that answers.
 const SALES_AGENT: AgentRecord = {
   ...SUPPORT_AGENT,
   agentId: "agent_sales",
@@ -98,8 +91,6 @@ const SALES_AGENT: AgentRecord = {
 
 const SLACK_MESSAGE_TS = "1713916800.000030";
 
-// Slack is the one provider whose reply has two places it can land, so it is
-// where a record's replyIn is observable end to end.
 const SLACK_AGENT: AgentRecord = {
   ...SUPPORT_AGENT,
   agentId: "agent_slack",
@@ -139,8 +130,6 @@ describe("channel record resolution", () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]!.agentId).toBe("agent_sales");
     expect(runs[0]!.agentConfig?.channels?.telegram).toEqual(TELEGRAM_CHANNEL);
-    // Keys are scoped by the agent that actually runs, so two agents in one
-    // channel never share a conversation.
     expect(runs[0]!.conversationKey).toContain("agent:agent_sales:");
   });
 
@@ -164,8 +153,7 @@ describe("channel record resolution", () => {
       path: "/v1/webhooks/acct_test/agent_support/telegram",
     });
 
-    // The agent-scoped shape is gone rather than redirected: a stale provider
-    // URL must fail loudly instead of quietly running the wrong agent.
+    // Gone, not redirected: a stale provider URL must not quietly run the wrong agent.
     expect(response.statusCode).toBe(404);
     expect(runs).toHaveLength(0);
   });
@@ -196,9 +184,7 @@ describe("channel record resolution", () => {
       },
     });
 
-    // Running the receiving agent here would skip a record's policies and
-    // denyTools, which is an escalation. The channel path already needs Convex to admit
-    // ingress, so failing closed costs no availability that is not already lost.
+    // Running the receiving agent would skip the record's policies and denyTools: fail closed.
     expect(response.statusCode).toBe(200);
     expect(runs).toHaveLength(0);
   });
@@ -209,9 +195,7 @@ describe("channel record resolution", () => {
       records: {},
       runs: runs,
       path: "/v1/webhooks/acct_test/telegram",
-      // A partial storage stub makes `storage.channelRecords` undefined, so the
-      // default loader throws before a promise exists, so `.catch` would miss it
-      // and the webhook would 500 instead of refusing cleanly.
+      // Throws before a promise exists, as the default loader does on a partial storage stub.
       channelRecordLoader: (() => {
         throw new TypeError("undefined is not an object");
       }) as never,
@@ -222,11 +206,8 @@ describe("channel record resolution", () => {
   });
 
   it("refuses without a 500 when storage has no channelRecords at all", async () => {
-    // The module-scope stub above provides only `agentPolicies`, so the default
-    // loader reads `undefined.getByExternalId`, the shape that broke CI.
     const runs: ChannelInboundEvent[] = [];
     const waited: Promise<unknown>[] = [];
-    // The refusal goes out through the real Telegram adapter; answer it locally.
     const originalFetch = globalThis.fetch;
     globalThis.fetch = Object.assign(
       async (): Promise<Response> => Response.json({ ok: true }),
@@ -284,14 +265,11 @@ describe("channel record resolution", () => {
       headers: { "x-telegram-bot-api-secret-token": "wrong-secret" },
     });
 
-    // Agents do configure telegram here, so this is a credential failure and
-    // must say so. A 404 would send the operator hunting a routing bug.
     expect(response.statusCode).toBe(401);
   });
 
   it("reaches an agent that configures the channel behind many that do not", async () => {
     const runs: ChannelInboundEvent[] = [];
-    // 30 agents with no telegram block, then the one that owns the bot token.
     const noise: AgentRecord[] = Array.from(
       { length: 30 },
       (_unused, index) => ({
@@ -311,9 +289,6 @@ describe("channel record resolution", () => {
     expect(runs[0]!.agentId).toBe("agent_support");
   });
 
-  // The bound agent attaches no workspace, so the record naming one is the
-  // escalation case: it must reach the run with instructions and policies
-  // layered on but no filesystem it did not already have.
   it("layers the record's instructions and policies, but not a workspace the agent lacks", async () => {
     const runs: ChannelInboundEvent[] = [];
     await route({
@@ -404,8 +379,6 @@ describe("channel record resolution", () => {
     expect(runs).toHaveLength(1);
   });
 
-  // The reply the router itself sends goes through the same rewritten source
-  // the run gets, so a refusal is where the placement is observable end to end.
   it("posts the record's inline reply to the channel, not a thread", async () => {
     const posts: Array<Record<string, unknown>> = [];
     await routeSlackMention({ replyIn: "source", posts: posts });
@@ -425,7 +398,6 @@ describe("channel record resolution", () => {
     const runs: ChannelInboundEvent[] = [];
     await routeSlackMention({ replyIn: "source", runs: runs });
 
-    // handler.ts rebuilds a background job's sender from this stored source.
     expect(runs[0]!.source.threadTs).toBeUndefined();
   });
 
@@ -481,10 +453,7 @@ describe("channel record layering", () => {
     expect(merged.policies).toEqual(["policy_base", "policy_channel"]);
   });
 
-  // A workspace is what materialises the sandbox file tools, so a record naming
-  // one the agent does not attach would hand out filesystem access the agent
-  // never had. Falling back to the agent's full list is no better: a record
-  // meant to narrow would widen.
+  // A workspace materialises sandbox file tools: a record may narrow access, never widen it.
   it("a record naming only unattached ids leaves no workspace", () => {
     const merged = applyChannelRecord(
       base,
@@ -501,8 +470,7 @@ describe("channel record layering", () => {
     expect(merged.workspaces).toEqual([]);
   });
 
-  // The agent's own ref wins whole: its name and its sandbox. A record alias
-  // would inherit the default sandbox and turn a read-only mount writable.
+  // A record alias would inherit the default sandbox and turn a read-only mount writable.
   it("narrows to the agent's own ref for a workspace the record names", () => {
     const merged = applyChannelRecord(
       {
@@ -540,9 +508,7 @@ describe("channel record layering", () => {
       "slack",
     );
 
-    // config.tools only ever names provider or account tools. Writing "bash"
-    // into it throws "not a supported tool" and kills the whole run, so the
-    // deny list stays separate and is applied to the built tool set instead.
+    // config.tools rejects "bash" as unsupported and kills the run, so denies stay separate.
     expect(merged.denyTools).toEqual(["bash", "tavilySearch"]);
     expect(merged.tools).toEqual(base.tools);
   });
@@ -582,9 +548,7 @@ describe("channel record layering", () => {
   });
 
   it("still sets the scope when the bound agent has no config for the channel", () => {
-    // On an account-scoped webhook the credentials sit on the receiving agent,
-    // so the agent that runs may carry no slack block at all. Dropping the scope
-    // here would make an isolated workspace throw at mount time.
+    // Account-scoped webhooks keep credentials on the receiving agent, not the one that runs.
     const merged = applyChannelRecord(
       { workspaces: [{ name: "docs", workspaceId: "ws_docs" }] },
       channelRecord({
@@ -636,11 +600,9 @@ describe("channel record helpers", () => {
   });
 
   it("only rejects a record when both sides name a provider workspace", () => {
-    // A Slack channel id is unique inside its team, not across teams, so a
-    // record naming team A must not drive a message from team B.
+    // A Slack channel id is unique inside its team, not across teams.
     expect(channelRecordMatchesWorkspace("T_A", "T_B")).toBe(false);
     expect(channelRecordMatchesWorkspace("T_A", "T_A")).toBe(true);
-    // Telegram gives no team, so there is nothing to compare and it stands.
     expect(channelRecordMatchesWorkspace("T_A", undefined)).toBe(true);
     expect(channelRecordMatchesWorkspace(undefined, "T_B")).toBe(true);
     expect(channelRecordMatchesWorkspace(undefined, undefined)).toBe(true);
@@ -719,10 +681,6 @@ describe("channel record validation", () => {
   });
 });
 
-/**
- * One Slack mention through the account-scoped webhook. A denied invoke makes
- * the router reply itself, which is the only outbound post these tests can see.
- */
 async function routeSlackMention(options: {
   replyIn?: "thread" | "source";
   posts?: Array<Record<string, unknown>>;
@@ -755,8 +713,6 @@ async function routeSlackMention(options: {
         config: {
           agentBindings: [{ agentId: "agent_slack" }],
           ...(options.replyIn ? { replyIn: options.replyIn } : {}),
-          // The invoke gate only evaluates when a policy is assigned, and a
-          // refusal is the only reply this router sends by itself.
           ...(options.posts ? { policies: ["policy_ops_only"] } : {}),
         },
       }),
@@ -769,7 +725,7 @@ async function routeSlackMention(options: {
       "x-slack-signature": `v0=${signature}`,
     },
     body: body,
-    // Only a refusal makes the router post; the run itself never replies here.
+    // A policy refusal is the only post the router makes by itself.
     ...(options.posts ? { policyDenies: true, posts: options.posts } : {}),
   });
 }
@@ -780,13 +736,10 @@ async function route(options: {
   path: string;
   headers?: Record<string, string>;
   policyDenies?: boolean;
-  /** A deny the rego downgraded, because the policy that owns the rule audits. */
   policyAudits?: boolean;
   replies?: string[];
   agents?: AgentRecord[];
-  /** Overrides the Telegram update these tests otherwise post. */
   body?: Record<string, unknown>;
-  /** Outbound chat.postMessage bodies only. Reactions carry no placement. */
   posts?: Array<Record<string, unknown>>;
   channelRecordLoader?: (
     accountId: string,
@@ -814,8 +767,6 @@ async function route(options: {
   });
   const previousOpaUrl = process.env.OPA_BASE_URL;
   process.env.OPA_BASE_URL = `http://127.0.0.1:${opa.port}`;
-  // The refusal goes out through the real Telegram adapter, so capture the
-  // outbound call rather than asserting on a mocked ChannelActions.
   const sentTexts: string[] = [];
   const slackPosts: Array<Record<string, unknown>> = [];
   const originalFetch = globalThis.fetch;
@@ -824,8 +775,7 @@ async function route(options: {
     const url = requestUrl(input);
     if (new URL(url).hostname === "slack.com") {
       const body = init?.body;
-      // chat.postMessage is form-encoded, so an omitted thread_ts is an absent
-      // key, which is the whole assertion for `inline`.
+      // chat.postMessage is form-encoded: an inline reply is an absent thread_ts key.
       if (new URL(url).pathname.endsWith("/chat.postMessage")) {
         slackPosts.push(
           Object.fromEntries(
@@ -898,8 +848,6 @@ async function route(options: {
     );
     await Promise.all(waited);
   } finally {
-    // A throwing router call must not leave the fetch stub installed, the env
-    // pointing at a stopped port, or the server leaked into the rest of the run.
     globalThis.fetch = originalFetch;
     await opa.stop(true);
     if (previousOpaUrl === undefined) {

@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * The canvas reads the few fields every agent card draws in one query, under
- * the same access as reading one config.
- */
-
 import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
@@ -14,8 +9,7 @@ const OWNER_AUTH_ID = "auth_owner";
 
 const caller = vi.hoisted(() => ({ authId: "auth_owner" }));
 
-// The query reads its caller through the WorkOS component, which the test
-// runtime does not register.
+// The query reads its caller through the WorkOS component, absent from the test runtime.
 vi.mock("../auth", () => ({
   authKit: { getAuthUser: async () => ({ id: caller.authId }) },
 }));
@@ -116,7 +110,6 @@ describe("agent.config.canvasBadges", () => {
   });
 });
 
-/** An org with an admin owner and a member, one project, two of its stages. */
 async function seed(t: T): Promise<Seeded> {
   return await t.run(async (ctx) => {
     const now = Date.now();

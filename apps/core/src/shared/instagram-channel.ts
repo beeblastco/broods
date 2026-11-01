@@ -1,10 +1,3 @@
-/**
- * Instagram DM channel adapter, on the Instagram API with Instagram Login. The
- * Chat SDK adapter reads the message and posts the reply, media included; the
- * Meta webhook handshake, signature check and event walk are shared with
- * Messenger in `meta-channel.ts`.
- */
-
 import {
   InstagramAdapter,
   type InstagramMessagingEvent,
@@ -14,8 +7,7 @@ import type { ChannelAdapter } from "./channels.ts";
 import { createMetaChannel, type MetaSource } from "./meta-channel.ts";
 import { INSTAGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
-// Instagram caps a text message at 1000 UTF-8 bytes; the margin covers what
-// the SDK's plain-text rendering can add back.
+// Instagram caps text at 1000 UTF-8 bytes; the margin covers what the SDK's rendering adds.
 const INSTAGRAM_TEXT_LIMIT_BYTES = 950;
 
 export interface InstagramChannelOptions {
@@ -31,10 +23,6 @@ export interface InstagramChannelOptions {
 
 export type InstagramSource = MetaSource;
 
-/**
- * Builds the Instagram adapter from one agent's `config.channels.instagram`.
- * `integrations.ts` calls it per request, so it holds no state of its own.
- */
 export function createInstagramChannel(
   options: InstagramChannelOptions,
 ): ChannelAdapter {

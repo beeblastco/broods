@@ -1,5 +1,3 @@
-/** Messenger and Instagram adapters: Meta's handshake and signature, parsing, and the Send API. */
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHmac } from "node:crypto";
 import type { ChannelRequest } from "../src/shared/channels.ts";
@@ -379,7 +377,6 @@ function instagramWebhook(text: string): {
   };
 }
 
-// A signed-body shape with any number of entries, each with its messages.
 function metaWebhook(
   object: "instagram" | "page",
   entries: { id: string; messages: { sender: string; mid: string }[] }[],
@@ -445,8 +442,7 @@ function messengerWebhook(text: string): {
   };
 }
 
-// Records every Graph call and answers each with the same Send API result.
-// The Page lookup (`/me`) answers `page-1` and lands in `lookups` instead.
+// The Page lookup (`/me`) answers `page-1` into `lookups`; every other call gets `result`.
 function recordFetch(
   result: Record<string, string>,
   lookups: string[] = [],

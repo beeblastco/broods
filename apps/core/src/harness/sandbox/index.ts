@@ -1,10 +1,3 @@
-/**
- * Sandbox provider registry and executor construction. A provider is one
- * executor file beside this one plus one entry in `EXECUTORS` below; the
- * config plane's `SANDBOX_PROVIDERS` is what names it, and the record's key
- * type fails the build when the two drift.
- */
-
 import { CloudflareSandboxExecutor } from "./cloudflare-executor.ts";
 import { DaytonaSandboxExecutor } from "./daytona-executor.ts";
 import { E2BSandboxExecutor } from "./e2b-executor.ts";
@@ -23,9 +16,6 @@ import type {
 import { VercelSandboxExecutor } from "./vercel-executor.ts";
 import { WorkdirSandboxExecutor } from "./workdir-executor.ts";
 
-// The explicit imports are what pull each executor into the compiled binary,
-// like the tool registry in tools/index.ts. "lambda" is the AWS Lambda MicroVM
-// backend (the old 4-stage invoke model is gone).
 type SandboxExecutorFactory = (
   config: SandboxExecutorConfig,
 ) => SandboxExecutor;
@@ -43,13 +33,7 @@ const EXECUTORS: Record<SandboxProvider, SandboxExecutorFactory> = {
   worker: (config): SandboxExecutor => new WorkerSandboxExecutor(config),
 };
 
-/**
- * The executor for a sandbox config. When the config names its account and
- * runs on the platform's credentials (not the account's own), every
- * call that can start or resume compute first checks the account's monthly
- * budget, so a run admitted just before the budget ran out cannot keep
- * launching machines.
- */
+// Budget checked per call: a run admitted just before it ran out cannot keep launching machines.
 export function createSandboxExecutor(
   config: SandboxExecutorConfig,
 ): SandboxExecutor {
@@ -98,11 +82,7 @@ export function createSandboxExecutor(
   return executor;
 }
 
-/**
- * The bare executor for a config's provider, with no budget check: what
- * cleanup releases through. A stored config may still name a provider this
- * build does not know, so it fails loudly rather than defaulting.
- */
+// No budget check: cleanup must still release once the budget is spent.
 export function providerExecutor(
   config: SandboxExecutorConfig,
 ): SandboxExecutor {

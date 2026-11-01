@@ -1,12 +1,3 @@
-/**
- * Read tool. Reads a file from the workspace, returning numbered lines
- * (Claude-Code-style). Sandbox-backed workspaces read through the mount; a
- * read-only workspace reads through a service-managed read-only mount by default
- * (readMount), or directly from S3 when the ref opts out with `sandbox: null` or
- * the workspace brings its own bucket.
- * Audio is the exception: reading a voice note returns what it says.
- */
-
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
@@ -87,8 +78,7 @@ Usage notes:
 
           return toolText(result.stdout);
         } catch (cause) {
-          // toolError throws, so an in-try call already landed here. Feeding its
-          // message back through would prefix a fatal setup error a second time.
+          // toolError already threw; re-wrapping would prefix a setup error twice.
           throw cause instanceof Error ? cause : new Error(String(cause));
         }
       },
@@ -121,10 +111,7 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
   };
 }
 
-// What an audio file says, or null when this is not one, so every other read
-// falls through to the line reader below. A provider that hears audio for itself
-// falls through too: transcribing for it would trade the recording for a worse
-// copy of it, and on google there is no transcription model to try anyway.
+// A provider that hears audio itself reads the recording, not a worse transcript.
 async function spokenContents(
   agentConfig: AgentConfig | undefined,
   ws: ResolvedWorkspace,
@@ -138,8 +125,7 @@ async function spokenContents(
   ) {
     return null;
   }
-  // A path that does not resolve falls through: the line reader reports a
-  // missing file in the words the agent expects.
+  // Unreadable: the line reader reports the missing file in the agent's usual words.
   const bytes = await workspaceMediaBytes(ws, rel).catch(() => undefined);
   if (!bytes) {
     return null;

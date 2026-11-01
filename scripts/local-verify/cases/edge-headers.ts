@@ -1,11 +1,5 @@
 import { assertStep, type VerifyContext } from "../harness.ts";
 
-/**
- * The edge stamps every public request. It marks it as public, so core and the
- * config plane refuse the in-cluster service token arriving from outside, and
- * drops the `X-Account-Id` that token picks its account by. It also answers
- * CORS preflights for allowed origins only, and passes `X-Request-Id` through.
- */
 export async function edgeHeaders(context: VerifyContext): Promise<void> {
   const { accountId } = await context.account.getAccount();
   const asService = async (baseUrl: string): Promise<number> => {
@@ -21,8 +15,7 @@ export async function edgeHeaders(context: VerifyContext): Promise<void> {
     return response.status;
   };
 
-  // `/v1/account` then refuses the service token with a 400, which it only
-  // reaches once the token has authenticated.
+  // `/v1/account` answers a service token 400, which it reaches only past auth.
   const direct = await asService(context.configPlaneUrl);
   assertStep(
     "the service token authenticates in-cluster",
@@ -38,8 +31,6 @@ export async function edgeHeaders(context: VerifyContext): Promise<void> {
     `status ${viaEdge}`,
   );
 
-  // Hosted MCP calls are Convex's, in-cluster with the service token; an
-  // account key from outside reaches core and is turned away there.
   const mcpRpc = await fetch(`${context.edgeUrl}/v1/mcp-service/rpc`, {
     method: "POST",
     headers: {
@@ -56,7 +47,6 @@ export async function edgeHeaders(context: VerifyContext): Promise<void> {
     `status ${mcpRpc.status}`,
   );
 
-  // The gateway used to stamp this; the config plane now issues its own.
   const unauthenticated = await fetch(`${context.edgeUrl}/v1/account`, {
     headers: { "X-Request-Id": "verify-edge-1" },
     signal: AbortSignal.timeout(10_000),

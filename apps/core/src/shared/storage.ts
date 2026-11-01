@@ -1,8 +1,3 @@
-/**
- * Runtime-facing data boundary for core. Convex is the only implementation;
- * domain records and configuration codecs live in `./domain/`.
- */
-
 import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "./domain/account-hooks.ts";
 import type { McpRecord } from "./domain/mcp.ts";
@@ -27,7 +22,6 @@ import type { SandboxConfigRecord } from "./domain/sandbox-config.ts";
 import type { SandboxSpecs } from "./sandbox-sizes.ts";
 import type { WorkspaceConfigRecord } from "./domain/workspace-config.ts";
 
-/** Safe deployment scope returned by Convex without stored credentials. */
 export interface AgentDeploymentScope {
   accountId: string;
   endpointId: string;
@@ -35,59 +29,34 @@ export interface AgentDeploymentScope {
   stageSlug: string;
 }
 
-/**
- * Raw counts for one finished agent task. No dollar amounts, because pricing is
- * computed at render time from a shared hardcoded table (plan §6d, §10a).
- *
- * endpointId is optional for account-key traffic that is not associated with
- * a dashboard deployment.
- */
 export interface TaskUsageInput {
   accountId: string;
-  /** Convex endpoint identifier when the task belongs to a deployment. */
   endpointId?: string;
   agentId: string;
-  /** The run's delegation chain, stored as `actor.chain` on its `run.completed` ledger row. */
   principalChain?: PrincipalLink[];
   conversationKey: string;
   /** `${eventId}#${traceId}`: one row per model pass. */
   taskId: string;
   modelProvider: string;
   modelId: string;
-  /** Unix epoch ms when the task finished. */
   finishedAt: number;
-  /** Wall-clock duration of the full task invocation in ms. */
   durationMs: number;
   status: "completed" | "failed";
-  /** Prompt (non-cached) input tokens. */
   inputTokens: number;
-  /** Completion tokens generated. */
   outputTokens: number;
-  /** Thinking / reasoning tokens (Anthropic extended thinking). */
   reasoningTokens: number;
-  /** Cache-read input tokens (served from an existing cache entry). */
   cachedInputTokens: number;
-  /** Cache-write tokens (tokens that created a new cache entry). */
   cacheWriteTokens: number;
-  /** Total tokens across all dimensions (provider definition). */
   totalTokens: number;
-  /** Harness runtime backend (always "container", the core pod). */
   runtimeKind: string;
-  /** Harness runtime wall-clock ms. */
   runtimeWallMs: number;
-  /** Core pod resident memory in MB when the run ended. */
   runtimeMemoryMb: number;
-  /** CPU per sandbox context; recorded for the self-hosted providers (sandbox/lambda). */
   sandboxUsage: SandboxUsageEntry[];
-  /** Number of model steps executed in this task. */
   stepCount: number;
-  /** Number of tool calls made across all steps. */
   toolCallCount: number;
-  /** Start of the latest user message, as the trace's `task.input` shows it. */
   inputPreview?: string;
 }
 
-/** Identifies one daemon connection of a `machine` sandbox. */
 export interface MachineConnectionRef {
   accountId: string;
   /** New on every connect, so a replaced connection's late writes miss. */
@@ -100,21 +69,16 @@ export interface MachineConnectionRecord extends MachineConnectionRef {
   hostname?: string;
   mcp: string[];
   platform?: string;
-  /** The hardware the daemon reported; absent from a daemon older than the report. */
   specs?: SandboxSpecs;
 }
 
-/** One sandbox's CPU within a task: the agent's own sandbox or a per-tool sandbox. */
 export interface SandboxUsageEntry {
-  /** Agent sandbox provider (sandbox/lambda metered), or "mcp-sandbox". */
   type: string;
   role: "agent" | "tool";
-  /** The model-facing tool that ran, when role is "tool". */
   toolName?: string;
   cpuUsec: number;
 }
 
-/** Account operations retained by core for auth, standalone creation, and cleanup. */
 interface AccountStore {
   getById(accountId: string): Promise<AccountRecord | null>;
   getBySecretHash(secretHash: string): Promise<AccountRecord | null>;
@@ -125,17 +89,13 @@ interface AccountStore {
   remove(accountId: string): Promise<boolean>;
 }
 
-/** Agent reads plus the explicit deletion cleanup used by core. */
 interface AgentStore {
   getById(accountId: string, agentId: string): Promise<AgentRecord | null>;
-  /** Agents of the account's production stages, for the bare webhook URL. */
   listForProduction(accountId: string): Promise<AgentRecord[]>;
-  /** Agents of one stage, for the stage-scoped webhook URL. */
   listForEndpoint(
     accountId: string,
     endpointId: string,
   ): Promise<AgentRecord[]>;
-  /** Agents of one stage, deployed or not, for the MCP explorer. */
   listForStage(
     accountId: string,
     projectId: string,
@@ -144,8 +104,6 @@ interface AgentStore {
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
-// Account-scoped records binding a real chat channel to an agent.
-// `getByExternalId` is the inbound-webhook hot path.
 interface ChannelRecordStore {
   getByExternalId(
     accountId: string,
@@ -160,49 +118,33 @@ interface ChannelRecordStore {
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
-/**
- * Project + stage scoped runtime keys, keyed by the dashboard/CLI-issued
- * API key hash. The key authorizes the account/stage scope; the agent is
- * chosen per request by id.
- */
 interface AgentDeploymentStore {
-  /** The key's scope with its account, null when either is inactive. */
   getByApiKeyHash(apiKeyHash: string): Promise<
     | (AgentDeploymentScope & {
         account: AccountRecord;
-        /** The stage's user-token signing secret, still sealed; absent until one is minted. */
         userTokenSecret?: EncryptedBlob;
       })
     | null
   >;
-  /** Stamp the key's lastUsedAt for the dashboard. Callers throttle it. */
   touchLastUsed(apiKeyHash: string, usedAt: number): Promise<void>;
-  /** Resolve the stage deployment containing one linked runtime agent. */
   getByAgentId?(
     accountId: string,
     agentId: string,
   ): Promise<AgentDeploymentScope | null>;
 }
 
-/** Account-scoped cron job schedules. */
 interface CronStore {
-  // Creates the crons row and its registered schedule in the config plane;
-  // the runtime path for it is the schedule tool.
   create(accountId: string, input: CreateCronInput): Promise<CronRecord>;
   getById(accountId: string, cronId: string): Promise<CronRecord | null>;
   list(accountId: string, agentId?: string): Promise<CronRecord[]>;
   remove(accountId: string, cronId: string): Promise<boolean>;
-  // Patches the row and its registered schedule together, so a rejected expression
-  // leaves the stored job untouched. Null means the job is gone: either it
-  // never existed, or it was deleted while the patch was in flight.
+  // Null: the job is gone, possibly deleted while the patch was in flight.
   update(
     accountId: string,
     cronId: string,
     patch: UpdateCronInput,
   ): Promise<CronRecord | null>;
-  // Records a fire that failed before it had a run row; a run's own settle
-  // records the rest. `firedAt` orders fires, so an older one never shows over
-  // a newer one.
+  // A fire that failed before its run row. `firedAt` keeps an older fire from showing over a newer.
   markFailed(
     accountId: string,
     cronId: string,
@@ -227,14 +169,12 @@ interface CronStore {
   ): Promise<void>;
 }
 
-/** Mirrors machine daemon connections so the dashboard can show them. */
 interface MachineConnectionStore {
   connected(connection: MachineConnectionRecord): Promise<void>;
   disconnected(ref: MachineConnectionRef): Promise<void>;
   seen(ref: MachineConnectionRef): Promise<void>;
 }
 
-/** Account-scoped, reusable sandbox config records (encrypted at rest). */
 interface SandboxConfigStore {
   getById(
     accountId: string,
@@ -244,19 +184,13 @@ interface SandboxConfigStore {
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
-/** Account-scoped, reusable workspace config records (plaintext, no secrets). */
 interface WorkspaceConfigStore {
   getById(
     accountId: string,
     workspaceId: string,
   ): Promise<WorkspaceConfigRecord | null>;
   list(accountId: string): Promise<WorkspaceConfigRecord[]>;
-  /**
-   * The sts:ExternalId every AssumeRole of the account's own storage role
-   * sends; the config plane mints it on first need.
-   */
   storageExternalId(accountId: string): Promise<string>;
-  /** One-hour R2 credentials scoped to `prefix`, minted by the config plane. */
   mintR2Credentials(
     accountId: string,
     workspaceId: string,
@@ -265,43 +199,36 @@ interface WorkspaceConfigStore {
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
-/** Account-owned isolate code hooks. */
 interface AccountHookStore {
   getById(accountId: string, hookId: string): Promise<AccountHookRecord | null>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
-/** Registered external MCP servers (#331); rows live in the config plane. */
 interface McpStore {
   getById(accountId: string, serverId: string): Promise<McpRecord | null>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
-/** Account-scoped reusable runtime authorization policies. */
 interface AgentPolicyStore {
   getById(accountId: string, policyId: string): Promise<PolicyRecord | null>;
 }
 
-/** A connection with its secrets, as core refreshes and uses it. */
 export interface StoredConnection {
   type: ConnectionType;
   clientId: string;
   scopes: string[];
   accessToken: string;
   refreshToken: string;
-  /** Access-token expiry, epoch ms. */
   expiresAt: number;
-  /** The row version a refresh must still match to save over it. */
   updatedAt: number;
 }
 
-/** External accounts signed in by `broods connect`. Written by the config plane. */
 interface ConnectionStore {
   load(
     accountId: string,
     type: ConnectionType,
   ): Promise<StoredConnection | null>;
-  /** False when the row changed since `loaded` was read: a new sign-in wins. */
+  /** False when `updatedAt` moved since `loaded` was read: a new sign-in wins. */
   saveRefreshed(
     accountId: string,
     type: ConnectionType,
@@ -313,18 +240,11 @@ interface ConnectionStore {
   ): Promise<boolean>;
 }
 
-/** Assume-role sessions, keyed by bsts_ token hash. Minted by the config plane. */
 interface RoleSessionStore {
-  /** Resolve a live session to its role principal; null when unknown/expired/disabled. */
   resolveByTokenHash(tokenHash: string): Promise<RolePrincipal | null>;
 }
 
-/** Scoped account keys: a bask_ that is not the account key acts as a role. Made in the dashboard. */
 interface AccountApiKeyStore {
-  /**
-   * A live key on an active account and the role principal it acts as;
-   * null when unknown, expired or disabled. `stampDue` asks for a lastUsedAt write.
-   */
   resolveByKeyHash(keyHash: string): Promise<{
     keyId: string;
     account: AccountRecord;
@@ -334,25 +254,15 @@ interface AccountApiKeyStore {
   touchLastUsed(keyId: string, usedAt: number): Promise<void>;
 }
 
-/** The project a usage write came from, or the agent or workspace that names it. */
 export interface UsageSource {
   projectId?: string;
   agentId?: string;
   workspaceId?: string;
 }
 
-/**
- * The account's monthly compute budget and the usage only core sees:
- * hosted-MCP invokes, worker commands, media egress and attachment ingress.
- * Other sandbox time and storage are metered in Convex itself.
- */
 interface BudgetStore {
-  /** Null for an unknown account. */
   get(accountId: string): Promise<BudgetStatus | null>;
-  /**
-   * Never throws: a failed write is retried, then logged with its usage.
-   * `source` names what used it, so the Usage tab can split it by project.
-   */
+  /** Never throws: a failed write is retried, then logged with its usage. */
   record(
     accountId: string,
     usage: Pick<
@@ -366,39 +276,26 @@ interface BudgetStore {
     >,
     source?: UsageSource,
   ): Promise<void>;
-  /** True for the one caller that should send this month's 80% warning. */
   claimWarning(accountId: string): Promise<boolean>;
 }
 
-/**
- * Writes per-task usage counts. The Convex storage adapter implements this;
- * it inserts one raw-count row per finished task and folds into a rollup
- * 5-minute Convex usageRollups bucket.
- */
 interface TaskUsageStore {
   record(input: TaskUsageInput): Promise<void>;
 }
 
-/**
- * One row core appends to the account's hash-chained audit ledger off the
- * happy path: an enforced policy denying a tool. A run's own `run.completed`
- * row rides the usage write (`internal.usage.recordTaskUsage`) instead, so
- * the per-turn path gains no Convex call. `details` must hold ids, names
- * and counts only, never tool input or secrets.
- */
+// run.completed rides the usage write instead, so the per-turn path gains no Convex call.
 export interface AuditLedgerInput {
   accountId: string;
   agentId?: string;
-  /** The run's delegation chain, stored as `actor.chain`. */
   chain?: PrincipalLink[];
   traceId?: string;
   action: "tool.denied";
   resource: { kind: "tool"; name: string };
   summary: string;
+  /** Ids, names and counts only: never tool input or secrets. */
   details?: Record<string, JSONValue | undefined>;
 }
 
-/** Appends to the audit ledger. Best-effort: a failed write is logged, never thrown. */
 interface AuditLedgerStore {
   append(input: AuditLedgerInput): Promise<void>;
 }

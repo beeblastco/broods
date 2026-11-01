@@ -3,15 +3,10 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "edge-runtime",
-    // Each file loads the full backend. More workers made cold imports and
-    // crypto work exceed the per-test timeout under concurrent checks.
+    // Each file loads the full backend; more workers push cold imports past the test timeout.
     maxWorkers: 2,
-    // Recursive, not a hand-listed file and not root-only: either narrower form
-    // silently skips test files, which is indistinguishable from them passing.
     include: ["**/*.test.ts"],
-    // convex-test loads every module in the deployment, so any test that reaches
-    // a module importing ./auth constructs AuthKit, which validates these at
-    // import time. Dummy values only, nothing here authenticates.
+    // convex-test loads every module, and ./auth builds AuthKit, which checks these at import.
     env: {
       BROODS_AUTH_PROVIDER: "workos",
       WORKOS_CLIENT_ID: "client_test",

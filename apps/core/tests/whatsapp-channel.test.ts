@@ -1,5 +1,3 @@
-/** WhatsApp adapter: Meta's signature and handshake, parsing, and the Graph API send. */
-
 import { afterEach, describe, expect, it } from "bun:test";
 import { createHmac } from "node:crypto";
 import { readAttachmentBytes } from "../src/harness/channel-media.ts";
@@ -236,7 +234,6 @@ function sign(body: string, secret: string = APP_SECRET): string {
   return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
 }
 
-// The payload Meta documents for an inbound text message.
 function textWebhook(text: string): {
   object: string;
   entry: {

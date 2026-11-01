@@ -13,14 +13,6 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-/**
- * A manifest pairing `browser` with a sandbox without Obscura is refused at
- * sync, and an agent made that way through the API fails the run at tool
- * assembly with the change to make, before any model or AWS call. With a
- * model key, browse on this computer as a machine sandbox runs Obscura with
- * the sandbox's OBSCURA_ALLOW_PRIVATE_NETWORK unset; a stand-in `obscura`
- * reports what it saw, so no browser is needed.
- */
 export async function browserSandbox(context: VerifyContext): Promise<void> {
   const key = `browser-${context.runId}`;
   const sandbox = await context.account.createSandbox({
@@ -98,8 +90,7 @@ export async function browserSandbox(context: VerifyContext): Promise<void> {
   await browseKeepsPrivateNetworkGuard(context, `${key}-machine`);
 }
 
-// browse on a machine sandbox whose env vars turn Obscura's private-network
-// guard off: the stand-in obscura must not see that variable.
+// A stand-in obscura echoes the guard variable it sees, so no browser is needed.
 async function browseKeepsPrivateNetworkGuard(
   context: VerifyContext,
   name: string,

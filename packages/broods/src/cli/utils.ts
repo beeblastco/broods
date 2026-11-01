@@ -1,7 +1,3 @@
-/**
- * Shared CLI helpers for argument parsing, local auth, and terminal IO.
- */
-
 import { createServer } from "node:http";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -28,7 +24,6 @@ const DASHBOARD_LOGIN_TIMEOUT =
   "--dashboard-url for the environment you deployed. Other common causes are missing\n" +
   "cliAuth Convex functions or no active API account (Organization settings -> API access).";
 
-/** Options whose value is a separate token, so both have to leave a prompt. */
 const VALUE_OPTIONS = new Set([
   "--base-url",
   "--cwd",
@@ -50,36 +45,27 @@ interface LoginCallback {
 }
 
 interface CallbackOptions<T> {
-  /** Preferred port; a busy one falls back to any free port unless `fixedPort`. */
   port: number;
   fixedPort: boolean;
   path: string;
-  /** Turns the callback query into its result; a throw fails the login. */
   read: (params: URLSearchParams) => T;
-  /** What the browser tab shows once `read` succeeds. */
   done: string;
 }
 
-/**
- * The command that opens `url` in the default browser. Windows skips `cmd /c
- * start`, whose parser cuts the URL at the first `&`.
- */
 export function browserCommand(
   url: string,
   platform: NodeJS.Platform = process.platform,
 ): { command: string; args: string[] } {
   if (platform === "darwin") return { command: "open", args: [url] };
   if (platform === "win32") {
+    // Not `cmd /c start`: its parser cuts the URL at the first `&`.
     return { command: "rundll32", args: ["url.dll,FileProtocolHandler", url] };
   }
 
   return { command: "xdg-open", args: [url] };
 }
 
-/**
- * True when `name` is passed. A value option also counts as `name=value`, a
- * boolean flag only bare, so `--yes=false` never skips a confirmation.
- */
+/** A boolean flag matches only bare, so `--yes=false` never skips a confirmation. */
 export function hasFlag(args: string[], name: string): boolean {
   const inline = VALUE_OPTIONS.has(name) ? `${name}=` : null;
 
@@ -94,10 +80,6 @@ export function isPlainObject(
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * The value of the first `name value` or `name=value`. An empty `name=` reads
- * as missing, so callers that reject a bare flag reject it too.
- */
 export function optionValue(args: string[], name: string): string | undefined {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -110,10 +92,6 @@ export function optionValue(args: string[], name: string): string | undefined {
   return undefined;
 }
 
-/**
- * Positional arguments only. `--project foo` puts `foo` in the list too, so
- * dropping just the flag would leave the value looking like a run prompt.
- */
 export function positionalArgs(args: string[]): string[] {
   const positional: string[] = [];
 
@@ -134,10 +112,9 @@ export function positionalArgs(args: string[]): string[] {
 export async function loginWithBrowser(
   dashboardUrl: string,
 ): Promise<StoredAuthConfig> {
-  // The bin runs under a `node` shebang, and Node 18 has no global `crypto`.
+  // Imported from node:crypto: the bin's `node` shebang may be Node 18, with no global.
   const state = randomUUID();
-  // PKCE: the code that comes back through the localhost callback is only
-  // exchangeable by this process, which holds the verifier.
+  // PKCE: only this process, holding the verifier, can exchange the callback's code.
   const codeVerifier = randomBytes(32).toString("base64url");
   const codeChallenge = createHash("sha256")
     .update(codeVerifier)
@@ -160,12 +137,9 @@ export async function loginWithBrowser(
         code_challenge: codeChallenge,
       });
     await assertCliAuthRouteExists(startUrl);
-    // Printed first, so a machine with no browser still has the link.
     console.log(`Opening ${startUrl}`);
     openBrowser(startUrl);
     const login = await waitWithTimeout(code.promise);
-    // The dashboard advertises the API base URL in the callback; the
-    // exchange and all later sync/env calls go there directly.
     const response = await cliFetch(
       `${login.baseUrl}/v1/account/auth/exchange`,
       {
@@ -221,10 +195,6 @@ export async function requireAuth(baseUrl?: string): Promise<StoredAuthConfig> {
   return auth;
 }
 
-/**
- * Asks a yes/no question on the terminal, defaulting to no. Returns false when
- * stdin is not a TTY (e.g. CI) so non-interactive runs never block on a prompt.
- */
 export async function promptConfirm(question: string): Promise<boolean> {
   if (!input.isTTY) return false;
   const rl = createInterface({ input: input, output: output });
@@ -240,11 +210,8 @@ export async function promptConfirm(question: string): Promise<boolean> {
 }
 
 /**
- * Reads a secret without echoing it: readline still edits the line, but writes
- * every keystroke to a stream that drops it. A terminal gives one line; piped
- * stdin gives every line up to its end (a PEM key, a JSON file), also a last
- * line without a newline. Ctrl+D or an empty pipe is an error, never a silent
- * exit: a readline question never settles when input ends first.
+ * A TTY gives one line, a pipe every line to its end (a PEM key). Iterated, not
+ * `rl.question`: a question never settles when input ends first (Ctrl+D).
  */
 export async function promptSecret(label: string): Promise<string> {
   output.write(`${label}: `);
@@ -275,10 +242,6 @@ export async function promptSecret(label: string): Promise<string> {
   }
 }
 
-/**
- * Numbered picker. `defaultIndex` marks that option with `*` and makes an empty
- * answer pick it, so the usual case is one Enter.
- */
 export async function promptSelect<T>(
   label: string,
   options: T[],
@@ -321,10 +284,6 @@ export async function promptSelect<T>(
   }
 }
 
-/**
- * Numbered picker that doubles as a text field: a number picks that option,
- * empty takes `freeText.defaultValue`, anything else comes back as typed.
- */
 export async function promptSelectOrText<T extends object>(
   label: string,
   options: T[],
@@ -354,11 +313,6 @@ export async function promptSelectOrText<T extends object>(
   }
 }
 
-/**
- * Free-text prompt with an editable default. Returns the default (or "") when
- * stdin is not a TTY, so a CI run errors on the missing value instead of
- * hanging on a question nobody can answer.
- */
 export async function promptText(
   label: string,
   defaultValue?: string,
@@ -380,10 +334,6 @@ export async function promptText(
   }
 }
 
-/**
- * Opens `url` in the default browser, detached so the CLI never waits on it.
- * Best effort: with no launcher (SSH, containers) the printed URL is the way in.
- */
 export function openBrowser(url: string): void {
   const { command, args } = browserCommand(url);
   const child = spawn(command, args, { stdio: "ignore", detached: true });
@@ -398,11 +348,6 @@ export function openBrowser(url: string): void {
   child.unref();
 }
 
-/**
- * Listens on 127.0.0.1 for one OAuth-style browser redirect carrying
- * `expectedState`. A redirect with any other state is refused and ignored,
- * so a stray tab cannot end the login.
- */
 export function waitForCallback<T>(
   expectedState: string,
   options: CallbackOptions<T>,
@@ -470,13 +415,6 @@ export function waitForCallback<T>(
   });
 }
 
-/**
- * Race a promise against a timeout so a stalled browser login surfaces an
- * actionable error instead of hanging the CLI forever. For `broods login` the
- * most common cause is the dashboard's cliAuth Convex functions not being
- * deployed in the target stage, which makes /cli-auth/start return a 500 in
- * the browser and never redirect back to the local callback.
- */
 export async function waitWithTimeout<T>(
   promise: Promise<T>,
   message: string = DASHBOARD_LOGIN_TIMEOUT,
@@ -492,7 +430,6 @@ export async function waitWithTimeout<T>(
   }
 }
 
-/** Fails early with a hint when the dashboard has no `/cli-auth/start`. */
 async function assertCliAuthRouteExists(startUrl: string): Promise<void> {
   const response = await cliFetch(startUrl, {
     method: "GET",
@@ -511,7 +448,6 @@ async function assertCliAuthRouteExists(startUrl: string): Promise<void> {
   }
 }
 
-/** The `broods login` callback port: `BROODS_LOGIN_PORT`, else a free one. */
 function callbackPort(): number {
   const raw = process.env.BROODS_LOGIN_PORT;
   if (raw) {
@@ -523,9 +459,7 @@ function callbackPort(): number {
   return 18987;
 }
 
-/** The dashboard's redirect: the login code and the API base URL it advertises. */
 function readLoginCallback(params: URLSearchParams): LoginCallback {
-  // The dashboard sends `error` instead of a code when it cannot log in.
   const failure = params.get("error");
   if (failure) throw new Error(`Login failed: ${failure}`);
   const code = params.get("code");

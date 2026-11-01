@@ -78,8 +78,7 @@ describe("normalizeChannelRecordConfig", () => {
     ).toThrow("config.replyIn must be one of: thread, source");
   });
 
-  // Mode moved onto the policy, so a record still naming these must not be
-  // accepted and quietly ignored.
+  // Mode moved onto the policy: a record still naming these must not be quietly ignored.
   it("rejects the retired policy fields", () => {
     expect(() =>
       normalizeChannelRecordConfig({
@@ -176,7 +175,6 @@ describe("normalizeUpdateChannelRecordInput", () => {
   });
 
   it("rejects an unknown key instead of silently patching nothing", () => {
-    // `{descripton: "x"}` normalized to {} and PATCH answered 200 unchanged.
     expect(() =>
       normalizeUpdateChannelRecordInput({ descripton: "typo" }),
     ).toThrow("descripton is not supported");

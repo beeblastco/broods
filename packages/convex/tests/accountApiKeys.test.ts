@@ -1,10 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * Scoped account keys: made on Organization › API access, then a `bask_`
- * bearer the config plane treats as a role over the key's own grid, pin and
- * expiry. Revoking or expiring one stops it at once.
- */
-
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
@@ -64,8 +58,7 @@ describe("scoped account keys on config-plane routes", () => {
     });
     expect(write.status).toBe(403);
 
-    // Like a role session: no role management, no rotating the account key,
-    // no minting sessions.
+    // Like a role session: no role management, no account-key rotation, no minting sessions.
     expect((await get(t, token, "/v1/roles")).status).toBe(403);
     const rotate = await t.fetch("/v1/account/rotate-secret", {
       method: "POST",

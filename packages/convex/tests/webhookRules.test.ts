@@ -1,11 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * The dashboard webhook mutations run the config plane's hook rules
- * (model/agentRules.ts, rule details covered in agentRules.test.ts): a bad row
- * is refused on the dashboard path exactly as the config HTTP surface refuses
- * it, while a stored legacy row stays removable.
- */
-
 import workosTest from "@convex-dev/workos-authkit/test";
 import { convexTest, type TestConvex } from "convex-test";
 import { expect, test } from "vitest";
@@ -101,7 +94,6 @@ test("a stored legacy row can be disabled and removed, but not re-enabled", asyn
   expect(listed[0]?.webhooks).toEqual([]);
 });
 
-/** Seed AuthKit's verified user projection without replacing its getAuthUser implementation. */
 async function seedAuthUser(t: T): Promise<void> {
   const now = new Date().toISOString();
   await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {
@@ -129,7 +121,6 @@ async function seedAuthUser(t: T): Promise<void> {
   });
 }
 
-/** A signed-in org owner with one agent config on a fresh project and stage. */
 async function setup(): Promise<
   FixtureIds & { t: T; caller: ReturnType<T["withIdentity"]> }
 > {

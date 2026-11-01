@@ -9,11 +9,6 @@ const INLINE_PRICES = JSON.stringify({
   custom: { "GPT-OSS-120B": { input: 0.1, output: 0.5 } },
 });
 
-/**
- * Self-hosted model prices: the stack is `self-host`, so the crawl fetches no
- * catalogue, applies the org's `BROODS_MODEL_PRICES`, and the dashboard's
- * rate query reads them back. Unsetting the variable clears them again.
- */
 export async function modelPrices(context: VerifyContext): Promise<void> {
   const ratesOf = (modelId: string): unknown =>
     convexResult(

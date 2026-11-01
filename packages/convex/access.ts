@@ -1,12 +1,6 @@
 /**
- * Organization › Access: permissions, policies and roles, all owned by the
- * org so one policy serves any agent, role or key in it.
- *
- * A permission names one thing an agent or member may do: the built-in
- * action vocabulary, or a custom name the org adds. A policy is named rules
- * over permissions, each in one scope, optionally narrowed by a condition.
- * A role is a named set of policies; a member gets one role. Owners and
- * admins may change all of it; `access:write` lets a custom role do so too.
+ * Org-owned permissions, policies (rules over permissions, each in one scope) and roles (sets
+ * of policies; a member holds one). Owners, admins and `access:write` roles may change them.
  */
 
 import { v, type Infer } from "convex/values";
@@ -60,7 +54,6 @@ const AGENT_DESCRIPTIONS: Record<
   "skill.load": "Load a skill",
 };
 
-/** The built-in permissions, one line each. */
 const BUILT_IN: Array<{
   kind: "built-in";
   name: string;
@@ -101,7 +94,6 @@ const conditionValidator = v.object({
   value: v.string(),
 });
 
-/** Where a rule applies: the whole org, one project, or one stage. */
 const scopeValidator = v.object({
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
@@ -141,7 +133,6 @@ const policyRowValidator = v.object({
   scope: v.string(),
   managedBy: v.optional(v.string()),
   rules: v.array(ruleRowValidator),
-  /** The distinct permissions across the rules, for counts and summaries. */
   permissions: v.array(v.string()),
   createdAt: v.number(),
   createdBy: v.optional(actorValidator),
@@ -152,7 +143,6 @@ const roleFields = {
   description: v.string(),
   policyIds: v.array(v.id("agentPolicies")),
   members: v.array(actorValidator),
-  /** The dashboard permissions the role grants org-wide. */
   permissions: v.array(dashboardActionValidator),
 };
 
@@ -177,7 +167,6 @@ type RoleRow = Infer<typeof roleRowValidator>;
 
 type Ctx = QueryCtx | MutationCtx;
 
-/** What the signed-in member may do in the active org's dashboard, org-wide or in one project. */
 export const viewerPermissions = query({
   args: { projectId: v.optional(v.id("projects")) },
   returns: v.array(dashboardActionValidator),
@@ -193,7 +182,6 @@ export const viewerPermissions = query({
   },
 });
 
-/** Built-in permissions first, then the org's custom ones. */
 export const listPermissions = query({
   args: {},
   returns: v.array(permissionRowValidator),
@@ -289,7 +277,6 @@ export const removePermission = mutation({
   },
 });
 
-/** Every active policy the org owns, org-wide ones and stage ones alike. */
 export const listPolicies = query({
   args: {},
   returns: v.array(policyRowValidator),
@@ -348,8 +335,7 @@ export const updatePolicy = mutation({
     const policy = await editablePolicy(ctx, caller.account._id, args.policyId);
     const document =
       args.mode !== undefined ? { ...policy.document, mode: args.mode } : null;
-    // An audit policy grants and denies nothing: switching to enforce lets its
-    // allows count, and switching to audit drops its denies.
+    // Audit grants and denies nothing, so either mode switch can widen what the policy grants.
     if (document && document.mode !== policy.document.mode) {
       await assertPolicyWithinReach(ctx, caller, policy, document);
     }
@@ -366,7 +352,6 @@ export const updatePolicy = mutation({
   },
 });
 
-/** One permission in one scope, optionally narrowed by a condition. */
 export const addRule = mutation({
   args: {
     policyId: v.id("agentPolicies"),
@@ -386,8 +371,7 @@ export const addRule = mutation({
     const dashboardAction = DASHBOARD_POLICY_ACTIONS.find(
       (action) => action === args.permission,
     );
-    // The dashboard evaluator reads only the scope, so a condition on any
-    // other attribute could neither grant nor refuse anything there.
+    // The dashboard evaluator reads only the scope; any other condition would be inert.
     if (dashboardAction && args.condition) {
       throw new ClientError(
         "A dashboard permission takes only a project or stage scope",
@@ -413,7 +397,6 @@ export const addRule = mutation({
       conditions.push({
         attribute: args.condition.attribute.trim(),
         operator: operator,
-        // `in` and `notIn` compare against a list, typed comma-separated.
         value:
           operator === "in" || operator === "notIn"
             ? args.condition.value.split(",").map((entry) => entry.trim())
@@ -468,7 +451,6 @@ export const removeRule = mutation({
   },
 });
 
-/** Soft-deletes a policy no agent, role or key still names. */
 export const removePolicy = mutation({
   args: { policyId: v.id("agentPolicies") },
   returns: v.null(),
@@ -487,7 +469,6 @@ export const removePolicy = mutation({
   },
 });
 
-/** Built-in roles first, then the org's custom ones, each with its members and permissions. */
 export const listRoles = query({
   args: {},
   returns: v.array(roleRowValidator),
@@ -639,7 +620,6 @@ export const updateRole = mutation({
   },
 });
 
-/** Deletes a role nobody holds. */
 export const removeRole = mutation({
   args: { roleId: v.id("orgRoles") },
   returns: v.null(),
@@ -662,7 +642,6 @@ export const removeRole = mutation({
   },
 });
 
-/** The caller, who must hold `access:write` in the active, enabled org. */
 async function requireAccessWriter(ctx: MutationCtx): Promise<ActiveAccount> {
   const caller = await getActiveCaller(ctx);
   const orgId = caller ? orgIdOf(ctx, caller.account) : null;
@@ -700,7 +679,6 @@ async function ownedPolicy(
   return policy;
 }
 
-/** An owned policy the dashboard may change: one it made, not one `broods deploy` owns. */
 async function editablePolicy(
   ctx: Ctx,
   accountId: Id<"accounts">,
@@ -716,10 +694,7 @@ async function editablePolicy(
   return policy;
 }
 
-/**
- * The document a policy would hold grants nothing new the caller lacks, alone
- * or in any role that holds it: a deny here can mask another policy's allow.
- */
+/** Checked alone and beside each role's other policies: a deny can mask another's allow. */
 async function assertPolicyWithinReach(
   ctx: MutationCtx,
   caller: ActiveAccount,
@@ -781,7 +756,6 @@ async function ownedRole(
   return role;
 }
 
-/** Every permission name a rule may use: built-in and the org's custom ones. */
 async function permissionNames(
   ctx: Ctx,
   accountId: Id<"accounts">,
@@ -797,7 +771,6 @@ async function permissionNames(
   ]);
 }
 
-/** The project and stage names the policies' scopes point at, each fetched once. */
 async function scopeNames(
   ctx: Ctx,
   policies: readonly Doc<"agentPolicies">[],
@@ -841,7 +814,6 @@ async function scopeNames(
   return names;
 }
 
-/** A policy as the list draws it: its rules in words, its scope, who made it. */
 function policyRow(
   policy: Doc<"agentPolicies">,
   names: Map<string, string>,
@@ -869,7 +841,6 @@ function policyRow(
   };
 }
 
-/** "organization", "project demo-app" or "stage demo-app / production". */
 function ruleScope(rule: PolicyRule, names: Map<string, string>): string {
   const scoped =
     conditionValue(rule, "stage.id") ?? conditionValue(rule, "project.id");
@@ -877,7 +848,6 @@ function ruleScope(rule: PolicyRule, names: Map<string, string>): string {
   return (scoped && names.get(scoped)) || "organization";
 }
 
-/** The rule's conditions that are not its scope, in one line. */
 function ruleCondition(rule: PolicyRule): string | undefined {
   const others = (rule.conditions ?? []).filter(
     (condition) =>

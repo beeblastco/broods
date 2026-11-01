@@ -100,17 +100,13 @@ type StreamTextScenario =
   | "real-two-step"
   | "silent-endpoint";
 let streamTextScenario: StreamTextScenario = "empty";
-// Scenarios whose first model call fails before any step finishes, by error.
 const NO_FINISH_ERRORS: Partial<Record<StreamTextScenario, string>> = {
   "error-no-finish": "provider failed",
   "context-overflow": "prompt is too long",
 };
-// The model the last "real-two-step" run was given, so a test can read its calls.
 let twoStepModelInUse: MockLanguageModelV4 | undefined;
-// How long the "real-two-step" second model call and weather tool take.
 let twoStepAnswerDelayMs = 20;
 let weatherDelayMs = 0;
-// The real compatible chat model the "silent-endpoint" run streams from.
 let silentEndpointModel: LanguageModel | undefined;
 
 const weatherTool = actualAi.tool({
@@ -249,9 +245,7 @@ const streamTextMock = mock(
 
         const noFinishError = NO_FINISH_ERRORS[streamTextScenario];
         if (noFinishError !== undefined) {
-          // Mimic the real AI SDK: a run that errors before any step completes (a
-          // usage-limit error on the first model call) fires onError but SKIPS
-          // onEnd, so a stream-draining caller never finalizes on its own.
+          // Like the real AI SDK: an error before any step completes fires onError but skips onEnd.
           const error = new Error(noFinishError);
           await options.onError({ error: error });
           controller.enqueue({ type: "error", error: error });
@@ -301,8 +295,7 @@ const streamTextMock = mock(
           return;
         }
 
-        // A policy decision the SDK resolved itself: the request part is a record
-        // of an answered question, and its response ships in the same run.
+        // The SDK resolved this approval itself; its response ships in the same run.
         if (streamTextScenario === "automatic-approval") {
           const approvalPart = {
             type: "tool-approval-request",
@@ -471,8 +464,6 @@ const streamTextMock = mock(
           return;
         }
 
-        // A gemini-flash-shaped run: the answer left through a delivery tool,
-        // then the model stopped with no final text.
         if (streamTextScenario === "delivery-tool-then-empty") {
           const toolCall = {
             type: "tool-call",
@@ -603,9 +594,7 @@ await mock.module("@ai-sdk/openai", () => ({
   createOpenAI: createOpenAIMock,
 }));
 
-// Keep the real named exports: the openai-compatible provider packages
-// (togetherai, cerebras, ...) import OpenAICompatibleChatLanguageModel from
-// this module, and a mock that drops them breaks every import of provider.ts.
+// Keep the real exports: togetherai, cerebras, ... import their chat model class from here.
 await mock.module("@ai-sdk/openai-compatible", () => ({
   ...actualOpenAICompatible,
   createOpenAICompatible: createOpenAICompatibleMock,
@@ -901,8 +890,7 @@ describe("runAgentLoop", () => {
     expect(
       Array.isArray(first) && first.some((part) => part.type === "tool-call"),
     ).toBe(true);
-    // prepareStep stored the first step before the second model call; onEnd
-    // stored only what was left.
+    // prepareStep stored step 0 before the second model call; onEnd stored only the rest.
     expect(
       persistModelMessages.mock.calls.map((call) => call[0].length),
     ).toEqual([0, 2, 1]);
@@ -911,14 +899,12 @@ describe("runAgentLoop", () => {
   it("aborts and fails the run when the caller stops reading", async () => {
     const { readAgentFullStream } = await import("../src/harness/harness.ts");
     const stream = await startTwoStepTurn();
-    // Leave while step 0's provider call is still streaming.
     for await (const chunk of readAgentFullStream(stream)) {
       if ((chunk as { type?: string }).type === "text-delta") break;
     }
 
     expect(stream.didFail()).toBe(true);
     expect(stream.failureText()).toBe("Caller stopped reading the stream");
-    // The abort reached the provider call, and the second step never started.
     expect(twoStepModelInUse?.doStreamCalls).toHaveLength(1);
     expect(twoStepModelInUse?.doStreamCalls[0]?.abortSignal?.aborted).toBe(
       true,
@@ -941,8 +927,7 @@ describe("runAgentLoop", () => {
     );
     await stream.consumeStream();
 
-    // After the step that crossed the line, one last step with no tools,
-    // told to answer now; steers stay queued.
+    // After the step that crossed the line, one last tool-free step; steers stay queued.
     expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
     expect(twoStepModelInUse?.doStreamCalls[0]?.toolChoice).not.toEqual({
       type: "none",
@@ -963,7 +948,6 @@ describe("runAgentLoop", () => {
     });
     await stream.consumeStream();
 
-    // Step 0's tool ran and its result is stored; no answer, no failure.
     expect(twoStepModelInUse?.doStreamCalls).toHaveLength(1);
     expect(twoStepModelInUse?.doStreamCalls[0]?.toolChoice).not.toEqual({
       type: "none",
@@ -975,8 +959,7 @@ describe("runAgentLoop", () => {
 
   it("fails the run when the model sends nothing within the chunk timeout", async () => {
     process.env.MODEL_FIRST_CHUNK_TIMEOUT_MS = "300";
-    // Longer than the timeout; the mock stream ignores the abort a real
-    // provider fetch would honour, so the test still waits it out.
+    // The mock stream ignores the abort a real provider fetch honours, so the test waits it out.
     twoStepAnswerDelayMs = 1_200;
     const stream = await startTwoStepTurn();
     await stream.consumeStream();
@@ -985,7 +968,6 @@ describe("runAgentLoop", () => {
     expect(stream.failureText()).toBe(
       "The model sent no output for 1s, so the run was stopped",
     );
-    // The stalled second call was aborted, not left holding its socket.
     expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
     expect(twoStepModelInUse?.doStreamCalls[1]?.abortSignal?.aborted).toBe(
       true,
@@ -1006,7 +988,6 @@ describe("runAgentLoop", () => {
 
     expect(stream.didFail()).toBe(true);
     expect(stream.failureText()).toBe("I ran out of time on this turn.");
-    // The abort reached the provider call, and the second step never started.
     expect(twoStepModelInUse?.doStreamCalls).toHaveLength(1);
     expect(twoStepModelInUse?.doStreamCalls[0]?.abortSignal?.aborted).toBe(
       true,
@@ -1056,7 +1037,6 @@ describe("runAgentLoop", () => {
         await stream.consumeStream();
 
         expect(stream.failureText()).toStartWith(failure);
-        // The stalled request was cancelled, not left holding its socket.
         expect(endpoint.calls()).toBe(2);
         await endpoint.cancelled;
       } finally {
@@ -1069,8 +1049,7 @@ describe("runAgentLoop", () => {
   it("keeps the run alive when a reader that drains on its own leaves early", async () => {
     const { readAgentFullStream } = await import("../src/harness/harness.ts");
     const stream = await startTwoStepTurn();
-    // A channel adapter that cannot post the stream: it stops on the first
-    // delta and hands the reply back, then the caller drains what is left.
+    // Like a channel adapter that cannot post the stream: stop on the first delta, then drain.
     for await (const chunk of readAgentFullStream(stream, false)) {
       if ((chunk as { type?: string }).type === "text-delta") break;
     }
@@ -1141,7 +1120,6 @@ describe("runAgentLoop", () => {
     setStorageForTests(usageStorage(writes));
     const { readAgentFullStream } = await import("../src/harness/harness.ts");
     const stream = await startTwoStepTurn();
-    // Leave when step 1 opens: step 0 has ended, step 1's answer is 20 ms away.
     let stepsStarted = 0;
     for await (const chunk of readAgentFullStream(stream)) {
       if ((chunk as { type?: string }).type !== "start-step") continue;
@@ -1319,9 +1297,7 @@ describe("runAgentLoop", () => {
 
   it("sends configured lifecycle webhooks for agent events", async () => {
     installHarnessEnv();
-    // Delivery opens its own pinned socket, so it is steered by resolving the
-    // hook's name to the loopback the test server listens on rather than by
-    // replacing a global.
+    // Delivery opens its own pinned socket, so the hook's name resolves to the test loopback.
     const delivered: HookDelivery[] = [];
     const { server, port } = await startHookServer(delivered);
     const { runAgentLoop } = await import("../src/harness/harness.ts");
@@ -1425,7 +1401,6 @@ describe("runAgentLoop", () => {
       () => undefined,
       (error: unknown) => error,
     );
-    // Only the hard failure rethrows to the caller; the hook has fired by then.
     expect(thrown).toEqual(
       scenario === "hard-throw"
         ? new Error("stream transport failed")
@@ -1530,11 +1505,8 @@ describe("runAgentLoop", () => {
   });
 
   it("finalizes via ensureFinalized when a caller drains stream and onEnd never fires", async () => {
-    // The channel progress streamer reads stream directly instead of calling
-    // consumeStream. When the model errors before any step completes (a usage-limit
-    // error on the first call), the AI SDK fires onError but skips onEnd, so the
-    // task would never finalize and its trace span would spin "running" forever.
-    // ensureFinalized() is the safety net that path must call.
+    // The channel streamer drains stream without consumeStream, and the SDK skips onEnd here,
+    // so only ensureFinalized() keeps the task's span from spinning "running" forever.
     streamTextScenario = "error-no-finish";
     installHarnessEnv();
     const usageWrites: TaskUsageInput[] = [];
@@ -1572,14 +1544,12 @@ describe("runAgentLoop", () => {
       },
     );
 
-    // Drain stream the way the channel streamer does (no consumeStream call).
     const reader = stream.stream.getReader();
     for (;;) {
       const { done } = await reader.read();
       if (done) break;
     }
 
-    // onError ran during the drain, but nothing has finalized the task yet.
     expect(onErrorText).toHaveBeenCalledWith("provider failed");
     expect(usageWrites).toHaveLength(0);
 
@@ -1588,7 +1558,6 @@ describe("runAgentLoop", () => {
     expect(stream.didFail()).toBe(true);
     expect(usageWrites[0]?.status).toBe("failed");
 
-    // Idempotent: a second call (and any later consumeStream) writes nothing more.
     await stream.ensureFinalized(true);
     expect(usageWrites).toHaveLength(1);
   });
@@ -1749,9 +1718,8 @@ describe("runAgentLoop", () => {
 
     await stream.consumeStream();
 
-    // An automatic request must not read as pending: on a channel turn that
-    // would persist a denial for an answered approvalId, and the next model call
-    // rejects the history with AI_InvalidToolApprovalError.
+    // Pending would persist a denial for an answered approvalId on a channel turn,
+    // and the next model call rejects that history with AI_InvalidToolApprovalError.
     expect(stream.approvalSummaries()).toEqual([]);
     expect(onApprovalRequired).not.toHaveBeenCalled();
     expect(onErrorText).not.toHaveBeenCalled();
@@ -1845,7 +1813,6 @@ describe("runAgentLoop", () => {
       model: { provider: "google", modelId: "gemini-custom" },
       temperature: 0.2,
       maxOutputTokens: 2048,
-      // Unified v7 reasoning setting flows through as a plain model setting.
       reasoning: "low",
       maxRetries: 1,
       // The AI SDK enforces every timeout field itself, so it arrives as set.
@@ -2133,8 +2100,7 @@ describe("runAgentLoop", () => {
         ],
       },
     ]);
-    // What the first run marked is a byte-identical prefix of the second run,
-    // after pruning dropped the first run's tool call, so the second reads it.
+    // The first run's marked prefix is byte-identical in the second, after pruning its tool call.
     expect(second.system).toEqual(first.system);
     expect(second.messages).toEqual([
       {
@@ -2173,8 +2139,7 @@ describe("runAgentLoop", () => {
     const first = await providerRequestBody(firstRun, config);
     const second = await providerRequestBody(secondRun, config);
 
-    // OpenAI's own breakpoint ends the latest message, after the environment;
-    // these mark what the next run sends again.
+    // OpenAI's own breakpoint ends the latest message; these mark what the next run resends.
     expect(first.input).toEqual([
       { role: "developer", content: "You are a support agent." },
       {
@@ -2200,7 +2165,6 @@ describe("runAgentLoop", () => {
         ],
       },
     ]);
-    // The first run's marked user message ends where the second run's does.
     expect((second.input as unknown[])[3]).toEqual({
       role: "user",
       content: [{ type: "input_text", text: "check the build" }],
@@ -2975,8 +2939,7 @@ describe("runAgentLoop", () => {
     });
     expect(openAIModelMock).toHaveBeenCalledWith("gpt-5.4");
 
-    // Bun drops a fetch whose socket stays silent for 300s, which failed a
-    // throttled provider's step mid-run. Model requests turn that timer off.
+    // Bun drops a fetch whose socket is silent for 300s; model requests turn that timer off.
     const inits: BunFetchRequestInit[] = [];
     globalThis.fetch = (async (_input, init) => {
       inits.push(init ?? {});
@@ -3334,8 +3297,6 @@ describe("auto-compaction after a turn", () => {
     },
   };
 
-  // Runs a turn on the real SDK loop with a session that records, in order,
-  // every final reply and auto-compaction the harness asks for.
   async function runCompactingTurn(options: {
     scenario: "real-two-step" | "approval-request" | "context-overflow";
     autoCompaction: { enabled?: boolean; maxContextLength?: number };
@@ -3497,9 +3458,8 @@ describe("auto-compaction after a turn", () => {
 });
 
 describe("subagent policy input", () => {
-  // A child replies to its parent and has no delivery of its own. Its policy
-  // input must still name the parent's place and person, or a deny scoped by
-  // role never matches and a guest gets the withheld action done through a child.
+  // A child's policy input must name the parent's place and person, or a role-scoped
+  // deny never matches and a guest gets the withheld action done through a child.
   it("refuses a child tool call the parent's role-scoped policy denies", async () => {
     installHarnessEnv();
     setStorageForTests({
@@ -3534,8 +3494,7 @@ describe("subagent policy input", () => {
       },
     } as unknown as Storage);
     const policyInputs: Array<{ userRoles?: string[] }> = [];
-    // Stands in for the rego on loopback, the way policy-enforce.test.ts does:
-    // the deny fires only when the input names a guest.
+    // Stands in for the rego on loopback: the deny fires only when the input names a guest.
     const opa = Bun.serve({
       port: 0,
       fetch: async function (request: Request): Promise<Response> {
@@ -3678,7 +3637,6 @@ function installHarnessEnv(): void {
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
 }
 
-// Starts a two-step turn, by default the "real-two-step" weather turn on the real SDK loop.
 async function startTwoStepTurn(
   persistModelMessages: () => Promise<string[]> = async () => [],
   loopOptions: AgentLoopOptions = {},
@@ -3722,7 +3680,6 @@ async function startTwoStepTurn(
   );
 }
 
-// Step 0 answers with text and a weather tool call, step 1 with text only.
 function twoStepModel(): MockLanguageModelV4 {
   const usage = {
     inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
@@ -3768,12 +3725,8 @@ function twoStepModel(): MockLanguageModelV4 {
   });
 }
 
-/**
- * A loopback chat-completions endpoint whose first stream calls the weather
- * tool and whose second answers 200, then repeats `beat` every 50ms (or sends
- * nothing when empty) without a word of model output. Installs the real
- * compatible model the "silent-endpoint" run streams from.
- */
+// Loopback chat completions: the first stream calls the weather tool, the second answers 200
+// and then repeats `beat` every 50ms without a word of model output.
 async function silentEndpoint(beat: string): Promise<{
   calls: () => number;
   cancelled: Promise<void>;
@@ -3869,8 +3822,6 @@ describe("system prompt trace attributes", () => {
       { role: "system", content: "<skills>\nload_skill first.\n</skills>" },
     ];
 
-    // Traces must show every injected block, not just the agent's own prompt.
-    // The joined text is exactly what the provider receives as instructions.
     expect(systemTraceAttributes(system, (value) => String(value))).toEqual({
       "model.system":
         "You are a helpful agent.\n\n<skills>\nload_skill first.\n</skills>",
@@ -3920,17 +3871,13 @@ describe("task input trace attribute", () => {
 
 describe("tool.call span duration", () => {
   it("reports what the SDK timed, not how late the handler was scheduled", async () => {
-    // On parallel calls that scheduling gap is model time, which turned 4ms
-    // isolate calls into multi-second spans in the trace.
+    // On parallel calls that scheduling gap is model time, not tool time.
     const { toolSpanDurationMs } = await import("../src/harness/harness.ts");
 
     expect(toolSpanDurationMs(1_000, 6_000, 12)).toBe(12);
     expect(toolSpanDurationMs(1_000, 6_000, 0)).toBe(0);
-    // No SDK measurement: the handler clock is all there is.
     expect(toolSpanDurationMs(1_000, 6_000, undefined)).toBe(5_000);
     expect(toolSpanDurationMs(1_000, 6_000, Number.NaN)).toBe(5_000);
-    // A clock that went backwards must not publish a negative span, whether the
-    // negative comes from the handler's own clock or from the SDK's measurement.
     expect(toolSpanDurationMs(6_000, 1_000, undefined)).toBe(0);
     expect(toolSpanDurationMs(1_000, 6_000, -12)).toBe(0);
   });
@@ -3974,11 +3921,7 @@ async function startHookServer(
   return { port: address.port, server: server };
 }
 
-/**
- * The request body for one run over `history`: runAgentLoop builds the
- * streamText call, and the real provider the config names (OpenAI Responses,
- * else Anthropic Messages) renders it to the wire.
- */
+// Rendered to the wire by the real provider the config names.
 async function providerRequestBody(
   history: ModelMessage[],
   config: AgentConfig,
@@ -4012,11 +3955,6 @@ async function providerRequestBody(
   return body;
 }
 
-/**
- * What step 0 of one run over the pruned `history` sends: the streamText call
- * runAgentLoop makes, with the instructions its prepareStep returns. The
- * system prompt is two stored messages and one ephemeral one.
- */
 async function firstStepCall(
   history: ModelMessage[],
   config: AgentConfig,

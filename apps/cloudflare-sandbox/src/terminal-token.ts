@@ -1,14 +1,8 @@
-/**
- * A short-lived bearer that opens one sandbox's terminal and nothing else.
- * Core signs it with the bridge API key and seals it in the terminal ticket,
- * so the gateway never holds the key that reaches every sandbox. Core's
- * cloudflare executor imports this file, so both sides share one format.
- */
+// Opens one sandbox's terminal, so the gateway never holds the key that reaches every sandbox.
 
 const PREFIX = "tt1";
 const encoder = new TextEncoder();
 
-/** Signs a terminal token for `sandboxId` that stops working at `expiresAt` (epoch ms). */
 export async function signTerminalToken(
   apiKey: string,
   sandboxId: string,
@@ -17,7 +11,6 @@ export async function signTerminalToken(
   return `${PREFIX}.${expiresAt}.${await mac(apiKey, sandboxId, expiresAt)}`;
 }
 
-/** True when `token` was signed with `apiKey` for `sandboxId` and has not expired. A bridge with no key yet verifies nothing. */
 export async function verifyTerminalToken(
   apiKey: string,
   token: string,
@@ -41,8 +34,7 @@ export async function verifyTerminalToken(
   return timingSafeEqual(new Uint8Array(given), new Uint8Array(expected));
 }
 
-// The "terminal" label keeps a token from ever matching a MAC made for
-// another purpose with the same key.
+// The "terminal" label domain-separates this MAC from any other made with the same key.
 async function mac(
   apiKey: string,
   sandboxId: string,
@@ -67,7 +59,6 @@ async function mac(
     .replace(/=+$/, "");
 }
 
-// Both inputs are SHA-256 digests, so the lengths always match.
 function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
   let diff = a.length ^ b.length;
   for (let i = 0; i < a.length; i += 1) diff |= a[i]! ^ b[i]!;

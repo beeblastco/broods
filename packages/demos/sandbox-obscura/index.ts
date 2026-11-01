@@ -1,14 +1,9 @@
-/**
- * Example: browse the web from a lambda sandbox on the Obscura image with the
- * built-in `browse` tool. Exits 1 unless browse ran in both modes without an
- * error, so it doubles as a smoke test for a stage.
- */
+// Exits 1 unless browse ran clean in both modes, so it doubles as a stage smoke test.
 
 import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-// The demo's agents require a signed user token beside the runtime key.
-// Your backend signs one per signed-in user; here one demo user stands in.
+// These agents need a signed user token; your backend signs one per signed-in user.
 const client = new BroodsClient({
   userToken: () => signUserToken({ userId: "demo-user" }),
 });
@@ -56,7 +51,7 @@ if (!modes.has("markdown") || !modes.has("links") || failed.length > 0) {
 }
 console.log("smoke test passed: browse answered in markdown and links mode");
 
-// The mode a browse call asked for; browse defaults to markdown when it names none.
+// browse defaults to markdown when the call names no mode.
 function browseMode(input: unknown): string {
   return typeof input === "object" && input !== null && "mode" in input
     ? String(input.mode)

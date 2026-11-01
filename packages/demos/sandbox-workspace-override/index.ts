@@ -1,22 +1,10 @@
-/**
- * Example: per-workspace sandbox override via declarative broods resources.
- *
- * The agent's first entry in `sandboxes` is the DEFAULT. Each `workspaces[]` entry
- * can set its own `sandbox` to override it for that workspace. The cascade is:
- *
- *   ws.sandbox === <id>   -> override: use that sandbox (and ITS permissionMode)
- *   ws.sandbox === null   -> force read-only (read/glob via S3 only), even with a default
- *   ws.sandbox omitted    -> inherit the agent's first sandbox
- *
- * Here one agent drives three workspaces at once: one inherits the default sandbox, one is
- * pinned to a stricter deny-all network sandbox, and one is forced read-only.
- */
+// The first `sandboxes` entry is the default; a workspace's own `sandbox` overrides it:
+// an id uses that sandbox and its permissionMode, null forces read-only, omitted inherits.
 
 import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-// The demo's agents require a signed user token beside the runtime key.
-// Your backend signs one per signed-in user; here one demo user stands in.
+// These agents need a signed user token; your backend signs one per signed-in user.
 const client = new BroodsClient({
   userToken: () => signUserToken({ userId: "demo-user" }),
 });

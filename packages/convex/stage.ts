@@ -1,7 +1,3 @@
-/**
- * Public stage queries and mutations scoped to a project owner.
- */
-
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -33,8 +29,7 @@ const stageDoc = v.object({
   _creationTime: v.number(),
 });
 
-// Creating, cloning, or promoting a stage copies agents, secrets and runtime
-// wiring, so it is an org admin operation like deleting one.
+// Copies agents, secrets and runtime wiring, so admin-only like deleting a stage.
 const STAGE_ADMIN_REQUIRED =
   "Stages can only be created or promoted by an org admin.";
 
@@ -89,8 +84,7 @@ export const create = mutation({
         now,
       );
     } else {
-      // Only an empty stage gets its key here: a clone's agents carry bot
-      // tokens, and a deployment would connect them beside the source's.
+      // A clone gets no key: its agents' bot tokens would connect beside the source's.
       await readyStageDeployment(ctx, authUser, projectId, stageId);
     }
 
@@ -107,9 +101,7 @@ export const ensureDefault = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    // No-op when the project is gone: a just-deleted project briefly keeps the
-    // header's "no stages → ensureDefault" effect firing, so return null
-    // instead of throwing rather than resurrecting a stage.
+    // Null, not a throw: a just-deleted project's header briefly still fires this.
     const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) return null;
 
@@ -120,13 +112,10 @@ export const ensureDefault = mutation({
 
     const now = Date.now();
     const development = existing.find((stage) => stage.kind === "development");
-    // A member reads the current default and never repairs or creates one.
     if (!(await getProjectForWrite(ctx, authUser.id, projectId, "admin"))) {
       return development?._id ?? null;
     }
 
-    // Otherwise guarantee a Development row that is the sole default, creating
-    // one if needed and demoting any other stage that claims the default.
     let changed = !development;
     const developmentId =
       development?._id ??
@@ -287,13 +276,6 @@ export const remove = mutation({
   },
 });
 
-/**
- * Cascade-deletes every resource scoped to a stage: agent configs (plus their
- * deployments and linked broods `agents` rows with their crons), the canvas
- * layout, MCP servers, env vars, project keys, and the scoped account keys
- * pinned to it. A linked `agents` row goes only when the project's account
- * owns it.
- */
 export async function deleteStageContents(
   ctx: MutationCtx,
   stage: Doc<"stages">,
@@ -306,8 +288,7 @@ export async function deleteStageContents(
       q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .collect();
-  // `agentsInStage` keeps only rows the project's account owns. Two configs
-  // can name one row, so ids are deduplicated before deleting.
+  // Two configs can name one agents row, so dedupe before deleting.
   const accountId = await accountIdForProject(ctx, projectId);
   const ownAgents = accountId
     ? await agentsInStage(
@@ -321,9 +302,7 @@ export async function deleteStageContents(
 
   for (const config of configs) await deleteAgentConfig(ctx, config._id);
 
-  // The stage's runtime key is scoped to (project, stage), not
-  // to an agent config, so it must be deleted here or it would keep
-  // authenticating requests against a deleted stage.
+  // The runtime key is per stage, not per config: left behind, it would still authenticate.
   const stageDeployments = await ctx.db
     .query("agentDeployments")
     .withIndex("by_projectId_and_stageId_and_status", (q) =>
@@ -347,8 +326,6 @@ export async function deleteStageContents(
     .collect();
   for (const layout of layouts) await ctx.db.delete(layout._id);
 
-  // MCP servers are stage-scoped resources, so they go with it. The S3
-  // bundle is left to the account-level sweep; nothing else references it.
   const mcpRows = await ctx.db
     .query("mcp")
     .withIndex("by_stageId_and_status_and_name", (q) =>
@@ -373,31 +350,26 @@ export async function deleteStageContents(
     .collect();
   for (const deployKey of deployKeys) await ctx.db.delete(deployKey._id);
 
-  // A key pinned here reaches nothing once the stage is gone.
   const pinnedKeys = await ctx.db
     .query("accountApiKeys")
     .withIndex("by_stageId", (q) => q.eq("stageId", stageId))
     .collect();
   for (const key of pinnedKeys) await ctx.db.delete(key._id);
 
-  // Audit rows for env-var reveals are scoped to the stage.
   const reveals = await ctx.db
     .query("environmentVariableReveals")
     .withIndex("by_stageId", (q) => q.eq("stageId", stageId))
     .collect();
   for (const reveal of reveals) await ctx.db.delete(reveal._id);
 
-  // The inbound-webhook lookup keys on (accountId, platform, externalId,
-  // status) with no stageId, so a surviving record keeps routing messages into
-  // the deleted stage and blocks `create` from rebinding that place.
+  // The inbound-webhook lookup has no stageId, so a surviving record would route into the
+  // deleted stage and block `create` from rebinding that place.
   const channels = await ctx.db
     .query("channelRecords")
     .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   for (const channel of channels) await ctx.db.delete(channel._id);
 
-  // The remaining stage-scoped config resources. `cliSync` prunes these by
-  // stageId, so anything left behind is unreachable once the stage is gone.
   const policies = await ctx.db
     .query("agentPolicies")
     .withIndex("by_stageId_and_status_and_name", (q) =>
@@ -417,8 +389,7 @@ export async function deleteStageContents(
     .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   for (const workspace of workspaces) {
-    // Managed workspace files live outside Convex and must be purged before the
-    // workspace row disappears. Bring-your-own buckets are customer-owned.
+    // Managed files live in our S3; bring-your-own buckets are the customer's to keep.
     if (!workspace.config?.storage?.bucket) {
       await ctx.scheduler.runAfter(0, internal.aws.workspaceFiles.purge, {
         accountId: workspace.accountId,
@@ -437,13 +408,6 @@ export async function deleteStageContents(
   for (const external of externals) await ctx.db.delete(external._id);
 }
 
-/**
- * Deep-copies every resource scoped to `sourceStageId` into `targetStageId`:
- * agent configs (each with a fresh broods `agents` row), the canvas layout
- * (remapping node references to the cloned configs), MCP servers, and env vars.
- * Subagent allow-lists are remapped onto the cloned agents so agent→agent calls stay
- * within the new stage.
- */
 export async function duplicateStageContents(
   ctx: MutationCtx,
   authId: string,
@@ -452,8 +416,7 @@ export async function duplicateStageContents(
   targetStageId: Id<"stages">,
   now: number,
 ): Promise<void> {
-  // 1. Clone MCP servers first: agent configs key `extraConfig.mcp` by
-  // row id, so the clones need the new ids before step 2 remaps them.
+  // MCP first: configs key `extraConfig.mcp` by row id, so the remap needs the new ids.
   const sourceMcpServers = await ctx.db
     .query("mcp")
     .withIndex("by_stageId_and_status_and_name", (q) =>
@@ -470,7 +433,6 @@ export async function duplicateStageContents(
     mcpIdMap.set(server._id, newServerId);
   }
 
-  // 2. Clone agent configs and provision their agents rows, tracking id remaps.
   const sourceConfigs = await ctx.db
     .query("agentConfigs")
     .withIndex("by_projectId_and_stageId", (q) =>
@@ -497,8 +459,6 @@ export async function duplicateStageContents(
       agentIdMap.set(source.agentId, newAgentId);
   }
 
-  // 3. Remap each clone's subagent allow-list and MCP server ids onto the
-  // cloned resources, then push config.
   for (const newConfigId of configIdMap.values()) {
     const clone = await ctx.db.get(newConfigId);
     if (!clone) continue;
@@ -543,7 +503,6 @@ export async function duplicateStageContents(
     }
   }
 
-  // 4. Clone the canvas layout, repointing agent and MCP nodes at the clones.
   const sourceLayout = await ctx.db
     .query("canvasLayouts")
     .withIndex("by_projectId_and_stageId", (q) =>
@@ -560,7 +519,6 @@ export async function duplicateStageContents(
       if (newConfigId)
         return { ...node, data: { ...data, agentConfigId: newConfigId } };
 
-      // MCP nodes point at their row through `resourceId`.
       const newServerId =
         typeof data.resourceId === "string"
           ? mcpIdMap.get(data.resourceId)
@@ -580,7 +538,6 @@ export async function duplicateStageContents(
     });
   }
 
-  // 5. Clone environment variables.
   const sourceVars = await ctx.db
     .query("environmentVariables")
     .withIndex("by_projectId_and_stageId", (q) =>
@@ -596,7 +553,6 @@ export async function duplicateStageContents(
   }
 }
 
-/** The role a stage name implies at creation: the two reserved names, else custom. */
 export function kindForStageName(name: string): Doc<"stages">["kind"] {
   const normalized = name.trim().toLowerCase();
   if (normalized === "development") return "development";
@@ -605,18 +561,13 @@ export function kindForStageName(name: string): Doc<"stages">["kind"] {
   return "custom";
 }
 
-/**
- * Stage listing for any org member. Split from the `list` query so the role
- * boundary is testable: convex-test cannot run the query itself, which needs
- * the WorkOS AuthKit component.
- */
+// Split from `list` for tests: convex-test cannot run AuthKit.
 export async function listStagesForProject(
   ctx: QueryCtx | MutationCtx,
   authId: string,
   projectId: Id<"projects">,
 ): Promise<Doc<"stages">[]> {
-  // Return empty rather than throwing so a just-deleted project doesn't crash
-  // reactive subscribers (header selector, settings) before they navigate away.
+  // Empty, not a throw: a just-deleted project must not crash reactive subscribers.
   const project = await getProjectForRole(ctx, authId, projectId);
   if (!project) return [];
 
@@ -634,7 +585,6 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-/** The slug rule plus: reserved names come from the project, and no sibling may share the name. */
 async function assertCustomStageNameFree(
   ctx: QueryCtx,
   projectId: Id<"projects">,
@@ -678,8 +628,6 @@ async function hasStageContents(
     .first();
   if (layout) return true;
 
-  // Tombstones do not count: a tombstone-only stage is still empty, and
-  // treating it as occupied silently skips the clone into production.
   const server = await ctx.db
     .query("mcp")
     .withIndex("by_stageId_and_status_and_name", (q) =>
@@ -698,7 +646,6 @@ async function hasStageContents(
   return Boolean(variable);
 }
 
-/** Strip Convex system fields so a fetched doc can be re-inserted as a clone. */
 function stripSystemFields<T extends object>(
   doc: T,
 ): Omit<T, "_id" | "_creationTime"> {

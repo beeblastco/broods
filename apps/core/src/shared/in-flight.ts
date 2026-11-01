@@ -1,11 +1,3 @@
-/**
- * Post-response work the process must finish before it exits. `waitUntil` is
- * what `RequestContext.waitUntil` hands every handler, and shutdown drains the
- * set before `process.exit`. Lives outside server.ts so runtime code that never
- * sees a request context (a sandbox teardown) can register work here without
- * importing the entry point.
- */
-
 import { toErrorMessage } from "./errors.ts";
 import { logError } from "./log.ts";
 
@@ -17,7 +9,6 @@ export async function drainInFlight(): Promise<void> {
   }
 }
 
-/** The post-response work still running; the test preload fails a test that leaves some behind. */
 export function inFlightForTests(): ReadonlySet<Promise<void>> {
   return inFlight;
 }

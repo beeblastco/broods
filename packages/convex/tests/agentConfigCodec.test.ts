@@ -8,9 +8,7 @@ import {
 import { normalizeAgentConfig } from "../model/agentRules";
 
 describe("agent config codec", () => {
-  // `scheduler` has no flat column, so it only survives a sync by riding in
-  // extraConfig. Dropping it let `broods dev` report the agent as updated while
-  // the harness kept building its toolset without schedule_task.
+  // `scheduler` has no flat column: it survives a sync only inside extraConfig.
   test("round-trips the scheduler and browser branches", () => {
     const flat = fromNestedAgentConfig({
       model: { provider: "custom", modelId: "deepseek-v4-pro" },
@@ -26,8 +24,7 @@ describe("agent config codec", () => {
     expect(toNestedAgentConfig(flat).browser).toEqual({ enabled: true });
   });
 
-  // Same failure mode as scheduler: without a NESTED_BRANCHES entry the
-  // mcp branch is dropped on write and never reaches core (#331).
+  // Without a NESTED_BRANCHES entry the mcp branch is dropped on write.
   test("round-trips the mcp branch", () => {
     const mcp = {
       k57mcpserver00000000000000000000: {
@@ -44,8 +41,6 @@ describe("agent config codec", () => {
     expect(toNestedAgentConfig(flat).mcp).toEqual(mcp);
   });
 
-  // Sandboxes have no flat column either, so they only reach core through
-  // extraConfig.
   test("round-trips the sandboxes branch", () => {
     const flat = fromNestedAgentConfig({
       model: { provider: "custom", modelId: "deepseek-v4-pro" },
@@ -61,8 +56,7 @@ describe("agent config codec", () => {
     ]);
   });
 
-  // Dropping a stored `sandbox` would push a config with no default and no error.
-  // Carried, it reaches core, which refuses it by name.
+  // Dropped, a stored `sandbox` would push a config with no default and no error.
   test("carries a stored legacy sandbox into the nested config", () => {
     const nested = toNestedAgentConfig({
       extraConfig: { sandbox: "sb_default", sandboxes: ["sb_offline"] },
@@ -72,8 +66,7 @@ describe("agent config codec", () => {
     expect(() => normalizeAgentConfig(nested)).toThrow(SANDBOX_REMOVED_MESSAGE);
   });
 
-  // A pre-#305 policy dropped on read would run the agent ungated. Carried, the
-  // validator refuses it by name.
+  // Dropped on read, a legacy policy would run the agent ungated.
   test("carries a stored legacy policy into the nested config", () => {
     const nested = toNestedAgentConfig({
       extraConfig: { policy: { policyIds: ["policy_1"] } },

@@ -21,7 +21,6 @@ const PINNED_TOKEN_URL = "https://93.184.216.34/token";
 
 const originalFetch = globalThis.fetch;
 
-/** One resolved oauth config; field overrides per test. */
 function resolvedOauth(
   overrides: Partial<ResolvedMcpOauth> = {},
 ): ResolvedMcpOauth {
@@ -34,7 +33,6 @@ function resolvedOauth(
   };
 }
 
-/** An external row carrying oauth with the ${NAME} refs a stored row holds. */
 function oauthRecord(overrides: Partial<McpRecord> = {}): McpRecord {
   const now = new Date().toISOString();
 
@@ -58,7 +56,6 @@ function oauthRecord(overrides: Partial<McpRecord> = {}): McpRecord {
   };
 }
 
-/** Stub the token endpoint; returns the recorded requests. */
 function stubTokenEndpoint(
   responses: Array<{ status?: number; body: unknown }>,
 ): Array<{
@@ -221,8 +218,7 @@ describe("mcpConnection oauth overlay", () => {
         tokenUrl: "https://oauth.test/token",
       },
     });
-    // Sync only validates the agent entry as a string record, so an
-    // endpoint smuggled in there must not win over the checked row value.
+    // Sync only checks the agent entry is a string record; a smuggled endpoint must not win.
     const smuggled = {
       clientSecret: "resolved-secret",
       refreshToken: "resolved-refresh",
@@ -278,7 +274,6 @@ describe("mcp cache keys", () => {
     expect(key).not.toContain("x-upstream");
     expect(cacheKeyFor(withOauth)).not.toContain("secret-1");
     expect(cacheKeyFor(withOauth)).not.toContain("refresh-1");
-    // Same uniqueness as before: a rotated header or added oauth is a miss.
     expect(cacheKeyFor(rotated)).not.toBe(key);
     expect(cacheKeyFor(withOauth)).not.toBe(key);
     expect(

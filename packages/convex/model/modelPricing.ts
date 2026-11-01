@@ -1,17 +1,9 @@
-/**
- * Shared token pricing and provider metadata conventions for usage metering.
- * Rates are standard USD prices per million text tokens, crawled hourly from
- * models.dev into the `modelPrices` table (`modelPrices/crawl.ts`).
- */
-
-/** Provider metadata fields that report cache creation tokens. */
 export const PROVIDER_CACHE_WRITE_FIELDS: Readonly<Record<string, string>> = {
   anthropic: "cacheCreationInputTokens",
   bedrock: "cacheCreationInputTokens",
   openai: "",
 };
 
-/** Cost components for a model whose rates are known. */
 export interface ModelCostEstimate {
   input: number;
   output: number;
@@ -20,7 +12,7 @@ export interface ModelCostEstimate {
   total: number;
 }
 
-/** Standard token rates in USD per million tokens. */
+/** USD per million tokens. */
 export interface ModelTokenRates {
   input: number;
   output: number;
@@ -28,10 +20,7 @@ export interface ModelTokenRates {
   cacheWrite: number;
 }
 
-/**
- * Raw token counts used to estimate one model's cost. `inputTokens` is the AI
- * SDK total, so it already includes `cachedInputTokens` and `cacheWriteTokens`.
- */
+// `inputTokens` is the AI SDK total: it already includes the cached and cache-write tokens.
 export interface ModelTokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -55,7 +44,6 @@ export function canonicalModelProvider(provider: string): string {
   return normalized;
 }
 
-/** Estimate standard token cost; returns null when the model is unpriced. */
 export function estimateModelTokenCost(
   rates: ModelTokenRates | undefined,
   usage: ModelTokenUsage,
@@ -80,16 +68,11 @@ export function estimateModelTokenCost(
   };
 }
 
-/** The model id rates are stored and looked up by, so `GPT-5.5` finds `gpt-5.5`. */
 export function normalizeModelId(modelId: string): string {
   return modelId.toLowerCase();
 }
 
-/**
- * The stored ids a usage model id is priced under, most exact first: then
- * without a release date (`-20250514`, `-2025-08-07`), since models.dev often
- * lists a dated snapshot only under its alias.
- */
+// Then undated (`-20250514`, `-2025-08-07`): models.dev often lists a snapshot only by alias.
 export function priceLookupIds(modelId: string): string[] {
   const exact = normalizeModelId(modelId);
   const undated = exact.replace(/-(?:\d{8}|\d{4}-\d{2}-\d{2})$/, "");

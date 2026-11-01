@@ -1,4 +1,4 @@
-/** Bucket helpers. The only module that imports the AWS S3 SDK. */
+// The only module that imports the AWS S3 SDK.
 
 import {
   S3Client as AwsS3Client,
@@ -17,8 +17,7 @@ import { logDebug, logError } from "./log.ts";
 
 const SANDBOX_UID = "993";
 const SANDBOX_GID = "990";
-// Per-key DeleteObjects codes worth another try; any other code (AccessDenied)
-// fails the cleanup at once. Whole-request failures are the SDK's to retry.
+// Per-key DeleteObjects codes only: whole-request failures are the SDK's to retry.
 const RETRYABLE_DELETE_CODES = new Set([
   "InternalError",
   "ServiceUnavailable",
@@ -27,16 +26,9 @@ const RETRYABLE_DELETE_CODES = new Set([
 const DELETE_ATTEMPTS = 3;
 
 let defaultClient: AwsS3Client | undefined;
-// One client per access object, so a cached read target keeps its connection
-// pool instead of paying a TLS handshake per read. Weak, so a dropped target
-// frees its client.
 const accessClients = new WeakMap<S3Access, AwsS3Client>();
 
-// Per-call S3 access for reads against a bring-your-own bucket: short-lived
-// assume-role credentials plus the bucket's region/endpoint. Omitted (the common
-// case) => the default client on the harness's own role against the managed bucket.
-// Pass the object a read target hands out as is: the client is cached by its
-// identity, so a copy pays for a new client.
+// Clients are cached by this object's identity: pass it as is, since a copy builds a new client.
 export interface S3Access {
   credentials?: {
     accessKeyId: string;
@@ -123,11 +115,6 @@ export async function deleteS3Object(
   );
 }
 
-/**
- * Deletes every object under `prefix`, one listed page (up to 1,000 keys) per
- * DeleteObjects request, one request at a time. Throws when any key could not
- * be deleted, so a partial cleanup never reports success.
- */
 export async function deleteS3Prefix(
   bucket: string,
   prefix: string,
@@ -208,8 +195,6 @@ export async function getS3ObjectUrl(
   );
 }
 
-// Object metadata without the body, or null when the key does not exist. The
-// media route needs the size and content type before it decides to stream.
 export async function headS3Object(
   bucket: string,
   key: string,
@@ -324,8 +309,6 @@ export async function listS3Prefix(
   return objects;
 }
 
-// A presigned PUT for one object, so a machine with no AWS credentials, such as a
-// sandbox VM, can upload it.
 export async function putS3ObjectUrl(
   bucket: string,
   key: string,
@@ -338,10 +321,6 @@ export async function putS3ObjectUrl(
   );
 }
 
-/**
- * An object's bytes. With `maxBytes`, a larger object, or one whose size the
- * store does not say, is refused before any is read.
- */
 export async function readS3Bytes(
   bucket: string,
   key: string,
@@ -353,7 +332,6 @@ export async function readS3Bytes(
   return body.transformToByteArray();
 }
 
-/** An object's text, with `maxBytes` refused as in `readS3Bytes`. */
 export async function readS3Text(
   bucket: string,
   key: string,
@@ -365,10 +343,7 @@ export async function readS3Text(
   return body.transformToString();
 }
 
-/**
- * The first `maxBytes` of an object as text. A ranged read, so the rest is
- * never downloaded; a store that ignores the range is refused as above.
- */
+// A store that ignores the range is refused by the maxBytes check.
 export async function readS3TextHead(
   bucket: string,
   key: string,
@@ -470,9 +445,6 @@ export async function writeS3Object(
   }
 }
 
-// The default (env-configured) client is shared so the credential chain
-// resolves once per process, not per call; access-scoped clients carry their
-// own credentials and stay per-call.
 function awsClient(access?: S3Access): AwsS3Client {
   if (access) {
     const existing = accessClients.get(access);

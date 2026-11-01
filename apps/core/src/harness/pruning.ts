@@ -1,8 +1,3 @@
-/**
- * Session pruning for model-visible conversation context.
- * Keep transient context cleanup here; persistence stays in session.ts.
- */
-
 import { pruneMessages, type ImagePart, type ModelMessage } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { STORED_ITEM_PROVIDERS } from "./provider.ts";
@@ -31,9 +26,7 @@ export function pruneSessionMessages(
     messages: retainsReasoning
       ? modelMessages
       : withToolImagesKept(modelMessages, modelMessages.length - keptMessages),
-    // Never `before-last-message` here. Half-stripping leaves older assistant
-    // messages referencing stored items whose reasoning is gone, which is the
-    // same rejection this retention exists to avoid, only deferred a turn.
+    // Not `before-last-message`: older stored-item references would lose their reasoning.
     reasoning: "none",
     // A pruned tool call orphans its reasoning item on a stored-item provider.
     toolCalls: retainsReasoning
@@ -43,12 +36,6 @@ export function pruneSessionMessages(
   });
 }
 
-/**
- * Whether reasoning must survive into the next model call. On a stored-item
- * provider it is not an optimization: the assistant message goes back as a
- * reference to the item the provider already holds, and the reference is
- * rejected without the reasoning item that produced it.
- */
 export function retainsReasoningParts(agentConfig: AgentConfig): boolean {
   const provider = agentConfig.model?.provider;
 
@@ -77,12 +64,7 @@ export function hasPendingToolApprovalResponse(
   );
 }
 
-/**
- * A tool result's picture as one a user message can carry, when the result
- * holds its bytes. Replay already capped those; a URL is left to be pruned, so
- * a link that expires never fails every later turn. Shared empty result, so the
- * check for any picture allocates nothing per item.
- */
+// A URL is left to be pruned, so a link that expires never fails every later turn.
 function toolImage(item: ToolContentPart): readonly ImagePart[] {
   switch (item.type) {
     case "image-data":
@@ -100,12 +82,6 @@ function toolImage(item: ToolContentPart): readonly ImagePart[] {
   }
 }
 
-/**
- * Pruning drops every tool call before `prunedBefore`, and the pictures their
- * results carried would go with them. Each tool message there is followed by a
- * user message holding its pictures, which pruning keeps, so the model sees a
- * screenshot on every later turn, not only the one that took it.
- */
 function withToolImagesKept(
   messages: ModelMessage[],
   prunedBefore: number,

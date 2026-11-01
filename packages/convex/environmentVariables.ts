@@ -1,8 +1,3 @@
-/**
- * Public CRUD for per-stage runtime variables, mirrored into the CLI
- * sync model. Scoped to the authenticated project owner.
- */
-
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
@@ -21,7 +16,6 @@ import {
   type AuditActor,
 } from "./model/auditEvents";
 
-// Plaintext reveal and every write are org admin operations; members read names only.
 const ADMIN_REQUIRED =
   "Environment variables can only be revealed or changed by an org admin.";
 
@@ -42,14 +36,12 @@ export const list = query({
     ctx,
     { projectId, stageId },
   ): Promise<ReturnType<typeof maskEnvironmentVariable>[]> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
 
-    // Return empty rather than throwing so a just-deleted stage doesn't
-    // crash reactive subscribers before they unmount.
+    // Empty, not a throw: a subscriber may briefly hold a just-deleted stage.
     const stage = await getOwnedStage(ctx, user.id, stageId);
     if (!stage || stage.projectId !== projectId) {
       return [];
@@ -70,7 +62,6 @@ export const remove = mutation({
   args: { variableId: v.id("environmentVariables") },
   returns: v.id("environmentVariables"),
   handler: async (ctx, { variableId }): Promise<Id<"environmentVariables">> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -121,12 +112,7 @@ export const remove = mutation({
   },
 });
 
-/**
- * Decrypts and returns one variable's plaintext value for the dashboard eye-icon
- * reveal, writing an audit record of the reveal. A mutation (not a query) so the
- * audit insert and decryption happen atomically for the owning user.
- * @throws when the caller does not own the stage or the variable is gone
- */
+/** A mutation, not a query, so the decrypt and its reveal record commit together. */
 export const reveal = mutation({
   args: {
     projectId: v.id("projects"),
@@ -138,7 +124,6 @@ export const reveal = mutation({
     ctx,
     { projectId, stageId, variableId },
   ): Promise<{ value: string }> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -190,7 +175,6 @@ export const set = mutation({
     ctx,
     { projectId, stageId, name, value },
   ): Promise<Id<"environmentVariables">> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -252,7 +236,7 @@ function maskEnvironmentVariable(variable: {
   };
 }
 
-/** Record an environment-variable mutation without storing plaintext values. */
+// Audit details carry the name only, never the value.
 async function recordEnvironmentVariableAudit(
   ctx: MutationCtx,
   actor: AuditActor,

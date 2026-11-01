@@ -1,11 +1,5 @@
-/**
- * Channel records: an account-scoped row per real place a team talks. One Slack
- * channel, one Discord channel, one repository. It binds that place to an agent
- * and adds instructions, workspaces, policies and roles scoped to it. Distinct
- * from `config.channels`, which holds one adapter's credentials. A record
- * narrows and adds; it never grants capability the agent lacks. Input validation
- * lives in packages/convex/model/channelRules.ts and is re-exported here.
- */
+// One row per real place a team talks (a Slack channel, a repo), not `config.channels` credentials.
+// A record narrows and adds; it never grants capability the agent lacks.
 
 import type { ChannelReplyIn } from "@broods/convex/model/channelRules";
 import type { SystemModelMessage } from "ai";
@@ -25,34 +19,23 @@ export { normalizeChannelRecordConfig } from "@broods/convex/model/channelRules"
 
 export interface ChannelAgentBinding {
   agentId: string;
-  /** The agent a message runs on when nothing narrower matches. */
   isDefault?: boolean;
 }
 
-/** A named group of people, referenced from policy conditions by `userRoles`. */
 export interface ChannelTagRole {
   roleId: string;
   userIds: string[];
 }
 
 export interface ChannelRecordConfig {
-  /** Appended after the agent's own system prompt, never replacing it. */
   instructions?: string;
   agentBindings: ChannelAgentBinding[];
-  /** Selects among the agent's own refs by workspaceId. `name` is inert; an id the agent does not attach is ignored. */
   workspaces?: AgentWorkspaceRef[];
-  /** Added to whatever the agent already carries. Each policy holds its own mode. */
   policies?: string[];
-  /** Tools to withhold here. Narrowing only, a channel cannot add a tool. */
   denyTools?: string[];
-  /**
-   * Where the reply lands. `source` answers wherever the message came from, and
-   * threads only when the message already did. Slack only: no other provider
-   * gives the runtime a second place to reply.
-   */
+  /** Slack only: no other provider gives the runtime a second place to reply. */
   replyIn?: ChannelReplyIn;
   partition?: ChannelPartition;
-  /** Images the agent may stand a sandbox up from for a thread in this channel. */
   sandboxImages?: string[];
   tagRoles?: ChannelTagRole[];
 }
@@ -60,9 +43,7 @@ export interface ChannelRecordConfig {
 export interface ChannelRecord {
   accountId: string;
   channelRecordId: string;
-  /** Adapter name the record belongs to, e.g. "slack". */
   platform: string;
-  /** Provider id of the place: a Slack channel id, or an owner/repo. */
   externalId: string;
   /** Team or guild the place sits in, when the provider has one. */
   workspaceRef?: string;
@@ -74,10 +55,6 @@ export interface ChannelRecord {
   updatedAt: string;
 }
 
-/**
- * Layer a channel record over the agent's runtime config for one turn.
- * Instructions append and policies union; workspaces and tools only narrow.
- */
 export function applyChannelRecord(
   config: AgentConfig,
   record: ChannelRecord,
@@ -89,7 +66,6 @@ export function applyChannelRecord(
     config.workspaces,
     channelConfig.workspaces,
   );
-  // A record adds policies, it never drops the agent's own.
   const policies = [
     ...new Set([...(config.policies ?? []), ...(channelConfig.policies ?? [])]),
   ];
@@ -113,9 +89,7 @@ export function applyChannelRecord(
     ...(workspaces ? { workspaces: workspaces } : {}),
     ...(policies.length > 0 ? { policies: policies } : {}),
     ...(denyTools ? { denyTools: denyTools } : {}),
-    // The scope entry is written even when the bound agent carries no config for
-    // this channel. With an account-scoped webhook the credentials live on the
-    // receiving agent, and an isolated workspace throws without a scope.
+    // Set even when the agent has no config for this channel: an isolated workspace needs a scope.
     ...(channelConfig.partition
       ? {
           channels: {
@@ -130,7 +104,6 @@ export function applyChannelRecord(
   };
 }
 
-/** Role ids an actor holds in this channel, for policy conditions. */
 export function channelActorRoles(
   record: ChannelRecord,
   userId: string | undefined,
@@ -142,9 +115,7 @@ export function channelActorRoles(
     .map((role) => role.roleId);
 }
 
-// A provider id is only unique inside its team or guild, so a record naming one
-// must match the message's. Either side unset means the provider gave us nothing
-// to compare and the record stands.
+// Provider ids are unique only per team or guild; an unset side leaves nothing to compare.
 export function channelRecordMatchesWorkspace(
   recordWorkspaceRef: string | undefined,
   messageWorkspaceRef: string | undefined,
@@ -154,12 +125,7 @@ export function channelRecordMatchesWorkspace(
   return recordWorkspaceRef === messageWorkspaceRef;
 }
 
-/**
- * A channel turn's run config: the running agent scoped to this channel, the
- * credential holder's entry for it (the app the reply must come from), then
- * the record layered over both. The webhook builds it per turn, and a
- * re-entered channel session rebuilds it from the same live rows.
- */
+// The credential holder's channel entry wins: the reply must come from that app.
 export function channelRuntimeAgentConfig(
   target: { agent: AgentRecord; record?: ChannelRecord },
   channelName: string,
@@ -210,10 +176,8 @@ function appendSystemInstructions(
   return Array.isArray(system) ? [...system, appended] : [system, appended];
 }
 
-// A workspace is capability, not configuration: attaching one is what materialises
-// the sandbox file tools. So a record only picks among the agent's own refs, name
-// and sandbox included; a ref under a new name would inherit the default sandbox
-// and turn a read-only mount writable.
+// Attaching a workspace grants sandbox file tools, so a record only picks among the agent's refs:
+// a ref under a new name would inherit the default sandbox and turn a read-only mount writable.
 function selectWorkspaceRefs(
   agentRefs: AgentWorkspaceRef[] | undefined,
   channelRefs: AgentWorkspaceRef[] | undefined,

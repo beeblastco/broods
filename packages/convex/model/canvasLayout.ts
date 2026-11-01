@@ -1,33 +1,5 @@
-/**
- * Deterministic canvas auto-layout, shared by the dashboard, the CLI sync and
- * the account API sync so every writer draws the same picture.
- *
- * The tidy layout reads like an org chart: agents along the top, each over a
- * row of the services it reaches, so most edges are one drop, one run along
- * the agent's bus and one drop into the service. Drags and manual adds are
- * finer: they snap to the background dot grid and only step aside when they
- * would cover another card.
- *
- * Each agent owns a cluster: the agent card sits over the middle of a block of
- * columns holding the services that agent uses, plus the services several
- * agents share when it is the middle one of them, so shared edges stay short
- * from both sides. Every sandbox, workspace and MCP group (a frame, or a card
- * when it has one member) takes its own column, moved along the block until
- * its mount, inherited and runs-on edges cross as few columns as they can;
- * sessions and skills stack in one column each. Sub-agents follow their
- * parent, so the side-handle link between them stays short. Services no agent
- * reaches park in a lane below. A mount edge ties its two cards together: an
- * agent that reaches one reaches the other, so a mounted pair always lands in
- * the same block. Groups come from `canvasFrames.ts`, so the dashboard reads
- * back the same frames the layout packed.
- *
- * Columns are as wide as their widest box plus a gutter, and every card is
- * {@link NODE_HEIGHT} tall, the one height the dashboard draws. The gap
- * under the agent row, each gutter, the gap between stacked boxes and the gap
- * above the parked lane grow, in grid steps, until the lanes routed through
- * them fit. The lanes come from `canvasEdgeRoutes.ts`, the same router the
- * dashboard draws with.
- */
+// Deterministic: the dashboard, the CLI sync and the account API sync all lay out with it,
+// so every writer draws the same picture.
 
 import type { CanvasNode } from "./canvasShapes";
 import {
@@ -59,58 +31,32 @@ import {
   type WorkspaceSandboxIds,
 } from "./canvasFrames";
 
-/** Card box, matching `w-44 min-h-24` on the node shell in `BaseNode.tsx`. */
+// Matches `w-44 min-h-24` on the node shell in `BaseNode.tsx`.
 export const NODE_WIDTH = 176;
 export const NODE_HEIGHT = 96;
 
-/** Background dot pitch. Drags snap to it, and cell sizes are multiples of it. */
 export const GRID = 24;
 
-/** Gap under a stacked box, and under the agent row before its bus needs more. */
 const STACK_GAP = 48;
 
-/** Top of the service row under agents of the usual height. */
 export const SERVICE_TOP = NODE_HEIGHT + STACK_GAP;
 
-/**
- * A card's rows, in px, as `BaseNode.tsx` renders them at scale 1 (measured):
- * top padding, 16px title lines (text-xs), 17px lines for every text-2xs row
- * after it (subtitle, feature, state, shared) with the margin above each, and
- * the status row with its globe badge. A title or state line wraps at about
- * the character counts below, kept low so an estimate is never short, and
- * clamps at two lines.
- */
+// Status row with its globe badge, measured from `BaseNode.tsx` at scale 1.
 export const CARD_STATUS_ROW = 38;
 
-/**
- * Column index to x before columns get their real widths: every box starts at
- * `column * COLUMN_UNIT`, plus a chip's inset in its frame.
- */
+// Cell space x is `column * COLUMN_UNIT` (plus a chip's inset) until columns get real widths.
 const COLUMN_UNIT = 1000;
 
-/** Gutter between two columns before its lanes need more. */
 const MIN_GUTTER = 40;
 
-/** Clearance a nudged card keeps from the cards it stepped around. */
 const NODE_MARGIN = 16;
 
-/** How far {@link findFreePosition} steps out before giving up, in dot-grid steps. */
 const MAX_NUDGE_RINGS = 48;
 
-/**
- * Widen-and-reroute rounds. Room only grows, so the rounds settle; the cap
- * only guards against a bug looping forever.
- */
+// Room only grows, so the passes settle; the cap only guards against a bug looping forever.
 const MAX_LANE_PASSES = 32;
 
-/**
- * Column order of an agent's service types. Within the MCP, sandbox and
- * workspace types each group takes a column, then moves along the block by
- * its side edges (see {@link orderColumns}), so a runs-on, mount or inherited
- * edge crosses as few gutters as it can. Exhaustive over the node types on
- * purpose: adding one to `canvasNodeValidator` without giving it a column is a
- * compile error here.
- */
+// Exhaustive: a node type added to `canvasNodeValidator` without a column fails to compile.
 const SERVICE_COLUMN_ORDER: Record<
   Exclude<CanvasNode["type"], "agent">,
   number
@@ -125,46 +71,27 @@ const COLUMN_RANKS: ReadonlyMap<string, number> = new Map(
   Object.entries(SERVICE_COLUMN_ORDER),
 );
 
-/** Column left edges already worked out, per room. */
 const COLUMN_LEFTS = new WeakMap<LaneRoom, number[]>();
 
-/** One stage's graph, split into the groups the layout places separately. */
 type CanvasGraph = {
-  /** Ids of every agent node, for the ownership and parent tests. */
   agentIds: Set<string>;
   agents: LayoutNode[];
-  /** Services exactly one agent reaches, keyed by that agent's id. */
   exclusiveServices: Map<string, LayoutNode[]>;
-  /** Services no agent reaches, the cards the canvas renders as unconnected. */
   orphanServices: LayoutNode[];
-  /** Sub-agent parent, keyed by the child agent's id. */
   parentAgentId: Map<string, string>;
-  /** Services more than one agent reaches, with the agents that reach them. */
   sharedServices: { node: LayoutNode; owners: ReadonlySet<string> }[];
 };
 
-/**
- * Nodes in cell space: x is a column index times COLUMN_UNIT (plus a chip's
- * inset), y already in pixels, before any room is added.
- */
 type Cells = {
-  /** Unwired cards in the lane below everything. */
   parked: ReadonlySet<string>;
   positions: Map<string, LayoutPosition>;
-  /** Top of the service row. */
   serviceTop: number;
-  /** How many boxes sit above each box in its column. */
   stackIndex: Map<string, number>;
 };
 
-/** One box a column holds: a group (a frame, or a card with one member) or an ungrouped card. */
 type ColumnItem = { group: CanvasFrame } | { node: LayoutNode };
 
-/**
- * Column widths, and pixels added on top of the minimum spacing: under the
- * agent row, per gutter (keyed by the column right of it), between stacked
- * boxes, and above the parked lane.
- */
+// Px added over the minimum spacing; `gutters` is keyed by the column right of each gutter.
 type LaneRoom = {
   bus: number;
   gutters: Map<number, number>;
@@ -173,32 +100,22 @@ type LaneRoom = {
   widths: ReadonlyMap<number, number>;
 };
 
-/** The facts every block reads while it places services. */
 type LayoutContext = {
-  /** Each grouped node's group, and each group's place in group order. */
   groupOf: ReadonlyMap<string, CanvasFrame>;
   groupRanks: ReadonlyMap<CanvasFrame, number>;
-  /** Side-edge ends, as node id pairs, with the edge's kind. */
   sidePairs: readonly (readonly [string, string, string])[];
   types: ReadonlyMap<string, string | undefined>;
 };
 
-/**
- * Where a block sits among the others: its agent's place, and every placed
- * service's block place, so a side edge leaving the block knows its side.
- */
 type BlockPlace = { rank: number; ranks: ReadonlyMap<string, number> };
 
-/** A block of columns, and how far down it reaches. */
 type LayoutBlock = {
-  /** Below the lowest placed box and its gap, or the origin when empty. */
   bottomY: number;
   columns: number;
   positions: Map<string, LayoutPosition>;
   stackIndex: Map<string, number>;
 };
 
-/** The subset of a canvas edge the layout reads. */
 export type LayoutEdge = {
   id: string;
   source: string;
@@ -207,10 +124,6 @@ export type LayoutEdge = {
   type?: string | undefined;
 };
 
-/**
- * The subset of a canvas node the layout reads. Both the dashboard's ReactFlow
- * nodes and the persisted `CanvasNode` satisfy it structurally.
- */
 export type LayoutNode = {
   id: string;
   type?: string | undefined;
@@ -219,11 +132,11 @@ export type LayoutNode = {
 
 export type LayoutPosition = CanvasNode["position"];
 
-/** A box already on the board: a card or a frame. */
 export type LayoutRect = LayoutPosition & {
   height: number;
   width: number;
-}; /** Overlay new positions by node id, leaving every other node field untouched. */
+};
+
 export function applyPositions<
   T extends LayoutNode & { position: LayoutPosition },
 >(nodes: readonly T[], positions: ReadonlyMap<string, LayoutPosition>): T[] {
@@ -244,11 +157,6 @@ export function applyTidyLayout<
   return applyPositions(nodes, tidyCanvasLayout(nodes, edges, mcpServers));
 }
 
-/**
- * Nearest dot-grid point to `desired` whose card clears every occupied box.
- * Manual adds and drag drops land right there, and only step aside when they
- * would cover a card or frame: below first, then right, left, above, then out.
- */
 export function findFreePosition(
   desired: LayoutPosition,
   occupied: readonly LayoutRect[],
@@ -269,11 +177,6 @@ export function findFreePosition(
   return start;
 }
 
-/**
- * Every node's tidy position. Lays out cells, then routes every edge and
- * grows the room between cells until the routes fit; the layout it returns is
- * always one it routed and checked.
- */
 export function tidyCanvasLayout(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -311,13 +214,6 @@ export function tidyCanvasLayout(
   return positions;
 }
 
-/**
- * The state line a workspace chip or card shows after its arrow: "a ·
- * mounted", "a · inherited", "2 sandboxes · inherited" when several agents
- * give it different sandboxes (their names go in the tooltip), or
- * "read-only". Shared with the chip and the card, so every place says the
- * same, and the height estimate counts the text the card draws.
- */
 export function workspaceStateText(
   kind: "inherited" | "override" | "readonly",
   sandboxLabels: readonly string[],
@@ -331,7 +227,6 @@ export function workspaceStateText(
   return `${sandboxes} · ${kind === "override" ? "mounted" : "inherited"}`;
 }
 
-/** How far the deepest bus lane under any agent runs past the gap below it. */
 function busShortfall(
   agentEdges: readonly AgentEdgeRequest[],
   boxes: ReadonlyMap<string, LayoutRect>,
@@ -353,7 +248,6 @@ function busShortfall(
   );
 }
 
-/** Whether a card at `card` comes within the margin of `box`. */
 function cardOverlaps(card: LayoutPosition, box: LayoutRect): boolean {
   return (
     card.x < box.x + box.width + NODE_MARGIN &&
@@ -363,11 +257,6 @@ function cardOverlaps(card: LayoutPosition, box: LayoutRect): boolean {
   );
 }
 
-/**
- * Nodes in cell space: agents on top, each over its block of services, a
- * block of shared services after the middle agent that reaches them, unwired
- * ones parked below.
- */
 function cellLayout(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -376,8 +265,7 @@ function cellLayout(
   const graph = indexGraph(nodes, edges);
   const agents = orderAgents(graph);
   const rank = new Map(agents.map((agent, index) => [agent.id, index]));
-  // Each service's block, by its agent's place: its one owner, or the middle
-  // of the agents that share it.
+  // A shared service joins the middle agent's block, so its edges stay short both ways.
   const blockRanks = new Map<string, number>();
   const servicesOf = new Map<string, LayoutNode[]>();
   const assign = (agentId: string, node: LayoutNode): void => {
@@ -416,7 +304,6 @@ function cellLayout(
       cursorColumn,
       serviceTop,
     );
-    // Middle column of the block; the left one of the two when the count is even.
     const column = cursorColumn + Math.floor((block.columns - 1) / 2);
     positions.set(agent.id, { x: column * COLUMN_UNIT, y: 0 });
     place(block);
@@ -429,7 +316,6 @@ function cellLayout(
     0,
     deepestY + STACK_GAP,
   );
-  // Left-aligned, so unwired cards read as parked rather than part of the graph.
   place(parked);
 
   return {
@@ -440,7 +326,6 @@ function cellLayout(
   };
 }
 
-/** A typed column's groups in group order, then its ungrouped cards by label. */
 function columnItems(
   column: readonly LayoutNode[],
   context: LayoutContext,
@@ -464,11 +349,6 @@ function columnItems(
   ];
 }
 
-/**
- * Left edge of a column: every column before it, its gutter and that gutter's
- * room, on the grid. Each room's edges are worked out once, left to right,
- * since routing asks for them per lane and per node.
- */
 function columnLeft(column: number, room: LaneRoom): number {
   let lefts = COLUMN_LEFTS.get(room);
   if (!lefts) {
@@ -489,12 +369,10 @@ function columnLeft(column: number, room: LaneRoom): number {
   return lefts[column];
 }
 
-/** Position of a service type in {@link SERVICE_COLUMN_ORDER}; unknown types sort last. */
 function columnRank(type: string): number {
   return COLUMN_RANKS.get(type) ?? COLUMN_RANKS.size;
 }
 
-/** Each column's width: a frame's where it holds one, else a card's. */
 function columnWidths(
   cells: ReadonlyMap<string, LayoutPosition>,
   frames: readonly CanvasFrame[],
@@ -510,12 +388,6 @@ function columnWidths(
   return widths;
 }
 
-/**
- * The edges the dashboard draws at `positions`, for the router: one agent
- * edge per agent and frame or card, and a side edge per mount, inherited
- * sandbox and runs-on link. Also the top-level boxes they run between and
- * around.
- */
 function edgeRequests(
   context: LayoutContext,
   edges: readonly LayoutEdge[],
@@ -549,7 +421,6 @@ function edgeRequests(
   const isAgent = (id: string): boolean => context.types.get(id) === "agent";
   const agentEdges = new Map<string, AgentEdgeRequest>();
   for (const edge of edges) {
-    // The dashboard draws agent→service, but an edge can arrive reversed.
     const [agentId, serviceId] = isAgent(edge.source)
       ? [edge.source, edge.target]
       : [edge.target, edge.source];
@@ -624,11 +495,6 @@ function groupIntoColumns(services: readonly LayoutNode[]): LayoutNode[][] {
     .map(([, column]) => column.sort(compareByLabel));
 }
 
-/**
- * `room` grown wherever the lanes routed at `positions` do not fit: the bus
- * gap under an agent, a column gutter, the gap above a box an approach lane
- * runs in, and the gap above the parked lane a side edge detours through.
- */
 function laneRoom(
   context: LayoutContext,
   edges: readonly LayoutEdge[],
@@ -658,13 +524,6 @@ function laneRoom(
   };
 }
 
-/**
- * Place services as columns growing right from `originColumn`, each column
- * stacking down from `originY` with a STACK_GAP under every box. A sandbox,
- * workspace or MCP group takes a column of its own, ordered by its side
- * edges; any other type shares one. An empty block still claims one column
- * for its agent.
- */
 function layoutBlock(
   services: readonly LayoutNode[],
   context: LayoutContext,
@@ -720,7 +579,6 @@ function gutterRoom(routes: EdgeRoutes, room: LaneRoom): Map<number, number> {
     ]),
   ];
   for (const x of xs) {
-    // The gutter right of a column's centre and left of the next one's.
     let boundary = 0;
     while (x > columnLeft(boundary, room) + widthOf(boundary, room) / 2) {
       boundary++;
@@ -797,11 +655,9 @@ function indexGraph(
   };
 }
 
-/** Agents in draw order: roots by label, each followed by its sub-agents. */
 function orderAgents(graph: CanvasGraph): LayoutNode[] {
   const childrenOf = new Map<string, LayoutNode[]>();
   const roots: LayoutNode[] = [];
-  // Sorted up front, so the root list and every child list come out by label.
   const sorted = [...graph.agents].sort(compareByLabel);
 
   for (const agent of sorted) {
@@ -831,16 +687,8 @@ function orderAgents(graph: CanvasGraph): LayoutNode[] {
   return ordered;
 }
 
-/**
- * A block's columns, one per MCP, sandbox and workspace group and one stacked
- * column per other type, ordered so side edges run short. Starting from type
- * order (sessions, MCP, sandbox, workspace, skills), each group column moves
- * to wherever the block's side edges cross the fewest columns, until no move
- * helps: an edge inside the block costs the columns between its ends, an edge
- * to another block the columns between its end and that block's side. Moves
- * are taken only when they strictly help, so without side edges the type
- * order holds.
- */
+// Group columns move to where side edges cross the fewest columns. Only a strict gain moves
+// one, so without side edges the type order holds.
 function orderColumns(
   typed: readonly ColumnItem[][],
   context: LayoutContext,
@@ -856,8 +704,6 @@ function orderColumns(
   );
   if (movable.length < 2) return order;
   const [first, last] = [movable[0], movable[movable.length - 1]];
-  // Columns are moved whole, so each node's column object is fixed; a
-  // candidate order only renumbers them.
   const columnOf = new Map<string, readonly ColumnItem[]>();
   for (const column of order) {
     for (const item of column) {
@@ -870,8 +716,6 @@ function orderColumns(
     ([a, b]) => columnOf.has(a) || columnOf.has(b),
   );
   if (pairs.length === 0) return order;
-  // Only a column an edge ends in gains by moving; the rest move out of its
-  // way when a linked column moves past them.
   const linked = new Set(
     pairs.flatMap(([a, b]) => [columnOf.get(a), columnOf.get(b)]),
   );
@@ -923,11 +767,7 @@ function orderColumns(
   return order;
 }
 
-/**
- * Grid-step offsets on the square ring `ring` steps out, nearest first: axis
- * neighbours before diagonals, and below or right before above or left, so a
- * displaced card stays close and stays inside the drawn graph.
- */
+// Nearest first, below/right before above/left, so a nudged card stays inside the graph.
 function ringOffsets(ring: number): LayoutPosition[] {
   if (ring === 0) return [{ x: 0, y: 0 }];
 
@@ -961,11 +801,6 @@ function sameRoom(a: LaneRoom, b: LaneRoom): boolean {
   );
 }
 
-/**
- * Node id pairs every side edge joins, with its kind: a mount between two
- * services, a workspace and each sandbox it inherits, and a machine MCP
- * server and the sandbox it runs on.
- */
 function sidePairs(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -1009,7 +844,6 @@ function snapToGrid(position: LayoutPosition): LayoutPosition {
   };
 }
 
-/** Cell positions at their columns' real left edges, pushed down by the room above them. */
 function spreadCells(
   cells: Cells,
   room: LaneRoom,
@@ -1034,10 +868,6 @@ function spreadCells(
   );
 }
 
-/**
- * How far an approach lane runs into the box above its target: the lane must
- * keep a lane's width below every box it passes over.
- */
 function stackShortfall(
   agentEdges: readonly AgentEdgeRequest[],
   boxes: ReadonlyMap<string, LayoutRect>,
@@ -1069,10 +899,6 @@ function stackShortfall(
   );
 }
 
-/**
- * How far a side edge's detour lane runs into the parked lane below it, with
- * a stack gap to spare.
- */
 function underShortfall(
   routes: EdgeRoutes,
   boxes: ReadonlyMap<string, LayoutRect>,

@@ -1,12 +1,5 @@
-/**
- * Cron job CRUD scoped to an account, and the schedules that fire them.
- * Mirrors broods's apps/core/src/shared/domain/cron.ts so the SaaS dashboard
- * can drive the same lifecycle through Convex live queries. Recurring jobs are
- * registered with the Convex crons component and one-time at(...) jobs with
- * the Convex scheduler, both in the same transaction as the row write, so a
- * schedule can never orphan the job that names it. Distinct from the root
- * `crons.ts`, which is the Convex platform cron registry.
- */
+// Account cron jobs, not the root `crons.ts` platform registry. A row and its schedule are
+// written in one transaction, so neither can orphan the other.
 
 import { v, type Infer } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
@@ -46,7 +39,6 @@ import { ClientError } from "../model/clientError";
 
 const CRON_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const CRON_RUN_PAGE_WINDOW = 1000;
-// Runs the scheduler's detail panel lists for one job.
 const DASHBOARD_RUN_LIMIT = 20;
 const PRUNE_BATCH_SIZE = 100;
 
@@ -56,8 +48,6 @@ const cronDoc = v.object({
   _creationTime: v.number(),
 });
 
-// The dashboard's shape: `lastRunId` is sync bookkeeping, not part of it, and
-// the creator comes resolved so the list can draw a name and an avatar.
 const projectCronDoc = v.object({
   ...cronDoc.omit("lastRunId").fields,
   creator: v.optional(actorValidator),
@@ -84,15 +74,6 @@ export const completeRun = internalMutation({
     settleRun(ctx, args, { status: "completed", result: args.result }),
 });
 
-/**
- * Create a cron job: validate the input, insert the crons row, and register
- * its schedule with the crons component (or the Convex scheduler for a
- * one-time at(...) job) in the same transaction. The row and the schedule
- * are one write, so neither can orphan the other.
- * @param accountId account id owning the cron job
- * @param input the create-cron request body
- * @returns the public cron record
- */
 export const create = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -132,10 +113,6 @@ export const create = internalMutation({
   },
 });
 
-/**
- * Creates a cron job run history row when a schedule fires, and makes it the
- * run the cron's last status follows unless a later fire already did.
- */
 export const createRun = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -173,13 +150,7 @@ export const createRun = internalMutation({
   },
 });
 
-/**
- * POST one fired cron job straight to core's in-cluster /v1/cron-runs leaf
- * (the gateway 404s that path), where core starts the configured agent. The
- * crons component (and the Convex scheduler for one-time jobs) invokes this
- * with the same {kind, accountId, cronId} payload EventBridge used to
- * deliver, so core is untouched.
- */
+// Posts to core's in-cluster leaf: the gateway 404s /v1/cron-runs.
 export const dispatch = internalAction({
   args: { accountId: v.id("accounts"), cronId: v.id("crons") },
   returns: v.null(),
@@ -189,9 +160,7 @@ export const dispatch = internalAction({
       cronId: args.cronId,
     });
     if (!live) {
-      // The row is gone (a cascade that could not reach the registration, or
-      // a crash between the two). Retire the schedule instead of firing it
-      // at a deleted job forever.
+      // The row is gone: retire the schedule rather than fire at a deleted job forever.
       await deleteRegistrationIfExists(ctx, args.cronId);
 
       return null;
@@ -240,7 +209,6 @@ export const getById = internalQuery({
     getOwned(ctx, accountId, cronId),
 });
 
-/** Whether the job still exists, without shipping its stored events. */
 export const isLive = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -251,7 +219,6 @@ export const isLive = internalQuery({
     (await getOwned(ctx, accountId, cronId)) !== null,
 });
 
-/** Every cron job of an account, or only one agent's when `agentId` is given. */
 export const list = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -300,22 +267,10 @@ export const listPage = internalQuery({
           .paginate(paginationOpts),
 });
 
-/**
- * Lists the cron jobs whose agent belongs to `projectId`, for that project's
- * scheduler page.
- *
- * A cron has no projectId of its own. It points at an agent, and the agent's
- * project comes from `agentConfigs`. Deriving it rather than storing a copy is
- * what keeps a cron from ever claiming a different project than the agent it
- * runs. Crons whose agent has no config row belong to no project and
- * are absent here.
- * @param projectId the project to list cron jobs for
- */
 export const listForProject = query({
   args: { projectId: v.id("projects") },
   returns: v.array(projectCronDoc),
   handler: async (ctx, args): Promise<ProjectCron[]> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -340,13 +295,6 @@ export const listForProject = query({
   },
 });
 
-/**
- * The newest runs of one cron job for the dashboard's scheduler panel, without
- * the model result each row carries. A cron outside the project, or a project
- * the viewer has no role in, reads as no runs.
- * @param projectId the project the cron's agent belongs to
- * @param cronId the cron job
- */
 export const listRunsForProject = query({
   args: { projectId: v.id("projects"), cronId: v.id("crons") },
   returns: v.array(cronRunDoc.omit("result")),
@@ -375,7 +323,6 @@ export const listRunsForProject = query({
   },
 });
 
-/** Lists recent cron job runs newest-first for account-management APIs. */
 export const listRuns = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -386,9 +333,7 @@ export const listRuns = internalQuery({
     const cron = await getOwned(ctx, accountId, cronId);
     if (!cron) return [];
 
-    // Newest first, capped: 30 days of a per-minute cron is tens of thousands
-    // of rows carrying full model results, and reading them all exceeds the
-    // per-transaction limit. Paging happens over this window.
+    // Capped: a month of a per-minute cron's runs exceeds the per-transaction read limit.
     return await ctx.db
       .query("cronRuns")
       .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
@@ -410,8 +355,6 @@ export const listRunsPage = internalQuery({
     ctx,
     { accountId, cronId, paginationOpts },
   ): Promise<PaginationResult<Doc<"cronRuns">>> => {
-    // A cron the caller does not own reads as an empty page, never as someone
-    // else's run history.
     const cron = await getOwned(ctx, accountId, cronId);
     if (!cron) return { page: [], isDone: true, continueCursor: "" };
 
@@ -425,12 +368,6 @@ export const listRunsPage = internalQuery({
   },
 });
 
-/**
- * Deletes cron run history older than the retention window, one bounded batch
- * per invocation. Run rows carry the full model result and a listing only ever
- * pages over the newest `CRON_RUN_PAGE_WINDOW`, so older rows are pure storage
- * growth. The creation-index range reads nothing when nothing is due.
- */
 export const pruneExpiredRuns = internalMutation({
   args: {},
   returns: v.number(),
@@ -453,11 +390,7 @@ export const pruneExpiredRuns = internalMutation({
   },
 });
 
-/**
- * Records a fire that failed before it had a run row, such as a plan refusal,
- * unless a later fire already reported. It detaches the last run, so an older
- * run settling later leaves it alone.
- */
+// Clears lastRunId, so an older run that settles later leaves this failure alone.
 export const recordFailedFire = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -490,12 +423,6 @@ export const recordFailedFire = internalMutation({
   },
 });
 
-/**
- * Delete a cron job and its schedule in one transaction (`deleteCron`).
- * @param accountId account id owning the cron job
- * @param cronId the cron job id
- * @returns true when the job existed and was removed
- */
 export const remove = internalMutation({
   args: { accountId: v.id("accounts"), cronId: v.string() },
   returns: v.boolean(),
@@ -508,12 +435,6 @@ export const remove = internalMutation({
   },
 });
 
-/**
- * Drains a deleted cron's run history: deletes one bounded batch per
- * invocation and reschedules itself until none remain. Scheduled by
- * `deleteCron`, which deletes the cron row in its own transaction; run rows
- * stay reachable through the account+cron index prefix.
- */
 export const removeRunsCascade = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -538,20 +459,11 @@ export const removeRunsCascade = internalMutation({
   },
 });
 
-/**
- * Update a cron job: patch the row and replace its registered schedule in the
- * same transaction whenever the schedule, timezone, or status changed.
- * @param accountId account id owning the cron job
- * @param cronId the cron job id
- * @param patch the update-cron request body
- * @returns the refreshed public cron record, or null when the job is missing
- */
 export const update = internalMutation({
   args: {
     accountId: v.id("accounts"),
     cronId: v.string(),
     patch: v.record(v.string(), v.any()),
-    /** A stage-pinned role's stage: a new agentId must sit on it too. */
     pin: v.optional(v.object({ projectId: v.string(), stageId: v.string() })),
   },
   returns: v.any(),
@@ -591,10 +503,8 @@ export const update = internalMutation({
       updatedAt: Date.now(),
     };
 
-    // The registration encodes the schedule, timezone, and active state, so a
-    // patch changing any of their values replaces it; a patch resending the
-    // same values (a full-body `broods dev` sync) leaves it alone, keeping a
-    // rate(...) job's phase.
+    // Re-register only on a changed value: a `broods dev` sync resending the same ones
+    // must keep a rate(...) job's phase.
     const scheduleChanged =
       updated.scheduleExpression !== existing.scheduleExpression ||
       updated.timezone !== existing.timezone ||
@@ -635,7 +545,6 @@ async function deleteRunsBatch(
   return runs.length;
 }
 
-/** Loads a cron job only when it belongs to the supplied account. */
 async function getOwned(
   ctx: Ctx,
   accountId: Id<"accounts">,
@@ -646,7 +555,6 @@ async function getOwned(
   return cron && cron.accountId === accountId ? cron : null;
 }
 
-/** Resolves an agent id string to the account's agent row, or throws. */
 async function getOwnedAgent(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -661,7 +569,6 @@ async function getOwnedAgent(
   return agent;
 }
 
-/** Like getOwned, treating a malformed id string as missing. */
 async function getOwnedByString(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -672,17 +579,10 @@ async function getOwnedByString(
   return normalized ? await getOwned(ctx, accountId, normalized) : null;
 }
 
-/** Whether a fire scheduled at `firedAt` is at least as late as the one the cron shows. */
 function isLatestFire(cron: Doc<"crons">, firedAt: number): boolean {
   return cron.lastInvokedAt === undefined || firedAt >= cron.lastInvokedAt;
 }
 
-/**
- * Records a run's outcome once, for `completeRun` and `failRun`, and on the
- * cron while it is still the cron's last run. A run already settled, or
- * drained with its one-time cron, is left alone; a run of another account or
- * cron is refused.
- */
 async function settleRun(
   ctx: MutationCtx,
   ids: {

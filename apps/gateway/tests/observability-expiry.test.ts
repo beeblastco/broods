@@ -29,7 +29,6 @@ afterEach((): void => {
   globalThis.fetch = realFetch;
 });
 
-/** A real gateway socket over the production ticket verifier. */
 test("an observability socket closes at its stage ticket's expiry and reads nothing after", async (): Promise<void> => {
   const originalTempoUrl = process.env.TEMPO_URL;
   const ticket: StageSessionTicket = {
@@ -91,8 +90,6 @@ test("an observability socket closes at its stage ticket's expiry and reads noth
       socket.addEventListener("close", resolve, { once: true });
     });
 
-    // While the ticket lives, its own stage's trace comes back and another
-    // tenant's does not.
     const ownReply = nextMessage(socket);
     socket.send(JSON.stringify({ type: "fetchTrace", traceId: OWN_TRACE_ID }));
     expect(await ownReply).toMatchObject({
@@ -182,7 +179,6 @@ test("core is asked again every minute, and only a refusal closes the socket", a
   cleanupObservabilitySocket(socket);
 });
 
-/** An open socket for one stage, recording what the gateway sends and the codes it closes with. */
 function fakeSocket(expiresAt: number): {
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>;
   sent: unknown[];
@@ -211,13 +207,12 @@ function fakeSocket(expiresAt: number): {
   return { socket: socket, sent: sent, closes: closes };
 }
 
-/** Lets the microtasks a fired fake timer started run out, rescheduling included. */
+// Drains the microtasks a fired fake timer started, rescheduling included.
 async function waitFor(condition: () => boolean): Promise<void> {
   for (let turn = 0; turn < 100; turn += 1) await Promise.resolve();
   expect(condition()).toBe(true);
 }
 
-/** Ordinary gateway limits without a NATS connection. */
 function gatewayConfig(coreBaseUrl: string): GatewayConfig {
   return {
     allowedOrigins: ["127.0.0.1"],
@@ -240,7 +235,6 @@ function gatewayConfig(coreBaseUrl: string): GatewayConfig {
   };
 }
 
-/** One server frame, with a deadline. */
 function nextMessage(socket: WebSocket): Promise<ObservabilityServerMessage> {
   return new Promise((resolve, reject): void => {
     const timer = setTimeout((): void => reject(new Error("no frame")), 3_000);
@@ -255,7 +249,6 @@ function nextMessage(socket: WebSocket): Promise<ObservabilityServerMessage> {
   });
 }
 
-/** The authenticated upgrade, with a deadline. */
 function openedSocket(socket: WebSocket): Promise<void> {
   return new Promise((resolve, reject): void => {
     const timer = setTimeout(
@@ -281,7 +274,6 @@ function openedSocket(socket: WebSocket): Promise<void> {
   });
 }
 
-/** A trace in this ticket's stage, or another tenant's for the other id. */
 function tracePayload(traceId: string, ticket: StageSessionTicket): object {
   return {
     batches: [

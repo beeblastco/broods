@@ -1,13 +1,3 @@
-/**
- * Holds the live set of Gateway sockets and keeps it equal to what the config
- * plane says it should be.
- *
- * Sockets are keyed by bot token, not by agent, because the token is what
- * Discord counts connections against. That also makes token rotation fall out
- * for free: a rotated token reads as one key disappearing and another arriving,
- * which is exactly the reconnect it needs.
- */
-
 import type { ForwarderConfig } from "./config.ts";
 import type { ForwarderConnection } from "./connections.ts";
 import type { MessageCreate } from "./discord.ts";
@@ -23,7 +13,6 @@ import { ThreadDirectory } from "./threads.ts";
 
 export type SocketFactory = (options: GatewaySocketOptions) => ForwarderSocket;
 
-/** The slice of `GatewaySocket` the supervisor drives, so tests can stub it. */
 export interface ForwarderSocket {
   readonly botIdentity: string | null;
   readonly state: SocketState;
@@ -61,12 +50,8 @@ export class Forwarder {
   }
 
   /**
-   * Opens sockets for tokens that gained a connection, closes the ones that lost
-   * every connection, and re-points the rest. An unchanged token keeps its
-   * socket: its session, sequence number and IDENTIFY history all survive. A
-   * socket parked on a fatal close code is replaced once its own targets change,
-   * the only signal that the owner may have fixed the bot. Any other reconcile,
-   * or a timer, would spend IDENTIFY budget on a bot that is still refused.
+   * A fatal socket is replaced only when its own targets change, the one sign the owner fixed
+   * the bot. Any other reconcile, or a timer, would spend an IDENTIFY on a bot still refused.
    */
   reconcile(connections: readonly ForwarderConnection[]): void {
     const desired = groupConnectionsByToken(connections);
@@ -84,13 +69,9 @@ export class Forwarder {
       const urls = webhookUrls(targets);
       const existing = this.managed.get(botToken);
       if (existing) {
-        // Unchanged projection rows are never rewritten, so equal targets mean
-        // nothing about this token moved.
         const moved =
           JSON.stringify(existing.targets) !== JSON.stringify(targets);
         if (!moved || existing.socket.state !== "fatal") {
-          // reconcile runs on every config change, so warn only when the
-          // fan-out itself moved.
           if (webhookUrls(existing.targets).join(" ") !== urls.join(" ")) {
             warnOnSharedToken("Discord", botToken, urls);
           }
@@ -133,18 +114,12 @@ export class Forwarder {
     threads: ThreadDirectory,
     data: MessageCreate,
   ): Promise<void> {
-    // Nothing to deliver to once the token is gone, and no reason to ask Discord
-    // about the channel either.
     if (!this.managed.has(botToken)) return;
 
-    // DMs have no threads, and core drops them anyway.
     const thread = data.guild_id
       ? await threads.resolve(data.channel_id)
       : null;
-    // Read after the lookup, not before. `resolve` can wait on Discord, and
-    // `reconcile` replaces the array outright, so a set read on the way in is
-    // already stale by here, which is the whole reason this goes through the map
-    // instead of closing over the array.
+    // Read after the await: `reconcile` may have replaced the targets while Discord answered.
     const targets = this.managed.get(botToken)?.targets;
     if (!targets?.length) return;
 
@@ -158,9 +133,6 @@ export class Forwarder {
       budget: this.budget,
       config: this.config,
       onMessageCreate: (data: MessageCreate): void => {
-        // A failed thread lookup rejects and drops the message here. Anything
-        // unhandled would take the process down, and a restart is another
-        // IDENTIFY.
         void this.deliver(botToken, threads, data).catch(
           (error: unknown): void => {
             logError("Discord message could not be delivered", {
@@ -173,8 +145,7 @@ export class Forwarder {
         );
       },
     });
-    // Registered before the socket starts, so the first event to arrive always
-    // finds its targets.
+    // Before start(), so the first event always finds its targets.
     this.managed.set(botToken, { socket: socket, targets: targets });
     logInfo("Discord connection added", {
       targets: targets.length,
@@ -184,13 +155,7 @@ export class Forwarder {
   }
 }
 
-/**
- * One socket per bot token, fanned out to every webhook that token serves.
- * Two agents sharing a token is unusual but legal, and it must not become two
- * sockets. Discord would then deliver every event twice. The connections may
- * come from different config planes, so the same token deployed to both is one
- * socket here rather than one per plane.
- */
+/** One socket per token, even across planes: with two, Discord delivers every event twice. */
 export function groupConnectionsByToken(
   connections: readonly ForwarderConnection[],
 ): Map<string, ForwardTarget[]> {
@@ -208,11 +173,6 @@ export function groupConnectionsByToken(
   return grouped;
 }
 
-/**
- * One token serving several webhooks runs the agent behind each of them, which
- * is legitimate for one account deployed to two stages and a mistake otherwise.
- * `channel` names which forwarder is reporting it.
- */
 export function warnOnSharedToken(
   channel: string,
   botToken: string,
@@ -226,7 +186,6 @@ export function warnOnSharedToken(
   });
 }
 
-/** The distinct webhooks a token fans out to, in a stable order. */
 export function webhookUrls(targets: readonly ForwardTarget[]): string[] {
   return [
     ...new Set(targets.map((target): string => target.webhookUrl)),

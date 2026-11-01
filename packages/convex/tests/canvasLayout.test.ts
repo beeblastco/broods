@@ -53,7 +53,6 @@ function edge(source: string, target: string, kind?: string): LayoutEdge {
   };
 }
 
-/** Every box on the board: one per frame, one per card no frame holds. */
 function boardBoxes(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -76,7 +75,6 @@ function boardBoxes(
   return boxes;
 }
 
-/** Every pair of boxes on the board that intersect. */
 function overlappingPairs(boxes: Map<string, LayoutRect>): string[] {
   const entries = [...boxes.entries()];
   const clashes: string[] = [];
@@ -135,7 +133,6 @@ describe("tidyCanvasLayout", () => {
   });
 
   it("orders an agent's services into typed columns", () => {
-    // mcp, sandbox for `support`: the mcp column sits left of the sandbox column.
     expect(positions.get("m1")!.x).toBeLessThan(positions.get("s1")!.x);
   });
 
@@ -149,8 +146,7 @@ describe("tidyCanvasLayout", () => {
   });
 
   it("keeps a sub-agent next to its parent", () => {
-    // `triage` sorts after `support` by label anyway, so assert the sub-agent
-    // link survives a reversed label order too.
+    // `triage` sorts after `support` anyway: the link must survive a reversed label order.
     const reversed = tidyCanvasLayout(
       [
         node("a1", "agent", "zulu"),
@@ -252,8 +248,6 @@ describe("tidyCanvasLayout", () => {
   });
 
   it("moves a sandbox nothing links out from between a computer and its workspaces", () => {
-    // Mac first, a server running on it and a workspace mounted on it: the
-    // unlinked cloud sandbox must not sit between them.
     const laid = tidyCanvasLayout(
       [
         node("a1", "agent", "support", { sandboxOrder: ["mac", "cloud"] }),
@@ -336,8 +330,6 @@ describe("tidyCanvasLayout", () => {
   });
 
   it("stacks every card at one height, whatever its rows say", () => {
-    // Unwired workspaces park in one column. A long name and a state line used
-    // to grow the card; now both truncate, so the stack step never changes.
     const long = "a-workspace-name-that-would-wrap";
     const laid = tidyCanvasLayout(
       [node("w1", "workspace", long), node("w2", "workspace", `${long}-too`)],
@@ -349,8 +341,7 @@ describe("tidyCanvasLayout", () => {
   });
 
   it("keeps a mounted pair together: beside its agent, or in the shared block", () => {
-    // `support` reaches `browser-sandbox` only through the workspace that mounts
-    // it, so the sandbox belongs in its cluster, not the unwired lane.
+    // `support` reaches the sandbox only through the workspace mounting it: its cluster.
     const cluster = tidyCanvasLayout(
       [
         node("a1", "agent", "support"),
@@ -361,8 +352,7 @@ describe("tidyCanvasLayout", () => {
       [edge("a1", "s2"), edge("a1", "w1"), edge("s1", "w1", "mount")],
       NO_SERVERS,
     );
-    // A sandbox mounted into a workspace two agents reach is reached by both,
-    // so the pair drops to the shared lane side by side.
+    // Mounted into a workspace two agents reach, the pair drops to the shared lane.
     const shared = tidyCanvasLayout(
       [
         node("a1", "agent", "support"),
@@ -379,9 +369,8 @@ describe("tidyCanvasLayout", () => {
       NO_SERVERS,
     );
 
-    // Both sandboxes share the agent's cloud frame in the first column; the one
-    // it lists comes first, the mounted one takes the next slot. The lone
-    // workspace is a card in the next column, level with the frame.
+    // One cloud frame, the listed sandbox before the mounted one; the lone workspace is a
+    // card in the next column, level with the frame.
     const frameTop = cluster.get("s2")!.y - FRAME_HEADER_HEIGHT;
     expect(cluster.get("s2")!.x).toBe(FRAME_PADDING);
     expect(frameTop).toBeGreaterThanOrEqual(SERVICE_TOP);
@@ -408,8 +397,7 @@ describe("tidyCanvasLayout", () => {
   });
 
   it("leaves room for every lane: under the agent and in the gutters", () => {
-    // Seven edges out of one agent, two frames stacked under it and a
-    // service deep in a column, so buses pile up and gutters carry lanes.
+    // Seven edges, two stacked frames and a deep service: buses pile up, gutters carry lanes.
     const many = [
       node("a1", "agent", "support"),
       node("m1", "mcp", "github"),
@@ -447,14 +435,12 @@ describe("tidyCanvasLayout", () => {
         handlePoint(boxes.get(id)!, "top"),
         route,
       );
-      // Every segment stays out of every box but the two the edge joins.
       expect(crossedBoxIds(points, boxes, new Set(["a1", id])), id).toEqual([]);
     }
   });
 
   it("grows the gap under the agents until every bus fits", () => {
-    // Three agents reach one service after the middle one, so all three buses
-    // cross the same stretch and need three lanes.
+    // All three reach one service after the middle one, so three buses share a stretch.
     const agents = ["a", "b", "c"];
     const laid = tidyCanvasLayout(
       [

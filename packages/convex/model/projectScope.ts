@@ -1,42 +1,21 @@
-/**
- * Resolves which account-plane objects belong to a project.
- *
- * `agents` rows are account-scoped and carry no projectId. The only link
- * between the account plane and the project plane is `agentConfigs.projectId`,
- * written by the canvas or by the API back-sync. Crons and conversations have
- * no projectId either; they point at an agent, so their project is whatever
- * their agent's is. Deriving that here, rather than storing a copy on each
- * table, is what makes it impossible for a cron to claim a different project
- * than the agent it actually runs.
- */
+// Agents, crons and conversations take their project from agentConfigs.projectId, never a
+// stored copy, so a cron can not claim another project than the agent it runs.
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 type Ctx = QueryCtx | MutationCtx;
 
-/** The (project, stage) pair every stage-scoped resource hangs off. */
 export type ProjectStageScope = {
   projectId: Id<"projects">;
   stageId: Id<"stages">;
 };
 
-/**
- * The agents that `accountId` owns and that belong to `projectId`, across
- * every stage.
- *
- * Both halves are required. `agentConfigs.agentId` is a loose `v.string()`,
- * so a stale or hand-edited row can name an agent on another account; without
- * the accountId check that agent's metadata would surface in this project's
- * scheduler and offer an unusable picker option. Agents with no config row
- * belong to no project and are absent.
- */
 export async function agentsInProject(
   ctx: Ctx,
   projectId: Id<"projects">,
   accountId: Id<"accounts">,
 ): Promise<Doc<"agents">[]> {
-  // Prefix scan on the compound index: every stage of this project.
   const configs = await ctx.db
     .query("agentConfigs")
     .withIndex("by_projectId_and_stageId", (q) => q.eq("projectId", projectId))
@@ -45,7 +24,6 @@ export async function agentsInProject(
   return await agentsForConfigs(ctx, configs, accountId);
 }
 
-/** The agents of exactly one stage, which is what a stage webhook URL routes on. */
 export async function agentsInStage(
   ctx: Ctx,
   scope: ProjectStageScope,
@@ -61,10 +39,6 @@ export async function agentsInStage(
   return await agentsForConfigs(ctx, configs, accountId);
 }
 
-/**
- * Whether `agentId` has a config row in `projectId` on any stage: one indexed
- * read, for a check on a single cron or conversation.
- */
 export async function agentInProject(
   ctx: Ctx,
   agentId: Id<"agents">,
@@ -78,14 +52,12 @@ export async function agentInProject(
   return configs.some((config) => config.projectId === projectId);
 }
 
-/** The crons whose agent belongs to `projectId` and is owned by `accountId`. */
 export async function cronsInProject(
   ctx: Ctx,
   projectId: Id<"projects">,
   accountId: Id<"accounts">,
 ): Promise<Doc<"crons">[]> {
-  // One range per agent, so a cron run elsewhere in the account does not
-  // re-run the dashboard's always-mounted `listForProject` subscription.
+  // One range per agent, so a cron run elsewhere does not re-run `listForProject`.
   const agents = await agentsInProject(ctx, projectId, accountId);
   const crons = await Promise.all(
     agents.map((agent) =>
@@ -101,8 +73,6 @@ export async function cronsInProject(
   return crons.flat();
 }
 
-// Resolve-only: an unknown name yields null rather than creating a project,
-// which is what separates every read path from the CLI's ensure path.
 export async function resolveProject(
   ctx: Ctx,
   account: Doc<"accounts">,
@@ -148,7 +118,6 @@ export async function resolveProjectStage(
   };
 }
 
-/** Stage names are matched case- and whitespace-insensitively everywhere. */
 export function stageNameEquals(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
@@ -165,6 +134,7 @@ async function agentsForConfigs(
     if (!normalized) continue;
     const agent = await ctx.db.get(normalized);
     if (!agent) continue;
+    // `agentConfigs.agentId` is a loose string: a stale row can name another account's agent.
     if (agent.accountId !== accountId) continue;
 
     agents.push(agent);
@@ -173,7 +143,6 @@ async function agentsForConfigs(
   return agents;
 }
 
-/** The API resource families whose rows live in one stage. */
 export const STAGE_SCOPED_RESOURCE_TYPES = [
   "agents",
   "channels",
@@ -187,13 +156,8 @@ export const STAGE_SCOPED_RESOURCE_TYPES = [
 export type StageScopedResourceType =
   (typeof STAGE_SCOPED_RESOURCE_TYPES)[number];
 
-/** A stage-scoped resource one config names, e.g. an agent's sandbox. */
 export type StageScopedRef = { type: StageScopedResourceType; id: string };
 
-/**
- * The refs that do not resolve to `pin`'s stage, so a pinned role's write
- * cannot point a resource at another stage's.
- */
 export async function refsOutsideStage(
   ctx: Ctx,
   accountId: Id<"accounts">,
@@ -211,11 +175,6 @@ export async function refsOutsideStage(
   return outside;
 }
 
-/**
- * The stage one of `accountId`'s resources lives in, for a stage-pinned role's
- * check. Null when the row is missing, belongs to another account, is
- * account-scoped, or (for an agent) has config rows on more than one stage.
- */
 export async function resourceStageScope(
   ctx: Ctx,
   accountId: Id<"accounts">,

@@ -1,8 +1,3 @@
-/**
- * These use an in-memory executor and loopback proxy only; no AWS or shared
- * control plane is touched.
- */
-
 import { describe, expect, test } from "bun:test";
 import {
   MicrovmHarnessDriver,

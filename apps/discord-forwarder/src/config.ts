@@ -1,9 +1,3 @@
-/**
- * Environment for the forwarder process. Every knob has a default that is safe
- * in a single-replica deployment; the only required value is the config-plane
- * list, which names the Convex deployments to read Discord connections from.
- */
-
 import { positiveIntegerEnv, requireEnv } from "../../core/src/shared/env.ts";
 
 // GUILDS | GUILD_MESSAGES | MESSAGE_CONTENT (33281). Message Content is
@@ -11,49 +5,30 @@ import { positiveIntegerEnv, requireEnv } from "../../core/src/shared/env.ts";
 export const GATEWAY_INTENTS = (1 << 0) | (1 << 9) | (1 << 15);
 
 const PLANES_ENV = "BROODS_CONFIG_PLANES";
-// A plane name becomes part of an env var name, so it is limited to what one can
-// hold. Checked rather than sanitized: silently rewriting it would look up a key
-// the operator never wrote.
+// Part of an env var name; checked, not sanitized, so we never read a key nobody wrote.
 const PLANE_NAME = /^[a-z0-9-]+$/i;
 
-/** A plane with the admin credential its config-plane read needs. */
 export interface ConfigPlane extends ConfigPlaneEntry {
   deployKey: string;
 }
 
-/** A plane as written in `BROODS_CONFIG_PLANES`, before its key is attached. */
 export interface ConfigPlaneEntry {
   convexUrl: string;
-  /** Log label, and the suffix of the env var holding this plane's deploy key. */
   name: string;
-  /** Gateway front door this plane's webhooks live behind, no trailing slash. */
   webhookBaseUrl: string;
 }
 
 export interface ForwarderConfig {
-  /** Ceiling on reconnect backoff. The IDENTIFY budget's first line of defence. */
   backoffCeilingMs: number;
-  /** IDENTIFY calls allowed per bot token per window; see `identify-budget.ts`. */
   identifyLimit: number;
-  /**
-   * Every config plane this process serves, not one per stage.
-   *
-   * One socket per bot token is a property of the token, not of a deployment, so
-   * two forwarders that ever saw the same token would each hold a socket for it
-   * and every message would be answered twice. A single process reading every
-   * plane cannot: `supervisor.ts` keys sockets by token, so the same token in two
-   * planes is one socket fanning out to both webhooks.
-   */
+  // One process serves every plane: sockets are keyed by token, so a token in two planes is
+  // one socket fanning out to both webhooks, never two sockets answering twice.
   planes: ConfigPlane[];
   port: number;
 }
 
-/**
- * Deploy keys stay out of the plane list because that list lives in a Helm values
- * file and they are secrets. Each plane names its own key by convention instead,
- * so serving one more Convex deployment is one list entry and one secret key
- * rather than a code change. `apps/matrix-forwarder` reads the same list.
- */
+// Deploy keys are secrets, so they stay out of the Helm-values plane list; each plane names
+// its key by convention. `apps/matrix-forwarder` reads the same list.
 export function configPlanesEnv(): ConfigPlane[] {
   return parseConfigPlanes(requireEnv(PLANES_ENV)).map(
     (plane): ConfigPlane => ({
@@ -75,12 +50,7 @@ export function forwarderConfigFromEnv(): ForwarderConfig {
   };
 }
 
-/**
- * Validated at startup, not at first use. Both URLs in a plane are dialled or
- * POSTed to, and `requireEnv` only ever proved presence: a value `new URL`
- * rejects would start cleanly and then fail every forwarded message, which reads
- * as Discord being broken rather than as a bad config.
- */
+// Checked at boot: a bad URL would otherwise start cleanly, then fail every forwarded message.
 export function parseConfigPlanes(raw: string): ConfigPlaneEntry[] {
   let parsed: unknown;
   try {
@@ -96,8 +66,6 @@ export function parseConfigPlanes(raw: string): ConfigPlaneEntry[] {
     if (typeof entry !== "object" || entry === null) {
       throw new Error(`${PLANES_ENV} entries must be objects`);
     }
-    // The one cast in this file, at the boundary where operator-written JSON
-    // becomes typed: every value stays `unknown` and is checked below.
     const record = entry as Partial<Record<keyof ConfigPlaneEntry, unknown>>;
     const name = record.name;
     if (typeof name !== "string" || !PLANE_NAME.test(name)) {
@@ -113,8 +81,7 @@ export function parseConfigPlanes(raw: string): ConfigPlaneEntry[] {
     };
   });
 
-  // Two planes under one name read one deploy key and would forward every row of
-  // that deployment twice, to the same webhook, from the same socket.
+  // One name = one deploy key: every row of that deployment would be forwarded twice.
   if (
     new Set(planes.map((plane): string => plane.name)).size !== planes.length
   ) {
@@ -124,7 +91,6 @@ export function parseConfigPlanes(raw: string): ConfigPlaneEntry[] {
   return planes;
 }
 
-/** Plane `dev` reads `CONVEX_DEPLOY_KEY_DEV`. */
 function deployKeyEnvName(plane: string): string {
   return `CONVEX_DEPLOY_KEY_${plane.toUpperCase().replace(/-/g, "_")}`;
 }

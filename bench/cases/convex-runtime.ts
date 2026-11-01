@@ -1,15 +1,3 @@
-/**
- * The Convex functions core calls on every turn, run in memory through
- * convex-test: the real function bodies and validators over an in-process
- * table store, no network. What moves these numbers is the function code,
- * which is the part of Convex cost a code change can regress.
- *
- * One deployment for the whole case: convex-test builds its module cache per
- * instance, and that costs more than any function here. Every op uses its own
- * conversation key, so the few hundred rows a case leaves behind stay out of
- * each other's index ranges.
- */
-
 import {
   createRuntimeTest,
   internal,
@@ -35,9 +23,6 @@ export const convexRuntimeCases: readonly BenchCase[] = [
     name: "convex/ingress-accept-take-settle",
     iterations: 10,
     samples: 15,
-    // The whole admission cycle one request costs the config plane: accept as
-    // owner, settle the turn, then drain the queue the way the handler does
-    // before it dispatches the next event.
     run: async (): Promise<unknown> => {
       const { test, accountId, conversationKey } = await freshConversation();
       const eventId = `evt_${sequence++}`;
@@ -64,8 +49,7 @@ export const convexRuntimeCases: readonly BenchCase[] = [
     name: "convex/session-save-get",
     iterations: 10,
     samples: 15,
-    // One owner for every op: a turn pays the fenced write and the read-back,
-    // not the admission that made it owner.
+    // One owner for every op: a turn pays the fenced write and read-back, not the admission.
     run: async (): Promise<unknown> => {
       checkpointOwner ??= ownedConversation();
       const { test, conversationKey, ownerGeneration } = await checkpointOwner;
@@ -92,8 +76,6 @@ export const convexRuntimeCases: readonly BenchCase[] = [
     name: "convex/conversation-append-list",
     iterations: 10,
     samples: 15,
-    // A turn's worth of history: four events appended, then the read-back the
-    // next turn does before it can build the model context.
     run: async (): Promise<unknown> => {
       const { test, conversationKey } = await freshConversation();
       for (let cursor = 1; cursor <= 4; cursor += 1) {
@@ -120,6 +102,8 @@ export const convexRuntimeCases: readonly BenchCase[] = [
 
 let sequence = 0;
 let checkpointOwner: ReturnType<typeof ownedConversation> | null = null;
+// One deployment for all ops: convex-test's per-instance module cache costs more than any op.
+// Each op gets its own conversation key, so leftover rows stay out of its index ranges.
 let shared: { test: RuntimeTest; accountId: string } | null = null;
 
 async function freshConversation(): Promise<{
@@ -139,7 +123,6 @@ async function freshConversation(): Promise<{
   };
 }
 
-/** A conversation the checkpoint case's owner holds for longer than any run. */
 async function ownedConversation(): Promise<{
   test: RuntimeTest;
   conversationKey: string;

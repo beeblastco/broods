@@ -1,44 +1,32 @@
-/**
- * Run tokens (`brt_…`): a stateless HMAC-signed bearer for one agent run,
- * handed to its sandbox code so it can read that agent's runs.
- * Signed with a key HKDF-derived from STAGE_TICKET_SECRET under its own info
- * string, so a run token can never open a stage ticket or the reverse. Core
- * is the only minter and verifier; the config plane refuses the prefix.
- * The same secret also tags the subagent conversation keys core mints, under
- * its own info string.
- */
-
 import { RUN_TOKEN_PREFIX } from "@broods/convex/model/principal";
 import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
 import { requireEnv, WORKER_TIMEOUT_BUDGET_MS } from "./env.ts";
 
+// Each key is HKDF-derived from STAGE_TICKET_SECRET under its own info string, so a run token
+// never opens a stage ticket or the reverse.
 const HKDF_INFO = "broods-run-token";
 const KEY_BYTES = 32;
 const TTL_MARGIN_MS = 5 * 60 * 1000;
 const TTL_MAX_MS = 2 * 60 * 60 * 1000;
 
-/** Outlives the run budget by a margin, capped: a leaked token stays short. */
 const RUN_TOKEN_TTL_MS = Math.min(
   WORKER_TIMEOUT_BUDGET_MS + TTL_MARGIN_MS,
   TTL_MAX_MS,
 );
 
-/** Whose runs the bearer reads. Nothing else is signed, so nothing goes unchecked. */
 export interface RunTokenSubject {
   accountId: string;
   agentId: string;
 }
 
+// Signed, not encrypted: the holder can read every claim.
 type RunTokenClaims = RunTokenSubject & { exp: number };
 
 const SUBAGENT_KEY_HKDF_INFO = "broods-subagent-key";
 const SUBAGENT_KEY_TAG_HEX = 32;
 
-// One derived key per info string and secret value, so a rotation re-derives
-// and a test can swap it.
 const derivedKeys = new Map<string, { secret: string; key: Buffer }>();
 
-/** Verify signature and expiry; null for anything else. */
 export function openRunToken(
   token: string,
   now = Date.now(),
@@ -64,7 +52,6 @@ export function openRunToken(
   return { accountId: claims.accountId, agentId: claims.agentId };
 }
 
-/** Sign an agent's bearer. The payload is readable by its holder, so it carries the two ids and an expiry. */
 export function sealRunToken(
   subject: RunTokenSubject,
   now = Date.now(),
@@ -94,11 +81,7 @@ function sign(payload: string): Buffer {
   return createHmac("sha256", derivedKey(HKDF_INFO)).update(payload).digest();
 }
 
-/**
- * The tag that proves core minted a subagent conversation key for this scope:
- * a direct-API caller can name a conversation in the same form, never with a
- * valid tag.
- */
+// Proves core minted this subagent key: a direct-API caller can copy its form, not its tag.
 export function subagentKeyTag(scope: string): string {
   return createHmac("sha256", derivedKey(SUBAGENT_KEY_HKDF_INFO))
     .update(scope)

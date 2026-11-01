@@ -16,14 +16,12 @@ import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const s3ObjectExistsMock = mock(async (_bucket: string, _key: string) => true);
 
-// The real module underneath, so an export added to s3.ts never breaks this file
-// when it runs alone. The no-network preload fails any unstubbed call.
+// The real module underneath, so an export added to s3.ts never breaks this file run alone.
 const realS3 = { ...(await import("../src/shared/s3.ts")) };
 
 await mock.module("../src/shared/s3.ts", () => ({
   ...realS3,
   s3ObjectExists: s3ObjectExistsMock,
-  // Canned answers for the S3 calls the code under test makes.
   headS3Object: mock(async () => ({
     contentLength: 1,
     contentType: "image/png",
@@ -42,8 +40,6 @@ await mock.module("../src/shared/s3.ts", () => ({
 
 const ORIGINAL_ENV = { ...process.env };
 const ACCOUNT = "acct_1";
-// Envelope fields every structured log line carries, stripped by `warnLines` so
-// assertions name only what the warning is about.
 const LOG_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
   "level",
   "service",
@@ -100,13 +96,10 @@ describe("sendImagesTool", () => {
       "image/jpeg",
       "image/png",
     ]);
-    // The whole set reaches the channel in one call, so the adapter can group it
-    // the way its provider wants rather than posting one message per picture.
     expect(sent[0]!.url.startsWith("https://gateway.test/v1/media/")).toBe(
       true,
     );
-    // The link must survive on its own: everything the media route needs to find
-    // the file again is sealed into the token.
+    // Everything the media route needs to find the file again is sealed into the token.
     expect(
       openMediaTicket(
         sent[0]!.url.slice("https://gateway.test/v1/media/".length),
@@ -142,7 +135,6 @@ describe("sendImagesTool", () => {
       file_paths: ["profile.jpeg"],
     });
 
-    // Same sealed link, offered as something to download rather than look at.
     expect(sent.map((file) => file.type)).toEqual(["file"]);
     expect(sent[0]!.name).toBe("profile.jpeg");
     expect(result).toContain("1 file(s) sent");
@@ -169,8 +161,7 @@ describe("sendImagesTool", () => {
       file_paths: ["profile.jpeg"],
     });
 
-    // A provider that takes the batch and refuses it must not cost the recipient
-    // the picture, so the error is logged and the next route down runs.
+    // A provider that refuses the batch must not cost the picture: the next route down runs.
     expect(sent.map((file) => file.name)).toEqual(["profile.jpeg"]);
     expect(result).toContain("1 file(s) sent");
   });
@@ -179,8 +170,7 @@ describe("sendImagesTool", () => {
     const { sendImagesTool } =
       await import("../src/harness/tools/channel.tool.ts");
     let sentText = "";
-    // Zalo's shape: it can send a photo but has no document endpoint at all, so
-    // a refused photo has only the text link left.
+    // Zalo's shape: no document endpoint, so a refused photo has only the text link left.
     const context = channelContext(async function (): Promise<void> {
       throw new Error("sendPhoto rejected");
     });
@@ -282,8 +272,6 @@ describe("sendFilesTool", () => {
       caption: "here you go",
     });
 
-    // The whole batch reaches the channel in one call, so the adapter can spend
-    // it the way its provider wants: one album, or one message per file.
     expect(sent.map((file) => file.name)).toEqual([
       "declaration.pdf",
       "prices.csv",
@@ -323,7 +311,6 @@ describe("sendFilesTool", () => {
     expect(
       sentText.startsWith("[safe] công bố sản phẩm\ndeclaration.pdf: "),
     ).toBe(true);
-    // The fallback link is the same sealed ticket the attachment path hands over.
     const url = sentText.slice(sentText.indexOf("https://"));
     expect(
       openMediaTicket(url.slice("https://gateway.test/v1/media/".length), [
@@ -356,9 +343,7 @@ describe("sendFilesTool", () => {
       },
     });
 
-    // Uploading fails on the provider's terms, since Discord caps a free guild at
-    // 10 MB, and the link needs no upload, so it is worth trying before the
-    // recipient gets nothing.
+    // Discord caps a free guild's upload at 10 MB; the link needs no upload, so it is tried next.
     const result = await execute(tools["send-files"], {
       file_paths: ["docs/declaration.pdf"],
     });
@@ -388,8 +373,7 @@ describe("sendFilesTool", () => {
       file_paths: ["docs/declaration.pdf"],
     });
 
-    // Slack and Discord ignore the URL and upload bytes, so every workspace
-    // attachment carries a reader they can call. It stays unread otherwise.
+    // Slack and Discord ignore the URL and upload bytes, so every attachment carries a reader.
     expect(typeof sent[0]!.fetchData).toBe("function");
     expect(await channelAttachmentBytes(sent[0]!)).toEqual(
       Buffer.from("pdf-bytes"),
@@ -432,8 +416,7 @@ describe("sendFilesTool", () => {
     try {
       tools = sendFilesTool({ ...context, workspaces: [] });
     } finally {
-      // Restore before asserting, or a throw leaves stdout captured for the
-      // tests after this one.
+      // Restore before asserting, or a throw leaves stdout captured for later tests.
       write.mockRestore();
     }
 
@@ -486,8 +469,6 @@ async function execute(
   })) as string;
 }
 
-// One `process.stdout.write` chunk can carry several newline-delimited records,
-// and non-log output must not fail the parse.
 function warnLines(chunks: string[]): Record<string, unknown>[] {
   return chunks
     .flatMap((chunk): string[] => chunk.split("\n"))

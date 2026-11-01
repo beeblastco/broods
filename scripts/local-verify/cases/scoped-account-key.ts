@@ -5,12 +5,6 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-/**
- * A scoped account key made the way Organization › API access makes it,
- * then used through the edge: the config plane and core both judge it as a
- * role over its own areas, an inline access change applies at once, and
- * revoking it refuses it on both.
- */
 export async function scopedAccountKey(context: VerifyContext): Promise<void> {
   const asAdmin = (fn: string, args: Record<string, unknown>): unknown =>
     convexResult(
@@ -36,7 +30,6 @@ export async function scopedAccountKey(context: VerifyContext): Promise<void> {
   };
 
   asAdmin("user:ensureSynced", {});
-  // An org of the case's own, so the key lands on an account no other case uses.
   const previous = asAdmin("org/orgs:getActive", {}) as { _id: string } | null;
   const orgId = String(
     asAdmin("org/orgs:create", { name: `keys-${context.runId}` }),
@@ -72,8 +65,7 @@ export async function scopedAccountKey(context: VerifyContext): Promise<void> {
         crons === 403,
         `status ${crons}`,
       );
-      // A role is judged before the missing sandbox answers 404, so a 403
-      // here means core resolved the key as a role, not as an unknown bearer.
+      // A role is judged before the missing sandbox's 404, so 403 means core resolved a role.
       const lifecycle = await status(
         "POST",
         "/v1/sandboxes/sbx_missing/suspend",
@@ -86,7 +78,6 @@ export async function scopedAccountKey(context: VerifyContext): Promise<void> {
       );
     });
 
-    // The dashboard saves one inline change at a time; it applies at once.
     asAdmin("accountApiKeys:update", {
       orgId: orgId,
       keyId: created._id,

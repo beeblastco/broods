@@ -60,8 +60,7 @@ test("client streams directly from core with apiKey auth", async () => {
 });
 
 test("run reads every pass of a run, past a mid-stream finish, until the stream closes", async (): Promise<void> => {
-  // A run that hands its worker slot on, or resumes after subagent results,
-  // streams a second pass after the first one's `finish`.
+  // A handed-on or resumed run streams a second pass after the first `finish`.
   const pass = (id: string, text: string): string[] => [
     `data: {"type":"text-start","id":"${id}"}`,
     `data: {"type":"text-delta","id":"${id}","text":"${text}"}`,

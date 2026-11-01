@@ -9,7 +9,7 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-// harness.ts's PARENT_STOP_MESSAGE. Importing it would load the whole harness.
+// apps/core harness.ts's PARENT_STOP_MESSAGE; importing it would load the whole harness.
 const PARENT_STOP_LABEL = "Stopped by the parent agent at the model boundary";
 // The model words the tool's note its own way, so match its meaning.
 const NO_REPORT = /(\b(no|not|never)\b|n't)[^.]{0,40}\breports?\b/i;
@@ -20,11 +20,6 @@ interface SubagentStoppedLog {
   parentEventId: string;
 }
 
-/**
- * A parent that stops its persistent subagent with stop_subagent is told no
- * report is coming, and the child's run ends labelled as stopped by the
- * parent agent, not by the user.
- */
 export async function subagentStop(context: VerifyContext): Promise<void> {
   if (!context.hasModelKey) {
     console.log(`  skip subagent stop (${MODEL_KEY_HINT})`);
@@ -34,8 +29,7 @@ export async function subagentStop(context: VerifyContext): Promise<void> {
   const machine = await connectMachine(context, {
     computer: false,
     name: key,
-    // A command the child leaves hanging ends fast, so the stop lands at the
-    // next step boundary instead of after the machine's default limit.
+    // A hanging command ends fast, so the stop lands at the next step boundary.
     timeout: 5,
   });
   try {
@@ -71,8 +65,6 @@ export async function subagentStop(context: VerifyContext): Promise<void> {
             record.parentEventId.endsWith(`:${key}`),
         ),
     );
-    // The model may hand the child a task it finishes in one step, before the
-    // stop lands; then there is no stop to check.
     if (!stopped && status.status === "completed") {
       console.log("  skip subagent stop (the child answered before the stop)");
       return;
@@ -80,8 +72,7 @@ export async function subagentStop(context: VerifyContext): Promise<void> {
     assertStep(
       "parent was told a stopped subagent sends no report",
       status.status === "completed" &&
-        // The raw text: JSON.stringify turns a newline into `\n`, gluing an
-        // "n" to the next word so `\bNo` no longer matches.
+        // Raw text: JSON.stringify's `\n` glues an "n" onto the next word, defeating `\bNo`.
         NO_REPORT.test(
           typeof status.response === "string"
             ? status.response

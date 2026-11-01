@@ -1,10 +1,3 @@
-/**
- * How a failed client-server call turns into a `MatrixError`. The retry and
- * shutdown decisions in `account.ts` read `status` and `errcode`, so a
- * homeserver or proxy that answers with something other than the documented
- * error object must not throw on the way to those fields.
- */
-
 import { afterEach, describe, expect, it } from "bun:test";
 import { MatrixClient, MatrixError } from "../src/matrix.ts";
 
@@ -42,7 +35,6 @@ describe("mapping an error response", () => {
   });
 
   it("still reports the status when the body is not an error object", async () => {
-    // `JSON.parse` accepts all three. None of them carries `errcode`.
     for (const body of ["null", "[]", "<html>502</html>"]) {
       stubFetch(502, body);
       const client = new MatrixClient(API_URL, "syt_token");

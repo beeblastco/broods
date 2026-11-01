@@ -59,14 +59,11 @@ const TEST_AGENT = {
   agentId: "agent_test",
   name: "Test agent",
   status: "active" as const,
-  // Opted into the public endpoint so the deployment (runtime-key) path is allowed.
   config: { ...TEST_ACCOUNT.config, publicAccess: true },
   createdAt: "2026-04-24T00:00:00.000Z",
   updatedAt: "2026-04-24T00:00:00.000Z",
 };
 
-// A second agent that has NOT opted into the public endpoint, used to assert the
-// secure-by-default gate on the deployment (runtime-key) path.
 const TEST_AGENT_PRIVATE = {
   ...TEST_AGENT,
   agentId: "agent_private",
@@ -734,8 +731,7 @@ describe("direct API ingress", () => {
   });
 
   it("keeps direct API disabled for a path that matches no run shape", async () => {
-    // The retired slug-first URL no longer parses as a public endpoint, so a
-    // gate keyed on the recognized shapes would have let it dispatch a run.
+    // The retired slug-first URL parses as no run shape; a gate keyed on shapes would dispatch it.
     const response = await routeIncomingEvent(
       createEvent(
         {
@@ -3081,8 +3077,7 @@ describe("runtime key with a user token", () => {
       error: { code: "user_token_required" },
     });
 
-    // A legacy agent without a token still reads its un-namespaced runs,
-    // never a user's.
+    // A legacy agent without a token still reads its un-namespaced runs, never a user's.
     expect(
       (await userStatusRead("chat_1", undefined, TEST_AGENT)).statusCode,
     ).toBe(200);

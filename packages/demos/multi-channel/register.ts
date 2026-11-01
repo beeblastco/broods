@@ -6,14 +6,7 @@ const host = process.env.BROODS_HOST;
 if (!host) throw new Error("BROODS_HOST is required (set it in .env.local)");
 const baseUrl = host.replace(/\/+$/, "");
 
-// ── Helpers ───────────────────────────────────────────────────────
-/**
- * Rotate a Slack app configuration token using its long-lived xoxe- refresh
- * token. Returns the new access + refresh tokens. The new refresh token
- * supersedes the previous one.
- *
- * https://docs.slack.dev/reference/methods/tooling.tokens.rotate/
- */
+// The returned refresh token supersedes the old one, so the caller must persist it.
 async function rotateSlackConfigToken(
   refreshToken: string,
 ): Promise<{ token: string; refreshToken: string }> {
@@ -43,11 +36,6 @@ function cleanEnvToken(token: string): string {
   return token.trim().replace(/^['"]|['"]$/g, "");
 }
 
-/**
- * Persist rotated Slack tokens back to .env.local so subsequent runs use
- * them. Only touches the two lines; leaves everything else untouched and
- * preserves quoting/formatting on the lines it rewrites.
- */
 async function persistRotatedSlackTokens(
   newToken: string,
   newRefreshToken: string,
@@ -150,7 +138,6 @@ function base64UrlEncode(value: string | Buffer): string {
     .replace(/\//g, "_");
 }
 
-// ── Slack ──────────────────────────────────────────────────────────
 const slackRef = api.channels?.slack;
 
 if (slackRef) {
@@ -171,8 +158,7 @@ if (slackRef) {
   ];
 
   if ((configToken || configRefreshToken) && appId) {
-    // Rotate the app configuration token first so we never hit a token_expired window.
-    // This is separate from OAuth bot token rotation in the Slack app settings.
+    // Rotate first so the config token never hits a token_expired window.
     let activeToken = configToken ?? "";
     if (configRefreshToken) {
       try {
@@ -295,7 +281,6 @@ if (slackRef) {
   console.log("No Slack channel defined, skipping Slack registration.");
 }
 
-// ── Telegram ───────────────────────────────────────────────────────
 const telegramRef = api.channels?.telegram;
 
 if (telegramRef) {
@@ -331,7 +316,6 @@ if (telegramRef) {
   console.log("No Telegram channel defined, skipping Telegram registration.");
 }
 
-// ── GitHub ─────────────────────────────────────────────────────────
 const githubRef = api.channels?.github;
 
 if (githubRef) {

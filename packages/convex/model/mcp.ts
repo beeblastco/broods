@@ -1,16 +1,3 @@
-/**
- * Shared validation for MCP server registrations (#331). One normalizer
- * serves every write path (CLI sync, direct API, dashboard). A `url` makes an "http" row
- * core connects to over the stateless 2026-07-28 transport; a `bundle` makes
- * a "hosted" row, hashed here so sha256 always travels with the bundle; the
- * S3 bundle writer (aws/bundles.ts) marks whether Cloudflare Dynamic Workers
- * can run it. Auth header values may carry ${NAME}
- * account env refs; they resolve into the encrypted agent config at sync
- * time, never on this row, and credential-bearing headers must use one
- * instead of an inline secret. `oauth` follows the same rule: clientSecret
- * and refreshToken must be ${NAME} refs, so the row never holds a secret.
- */
-
 import type { Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { sha256Hex } from "./accountSecrets";
@@ -24,14 +11,8 @@ import { isSecretName } from "./secretNames";
 const MAX_ALLOWED_TOOLS = 256;
 const MAX_COMMAND_ARGS = 32;
 const MAX_COMMAND_ARG_LENGTH = 4096;
-/**
- * An inline `bundle` rides the JSON body, which Convex caps at ~20 MB; bigger
- * goes through file storage as `bundleStorageId` (#190). Both values mirror
- * packages/broods/src/manifest.ts (the published CLI cannot import this
- * package). Change both or the CLI accepts what the config plane rejects.
- */
+// Both mirrored in packages/broods/src/manifest.ts, which the published CLI can not import.
 export const MAX_INLINE_BUNDLE_BYTES = 10_000_000;
-/** Ceiling for a hosted MCP server bundle by either upload path (#190). */
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
 
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
@@ -40,10 +21,8 @@ const MAX_HEADERS = 16;
 const MAX_HEADER_VALUE_LENGTH = 2048;
 const MAX_URL_LENGTH = 2048;
 
-/** RFC 9110 field-name token characters. */
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
 
-/** Optional row fields a declarative sync clears when its manifest drops them. */
 export const MCP_CLEARABLE_FIELDS = [
   "allowedTools",
   "command",
@@ -52,35 +31,21 @@ export const MCP_CLEARABLE_FIELDS = [
   "oauth",
 ] as const;
 
-/**
- * Server names become the `server__tool` namespace prefix inside provider
- * tool names, which allow only [A-Za-z0-9_-]. Underscores are excluded here
- * so the `__` separator stays unambiguous.
- */
+// Prefixes provider tool names as `server__tool`: no underscore keeps `__` unambiguous.
 const MCP_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 
-/** Remote tool names, as constrained by the MCP spec's SHOULD plus our cap. */
 const MCP_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** Where a saved MCP server runs: its transport, and a machine server's sandbox name. */
 export type McpPlacement = { sandbox: string | null; transport: McpTransport };
 
 export type McpTransport = "http" | "hosted" | "machine";
 
-/** Where a hosted server may run: "auto" picks Workers when the bundle can run there. */
 export type McpRuntime = "auto" | "lambda";
 
-/**
- * OAuth 2.0 refresh-token grant for an external row. Core mints access tokens
- * at connect time and sends `Authorization: Bearer <token>`, so a server
- * whose tokens expire (Google's Workspace MCP endpoints) still works where a
- * static header cannot. Secret fields hold ${NAME} refs on the row.
- */
 export interface McpOauth {
   clientId: string;
   clientSecret: string;
   refreshToken: string;
-  /** Token endpoint, https only; core defaults to https://oauth2.googleapis.com/token. */
   tokenUrl?: string;
 }
 
@@ -89,20 +54,11 @@ export interface McpInput {
   description?: string;
   transport?: McpTransport;
   url?: string;
-  /** Machine-only: the sandbox (by name) that serves it. */
   sandbox?: string;
-  /** Machine-only: argv of the stdio server; a lambda sandbox needs it. */
   command?: string[];
-  /** Hosted-only: bundled server module source; sha256 derived from it. */
   bundle?: string;
-  /**
-   * Hosted-only alternative to `bundle` for large uploads: storage id of
-   * module source POSTed to an upload URL; its declared sha256 is verified
-   * against the bytes before the S3 write.
-   */
   bundleStorageId?: string;
   sha256?: string;
-  /** Hosted-only: "lambda" keeps the server off Cloudflare Workers. */
   runtime?: McpRuntime;
   headers?: Record<string, string>;
   oauth?: McpOauth;
@@ -110,13 +66,6 @@ export interface McpInput {
   disabled?: boolean;
 }
 
-/**
- * Invariants on the row a create or update produces, whichever side brings
- * each field: a machine row names its sandbox, only it carries a command,
- * only a hosted row picks a runtime, and oauth needs an external row with an
- * https url (the minted bearer rides every request) and no Authorization
- * header (core mints it itself).
- */
 export function assertMcpRow(row: {
   transport: McpTransport;
   url?: string;
@@ -134,8 +83,7 @@ export function assertMcpRow(row: {
   if (row.transport !== "machine" && row.command !== undefined) {
     throw new ClientError("command applies to a server on a sandbox");
   }
-  // A patch that carries headers alone leaves `transport` unset, so the body
-  // normalizer's own check never sees it.
+  // A headers-only patch leaves `transport` unset, so normalizeMcpInput can not catch it.
   if (row.transport === "machine" && row.headers !== undefined) {
     throw new ClientError("headers do not apply to a machine server");
   }
@@ -163,10 +111,6 @@ export function assertMcpRow(row: {
   }
 }
 
-/**
- * The name of the Authorization header as written, whatever its case, or
- * undefined.
- */
 export function authorizationHeaderName(
   headers: Record<string, string> | undefined,
 ): string | undefined {
@@ -175,12 +119,6 @@ export function authorizationHeaderName(
   );
 }
 
-/**
- * Transport and sandbox of each active server in a stage, keyed by the canvas
- * node it owns. Canvas frames group MCP nodes by transport, and the layout
- * keeps a machine server beside the sandbox it runs on, so every tidy writer
- * passes it.
- */
 export async function loadMcpServersByNode(
   ctx: QueryCtx,
   stageId: Id<"stages">,
@@ -204,22 +142,11 @@ export async function loadMcpServersByNode(
   return placements;
 }
 
-/**
- * Build the S3 object key used for a hosted MCP server bundle. Keeping the
- * prefix separate from account-tools/ is what makes the phase 3 deletion and
- * the account-delete sweep (accounts/cleanup.ts) unambiguous.
- */
+// A prefix apart from account-tools/ keeps the account-delete sweep unambiguous.
 export function mcpBundleStorageKey(accountId: string, sha256: string): string {
   return `account-mcp/${encodeURIComponent(accountId)}/bundles/${sha256}.mjs`;
 }
 
-/**
- * Validate and normalize an MCP server create or patch body. With
- * `requireConnection` (POST) `name` plus a connection are mandatory: a `url`
- * makes an "http" row, a `bundle` makes a "hosted" one. A patch (PATCH) may
- * carry any subset. Unknown keys are ignored, matching the tolerance of the
- * other config-plane normalizers.
- */
 export async function normalizeMcpInput(
   body: unknown,
   options: { requireConnection: boolean },
@@ -234,9 +161,6 @@ export async function normalizeMcpInput(
     input.description = normalizeDescription(record.description);
   }
   normalizeConnection(record, input);
-  // Hash here (async: Convex's runtime only offers web crypto) so every
-  // write path gets sha256 with the bundle; a storage-id upload declares its
-  // own, which the S3 writer verifies against the bytes.
   if (input.bundle !== undefined) {
     input.sha256 = await sha256Hex(input.bundle);
   }
@@ -307,7 +231,6 @@ function normalizeBundle(value: unknown): string {
   return value;
 }
 
-/** A stdio server's argv: non-empty strings, bounded in count and length. */
 function normalizeCommand(value: unknown): string[] {
   if (
     !Array.isArray(value) ||
@@ -328,11 +251,6 @@ function normalizeCommand(value: unknown): string[] {
   return value;
 }
 
-/**
- * A `url` makes an "http" row; a `bundle` or `bundleStorageId` a "hosted"
- * one; a `sandbox` a "machine" one, which alone may carry a `command`.
- * Exactly one connection may be given.
- */
 function normalizeConnection(
   record: Record<string, unknown>,
   input: McpInput,
@@ -386,8 +304,6 @@ function normalizeConnection(
     input.transport = "hosted";
   }
   if (input.sandbox !== undefined) input.transport = "machine";
-  // Only a sandbox row may carry one; assertMcpRow checks the row every write
-  // produces, including a patch that sets command alone.
   if (record.command !== undefined && record.command !== null) {
     input.command = normalizeCommand(record.command);
   }
@@ -403,13 +319,7 @@ function normalizeDescription(value: unknown): string {
   return value;
 }
 
-/**
- * Static request headers an account configures for a server it names: RFC 9110
- * names, single-line bounded values, and a credential header only as a
- * `${NAME}` env ref. Shared with the custom sandbox provider's headers, whose
- * update passes the `stored` values: one sent back unchanged was a ref that a
- * code sync resolved, so it is kept.
- */
+// A `stored` value sent back unchanged is a ref a code sync already resolved, so it is kept.
 export function normalizeHeaders(
   value: unknown,
   stored: Record<string, string> = {},
@@ -437,8 +347,7 @@ export function normalizeHeaders(
         `headers values must be single-line strings of at most ${MAX_HEADER_VALUE_LENGTH} characters`,
       );
     }
-    // Header names ignore case, and a bare `Key` header carries a credential
-    // though a `key` field names a row.
+    // A bare `Key` header is a credential, though isSecretName reads a lone `key` as a row name.
     const lowerName = name.toLowerCase();
     if (
       (isSecretName(lowerName) || /^keys?$/.test(lowerName)) &&
@@ -465,13 +374,6 @@ function normalizeName(value: unknown): string {
   return value;
 }
 
-/**
- * Set input.oauth from the body. The cross-field rules (external transport,
- * https url, no Authorization header) live in assertMcpRow, which sees the
- * whole row a create or patch produces. clientId may be inline (it is not a secret); clientSecret and refreshToken
- * must be ${NAME} refs, exactly like credential-bearing headers, so a token
- * never lands on the row or in a public projection.
- */
 function normalizeOauth(
   record: Record<string, unknown>,
   input: McpInput,

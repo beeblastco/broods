@@ -1,13 +1,7 @@
 import { assertStep, type VerifyContext } from "../harness.ts";
 
-/**
- * The config plane counts failed logins by source, never by token: a caller
- * that sends a new invalid bearer each time is still blocked within 20 tries,
- * and a valid key keeps working from that source. It talks to the Convex site
- * directly with a forwarded address of its own, so the edge's address, which
- * other cases fail logins from, never gets blocked. Runs last for the same
- * reason.
- */
+// Hits the Convex site directly from a forwarded address of its own, so the edge's address,
+// which other cases fail logins from, is never blocked. Runs last for the same reason.
 export async function authFailures(context: VerifyContext): Promise<void> {
   const source = `198.18.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`;
   const status = async (bearer: string): Promise<number> => {

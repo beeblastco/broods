@@ -1,7 +1,3 @@
-/**
- * HTTP client for the SaaS CLI API exposed by the dashboard/Convex backend.
- */
-
 import type {
   CliManifest,
   DeploymentRegion,
@@ -11,27 +7,16 @@ import { stripTrailingSlash } from "./config.ts";
 import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
 import { StageSessionRefusedError } from "./observability-client.ts";
 
-/**
- * Keys the local and remote configs never agree on: artifact bytes, which the
- * server snapshot drops, and the upload handle a large MCP bundle is swapped
- * for after the diff, which only the remote has. Each artifact's sha256 stays,
- * so a content change still shows as an update.
- */
+// Bytes the server snapshot drops, and an upload handle only it has; sha256 still diffs content.
 const ARTIFACT_KEYS: ReadonlySet<string> = new Set([
   "bundle",
   "bundleStorageId",
   "contentBase64",
 ]);
-/** Resource kinds whose config carries artifact bytes the server keeps apart. */
 const ARTIFACT_KINDS: ReadonlySet<string> = new Set(["hook", "mcp", "skill"]);
-/** How long a CLI request waits for the server to answer. */
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export interface SyncClientOptions {
-  /**
-   * Base URL serving the /v1/account/* control-plane routes: the Convex
-   * deployment directly, or the gateway's unified domain in front of it.
-   */
   baseUrl: string;
   token: string;
   fetch?: typeof fetch;
@@ -40,33 +25,16 @@ export interface SyncClientOptions {
 export interface RemoteManifestResponse {
   manifest: CliManifest;
   ids: GeneratedIds;
-  /**
-   * The stage's manifest revision, which a later PUT sends back to be refused
-   * if another sync landed in between. Absent on backends that predate it.
-   */
   revision?: number;
-  /**
-   * Non-fatal deploy advisories: policy refs that resolve to nothing, and
-   * resources a prune kept because a reserved sandbox instance is still live.
-   */
   warnings?: { missingPolicies?: string[]; reservedResources?: string[] };
-  /**
-   * The stage's runtime key context. Deployments include the plaintext
-   * `apiKey` so the CLI can write `BROODS_API_KEY` locally.
-   */
   deployment?: {
     accountId: string;
     endpointId: string;
     projectSlug: string;
     stageSlug: string;
-    /** Decides the webhook URL shape; only production keeps the bare one. */
     stageKind?: "development" | "production" | "custom";
     keyHint: string;
     apiKey: string;
-    /**
-     * The masked hint (`bsig_…abcd`) of the stage's user-token signing
-     * secret; absent while the stage has none.
-     */
     userTokenSecretHint?: string;
   } | null;
 }
@@ -76,7 +44,6 @@ export interface CliOnboardingOrg {
   name: string;
   slug: string;
   role: "owner" | "admin" | "member";
-  /** Absent on backends that predate plan reporting. */
   plan?: "free" | "pro";
   accountStatus: "active" | "missing" | "disabled";
 }
@@ -103,12 +70,10 @@ export interface CliOnboardingContext {
   currentOrgId: string;
   orgs: CliOnboardingOrg[];
   projects: CliOnboardingProject[];
-  /** The API account backing the current org; absent on older backends. */
   account?: CliOnboardingAccount | null;
   user?: CliOnboardingUser;
 }
 
-/** A 15-minute stage ticket and the slugs the gateway paths use. */
 export interface CliStageSession {
   token: string;
   expiresAt: number;
@@ -116,7 +81,6 @@ export interface CliStageSession {
   stageSlug: string;
 }
 
-/** One stage of a project, as listed by `broods stage list`. */
 export interface CliStage {
   id: string;
   name: string;
@@ -128,12 +92,10 @@ export interface CliStage {
   updatedAt: number;
 }
 
-/** A project of the logged-in account's org, with the counts `broods project` prints. */
 export interface CliProject {
   id: string;
   name: string;
   slug: string;
-  /** No stage, agent, variable, deployment or workspace file left in it. */
   empty: boolean;
   stageCount: number;
   agentCount: number;
@@ -143,11 +105,9 @@ export interface CliProject {
   updatedAt: number;
 }
 
-/** A stored environment variable as listed by the CLI (name only; value is write-only). */
 export interface CliEnvVar {
   name: string;
   updatedAt: number;
-  /** SHA-256 hex of the stored value. */
   valueDigest: string;
 }
 
@@ -160,10 +120,8 @@ export interface DiffEntry {
   previousName?: string;
 }
 
-/** A sync is already running or the stage revision changed: read it again and retry. */
 export class ManifestConflictError extends Error {}
 
-/** The server predates a route the CLI calls. */
 export class RouteNotMountedError extends Error {}
 
 export class BroodsSyncClient {
@@ -190,12 +148,6 @@ export class BroodsSyncClient {
     return (await response.json()) as RemoteManifestResponse;
   }
 
-  /**
-   * Syncs the manifest. With `revision`, the revision this client last read,
-   * the server refuses the write with a `ManifestConflictError` when another
-   * sync landed since. An overlapping sync is refused with the same error,
-   * including a write without a revision.
-   */
   async putManifest(
     manifest: CliManifest,
     prune: boolean,
@@ -225,11 +177,7 @@ export class BroodsSyncClient {
     return (await response.json()) as RemoteManifestResponse;
   }
 
-  /**
-   * An MCP bundle past the inline threshold cannot ride the manifest JSON
-   * (the config plane caps bodies ~20 MB): upload it to a minted URL and swap
-   * `bundle` for the storage id plus sha256 (#190). Small bundles stay inline.
-   */
+  // The config plane caps request bodies near 20 MB.
   private async externalizeLargeMcpBundles(
     manifest: CliManifest,
   ): Promise<CliManifest> {
@@ -267,7 +215,6 @@ export class BroodsSyncClient {
     return { ...manifest, resources: resources };
   }
 
-  /** POST one bundle's module source to a minted upload URL; returns the storage id. */
   private async uploadMcpBundle(
     project: string,
     stage: string,
@@ -300,11 +247,6 @@ export class BroodsSyncClient {
     return storageId;
   }
 
-  /**
-   * Recovers the stage's runtime key so the CLI can reconnect to a
-   * dashboard-created project without redeploying. Returns null when the project/
-   * stage is unknown.
-   */
   async getRuntimeKey(
     project: string,
     stage: string,
@@ -340,12 +282,6 @@ export class BroodsSyncClient {
     };
   }
 
-  /**
-   * Rotates the stage's user-token signing secret (`bsig_…`) and returns it
-   * this once; tokens the previous secret signed stop opening. Needs
-   * `keys:write` on the stage. Returns null when the project or stage is
-   * unknown or has no runtime key yet.
-   */
   async rotateUserTokenSecret(
     project: string,
     stage: string,
@@ -387,10 +323,6 @@ export class BroodsSyncClient {
     await assertOk(response, "Set environment variable failed");
   }
 
-  /**
-   * Lists the names of the stage's stored variables (values stay
-   * server-side and encrypted, so only names and last-updated times return).
-   */
   async listEnv(project: string, stage: string): Promise<CliEnvVar[]> {
     const response = await this.request(project, stage, "/env", {
       method: "GET",
@@ -401,7 +333,6 @@ export class BroodsSyncClient {
     return payload.variables ?? [];
   }
 
-  /** Reveals a single env var's plaintext value, or null when it is not set. The reveal is audited server-side. */
   async getEnv(
     project: string,
     stage: string,
@@ -502,7 +433,6 @@ export class BroodsSyncClient {
     };
   }
 
-  /** Trade the login token for a stage ticket (logs, stream, machine). */
   async mintStageSession(
     project: string,
     stage: string,
@@ -534,7 +464,6 @@ export class BroodsSyncClient {
     return (await response.json()) as CliStageSession;
   }
 
-  /** Every project in the logged-in account's org, empty ones sorted last. */
   async listProjects(): Promise<CliProject[]> {
     const response = await this.send(`${this.baseUrl}/v1/account/projects`, {
       method: "GET",
@@ -549,12 +478,6 @@ export class BroodsSyncClient {
     return payload.projects ?? [];
   }
 
-  /**
-   * Deletes a project and everything under it: stages, agents, canvas, env
-   * vars, crons and workspace files. Takes the project id from `listProjects`
-   * (names are not unique). Returns what the project held, or null when the id
-   * matches nothing.
-   */
   async deleteProject(projectId: string): Promise<CliProject | null> {
     const response = await this.send(
       `${this.baseUrl}/v1/account/projects?projectId=${encodeURIComponent(projectId)}`,
@@ -611,7 +534,6 @@ export class BroodsSyncClient {
     );
   }
 
-  /** Every request goes through `cliFetch` with the injected fetch. */
   private async send(
     url: string,
     init: RequestInit,
@@ -624,11 +546,6 @@ export class BroodsSyncClient {
   }
 }
 
-/**
- * `fetch` for every CLI call to a broods server. Gives up after 30 s, or never
- * with `timeoutMs: null`, and turns a network failure into "Cannot reach
- * <origin>: <cause>" instead of a bare "fetch failed".
- */
 export async function cliFetch(
   url: string,
   init: RequestInit,
@@ -831,26 +748,17 @@ function stripArtifactContent(value: unknown): unknown {
   return value;
 }
 
-/**
- * Turns a failed response into an error carrying the server's own reason. The
- * config plane answers with the error envelope, whose `message` is where
- * manifest validation failures (an unset `env()` ref, an unsupported mount)
- * explain themselves. Printing the raw JSON instead buries them.
- */
 async function assertOk(response: Response, message: string): Promise<void> {
   if (response.ok) return;
   const body = await response.text();
-  // Without an envelope, the raw body is the best reason available.
   const { message: reason = body, code } = errorEnvelope(body);
   if (code === "manifest_conflict") throw new ManifestConflictError(reason);
-  // CLI tokens expire, and a 401 is how the control plane says so.
   const hint =
     response.status === 401 ? "\nRun `broods login` to sign in again." : "";
 
   throw new Error(`${message}: ${response.status} ${reason}${hint}`);
 }
 
-/** The `message` and `code` of an error envelope body, or neither. */
 function errorEnvelope(body: string): { message?: string; code?: string } {
   let parsed: unknown;
   try {
@@ -874,10 +782,7 @@ function errorEnvelope(body: string): { message?: string; code?: string } {
   };
 }
 
-/**
- * A 404 that is not JSON came from the router, not the handler: the server
- * predates the route. Says so, rather than letting it read as "not found".
- */
+// A 404 that is not JSON came from the router, not a handler: the server predates the route.
 function assertRouteMounted(
   response: Response,
   route: string,
@@ -892,7 +797,6 @@ function assertRouteMounted(
   );
 }
 
-/** Why a request got no answer, in the runtime's own words. */
 function networkFailureReason(
   error: unknown,
   timeoutMs: number | null,
@@ -911,7 +815,6 @@ function networkFailureReason(
     : error.message;
 }
 
-/** The bundle source when the MCP resource must be externalized, else null. */
 function largeBundleOf(
   resource: CliManifest["resources"][number],
 ): string | null {

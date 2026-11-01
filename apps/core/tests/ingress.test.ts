@@ -65,7 +65,6 @@ function agentRecord(config: AgentConfig): AgentRecord {
   };
 }
 
-// What a /compact that folded `messageCount` messages in one summary call reports.
 function compaction(messageCount: number): CompactionResult {
   return {
     messageCount: messageCount,
@@ -150,8 +149,7 @@ describe("ingress admission payloads", () => {
       channel: { channelName: "telegram", channelRecordId: "rec_1" },
     });
     expect(call).not.toHaveProperty("agentConfig");
-    // The sender rides on the envelope so a queued turn is policed as its own
-    // author, not as whoever owned the run when it was queued.
+    // A queued turn is policed as its own sender, not whoever owned the run when it queued.
     expect(call?.delivery).toEqual(
       expect.objectContaining({
         identity: { userId: "U2", userRoles: ["dev"] },
@@ -183,11 +181,8 @@ describe("ingress admission payloads", () => {
     expect(first!.ephemeralSystem).toEqual([
       { role: "system", content: "one-turn override" },
     ]);
-    // Different model/system overrides must never collapse into the same
-    // idempotent payload identity.
     expect(first!.payloadDigest).not.toBe(second!.payloadDigest);
     expect(second!.payloadDigest).not.toBe(third!.payloadDigest);
-    // Queue byte accounting includes the persisted execution context.
     expect(first!.sizeBytes as number).toBeGreaterThan(
       third!.sizeBytes as number,
     );
@@ -419,7 +414,6 @@ describe("step boundary", (): void => {
         },
       ],
     });
-    // The renewed boundary answered the owner check: no read.
     expect(reads).not.toHaveBeenCalled();
   });
 
@@ -738,7 +732,6 @@ describe("async turn that throws after it settles", (): void => {
     ).toEqual([]);
   });
 
-  /** An async event whose run ends with the final text "answer". */
   function completedEvent(): DirectInboundEvent {
     return {
       ...candidate(),
@@ -750,7 +743,6 @@ describe("async turn that throws after it settles", (): void => {
     };
   }
 
-  /** Stubs a turn that ends with the final text "answer"; returns the settle spy. */
   function stubCompletedTurn(
     writes: Array<{ name: string; status?: unknown }>,
   ): ReturnType<typeof spyOn<typeof ingress, "settleIngress">> {
@@ -764,10 +756,6 @@ describe("async turn that throws after it settles", (): void => {
     );
   }
 
-  /**
-   * Stubs one model turn that `end` finishes through the loop's reply
-   * callbacks, returning the questions it leaves open; returns the settle spy.
-   */
   function stubTurn(
     writes: Array<{ name: string; status?: unknown }>,
     end: (reply: AgentReplyHooks) => Promise<PendingQuestionSummary[]>,
@@ -832,7 +820,6 @@ describe("channel senders", (): void => {
 
   beforeEach((): void => {
     senders = [];
-    // The queued envelope's ref rebuilds its config from this row.
     setStorageForTests({
       agents: { getById: async (): Promise<AgentRecord> => agentRecord({}) },
     } as never);
@@ -939,7 +926,6 @@ describe("channel senders", (): void => {
       attachments: [{ type: "image", url: "https://files.test/a.png" }],
     });
 
-    // No admission and no ingestion: the first delivery already did both.
     expect(mutations).toEqual([]);
     expect(senders).toEqual([]);
   });
@@ -987,7 +973,6 @@ describe("channel senders", (): void => {
       compact.mockRestore();
     }
 
-    // Only alice's turn reached the history; the command never did.
     expect(senders).toEqual([{ userId: "U1", userRoles: ["admin"] }]);
     expect(compacted).toEqual(["keep the deploy"]);
     expect(replies.at(-1)).toBe("Context compacted. 4 message(s) summarized.");
@@ -1315,7 +1300,6 @@ describe("queued /compact on an async run", (): void => {
     await handler({ kind: "direct-api-async-worker", event: compactEvent() });
 
     expect(compact).toHaveBeenCalledWith("keep the deploy");
-    // The summary's spend lands on a usage row of its own, under the run.
     expect(usage).toHaveBeenCalledTimes(1);
     expect(usage.mock.calls[0]?.[0]).toMatchObject({
       status: "completed",
@@ -1337,7 +1321,6 @@ describe("queued /compact on an async run", (): void => {
         },
       },
     });
-    // The queue drains on behind it.
     expect(takeNext).toHaveBeenCalledTimes(1);
   });
 
@@ -1464,8 +1447,7 @@ describe("live owners at shutdown", (): void => {
     calls.length = 0;
 
     expect(await interruptLiveOwners("restarting")).toBe(2);
-    // The released lease is gone; the transferred one is interrupted at its
-    // new generation, never the one it moved on from.
+    // The transferred lease is interrupted at its new generation, never the one it moved on from.
     expect(calls).toEqual(
       expect.arrayContaining([
         [
@@ -1665,7 +1647,6 @@ describe("session messages", (): void => {
     expect(prepared.publicConversationKey).toBe("tg:target-chat");
   });
 
-  // The record a session ran through is gone, or now binds another agent.
   for (const [name, refs, record] of [
     [
       "a cross-agent session whose record is gone",
@@ -1737,8 +1718,7 @@ describe("session messages", (): void => {
   });
 
   it("refuses a chat that has never messaged the bot, naming the key format and this conversation's key", async (): Promise<void> => {
-    // No coordinator row means no stored channel target, which is every group
-    // the bot was added to but that has not spoken yet.
+    // No coordinator row means no stored channel target: a group the bot joined that never spoke.
     runtime.query = async function <T>(): Promise<T> {
       return null as T;
     };

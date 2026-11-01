@@ -1,9 +1,4 @@
-/**
- * Agent config validation, the only copy of it: Convex config HTTP checks a
- * config on write and core re-checks the stored config on every run. Pure
- * module: safe for the default Convex runtime. The public projection lives in
- * ./responses.ts.
- */
+// The only copy of config validation (Convex on write, core every run): keep it runtime-pure.
 
 import { SANDBOX_REMOVED_MESSAGE } from "./agentConfigCodec";
 import { mergeConfigObjects } from "./configValues";
@@ -43,7 +38,7 @@ export type AgentConfig = Record<string, unknown> & {
   provider?: Partial<Record<AccountModelProviderName, Record<string, unknown>>>;
   sandboxes?: string[];
   workspaces?: AgentWorkspaceRef[];
-  /** Keyed by MCP server row id; normalizeMcpConfig checks the shape. */
+  /** Keyed by MCP server row id. */
   mcp?: Record<string, unknown>;
   session?: Record<string, unknown>;
   hooks?: Record<string, unknown>;
@@ -62,17 +57,13 @@ export type AgentConfig = Record<string, unknown> & {
     [key: string]: unknown;
   };
   scheduler?: { enabled?: boolean; [key: string]: unknown };
-  // Registers the `browse` tool, which runs Obscura on the first sandbox.
   browser?: { enabled?: boolean; [key: string]: unknown };
   policies?: string[];
   publicAccess?: boolean;
   allowRunOverrides?: boolean;
 };
 
-/**
- * `patch` marks a partial config checked alone before the merge. A rule that
- * needs another branch skips it, since the merged config is checked in full.
- */
+// patch: a partial config checked before its merge; cross-branch rules wait for the merge.
 export type AgentConfigCheckOptions = { patch?: boolean };
 
 export interface AgentWorkspaceRef {
@@ -81,7 +72,6 @@ export interface AgentWorkspaceRef {
   sandbox?: string | null;
 }
 
-/** A workspace mounted on a sandbox that is not the agent's first. */
 export type LaterSandboxMount = {
   index: number;
   sandboxId: string;
@@ -123,12 +113,9 @@ const AGENT_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
 const PROVIDER_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 // Core puts the gateway id into AI Gateway URL paths, so it stays URL-safe.
 const AI_GATEWAY_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-// Deprecated public account-tool id prefix. It is neither a native Convex id
-// nor a provider tool name, so it must not fall through as one.
+// Retired account-tool id prefix: neither a Convex id nor a provider tool name.
 const DEPRECATED_TOOL_ID_PREFIX = "tool_";
 
-// Tool names the harness registers itself (sandbox, skills, subagents, async
-// status). config.tools cannot claim them for a provider-defined tool.
 const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "ask_parent",
   "async_status",
@@ -151,15 +138,11 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
 ]);
 const CHANNEL_PARTITION_MODES = ["shared", "conversation"] as const;
 
-// Both spellings this field used to carry, kept so a stale key throws instead
-// of sitting in config doing nothing.
 const RETIRED_PARTITION_KEYS = [
   "workspaceIsolationScope",
   "workspaceScope",
 ] as const;
 
-// Every provider used to name its own reach list. They are one pair now, so a
-// stale key has to fail loudly here rather than sit in config doing nothing.
 const RETIRED_REACH_KEYS = [
   ["allowedChatIds", "allowedChannelIds"],
   ["allowedGroupIds", "allowedChannelIds"],
@@ -184,8 +167,7 @@ export const MODEL_CONFIG_SETTING_KEYS = [
   "maxRetries",
   "timeout",
 ] as const;
-// The object form of the AI SDK's `TimeoutConfiguration` (ai 7). `tools` holds
-// per-tool limits named `{toolName}Ms`.
+// The AI SDK's TimeoutConfiguration (ai 7) object; `tools` holds per-tool `{toolName}Ms`.
 const MODEL_TIMEOUT_KEYS = [
   "totalMs",
   "stepMs",
@@ -196,8 +178,7 @@ const MODEL_TIMEOUT_KEYS = [
 ] as const;
 // The longest delay setTimeout takes; a longer one overflows and fires at once.
 const MAX_TIMER_MS = 2_147_483_647;
-// Webhooks subscribe to agent-loop lifecycle events only. Code hooks use the
-// full AGENT_HOOK_EVENT_NAMES list (lifecycle + channel points).
+// Webhooks get agent-loop lifecycle events only; code hooks take all AGENT_HOOK_EVENT_NAMES.
 export const AGENT_LIFECYCLE_EVENT_NAMES = [
   "agent.started",
   "agent.step.finished",
@@ -211,11 +192,6 @@ export const AGENT_LIFECYCLE_EVENT_NAMES = [
   "subagent.task.finished",
 ] as const;
 
-/**
- * @param value unknown config value
- * @param options `patch` when value is a partial config checked before its merge
- * @returns normalized agent config
- */
 export function normalizeAgentConfig(
   value: unknown,
   options: AgentConfigCheckOptions = {},
@@ -280,11 +256,6 @@ export function normalizeAgentConfig(
   return config;
 }
 
-/**
- * Validate a partial config patch, preserving null deletes for merge time.
- * @param value patch value
- * @returns the original patch object
- */
 export function normalizeAgentConfigPatch(
   value: unknown,
 ): Record<string, unknown> {
@@ -296,11 +267,6 @@ export function normalizeAgentConfigPatch(
   return value;
 }
 
-/**
- * @param existing existing stored config
- * @param patch patch object
- * @returns merged normalized config
- */
 export function mergeAgentConfig(
   existing: AgentConfig,
   patch: Record<string, unknown>,
@@ -308,11 +274,6 @@ export function mergeAgentConfig(
   return normalizeAgentConfig(mergeConfigObjects(existing, patch));
 }
 
-/**
- * Normalize input for POST /v1/agents.
- * @param value request body
- * @returns normalized create input
- */
 export function normalizeCreateAgentInput(value: unknown): {
   name: string;
   description?: string;
@@ -331,12 +292,6 @@ export function normalizeCreateAgentInput(value: unknown): {
   };
 }
 
-/**
- * Normalize input for PATCH /v1/agents/{agentId}.
- * @param existingConfig stored config before the patch
- * @param value request body
- * @returns normalized patch values and merged config
- */
 export function normalizeUpdateAgentInput(
   existingConfig: AgentConfig,
   value: unknown,
@@ -376,11 +331,7 @@ export function normalizeUpdateAgentInput(
   };
 }
 
-/**
- * The sandbox and workspace rules of {@link normalizeAgentConfig}, alone. A canvas
- * save changes only these refs, so it checks them without re-judging branches the
- * dashboard never validated, like a custom provider's `${BASE_URL}` placeholder.
- */
+// A canvas save checks only these refs, never branches the dashboard did not validate.
 export function assertAgentRuntimeRefs(
   config: AgentConfig,
   options: AgentConfigCheckOptions = {},
@@ -389,7 +340,6 @@ export function assertAgentRuntimeRefs(
     throw new ClientError(SANDBOX_REMOVED_MESSAGE);
   normalizeWorkspaceRefs(config.workspaces);
   normalizeSandboxRefs(config.sandboxes, config.workspaces);
-  // A patch may add a harness to an agent whose sandboxes are already stored.
   if (
     !options.patch &&
     isPlainObject(config.harness) &&
@@ -400,10 +350,7 @@ export function assertAgentRuntimeRefs(
     );
 }
 
-/**
- * A tenant-configured outbound URL: https only, never a loopback, private,
- * link-local or internal-looking host. A config-time string check.
- */
+// A config-time string check: it resolves no DNS.
 export function assertPublicHttpsUrl(value: string, label: string): URL {
   let url: URL;
   try {
@@ -421,11 +368,6 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
   return url;
 }
 
-/**
- * The first sandbox after the default that also backs a workspace, which the
- * config API refuses: only the first sandbox mounts workspaces, a later one runs
- * with none. The dashboard checks a canvas edit with this before saving it.
- */
 export function findLaterSandboxMount(
   sandboxes: readonly string[],
   workspaces: readonly AgentWorkspaceRef[] | undefined,
@@ -440,8 +382,7 @@ export function findLaterSandboxMount(
   return undefined;
 }
 
-// Provider-defined tool names are validated for shape only; whether the
-// configured provider actually ships the tool is resolved by core at run time.
+// Shape only: core resolves at run time whether the provider ships the tool.
 export function isProviderToolName(toolName: string): boolean {
   return (
     PROVIDER_TOOL_NAME_PATTERN.test(toolName) &&
@@ -450,7 +391,6 @@ export function isProviderToolName(toolName: string): boolean {
   );
 }
 
-/** The default sandbox id of a stored or nested config: the first of `sandboxes`. */
 export function defaultSandboxOf(
   config: Record<string, unknown>,
 ): string | undefined {
@@ -461,11 +401,7 @@ export function defaultSandboxOf(
   return typeof first === "string" ? first : undefined;
 }
 
-/**
- * The agent's sandbox list after a canvas save. The canvas order wins, and a
- * stored id no sandbox node on the stage canvas stands for is kept after it:
- * the canvas cannot draw that sandbox, so it cannot mean to remove it.
- */
+// Canvas order first; a stored id it cannot draw is kept, since it cannot mean to remove it.
 export function mergeCanvasSandboxes(
   canvas: readonly string[],
   stored: readonly string[],
@@ -476,11 +412,6 @@ export function mergeCanvasSandboxes(
   return [...new Set([...canvas, ...hidden])];
 }
 
-/**
- * Checks one outbound webhook entry against the config plane's rules. Agent
- * config normalization runs it on every `hooks.webhooks` row, and the
- * dashboard's webhook mutations run it on the row they add or re-enable.
- */
 export function normalizeWebhookHookConfig(value: unknown, path: string): void {
   if (!isPlainObject(value)) throw new ClientError(`${path} must be an object`);
   const config = value as Record<string, unknown>;
@@ -525,8 +456,7 @@ function normalizeAgentBehaviorConfig(value: unknown): void {
   validateAgentSystemConfig(config.system);
 }
 
-// Any non-negative integer; 0 lifts the cap. No ceiling: a long tool job can
-// legitimately take hundreds of steps.
+// No ceiling: a long tool job can legitimately take hundreds of steps.
 function assertOptionalMaxTurn(value: unknown): void {
   if (value === undefined) return;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
@@ -536,8 +466,7 @@ function assertOptionalMaxTurn(value: unknown): void {
   }
 }
 
-// The shape of the AI SDK's SystemModelMessage, checked by hand because Convex
-// cannot import `ai`. Provider option values arrive as parsed JSON already.
+// The AI SDK's SystemModelMessage, checked by hand: Convex cannot import `ai`.
 function validateAgentSystemConfig(value: unknown): void {
   if (value === undefined || typeof value === "string") return;
   const values = Array.isArray(value) ? value : [value];
@@ -641,10 +570,6 @@ function normalizeHarnessDebugConfig(value: unknown): void {
   );
 }
 
-/**
- * Checks a model config's keys and values: the stored `config.model`, the
- * subagent's, and a per-run `model` override.
- */
 export function normalizeModelConfig(value: unknown, label: string): void {
   if (value == null) return;
   if (!isPlainObject(value))
@@ -768,13 +693,10 @@ function normalizeProviderSettings(
   if (baseURL) {
     const label = typeof config.base_url === "string" ? "base_url" : "baseURL";
     assertPublicHttpsUrl(baseURL, `config.provider.${providerName}.${label}`);
-    // Canonicalize on `baseURL`: accepting both spellings but storing one
-    // prevents a stale `base_url` (which core prefers at runtime) from
-    // shadowing later `baseURL` updates.
+    // Store one spelling: a stale base_url (core prefers it) would shadow later baseURL edits.
     config.baseURL = baseURL;
     delete config.base_url;
   }
-  // `baseURL` is the canonical base URL checked above.
   for (const [key, endpoint] of Object.entries(config)) {
     if (key === "baseURL" || !PROVIDER_ENDPOINT_SETTING.test(key)) continue;
     const label = `config.provider.${providerName}.${key}`;
@@ -799,8 +721,6 @@ function providerBaseURL(config: Record<string, unknown>): string | undefined {
   return trimmed || undefined;
 }
 
-// The first sandbox is the default and may back a workspace. A later one runs
-// with no mount, so it never backs one. Each id appears once.
 function normalizeSandboxRefs(
   value: unknown,
   workspaces: AgentWorkspaceRef[] | undefined,
@@ -808,8 +728,7 @@ function normalizeSandboxRefs(
   assertOptionalStringArray(value, "config.sandboxes");
   if (value === undefined) return;
   const seen = new Set<string>();
-  // One index at a time, duplicate first, so mixed input reports the same
-  // error as core's copy of this rule.
+  // Index by index, duplicate first: mixed input must report the same error as core.
   value.forEach((sandboxId, index): void => {
     if (seen.has(sandboxId))
       throw new ClientError(
@@ -824,7 +743,7 @@ function normalizeSandboxRefs(
   });
 }
 
-/** The workspace backed by `sandboxes[index]` when that is not the first sandbox. */
+// Only the first sandbox mounts workspaces; a later one runs with none.
 function workspaceOnLaterSandbox(
   sandboxes: readonly string[],
   index: number,
@@ -1022,8 +941,6 @@ function normalizeSkillsConfig(value: unknown): void {
   assertOptionalBoolean(config.enabled, "config.skills.enabled");
   assertOptionalStringArray(config.allowed, "config.skills.allowed");
   if (config.allowed === undefined) return;
-  // Every listed skill is read on every turn, so a repeat buys nothing and
-  // only multiplies the reads.
   const allowed = [...new Set(config.allowed)];
   config.allowed = allowed;
   if (allowed.length > MAX_CONFIGURED_SKILLS) {
@@ -1057,8 +974,6 @@ function normalizeSubagentConfig(value: unknown): void {
   normalizeModelConfig(config.model, "config.subagent.model");
 }
 
-// A feature switch such as `config.scheduler` or `config.browser`: an object
-// whose only checked field is `enabled`.
 function normalizeEnabledSwitch(value: unknown, label: string): void {
   if (value == null) return;
   if (!isPlainObject(value))
@@ -1067,10 +982,6 @@ function normalizeEnabledSwitch(value: unknown, label: string): void {
   assertOptionalBoolean(config.enabled, `${label}.enabled`);
 }
 
-/**
- * Validates the policy ids attached to an agent. Attachment is just the list:
- * how hard each one bites is carried by the policy document itself.
- */
 function normalizePolicyIds(value: unknown): string[] | undefined {
   if (value == null) return undefined;
   assertOptionalStringArray(value, "config.policies");
@@ -1128,11 +1039,7 @@ function normalizeTelegramConfig(value: unknown): void {
   );
 }
 
-/**
- * A Google Chat app is only reachable once one audience is set: without it no
- * webhook token can be verified. A patch may carry the key alone, so the
- * merged config checks it.
- */
+// Without an audience no Google Chat webhook token can be verified.
 function normalizeGoogleChatConfig(
   value: unknown,
   options: AgentConfigCheckOptions,
@@ -1206,13 +1113,8 @@ function normalizeGitHubConfig(value: unknown): void {
   );
 }
 
-/**
- * Linear has no bot account: the agent comments as the member whose API key it
- * holds, and `userName` is what mentions it. Core runs the channel only with
- * the key, the name and the webhook secret, so a config with the key and not
- * the other two is refused here. A patch may carry the key alone, so the merged
- * config checks it.
- */
+// Linear has no bots: the agent posts as the key's member, mentioned by userName.
+// Core runs the channel only with the key, userName and webhook secret together.
 function normalizeLinearConfig(
   value: unknown,
   options: AgentConfigCheckOptions,
@@ -1285,10 +1187,7 @@ function normalizeDiscordConfig(value: unknown): void {
   );
 }
 
-/**
- * Matrix has no fixed API host: a token is useless without the homeserver it
- * belongs to. A patch may carry the token alone, so the merged config checks it.
- */
+// Matrix has no fixed API host: a token is useless without its homeserver.
 function normalizeMatrixConfig(
   value: unknown,
   options: AgentConfigCheckOptions,
@@ -1305,8 +1204,7 @@ function normalizeMatrixConfig(
     config.mentionText,
     "config.channels.matrix.mentionText",
   );
-  // Core and apps/matrix-forwarder both call this URL with the account's token
-  // from inside the cluster, so it may not name an internal address.
+  // Core and apps/matrix-forwarder call it in-cluster with the account's token: public only.
   if (typeof config.apiUrl === "string") {
     assertPublicHttpsUrl(config.apiUrl, "config.channels.matrix.apiUrl");
   } else if (typeof config.botToken === "string" && !options.patch) {
@@ -1334,10 +1232,7 @@ function normalizePancakeConfig(value: unknown): void {
   assertOptionalString(config.senderId, "config.channels.pancake.senderId");
 }
 
-/**
- * A single-tenant bot signs in against its own tenant, so it cannot work
- * without one. A patch may carry the app id alone, so the merged config checks it.
- */
+// A single-tenant bot signs in against its own tenant, so it cannot work without one.
 function normalizeTeamsConfig(
   value: unknown,
   options: AgentConfigCheckOptions,
@@ -1371,11 +1266,6 @@ function normalizeTeamsConfig(
   }
 }
 
-/**
- * Every URL Twilio is told to call, and the one it signs, is held to public
- * https. A Messaging Service sid is the reply sender, so it must look like one
- * or the adapter would send it as a phone number.
- */
 function normalizeTwilioConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
@@ -1394,6 +1284,7 @@ function normalizeTwilioConfig(value: unknown): void {
     config.messagingServiceSid,
     "config.channels.twilio.messagingServiceSid",
   );
+  // A sid that does not look like one would be sent as a phone number.
   if (
     typeof config.messagingServiceSid === "string" &&
     !/^MG[0-9a-fA-F]{32}$/.test(config.messagingServiceSid)
@@ -1406,8 +1297,7 @@ function normalizeTwilioConfig(value: unknown): void {
     config.phoneNumber,
     "config.channels.twilio.phoneNumber",
   );
-  // Core compares it to the E.164 `To` Twilio posts, so any other spelling
-  // would ignore every message.
+  // Core matches it to the E.164 `To` Twilio posts; any other spelling ignores every message.
   if (
     typeof config.phoneNumber === "string" &&
     !/^\+[1-9]\d{1,14}$/.test(config.phoneNumber)
@@ -1419,10 +1309,6 @@ function normalizeTwilioConfig(value: unknown): void {
   assertOptionalString(config.userName, "config.channels.twilio.userName");
 }
 
-/**
- * The version is spliced into every Graph API path, so it is held to Meta's
- * `vNN.N` shape rather than taken as free text.
- */
 function normalizeWhatsAppConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
@@ -1454,7 +1340,7 @@ function normalizeWhatsAppConfig(value: unknown): void {
     config.phoneNumberId,
     "config.channels.whatsapp.phoneNumberId",
   );
-  // It is a Graph API path segment, and the SDK refuses to send to any other.
+  // A Graph API path segment, and the SDK refuses to send to any other.
   if (
     typeof config.phoneNumberId === "string" &&
     !/^\d+$/.test(config.phoneNumberId)
@@ -1504,7 +1390,6 @@ function normalizeInstagramConfig(
     "config.channels.instagram.accessToken",
   );
   assertOptionalString(config.accountId, "config.channels.instagram.accountId");
-  // The account id is a path segment of every Graph call the SDK makes.
   if (typeof config.accountId === "string" && !/^\d+$/.test(config.accountId))
     throw new ClientError(
       "config.channels.instagram.accountId must be the numeric Instagram account id",
@@ -1552,11 +1437,7 @@ function normalizeMessengerConfig(
   );
 }
 
-/**
- * Core builds a Messenger or Instagram adapter only when every one of these is
- * set and non-empty, so a config that has some but not all would never answer.
- * A patch may carry one alone, so the merged config checks it.
- */
+// Core builds the adapter only with all of these set, so a partial set would never answer.
 function assertMetaCredentials(
   config: Record<string, unknown>,
   path: string,
@@ -1580,10 +1461,7 @@ function assertMetaCredentials(
   }
 }
 
-/**
- * Messenger and Instagram put `apiVersion` into the path of every Graph call,
- * so it may only be a version, never a path.
- */
+// Spliced into every Graph API path, so a version only, never a path.
 function normalizeGraphApiVersion(
   config: Record<string, unknown>,
   name: string,
@@ -1690,7 +1568,6 @@ export function isPrivateHostname(hostname: string): boolean {
   return false;
 }
 
-/** Loopback/private/link-local/CGNAT IPv4, judged from the first two octets. */
 function isPrivateIpv4(a: number, b: number): boolean {
   return (
     a === 0 ||
@@ -1703,7 +1580,7 @@ function isPrivateIpv4(a: number, b: number): boolean {
   );
 }
 
-/** Unspecified/loopback/v4-mapped/ULA/link-local IPv6 (host already lowercased, unbracketed). */
+// host is already lowercased and unbracketed.
 function isPrivateIpv6(host: string): boolean {
   return (
     host === "::" ||
@@ -1783,10 +1660,6 @@ function assertPartitionAlias(value: unknown, name: string): void {
   }
 }
 
-/**
- * Checks `model.timeout` against the AI SDK's `TimeoutConfiguration`: a total
- * in ms, or an object of per-phase limits. Every limit is a positive integer.
- */
 function assertOptionalModelTimeout(value: unknown, name: string): void {
   if (value === undefined) return;
   if (typeof value === "number") {

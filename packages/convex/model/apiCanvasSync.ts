@@ -1,23 +1,3 @@
-/**
- * Mirrors API-managed agents' runtime wiring onto the dashboard canvas, the
- * account-API counterpart of cliSync's `syncCanvasLayoutForManifest`.
- *
- * An agent created or updated through the public account API carries its
- * wiring inline in the encrypted config blob (`sandbox`, `workspaces`,
- * `skills.allowed`, `subagent.allowed`). The canvas never sees any of it: the
- * back-sync only drops a bare agent node, so the Architecture view shows an
- * agent floating with no workspace, sandbox, or skills even though the runtime
- * resolves all of them. This module recomputes the desired wiring for every
- * `managedBy: "api"` agent in a stage and materializes it as locked
- * `managedBy: "api"` nodes and edges, so the canvas mirrors the API config
- * without ever fighting its owner.
- *
- * Referenced workspace/sandbox rows created through the API are account-scoped
- * (no project/stage). They are adopted into the canvas stage here.
- * Without adoption `materializeRuntimeNodes` rejects them on the next
- * dashboard save ("belongs to a different project or stage").
- */
-
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { CanvasEdge, CanvasNode } from "./canvasShapes";
@@ -26,7 +6,6 @@ import { applyTidyLayout } from "./canvasLayout";
 import { loadMcpServersByNode } from "./mcp";
 import { isPlainObject, stableJson } from "./objects";
 
-/** The stored layout normalized and indexed by id and back-references. */
 type ExistingApiCanvas = {
   existingByAgentConfigId: Map<string, CanvasNode>;
   existingByResourceId: Map<string, CanvasNode>;
@@ -34,33 +13,20 @@ type ExistingApiCanvas = {
   nextById: Map<string, CanvasNode>;
 };
 
-/** Shared state threaded through one wiring pass over a stage's canvas. */
 type ApiWiringSync = ExistingApiCanvas & {
   ctx: MutationCtx;
   projectId: Id<"projects">;
   stageId: Id<"stages">;
   configs: Doc<"agentConfigs">[];
-  /** Lazily loaded skill names per owning account. */
   desiredEdges: Map<string, CanvasEdge>;
   desiredWiringNodeIds: Set<string>;
   workspaceReferenced: Set<string>;
   workspaceHasWriter: Set<string>;
   agentNodeByConfigId: Map<string, string>;
-  /**
-   * Agent nodes whose config blob could not be read this pass: their existing
-   * wiring must survive reconciliation, since the desired state is unknown.
-   */
+  /** Agents whose blob could not be read: desired wiring unknown, so existing wiring stays. */
   unresolvedAgentNodeIds: Set<string>;
 };
 
-/**
- * Recomputes the desired API-managed wiring for one stage's canvas and
- * patches the layout: locked workspace/sandbox/skill nodes, agent→resource
- * edges, and pruning of wiring the configs no longer declare. Resources are
- * resolved against each agent's own account, so a mixed stage never
- * aliases or prunes another account's wiring. Agents whose blob cannot be
- * decrypted keep their existing wiring untouched.
- */
 export async function syncApiAgentCanvasWiring(
   ctx: MutationCtx,
   options: {
@@ -69,8 +35,7 @@ export async function syncApiAgentCanvasWiring(
   },
 ): Promise<void> {
   const { projectId, stageId } = options;
-  // Without the shared secret no blob can be decrypted, so no wiring is known;
-  // leave the canvas untouched rather than pruning edges we cannot recompute.
+  // No secret means no readable blob: leave the canvas, never prune what we cannot recompute.
   if (!hasEncryptionSecret()) {
     return;
   }
@@ -119,7 +84,6 @@ export async function syncApiAgentCanvasWiring(
     reconciled.nextEdges,
     await loadMcpServersByNode(ctx, stageId),
   );
-  // Runs on every API agent write; most of them do not change the wiring.
   if (
     stableJson(layout.nodes) === stableJson(nodes) &&
     stableJson(layout.edges) === stableJson(reconciled.nextEdges)
@@ -134,7 +98,7 @@ export async function syncApiAgentCanvasWiring(
   });
 }
 
-/** Default agent→service edge, matching the dashboard's `xy-edge__` id scheme. */
+// Edge ids follow the dashboard's schemes: it rebuilds handles from the id on load.
 function addDefaultEdge(
   edges: Map<string, CanvasEdge>,
   source: string,
@@ -144,10 +108,6 @@ function addDefaultEdge(
   edges.set(id, { id: id, source: source, target: target });
 }
 
-/**
- * Side-handle mount edge for a workspace↔sandbox override, matching the
- * dashboard's `mount:` id scheme (handles are rebuilt from the id on load).
- */
 function addMountEdge(
   edges: Map<string, CanvasEdge>,
   workspaceNodeId: string,
@@ -161,13 +121,7 @@ function addMountEdge(
   });
 }
 
-/**
- * Adopt an API-created (account-scoped) row into this stage so canvas
- * saves accept it; rows owned by another account or living in another
- * stage cannot be drawn here and are skipped. Dashboard-owned rows in
- * this stage keep their owner, so an API agent may reference a
- * dashboard-created resource without stealing it.
- */
+// An account-scoped API row joins the stage, or the next dashboard save rejects it.
 async function adoptResourceRow(
   sync: ApiWiringSync,
   row: Doc<"workspaceConfigs"> | Doc<"sandboxConfigs">,
@@ -222,10 +176,6 @@ function indexExistingCanvas(layout: Doc<"canvasLayouts">): ExistingApiCanvas {
   };
 }
 
-/**
- * Persistence stage: merge desired wiring with what survives from the
- * existing layout, and drop anything left dangling.
- */
 function reconcileApiWiring(sync: ApiWiringSync): {
   nextNodes: CanvasNode[];
   nextEdges: CanvasEdge[];
@@ -233,8 +183,6 @@ function reconcileApiWiring(sync: ApiWiringSync): {
   const isApiManagedEdge = (edge: CanvasEdge): boolean =>
     sync.nextById.get(edge.source)?.data.managedBy === "api" &&
     sync.nextById.get(edge.target)?.data.managedBy === "api";
-  // Stale API wiring is pruned; user-drawn edges and the wiring of agents
-  // whose desired state is unknown this pass survive.
   const existingEdgeIds = new Set(sync.existingEdges.map((edge) => edge.id));
   const keptEdges = sync.existingEdges.filter(
     (edge) =>
@@ -248,9 +196,7 @@ function reconcileApiWiring(sync: ApiWiringSync): {
     keptEdges.push(edge);
   }
 
-  // Prune API-managed wiring nodes nothing references anymore: neither the
-  // desired sets nor a surviving edge (an unresolved agent's wiring). Agent
-  // nodes are owned by the create/remove back-sync, not by this wiring pass.
+  // Agent nodes belong to the create/remove back-sync, not to this wiring pass.
   const edgeEndpointIds = new Set(
     keptEdges.flatMap((edge) => [edge.source, edge.target]),
   );
@@ -262,8 +208,6 @@ function reconcileApiWiring(sync: ApiWiringSync): {
       edgeEndpointIds.has(node.id),
   );
 
-  // Invariant: every persisted edge has two persisted endpoints. A pruned or
-  // externally deleted node must take its edges with it.
   const nextNodeIds = new Set(nextNodes.map((node) => node.id));
   const nextEdges = keptEdges.filter(
     (edge) => nextNodeIds.has(edge.source) && nextNodeIds.has(edge.target),
@@ -272,7 +216,6 @@ function reconcileApiWiring(sync: ApiWiringSync): {
   return { nextNodes: nextNodes, nextEdges: nextEdges };
 }
 
-/** Resolves a sandbox ref into an adopted, materialized node id. */
 async function resolveSandboxNode(
   sync: ApiWiringSync,
   sandboxRef: unknown,
@@ -308,10 +251,6 @@ async function resolveSandboxNode(
   return node.id;
 }
 
-/**
- * Stamp the resolved read-only state onto referenced workspace nodes; an
- * explicit `false` clears a stale flag once a writer exists.
- */
 function stampWorkspaceReadOnly(sync: ApiWiringSync): void {
   for (const nodeId of sync.desiredWiringNodeIds) {
     const node = sync.nextById.get(nodeId);
@@ -325,7 +264,6 @@ function stampWorkspaceReadOnly(sync: ApiWiringSync): void {
   }
 }
 
-/** Creates or refreshes a node in `sync.nextById`. Positions come from the tidy pass. */
 function upsertWiringNode(
   sync: ApiWiringSync,
   preferred: CanvasNode | undefined,
@@ -338,7 +276,7 @@ function upsertWiringNode(
   const node = {
     id: nodeId,
     type: kind,
-    // Placeholder: the tidy pass in `syncApiAgentCanvasWiring` assigns every position.
+    // Placeholder: the tidy pass in syncApiAgentCanvasWiring assigns every position.
     position: { x: 0, y: 0 },
     data: { ...existing?.data, ...data },
   };
@@ -347,12 +285,6 @@ function upsertWiringNode(
   return node;
 }
 
-/**
- * Per-config wiring stage: resolve the agent row and its decrypted blob,
- * upsert the agent node, then materialize the sandbox/workspace/skill/
- * subagent wiring the blob declares. A config whose blob cannot be read is
- * marked unresolved so its existing wiring survives reconciliation.
- */
 async function wireAgentConfig(
   sync: ApiWiringSync,
   config: Doc<"agentConfigs">,
@@ -389,8 +321,6 @@ async function wireAgentConfig(
   );
   sync.agentNodeByConfigId.set(config._id, agentNode.id);
 
-  // Every listed sandbox gets an edge, and the agent node keeps their order so
-  // the canvas can number them. The first entry stays the default.
   const sandboxes: unknown[] = Array.isArray(nested.sandboxes)
     ? nested.sandboxes
     : [];
@@ -440,7 +370,6 @@ async function wireAgentConfig(
   }
 }
 
-/** Agent→skill wiring from `skills.allowed`, scoped to the owning account. */
 function wireAgentSkills(
   sync: ApiWiringSync,
   options: {
@@ -451,8 +380,7 @@ function wireAgentSkills(
 ): void {
   for (const entry of options.allowed) {
     if (typeof entry !== "string" || !entry.trim()) continue;
-    // Allowed refs are `<accountId>/<name>` paths; the node id carries the
-    // owning account so same-named skills never alias across accounts.
+    // Refs are `<accountId>/<name>`; the node id keeps the account so names never alias.
     const name = entry.slice(entry.lastIndexOf("/") + 1).trim();
     // Skills live in S3, which a mutation cannot list, so the ref is trusted.
     if (!name) continue;
@@ -474,7 +402,6 @@ function wireAgentSkills(
   }
 }
 
-/** Agent→agent edges from `subagent.allowed` toward other API configs in the stage. */
 function wireAgentSubagents(
   sync: ApiWiringSync,
   options: {
@@ -500,7 +427,6 @@ function wireAgentSubagents(
   }
 }
 
-/** Agent→workspace wiring from `workspaces`, including per-workspace sandbox overrides. */
 async function wireAgentWorkspaces(
   sync: ApiWiringSync,
   options: {
@@ -529,8 +455,7 @@ async function wireAgentWorkspaces(
         label: row.name,
         status: "idle",
         resourceId: row._id,
-        // The agent's ref name is the mount path the runtime uses; prefer
-        // it over the row name so a canvas round-trip derives the same ref.
+        // The ref name is the runtime mount path; a canvas round-trip must derive the same ref.
         mountName:
           typeof ref.name === "string" && ref.name.trim()
             ? ref.name.trim()
@@ -544,9 +469,6 @@ async function wireAgentWorkspaces(
     addDefaultEdge(sync.desiredEdges, options.agentNodeId, workspaceNode.id);
     sync.workspaceReferenced.add(workspaceNode.id);
     if (typeof ref.sandbox === "string") {
-      // Per-workspace sandbox override → writable, drawn as a mount edge.
-      // A ref that fails to resolve grants no writer: readOnly must never
-      // claim writability without the mount edge that backs it.
       const overrideNodeId = await resolveSandboxNode(
         sync,
         ref.sandbox,
@@ -557,8 +479,7 @@ async function wireAgentWorkspaces(
         addMountEdge(sync.desiredEdges, workspaceNode.id, overrideNodeId);
       }
     } else if (ref.sandbox !== null && options.defaultSandboxNodeId) {
-      // Omitted sandbox inherits the agent-level default (writable);
-      // `null` explicitly forces read-only, so it stays a non-writer.
+      // An omitted sandbox inherits the agent's default (writable); `null` forces read-only.
       sync.workspaceHasWriter.add(workspaceNode.id);
     }
   }

@@ -1,15 +1,3 @@
-/**
- * The whole loop against a fake homeserver: whoami, the device's real crypto
- * store on disk, `/sync`, the outbox, a message forwarded to a webhook the
- * fake also serves, and a send back into the room.
- * Everything else in this folder stubs the account, so this is the only test
- * that runs `MatrixAccount` itself.
- *
- * It loads `@matrix-org/matrix-sdk-crypto-nodejs`, whose prebuilt `.node` is
- * absent wherever install ran with `--ignore-scripts` (CI does). The suite
- * skips itself there rather than failing.
- */
-
 import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -35,7 +23,6 @@ const ADA_MESSAGE: RoomEvent = {
 };
 const DEFAULT_TIMELINE: RoomEvent[] = [
   {
-    // The agent's own reply, which must not come back.
     content: {
       body: "earlier reply",
       [MATRIX_BOT_MARKER]: true,
@@ -51,23 +38,18 @@ const DEFAULT_TIMELINE: RoomEvent[] = [
 
 interface Homeserver {
   apiUrl: string;
-  /** What the fake webhook was posted, in order. */
   forwarded: MatrixForwardedEvent[];
-  /** Holds the webhook's answer while set. */
   hold: Promise<void> | null;
   memberLookups: number;
-  /** Who `/joined_members` lists. Tests edit it to have someone leave. */
   members: Record<string, { display_name: string }>;
   sent: Array<{ body: unknown; path: string }>;
   stop: () => void;
   syncs: number;
-  /** The fake webhook, as the account's only target. */
   targets: () => ForwardTarget[];
 }
 
 interface HomeserverOptions {
   encrypted?: boolean;
-  /** What the second sync, the first one the account forwards, serves. */
   timeline?: RoomEvent[];
   unknownToken?: boolean;
 }
@@ -134,7 +116,6 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
       homeserver.stop();
     }
 
-    // The store outlives the account: its keys and its place in the timeline.
     expect(
       await readFile(join(storeDir, storePath(), "sync-token"), "utf8"),
     ).toBe("s2");
@@ -167,7 +148,6 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
     const homeserver = fakeHomeserver({
       timeline: [
         {
-          // No room key will ever arrive for this session.
           content: {
             algorithm: "m.megolm.v1.aes-sha2",
             ciphertext: "unknown",
@@ -192,7 +172,6 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
 
     account.start();
     try {
-      // A few syncs past the one that served it.
       await until((): boolean => homeserver.syncs >= 5);
     } finally {
       await account.stop();
@@ -203,7 +182,6 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
     expect(
       await readFile(join(storeDir, storePath(), "sync-token"), "utf8"),
     ).toBe("s2");
-    // Still encrypted at rest, waiting for its room key.
     using outbox = new Database(join(storeDir, storePath(), "outbox.sqlite"));
     expect(
       outbox.query("SELECT event_id, event_json FROM outbox").all(),
@@ -223,7 +201,6 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
     const storeDir = await temporaryStore();
     const { promise: delivered, resolve: deliver } =
       Promise.withResolvers<void>();
-    // The first delivery is still in flight when shutdown starts.
     homeserver.hold = delivered;
     const options = {
       accessToken: "syt_token",
@@ -277,8 +254,7 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
     try {
       await until((): boolean => homeserver.syncs >= 2);
       await account.send(reply);
-      // Ada leaves. Her device list stays tracked while she shares another
-      // room with the account, so no sync would say the room changed.
+      // She may share another room with the account, so no sync would say this one changed.
       delete homeserver.members["@ada:example.org"];
       await account.send(reply);
 
@@ -293,11 +269,6 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
   }, 20_000);
 });
 
-/**
- * Answers the handful of endpoints the loop calls. `/sync` serves the timeline
- * on the second call, which is the first one the account forwards: the first
- * sync only fetches a token so the backlog is skipped.
- */
 function fakeHomeserver(options: HomeserverOptions = {}): Homeserver {
   const state: Homeserver = {
     apiUrl: "",
@@ -381,8 +352,7 @@ function fakeHomeserver(options: HomeserverOptions = {}): Homeserver {
 
         return Response.json({ event_id: "$sent-1" });
       }
-      // Every queried user answers with no devices, so there is no key to
-      // share. A user left out would make the machine wait on them.
+      // Every queried user must answer, or the OlmMachine waits on the missing one.
       if (path === "/keys/query") {
         const query: { device_keys: Record<string, string[]> } = JSON.parse(
           await request.text(),
@@ -399,7 +369,6 @@ function fakeHomeserver(options: HomeserverOptions = {}): Homeserver {
       if (path === "/keys/claim") {
         return Response.json({ failures: {}, one_time_keys: {} });
       }
-      // Whatever the OlmMachine uploads on its first sync.
       if (path.startsWith("/keys/")) {
         return Response.json({ one_time_key_counts: { signed_curve25519: 0 } });
       }
@@ -426,7 +395,6 @@ async function nativeCryptoAvailable(): Promise<boolean> {
   }
 }
 
-/** The account's store folder name: the sha256 of its user and device. */
 function storePath(): string {
   return new Bun.CryptoHasher("sha256")
     .update(`${USER_ID}|${DEVICE_ID}`)
@@ -440,7 +408,6 @@ async function temporaryStore(): Promise<string> {
   return dir;
 }
 
-/** Polls `ready` every 50ms, failing the test rather than hanging forever. */
 async function until(ready: () => boolean): Promise<void> {
   const deadline = Date.now() + 10_000;
   while (!ready()) {

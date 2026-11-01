@@ -1,11 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * `/v1/account/connections`: `start` answers the provider's consent screen on
- * the right client, a PUT trades the code and stores the connection only after
- * its ID token verifies and the type's rules hold, the stored tokens never
- * leave, the managed service refuses ChatGPT, a refresh never overwrites a
- * newer sign-in, and a disconnect forgets, then revokes.
- */
 
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -25,7 +18,6 @@ const connectionsTest = (): TestConvex<typeof schema> =>
 
 type T = TestConvex<typeof schema>;
 
-/** What the stubbed provider answers on the token endpoint. */
 interface ProviderAnswer {
   issuer: string;
   audience: string;
@@ -252,7 +244,6 @@ test("a disconnect forgets the connection, then revokes it", async () => {
   expect((await request(t, "GET", "chatgpt")).status).toBe(404);
 });
 
-/** The PUT body `broods connect chatgpt` sends after the redirect. */
 function codeBody(): Record<string, string> {
   return {
     code: "code-1",
@@ -264,7 +255,6 @@ function codeBody(): Record<string, string> {
   };
 }
 
-/** An ID token for the current provider answer, signed with the test's key. */
 async function idToken(): Promise<string> {
   const encode = (binary: string): string =>
     btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -286,7 +276,6 @@ async function idToken(): Promise<string> {
   return `${signingInput}.${encode(String.fromCharCode(...new Uint8Array(signature)))}`;
 }
 
-/** One call to the connections routes as the account owner. */
 async function request(
   t: T,
   method: "GET" | "POST" | "PUT" | "DELETE",
@@ -306,7 +295,6 @@ async function request(
   );
 }
 
-/** An org and account whose secret `request` sends. */
 async function seedAccount(t: T): Promise<Id<"accounts">> {
   return await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("orgs", {
@@ -328,7 +316,6 @@ async function seedAccount(t: T): Promise<Id<"accounts">> {
   });
 }
 
-/** The start body `broods connect` sends before opening the browser. */
 function startBody(): Record<string, string> {
   return {
     redirectUri: REDIRECT_URI,

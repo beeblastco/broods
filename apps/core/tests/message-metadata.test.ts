@@ -1,10 +1,3 @@
-/**
- * Generic per-message metadata carriage: a channel.message.received hook's
- * `metadata` return rides the ingress event, persists on the stored-event
- * envelope (never inside the model message), and is stripped again before
- * messages reach a model call. Core carries the value without interpreting it.
- */
-
 import { describe, expect, it } from "bun:test";
 import type { ModelMessage } from "ai";
 import { attachMetadataToLatestUserIngress } from "../src/harness/integrations.ts";
@@ -33,7 +26,6 @@ describe("attachMetadataToLatestUserIngress", () => {
       metadata: METADATA,
     });
     expect(next[0]).toEqual({ role: "user", content: "earlier" });
-    // Input list is not mutated.
     expect(events[2]).toEqual({ role: "user", content: "latest" });
   });
 });
@@ -108,8 +100,7 @@ describe("createStoredEventFromModelMessage", () => {
   });
 
   it("keeps a note for a picture-only turn instead of dropping the row", () => {
-    // A dropped row would leave the assistant's reply in history answering a
-    // user turn that is not there.
+    // A dropped row would leave the assistant's reply answering a user turn that is not there.
     const stored = createStoredEventFromModelMessage(
       {
         role: "user",
@@ -185,7 +176,6 @@ describe("stripEnvelopeFieldsFromMessages", () => {
     const stripped = stripEnvelopeFieldsFromMessages(messages);
 
     expect(stripped[0]).toEqual({ role: "user", content: "hello" });
-    // Clean messages pass through by reference.
     expect(stripped[1]).toBe(messages[1]);
   });
 });

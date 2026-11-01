@@ -29,7 +29,6 @@ const readS3TextMock = mock(
     throw new Error("NoSuchKey");
   },
 );
-// A ranged read: the head of whatever readS3TextMock serves.
 const readS3TextHeadMock = mock(
   async (bucket: string, key: string, maxBytes: number): Promise<string> =>
     (await readS3TextMock(bucket, key)).slice(0, maxBytes),
@@ -77,8 +76,7 @@ const deleteS3ObjectMock = mock(async (bucket: string, key: string) => {
   s3Deletes.push({ bucket: bucket, key: key });
 });
 
-// Spread the real module first: mock.module is process-global, so any export
-// omitted here disappears for every test file that loads after this one.
+// mock.module is process-global: an export omitted here vanishes for later test files.
 await mock.module("../src/shared/s3.ts", () => ({
   ...realS3,
   s3ObjectExists: s3ObjectExistsMock,
@@ -428,7 +426,6 @@ describe("loadConfiguredSkillPrompt", () => {
         "fs-0123456789abcdef0123456789abcdef01234567/.agents/skills/script-skill/scripts/analyze.py",
       options: { contentType: "text/plain; charset=utf-8", executable: true },
     });
-    // Staging no longer writes a manifest. Every load re-stages from source.
     expect(
       s3Writes.filter((write) => write.key.endsWith(".stage.json")),
     ).toHaveLength(0);
@@ -476,7 +473,6 @@ describe("loadConfiguredSkillPrompt", () => {
     );
 
     expect(result.stagedFiles).toEqual(["SKILL.md"]);
-    // Source is always re-copied; no manifest is written or read.
     expect(s3Copies).toContainEqual({
       sourceBucket: "test-skills-bucket",
       sourceKey: "acct_test/refresh-skill/SKILL.md",
@@ -487,7 +483,6 @@ describe("loadConfiguredSkillPrompt", () => {
     expect(
       s3Writes.filter((write) => write.key.endsWith(".stage.json")),
     ).toHaveLength(0);
-    // The stale file no longer in source is removed.
     expect(s3Deletes).toContainEqual({
       bucket: "workspace-bucket",
       key: `${canonicalPrefix}old.py`,
@@ -632,7 +627,6 @@ describe("configured skill read bounds", () => {
   let active = 0;
   let peak = 0;
 
-  // Serves `count` distinct 4 MiB skills and counts the S3 calls in flight.
   function serveLargeSkills(count: number): string[] {
     active = 0;
     peak = 0;
@@ -689,7 +683,6 @@ describe("configured skill read bounds", () => {
     expect(skills).toHaveLength(1);
     expect(readS3TextHeadMock).toHaveBeenCalledTimes(1);
     expect(listS3PrefixMock).toHaveBeenCalledTimes(1);
-    // The SKILL.md read is held to the size the listing reported.
     expect(readS3TextMock.mock.calls.at(-1)?.[3]).toBe(SKILL_BYTES);
   });
 

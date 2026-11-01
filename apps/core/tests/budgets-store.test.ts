@@ -1,8 +1,3 @@
-/**
- * The Convex budget store's usage write: a failed write is retried rather
- * than dropped, since each one is money the platform already spent.
- */
-
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { ConvexHttpClient } from "convex/browser";
 import { budgets } from "../src/shared/convex/budgets.ts";
@@ -34,8 +29,7 @@ describe("budgets.record", () => {
       mutation.mockRestore();
     }
 
-    // Both attempts carry the same write id, so Convex applies the usage once
-    // even when the first one committed and only its response was lost.
+    // One write id across attempts: Convex applies it once even if only the response was lost.
     const write = {
       accountId: "acct_1",
       usage: { egressGb: 2 },

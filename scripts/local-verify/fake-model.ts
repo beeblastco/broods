@@ -1,10 +1,5 @@
-/**
- * Core preload for `local-stack up --perf`. Answers api.anthropic.com in
- * process, so a perf run times Broods and not the model, and appends every
- * core call to the local Convex backend to BROODS_LOCAL_CONVEX_TRACE so
- * `local-stack perf` can count round trips per turn. Never loaded outside the
- * local stack.
- */
+// Core preload for `local-stack up --perf`: answers api.anthropic.com in process so perf
+// times Broods, not the model, and traces core's Convex calls to BROODS_LOCAL_CONVEX_TRACE.
 
 import { appendFileSync } from "node:fs";
 
@@ -47,7 +42,6 @@ function event(type: string, fields: Record<string, unknown>): string {
   return `event: ${type}\ndata: ${JSON.stringify({ type: type, ...fields })}\n\n`;
 }
 
-/** A Messages API answer: text, or one `bash` call when the user asks with RUN_BASH. */
 function fakeModel(request: MessagesRequest): Response {
   const message = {
     id: `msg_${Date.now()}`,

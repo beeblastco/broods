@@ -1,7 +1,3 @@
-/**
- * Composition boundary between durable Broods sessions and live HarnessAgent sessions.
- */
-
 import {
   HarnessCapabilityUnsupportedError,
   type HarnessAgent,
@@ -41,17 +37,13 @@ import type {
 } from "./runtime.ts";
 
 const HARNESS_LEASE_RENEWAL_FAILURE_LIMIT = 3;
-// A machine only one conversation uses is released after a day idle instead of
-// the default week, so abandoned subagent tasks stop holding machines.
+// An unshared machine frees after a day idle, not the default week: abandoned tasks hold none.
 const ISOLATED_SANDBOX_RELEASE_SECONDS = 24 * 60 * 60;
-// Harness types whose runtime refused a mid-turn message in this process.
 export const MID_TURN_STEERING_UNSUPPORTED = new Set<AiSdkHarnessType>();
 
 export interface HarnessReservationOptions {
-  /** The agent-level key its first sandbox reserves on, when it reserves one. */
   agentReservationKey: string | undefined;
   conversationKey: string;
-  /** The task asked for a machine of its own. */
   isolated: boolean;
   stored: StoredHarnessSession | null;
   type: AiSdkHarnessType;
@@ -64,14 +56,10 @@ export interface OpenAiSdkHarnessSessionOptions {
   type: AiSdkHarnessType;
 }
 
-/** A native harness turn ready to stream, from `prepareHarnessTurn`. */
 export interface HarnessTurn {
-  /** Stops the lease monitor and destroys the native session; for a turn that fails before its stream. */
   dispose: () => Promise<void>;
-  /** The environment text the model reads with the turn. */
   environment: string;
   nativeSession: HarnessAgentSession;
-  /** Stored with the checkpoint so the next turn resumes on the same machine. */
   reservationKey: string;
   runtime: AiSdkHarnessRuntime;
   stopLeaseMonitor: () => void;
@@ -80,21 +68,15 @@ export interface HarnessTurn {
 export interface PrepareHarnessTurnOptions {
   abortController: AbortController;
   agentConfig: AgentConfig;
-  /** The agent-level key its first sandbox reserves on, when it reserves one. */
   agentReservationKey: string | undefined;
-  /** Drains steering queued before the turn into `turnContext`. */
   applySteering: () => Promise<void>;
-  /** Tool names the agent config sends to a person for approval. */
   configuredApprovals: ReadonlyMap<string, true>;
-  /** The run loop passes the entrypoint's agent factory and session opener. */
   createAgent: typeof createConfiguredHarnessAgent;
-  /** The task asked for a machine of its own. */
   isolated: boolean;
   metadata: SandboxRunMetadata;
-  /** Takes the machine occupancy release; the caller runs it when the run finalizes, also when setup throws. */
+  /** The caller runs the release when the run finalizes, also when setup throws. */
   onOccupied: (release: () => void) => void;
   openSession: typeof openAiSdkHarnessSession;
-  /** The agent's first sandbox, which the harness runs on. */
   sandbox: ResolvedAgentSandbox | undefined;
   session: Session;
   stopMessage: string;
@@ -105,17 +87,11 @@ export interface PrepareHarnessTurnOptions {
 export interface ParkAiSdkHarnessSessionOptions {
   broodsSession: Session;
   nativeSession: HarnessAgentSession;
-  /** Stored with the checkpoint so the next turn resumes on the same machine. */
   reservationKey: string;
   successful: boolean;
   type: AiSdkHarnessType;
 }
 
-/**
- * The reservation a harness conversation runs on; the run loop in `harness.ts` calls it.
- * A stored session keeps its own (older rows fall back to the conversation key). A new
- * one shares the agent's machine unless the task is isolated or the adapter can't share.
- */
 export function harnessReservationKey(
   options: HarnessReservationOptions,
 ): string {
@@ -129,10 +105,6 @@ export function harnessReservationKey(
   return options.agentReservationKey ?? options.conversationKey;
 }
 
-/**
- * Starts the native session for a harness turn, resuming the stored one when it
- * exists. Called by the run loop in `harness.ts`; a released machine starts fresh.
- */
 export async function openAiSdkHarnessSession(
   options: OpenAiSdkHarnessSessionOptions,
 ): Promise<HarnessAgentSession> {
@@ -156,9 +128,6 @@ export async function openAiSdkHarnessSession(
       abortSignal: options.abortSignal,
     });
   } catch (error) {
-    // The machine idled past its reservation window and was released. The
-    // conversation continues on a fresh machine and native session; only the
-    // harness-side context of earlier turns is lost.
     if (!isSandboxGoneError(error)) throw error;
     logWarn("Harness machine was released; starting a fresh session", {
       sessionId: stored.sessionId,
@@ -172,10 +141,6 @@ export async function openAiSdkHarnessSession(
   }
 }
 
-/**
- * Detaches or stops the native session after a turn and saves its resume state on
- * the Broods session. Called by the run loop in `harness.ts`; destroys it on failure.
- */
 export async function parkAiSdkHarnessSession(
   options: ParkAiSdkHarnessSessionOptions,
 ): Promise<void> {
@@ -184,7 +149,7 @@ export async function parkAiSdkHarnessSession(
       options.successful && harnessSessionParking(options.type) === "detach"
         ? await options.nativeSession.detach()
         : await options.nativeSession.stop();
-    // The save itself is owner-fenced: a stale run's write is refused there.
+    // The save is owner-fenced: a stale run's write is refused there.
     await options.broodsSession.saveHarnessSession({
       harnessType: options.type,
       sessionId: options.nativeSession.sessionId,
@@ -197,12 +162,6 @@ export async function parkAiSdkHarnessSession(
   }
 }
 
-/**
- * Sets up a native harness turn: stores the pending input, applies steering,
- * loads the stored session, builds the agent on its machine and opens the
- * session, renewing the conversation lease from before the open. Called by the
- * run loop in `harness.ts`, which owns finalization and the occupancy release.
- */
 export async function prepareHarnessTurn(
   options: PrepareHarnessTurnOptions,
 ): Promise<HarnessTurn> {
@@ -266,9 +225,8 @@ export async function prepareHarnessTurn(
       conversationKey: session.conversationKey,
     }),
   );
-  // Opening a machine can outlast the lease, so renewal starts before it. A
-  // lease lost during the open waits until the open settles: cancelling it
-  // would leave a booting machine with no session to park or destroy.
+  // Opening can outlast the lease, so renewal starts first. A lease lost mid-open aborts once
+  // the open settles: cancelling it would leave a booting machine with no session to destroy.
   let opened = false;
   let lostDuringOpen: { reason: unknown } | undefined;
   const stopLeaseMonitor = startHarnessLeaseMonitor(
@@ -330,20 +288,11 @@ export async function prepareHarnessTurn(
   };
 }
 
-/**
- * Saves steering that arrived during a HarnessAgent turn, then hands it to the
- * running turn, which takes it at its next safe input boundary. Only for
- * adapters that accept mid-turn messages; the rest get it before their next
- * turn. A hand-over that fails throws and fails the run; the steer is already
- * in history, so a retry still reads it.
- */
 export async function steerHarnessTurn(
   session: Session,
   harnessSession: HarnessAgentSession,
   type: AiSdkHarnessType,
 ): Promise<void> {
-  // Only plain-text steers can be handed over; the rest stay queued for the
-  // next turn, which takes them whole.
   const steering = await session.applySteeringIngress({ textOnly: true });
   if (!steering) {
     return;
@@ -355,13 +304,12 @@ export async function steerHarnessTurn(
     )
     .filter(Boolean)
     .join("\n\n");
+  // Saved before the hand-over, so a retry of a run whose hand-over failed still reads it.
   await session.appendIngressEvents(events);
   if (text) {
     await harnessSession
       .experimental_steerTurn(text)
       .catch((error: unknown): never => {
-        // This runtime cannot take one at all, so later turns in this process
-        // leave steers queued for the next turn instead.
         if (error instanceof HarnessCapabilityUnsupportedError) {
           MID_TURN_STEERING_UNSUPPORTED.add(type);
         }
@@ -375,7 +323,6 @@ export async function steerHarnessTurn(
   });
 }
 
-/** The agent's first sandbox, which a harness run needs to run on. */
 function requireHarnessSandbox(
   sandbox: ResolvedAgentSandbox | undefined,
 ): ResolvedAgentSandbox {
@@ -388,12 +335,6 @@ function requireHarnessSandbox(
   return sandbox;
 }
 
-/**
- * Renews the conversation lease every second during a HarnessAgent turn and
- * reports a stop, a lost lease or repeated renewal failures once through
- * `onLost`. Returns the function that stops the monitor; a renewal still in
- * flight then reports nothing.
- */
 function startHarnessLeaseMonitor(
   session: Session,
   signal: AbortSignal,

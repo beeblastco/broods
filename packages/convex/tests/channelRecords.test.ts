@@ -10,7 +10,6 @@ const modules = import.meta.glob("../**/*.ts");
 const t = (): TestConvex<typeof schema> => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-/** One account with one active record and one soft-deleted tombstone. */
 async function seed(tt: T): Promise<Id<"accounts">> {
   return await tt.run(async (ctx) => {
     const now = Date.now();

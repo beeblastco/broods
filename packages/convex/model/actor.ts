@@ -1,9 +1,3 @@
-/**
- * Who did something, as a list draws it: a name and an avatar behind a user
- * id. Every "created by", "rotated by" and "invited by" cell reads this
- * shape, so the queries behind them share one resolver.
- */
-
 import { v, type Infer } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
@@ -17,7 +11,6 @@ export type Actor = Infer<typeof actorValidator>;
 
 type Ctx = QueryCtx | MutationCtx;
 
-/** One actor; undefined when there is no id or the user is gone. */
 export async function actorOf(
   ctx: Ctx,
   userId: Id<"users"> | undefined,
@@ -28,7 +21,6 @@ export async function actorOf(
   return user ? { name: user.name, avatarUrl: user.avatarUrl } : undefined;
 }
 
-/** Several actors by id, each user fetched once; gone users are absent. */
 export async function actorsOf(
   ctx: Ctx,
   userIds: Iterable<Id<"users"> | undefined>,

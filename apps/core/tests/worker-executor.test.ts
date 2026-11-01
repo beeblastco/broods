@@ -1,8 +1,4 @@
-/**
- * The worker executor against a mocked Worker: what it sends, when it
- * reserves and reuses stored files, and which instance rows it mirrors. The
- * Worker itself is tested in its own workspace under Miniflare.
- */
+// The Worker itself is tested in its own workspace under Miniflare.
 
 import { afterEach, beforeEach, expect, it, mock, spyOn } from "bun:test";
 import { MAX_TIMEOUT_MS } from "../../cloudflare-worker/src/limits.ts";
@@ -17,7 +13,6 @@ import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
 import { requestUrl } from "./helpers/http.ts";
 import { WORKER_MAX_TIMEOUT_SECONDS } from "@broods/convex/model/sandboxRules";
 
-// A successful Worker exec answer, in the shared exec contract's shape.
 const EXEC_OK = {
   ok: true,
   exit_code: 0,
@@ -339,7 +334,6 @@ function mockFetch(
   );
 }
 
-// Lets the queued mirror writes, which run off the command's path, settle.
 async function settled(): Promise<void> {
   await new Promise((resolve): void => {
     setTimeout(resolve, 0);

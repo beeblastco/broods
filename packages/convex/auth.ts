@@ -1,22 +1,15 @@
-/**
- * WorkOS AuthKit integration and event handlers for user authentication lifecycle.
- */
-
 import { AuthKit, type AuthFunctions } from "@convex-dev/workos-authkit";
 import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
 import { authProvider } from "./model/selfHostAuth";
 
-// A self-hosted stack never calls WorkOS: its admin is seeded into the
-// component's users table by `user.ensureSynced`, so the client needs no keys.
+// Self-hosted never calls WorkOS (`user.ensureSynced` seeds its admin), so it needs no keys.
 const selfHosted = authProvider() === "self-host";
 
 export const authKit: AuthKit<DataModel> = new AuthKit<DataModel>(
   components.workOSAuthKit,
   {
-    // The generated API types `authKitAction` from the component's own
-    // `v.record` returns validator, wider than the payload `AuthFunctions`
-    // names. These are the component's handlers, so the refs are its own.
+    // Codegen types these from the component's `v.record` returns, wider than `AuthFunctions`.
     authFunctions: internal.auth as AuthFunctions,
     ...(selfHosted
       ? {
@@ -28,7 +21,6 @@ export const authKit: AuthKit<DataModel> = new AuthKit<DataModel>(
   },
 );
 
-/** The signed-in WorkOS user `authKit.getAuthUser` returns, once checked non-null. */
 export type AuthUser = NonNullable<
   Awaited<ReturnType<typeof authKit.getAuthUser>>
 >;
@@ -98,8 +90,7 @@ export const { authKitEvent } = authKit.events({
 
       return;
     }
-    // WorkOS may redeliver a deletion event. Queue teardown once, so a
-    // duplicate delivery cannot race the core runtime cleanup or final purge.
+    // WorkOS may redeliver a deletion: queue teardown once so a duplicate cannot race cleanup.
     if (user.workosDeletionRequestedAt) {
       return;
     }
@@ -117,7 +108,6 @@ export const { authKitEvent } = authKit.events({
   "session.revoked": async (): Promise<void> => {},
 });
 
-/** Display name for a WorkOS user: first + last name, else the email. Also stamps who minted a runtime key. */
 export function deriveName(data: {
   firstName?: string | null;
   lastName?: string | null;

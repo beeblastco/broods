@@ -1,17 +1,10 @@
-/**
- * Example: E2B sandbox provider (stateless bash) via declarative broods resources.
- *
- * E2B runs each command in an ephemeral template sandbox and does NOT mount the S3
- * workspace, so workspace-backed tools (read/write/edit/glob/grep) are disabled. Reference
- * the sandbox WITHOUT a workspace for stateless `bash`. Use a template with Node + Python
- * installed; `apiKey` can be omitted when `E2B_API_KEY` is set on the harness runtime.
- */
+// E2B mounts no S3 workspace, so only stateless `bash`: the workspace file tools stay off.
+// Use a template with Node + Python; apiKey may be omitted when E2B_API_KEY is set on core.
 
 import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-// The demo's agents require a signed user token beside the runtime key.
-// Your backend signs one per signed-in user; here one demo user stands in.
+// These agents need a signed user token; your backend signs one per signed-in user.
 const client = new BroodsClient({
   userToken: () => signUserToken({ userId: "demo-user" }),
 });

@@ -1,20 +1,11 @@
-/**
- * BudgetStore implementation over `account/budget.ts`. A usage write never
- * reaches the run that caused it: it retries in the background, and a write
- * that still fails is logged with its usage. Both writes skip the Convex
- * client's process-wide mutation FIFO: the meter adds, the warning claim is a
- * flag, so neither depends on landing in order with other runs' writes.
- */
-
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import { logError } from "../log.ts";
 import type { Storage } from "../storage.ts";
 import { adminMutation, adminQuery, internal } from "./client.ts";
 
-// A usage write is retried through a Convex blip before it is given up. The
-// caller never waits on it, so the backoff costs a run nothing.
 const RECORD_RETRY_DELAYS_MS = [0, 1_000, 5_000, 30_000];
 
+// The writes skip the mutation FIFO: the meter adds and the claim is a flag, so order is moot.
 export const budgets: Storage["budgets"] = {
   claimWarning: async function (accountId): Promise<boolean> {
     return await adminMutation(

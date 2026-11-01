@@ -1,13 +1,8 @@
-/**
- * A fake OpenAI-compatible chat endpoint for the custom-provider tests: it
- * keeps every request body it receives and answers from a list of statuses.
- * The model class, not the factory: harness.test.ts mocks
- * `createOpenAICompatible` for the files after it.
- */
+// Builds the model class, not the factory: harness.test.ts mocks `createOpenAICompatible`
+// for the files after it.
 
 import { OpenAICompatibleChatLanguageModel } from "@ai-sdk/openai-compatible";
 
-// A chat-completions request body as the compatible converter builds it.
 export type ChatRequest = {
   messages: {
     role: string;
@@ -18,11 +13,6 @@ export type ChatRequest = {
   [field: string]: unknown;
 };
 
-/**
- * A `modelId` chat model on a fresh endpoint, and the bodies it was sent. Call
- * n is answered by `statuses[n]`: 200 (the default) replies "ok", anything else
- * refuses an image.
- */
 export function compatibleEndpoint(
   modelId: string,
   statuses: number[] = [],

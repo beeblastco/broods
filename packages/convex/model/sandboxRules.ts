@@ -1,9 +1,3 @@
-/**
- * Sandbox-config validation for the Convex config plane. Ports core's former
- * storage/sandbox-config.ts normalizer so the public /v1/sandboxes contract
- * is unchanged. The public projection lives in ./responses.ts.
- */
-
 import { assertPublicHttpsUrl } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
 import { normalizeHeaders } from "./mcp";
@@ -27,11 +21,9 @@ export {
   type SandboxProvider,
 } from "./sandboxProviders";
 
-/** The provider a config without one runs on: AWS MicroVM, until `sandbox` has hosts everywhere. */
 export const DEFAULT_SANDBOX_PROVIDER: SandboxProvider = "lambda";
 
-// Platform MicroVM image variants a lambda sandbox can boot by name instead of ARN.
-// Core resolves each to `<default image name>-<variant>` in the default's account.
+// Core boots each as `<default image name>-<variant>` in the default image's account.
 export const SANDBOX_IMAGES = ["browser", "obscura"] as const;
 
 export const SANDBOX_RUNTIMES = ["bash", "python", "node"] as const;
@@ -58,29 +50,19 @@ export const LAMBDA_MAX_TIMEOUT_SECONDS = 600;
 export const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
-// Providers whose own idle window stops short of MAX_IDLE_TIMEOUT_SECONDS.
-// Cloudflare refuses a Container inactivity timeout over six hours. Vercel holds
-// a session to 24 hours on Pro and Enterprise (45 minutes on Hobby, which its
-// API refuses itself).
+// Cloudflare refuses a Container idle timeout over 6h; Vercel caps a Pro session at 24h.
 const PROVIDER_MAX_IDLE_TIMEOUT_SECONDS: Partial<
   Record<SandboxProvider, number>
 > = {
   cloudflare: 6 * 60 * 60,
   vercel: 24 * 60 * 60,
 };
-// A V8 Worker's CPU limit is its call's timeout plus a few seconds to load and
-// store its files, so one command may run this long at most: `MAX_TIMEOUT_MS`
-// in `apps/cloudflare-worker/src/limits.ts`.
+// Must match MAX_TIMEOUT_MS in apps/cloudflare-worker/src/limits.ts.
 export const WORKER_MAX_TIMEOUT_SECONDS = 60;
-// The only options core reads for a platform-run provider (lambda, cloudflare,
-// worker): the executor's workspaceRoot and the reservation pin every provider
-// shares. Images, roles and the Workers are platform resources core takes from
-// its env, so anything else is refused.
 const PLATFORM_OPTION_KEYS: ReadonlySet<string> = new Set([
   "reservationKey",
   "workspaceRoot",
 ]);
-// Provider options that used to pick the boot image. `config.snapshot` does now.
 const RETIRED_IMAGE_OPTIONS: Partial<
   Record<SandboxProvider, readonly string[]>
 > = {
@@ -99,9 +81,6 @@ export type SandboxSize = (typeof SANDBOX_SIZE_NAMES)[number];
 
 export type SandboxImage = (typeof SANDBOX_IMAGES)[number];
 
-/**
- * Idle and maximum lifetime controls for a persistent sandbox.
- */
 export interface SandboxLifecycleConfig {
   idleTimeoutSeconds?: number;
   maxLifetimeSeconds?: number;
@@ -113,21 +92,11 @@ export interface SandboxNetworkConfig {
   allowCidrs?: string[];
 }
 
-/**
- * Account-scoped reusable sandbox configuration referenced by agents.
- */
 export interface SandboxConfig {
   provider: SandboxProvider;
-  // Where an ephemeral run goes when `provider` refuses the create for capacity.
-  // Never set with `persistent`: a reserved sandbox belongs to one provider.
   fallbackProvider?: SandboxProvider;
   size?: SandboxSize;
-  // A platform image variant by name (lambda only): "browser" has Chromium,
-  // "obscura" has the Obscura headless browser. With `snapshot`, the variant it was built from.
   image?: SandboxImage;
-  // What the sandbox boots from, in its provider's own format. See
-  // SNAPSHOT_SANDBOX_PROVIDERS. A Broods snapshot boots only on the stage it
-  // was taken on (snapshotBootRefusal).
   snapshot?: string;
   runtimes?: RuntimeName[];
   network?: SandboxNetworkConfig;
@@ -139,7 +108,6 @@ export interface SandboxConfig {
   timeout?: number;
   outputLimitBytes?: number;
   envVars?: Record<string, undefined | string>;
-  // Provider knobs; `docker: boolean` is the sandbox provider's only typed one.
   options?: Record<string, unknown>;
 }
 
@@ -148,11 +116,6 @@ export interface WorkspaceSandboxLimits {
   maxOutputLimitBytes: number;
 }
 
-/**
- * Per-call sandbox limits for a provider, including environment overrides.
- * @param provider sandbox compute backend
- * @returns provider-aware ceilings used by config validation
- */
 export function workspaceSandboxLimits(
   provider: SandboxProvider = "lambda",
 ): WorkspaceSandboxLimits {
@@ -176,11 +139,6 @@ export function workspaceSandboxLimits(
   };
 }
 
-/**
- * @param value the raw config value
- * @param stored the config an update merges into, when there is one
- * @returns the normalized sandbox config
- */
 export function normalizeSandboxConfig(
   value: unknown,
   stored?: SandboxConfig,
@@ -238,8 +196,7 @@ export function normalizeSandboxConfig(
       "config.fallbackProvider must differ from config.provider",
     );
   }
-  // A machine is one computer, and a custom server's endpoint lives in
-  // `options`, which does not carry over to the fallback.
+  // A machine is one computer, and a custom server's options do not carry over to a fallback.
   if (fallbackProvider && STATELESS_SANDBOX_PROVIDERS.has(fallbackProvider)) {
     throw new ClientError(
       `config.fallbackProvider cannot be ${fallbackProvider}`,
@@ -254,7 +211,6 @@ export function normalizeSandboxConfig(
   const network = normalizeNetwork(config.network);
   const persistentFields = normalizePersistentFields(config, provider);
   assertRuntimes(config.runtimes);
-  // The fallback runs this same config, so it has to be able to enforce it too.
   for (const runsOn of fallbackProvider
     ? [provider, fallbackProvider]
     : [provider]) {
@@ -274,10 +230,6 @@ export function normalizeSandboxConfig(
   );
 }
 
-/**
- * @param value the raw request body
- * @returns normalized create fields
- */
 export function normalizeCreateSandboxConfigInput(value: unknown): {
   name: string;
   description?: string;
@@ -296,13 +248,6 @@ export function normalizeCreateSandboxConfigInput(value: unknown): {
   };
 }
 
-/**
- * Refuses the provider options `config.snapshot` replaced. Config validation,
- * core's run loader and its sandbox lifecycle handler call it, so a config
- * stored before the cutover fails loudly instead of booting the provider default.
- * @param provider the sandbox compute backend
- * @param options the config's provider options
- */
 export function assertNoRetiredImageOptions(
   provider: SandboxProvider,
   options: Record<string, unknown>,
@@ -316,13 +261,9 @@ export function assertNoRetiredImageOptions(
   }
 }
 
-/**
- * Where a sandbox runs or a snapshot was taken: one project stage, or the
- * account for a sandbox config with no stage. Mirrors `sandboxSnapshotScopeValidator`.
- */
+// Mirrors sandboxSnapshotScopeValidator.
 export type SandboxScope = "account" | { projectId: string; stageId: string };
 
-/** A sandbox config row's scope: its stage, or the account when it has none. */
 export function sandboxScope<P extends string, S extends string>(row: {
   projectId?: P;
   stageId?: S;
@@ -332,12 +273,6 @@ export function sandboxScope<P extends string, S extends string>(row: {
     : "account";
 }
 
-/**
- * Why a sandbox cannot run the `browse` tool, or null when it can. CLI sync
- * refuses a declared first sandbox that cannot; core checks every run's first
- * sandbox at tool assembly.
- * @param sandbox the agent's first sandbox, typed or straight from a manifest
- */
 export function browserSandboxRefusal(
   sandbox:
     | { provider?: string; image?: unknown; network?: { mode?: unknown } }
@@ -354,14 +289,7 @@ export function browserSandboxRefusal(
   return null;
 }
 
-/**
- * Why a sandbox may not boot a registered snapshot, or null when it may. A
- * snapshot is a copy of another sandbox's disk, so it boots only in the
- * account and stage it was taken from, whoever asks. One taken before
- * snapshots recorded their stage has no scope and boots nowhere.
- * @param snapshot the snapshot row's owner and scope
- * @param sandbox the booting sandbox's owner and scope
- */
+// A snapshot is a copy of another sandbox's disk: it boots only on its own account and stage.
 export function snapshotBootRefusal(
   snapshot: { accountId: string; scope?: SandboxScope },
   sandbox: { accountId: string; scope: SandboxScope },
@@ -383,12 +311,6 @@ export function snapshotBootRefusal(
     : "config.snapshot names a snapshot taken on another stage; a sandbox boots only snapshots taken on its own stage";
 }
 
-/**
- * Validate an update-sandbox request body against the stored config.
- * @param existingConfig the stored sandbox config
- * @param value the raw request body
- * @returns normalized patch fields with a fully merged config
- */
 export function normalizeUpdateSandboxConfigInput(
   existingConfig: SandboxConfig,
   value: unknown,
@@ -426,9 +348,6 @@ function asObject(value: unknown): Record<string, unknown> {
   return value;
 }
 
-// A custom server is reached by one URL and nothing else, so the endpoint is
-// the one required option. A `${NAME}` token or header resolves on a code sync
-// only (core refuses one left over); a placeholder URL is never accepted.
 function assertCustomOptions(
   options: Record<string, unknown>,
   storedHeaders: unknown,
@@ -480,10 +399,6 @@ function assertEnvVarsAndOptions(
   }
 }
 
-// An image variant is a platform MicroVM image, so only lambda boots it, and a
-// capacity fallback onto another provider would silently run without it. With a
-// snapshot pinned too, the VM boots the snapshot and `image` names the variant it
-// was built from, which is what the browse tool and the dashboard read.
 function assertImage(
   image: SandboxImage | undefined,
   provider: SandboxProvider,
@@ -598,7 +513,6 @@ function assertRuntimes(value: unknown): void {
   }
 }
 
-// A stateless provider is never sized or reserved by Broods.
 function assertStatelessProviderFields(
   config: Record<string, unknown>,
   provider: SandboxProvider,
@@ -744,8 +658,6 @@ function normalizeOptionalStringList(
   return entries;
 }
 
-// The platform Workers set the machine themselves, so no hook runs on them,
-// and a Container has no lifetime cap.
 function assertWorkerLifecycle(
   config: Record<string, unknown>,
   provider: SandboxProvider,
@@ -909,8 +821,6 @@ function validateProviderOptions(
     );
   }
   assertNoRetiredImageOptions(provider, options);
-  // Daytona builds `options.image` into a fresh snapshot on create, so a
-  // sandbox names one or the other.
   if (
     provider === "daytona" &&
     optionalString(options.image, "config.options.image") !== undefined &&

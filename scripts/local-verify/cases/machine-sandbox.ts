@@ -9,11 +9,6 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-/**
- * This computer joins as a machine sandbox through the gateway, and with a
- * model key an agent runs bash on it. BROODS_VERIFY_COMPUTER=1 swaps bash for
- * the computer tool.
- */
 export async function machineSandbox(context: VerifyContext): Promise<void> {
   const name = `machine-${context.runId}`;
   const computer = process.env.BROODS_VERIFY_COMPUTER === "1";

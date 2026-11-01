@@ -71,9 +71,7 @@ async function sha256Hex(value: string): Promise<string> {
     .join("");
 }
 
-// These three functions are the CLI/core wire for a stage's runtime key. Their
-// `returns` validators are runtime-only, so a key renamed on one side alone is
-// invisible to `bun run check` and only fails when the function runs.
+// `returns` validators only run at runtime: a key renamed on one side passes `bun run check`.
 describe("runtime key wire", () => {
   afterEach(() => {
     vi.unstubAllEnvs();

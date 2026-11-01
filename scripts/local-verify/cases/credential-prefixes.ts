@@ -1,10 +1,5 @@
 import { assertStep, type VerifyContext } from "../harness.ts";
 
-/**
- * Every Broods credential is routed by its `b` prefix. Through the edge, the
- * account key authenticates on both planes, and the same key under the old
- * `ask_` prefix, or any other unbranded bearer, gets 401 on both.
- */
 export async function credentialPrefixes(
   context: VerifyContext,
 ): Promise<void> {

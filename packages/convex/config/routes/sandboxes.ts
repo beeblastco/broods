@@ -1,8 +1,3 @@
-/**
- * Sandbox config CRUD (`/v1/sandboxes*`): stores encrypted config blobs,
- * redacts secrets on read, and tears down reserved instances on delete.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -56,8 +51,7 @@ export async function handleSandboxConfigRoute(
     }
     if (req.method === "POST") {
       const input = normalizeCreateSandboxConfigInput(await req.json());
-      // The API creates account-scoped sandboxes, which boot only snapshots
-      // taken on an account-scoped sandbox.
+      // API-created sandboxes are account-scoped and boot only account-scoped snapshots.
       await ctx.runQuery(internal.sandbox.snapshots.assertInScope, {
         accountId: accountId,
         scope: "account",
@@ -143,9 +137,7 @@ export async function handleSandboxConfigRoute(
       existingConfig,
       await req.json(),
     );
-    // A snapshot is a copy of another sandbox's disk: pointing this one at a
-    // snapshot of another stage is refused for every caller, a stage-pinned
-    // role session included.
+    // A snapshot copies another sandbox's disk: one from another scope is refused for anyone.
     if (patch.config.snapshot !== existingConfig.snapshot) {
       await ctx.runQuery(internal.sandbox.snapshots.assertInScope, {
         accountId: accountId,

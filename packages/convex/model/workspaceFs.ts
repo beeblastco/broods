@@ -1,11 +1,5 @@
-/**
- * S3-backed workspace filesystem operations for the Convex config plane.
- * Shared by the dashboard actions (workspaceFilesPublic)
- * and the public config HTTP routes (awsWorkspaceFiles). Buckets, namespaces
- * and limits match core's workdir mount exactly, including a workspace that
- * brings its own bucket. Node-runtime only, import exclusively from
- * `"use node"` actions.
- */
+// Buckets, namespaces and limits match core's workdir mount, own buckets included.
+// Node runtime only: import from `"use node"` actions alone.
 
 import { internal } from "../_generated/api";
 import type { ActionCtx } from "../_generated/server";
@@ -32,9 +26,6 @@ import {
 } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
-/**
- * One listed workspace file or synthesized folder entry.
- */
 export interface WorkspaceFileEntry {
   path: string;
   name: string;
@@ -43,36 +34,20 @@ export interface WorkspaceFileEntry {
   updatedAt?: string;
 }
 
-/**
- * A workspace to operate on. `storage` is the workspace's own `config.storage`;
- * omitting it means the managed bucket, exactly like core's default.
- */
 export interface WorkspaceFsRef {
   accountId: string;
   workspaceId: string;
   storage?: WorkspaceStorageConfig;
-  /** An R2 workspace's minted credentials; see {@link withStorageAccess}. */
   r2Credentials?: S3Access["credentials"];
-  /** The account's sts:ExternalId for an assumeRole workspace; same source. */
   externalId?: string;
 }
 
-/**
- * Where a workspace's files actually live: bucket, key prefix (trailing slash,
- * possibly empty) and the access needed to reach them.
- */
 interface WorkspaceFsTarget {
   bucket: string;
   prefix: string;
   access?: S3Access;
 }
 
-/**
- * Delete a file or folder prefix from a workspace's S3 namespace.
- * @param ref the workspace to write to
- * @param rawPath the file or folder path
- * @returns the number of objects deleted
- */
 export async function deleteWorkspacePath(
   ref: WorkspaceFsRef,
   rawPath: unknown,
@@ -94,11 +69,6 @@ export async function deleteWorkspacePath(
   return descendants;
 }
 
-/**
- * Read the filesystem bucket name from the Convex deployment environment.
- * @returns the bucket name
- * @throws when the variable is unset
- */
 export function filesystemBucketName(): string {
   const bucket = process.env.FILESYSTEM_BUCKET_NAME;
   if (!bucket)
@@ -109,10 +79,6 @@ export function filesystemBucketName(): string {
   return bucket;
 }
 
-/**
- * @param ref the workspace to read
- * @returns files plus synthesized parent folders
- */
 export async function listWorkspaceFiles(
   ref: WorkspaceFsRef,
 ): Promise<WorkspaceFileEntry[]> {
@@ -151,17 +117,11 @@ export async function listWorkspaceFiles(
   return [...entries.values()];
 }
 
-/**
- * Delete every object under a workspace's S3 namespace.
- * @param ref the workspace to purge
- * @returns the number of objects deleted
- */
 export async function purgeWorkspaceFilesystem(
   ref: WorkspaceFsRef,
 ): Promise<number> {
   const target = await resolveTarget(ref);
-  // A bring-your-own bucket with no prefix resolves to the whole bucket, and this
-  // is a recursive delete. Refuse rather than trust every future caller to check.
+  // An own bucket with no prefix is the whole bucket: never recursive-delete it.
   if (!target.prefix) {
     throw new Error(
       "Refusing to purge a workspace bucket without a key prefix",
@@ -171,15 +131,7 @@ export async function purgeWorkspaceFilesystem(
   return await deleteS3Prefix(target.bucket, target.prefix, target.access);
 }
 
-/**
- * Read one workspace file as text, for the dashboard preview. Read here rather
- * than through a presigned URL, so the bucket needs no CORS rule for the
- * dashboard origin.
- * @param ref the workspace to read
- * @param rawPath the file path
- * @returns the file decoded as UTF-8
- * @throws when the file is missing or larger than the upload limit
- */
+// Read here, not through a presigned URL, so the bucket needs no CORS rule for the dashboard.
 export async function readWorkspaceFile(
   ref: WorkspaceFsRef,
   rawPath: unknown,
@@ -187,8 +139,7 @@ export async function readWorkspaceFile(
   const path = normalizeFilePath(rawPath);
   const target = await resolveTarget(ref);
   const key = `${target.prefix}${path}`;
-  // Sized before the read, so an agent's multi-gigabyte file is refused
-  // without pulling it into the action's memory.
+  // Sized first, so a multi-gigabyte file is refused without pulling it into memory.
   const size = await s3ObjectSize(target.bucket, key, target.access);
   if (size === null) throw new ClientError("Workspace file not found");
   if (size > MAX_WORKSPACE_FILE_BYTES)
@@ -199,14 +150,6 @@ export async function readWorkspaceFile(
   );
 }
 
-/**
- * Rename a file or folder prefix inside a workspace's S3 namespace.
- * @param ref the workspace to write to
- * @param rawPath the source path
- * @param rawNewPath the destination path
- * @returns the number of objects moved
- * @throws when the source is missing or the destination is inside the source
- */
 export async function renameWorkspacePath(
   ref: WorkspaceFsRef,
   rawPath: unknown,
@@ -265,13 +208,6 @@ export async function renameWorkspacePath(
   return descendants.length + (exact ? 1 : 0);
 }
 
-/**
- * Upload or replace one file in a workspace's S3 namespace.
- * @param ref the workspace to write to
- * @param input file path, base64 contents, and optional content type
- * @returns the stored file entry
- * @throws when the path is invalid or the file exceeds the size limit
- */
 export async function uploadWorkspaceFile(
   ref: WorkspaceFsRef,
   input: { path: unknown; contentBase64: unknown; contentType?: unknown },
@@ -303,12 +239,7 @@ export async function uploadWorkspaceFile(
   };
 }
 
-/**
- * Attach what reaching a workspace's own bucket needs: an R2 workspace's scoped
- * credentials, or the account's external id for an assumeRole one. Any other
- * ref passes through. Every action calls it before an op, since only a ctx can
- * mint them.
- */
+// Every action calls this before an op: only a ctx can mint R2 keys or read the external id.
 export async function withStorageAccess<Ref extends WorkspaceFsRef>(
   ctx: ActionCtx,
   ref: Ref,
@@ -342,13 +273,6 @@ export async function withStorageAccess<Ref extends WorkspaceFsRef>(
   };
 }
 
-/**
- * Presign a short-lived download URL for one workspace file.
- * @param ref the workspace to read
- * @param rawPath the file path
- * @returns a presigned S3 GET URL
- * @throws when the file does not exist
- */
 export async function workspaceFileDownloadUrl(
   ref: WorkspaceFsRef,
   rawPath: unknown,
@@ -362,16 +286,7 @@ export async function workspaceFileDownloadUrl(
   return await getS3ObjectUrl(target.bucket, key, {}, target.access);
 }
 
-/**
- * Resolve where a workspace's files live, mirroring core's
- * `resolveS3MountIdentity` / `resolveS3ReadTarget`: the managed bucket is
- * partitioned by hashed namespace and read on the config plane's own role, while
- * a bring-your-own bucket uses its own prefix and a scoped session on its role.
- * This does not apply the runtime per-conversation isolation suffix. The
- * dashboard shows the workspace's base namespace, as it always has.
- * @param ref the workspace to resolve
- * @returns the bucket, key prefix and access to reach it
- */
+// Mirrors core's resolveS3ReadTarget, without the per-conversation isolation suffix.
 async function resolveTarget(ref: WorkspaceFsRef): Promise<WorkspaceFsTarget> {
   const storage = ref.storage;
   if (!storage?.bucket) {

@@ -1,13 +1,3 @@
-/**
- * The Worker behind core's `worker` sandbox provider. Core calls it over
- * bearer-authenticated HTTP with one bash command per request; the Worker
- * runs the command in a V8 isolate of its own per sandbox (a Dynamic Worker
- * running just-bash, see `runtime.ts`) and keeps a reserved sandbox's files
- * in R2 between calls. No container, no Durable Object, nothing runs while
- * no command does. Only the calls the executor makes live here; reservation
- * bookkeeping stays in core.
- */
-
 import { z } from "zod";
 import RUNTIME from "../.generated/runtime.txt";
 import { bearerMatches } from "../../cloudflare-sandbox/src/bearer.ts";
@@ -18,14 +8,10 @@ import type { Runtime } from "./runtime.ts";
 
 const COMPATIBILITY_DATE = "2026-09-30";
 const SANDBOX_PATH = /^\/v1\/sandboxes\/([A-Za-z0-9_-]{1,128})(\/exec)?$/;
-// Fetches one command may make once the sandbox has internet.
 const INTERNET_SUBREQUESTS = 50;
-// CPU the isolate spends on the disk around the command (gunzip before, pack
-// and gzip after), sized for a disk at the cap, so a short timeout on a big
-// disk does not kill the isolate before the command runs.
+// Gunzip before and pack + gzip after the command, sized for a disk at the cap.
 const CODEC_CPU_MS = 5_000;
-// What an emptied disk is stored as, so the next write still has an etag to
-// condition on: R2 can delete unconditionally only.
+// R2 deletes only unconditionally, so an emptied disk stays as an empty object with an etag.
 const EMPTY_DISK = new Uint8Array(0);
 
 const execRequest: z.ZodType<WorkerExecRequest> = z.object({
@@ -45,20 +31,16 @@ interface Env {
   WORKER_API_KEY: string;
 }
 
-/** The stored object under a sandbox id: its disk, or null once emptied, and the etag it was read under. */
 interface StoredState {
   bytes: Uint8Array | null;
   etag: string;
 }
 
-/** Another command changed or dropped the stored disk while this one ran. */
 class StateConflict extends Error {}
 
-/** The disk after a command would not fit the store. */
 class StateTooLarge extends Error {}
 
 const handler: ExportedHandler<Env> = {
-  /** Authenticates core's bearer token, then routes to the sandbox it names. */
   fetch: async function (request: Request, env: Env): Promise<Response> {
     if (!(await bearerMatches(request, env.WORKER_API_KEY)))
       return new Response("Unauthorized", { status: 401 });
@@ -90,15 +72,6 @@ const handler: ExportedHandler<Env> = {
 
 export default handler;
 
-/**
- * Runs one command in the sandbox's isolate: its stored disk goes in, the
- * disk after the command comes back and is stored again if it changed. The
- * isolate is keyed by what is fixed at load (its network and CPU limit), so a
- * sandbox whose config changes gets a fresh one. Every store is conditional
- * on the etag the disk was read under, so of two calls on one sandbox at
- * once the second to finish answers 409 and stores nothing. A failure in the
- * runtime or the store answers its message, so core can show it.
- */
 async function exec(
   env: Env,
   id: string,
@@ -147,7 +120,6 @@ async function exec(
   }
 }
 
-// The stored disk under `key`, with its etag; an emptied disk reads as null bytes.
 async function readState(
   bucket: R2Bucket,
   key: string,
@@ -159,16 +131,11 @@ async function readState(
   return { bytes: bytes.byteLength === 0 ? null : bytes, etag: object.etag };
 }
 
-// Where a sandbox's disk lives in the bucket.
 function stateKey(id: string): string {
   return `sandboxes/${id}`;
 }
 
-// Stores the disk after a command, only if the disk is still the one the
-// command started from: the etag it was read under, or no object at all. An
-// emptied disk is stored as an empty object for the same reason. A disk past
-// the cap stays as it was, so one runaway write cannot make the sandbox
-// unloadable; the error tells the agent what to clean up.
+// Past the cap the old disk stays, so one runaway write cannot make the sandbox unloadable.
 async function writeState(
   bucket: R2Bucket,
   key: string,

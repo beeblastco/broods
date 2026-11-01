@@ -1,13 +1,3 @@
-/**
- * Server-side signing of end-user tokens. The runtime key (`bsk_`) sits in a
- * frontend, so it cannot say who is using it; your backend, which knows the
- * signed-in user, signs a short-lived token with the stage's signing secret
- * (`bsig_`, from the dashboard's Runtime key tab) and hands it to the
- * frontend. Core then keeps every conversation that request touches under
- * that user, so one visitor can never read or steer another's. Never ship the
- * signing secret to a browser.
- */
-
 import {
   sealUserToken,
   USER_TOKEN_DEFAULT_TTL_MS,
@@ -17,19 +7,12 @@ import {
 
 export { USER_TOKEN_HEADER, USER_TOKEN_MAX_TTL_MS };
 
-/**
- * The env var `signUserToken` reads the signing secret from, and the one
- * `broods dev` / `broods deploy` write it to in `.env.local`.
- */
 export const USER_TOKEN_SECRET_ENV = "BROODS_USER_TOKEN_SECRET";
 
 export interface SignUserTokenInput {
   /** Your own id for the signed-in user. Letters, digits and `._@+=-`, at most 128. */
   userId: string;
-  /**
-   * The conversation keys this user may use. Omit to allow any key, which
-   * still lands under this user only.
-   */
+  /** Conversation keys this user may use. Omit to allow any key, still under this user only. */
   conversations?: string[];
   /** Lifetime in ms. Defaults to 10 minutes, at most 60. */
   ttlMs?: number;
@@ -38,8 +21,9 @@ export interface SignUserTokenInput {
 }
 
 /**
- * A user token for the runtime key: pass it as `userToken` to `BroodsClient`
- * or `BroodsWebSocketClient`, or send it in the `X-Broods-User-Token` header.
+ * Signs a short-lived token for your signed-in user, so core keeps that user's conversations
+ * apart. Call it on your backend only: never ship the `bsig_` secret to a browser. Pass the
+ * token as `userToken` to `BroodsClient` or `BroodsWebSocketClient`.
  * @throws when no signing secret is set or an input is out of range
  */
 export async function signUserToken(

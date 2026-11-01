@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * A caller's own mistake answers 400 or 409 with its reason, wherever the rule
- * that caught it runs: in the HTTP action or inside a mutation behind
- * `ctx.runMutation`. Anything else is a 500 that names no internals.
- */
 
 import { convexTest } from "convex-test";
 import { beforeEach, expect, test, vi } from "vitest";
@@ -118,10 +113,6 @@ async function errorOf(response: Response): Promise<ApiErrorBody["error"]> {
   return body.error;
 }
 
-/**
- * One org account with an agent, a `demo-app` project and its Development
- * stage holding one environment variable.
- */
 async function seed(t: T): Promise<{ agentId: Id<"agents"> }> {
   return await t.run(async (ctx) => {
     const now = Date.now();

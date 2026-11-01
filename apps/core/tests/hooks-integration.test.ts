@@ -1,11 +1,3 @@
-/**
- * End-to-end hook machinery test: a real uploaded bundle, loaded from S3 (mocked
- * transport), executed in a live isolated-vm, whose sanitized return actually (a)
- * injects a system prompt at agent.started and (b) denies a tool call through the
- * tool wrapper. Exercises hook-runner + isolate + hook-dispatcher together; only
- * the S3 byte fetch is stubbed. Runs when BROODS_TEST_ISOLATE_RUNNER_PATH is set.
- */
-
 import { describe, expect, it, mock } from "bun:test";
 import { createHash } from "node:crypto";
 import type { ToolSet } from "ai";
@@ -47,20 +39,17 @@ const bundleSha = createHash("sha256")
   .digest("hex");
 
 const runnerPath = process.env.BROODS_TEST_ISOLATE_RUNNER_PATH;
-// isolate-executor reads ISOLATE_RUNNER_PATH; point it at the test runner (whose
-// dir has isolated-vm installed) so the in-core execution path uses it.
 if (runnerPath) {
   process.env.ISOLATE_RUNNER_PATH = runnerPath;
-  // Stub only the S3 byte fetch; everything else (isolate exec, sanitize, wrap)
-  // is real. mock.module is process-global in bun test, so keep it behind the
-  // runner gate. When the suite is skipped the override must not leak into
-  // other test files that mock the same module.
+  // Only the S3 byte fetch is stubbed. mock.module is process-global, so it stays
+  // behind the runner gate: a skipped suite must not leak it into other files.
   await mock.module("../src/shared/s3.ts", () => ({
     ...realS3,
     readS3Bytes: async () =>
       new TextEncoder().encode(HOOK_BUNDLE) as Uint8Array,
   }));
 }
+// skip: needs BROODS_TEST_ISOLATE_RUNNER_PATH, a runner with isolated-vm installed beside it
 const realRunnerIt = runnerPath ? it : it.skip;
 
 describe("code hooks end-to-end (real isolate)", () => {
@@ -138,7 +127,6 @@ describe("code hooks end-to-end (real isolate)", () => {
       HOOK_CONFIG,
     );
 
-    // First hook seeds ctx.state.calls; the second reads what it left behind.
     await dispatcher.runMutation("agent.started", {
       system: "You are helpful.",
       messages: [],
@@ -163,8 +151,7 @@ describe("code hooks end-to-end (real isolate)", () => {
         HOOK_CONFIG,
       );
 
-      // Parallel tool calls / subagent finishes can enter runMutation concurrently;
-      // both increments must land instead of the last writer clobbering the first.
+      // Parallel tool calls can enter runMutation concurrently; both increments must land.
       await Promise.all([
         dispatcher.runMutation("agent.started", { system: "a", messages: [] }),
         dispatcher.runMutation("agent.started", { system: "b", messages: [] }),
@@ -274,10 +261,6 @@ describe("hook ctx.config", () => {
 });
 
 describe("channel.message.received rewrite reaches the session", () => {
-  // Full wiring: webhook → processChannelMessage → real hook in a live isolate
-  // → handleChannelRequest. The regression this pins: the rewrite landed only
-  // in `content` while the session reads `events`, so it never reached the
-  // model despite every unit underneath passing.
   realRunnerIt(
     "forwards the rewritten ingress events to the channel handler",
     async () => {
@@ -330,8 +313,7 @@ describe("channel.message.received rewrite reaches the session", () => {
           agentLoader: async () => hookedAgent,
           agentLister: async () => [hookedAgent],
           deploymentLoader: async () => null,
-          // This account configures no channel records; the storage stub above
-          // omits the store, and a failed lookup refuses the turn by design.
+          // The storage stub has no channel records, and a failed lookup refuses the turn.
           channelRecordLoader: async () => null,
           waitUntil: (promise) => waited.push(Promise.resolve(promise)),
         });
@@ -370,16 +352,14 @@ describe("channel.message.received rewrite reaches the session", () => {
         resetStorageForTests();
       }
 
-      // The test bundle uppercases the text; both the content AND the ingress
-      // events the session persists must carry the rewrite.
+      // The test bundle uppercases the text.
       expect(handled).toHaveLength(1);
       expect(handled[0]!.content).toBe("HELLO");
       expect(handled[0]!.events).toEqual([{ role: "user", content: "HELLO" }]);
     },
   );
 
-  // The session persists and builds the turn from the ingress events, not from
-  // `content`. A rewrite that only lands in `content` never reaches the model.
+  // The session builds the turn from the ingress events, not from `content`.
   it("rewrites the newest user ingress event", async () => {
     const { rewriteLatestUserIngressText } =
       await import("../src/harness/integrations.ts");

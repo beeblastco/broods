@@ -1,10 +1,3 @@
-/**
- * Short-lived sandbox terminal tickets. account-manage mints one when the
- * dashboard opens a live terminal; the public gateway decrypts it to learn the
- * upstream PTY WebSocket target. The provider credential rides inside the
- * AES-256-GCM ciphertext, so the browser only ever holds an opaque token.
- */
-
 import {
   createCipheriv,
   createDecipheriv,
@@ -21,22 +14,15 @@ export const TERMINAL_TICKET_TTL_MS = 2 * 60 * 1000;
 export const TERMINAL_WEBSOCKET_PATH = "/v1/sandboxes/terminal/ws";
 
 export interface TerminalTicket {
-  /** Upstream PTY WebSocket URL (ws:// or wss://). */
   url: string;
-  /** Authorization header value for the upstream connection. */
   authorization: string;
-  /** Header the credential is sent in; defaults to `authorization` (workdir). MicroVM shells use `X-aws-proxy-auth`. */
+  /** Defaults to `authorization`; MicroVM shells use `X-aws-proxy-auth`. */
   authorizationHeader?: string;
-  /** Owning account, kept for gateway-side logging/limits. */
   accountId: string;
-  /** Unix ms after which the ticket is rejected. */
   expiresAt: number;
 }
 
-/**
- * Decrypts and validates a ticket. Returns null (never throws) on any tamper,
- * wrong-secret, or expiry failure so callers can try their other live secrets.
- */
+// Null, never a throw, so a caller can try its other live secrets.
 export function openTerminalTicket(
   token: string,
   secret: string,
@@ -51,9 +37,8 @@ export function openTerminalTicket(
     extra !== undefined
   )
     return null;
-  // Node decodes base64url leniently, so one ticket has many spellings. Only
-  // the one sealTerminalTicket writes opens, or the gateway's single-use
-  // check, keyed on the token, could be dodged by re-spelling it.
+  // Node decodes base64url leniently; only the canonical spelling opens, or a re-spelled token
+  // would dodge the gateway's single-use check.
   const ivBytes = Buffer.from(iv, "base64url");
   const tagBytes = Buffer.from(tag, "base64url");
   const ciphertextBytes = Buffer.from(ciphertext, "base64url");
@@ -127,7 +112,6 @@ export function sealTerminalTicket(
   ].join(".");
 }
 
-// The purpose label keeps this key distinct from every other ticket kind's.
 function ticketKey(secret: string): Buffer {
   return createHash("sha256")
     .update(`sandbox-terminal-ticket:${secret}`)

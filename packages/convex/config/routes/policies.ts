@@ -1,8 +1,3 @@
-/**
- * Agent policy CRUD (`/v1/policies*`): list/create on the collection,
- * get/patch/delete by id.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -20,7 +15,6 @@ import {
   writeAudit,
 } from "./shared";
 
-/** Mirrors core's former handlePolicyRoute contract. */
 export async function handlePolicyConfigRoute(
   ctx: ActionCtx,
   req: Request,

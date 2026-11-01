@@ -1,18 +1,9 @@
-/**
- * Cron-job records and patch-merge helpers for the runtime. Input
- * normalization lives in the config plane (packages/convex/model/cronRules.ts,
- * the single home of those rules).
- */
-
 import {
   isOneTimeSchedule,
   normalizeUpdateCronInput as normalizeUpdateCronInputRule,
 } from "@broods/convex/model/cronRules";
 import type { JSONValue, ModelMessage } from "ai";
 
-// Whether a schedule fires exactly once (an at(...) expression). Its
-// scheduled run is spent once it has fired, so the stored job is dropped when
-// that run settles.
 export { isOneTimeSchedule };
 
 export type CronStatus = "active" | "paused";
@@ -49,10 +40,6 @@ export interface CronRunRecord {
   completedAt?: string;
 }
 
-/**
- * One-of run payload mirroring the agent direct API's AgentRunInput: provide a
- * single `input` string (wrapped into one user message) or a full `events` list.
- */
 export type CronRunInput =
   | { input: string; events?: never }
   | { events: ModelMessage[]; input?: never };
@@ -80,7 +67,6 @@ export type UpdateCronInput = {
   | { events?: ModelMessage[]; input?: never }
 );
 
-/** Normalized update patch: clearable fields use null, run payload uses events. */
 export interface NormalizedCronUpdate {
   name?: string;
   description?: string | null;
@@ -92,22 +78,13 @@ export interface NormalizedCronUpdate {
   status?: CronStatus;
 }
 
-/**
- * Validates an update patch with the config plane's normalizer, then re-types
- * the events list to the ModelMessage[] core stores. The rule checks the
- * payload shape only (non-empty array), exactly as core's former copy did, so
- * the assertion adds no trust the caller did not already have.
- */
+// The rule only checks events is a non-empty array; the cast re-types it to core's ModelMessage[].
 export function normalizeUpdateCronInput(
   input: UpdateCronInput,
 ): NormalizedCronUpdate {
   return normalizeUpdateCronInputRule(input) as NormalizedCronUpdate;
 }
 
-/**
- * Frames a fired job's stored instructions for the model. They arrive as a user
- * turn nobody typed, so the first user message says what fired and when.
- */
 export function withScheduledRunContext(
   job: CronRecord,
   firedAt: Date,

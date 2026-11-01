@@ -1,7 +1,3 @@
-/**
- * Runtime object-shape guards for untyped provider, webhook, and config payloads.
- */
-
 export function isPlainObject(
   value: unknown,
 ): value is Record<string, unknown> {

@@ -1,9 +1,3 @@
-/**
- * OTel trace/log exporters for the harness, plus the per-request
- * observability context store. A no-op when no exporter is configured; never
- * throws into the agent path.
- */
-
 import { OpenTelemetry } from "@ai-sdk/otel";
 import { PostHogSpanProcessor } from "@posthog/ai/otel";
 import {
@@ -34,10 +28,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHmac } from "node:crypto";
 import { optionalEnv } from "./env.ts";
 
-// The only span attributes PostHog gets: what ran, on which model, how long and
-// how many tokens, never what anyone wrote. A key an SDK bump adds is dropped
-// until it is listed here. The call sites' `recordInputs: false` still guards
-// the OTLP exporter; this is PostHog's backstop.
+// The only span attributes PostHog gets, never what anyone wrote; new SDK keys wait to be listed.
 const POSTHOG_SPAN_ATTRIBUTES = new Set([
   "$ai_session_id",
   "$ai_trace_name",
@@ -82,19 +73,12 @@ export interface ObservabilityContext {
   agentId: string;
   conversationKey: string;
   traceId: string;
-  /** OTel context containing the active root task span for log correlation. */
   otelContext: Context;
-  /** Plaintext values that must be removed from every emitted log string. */
   secretValues: readonly string[];
 }
 
-// The observability context (per-tenant secretValues for log redaction + NATS
-// routing tags) must be request-scoped. The self-hosted container serves many
-// tenants concurrently in one process, so a module global would let one request's
-// secrets/tags clobber another's mid-flight. Each container entry point opens a
-// scope via runWithObservabilityScope; setters write into that request's cell.
-// When no scope is active, the module global is used as a narrow fallback for
-// tests and legacy direct call sites.
+// Request-scoped: one process serves many tenants, so a module global would let one request's
+// secrets and tags clobber another's. The global is only the no-scope fallback.
 interface ObservabilityCell {
   current: ObservabilityContext | null;
 }
@@ -108,10 +92,6 @@ export function getObservabilityContext(): ObservabilityContext | null {
   return cell ? cell.current : _obsCtxGlobal;
 }
 
-// Runs fn with a fresh, request-private observability cell. Save/restore call
-// sites inside one request share the cell. Concurrent requests, and subagents
-// that outlive their parent's pass, each get their own. `inherited` seeds the
-// cell for work that outlives the request that started it.
 export function runWithObservabilityScope<T>(
   fn: () => T,
   inherited: ObservabilityContext | null = null,
@@ -145,12 +125,11 @@ let _tracer: Tracer | null = null;
 let _tracerProvider: BasicTracerProvider | null = null;
 let _posthogTracerProvider: BasicTracerProvider | null = null;
 let _loggerProvider: LoggerProvider | null = null;
-// Deliberately separate from the global logger provider: only log lines added
-// for PostHog below are exported to PostHog Logs.
+// Not the global provider: only purpose-written lines reach PostHog Logs.
 let _posthogLoggerProvider: LoggerProvider | null = null;
 let _initialized = false;
 
-// Best-effort; `body` must already be redacted by the caller.
+// `body` must already be redacted.
 export function emitOtelLog(
   level: "INFO" | "WARN" | "ERROR" | "DEBUG",
   body: Record<string, unknown>,
@@ -179,12 +158,9 @@ export function emitOtelLog(
           ? new Date(body.time).getTime()
           : Date.now(),
     });
-  } catch {
-    // Best-effort: never propagate into the agent path.
-  }
+  } catch {}
 }
 
-/** Flush buffered logs and spans before the request returns or the process exits. */
 export async function forceFlushOtel(): Promise<void> {
   await Promise.allSettled([
     _tracerProvider?.forceFlush() ?? Promise.resolve(),
@@ -194,7 +170,6 @@ export async function forceFlushOtel(): Promise<void> {
   ]);
 }
 
-/** Emits only purpose-written operational lines owned by the PostHog integration. */
 export function emitPostHogLog(
   body: string,
   attributes: Record<string, string | number | boolean> = {},
@@ -206,21 +181,15 @@ export function emitPostHogLog(
       body: body,
       attributes: attributes,
     });
-  } catch {
-    // Best-effort: logging must never affect the serving path.
-  }
+  } catch {}
 }
 
-// Returns a noop tracer if initOtel() has not run.
 export function getTracer(): Tracer {
   if (_tracer) return _tracer;
 
   return trace.getTracer("broods-harness");
 }
 
-// Idempotent; adds PostHog AI Observability when configured, and keeps the
-// optional OTLP trace/log exporters. Reads OTEL_EXPORTER_OTLP_HEADERS
-// ("K=V,K2=V2", e.g. Authorization=Basic …) for the OTLP exporter.
 export function initOtel(): void {
   if (_initialized) return;
   _initialized = true;
@@ -327,8 +296,6 @@ export function initOtel(): void {
 
     if (!aiTracer) return;
 
-    // AI SDK v7 uses this integration to produce gen-ai spans. The session is
-    // a keyed tag of the run's conversation, never the key or the requester.
     registerTelemetry(
       new OpenTelemetry({
         tracer: aiTracer,
@@ -354,16 +321,10 @@ export function initOtel(): void {
         },
       }),
     );
-  } catch {
-    // Best-effort: a failed init leaves the global API noop.
-  }
+  } catch {}
 }
 
-/**
- * The AI Observability session id for a conversation key: groups its turns,
- * and cannot be matched to a guessed key such as a phone number without
- * ANALYTICS_ID_SECRET. Undefined when that secret is unset.
- */
+// Keyed, so a guessed key such as a phone number cannot be matched without the secret.
 export function analyticsSessionTag(
   conversationKey: string,
 ): string | undefined {
@@ -374,7 +335,6 @@ export function analyticsSessionTag(
     : undefined;
 }
 
-/** Tenant attributes shared by logs and spans and consumed by gateway filters. */
 export function observabilityAttributes(
   ctx: Pick<
     ObservabilityContext,
@@ -396,7 +356,7 @@ export function observabilityAttributes(
   };
 }
 
-/** Wraps the PostHog processor so no user content leaves: only listed attributes pass, and error text is dropped; codes and error types stay. */
+// Keeps user content out of PostHog: listed attributes only, exception text dropped.
 export class AnonymousSpanProcessor implements SpanProcessor {
   constructor(private readonly inner: SpanProcessor) {}
 

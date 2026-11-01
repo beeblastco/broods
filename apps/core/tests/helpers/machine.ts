@@ -1,11 +1,3 @@
-/**
- * Storage with account-level `my-mac` and `other-mac` machine records, a
- * `stage-mac` in each of two stages, a production-only `prod-mac`, and a
- * `cloud-box` lambda record, and a core server that serves only the daemon
- * socket. `other-mac` is `bypass` so a test can tell two machines' approval
- * apart.
- */
-
 import {
   isMachineUpgrade,
   machineWebSocketHandler,
@@ -26,19 +18,14 @@ import type {
 } from "../../src/shared/storage.ts";
 
 export const MACHINE_ACCOUNT_ID = "acct_machine";
-/** The account key the daemon connects with in these tests. */
 export const MACHINE_ACCOUNT_SECRET = `bask_${crypto.randomUUID()}`;
-/** The runtime key, which sits in frontends and must be refused. */
 export const MACHINE_EMBEDDABLE_KEY = `bsk_${crypto.randomUUID()}`;
-/** A role session whose policy reads sandboxes and nothing more. */
 export const MACHINE_READ_ONLY_ROLE_TOKEN = `bsts_${crypto.randomUUID()}`;
 export const MACHINE_SANDBOX_ID = "sbx_machine";
 export const OTHER_MACHINE_SANDBOX_ID = "sbx_machine_other";
-/** `stage-mac` exists in both stages of project `proj`; these are its ids. */
 export const DEV_STAGE_SANDBOX_ID = "sbx_stage_dev";
 export const PROD_STAGE_SANDBOX_ID = "sbx_stage_prod";
 
-/** One connection status write core sent to storage. */
 export type MachineConnectionWrite =
   | { kind: "connected"; ref: MachineConnectionRecord }
   | { kind: "disconnected" | "seen"; ref: MachineConnectionRef };
@@ -49,7 +36,6 @@ export function closeOf(socket: WebSocket): Promise<CloseEvent> {
   });
 }
 
-/** The executor config core builds for the `my-mac` record. */
 export function machineExecutorConfig(
   overrides: Partial<SandboxExecutorConfig> = {},
 ): SandboxExecutorConfig {
@@ -65,7 +51,6 @@ export function machineExecutorConfig(
   };
 }
 
-/** An `echo` MCP row served by the `my-mac` daemon. */
 export function machineMcpRecord(): McpRecord {
   return {
     accountId: MACHINE_ACCOUNT_ID,
@@ -81,7 +66,6 @@ export function machineMcpRecord(): McpRecord {
   };
 }
 
-/** Connection status writes land in `writes`. */
 export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
   const account: AccountRecord = {
     accountId: MACHINE_ACCOUNT_ID,
@@ -110,6 +94,7 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
       name: "other-mac",
       config: {
         provider: "machine",
+        // Unlike my-mac, so a test can tell the two machines' approval apart.
         permissionMode: "bypass",
         network: { mode: "allow-all" },
       },
@@ -240,7 +225,6 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
   } as unknown as Storage;
 }
 
-/** The executor config core builds for the `other-mac` record. */
 export function otherMachineExecutorConfig(
   overrides: Partial<SandboxExecutorConfig> = {},
 ): SandboxExecutorConfig {

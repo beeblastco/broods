@@ -1,9 +1,3 @@
-/**
- * Core-owned AWS Lambda MicroVM driver for the AI SDK Harness sandbox adapter.
- * Reservation ownership stays in MicrovmSandboxExecutor; bridge WebSockets pass
- * through a loopback proxy so AWS authentication never enters a URL or log.
- */
-
 import { Buffer } from "node:buffer";
 import { dirname } from "node:path/posix";
 import type {
@@ -33,18 +27,13 @@ import { shellQuote, stringRecord } from "./utils.ts";
 const DEFAULT_WORKING_DIRECTORY = "/workspace";
 
 export interface MicrovmHarnessDriverOptions {
-  /** Existing core reservation identity, already scoped to its account/agent. */
   reservationKey: string;
-  /** Optional exact bootstrap identity for callers that precompute one. */
   bootstrapIdentity?: string;
   config: SandboxExecutorConfig & { provider: "lambda"; persistent: true };
   defaultWorkingDirectory?: string;
-  /** The invoking run's identity, mirrored onto the reserved sandbox. */
   metadata?: SandboxRunMetadata;
-  /** Receives the guest's CPU, memory and disk once the machine is acquired. */
   onUsage?: (usage: SandboxUsage) => void;
   ports?: ReadonlyArray<number>;
-  /** Other conversations use this machine too, so a session ending leaves it running. */
   shared?: boolean;
 }
 
@@ -335,8 +324,7 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
     return this.#proxy.getPortUrl(options.port);
   }
 
-  // A shared machine idles down on its own; suspending it here would pull it
-  // out from under the other conversations still running on it.
+  // A shared VM idles down on its own; other conversations may still be running on it.
   async stop(): Promise<void> {
     await this.#proxy.close();
     if (this.#shared) return;

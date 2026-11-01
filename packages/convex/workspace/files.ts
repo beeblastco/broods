@@ -1,14 +1,3 @@
-/**
- * Workspace file tree CRUD. Files are stored in Convex storage; this table
- * tracks path metadata and is scoped to a projectId + canvas nodeId.
- *
- * Also owns capability links for workspace files (the `workspaceDownloadTokens`
- * table). A token is the whole credential, so it is stored only as a SHA-256
- * hash and the plaintext lives nowhere but the URL that was handed out.
- * Redeeming one mints a fresh presigned S3 URL server-side, which is what keeps
- * AWS signature material out of chat clients entirely.
- */
-
 import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
@@ -36,8 +25,7 @@ import {
 } from "../model/workspaceRules";
 
 export const DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS = 24 * 60 * 60;
-// Expired rows are dead weight, not a security boundary. Redeeming always
-// re-checks expiresAt. One bounded sweep per mint keeps the table from growing.
+// Redeeming re-checks expiresAt; this per-mint sweep only keeps the table from growing.
 const DOWNLOAD_TOKEN_PRUNE_BATCH_SIZE = 50;
 export const MAX_DOWNLOAD_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 
@@ -65,11 +53,7 @@ const workspaceFileDoc = v.object({
   updatedAt: v.number(),
 });
 
-/**
- * A workspace's storage block, shaped as `WorkspaceStorageConfig`. Carried
- * alongside the workspace ids so file operations reach the bucket the sandbox
- * actually mounts instead of always assuming the managed one.
- */
+// Lets file ops reach the bucket the sandbox actually mounts, not always the managed one.
 export const workspaceStorageValidator = v.object({
   provider: v.literal("s3"),
   bucket: v.optional(v.string()),
@@ -95,17 +79,6 @@ export const workspaceStorageValidator = v.object({
 const WORKSPACE_ADMIN_REQUIRED =
   "Workspace files can only be changed by an org admin.";
 
-/**
- * Create a file or folder entry after the binary has been uploaded to storage.
- * @param projectId owning project
- * @param nodeId canvas workspace node ID
- * @param path full path from workspace root, e.g. "src/components/Button.tsx"
- * @param name filename or folder name
- * @param isFolder true for directory entries
- * @param storageId Convex storage ID for the uploaded file (omit for folders)
- * @param mimeType MIME type of the file
- * @returns the new document ID
- */
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
@@ -121,7 +94,6 @@ export const create = mutation({
     const { projectId, nodeId, path, name, isFolder, storageId, mimeType } =
       args;
 
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -156,16 +128,8 @@ export const create = mutation({
   },
 });
 
-/**
- * Store one download token and sweep a bounded batch of expired rows.
- * @param accountId account owning the workspace
- * @param workspaceId workspace the file lives in
- * @param path normalized workspace-relative path
- * @param filename name offered to whoever follows the link
- * @param tokenHash SHA-256 hex of the minted token
- * @param expiresAt epoch millis the token stops working
- * @param now caller's clock in epoch millis
- */
+// Only the token's SHA-256 is stored; the plaintext lives only in the URL handed out.
+// Redeeming mints a fresh presigned S3 URL, so AWS signatures never reach chat clients.
 export const createDownloadToken = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -197,16 +161,10 @@ export const createDownloadToken = internalMutation({
   },
 });
 
-/**
- * Generate a one-time upload URL for Convex file storage, counted against the
- * account's hourly upload quota.
- * @returns a pre-signed upload URL
- */
 export const generateUploadUrl = mutation({
   args: {},
   returns: v.string(),
   handler: async (ctx): Promise<string> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -221,13 +179,6 @@ export const generateUploadUrl = mutation({
   },
 });
 
-/**
- * Return a short-lived signed download URL for a single file entry.
- * @param projectId owning project
- * @param nodeId canvas node ID
- * @param path file path (e.g. "SKILL.md")
- * @returns signed URL, or null if the file does not exist / has no storageId
- */
 export const getFileDownloadUrl = query({
   args: {
     projectId: v.id("projects"),
@@ -238,7 +189,6 @@ export const getFileDownloadUrl = query({
   handler: async (ctx, args): Promise<string | null> => {
     const { projectId, nodeId, path } = args;
 
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -260,11 +210,6 @@ export const getFileDownloadUrl = query({
   },
 });
 
-/**
- * @param projectId owning project
- * @param nodeId canvas node ID of the workspace
- * @returns flat array of file metadata records
- */
 export const list = query({
   args: {
     projectId: v.id("projects"),
@@ -274,14 +219,12 @@ export const list = query({
   handler: async (ctx, args): Promise<Doc<"workspaceFiles">[]> => {
     const { projectId, nodeId } = args;
 
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
 
-    // Return empty rather than throwing so a just-deleted project doesn't crash
-    // the reactive workspace panel before it unmounts.
+    // Empty, not a throw: a just-deleted project must not crash the panel before it unmounts.
     const project = await getProjectForRole(ctx, user.id, projectId);
     if (!project) return [];
 
@@ -294,17 +237,12 @@ export const list = query({
   },
 });
 
-/**
- * Delete a single file entry and its storage object (if any).
- * @param fileId the workspaceFiles document to remove
- */
 export const remove = mutation({
   args: { fileId: v.id("workspaceFiles") },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const { fileId } = args;
 
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -326,12 +264,6 @@ export const remove = mutation({
   },
 });
 
-/**
- * Delete a folder and all descendants (files + subfolders) matching a path prefix.
- * @param projectId owning project
- * @param nodeId canvas workspace node ID
- * @param folderPath the folder path to remove including all children
- */
 export const removeFolder = mutation({
   args: {
     projectId: v.id("projects"),
@@ -342,7 +274,6 @@ export const removeFolder = mutation({
   handler: async (ctx, args): Promise<null> => {
     const { projectId, nodeId, folderPath } = args;
 
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -372,11 +303,6 @@ export const removeFolder = mutation({
   },
 });
 
-/**
- * Rename a file or folder. For folders, all descendant paths are updated atomically.
- * @param fileId the workspaceFiles document to rename
- * @param newName the new filename or folder name (no slashes)
- */
 export const rename = mutation({
   args: {
     fileId: v.id("workspaceFiles"),
@@ -386,7 +312,6 @@ export const rename = mutation({
   handler: async (ctx, args): Promise<null> => {
     const { fileId, newName } = args;
 
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -438,12 +363,6 @@ export const rename = mutation({
   },
 });
 
-/**
- * Look up a download token by hash, ignoring anything already expired.
- * @param tokenHash SHA-256 hex of the presented token
- * @param now caller's clock in epoch millis
- * @returns the file the token grants, or null when unknown or expired
- */
 export const resolveByHash = internalQuery({
   args: { tokenHash: v.string(), now: v.number() },
   returns: v.union(resolvedToken, v.null()),
@@ -464,14 +383,6 @@ export const resolveByHash = internalQuery({
   },
 });
 
-/**
- * Internal: resolve an S3-backed workspace for a caller-owned project.
- * @param authId WorkOS auth id of the caller
- * @param projectId owning project
- * @param workspaceId workspaceConfigs document ID stored on the canvas node
- * @param requiredRole passed only by a change, which a disabled account may not make
- * @returns runtime account/workspace identifiers, or null when inaccessible
- */
 export const resolveRuntimeWorkspaceInternal = internalQuery({
   args: {
     authId: v.string(),
@@ -504,6 +415,7 @@ export const resolveRuntimeWorkspaceInternal = internalQuery({
     if (!workspaceId) return null;
     const workspace = await ctx.db.get(workspaceId);
     if (!workspace || workspace.projectId !== args.projectId) return null;
+    // Only a change passes requiredRole, and a disabled account may not make one.
     if (args.requiredRole) await requireActiveAccount(ctx, workspace.accountId);
 
     return {

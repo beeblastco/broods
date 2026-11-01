@@ -1,7 +1,3 @@
-/**
- * Local project/auth configuration helpers for the CLI.
- */
-
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -11,23 +7,12 @@ export const PROJECT_DIR = "broods";
 export const GENERATED_DIR = "_generated";
 export const USER_CONFIG_PATH = join(homedir(), ".broods", "config.json");
 
-// Host naming we control, used only to pair a dashboard with its API origin
-// before login has advertised one. Not part of the public config surface.
 const BROODS_APEX_DOMAIN = "broods.app";
 const DASHBOARD_HOST_PREFIX = "dashboard";
 const GATEWAY_HOST_PREFIX = "gateway";
 
 export interface StoredAuthConfig {
-  /**
-   * Base URL of the Convex control plane serving the /v1/account/* routes
-   * (the Convex deployment directly, or the gateway's unified domain).
-   * All sync/env/deploy calls go here.
-   */
   baseUrl: string;
-  /**
-   * Base URL of the dashboard UI. Only used for browser login and deep
-   * links; absent for env-based auth.
-   */
   dashboardUrl?: string;
   token: string;
   createdAt: string;
@@ -47,23 +32,12 @@ export interface StoredAuthConfig {
   };
 }
 
-/**
- * `~/.broods/config.json`: every CLI login on this machine, keyed by server
- * base URL, so logging in to one environment never replaces another.
- */
 interface StoredAuthFile {
-  /** Base URL of the most recent login, used when nothing names a server. */
   current: string;
   logins: Record<string, StoredAuthConfig>;
 }
 
-/**
- * Resolves the login this invocation acts as. BROODS_TOKEN (a project key or
- * login token) + BROODS_BASE_URL win outright. Otherwise it is the stored
- * login for one server, named by `baseUrl`, then BROODS_BASE_URL, then the login whose dashboard is
- * BROODS_DASHBOARD_URL, then the most recent login. Null when that server has
- * no login, so a dev project never quietly runs on a prod token.
- */
+/** Null when the named server has no login, so a dev project never runs on a prod token. */
 export function readStoredAuth(baseUrl?: string): StoredAuthConfig | null {
   const envToken = process.env.BROODS_TOKEN;
   const envBaseUrl = baseUrl ?? process.env.BROODS_BASE_URL;
@@ -92,7 +66,6 @@ export function readStoredAuth(baseUrl?: string): StoredAuthConfig | null {
   return file.logins[file.current] ?? null;
 }
 
-/** Stores `config` as the login for its server and makes it the most recent one. */
 export async function writeStoredAuth(config: StoredAuthConfig): Promise<void> {
   const logins = readStoredAuthFile()?.logins ?? {};
   const file: StoredAuthFile = {
@@ -108,15 +81,12 @@ export async function writeStoredAuth(config: StoredAuthConfig): Promise<void> {
   );
 }
 
-/**
- * Writes a file only its owner can read. The chmod covers a file an older CLI
- * created with the default 0644, which `mode` alone leaves as it was.
- */
 export async function writePrivateFile(
   path: string,
   body: string,
 ): Promise<void> {
   await writeFile(path, body, { encoding: "utf8", mode: 0o600 });
+  // `mode` only applies on create; an older CLI made this file 0644.
   await chmod(path, 0o600);
 }
 
@@ -131,12 +101,7 @@ export function stripTrailingSlash(value: string): string {
   return value.slice(0, end);
 }
 
-/**
- * Guesses the API origin for a dashboard origin, but only for hosts we own and
- * therefore know the naming convention of. Any other host, self-hosted or on a
- * custom domain, returns undefined so the caller waits for the base URL that
- * login advertises instead of inventing one that would not resolve.
- */
+/** Only hosts we own; any other host waits for the base URL login advertises. */
 export function gatewayUrlForDashboard(
   dashboardUrl: string,
 ): string | undefined {
@@ -154,10 +119,6 @@ export function gatewayUrlForDashboard(
   }
 }
 
-/**
- * Reads the login file. A missing, malformed or single-login file from an
- * older CLI reads as null, which means logged out.
- */
 function readStoredAuthFile(): StoredAuthFile | null {
   try {
     const file = JSON.parse(

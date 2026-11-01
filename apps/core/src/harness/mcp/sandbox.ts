@@ -1,11 +1,4 @@
-/**
- * MCP servers on a lambda sandbox. The sandbox image serves `POST /mcp` on the
- * VM's proxy port: it spawns the row's stdio `command` on first use, runs the
- * MCP handshake itself and keeps the process for the VM's lifetime, so a
- * server's state (a browser session) lasts as long as the reservation. Core
- * relays one JSON-RPC request per listing or call through the MicroVM
- * executor, which owns reaching the VM; this file owns only the envelope.
- */
+// The lambda sandbox image serves `POST /mcp`, keeping each row's stdio server for the VM's life.
 
 import { randomUUID } from "node:crypto";
 import {
@@ -30,29 +23,18 @@ import {
   workspaceRootFor,
 } from "../tools/filesystem-utils.ts";
 
-// A tool call on a sandbox with no `timeout` of its own: browser steps run
-// longer than bash's 30 s default. The operator's ceiling still caps it.
+// Browser steps run longer than bash's 30 s default; the operator's ceiling still caps it.
 const DEFAULT_TIMEOUT_SECONDS = 120;
-// The image may spend up to this long starting a server and running its
-// handshake before the tool's own timeout begins.
 const SERVER_START_MS = 30_000;
 
-/** Which VM serves the row and what it runs: bash's sandbox and reservation. */
 export interface SandboxMcpTarget {
   config: SandboxExecutorConfig;
   reservation: SandboxReservedTarget;
   command: string[];
 }
 
-/** The executor call the relay makes; tests pass a fake. */
 export type SandboxMcpExecutor = Pick<SandboxExecutor, "postReserved">;
 
-/**
- * Send one JSON-RPC request to a server on a lambda sandbox and return its
- * result. mcp/client.ts calls it for `tools/list` and `tools/call` when the
- * connection carries a lambda sandbox. The executor checks the account's
- * sandbox budget first, as it does for bash.
- */
 export async function sandboxMcpRequest(
   target: SandboxMcpTarget,
   serverName: string,
@@ -74,8 +56,7 @@ export async function sandboxMcpRequest(
       body: {
         server: serverName,
         command: target.command,
-        // The server sees the env vars bash sees, minus the run identity: it
-        // outlives the run. The image restarts the server when they change.
+        // No run identity: the server outlives the run. The image restarts it when env changes.
         env: mergeSandboxEnv(target.config.envVars, undefined),
         message: {
           jsonrpc: "2.0",
@@ -105,14 +86,6 @@ export async function sandboxMcpRequest(
   return reply.result;
 }
 
-/**
- * Where a row runs when it names a lambda sandbox among `runtime.sandboxes`:
- * the VM bash reaches on that sandbox, which is the workspace's when one mounts
- * the agent's first sandbox. Undefined for any other row (a machine sandbox's
- * daemon serves it). A missing command or a non-persistent sandbox is a config
- * error, not a quiet skip. Agent tool registration and the dashboard explorer
- * both resolve a row here, each with its own runtime.
- */
 export function sandboxMcpTarget(
   record: McpRecord,
   runtime: Partial<ResolvedAgentRuntime>,

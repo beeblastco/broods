@@ -1,10 +1,3 @@
-/**
- * Provider-neutral sandbox executor helpers.
- * Keep small coercion, path, quoting, and output utilities here, plus the
- * per-sandbox queue that orders dashboard-row writes and the ephemeral meter
- * built on it.
- */
-
 import {
   removeSandboxInstance,
   setSandboxInstanceSpecs,
@@ -38,11 +31,8 @@ import type {
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-// Keeps a prefixed name within the length a whole name used to take, so adding a
-// per-machine suffix cannot run into a provider's undocumented name limit.
 const PREFIX_SLUG_LENGTH = 31;
 
-// The run identity. Only core sets these, so both env layers drop them.
 const IDENTITY_ENV_KEYS: ReadonlySet<string> = new Set([
   "BROODS_ACCOUNT_ID",
   "BROODS_AGENT_ID",
@@ -50,8 +40,6 @@ const IDENTITY_ENV_KEYS: ReadonlySet<string> = new Set([
   "BROODS_RUN_TOKEN",
 ]);
 
-// Keys a per-call `request.envVars` may never set. Account `config.envVars` is
-// filtered for the identity names only.
 export const RESERVED_SANDBOX_ENV_KEYS: ReadonlySet<string> = new Set([
   ...IDENTITY_ENV_KEYS,
   "BASH_ENV",
@@ -76,32 +64,16 @@ export const RESERVED_SANDBOX_ENV_KEYS: ReadonlySet<string> = new Set([
   "__CB_URL",
 ]);
 
-/**
- * Thrown by an executor whose provider refused the *create* for lack of room:
- * the MicroVM quota or throttle, workdir's admission ceiling, Daytona with no
- * runner. Raised only at the create call, so it always means nothing ran and
- * the same request may go to another provider.
- */
+// Thrown only at create, so nothing ran and the request may go to another provider.
 export class SandboxCapacityError extends Error {}
 
-/**
- * Thrown by an executor that read the sandbox back from its provider and found
- * it past recovery (workdir `failed`: exec answers 409, only delete is allowed),
- * so the caller retires the reservation and creates a fresh one, exactly as it
- * would for a provider 404.
- */
 export class SandboxGoneError extends Error {}
 
-// Each sandbox's dashboard-row writes (upsert, burst, remove) in the order they
-// were queued, so a write never beats the row it bills or its removal.
 const mirrorWrites = new Map<string, Promise<void>>();
 
-// Past the exec server's own `timeout_ms`: it answers `timed_out` itself, so
-// the client deadline only covers a server that never answers.
+// The server answers `timed_out` itself; this only catches a server that never answers.
 export const EXEC_GRACE_MS = 15_000;
 
-// A `SandboxExecResponse` (the lambda-sandbox image's and a custom server's
-// answer) as a run result, with the output held to the request's limit.
 export function execRunResult(
   request: SandboxRunRequest,
   response: SandboxExecResponse,
@@ -128,8 +100,7 @@ export function execRunResult(
   };
 }
 
-// The body of a 2xx exec answer as the contract. A custom server is a third
-// party, so the fields a run result is built from are checked, not assumed.
+// A custom exec server is a third party, so its answer is checked, not assumed.
 export function parseExecResponse(
   bodyText: string,
   label: string,
@@ -152,13 +123,6 @@ export function configString(value: unknown): string | undefined {
     : undefined;
 }
 
-/**
- * The machine size Broods itself sets from a config: workdir creates the VM with
- * those resources, every MicroVM is one size, and cloudflare starts that instance
- * type. Undefined for providers that size machines themselves, whose real size
- * is known only once they report it. Those three executors mirror it, and the
- * agent's status line states it.
- */
 export function configuredSandboxSpecs(
   config: Pick<SandboxExecutorConfig, "provider" | "controlPlane">,
 ): SandboxSpecs | undefined {
@@ -167,11 +131,6 @@ export function configuredSandboxSpecs(
     : undefined;
 }
 
-/**
- * True when a provider rejected sandbox creation because no runner could host it
- * (capacity, or a region-pinned/non-general snapshot). Capacity is the provider's
- * to resolve; the executor only surfaces a clearer message.
- */
 export function isNoRunnersError(error: unknown): boolean {
   const message =
     isPlainObject(error) && typeof error.message === "string"
@@ -183,11 +142,6 @@ export function isNoRunnersError(error: unknown): boolean {
   return /no (available )?runners?/i.test(message);
 }
 
-/**
- * True when a provider error means the sandbox is already gone (safe to forget),
- * as opposed to wrong credentials or a transient fault (which must propagate so a
- * caller can try another config rather than silently drop the instance record).
- */
 export function isSandboxGoneError(error: unknown): boolean {
   if (error instanceof SandboxGoneError) return true;
   if (!isPlainObject(error)) {
@@ -207,8 +161,6 @@ export function isSandboxGoneError(error: unknown): boolean {
   );
 }
 
-// Account envVars under per-call overrides, reserved keys dropped from the
-// overrides and the identity names from both, then the run's identity on top.
 export function mergeSandboxEnv(
   accountEnv: Record<string, string | undefined> | undefined,
   requestEnv: Record<string, string> | undefined,
@@ -228,15 +180,8 @@ export function mergeSandboxEnv(
   };
 }
 
-/**
- * Meter one ephemeral sandbox call on platform credentials: mirror a row keyed by
- * the sandbox id now, and return the call that removes it, which bills the time
- * in between. Call it only once the provider confirms the sandbox is gone, so a
- * failed teardown keeps billing until the stale-row sweep. The account's own
- * credentials, or no account, get no row. `readSpecs` returns the machine's real
- * size, or a read of it; it is called only for a metered call. The row is written
- * at once either way, and a read that answers later only patches its size in.
- */
+// Call the returned remover only once the provider confirms the sandbox is gone:
+// a failed teardown keeps billing until the stale-row sweep.
 export function meterEphemeralSandbox(
   controlPlane: SandboxControlPlane | undefined,
   provider: SandboxProvider,
@@ -279,12 +224,7 @@ export function meterEphemeralSandbox(
     );
 }
 
-/**
- * Run `write` after every earlier write queued for this sandbox id. A failed
- * write never blocks the ones behind it. Every dashboard-row write for a sandbox
- * (upsert, burst, remove) goes through it, so a burst never beats the row it
- * bills and a removal never lands before the upsert that created the row.
- */
+// Every row write for a sandbox goes here, so neither a burst nor a removal beats its upsert.
 export function queueMirrorWrite(
   sandboxId: string,
   write: () => Promise<unknown>,
@@ -310,11 +250,8 @@ export function requiredWorkspacePath(
   return workspacePath(request, fallbackRoot)!;
 }
 
-// The readable half of a reserved sandbox's name: a slug and hash of the
-// reservation key, so a machine is recognisable at its provider. This is a
-// prefix, not a name. The caller appends a per-machine suffix, because a name
-// derived from the key alone would let a compare-and-swap on that name match a
-// machine the caller never created. The slug budget leaves room for the suffix.
+// Not a name: a key-derived name would let a compare-and-swap match a machine the caller
+// never created, so callers append a per-machine suffix, which the slug budget leaves room for.
 export function sandboxNamePrefix(reservationKey: string): string {
   return `fp-p-${slugFor(reservationKey, undefined, PREFIX_SLUG_LENGTH)}-${shortHash(reservationKey)}`;
 }
@@ -339,8 +276,7 @@ export function shortHash(value: string): string {
   return hash.toString(36).slice(0, 6);
 }
 
-// Trimmed after the truncation, not before: a cut that lands on a separator
-// would otherwise leave one dangling for a caller that appends to the result.
+// Trimmed after the cut, so a caller appending to it never gets a dangling separator.
 export function slugFor(
   value: string | undefined,
   fallback = "sandbox",
@@ -396,8 +332,6 @@ export function workspacePath(
 }
 
 function isExecResponse(value: object): value is SandboxExecResponse {
-  // Every field the run result reads, by the type it must have. A required
-  // one must be there; an optional one is checked only when the server sent it.
   const fields: Record<
     Exclude<keyof SandboxExecResponse, "burst">,
     [type: string, required: boolean]
@@ -421,17 +355,8 @@ function isExecResponse(value: object): value is SandboxExecResponse {
   );
 }
 
-/**
- * Refuses to boot a Broods snapshot outside the account and stage it was taken
- * in. Every executor that creates a machine from `config.snapshot` calls it
- * first, whoever the caller is: a snapshot is a copy of another sandbox's disk.
- * A config with no control plane (no known account or stage) boots no
- * registered snapshot at all.
- * @param controlPlane the booting sandbox's account and stage
- * @param snapshot the provider image the machine boots from, when it names one
- * @returns the snapshot's row, or null when no account registered the image
- * (a provider image or template, not a Broods snapshot)
- */
+// A snapshot copies another sandbox's disk, so every create from one checks it first.
+// Null for an image no account registered (a provider image or template).
 export async function assertSnapshotBootable(
   controlPlane: SandboxControlPlane | undefined,
   snapshot: string | undefined,
@@ -450,7 +375,6 @@ export async function assertSnapshotBootable(
   return row;
 }
 
-/** The BROODS_* variables sandbox code reads to act as its run. */
 function principalEnv(principal: SandboxRunPrincipal): Record<string, string> {
   return {
     BROODS_ACCOUNT_ID: principal.accountId,

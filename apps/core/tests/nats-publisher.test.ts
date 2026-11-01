@@ -11,7 +11,6 @@ interface FakeConnection {
   close: () => void;
 }
 
-// Only the dial is faked; the subject and stream helpers stay real.
 await mock.module("nats", (): Record<string, unknown> => ({
   ...realNats,
   connect: async (options: Record<string, unknown>): Promise<unknown> => {
@@ -158,7 +157,6 @@ describe("LiveNatsPublisher", (): void => {
         // Structural: left alone even when it carries the value.
         toolCallId: "call-hdr-secret-abc123",
         toolName: "bash",
-        // Values are scrubbed, keys never: a token that is no secret stays.
         input: { command: "echo [redacted]", token: "t" },
       },
       {

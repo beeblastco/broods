@@ -1,16 +1,10 @@
-/**
- * Example: webhook subscription flow via declarative broods resources.
- *
- * Creates a pre-deployed agent with webhook events configured.
- * Lifecycle events are POSTed to WEBHOOK_URL, signed with WEBHOOK_SECRET in
- * `X-Webhook-Signature`. Point WEBHOOK_URL at any HTTPS endpoint you can read.
- */
+// Lifecycle events POST to WEBHOOK_URL (any HTTPS endpoint you can read), signed with
+// WEBHOOK_SECRET in `X-Webhook-Signature`.
 
 import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-// The demo's agents require a signed user token beside the runtime key.
-// Your backend signs one per signed-in user; here one demo user stands in.
+// These agents need a signed user token; your backend signs one per signed-in user.
 const client = new BroodsClient({
   userToken: () => signUserToken({ userId: "demo-user" }),
 });

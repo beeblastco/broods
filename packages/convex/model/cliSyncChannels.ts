@@ -1,9 +1,3 @@
-/**
- * CLI manifest sync for channel records: name→id resolution against the synced
- * agents/workspaces/policies, the one-record-per-place ownership guard, prune,
- * and the inverse id→name mapping used when reading the manifest back.
- */
-
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { normalizeChannelRecordConfig } from "./channelRules";
@@ -11,12 +5,7 @@ import { resourceName, type CliResource } from "./cliSync";
 import { isPlainObject } from "./objects";
 import { ClientError } from "./clientError";
 
-/**
- * Inverse of `resolveChannelRecordRefs`: ids back to resource names, and the
- * place columns folded back into the config the manifest declares. It must land
- * exactly where the local manifest normalizes, or `broods dev` reports a diff
- * that never settles.
- */
+// Must land exactly where the local manifest normalizes, or the `broods dev` diff never settles.
 export function channelRecordManifestConfig(
   record: Doc<"channelRecords">,
   names: {
@@ -91,13 +80,6 @@ export async function pruneChannelRecordResources(
   }
 }
 
-/**
- * Channel records name agents, workspaces and policies by resource name, so this
- * runs after those are synced and their ids are known. A record is unique per
- * `(account, platform, externalId)` because the inbound webhook looks it up that
- * way, so two stages cannot both claim one Slack channel, and trying is
- * an error rather than a silent last-writer-wins.
- */
 export async function syncChannelRecordResources(
   ctx: MutationCtx,
   options: {
@@ -165,11 +147,6 @@ export async function syncChannelRecordResources(
   return ids;
 }
 
-/**
- * A manifest channel record with its names resolved to ids and its config
- * checked, without reading the database. The sync stores it; the manifest
- * pre-check runs it with placeholder ids.
- */
 export function normalizeChannelRecordResource(
   resource: CliResource,
   ids: {
@@ -191,12 +168,12 @@ export function normalizeChannelRecordResource(
     platform: requireChannelRecordString(input.platform, "platform"),
     externalId: requireChannelRecordString(input.externalId, "externalId"),
     workspaceRef: input.workspaceRef,
-    // Same validation the CRUD route runs: a malformed manifest record must
-    // fail the deploy, not reach the webhook resolver at runtime.
+    // A malformed record must fail the deploy, not reach the webhook resolver at runtime.
     config: normalizeChannelRecordConfig(input.config),
   };
 }
 
+// The inbound webhook finds a record by (account, platform, externalId), so a place has one owner.
 async function assertChannelRecordPlaceIsFree(
   ctx: MutationCtx,
   options: {
@@ -237,7 +214,6 @@ function requireChannelRecordString(value: unknown, field: string): string {
   return value;
 }
 
-/** A record's agents, workspaces and policies are written as resource names. */
 function resolveChannelRecordRefs(
   raw: unknown,
   ids: {

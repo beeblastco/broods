@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * A CLI prune removes the skills, hooks and MCP servers its own stage recorded,
- * even when the manifest now declares none, and never one another stage
- * records or the dashboard created. A pruned agent takes its crons along.
- */
 
 import cronsComponent from "@convex-dev/crons/test";
 import { convexTest, type TestConvex } from "convex-test";
@@ -236,7 +231,6 @@ describe("cli prune of external resources", () => {
   });
 });
 
-/** Active hook and MCP names, and every recorded external resource by stage kind. */
 async function activeNames(
   tt: T,
 ): Promise<{ hooks: string[]; mcp: string[]; recorded: string[] }> {
@@ -268,7 +262,6 @@ async function activeNames(
   });
 }
 
-/** An active account hook, as the dashboard makes one. */
 async function insertHook(
   tt: T,
   accountId: Id<"accounts">,
@@ -290,7 +283,6 @@ async function insertHook(
   });
 }
 
-/** A stage MCP server nothing recorded, as the dashboard or config API makes one. */
 async function insertMcpServer(
   tt: T,
   accountId: Id<"accounts">,
@@ -315,7 +307,6 @@ async function insertMcpServer(
   });
 }
 
-/** `deploy --prune` to the development stage, of an empty manifest by default. */
 async function pruneAll(
   tt: T,
   resources: Array<{ kind: string; name: string; config: unknown }> = [],
@@ -341,7 +332,6 @@ async function pruneAll(
   );
 }
 
-/** An account hook that `stage` recorded as CLI-managed. */
 async function recordHook(
   tt: T,
   accountId: Id<"accounts">,
@@ -360,7 +350,6 @@ async function recordHook(
   });
 }
 
-/** A stage MCP server that the development stage recorded as CLI-managed. */
 async function recordMcpServer(
   tt: T,
   accountId: Id<"accounts">,
@@ -382,7 +371,6 @@ async function recordMcpServer(
   });
 }
 
-/** A skill `stage` recorded as CLI-managed, with the file `syncSkillNodeFiles` mirrors. */
 async function recordSkill(tt: T, stage: string, name: string): Promise<void> {
   const secretHash = await sha256Hex(SECRET);
   const scope = await tt.mutation(internal.cli.sync.ensureScopeBySecretHash, {
@@ -415,7 +403,6 @@ async function recordSkill(tt: T, stage: string, name: string): Promise<void> {
   });
 }
 
-/** An org, its owner and an active account whose secret is `SECRET`. */
 async function seedAccount(tt: T): Promise<Id<"accounts">> {
   const secretHash = await sha256Hex(SECRET);
 

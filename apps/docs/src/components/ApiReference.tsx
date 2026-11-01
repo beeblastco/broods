@@ -1,8 +1,3 @@
-/**
- * The API reference page. Scalar's own route component expects its standalone
- * bundle already on `window`, which its plugin gets by putting a render-blocking
- * 1 MB script on every docs page. This one loads the bundle here only.
- */
 import "@scalar/docusaurus/dist/theme.css";
 import Layout from "@theme/Layout";
 import { useEffect, useId } from "react";
@@ -19,8 +14,7 @@ export default function ApiReference({
   const id = useId();
 
   useEffect(() => {
-    // The configuration arrives serialized as a JavaScript literal (it can
-    // hold functions), so it runs as a script, as Scalar's component does.
+    // The configuration is a JavaScript literal (it can hold functions), so it runs as a script.
     const init = document.createElement("script");
     const mount = (): void => {
       init.textContent = `window.Scalar.createApiReference(document.getElementById(${JSON.stringify(id)}), ${route.configuration})`;

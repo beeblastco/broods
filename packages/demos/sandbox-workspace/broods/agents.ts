@@ -1,8 +1,6 @@
 import { defineAgent, defineSandbox, defineWorkspace, env } from "broods";
 
-// A workspace-backed sandbox on the self-hosted `sandbox` (workdir) provider. Compute is
-// ephemeral per call, but the workspace FILES persist through the shared S3 mount, so the
-// file tools (write/read/edit/glob/grep) operate on a real, durable project checkout.
+// Workdir provider: compute is ephemeral per call, files persist through the shared S3 mount.
 export const workspaceSandbox = defineSandbox({
   name: "workspace-sandbox",
   provider: "sandbox",

@@ -1,9 +1,3 @@
-/**
- * Past the inline threshold, putManifest uploads the MCP bundle to a minted
- * URL and syncs bundleStorageId + sha256 (#190); small bundles keep the
- * single-request path byte-for-byte.
- */
-
 import { createHash } from "node:crypto";
 import { expect, test } from "bun:test";
 import type { CliManifest } from "../src/contracts.ts";

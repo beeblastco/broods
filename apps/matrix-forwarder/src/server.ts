@@ -1,9 +1,3 @@
-/**
- * The forwarder's HTTP surface: probes for the kubelet, and the two calls core
- * makes back into a room. No ingress: core reaches it in-cluster, and every
- * call authenticates with the account's own access token.
- */
-
 import {
   MATRIX_ACCESS_TOKEN_HEADER,
   type MatrixSendRequest,
@@ -20,8 +14,7 @@ export async function handleRequest(
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
   const status = ready ? "ok" : "starting";
-  // Liveness never waits on the config plane: a Convex outage must not become
-  // a restart loop. Only readiness carries the account detail.
+  // Liveness never waits on the config plane: a Convex outage must not become a restart loop.
   if (path === "/" || path === "/healthz") {
     return Response.json({ status: status });
   }
@@ -43,7 +36,6 @@ export async function handleRequest(
   if (!accessToken || !account) {
     return new Response("Unknown Matrix access token", { status: 401 });
   }
-  // Not a homeserver blip: retrying cannot help until the token changes.
   if (account.state === "failed") {
     return new Response(
       "Matrix account stopped and will not restart until its access token changes",
@@ -78,8 +70,6 @@ export async function handleRequest(
   }
 }
 
-// The two casts below sit where core's JSON becomes typed: every value stays
-// `unknown` until it is checked.
 function isSendRequest(body: unknown): body is MatrixSendRequest {
   if (typeof body !== "object" || body === null) return false;
   const record = body as Partial<Record<keyof MatrixSendRequest, unknown>>;

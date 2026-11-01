@@ -12,11 +12,7 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-/**
- * The audit ledger records a config write and concurrent runs, verifies, and
- * refuses a non-public sink. A run that fails at the provider call (no model
- * key) still finishes through the usage write, so its row lands either way.
- */
+// A run failing at the provider call (no model key) still writes usage, so its row lands.
 export async function auditLedger(context: VerifyContext): Promise<void> {
   const name = `audit-${context.runId}`;
   const { agentId } = await context.account.createAgent({
@@ -40,7 +36,6 @@ export async function auditLedger(context: VerifyContext): Promise<void> {
     ),
   );
 
-  // The usage write that appends the row lands just after the run's status.
   const page = await context.measure("audit list", () =>
     pollUntil(
       { initialIntervalMs: 50, maxIntervalMs: 400, timeoutMs: 5_000 },
@@ -108,7 +103,6 @@ export async function auditLedger(context: VerifyContext): Promise<void> {
   );
 }
 
-/** Matches the `run.completed` row one agent's run appended. */
 function finishedRunOf(agentId: string): (event: AuditEvent) => boolean {
   return (event: AuditEvent): boolean =>
     event.action === "run.completed" && event.actor.agentId === agentId;

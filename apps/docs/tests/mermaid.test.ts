@@ -1,7 +1,3 @@
-/**
- * Checks every docs diagram against the renderer used by the published site.
- */
-
 import { describe, expect, test } from "bun:test";
 import { Glob } from "bun";
 import { readFileSync } from "node:fs";
@@ -43,7 +39,6 @@ describe("docs diagrams", (): void => {
   }
 });
 
-/** Reads the real diagram sources so new docs are covered without a fixture copy. */
 function readDiagrams(): Diagram[] {
   const diagrams: Diagram[] = [];
   const files = ["docs/**/*.{md,mdx}", "src/pages/**/*.{md,mdx}"].flatMap(

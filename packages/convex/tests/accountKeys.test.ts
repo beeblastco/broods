@@ -24,7 +24,6 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** An org with its account, project and stage, the scope every encrypted row hangs off. */
 async function seedAccount(
   tt: T,
   slug: string,
@@ -70,7 +69,6 @@ async function seedAccount(
   });
 }
 
-/** One agent row, one account env var and one stage env var, all under the account's current key. */
 async function seedEncryptedRows(
   tt: T,
   scope: Awaited<ReturnType<typeof seedAccount>>,
@@ -210,7 +208,6 @@ test("rotateAccountKey rewrites every blob of the account and retires the old ke
   expect(after.variableDigest).toBe(after.expectedDigest);
   expect(after.accountVarNeedsRewrite).toBe(false);
   expect(after.accountVarValue).toEqual({ value: "acct-value" });
-  // Another tenant's rows are not touched.
   expect(after.bystanderBlob).toBe(before.bystanderBlob);
 });
 
@@ -270,8 +267,7 @@ test("a walk that finishes after a newer rotation began leaves the retiring to t
       });
     });
 
-  // The first rotation moves the agent row under its key, then a later one
-  // begins before the first walk has finished.
+  // A later rotation begins before the first walk has finished.
   await tt.mutation(internal.account.keys.rotateAccountKey, {
     accountId: scope.accountId,
   });
@@ -281,8 +277,7 @@ test("a walk that finishes after a newer rotation began leaves the retiring to t
 
     return keyId;
   });
-  // The first walk reaches its last table: it must not retire its own key,
-  // which the later rotation has not finished replacing.
+  // The first walk's last table must not retire its key: the later rotation still needs it.
   await tt.mutation(internal.account.keys.rotateAccountKey, {
     accountId: scope.accountId,
     table: "connections",
@@ -291,7 +286,6 @@ test("a walk that finishes after a newer rotation began leaves the retiring to t
   });
   expect(await agentConfig()).toEqual({ model: { provider: "deepseek" } });
 
-  // The later rotation's own walk finishes the job and retires both.
   await tt.mutation(internal.account.keys.rotateAccountKey, {
     accountId: scope.accountId,
   });

@@ -1,8 +1,3 @@
-/**
- * HTTP ingress and channel routing for harness-processing.
- * Keep request normalization, account/agent lookup, provider ACKs, and normalized channel events here.
- */
-
 import type { ApiErrorInit } from "@broods/convex/model/apiError";
 import {
   userConversationKey,
@@ -160,26 +155,17 @@ import { channelPolicyIdentity, evaluateChannelInvoke } from "./policy.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 import { WORKER_QUEUE_FULL } from "./worker-queue.ts";
 
-// How long a channel webhook waits for admission before it acks anyway. Under
-// Slack's and Discord's 3s, so a slow hook or a large file never earns a retry.
+// Under Slack's and Discord's 3s, so a slow hook or a large file never earns a retry.
 const CHANNEL_ACK_BUDGET_MS = 2_000;
-// Bound so one inbound webhook cannot fan out into an unbounded credential scan.
 const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
-// A webhook lists and decrypts its URL's agents before any signature is
-// checked. With `cacheAgentLists`, unsigned traffic reuses one listing per
-// account or stage URL for this long, so a flood costs one read per window; a
-// request that verifies lists again before it runs.
+// Listing (and decrypting) runs before any signature check, so caching it holds an unsigned
+// flood to one read per window. A request that verifies lists again before it runs.
 const CHANNEL_AGENT_LIST_TTL_MS = 10_000;
-// A request no cached agent verifies may reload a listing this old, at most.
 const CHANNEL_AGENT_LIST_RELOAD_AFTER_MS = 1_000;
-// Listings hold decrypted configs, so few are kept and expired ones go first.
 const CHANNEL_AGENT_LIST_CACHE_LIMIT = 256;
-// The single runtime entry point; sync or background is a body field.
 const RUN_PATH = "/v1/runs";
 const RUN_PATH_PREFIX = `${RUN_PATH}/`;
 
-// One receiver's reading of a delivery: an answer the provider needs right
-// away, nothing to run, or turns whose admission is still in flight.
 type ChannelReceipt =
   | { kind: "response"; response: ChannelResponse }
   | { kind: "ignore"; response: ChannelResponse }
@@ -196,22 +182,16 @@ type PublicEndpointPath = {
   stageSlug?: string;
 };
 
-// A lookup that failed is not the same as "no record": the first must not run.
 type ChannelTarget =
   | { kind: "resolved"; agent: AgentRecord; record?: ChannelRecord }
   | { kind: "unavailable" };
 
-// An agent whose channel credentials verified a delivery, with the adapter
-// that verified it and now parses it.
 interface ChannelReceiver {
   agent: AgentRecord;
   adapter: ChannelAdapter;
 }
 
-// With no agent in the webhook URL, "nobody configures this channel", "nobody's
-// credentials verified" and "the scan broke" are the operator's whole diagnosis.
-// A holder is one receiver, or every verifying one when the adapter
-// `routesEachEntry`.
+// Kept apart: with no agent in the webhook URL, these are the operator's whole diagnosis.
 type ChannelCredentialHolder =
   | { kind: "holder"; receivers: ChannelReceiver[] }
   | { kind: "unconfigured"; configured: boolean }
@@ -219,10 +199,6 @@ type ChannelCredentialHolder =
   | { kind: "unverified" }
   | { kind: "unavailable" };
 
-/**
- * Where a re-entered conversation runs and answers: its record-narrowed
- * config, key, reply target and deployment scope.
- */
 export type ReentryTarget = Pick<
   DirectInboundEvent,
   | "agentConfig"
@@ -238,73 +214,41 @@ export interface DirectInboundEvent {
   accountId: string;
   agentId: string;
   agentConfig: AgentConfig;
-  // How a queued envelope rebuilds `agentConfig` when it runs; the stored
-  // envelope carries this, never the config. Absent on a subagent child.
   configRef?: IngressConfigRef;
-  // Set on a subagent's run, to the config it runs on. That config derives
-  // from its parent, so no ref can rebuild it and its ref-less controls run on
-  // this.
+  // A subagent's config derives from its parent, so no ref can rebuild it.
   subagentConfig?: AgentConfig;
-  // Per-deployment id from the runtime key, when the request authenticated with
-  // one. Scopes realtime telemetry to the dashboard's deployment view.
   endpointId?: string;
-  // Project and stage slugs from the runtime key scope, forwarded to the
-  // harness so it can build NATS observability subjects for live streaming.
   projectSlug?: string;
   stageSlug?: string;
-  // Dedicated server-derived proof that this ingress entered through a public
-  // deployment route. Generic deployment fields also exist on channel/cron work.
+  // Proof of a public deployment route; channel and cron work set endpointId too.
   publicDeploymentIngress?: PublicDeploymentIngress;
   eventId: string;
   asyncResultEventId?: string;
   publicEventId: string;
-  /** Account-unique public id for this run; what its status URL names. */
   runId: string;
   conversationKey: string;
   publicConversationKey: string;
   events: DirectIngressEvent[];
-  /**
-   * 202 + run id instead of an SSE stream. Absent on internally-built events
-   * (cron, continuation, channel), which are never backgrounded.
-   */
   background?: boolean;
-  /**
-   * `continue: true`: re-enter this conversation with no new content, for a
-   * turn that stopped short. The key may be the scoped one a trace row shows.
-   */
   continuation?: boolean;
   requestedMode: IngressMode;
   idempotencyKey: string;
-  // Server-issued fencing token added only after durable admission.
   ownerGeneration?: number;
   connectionId?: string;
-  // One-turn system events from the direct request. Model overrides are already folded into agentConfig.
   ephemeralSystem?: SystemModelMessage[];
-  // Set on a continuation that should also push its final text to a chat
-  // channel (a background job launched from Telegram/Slack/etc.). The worker
-  // rebuilds the sender from the agent config via sendChannelReply.
-  // `identity` is who wrote the message, so policy sees the real sender.
   replyTarget?: {
     channelName: string;
     identity?: ChannelIdentity;
     source: Record<string, unknown>;
   };
-  // `oneShot` marks a cron whose schedule fires once: the job is deleted when
-  // this run settles, because its scheduled run is already spent.
+  // `oneShot`: the job is deleted when this run settles; its only scheduled run is spent.
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
-  // Who asked, as the router authenticated it, or the chain of the run that
-  // sent a session message. Absent on a rebuilt envelope: nothing is guessed.
+  // Absent on a rebuilt envelope: nothing is guessed.
   principalChain?: PrincipalLink[];
-  // Answers to open ask_questions prompts. A request carrying these settles
-  // the prompts and resumes the conversation; it runs no turn of its own.
+  // Settles open ask_questions prompts and resumes; it runs no turn of its own.
   answers?: QuestionAnswer[];
 }
 
-/**
- * The scope a queued envelope needs to be rebuilt into its own run. It names
- * no config: the envelope's ref rebuilds one. Only a subagent's scope carries
- * `subagentConfig`, for the ref-less controls of that subagent.
- */
 export type IngressDispatchScope = Pick<
   DirectInboundEvent,
   | "accountId"
@@ -326,16 +270,12 @@ export interface AsyncDirectInboundEvent extends DirectInboundEvent {
   statusUrl: string;
 }
 
-/** What `GET /v1/runs/{runId}` names before anything is resolved. */
 export interface StatusRunTarget {
   accountId: string;
   runId: string;
 }
 
-/**
- * One resolved run. Every field but `runId` comes off the envelope rather than
- * the request, so the caller cannot name an agent it does not own.
- */
+// All but `runId` come off the envelope, so the caller cannot name an agent it does not own.
 export interface StatusInboundEvent extends StatusRunTarget {
   agentId: string;
   eventId: string;
@@ -343,9 +283,7 @@ export interface StatusInboundEvent extends StatusRunTarget {
   ingress: IngressStatusRecord;
 }
 
-// Background-job completion posted by the detached job itself. Authenticated by
-// the per-job token (matched against the stored row), so no account key rides
-// inside the sandbox.
+// Authenticated by the per-job token, so no account key rides inside the sandbox.
 export interface SandboxJobCompletionInboundEvent {
   resultId: string;
   token: string;
@@ -364,15 +302,11 @@ export interface ChannelInboundEvent {
   eventId: string;
   conversationKey: string;
   content: UserContent;
-  // Media the channel delivered with the message. Still un-downloaded: the
-  // bytes are read once the turn runs, against the agent's own workspace.
   attachments?: Attachment[];
   events: ConversationIngressEvent[];
   channelName: string;
   identity?: ChannelIdentity;
   source: Record<string, unknown>;
-  // The rows this turn's config came from, pinned so a later re-entry into the
-  // session rebuilds it instead of reading a stored copy.
   channelTarget?: ChannelTargetRefs;
   channel: ChannelActions;
   channelFactory?: (source: Record<string, unknown>) => ChannelActions;
@@ -422,7 +356,6 @@ export interface IntegrationRoutingOptions {
     accountId: string,
     agentId: string,
   ) => Promise<AgentRecord | null>;
-  /** The production-stage agents the bare webhook URL routes to. */
   agentLister?: (accountId: string) => Promise<AgentRecord[]>;
   stageAgentLister?: (
     accountId: string,
@@ -450,13 +383,7 @@ export interface IntegrationRoutingOptions {
     eventId: string;
   }) => Promise<IngressStatusRecord | null>;
   directApiEnabled?: boolean;
-  /**
-   * Reuse a channel webhook's agent listing across requests for a few seconds.
-   * A request that verifies lists again and verifies again before it runs, so
-   * only rejecting unsigned traffic is cached, never what a turn runs with.
-   */
   cacheAgentLists?: boolean;
-  /** Registers post-response background work (channel ack-then-process). */
   waitUntil?: (promise: Promise<unknown>) => void;
 }
 
@@ -495,8 +422,6 @@ interface HttpRoutingContext {
   waitUntil(promise: Promise<unknown>): void;
 }
 
-// `endpointId` absent means the bare production URL, which scans the account's
-// production stages.
 interface WebhookRoute {
   accountId: string;
   channelName: string;
@@ -658,11 +583,8 @@ async function handleHttpRequest(
     }
   }
 
-  // A provider console may GET a webhook URL to check it is live. A GET with a
-  // query string may be a subscription handshake (Meta's `hub.challenge`), so
-  // it goes to the channels like a delivery and is answered as live when none
-  // claims it. Any other GET is a path core does not serve; `/healthz` is
-  // answered in server.ts.
+  // A provider console GETs a webhook URL to check it is live; a GET with a query may be a
+  // subscription handshake (Meta's `hub.challenge`), so it goes to the channels like a delivery.
   if (method === "GET" && !(request.search && matchWebhookPath(request.path))) {
     return matchWebhookPath(request.path)
       ? jsonResponse(200, { status: "ok", method: "POST" })
@@ -701,12 +623,8 @@ async function handleHttpRequest(
     }
   }
 
-  // Two webhook shapes, neither naming an agent: the bare one production keeps,
-  // and a `/dev/{endpointId}/` one that pins delivery to a single stage.
   const webhookRoute = matchWebhookPath(request.path);
-  // Answer a wrong webhook shape here rather than letting it fall through to
-  // the generic 401, which reads as "bad credentials" to a provider that is
-  // really just pointed at the retired /webhooks/{account}/{agent}/{channel}.
+  // Not the generic 401: that reads as bad credentials to a provider on a retired URL.
   if (!webhookRoute && request.path.startsWith("/v1/webhooks/")) {
     logWarn("Webhook path does not match a known webhook shape", {
       method: request.method,
@@ -754,11 +672,6 @@ async function handleHttpRequest(
 
       return notFoundResponse();
     }
-    // The credential holder owns the provider app the request came from:
-    // whichever of the account's agents holds credentials that verify this
-    // request. Its adapter parses the request and sends the reply, because the
-    // reply must come from the app that received it; the channel record only
-    // chooses who runs.
     let holder: ChannelCredentialHolder;
     try {
       holder = await findChannelCredentialHolder(
@@ -777,11 +690,7 @@ async function handleHttpRequest(
       });
       throw err;
     }
-    // Without an agent in the URL these three cases would all collapse into one
-    // 404, so keep them apart: nothing configures the channel, something does
-    // but no credentials verified, or the scan itself failed.
-    // A GET no channel claims is the liveness check, whatever its query string
-    // carries (Pancake's `?secret=`, a cache-buster).
+    // A GET nothing claims is the liveness check, whatever its query (Pancake's `?secret=`).
     if (holder.kind === "unconfigured" && method === "GET") {
       return jsonResponse(200, { status: "ok", method: "POST" });
     }
@@ -792,8 +701,6 @@ async function handleHttpRequest(
         channelConfigured: holder.configured,
       });
 
-      // "configured" means an agent declares the channel but its adapter would
-      // not take this request, a different message from nobody declaring it.
       return integrationNotConfigured(
         holder.configured ? `Webhook ${channelName}` : channelName,
       );
@@ -819,8 +726,7 @@ async function handleHttpRequest(
 
       return unauthorizedResponse();
     }
-    // The lookup broke, so a redelivery can still succeed: a 404 would tell
-    // the provider, and the Matrix forwarder, to give up on the event.
+    // Not 404: that tells the provider, and the Matrix forwarder, to give up on the event.
     if (holder.kind === "unavailable") {
       return errorResponse(503, "Channel lookup failed, retry the delivery");
     }
@@ -837,15 +743,8 @@ async function handleHttpRequest(
 
   const auth = await context.authResolver(request.headers);
 
-  // Scope resolution for the gateway's sockets. The gateway calls this
-  // server-side with the client's credential to learn which account and stage
-  // the socket binds to. Scope comes from the credential, never the client.
-  // The observability socket takes only a member's stage ticket: the
-  // embeddable runtime key sits in frontends, and logs carry every user's
-  // chats and tool payloads. The agent socket takes that key too: the gateway
-  // starts, steers and reads back each run through the run paths here, with
-  // the client's key, so the key reaches what it reaches over HTTP: the public
-  // agents of its own stage.
+  // Observability takes only a member's stage ticket: the embeddable key sits in frontends,
+  // and logs carry every user's chats and tool payloads.
   const socketScope = socketScopePath(request.path);
   if (socketScope) {
     if (
@@ -860,12 +759,8 @@ async function handleHttpRequest(
       projectSlug: auth.projectSlug,
       stageSlug: auth.stageSlug,
       endpointIds: [auth.endpointId],
-      // The gateway closes an observability socket at this instant: a ticket
-      // is checked once at the upgrade, so its lifetime must ride along.
+      // A ticket is checked once at the upgrade, so the gateway closes the socket at expiry.
       ...(auth.stageTicket ? { expiresAt: auth.stageTicket.expiresAt } : {}),
-      // A socket opened with a user token streams that user's conversations,
-      // which core keys under this namespace; the gateway subscribes to it.
-      // The gateway closes the agent socket when the user token dies.
       ...(auth.user
         ? {
             conversationPrefix: userConversationPrefix(auth.user.userId),
@@ -875,22 +770,16 @@ async function handleHttpRequest(
     });
   }
 
-  // A run token reads its own agent's runs, above. It starts none yet.
   if (auth?.kind === "agent") {
     return runTokenScopeResponse(auth.agentId);
   }
 
-  // Everything below dispatches a run, whatever path it arrived on. Keying
-  // this on the recognized path shapes let a POST to a retired URL through.
+  // Gate every path, not the known shapes, so a POST to a retired URL cannot start a run.
   if (!context.directApiEnabled) {
     return directApiDisabledResponse();
   }
 
-  // A runtime key works on both /v1/runs and the scoped
-  // /v1/projects/{project}/stages/{stage}/agents/{endpointId} URL. When the
-  // scoped path is present it must match the key's stage; the agent itself is
-  // chosen by the request body's agentId and loaded against the key's account.
-  // The scoped URL takes no other credential.
+  // A scoped URL takes only a runtime key, for its own stage; the body's agentId picks the agent.
   if (
     publicEndpoint &&
     (auth?.kind !== "deployment" ||
@@ -903,8 +792,7 @@ async function handleHttpRequest(
   }
   const deployment = auth.kind === "deployment" ? auth : undefined;
 
-  // A handler's own failure is returned, not awaited: it is no bad request,
-  // so it reaches the server's 500.
+  // Returned, not awaited: a handler's own failure must reach the server's 500, not a 400.
   try {
     const parsed = {
       ...(await parseDirectPayload(
@@ -940,12 +828,7 @@ async function handleHttpRequest(
   }
 }
 
-/**
- * Find the agent whose channel credentials verify this request. A request no
- * cached agent verifies tries once more on a fresh listing when the cached one
- * is over a second old, so a new agent or a rotated secret is picked up within
- * a second while unsigned traffic still reads at most once a second.
- */
+// A miss on a cached listing over a second old retries once on a fresh listing.
 async function findChannelCredentialHolder(
   context: HttpRoutingContext,
   accountId: string,
@@ -978,11 +861,6 @@ async function findChannelCredentialHolder(
   );
 }
 
-/**
- * One pass of `findChannelCredentialHolder`. Only agents that configure the
- * channel are tried, signature checks are cheap, and the scan is capped so a
- * large account cannot turn one webhook into unbounded work.
- */
 async function scanChannelCredentialHolder(
   context: HttpRoutingContext,
   accountId: string,
@@ -992,9 +870,7 @@ async function scanChannelCredentialHolder(
 ): Promise<ChannelCredentialHolder> {
   let listed: AgentRecord[];
   try {
-    // Each URL scans only its own stage: the stage URL that stage's agents, the
-    // bare URL the production stages' agents. A sibling stage holding the same
-    // provider credentials is never a candidate.
+    // Own stage only: a sibling stage with the same provider credentials is never a candidate.
     listed = await listWebhookAgents(context, accountId, endpointId);
   } catch (err) {
     logWarn("Channel credential holder lookup failed", {
@@ -1006,23 +882,18 @@ async function scanChannelCredentialHolder(
 
     return { kind: "unavailable" };
   }
-  // A stage URL that resolves to nothing named a stage of another account, or
-  // one that is gone. Say that, rather than reporting the channel unconfigured.
   if (endpointId && listed.length === 0) {
     return { kind: "unknown-stage" };
   }
-  // Cap the agents that actually configure this channel, not the raw list. An
-  // account whose 30th agent owns the Slack app must still be reachable. Sort
-  // first: the cap is applied while scanning, so ordering it afterwards would
-  // still leave *which* agents were considered up to the lister.
+  // Sorted, and capped on agents that configure the channel (not the raw list), so which agents
+  // are tried, and which verifying one receives, never depends on the lister's order.
   const candidates: ChannelReceiver[] = [];
   let configured = false;
   let truncated = false;
   for (const candidate of [...listed].sort((left, right) =>
     left.agentId.localeCompare(right.agentId),
   )) {
-    // Cheap key check before building any adapter: an unauthenticated caller
-    // should not make us instantiate SDK clients for every agent in the account.
+    // Before any adapter: unsigned traffic must not instantiate every agent's SDK clients.
     if (!candidate.config.channels?.[channelName]) continue;
     configured = true;
     const adapter = createChannelRegistry(
@@ -1045,12 +916,8 @@ async function scanChannelCredentialHolder(
     });
   }
 
-  // Sort before authenticating. With no agent in the URL this scan is the only
-  // thing choosing a receiver, so two agents sharing one provider app must not
-  // resolve differently between requests. Pick the same one every time and say
-  // so, since the channel record is what disambiguates them. An adapter that
-  // `routesEachEntry` names each entry's owner itself, so every verifying
-  // agent receives the delivery and keeps its own entries.
+  // With no agent in the URL this scan picks the receiver: two agents sharing
+  // one provider app must resolve the same way on every request.
   candidates.sort((left, right) =>
     left.agent.agentId.localeCompare(right.agent.agentId),
   );
@@ -1088,7 +955,6 @@ async function scanChannelCredentialHolder(
     : { kind: "unconfigured", configured: configured };
 }
 
-/** The agents a webhook URL can reach, from the cache when the router keeps one and `fresh` is not set. */
 function listWebhookAgents(
   context: HttpRoutingContext,
   accountId: string,
@@ -1114,7 +980,6 @@ function channelAgentListKey(
   return endpointId ? `${accountId}\u0000${endpointId}` : accountId;
 }
 
-/** Drops the listing under `key` when it is old enough to load again; whether it did. */
 function dropAgedChannelAgentList(key: string): boolean {
   const cached = channelAgentLists.get(key);
   if (
@@ -1128,13 +993,7 @@ function dropAgedChannelAgentList(key: string): boolean {
   return true;
 }
 
-/**
- * A cached listing found these receivers; run them only as the URL reaches
- * them now. A signed request lists again, uncached, and keeps a receiver only
- * while it is still listed and its current credentials still verify, so a
- * revoked deployment, a changed policy or a rotated secret applies at once.
- * Only unsigned traffic is served from the cache.
- */
+// So a revoked deployment, a changed policy or a rotated secret applies at once.
 async function reverifyReceivers(
   context: HttpRoutingContext,
   route: { accountId: string; channelName: string; endpointId?: string },
@@ -1179,7 +1038,6 @@ async function reverifyReceivers(
     : { kind: "unverified" };
 }
 
-/** One listing per key for `CHANNEL_AGENT_LIST_TTL_MS`; concurrent misses share a load, and a failed load is not kept. */
 function cachedChannelAgentList(
   key: string,
   load: () => Promise<AgentRecord[]>,
@@ -1210,19 +1068,12 @@ function cachedChannelAgentList(
   return entry.agents;
 }
 
-/** Drops every cached listing. */
 export function resetChannelAgentListsForTests(): void {
   channelAgentLists.clear();
 }
 
-/**
- * Hand the turn to the agent this channel is bound to, with the record's
- * instructions, workspaces and policies layered on. A lookup that answers
- * "no record" falls back to the receiving agent; a lookup that *fails* returns
- * unavailable, because running without a record's policies and denyTools would
- * be an escalation. The channel path already needs Convex to admit ingress, so
- * failing closed here costs no availability that is not already lost.
- */
+// A failed lookup is unavailable, never "no record": running without the record's policies
+// and denyTools would be an escalation.
 async function resolveChannelTarget(
   context: HttpRoutingContext,
   account: AccountRecord,
@@ -1232,8 +1083,7 @@ async function resolveChannelTarget(
 ): Promise<ChannelTarget> {
   if (!identity?.channelId) return { kind: "resolved", agent: agent };
 
-  // try/catch, not .catch(): a loader can throw synchronously (a partial storage
-  // stub, a missing binding) and that must not escape as a 500.
+  // try/catch, not .catch(): a loader may throw synchronously, which must not become a 500.
   let record: ChannelRecord | null = null;
   try {
     record = await context.channelRecordLoader(
@@ -1286,7 +1136,6 @@ async function resolveChannelTarget(
   return { kind: "resolved", agent: bound, record: record };
 }
 
-/** Attach the roles this actor holds in the channel so policies can read them. */
 function identityWithChannelRoles(
   identity: ChannelIdentity | undefined,
   record: ChannelRecord | undefined,
@@ -1297,11 +1146,6 @@ function identityWithChannelRoles(
   return roles.length > 0 ? { ...identity, userRoles: roles } : identity;
 }
 
-/**
- * Refuse the tag before the turn starts when a policy says this person may not
- * address the agent here. Audit mode only records it, so a rule can be watched
- * on a live channel before it starts blocking anyone.
- */
 async function refuseChannelInvoke(
   agentConfig: AgentConfig,
   account: AccountRecord,
@@ -1325,9 +1169,7 @@ async function refuseChannelInvoke(
     userId: identity?.userId,
     reason: decision.reason,
   };
-  // The verdict already accounts for each policy's mode, so `allowed` is final.
-  // A rule that fired from an auditing policy is reported and then let through,
-  // which is the whole signal a rollout is watched on.
+  // `allowed` already folds in each policy's mode; an audit-mode hit is logged, then let through.
   if (decision.allowed) {
     if (decision.auditedRuleIds.length > 0) {
       logWarn("Agent policy would deny agent.invoke (audit)", {
@@ -1347,11 +1189,6 @@ async function refuseChannelInvoke(
   return decision.reason;
 }
 
-/**
- * Reply routing for this turn. A record's `replyIn` decides between a thread
- * and wherever the message came from, so it applies only where the provider
- * gives the runtime that choice. Everywhere else there is one place to reply.
- */
 function channelReplySource(
   adapter: ChannelAdapter,
   message: InboundMessage,
@@ -1363,12 +1200,6 @@ function channelReplySource(
   return adapter.applyReplyIn(message.source, replyIn);
 }
 
-/**
- * Admit a verified delivery through every receiver the credential scan found.
- * A direct response from a receiver answers the provider at once. Otherwise
- * one ack budget bounds admission for all of them; whatever is still admitting
- * when it runs out carries on in the background after the ack.
- */
 async function handleChannelWebhook(
   receivers: ChannelReceiver[],
   request: ChannelRequest,
@@ -1379,8 +1210,7 @@ async function handleChannelWebhook(
   const admissions: Promise<void>[] = [];
   let ack: ChannelResponse | undefined;
   let ignored: ChannelResponse | undefined;
-  // Set when the ack budget runs out, so a turn a full queue turns away after
-  // that says so in the channel instead of asking for a 503 nobody receives.
+  // Once acked, a full-queue refusal goes to the channel: a 503 would reach nobody.
   let acked = false;
   try {
     for (const receiver of receivers) {
@@ -1401,8 +1231,7 @@ async function handleChannelWebhook(
       }
       ack ??= receipt.ack;
       if (receipt.admitted) {
-        // Handled here, so a failure while later receivers parse is not an
-        // unhandled rejection; the race below still sees it.
+        // No unhandled rejection while later receivers parse; the race below still sees it.
         receipt.admitted.catch((): void => {});
         admissions.push(receipt.admitted);
       }
@@ -1424,8 +1253,7 @@ async function handleChannelWebhook(
 
     return toResponse(ack ?? ignored ?? { statusCode: 200 });
   } catch (err) {
-    // Nothing was counted or recorded for it, so the provider's redelivery
-    // after Retry-After is admitted like a new message.
+    // Nothing was recorded, so the redelivery after Retry-After is admitted as new.
     if (err instanceof Error && err.message === WORKER_QUEUE_FULL) {
       return errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS);
     }
@@ -1438,12 +1266,6 @@ async function handleChannelWebhook(
   }
 }
 
-/**
- * Parse a delivery with one receiver's adapter, under that agent's deployment
- * scope, and start admitting the turns it keeps. The credential scan already
- * authenticated the request with this same adapter.
- * @param acked true once the provider has its ack
- */
 async function receiveChannelWebhook(
   receiver: ChannelReceiver,
   request: ChannelRequest,
@@ -1496,8 +1318,6 @@ async function receiveChannelWebhook(
         : {}),
     });
 
-    // Provider needs a direct HTTP response, but no agent run.
-    // Example: Slack URL verification or Discord interaction response.
     if (parsed.kind === "response") {
       logInfo("Channel webhook responded without agent run", {
         channel: adapter.name,
@@ -1510,8 +1330,6 @@ async function receiveChannelWebhook(
       return { kind: "response", response: parsed.response };
     }
 
-    // Webhook is valid enough to accept, but should not run the agent.
-    // Example: unsupported Pancake event, wrong page ID, hidden/removed or page-originated message.
     if (parsed.kind === "ignore") {
       logDebug(`Channel webhook ignored: ${parsed.reason ?? "unspecified"}`, {
         channel: adapter.name,
@@ -1551,9 +1369,7 @@ async function receiveChannelWebhook(
       return { kind: "accepted", ack: response };
     }
 
-    // A batch admits its turns in order, each on its own; one that fails is
-    // logged and the rest still run. A full queue stops the batch and answers
-    // the whole delivery; turns already admitted redeliver as duplicates.
+    // A full queue stops the batch; turns already admitted come back as duplicates.
     const admitted =
       parsed.kind === "batch"
         ? runWithObservabilityScope(async (): Promise<void> => {
@@ -1606,10 +1422,6 @@ async function receiveChannelWebhook(
   }
 }
 
-// Resolve one parsed turn's record and target and apply its policy. A context
-// turn is stored in the background and a refused one answered here; both give
-// back nothing. A turn to run gives back its admission, which the caller starts
-// and races against the ack budget, telling it whether the ack already went.
 async function acceptChannelTurn(
   adapter: ChannelAdapter,
   result: ParsedChannelMessage | ParsedChannelContext,
@@ -1731,11 +1543,9 @@ async function acceptChannelTurn(
 
     return undefined;
   }
-  // The rewritten source is what every later reply routes on, so a background
-  // job's delayed answer lands in the same place this turn's did.
+  // Every later reply, a background job's included, routes on this rewritten source.
   const source = channelReplySource(adapter, message, target.record);
-  // Replies go out through the adapter that received the webhook, the same
-  // provider app, even when the channel record hands the run to another agent.
+  // The receiving adapter replies, even for another agent: the provider app must match.
   const channel = adapter.actions({ ...message, source: source });
   const targetDeployment =
     target.agent.agentId === agent.agentId
@@ -1779,9 +1589,7 @@ async function acceptChannelTurn(
     return undefined;
   }
 
-  // Admission runs before the ack, so a delivery the provider saw acked is
-  // durably queued; the agent run goes to the worker pool. Its own scope,
-  // because it can outlive this request, whose finally restores the context.
+  // Own scope: admission can outlive this request, whose finally restores the context.
   return (acked): Promise<void> =>
     runWithObservabilityScope(
       (): Promise<void> =>
@@ -1907,8 +1715,6 @@ function isChannelPartition(value: unknown): value is ChannelPartition {
   return value.by === "conversation" && typeof value.alias === "string";
 }
 
-// Attaches an onMessageReceived hook's opaque metadata to the newest user
-// ingress event; the session persists it and re-exposes it on hook payloads.
 export function attachMetadataToLatestUserIngress(
   events: ConversationIngressEvent[],
   metadata: unknown,
@@ -1925,12 +1731,7 @@ export function attachMetadataToLatestUserIngress(
   return events;
 }
 
-/**
- * Run the inbound hook and acknowledgements, then admit the message. Resolves
- * after admission, with the agent run already on a worker slot. A failure is
- * answered in the channel; it rejects only for a full run queue when
- * `redeliver` says the provider will send the message again after a 503.
- */
+// Failures are answered in the channel; rejects only on a full queue the provider redelivers.
 async function processChannelMessage(
   event: ChannelInboundEvent,
   handlers: IntegrationHandlers,
@@ -1968,13 +1769,8 @@ async function processChannelMessage(
       source: event.source,
     });
 
-    // An onMessageReceived hook may drop or rewrite the inbound message before it
-    // reaches the agent (spam filter, redaction). Cheap when unused: the
-    // dispatcher is a no-op unless the agent configured code hooks.
     let content = event.content;
     let events = event.events;
-    // A button click is an answer, not a message: no hook, no typing, no
-    // reaction on the prompt it clicked.
     if (event.agentConfig && !event.answer) {
       const hooks = await createAgentHookDispatcher(
         event.accountId,
@@ -1983,8 +1779,6 @@ async function processChannelMessage(
       const mutation = await hooks.runMutation("channel.message.received", {
         channel: event.channelName,
         text: extractText(event.content),
-        // Channel-specific routing data (e.g. Pancake `tagIds`) so a hook can
-        // key on it. This replaced the old baked-in tag skip.
         source: toLifecycleValue(event.source),
       });
       if (mutation?.drop === true) {
@@ -1998,9 +1792,7 @@ async function processChannelMessage(
       }
       if (typeof mutation?.text === "string") {
         content = rewriteUserContentText(content, mutation.text);
-        // The turn is persisted and built from the ingress events, not from
-        // `content` (handler.ts appendIngressEvents). A rewrite that only
-        // touches `content` is computed and then dropped.
+        // The turn is built from the events (handler.ts), so the rewrite must reach them.
         events = rewriteLatestUserIngressText(events, mutation.text);
       }
       if (mutation !== undefined && mutation.metadata !== undefined) {
@@ -2008,9 +1800,6 @@ async function processChannelMessage(
       }
     }
 
-    // Best-effort acknowledgements. They must never fail the turn, but a bare
-    // catch left a missing typing indicator indistinguishable from one the
-    // provider rejected, so each outcome is recorded.
     if (!event.answer) {
       ackInbound(event, "sendTyping", () => event.channel.sendTyping());
       ackInbound(event, "reactToMessage", () => event.channel.reactToMessage());
@@ -2056,11 +1845,6 @@ async function processChannelMessage(
   }
 }
 
-/**
- * Run one best-effort inbound acknowledgement and record what the provider did
- * with it. Never rethrows, so a channel that refuses the call still gets its
- * turn; the debug line is what distinguishes "accepted" from "never sent".
- */
 function ackInbound(
   event: ChannelInboundEvent,
   action: "reactToMessage" | "sendTyping",
@@ -2084,11 +1868,6 @@ function ackInbound(
   })();
 }
 
-/**
- * Applies a channel.message.received text rewrite to the ingress events that
- * actually reach the session. The newest user event is the inbound message the
- * hook saw; earlier events (context, prior turns a channel may batch) are kept.
- */
 export function rewriteLatestUserIngressText(
   events: ConversationIngressEvent[],
   text: string,
@@ -2108,8 +1887,6 @@ export function rewriteLatestUserIngressText(
   return events;
 }
 
-// A hook rewrites text only, so any image or file the channel delivered stays on
-// the message. Otherwise redacting the caption drops the attachment with it.
 function rewriteUserContentText(
   content: UserContent,
   text: string,
@@ -2196,12 +1973,6 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   };
 }
 
-/**
- * The adapter one named channel is configured with, rebuilt from the agent's
- * own credentials. The webhook path resolves an adapter by asking every channel
- * whether it recognises the request; anything working from a stored message
- * already knows the channel's name and asks for it directly.
- */
 export function channelAdapterFromConfig(
   config: AgentConfig,
   channelName: string,
@@ -2232,13 +2003,6 @@ export function channelActionsFromConfig(
   });
 }
 
-/**
- * Push a single message into a chat channel outside the inbound webhook, to
- * deliver a background job's result back to the conversation it came from. Each
- * channel decides how a delayed message is delivered inside its own module:
- * Discord falls back to a bot-token channel post once its interaction token
- * expires.
- */
 export async function sendChannelReply(options: {
   config: AgentConfig;
   accountId: string;
@@ -2256,7 +2020,6 @@ export async function sendChannelReply(options: {
     );
   }
 
-  // Outbound policy applies to delayed replies too, not just the sync path.
   const hooks = await createAgentHookDispatcher(
     options.accountId,
     options.config,
@@ -2285,7 +2048,6 @@ export async function sendChannelReply(options: {
   await adapter.actions(message).sendText(text);
 }
 
-/** The one refusal a run token gets outside reading its own agent's runs. */
 function runTokenScopeResponse(agentId: string): Response {
   return errorResponse(
     403,
@@ -2294,7 +2056,6 @@ function runTokenScopeResponse(agentId: string): Response {
   );
 }
 
-/** The two invoke shapes: project/stage scoped, and bare agent id. */
 function parsePublicEndpointPath(rawPath: string): PublicEndpointPath | null {
   const scoped = rawPath.match(
     /^\/v1\/projects\/([^/]+)\/stages\/([^/]+)\/agents\/([^/]+)$/,
@@ -2386,8 +2147,7 @@ async function parseDirectPayload(
     throw new DirectNotFoundError("Agent not found");
   }
   const embeddableKey = admitStageCredential(deploymentAuth, agent, deployment);
-  // Only the embeddable key carries a user: a ticket or an account key
-  // already speaks for the whole stage.
+  // Only the embeddable key acts for a user; a ticket or an account key speaks for the stage.
   const user = embeddableKey ? deploymentAuth?.user : undefined;
   if (embeddableKey && !user && agent.requireUserToken === true) {
     throw new DirectForbiddenError(userTokenRequiredMessage(agent.agentId), {
@@ -2429,8 +2189,6 @@ async function parseDirectPayload(
     record.connectionId.trim().length > 0
       ? record.connectionId.trim()
       : undefined;
-  // Steer is the default: a busy conversation absorbs the request at the next
-  // step boundary (or FIFO-follows up); callers opt into reject explicitly.
   const requestedMode = parseIngressMode(record.mode) ?? "steer";
   const rawIdempotencyKey = record.idempotencyKey;
   if (
@@ -2467,11 +2225,6 @@ async function parseDirectPayload(
   };
 }
 
-/**
- * A continuation may name the scoped key a trace row shows, which must parse
- * and name this agent; the handler then resolves it to the session it names.
- * Every other request names a public key.
- */
 function directConversationKeys(
   requested: string,
   continuation: boolean,
@@ -2486,8 +2239,7 @@ function directConversationKeys(
       accountId,
       agentId,
     );
-    // A channel session belongs to its channel: the embeddable key continues
-    // only conversations the direct API opened, and only its own user's.
+    // The embeddable key continues only its own user's direct-API conversations.
     if (
       !scope ||
       scope.accountId !== accountId ||
@@ -2512,7 +2264,6 @@ function directConversationKeys(
       { code: "user_token_conversation", param: "conversationKey" },
     );
   }
-  // The part after a user's namespace is held to the rules of a bare key.
   const bare = user
     ? publicKey.slice(userConversationPrefix(user.userId).length)
     : publicKey;
@@ -2526,7 +2277,6 @@ function directConversationKeys(
   };
 }
 
-/** A caller event id under the token's user, accepting one already namespaced. */
 function userScopedEventId(user: UserToken, requested: string): string {
   const prefix = userConversationPrefix(user.userId);
   const bare = normalizeDirectIdentifier("eventId", requested);
@@ -2538,7 +2288,6 @@ function userTokenRequiredMessage(agentId: string): string {
   return `Agent ${agentId} requires a signed user token with the runtime key. Send it in the X-Broods-User-Token header (signUserToken in the broods SDK), or turn the requirement off for this agent.`;
 }
 
-/** A body is exactly one of: events, answers, or a bare continue. */
 function assertOneDirectPayloadShape(
   continuation: boolean,
   body: { eventCount: number; answerCount: number; hasOverrides: boolean },
@@ -2566,11 +2315,7 @@ function assertOneDirectPayloadShape(
   }
 }
 
-/**
- * Throws unless the agent is in the credential's stage, and public for the
- * embeddable runtime key. True for that key, false for a member's ticket or
- * no credential.
- */
+/** Throws unless the credential reaches the agent; true only for the embeddable key. */
 function admitStageCredential(
   auth: Extract<AuthContext, { kind: "deployment" }> | undefined,
   agent: AgentRecord,
@@ -2581,8 +2326,7 @@ function admitStageCredential(
   if (!deploymentScopeMatches(auth, deployment)) {
     throw new DirectNotFoundError("Agent not found");
   }
-  // publicAccess opens an agent to the frontend key. A member's ticket
-  // already reads every trace in the stage, so it runs private agents too.
+  // A member's ticket already reads every trace in the stage, so it runs private agents too.
   if (auth.stageTicket) return false;
   if (agent.config.publicAccess !== true) {
     throw new DirectForbiddenError(
@@ -2594,7 +2338,6 @@ function admitStageCredential(
   return true;
 }
 
-/** The embeddable key picks neither prompt nor spend unless the agent opts in. */
 function assertRunOverridesAllowed(
   embeddableKey: boolean,
   agent: AgentRecord,
@@ -2613,7 +2356,6 @@ function assertRunOverridesAllowed(
   }
 }
 
-/** One entry per open prompt, labels keyed by question id. */
 function parseDirectQuestionAnswers(value: unknown): QuestionAnswer[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
@@ -2660,12 +2402,6 @@ function parseIngressMode(value: unknown): IngressMode | undefined {
   throw new Error("mode must be reject, followup, collect, or steer");
 }
 
-/**
- * Validates optional per-run overrides from a request body. `model` rejects the
- * reserved identity/credential keys (RUN_OVERRIDE_RESERVED_MODEL_KEYS), checks the
- * rest like the stored model config, and forwards AI SDK call settings/providerOptions
- * to the same model path. Returns undefined when absent.
- */
 export function parseRunOverrides(
   record: Record<string, unknown>,
 ): RunOverrides | undefined {
@@ -2784,15 +2520,12 @@ function parseSandboxJobCompletionPayload(
   };
 }
 
-/** The gateway socket a scope lookup is for, or null on any other path. */
 function socketScopePath(rawPath: string): "agent" | "observability" | null {
   if (rawPath === "/v1/internal/observability-scope") return "observability";
 
   return rawPath === "/v1/internal/agent-socket-scope" ? "agent" : null;
 }
 
-// A malformed escape makes `decodeURIComponent` throw, which would surface as a
-// 500 on a path the router should decline.
 function decodePathSegments(segments: string[]): string[] | null {
   try {
     return segments.map((segment) => decodeURIComponent(segment));
@@ -2801,8 +2534,7 @@ function decodePathSegments(segments: string[]): string[] | null {
   }
 }
 
-// The `dev` marker keeps the stage form at four segments, so the retired
-// three-segment agent form still reaches its own 404 instead of a stage lookup.
+// `dev` keeps the stage form at four segments, so the retired three-segment form still 404s.
 function matchWebhookPath(rawPath: string): WebhookRoute | null {
   const stageMatch = rawPath.match(
     /^\/v1\/webhooks\/([^/]+)\/dev\/([^/]+)\/([^/]+)$/,
@@ -3151,8 +2883,7 @@ function createMatrixChannelFromConfig(
     allowedChannelIds: reachSet(channel.allowedChannelIds),
     allowedUserIds: reachSet(channel.allowedUserIds),
     apiUrl: channel.apiUrl,
-    // Empty when the deployment has no forwarder: inbound still parses, and a
-    // reply fails with a message naming the variable.
+    // Empty without a forwarder: inbound still parses; a reply fails naming the variable.
     forwarderUrl: optionalEnv(MATRIX_FORWARDER_URL_ENV) ?? "",
     ...(channel.botName ? { botName: channel.botName } : {}),
     ...(channel.mentionText ? { mentionText: channel.mentionText } : {}),

@@ -1,8 +1,3 @@
-/**
- * WorkOS-backed CLI login codes and bearer tokens, plus the HTTP exchange
- * endpoint that swaps a one-time login code for a token.
- */
-
 import { v, type Infer } from "convex/values";
 import {
   httpAction,
@@ -40,9 +35,6 @@ const CODE_TTL_MS = 5 * 60 * 1000;
 const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
-// onboardingContextValidator embeds the validators below, so it comes last.
-
-/** The API account backing the token's current org; `broods whoami` reports it. */
 const onboardingAccountValidator = v.object({
   id: v.id("accounts"),
   username: v.string(),
@@ -91,12 +83,7 @@ type OnboardingOrg = {
   accountStatus: "active" | "disabled" | "missing";
 };
 
-/**
- * Mint a short-lived one-time login code for the authenticated user's active
- * org. The PKCE `codeChallenge` means only the CLI process holding the
- * verifier can exchange the code, so a stray localhost listener that catches
- * it gets nothing.
- */
+// PKCE: only the CLI holding the verifier can exchange it, not a stray localhost listener.
 export const createLoginCode = mutation({
   args: { codeChallenge: v.string() },
   returns: v.object({ code: v.string(), expiresAt: v.number() }),
@@ -118,8 +105,7 @@ export const createLoginCode = mutation({
       .unique();
     if (!user) throw new ClientError("User not found", "not_found");
 
-    // Plain Errors reach a production caller as "Server Error"; these
-    // sentences go back to the CLI as the reason its login failed.
+    // ClientError: a plain Error reaches a production caller only as "Server Error".
     const org = await getActiveOrgForUser(ctx, user._id);
     if (!org) throw new ClientError("No active organization", "not_found");
     const membership = await getOrgMembership(ctx, org._id, user._id);
@@ -157,7 +143,6 @@ export const createLoginCode = mutation({
   },
 });
 
-/** Creates a new org for the CLI token user and switches the token to it. */
 export const createOnboardingOrg = internalMutation({
   args: {
     tokenHash: v.string(),
@@ -212,7 +197,6 @@ export const createOnboardingOrg = internalMutation({
   },
 });
 
-/** HTTP exchange endpoint: swap a one-time WorkOS-backed login code for a CLI token. */
 export const exchange = httpAction(async (ctx, req): Promise<Response> => {
   if (req.method !== "POST") {
     return methodNotAllowed(["POST"]);
@@ -255,7 +239,6 @@ export const exchange = httpAction(async (ctx, req): Promise<Response> => {
   }
 });
 
-/** Exchange a one-time code for a long-lived CLI bearer token. */
 export const exchangeLoginCode = internalMutation({
   args: { code: v.string(), codeVerifier: v.string() },
   returns: v.object({
@@ -338,7 +321,6 @@ export const exchangeLoginCode = internalMutation({
   },
 });
 
-/** Returns selectable orgs and projects for the current CLI token context. */
 export const getOnboardingContext = internalMutation({
   args: { tokenHash: v.string() },
   returns: v.union(v.null(), onboardingContextValidator),
@@ -357,21 +339,12 @@ export const getOnboardingContext = internalMutation({
   },
 });
 
-/**
- * Hash of the request's `broods login` bearer token, for `resolveCliToken`.
- * Null when the bearer is missing or carries another prefix, so the
- * login-only CLI routes spend no lookup on it.
- */
 export async function cliLoginTokenHash(req: Request): Promise<string | null> {
   const token = bearerToken(req);
 
   return token?.startsWith(CLI_TOKEN_PREFIX) ? await sha256Hex(token) : null;
 }
 
-/**
- * Resolve a CLI token to the account key hash used by existing sync code.
- * Touches lastUsedAt at a coarse interval to avoid write contention.
- */
 export const resolveCliToken = internalMutation({
   args: {
     tokenHash: v.string(),
@@ -401,7 +374,6 @@ export const resolveCliToken = internalMutation({
   },
 });
 
-/** Switches the current CLI token to another org where the user can manage resources. */
 export const selectOnboardingOrg = internalMutation({
   args: {
     tokenHash: v.string(),
@@ -448,7 +420,6 @@ export const selectOnboardingOrg = internalMutation({
   },
 });
 
-/** S256 PKCE transform: base64url(sha256(verifier)), no padding. */
 export async function pkceChallenge(verifier: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -550,8 +521,7 @@ async function resolveActiveCliToken(
   const account = await ctx.db.get(token.accountId);
   if (!account || account.status !== "active") return null;
 
-  // A token is minted for an owner/admin; it must stop working the moment
-  // that membership is removed or demoted, not when it expires.
+  // Stops working the moment the owner/admin membership is removed or demoted.
   const user = await userByAuthId(ctx, token.authId);
   const membership = user
     ? await getOrgMembership(ctx, token.orgId, user._id)

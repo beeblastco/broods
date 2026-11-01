@@ -1,8 +1,3 @@
-/**
- * The run's task token totals: how finished steps sum into the usage row and
- * root span numbers, and when the turn total from onEnd replaces that sum.
- */
-
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelUsage } from "ai";
 import {
@@ -30,7 +25,6 @@ const stepUsage = (
   totalTokens: input + output,
 });
 
-/** A finished step as onStepEnd hands it over: the flattened usage. */
 const step = (...args: Parameters<typeof stepUsage>): UsageTokenTotals =>
   usageTokenTotals(stepUsage(...args));
 
@@ -72,8 +66,6 @@ describe("createTaskTotals", () => {
 
   it("meters cache-write tokens from the usage shape, else from the fallback", () => {
     const totals = createTaskTotals();
-    // Step 0 carries the count in its usage shape, so the fallback is ignored;
-    // step 1 only had it in providerMetadata.
     expect(totals.addStep(0, step(10, 5, { cacheWrite: 100 }), 7)).toBe(100);
     expect(totals.addStep(1, step(10, 5), 40)).toBe(40);
 

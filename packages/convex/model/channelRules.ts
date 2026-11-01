@@ -1,9 +1,4 @@
-/**
- * Channel record validation for the config plane, the single home of the
- * normalizers core's `shared/domain/channel-record.ts` re-exports. Kept free
- * of Convex imports so the rules stay unit-testable; the public projection
- * lives in ./responses.ts.
- */
+// No Convex imports: core re-exports these from `shared/domain/channel-record.ts`.
 
 import { isPlainObject } from "./objects";
 import { ClientError } from "./clientError";
@@ -28,7 +23,6 @@ const CHANNEL_RECORD_UPDATE_KEYS = [
   "status",
 ] as const;
 
-/** Where a reply lands: its own thread, or wherever the message came from. */
 export const CHANNEL_REPLY_TARGETS = ["thread", "source"] as const;
 
 export type ChannelRecordConfig = {
@@ -129,8 +123,7 @@ export function normalizeUpdateChannelRecordInput(
   if (!isPlainObject(value))
     throw new ClientError("Request body must be an object");
   const input = value as Record<string, unknown>;
-  // Without this a typo like `descripton` normalizes to {} and PATCH answers
-  // 200 having changed nothing.
+  // Else a typo like `descripton` normalizes to {} and PATCH answers 200 having changed nothing.
   for (const key of Object.keys(input)) {
     if (
       !CHANNEL_RECORD_UPDATE_KEYS.includes(

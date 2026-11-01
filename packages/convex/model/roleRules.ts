@@ -1,10 +1,3 @@
-/**
- * Account-role validation for the Convex config plane: role CRUD input,
- * assume-role input, and the brole_/bsts_ identifier generation. Role
- * policies reuse the PolicyDocument shape (model/policyRules.ts) restricted to
- * the API action namespace.
- */
-
 import { randomToken } from "./accountSecrets";
 import { isPlainObject } from "./objects";
 import {
@@ -39,17 +32,15 @@ export interface UpdateRoleInput {
   status?: "active" | "disabled";
 }
 
-/** Generate a public role id: "brole_" + random base64url. */
 export function createRoleId(): string {
   return randomToken(ROLE_ID_PREFIX, ROLE_ID_BYTES);
 }
 
-/** Generate a one-time role session token. Only its SHA-256 hash is stored. */
+// Shown once: only its SHA-256 hash is stored.
 export function createRoleSessionToken(): string {
   return randomToken(ROLE_SESSION_TOKEN_PREFIX);
 }
 
-/** Validate a `POST /v1/account/assume-role` request body. */
 export function normalizeAssumeRoleInput(value: unknown): AssumeRoleInput {
   if (!isPlainObject(value))
     throw new ClientError("Request body must be an object");

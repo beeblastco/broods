@@ -1,10 +1,3 @@
-/**
- * Google Chat channel adapter, for a Chat app on an HTTP endpoint. The Chat
- * SDK adapter is the transport: it verifies Google's signed token, reads the
- * message and posts the reply as the app's service account. Pub/Sub delivery
- * is not wired, so the app hears direct messages and @-mentions only.
- */
-
 import {
   GoogleChatAdapter,
   type GoogleChatEvent,
@@ -27,19 +20,15 @@ import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { GCHAT_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
-// Only the two fields the adapter signs with; the rest of the key file rides along.
 const SERVICE_ACCOUNT_KEY = z.looseObject({
   client_email: z.string().min(1),
   private_key: z.string().min(1),
 });
-// The SDK adapter caches Google's signing certificates and the service
-// account's access token, so one is kept per app. Adapters are rebuilt per
-// request and would otherwise refetch both every time.
+// The SDK adapter caches Google's certificates and the access token, so one lives per app.
 const TRANSPORT_CACHE_MAX = 100;
 const transports = new Map<string, GoogleChatAdapter>();
 
-// A Chat app that is a Workspace add-on posts `chat.messagePayload`; one that
-// is not posts this older shape, with the same message inside.
+// What a Chat app that is not a Workspace add-on is posted; an add-on gets `chat.messagePayload`.
 interface GoogleChatClassicEvent {
   message?: GoogleChatMessage;
   space?: GoogleChatSpace;
@@ -68,10 +57,6 @@ export interface GoogleChatSource {
   userName?: string;
 }
 
-/**
- * Builds the Google Chat adapter from one agent's `config.channels.gchat`.
- * `integrations.ts` calls it per request; only the SDK transport is reused.
- */
 export function createGoogleChatChannel(
   options: GoogleChatChannelOptions,
 ): ChannelAdapter {
@@ -88,9 +73,8 @@ export function createGoogleChatChannel(
       return req.method === "POST" && "authorization" in req.headers;
     },
 
-    // The token verifiers are private to the SDK adapter. Its webhook handler
-    // runs them first and, with no Chat instance behind it, does nothing else,
-    // so a 200 is exactly "Google signed this for our audience".
+    // The SDK keeps its token check private; with no Chat behind it, handleWebhook only
+    // verifies, so a 200 means exactly "Google signed this for our audience".
     authenticate: async function (req): Promise<boolean> {
       const response = await transport.handleWebhook(
         new Request(`https://core.invalid${req.rawPath}`, {
@@ -139,7 +123,7 @@ export function createGoogleChatChannel(
         return { kind: "ignore", reason: "not allowed" };
       }
       const parsed = transport.parseMessage(event);
-      // `argumentText` is the message with the app's own mention cut out.
+      // `argumentText` is the text without the app's own mention.
       const text = (payload.message.argumentText ?? parsed.text).trim();
       if (!text && parsed.attachments.length === 0) {
         return { kind: "ignore", reason: "empty message" };
@@ -169,8 +153,7 @@ export function createGoogleChatChannel(
         sendText: async function (text): Promise<void> {
           await transport.postMessage(source.threadId, { markdown: text });
         },
-        // Google Chat has no typing indicator, and an app reacts only with a
-        // user's credentials, so an accepted message shows neither.
+        // No typing indicator, and an app can react only with a user's credentials.
         sendTyping: async function (): Promise<void> {
           return;
         },
@@ -182,10 +165,6 @@ export function createGoogleChatChannel(
   };
 }
 
-/**
- * The service-account key an agent stores as JSON text. Null when it does not
- * parse or lacks the email and key the adapter signs with.
- */
 export function parseServiceAccountKey(
   json: string,
 ): ServiceAccountCredentials | null {
@@ -200,8 +179,6 @@ export function parseServiceAccountKey(
   return key.success ? key.data : null;
 }
 
-// Both event shapes as the add-on one the SDK parses, or null when the
-// delivery carries no message (added to a space, a card click).
 function addOnEvent(event: GoogleChatWebhookEvent): GoogleChatEvent | null {
   if (event.chat?.messagePayload) {
     return event;
@@ -218,10 +195,6 @@ function addOnEvent(event: GoogleChatWebhookEvent): GoogleChatEvent | null {
   };
 }
 
-/**
- * Where the message arrived and who sent it. A direct message has no thread to
- * reply in; a space reply goes to the thread the message opened or joined.
- */
 function googleChatIdentity(
   space: GoogleChatSpace,
   message: GoogleChatMessage,
@@ -239,8 +212,6 @@ function googleChatIdentity(
   };
 }
 
-// One SDK adapter per app configuration, least recently used dropped past the
-// cap. The key hashes every field the adapter is built from.
 function googleChatTransport(
   options: GoogleChatChannelOptions,
 ): GoogleChatAdapter {
@@ -307,8 +278,6 @@ function toGoogleChatSource(source: Record<string, unknown>): GoogleChatSource {
   };
 }
 
-// The turn one verified message becomes: one conversation per space thread,
-// or per direct-message space.
 function toInboundMessage(
   message: GoogleChatMessage,
   parsed: Message,

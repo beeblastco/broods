@@ -1,9 +1,4 @@
-/**
- * Project + stage scoped project keys (`bpdk_…`) for the `broods` CLI. Unlike
- * the account key (Settings → API Access), a project key authorizes only one
- * project/stage. The plaintext token is returned once at creation; only its
- * SHA-256 hash is stored.
- */
+/** `bpdk_` keys that authorize one project stage; only the token's SHA-256 is stored. */
 
 import { type Infer, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
@@ -21,7 +16,6 @@ import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForWrite } from "./model/ownership/project";
 import { deployKeysFields } from "./schema";
 
-// What `list` sends to the browser: the row minus `keyHash`.
 const { keyHash: _keyHash, ...deployKeyListFields } = deployKeysFields;
 const deployKeyListItem = v.object({
   ...deployKeyListFields,
@@ -45,7 +39,6 @@ export const create = mutation({
     ctx,
     { projectId, stageId, name, description },
   ): Promise<{ _id: Id<"deployKeys">; token: string; keyHint: string }> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -65,8 +58,6 @@ export const create = mutation({
       stageId: stageId,
     });
 
-    // A project key resolves to the project's org account, so that account must
-    // already be provisioned (Settings → API Access).
     const account = await ctx.db
       .query("accounts")
       .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
@@ -109,14 +100,12 @@ export const list = query({
     ctx,
     { projectId, stageId },
   ): Promise<Infer<typeof deployKeyListItem>[]> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
 
-    // Return empty rather than throwing so a just-deleted stage doesn't
-    // crash reactive subscribers before they unmount.
+    // Empty, not a throw: a subscriber may briefly hold a just-deleted stage.
     const stage = await getOwnedStage(ctx, user.id, stageId);
     if (!stage || stage.projectId !== projectId) {
       return [];
@@ -137,7 +126,6 @@ export const remove = mutation({
   args: { deployKeyId: v.id("deployKeys") },
   returns: v.id("deployKeys"),
   handler: async (ctx, { deployKeyId }): Promise<Id<"deployKeys">> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");

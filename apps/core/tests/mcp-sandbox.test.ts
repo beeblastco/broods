@@ -1,7 +1,3 @@
-// An MCP server on a lambda sandbox is one JSON-RPC request per POST /mcp to
-// the reserved VM. These pin the body the sandbox image reads and how replies
-// are checked; reaching the VM is the executor's, tested in sandbox-executor.
-
 import { expect, test } from "bun:test";
 import {
   sandboxMcpRequest,
@@ -163,7 +159,6 @@ test("refuses a sandbox whose executor has no MCP host", async () => {
   );
 });
 
-// An executor whose every POST answers `reply`, recording each request.
 function answering(requests: unknown[], reply: unknown): SandboxMcpExecutor {
   return {
     postReserved: async function (request): Promise<unknown> {
@@ -174,7 +169,6 @@ function answering(requests: unknown[], reply: unknown): SandboxMcpExecutor {
   };
 }
 
-// The error a call fails with, or "resolved" when it does not fail.
 function failure(call: Promise<unknown>): Promise<string> {
   return call.then(
     (): string => "resolved",

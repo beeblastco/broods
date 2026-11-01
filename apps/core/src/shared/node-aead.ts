@@ -1,9 +1,4 @@
-/**
- * The envelope codec's cipher on `node:crypto`. It is synchronous, so a
- * per-turn decrypt in core costs no Web Crypto thread hop. The blob format
- * stays in `@broods/convex/model/envelope`; this only seals and opens bytes,
- * and a blob sealed by either primitive opens with the other.
- */
+// Sync, so a per-turn decrypt skips the Web Crypto thread hop; blobs open with either primitive.
 
 import { createCipheriv, createDecipheriv, createHmac } from "node:crypto";
 import {

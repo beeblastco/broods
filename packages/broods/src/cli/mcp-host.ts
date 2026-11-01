@@ -1,11 +1,3 @@
-/**
- * `broods machine --mcp <file>`: the daemon as MCP host. The file has the
- * `.mcp.json` shape Claude Code, Cursor and Codex read. Each server is a
- * stdio child the SDK client spawns on first use and keeps, and it must speak
- * MCP 2026-07-28: there is no 2025-era fallback. Core only ever learns names, tool
- * listings and results: the file and its command lines stay on this computer.
- */
-
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
@@ -19,8 +11,7 @@ import { MCP_PROTOCOL_VERSION } from "../../../../apps/core/src/shared/mcp-proto
 import { agentEnv } from "../runtime-config.ts";
 
 const CLIENT_INFO = { name: "broods-machine", version: "1.0.0" };
-// A server that never answers `server/discover` is refused after this, not
-// after the SDK's 60 second request timeout.
+// Refuses a server that never answers `server/discover` before the SDK's 60s request timeout.
 const DISCOVER_TIMEOUT_MS = 10_000;
 
 const serverSpec = z.object({
@@ -41,6 +32,8 @@ const serversFile = z.object({
 
 export type McpServerSpec = z.infer<typeof serverSpec>;
 
+// Servers must speak MCP 2026-07-28, no 2025-era fallback. Core only sees names, tool
+// listings and results: the file and its command lines stay on this computer.
 export class McpHost {
   readonly #clients = new Map<string, Promise<Client>>();
   readonly #log: (line: string) => void;
@@ -84,8 +77,7 @@ export class McpHost {
     );
   }
 
-  // Spawned on first use and kept. A server that exits is forgotten, so the
-  // next call spawns it again instead of failing forever.
+  // A server that exits is forgotten, so the next call respawns it instead of failing forever.
   #client(server: string): Promise<Client> {
     const spec = this.#servers.get(server);
     if (!spec) {
@@ -125,7 +117,6 @@ export class McpHost {
   }
 }
 
-/** Parse a `.mcp.json`; a relative `cwd` resolves against the file. */
 export function readMcpServersFile(path: string): Map<string, McpServerSpec> {
   const file = resolve(path);
   const parsed = serversFile.safeParse(readJson(file));

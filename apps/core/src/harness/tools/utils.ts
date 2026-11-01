@@ -1,8 +1,3 @@
-/**
- * Generic model-result helpers plus shared persistent-subagent tool plumbing.
- * Keep tool-specific schemas, inputs, and actions in their own tool files.
- */
-
 import type { JSONValue } from "@ai-sdk/provider";
 import { detectMediaType, type ToolResultOutput } from "@ai-sdk/provider-utils";
 import type {
@@ -40,11 +35,8 @@ export const SUBAGENT_TOOL_PROPERTIES: Record<string, JSONSchema7> = {
 
 export const VIRTUAL_AGENT_PREFIX = "virtual_subagent_";
 
-// Images one tool result may show the model; together they share MAX_IMAGE_BYTES.
 export const MAX_RESULT_IMAGES = 8;
-// The longest side a model provider takes for an inline image.
 const MAX_IMAGE_SIDE = 8000;
-// What every model provider reads inline.
 const MODEL_IMAGE_TYPES: ReadonlySet<string> = new Set([
   "image/gif",
   "image/jpeg",
@@ -53,7 +45,6 @@ const MODEL_IMAGE_TYPES: ReadonlySet<string> = new Set([
 ]);
 const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
 
-/** One part of a `content` tool result. */
 export type ToolContentPart = Extract<
   ToolResultOutput,
   { type: "content" }
@@ -65,13 +56,11 @@ export interface SubagentToolContext {
   conversationKey: string;
 }
 
-/** A persistent subagent's question to its parent; null when no answer comes. */
 export type AskParent = (
   question: string,
   abortSignal?: AbortSignal,
 ) => Promise<string | null>;
 
-/** This turn's live subagents, as the parent's loop and subagent tools see them. */
 export interface SubagentWatch {
   answerQuestion(taskId: string, answer: string): boolean;
   takeParentMessages(): Promise<UserModelMessage[]>;
@@ -84,11 +73,7 @@ export interface SubagentToolInput {
 
 export type UserContentPart = Exclude<UserContent, string>[number];
 
-/**
- * The subagent tools' ownership check: the task's status row, when a run of
- * this conversation started it. A child can outlive the run that started it,
- * so a later turn of the same conversation can still steer or stop it.
- */
+// A child can outlive the run that started it, so any run of its conversation owns it.
 export async function getOwnedSubagent(
   context: SubagentToolContext,
   input: SubagentToolInput,
@@ -126,10 +111,6 @@ export function isFatalSandboxSetupError(value: string): boolean {
   );
 }
 
-/**
- * Adapt a retained JSON result to the richest user-message parts supported by
- * the AI SDK. JSON has no native user part, so only that case becomes text.
- */
 export function modelValueToUserParts(value: JSONValue): UserContentPart[] {
   const output = parseToolResultOutput(value);
   if (!output) {
@@ -157,11 +138,7 @@ export function modelValueToUserParts(value: JSONValue): UserContentPart[] {
   }
 }
 
-/**
- * Convert an erased execute result at the AI SDK model-output boundary. Static
- * tools return string or JSON and take the SDK's own default; only uploaded
- * tools need this, because the SDK default never validates what it wraps.
- */
+// For uploaded tools: the SDK's default output conversion never validates what it wraps.
 export function normalizeToolResultOutput(output: unknown): ToolResultOutput {
   if (isToolResultOutput(output)) {
     return output;
@@ -192,9 +169,7 @@ export function prependTextToUserParts(
     : [{ type: "text", text: prefix }, ...parts];
 }
 
-// A child carries the parent's effective policies and withheld tools (a channel
-// record's included), and never spawns subagents of its own. Workspaces are the
-// exception: a predefined child keeps its own, whatever a record narrowed.
+// Workspaces are not inherited: a predefined child keeps its own, whatever a record narrowed.
 export function subagentConfig(
   config: AgentConfig,
   parent: AgentConfig,
@@ -221,7 +196,6 @@ export function subagentNotFound(taskId: string): string {
   return `Error: no subagent task found for ${taskId}`;
 }
 
-/** Every content item of a tool message's results, in order. */
 export function toolContentItems(message: ToolModelMessage): ToolContentPart[] {
   return message.content.flatMap((part): ToolContentPart[] =>
     part.type === "tool-result" && part.output.type === "content"
@@ -230,17 +204,14 @@ export function toolContentItems(message: ToolModelMessage): ToolContentPart[] {
   );
 }
 
-/** Throw native errors from execute so the AI SDK selects its error result path. */
 export const toolError = (value: string): never => {
   throw new Error(
     isFatalSandboxSetupError(value) ? `Sandbox setup failed: ${value}` : value,
   );
 };
 
-/** Return native text from execute so the AI SDK selects ToolResultOutput.text. */
 export const toolText = (value: string): string => value;
 
-// A virtual child (no agentId) is the parent itself, on `subagent.model` when set.
 export function virtualSubagentConfig(parent: AgentConfig): AgentConfig {
   return subagentConfig(
     applyRunOverrides(parent, { model: parent.subagent?.model }),
@@ -248,12 +219,7 @@ export function virtualSubagentConfig(parent: AgentConfig): AgentConfig {
   );
 }
 
-/**
- * A tool result's content parts with every image the model cannot read, or past
- * the result's budget (MAX_RESULT_IMAGES images sharing MAX_IMAGE_BYTES), swapped
- * for a text note. A bad image would fail the next model call, and big ones stay
- * in the conversation for every later turn. browse and MCP results go through it.
- */
+// A bad image fails the next model call, and a big one rides along on every later turn.
 export function withImageLimits(parts: ToolContentPart[]): ToolContentPart[] {
   let images = 0;
   let bytes = 0;
@@ -265,7 +231,6 @@ export function withImageLimits(parts: ToolContentPart[]): ToolContentPart[] {
       text: `[An image (${part.mediaType}, ${part.data.length} base64 characters) was not shown to you: ${problem}.]`,
     });
     const size = base64Bytes(part.data);
-    // The bytes name the type; a label alone is often wrong.
     const mediaType =
       size === undefined
         ? undefined
@@ -302,7 +267,6 @@ export function withImageLimits(parts: ToolContentPart[]): ToolContentPart[] {
   });
 }
 
-/** Decoded size of a base64 string, or undefined when it is not valid base64. */
 function base64Bytes(data: string): number | undefined {
   if (data.length % 4 !== 0 || !BASE64_PATTERN.test(data)) return undefined;
   const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
@@ -337,11 +301,6 @@ function hasValidProviderOptions(value: Record<string, unknown>): boolean {
   );
 }
 
-/**
- * An image's pixel size, read from the header its type defines, or undefined
- * when that header is not all there: a signature alone is not an image. Only
- * the header is read, so a body cut short past it still passes.
- */
 function imageSize(
   bytes: Buffer,
   mediaType: string,
@@ -505,14 +464,13 @@ function isToolResultOutput(value: unknown): value is ToolResultOutput {
   }
 }
 
-/** A JPEG's size from its first start-of-frame segment. */
 function jpegSize(
   bytes: Buffer,
 ): { width: number; height: number } | undefined {
   let offset = 2;
   while (offset + 9 <= bytes.length && bytes[offset] === 0xff) {
     const marker = bytes.readUInt8(offset + 1);
-    // A marker may be preceded by any number of 0xFF fill bytes.
+    // Any number of 0xFF fill bytes may precede a marker.
     if (marker === 0xff) {
       offset += 1;
       continue;
@@ -542,8 +500,6 @@ export function parseToolResultOutput(
   return isToolResultOutput(value) ? value : undefined;
 }
 
-// The task id names the run that started the child; a run other than this one
-// counts when its envelope belongs to this conversation.
 async function startedInConversation(
   context: SubagentToolContext,
   taskId: string,
@@ -673,7 +629,6 @@ function urlToolContentPartToUserPart(
   }
 }
 
-/** A WebP's size from its VP8, VP8L or VP8X chunk. */
 function webpSize(
   bytes: Buffer,
 ): { width: number; height: number } | undefined {

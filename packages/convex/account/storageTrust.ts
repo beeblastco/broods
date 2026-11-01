@@ -1,9 +1,4 @@
-/**
- * The account's storage trust (external id + Broods principal) for its own
- * S3 roles: an internal mutation for core's mounts and the file actions, and a
- * dashboard mutation for the active org. Both mint the id on first need, which
- * is why neither is a query. The rules live in `model/storageTrust.ts`.
- */
+// Mutations, not queries: each mints the external id on first need.
 
 import { v } from "convex/values";
 import { internalMutation, mutation } from "../_generated/server";
@@ -21,7 +16,6 @@ export const storageTrustValidator = v.object({
   trustPolicy: v.optional(v.string()),
 });
 
-/** The external id every AssumeRole of this account's own roles must send. */
 export const externalId = internalMutation({
   args: { accountId: v.string() },
   returns: v.string(),
@@ -33,7 +27,6 @@ export const externalId = internalMutation({
   },
 });
 
-/** The full trust for one account, for `GET /v1/account/storage-trust`. */
 export const get = internalMutation({
   args: { accountId: v.id("accounts") },
   returns: storageTrustValidator,
@@ -42,12 +35,10 @@ export const get = internalMutation({
   },
 });
 
-/** The active org's trust, shown read-only in the workspace storage editor. */
 export const getForActiveOrg = mutation({
   args: {},
   returns: v.union(storageTrustValidator, v.null()),
   handler: async (ctx): Promise<StorageTrust | null> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");

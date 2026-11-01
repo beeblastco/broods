@@ -1,9 +1,3 @@
-/**
- * Presentation for `broods run`. Terminals get the AI SDK terminal UI; pipes get
- * plain text. The agent stays deployed either way: a `ChatTransport` turns every
- * turn into a direct-API SSE run and the SDK maps core's stream parts for us.
- */
-
 import { runAgentTUI } from "@ai-sdk/tui";
 import {
   convertToModelMessages,
@@ -27,23 +21,19 @@ type SendMessagesOptions = Parameters<
 export interface AgentRunOptions {
   client: BroodsClient;
   agent: AgentReference;
-  /** Sent as the first turn. The TUI stays open afterwards for follow-ups. */
   prompt?: string;
 }
 
-/** Run a deployed agent in the AI SDK terminal UI until the user exits. */
 export async function runAgentTui(options: AgentRunOptions): Promise<void> {
   if (options.prompt !== undefined) void submitPrompt(options.prompt);
   await runAgentTUI({
     title: `broods · ${options.agent.name}`,
-    // Tool cards stay expanded: their input and output are what a dev testing
-    // an agent came to see, and the default collapses them once text arrives.
+    // The default collapses tool cards, whose input and output a dev came here to see.
     tools: "full",
     transport: new RemoteAgentTransport(options.client, options.agent),
   });
 }
 
-/** Stream a single run as plain text, for redirected or piped output. */
 export async function streamAgentText(
   options: AgentRunOptions & { prompt: string },
 ): Promise<void> {
@@ -51,7 +41,6 @@ export async function streamAgentText(
     stream: toReadableStream(
       options.client.stream(options.agent, { input: options.prompt }),
       undefined,
-      // One-shot: there is no follow-up turn to keep bookkeeping for.
       () => {},
     ),
   });
@@ -61,10 +50,7 @@ export async function streamAgentText(
   process.stdout.write("\n");
 }
 
-/**
- * `runAgentTUI` takes no initial prompt, so type the CLI's prompt into the
- * listener the terminal UI attaches to stdin once it is ready for input.
- */
+// `runAgentTUI` takes no initial prompt, so type it into stdin once the TUI listens there.
 export async function submitPrompt(prompt: string): Promise<void> {
   const listeners = process.stdin.listenerCount("data");
   const deadline = Date.now() + 10_000;
@@ -76,11 +62,8 @@ export async function submitPrompt(prompt: string): Promise<void> {
   process.stdin.emit("data", Buffer.from("\r"));
 }
 
-/**
- * Bridges the TUI's chat protocol to a deployed agent. Core owns the
- * conversation, so a turn only forwards what core has not seen yet: new user
- * messages and tool-approval responses, the two inputs it treats as runnable.
- */
+// Core owns the conversation, so a turn forwards only what core has not seen yet: new user
+// messages and tool-approval responses, the two inputs it treats as runnable.
 export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   private readonly conversationKey = `tui-${generateId()}`;
   private readonly sentApprovals = new Set<string>();
@@ -91,7 +74,6 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
     private readonly agent: AgentReference,
   ) {}
 
-  // The TUI never resumes a dropped stream; each turn opens its own SSE run.
   async reconnectToStream(): Promise<ReadableStream<UIMessageChunk> | null> {
     return null;
   }
@@ -119,11 +101,7 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
     });
   }
 
-  /**
-   * Diff the converted history against what core already has, without recording
-   * anything: `commit` runs only once core answers, so a run that never reached
-   * it is re-sent on the next turn instead of being silently dropped.
-   */
+  // Records nothing: `commit` runs once core answers, so a turn that never reached it is re-sent.
   private pendingEvents(messages: ModelMessage[]): {
     events: ModelMessage[];
     commit: () => void;
@@ -163,7 +141,6 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   }
 }
 
-/** Resolves as an exhausted read when the signal aborts; never otherwise. */
 function abortedRead(
   signal: AbortSignal | undefined,
 ): Promise<IteratorResult<TextStreamPart<ToolSet>>> {
@@ -175,20 +152,14 @@ function abortedRead(
   });
 }
 
-/**
- * Adapt the client's async generator to the `ReadableStream` the SDK expects.
- * Aborting races the in-flight read so a stalled turn stops immediately instead
- * of waiting for the model's next event, and `onAnswered` fires once core has
- * replied, which is the point the turn counts as delivered.
- */
 function toReadableStream(
   stream: AsyncGenerator<TextStreamPart<ToolSet>>,
   signal: AbortSignal | undefined,
   onAnswered: () => void,
 ): ReadableStream<TextStreamPart<ToolSet>> {
   let answered = false;
-  // Never awaited: the generator can be parked on a read that never completes,
-  // and `return()` queues behind it, so awaiting would hang the abort itself.
+  // Never awaited: `return()` queues behind a read that may never complete, so awaiting it
+  // would hang the abort itself.
   const release = () => void stream.return(undefined);
 
   return new ReadableStream({

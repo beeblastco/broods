@@ -285,8 +285,7 @@ describe("createTools", () => {
       denyTools: ["bash", "neverRegistered"],
     });
 
-    // bash comes from the sandbox, not config.tools. Naming it there throws
-    // "not a supported tool", so the deny list has to apply to the built set.
+    // bash comes from the sandbox, not config.tools, so the deny list applies to the built set.
     expect(Object.keys(tools).sort()).toEqual(["urlContext"]);
   });
 
@@ -297,8 +296,7 @@ describe("createTools", () => {
     }));
     const { createTools } = await import("../src/harness/tools/index.ts");
 
-    // Shape produced by JSON.stringify(google.tools.googleSearch({...})). The
-    // lazy schemas drop out, so only `args` is meaningful.
+    // As JSON.stringify(google.tools.googleSearch(...)) emits it: the lazy schemas drop out.
     const tools = await createTools(createToolContext(googleSearchMock), {
       tools: {
         googleSearch: {
@@ -344,7 +342,6 @@ describe("createTools", () => {
       "read",
       "write",
     ]);
-    // bypass mode auto-approves everything.
     for (const name of Object.keys(tools)) {
       expect(approvalStatus(name, {}, context)).resolves.toBeUndefined();
     }
@@ -453,8 +450,6 @@ describe("createTools", () => {
       {},
     );
 
-    // bash/write/edit/grep/memory_save exist for the sandbox-backed workspace;
-    // read/glob span both.
     expect(Object.keys(tools).sort()).toEqual([
       "bash",
       "edit",
@@ -464,10 +459,7 @@ describe("createTools", () => {
       "read",
       "write",
     ]);
-    // write preserves the real default workspace (ro) instead of silently selecting the
-    // later writable one. Because ro is read-only there is no sandbox to approve against,
-    // so omitting workspace does NOT prompt. It falls straight through to a clean
-    // read-only error.
+    // The default workspace is read-only: no sandbox to approve against, so no prompt.
     expect(await needsApproval(tools.write)).toBe(false);
     expect(
       (
@@ -797,8 +789,7 @@ describe("createTools", () => {
     });
 
     expect(Object.keys(tools).sort()).toEqual(["googleSearch", "urlContext"]);
-    // enabled/needsApproval/async are registry-level flags and never reach the
-    // provider factory; every other key is passed through as tool args.
+    // Registry flags (enabled, needsApproval, async) never reach the provider factory.
     expect(googleSearchMock).toHaveBeenCalledWith({
       searchTypes: {
         imageSearch: {},
@@ -1001,8 +992,7 @@ describe("createTools", () => {
 
   it("updates its own scheduled task and refuses another agent's", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
-    // Every field the success line quotes differs from the stored record, so
-    // the test fails if the message is built from the pre-update read.
+    // Every quoted field differs from the stored record, catching a pre-update message.
     const update = mock(async function (): Promise<CronRecord> {
       return {
         ...cronSummary(),
@@ -1040,9 +1030,7 @@ describe("createTools", () => {
     ).toBe(
       "Updated scheduled task 'renamed' (cron_mine): cron(0 10 * * ? *) in Europe/Paris, paused.",
     );
-    // instructions ride the patch as `input`, the one-of field the config plane
-    // collapses into stored events. Nothing may add agentId or conversationKey,
-    // which is what stops a task being repointed.
+    // Nothing may add agentId or conversationKey: that is what stops a task being repointed.
     expect(update).toHaveBeenCalledWith("acct_test", "cron_mine", {
       name: "renamed",
       input: "Post the new summary.",
@@ -1099,8 +1087,7 @@ describe("createTools", () => {
     ).rejects.toThrow("answers in another conversation");
     expect(update).not.toHaveBeenCalled();
 
-    // Retiming, pausing and resuming carry no model-chosen content, so they
-    // still reach a task bound elsewhere.
+    // Retime, pause and resume carry no model-chosen text, so a task bound elsewhere takes them.
     await channelToolExecute(tools.update_schedule, {
       cronId: "cron_elsewhere",
       status: "paused",
@@ -1118,8 +1105,6 @@ describe("createTools", () => {
     });
   });
 
-  // The input schema (schedule-tool.test.ts) holds the shape; what the config
-  // plane's normalizer refuses still fails here, before any write.
   it("refuses a timezone the config plane would refuse", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const update = mock(async function (): Promise<CronRecord> {
@@ -1299,8 +1284,7 @@ describe("connected MCP servers", () => {
       {},
     );
 
-    // Core reads the picture itself, so a link to a private address, or to a
-    // file only the server can read, stays a line of text.
+    // Core fetches the picture itself, so a private-address or server-file link stays text.
     expect(result).toEqual({
       type: "content",
       value: [
@@ -1335,7 +1319,6 @@ describe("connected MCP servers", () => {
             image(jpegHeader(2, 3)),
             image("not base64!"),
             image(btoa("<svg/>"), "image/svg+xml"),
-            // A PNG signature with no header behind it cannot be decoded.
             image("iVBORw0KGgo="),
             image(pngHeader(9000, 10)),
             image(huge),
@@ -1351,7 +1334,6 @@ describe("connected MCP servers", () => {
       {},
     )) as { type: "content"; value: Array<Record<string, string>> };
 
-    // The bytes name the type: a JPEG labelled PNG goes through as a JPEG.
     expect(result.value[0]).toEqual({
       type: "image-data",
       data: jpegHeader(2, 3),
@@ -1552,7 +1534,6 @@ function createToolContext(
   };
 }
 
-/** Tool context for a Slack-scoped session that may schedule tasks. */
 function schedulerToolContext(
   session: Partial<Session> = {},
 ): Omit<ToolContext, "config"> {
@@ -1647,8 +1628,7 @@ function storageWithCrons(
         ) ?? null
       );
     },
-    // Mirrors the by_accountId_and_agentId index: the store scopes the read,
-    // so a leak here would show up as a task the caller does not own.
+    // Scoped like the by_accountId_and_agentId index, so a leak shows as a foreign task.
     list: async function (accountId: string, agentId?: string) {
       return crons.filter(
         (cron) =>
@@ -1683,8 +1663,7 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
   };
 }
 
-// A JPEG's start of image, then, after one 0xFF fill byte, the frame header
-// that names its size, as base64.
+// JPEG SOI, one 0xFF fill byte, then the SOF0 frame header that names the size.
 function jpegHeader(width: number, height: number): string {
   const frame = Buffer.alloc(20);
   frame.set([0xff, 0xd8, 0xff, 0xff, 0xc0, 0x00, 0x11, 0x08]);
@@ -1694,7 +1673,6 @@ function jpegHeader(width: number, height: number): string {
   return frame.toString("base64");
 }
 
-// A PNG's signature and IHDR chunk, as base64.
 function pngHeader(width: number, height: number): string {
   const header = Buffer.alloc(33);
   header.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
@@ -1757,7 +1735,6 @@ function sandboxContext(
         sandbox: { provider: "lambda", permissionMode: permissionMode },
       },
     ],
-    // Each workspace carries its own effective sandbox (its permissionMode lives on it).
     workspaces: workspaces.map((workspace): ResolvedWorkspace => ({
       ...workspace,
       config: { storage: { provider: "s3" } },
@@ -1787,9 +1764,7 @@ async function approvalStatus(
   });
 }
 
-// v7 approval lives on harness-level toolApproval. Tool definitions should not
-// carry legacy needsApproval; normalize the absence to false where tests only
-// need to verify auto-approved tools stay clean.
+// v7 approval lives on harness toolApproval; a definition without needsApproval is false.
 async function needsApproval(
   entry: unknown,
   input: Record<string, unknown> = {},

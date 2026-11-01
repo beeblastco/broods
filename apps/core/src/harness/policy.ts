@@ -1,9 +1,3 @@
-/**
- * AI SDK policy approval wiring.
- * OPA evaluates the attached policy documents. Each document selects audit
- * mode to log decisions or enforce mode to block denied actions.
- */
-
 import {
   httpPolicyClient,
   opaPolicy,
@@ -49,12 +43,9 @@ import {
 import { COMPUTER_TOOL_NAME } from "./tools/computer.tool.ts";
 import { MEMORY_DIR, memorySlug } from "./tools/memory.tool.ts";
 
-// httpPolicyClient exposes no timeout/AbortSignal, and the OPA round-trip sits
-// on the tool-approval path: a hung OPA endpoint would stall gated tool
-// execution. A rejected evaluation fails closed inside opaPolicy.
+// httpPolicyClient has no timeout, and a hung OPA would stall every gated tool call.
 const OPA_EVALUATE_TIMEOUT_MS = 3000;
 
-/** Rego entrypoint. Both the per-tool approval and the invoke gate use it. */
 const POLICY_DECISION_PATH = "broods/authz/decision";
 
 const POLICY_INPUT_MAX_DEPTH = 4;
@@ -63,8 +54,6 @@ const POLICY_INPUT_MAX_STRING = 500;
 const POLICY_INPUT_PREVIEW_MAX = 160;
 const POLICY_REDACTED_VALUE = "[redacted]";
 
-// A policy only ever refuses, so a reference that resolves to nothing must not
-// read as "no policy": it refuses everything until the reference is fixed.
 const UNRESOLVED_POLICY: PolicyDocument = {
   version: 1,
   mode: "enforce",
@@ -82,10 +71,6 @@ type RuntimeToolApproval = Extract<
   (...args: never[]) => unknown
 >;
 
-// Lifts the channel's place and person onto the policy input. The rego resolves
-// any dotted path, so these are usable in rule conditions with no engine change.
-// userRoles goes out even when empty, because a negated operator only matches an
-// attribute that is present. Only a channel turn, or a subagent under one, gets it.
 export function channelPolicyIdentity(
   identity: ChannelIdentity | undefined,
 ): Pick<
@@ -97,11 +82,8 @@ export function channelPolicyIdentity(
     ...(identity?.threadId ? { threadId: identity.threadId } : {}),
     ...(identity?.userId ? { userId: identity.userId } : {}),
     ...(identity?.userName ? { userName: identity.userName } : {}),
-    // A user with no tag role holds no roles, so send `[]` and let a
-    // `userRoles notIn` rule match them. A request that carries no identity
-    // at all is a different thing: nobody knows what roles it holds, and
-    // sending `[]` there would let a negated operator on an allow rule
-    // authorize it.
+    // `[]` lets a `userRoles notIn` rule match; with no identity the roles are unknown,
+    // and `[]` there would let a negated operator on an allow rule authorize it.
     ...(identity ? { userRoles: identity.userRoles ?? [] } : {}),
   };
 }
@@ -124,7 +106,6 @@ export function compatibilityApprovalStatus(
   const onSandbox = bashSandboxTarget(record.sandbox);
 
   if (toolName === "bash") {
-    // A `sandbox` that is no name resolves nowhere, so it asks like an unknown name.
     if (record.sandbox !== undefined && onSandbox === undefined) {
       return "user-approval";
     }
@@ -137,9 +118,6 @@ export function compatibilityApprovalStatus(
       : undefined;
   }
 
-  // Looking is free; any other action asks like bash does, on the computer the
-  // call names rather than on whatever the agent's own sandbox happens to be.
-  // createRuntimeToolApproval still holds a look behind an action that asks.
   if (toolName === COMPUTER_TOOL_NAME) {
     if (COMPUTER_READ_ACTIONS.has(String(record.action))) {
       return undefined;
@@ -154,8 +132,7 @@ export function compatibilityApprovalStatus(
       : undefined;
   }
 
-  // Reading a page is free. `eval` runs the model's own JavaScript in it, which
-  // can send requests, so it asks like bash on the sandbox browse runs on.
+  // `eval` runs the model's JavaScript in the page, which can send requests.
   if (toolName === "browse") {
     return record.mode === "eval" &&
       options.sandboxes?.[0]?.sandbox.permissionMode !== "bypass"
@@ -163,8 +140,6 @@ export function compatibilityApprovalStatus(
       : undefined;
   }
 
-  // memory_save writes workspace files (memory/*.md + the index), so it follows
-  // the same approval path as write/edit.
   if (
     toolName === "write" ||
     toolName === "edit" ||
@@ -214,9 +189,7 @@ export async function createPolicyToolApproval(
       }),
     }),
     {
-      // The rego already applied each policy's own mode, so a deny that arrives
-      // here is one an enforcing policy meant. This flag only still matters when
-      // OPA cannot be reached: a place with nothing enforcing must stay open.
+      // The rego applies each policy's mode; this only decides the outcome when OPA is down.
       enforce: mode === "enforce",
       onDecision: (event) => {
         const reason =
@@ -254,8 +227,6 @@ export async function createPolicyToolApproval(
           filePath: policyInput.filePath,
           skillPath: policyInput.skillPath,
           subagentId: policyInput.subagentId,
-          // A rule conditioned on the actor is undebuggable without the actor
-          // the decision actually read.
           channelId: baseInput.channelId,
           userId: baseInput.userId,
           userRoles: baseInput.userRoles,
@@ -265,10 +236,7 @@ export async function createPolicyToolApproval(
         } else {
           logWarn(message, data);
         }
-        // Only a denial that stopped the tool reaches the ledger; an audited
-        // policy's would-deny is a log line, not an account event. The log
-        // message carries the input preview, so the row gets its own summary.
-        // Shutdown drains the write without blocking tool approval.
+        // An audited would-deny stays a log line; only an enforced denial is an account event.
         if (event.decision.type === "denied" && event.enforced) {
           waitUntil(
             getStorage().auditLedger.append({
@@ -303,10 +271,7 @@ export async function createPolicyToolApproval(
     : undefined;
 }
 
-// The run's tool approval. A policy deny stands even where ask mode would only
-// ask. A computer call after one in the same step that waits for a person also
-// asks, so it never runs first. `startStep` opens the next step; the harness
-// calls it from onStepStart.
+// A computer call after one awaiting a person in the same step asks too, so it never runs first.
 export function createRuntimeToolApproval(options: {
   configuredApprovals: ReadonlyMap<string, true>;
   workspaces: ResolvedWorkspace[];
@@ -354,8 +319,6 @@ export function createRuntimeToolApproval(options: {
   };
 }
 
-// Gates the turn before it starts: may this person address the agent here?
-// Audit records only; enforce denies, including on an unreachable OPA.
 export async function evaluateChannelInvoke(
   agentConfig: AgentConfig,
   input: Omit<PolicyDecisionInput, "action">,
@@ -383,8 +346,7 @@ export async function evaluateChannelInvoke(
     });
 
     return {
-      // No decision means OPA does not carry the package: only a place where
-      // nothing enforces stays open.
+      // No decision means OPA does not carry the package.
       allowed: decision ? decision.allowed === true : mode === "audit",
       mode: mode,
       reason: decision?.reason ?? "No allow policy rule matched",
@@ -399,8 +361,7 @@ export async function evaluateChannelInvoke(
       error: error instanceof Error ? error.message : String(error),
     });
 
-    // `mode` is unset when the document load threw: an auditing place cannot
-    // be told from an enforcing one, so refuse. An OPA outage alone keeps it.
+    // `mode` is unset when the document load threw: audit cannot be told from enforce.
     return {
       allowed: mode === "audit",
       mode: mode ?? "enforce",
@@ -465,9 +426,7 @@ export function policyInputForTool(
       ? (input as Record<string, unknown>)
       : {};
   const sandboxTarget = bashSandboxTarget(record.sandbox);
-  // A bash call that runs on an agent-level sandbox touches no workspace, so it must
-  // not be described to the policy as if it did. A workspace-scoped rule would then
-  // authorize a run that never lands there. Resolve the same target execution will.
+  // bash on an agent sandbox touches no workspace, so no workspace rule may authorize it.
   const workspaceTarget =
     typeof record.workspace === "string" ? record.workspace : undefined;
   const onAgentSandbox =
@@ -479,9 +438,6 @@ export function policyInputForTool(
   const workspace = onAgentSandbox
     ? undefined
     : resolveWorkspaceForPolicy(workspaces, workspaceTarget);
-  // A sandbox carries its own permissionMode, and that is the one fact a policy can
-  // use to tell one sandbox from another. An unnamed call runs on the default, so it
-  // reports the same mode as naming the default does.
   const picked = onAgentSandbox
     ? sandboxTarget === undefined
       ? options.sandboxes?.[0]
@@ -489,10 +445,8 @@ export function policyInputForTool(
           (entry): boolean => entry.name === sandboxTarget,
         )
     : undefined;
-  // grep and glob search from `path`; the regex is not a file.
   const searches = toolName === "grep" || toolName === "glob";
   const rawPath = searches ? record.path : record.file_path;
-  // A search with no `path` runs from the workspace root, so it still gets a path.
   const filePath =
     typeof rawPath === "string"
       ? policyFilePath(rawPath, searches)
@@ -524,8 +478,6 @@ export function policyInputForTool(
   if (toolName === "write" || toolName === "edit")
     return { action: "workspace.write", ...base };
   if (toolName === "memory_save") {
-    // The tool derives its target path from the title, so mirror that here to give
-    // policies the same workspace.write + filePath surface as write/edit.
     const title = typeof record.title === "string" ? record.title : "";
 
     return {
@@ -566,10 +518,6 @@ export function policyInputForTool(
   return { action: "tool.call", ...base };
 }
 
-/**
- * Summary stage for a set of attached policies, matching what the rego decides:
- * the place is enforcing as soon as one policy attached to it enforces.
- */
 function enforcingMode(documents: PolicyDocument[]): PolicyMode {
   return documents.some((document) => document.mode === "enforce")
     ? "enforce"
@@ -630,9 +578,8 @@ function policyClient(): PolicyClient {
   );
 }
 
-// The form the tools resolve. A search root ends in `/` so `secrets/` matches it,
-// and the workspace root is "", the ancestor of every prefix. A traversal stays
-// raw: the SDK calls toInput outside its try, so no throw.
+// A search root ends in `/` so `secrets/` matches it; the root is "", every prefix's ancestor.
+// A traversal stays raw: the SDK calls toInput outside its try, so this must not throw.
 function policyFilePath(rawPath: string, searchRoot: boolean): string {
   try {
     const path = toWorkspaceRelative(rawPath);
@@ -651,8 +598,6 @@ function resolveWorkspaceForPolicy(
   try {
     return resolveWorkspace(workspaces, workspaceName);
   } catch (error) {
-    // Workspace-scoped selectors cannot match without this context, so make
-    // the miss visible before enforcement mode relies on it.
     logDebug("Policy workspace resolution failed", {
       workspaceName: workspaceName,
       error: error instanceof Error ? error.message : String(error),
@@ -755,7 +700,6 @@ function withEvaluationDeadline(
   };
 }
 
-// The decision an approval status carries, whether bare or with a reason.
 function approvalDecision(
   status: ToolApprovalStatus,
 ): Exclude<ToolApprovalStatus, object> {

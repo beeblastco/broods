@@ -1,10 +1,3 @@
-/**
- * A machine socket lives no longer than the credential that opened it: a stage
- * ticket closes it at its expiry, and a bearer that stops resolving loses it at
- * the next heartbeat. The fake daemon only trades frames on loopback and never
- * runs a command.
- */
-
 import { afterEach, beforeEach, expect, jest, test } from "bun:test";
 import {
   sealStageSessionTicket,
@@ -87,9 +80,8 @@ test("a stage ticket's daemon that sends no fresh one is closed at the ticket's 
       (): string => "resolved",
       (error: Error): string => error.message,
     );
-  // The held exec must reach the daemon before the clock moves past the ticket.
-  // Awaited, not polled: the frame crosses a real socket, which only the event
-  // loop delivers, and an await leaves the test timeout free to fire.
+  // The held exec must reach the daemon before the clock passes the ticket. Awaited, not polled:
+  // only the event loop delivers its frame, and an await leaves the test timeout free to fire.
   await held.promise;
   jest.advanceTimersByTime(expiresAt - 1 - Date.now());
   expect(isMachineConnected(machineExecutorConfig())).toBe(true);
@@ -165,8 +157,7 @@ test("a fresh ticket before the expiry keeps the daemon past it, and frames stil
 test("a fresh ticket for another stage or account, or one that cannot write sandboxes, closes the daemon as unauthorized", async (): Promise<void> => {
   const storage = machineStorage();
   setStorageForTests(storage);
-  // Any account resolves, so the other account's ticket is refused for the
-  // mismatch rather than for being unknown.
+  // Any account resolves, so the other account's ticket fails on the mismatch, not as unknown.
   const own = await storage.accounts.getById(MACHINE_ACCOUNT_ID);
   storage.accounts.getById = async (accountId: string) =>
     own && { ...own, accountId: accountId };
@@ -323,7 +314,6 @@ function core(): Bun.Server<MachineSocketData> {
   return server;
 }
 
-/** Claims `my-mac` and resolves once core says ready. */
 function connectDaemon(
   server: Bun.Server<MachineSocketData>,
   token: string,
@@ -384,7 +374,6 @@ function result(id: string): Record<string, unknown> {
   };
 }
 
-/** A `broods login` ticket for the development stage, able to claim a machine. */
 function ticket(
   expiresAt: number,
   overrides: Partial<StageSessionTicket> = {},

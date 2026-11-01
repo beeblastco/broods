@@ -8,8 +8,6 @@ import {
 } from "../src/supervisor.ts";
 
 describe("grouping connections", () => {
-  // The same account deployed to dev and prod is one sync loop and one crypto
-  // store, fanned out to both webhooks.
   it("keeps a token deployed to two planes on a single account", () => {
     const grouped = groupConnectionsByToken([
       connection(),
@@ -38,8 +36,6 @@ describe("grouping connections", () => {
     });
   });
 
-  // Two planes may spell one homeserver with and without its trailing slash.
-  // Read as two, the later plane's webhook would be dropped as a conflict.
   it("treats homeservers that differ only by a trailing slash as one", () => {
     const grouped = groupConnectionsByToken([
       connection(),

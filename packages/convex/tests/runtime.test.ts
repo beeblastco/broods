@@ -1312,7 +1312,6 @@ describe("runtime persistence", () => {
 describe("sandbox reservation expiry", () => {
   let ACCOUNT: Id<"accounts">;
 
-  /** Inserts one reservation with an absolute expiry. */
   async function reservation(
     t: ReturnType<typeof runtimeTest>,
     reservationKey: string,
@@ -1550,8 +1549,7 @@ describe("sandbox reservation expiry", () => {
           specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
           createdAt: lastUsedAt,
           lastUsedAt: lastUsedAt,
-          // A per-call instance keys on the provider id, so there is no
-          // reconnect key to adopt it back with.
+          // A per-call instance keys on its provider id: no reconnect key adopts it back.
           ...(reservationKey === "throwaway" ? { ephemeral: true } : {}),
         });
       }
@@ -1703,7 +1701,6 @@ describe("runtime.deleteAgentRuntimeData", () => {
   const RUNTIME_DELETE_BATCH_SIZE = 100;
   const FAR_FUTURE_EXPIRY = 9_999_999_999;
 
-  /** Two agents in one account, each with a row in every key-scoped table. */
   async function seedTwoAgents(
     t: ReturnType<typeof runtimeTest>,
   ): Promise<void> {
@@ -1811,9 +1808,8 @@ describe("runtime.deleteAgentRuntimeData", () => {
     const t = runtimeTest();
     ACCOUNT = await createActiveAccount(t);
     await t.run(async (ctx) => {
-      // A full batch of rows belonging to someone else. Read over an index that
-      // is not the conversation key, these would come back every pass, delete
-      // nothing and reschedule forever.
+      // Someone else's rows: read over an index other than the conversation key, they
+      // would come back every pass, delete nothing and reschedule forever.
       for (let index = 0; index < RUNTIME_DELETE_BATCH_SIZE; index += 1)
         await ctx.db.insert("runtimeAsyncAgentResults", {
           accountId: ACCOUNT,

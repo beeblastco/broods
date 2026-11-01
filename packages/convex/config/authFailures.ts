@@ -1,8 +1,4 @@
-/**
- * Failed-auth rate limiter state for the public config HTTP surface: one
- * counter per source bucket (`authFailureKey` in `routes/shared.ts`), never per
- * bearer value, and its daily prune.
- */
+// One counter per source bucket (authFailureKey in routes/shared.ts), never per bearer value.
 
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
@@ -12,10 +8,6 @@ import { internalMutation } from "../_generated/server";
 const AUTH_FAILURE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PRUNE_BATCH_SIZE = 200;
 
-/**
- * Delete stale failed-auth counters in bounded batches.
- * @returns count deleted during this invocation.
- */
 export const pruneExpired = internalMutation({
   args: {
     now: v.optional(v.number()),
@@ -51,10 +43,6 @@ export const pruneExpired = internalMutation({
   },
 });
 
-/**
- * Record one failed auth attempt and report whether the key is blocked.
- * @returns blocked status and optional retry delay in milliseconds.
- */
 export const recordAuthFailure = internalMutation({
   args: {
     key: v.string(),

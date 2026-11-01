@@ -1,8 +1,5 @@
 /// <reference types="vite/client" />
-/**
- * `harness`, `policies` and `denyTools` must reach the encrypted blob core
- * reads on every path that rebuilds it from the flat `agentConfigs` row.
- */
+// harness, policies and denyTools must survive every path that rebuilds core's blob.
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -102,7 +99,6 @@ describe("agent config branches core reads", () => {
     await setEnv(tt, "sk-live-1");
     await deploy(tt);
 
-    // Rotating a value the agent references re-encrypts its config.
     await setEnv(tt, "sk-live-2");
 
     expect(await runtimeConfigByName(tt, "coder")).toMatchObject({
@@ -167,7 +163,6 @@ async function deploy(tt: T): Promise<void> {
   });
 }
 
-/** Decrypts the `agents` row blob, the config core runs with. */
 async function runtimeConfigByName(
   tt: T,
   name: string,
@@ -193,7 +188,6 @@ async function runtimeConfigByName(
   );
 }
 
-/** Seeds the org, account and owner membership a CLI sync writes against. */
 async function seedAccount(tt: T): Promise<Id<"accounts">> {
   return await tt.run(async (ctx) => {
     const now = Date.now();

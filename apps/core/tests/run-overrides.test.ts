@@ -1,8 +1,3 @@
-/**
- * Per-run override parsing/folding: the whitelist on top-level `model`, system
- * message validation, and applyRunOverrides folding overrides into a config copy.
- */
-
 import { describe, expect, it } from "bun:test";
 import { parseRunOverrides } from "../src/harness/integrations.ts";
 import {

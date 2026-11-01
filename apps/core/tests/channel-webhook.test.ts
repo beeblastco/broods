@@ -1,5 +1,3 @@
-/** Channel adapters ignore webhook bodies that are not a JSON object and keep every real payload. */
-
 import { describe, expect, it } from "bun:test";
 import {
   parseChannelWebhookBody,

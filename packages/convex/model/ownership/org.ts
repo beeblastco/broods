@@ -13,7 +13,7 @@ export function orgRoleMeets(role: OrgRole, requiredRole?: OrgRole): boolean {
   return !requiredRole || ROLE_RANK[role] >= ROLE_RANK[requiredRole];
 }
 
-/** The user row behind an auth id, or null before the WorkOS webhook has synced it. */
+/** Null until the WorkOS webhook has synced the user. */
 export async function userByAuthId(
   ctx: QueryCtx | MutationCtx,
   authId: string,
@@ -24,7 +24,6 @@ export async function userByAuthId(
     .unique();
 }
 
-/** The org behind an account; null for a service account bound to no org. */
 export function orgIdOf(
   ctx: QueryCtx | MutationCtx,
   account: Doc<"accounts">,
@@ -47,12 +46,8 @@ export async function getOrgMembership(
   return membership ?? null;
 }
 
-/**
- * Returns the user's explicitly-chosen active org when set and still valid,
- * otherwise the oldest membership. Oldest, not newest, because any org admin
- * can add a user without consent, and that membership is always newer than the
- * user's own. Null if the user belongs to none.
- */
+// Falls back to the oldest membership: any org admin can add a user without consent, so a
+// newer one may not be the user's own.
 export async function getActiveOrgForUser(
   ctx: QueryCtx | MutationCtx,
   userId: Id<"users">,

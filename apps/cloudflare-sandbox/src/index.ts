@@ -1,11 +1,3 @@
-/**
- * Bridge between core's `cloudflare` sandbox executor and Cloudflare Containers.
- * The Container API only answers inside a Durable Object, so core calls this
- * Worker over bearer-authenticated HTTP and each sandbox id is one `Sandbox`
- * Durable Object that owns one Container. Only the calls the executor and the
- * dashboard terminal make live here; reservation bookkeeping stays in core.
- */
-
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
 import type { SandboxExecAnswer } from "../../core/src/shared/domain/sandbox-config.ts";
@@ -20,15 +12,10 @@ import { verifyTerminalToken } from "./terminal-token.ts";
 const SANDBOX_PATH =
   /^\/v1\/sandboxes\/([A-Za-z0-9_-]{1,128})(\/exec|\/terminal)?$/;
 const TERMINAL_SIZE = { cols: 120, rows: 32 };
-// Characters a sandbox name keeps in the terminal prompt; the rest become "-".
 const PROMPT_UNSAFE = /[^A-Za-z0-9_.-]+/g;
-// Seconds `timeout` waits after its TERM before it sends KILL.
 const KILL_GRACE_SECONDS = 5;
-// The abort fires only past the KILL, for an exec that never settles.
 const BACKSTOP_GRACE_MS = (KILL_GRACE_SECONDS + 5) * 1000;
-// Storage key for the internet and size the running Container started with.
 const LAUNCH_KEY = "launch";
-// Storage key for the idle window (ms) the running Container was given.
 const IDLE_KEY = "idleMs";
 
 const execRequest = z.object({
@@ -54,24 +41,19 @@ interface Env {
   SANDBOX_API_KEY: string;
 }
 
-/** One finished command, its output capped at the request's limit per stream. */
 export type ExecResult = SandboxExecAnswer;
 
-/** One sandbox: the Container it starts and the commands core runs in it. */
 export class Sandbox extends DurableObject<Env> {
   #starting: Promise<void> | null = null;
   #booting = false;
 
-  // The inactivity timeout lives with this Durable Object instance, so one
-  // that restarts while its Container runs sets the stored window again;
-  // otherwise the platform default stops the Container within a minute.
+  // The idle window lives on this DO instance, so a restarted one must set it again or the
+  // platform default stops the running Container within a minute.
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     const container = ctx.container;
     const idleMs = ctx.storage.kv.get<number>(IDLE_KEY);
     if (container?.running && idleMs !== undefined) {
-      // A rejection here would reset the Durable Object; the next exec sets
-      // the window again, so a failure is only logged.
       void ctx.blockConcurrencyWhile((): Promise<void> =>
         container
           .setInactivityTimeout(idleMs)
@@ -82,13 +64,7 @@ export class Sandbox extends DurableObject<Env> {
     }
   }
 
-  /**
-   * Starts the Container on first use, then runs one command to completion.
-   * GNU `timeout` kills the command's whole process group at the deadline, so
-   * a background child dies with it; the abort is only a backstop for a wedged
-   * exec, and it is cleared once the command settles, because aborting an
-   * exited process throws.
-   */
+  // GNU timeout kills the command's whole process group; the abort only backstops a wedged exec.
   async exec(request: ExecRequest): Promise<ExecResult> {
     const startedAt = Date.now();
     const container = this.#container();
@@ -123,8 +99,7 @@ export class Sandbox extends DurableObject<Env> {
         readCapped(process.stderr, request.outputLimitBytes, backstop.signal),
       ]);
       const finished = await process.exitCode.catch((): null => null);
-      // 124 is the TERM `timeout` sends, 137 the KILL its `-k` follows with;
-      // before the deadline they are the command's own exit or an OOM kill.
+      // 124/137 are timeout's TERM/KILL, but before the deadline the command's own exit or an OOM.
       const pastDeadline = Date.now() - startedAt >= request.timeoutMs;
       const timedOut =
         backstop.signal.aborted ||
@@ -145,16 +120,11 @@ export class Sandbox extends DurableObject<Env> {
     }
   }
 
-  /**
-   * Stops the Container and drops its disk. One still starting is stopped too,
-   * so a terminate during the first exec does not leave it running.
-   */
   async destroy(): Promise<void> {
     const container = this.#container();
     if (container.running || this.#booting) await container.destroy();
   }
 
-  /** Opens a PTY shell over a WebSocket: raw bytes both ways, no resize frames. */
   async fetch(request: Request): Promise<Response> {
     const container = this.#container();
     if (request.headers.get("Upgrade") !== "websocket")
@@ -165,7 +135,6 @@ export class Sandbox extends DurableObject<Env> {
     const name = (new URL(request.url).searchParams.get("name") ?? "")
       .replace(PROMPT_UNSAFE, "-")
       .slice(0, 63);
-    // The image's WORKDIR, where agent commands run; exec alone starts in /.
     const shell = await container.exec(["bash", "-l"], {
       cwd: "/workspace",
       pty: TERMINAL_SIZE,
@@ -194,7 +163,7 @@ export class Sandbox extends DurableObject<Env> {
         .write(bytes)
         .catch((): void => server.close(1011, "Terminal input failed"));
     });
-    // Aborting a shell that already exited throws, so only a live one is killed.
+    // Aborting an exited process throws.
     let exited = false;
     void shell.exitCode.finally((): void => {
       exited = true;
@@ -211,7 +180,6 @@ export class Sandbox extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  /** Whether the Container is up. A stopped one has lost its disk. */
   status(): { running: boolean } {
     return { running: this.#container().running };
   }
@@ -223,13 +191,8 @@ export class Sandbox extends DurableObject<Env> {
     return container;
   }
 
-  // `start()` returns before the Container is ready and its first `exec()`
-  // waits for it, per the Container API. `running` can read false until then,
-  // so `#booting` holds the shared start until an exec gets through. Concurrent
-  // first calls share one start, and a failed setup destroys the half-started
-  // Container. Internet and size are fixed at `start()`, so a running Container
-  // started under another policy (stored, since the Durable Object can restart)
-  // is replaced rather than reused.
+  // `running` reads false until the first exec after start() gets through; #booting covers that.
+  // Internet and size are fixed at start(), so a Container under another policy is replaced.
   #ensureRunning(container: Container, request: ExecRequest): Promise<void> {
     const launch = `${request.enableInternet ? "internet" : "offline"}:${request.instance}`;
     const relaunch =
@@ -272,10 +235,6 @@ export class Sandbox extends DurableObject<Env> {
 }
 
 const handler: ExportedHandler<Env> = {
-  /**
-   * Authenticates core's bearer token, then routes to the sandbox it names. A
-   * terminal token from a ticket opens only its own sandbox's terminal.
-   */
   fetch: async function (request: Request, env: Env): Promise<Response> {
     const match = SANDBOX_PATH.exec(new URL(request.url).pathname);
     const action = match?.[2];
@@ -326,9 +285,7 @@ async function terminalAuthorized(
   );
 }
 
-// Keeps the first `limit` bytes and drains the rest, so a chatty command can
-// not grow the Durable Object's memory. The timeout cancels the read, so a
-// stream the killed process left open can not hold the request past it.
+// Drains past the limit to bound memory; the abort cancels a stream a killed process left open.
 async function readCapped(
   stream: ReadableStream<Uint8Array> | null,
   limit: number,
@@ -347,7 +304,6 @@ async function readCapped(
       const room = limit - size;
       if (value.byteLength > room) truncated = true;
       if (room > 0) {
-        // A copy, so a kept prefix does not pin the whole chunk's buffer.
         const part = value.slice(0, room);
         kept.push(part);
         size += part.byteLength;

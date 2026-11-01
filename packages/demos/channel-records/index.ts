@@ -1,13 +1,3 @@
-/**
- * Example: bind two Slack channels to two different agents under one Slack app.
- *
- * Needs BROODS_ACCOUNT_SECRET (and BROODS_BASE_URL when self-hosted), plus two
- * agent ids in the same account. Point the Slack app's Event Subscriptions URL
- * at the account-scoped webhook so the records choose who answers:
- *
- *   {BROODS_BASE_URL}/v1/webhooks/{accountId}/slack
- */
-
 import {
   BroodsAccountClient,
   type AccountChannel,
@@ -42,8 +32,7 @@ async function upsertChannel(input: {
   const config = {
     agentBindings: [{ agentId: input.agentId, isDefault: true }],
     instructions: input.instructions,
-    // Each thread gets its own private folder under the channel workspace, so
-    // two incidents in one channel never read each other's scratch files.
+    // A private folder per thread, so two incidents in one channel never share scratch files.
     partition: { alias: "thread", by: "conversation" } as const,
     replyIn: "thread" as const,
     ...input.extra,

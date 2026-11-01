@@ -1,11 +1,3 @@
-/**
- * Cron-job input normalization for the Convex config plane. Ports core's
- * former src/shared/domain/cron.ts normalizer so the public /v1/crons
- * contract is unchanged. Pure module, safe for the default Convex runtime;
- * schedule registration lives in agent/crons.ts and the public projections
- * in ./responses.ts.
- */
-
 import type { CronInfo } from "@convex-dev/crons";
 import { isPlainObject } from "./objects";
 import { ClientError } from "./clientError";
@@ -34,15 +26,12 @@ const DAY_OF_WEEK_NAMES = new Set([
 
 export type CronStatus = "active" | "paused";
 
-/** A schedule the Convex crons component can register. */
 export type ComponentCronSchedule = CronInfo["schedule"];
 
-/** A translated schedule: recurring for the component, or a one-time instant. */
 export type TranslatedCronSchedule =
   | ComponentCronSchedule
   | { kind: "at"; timestamp: number };
 
-/** Normalized create payload: `input`/`events` collapsed to a stored events list. */
 export interface NormalizedCronCreate {
   name: string;
   description?: string;
@@ -54,7 +43,6 @@ export interface NormalizedCronCreate {
   status?: CronStatus;
 }
 
-/** Normalized update patch: clearable fields use null, run payload uses events. */
 export interface NormalizedCronUpdate {
   name?: string;
   description?: string | null;
@@ -66,11 +54,6 @@ export interface NormalizedCronUpdate {
   status?: CronStatus;
 }
 
-/**
- * @param input the raw request body
- * @returns the normalized create payload
- * @throws when a field is missing, malformed, or out of bounds
- */
 export function normalizeCreateCronInput(input: unknown): NormalizedCronCreate {
   if (!isPlainObject(input))
     throw new ClientError("Request body must be an object");
@@ -101,11 +84,6 @@ export function normalizeCreateCronInput(input: unknown): NormalizedCronCreate {
   };
 }
 
-/**
- * @param input the raw request body
- * @returns the normalized patch, with null marking fields to clear
- * @throws when the patch is empty or a field is malformed
- */
 export function normalizeUpdateCronInput(input: unknown): NormalizedCronUpdate {
   if (!isPlainObject(input))
     throw new ClientError("Request body must be an object");
@@ -160,16 +138,6 @@ export function normalizeUpdateCronInput(input: unknown): NormalizedCronUpdate {
   return normalized;
 }
 
-/**
- * Translate a stored schedule expression, in the `cron(...)` / `rate(...)` /
- * `at(...)` forms the public contract keeps, into what the Convex crons
- * component registers: a unix cronspec with an IANA `tz`, an interval in
- * milliseconds, or the epoch instant of a one-time job.
- * @param expression a normalized schedule expression
- * @param timezone optional IANA timezone the expression is evaluated in
- * @returns the translated schedule
- * @throws when the expression uses forms the scheduler does not support
- */
 export function translateScheduleExpression(
   expression: string,
   timezone: string | undefined,
@@ -206,21 +174,10 @@ export function translateScheduleExpression(
   };
 }
 
-/**
- * Whether a schedule fires exactly once. Single home for this rule. Core
- * re-exports it from apps/core/src/shared/domain/cron.ts.
- * @param expression a normalized schedule expression
- * @returns true for an at(...) schedule
- */
 export function isOneTimeSchedule(expression: string): boolean {
   return expression.startsWith("at(");
 }
 
-/**
- * Resolve an `at(yyyy-mm-ddThh:mm:ss)` expression to an epoch instant. The
- * wall-clock time is read in `timezone` when given, UTC otherwise, the same
- * semantics EventBridge Scheduler applied.
- */
 function atExpressionToTimestamp(
   expression: string,
   timezone: string | undefined,
@@ -252,14 +209,13 @@ function atExpressionToTimestamp(
     throw new ClientError("at(...) date is not a valid time");
   if (!timezone) return asUtc;
 
-  // Two passes pin the wall clock to the zone's offset at the target instant,
-  // which the first guess (the UTC reading) can miss across a DST boundary.
+  // A second pass takes the offset at the target instant, which the UTC guess misses across DST.
   const adjusted = asUtc - timezoneOffsetMs(asUtc, timezone);
 
   return asUtc - timezoneOffsetMs(adjusted, timezone);
 }
 
-/** Shift an AWS day-of-week field (1-7, 1 = Sunday) to unix cron's 0-6. */
+// AWS day-of-week is 1-7 with 1 = Sunday; unix cron is 0-6.
 function convertDayOfWeek(field: string): string {
   if (field === "?" || field === "*") return "*";
 
@@ -281,13 +237,7 @@ function convertDayOfWeek(field: string): string {
     .join(",");
 }
 
-/**
- * Convert the six-field cron form, minute hour day-of-month month day-of-week
- * year, to the five-field unix cronspec the crons component parses. `?` maps
- * to `*`, and day-of-week numbers shift from 1-7 (1 = Sunday) to 0-6.
- * @throws for the calendar forms unix cron has no equivalent for (`L`, `W`,
- * `#`, or a constrained year)
- */
+// AWS six-field cron to the unix cronspec, which has no year field and no `L`, `W` or `#`.
 function cronExpressionToCronspec(fields: string): string {
   const parts = fields.split(/\s+/);
   if (parts.length !== 6) {
@@ -363,7 +313,6 @@ function normalizeTimezone(value: unknown): string {
   return timezone;
 }
 
-/** Like runPayloadToEvents, but returns undefined when neither field is supplied (updates). */
 function optionalRunPayloadToEvents(payload: {
   input?: unknown;
   events?: unknown;
@@ -389,7 +338,6 @@ function optionalString(
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-/** Parses an AWS numeric day-of-week token (1-7, 1 = Sunday), or throws. */
 function requireDayOfWeekNumber(token: string): number {
   const value = Number(token);
   if (!Number.isInteger(value) || value < 1 || value > 7) {
@@ -417,7 +365,6 @@ function requireString(
   return trimmed;
 }
 
-/** Collapses a one-of `input`/`events` payload into the stored events list. */
 function runPayloadToEvents(payload: {
   input?: unknown;
   events?: unknown;
@@ -439,7 +386,6 @@ function runPayloadToEvents(payload: {
   return normalizeEvents(payload.events);
 }
 
-/** Offset of `timezone` from UTC at `timestamp`, in milliseconds. */
 function timezoneOffsetMs(timestamp: number, timezone: string): number {
   let formatter = timezoneFormatters.get(timezone);
   if (!formatter) {

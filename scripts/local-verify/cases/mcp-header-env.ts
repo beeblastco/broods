@@ -9,14 +9,7 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-/**
- * An MCP server whose header names a stage variable, `"Bearer ${NAME}"`, as the
- * docs say to write it. The sync resolves the ref into the agent, so its run
- * reaches the model instead of failing on the unresolved header. The server
- * itself is unreachable, which only costs the run its tools. A role session
- * that may write MCP servers but not read env vars cannot repoint the server
- * the agent sends that resolved header to.
- */
+// The server is unreachable, which only costs the run its tools.
 export async function mcpHeaderEnv(context: VerifyContext): Promise<void> {
   const client = new BroodsSyncClient({
     baseUrl: context.edgeUrl,
@@ -142,7 +135,6 @@ export async function mcpHeaderEnv(context: VerifyContext): Promise<void> {
     repointed.status === 400 && refusal.includes("SEARCH_TOKEN"),
     `${repointed.status} ${refusal.slice(0, 200)}`,
   );
-  // Core signs a workspace's R2 requests with the env vars its storage names.
   const workspace = await send("POST", "/v1/workspaces", token, {
     name: `r2-${context.runId}`,
     config: {

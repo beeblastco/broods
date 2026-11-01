@@ -1,15 +1,3 @@
-/**
- * Sandbox execution contracts.
- *
- * Every provider but `machine` is a uniform Linux compute backend (real bash +
- * python3 + node on PATH). All providers expose ONE `run` method that executes
- * a piece of code in an optionally named sandbox. The harness tools
- * (bash/read/write/edit/glob/grep) all compile down to a bash `code` string.
- * Per-runtime routing no longer exists. `machine` is the user's own computer:
- * bash and whatever that computer has, and no workspace mount, so it serves
- * `run` alone.
- */
-
 import type { Readable } from "node:stream";
 import type { SandboxImage } from "@broods/convex/model/sandboxRules";
 import type {
@@ -24,9 +12,6 @@ import type {
   SandboxSize,
 } from "../../shared/sandbox-sizes.ts";
 
-// The provider, runtime and network lists are the config plane's
-// (`packages/convex/model/sandboxRules.ts`); the registry in index.ts is keyed
-// by the provider one.
 export type {
   SandboxNetworkMode,
   SandboxProvider,
@@ -37,109 +22,61 @@ export interface SandboxNetworkConfig {
   mode: SandboxNetworkMode;
   allowDomains?: string[];
   allowCidrs?: string[];
-  // Carved out of every allowCidrs block. Lets a policy say "all public internet"
-  // by allowing 0.0.0.0/0 minus private ranges.
   denyCidrs?: string[];
 }
 
-// Runtime subset of the persisted sandbox config (see domain/sandbox-config.ts)
-// that an executor needs. `provider` is required: normalizeSandboxConfig always
-// resolves one, so an executor config never carries an undefined provider.
 export interface SandboxExecutorConfig {
   provider: SandboxProvider;
-  // Where runSandbox sends an ephemeral run when `provider` refuses the create
-  // for capacity. Validation refuses it beside `persistent`.
+  // Takes an ephemeral run `provider` refuses for capacity; never valid beside `persistent`.
   fallbackProvider?: SandboxProvider;
-  // Predefined compute size; drives workdir create-time resources (see
-  // _shared/sandbox-sizes). Advisory on providers that size natively.
   size?: SandboxSize;
-  // Platform MicroVM image variant by name (lambda only). With `snapshot`, the
-  // variant that snapshot was built from.
   image?: SandboxImage;
-  // What to boot, in the provider's own format (see SNAPSHOT_SANDBOX_PROVIDERS).
-  // Unset boots the provider default.
   snapshot?: string;
   runtimes?: SandboxRuntime[];
   network?: SandboxNetworkConfig;
   timeout?: number;
   outputLimitBytes?: number;
-  // Reserve a long-lived sandbox instead of create-and-destroy per call.
-  // Persistent runs must pass a stable request.reservationKey, or request.namespace
-  // for workspace-backed callers. Meaningful for sandbox/lambda/daytona/e2b.
   persistent?: boolean;
-  // Idle/expiry policy for a persistent sandbox (Fargate-style scale-to-0).
   lifecycle?: SandboxLifecycle;
-  // Persistent sandbox command hooks. onCreate is guarded by a marker for
-  // providers without native lifecycle support; onResume runs on acquisition.
   onCreate?: string[];
   onResume?: string[];
-  // Account-configured env vars injected into every run. Values may be
-  // `undefined` (an unset key); `stringRecord()` filters those at injection.
   envVars?: Record<string, string | undefined>;
-  // Provider-specific knobs (function names, templates, kubeconfig, ...).
   options?: Record<string, unknown>;
-  // The workspace's storage identity (bucket / region / endpoint / prefix / auth),
-  // attached per-workspace by the runtime resolver. Drives the S3 mount target and
-  // credentials. Absent for stateless (no-workspace) runs. Storage is a property of
-  // the workspace, not the sandbox compute. See shared/domain/workspace-config.
   storage?: WorkspaceStorageConfig;
-  // Account + sandbox identity attached by the runtime resolver so a freshly
-  // reserved persistent instance mirrors itself into the Convex registry. Absent
-  // for synthetic/stateless configs (the mirror then no-ops). See _shared/sandbox-sizes.
   controlPlane?: SandboxControlPlane;
 }
 
 export interface SandboxLifecycle {
-  // Scale the sandbox down after this many seconds with no activity and no
-  // running background job. Maps to the workdir auto_stop, daytona
-  // autoStopInterval, and e2b onTimeout pause.
   idleTimeoutSeconds?: number;
-  // Hard expiry: delete/stop the sandbox this many seconds after creation
-  // regardless of activity. Undefined => no hard expiry.
   maxLifetimeSeconds?: number;
 }
 
 export interface SandboxRunRequest {
-  // Defaults to "bash". The harness only ever sends "bash"; python/node exist for
-  // the lambda API's typed-runtime fidelity.
   runtime?: SandboxRuntime;
   code: string;
-  // Workspace filesystem namespace. For workspace-backed runs this selects the
-  // working directory and S3 mount prefix.
   namespace?: string;
-  // Stable identity for a reserved sandbox. Use this when persistence identity is
-  // not a workspace filesystem namespace.
   reservationKey?: string;
   workspaceRoot?: string;
   timeoutSeconds: number;
   outputLimitBytes: number;
   args?: string[];
-  // Per-call env vars merged over the account envVars by `mergeSandboxEnv`, which
-  // drops RESERVED_SANDBOX_ENV_KEYS; the host process.env is never inherited.
+  // Never inherits the host env; `mergeSandboxEnv` drops RESERVED_SANDBOX_ENV_KEYS.
   envVars?: Record<string, string>;
-  // The run's identity, laid over both env layers as BROODS_* by `mergeSandboxEnv`.
   // Blocking execs only: a background job outlives the run and its token.
   principal?: SandboxRunPrincipal;
   metadata?: SandboxRunMetadata;
-  // Background-only: the caller supplies the jobId (so the tracking row exists
-  // before the job can finish) and an optional completion callback the detached
-  // job POSTs when it exits.
+  // Caller-chosen, so the tracking row exists before the background job can finish.
   jobId?: string;
   callback?: SandboxJobCallback;
 }
 
-/** What sandbox code learns about the run it serves: who it is and a bearer that reads its agent's runs. */
 export interface SandboxRunPrincipal {
   accountId: string;
   agentId: string;
   runToken: string;
-  /** The public API base, when core knows its own (PUBLIC_BASE_URL). */
   baseUrl?: string;
 }
 
-// Where a finished background job reports its result. The detached process POSTs
-// this URL with the per-job token; the harness settles the tracking row and
-// resumes the conversation. See tools/async-status + the /sandbox-jobs route.
 export interface SandboxJobCallback {
   url: string;
   token: string;
@@ -155,38 +92,24 @@ export interface SandboxRunResult {
   timedOut?: boolean;
   truncated?: boolean;
   provider: SandboxProvider;
-  /** CPU time consumed by this exec in microseconds. Sourced from the workdir exec
-   *  report on sandbox and from the lambda-sandbox image's getrusage report on
-   *  lambda. Absent (undefined) for providers that do not report it and on read
-   *  failure. */
   cpuUsec?: number;
 }
 
-// The hosted-MCP runner Lambda is its own compute type, not one of the agent
-// sandbox providers. Metering it as "lambda" would file it under the agent's
-// sandbox. (Retired custom-tool rows stored "custom-tool-sandbox" here.)
+// The hosted-MCP Lambda; metering it as "lambda" would bill it to the agent's sandbox.
 export type ToolComputeProvider = "mcp-sandbox";
 
-/** One sandbox exec's CPU, tagged by sandbox type and role for usage metering. */
 export interface SandboxCpuSample {
   type: SandboxProvider | ToolComputeProvider;
   role: "agent" | "tool";
-  /** The model-facing tool that ran, when role is "tool". */
   toolName?: string;
-  /** The AI SDK call this CPU belongs to, so a trace span can carry its cost. */
   toolCallId?: string;
   cpuUsec: number;
 }
 
-// A detached, long-running job started inside a persistent sandbox. The work
-// outlives the harness request: it runs in the sandbox (workdir sandbox / daytona
-// session / e2b background command), not in the core runtime. Identified by `jobId`.
 export type SandboxJobState = "running" | "completed" | "failed" | "unknown";
 
 export interface SandboxJobHandle {
   jobId: string;
-  // The provider id of the reserved sandbox the job launched on, so the caller
-  // can fence the job's completion callback on it.
   externalId: string;
 }
 
@@ -202,7 +125,6 @@ export interface SandboxJobLogs {
   truncated?: boolean;
 }
 
-// Job operations address a job by id within a persistent reservation.
 export interface SandboxJobRequest {
   jobId: string;
   namespace?: string;
@@ -211,64 +133,42 @@ export interface SandboxJobRequest {
   outputLimitBytes?: number;
 }
 
-/** Identifies a reserved sandbox by workspace namespace or explicit reservation key. */
 export interface SandboxReservationRef {
   namespace?: string;
   reservationKey?: string;
 }
 
-/**
- * A reservation and the machine it names. Provider ids are never reused, so the
- * id is the fence for every write to the reservation row.
- */
+// Provider ids are never reused, so `externalId` fences every write to the reservation row.
 export interface ReservedSandbox {
   provider: SandboxProvider;
   reservationKey: string;
   externalId: string;
-  /** The idle window it was claimed with, so a restore keeps it. */
   ttlSeconds?: number;
 }
 
-/**
- * The reserved machine, and the instance row's record of whose credentials it
- * runs on and which config reserved it; null while no row names that machine.
- */
 export interface SandboxReleaseTarget {
   externalId: string | null;
   instance: { ownCredentials: boolean; sandboxConfigId?: string } | null;
 }
 
-/**
- * A release, optionally pinned to the machine the caller already read. Vercel's
- * id is a name derived from the key, shared by every replacement, so the pin is
- * a no-op there.
- */
 export interface SandboxReleaseRequest extends SandboxReservationRef {
   expectedExternalId?: string;
 }
 
-/** Result of capturing a sandbox snapshot/image (workdir snapshot or MicroVM image). */
-/** Where a snapshot's image build stands, for providers that build it after capture. */
 export type SandboxSnapshotBuildState = "building" | "active" | "build_failed";
 
 export interface SandboxSnapshotResult {
   snapshotId: string;
-  // Provider-side image id/ARN, when distinct from snapshotId.
   externalImageId?: string;
-  // "building" while the provider still builds the image; absent means ready.
   status?: SandboxSnapshotBuildState;
 }
 
-/** Live instance info surfaced for control-plane sync (Convex sandboxInstances). */
 export interface SandboxInstanceInfo {
   externalId: string;
   state: "running" | "suspended" | "terminating" | "error" | "unknown";
-  // The provider's own reason when `state` is "error" or "unknown", so the
-  // dashboard can show why instead of a bare badge.
   errorMessage?: string;
 }
 
-/** One JSON POST to a route the sandbox image serves, such as `/exec` or `/mcp`. */
 export interface SandboxGuestPost {
   path: string;
   body: unknown;
@@ -276,33 +176,23 @@ export interface SandboxGuestPost {
   abortSignal?: AbortSignal;
 }
 
-/** Which reserved VM a call reaches: bash's workspace namespace, or its reservation key. */
 export type SandboxReservedTarget = Pick<
   SandboxRunRequest,
   "namespace" | "reservationKey" | "workspaceRoot"
 >;
 
-/** A guest POST to the reserved VM bash reaches on the same target. */
 export interface SandboxReservedPost
   extends SandboxGuestPost, SandboxReservedTarget {}
 
 export interface SandboxExecutor {
   run(request: SandboxRunRequest): Promise<SandboxRunResult>;
-  // Best-effort: create/resume the reserved sandbox and wait until its pod is
-  // Ready, ahead of the first real call, to hide cold-start. No-op for
-  // non-persistent configs. Callers feature-detect and fire-and-forget.
   prewarm?(request: {
     namespace?: string;
     reservationKey?: string;
   }): Promise<void>;
-  // Low-level exec in the reserved pod with optional stdin streaming. Unlike
-  // `run` it does not cd into a workspace or wrap output. Callers use it to talk
-  // to the resident in-pod tool worker. Persistent-only; absent for non-pod providers.
   execInReservedPod?(
     request: { namespace?: string; reservationKey?: string },
     command: string[],
-    // onStdout receives each stdout chunk as it arrives (used to stream a custom
-    // tool's NDJSON frames live). The returned stdout still holds the full output.
     opts?: {
       stdin?: Readable;
       timeoutSeconds?: number;
@@ -316,34 +206,18 @@ export interface SandboxExecutor {
     timedOut?: boolean;
     cpuUsec?: number;
   }>;
-  // Persistent-only background capabilities. Implemented by sandbox/daytona/
-  // e2b when config.persistent is true; absent otherwise (callers feature-detect).
   runBackground?(request: SandboxRunRequest): Promise<SandboxJobHandle>;
-  // A guest route on the reserved VM, beside /exec. lambda only: the MCP relay.
   postReserved?(request: SandboxReservedPost): Promise<unknown>;
   jobStatus?(request: SandboxJobRequest): Promise<SandboxJobStatus>;
   jobLogs?(request: SandboxJobRequest): Promise<SandboxJobLogs>;
   stopJob?(request: SandboxJobRequest): Promise<SandboxJobStatus>;
-  // Tear down the reserved sandbox for a reservation and its durable storage
-  // (workdir/daytona/e2b sandbox) plus its instance record.
-  // Best-effort + idempotent: a missing sandbox is a no-op. Called on
-  // account/workspace deletion to prevent leaked compute/disk.
-  // With `expectedExternalId` it tears down that machine and drops the row only
-  // while it still names it, so a key re-claimed in between keeps its replacement.
-  // Without it, whatever the key points at now.
+  // Idempotent. With `expectedExternalId` the row drops only while it still names that
+  // machine, so a key re-claimed meanwhile keeps its replacement.
   release?(request: SandboxReleaseRequest): Promise<void>;
-  // --- Snapshot/standby lifecycle (snapshot: workdir, lambda, daytona, e2b, vercel;
-  // suspend/resume: workdir, lambda). All optional; callers
-  // feature-detect. Drives control-plane sync + dashboard suspend/resume/snapshot. ---
-  // Suspend a reserved sandbox, preserving disk+memory while freeing compute.
   suspend?(request: SandboxReservationRef): Promise<void>;
-  // Resume a suspended sandbox.
   resume?(request: SandboxReservationRef): Promise<void>;
-  // Capture the current sandbox state as a reusable snapshot/image.
   snapshot?(request: SandboxReservationRef): Promise<SandboxSnapshotResult>;
-  // A building snapshot's progress, by its provider image id (lambda only).
   snapshotStatus?(externalImageId: string): Promise<SandboxSnapshotBuildState>;
-  // Best-effort live instance info (external id + state) for control-plane sync.
   getInstanceInfo?(
     request: SandboxReservationRef,
   ): Promise<SandboxInstanceInfo | null>;

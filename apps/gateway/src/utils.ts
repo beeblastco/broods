@@ -19,20 +19,13 @@ export type GatewayLimits = {
 };
 
 export const decoder = new TextDecoder();
-/** Subprotocol the gateway selects so a token-bearing handshake completes. */
 const WEBSOCKET_SUBPROTOCOL = "broods.v1";
-/** `Sec-WebSocket-Protocol` entry prefix that carries the credential. */
 const WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX = "broods.token.";
-/**
- * The end-user token's header and subprotocol prefix, the values core's
- * `@broods/convex/model/userToken` names (a test holds them equal). Spelled
- * here so the gateway image needs no file from another workspace.
- */
+// Mirrors convex/model/userToken (a test holds them equal) so the image needs no file from it.
 export const USER_TOKEN_HEADER = "x-broods-user-token";
 const USER_TOKEN_SUBPROTOCOL_PREFIX = "broods.user.";
 const maxBunIdleTimeoutSeconds = 255;
 
-/** The message from either shape core puts in `error`: envelope or plain text. */
 export function errorText(
   error: string | ApiError | undefined,
 ): string | undefined {
@@ -72,12 +65,7 @@ export function normalizeBaseUrl(value: string): string {
     : `https://${trimmed}`;
 }
 
-/**
- * WebSocket credential: the Authorization header, else the token carried as a
- * `broods.token.<token>` entry in `Sec-WebSocket-Protocol` (browsers cannot
- * set headers on an upgrade). A `?token=` query parameter is ignored, with a
- * warning: query strings end up in access logs.
- */
+// Browsers cannot set upgrade headers, hence the subprotocol; ?token= would land in access logs.
 export function websocketToken(request: Request): string {
   const token = (
     bearerToken(request.headers.get("authorization")) ??
@@ -94,11 +82,6 @@ export function websocketToken(request: Request): string {
   return token;
 }
 
-/**
- * The signed end-user token beside the credential: the `X-Broods-User-Token`
- * header, else a `broods.user.<token>` subprotocol entry (browsers again).
- * Undefined when the upgrade carries none; core checks it.
- */
 export function websocketUserToken(request: Request): string | undefined {
   const token = (
     request.headers.get(USER_TOKEN_HEADER) ??
@@ -109,12 +92,8 @@ export function websocketUserToken(request: Request): string | undefined {
   return token || undefined;
 }
 
-/**
- * Response headers for an upgrade. A client that offered subprotocols fails
- * the handshake unless the server selects one, so `broods.v1` is echoed back;
- * the token entry is never echoed. Undefined, never `{}`, when `broods.v1`
- * was not offered: Bun's `server.upgrade` throws on an empty headers object.
- */
+// A client that offered subprotocols fails the handshake unless one is selected; never the token.
+// undefined, never `{}`: Bun's `server.upgrade` throws on an empty headers object.
 export function websocketUpgradeHeaders(
   request: Request,
 ): HeadersInit | undefined {
@@ -160,12 +139,8 @@ export function isOriginAllowed(
   });
 }
 
-/**
- * Rate-limit key for a request. Trusts the rightmost forwarded address added by
- * the ingress, never client input: an inbound `X-Real-Ip`, or a hop the caller
- * prepended to `X-Forwarded-For`, would otherwise let one attacker mint a fresh
- * limiter bucket per request. Matches `apps/core/src/server.ts`.
- */
+// Only the ingress's rightmost hop: X-Real-Ip or a prepended hop would let one attacker mint a
+// fresh limiter bucket per request. Matches `apps/core/src/server.ts`.
 export function clientIp(
   request: Request,
   fallback: string | undefined,

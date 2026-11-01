@@ -13,7 +13,6 @@ const modules = import.meta.glob("../**/*.ts");
 const t = () => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-/** Seeds an org owned by `email`, its account, and the owner membership. */
 async function seedOrg(
   tt: T,
   opts: {
@@ -78,10 +77,7 @@ const createAgent = (tt: T, accountId: Id<"accounts">, name: string) =>
     name: name,
   });
 
-/**
- * Writes an agent config the way `PATCH /v1/agents/{id}` does: the resolved
- * blob, plus the `${NAME}` source blob when given, through `agents.update`.
- */
+// As `PATCH /v1/agents/{id}` writes it: the resolved blob plus the `${NAME}` source blob.
 async function seedConfig(
   tt: T,
   args: {
@@ -144,9 +140,7 @@ describe("backSyncCanvasFromAgentRow", () => {
 
     await tt.run(async (ctx) => {
       const project = await ctx.db.get(config!.projectId);
-      // The project is created on demand, so an org that never went
-      // through dashboard onboarding still gets one, and it is named
-      // for the account rather than a random adjective-noun pair.
+      // Made on demand for an org that skipped onboarding, named for the account.
       expect(project?.name).toBe("service-dev");
       expect(project?.orgId).toBe(orgId);
 
@@ -157,8 +151,7 @@ describe("backSyncCanvasFromAgentRow", () => {
 
   test("never places an agent in another org's project owned by the same user", async () => {
     const tt = t();
-    // The owner's personal org comes first by authId, so an authId-keyed
-    // project lookup would drop the beeblast agent into `personal`.
+    // The personal org comes first by authId: an authId-keyed lookup would pick its project.
     const personal = await seedOrg(tt, {
       orgName: "personal",
       slug: "personal",
@@ -207,8 +200,7 @@ describe("backSyncCanvasFromAgentRow", () => {
 
     const a = await configFor(tt, first);
     const b = await configFor(tt, second);
-    // The whole app's agents share one project: the selector must not grow
-    // an entry per customer.
+    // The project selector must not grow an entry per customer.
     expect(a!.projectId).toBe(b!.projectId);
 
     await tt.run(async (ctx) => {
@@ -236,7 +228,6 @@ describe("backSyncCanvasFromAgentRow", () => {
 
     const agentId = await createAgent(tt, accountId, "agent-one");
 
-    // The agent still exists and runs; it just has no project.
     expect(await configFor(tt, agentId)).toBeNull();
   });
 });
@@ -246,7 +237,6 @@ describe("syncApiAgentCanvasWiring", () => {
     vi.unstubAllEnvs();
   });
 
-  /** Account-scoped rows shaped like the account REST API creates them. */
   const seedWiringFixtures = (tt: T, accountId: Id<"accounts">) =>
     tt.run(async (ctx) => {
       const now = Date.now();
@@ -267,7 +257,6 @@ describe("syncApiAgentCanvasWiring", () => {
       return { workspaceId: workspaceId, sandboxId: sandboxId };
     });
 
-  /** The canvas layout of the stage the config was back-synced into. */
   const layoutFor = (tt: T, config: Doc<"agentConfigs">) =>
     tt.run(async (ctx) =>
       ctx.db
@@ -301,7 +290,6 @@ describe("syncApiAgentCanvasWiring", () => {
     });
 
     const config = await configFor(tt, agentId);
-    // The API path owns this config; the canvas locks it accordingly.
     expect(config!.managedBy).toBe("api");
 
     const layout = await layoutFor(tt, config!);
@@ -315,8 +303,7 @@ describe("syncApiAgentCanvasWiring", () => {
 
     const workspaceNode = nodes.find((n) => n.type === "workspace")!;
     expect(workspaceNode.data.resourceId).toBe(workspaceId);
-    // The agent's ref name, not the row name. A canvas round-trip must
-    // derive the same mount the runtime uses.
+    // The agent's ref name, not the row name: a round-trip must derive the runtime's mount.
     expect(workspaceNode.data.mountName).toBe("memory");
     expect(workspaceNode.data.managedBy).toBe("api");
     // The agent-level default sandbox makes the workspace writable.
@@ -336,8 +323,7 @@ describe("syncApiAgentCanvasWiring", () => {
     // Animated edges repaint the canvas every frame.
     expect(edges.filter((edge) => "animated" in edge)).toEqual([]);
 
-    // Referenced account-scoped rows are adopted into the canvas stage
-    // so the dashboard's save path accepts (and never edits) them.
+    // Referenced account rows join the canvas stage so the dashboard's save accepts them.
     await tt.run(async (ctx) => {
       const workspace = await ctx.db.get(workspaceId);
       expect(workspace!.stageId).toBe(config!.stageId);
@@ -360,7 +346,6 @@ describe("syncApiAgentCanvasWiring", () => {
     const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
 
     const agentId = await createAgent(tt, accountId, "agent-one");
-    /** Writes an encrypted config onto the agent the way an API PATCH does. */
     const seed = (config: Record<string, unknown>) =>
       seedConfig(tt, {
         agentId: agentId,
@@ -379,8 +364,6 @@ describe("syncApiAgentCanvasWiring", () => {
       type: string;
       data: Record<string, unknown>;
     }>;
-    // The dropped workspace ref takes its node and edge with it; the sandbox
-    // the config still declares survives.
     expect(nodes.find((n) => n.type === "workspace")).toBeUndefined();
     const sandboxNode = nodes.find((n) => n.type === "sandbox")!;
     expect(sandboxNode.data.resourceId).toBe(sandboxId);
@@ -415,8 +398,6 @@ describe("syncApiAgentCanvasWiring", () => {
         config: config,
       });
     await seed({ sandboxes: [sandboxId] });
-    // A PATCH that turns the default into a second sandbox keeps its node and
-    // edge, and the agent node records the new order.
     await seed({ sandboxes: [defaultSandboxId, sandboxId] });
 
     const config = await configFor(tt, agentId);
@@ -457,8 +438,7 @@ describe("syncApiAgentCanvasWiring", () => {
       },
     });
 
-    // The first agent's blob becomes unreadable (e.g. written under another
-    // secret); a second agent's sync must not prune the first one's wiring.
+    // A second agent's sync must not prune the wiring of a blob it cannot read.
     await tt.run(async (ctx) => {
       await ctx.db.patch(first, {
         encryptedConfig: "not-decodable",
@@ -581,10 +561,7 @@ describe("ensureAgentsRowForConfig", () => {
       email: "owner@example.com",
     });
 
-    // `broods dev` synced the personal org while the same human's dashboard
-    // session sat on beeblast. Resolving the account from the active org files
-    // the agent under a tenant that owns neither the project nor the runtime
-    // key, and the harness then 404s the agent it was just told to run.
+    // The dashboard sits on an org owning neither the project nor the runtime key.
     await tt.run(async (ctx) => {
       await ctx.db.patch(personal.userId, { activeOrgId: beeblast.orgId });
     });
@@ -665,7 +642,7 @@ describe("ensureAgentsRowForConfig", () => {
         isDefault: true,
         updatedAt: now,
       });
-      // The row an earlier, pre-fix sync left under the wrong tenant.
+      // Filed under the wrong tenant.
       const strayAgentId = await ctx.db.insert("agents", {
         accountId: beeblast.accountId,
         name: "scheduled-task-agent",
@@ -697,7 +674,6 @@ describe("ensureAgentsRowForConfig", () => {
     await tt.run(async (ctx) => {
       const agent = await ctx.db.get(agentId!);
       expect(agent?.accountId).toBe(personal.accountId);
-      // The config now points at the replacement, not the stray row.
       const config = await ctx.db.get(seeded.configId);
       expect(config?.agentId).toBe(agentId);
     });

@@ -1,9 +1,3 @@
-/**
- * Agent config CRUD (`/v1/agents*`) plus the live channel-directory lookup
- * (`/v1/agents/{id}/channels/{type}/directory`). Owns agent config
- * encrypt/decrypt, env-placeholder resolution, and reference validation.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -40,8 +34,7 @@ type PreparedAccountAgentConfig = {
   source?: EncryptedBlob;
 };
 
-// Skills are account-scoped, so bare names canonicalize to <accountId>/<name>
-// in place. Callers must run this BEFORE the config is encrypted to persist.
+// Mutates in place, so callers run it before the config is encrypted.
 export function canonicalizeAgentSkillPaths(
   accountId: Id<"accounts">,
   config: AgentConfig | undefined,
@@ -53,12 +46,7 @@ export function canonicalizeAgentSkillPaths(
   );
 }
 
-/**
- * Lists the live channel directory (id, name, privacy, bot membership) for an
- * agent's configured messaging channel, Slack only for now. The decrypted
- * stored credential is used server-side and never included in the response, so
- * dashboards can offer a pick-a-channel UX without re-collecting tokens.
- */
+// The stored bot token is used server-side only and never returned.
 export async function handleAgentChannelDirectoryRoute(
   ctx: ActionCtx,
   req: Request,
@@ -82,8 +70,7 @@ export async function handleAgentChannelDirectoryRoute(
       { code: "unsupported_channel_type", param: "channelType" },
     );
   }
-  // The resolved config (env placeholders substituted), not the public-read
-  // source config. This is the same view the runtime uses to post messages.
+  // The resolved config (placeholders substituted): the view the runtime posts with.
   const config = await decryptAgentConfig(
     await accountCipherForAction(ctx, accountId, "read"),
     record,
@@ -115,7 +102,6 @@ export async function handleAgentChannelDirectoryRoute(
   return json({ channels: directory.channels, truncated: directory.truncated });
 }
 
-/** Mirrors core's former handleAgentRoute contract. */
 export async function handleAgentConfigRoute(
   ctx: ActionCtx,
   req: Request,
@@ -167,7 +153,6 @@ export async function handleAgentConfigRoute(
       },
     );
     if (!existing) return jsonError(404, "Agent not found");
-    // Takes its crons, conversations, queued work and status rows with it.
     await ctx.runMutation(internal.agent.agents.remove, {
       accountId: accountId,
       agentId: agentId,
@@ -204,7 +189,7 @@ async function decryptAgentConfig(
   return decrypted as AgentConfig;
 }
 
-/** Decrypt the unresolved config when present so API reads and PATCHes preserve placeholders. */
+// The unresolved source config when present, so reads and PATCHes keep env placeholders.
 async function decryptAgentConfigForPublicRead(
   cipher: AccountCipher,
   doc: Doc<"agents">,
@@ -253,8 +238,7 @@ async function handleAgentCollectionRoute(
   }
   if (req.method === "POST") {
     const input = normalizeCreateAgentInput(await req.json());
-    // Names identify agents to config-plane clients (lookup-before-create
-    // upserts), so a duplicate must 409 instead of silently forking.
+    // Clients upsert by name (lookup-before-create), so a duplicate 409s instead of forking.
     const duplicate: Doc<"agents"> | null = await ctx.runQuery(
       internal.agent.agents.getByName,
       {
@@ -270,7 +254,6 @@ async function handleAgentCollectionRoute(
       );
     }
     assertRoleMayReadEnv(role, undefined, input.config);
-    // Before encryption: canonicalization must land in the persisted config.
     canonicalizeAgentSkillPaths(accountId, input.config);
     const config = await prepareAccountAgentConfig(
       ctx,
@@ -367,7 +350,6 @@ async function patchAgentConfigRoute(
     }
   }
   assertRoleMayReadEnv(role, existingConfig, patch.config);
-  // Before encryption: canonicalization must land in the persisted config.
   canonicalizeAgentSkillPaths(accountId, patch.config);
   const config = await prepareAccountAgentConfig(
     ctx,
@@ -381,9 +363,7 @@ async function patchAgentConfigRoute(
     accountId: accountId,
     agentId: agentId,
     ...(patch.name !== undefined ? { name: patch.name } : {}),
-    // Null is dropped, not forwarded: core's adapter has always done
-    // `?? undefined` here, so PATCH {description: null} is a no-op
-    // for agents (unlike policies, where null clears).
+    // Null is dropped: PATCH {description: null} is a no-op for agents (policies clear on null).
     ...(patch.description !== undefined
       ? { description: patch.description ?? undefined }
       : {}),
@@ -474,7 +454,6 @@ async function validateAgentPolicyIds(
   }
 }
 
-/** The stage-scoped resources an agent config names. */
 function agentConfigRefs(config: AgentConfig | undefined): StageScopedRef[] {
   return [
     ...(config?.sandboxes ?? []).map((id) => ({

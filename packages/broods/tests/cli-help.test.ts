@@ -3,12 +3,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-/**
- * Help is progressive: the bare command lists groups, and every command owns a
- * page. A grouped command with no subcommand must print that page rather than
- * guess a default and reach the network.
- */
-
 const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
 
 const workdirs: string[] = [];
@@ -53,7 +47,6 @@ test("the bare CLI lists commands and points at per-command help", async () => {
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("Usage: broods <command>");
   expect(result.stdout).toContain("Run `broods <command> --help`");
-  // Subcommands belong to the command's own page, not the top-level list.
   expect(result.stdout).not.toContain("org create");
 });
 

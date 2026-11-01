@@ -1,8 +1,3 @@
-/**
- * The prompt-cache defaults `providerOptionsFromModelConfig` injects for a
- * conversation run, and the calls that must not get them.
- */
-
 import { describe, expect, test } from "bun:test";
 import {
   cacheBreakpointFromProviderOptions,
@@ -16,8 +11,6 @@ import {
 
 const CONVERSATION_KEY = "channel:acct:chat";
 
-// The body a custom endpoint receives for one unmarked call with the
-// conversation run's options for `modelId`.
 async function requestBody(modelId: string): Promise<ChatRequest | undefined> {
   const config: AgentConfig = {
     model: { provider: "custom", modelId: modelId },

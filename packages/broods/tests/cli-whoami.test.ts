@@ -4,11 +4,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { CliOnboardingContext } from "../src/sync";
 
-/**
- * `whoami` must not present a folder name as the project in effect. Before a
- * project is chosen there is no remote scope, so it must not query one either.
- */
-
 const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
 
 const ONBOARDING: CliOnboardingContext = {
@@ -76,10 +71,6 @@ test("refuses another server's login when .env.local names one without a login",
   expect(prod.paths).toEqual([]);
 });
 
-/**
- * Runs `whoami` with a minimal env. With `baseUrl` it authenticates through
- * BROODS_TOKEN; without it, through the login file under `home`.
- */
 async function runWhoami(
   cwd: string,
   baseUrl?: string,
@@ -105,7 +96,6 @@ async function runWhoami(
   return { exitCode: exitCode, stdout: stdout };
 }
 
-/** A HOME whose login file holds one login per server; the last is the most recent. */
 async function homeWithLogins(baseUrls: string[]): Promise<string> {
   const home = await mkdtemp(join(tmpdir(), "broods-home-"));
   workdirs.push(home);
@@ -125,7 +115,6 @@ async function homeWithLogins(baseUrls: string[]): Promise<string> {
   return home;
 }
 
-/** A fake control plane that records every path `whoami` requests. */
 function serveBackend(): { baseUrl: string; paths: string[] } {
   const paths: string[] = [];
   const server = Bun.serve({
