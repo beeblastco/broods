@@ -15,7 +15,7 @@ The `broods` CLI does the interaction: sign-in, project sync, env, logs, running
 
 ## Create a project and agents
 
-`broods dev` on first run does everything: scaffolds `broods/` with a starter agent, runs the browser login if needed, pushes model keys from `.env.local` to the cloud env store, syncs to the `development` stage, then watches for changes and tails logs. `broods init` and `broods login` exist standalone when you want the steps separate.
+`broods dev` on first run does everything: scaffolds `broods/` with a starter agent, runs the browser login if needed, asks in the terminal for any `env()` value nobody has set yet (saved to `.env.local`), pushes model keys from `.env.local` to the cloud env store, syncs to the `development` stage, then watches for changes and tails logs. `broods init` and `broods login` exist standalone when you want the steps separate.
 
 A project is the `broods/` directory. `broods/index.ts` exports resources built with the `define*` functions: `defineAgent`, `defineSandbox`, `defineWorkspace`, `defineSkill`, `defineCron`, `defineMcp`, `definePolicy`, and the channel helpers. An optional `export default defineBroods({...})` sets project defaults like project name and stage mapping. The full reference is https://docs.broods.app/reference/configuration; the starter agent in `broods/index.ts` shows the minimum shape.
 
