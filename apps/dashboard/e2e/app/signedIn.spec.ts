@@ -32,7 +32,8 @@ test("the home route opens the caller's project @rollout", async ({ page }) => {
   expect(settingsFetches, "home prefetches no account page").toEqual([]);
 });
 
-test("a cold project load is one document, no server action, no logo fetch", async ({
+// @rollout: the canvas reads agent.config.canvasBadges, which dev has only after the merge.
+test("a cold project load is one document, no server action, no logo fetch @rollout", async ({
   page,
 }) => {
   const requests: Request[] = [];
