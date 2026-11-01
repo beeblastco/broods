@@ -72,9 +72,10 @@ export default function DashboardPage(): React.JSX.Element {
   const activeTab = tab.id;
 
   // No panel renders before the project query answers. A cold load onto a
-  // split-out tab fetches its chunk alongside that query, not after it.
+  // split-out tab fetches its chunk alongside that query, not after it. A
+  // failed fetch stays quiet here; the panel's own load surfaces it.
   useEffect(() => {
-    void DASHBOARD_PANELS[activeTab]?.();
+    void DASHBOARD_PANELS[activeTab]?.().catch((): void => {});
   }, [activeTab]);
 
   // Source of projectSlug, stageSlug and endpointId: the observability WS and
@@ -127,7 +128,7 @@ export default function DashboardPage(): React.JSX.Element {
   const generateViewingKey = useCallback(async () => {
     if (!activeStageId) return;
     // The key dialog opens once the mint answers; its chunk loads meanwhile.
-    void loadRuntimeKeyDialog();
+    void loadRuntimeKeyDialog().catch((): void => {});
     setGeneratingKey(true);
     setKeyError(null);
     try {

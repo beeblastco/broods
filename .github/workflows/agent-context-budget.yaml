@@ -1,10 +1,11 @@
 name: Agent context budget
 
 # Fails when a pull request raises a value in apps/core/tests/agent-context-budget.json
-# above its base branch's. agent-context-budget.test.ts (run by ci.yaml) keeps
-# that file equal to the bytes core sends the model, so the context cannot grow
-# by editing the file alone. To accept growth on purpose, a maintainer adds the
-# agent-context-increase label.
+# above its base branch's. A key the base lacks counts as 0, so a renamed or new
+# measurement cannot grow unlabeled. agent-context-budget.test.ts (run by
+# ci.yaml) keeps that file equal to the bytes core sends the model, so the
+# context cannot grow by editing the file alone. To accept growth on purpose, a
+# maintainer adds the agent-context-increase label.
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
@@ -54,8 +55,9 @@ jobs:
           fi
           grown=$(jq -r --slurpfile base "base/$BUDGET" '
             to_entries[]
-            | select($base[0][.key] != null and .value > $base[0][.key])
-            | "\(.key): \($base[0][.key]) -> \(.value) (+\(.value - $base[0][.key]))"
+            | ($base[0][.key] // 0) as $was
+            | select(.value > $was)
+            | "\(.key): \($was) -> \(.value) (+\(.value - $was))"
           ' "head/$BUDGET")
           if [ -z "$grown" ]; then
             echo "Agent context is not larger than $GITHUB_BASE_REF."
