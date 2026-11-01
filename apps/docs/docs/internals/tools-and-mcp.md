@@ -265,6 +265,34 @@ Before every spawn the handler also kills every other process of its user (`reap
 
 `defineTool` and `POST /v1/tools` are retired; hosted MCP servers replace them.
 
+## MCP Tasks server
+
+Core is also an MCP server: `POST /mcp` (`src/harness/mcp-tasks.ts`) serves the account's agents as tools with the `io.modelcontextprotocol/tasks` extension, so a client gets a task handle back from `tools/call`. It is a translator with no state of its own. A low-level SDK `Server` behind `createMcpHandler(factory, { legacy: "reject" })` answers each request; `McpServer` would reshape the `resultType: "task"` result. Every run read and write is replayed through core's own handler as `POST /v1/runs` or `GET /v1/runs/{runId}` with the caller's headers, so auth, stage scope, public access, user tokens, plan limits and the run-token rules stay in `integrations.ts`.
+
+```mermaid
+sequenceDiagram
+  participant C as MCP client
+  participant M as mcp-tasks.ts
+  participant H as handler (/v1/runs)
+  C->>M: tools/call agent_1 {prompt}
+  M->>H: POST /v1/runs background, fresh conversation mcp-uuid
+  H-->>M: 202 runId
+  M->>H: GET /v1/runs/:runId
+  M-->>C: resultType task, taskId = runId
+  C->>M: tasks/get
+  M->>H: GET /v1/runs/:runId, then each approval reply
+  M-->>C: working, input_required, completed or cancelled
+```
+
+- Task id: the run id, 122 random bits. There is no `tasks/list`, and every task call replays the caller's credential, so a task one key cannot read is `-32602` like an unknown one.
+- Tools: `tools/list` reads `agents.listForAccount` for an account key and `listForEndpoint` for a stage key, filtered to public agents for the embeddable key. A `brt_` run token lists none until peer calls land with their own allow-list and cycle guard.
+- Questions: an answer goes back as `POST /v1/runs {answers}`. The resumed turn writes its outcome to the asking run's polling row (`asyncResultEventId`), so the task's own run carries on.
+- Approvals: a reply is a new run with nothing pointing back. `tasks/update` sends it under the event id `<waiting eventId>:approval`, and `tasks/get` follows that id with `getIngressStatusByEventId` from run to run. No row or schema field records the link, and the fixed id makes a retried update a duplicate admission.
+- Cancel: `stopIngressOwner` on the task's conversation, the path `/stop` and `stop_subagent` take, for a key that may start runs. The run ends `failed` with `stoppedByUser`, which maps to `cancelled`.
+- Timestamps: `createdAt` and `lastUpdatedAt` come from `GET /v1/runs/{runId}`. `lastUpdatedAt` is the later of the envelope and its polling row, since an answered question moves only the row.
+
+Not built: client-side elicitation pushed to the caller mid-run, Broods calling remote task servers, and MCP OAuth for hosted connectors.
+
 ## Add a built-in tool
 
 Most integrations belong in an MCP server, external or hosted. Add a built-in tool only for behavior that needs core internals: the session, a sandbox or a channel.

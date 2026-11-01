@@ -128,6 +128,8 @@ interface AccountStore {
 /** Agent reads plus the explicit deletion cleanup used by core. */
 interface AgentStore {
   getById(accountId: string, agentId: string): Promise<AgentRecord | null>;
+  /** Every agent of the account, deployed or not, for an account key's MCP tools. */
+  listForAccount(accountId: string): Promise<AgentRecord[]>;
   /** Agents of the account's production stages, for the bare webhook URL. */
   listForProduction(accountId: string): Promise<AgentRecord[]>;
   /** Agents of one stage, for the stage-scoped webhook URL. */

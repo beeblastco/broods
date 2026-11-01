@@ -94,9 +94,11 @@ where
     rootOrItem "roles" p || rootOrItem "channels" p || rootOrItem "crons" p ||
     shape [.lit "v1", .lit "workspaces", .any, .lit "files"] p ||
     shape [.lit "v1", .lit "crons", .any, .lit "runs"] p
-  /-- The `webhooks`, `media` and `core` routers: `/v1` or anything under `/v1/`. -/
+  /-- The `webhooks`, `media` and `core` routers: `/v1` or anything under `/v1/`,
+  and core's MCP Tasks server at `/mcp`. -/
   isCore : Path → Bool
     | "v1" :: _ => true
+    | ["mcp"] => true
     | _ => false
   /-- The `sockets` router, by path alone. -/
   socket (p : Path) : Option Socket :=
@@ -172,6 +174,11 @@ example : route .get ["healthz", ""] = .health := by decide
 /-- A socket path reaches the gateway for any method; the gateway refuses a
 non-upgrade itself. -/
 example : route .post ["v1", "agents", "a", "ws"] = .socket .agent := by decide
+
+/-- The MCP Tasks server reaches core; `/v1/mcp` stays the config plane's CRUD. -/
+example : route .post ["mcp"] = .core := by decide
+example : route .post ["mcp", "x"] = .notFound := by decide
+example : route .get ["v1", "mcp"] = .config := by decide
 
 /-- In-cluster paths reach core, which refuses them without the service token. -/
 example : route .post ["v1", "cron-runs"] = .core := by decide

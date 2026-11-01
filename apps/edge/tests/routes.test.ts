@@ -29,6 +29,11 @@ const CASES: [string, string, Upstream | null][] = [
   // In-cluster only: core refuses them without the service token.
   ["POST", "/v1/cron-runs", "core"],
   ["POST", "/v1/mcp-service/rpc", "core"],
+  // Core's MCP Tasks server sits off /v1; /v1/mcp is the config plane's CRUD.
+  ["POST", "/mcp", "core"],
+  ["GET", "/mcp/", "core"],
+  ["POST", "/mcp/x", null],
+  ["GET", "/v1/mcp", "config"],
 
   // Sockets go to the gateway by path, upgrade or not.
   ["GET", "/v1/agents/a/ws", "gateway"],
