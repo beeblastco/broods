@@ -1413,7 +1413,7 @@ export const subagentTaskValidator = v.object({
  * A tool call waiting on a person's approval, as the polling row lists it:
  * core's `ToolApprovalSummary`. `input` is the model-generated tool input.
  */
-export const toolApprovalSummaryValidator = v.object({
+const toolApprovalSummaryValidator = v.object({
   approvalId: v.string(),
   toolCallId: v.string(),
   toolName: v.string(),
@@ -1423,7 +1423,7 @@ export const toolApprovalSummaryValidator = v.object({
  * One open ask_questions prompt while a run is awaiting_input: core's
  * `PendingQuestionSummary` over its `ChannelQuestion` rows.
  */
-export const pendingQuestionSummaryValidator = v.object({
+const pendingQuestionSummaryValidator = v.object({
   statusId: v.string(),
   questions: v.array(
     v.object({
