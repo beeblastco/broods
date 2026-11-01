@@ -1831,8 +1831,10 @@ function CanvasInner({
           )}
         </div>
 
+        {/* No width transition: an animated width relays out the whole
+            canvas and the panel on every frame of the slide. */}
         <div
-          className={`h-full shrink-0 overflow-hidden transition-all duration-200 ease-out ${selectedNode ? "w-2/5" : "w-0"}`}
+          className={`h-full shrink-0 overflow-hidden ${selectedNode ? "w-2/5" : "w-0"}`}
         >
           {sidePanelWanted && (
             <NodeSidePanel

@@ -36,7 +36,7 @@ export function CanvasControls({
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col rounded-lg border border-border bg-card/80 p-0.5 backdrop-blur-md">
+      <div className="flex flex-col rounded-lg border border-border bg-card p-0.5">
         <ControlButton label="Zoom in" onClick={() => zoomIn()}>
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path

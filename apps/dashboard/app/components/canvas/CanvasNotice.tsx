@@ -46,7 +46,7 @@ export function CanvasPill({
     <div
       aria-live="polite"
       data-slot={slot}
-      className="pointer-events-auto flex items-center gap-2 rounded-lg border border-border bg-card/80 px-2 py-1 text-xs text-muted-foreground backdrop-blur-md"
+      className="pointer-events-auto flex items-center gap-2 rounded-lg border border-border bg-card px-2 py-1 text-xs text-muted-foreground"
     >
       {children}
     </div>
