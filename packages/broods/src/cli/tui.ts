@@ -29,6 +29,8 @@ export interface AgentRunOptions {
   agent: AgentReference;
   /** Sent as the first turn. The TUI stays open afterwards for follow-ups. */
   prompt?: string;
+  /** Rewrites a failed turn's error into the fix, shown where the turn failed. */
+  explain?: (error: unknown) => unknown;
 }
 
 /** Run a deployed agent in the AI SDK terminal UI until the user exits. */
@@ -39,7 +41,11 @@ export async function runAgentTui(options: AgentRunOptions): Promise<void> {
     // Tool cards stay expanded: their input and output are what a dev testing
     // an agent came to see, and the default collapses them once text arrives.
     tools: "full",
-    transport: new RemoteAgentTransport(options.client, options.agent),
+    transport: new RemoteAgentTransport(
+      options.client,
+      options.agent,
+      options.explain,
+    ),
   });
 }
 
@@ -53,6 +59,7 @@ export async function streamAgentText(
       undefined,
       // One-shot: there is no follow-up turn to keep bookkeeping for.
       () => {},
+      options.explain,
     ),
   });
   for await (const text of stream) {
@@ -89,6 +96,7 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   constructor(
     private readonly client: BroodsClient,
     private readonly agent: AgentReference,
+    private readonly explain?: (error: unknown) => unknown,
   ) {}
 
   // The TUI never resumes a dropped stream; each turn opens its own SSE run.
@@ -112,7 +120,12 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
     });
 
     return toUIMessageStream({
-      stream: toReadableStream(stream, options.abortSignal, pending.commit),
+      stream: toReadableStream(
+        stream,
+        options.abortSignal,
+        pending.commit,
+        this.explain,
+      ),
       originalMessages: options.messages,
       generateMessageId: generateId,
       sendSources: true,
@@ -185,6 +198,7 @@ function toReadableStream(
   stream: AsyncGenerator<TextStreamPart<ToolSet>>,
   signal: AbortSignal | undefined,
   onAnswered: () => void,
+  explain: (error: unknown) => unknown = (error) => error,
 ): ReadableStream<TextStreamPart<ToolSet>> {
   let answered = false;
   // Never awaited: the generator can be parked on a read that never completes,
@@ -193,7 +207,12 @@ function toReadableStream(
 
   return new ReadableStream({
     pull: async function (controller): Promise<void> {
-      const next = await Promise.race([stream.next(), abortedRead(signal)]);
+      const next = await Promise.race([
+        stream.next(),
+        abortedRead(signal),
+      ]).catch((error: unknown) => {
+        throw explain(error);
+      });
       if (signal?.aborted) {
         release();
         controller.close();

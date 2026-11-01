@@ -34,7 +34,7 @@ import {
   type StoredAuthConfig,
 } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
-import { USER_TOKEN_SECRET_ENV } from "../user-token.ts";
+import { signUserToken, USER_TOKEN_SECRET_ENV } from "../user-token.ts";
 import { keyHint } from "../../../convex/model/accountSecrets.ts";
 import {
   DEPLOYMENT_REGIONS,
@@ -1246,6 +1246,33 @@ async function deploy(args: string[]): Promise<void> {
   printSyncWarnings(result);
 }
 
+function matchesSecretHint(
+  secret: string | undefined,
+  remoteHint: string | undefined,
+): secret is string {
+  return (
+    secret !== undefined &&
+    remoteHint !== undefined &&
+    keyHint(USER_TOKEN_SECRET_PREFIX, secret) === remoteHint
+  );
+}
+
+/**
+ * The stage's user-token signing secret as this checkout holds it: the shell's
+ * export, else `.env.local`'s, whichever matches the stage's masked hint.
+ */
+async function localUserTokenSecret(
+  remoteHint: string | undefined,
+): Promise<string | undefined> {
+  const fileSecret = parseDotenv(
+    await readTextIfExists(resolve(process.cwd(), ".env.local")),
+  )[USER_TOKEN_SECRET_ENV];
+
+  return [process.env[USER_TOKEN_SECRET_ENV], fileSecret].find((secret) =>
+    matchesSecretHint(secret, remoteHint),
+  );
+}
+
 /**
  * Persist the stage's recoverable runtime key after a deploy, and its
  * user-token signing secret when this checkout lacks it: a new agent refuses
@@ -1266,20 +1293,11 @@ async function applyDeploymentKey(
   }
 
   const remoteHint = deployment.userTokenSecretHint;
-  const matches = (secret: string | undefined): boolean =>
-    secret !== undefined &&
-    keyHint(USER_TOKEN_SECRET_PREFIX, secret) === remoteHint;
-  const fileSecret = parseDotenv(
-    await readTextIfExists(resolve(process.cwd(), ".env.local")),
-  )[USER_TOKEN_SECRET_ENV];
-  if (
-    remoteHint &&
-    (matches(process.env[USER_TOKEN_SECRET_ENV]) || matches(fileSecret))
-  ) {
+  if (await localUserTokenSecret(remoteHint)) {
     // `.env.local` is current, but a stale shell export still wins over it.
     warnShellShadowedEnv(
       USER_TOKEN_SECRET_ENV,
-      !matches(process.env[USER_TOKEN_SECRET_ENV]) &&
+      !matchesSecretHint(process.env[USER_TOKEN_SECRET_ENV], remoteHint) &&
         isShellOwnedEnv(USER_TOKEN_SECRET_ENV),
     );
 
@@ -3026,6 +3044,7 @@ async function run(args: string[]): Promise<void> {
   // Runtime traffic has to reach the same deployment the control plane resolved.
   // Without an explicit base URL the SDK falls back to prod, which rejects a
   // dev-issued runtime key with a 401.
+  const userToken = await cliUserToken(auth, runtimeKey?.userTokenSecretHint);
   const client = new BroodsClient({
     baseUrl:
       optionValue(args, "--base-url") ??
@@ -3033,6 +3052,7 @@ async function run(args: string[]): Promise<void> {
       process.env.BROODS_HOST ??
       auth.baseUrl,
     ...(runtimeKey?.apiKey ? { apiKey: runtimeKey.apiKey } : {}),
+    ...userToken,
   });
   const ref: AgentReference = {
     kind: "agent",
@@ -3047,26 +3067,90 @@ async function run(args: string[]): Promise<void> {
   // Lazy, so `ai` and the terminal UI load for this command only.
   const { runAgentTui, streamAgentText } = await import("./tui.ts");
   try {
+    // The TUI shows a turn's error in the chat, so explain it at the stream.
+    const explain = (error: unknown): unknown =>
+      explainRunError(error, agentName, manifest, "userToken" in userToken);
     if (interactive) {
       await runAgentTui({
         client: client,
         agent: ref,
+        explain: explain,
         ...(prompt ? { prompt: prompt } : {}),
       });
 
       return;
     }
-    await streamAgentText({ client: client, agent: ref, prompt: prompt });
+    await streamAgentText({
+      client: client,
+      agent: ref,
+      prompt: prompt,
+      explain: explain,
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("public_access_disabled")) {
-      throw new Error(
-        `Agent "${agentName}" is not publicly accessible (secured by default). ` +
-          "Set publicAccess: true in its config and redeploy, or enable Public access in the dashboard.",
-      );
-    }
-    throw error;
+    throw explainRunError(error, agentName, manifest, "userToken" in userToken);
   }
+}
+
+/**
+ * A new agent refuses the bare runtime key, so `broods run` signs each request
+ * as this developer with the secret `dev` / `deploy` wrote, as a backend would.
+ * Only the secret the stage's hint names: a stale or foreign one would turn a
+ * run that needs no token into a 401. None otherwise; the run names the fix.
+ */
+async function cliUserToken(
+  auth: StoredAuthConfig,
+  remoteHint: string | undefined,
+): Promise<{ userToken?: () => Promise<string> }> {
+  const secret = await localUserTokenSecret(remoteHint);
+  if (!secret) return {};
+  // Core scopes conversations by this id, so two logins must never share one:
+  // the email when the id alphabet holds it as is, else a digest.
+  const email = auth.user?.email;
+  const userId =
+    email && /^[A-Za-z0-9._@+=-]{1,128}$/.test(email)
+      ? email
+      : `cli-${createHash("sha256")
+          .update(auth.user?.authId ?? auth.token)
+          .digest("hex")
+          .slice(0, 32)}`;
+
+  return { userToken: () => signUserToken({ userId: userId, secret: secret }) };
+}
+
+/**
+ * Names the fix for the refusals a deployed agent gives `broods run`. Code
+ * spans keep names like `BROODS_USER_TOKEN_SECRET` intact in the TUI, which
+ * renders an error as Markdown.
+ */
+function explainRunError(
+  error: unknown,
+  agentName: string,
+  scope: { project: string; stage: string },
+  signed: boolean,
+): unknown {
+  const message = error instanceof Error ? error.message : String(error);
+  if (signed && message.includes(" 401 ")) {
+    return new Error(
+      `The run was refused (401): ${scope.project}/${scope.stage} accepted neither the runtime key nor the ` +
+        `user token. Check that \`${USER_TOKEN_SECRET_ENV}\` is the stage's signing secret (the dashboard's ` +
+        "Runtime key tab rotates it) and that no proxy rewrites the Authorization header.",
+    );
+  }
+  if (message.includes("user_token_required")) {
+    return new Error(
+      `Agent "${agentName}" requires a signed user token, and this checkout has no \`${USER_TOKEN_SECRET_ENV}\` ` +
+        `matching ${scope.project}/${scope.stage}. Put the secret your backend signs with in .env.local, ` +
+        "rotate it on the dashboard's Runtime key tab, or turn off Require user token for this agent.",
+    );
+  }
+  if (message.includes("public_access_disabled")) {
+    return new Error(
+      `Agent "${agentName}" is not publicly accessible (secured by default). ` +
+        "Set `publicAccess: true` in its config and redeploy, or enable Public access in the dashboard.",
+    );
+  }
+
+  return error;
 }
 
 async function writeStarter(
