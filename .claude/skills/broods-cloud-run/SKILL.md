@@ -69,7 +69,7 @@ Capture exact commands and output.
 ## 6. Dashboard
 
 - local: `bun run local:up -- --dashboard`, then in `apps/dashboard`:
-  `E2E_ADMIN_KEY=$(bun scripts/local-stack.ts status --key) E2E_BASE_URL=<printed url> bun run test:app` (and `perf`).
+  `E2E_ADMIN_KEY=$(bun ../../scripts/local-stack.ts status --key) E2E_BASE_URL=<printed url> bun run test:app` (and `perf`).
 - dev: `E2E_BASE_URL=https://dashboard.dev.broods.app E2E_PROJECT_ID=<id of $BROODS_CLOUD_PROJECT>`
   with `E2E_EMAIL`, `E2E_PASSWORD` (the probe). The id is in the dashboard URL of the project.
 - prod: browse read-only with the same user. No writes.

@@ -56,30 +56,43 @@ export async function runAgentTui(options: AgentRunOptions): Promise<void> {
   }
 }
 
+/** How long a lone Esc waits for the rest of a key sequence split across reads. */
+const ESC_SEQUENCE_WAIT_MS = 30;
+
 /**
  * The terminal UI quits on Esc, even mid-reply, which drops the conversation.
  * A lone Esc while a turn streams stops that turn instead; Ctrl+C still quits.
- * Arrow and page keys arrive as one `\x1b[...` chunk, so they pass untouched.
+ * Arrow and page keys start with Esc too, and a slow link can split them, so a
+ * lone Esc is held briefly: a following chunk makes it part of that key.
  * Returns the undo.
  */
 export function stopTurnOnEscape(
-  transport: Pick<RemoteAgentTransport, "stopTurn">,
+  transport: Pick<RemoteAgentTransport, "stopTurn" | "streaming">,
   input: EventEmitter = process.stdin,
 ): () => void {
   const emit = input.emit.bind(input);
+  let held: ReturnType<typeof setTimeout> | undefined;
   input.emit = (event: string | symbol, ...args: unknown[]): boolean => {
-    if (
-      event === "data" &&
-      String(args[0]) === "\x1b" &&
-      transport.stopTurn()
-    ) {
-      return true;
-    }
+    if (event !== "data") return emit(event, ...args);
+    if (held) {
+      clearTimeout(held);
+      held = undefined;
 
-    return emit(event, ...args);
+      return emit("data", Buffer.from(`\x1b${String(args[0])}`));
+    }
+    if (String(args[0]) !== "\x1b" || !transport.streaming) {
+      return emit(event, ...args);
+    }
+    held = setTimeout((): void => {
+      held = undefined;
+      if (!transport.stopTurn()) emit("data", Buffer.from("\x1b"));
+    }, ESC_SEQUENCE_WAIT_MS);
+
+    return true;
   };
 
   return () => {
+    clearTimeout(held);
     input.emit = emit;
   };
 }
@@ -186,6 +199,11 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
    * has no cancel), so the turn counts as sent and is not repeated next time.
    * False when no turn is streaming.
    */
+  /** True while a turn streams. */
+  get streaming(): boolean {
+    return this.activeTurn !== undefined;
+  }
+
   stopTurn(): boolean {
     if (!this.activeTurn) return false;
     this.activeTurn.commit();

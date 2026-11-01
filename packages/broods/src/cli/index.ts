@@ -3155,7 +3155,11 @@ async function cliUserToken(
   return { userToken: () => signUserToken({ userId: userId, secret: secret }) };
 }
 
-/** Names the fix for the refusals a deployed agent gives `broods run`. */
+/**
+ * Names the fix for the refusals a deployed agent gives `broods run`. Code
+ * spans keep names like `BROODS_USER_TOKEN_SECRET` intact in the TUI, which
+ * renders an error as Markdown.
+ */
 function explainRunError(
   error: unknown,
   agentName: string,
@@ -3166,13 +3170,13 @@ function explainRunError(
   if (signed && message.includes(" 401 ")) {
     return new Error(
       `The run was refused (401): ${scope.project}/${scope.stage} accepted neither the runtime key nor the ` +
-        `user token. Check that ${USER_TOKEN_SECRET_ENV} is the stage's signing secret (the dashboard's ` +
+        `user token. Check that \`${USER_TOKEN_SECRET_ENV}\` is the stage's signing secret (the dashboard's ` +
         "Runtime key tab rotates it) and that no proxy rewrites the Authorization header.",
     );
   }
   if (message.includes("user_token_required")) {
     return new Error(
-      `Agent "${agentName}" requires a signed user token, and this checkout has no ${USER_TOKEN_SECRET_ENV} ` +
+      `Agent "${agentName}" requires a signed user token, and this checkout has no \`${USER_TOKEN_SECRET_ENV}\` ` +
         `matching ${scope.project}/${scope.stage}. Put the secret your backend signs with in .env.local, ` +
         "rotate it on the dashboard's Runtime key tab, or turn off Require user token for this agent.",
     );
@@ -3180,7 +3184,7 @@ function explainRunError(
   if (message.includes("public_access_disabled")) {
     return new Error(
       `Agent "${agentName}" is not publicly accessible (secured by default). ` +
-        "Set publicAccess: true in its config and redeploy, or enable Public access in the dashboard.",
+        "Set `publicAccess: true` in its config and redeploy, or enable Public access in the dashboard.",
     );
   }
 

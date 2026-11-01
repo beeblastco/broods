@@ -384,12 +384,15 @@ test("stopTurn ends a streaming reply and keeps the text so far", async () => {
   expect(transport.stopTurn()).toBe(false);
 });
 
-test("a lone Esc stops the streaming turn; other keys and idle Esc pass through", () => {
+test("a lone Esc stops the streaming turn; keys, split keys and idle Esc pass through", async () => {
   const input = new EventEmitter();
   const seen: string[] = [];
   input.on("data", (chunk: Buffer) => seen.push(String(chunk)));
   let streaming = true;
   const transport = {
+    get streaming(): boolean {
+      return streaming;
+    },
     stopTurn: (): boolean => {
       const was = streaming;
       streaming = false;
@@ -399,14 +402,21 @@ test("a lone Esc stops the streaming turn; other keys and idle Esc pass through"
   };
 
   const restore = stopTurnOnEscape(transport, input);
-  input.emit("data", Buffer.from("\x1b"));
   input.emit("data", Buffer.from("\x1b[A"));
+  // An arrow split across two reads is still an arrow, not a stop.
+  input.emit("data", Buffer.from("\x1b"));
+  input.emit("data", Buffer.from("[B"));
+  expect(streaming).toBe(true);
+  // A lone Esc stops the turn once no sequence follows.
+  input.emit("data", Buffer.from("\x1b"));
+  await Bun.sleep(60);
+  expect(streaming).toBe(false);
+  // Idle, Esc goes straight to the UI, which quits on it.
   input.emit("data", Buffer.from("\x1b"));
   restore();
   input.emit("data", Buffer.from("x"));
 
-  // The first Esc stopped the turn; the arrow and the idle Esc reached the UI.
-  expect(seen).toEqual(["\x1b[A", "\x1b", "x"]);
+  expect(seen).toEqual(["\x1b[A", "\x1b[B", "\x1b", "x"]);
 });
 
 test("Esc before the first part counts the turn as sent", async () => {

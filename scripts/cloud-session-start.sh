@@ -30,6 +30,10 @@ timeout 60 git fetch origin dev --quiet 2>/dev/null || true
 # One broods project per cloud session, in the shared test account, so parallel
 # sessions never touch each other's stage. Same id on resume = same project.
 if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "${CLAUDE_CODE_REMOTE_SESSION_ID:-}" ]; then
+  # The env file and its scratch copies hold the Anthropic key: owner only,
+  # and no scratch file outlives an interrupted run.
+  umask 077
+  trap 'rm -f "$CLAUDE_ENV_FILE.tmp" "$CLAUDE_ENV_FILE.broods"' EXIT
   id=$(printf %s "${CLAUDE_CODE_REMOTE_SESSION_ID#cse_}" | tr -cd 'A-Za-z0-9' | tr 'A-Z' 'a-z' | tail -c 12)
   # broods-dev / broods-prod: the CLI from source (no build), pointed at one
   # server. The token is read when the command runs, never written down, so
