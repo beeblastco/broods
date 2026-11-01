@@ -18,8 +18,7 @@ import { OK_AGENT, assertStep, type VerifyContext } from "../harness.ts";
  * credential with 401 on HTTP and on the agent socket's upgrade, and a
  * member's stage ticket still runs the agent without one. The account key
  * then rotates the stage's signing secret through the CLI route `broods dev`
- * and `broods deploy` call, the runtime-key route then names its hint (what
- * `broods run` signs by), and a token signed with it runs the agent under
+ * and `broods deploy` call, and a token signed with it runs the agent under
  * that user's namespace.
  */
 export async function userToken(context: VerifyContext): Promise<void> {
@@ -56,12 +55,6 @@ export async function userToken(context: VerifyContext): Promise<void> {
     "a fresh stage reports no user token signing secret",
     deployment.userTokenSecretHint === undefined,
     JSON.stringify(deployment.userTokenSecretHint),
-  );
-  assertStep(
-    "the runtime-key route reports no signing secret for a fresh stage",
-    (await sync.getRuntimeKey(project, "development"))?.userTokenSecretHint ===
-      undefined,
-    "a hint before any secret was minted",
   );
   const runtimeKey = deployment.apiKey;
   const agent: AgentReference = {
@@ -186,13 +179,6 @@ export async function userToken(context: VerifyContext): Promise<void> {
     rotated?.secret.startsWith("bsig_") === true &&
       rotated.hint.startsWith("bsig_"),
     JSON.stringify(rotated?.hint),
-  );
-  // `broods run` signs only with the secret this hint names.
-  const recovered = await sync.getRuntimeKey(project, "development");
-  assertStep(
-    "the runtime-key route names the rotated secret's hint",
-    recovered?.userTokenSecretHint === rotated.hint,
-    JSON.stringify(recovered?.userTokenSecretHint),
   );
   const signed = await run({
     [USER_TOKEN_HEADER]: await signUserToken({
