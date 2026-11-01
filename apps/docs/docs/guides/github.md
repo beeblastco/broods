@@ -32,6 +32,10 @@ The workflow detects bun, pnpm, yarn or npm from the lockfile nearest above `bro
 
 A protected default branch refuses a direct commit, so Broods opens a pull request with the workflow instead. Merge it to start deploying on push. **Settings > Git** links to it.
 
+Each key sits in an environment only its branch may deploy from, so a workflow on any other branch cannot read Production's key. GitHub Free has no environments on private repos; there the keys go in as repo secrets `BROODS_PRODUCTION_TOKEN` and `BROODS_DEVELOPMENT_TOKEN`, which any branch's workflow can read, and **Settings > Git** says so.
+
+A repo deploys one project. Linking a repo another project already deploys from is refused until you unlink it there.
+
 ## Deploy status
 
 **Settings > Git** shows the latest run on each branch: deploying, deployed or failed, with its commit and a link to the run on GitHub.
@@ -40,7 +44,7 @@ A protected default branch refuses a direct commit, so Broods opens a pull reque
 
 - The repo is the source of truth for what `broods/` defines. `--prune` removes a resource from the stage when you delete it from code. Resources made on the dashboard stay; code-managed nodes are locked there.
 - Secrets your agents read with `env("NAME")` are not in the repo. Set them per stage with `broods env set` or on the dashboard before the first push, or the deploy fails naming them.
-- **Unlink** revokes both project keys and forgets the deploy history. The workflow file and the secrets stay in the repo; delete them there if you no longer want them.
+- **Unlink** revokes both project keys and forgets the deploy history. The workflow file, the environments and the secrets stay in the repo; delete them there if you no longer want them.
 - Uninstalling the App on GitHub, or removing a repo from it, unlinks every project on those repos.
 
 See [Deploying](deploying.md) for running `broods deploy` from any other CI.

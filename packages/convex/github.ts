@@ -28,7 +28,6 @@ import { randomToken } from "./model/accountSecrets";
 import { ensureStage } from "./model/cliSync";
 import { ClientError } from "./model/clientError";
 import {
-  DEPLOY_TOKEN_SECRETS,
   WORKFLOW_PATH,
   authorizeUrl,
   branchExists,
@@ -45,7 +44,7 @@ import {
   listInstallationRepos,
   listUserInstallations,
   requireGitHubApp,
-  setRepoSecret,
+  sealDeployKeys,
   starterFiles,
   verifyWebhookSignature,
   type GitHubApp,
@@ -327,30 +326,38 @@ export const finish = action({
       authId: user.id,
       projectId: request.projectId,
     });
-    const repo = await withKeys(ctx, keys, async (): Promise<GitHubRepo> => {
-      const created = await createGitHubRepo(
+    let environments = false;
+    const repo = await withKeys(ctx, keys, (): Promise<GitHubRepo> =>
+      createGitHubRepo(
         app,
         userToken,
         installation,
         { name: request.name, private: request.private },
-        (defaultBranch: string): Record<string, string> => ({
-          ...starterFiles(keys.projectSlug),
-          [WORKFLOW_PATH]: deployWorkflow({
-            projectSlug: keys.projectSlug,
-            baseUrl: request.baseUrl,
-            rootDirectory: "",
-            installDirectory: "",
-            manager: "npm",
-            productionBranch: defaultBranch,
-            developmentBranch: DEFAULT_DEVELOPMENT_BRANCH,
-          }),
-        }),
-        DEFAULT_DEVELOPMENT_BRANCH,
-      );
-      await setDeploySecrets(app, created, keys);
+        async (created: GitHubRepo): Promise<Record<string, string>> => {
+          environments = await setDeploySecrets(
+            app,
+            created,
+            DEFAULT_DEVELOPMENT_BRANCH,
+            keys,
+          );
 
-      return created;
-    });
+          return {
+            ...starterFiles(keys.projectSlug),
+            [WORKFLOW_PATH]: deployWorkflow({
+              projectSlug: keys.projectSlug,
+              baseUrl: request.baseUrl,
+              rootDirectory: "",
+              installDirectory: "",
+              manager: "npm",
+              productionBranch: created.defaultBranch,
+              developmentBranch: DEFAULT_DEVELOPMENT_BRANCH,
+              environments: environments,
+            }),
+          };
+        },
+        DEFAULT_DEVELOPMENT_BRANCH,
+      ),
+    );
     await ctx.runMutation(internal.github.saveLink, {
       authId: user.id,
       projectId: request.projectId,
@@ -362,6 +369,7 @@ export const finish = action({
         productionBranch: repo.defaultBranch,
         developmentBranch: DEFAULT_DEVELOPMENT_BRANCH,
         deployKeyIds: keys.keyIds,
+        protectedSecrets: environments,
       },
     });
 
@@ -456,6 +464,7 @@ export const linkRepo = action({
     const keys = await ctx.runMutation(internal.github.mintLinkKeys, {
       authId: user.id,
       projectId: projectId,
+      repoId: target.repoId,
     });
     const repo = await withKeys(ctx, keys, (): Promise<ProjectRepo> =>
       setUpRepo(app, target, keys),
@@ -631,15 +640,21 @@ export const storeInstallations = internalMutation({
 
 /** Mints a GitHub Actions key for Production and Development, creating either stage when missing. */
 export const mintLinkKeys = internalMutation({
-  args: { authId: v.string(), projectId: v.id("projects") },
+  /** `repoId`: an existing repo, refused when another project already deploys from it. */
+  args: {
+    authId: v.string(),
+    projectId: v.id("projects"),
+    repoId: v.optional(v.number()),
+  },
   returns: v.object({
     projectSlug: v.string(),
     keyIds: v.array(v.id("deployKeys")),
     production: v.string(),
     development: v.string(),
   }),
-  handler: async (ctx, { authId, projectId }): Promise<LinkKeys> => {
+  handler: async (ctx, { authId, projectId, repoId }): Promise<LinkKeys> => {
     const project = await requireLinkAccess(ctx, authId, projectId);
+    if (repoId !== undefined) await requireRepoFree(ctx, repoId, projectId);
     const member = await userByAuthId(ctx, authId);
     if (!member) throw new Error("User row not found");
     const mint = async (
@@ -694,6 +709,8 @@ export const saveLink = internalMutation({
   returns: v.null(),
   handler: async (ctx, { authId, projectId, repo }): Promise<null> => {
     const project = await requireLinkAccess(ctx, authId, projectId);
+    // Rechecked here: another link may have landed while GitHub was set up.
+    await requireRepoFree(ctx, repo.repoId, projectId);
     for (const keyId of project.repo?.deployKeyIds ?? []) {
       if (repo.deployKeyIds.includes(keyId)) continue;
       if (await ctx.db.get(keyId)) await ctx.db.delete(keyId);
@@ -885,25 +902,38 @@ async function requireOrgAdmin(
   return org._id;
 }
 
+// One repo deploys one project: its workflow and secrets have room for one.
+async function requireRepoFree(
+  ctx: QueryCtx,
+  repoId: number,
+  projectId: Id<"projects">,
+): Promise<void> {
+  const other = await ctx.db
+    .query("projects")
+    .withIndex("by_repoId", (q) => q.eq("repo.repoId", repoId))
+    .first();
+  if (other && other._id !== projectId) {
+    throw new ClientError(
+      `${other.repo?.fullName ?? "That repo"} already deploys project ${other.name}. Unlink it there first.`,
+    );
+  }
+}
+
+// Seals both keys before any workflow can run; true when they sit in per-branch environments.
 async function setDeploySecrets(
   app: GitHubApp,
   repo: GitHubRepo,
+  developmentBranch: string,
   keys: LinkKeys,
-): Promise<void> {
-  const token = await installationToken(app, repo.installationId);
-  await setRepoSecret(
+): Promise<boolean> {
+  return await sealDeployKeys(
     app,
-    token,
+    await installationToken(app, repo.installationId),
     repo.fullName,
-    DEPLOY_TOKEN_SECRETS.production,
-    keys.production,
-  );
-  await setRepoSecret(
-    app,
-    token,
-    repo.fullName,
-    DEPLOY_TOKEN_SECRETS.development,
-    keys.development,
+    {
+      production: { branch: repo.defaultBranch, token: keys.production },
+      development: { branch: developmentBranch, token: keys.development },
+    },
   );
 }
 
@@ -930,7 +960,12 @@ async function setUpRepo(
   };
   const developmentBranch =
     target.developmentBranch?.trim() || DEFAULT_DEVELOPMENT_BRANCH;
-  await setDeploySecrets(app, repo, keys);
+  const environments = await setDeploySecrets(
+    app,
+    repo,
+    developmentBranch,
+    keys,
+  );
   if (
     developmentBranch !== repo.defaultBranch &&
     !(await branchExists(app, token, repo.fullName, developmentBranch))
@@ -958,6 +993,7 @@ async function setUpRepo(
     baseUrl: target.baseUrl,
     productionBranch: repo.defaultBranch,
     developmentBranch: developmentBranch,
+    environments: environments,
   });
   const productionPull = await commitWorkflow(
     app,
@@ -985,6 +1021,7 @@ async function setUpRepo(
     productionBranch: repo.defaultBranch,
     developmentBranch: developmentBranch,
     deployKeyIds: keys.keyIds,
+    protectedSecrets: environments,
     setupPullRequestUrl: productionPull ?? developmentPull,
   };
 }

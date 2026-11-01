@@ -114,6 +114,13 @@ function LinkedRepo({
           />
         ))}
       </dl>
+      {!repo.protectedSecrets && (
+        <p className="text-xs text-warning">
+          This GitHub plan has no environments on private repos, so the deploy
+          keys are repo secrets: anyone who can push a branch can read
+          Production&apos;s.
+        </p>
+      )}
       {repo.setupPullRequestUrl && (
         <p className="text-xs text-warning">
           A branch is protected, so the deploy workflow waits in a{" "}

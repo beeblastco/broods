@@ -50,6 +50,7 @@ describe("deployWorkflow", () => {
       manager: "bun",
       productionBranch: "main",
       developmentBranch: "dev",
+      environments: true,
     });
 
     expect(workflow).toContain('branches: ["main", "dev"]');
@@ -63,11 +64,12 @@ describe("deployWorkflow", () => {
       "BROODS_STAGE: ${{ github.ref_name == 'main' && 'production' || 'development' }}",
     );
     expect(workflow).toContain(
-      "BROODS_TOKEN: ${{ github.ref_name == 'main' && secrets.BROODS_PRODUCTION_TOKEN || secrets.BROODS_DEVELOPMENT_TOKEN }}",
+      "environment: ${{ github.ref_name == 'main' && 'broods-production' || 'broods-development' }}",
     );
+    expect(workflow).toContain("BROODS_TOKEN: ${{ secrets.BROODS_TOKEN }}");
   });
 
-  test("an npm repo sets up node and fetches the CLI when it has none", () => {
+  test("an npm repo without environments sets up node and reads repo secrets", () => {
     const workflow = deployWorkflow({
       projectSlug: "support",
       baseUrl: "https://gateway.broods.app",
@@ -75,12 +77,17 @@ describe("deployWorkflow", () => {
       installDirectory: "",
       manager: "npm",
       productionBranch: "main",
+      environments: false,
     });
 
     expect(workflow).toContain('branches: ["main"]');
     expect(workflow).toContain("actions/setup-node@v4");
     expect(workflow).not.toContain("corepack");
     expect(workflow).toContain("npx --yes broods deploy");
+    expect(workflow).not.toContain("environment:");
+    expect(workflow).toContain(
+      "BROODS_TOKEN: ${{ github.ref_name == 'main' && secrets.BROODS_PRODUCTION_TOKEN || secrets.BROODS_DEVELOPMENT_TOKEN }}",
+    );
   });
 });
 

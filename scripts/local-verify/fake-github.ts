@@ -23,8 +23,12 @@ export interface FakeRepo {
   branches: Map<string, string>;
   /** Branches that refuse a direct commit, like a protected `main`. */
   protectedBranches: Set<string>;
-  /** Decrypted Actions secrets, so a case can deploy with what Broods sealed. */
+  /** Decrypted Actions secrets, so a case can deploy with what Broods sealed; `env/NAME` for an environment's. */
   secrets: Map<string, string>;
+  /** Environment → the branches its deployment policy allows; null on a plan without environments. */
+  environments: Map<string, Set<string>> | null;
+  /** How many secrets existed at each branch write, to prove they landed before the first push. */
+  secretsAtPush: number[];
   pulls: Array<{ head: string; base: string; url: string }>;
   keyPair: nacl.BoxKeyPair;
 }
@@ -150,6 +154,8 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
       ]),
       protectedBranches: new Set(repo.protectedBranches ?? []),
       secrets: new Map(),
+      environments: new Map(),
+      secretsAtPush: [],
       pulls: [],
       keyPair: nacl.box.keyPair(),
     };
@@ -230,6 +236,8 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
             : {},
         });
         repo.private = Boolean(call.body.private);
+        // A free plan's private repo: GitHub refuses environments there.
+        repo.environments = null;
 
         return json(201, rawRepo(repo));
       },
@@ -348,6 +356,7 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
           return json(422, { message: "Reference already exists" });
         }
         repo.branches.set(branch, String(body.sha));
+        repo.secretsAtPush.push(repo.secrets.size);
 
         return json(201, { ref: body.ref });
       },
@@ -357,6 +366,7 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
       /^\/git\/refs\/heads\/(.+)$/,
       ({ body, match, repo }): Response => {
         repo.branches.set(match[1] ?? "", String(body.sha));
+        repo.secretsAtPush.push(repo.secrets.size);
 
         return json(200, { object: { sha: body.sha } });
       },
@@ -407,6 +417,7 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
         const next = new Map(files);
         next.set(path, Buffer.from(String(body.content), "base64").toString());
         repo.branches.set(branch, commit(next));
+        repo.secretsAtPush.push(repo.secrets.size);
 
         return json(current === undefined ? 201 : 200, {
           content: { path: path },
@@ -443,8 +454,33 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
       },
     ],
     [
+      "PUT",
+      /^\/environments\/([\w-]+)$/,
+      ({ match, repo }): Response => {
+        if (!repo.environments) {
+          return json(422, { message: "Environments are not available" });
+        }
+        const name = match[1] ?? "";
+        if (!repo.environments.has(name))
+          repo.environments.set(name, new Set());
+
+        return json(200, { name: name });
+      },
+    ],
+    [
+      "POST",
+      /^\/environments\/([\w-]+)\/deployment-branch-policies$/,
+      ({ body, match, repo }): Response => {
+        const policies = repo.environments?.get(match[1] ?? "");
+        if (!policies) return notFound();
+        policies.add(String(body.name));
+
+        return json(200, { name: body.name });
+      },
+    ],
+    [
       "GET",
-      /^\/actions\/secrets\/public-key$/,
+      /^\/(?:environments\/[\w-]+\/)?(?:actions\/)?secrets\/public-key$/,
       ({ repo }): Response =>
         json(200, {
           key_id: SECRET_KEY_ID,
@@ -453,13 +489,18 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
     ],
     [
       "PUT",
-      /^\/actions\/secrets\/(\w+)$/,
+      /^\/(?:environments\/([\w-]+)\/secrets|actions\/secrets)\/(\w+)$/,
       ({ body, match, repo }): Response => {
+        const environment = match[1];
+        if (environment && !repo.environments?.has(environment)) {
+          return notFound();
+        }
         const opened = openSealed(String(body.encrypted_value), repo.keyPair);
         if (opened === null || body.key_id !== SECRET_KEY_ID) {
           return json(422, { message: "Bad encrypted_value" });
         }
-        repo.secrets.set(match[1] ?? "", opened);
+        const name = match[2] ?? "";
+        repo.secrets.set(environment ? `${environment}/${name}` : name, opened);
 
         return new Response(null, { status: 201 });
       },

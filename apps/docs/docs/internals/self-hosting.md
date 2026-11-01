@@ -195,13 +195,13 @@ A malformed value fails the crawl with the reason in the Convex logs. Removing a
 
 Repo links ([GitHub](../guides/github.md)) need a GitHub App of your own. Without one the dashboard hides the GitHub starts. Register it under your GitHub organization's Developer settings:
 
-| Setting                                                | Value                                                                                                |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| Callback URL                                           | `{dashboard}/github/callback`                                                                        |
-| Request user authorization (OAuth) during installation | on                                                                                                   |
-| Webhook URL                                            | `{CONVEX_SITE_URL}/github/webhook`                                                                   |
-| Repository permissions                                 | Administration, Contents, Pull requests, Secrets, Workflows: read and write. Actions, Metadata: read |
-| Subscribe to events                                    | Workflow run, Repository                                                                             |
+| Setting                                                | Value                                                                                                              |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| Callback URL                                           | `{dashboard}/github/callback`                                                                                      |
+| Request user authorization (OAuth) during installation | on                                                                                                                 |
+| Webhook URL                                            | `{CONVEX_SITE_URL}/github/webhook`                                                                                 |
+| Repository permissions                                 | Administration, Contents, Environments, Pull requests, Secrets, Workflows: read and write. Actions, Metadata: read |
+| Subscribe to events                                    | Workflow run, Repository                                                                                           |
 
 The App receives installation events without a subscription. Generate a private key and a client secret, then set the six `GITHUB_APP_*` variables. `GITHUB_APP_PRIVATE_KEY` takes the PEM as GitHub hands it, newlines escaped as `\n` or not. `GITHUB_API_URL` and `GITHUB_WEB_URL` point at GitHub Enterprise Server instead of github.com. The code is in `packages/convex/github.ts`.
 

@@ -1117,6 +1117,7 @@ export declare const api: {
         fullName: string;
         installationId: number;
         productionBranch: string;
+        protectedSecrets: boolean;
         repoId: number;
         rootDirectory: string;
         setupPullRequestUrl?: string;
@@ -1160,6 +1161,7 @@ export declare const api: {
           fullName: string;
           installationId: number;
           productionBranch: string;
+          protectedSecrets: boolean;
           repoId: number;
           rootDirectory: string;
           setupPullRequestUrl?: string;
@@ -1523,6 +1525,7 @@ export declare const api: {
           fullName: string;
           installationId: number;
           productionBranch: string;
+          protectedSecrets: boolean;
           repoId: number;
           rootDirectory: string;
           setupPullRequestUrl?: string;
@@ -1548,6 +1551,7 @@ export declare const api: {
           fullName: string;
           installationId: number;
           productionBranch: string;
+          protectedSecrets: boolean;
           repoId: number;
           rootDirectory: string;
           setupPullRequestUrl?: string;
@@ -5562,7 +5566,7 @@ export declare const internal: {
     mintLinkKeys: FunctionReference<
       "mutation",
       "internal",
-      { authId: string; projectId: Id<"projects"> },
+      { authId: string; projectId: Id<"projects">; repoId?: number },
       {
         development: string;
         keyIds: Array<Id<"deployKeys">>;
@@ -5614,6 +5618,7 @@ export declare const internal: {
           fullName: string;
           installationId: number;
           productionBranch: string;
+          protectedSecrets: boolean;
           repoId: number;
           rootDirectory: string;
           setupPullRequestUrl?: string;

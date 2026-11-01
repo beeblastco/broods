@@ -31,6 +31,7 @@ interface Status {
     rootDirectory: string;
     productionBranch: string;
     developmentBranch?: string;
+    protectedSecrets: boolean;
     setupPullRequestUrl?: string;
   };
   deploys: Array<{ branch: string; status: string; conclusion?: string }>;
@@ -251,16 +252,7 @@ async function link(
         workflow,
     workflow,
   );
-  const secrets = github.repos.get(ORG_REPO)?.secrets;
-  const production = secrets?.get("BROODS_PRODUCTION_TOKEN") ?? "";
-  const development = secrets?.get("BROODS_DEVELOPMENT_TOKEN") ?? "";
-  assertStep(
-    "each stage's project key is sealed into a repo secret",
-    production.startsWith("bpdk_") &&
-      development.startsWith("bpdk_") &&
-      production !== development,
-    [...(secrets?.keys() ?? [])].join(","),
-  );
+  const { production, development } = sealedKeys(github, linked, workflow);
 
   return {
     projectId: projectId,
@@ -323,6 +315,18 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
     JSON.stringify(deploys),
   );
 
+  // A second project cannot take over the repo's one workflow and its keys.
+  const other = await newProject(run, "gh-dupe");
+  await run.refused("github:linkRepo", {
+    projectId: other.projectId,
+    target: {
+      installationId: ORG_INSTALLATION,
+      repoId: ORG_REPO,
+      rootDirectory: "apps/agents",
+      baseUrl: context.edgeUrl,
+    },
+  });
+
   await run.asAdmin("github:unlinkRepo", { projectId: imported.projectId });
   const revoked = deploy(context, agents, slug, "development", development);
   const after = await run.status(imported.projectId);
@@ -383,9 +387,16 @@ async function createRepo(run: Run): Promise<string> {
   );
   const status = await run.status(projectId);
   assertStep(
-    "both secrets are set and the project is linked",
+    "without environments the keys fall back to repo secrets, set before the first push",
     created.secrets.size === 2 &&
-      status.repo?.fullName === `${USER.login}/${name}` &&
+      created.secretsAtPush.every((count) => count === 2) &&
+      status.repo?.protectedSecrets === false &&
+      !(main?.get(WORKFLOW) ?? "").includes("environment:"),
+    JSON.stringify({ pushes: created.secretsAtPush, status: status }),
+  );
+  assertStep(
+    "the project is linked to the new repo",
+    status.repo?.fullName === `${USER.login}/${name}` &&
       status.repo.developmentBranch === "dev",
     JSON.stringify(status),
   );
@@ -483,6 +494,34 @@ async function newProject(
   };
 
   return { projectId: projectId, slug: project.slug };
+}
+
+// The keys Broods sealed for acme/web, after checking each sits in its branch's environment.
+function sealedKeys(
+  github: FakeGitHub,
+  linked: NonNullable<Status["repo"]>,
+  workflow: string,
+): { production: string; development: string } {
+  const repo = github.repos.get(ORG_REPO);
+  const production = repo?.secrets.get("broods-production/BROODS_TOKEN") ?? "";
+  const development =
+    repo?.secrets.get("broods-development/BROODS_TOKEN") ?? "";
+  assertStep(
+    "each stage's key sits in an environment only its branch may use",
+    production.startsWith("bpdk_") &&
+      development.startsWith("bpdk_") &&
+      production !== development &&
+      repo?.secrets.size === 2 &&
+      [...(repo.environments?.get("broods-production") ?? [])].join() ===
+        "main" &&
+      [...(repo.environments?.get("broods-development") ?? [])].join() ===
+        "dev" &&
+      linked.protectedSecrets &&
+      workflow.includes("BROODS_TOKEN: ${{ secrets.BROODS_TOKEN }}"),
+    JSON.stringify([...(repo?.secrets.keys() ?? [])]),
+  );
+
+  return { production: production, development: development };
 }
 
 function workflowRun(id: number, conclusion: string | null): unknown {

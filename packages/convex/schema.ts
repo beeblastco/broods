@@ -43,6 +43,8 @@ export const projectRepoValidator = v.object({
   developmentBranch: v.optional(v.string()),
   /** The project keys the workflow deploys with, revoked on unlink. */
   deployKeyIds: v.array(v.id("deployKeys")),
+  /** False when the plan had no environments, so the keys are repo secrets any branch can read. */
+  protectedSecrets: v.boolean(),
   /** Set when the workflow went in through a PR because the branch is protected. */
   setupPullRequestUrl: v.optional(v.string()),
 });

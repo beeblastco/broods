@@ -14,11 +14,22 @@ import { ClientError } from "./clientError";
 export const WORKFLOW_PATH = ".github/workflows/broods.yml";
 export const WORKFLOW_NAME = "Broods deploy";
 
-/** The repo secrets the workflow deploys with, one project key per stage. */
+/**
+ * The GitHub Environments holding each stage's project key as `BROODS_TOKEN`,
+ * each open only to its own branch, so a pushed branch cannot read Production's.
+ */
+export const DEPLOY_ENVIRONMENTS = {
+  production: "broods-production",
+  development: "broods-development",
+} as const;
+
+/** Repo-level secrets, the fallback where the plan has no environments on a private repo. */
 export const DEPLOY_TOKEN_SECRETS = {
   production: "BROODS_PRODUCTION_TOKEN",
   development: "BROODS_DEVELOPMENT_TOKEN",
 } as const;
+
+const ENVIRONMENT_SECRET = "BROODS_TOKEN";
 
 const GITHUB_TIMEOUT_MS = 15_000;
 const SETUP_BRANCH = "broods/deploy-workflow";
@@ -88,6 +99,14 @@ export interface WorkflowTarget extends BroodsRoot {
   baseUrl: string;
   productionBranch: string;
   developmentBranch?: string;
+  /** Keys sit in the per-branch environments, not repo secrets. */
+  environments: boolean;
+}
+
+/** Each stage's branch and project key. */
+export interface DeployKeys {
+  production: { branch: string; token: string };
+  development: { branch: string; token: string };
 }
 
 /** A user's GitHub installation, from `GET /user/installations`. */
@@ -367,6 +386,11 @@ export function deployWorkflow(target: WorkflowTarget): string {
     "jobs:",
     "  deploy:",
     "    runs-on: ubuntu-latest",
+    ...(target.environments
+      ? [
+          `    environment: \${{ ${isProduction} && '${DEPLOY_ENVIRONMENTS.production}' || '${DEPLOY_ENVIRONMENTS.development}' }}`,
+        ]
+      : []),
     "    steps:",
     "      - uses: actions/checkout@v4",
     ...setup,
@@ -378,7 +402,9 @@ export function deployWorkflow(target: WorkflowTarget): string {
     `          BROODS_BASE_URL: ${quote(target.baseUrl)}`,
     `          BROODS_PROJECT: ${quote(target.projectSlug)}`,
     `          BROODS_STAGE: \${{ ${isProduction} && 'production' || 'development' }}`,
-    `          BROODS_TOKEN: \${{ ${isProduction} && secrets.${DEPLOY_TOKEN_SECRETS.production} || secrets.${DEPLOY_TOKEN_SECRETS.development} }}`,
+    target.environments
+      ? `          BROODS_TOKEN: \${{ secrets.${ENVIRONMENT_SECRET} }}`
+      : `          BROODS_TOKEN: \${{ ${isProduction} && secrets.${DEPLOY_TOKEN_SECRETS.production} || secrets.${DEPLOY_TOKEN_SECRETS.development} }}`,
     "",
   ].join("\n");
 }
@@ -478,40 +504,76 @@ export async function branchExists(
   }
 }
 
-/** Sets a repo Actions secret, sealed to the repo's public key. */
-export async function setRepoSecret(
+/**
+ * Seals each stage's key into an environment only its branch may deploy
+ * from, and answers true. A plan without environments on a private repo
+ * refuses them; the keys then go in as repo secrets and this answers false.
+ */
+export async function sealDeployKeys(
   app: GitHubApp,
   token: string,
   fullName: string,
-  name: string,
-  value: string,
-): Promise<void> {
-  const key = await githubRequest<{ key_id: string; key: string }>(
-    app,
-    token,
-    "GET",
-    `/repos/${fullName}/actions/secrets/public-key`,
-  );
-  await githubRequest(
-    app,
-    token,
-    "PUT",
-    `/repos/${fullName}/actions/secrets/${name}`,
-    { encrypted_value: sealSecret(key.key, value), key_id: key.key_id },
-  );
+  keys: DeployKeys,
+): Promise<boolean> {
+  try {
+    for (const stage of ["production", "development"] as const) {
+      const environment = `/repos/${fullName}/environments/${DEPLOY_ENVIRONMENTS[stage]}`;
+      await githubRequest(app, token, "PUT", environment, {
+        deployment_branch_policy: {
+          protected_branches: false,
+          custom_branch_policies: true,
+        },
+      });
+      await githubRequest(
+        app,
+        token,
+        "POST",
+        `${environment}/deployment-branch-policies`,
+        { name: keys[stage].branch, type: "branch" },
+      ).catch(ignoreStatus(409));
+      await setSecret(
+        app,
+        token,
+        `${environment}/secrets`,
+        ENVIRONMENT_SECRET,
+        keys[stage].token,
+      );
+    }
+
+    return true;
+  } catch (error) {
+    if (
+      !(error instanceof GitHubApiError) ||
+      !(isRefusedWrite(error.status) || error.status === 404)
+    ) {
+      throw error;
+    }
+  }
+  for (const stage of ["production", "development"] as const) {
+    await setSecret(
+      app,
+      token,
+      `/repos/${fullName}/actions/secrets`,
+      DEPLOY_TOKEN_SECRETS[stage],
+      keys[stage].token,
+    );
+  }
+
+  return false;
 }
 
 /**
- * Creates `owner/name` with the user's token, lets the installation reach it,
- * and commits `filesFor(defaultBranch)` as its first commit on the default
- * branch, with `developmentBranch` cut from it.
+ * Creates `owner/name` with the user's token and lets the installation reach
+ * it. `prepare` then runs (sealing the keys, so the first push finds them)
+ * and answers the files to commit on the default branch, with
+ * `developmentBranch` cut from that commit.
  */
 export async function createRepo(
   app: GitHubApp,
   userToken: string,
   installation: UserInstallation,
   repo: { name: string; private: boolean },
-  filesFor: (defaultBranch: string) => Record<string, string>,
+  prepare: (created: GitHubRepo) => Promise<Record<string, string>>,
   developmentBranch: string,
 ): Promise<GitHubRepo> {
   const path =
@@ -530,6 +592,7 @@ export async function createRepo(
     "PUT",
     `/user/installations/${installation.installationId}/repositories/${created.id}`,
   );
+  const files = await prepare(toRepo(installation.installationId, created));
   const token = await installationToken(app, installation.installationId);
   const fullName = created.full_name;
   const branch = created.default_branch;
@@ -552,7 +615,7 @@ export async function createRepo(
     `/repos/${fullName}/git/trees`,
     {
       base_tree: parent.tree.sha,
-      tree: Object.entries(filesFor(branch)).map(([path, content]) => ({
+      tree: Object.entries(files).map(([path, content]) => ({
         path: path,
         mode: "100644",
         type: "blob",
@@ -861,6 +924,26 @@ async function putFile(
 
 function quote(value: string): string {
   return JSON.stringify(value);
+}
+
+// Seals `value` to the public key under `secrets` (a repo's or an environment's) and stores it.
+async function setSecret(
+  app: GitHubApp,
+  token: string,
+  secrets: string,
+  name: string,
+  value: string,
+): Promise<void> {
+  const key = await githubRequest<{ key_id: string; key: string }>(
+    app,
+    token,
+    "GET",
+    `${secrets}/public-key`,
+  );
+  await githubRequest(app, token, "PUT", `${secrets}/${name}`, {
+    encrypted_value: sealSecret(key.key, value),
+    key_id: key.key_id,
+  });
 }
 
 function toBase64(bytes: Uint8Array): string {
