@@ -133,7 +133,7 @@ describe("backSyncCanvasFromAgentRow", () => {
     const { orgId, accountId } = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "beeblast-sale-agent-dev",
+      username: "sales-agent-dev",
       email: "owner@example.com",
     });
 
@@ -147,7 +147,7 @@ describe("backSyncCanvasFromAgentRow", () => {
       // The project is created on demand, so an org that never went
       // through dashboard onboarding still gets one, and it is named
       // for the account rather than a random adjective-noun pair.
-      expect(project?.name).toBe("beeblast-sale-agent-dev");
+      expect(project?.name).toBe("sales-agent-dev");
       expect(project?.orgId).toBe(orgId);
 
       const stage = await ctx.db.get(config!.stageId);
@@ -179,7 +179,7 @@ describe("backSyncCanvasFromAgentRow", () => {
     const beeblast = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "beeblast-sale-agent-dev",
+      username: "sales-agent-dev",
       email: "owner@example.com",
     });
 
@@ -202,7 +202,7 @@ describe("backSyncCanvasFromAgentRow", () => {
     const { orgId, accountId } = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "beeblast-sale-agent-dev",
+      username: "sales-agent-dev",
       email: "owner@example.com",
     });
 
@@ -230,7 +230,7 @@ describe("backSyncCanvasFromAgentRow", () => {
       async (ctx) =>
         await ctx.db.insert("accounts", {
           orgId: "external:sale-agent-dev",
-          username: "beeblast-sale-agent-dev",
+          username: "sales-agent-dev",
           secretHash: "hash-x",
           status: "active" as const,
           createdAt: Date.now(),
@@ -251,7 +251,7 @@ describe("backSyncCanvasFromAgentRow", () => {
       async (ctx) =>
         await ctx.db.insert("accounts", {
           orgId: "external:sale-agent-dev",
-          username: "beeblast-sale-agent-dev",
+          username: "sales-agent-dev",
           secretHash: "hash-x",
           status: "active" as const,
           createdAt: Date.now(),
@@ -333,7 +333,7 @@ describe("syncApiAgentCanvasWiring", () => {
     const { accountId } = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "beeblast-sale-agent-dev",
+      username: "sales-agent-dev",
       email: "owner@example.com",
     });
     const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
@@ -403,7 +403,7 @@ describe("syncApiAgentCanvasWiring", () => {
     const { accountId } = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "beeblast-sale-agent-dev",
+      username: "sales-agent-dev",
       email: "owner@example.com",
     });
     const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
@@ -444,7 +444,7 @@ describe("syncApiAgentCanvasWiring", () => {
     const { accountId } = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "beeblast-sale-agent-dev",
+      username: "sales-agent-dev",
       email: "owner@example.com",
     });
     const { sandboxId } = await seedWiringFixtures(tt, accountId);
@@ -492,7 +492,7 @@ describe("syncApiAgentCanvasWiring", () => {
     const { accountId } = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "beeblast-sale-agent-dev",
+      username: "sales-agent-dev",
       email: "owner@example.com",
     });
     const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
@@ -626,7 +626,7 @@ describe("ensureAgentsRowForConfig", () => {
     const beeblast = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "beeblast-sale-agent-dev",
+      username: "sales-agent-dev",
       email: "owner@example.com",
     });
 
@@ -693,7 +693,7 @@ describe("ensureAgentsRowForConfig", () => {
     const beeblast = await seedOrg(tt, {
       orgName: "beeblast",
       slug: "beeblast",
-      username: "beeblast-sale-agent-dev",
+      username: "sales-agent-dev",
       email: "owner@example.com",
     });
 

@@ -29,7 +29,7 @@ async function seed(tt: T): Promise<{
     const now = Date.now();
     const accountId = await ctx.db.insert("accounts", {
       orgId: "org-placeholder",
-      username: "beeblast-sale-agent-dev",
+      username: "sales-agent-dev",
       secretHash: "hash",
       status: "active" as const,
       createdAt: now,
