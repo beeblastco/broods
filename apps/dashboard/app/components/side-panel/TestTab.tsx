@@ -254,7 +254,10 @@ function ChatWindow({
     webSocketEnabled: true,
   });
   const [input, setInput] = useState("");
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  // Follow the newest message while the reader sits at the bottom; scrolling
+  // up to read stops it until they scroll back down.
+  const followRef = useRef(true);
   const hasAssistantMessage = messages.some((m) => m.role === "assistant");
   // A run that stopped on a blocking question ends ready with its prompts open.
   const awaitingAnswer = status === "ready" && pendingQuestions.length > 0;
@@ -262,8 +265,11 @@ function ChatWindow({
   // message would steer the run but leave the question open.
   const composerLocked = status === "streaming" || awaitingAnswer;
 
+  // Instant, not smooth: a smooth scroll restarted on every streamed frame
+  // forces a layout per chunk and never settles.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const list = listRef.current;
+    if (list && followRef.current) list.scrollTop = list.scrollHeight;
   }, [messages, awaitingAnswer]);
 
   useShortcut("panel.send", send);
@@ -282,7 +288,15 @@ function ChatWindow({
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Message list */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div
+        ref={listRef}
+        onScroll={(e) => {
+          const list = e.currentTarget;
+          followRef.current =
+            list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+        }}
+        className="flex-1 overflow-y-auto p-4 space-y-4"
+      >
         {messages.length === 0 && (
           <p className="text-center text-xs text-muted-foreground pt-8">
             Send a message to test the agent.
@@ -302,7 +316,6 @@ function ChatWindow({
           <QuestionCard prompts={pendingQuestions} onAnswer={answerQuestions} />
         )}
         {error && <p className="text-xs text-destructive">{error.message}</p>}
-        <div ref={bottomRef} />
       </div>
 
       {/* Input bar */}
