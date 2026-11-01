@@ -1,11 +1,14 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "promise"],
+  "jsPlugins": ["./oxlint-plugin-broods/index.ts"],
   "categories": {
     "correctness": "error"
   },
   "rules": {
     "complexity": ["warn", 20],
+    "broods/no-low-value-comments": "warn",
+    "broods/require-suppression-reason": "warn",
     "import/no-cycle": "error",
     "object-shorthand": ["error", "never"],
     "typescript/explicit-module-boundary-types": "error"
@@ -111,6 +114,12 @@
       "rules": {
         "no-unsafe-optional-chaining": "off",
         "require-yield": "off"
+      }
+    },
+    {
+      "files": ["packages/broods/src/**"],
+      "rules": {
+        "broods/no-low-value-comments": ["warn", { "maxLines": 6 }]
       }
     },
     {
