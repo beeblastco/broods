@@ -2967,7 +2967,7 @@ function TaskListPane({
     <div
       data-scroll-pane
       className={cn(
-        "max-h-72 shrink-0 overflow-x-hidden overflow-y-auto border-b border-border transition-box duration-200 ease-out motion-reduce:transition-none md:max-h-none md:border-r md:border-b-0",
+        "max-h-72 shrink-0 overflow-x-hidden overflow-y-auto border-b border-border md:max-h-none md:border-r md:border-b-0",
         rail ? "md:w-9" : "md:w-80",
       )}
     >

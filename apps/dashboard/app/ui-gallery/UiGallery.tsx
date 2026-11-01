@@ -102,7 +102,9 @@ import type { RangePreset, TimeWindow } from "@/app/lib/queryTokens";
 import { ObservabilityPageStandIn } from "./ObservabilityPageStandIn";
 import { SandboxInstancesStandIn } from "./SandboxInstancesStandIn";
 import { DataTableStandIn } from "./DataTableStandIn";
+import { MotionStandIn } from "./MotionStandIn";
 import { ShortcutsStandIn } from "./ShortcutsStandIn";
+import { InlineEditStandIn } from "./InlineEditStandIn";
 import { UsageChartStandIn } from "./UsageChartStandIn";
 import { AllowanceStandIn } from "./AllowanceStandIn";
 import { WorkspaceFilesStandIn } from "./WorkspaceFilesStandIn";
@@ -412,6 +414,16 @@ export function UiGallery(): React.JSX.Element {
   // the page), so they get their own stand-in rather than a section here.
   if (dashboardTab === "shortcuts") {
     return <ShortcutsStandIn />;
+  }
+
+  // Its links navigate back here with `?opened=`, so it owns the page too.
+  if (dashboardTab === "inline-edit") {
+    return <InlineEditStandIn />;
+  }
+
+  // The side panel and the popups, each timed and measured on its own page.
+  if (dashboardTab === "motion") {
+    return <MotionStandIn />;
   }
 
   return (

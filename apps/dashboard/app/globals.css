@@ -132,6 +132,74 @@
   --color-avatar-8: #f97316;
 }
 
+/* Motion: `duration-fast` (hover, tooltips), `duration-base` (menus, panels),
+   `duration-slow` (dialogs, sheets), all on `ease-snappy`. MOTION_MS in
+   app/lib/motion.ts mirrors the durations for timers. */
+@theme {
+  --transition-duration-fast: 120ms;
+  --transition-duration-base: 160ms;
+  --transition-duration-slow: 200ms;
+  --ease-snappy: cubic-bezier(0.2, 0, 0, 1);
+  --default-transition-duration: var(--transition-duration-fast);
+  --default-transition-timing-function: var(--ease-snappy);
+}
+
+/* Only opacity, translate and scale animate: a width, height or inset
+   transition relays out the canvas on every frame. A `duration-*` or
+   `ease-*` class next to one of these overrides its default. */
+@utility motion-fade {
+  transition-property: opacity;
+  transition-duration: var(--tw-duration, var(--transition-duration-base));
+  transition-timing-function: var(--tw-ease, var(--ease-snappy));
+
+  &[data-starting-style],
+  &[data-ending-style] {
+    opacity: 0;
+  }
+}
+
+/* Base UI popups (menus, selects, tooltips, dialogs) fade and settle from
+   their anchor; pair with `origin-(--transform-origin)` where Base UI sets it. */
+@utility motion-pop {
+  transition-property: opacity, scale;
+  transition-duration: var(--tw-duration, var(--transition-duration-base));
+  transition-timing-function: var(--tw-ease, var(--ease-snappy));
+
+  &[data-starting-style],
+  &[data-ending-style] {
+    opacity: 0;
+    scale: 0.97;
+  }
+}
+
+/* A sheet slides from its edge; the side's `data-starting-style:translate-*`
+   says how far. */
+@utility motion-slide {
+  transition-property: translate;
+  transition-duration: var(--tw-duration, var(--transition-duration-slow));
+  transition-timing-function: var(--tw-ease, var(--ease-snappy));
+}
+
+/* A docked right panel's content (usePresence): fades in from the edge each
+   time it is shown, out while `data-closing`, and never moves while it stays
+   open, so switching what it shows replays nothing. */
+@utility motion-panel {
+  transition-property: opacity, translate;
+  transition-duration: var(--tw-duration, var(--transition-duration-base));
+  transition-timing-function: var(--tw-ease, var(--ease-snappy));
+
+  @starting-style {
+    opacity: 0;
+    translate: 0.5rem 0;
+  }
+
+  &[data-closing] {
+    opacity: 0;
+    translate: 0.5rem 0;
+    pointer-events: none;
+  }
+}
+
 @utility clip-hex {
   clip-path: polygon(
     25% 6.7%,
@@ -248,13 +316,6 @@ body {
   --span-phase: oklch(0.704 0.14 182.503);
 }
 
-/* React Flow writes a node's box inline, so a frame that grows around an open
-   chip transitions those two properties. `transition-all` would catch the
-   transform a drag writes and leave the frame trailing the cursor. */
-@utility transition-box {
-  transition-property: width, height;
-}
-
 /* A picked or linked run's first row in the trace waterfall rings once and
    fades, so it is easy to find in a chain; a ring that stayed would read as a
    second selection. A color fade, so it stays under reduced motion. */
@@ -317,4 +378,17 @@ body {
    turns red over a card that will not take it. CanvasRefusal outlines the card. */
 .react-flow__connection.invalid .react-flow__connection-path {
   stroke: var(--color-destructive);
+}
+
+/* Reduced motion: every transition and animation ends where it starts.
+   Unlayered, so it beats any utility. The trace flash is a color fade only. */
+@media (prefers-reduced-motion: reduce) {
+  *:not(.animate-trace-flash),
+  ::before,
+  ::after {
+    transition-duration: 0s;
+    animation-duration: 0s;
+    animation-iteration-count: 1;
+    scroll-behavior: auto;
+  }
 }
