@@ -10,11 +10,14 @@ you ran in this session. Root and workspace `AGENTS.md` still apply.
 
 ## 1. Branch
 
-`git switch -c claude/<slug> origin/dev`. Read the `AGENTS.md` of each workspace you touch.
+`git switch -c claude/<slug> origin/dev && bun install --frozen-lockfile` (the session hook
+installed deps for the branch the session started on). Read the `AGENTS.md` of each
+workspace you touch.
 
 ## 2. Build and static checks
 
-- each touched workspace: `bun run --filter <pkg> check`; root `bun run lint`, `bun run format`.
+- each touched workspace: `bun run --filter <pkg> check`; root `bun run lint:types` (what CI
+  `validate` runs) and `bun run format`.
 - focused tests: `bun test <paths>` or `bun run --filter <pkg> test`.
 - Convex change: `bun run --filter @broods/convex codegen`, commit `_generated`.
 - `verification/` mirrored code touched: `cd verification && lake build`.
@@ -24,24 +27,24 @@ Log each command and its result.
 ## 3. Candidate end to end
 
 ```bash
-bun run local:up -- --perf      # add --dashboard when UI matters
-bun run local:verify
-bun run local:perf
+bun run local:up && bun run local:verify; bun run local:down   # add -- --dashboard when UI matters
+bun run local:up -- --perf && bun run local:perf; bun run local:down
 bun run bench
-bun run local:down
 ```
 
+`--perf` answers the model in process, so verify runs on a plain `local:up` and perf on its own.
 End-to-end behavior changed = add or update a case in `scripts/local-verify/cases/`.
-`ANTHROPIC_API_KEY` set means real model calls that cost money: use it only when the request touches the model path.
+Real model calls cost money: only when the request touches the model path, run verify as
+`ANTHROPIC_API_KEY="$CLOUD_ANTHROPIC_API_KEY" bun run local:verify`.
 
 ## 4. Baseline
 
 ```bash
 git worktree remove ../broods-base 2>/dev/null   # refuses one with uncommitted work: then stop
-git worktree add ../broods-base origin/dev &&
-  cd ../broods-base && bun install --frozen-lockfile &&
-  bun run local:up -- --perf && bun run local:verify && bun run local:perf && bun run bench
-bun run local:down
+git worktree add ../broods-base origin/dev && cd ../broods-base && bun install --frozen-lockfile &&
+  bun run local:up && bun run local:verify && bun run local:down &&
+  bun run local:up -- --perf && bun run local:perf && bun run local:down && bun run bench
+cd "$CLAUDE_PROJECT_DIR"
 ```
 
 The `&&` chain stops at the first failure, so nothing runs on a stale baseline. Stacks are
@@ -58,7 +61,9 @@ run a command there that changes anything. Both run this checkout's CLI from
 source, so every edit is live with no build, and read the token only when they run.
 
 ```bash
-mkdir -p /tmp/$BROODS_CLOUD_PROJECT && cd /tmp/$BROODS_CLOUD_PROJECT   # folder name = project name
+bun run --filter broods build                     # the project imports the SDK from dist/
+mkdir -p /tmp/$BROODS_CLOUD_PROJECT/node_modules && cd /tmp/$BROODS_CLOUD_PROJECT   # folder name = project name
+ln -sfn "$CLAUDE_PROJECT_DIR/packages/broods" node_modules/broods   # this checkout's SDK, not npm's
 broods-dev init
 echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env.local   # dev pushes env() values from .env.local only
 broods-dev dev --once                             # first sync creates the project

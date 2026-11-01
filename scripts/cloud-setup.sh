@@ -29,7 +29,7 @@ for arg in "$@"; do
     *) echo "cloud-setup: unknown option $arg" >&2; exit 1 ;;
   esac
 done
-mkdir -p "$out" "$test_home"
+mkdir -p "$test_home"
 chmod 700 "$out" "$test_home"
 
 if $login; then
@@ -74,8 +74,9 @@ from_login() {
   CONFIG="$test_home/.broods/config.json" SERVER="https://$1" PROBE="$probe_email" bun -e '
     const login = JSON.parse(await Bun.file(process.env.CONFIG).text()).logins?.[process.env.SERVER];
     if (login && login.user?.email !== process.env.PROBE) {
-      console.error(`cloud-setup: ${process.env.SERVER} login is ${login.user?.email}, not the probe ${process.env.PROBE}; ignored`);
-    } else process.stdout.write(login?.token ?? "");' || true
+      console.error(`cloud-setup: ${process.env.SERVER} login is ${login.user?.email}, not the probe ${process.env.PROBE}; rerun with --login`);
+      process.exit(1);
+    } else process.stdout.write(login?.token ?? "");'
 }
 pick() { local v="${!1:-}"; [ -n "$v" ] && printf %s "$v" || printf %s "$2"; }
 
@@ -144,14 +145,13 @@ OPENAI_API_KEY=${openai_key}
 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 EOF
 
-rm -f "$out/network-secrets.txt"
 chmod 600 "$out/setup.sh" "$out/env.txt"
 
-echo "Wrote $out/{setup.sh,env.txt}. Delete any broods network secrets from the environment."
+echo "Wrote $out/{setup.sh,env.txt}"
 missing=()
 for pair in "BROODS_DEV_TOKEN:$dev_token" "BROODS_PROD_TOKEN:$prod_token" "E2E_EMAIL:$e2e_email" \
   "E2E_PASSWORD:$e2e_password" "ANTHROPIC_API_KEY:$anthropic_key" "OPENAI_API_KEY:$openai_key"; do
   [ -n "${pair#*:}" ] || missing+=("${pair%%:*}")
 done
-[ ${#missing[@]} -eq 0 ] || echo "Empty, set in env and rerun: ${missing[*]}"
+[ ${#missing[@]} -eq 0 ] || echo "Empty: ${missing[*]}. Tokens come from --login, the rest from the shell; rerun after."
 [ -n "$dev_token$prod_token" ] || echo "No test-account login yet: run bash scripts/cloud-setup.sh --login"
