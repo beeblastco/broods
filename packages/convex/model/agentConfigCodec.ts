@@ -14,6 +14,7 @@ import {
   ACCOUNT_ENV_REFS_ONLY_PATTERN,
 } from "./envRefs";
 import { ClientError } from "./clientError";
+import type { AgentConfig } from "./agentRules";
 
 // Global clone of the shared pattern for iteration/replacement.
 const ACCOUNT_ENV_PLACEHOLDER_PATTERN_G = new RegExp(
@@ -23,6 +24,16 @@ const ACCOUNT_ENV_PLACEHOLDER_PATTERN_G = new RegExp(
 /** Account and stage environment variable names, the ones `${NAME}` references reach. */
 const ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 const ENV_PLACEHOLDER_PATTERN_G = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+// `model.output` types that answer with data. The agent card has always counted
+// `json_schema` and an output with no type as structured, so it still does.
+const STRUCTURED_OUTPUT_TYPES = new Set<string | undefined>([
+  undefined,
+  "json_schema",
+  "object",
+  "array",
+  "choice",
+  "json",
+]);
 
 // Every AgentConfig branch with no flat column. One missing here is dropped from
 // extraConfig, so the next push re-encrypts the agent without it.
@@ -104,6 +115,40 @@ export interface FlatPatch {
 }
 
 export type NestedAgentConfig = Record<string, unknown>;
+
+/** The bits of one agent config its canvas card and its skill cards draw. */
+export interface AgentCanvasBadge {
+  /** Callers need no runtime key, so the card's globe shows green. */
+  publicAccess: boolean;
+  /** Skill refs the agent loads: `skills.allowed` while skills are on, else none. */
+  skills: string[];
+  /** The model answers with data instead of text. */
+  structuredOutput: boolean;
+}
+
+/**
+ * Projects a config row to its canvas badge. The canvas badges query and the
+ * dashboard's optimistic config update both use it, so a side-panel edit
+ * redraws the card at once and the server's answer matches it.
+ */
+export function agentCanvasBadge(config: {
+  outputFormat?: { type?: string } | null;
+  extraConfig?: Pick<AgentConfig, "publicAccess" | "skills">;
+}): AgentCanvasBadge {
+  const { extraConfig, outputFormat } = config;
+  const skills = extraConfig?.skills;
+  // Both columns are v.any() and written unchecked: one bad row must not fail the stage.
+  const allowed: unknown = skills?.enabled === true ? skills.allowed : [];
+
+  return {
+    publicAccess: extraConfig?.publicAccess === true,
+    skills: Array.isArray(allowed)
+      ? allowed.filter((ref): ref is string => typeof ref === "string")
+      : [],
+    structuredOutput:
+      outputFormat != null && STRUCTURED_OUTPUT_TYPES.has(outputFormat.type),
+  };
+}
 
 /**
  * Refuses an env var name a `${NAME}` ref could not reach. The account env

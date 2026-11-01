@@ -21,6 +21,8 @@ import type {
 } from "../../../../packages/broods/src/websocket-contracts";
 
 const WEBSOCKET_CONNECT_TIMEOUT_MS = 2000;
+// How long streamed chunks gather before one render commits them.
+const STREAM_COMMIT_INTERVAL_MS = 50;
 
 type ChatStatus = "ready" | "streaming" | "error";
 
@@ -323,7 +325,18 @@ export function useAgentChat({
           terminateOnError: true,
         });
 
-        for await (const assistantMessage of messageStream) {
+        // A model streams far more chunks than a reader can see: keep the
+        // newest snapshot and commit it once per window, so a long answer
+        // re-renders (and re-parses its markdown) about 20 times a second
+        // instead of once per chunk.
+        let pending: UIMessage | null = null;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const commitPending = (): void => {
+          timer = undefined;
+          const assistantMessage = pending;
+          pending = null;
+          // An aborted turn's transcript now belongs to a reset or a newer turn.
+          if (!assistantMessage || controller.signal.aborted) return;
           setMessages((prev) => {
             const next = upsertMainAssistantMessage({
               previousMessages: prev,
@@ -335,6 +348,15 @@ export function useAgentChat({
 
             return next.messages;
           });
+        };
+        try {
+          for await (const assistantMessage of messageStream) {
+            pending = assistantMessage;
+            timer ??= setTimeout(commitPending, STREAM_COMMIT_INTERVAL_MS);
+          }
+        } finally {
+          clearTimeout(timer);
+          commitPending();
         }
 
         setStatus("ready");

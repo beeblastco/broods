@@ -1,10 +1,14 @@
 {
   "canvas": {
-    "jsRequests": 32,
-    "jsBytes": 1439361
+    "jsRequests": 31,
+    "jsBytes": 1410021
+  },
+  "dashboard": {
+    "jsRequests": 30,
+    "jsBytes": 1183650
   },
   "projects": {
-    "jsRequests": 28,
-    "jsBytes": 1120668
+    "jsRequests": 27,
+    "jsBytes": 1094785
   }
 }

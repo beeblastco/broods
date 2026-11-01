@@ -728,6 +728,7 @@ function CanvasConnectFixture(): React.JSX.Element {
   );
   const frames = useMemo(
     (): CanvasFramesValue => ({
+      agentBadges: {},
       canWrite: true,
       expandedMemberId: expandedMemberId,
       machineConnections: [],
@@ -892,6 +893,7 @@ function CanvasDropFixture(): React.JSX.Element {
   );
   const frames = useMemo(
     (): CanvasFramesValue => ({
+      agentBadges: {},
       canWrite: true,
       expandedMemberId: null,
       machineConnections: [],
@@ -1016,6 +1018,7 @@ function CanvasFramesFixture(): React.JSX.Element {
   );
   const frames = useMemo(
     (): CanvasFramesValue => ({
+      agentBadges: {},
       canWrite: true,
       expandedMemberId: expandedMemberId,
       machineConnections: [

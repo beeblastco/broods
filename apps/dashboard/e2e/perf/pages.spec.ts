@@ -25,7 +25,11 @@ import {
   readProjectId,
   SIGNED_IN_CONTEXT,
 } from "../lib/session";
-import { timeClientNavigation, waitForReady } from "../lib/timing";
+import {
+  timeClientNavigation,
+  waitForReady,
+  watchLongTasks,
+} from "../lib/timing";
 
 interface ProbePage {
   name: string;
@@ -266,14 +270,7 @@ test("a live log burst on Monitoring reaches the screen without blocking the pag
       entry: logLine(`burst ${line}`, at, line % 100 === 0 ? 8_000 : 300),
     });
   });
-  const longTasks = await page.evaluateHandle(() => {
-    const durations: number[] = [];
-    new PerformanceObserver((list) => {
-      durations.push(...list.getEntries().map((entry) => entry.duration));
-    }).observe({ type: "longtask" });
-
-    return durations;
-  });
+  const longTasks = await watchLongTasks(page);
   const start = performance.now();
   for (const message of burst) route.send(message);
   await waitForReady(

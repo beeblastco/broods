@@ -32,7 +32,8 @@ test("the home route opens the caller's project @rollout", async ({ page }) => {
   expect(settingsFetches, "home prefetches no account page").toEqual([]);
 });
 
-test("a cold project load is one document, no server action, no logo fetch", async ({
+// @rollout: the canvas reads agent.config.canvasBadges, which dev has only after the merge.
+test("a cold project load is one document, no server action, no logo fetch @rollout", async ({
   page,
 }) => {
   const requests: Request[] = [];
@@ -72,6 +73,40 @@ test("a cold project load is one document, no server action, no logo fetch", asy
     urls((request) => request.url().includes("/assets/logo/")),
     "the logo is inline",
   ).toEqual([]);
+});
+
+test("a page off the canvas subscribes to no palette data until the palette is wanted", async ({
+  page,
+}) => {
+  // Every query the client adds is a frame it sends on the Convex sync socket.
+  const sent: string[] = [];
+  page.on("websocket", (socket) => {
+    if (!/\/api\/[^/]+\/sync$/.test(new URL(socket.url()).pathname)) return;
+    socket.on("framesent", (frame) => sent.push(String(frame.payload)));
+  });
+  const subscribed = (udfPath: string): boolean =>
+    sent.some((payload) => payload.includes(`"udfPath":"${udfPath}"`));
+
+  await page.goto(`/${readProjectId()}/settings`);
+  // The stage name is a query result, so the socket is live and every query
+  // the shell asks for on mount has gone out by now.
+  await expect(page.getByRole("button", { name: "Development" })).toBeVisible();
+  expect(
+    subscribed("canvas:getByProject"),
+    "the canvas layout waits for the palette",
+  ).toBe(false);
+  expect(
+    subscribed("agent/crons:listForProject"),
+    "the crons wait for the palette",
+  ).toBe(false);
+
+  await page.locator("[data-palette-trigger]").click();
+  await expect(page.getByRole("dialog")).toContainText("Go to");
+  await expect
+    .poll(() => subscribed("canvas:getByProject"), {
+      message: "opening the palette subscribes its rows",
+    })
+    .toBe(true);
 });
 
 test("a segment that is no project id is the not-found page", async ({

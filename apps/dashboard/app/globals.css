@@ -270,19 +270,6 @@ body {
   animation: trace-flash 1.5s ease-out;
 }
 
-/* The trace waterfall rescales once a second while a run is live, so its bars,
-   ticks and lines slide to the new scale. Position only: a bar's color change
-   stays instant. */
-@utility transition-timeline {
-  transition-property: left, width;
-  transition-duration: 200ms;
-  transition-timing-function: linear;
-
-  @media (prefers-reduced-motion: reduce) {
-    transition-property: none;
-  }
-}
-
 @layer base {
   * {
     @apply border-border outline-ring/50;

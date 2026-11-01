@@ -31,12 +31,18 @@ const BUDGET_FILE = join(__dirname, "first-load-budget.json");
 // Chunk hashes and minifier output move the gzip size a little per build.
 const BYTES_HEADROOM = 1.05;
 const RECORD = process.env.E2E_RECORD_FIRST_LOAD === "1";
-// The canvas carries React Flow; the projects page is the shell alone.
+// The canvas carries React Flow; the projects page is the shell alone; the
+// dashboard opens on Monitoring, its other tabs load when they are opened.
 const PAGES: ProbePage[] = [
   {
     name: "canvas",
     path: () => `/${readProjectId()}`,
     ready: (page) => page.locator(CANVAS_READY),
+  },
+  {
+    name: "dashboard",
+    path: () => `/${readProjectId()}/dashboard?tab=monitoring`,
+    ready: (page) => page.getByRole("heading", { name: "Monitoring" }),
   },
   {
     name: "projects",
