@@ -432,7 +432,14 @@ function positiveEnvInt(name, fallback) {
 // No-op outside Lambda too: on a dev box or CI runner the same UID owns the
 // shell, dockerd, the local stack, so this would SIGKILL all of them.
 function reapStrays() {
-  if (!insideLambda()) return;
+  // Set by the Lambda runtime (and its emulators, which run in a container of
+  // their own). A runtime that sets neither turns reaping off.
+  if (
+    typeof process.env.AWS_LAMBDA_FUNCTION_NAME !== "string" ||
+    process.env.AWS_EXECUTION_ENV?.startsWith("AWS_Lambda_") !== true
+  ) {
+    return;
+  }
   let pids;
   try {
     pids = readdirSync("/proc").filter((name) => /^\d+$/.test(name));
@@ -450,14 +457,6 @@ function reapStrays() {
       // Exited between the listing and the kill.
     }
   }
-}
-
-// The managed runtime sets both on every function; nothing else does.
-function insideLambda() {
-  return (
-    typeof process.env.AWS_LAMBDA_FUNCTION_NAME === "string" &&
-    process.env.AWS_EXECUTION_ENV?.startsWith("AWS_Lambda_") === true
-  );
 }
 
 // Dispose one child: clear the warm slot if it holds it, SIGKILL its group.

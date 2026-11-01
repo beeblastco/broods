@@ -77,6 +77,14 @@ const LAMBDA_ENV = {
   AWS_EXECUTION_ENV: "AWS_Lambda_nodejs22.x",
 };
 
+// Every driver starts from this, so a shell that exported the Lambda vars
+// (a Lambda base image, a debugging session) cannot arm the reaper on the host.
+const {
+  AWS_LAMBDA_FUNCTION_NAME: _functionName,
+  AWS_EXECUTION_ENV: _executionEnv,
+  ...hostEnv
+} = process.env;
+
 // argv prefix that runs a command as pid 1 of a fresh PID namespace with its
 // own /proc, so the reaper sees nothing outside it. A user namespace needs no
 // root; root alone can skip it. null when neither works here.
@@ -116,6 +124,7 @@ async function invokeHandler(
   stdout?: string;
   followUpStdout?: string;
   arrivalsMs?: number[];
+  exitCode: number | null;
 }> {
   const dir = await mkdtemp(join(tmpdir(), "broods-handler-drv-"));
   const server =
@@ -191,16 +200,16 @@ async function invokeHandler(
       const [file, ...args] = options.command?.(driver) ?? ["node", driver];
       const child = spawn(file!, args, {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, ...parentEnv },
+        env: { ...hostEnv, ...parentEnv },
       });
       let out = "";
       let err = "";
       child.stdout.on("data", (chunk) => (out += chunk));
       child.stderr.on("data", (chunk) => (err += chunk));
       child.once("error", reject);
-      child.once("exit", () => {
+      child.once("exit", (exitCode) => {
         try {
-          resolve(JSON.parse(out));
+          resolve({ ...JSON.parse(out), exitCode: exitCode });
         } catch {
           reject(new Error(`driver produced no JSON: ${out}${err}`));
         }
@@ -301,9 +310,16 @@ describe("mcp-runner containment", () => {
     }
   }, 30_000);
 
-  it.skipIf(pidNamespace === null)(
+  // Skipped only off CI: on CI a missing namespace is a failure, or the one
+  // test that proves the reaper works would turn into a silent skip.
+  it.skipIf(pidNamespace === null && !process.env.CI)(
     "reaps a survivor that left the child's process group before the next spawn",
     async () => {
+      if (pidNamespace === null) {
+        throw new Error(
+          "CI needs a PID namespace (unshare) to test the hosted-MCP reaper",
+        );
+      }
       // setsid() puts the survivor out of killGroup's reach; only the reaper
       // finds it. It runs before a spawn, so a second invoke triggers it.
       const dir = await mkdtemp(join(tmpdir(), "broods-escapee-"));
@@ -326,7 +342,7 @@ describe("mcp-runner containment", () => {
         const result = await invokeHandler(bundle, LAMBDA_ENV, 0, undefined, {
           followUp: next,
           command: (driver) => [
-            ...pidNamespace!,
+            ...pidNamespace,
             "sh",
             "-c",
             'node "$0"; sleep 2',
@@ -349,13 +365,26 @@ describe("mcp-runner containment", () => {
   it("leaves a process it did not start alive outside Lambda", async () => {
     // Off Lambda the handler shares its UID with the shell, dockerd, the local
     // stack. The reaper must not run there, so a same-UID bystander that is not
-    // the handler's descendant survives both a spawn and a respawn.
+    // the handler's descendant survives both a spawn and a respawn. Where it
+    // can, the driver runs in its own PID namespace with a bystander of its
+    // own, so a broken gate fails this test instead of killing the machine;
+    // the shell exits non-zero when that bystander is gone or a zombie.
     const bystander = Bun.spawn(["sleep", "30"]);
     try {
       const bundle = `export default () => new Response(JSON.stringify({ ok: true }));`;
       const result = await invokeHandler(bundle, {}, 0, undefined, {
         followUp: bundle,
+        ...(pidNamespace && {
+          command: (driver: string) => [
+            ...pidNamespace,
+            "sh",
+            "-c",
+            'sleep 30 & b=$!; node "$0"; s=$(ps -o stat= -p "$b"); kill "$b"; case "$s" in ""|Z*) exit 1;; esac',
+            driver,
+          ],
+        }),
       });
+      expect(result.exitCode).toBe(0);
       expect(finalBody(result.stdout)).toEqual({ ok: true });
       expect(finalBody(result.followUpStdout)).toEqual({ ok: true });
       expect(isAlive(bystander.pid)).toBe(true);
