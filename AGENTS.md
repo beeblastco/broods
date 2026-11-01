@@ -43,6 +43,15 @@ outside repo, sibling of checkout:
 - Convex schema or function change = `bun run --filter @broods/convex codegen`, commit the generated diff. it is committed on purpose so core and dashboard typecheck with no local codegen. the API is static (`codegen.staticApi`): `_generated/api.d.ts` spells each function's args and result from its validators, so changing a validator without codegen leaves every caller typed against the old contract. CI `local-stack` deploys the backend (which regenerates it) and fails on any diff under `_generated`.
 - React version pinned per app package. never add React to root package.
 
+## Cloud Sessions (Claude Code on the web)
+
+- a session acts as the probe user (`apps/dashboard/AGENTS.md`), never a person. refresh the environment with `bash scripts/cloud-setup.sh --login`: upload `~/.broods-cloud/setup.sh` as "Setup script", paste `env.txt` as "Environment variables", network access Full. rerun it after a version bump (`.bun-version`, Playwright, `verification/lean-toolchain`, `local-stack.ts` images), when the probe's 90-day login runs out, or after a probe password reset.
+- no network secret for a broods gateway: the proxy overwrites Authorization on every request to it, so runtime-key calls get 401. the probe's tokens sit in `env.txt`. `ANTHROPIC_API_KEY` cannot be a network secret either, and a session drops it from env: `env.txt` carries `CLOUD_ANTHROPIC_API_KEY`, the hook exports it back. use spend-limited keys.
+- `scripts/cloud-session-start.sh` is the SessionStart hook (`.claude/settings.json`), cloud only (`CLAUDE_CODE_REMOTE=true`): dockerd, `bun install` when `bun.lock` moves, `origin/dev`, `BROODS_CLOUD_PROJECT=cloud-<session id>`, and `broods-dev` / `broods-prod` (this checkout's CLI from source, token read at run time). it also reports installs the setup script could not do.
+- unattended request = skill `broods-cloud-run`: branch from `origin/dev`, check, verify and compare with an `origin/dev` baseline, PR to `dev`, report with numbers.
+- a session never pushes `dev`/`main`, deploys, adds the `real-model` label, or writes to prod. prod read-only is a rule, not enforced: the token can write. on dev it uses only its own `$BROODS_CLOUD_PROJECT` and deletes it when done.
+- GitHub goes through Anthropic's proxy: `gh pr` / `gh issue` get GraphQL 403. use the built-in GitHub tools or `gh api repos/beeblastco/broods/...`.
+
 ## Code Style
 
 - no new function unless behavior really different from code that already exist. less code that stay maintainable is win. big complex code base = big technical debt.
