@@ -31,18 +31,30 @@ timeout 60 git fetch origin dev --quiet 2>/dev/null || true
 # sessions never touch each other's stage. Same id on resume = same project.
 if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "${CLAUDE_CODE_REMOTE_SESSION_ID:-}" ]; then
   id=$(printf %s "${CLAUDE_CODE_REMOTE_SESSION_ID#cse_}" | tr -cd 'A-Za-z0-9' | tr 'A-Z' 'a-z' | tail -c 12)
-  cli="bun $CLAUDE_PROJECT_DIR/packages/broods/dist/cli/index.js"
+  # broods-dev / broods-prod: the CLI from source (no build), pointed at one
+  # server. The token is read when the command runs, never written down, so
+  # printing the environment shows no secret. Prod is read-only.
+  bin="$HOME/.local/bin"
+  mkdir -p "$bin"
+  for target in dev:gateway.dev.broods.app:dashboard.dev.broods.app:BROODS_DEV_TOKEN \
+    prod:gateway.broods.app:dashboard.broods.app:BROODS_PROD_TOKEN; do
+    IFS=: read -r name gateway dashboard token <<<"$target"
+    cat >"$bin/broods-$name" <<EOF
+#!/bin/sh
+BROODS_BASE_URL=https://$gateway BROODS_DASHBOARD_URL=https://$dashboard BROODS_TOKEN="\$$token" \\
+  exec bun "$CLAUDE_PROJECT_DIR/packages/broods/src/cli/index.ts" "\$@"
+EOF
+    chmod +x "$bin/broods-$name"
+  done
   {
     # Not BROODS_PROJECT: the CLI and its tests read that one from the shell.
     echo "export BROODS_CLOUD_PROJECT=cloud-$id"
-    # Word-split on use: \$BROODS_CLI_DEV whoami. Prod is read-only.
-    echo "export BROODS_CLI_DEV='env BROODS_BASE_URL=https://gateway.dev.broods.app BROODS_DASHBOARD_URL=https://dashboard.dev.broods.app BROODS_TOKEN=${BROODS_DEV_TOKEN:-} $cli'"
-    echo "export BROODS_CLI_PROD='env BROODS_BASE_URL=https://gateway.broods.app BROODS_DASHBOARD_URL=https://dashboard.broods.app BROODS_TOKEN=${BROODS_PROD_TOKEN:-} $cli'"
+    echo "export PATH=\"$bin:\$PATH\""
     # A session drops ANTHROPIC_API_KEY from the environment; local:verify
     # reads it for real-model runs, so cloud-setup ships it under this name.
     [ -n "${CLOUD_ANTHROPIC_API_KEY:-}" ] && printf 'export ANTHROPIC_API_KEY=%q\n' "$CLOUD_ANTHROPIC_API_KEY"
   } >"$CLAUDE_ENV_FILE.broods"
-  grep -v -e '^export BROODS_CLOUD_PROJECT=' -e '^export BROODS_CLI_' -e '^export ANTHROPIC_API_KEY=' "$CLAUDE_ENV_FILE" 2>/dev/null >"$CLAUDE_ENV_FILE.tmp" || true
+  grep -v -e '^export BROODS_CLOUD_PROJECT=' -e "^export PATH=\"$bin:" -e '^export ANTHROPIC_API_KEY=' "$CLAUDE_ENV_FILE" 2>/dev/null >"$CLAUDE_ENV_FILE.tmp" || true
   cat "$CLAUDE_ENV_FILE.tmp" "$CLAUDE_ENV_FILE.broods" >"$CLAUDE_ENV_FILE"
   rm -f "$CLAUDE_ENV_FILE.tmp" "$CLAUDE_ENV_FILE.broods"
 fi

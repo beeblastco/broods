@@ -49,21 +49,20 @@ other (4 vCPU, 16 GB). Run perf and bench at least 3 times per side; report medi
 
 Every session acts as the shared probe account and works in its own project,
 `$BROODS_CLOUD_PROJECT` (`cloud-<session id>`), on its default `development` stage. Never touch another `cloud-*` project: a
-parallel session owns it. Shell state does not survive between Bash calls, so the
-session-start hook exports the whole command: `$BROODS_CLI_DEV` (dev, read and write)
-and `$BROODS_CLI_PROD` (prod, read-only). Both run the CLI built from this checkout.
+parallel session owns it. The session-start hook installs `broods-dev` (dev, read and
+write) and `broods-prod` (prod, read-only) on PATH. Both run this checkout's CLI from
+source, so every edit is live with no build, and read the token only when they run.
 
 ```bash
-bun run --filter broods build
 mkdir -p /tmp/$BROODS_CLOUD_PROJECT && cd /tmp/$BROODS_CLOUD_PROJECT   # folder name = project name
-$BROODS_CLI_DEV init
+broods-dev init
 echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env.local   # dev pushes env() values from .env.local only
-$BROODS_CLI_DEV dev --once                             # first sync creates the project
-$BROODS_CLI_DEV whoami
-$BROODS_CLI_PROD whoami                                # prod: whoami, list, read only
+broods-dev dev --once                             # first sync creates the project
+broods-dev whoami
+broods-prod whoami                                # prod: whoami, list, read only
 ```
 
-`$BROODS_CLI_DEV run my-agent "..." < /dev/null` answers in plain text: it signs a user token with the
+`broods-dev run my-agent "..." < /dev/null` answers in plain text: it signs a user token with the
 `BROODS_USER_TOKEN_SECRET` that `dev` wrote to `.env.local`.
 Capture exact commands and output.
 
@@ -79,7 +78,7 @@ Keep screenshots and traces as evidence.
 
 ## Clean up
 
-Before the final reply: `$BROODS_CLI_DEV project delete "$BROODS_CLOUD_PROJECT" --yes`, unless the user
+Before the final reply: `broods-dev project delete "$BROODS_CLOUD_PROJECT" --yes`, unless the user
 asked to keep it (then put its dashboard URL in the report). Run `bun run local:down` in each worktree.
 
 ## 7. Report
