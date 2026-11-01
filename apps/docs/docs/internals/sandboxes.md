@@ -320,8 +320,8 @@ stateDiagram-v2
   [*] --> processing: created before launch
   processing --> completed: callback or poll reads exit 0
   processing --> failed: callback, poll, or launch error
-  completed --> stored: the conversation's saved history holds it
-  failed --> stored: the conversation's saved history holds it
+  completed --> stored: saved history holds it, or a run that saves none read it
+  failed --> stored: saved history holds it, or a run that saves none read it
 ```
 
 - `lambda`, workdir, Daytona and Vercel keep markers under `<workspace root>/.fp-jobs/<reservation key>`, at most 10 running (`MAX_CONCURRENT_BACKGROUND_JOBS`). E2B uses its native `background: true` command, so it has callback delivery but no logs or stop.
