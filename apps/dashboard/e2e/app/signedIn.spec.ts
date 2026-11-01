@@ -70,7 +70,7 @@ test("a cold project load is one document, no server action, no logo fetch", asy
   ).toEqual([]);
   expect(
     urls((request) => request.url().includes("/assets/logo/")),
-    "the wordmark is inline",
+    "the logo is inline",
   ).toEqual([]);
 });
 
