@@ -16,6 +16,7 @@ import {
 } from "@/app/lib/copilotActions";
 import { planFromQuery } from "@/app/lib/copilotIntent";
 import { navHref } from "@/app/lib/navigation";
+import type { SearchItem } from "@/app/lib/paletteSearch";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
@@ -25,6 +26,7 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useReducer,
   useState,
 } from "react";
 
@@ -44,11 +46,15 @@ export interface CopilotState {
   /** Keys of plan steps already run, as `${messageId}:${index}`. */
   completed: ReadonlySet<string>;
   isOpen: boolean;
+  /** What the palette lists and the copilot resolves names against; empty until woken. */
+  items: readonly SearchItem[];
   messages: readonly CopilotMessage[];
   /** Carry out one action. The palette selects rows through this. */
   runAction: (action: CopilotAction) => void;
   runStep: (messageId: string, index: number, action: CopilotAction) => void;
   setOpen: (open: boolean) => void;
+  /** Start the index's subscriptions; they stay live after. Opening the dock does it too. */
+  wakeIndex: () => void;
 }
 
 const CopilotContext = createContext<CopilotState | null>(null);
@@ -64,19 +70,31 @@ export function CopilotProvider({
   const router = useRouter();
   const registry = useShortcutRegistry();
 
-  const items = useDashboardIndex(projectId);
+  // The palette and the dock are the index's only readers, and most visits
+  // open neither, so it subscribes to nothing until one of them is first
+  // wanted. It stays live after: a second open should not wait again.
+  const [indexAwake, wakeIndex] = useReducer(() => true, false);
+  const indexedProject = indexAwake ? projectId : null;
+
+  const items = useDashboardIndex(indexedProject);
   const crons = useQuery(
     api.agent.crons.listForProject,
-    projectId ? { projectId: projectId } : "skip",
+    indexedProject ? { projectId: indexedProject } : "skip",
   );
   const envVars = useQuery(
     api.environmentVariables.list,
-    projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
+    indexedProject && stageId
+      ? { projectId: indexedProject, stageId: stageId }
+      : "skip",
   );
   const updateCron = useMutation(api.agent.cronsPublic.update);
   const setEnvVar = useMutation(api.environmentVariables.set);
 
-  const [isOpen, setOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+  const setOpen = useCallback((open: boolean): void => {
+    if (open) wakeIndex();
+    setIsOpen(open);
+  }, []);
   const [messages, setMessages] = useState<readonly CopilotMessage[]>([]);
   const [completed, setCompleted] = useState<ReadonlySet<string>>(new Set());
 
@@ -183,12 +201,14 @@ export function CopilotProvider({
       ask: ask,
       completed: completed,
       isOpen: isOpen,
+      items: items,
       messages: messages,
       runAction: run,
       runStep: runStep,
       setOpen: setOpen,
+      wakeIndex: wakeIndex,
     }),
-    [ask, completed, isOpen, messages, run, runStep],
+    [ask, completed, isOpen, items, messages, run, runStep, setOpen],
   );
 
   return <CopilotStateProvider value={value}>{children}</CopilotStateProvider>;

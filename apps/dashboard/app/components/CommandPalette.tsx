@@ -33,10 +33,13 @@ export function CommandPalette({
   items,
   onAsk,
   onSelect,
+  onWake,
 }: {
   items: readonly SearchItem[];
   onAsk: (query: string) => void;
   onSelect: (item: SearchItem) => void;
+  /** The palette is about to be wanted: its trigger hovered or focused, or the palette opened. */
+  onWake?: () => void;
 }): React.JSX.Element {
   const { activeIds, isMac } = useShortcutRegistry();
 
@@ -47,6 +50,7 @@ export function CommandPalette({
   const [only, setOnly] = useState<SearchGroup | null>(null);
 
   const openScoped = (group: SearchGroup | null): void => {
+    onWake?.();
     setQuery("");
     setOnly(group);
     setOpen(true);
@@ -99,6 +103,8 @@ export function CommandPalette({
         data-palette-trigger
         aria-label="Search or ask Broods"
         onClick={() => openScoped(null)}
+        onFocus={onWake}
+        onPointerEnter={onWake}
         className="flex h-6.5 shrink-0 cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-2 text-muted-foreground transition-colors hover:text-foreground lg:w-56"
       >
         <Search className="size-3.5" />
