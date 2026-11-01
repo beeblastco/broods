@@ -19,7 +19,6 @@ import {
   getAsyncToolResult,
   markAsyncToolResultCompleted,
   markAsyncToolResultFailed,
-  markAsyncToolHandback,
   type AsyncToolResultRecord,
 } from "../async-tool-result.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
@@ -41,6 +40,9 @@ export interface AsyncStatusContext {
   // `logs`/`stop` actions, which have no meaning for async tool calls (there is
   // no live process to tail or kill, and those are delivered automatically).
   supportsJobs: boolean;
+  // Records that tool call `toolCallId` handed the model the finished result
+  // `resultId`; the session stores it with the call's saved step.
+  onResultRead?: (toolCallId: string, resultId: string) => Promise<void>;
 }
 
 interface AsyncStatusInput {
@@ -93,23 +95,25 @@ The result is delivered back into the conversation automatically when it finishe
         required: ["statusId"],
         additionalProperties: false,
       }),
-      execute: async function (input): Promise<JSONValue> {
+      execute: async function (input, { toolCallId }): Promise<JSONValue> {
         const { statusId, action = "status" } = input;
+        const handedOver = async (): Promise<void> => {
+          await context.onResultRead?.(toolCallId, statusId);
+        };
         const record = await getAsyncToolResult(statusId);
         // Resolve only within the caller's own conversation (both missing and
         // foreign rows return the same not-found, so it is not an oracle).
         if (!record || record.conversationKey !== context.conversationKey) {
           return toolError(`Error: no async result found for ${statusId}`);
         }
-        // The model is consuming the terminal result here, so mark it stored,
-        // awaited, since the resume gate reads this row the moment the turn
-        // ends. A failed mark only logs: the row keeps the result, and the
-        // sweep may then deliver it once more. A continuation already queued
-        // tells the conversation next, so this read hands nothing over.
+        // The model gets the terminal result here. Nothing is stored yet: the
+        // row is stored, and a continuation of it still queued completed, by
+        // the write that saves this call's step, so a turn that dies before
+        // that save leaves the result for the continuation or the sweep.
         if (record.status !== "processing") {
-          return (await markAsyncToolHandback(statusId, "stored"))
-            ? { status: record.status, delivery: "automatic" }
-            : settledResult(record, action);
+          await handedOver();
+
+          return settledResult(record, action);
         }
 
         // Still processing. A sandbox-job row can be polled live; any other async
@@ -152,7 +156,16 @@ The result is delivered back into the conversation automatically when it finishe
               namespace: job.namespace,
             });
 
-            return settleTerminalJob(statusId, executor, job, stopped);
+            // Recorded once the row is settled with what the model gets.
+            const settled = await settleTerminalJob(
+              statusId,
+              executor,
+              job,
+              stopped,
+            );
+            await handedOver();
+
+            return settled;
           }
 
           if (!executor.jobStatus) {
@@ -174,7 +187,15 @@ The result is delivered back into the conversation automatically when it finishe
             return { status: "unknown", jobId: job.jobId };
           }
 
-          return settleTerminalJob(statusId, executor, job, status);
+          const settled = await settleTerminalJob(
+            statusId,
+            executor,
+            job,
+            status,
+          );
+          await handedOver();
+
+          return settled;
         } catch (cause) {
           return toolError(
             cause instanceof Error ? cause.message : String(cause),
@@ -264,11 +285,6 @@ async function settleTerminalJob(
       resultId: resultId,
       error: `Job exited with code ${status.exitCode ?? "unknown"}.${logs ? `\n${logs}` : ""}`,
     });
-  }
-  // Consumed through the poll, so the auto-delivery resume must not re-inject
-  // it, unless one already waits in the queue: that one tells it next.
-  if (await markAsyncToolHandback(resultId, "stored")) {
-    return { status: status.state, delivery: "automatic" };
   }
 
   return {

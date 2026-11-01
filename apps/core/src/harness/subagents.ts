@@ -603,7 +603,7 @@ export class SubagentCoordinator {
     await Promise.all(
       detaching
         .filter(({ eventId }): boolean => !this.handled.has(eventId))
-        .map(({ eventId }): Promise<boolean> =>
+        .map(({ eventId }): Promise<void> =>
           markAsyncAgentHandback(eventId, "detached"),
         ),
     );
@@ -1430,8 +1430,8 @@ export async function resumeLostSubagentResults(
         if (retry) held.set(row.eventId, retry);
         // Counted the first pass that takes it up: each one is a result a
         // parent run dropped without a trace. A row held from an earlier pass
-        // is not counted again, and a queued resume, which the apply stores
-        // without the sweep, is still counted.
+        // is not counted again, and a queued resume, which its owner's save
+        // stores without the sweep, is still counted.
         if (handback === "pending" && !heldLostResults.has(row.eventId)) {
           logInfo("Subagent result left pending past the parent's hold", {
             eventId: row.eventId,
@@ -1579,8 +1579,8 @@ async function giveUpLostSubagentResult(
  * from `held` when an earlier pass already ran its finish hook. A row no
  * resume can ever deliver is given up. A duplicate is never given up:
  * admission marks the row stored once its conversation has the result, and
- * a resume still queued marks it when applied, or is admitted again by a
- * later pass once it expired. The row's `eventId` is
+ * a resume still queued or applied is stored by its owner's save, or is
+ * admitted again by a later pass once it expired. The row's `eventId` is
  * `scopedDirectEventId(account, child agent, taskId)`.
  * @returns the parent message to retry on the next pass, when the
  *   conversation had no room for it, its resume is still queued or failed

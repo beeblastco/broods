@@ -328,6 +328,108 @@ describe("step boundary", (): void => {
     });
   });
 
+  it("carries a status read's result id on the row of its tool result, unless the call failed", async (): Promise<void> => {
+    const calls: [string, Record<string, unknown>][] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push([name, args]);
+
+      return { renewal: "renewed", steering: null };
+    }) as typeof runtime.mutate;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      agentConfig: {},
+      ownerGeneration: 1,
+    });
+    await session.recordToolResultRead("call-read", "async_tool_1");
+    // A tool.result hook threw after this read, so the model got an error.
+    await session.recordToolResultRead("call-failed", "async_tool_2");
+
+    await session.stepBoundary([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-read",
+            toolName: "async_status",
+            input: { statusId: "async_tool_1" },
+          },
+          {
+            type: "tool-call",
+            toolCallId: "call-other",
+            toolName: "bash",
+            input: {},
+          },
+          {
+            type: "tool-call",
+            toolCallId: "call-failed",
+            toolName: "async_status",
+            input: { statusId: "async_tool_2" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-read",
+            toolName: "async_status",
+            output: { type: "json", value: { status: "completed" } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-other",
+            toolName: "bash",
+            output: { type: "text", value: "ok" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-failed",
+            toolName: "async_status",
+            output: { type: "error-text", value: "hook unavailable" },
+          },
+        ],
+      },
+    ]);
+
+    expect(calls[0]?.[1].events).toEqual([
+      expect.not.objectContaining({ toolResultIds: expect.anything() }),
+      expect.objectContaining({ toolResultIds: ["async_tool_1"] }),
+    ]);
+  });
+
+  it("stores a status read at once on a session that saves no step", async (): Promise<void> => {
+    const calls: [string, Record<string, unknown>][] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push([name, args]);
+
+      return null;
+    }) as typeof runtime.mutate;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      agentConfig: {},
+      persist: false,
+    });
+
+    await session.recordToolResultRead("call-read", "async_tool_1");
+
+    expect(calls).toEqual([
+      [
+        "markAsyncToolHandback",
+        { resultId: "async_tool_1", handback: "stored" },
+      ],
+    ]);
+  });
+
   it("keeps the rows of a boundary that threw for the next one, keyed by cursor", async (): Promise<void> => {
     const calls: [string, Record<string, unknown>][] = [];
     runtime.mutate = (async (

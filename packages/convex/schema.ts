@@ -1222,6 +1222,12 @@ export const channelTargetRefsFields = {
   channelRecordId: v.optional(v.string()),
 };
 /** Fenced ownership and FIFO counters for one runtime conversation. */
+/** The late result a resume envelope carries, as its fence fields name it. */
+export const resultFenceValidator = v.union(
+  v.object({ resultEventId: v.string() }),
+  v.object({ toolResultId: v.string() }),
+);
+
 export const runtimeConversationCoordinatorsFields = {
   accountId: v.id("accounts"),
   agentId: v.string(),
@@ -1246,6 +1252,9 @@ export const runtimeConversationCoordinatorsFields = {
   leaseExpiresAt: v.optional(v.number()),
   queuedCount: v.number(),
   queuedBytes: v.number(),
+  // The late results of the resumes handed to the current owner since its
+  // last history write, which saves them and stores the results.
+  unsavedResults: v.optional(v.array(resultFenceValidator)),
   updatedAt: v.number(),
 };
 /**
@@ -2024,6 +2033,9 @@ export default defineSchema({
       "sequence",
     ])
     .index("by_accountId_and_runId", ["accountId", "runId"])
+    // A resume of one late result still queued or applied, under any identity.
+    .index("by_resultEventId_and_status", ["resultEventId", "status"])
+    .index("by_toolResultId_and_status", ["toolResultId", "status"])
     // Status leads so maintenance scans only nonterminal rows: terminal rows
     // keep their stale expiresAt for the whole status retention window, and a
     // bare expiresAt index would re-read every one of them each sweep.
