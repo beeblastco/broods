@@ -1769,7 +1769,11 @@ describe("SubagentCoordinator", () => {
     const settleIngress = mock(
       async (_status: string, _settlement: unknown): Promise<boolean> => true,
     );
+    const persistModelMessages = mock(
+      async (_messages: unknown[]): Promise<void> => {},
+    );
     const childSession = {
+      persistModelMessages: persistModelMessages,
       settleIngress: settleIngress,
       takeNextIngress: async (): Promise<null> => null,
       releaseConversationLease: async (): Promise<void> => {},
@@ -1781,6 +1785,19 @@ describe("SubagentCoordinator", () => {
       followUp: false,
       waitSeconds: 3600,
     });
+
+    // Pruning drops the message-agents call from later turns; this line survives.
+    expect(persistModelMessages.mock.calls[0]?.[0]).toEqual([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "I messaged my parent and am waiting for the reply (exchange ex_1): Which region?",
+          },
+        ],
+      },
+    ]);
 
     expect(settleIngress.mock.calls[0]?.[1]).toMatchObject({
       asyncResult: {
@@ -2592,6 +2609,7 @@ describe("message-agents in the coordinator", () => {
       publicConversationKey: address.slice(address.indexOf("/") + 1),
     };
     const childSession = {
+      persistModelMessages: async (): Promise<void> => {},
       settleIngress: async (): Promise<boolean> => true,
       takeNextIngress: async (): Promise<null> => null,
       releaseConversationLease: async (): Promise<void> => {},

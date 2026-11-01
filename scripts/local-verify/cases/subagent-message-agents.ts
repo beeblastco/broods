@@ -47,7 +47,7 @@ export async function subagentMessageAgents(
       ...context.model,
       agent: {
         system:
-          "On your first task call message-agents exactly once with to 'parent', text 'Which color?' and wait true, and nothing else. When the reply arrives, reply with exactly COLOR= followed by the color and nothing else.",
+          "If you have not messaged your parent yet, call message-agents exactly once with to 'parent', text 'Which color?' and wait true, and nothing else. Once your parent has replied, reply with exactly COLOR= followed by the color and nothing else.",
       },
     },
   });
