@@ -4,6 +4,7 @@
  * turn into a direct-API SSE run and the SDK maps core's stream parts for us.
  */
 
+import type { EventEmitter } from "node:events";
 import { runAgentTUI } from "@ai-sdk/tui";
 import {
   convertToModelMessages,
@@ -35,18 +36,65 @@ export interface AgentRunOptions {
 
 /** Run a deployed agent in the AI SDK terminal UI until the user exits. */
 export async function runAgentTui(options: AgentRunOptions): Promise<void> {
+  const transport = new RemoteAgentTransport(
+    options.client,
+    options.agent,
+    options.explain,
+  );
+  const restoreKeys = stopTurnOnEscape(transport);
   if (options.prompt !== undefined) void submitPrompt(options.prompt);
-  await runAgentTUI({
-    title: `broods · ${options.agent.name}`,
-    // Tool cards stay expanded: their input and output are what a dev testing
-    // an agent came to see, and the default collapses them once text arrives.
-    tools: "full",
-    transport: new RemoteAgentTransport(
-      options.client,
-      options.agent,
-      options.explain,
-    ),
-  });
+  try {
+    await runAgentTUI({
+      title: `broods · ${options.agent.name}`,
+      // Tool cards stay expanded: their input and output are what a dev testing
+      // an agent came to see, and the default collapses them once text arrives.
+      tools: "full",
+      transport: transport,
+    });
+  } finally {
+    restoreKeys();
+  }
+}
+
+/** How long a lone Esc waits for the rest of a key sequence split across reads. */
+const ESC_SEQUENCE_WAIT_MS = 30;
+
+/**
+ * The terminal UI quits on Esc, even mid-reply, which drops the conversation.
+ * A lone Esc while a turn streams stops that turn instead; Ctrl+C still quits.
+ * Arrow and page keys start with Esc too, and a slow link can split them, so a
+ * lone Esc is held briefly: a following chunk makes it part of that key.
+ * Returns the undo.
+ */
+export function stopTurnOnEscape(
+  transport: Pick<RemoteAgentTransport, "stopTurn" | "streaming">,
+  input: EventEmitter = process.stdin,
+): () => void {
+  const emit = input.emit.bind(input);
+  let held: ReturnType<typeof setTimeout> | undefined;
+  input.emit = (event: string | symbol, ...args: unknown[]): boolean => {
+    if (event !== "data") return emit(event, ...args);
+    if (held) {
+      clearTimeout(held);
+      held = undefined;
+
+      return emit("data", Buffer.from(`\x1b${String(args[0])}`));
+    }
+    if (String(args[0]) !== "\x1b" || !transport.streaming) {
+      return emit(event, ...args);
+    }
+    held = setTimeout((): void => {
+      held = undefined;
+      if (!transport.stopTurn()) emit("data", Buffer.from("\x1b"));
+    }, ESC_SEQUENCE_WAIT_MS);
+
+    return true;
+  };
+
+  return () => {
+    clearTimeout(held);
+    input.emit = emit;
+  };
 }
 
 /** Stream a single run as plain text, for redirected or piped output. */
@@ -58,6 +106,7 @@ export async function streamAgentText(
       options.client.stream(options.agent, { input: options.prompt }),
       undefined,
       // One-shot: there is no follow-up turn to keep bookkeeping for.
+      () => {},
       () => {},
       options.explain,
     ),
@@ -92,6 +141,10 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   private readonly conversationKey = `tui-${generateId()}`;
   private readonly sentApprovals = new Set<string>();
   private sentUserTurns = 0;
+  /** The streaming turn, which `stopTurn` ends, and how to record it sent. */
+  private activeTurn:
+    | { controller: AbortController; commit: () => void }
+    | undefined;
 
   constructor(
     private readonly client: BroodsClient,
@@ -118,18 +171,46 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
       conversationKey: this.conversationKey,
       events: pending.events as [ModelMessage, ...ModelMessage[]],
     });
+    const turn = { controller: new AbortController(), commit: pending.commit };
+    this.activeTurn = turn;
+    const signal = options.abortSignal
+      ? AbortSignal.any([options.abortSignal, turn.controller.signal])
+      : turn.controller.signal;
 
     return toUIMessageStream({
       stream: toReadableStream(
         stream,
-        options.abortSignal,
+        signal,
         pending.commit,
+        () => {
+          if (this.activeTurn === turn) this.activeTurn = undefined;
+        },
         this.explain,
       ),
       originalMessages: options.messages,
       generateMessageId: generateId,
       sendSources: true,
     });
+  }
+
+  /**
+   * End the streaming turn on screen: the text so far stays and the input comes
+   * back. Core was already sent the turn and finishes its run (the runtime key
+   * has no cancel), so the turn counts as sent and is not repeated next time.
+   * False when no turn is streaming.
+   */
+  /** True while a turn streams. */
+  get streaming(): boolean {
+    return this.activeTurn !== undefined;
+  }
+
+  stopTurn(): boolean {
+    if (!this.activeTurn) return false;
+    this.activeTurn.commit();
+    this.activeTurn.controller.abort();
+    this.activeTurn = undefined;
+
+    return true;
   }
 
   /**
@@ -198,6 +279,7 @@ function toReadableStream(
   stream: AsyncGenerator<TextStreamPart<ToolSet>>,
   signal: AbortSignal | undefined,
   onAnswered: () => void,
+  onClosed: () => void = () => {},
   explain: (error: unknown) => unknown = (error) => error,
 ): ReadableStream<TextStreamPart<ToolSet>> {
   let answered = false;
@@ -211,11 +293,13 @@ function toReadableStream(
         stream.next(),
         abortedRead(signal),
       ]).catch((error: unknown) => {
+        onClosed();
         throw explain(error);
       });
       if (signal?.aborted) {
         release();
         controller.close();
+        onClosed();
 
         return;
       }
@@ -223,9 +307,14 @@ function toReadableStream(
         answered = true;
         onAnswered();
       }
-      if (next.done) controller.close();
-      else controller.enqueue(next.value);
+      if (next.done) {
+        controller.close();
+        onClosed();
+      } else controller.enqueue(next.value);
     },
-    cancel: release,
+    cancel: () => {
+      release();
+      onClosed();
+    },
   });
 }

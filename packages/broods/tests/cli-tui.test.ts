@@ -6,8 +6,10 @@ import {
   type UIMessage,
 } from "ai";
 import { BroodsClient, type AgentReference } from "../src/client.ts";
+import { EventEmitter } from "node:events";
 import {
   RemoteAgentTransport,
+  stopTurnOnEscape,
   streamAgentText,
   submitPrompt,
 } from "../src/cli/tui.ts";
@@ -344,6 +346,103 @@ test("aborting stops a turn that is waiting on the model", async () => {
 
   // Without racing the signal this would hang until the server sent more.
   expect((await pending).done).toBe(true);
+});
+
+/** An SSE body that sends `parts` and then stays open, like a long reply. */
+function openSse(...parts: unknown[]): Response {
+  const encoder = new TextEncoder();
+
+  return new Response(
+    new ReadableStream({
+      start: function (controller): void {
+        for (const part of parts)
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(part)}\n\n`),
+          );
+      },
+    }),
+  );
+}
+
+test("stopTurn ends a streaming reply and keeps the text so far", async () => {
+  const { transport } = testTransport([
+    openSse(
+      { type: "text-start", id: "0" },
+      { type: "text-delta", id: "0", text: "Once upon" },
+    ),
+  ]);
+  expect(transport.stopTurn()).toBe(false);
+
+  const turn = readTurn(transport, [userMessage("m1", "tell a story")]);
+  await Bun.sleep(50);
+  expect(transport.stopTurn()).toBe(true);
+  const message = await turn;
+
+  expect(message?.parts).toContainEqual(
+    expect.objectContaining({ type: "text", text: "Once upon" }),
+  );
+  expect(transport.stopTurn()).toBe(false);
+});
+
+test("a lone Esc stops the streaming turn; keys, split keys and idle Esc pass through", async () => {
+  const input = new EventEmitter();
+  const seen: string[] = [];
+  input.on("data", (chunk: Buffer) => seen.push(String(chunk)));
+  let streaming = true;
+  const transport = {
+    get streaming(): boolean {
+      return streaming;
+    },
+    stopTurn: (): boolean => {
+      const was = streaming;
+      streaming = false;
+
+      return was;
+    },
+  };
+
+  const restore = stopTurnOnEscape(transport, input);
+  input.emit("data", Buffer.from("\x1b[A"));
+  // An arrow split across two reads is still an arrow, not a stop.
+  input.emit("data", Buffer.from("\x1b"));
+  input.emit("data", Buffer.from("[B"));
+  expect(streaming).toBe(true);
+  // A lone Esc stops the turn once no sequence follows.
+  input.emit("data", Buffer.from("\x1b"));
+  await Bun.sleep(60);
+  expect(streaming).toBe(false);
+  // Idle, Esc goes straight to the UI, which quits on it.
+  input.emit("data", Buffer.from("\x1b"));
+  restore();
+  input.emit("data", Buffer.from("x"));
+
+  expect(seen).toEqual(["\x1b[A", "\x1b[B", "\x1b", "x"]);
+});
+
+test("Esc before the first part counts the turn as sent", async () => {
+  const { transport, bodies } = testTransport([
+    openSse(),
+    sse(
+      { type: "text-start", id: "0" },
+      { type: "text-delta", id: "0", text: "ok" },
+      { type: "text-end", id: "0" },
+      { type: "finish", finishReason: "stop" },
+    ),
+  ]);
+
+  const first = readTurn(transport, [userMessage("m1", "first")]);
+  await Bun.sleep(50);
+  expect(transport.stopTurn()).toBe(true);
+  await first;
+  await readTurn(transport, [
+    userMessage("m1", "first"),
+    userMessage("m2", "second"),
+  ]);
+
+  // Core already has "first": the next turn sends only the new message.
+  expect(bodies[1]?.events).toEqual([
+    { role: "user", content: [{ type: "text", text: "second" }] },
+  ]);
 });
 
 test("a failed turn surfaces the explained error", async () => {
