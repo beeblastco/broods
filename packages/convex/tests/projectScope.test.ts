@@ -105,7 +105,7 @@ async function seed(tt: T): Promise<{
     const agentA1 = await mkAgent("agent-one");
     const agentA2 = await mkAgent("agent-two");
     const agentB = await mkAgent("other-agent");
-    const stranded = await mkAgent("pre-adoption-agent");
+    const stranded = await mkAgent("stranded-agent");
 
     // An agent on a different account entirely, pointed at by a config row
     // in this project. agentConfigs.agentId is a loose string, so a stale
