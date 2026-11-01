@@ -31,6 +31,24 @@ export const usersFields = {
   activeOrgId: v.optional(v.id("orgs")),
 };
 
+/** A project's linked GitHub repo; see `github.ts`. */
+export const projectRepoValidator = v.object({
+  installationId: v.number(),
+  repoId: v.number(),
+  /** `owner/name`, kept current by the `repository` webhook. */
+  fullName: v.string(),
+  /** The folder holding `broods/`, relative to the repo root; "" is the root. */
+  rootDirectory: v.string(),
+  productionBranch: v.string(),
+  developmentBranch: v.optional(v.string()),
+  /** The project keys the workflow deploys with, revoked on unlink. */
+  deployKeyIds: v.array(v.id("deployKeys")),
+  /** False when the plan had no environments, so the keys are repo secrets any branch can read. */
+  protectedSecrets: v.boolean(),
+  /** Set when the workflow went in through a PR because the branch is protected. */
+  setupPullRequestUrl: v.optional(v.string()),
+});
+
 export const projectsFields = {
   authId: v.string(),
   /** Org that owns this project. */
@@ -38,6 +56,12 @@ export const projectsFields = {
   name: v.string(),
   description: v.optional(v.string()),
   slug: v.string(),
+  /** The GitHub repo whose pushes deploy this project, when one is linked. */
+  repo: v.optional(projectRepoValidator),
+  /** A link in flight holding its repo, so two projects never set up one repo at once. */
+  linkClaim: v.optional(
+    v.object({ repoId: v.number(), expiresAt: v.number() }),
+  ),
   updatedAt: v.number(),
 };
 
@@ -930,6 +954,58 @@ export const accountEnvVarsFields = {
  * Core refreshes it in process and writes the rotated tokens back. Tokens are
  * sealed under the account's envelope key and never leave through the API.
  */
+/**
+ * A GitHub App installation an org connected: the GitHub user or org whose
+ * repos the org's projects may link. One row per (org, installation).
+ */
+export const githubInstallationsFields = {
+  orgId: v.id("orgs"),
+  installationId: v.number(),
+  /** The GitHub login the App is installed on. */
+  login: v.string(),
+  accountType: v.union(v.literal("User"), v.literal("Organization")),
+  updatedAt: v.number(),
+};
+
+/**
+ * A dashboard round trip through GitHub in flight. `state` comes back on the
+ * callback; `createRepo` is the repo to make with the user's token, absent
+ * for a plain connect. Deleted when the callback lands or it expires.
+ */
+export const githubSignInsFields = {
+  state: v.string(),
+  authId: v.string(),
+  orgId: v.id("orgs"),
+  /** The dashboard path the callback returns to. */
+  returnTo: v.optional(v.string()),
+  createRepo: v.optional(
+    v.object({
+      projectId: v.id("projects"),
+      owner: v.string(),
+      name: v.string(),
+      private: v.boolean(),
+      /** The Broods API the workflow deploys to. */
+      baseUrl: v.string(),
+    }),
+  ),
+  expiresAt: v.number(),
+};
+
+/** The latest run of a linked repo's deploy workflow on one branch, from GitHub's `workflow_run` webhook. */
+export const githubDeploysFields = {
+  projectId: v.id("projects"),
+  branch: v.string(),
+  runId: v.number(),
+  /** A rerun keeps `runId` and raises this. */
+  runAttempt: v.optional(v.number()),
+  sha: v.string(),
+  status: v.string(),
+  /** Set once `status` is `completed`: `success`, `failure`, `cancelled`, ... */
+  conclusion: v.optional(v.string()),
+  url: v.string(),
+  updatedAt: v.number(),
+};
+
 export const connectionsFields = {
   accountId: v.id("accounts"),
   type: v.union(...CONNECTION_TYPE_NAMES.map((name) => v.literal(name))),
@@ -1809,10 +1885,10 @@ export default defineSchema({
     .index("by_email", ["email"]),
   // Also serves the org's project list, in slug order; the one caller that
   // needs newest-first sorts by `updatedAt`.
-  projects: defineTable(projectsFields).index("by_orgId_and_slug", [
-    "orgId",
-    "slug",
-  ]),
+  projects: defineTable(projectsFields)
+    .index("by_orgId_and_slug", ["orgId", "slug"])
+    .index("by_repoId", ["repo.repoId"])
+    .index("by_linkClaimRepoId", ["linkClaim.repoId"]),
   stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
   stageSyncs: defineTable(stageSyncsFields).index("by_stageId", ["stageId"]),
   agentConfigs: defineTable(agentConfigsFields)
@@ -1962,6 +2038,16 @@ export default defineSchema({
   accountEnvVars: defineTable(accountEnvVarsFields).index(
     "by_accountId_and_name",
     ["accountId", "name"],
+  ),
+  githubInstallations: defineTable(githubInstallationsFields)
+    .index("by_orgId", ["orgId"])
+    .index("by_installationId", ["installationId"]),
+  githubSignIns: defineTable(githubSignInsFields)
+    .index("by_state", ["state"])
+    .index("by_expiresAt", ["expiresAt"]),
+  githubDeploys: defineTable(githubDeploysFields).index(
+    "by_projectId_and_branch",
+    ["projectId", "branch"],
   ),
   connections: defineTable(connectionsFields).index("by_accountId_and_type", [
     "accountId",

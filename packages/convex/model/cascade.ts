@@ -340,6 +340,12 @@ export async function purgeProject(
     .collect();
   for (const file of files) await deleteWorkspaceFile(ctx, file);
 
+  const deploys = await ctx.db
+    .query("githubDeploys")
+    .withIndex("by_projectId_and_branch", (q) => q.eq("projectId", projectId))
+    .collect();
+  for (const deploy of deploys) await ctx.db.delete(deploy._id);
+
   await ctx.db.delete(projectId);
 }
 
@@ -375,6 +381,14 @@ export async function purgeOrg(
     .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", orgId))
     .collect();
   for (const member of members) await ctx.db.delete(member._id);
+
+  const installations = await ctx.db
+    .query("githubInstallations")
+    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .collect();
+  for (const installation of installations) {
+    await ctx.db.delete(installation._id);
+  }
 
   // Its developers' seats go back to the owner's pool; the owner's Pro stays
   // for their other orgs (model/orgBilling.ts).

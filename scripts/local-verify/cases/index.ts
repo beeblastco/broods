@@ -10,6 +10,7 @@ import { cloudflareSandbox } from "./cloudflare-sandbox.ts";
 import { connections } from "./connections.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
 import { edgeHeaders } from "./edge-headers.ts";
+import { githubRepo } from "./github-repo.ts";
 import { workerSandbox } from "./worker-sandbox.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { mcpCommand } from "./mcp-command.ts";
@@ -71,6 +72,7 @@ export const verifyCases: readonly VerifyCase[] = [
   credentialPrefixes,
   scopedAccountKey,
   manifestSync,
+  githubRepo,
   productionRegion,
   projectUsage,
   modelPrices,
