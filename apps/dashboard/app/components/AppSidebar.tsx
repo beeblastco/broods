@@ -32,6 +32,7 @@ import {
   stepNavItem,
   tabHref,
 } from "@/app/lib/navigation";
+import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 import { cn } from "@/app/lib/utils";
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
@@ -64,6 +65,12 @@ export function AppSidebar(): React.JSX.Element {
   // stable from the first render and no prefetch wave is thrown away.
   const itemHref = (item: NavItem): string =>
     projectId ? navHref(projectId, item.segment, stageParam) : item.segment;
+  // Home only redirects to a project, so its links are never walked.
+  const prefetchRoute = (item: NavItem, isActive: boolean): void => {
+    if (!isActive && pathname !== "/") {
+      router.prefetch(itemHref(item), FULL_ROUTE_PREFETCH);
+    }
+  };
 
   useShortcut("nav.prev", () =>
     router.push(itemHref(stepNavItem(items, active, -1))),
@@ -95,15 +102,19 @@ export function AppSidebar(): React.JSX.Element {
                 <SidebarMenuItem key={item.segment}>
                   <SidebarMenuButton
                     isActive={isActive && item.tabs.length === 0}
-                    // The whole route, on viewport entry, except the page we
-                    // are on. The default prefetch stops at loading.tsx and
-                    // expires at once, so a click still fetched the tree, then
-                    // its chunks, then data: three trips in a row. Home only
-                    // redirects to a project, so its links are never walked.
+                    // The whole route, on intent (hover, focus, press), except
+                    // the page we are on. The default prefetch stops at
+                    // loading.tsx and expires at once, so a click still fetched
+                    // the tree, then its chunks, then data: three trips in a
+                    // row. Prefetching on viewport entry instead loaded every
+                    // route's chunks and data right after each cold load.
                     render={
                       <Link
                         href={itemHref(item)}
-                        prefetch={!isActive && pathname !== "/"}
+                        prefetch={false}
+                        onMouseEnter={() => prefetchRoute(item, isActive)}
+                        onFocus={() => prefetchRoute(item, isActive)}
+                        onPointerDown={() => prefetchRoute(item, isActive)}
                         draggable={false}
                       />
                     }
@@ -133,6 +144,7 @@ export function AppSidebar(): React.JSX.Element {
                                   tab.id,
                                   searchParams.toString(),
                                 )}
+                                prefetch={false}
                                 draggable={false}
                               />
                             }
