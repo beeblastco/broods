@@ -49,6 +49,12 @@ import {
 import { BroodsAccountClient } from "../packages/broods/src/account.ts";
 import { BroodsClient } from "../packages/broods/src/client.ts";
 import { verifyCases } from "./local-verify/cases/index.ts";
+import {
+  exportCsv,
+  runLongHorizon,
+  summarizeLongHorizon,
+  type ScenarioName,
+} from "./local-verify/long-horizon.ts";
 import { runPerf } from "./local-verify/perf.ts";
 import {
   VerifyFailure,
@@ -150,9 +156,12 @@ switch (command) {
   case "convex":
     convex(process.argv.slice(3));
     break;
+  case "long-horizon":
+    await longHorizon(process.argv.slice(3));
+    break;
   default:
     console.error(
-      "Usage: bun scripts/local-stack.ts <up|down|status|verify|perf|convex> [--fresh|--purge|--perf|--dashboard|--key|--record]",
+      "Usage: bun scripts/local-stack.ts <up|down|status|verify|perf|long-horizon|convex> [--fresh|--purge|--perf|--dashboard|--key|--record]",
     );
     process.exit(2);
 }
@@ -404,6 +413,85 @@ async function perf(record: boolean): Promise<void> {
       <T>(_step: string, fn: () => Promise<T>): Promise<T> => fn(),
     ),
     { record: record, tracePath: convexTracePath(state.instanceId) },
+  );
+  if (!passed) process.exit(1);
+}
+
+/**
+ * Long-horizon benchmark (scripts/local-verify/long-horizon.ts): needs core
+ * started by `up --perf`. `--label <name> --out <dir> [--runs 3] [--scenarios
+ * L1,L2,L3,L4,C1] [--turns n] [--c1-wait-min m]` writes one JSON per run under `<dir>/<name>`;
+ * `--summarize <dir>...` prints the comparison tables and writes the CSVs.
+ */
+async function longHorizon(args: string[]): Promise<void> {
+  const value = (name: string): string | undefined => {
+    const index = args.indexOf(name);
+
+    return index < 0 ? undefined : args[index + 1];
+  };
+  if (args[0] === "--summarize") {
+    const dirs = args.slice(1);
+    for (const dir of dirs) exportCsv(dir);
+    console.log(summarizeLongHorizon(dirs));
+
+    return;
+  }
+  const state = loadState(currentInstanceId());
+  if (!state?.perf || !isProcessAlive(state.pids.core)) {
+    console.error("core is not running in perf mode. Run `up --perf` first");
+    process.exit(1);
+  }
+  const label = value("--label");
+  const outDir = value("--out");
+  if (!label || !outDir) {
+    console.error("long-horizon needs --label and --out");
+    process.exit(2);
+  }
+  const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
+  const runId = Date.now().toString(36);
+  const accountSecret = await createAccount(
+    edgeUrl,
+    state.secrets.adminAccount,
+    `lh-${runId}`,
+  );
+  const turns = value("--turns");
+  const c1WaitMin = value("--c1-wait-min");
+  const passed = await runLongHorizon(
+    verifyContext(
+      state,
+      accountSecret,
+      runId,
+      <T>(_step: string, fn: () => Promise<T>): Promise<T> => fn(),
+    ),
+    {
+      adminKey: state.adminKey ?? "",
+      convexContainer: containerName(state.instanceId),
+      convexUrl: `http://127.0.0.1:${ports(state).convexApi}`,
+      label: label,
+      outDir: resolve(outDir),
+      pids: () => state.pids,
+      restartCore: async (): Promise<void> => {
+        if (state.pids.core) process.kill(state.pids.core, "SIGKILL");
+        await pollUntil(
+          { initialIntervalMs: 20, maxIntervalMs: 100, timeoutMs: 5_000 },
+          async () => (isProcessAlive(state.pids.core) ? null : true),
+        );
+        state.pids.core = undefined;
+        startCore(state);
+        saveState(state);
+        await waitForHttp(
+          `http://127.0.0.1:${ports(state).core}/healthz`,
+          "core",
+        );
+      },
+      runs: Number(value("--runs") ?? 3),
+      scenarios: (value("--scenarios") ?? "L1,L2,L3,L4,C1").split(
+        ",",
+      ) as ScenarioName[],
+      tracePath: convexTracePath(state.instanceId),
+      ...(turns ? { turns: Number(turns) } : {}),
+      ...(c1WaitMin ? { c1WaitMs: Number(c1WaitMin) * 60_000 } : {}),
+    },
   );
   if (!passed) process.exit(1);
 }
@@ -734,6 +822,8 @@ function tryConvexCli(
     cwd: join(repoRoot, "packages", "convex"),
     encoding: "utf8",
     env: convexCliEnv(state),
+    // `convex data` of a busy table runs past the 1 MiB default.
+    maxBuffer: 256 * 1024 * 1024,
   });
 
   return {
