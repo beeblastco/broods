@@ -281,7 +281,7 @@ broods run my-agent "ping" > answer.txt   # plain text, no UI
 - The session streams reasoning, shows tool calls as cards with input and output, and stops for `y`/`n` on tools that need approval. It stays open for follow-ups.
 - Enter sends, arrows or PgUp and PgDn scroll, Ctrl+L repaints, and Esc or Ctrl+C leaves.
 - When stdin or stdout is not a terminal, `run` prints the answer as plain text. A prompt is then required.
-- `run` uses the runtime key over the public endpoint, so the agent needs `publicAccess: true`. Without it you get `403 public_access_disabled`.
+- `run` reaches the agent with your 15-minute stage session ticket, the credential `logs` uses, not the runtime key. So it runs private agents and agents that require a user token, and a long chat gets a fresh ticket before the old one ends.
 - Each turn is a normal run on one conversation. Tools, sandboxes and policies behave as in production.
 
 ## agent
