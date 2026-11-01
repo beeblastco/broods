@@ -14,14 +14,14 @@ type T = ReturnType<typeof orgTest>;
 async function seedAccount(
   t: T,
   orgId: string,
-  username = "sales-agent-dev",
+  username = "service-dev",
 ): Promise<Id<"accounts">> {
   return await t.run(
     async (ctx) =>
       await ctx.db.insert("accounts", {
         orgId: orgId,
         username: username,
-        description: "sale-agent-usecase dev stack tenant account",
+        description: "service account provisioned through the account API",
         secretHash: "hash-" + username,
         status: "active" as const,
         createdAt: Date.now(),
@@ -54,13 +54,13 @@ const adopt = (
 describe("adoptExternalAccount", () => {
   test("binds an external account to a new org owned by the target user", async () => {
     const t = orgTest();
-    const accountId = await seedAccount(t, "external:sale-agent-dev");
+    const accountId = await seedAccount(t, "external:service-dev");
     const userId = await seedUser(t, "owner@example.com");
 
     const result = await adopt(t, {
       accountId: accountId,
       ownerEmail: "owner@example.com",
-      orgName: "BeeBlast Sale Agent (dev)",
+      orgName: "Service Account (dev)",
     });
 
     await t.run(async (ctx) => {
@@ -68,10 +68,10 @@ describe("adoptExternalAccount", () => {
       // The account now points at a real org document, not the synthetic string.
       expect(account?.orgId).toBe(result.orgId);
       // Untouched: the service holding this secret keeps working.
-      expect(account?.secretHash).toBe("hash-sales-agent-dev");
+      expect(account?.secretHash).toBe("hash-service-dev");
 
       const org = await ctx.db.get(result.orgId);
-      expect(org?.name).toBe("BeeBlast Sale Agent (dev)");
+      expect(org?.name).toBe("Service Account (dev)");
       expect(org?.ownerAuthId).toBe("auth_owner@example.com");
 
       const membership = await ctx.db.get(result.membershipId);
@@ -85,13 +85,13 @@ describe("adoptExternalAccount", () => {
 
   test("the adopted account is now reachable the way the dashboard reaches accounts", async () => {
     const t = orgTest();
-    const accountId = await seedAccount(t, "external:sale-agent-dev");
+    const accountId = await seedAccount(t, "external:service-dev");
     await seedUser(t, "owner@example.com");
 
     const { orgId } = await adopt(t, {
       accountId: accountId,
       ownerEmail: "owner@example.com",
-      orgName: "BeeBlast Sale Agent (dev)",
+      orgName: "Service Account (dev)",
     });
 
     // getByOrgId resolves with .unique(); this is the query that was previously
@@ -129,7 +129,7 @@ describe("adoptExternalAccount", () => {
 
   test("refuses an owner who has never signed in", async () => {
     const t = orgTest();
-    const accountId = await seedAccount(t, "external:sale-agent-dev");
+    const accountId = await seedAccount(t, "external:service-dev");
 
     await expect(
       adopt(t, {
@@ -159,13 +159,13 @@ describe("adoptExternalAccount", () => {
       existingOrgId,
       "owners-workspace",
     );
-    const accountId = await seedAccount(t, "external:sale-agent-dev");
+    const accountId = await seedAccount(t, "external:service-dev");
     await seedUser(t, "owner@example.com");
 
     const { orgId } = await adopt(t, {
       accountId: accountId,
       ownerEmail: "owner@example.com",
-      orgName: "BeeBlast Sale Agent (dev)",
+      orgName: "Service Account (dev)",
     });
 
     expect(orgId).not.toBe(existingOrgId);
@@ -178,23 +178,19 @@ describe("adoptExternalAccount", () => {
 
   test("gives each adopted account a distinct slug", async () => {
     const t = orgTest();
-    const first = await seedAccount(t, "external:sale-agent-dev", "acct-dev");
-    const second = await seedAccount(
-      t,
-      "external:sale-agent-prod",
-      "acct-prod",
-    );
+    const first = await seedAccount(t, "external:service-dev", "acct-dev");
+    const second = await seedAccount(t, "external:service-prod", "acct-prod");
     await seedUser(t, "owner@example.com");
 
     const a = await adopt(t, {
       accountId: first,
       ownerEmail: "owner@example.com",
-      orgName: "BeeBlast Sale Agent",
+      orgName: "Service Account",
     });
     const b = await adopt(t, {
       accountId: second,
       ownerEmail: "owner@example.com",
-      orgName: "BeeBlast Sale Agent",
+      orgName: "Service Account",
     });
 
     expect(a.slug).not.toBe(b.slug);

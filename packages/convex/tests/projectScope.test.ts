@@ -29,7 +29,7 @@ async function seed(tt: T): Promise<{
     const now = Date.now();
     const accountId = await ctx.db.insert("accounts", {
       orgId: "org-placeholder",
-      username: "sales-agent-dev",
+      username: "service-dev",
       secretHash: "hash",
       status: "active" as const,
       createdAt: now,
@@ -96,14 +96,14 @@ async function seed(tt: T): Promise<{
         updatedAt: now,
       });
 
-    const projectA = await mkProject("sale-agent");
+    const projectA = await mkProject("project-a");
     const projectB = await mkProject("other");
     const stageA1 = await mkStage(projectA);
     const stageA2 = await mkStage(projectA);
     const stageB = await mkStage(projectB);
 
-    const agentA1 = await mkAgent("beeblast-agent-cust1");
-    const agentA2 = await mkAgent("beeblast-agent-cust2");
+    const agentA1 = await mkAgent("agent-one");
+    const agentA2 = await mkAgent("agent-two");
     const agentB = await mkAgent("other-agent");
     const stranded = await mkAgent("pre-adoption-agent");
 
@@ -125,9 +125,9 @@ async function seed(tt: T): Promise<{
       updatedAt: now,
     });
 
-    await mkConfig(projectA, stageA1, agentA1, "cust1");
+    await mkConfig(projectA, stageA1, agentA1, "one");
     // Second stage of the same project: must still be found.
-    await mkConfig(projectA, stageA2, agentA2, "cust2");
+    await mkConfig(projectA, stageA2, agentA2, "two");
     await mkConfig(projectB, stageB, agentB, "other");
     // A config row whose agentId never resolves must not crash the scan.
     await mkConfig(projectA, stageA1, "not-a-real-id", "dangling");
