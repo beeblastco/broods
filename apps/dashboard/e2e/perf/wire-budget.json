@@ -1,21 +1,21 @@
 {
   "canvas": {
-    "resultBytes": 33812,
-    "subscriptions": 38,
-    "bytesReceived": 35749,
-    "framesReceived": 8
+    "resultBytes": 8788,
+    "subscriptions": 12,
+    "bytesReceived": 9780,
+    "framesReceived": 4
   },
   "monitoring": {
-    "resultBytes": 7291,
-    "subscriptions": 13,
-    "bytesReceived": 8937,
+    "resultBytes": 2994,
+    "subscriptions": 10,
+    "bytesReceived": 4537,
     "framesReceived": 8
   },
   "settings": {
-    "resultBytes": 6338,
-    "subscriptions": 11,
-    "bytesReceived": 7545,
-    "framesReceived": 5
+    "resultBytes": 2043,
+    "subscriptions": 8,
+    "bytesReceived": 2931,
+    "framesReceived": 4
   },
   "projects": {
     "resultBytes": 1445,

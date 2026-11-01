@@ -1,13 +1,13 @@
 {
-  "recordedAt": "2026-10-08T21:48:32.637Z",
+  "recordedAt": "2026-11-01T19:22:24.545Z",
   "metrics": {
     "dashboard/client-js-total": {
-      "bytes": 4778903,
+      "bytes": 5265168,
       "ceilingBytes": 5913713,
       "maxGrowthPct": 10
     },
     "dashboard/largest-chunk": {
-      "bytes": 508304,
+      "bytes": 508394,
       "ceilingBytes": 762456,
       "maxGrowthPct": 10
     },
