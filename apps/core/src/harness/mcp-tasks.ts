@@ -299,13 +299,17 @@ async function answerApprovals(
   // One reply carries every decision of the run, and its event id can be
   // sent once, so a partial set waits for the rest.
   if (parts.length === 0 || parts.length < approvals.length) return;
-  await sendRunRequest(caller, {
-    agentId: run.agentId,
-    conversationKey: run.conversationKey,
-    eventId: `${run.eventId}${APPROVAL_EVENT_SUFFIX}`,
-    background: true,
-    events: [{ role: "tool", content: parts }],
-  });
+  await sendRunRequest(
+    caller,
+    {
+      agentId: run.agentId,
+      conversationKey: run.conversationKey,
+      eventId: `${run.eventId}${APPROVAL_EVENT_SUFFIX}`,
+      background: true,
+      events: [{ role: "tool", content: parts }],
+    },
+    false,
+  );
 }
 
 /** Each answered prompt settles through `answers`; the run's own row carries on. */
@@ -329,12 +333,16 @@ async function answerQuestions(
       : [];
   });
   if (answers.length === 0) return;
-  await sendRunRequest(caller, {
-    agentId: run.agentId,
-    conversationKey: run.conversationKey,
-    eventId: `${RUN_PREFIX}${crypto.randomUUID()}`,
-    answers: answers,
-  });
+  await sendRunRequest(
+    caller,
+    {
+      agentId: run.agentId,
+      conversationKey: run.conversationKey,
+      eventId: `${RUN_PREFIX}${crypto.randomUUID()}`,
+      answers: answers,
+    },
+    true,
+  );
 }
 
 /** The approval reply that carries a waiting run on, once one was sent. */
@@ -474,7 +482,15 @@ async function readRun(
     runRequest(caller, "GET", `${RUN_PATH}/${encodeURIComponent(runId)}`),
   );
 
-  return response.ok ? ((await response.json()) as RunStatus) : null;
+  if (response.ok) return (await response.json()) as RunStatus;
+  if (response.status >= 500) {
+    throw new ProtocolError(
+      ProtocolErrorCode.InternalError,
+      await errorText(response),
+    );
+  }
+
+  return null;
 }
 
 function requireTaskCapability(ctx: ServerContext): void {
@@ -551,15 +567,19 @@ async function runnableAgents(auth: McpAuth): Promise<AgentRecord[]> {
       );
 }
 
-/** A refused write is the task's own failure to report, except an answer already given. */
+/**
+ * A refused write is the task's own failure to report. A 409 on an answer
+ * means it was already given; on an approval it means another decision won.
+ */
 async function sendRunRequest(
   caller: McpCaller,
   body: Record<string, unknown>,
+  settledOnConflict: boolean,
 ): Promise<void> {
   const response = await caller.replay(
     runRequest(caller, "POST", RUN_PATH, body),
   );
-  if (!response.ok && response.status !== 409) {
+  if (!response.ok && !(settledOnConflict && response.status === 409)) {
     throw new ProtocolError(
       ProtocolErrorCode.InternalError,
       await errorText(response),
@@ -593,8 +613,24 @@ async function startTask(
     return toolResult(await errorText(started), true);
   }
   const accepted = (await started.json()) as AsyncRequestAccepted;
+  // The run is already going, so a failed first read still hands back its id:
+  // a retry would start a second run.
+  const runs = await resolveTask(caller, accepted.runId).catch(
+    (): null => null,
+  );
+  const now = new Date().toISOString();
+  const task: DetailedTaskV2 = runs
+    ? taskFromRuns(runs)
+    : {
+        taskId: accepted.runId,
+        status: "working",
+        createdAt: now,
+        lastUpdatedAt: now,
+        ttlMs: null,
+        pollIntervalMs: POLL_INTERVAL_MS,
+      };
   const { taskId, status, createdAt, lastUpdatedAt, ttlMs, pollIntervalMs } =
-    taskFromRuns(await resolveTask(caller, accepted.runId));
+    task;
 
   return {
     resultType: "task",

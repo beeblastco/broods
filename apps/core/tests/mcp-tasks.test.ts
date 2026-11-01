@@ -221,6 +221,22 @@ describe("handleMcpRequest", () => {
     expect(started.conversationKey).toBe(started.eventId);
   });
 
+  it("still hands back the task when the first status read fails", async () => {
+    const { result } = await rpc(
+      mcpRequest("tools/call", {
+        name: "agent_1",
+        arguments: { prompt: "hi" },
+      }),
+      replayOf({}),
+    );
+
+    expect(result).toMatchObject({
+      resultType: "task",
+      taskId: "run_1",
+      status: "working",
+    });
+  });
+
   it("follows an approval reply sent through tasks/update", async () => {
     const waiting = run({
       runId: "run_1",

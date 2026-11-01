@@ -437,8 +437,9 @@ paths:
         `{prompt}`. `tools/call` starts a background run in a fresh
         conversation and answers a task handle (`resultType: "task"`) whose
         `taskId` is the run id; `tasks/get`, `tasks/update` and `tasks/cancel`
-        follow it. A client that does not declare the tasks extension on the
-        request gets `-32021`. Run reads and writes go through `/v1/runs`, so
+        follow it. A `tools/call` or `tasks/*` request that does not declare
+        the tasks extension gets `-32021`; `tools/list` answers without it.
+        Run reads and writes go through `/v1/runs`, so
         the same credential rules apply: an account key lists every agent of
         the account, a member's stage ticket its stage, the runtime key its
         stage's public agents. A run token lists no tools yet. 2025-era
