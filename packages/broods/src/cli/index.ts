@@ -116,6 +116,7 @@ import {
 } from "./output.ts";
 import {
   isNewerVersion,
+  installedPackage,
   latestPublishedVersion,
   majorVersion,
   updateTarget,
@@ -1394,6 +1395,9 @@ async function update(): Promise<void> {
  * any failure, because a version check must never hold up or fail a sync.
  */
 async function warnOnOutdatedCli(): Promise<void> {
+  // A build from the monorepo carries the workspace version, which is never
+  // the released one (packages/broods/AGENTS.md), so it would always nag.
+  if (!installedPackage()) return;
   const latest = await latestPublishedVersion();
   if (latest === null || !isNewerVersion(latest, VERSION)) return;
   printWarning(
@@ -1438,11 +1442,32 @@ async function dev(args: string[]): Promise<void> {
   // Recorded only after a sync succeeds, so a failed one retries on the next save.
   let lastSourceSignature: string | undefined;
 
+  // Like `convex dev`: stream live agent logs alongside the resource watcher so
+  // the developer sees activity while editing. Tried after each sync until the
+  // stream opens: a new stage has no deployment, so no logs, before one lands.
+  const logController = new AbortController();
+  let logs: "off" | "opening" | "on" = "off";
+  const startLogs = (): void => {
+    if (logs !== "off") return;
+    logs = "opening";
+    void streamDevLogs(args, logController.signal).then((opened) => {
+      logs = opened ? "on" : "off";
+    });
+  };
+  let lastSyncFailed = false;
   const syncChanged = async (): Promise<void> => {
     const signature = await sourceSignature();
-    if (signature === lastSourceSignature) return;
-    await runSyncChild(args, childEnv);
-    lastSourceSignature = signature;
+    // A failed sync may have written part of the stage, so after one even an
+    // undo back to the last synced source syncs again.
+    if (signature === lastSourceSignature && !lastSyncFailed) return;
+    lastSyncFailed = true;
+    try {
+      await runSyncChild(args, childEnv);
+      lastSyncFailed = false;
+      lastSourceSignature = signature;
+    } finally {
+      startLogs();
+    }
   };
   const printSyncError = (error: unknown): void =>
     console.error(error instanceof Error ? error.message : String(error));
@@ -1478,12 +1503,6 @@ async function dev(args: string[]): Promise<void> {
     },
   );
 
-  // Like `convex dev`: stream live agent logs alongside the resource watcher so
-  // the developer sees activity while editing. Best-effort: with no runtime
-  // key configured yet, it prints a hint and skips without breaking the sync.
-  const logController = new AbortController();
-  void streamDevLogs(args, logController.signal);
-
   process.on("SIGINT", () => {
     logController.abort();
     watcher.close();
@@ -1492,21 +1511,25 @@ async function dev(args: string[]): Promise<void> {
 }
 
 // Live-tail logs during `dev`, mirroring `convex dev`. Best-effort: if the
-// stage has no deployment yet, print a hint and return rather than breaking the
-// watch loop.
+// stage has no deployment yet, print a hint and return false rather than
+// breaking the watch loop, so the caller tries again after the next sync.
 async function streamDevLogs(
   args: string[],
   signal: AbortSignal,
-): Promise<void> {
+): Promise<boolean> {
   let session: ObservabilityClientOptions;
   try {
     session = await openStageSession(args);
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // A stage before its first sync: logs start once one lands.
     console.log(
-      `· live logs off. ${error instanceof Error ? error.message : String(error)}`,
+      message.includes("has no deployment")
+        ? "· live logs start after the first sync lands."
+        : `· live logs off. ${message}`,
     );
 
-    return;
+    return false;
   }
 
   const minLevel = resolveMinLevel(args);
@@ -1527,6 +1550,8 @@ async function streamDevLogs(
       );
     }
   }
+
+  return true;
 }
 
 async function ensureDevOnboarding(args: string[]): Promise<void> {
@@ -2003,9 +2028,10 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
       }
       reject(
         new Error(
+          // The child already printed why; say what happens next.
           signal
-            ? `Sync child exited from signal ${signal}`
-            : `Sync child exited with code ${code ?? "unknown"}`,
+            ? `Sync stopped (${signal}). Watching for changes: save a file to retry.`
+            : "Sync failed. Watching for changes: fix it and save a file to retry.",
         ),
       );
     });
@@ -2039,7 +2065,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const pushed = await pushLocalEnvVars(
     client,
     compiled.manifest,
-    await inspectEnvRefs(client, compiled.manifest),
+    await askForUnresolvedEnv(await inspectEnvRefs(client, compiled.manifest)),
   );
   if (pushed.length > 0) printEnvSync(pushed);
 
@@ -2211,6 +2237,32 @@ async function inspectEnvRefs(
     name: name,
     state: envRefState(name, remote),
   }));
+}
+
+/**
+ * In a terminal, asks for each `env()` value neither `.env.local` nor the stage
+ * holds (a new project's model key, say), saves it to `.env.local` and marks it
+ * for the push, so a first `dev` sets up instead of failing on the missing
+ * names. An empty answer leaves the name unresolved and the sync names it.
+ */
+async function askForUnresolvedEnv(refs: EnvRef[]): Promise<EnvRef[]> {
+  const missing = namesInState(refs, "unresolved");
+  if (missing.length === 0 || !process.stdin.isTTY) return refs;
+  console.log(
+    `The project needs ${missing.length === 1 ? "a value" : `${missing.length} values`} no one has set yet. ` +
+      "Input is hidden and saved to .env.local, which stays out of git.",
+  );
+  for (const name of missing) {
+    // Saved as typed, like `broods env set`; an empty answer skips the name.
+    const value = await promptSecret(name, { optional: true });
+    if (value) await writeEnvValue(name, value);
+  }
+
+  return refs.map((ref) =>
+    ref.state === "unresolved" && process.env[ref.name]
+      ? { ...ref, state: "unset" }
+      : ref,
+  );
 }
 
 /**
