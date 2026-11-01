@@ -51,6 +51,7 @@ import { BroodsClient } from "../packages/broods/src/client.ts";
 import { verifyCases } from "./local-verify/cases/index.ts";
 import { runPerf } from "./local-verify/perf.ts";
 import {
+  LOCAL_GITHUB_APP,
   VerifyFailure,
   assertStep,
   lastJsonLine,
@@ -82,11 +83,16 @@ interface InstancePorts {
   edge: number;
   /** The WebSocket gateway process, behind Traefik. */
   gateway: number;
+  /** The fake GitHub the `github-repo` verify case serves while it runs. */
+  github: number;
 }
 
 interface InstanceSecrets {
   accountConfigEncryption: string;
   adminAccount: string;
+  /** PKCS#1 PEM the fake GitHub App signs its JWTs with; filled in on an older stack. */
+  githubAppKey?: string;
+  githubWebhook?: string;
   mediaTicket: string;
   serviceAuth: string;
   /** Private ES256 JWK the dashboard signs the admin's session with. */
@@ -564,8 +570,29 @@ function deploymentEnvEntries(state: InstanceState): Record<string, string> {
     BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${ports(state).core}`,
     BROODS_AUTH_PROVIDER: "self-host",
     BROODS_SESSION_JWKS: JSON.stringify({ keys: [publicJwk(signingKey)] }),
+    ...githubAppEnv(state),
     SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
     STAGE_TICKET_SECRET: state.secrets.stageTicket,
+  };
+}
+
+// The Broods GitHub App, pointed at the fake the `github-repo` case serves.
+// The env file is one line per var, so the PEM's newlines go in escaped.
+function githubAppEnv(state: InstanceState): Record<string, string> {
+  const github = `http://host.docker.internal:${ports(state).github}`;
+
+  return {
+    GITHUB_API_URL: github,
+    GITHUB_APP_CLIENT_ID: LOCAL_GITHUB_APP.clientId,
+    GITHUB_APP_CLIENT_SECRET: LOCAL_GITHUB_APP.clientSecret,
+    GITHUB_APP_ID: LOCAL_GITHUB_APP.appId,
+    GITHUB_APP_PRIVATE_KEY: (state.secrets.githubAppKey ?? "").replace(
+      /\n/g,
+      "\\n",
+    ),
+    GITHUB_APP_SLUG: LOCAL_GITHUB_APP.slug,
+    GITHUB_APP_WEBHOOK_SECRET: state.secrets.githubWebhook ?? "",
+    GITHUB_WEB_URL: github,
   };
 }
 
@@ -742,6 +769,26 @@ function tryConvexCli(
     stdout: result.stdout,
     stderr: result.stderr,
   };
+}
+
+/** `tryConvexCli` without blocking, so a server the case runs in process can answer the backend. */
+async function tryConvexCliAsync(
+  state: InstanceState,
+  args: readonly string[],
+): Promise<{ ok: boolean; output: string }> {
+  const child = Bun.spawn(["bunx", "convex", ...args], {
+    cwd: join(repoRoot, "packages", "convex"),
+    env: convexCliEnv(state),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+
+  return { ok: code === 0, output: stdout + stderr };
 }
 
 function convexCliEnv(state: InstanceState): NodeJS.ProcessEnv {
@@ -1058,10 +1105,17 @@ function verifyContext(
     client: new BroodsClient({ apiKey: accountSecret, baseUrl: edgeUrl }),
     configPlaneUrl: `http://127.0.0.1:${ports(state).convexSite}`,
     convex: (args) => tryConvexCli(state, args),
+    convexAsync: (args) => tryConvexCliAsync(state, args),
     coreLogPath: join(instanceDir(state.instanceId), "logs", "core.log"),
     edgeUrl: edgeUrl,
     measure: measure,
     runId: runId,
+    github: {
+      ...LOCAL_GITHUB_APP,
+      port: ports(state).github,
+      privateKey: state.secrets.githubAppKey ?? "",
+      webhookSecret: state.secrets.githubWebhook ?? "",
+    },
     serviceSecret: state.secrets.serviceAuth,
     stageTicketSecret: state.secrets.stageTicket,
   };
@@ -1260,6 +1314,11 @@ function loadOrCreateState(): InstanceState {
       "this stack predates the self-hosted sign-in; run `bun run local:up -- --fresh` to recreate it",
     );
   }
+  if (existing && !existing.secrets.githubAppKey) {
+    existing.secrets.githubAppKey = newGitHubAppKey();
+    existing.secrets.githubWebhook = randomBytes(24).toString("hex");
+    saveState(existing);
+  }
   if (existing) return existing;
 
   const state: InstanceState = {
@@ -1270,6 +1329,8 @@ function loadOrCreateState(): InstanceState {
     secrets: {
       accountConfigEncryption: randomBytes(24).toString("hex"),
       adminAccount: `local_admin_${randomBytes(18).toString("hex")}`,
+      githubAppKey: newGitHubAppKey(),
+      githubWebhook: randomBytes(24).toString("hex"),
       mediaTicket: randomBytes(24).toString("hex"),
       serviceAuth: randomBytes(24).toString("hex"),
       sessionSigningKey: newSessionSigningKey(),
@@ -1287,6 +1348,13 @@ function loadState(instanceId: string): InstanceState | null {
   if (!existsSync(path)) return null;
 
   return JSON.parse(readFileSync(path, "utf8")) as InstanceState;
+}
+
+// An RSA key in the PKCS#1 PEM GitHub hands an App.
+function newGitHubAppKey(): string {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+
+  return privateKey.export({ format: "pem", type: "pkcs1" }).toString();
 }
 
 // A P-256 key as a private JWK, the form BROODS_SESSION_SIGNING_KEY takes.
@@ -1311,6 +1379,7 @@ function ports(state: InstanceState): InstancePorts {
     dashboard: base + 5,
     edge: base,
     gateway: base + 4,
+    github: base + 6,
   };
 }
 

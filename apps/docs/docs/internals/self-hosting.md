@@ -143,30 +143,32 @@ Fixed names, not outputs: `SANDBOX_MOUNT_ROLE_ARN` is the role `<stage>-<project
 
 From `packages/convex`, set each with `bunx convex env set NAME value`:
 
-| Variable                                                                   | Required  | Notes                                                                                      |
-| -------------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------ |
-| `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                                         | yes       | Same as core. Comma-separated list                                                         |
-| `ADMIN_ACCOUNT_SECRET`                                                     | yes       | Same as core                                                                               |
-| `SERVICE_AUTH_SECRET`                                                      | yes       | Same as core                                                                               |
-| `STAGE_TICKET_SECRET`                                                      | yes       | Same as core                                                                               |
-| `ANALYTICS_ID_SECRET`                                                      | no        | Same as core. Keys the dashboard's PostHog user id; unset leaves it anonymous per browser  |
-| `BROODS_ACCOUNT_MANAGE_URL`                                                | yes       | Core's in-cluster URL, such as `http://core.<ns>.svc.cluster.local`. Never the public host |
-| `AWS_REGION`                                                               | yes       | The data plane region                                                                      |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`                               | yes       | The bootstrap user's key. It can only assume `ConvexAwsRole`                               |
-| `CONVEX_AWS_ROLE_ARN`                                                      | yes       | `convexAwsRoleArn` output                                                                  |
-| `CONVEX_AWS_EXTERNAL_ID`                                                   | no        | Default `broods-convex`                                                                    |
-| `FILESYSTEM_BUCKET_NAME`, `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME` | yes       | Stack outputs                                                                              |
-| `MICROVM_ARTIFACTS_BUCKET_NAME`, `MICROVM_BUILD_ROLE_ARN`                  | no        | Refused as a workspace's own bucket or role                                                |
-| `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                          | no        | `true` accepts a private workspace `storage.endpoint`, such as MinIO. Set the same on core |
-| `BROODS_AUTH_PROVIDER`                                                     | yes       | `self-host` for the dashboard's admin session, `workos` for the managed login              |
-| `BROODS_SESSION_JWKS`                                                      | dashboard | Public half of `BROODS_SESSION_SIGNING_KEY`, see [dashboard](#dashboard)                   |
-| `BROODS_MODEL_PRICES`                                                      | no        | Your token rates for the Usage tab, see [model prices](#model-prices)                      |
-| `BROODS_MODEL_PRICES_URL`                                                  | no        | A models.dev-format catalogue to crawl hourly. Unset fetches nothing                       |
-| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_WEBHOOK_SECRET`              | no        | The managed service's login. Leave unset                                                   |
-| `DASHBOARD_ORIGIN`                                                         | billing   | Allowed origin for Stripe return URLs                                                      |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                               | no        | Billing                                                                                    |
-| `STRIPE_PRO_PRICE_ID`                                                      | no        | Monthly Pro price, with 2 developer seats; Upgrade bills it                                |
-| `STRIPE_SEAT_PRICE_ID`                                                     | no        | Monthly price of one seat past Pro's 2; Upgrade and Add seat bill it                       |
+| Variable                                                                        | Required  | Notes                                                                                      |
+| ------------------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------ |
+| `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                                              | yes       | Same as core. Comma-separated list                                                         |
+| `ADMIN_ACCOUNT_SECRET`                                                          | yes       | Same as core                                                                               |
+| `SERVICE_AUTH_SECRET`                                                           | yes       | Same as core                                                                               |
+| `STAGE_TICKET_SECRET`                                                           | yes       | Same as core                                                                               |
+| `ANALYTICS_ID_SECRET`                                                           | no        | Same as core. Keys the dashboard's PostHog user id; unset leaves it anonymous per browser  |
+| `BROODS_ACCOUNT_MANAGE_URL`                                                     | yes       | Core's in-cluster URL, such as `http://core.<ns>.svc.cluster.local`. Never the public host |
+| `AWS_REGION`                                                                    | yes       | The data plane region                                                                      |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`                                    | yes       | The bootstrap user's key. It can only assume `ConvexAwsRole`                               |
+| `CONVEX_AWS_ROLE_ARN`                                                           | yes       | `convexAwsRoleArn` output                                                                  |
+| `CONVEX_AWS_EXTERNAL_ID`                                                        | no        | Default `broods-convex`                                                                    |
+| `FILESYSTEM_BUCKET_NAME`, `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME`      | yes       | Stack outputs                                                                              |
+| `MICROVM_ARTIFACTS_BUCKET_NAME`, `MICROVM_BUILD_ROLE_ARN`                       | no        | Refused as a workspace's own bucket or role                                                |
+| `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                               | no        | `true` accepts a private workspace `storage.endpoint`, such as MinIO. Set the same on core |
+| `BROODS_AUTH_PROVIDER`                                                          | yes       | `self-host` for the dashboard's admin session, `workos` for the managed login              |
+| `BROODS_SESSION_JWKS`                                                           | dashboard | Public half of `BROODS_SESSION_SIGNING_KEY`, see [dashboard](#dashboard)                   |
+| `BROODS_MODEL_PRICES`                                                           | no        | Your token rates for the Usage tab, see [model prices](#model-prices)                      |
+| `BROODS_MODEL_PRICES_URL`                                                       | no        | A models.dev-format catalogue to crawl hourly. Unset fetches nothing                       |
+| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_WEBHOOK_SECRET`                   | no        | The managed service's login. Leave unset                                                   |
+| `DASHBOARD_ORIGIN`                                                              | billing   | Allowed origin for Stripe return URLs                                                      |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                                    | no        | Billing                                                                                    |
+| `STRIPE_PRO_PRICE_ID`                                                           | no        | Monthly Pro price, with 2 developer seats; Upgrade bills it                                |
+| `STRIPE_SEAT_PRICE_ID`                                                          | no        | Monthly price of one seat past Pro's 2; Upgrade and Add seat bill it                       |
+| `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`                    | GitHub    | Your GitHub App, see [GitHub App](#github-app). All six or none                            |
+| `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_WEBHOOK_SECRET` | GitHub    | Same App                                                                                   |
 
 Then deploy the functions, before core:
 
@@ -188,6 +190,20 @@ bunx convex env set BROODS_MODEL_PRICES '{"custom":{"gpt-oss-120b":{"input":0.1,
 ```
 
 A malformed value fails the crawl with the reason in the Convex logs. Removing a rate from the variable removes it on the next crawl.
+
+### GitHub App
+
+Repo links ([GitHub](../guides/github.md)) need a GitHub App of your own. Without one the dashboard hides the GitHub starts. Register it under your GitHub organization's Developer settings:
+
+| Setting                                                | Value                                                                                                |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Callback URL                                           | `{dashboard}/github/callback`                                                                        |
+| Request user authorization (OAuth) during installation | on                                                                                                   |
+| Webhook URL                                            | `{CONVEX_SITE_URL}/github/webhook`                                                                   |
+| Repository permissions                                 | Administration, Contents, Pull requests, Secrets, Workflows: read and write. Actions, Metadata: read |
+| Subscribe to events                                    | Workflow run, Repository                                                                             |
+
+The App receives installation events without a subscription. Generate a private key and a client secret, then set the six `GITHUB_APP_*` variables. `GITHUB_APP_PRIVATE_KEY` takes the PEM as GitHub hands it, newlines escaped as `\n` or not. `GITHUB_API_URL` and `GITHUB_WEB_URL` point at GitHub Enterprise Server instead of github.com. The code is in `packages/convex/github.ts`.
 
 ## 3. Shared services
 

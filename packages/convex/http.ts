@@ -1,5 +1,5 @@
 /**
- * HTTP route registration: AuthKit, the Stripe webhook, the CLI routes, and the
+ * HTTP route registration: AuthKit, the Stripe and GitHub webhooks, the CLI routes, and the
  * config-plane routes the gateway forwards here.
  */
 
@@ -20,6 +20,7 @@ import {
   sessionHttpHandle as cliStageSessionHttp,
 } from "./cli/stages";
 import { handle as configHttp } from "./config/http";
+import { webhook as githubWebhook } from "./github";
 import { authProvider } from "./model/selfHostAuth";
 import { reconcileSubscription } from "./stripe";
 
@@ -33,6 +34,12 @@ http.route({
   path: "/stripe/webhook",
   method: "POST",
   handler: httpAction(handleStripeWebhook),
+});
+
+http.route({
+  path: "/github/webhook",
+  method: "POST",
+  handler: githubWebhook,
 });
 
 http.route({

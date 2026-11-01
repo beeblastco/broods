@@ -7,6 +7,7 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import { useParams, useSearchParams } from "next/navigation";
 import { DangerPanel } from "./components/DangerPanel";
 import { EnvironmentVariablesPanel } from "./components/EnvironmentVariablesPanel";
+import { GitPanel } from "./components/GitPanel";
 import { KeysPanel } from "./components/KeysPanel";
 import { PoliciesPanel } from "./components/PoliciesPanel";
 import { ProjectGeneralPanel } from "./components/ProjectGeneralPanel";
@@ -24,6 +25,8 @@ export default function SettingsPage(): React.JSX.Element {
     switch (tab.id) {
       case "general":
         return <ProjectGeneralPanel projectId={projectId} />;
+      case "git":
+        return <GitPanel projectId={projectId} />;
       case "variables":
         return (
           <EnvironmentVariablesPanel

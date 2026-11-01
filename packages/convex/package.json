@@ -21,8 +21,10 @@
     "@convex-dev/crons": "0.2.3",
     "@convex-dev/stripe": "^0.1.7",
     "@convex-dev/workos-authkit": "^0.2.10",
+    "@noble/hashes": "1.8.0",
     "convex": "^1.47.0",
-    "stripe": "^22.6.2"
+    "stripe": "^22.6.2",
+    "tweetnacl": "1.0.3"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
