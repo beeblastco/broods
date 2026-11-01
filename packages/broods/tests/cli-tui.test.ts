@@ -461,7 +461,9 @@ test("a turn queued behind a stopped one streams its answer, not the 202", async
     baseUrl: "http://core.test",
     fetch: Object.assign(
       async (...[input]: Parameters<typeof fetch>): Promise<Response> =>
-        String(input).endsWith("/status/run_2")
+        (input instanceof Request ? input.url : input.toString()).endsWith(
+          "/status/run_2",
+        )
           ? Response.json({ status: "completed", response: "queued answer" })
           : Response.json(
               {
