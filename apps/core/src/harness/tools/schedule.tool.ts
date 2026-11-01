@@ -63,6 +63,8 @@ const updateScheduleInput = z.strictObject({
     .optional(),
 });
 
+const listSchedulesInput = z.strictObject({});
+
 export interface ScheduleContext {
   accountId: string;
   agentId: string;
@@ -110,7 +112,7 @@ export function listSchedulesTool(context: ScheduleContext): ToolSet {
     list_schedules: tool({
       description:
         "Lists every scheduled task you own, including ones scheduled from other conversations and ones an account owner created for you. `conversationKey` tells you where each task answers.",
-      inputSchema: z.strictObject({}),
+      inputSchema: listSchedulesInput,
       execute: async function (): Promise<{ schedules: ScheduleSummary[] }> {
         const crons = await getStorage().crons.list(
           context.accountId,

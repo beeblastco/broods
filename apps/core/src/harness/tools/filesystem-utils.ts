@@ -1,7 +1,7 @@
 import type { JSONSchema7 } from "ai";
 import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
-import { isPlainObject } from "../../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import {
   isMissingS3Error,
   listS3Prefix,
@@ -848,7 +848,7 @@ function unescapeShellChars(command: string): string {
 }
 
 function workspaceRelativeSuggestion(target: string): string {
-  const basename = target.split("/").filter(Boolean).pop();
+  const basename = target.split("/").findLast(Boolean);
 
   return basename ? `./${basename}` : "./output";
 }

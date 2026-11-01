@@ -28,10 +28,10 @@ export const agent = defineAgent({
   hooks: {
     onMessageReceived: (ctx, event) => {
       if (event.channel !== "pancake") return undefined;
-      const handoffTagIds = ["order-tag", "pending-tag"];
+      const handoffTagIds = new Set(["order-tag", "pending-tag"]);
       const tagIds = event.source.tagIds ?? [];
 
-      return tagIds.some((tagId) => handoffTagIds.includes(tagId))
+      return tagIds.some((tagId) => handoffTagIds.has(tagId))
         ? { drop: true }
         : undefined;
     },

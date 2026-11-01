@@ -3,7 +3,7 @@ import {
   PROVIDER_CACHE_WRITE_FIELDS,
 } from "@broods/convex/model/modelPricing";
 import type { LanguageModelUsage, TextStreamPart, ToolSet } from "ai";
-import { isPlainObject } from "../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import type { ModelAttempt } from "./provider.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
 

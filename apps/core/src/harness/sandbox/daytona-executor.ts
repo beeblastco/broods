@@ -4,7 +4,7 @@ import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts"
 import { optionalEnv } from "../../shared/env.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { logWarn } from "../../shared/log.ts";
-import { isPlainObject } from "../../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   DEFAULT_RELEASE_GRACE_SECONDS,

@@ -104,9 +104,7 @@ function planeUrl(
     throw new Error(`${PLANES_ENV} plane ${plane} is missing ${field}`);
   }
   const trimmed = value.replace(/\/+$/, "");
-  try {
-    new URL(trimmed);
-  } catch {
+  if (!URL.canParse(trimmed)) {
     throw new Error(
       `${PLANES_ENV} plane ${plane} has an invalid ${field}: ${JSON.stringify(value)}`,
     );

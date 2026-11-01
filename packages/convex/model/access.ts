@@ -109,14 +109,14 @@ export async function assertGrantsWithinReach(
     ...before,
     ...access.policies,
   ])) {
-    const held = [
+    const held = new Set([
       ...dashboardPermissions(access, scope),
       ...dashboardPermissions({ tier: "member", policies: before }, scope),
-    ];
+    ]);
     const beyond = dashboardPermissions(
       { tier: "member", policies: policies },
       scope,
-    ).filter((permission) => !held.includes(permission));
+    ).filter((permission) => !held.has(permission));
     if (beyond.length > 0) {
       throw new ClientError(
         `That grants ${beyond.join(", ")}, which you do not hold`,

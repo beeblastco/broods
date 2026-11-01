@@ -305,7 +305,7 @@ function normalizeTimezone(value: unknown): string {
     throw new ClientError("timezone contains unsupported characters");
   }
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+    timezoneFormatter(timezone);
   } catch {
     throw new ClientError("timezone must be a valid IANA timezone");
   }
@@ -386,7 +386,7 @@ function runPayloadToEvents(payload: {
   return normalizeEvents(payload.events);
 }
 
-function timezoneOffsetMs(timestamp: number, timezone: string): number {
+function timezoneFormatter(timezone: string): Intl.DateTimeFormat {
   let formatter = timezoneFormatters.get(timezone);
   if (!formatter) {
     formatter = new Intl.DateTimeFormat("en-US", {
@@ -401,6 +401,12 @@ function timezoneOffsetMs(timestamp: number, timezone: string): number {
     });
     timezoneFormatters.set(timezone, formatter);
   }
+
+  return formatter;
+}
+
+function timezoneOffsetMs(timestamp: number, timezone: string): number {
+  const formatter = timezoneFormatter(timezone);
   const parts: Partial<Record<Intl.DateTimeFormatPartTypes, string>> = {};
   for (const part of formatter.formatToParts(new Date(timestamp))) {
     parts[part.type] = part.value;

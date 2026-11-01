@@ -8,7 +8,7 @@ import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts"
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
-import { isPlainObject } from "../../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   MAX_CONCURRENT_BACKGROUND_JOBS,

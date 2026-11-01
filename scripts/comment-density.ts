@@ -430,15 +430,15 @@ function renderMarkdown(report: Report): string {
 }
 
 if (import.meta.main) {
-  const args = process.argv.slice(2);
+  const args = new Set(process.argv.slice(2));
   const root = git(["rev-parse", "--show-toplevel"], process.cwd()).trim();
   const budget: Budget = budgetJson;
   const report = judge(measure(root), budget);
-  const json = args.includes("--json");
+  const json = args.has("--json");
   console.log(json ? JSON.stringify(report, null, 2) : renderText(report));
   const summary = process.env.GITHUB_STEP_SUMMARY;
   if (summary) appendFileSync(summary, renderMarkdown(report));
-  if (args.includes("--check")) {
+  if (args.has("--check")) {
     for (const failure of report.failures)
       console.error(`over budget: ${failure}`);
     if (report.failures.length > 0) process.exit(1);

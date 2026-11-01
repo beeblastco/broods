@@ -10,16 +10,16 @@ import { FrameQueue } from "../frames.ts";
 const DEFAULT_TIMEOUT_SECONDS = 30;
 // Ready lands ~80 ms after spawn; a hung start must not burn the run timeout on each retry.
 const WORKER_READY_TIMEOUT_MS = 5_000;
-const RUNNER_ENV_KEYS = [
+const RUNNER_ENV_KEYS = new Set([
   "PATH",
   "ISOLATE_MEMORY_LIMIT_MB",
   "ISOLATE_RUNNER_TIMEOUT_SECONDS",
   "ISOLATE_TENANT_CACHE_PER_WORKER",
-];
+]);
 // The runner hosts tenant code: it gets only what it reads, never core's secrets.
 const RUNNER_ENV = Object.fromEntries(
   Object.entries(process.env).filter(([key]): boolean =>
-    RUNNER_ENV_KEYS.includes(key),
+    RUNNER_ENV_KEYS.has(key),
   ),
 );
 // Added to the request size: a hook may hand back its whole input plus a result.

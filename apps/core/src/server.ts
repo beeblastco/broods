@@ -124,8 +124,7 @@ export async function toCoreRequest(
     ? (forwardedChain
         .split(",")
         .map((entry) => entry.trim())
-        .filter(Boolean)
-        .pop() ?? "")
+        .findLast(Boolean) ?? "")
     : (socketAddress ?? "");
 
   const cookies =

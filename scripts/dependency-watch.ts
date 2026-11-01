@@ -9,7 +9,7 @@ const REGISTRY = "https://registry.npmjs.org";
 const EXPIRY_WARNING_DAYS = 30;
 
 /** Watched outside the AI SDK family, where a caret bump is not automatic. */
-const EXTRA_WATCHED = ["esbuild"];
+const EXTRA_WATCHED = new Set(["esbuild"]);
 
 const WORKSPACES = [
   "apps/core",
@@ -233,7 +233,7 @@ function isStale(entry: WatchedPackage): boolean {
 
 function isWatched(name: string): boolean {
   return (
-    name === "ai" || name.startsWith("@ai-sdk/") || EXTRA_WATCHED.includes(name)
+    name === "ai" || name.startsWith("@ai-sdk/") || EXTRA_WATCHED.has(name)
   );
 }
 

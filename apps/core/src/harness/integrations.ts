@@ -83,7 +83,7 @@ import {
   createMatrixChannel,
   MATRIX_FORWARDER_URL_ENV,
 } from "../shared/matrix-channel.ts";
-import { isPlainObject } from "../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import {
   getObservabilityContext,
   mintTraceId,

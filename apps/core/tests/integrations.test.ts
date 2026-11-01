@@ -2006,12 +2006,9 @@ describe("direct API ingress", () => {
     expect(response.statusCode).toBe(200);
   });
 
-  for (const source of [
-    "channel",
-    "cron/internal",
-    "account-auth direct",
-  ] as const) {
-    it(`refuses deployment-key status access to ${source} ingress without public deployment provenance`, async () => {
+  it.each(["channel", "cron/internal", "account-auth direct"])(
+    "refuses deployment-key status access to %s ingress without public deployment provenance",
+    async (source) => {
       const eventId = scopedDirectEventId(
         TEST_ACCOUNT.accountId,
         TEST_AGENT.agentId,
@@ -2036,16 +2033,17 @@ describe("direct API ingress", () => {
       expect(responseJson(response)).toMatchObject({
         error: { code: "status_access_denied" },
       });
-    });
-  }
+    },
+  );
 
-  for (const [field, value] of [
+  it.each([
     ["accountId", "acct_other"],
     ["endpointId", "endpoint-other"],
     ["projectSlug", "project-other"],
     ["stageSlug", "stage-other"],
-  ] as const) {
-    it(`requires the public deployment ingress ${field} to match exactly`, async () => {
+  ] as const)(
+    "requires the public deployment ingress %s to match exactly",
+    async (field, value) => {
       const eventId = scopedDirectEventId(
         TEST_ACCOUNT.accountId,
         TEST_AGENT.agentId,
@@ -2070,11 +2068,15 @@ describe("direct API ingress", () => {
       expect(responseJson(response)).toMatchObject({
         error: { code: "status_access_denied" },
       });
-    });
-  }
+    },
+  );
 
-  for (const childKind of ["virtual", "private"] as const) {
-    it(`authorizes ${childKind === "private" ? "private predefined" : "virtual"} child status through its durable public parent scope`, async () => {
+  it.each([
+    { childKind: "virtual", label: "virtual" },
+    { childKind: "private", label: "private predefined" },
+  ] as const)(
+    "authorizes $label child status through its durable public parent scope",
+    async ({ childKind }) => {
       const parentEventId = scopedDirectEventId(
         TEST_ACCOUNT.accountId,
         TEST_AGENT.agentId,
@@ -2147,8 +2149,8 @@ describe("direct API ingress", () => {
           publicEventId: taskId,
         },
       ]);
-    });
-  }
+    },
+  );
 
   it("lets a stage ticket read a subagent of a private parent, never the runtime key", async () => {
     const fixture = subagentStatusFixture({
@@ -2222,13 +2224,14 @@ describe("direct API ingress", () => {
     });
   });
 
-  for (const [field, value] of [
+  it.each([
     ["accountId", "acct_other"],
     ["endpointId", "endpoint-other"],
     ["projectSlug", "project-other"],
     ["stageSlug", "stage-other"],
-  ] as const) {
-    it(`rejects subagent status when the parent ingress ${field} does not match`, async () => {
+  ] as const)(
+    "rejects subagent status when the parent ingress %s does not match",
+    async (field, value) => {
       const fixture = subagentStatusFixture();
       const response = await deploymentStatusRequest(
         CHILD_RUN_ID,
@@ -2257,8 +2260,8 @@ describe("direct API ingress", () => {
       expect(responseJson(response)).toMatchObject({
         error: { code: "status_access_denied" },
       });
-    });
-  }
+    },
+  );
 
   it("rejects subagent status when the parent belongs to another endpoint", async () => {
     const fixture = subagentStatusFixture();

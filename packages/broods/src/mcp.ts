@@ -36,14 +36,36 @@ const SCOPE_FIELDS = {
   stage: z.string().optional(),
 };
 
+const NON_EMPTY_STRING = z.string().min(1);
+
 const LIFECYCLE_FIELDS = {
-  sandboxId: z.string().min(1),
-  reservationKey: z.string().min(1),
+  sandboxId: NON_EMPTY_STRING,
+  reservationKey: NON_EMPTY_STRING,
+};
+
+const ACCOUNT_PATCH_FIELDS = {
+  username: z.string().optional(),
+  description: z.string().nullable().optional(),
 };
 
 const CONFIRM_FIELD = z
   .boolean()
   .describe("Must be true, after the owner has agreed to this delete.");
+
+const BODY_FIELD = z.record(z.string(), z.unknown());
+
+const CLONE_STAGE_FIELD = z
+  .string()
+  .optional()
+  .describe("Stage to clone architecture and env vars from.");
+
+const CRON_RUNS_LIMIT_FIELD = z.number().int().positive().max(100).optional();
+
+const ENV_VAR_VALUE_FIELD = z.string();
+
+const SESSION_TTL_FIELD = z.number().int().positive().max(43200).optional();
+
+const SKILL_NAME_FIELD = NON_EMPTY_STRING.describe("The skillName.");
 
 const SECRET_MERGE_HINT =
   "'********' keeps a stored secret and null deletes a field: never send a placeholder you did not read from a get.";
@@ -308,7 +330,7 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
     {
       description:
         "Create an organization and switch this login to it. Later calls act in the new org.",
-      inputSchema: { name: z.string().min(1) },
+      inputSchema: { name: NON_EMPTY_STRING },
     },
     async ({ name }) =>
       await attempt(async () => await cli.createOnboardingOrg(name)),
@@ -319,7 +341,7 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
     {
       description:
         "Switch this login to another organization, by an orgId from list-orgs.",
-      inputSchema: { orgId: z.string().min(1) },
+      inputSchema: { orgId: NON_EMPTY_STRING },
     },
     async ({ orgId }) =>
       await attempt(async () => await cli.selectOnboardingOrg(orgId)),
@@ -339,7 +361,7 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
     "list-stages",
     {
       description: "Every stage of one project, by project name.",
-      inputSchema: { project: z.string().min(1) },
+      inputSchema: { project: NON_EMPTY_STRING },
     },
     async ({ project }) =>
       await attempt(async () => await cli.listStages(project)),
@@ -351,12 +373,9 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
       description:
         "Create a stage in a project, optionally cloning another stage's architecture and env vars. A project name that does not exist yet is created with it, which is the only way to make a project without deploying a manifest.",
       inputSchema: {
-        project: z.string().min(1),
-        name: z.string().min(1),
-        from: z
-          .string()
-          .optional()
-          .describe("Stage to clone architecture and env vars from."),
+        project: NON_EMPTY_STRING,
+        name: NON_EMPTY_STRING,
+        from: CLONE_STAGE_FIELD,
       },
     },
     async ({ project, name, from }) =>
@@ -396,7 +415,7 @@ function registerDestructive(
       {
         description:
           "Delete a project and everything under it: stages, agents, canvas, env vars, crons and workspace files. Takes a projectId from list-projects and requires confirm:true.",
-        inputSchema: { projectId: z.string().min(1), confirm: CONFIRM_FIELD },
+        inputSchema: { projectId: NON_EMPTY_STRING, confirm: CONFIRM_FIELD },
       },
       async ({ projectId, confirm }) =>
         await attempt(async () => {
@@ -418,8 +437,8 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
       description:
         "Run history for one cron, newest first. Check this before telling anyone a cron fired.",
       inputSchema: {
-        cronId: z.string().min(1),
-        limit: z.number().int().positive().max(100).optional(),
+        cronId: NON_EMPTY_STRING,
+        limit: CRON_RUNS_LIMIT_FIELD,
       },
     },
     async ({ cronId, limit }) =>
@@ -478,11 +497,7 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     {
       description:
         "Snapshot a sandbox reservation into an image its provider's sandboxes can pin with `snapshot` (sandbox, lambda, daytona, e2b or vercel; lambda builds for a few minutes).",
-      inputSchema: {
-        sandboxId: z.string().min(1),
-        reservationKey: z.string().min(1),
-        name: z.string().min(1),
-      },
+      inputSchema: { ...LIFECYCLE_FIELDS, name: NON_EMPTY_STRING },
     },
     async ({ sandboxId, reservationKey, name }) =>
       await attempt(
@@ -497,8 +512,8 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
       description:
         "Replace one skill's bundle wholesale (PUT, not a merge) by skillName. 'body' is the same source shape create-skill takes.",
       inputSchema: {
-        id: z.string().min(1).describe("The skillName."),
-        body: z.record(z.string(), z.unknown()),
+        id: SKILL_NAME_FIELD,
+        body: BODY_FIELD,
       },
     },
     async ({ id, body }) =>
@@ -524,8 +539,8 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
       description:
         "Create or replace one write-only environment variable. Reference it from a config as ${NAME} rather than inlining the value.",
       inputSchema: {
-        name: z.string().min(1),
-        value: z.string(),
+        name: NON_EMPTY_STRING,
+        value: ENV_VAR_VALUE_FIELD,
       },
     },
     async ({ name, value }) =>
@@ -541,7 +556,7 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     {
       description: "Delete one environment variable.",
       inputSchema: {
-        name: z.string().min(1),
+        name: NON_EMPTY_STRING,
         confirm: CONFIRM_FIELD,
       },
     },
@@ -562,8 +577,8 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
       description:
         "Exchange a role for a short-lived session token (default 1h, max 12h). Hand the returned token to whatever tool needs narrow access, as BROODS_SESSION_TOKEN. It is shown once and is not stored here.",
       inputSchema: {
-        roleId: z.string().min(1),
-        ttlSeconds: z.number().int().positive().max(43200).optional(),
+        roleId: NON_EMPTY_STRING,
+        ttlSeconds: SESSION_TTL_FIELD,
       },
     },
     async ({ roleId, ttlSeconds }) =>
@@ -581,10 +596,7 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     {
       description:
         "Rename this account or change its description. Everything else about an account is derived, not settable.",
-      inputSchema: {
-        username: z.string().optional(),
-        description: z.string().nullable().optional(),
-      },
+      inputSchema: ACCOUNT_PATCH_FIELDS,
     },
     async ({ username, description }) =>
       await attempt(
@@ -658,13 +670,12 @@ function registerResource(
       (spec.createHint ? ` ${spec.createHint}` : "") +
       scopeNote +
       " Prefer changing the broods/ manifest and deploying for anything the project already declares.";
-    const body = z.record(z.string(), z.unknown());
     if (spec.scoped) {
       server.registerTool(
         `create-${spec.singular}`,
         {
           description: description,
-          inputSchema: { body: body, ...SCOPE_FIELDS },
+          inputSchema: { body: BODY_FIELD, ...SCOPE_FIELDS },
         },
         async ({ body, project, stage }) =>
           await attempt(
@@ -679,7 +690,7 @@ function registerResource(
     } else {
       server.registerTool(
         `create-${spec.singular}`,
-        { description: description, inputSchema: { body: body } },
+        { description: description, inputSchema: { body: BODY_FIELD } },
         async ({ body }) =>
           await attempt(async () => await create(client, body)),
       );
@@ -695,7 +706,7 @@ function registerResource(
           (spec.updateHint ? ` ${spec.updateHint}` : ""),
         inputSchema: {
           id: idField,
-          body: z.record(z.string(), z.unknown()),
+          body: BODY_FIELD,
         },
       },
       async ({ id, body }) =>

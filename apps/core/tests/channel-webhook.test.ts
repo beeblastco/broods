@@ -65,11 +65,12 @@ describe("parseChannelWebhookBody", (): void => {
   });
 });
 
-for (const adapter of adapters) {
-  it(`${adapter.name} ignores a non-object body`, async (): Promise<void> => {
+it.each(adapters)(
+  "$name ignores a non-object body",
+  async (adapter): Promise<void> => {
     expect(await adapter.parse(request("[]"))).toEqual(INVALID_PAYLOAD);
-  });
-}
+  },
+);
 
 describe("provider payloads with null fields", (): void => {
   it("accepts a Pancake message with null fields", async (): Promise<void> => {

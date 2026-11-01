@@ -25,7 +25,7 @@ import {
   workspaceMemoryHarnessEnabled,
 } from "../shared/domain/workspace-config.ts";
 import { collectSecretValues, logDebug, logError } from "../shared/log.ts";
-import { isPlainObject } from "../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import { sealRunToken } from "../shared/run-token.ts";
 import { channelScopeKeyFromConversation } from "../shared/runtime-keys.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";

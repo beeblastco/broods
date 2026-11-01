@@ -60,20 +60,18 @@ const SURFACES: Array<{
 ];
 
 describe("config-plane HTTP routes", () => {
-  for (const surface of SURFACES) {
-    it(`mounts ${surface.path}`, () => {
-      for (const method of surface.collection) {
-        expect(
-          http.lookup(surface.path, method),
-          `${method} ${surface.path}`,
-        ).toBeTruthy();
-      }
-      for (const method of surface.item) {
-        const path = `${surface.path}/id_1`;
-        expect(http.lookup(path, method), `${method} ${path}`).toBeTruthy();
-      }
-    });
-  }
+  it.each(SURFACES)("mounts $path", (surface) => {
+    for (const method of surface.collection) {
+      expect(
+        http.lookup(surface.path, method),
+        `${method} ${surface.path}`,
+      ).toBeTruthy();
+    }
+    for (const method of surface.item) {
+      const path = `${surface.path}/id_1`;
+      expect(http.lookup(path, method), `${method} ${path}`).toBeTruthy();
+    }
+  });
 
   it("mounts workspace file and download-link surfaces", () => {
     expect(http.lookup("/v1/workspaces/ws_1/files", "GET")).toBeTruthy();

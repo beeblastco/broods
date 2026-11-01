@@ -151,8 +151,7 @@ export function clientIp(
     forwarded
       ?.split(",")
       .map((entry) => entry.trim())
-      .filter(Boolean)
-      .pop() ||
+      .findLast(Boolean) ||
     fallback ||
     "unknown"
   );

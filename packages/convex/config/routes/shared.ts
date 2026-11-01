@@ -364,8 +364,7 @@ export async function authFailureKey(req: Request): Promise<string> {
     forwarded
       .split(",")
       .map((entry) => entry.trim())
-      .filter(Boolean)
-      .pop() ?? "unknown";
+      .findLast(Boolean) ?? "unknown";
   const encoder = new TextEncoder();
   const algorithm = { name: "HMAC", hash: "SHA-256" };
   const key = await crypto.subtle.importKey(

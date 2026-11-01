@@ -61,7 +61,7 @@ import {
   tracesSubject,
 } from "../shared/nats.ts";
 import type { ProviderOptions, ToolResultOutput } from "@ai-sdk/provider-utils";
-import { isPlainObject } from "../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import {
   getObservabilityContext,
   getTracer,

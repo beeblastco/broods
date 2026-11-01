@@ -749,7 +749,7 @@ describe("createSandboxExecutor", () => {
   });
 
   // e2b's size needs a read, so its row is written without one and patched once it answers.
-  for (const [provider, sandboxId, specs, patched] of [
+  it.each([
     [
       "daytona",
       "daytona-sandbox",
@@ -758,8 +758,9 @@ describe("createSandboxExecutor", () => {
     ],
     ["e2b", "e2b-sandbox", { vcpu: 2, memoryMb: 2048 }, true],
     ["vercel", "ephemeral", { vcpu: 2, memoryMb: 4096 }, false],
-  ] as const) {
-    it(`meters an ephemeral ${provider} sandbox on platform keys with a row for the call`, async () => {
+  ] as const)(
+    "meters an ephemeral %s sandbox on platform keys with a row for the call",
+    async (provider, sandboxId, specs, patched) => {
       const {
         createSandboxExecutor,
       } = require("../src/harness/sandbox/index.ts");
@@ -809,8 +810,8 @@ describe("createSandboxExecutor", () => {
       delete process.env.VERCEL_TOKEN;
       delete process.env.VERCEL_TEAM_ID;
       delete process.env.VERCEL_PROJECT_ID;
-    });
-  }
+    },
+  );
 
   it("keeps billing an ephemeral sandbox whose teardown failed", async () => {
     const {
@@ -3895,8 +3896,9 @@ describe("persistent acquire teardown", () => {
     },
   ];
 
-  for (const { provider, destroy, options } of cases) {
-    it(`destroys the ${provider} sandbox it just created when the claim fails`, async () => {
+  it.each(cases)(
+    "destroys the $provider sandbox it just created when the claim fails",
+    async ({ provider, destroy, options }) => {
       upsertSandboxInstanceMock.mockImplementationOnce(async () => {
         throw new Error("post-claim persistence failed");
       });
@@ -3920,8 +3922,8 @@ describe("persistent acquire teardown", () => {
 
       expect(destroy).toHaveBeenCalled();
       expect(deleteSandboxInstanceMock.mock.calls[0]?.[0]).toBe(provider);
-    });
-  }
+    },
+  );
 });
 
 describe("conditional release", () => {
@@ -3959,8 +3961,9 @@ describe("conditional release", () => {
     },
   ];
 
-  for (const { provider, destroyed, options } of cases) {
-    it(`${provider} release tears down the named machine, not the key's current one`, async () => {
+  it.each(cases)(
+    "$provider release tears down the named machine, not the key's current one",
+    async ({ provider, destroyed, options }) => {
       storedSandboxExternalId = "sbx-current";
       const {
         createSandboxExecutor,
@@ -3979,8 +3982,8 @@ describe("conditional release", () => {
       await executor.release({ namespace: NS });
       expect(destroyed()).toEqual(["sbx-old", "sbx-current"]);
       expect(deleteSandboxInstanceMock.mock.calls[1]?.[3]).toBe("sbx-current");
-    });
-  }
+    },
+  );
 
   it("lambda release keeps the row of a VM whose terminate failed", async () => {
     const {

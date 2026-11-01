@@ -90,15 +90,16 @@ test("a client on a 2025-era revision is refused with -32022", async () => {
   expect(connect({}, false)).rejects.toMatchObject({ code: -32022 });
 });
 
-for (const { tool, args, refusal } of GUARD_CASES) {
-  test(`${tool} refuses without its guard satisfied`, async () => {
+test.each(GUARD_CASES)(
+  "$tool refuses without its guard satisfied",
+  async ({ tool, args, refusal }) => {
     const client = await connectWithSecret({});
 
     const result = await client.callTool({ name: tool, arguments: args });
     expect(result.isError).toBe(true);
     expect(resultText(result)).toContain(refusal);
-  });
-}
+  },
+);
 
 async function connect(
   options: BroodsMcpServerOptions,

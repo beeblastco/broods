@@ -20,7 +20,9 @@ import { lostResultWindows } from "./subagents.ts";
 import { isAsyncIterable, type ToolExecute } from "./tool-execute.ts";
 import {
   modelValueToUserParts,
+  parseToolResultOutput,
   prependTextToUserParts,
+  type ToolContentPart,
 } from "./tools/utils.ts";
 
 const DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS = 8 * 60 * 1000;
@@ -450,21 +452,15 @@ export function completionToParentMessage(
 }
 
 // Binary and URL file parts become their JSON form, which Convex can store.
-function canonicalizeAsyncToolContentPart(part: unknown): unknown {
-  if (
-    !isRecord(part) ||
-    part.type !== "file" ||
-    typeof part.mediaType !== "string" ||
-    !isRecord(part.data)
-  ) {
+function canonicalizeAsyncToolContentPart(
+  part: ToolContentPart,
+): ToolContentPart {
+  if (part.type !== "file") {
     return part;
   }
 
-  const data = part.data;
-  if (
-    data.type === "data" &&
-    (data.data instanceof Uint8Array || data.data instanceof ArrayBuffer)
-  ) {
+  const { data } = part;
+  if (data.type === "data" && typeof data.data !== "string") {
     return {
       type: "file-data",
       data: Buffer.from(
@@ -473,19 +469,19 @@ function canonicalizeAsyncToolContentPart(part: unknown): unknown {
           : data.data,
       ).toString("base64"),
       mediaType: part.mediaType,
-      ...(typeof part.filename === "string" ? { filename: part.filename } : {}),
-      ...(isRecord(part.providerOptions)
+      ...(part.filename !== undefined ? { filename: part.filename } : {}),
+      ...(part.providerOptions
         ? { providerOptions: part.providerOptions }
         : {}),
     };
   }
 
-  if (data.type === "url" && data.url instanceof URL) {
+  if (data.type === "url") {
     return {
       type: "file-url",
       url: data.url.href,
       mediaType: part.mediaType,
-      ...(isRecord(part.providerOptions)
+      ...(part.providerOptions
         ? { providerOptions: part.providerOptions }
         : {}),
     };
@@ -495,17 +491,14 @@ function canonicalizeAsyncToolContentPart(part: unknown): unknown {
 }
 
 function canonicalizeAsyncToolOutput(output: unknown): unknown {
-  if (
-    !isRecord(output) ||
-    output.type !== "content" ||
-    !Array.isArray(output.value)
-  ) {
+  const parsed = parseToolResultOutput(output);
+  if (parsed?.type !== "content") {
     return output;
   }
 
   return {
-    ...output,
-    value: output.value.map(canonicalizeAsyncToolContentPart),
+    ...parsed,
+    value: parsed.value.map(canonicalizeAsyncToolContentPart),
   };
 }
 
@@ -518,10 +511,6 @@ function formatUnknown(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object";
 }
 
 // `statusId` is the resultId under its model-facing name.

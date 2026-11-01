@@ -83,8 +83,9 @@ afterEach((): void => {
 });
 
 describe("tenant channel apiUrl", () => {
-  for (const call of TENANT_CALLS) {
-    it(`${call.name} refuses a host that resolves to a private address`, async (): Promise<void> => {
+  it.each(TENANT_CALLS)(
+    "$name refuses a host that resolves to a private address",
+    async (call): Promise<void> => {
       const restoreDns = stubPublicDns("10.0.0.5");
       let requests = 0;
       globalThis.fetch = Object.assign(
@@ -102,9 +103,12 @@ describe("tenant channel apiUrl", () => {
       }
 
       expect(requests).toBe(0);
-    });
+    },
+  );
 
-    it(`${call.name} refuses a redirect to a private address`, async (): Promise<void> => {
+  it.each(TENANT_CALLS)(
+    "$name refuses a redirect to a private address",
+    async (call): Promise<void> => {
       // Passes the address check, then redirects to loopback: a followed one shows a second path.
       const paths: string[] = [];
       const server = Bun.serve({
@@ -143,8 +147,8 @@ describe("tenant channel apiUrl", () => {
 
       expect(paths).toHaveLength(1);
       expect(paths).not.toContain("/internal");
-    });
-  }
+    },
+  );
 });
 
 function discordActions(): ChannelActions {

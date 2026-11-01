@@ -9,7 +9,7 @@ import {
 } from "../../shared/convex/sandbox-snapshots.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
-import { isPlainObject } from "../../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import {
   CONFIGURED_SIZE_PROVIDERS,
   type SandboxControlPlane,

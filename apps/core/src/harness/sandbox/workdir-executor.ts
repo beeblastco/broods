@@ -10,7 +10,7 @@ import { toErrorMessage } from "../../shared/errors.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
-import { isPlainObject } from "../../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import { stripTrailingSlashes } from "../../shared/paths.ts";
 import {
   type SandboxRunMetadata,

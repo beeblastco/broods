@@ -4,11 +4,18 @@ import {
   createHash,
   randomBytes,
 } from "node:crypto";
-import { isPlainObject } from "./object.ts";
+import { z } from "zod";
 
 const TICKET_ALGORITHM = "aes-256-gcm";
 const TICKET_AUTH_TAG_LENGTH = 16;
 const TICKET_VERSION = "st1";
+const SEALED_TICKET = z.object({
+  url: z.string(),
+  authorization: z.string(),
+  authorizationHeader: z.string().optional(),
+  accountId: z.string(),
+  expiresAt: z.number(),
+});
 
 export const TERMINAL_TICKET_TTL_MS = 2 * 60 * 1000;
 export const TERMINAL_WEBSOCKET_PATH = "/v1/sandboxes/terminal/ws";
@@ -60,32 +67,13 @@ export function openTerminalTicket(
       decipher.update(ciphertextBytes),
       decipher.final(),
     ]).toString("utf-8");
-    const parsed: unknown = JSON.parse(plaintext);
-    if (!isPlainObject(parsed)) return null;
-    const { url, authorization, authorizationHeader, accountId, expiresAt } =
-      parsed;
-    if (
-      typeof url !== "string" ||
-      typeof authorization !== "string" ||
-      typeof accountId !== "string"
-    )
-      return null;
-    if (
-      authorizationHeader !== undefined &&
-      typeof authorizationHeader !== "string"
-    )
-      return null;
-    if (typeof expiresAt !== "number" || expiresAt <= now) return null;
+    const sealed = SEALED_TICKET.safeParse(JSON.parse(plaintext));
+    if (!sealed.success || sealed.data.expiresAt <= now) return null;
+    const { authorizationHeader, ...ticket } = sealed.data;
 
-    return {
-      url: url,
-      authorization: authorization,
-      accountId: accountId,
-      expiresAt: expiresAt,
-      ...(authorizationHeader
-        ? { authorizationHeader: authorizationHeader }
-        : {}),
-    };
+    return authorizationHeader
+      ? { ...ticket, authorizationHeader: authorizationHeader }
+      : ticket;
   } catch {
     return null;
   }

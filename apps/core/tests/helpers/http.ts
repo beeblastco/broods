@@ -38,8 +38,7 @@ export function coreRequest(
       lowerHeaders["x-forwarded-for"]
         ?.split(",")
         .map((ip) => ip.trim())
-        .filter(Boolean)
-        .pop() ?? "127.0.0.1",
+        .findLast(Boolean) ?? "127.0.0.1",
   };
 }
 

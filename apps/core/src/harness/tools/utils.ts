@@ -6,6 +6,7 @@ import type {
   UserContent,
   UserModelMessage,
 } from "ai";
+import { z } from "zod";
 import {
   applyRunOverrides,
   type AgentConfig,
@@ -44,6 +45,106 @@ const MODEL_IMAGE_TYPES: ReadonlySet<string> = new Set([
   "image/webp",
 ]);
 const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
+
+const jsonValueSchema = z.custom<JSONValue>((value) => isJSONValue(value));
+const providerOptionsSchema = z
+  .record(z.string(), z.record(z.string(), jsonValueSchema))
+  .optional();
+const providerReferenceSchema = z.record(z.string(), z.string());
+const toolContentPartSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("text"),
+    text: z.string(),
+    providerOptions: providerOptionsSchema,
+  }),
+  z.object({
+    type: z.literal("file"),
+    data: z.discriminatedUnion("type", [
+      z.object({
+        type: z.literal("data"),
+        data: z.union([
+          z.string(),
+          z.instanceof(Uint8Array),
+          z.instanceof(ArrayBuffer),
+        ]),
+      }),
+      z.object({ type: z.literal("url"), url: z.instanceof(URL) }),
+      z.object({
+        type: z.literal("reference"),
+        reference: providerReferenceSchema,
+      }),
+      z.object({ type: z.literal("text"), text: z.string() }),
+    ]),
+    mediaType: z.string(),
+    filename: z.string().optional(),
+    providerOptions: providerOptionsSchema,
+  }),
+  z.object({
+    type: z.enum(["file-data", "image-data"]),
+    data: z.string(),
+    mediaType: z.string(),
+    filename: z.string().optional(),
+    providerOptions: providerOptionsSchema,
+  }),
+  z.object({
+    type: z.literal("file-url"),
+    url: z.string(),
+    mediaType: z.string().optional(),
+    providerOptions: providerOptionsSchema,
+  }),
+  z.object({
+    type: z.literal("image-url"),
+    url: z.string(),
+    providerOptions: providerOptionsSchema,
+  }),
+  z.object({
+    type: z.enum(["file-id", "image-file-id"]),
+    fileId: z.union([z.string(), providerReferenceSchema]),
+    providerOptions: providerOptionsSchema,
+  }),
+  z.object({
+    type: z.enum(["file-reference", "image-file-reference"]),
+    providerReference: providerReferenceSchema,
+    providerOptions: providerOptionsSchema,
+  }),
+  z.object({
+    type: z.literal("custom"),
+    providerOptions: providerOptionsSchema,
+  }),
+]);
+const toolResultOutputTypeSchema = z.object({
+  type: z.enum([
+    "text",
+    "error-text",
+    "json",
+    "error-json",
+    "execution-denied",
+    "content",
+  ]),
+});
+const toolResultOutputSchema: z.ZodType<ToolResultOutput> =
+  z.discriminatedUnion("type", [
+    z.object({
+      type: z.enum(["text", "error-text"]),
+      value: z.string(),
+      providerOptions: providerOptionsSchema,
+    }),
+    z.object({
+      type: z.enum(["json", "error-json"]),
+      value: jsonValueSchema,
+      providerOptions: providerOptionsSchema,
+    }),
+    z.object({
+      type: z.literal("execution-denied"),
+      reason: z.string().optional(),
+      providerOptions: providerOptionsSchema,
+    }),
+    z.object({
+      type: z.literal("content"),
+      value: z.array(toolContentPartSchema),
+      providerOptions: providerOptionsSchema,
+    }),
+  ]);
 
 export type ToolContentPart = Extract<
   ToolResultOutput,
@@ -140,11 +241,15 @@ export function modelValueToUserParts(value: JSONValue): UserContentPart[] {
 
 // For uploaded tools: the SDK's default output conversion never validates what it wraps.
 export function normalizeToolResultOutput(output: unknown): ToolResultOutput {
-  if (isToolResultOutput(output)) {
-    return output;
+  const parsed = parseToolResultOutput(output);
+  if (parsed) {
+    return parsed;
   }
-  if (hasToolResultOutputDiscriminant(output)) {
-    throw new TypeError(`Invalid ToolResultOutput for type "${output.type}"`);
+  const typed = toolResultOutputTypeSchema.safeParse(output);
+  if (typed.success) {
+    throw new TypeError(
+      `Invalid ToolResultOutput for type "${typed.data.type}"`,
+    );
   }
   if (typeof output === "string") {
     return { type: "text", value: output };
@@ -278,29 +383,6 @@ function formatJSONValue(value: JSONValue): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
-function hasToolResultOutputDiscriminant(
-  value: unknown,
-): value is Record<string, unknown> & { type: string } {
-  return (
-    isRecord(value) &&
-    typeof value.type === "string" &&
-    [
-      "text",
-      "json",
-      "execution-denied",
-      "error-text",
-      "error-json",
-      "content",
-    ].includes(value.type)
-  );
-}
-
-function hasValidProviderOptions(value: Record<string, unknown>): boolean {
-  return (
-    value.providerOptions === undefined || isJSONValue(value.providerOptions)
-  );
-}
-
 function imageSize(
   bytes: Buffer,
   mediaType: string,
@@ -320,29 +402,6 @@ function imageSize(
   }
 
   return jpegSize(bytes);
-}
-
-function isFileData(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.type !== "string") {
-    return false;
-  }
-
-  switch (value.type) {
-    case "data":
-      return (
-        typeof value.data === "string" ||
-        value.data instanceof Uint8Array ||
-        value.data instanceof ArrayBuffer
-      );
-    case "url":
-      return value.url instanceof URL;
-    case "reference":
-      return isStringRecord(value.reference);
-    case "text":
-      return typeof value.text === "string";
-    default:
-      return false;
-  }
 }
 
 function isJSONValue(
@@ -372,96 +431,6 @@ function isJSONValue(
   active.delete(value);
 
   return valid;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object";
-}
-
-function isStringRecord(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    Object.values(value).every((item) => typeof item === "string")
-  );
-}
-
-function isToolResultContentPart(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.type !== "string") {
-    return false;
-  }
-
-  switch (value.type) {
-    case "text":
-      return typeof value.text === "string" && hasValidProviderOptions(value);
-    case "file":
-      return (
-        typeof value.mediaType === "string" &&
-        isFileData(value.data) &&
-        (value.filename === undefined || typeof value.filename === "string") &&
-        hasValidProviderOptions(value)
-      );
-    case "file-data":
-    case "image-data":
-      return (
-        typeof value.data === "string" &&
-        typeof value.mediaType === "string" &&
-        (value.filename === undefined || typeof value.filename === "string") &&
-        hasValidProviderOptions(value)
-      );
-    case "file-url":
-      return (
-        typeof value.url === "string" &&
-        (value.mediaType === undefined ||
-          typeof value.mediaType === "string") &&
-        hasValidProviderOptions(value)
-      );
-    case "image-url":
-      return typeof value.url === "string" && hasValidProviderOptions(value);
-    case "file-id":
-    case "image-file-id":
-      return (
-        (typeof value.fileId === "string" || isStringRecord(value.fileId)) &&
-        hasValidProviderOptions(value)
-      );
-    case "file-reference":
-    case "image-file-reference":
-      return (
-        isStringRecord(value.providerReference) &&
-        hasValidProviderOptions(value)
-      );
-    case "custom":
-      return hasValidProviderOptions(value);
-    default:
-      return false;
-  }
-}
-
-function isToolResultOutput(value: unknown): value is ToolResultOutput {
-  if (!isRecord(value) || typeof value.type !== "string") {
-    return false;
-  }
-
-  switch (value.type) {
-    case "text":
-    case "error-text":
-      return typeof value.value === "string" && hasValidProviderOptions(value);
-    case "json":
-    case "error-json":
-      return isJSONValue(value.value) && hasValidProviderOptions(value);
-    case "execution-denied":
-      return (
-        (value.reason === undefined || typeof value.reason === "string") &&
-        hasValidProviderOptions(value)
-      );
-    case "content":
-      return (
-        Array.isArray(value.value) &&
-        value.value.every(isToolResultContentPart) &&
-        hasValidProviderOptions(value)
-      );
-    default:
-      return false;
-  }
 }
 
 function jpegSize(
@@ -497,7 +466,10 @@ function jpegSize(
 export function parseToolResultOutput(
   value: unknown,
 ): ToolResultOutput | undefined {
-  return isToolResultOutput(value) ? value : undefined;
+  // The input, not zod's copy, which would drop the keys the schema does not name.
+  return toolResultOutputSchema.safeParse(value).success
+    ? (value as ToolResultOutput)
+    : undefined;
 }
 
 async function startedInConversation(

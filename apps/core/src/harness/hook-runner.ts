@@ -6,7 +6,7 @@ import type {
   HookAgentConfig,
 } from "../shared/domain/agent-config.ts";
 import { logError } from "../shared/log.ts";
-import { isPlainObject } from "../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import { readS3Bytes } from "../shared/s3.ts";
 import { streamIsolatePayload } from "./isolate/executor.ts";
 import { toolBundlesBucket } from "./frames.ts";

@@ -198,7 +198,7 @@ export class AccountCipher {
     this.keys = new Map(keys.map((key) => [key.keyId, key]));
     // Rows come in creation order, so the last live key is the newest.
     this.currentKeyId =
-      keys.filter((key) => key.retiredAt === undefined).at(-1)?.keyId ?? null;
+      keys.findLast((key) => key.retiredAt === undefined)?.keyId ?? null;
   }
 
   get keyId(): string | null {

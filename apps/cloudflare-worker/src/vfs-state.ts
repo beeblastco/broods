@@ -126,8 +126,5 @@ export function samePacked(
 }
 
 function defaultPaths(): ReadonlySet<string> {
-  const fs = new InMemoryFs();
-  new Bash({ fs: fs, cwd: "/" });
-
-  return new Set(fs.getAllPaths());
+  return new Set(new Bash({ fs: new InMemoryFs(), cwd: "/" }).fs.getAllPaths());
 }

@@ -1135,7 +1135,7 @@ function allocatePortBase(): number {
 
 function currentInstanceId(): string {
   const digest = createHash("sha1").update(repoRoot).digest("hex").slice(0, 8);
-  const basename = repoRoot.split("/").filter(Boolean).pop() ?? "broods";
+  const basename = repoRoot.split("/").findLast(Boolean) ?? "broods";
 
   return `${basename}-${digest}`;
 }

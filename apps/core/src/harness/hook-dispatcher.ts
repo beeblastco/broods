@@ -6,7 +6,7 @@ import type {
   AgentHookEventName,
   HookAgentConfig,
 } from "../shared/domain/agent-config.ts";
-import { isPlainObject } from "../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import { getStorage } from "../shared/storage.ts";
 import { runCodeHook } from "./hook-runner.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
@@ -83,7 +83,7 @@ export function createHookDispatcher(
         return undefined;
       }
       const run = queue.then(async () => {
-        let merged: Record<string, unknown> | undefined;
+        const mutations: Record<string, unknown>[] = [];
         for (const record of records) {
           const { mutation, state } = await runCodeHook({
             accountId: accountId,
@@ -94,12 +94,12 @@ export function createHookDispatcher(
             state: runState,
           });
           runState = state;
-          if (mutation) {
-            merged = { ...merged, ...mutation };
-          }
+          if (mutation) mutations.push(mutation);
         }
 
-        return merged;
+        return mutations.length > 0
+          ? Object.fromEntries(mutations.flatMap((m) => Object.entries(m)))
+          : undefined;
       });
       queue = run.catch(() => undefined);
 

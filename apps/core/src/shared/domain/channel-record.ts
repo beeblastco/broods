@@ -4,7 +4,7 @@
 import type { ChannelReplyIn } from "@broods/convex/model/channelRules";
 import type { SystemModelMessage } from "ai";
 import { logWarn } from "../log.ts";
-import { isPlainObject } from "../object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import {
   toChannelRuntimeAgentConfig,
   type AgentBehaviorConfig,

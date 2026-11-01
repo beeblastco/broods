@@ -63,6 +63,7 @@ afterAll(async (): Promise<void> => {
   }
 });
 
+// skip: needs the native @matrix-org/matrix-sdk-crypto-nodejs binding for this platform
 describe.skipIf(!cryptoAvailable)("the account loop", () => {
   it("forwards a room message and sends a reply back", async () => {
     const { MatrixAccount } = await import("../src/account.ts");

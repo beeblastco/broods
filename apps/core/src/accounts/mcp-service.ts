@@ -21,7 +21,7 @@ import {
   parseJsonBody,
   type CoreRequest,
 } from "../shared/http.ts";
-import { isPlainObject, isStringRecord } from "../shared/object.ts";
+import { isPlainObject, isStringRecord } from "@broods/convex/model/objects";
 import { getStorage } from "../shared/storage.ts";
 import { resolveAgentRuntime } from "../shared/workspaces.ts";
 

@@ -66,7 +66,7 @@ import {
   type CoreRequest,
 } from "../shared/http.ts";
 import { logDebug, logError, logWarn } from "../shared/log.ts";
-import { isPlainObject } from "../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
 import { getStorage } from "../shared/storage.ts";

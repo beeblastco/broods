@@ -1,5 +1,5 @@
 import type { ToolSet } from "ai";
-import { isPlainObject } from "../../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import type { ToolContext } from "./index.ts";
 
 // How the AI SDK serializes a provider tool. Its lazy schemas do not survive JSON, so only

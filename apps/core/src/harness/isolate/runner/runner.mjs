@@ -320,6 +320,7 @@ async function runIsolateJob(
             const timer = setTimeout(
               () => {
                 timers.delete(timer);
+                // oxlint-disable-next-line eslint/no-useless-call -- fireTimer is an ivm.Reference: its apply calls into the isolate, it is not Function.prototype.apply
                 fireTimer?.apply(undefined, [id]).catch(() => {});
               },
               Math.min(ms, 60_000),

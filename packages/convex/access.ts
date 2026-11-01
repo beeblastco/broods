@@ -80,7 +80,7 @@ const BUILT_IN: Array<{
   })),
 ];
 
-const BUILT_IN_ROLE_NAMES = ["owner", "admin", "member"];
+const BUILT_IN_ROLE_NAMES = new Set(["owner", "admin", "member"]);
 
 const dashboardActionValidator = v.union(
   ...DASHBOARD_POLICY_ACTIONS.map((action) => v.literal(action)),
@@ -562,7 +562,7 @@ export const createRole = mutation({
     if (!orgId) throw new ClientError("No organization");
     const name = args.name.trim();
     if (!name) throw new ClientError("A role needs a name");
-    if (BUILT_IN_ROLE_NAMES.includes(name.toLowerCase())) {
+    if (BUILT_IN_ROLE_NAMES.has(name.toLowerCase())) {
       throw new ClientError(`${name} is a built-in role`);
     }
     await assertOwnedPolicies(ctx, caller.account._id, args.policyIds);
