@@ -1413,7 +1413,7 @@ export const subagentTaskValidator = v.object({
  * A tool call waiting on a person's approval, as the polling row lists it:
  * core's `ToolApprovalSummary`. `input` is the model-generated tool input.
  */
-export const toolApprovalSummaryValidator = v.object({
+const toolApprovalSummaryValidator = v.object({
   approvalId: v.string(),
   toolCallId: v.string(),
   toolName: v.string(),
@@ -1423,7 +1423,7 @@ export const toolApprovalSummaryValidator = v.object({
  * One open ask_questions prompt while a run is awaiting_input: core's
  * `PendingQuestionSummary` over its `ChannelQuestion` rows.
  */
-export const pendingQuestionSummaryValidator = v.object({
+const pendingQuestionSummaryValidator = v.object({
   statusId: v.string(),
   questions: v.array(
     v.object({
@@ -1458,11 +1458,8 @@ export const runtimeAsyncAgentResultsFields = {
   response: v.optional(v.any()),
   error: v.optional(v.string()),
   approvals: v.optional(v.array(toolApprovalSummaryValidator)),
-  // Open ask_questions prompts while status is awaiting_input. Loose for one
-  // release: rows stored before ask_questions validated its input expire within
-  // 7 days of it shipping, then this narrows to pendingQuestionSummaryValidator.
-  // Writes are already held to it by runtime.ts's outcome args.
-  questions: v.optional(v.array(v.any())),
+  // Open ask_questions prompts while status is awaiting_input.
+  questions: v.optional(v.array(pendingQuestionSummaryValidator)),
   createdAt: v.string(),
   updatedAt: v.string(),
   expiresAt: v.number(),

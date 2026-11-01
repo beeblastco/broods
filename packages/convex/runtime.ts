@@ -14,7 +14,6 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { sha256Hex } from "./model/accountSecrets";
 import {
   asyncToolDeliveryValidator,
-  pendingQuestionSummaryValidator,
   reservedSandboxValidator,
   runtimeAsyncAgentResultsFields,
   runtimeAsyncToolResultsFields,
@@ -22,7 +21,6 @@ import {
   sandboxProviderValidator,
   sandboxSnapshotScopeValidator,
   subagentTaskValidator,
-  toolApprovalSummaryValidator,
 } from "./schema";
 import {
   accountIdFromKey,
@@ -69,10 +67,10 @@ export const conversationEventsValidator = v.array(
 /** How an async run ended, or what it waits on, as its polling row records it. */
 export const asyncAgentOutcomeValidator = v.object({
   status: runtimeAsyncAgentResultsFields.status,
-  response: v.optional(v.any()),
-  error: v.optional(v.string()),
-  approvals: v.optional(v.array(toolApprovalSummaryValidator)),
-  questions: v.optional(v.array(pendingQuestionSummaryValidator)),
+  response: runtimeAsyncAgentResultsFields.response,
+  error: runtimeAsyncAgentResultsFields.error,
+  approvals: runtimeAsyncAgentResultsFields.approvals,
+  questions: runtimeAsyncAgentResultsFields.questions,
 });
 
 const asyncAgentDoc = v.object({

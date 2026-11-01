@@ -11,8 +11,6 @@
  *
  * The POST authenticates with the transport credential `discord-wire.ts`
  * derives from the bot token, so the token itself stays off the public edge.
- * A core that predates the derivation answers it with a 401; the retry with
- * the raw token below keeps messages flowing until that core has rolled.
  */
 
 import {
@@ -46,12 +44,6 @@ export interface ForwardTarget {
  */
 export interface ForwardAuth {
   attempts?: number;
-  /**
-   * Retried once per target when `token` gets a 401: a core that predates the
-   * derived Discord credential still expects the raw bot token. Remove
-   * together with the raw-token fallback in core's `discord-channel.ts`.
-   */
-  fallbackToken?: string;
   header: string;
   timeoutMs: number;
   token: string;
@@ -97,7 +89,6 @@ export async function forwardMessageCreate(
 
   await fanOut(targets, body, {
     attempts: DISCORD_FORWARD_ATTEMPTS,
-    fallbackToken: botToken,
     header: DISCORD_GATEWAY_TOKEN_HEADER,
     timeoutMs: FETCH_TIMEOUT_MS,
     token: discordForwarderToken(botToken),
@@ -111,7 +102,6 @@ async function post(
   fields: LogFields,
 ): Promise<boolean> {
   const attempts = auth.attempts ?? 1;
-  let token = auth.token;
   let retryAfterMs = Number.NaN;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     if (attempt > 1) {
@@ -130,7 +120,7 @@ async function post(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          [auth.header]: token,
+          [auth.header]: auth.token,
         },
         body: body,
         // The forwarder's token rides the header above, and the gateway never
@@ -139,18 +129,6 @@ async function post(
         signal: AbortSignal.timeout(auth.timeoutMs),
       });
       if (response.ok) return true;
-      // A 401 on the primary token is asked again at once with the fallback
-      // (see `ForwardAuth`). It is another credential, not a retry of this
-      // one, so it spends no attempt.
-      if (
-        response.status === 401 &&
-        auth.fallbackToken !== undefined &&
-        token !== auth.fallbackToken
-      ) {
-        token = auth.fallbackToken;
-        attempt -= 1;
-        continue;
-      }
       // A 4xx answers the same way every time, except a timeout and a rate
       // limit, so only those and a 5xx earn a retry.
       const retryable =
@@ -164,7 +142,7 @@ async function post(
           agentName: target.agentName,
           attempts: attempt,
           status: response.status,
-          tokenHint: tokenHint(token),
+          tokenHint: tokenHint(auth.token),
         });
 
         return !retryable;
@@ -180,7 +158,7 @@ async function post(
           agentName: target.agentName,
           attempts: attempt,
           error: error instanceof Error ? error.message : String(error),
-          tokenHint: tokenHint(token),
+          tokenHint: tokenHint(auth.token),
         });
       }
     }

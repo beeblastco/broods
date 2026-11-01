@@ -15,11 +15,7 @@ x-discord-gateway-token: <credential derived from the bot token>
 
 The header value is `discordForwarderToken(botToken)` from
 `apps/core/src/shared/discord-wire.ts`, not the bot token itself: a leak of
-the transport credential cannot call Discord. Rollout order between the two
-releases is not guaranteed, so each side carries a transition fallback: core
-still accepts the raw token with a deprecation warning, and the forwarder
-retries a 401 once with the raw token for a core that predates the derivation.
-Remove both fallbacks together once the derivation has rolled everywhere.
+the transport credential cannot call Discord. Core refuses the raw token.
 
 ## Gotchas
 
