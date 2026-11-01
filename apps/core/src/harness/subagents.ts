@@ -553,10 +553,14 @@ export class SubagentCoordinator {
     if (admission.outcome === "queued") {
       if (running) await this.watchReply(running, message);
 
+      // A child an earlier turn left running reports to that turn's
+      // coordinator, which resumes this conversation with its result.
       return {
         status: "delivered",
         exchangeId: message.exchangeId,
-        note: "It reads this at its next step.",
+        note: running
+          ? "It reads this at its next step."
+          : "It reads this at its next step. It is still running from an earlier turn, so its reply arrives as a later message, not in this turn.",
       };
     }
     if (admission.outcome !== "not_running") {

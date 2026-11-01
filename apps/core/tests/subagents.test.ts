@@ -2563,6 +2563,25 @@ describe("message-agents in the coordinator", () => {
     ]);
   });
 
+  it("tells the parent a child running outside this turn replies later, instead of waiting on it", async () => {
+    const { coordinator, internals, address } = await persistentCoordinator(
+      (name) => (name === "acceptIngress" ? { outcome: "queued" } : true),
+    );
+
+    // The steer lands, but no child of this coordinator owns the conversation.
+    expect(
+      await coordinator.messageChild(
+        address,
+        agentMessage({ waitSeconds: 60 }),
+      ),
+    ).toMatchObject({
+      status: "delivered",
+      note: expect.stringContaining("arrives as a later message"),
+    });
+    expect(internals.pending.size).toBe(0);
+    expect(await coordinator.waitForIdle()).toBe("idle");
+  });
+
   it("resumes an idle child, and refuses once the family spent its wake budget", async () => {
     const { coordinator, address, dispatched } = await persistentCoordinator(
       (name) => (name === "acceptIngress" ? { outcome: "not_running" } : true),
