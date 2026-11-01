@@ -55,5 +55,7 @@ if ! sha256sum --check --status "$stamp" 2>/dev/null; then
   fi
 fi
 
-timeout 60 git fetch origin dev --quiet 2>/dev/null || true
+# Into origin/dev itself: the skill branches and measures the baseline from it.
+timeout 60 git fetch --quiet origin +refs/heads/dev:refs/remotes/origin/dev 2>/dev/null ||
+  echo "cloud-session-start: git fetch of origin/dev failed, so it may be stale"
 exit 0
