@@ -33,10 +33,22 @@ test("empty piped stdin fails instead of storing nothing", async () => {
   expect(result.stderr).toContain("SECRET is required");
 });
 
+test("an optional prompt skips on an empty line but still stops when input ends", async () => {
+  const skipped = await run("\n", ["--optional"]);
+  const ended = await run("", ["--optional"]);
+
+  expect(skipped.code).toBe(0);
+  expect(skipped.stdout).toContain('value=""');
+  // Ctrl+D or Ctrl+C ends the input without a line: the user is aborting.
+  expect(ended.code).not.toBe(0);
+  expect(ended.stderr).toContain("SECRET is required");
+});
+
 async function run(
   stdin: string,
+  args: string[] = [],
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const child = Bun.spawn([process.execPath, FIXTURE], {
+  const child = Bun.spawn([process.execPath, FIXTURE, ...args], {
     stdin: new Blob([stdin]),
     stdout: "pipe",
     stderr: "pipe",
