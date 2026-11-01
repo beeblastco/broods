@@ -26,16 +26,13 @@ const OTEL_EXPORTER_OTLP_ENDPOINT =
   process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim() || "https://otel.beeblast.co";
 const OTEL_EXPORTER_OTLP_HEADERS =
   process.env.OTEL_EXPORTER_OTLP_HEADERS?.trim();
-// Comma-separated public IPs the self-hosted runtime reaches AWS from (the infra
-// repo's cluster node). On production stages the static-key users deny every
-// call from anywhere else, so a leaked key is useless off the cluster. Unset =
-// no lock. Change it before the cluster gets a new address, or runtime AWS calls fail.
-const RUNTIME_EGRESS_IPS = (process.env.RUNTIME_EGRESS_IPS ?? "")
-  .split(",")
+// Comma-separated public IPs of the infra repo's cluster. Unset = no lock. Change
+// it before the cluster gets a new address, or production AWS calls fail.
+const RUNTIME_EGRESS_IPS_RAW = process.env.RUNTIME_EGRESS_IPS?.trim() ?? "";
+const RUNTIME_EGRESS_IPS = RUNTIME_EGRESS_IPS_RAW.split(",")
   .map((ip) => ip.trim())
   .filter((ip) => ip.length > 0);
-// Fail closed: a value like "," must not silently drop the lock.
-if (RUNTIME_EGRESS_IPS.length === 0 && process.env.RUNTIME_EGRESS_IPS?.trim()) {
+if (RUNTIME_EGRESS_IPS_RAW && RUNTIME_EGRESS_IPS.length === 0) {
   throw new Error("RUNTIME_EGRESS_IPS is set but lists no IP address");
 }
 
@@ -190,7 +187,7 @@ interface PermissionStatement {
   effect?: "Allow" | "Deny";
   actions: string[];
   resources: $util.Input<string>[];
-  conditions?: Record<string, Record<string, string>>;
+  conditions?: Record<string, Record<string, string | string[]>>;
 }
 
 // SST's `permissions` shorthand -> a raw IAM policy doc, for the container
@@ -1169,29 +1166,28 @@ export default $config({
         }),
       ),
     });
-    // Both users above hold static keys that live on the cluster. Off-cluster
-    // calls are denied; sessions from the roles they assume are not affected.
+    // Static keys of both users live only on the cluster: deny calls from
+    // anywhere else. Sessions from the roles they assume are not affected.
     if (isProduction && RUNTIME_EGRESS_IPS.length > 0) {
-      const sourceIpLock = JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Effect: "Deny",
-            Action: "*",
-            Resource: "*",
-            Condition: {
-              NotIpAddress: { "aws:SourceIp": RUNTIME_EGRESS_IPS },
-              Bool: { "aws:ViaAWSService": "false" },
-            },
+      const sourceIpLock = permissionsPolicy([
+        {
+          effect: "Deny",
+          actions: ["*"],
+          resources: ["*"],
+          conditions: {
+            NotIpAddress: { "aws:SourceIp": RUNTIME_EGRESS_IPS },
+            Bool: { "aws:ViaAWSService": "false" },
           },
-        ],
+        },
+      ]);
+      new aws.iam.UserPolicy("CoreRuntimeSourceIpLock", {
+        user: coreRuntimeUser.name,
+        policy: sourceIpLock,
       });
-      for (const [id, user] of [
-        ["CoreRuntimeSourceIpLock", coreRuntimeUser],
-        ["ConvexBootstrapSourceIpLock", convexBootstrapUser],
-      ] as const) {
-        new aws.iam.UserPolicy(id, { user: user.name, policy: sourceIpLock });
-      }
+      new aws.iam.UserPolicy("ConvexBootstrapSourceIpLock", {
+        user: convexBootstrapUser.name,
+        policy: sourceIpLock,
+      });
     }
 
     // The Cloudflare Workers, named per stage, when the deploy has a
