@@ -335,7 +335,8 @@ export function useAgentChat({
           timer = undefined;
           const assistantMessage = pending;
           pending = null;
-          if (!assistantMessage) return;
+          // An aborted turn's transcript now belongs to a reset or a newer turn.
+          if (!assistantMessage || controller.signal.aborted) return;
           setMessages((prev) => {
             const next = upsertMainAssistantMessage({
               previousMessages: prev,
@@ -355,8 +356,8 @@ export function useAgentChat({
           }
         } finally {
           clearTimeout(timer);
+          commitPending();
         }
-        commitPending();
 
         setStatus("ready");
       } catch (err) {

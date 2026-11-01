@@ -63,9 +63,10 @@ export default function OrgSettingsPage(): React.JSX.Element {
   const tab = pickTab(ORG_TABS, searchParams.get("tab"));
 
   // No panel renders before the org query answers. A cold load onto a
-  // split-out tab fetches its chunk alongside that query, not after it.
+  // split-out tab fetches its chunk alongside that query, not after it. A
+  // failed fetch stays quiet here; the panel's own load surfaces it.
   useEffect(() => {
-    void ORG_PANELS[tab.id]?.();
+    void ORG_PANELS[tab.id]?.().catch((): void => {});
   }, [tab]);
 
   const renderPanel = (): React.JSX.Element | null => {

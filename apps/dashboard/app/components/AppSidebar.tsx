@@ -173,7 +173,10 @@ export function AppSidebar(): React.JSX.Element {
                     <SidebarMenuSub>
                       {item.tabs.map((tab) => {
                         const load = TAB_PANELS[item.segment]?.[tab.id];
-                        const warm = load ? (): void => void load() : undefined;
+                        // A failed warm-up stays quiet; the click's load surfaces it.
+                        const warm = load
+                          ? (): void => void load().catch((): void => {})
+                          : undefined;
 
                         return (
                           <SidebarMenuSubItem key={tab.id}>

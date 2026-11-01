@@ -932,31 +932,33 @@ function CanvasInner({
     if (canWrite) scheduleSave();
   }, [mcpServers, canWrite, setNodes, scheduleSave]);
 
-  // Re-center the focused node after the side panel finishes its width transition,
-  // so it stays visually centered as the canvas shrinks or grows back.
+  // Re-center the focused node as the side panel opens or closes. Two frames:
+  // `setCenter` reads the canvas width ReactFlow's ResizeObserver stores after layout.
   const lastFocusedNode = useRef<Node | null>(null);
   useEffect(() => {
     const node = selectedNode ?? lastFocusedNode.current;
     if (selectedNode) lastFocusedNode.current = selectedNode;
     if (!node) return;
 
-    const id = window.setTimeout(() => {
-      const width = node.measured?.width ?? node.width ?? 0;
-      const height = node.measured?.height ?? node.height ?? 0;
-      void setCenter(
-        node.position.x + width / 2,
-        node.position.y + height / 2,
-        {
-          zoom: getZoom(),
-          duration: 200,
-        },
-      ).catch((error: unknown): void => {
-        console.error("Failed to center the selected canvas node", error);
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        const width = node.measured?.width ?? node.width ?? 0;
+        const height = node.measured?.height ?? node.height ?? 0;
+        void setCenter(
+          node.position.x + width / 2,
+          node.position.y + height / 2,
+          {
+            zoom: getZoom(),
+            duration: 200,
+          },
+        ).catch((error: unknown): void => {
+          console.error("Failed to center the selected canvas node", error);
+        });
+        if (!selectedNode) lastFocusedNode.current = null;
       });
-      if (!selectedNode) lastFocusedNode.current = null;
-    }, 220);
+    });
 
-    return () => window.clearTimeout(id);
+    return () => cancelAnimationFrame(frame);
   }, [selectedNode, setCenter, getZoom]);
 
   /**
