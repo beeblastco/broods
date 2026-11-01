@@ -144,7 +144,13 @@ export function AppSidebar(): React.JSX.Element {
                         }}
                         onClick={(event) => {
                           // Pressed already navigated; skip Link's own push.
-                          if (event.detail > 0 && isPlainPress(event)) {
+                          // The active item has no press push, so its click
+                          // still resets the section to its default tab.
+                          if (
+                            event.detail > 0 &&
+                            isPlainPress(event) &&
+                            !isActive
+                          ) {
                             event.preventDefault();
                           }
                         }}
