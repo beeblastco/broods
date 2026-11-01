@@ -97,8 +97,6 @@ const PERSISTENT_SUBAGENT_KEY =
   /^subagent-persistent-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-([0-9a-f]{32})$/;
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
-// How long a child's ask_parent waits for the parent's answer.
-const ASK_PARENT_WAIT_MS = 5 * 60 * 1000;
 // What the parent model reads for a child it stopped waiting for.
 const STILL_RUNNING_NOTE =
   "Still working. Its result will arrive in this conversation as a new message when it finishes, so do not redo this task.";
@@ -140,9 +138,11 @@ interface SubagentCompletion {
   agentId: string;
   description?: string;
   conversationKey: string;
-  status: "completed" | "failed" | "running";
+  // `awaiting_input`: the child ended its turn on an ask_parent `question`.
+  status: "completed" | "failed" | "running" | "awaiting_input";
   response?: JSONValue;
   error?: string;
+  question?: string;
   // What the parent actually sees, after subagent.visibility + an onSubagentFinish
   // hook. Undefined => render the raw response.
   visibleResult?: JSONValue;
@@ -232,19 +232,6 @@ export class SubagentCoordinator {
   // kept from it. A child still in `pendingMetadata` after its result
   // is one draining a follow-up, and the parent stopping is no news of that row.
   private readonly handled = new Set<string>();
-  // Questions children asked, queued for the parent's next step.
-  private readonly questions: Array<{
-    taskId: string;
-    message: UserModelMessage;
-    dedupeKey: string;
-  }> = [];
-  // Set once no parent pass can answer, so ask_parent returns at once.
-  private questionsClosed = false;
-  // A child blocked in ask_parent, by taskId, resolved by the parent's answer.
-  private readonly openQuestions = new Map<
-    string,
-    (answer: string | null) => void
-  >();
   // The parent's user stop, which every child run listens to.
   private readonly childStop = new AbortController();
   private hooksPromise?: Promise<HookDispatcher>;
@@ -369,7 +356,7 @@ export class SubagentCoordinator {
   ): Promise<"idle" | "question" | "timeout"> {
     while (
       this.pending.size > 0 &&
-      this.questions.length === 0 &&
+      !this.hasQuestion() &&
       Date.now() < this.waitUntilMs
     ) {
       const heartbeatAt = Math.min(
@@ -395,13 +382,13 @@ export class SubagentCoordinator {
       }
     }
 
-    if (this.questions.length > 0) return "question";
+    if (this.hasQuestion()) return "question";
 
     return this.pending.size === 0 ? "idle" : "timeout";
   }
 
   /**
-   * The pass's last write of results and questions. No pass drains after it,
+   * The pass's last write of results. No pass drains after it,
    * so when it fails each finished result it did not save resumes the parent
    * through `resumeParent`, each child still working is detached to resume it
    * the same way, and the run still fails.
@@ -429,8 +416,9 @@ export class SubagentCoordinator {
   }
 
   /**
-   * Moves queued results and questions into the parent conversation and returns
-   * them. The parent's step boundary calls it, so they reach the model mid-pass.
+   * Moves queued results, questions among them, into the parent conversation
+   * and returns them. The parent's step boundary calls it, so they reach the
+   * model mid-pass.
    */
   async takeParentMessages(): Promise<UserModelMessage[]> {
     // A running notice is stale once its child has finished: that child
@@ -442,11 +430,7 @@ export class SubagentCoordinator {
         ({ status, taskId }): boolean =>
           status !== "running" || this.detached.has(taskId),
       );
-    const questions = this.questions.splice(0);
-    const messages = [
-      ...completions.map(completionToParentMessage),
-      ...questions.map((question): UserModelMessage => question.message),
-    ];
+    const messages = completions.map(completionToParentMessage);
     if (messages.length === 0) return messages;
     // One write for all of them. Each is one stored event, and a large write
     // takes several appends, so a failure puts back only what no append saved,
@@ -460,73 +444,16 @@ export class SubagentCoordinator {
         (count): void => {
           saved = count;
         },
-        [
-          ...completions.map(({ eventId, status }): string =>
-            subagentResultDedupeKey(eventId, status),
-          ),
-          ...questions.map(({ dedupeKey }): string => dedupeKey),
-        ],
+        completions.map(({ eventId, status }): string =>
+          subagentResultDedupeKey(eventId, status),
+        ),
       )
       .catch((error: unknown): never => {
         this.completions.unshift(...completions.slice(saved));
-        this.restoreQuestions(
-          questions.slice(Math.max(saved - completions.length, 0)),
-        );
         throw error;
       });
 
     return messages;
-  }
-
-  /**
-   * A child's ask_parent: queues the question for the parent and waits for the
-   * answer, which update_subagent delivers. Null when the parent does not answer
-   * in time, the child stops, it already has a question open, or no parent pass
-   * is left to answer.
-   */
-  async askParent(
-    taskId: string,
-    question: string,
-    abortSignal?: AbortSignal,
-  ): Promise<string | null> {
-    const metadata = this.pendingMetadata.get(taskId);
-    if (
-      !metadata ||
-      this.questionsClosed ||
-      this.openQuestions.has(taskId) ||
-      abortSignal?.aborted
-    ) {
-      return null;
-    }
-    const budgetMs = Math.max(
-      Math.min(ASK_PARENT_WAIT_MS, this.waitUntilMs - Date.now()),
-      0,
-    );
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let onAbort: (() => void) | undefined;
-    const answer = new Promise<string | null>((resolve): void => {
-      this.openQuestions.set(taskId, resolve);
-      timer = setTimeout((): void => resolve(null), budgetMs);
-      onAbort = (): void => resolve(null);
-      abortSignal?.addEventListener("abort", onAbort, { once: true });
-    });
-    this.questions.push({
-      taskId: taskId,
-      message: questionToParentMessage(metadata, question),
-      dedupeKey: `subagent-question:${crypto.randomUUID()}`,
-    });
-    this.notifyCompletion();
-    const result = await answer;
-    clearTimeout(timer);
-    if (onAbort) abortSignal?.removeEventListener("abort", onAbort);
-    // A question nobody answered in time is not left for the parent to answer.
-    this.openQuestions.delete(taskId);
-    const queued = this.questions.findIndex((open) => open.taskId === taskId);
-    if (queued !== -1) {
-      this.questions.splice(queued, 1);
-    }
-
-    return result;
   }
 
   /**
@@ -535,29 +462,6 @@ export class SubagentCoordinator {
    */
   stopChildren(): void {
     this.childStop.abort(new Error(USER_STOP_MESSAGE));
-  }
-
-  /**
-   * For a parent that cannot run another pass: every open question resolves
-   * with no answer, and later ones return at once.
-   */
-  closeQuestions(): void {
-    this.questionsClosed = true;
-    this.questions.length = 0;
-    for (const resolve of this.openQuestions.values()) resolve(null);
-    this.openQuestions.clear();
-  }
-
-  /** Hands the parent's message to a child blocked in ask_parent; false when none is. */
-  answerQuestion(taskId: string, answer: string): boolean {
-    const resolve = this.openQuestions.get(taskId);
-    if (!resolve) {
-      return false;
-    }
-    this.openQuestions.delete(taskId);
-    resolve(answer);
-
-    return true;
   }
 
   /**
@@ -580,8 +484,8 @@ export class SubagentCoordinator {
 
   /**
    * The parent stops waiting on every child still working: each resumes the
-   * parent with its result through `resumeParent` once it finishes, and no
-   * question gets an answer. Returns the children it detached.
+   * parent with its result, or its question, through `resumeParent` once it
+   * finishes. Returns the children it detached.
    */
   private async detachPending(): Promise<
     Omit<
@@ -597,7 +501,6 @@ export class SubagentCoordinator {
     for (const { taskId } of detaching) this.detached.add(taskId);
     this.pending.clear();
     this.pendingMetadata.clear();
-    this.closeQuestions();
     // Only the recovery sweep reads this, for a result this process never
     // delivers; the live resume needs none of it.
     await Promise.all(
@@ -915,14 +818,7 @@ export class SubagentCoordinator {
           deadlineMs: deadlineMs,
           abortSignal: AbortSignal.any([budget.signal, this.childStop.signal]),
           ...(task.persistent
-            ? {
-                askParent: (
-                  question: string,
-                  abortSignal?: AbortSignal,
-                ): Promise<string | null> =>
-                  this.askParent(task.taskId, question, abortSignal),
-                stopMessage: PARENT_STOP_MESSAGE,
-              }
+            ? { canAskParent: true, stopMessage: PARENT_STOP_MESSAGE }
             : {}),
         },
       );
@@ -937,6 +833,18 @@ export class SubagentCoordinator {
       }
       if (stream.didFail()) {
         throw new Error(stream.failureText() ?? "Subagent task failed");
+      }
+      const question = stream.parentQuestion();
+      if (question !== undefined) {
+        await this.completeAskedRun(
+          childSession,
+          task,
+          question,
+          subagentParent,
+          publisher,
+        );
+
+        return;
       }
       if (finalResponse === undefined) {
         throw new Error("Subagent task returned an empty response");
@@ -981,6 +889,44 @@ export class SubagentCoordinator {
     } finally {
       clearTimeout(budgetTimer);
     }
+  }
+
+  /**
+   * A child that ended its turn on ask_parent: the question is its outcome, on
+   * the same row and hand-back as a result, so it reaches the parent live, on
+   * a resume or from the recovery sweep. The answer resumes the child.
+   */
+  private async completeAskedRun(
+    childSession: Session,
+    task: ResolvedSubagentTask,
+    question: string,
+    subagentParent?: SubagentParentContext,
+    publisher?: NatsPublisher,
+  ): Promise<void> {
+    await this.recordOutcome(childSession, task, {
+      status: "awaiting_input",
+      question: question,
+    });
+    await this.completeTask({
+      taskId: task.taskId,
+      eventId: task.eventId,
+      agentId: task.agentId,
+      ...(task.description ? { description: task.description } : {}),
+      conversationKey: task.publicConversationKey,
+      status: "awaiting_input",
+      question: question,
+    });
+    await this.drainChildConversation(
+      childSession,
+      task,
+      subagentParent,
+      publisher,
+    ).catch((error) => {
+      logError("Failed to drain subagent conversation after its question", {
+        taskId: task.taskId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   private async completeSuccessfulRun(
@@ -1337,12 +1283,11 @@ export class SubagentCoordinator {
     });
   }
 
-  // Puts unsaved questions back; one whose child stopped waiting stays dropped.
-  private restoreQuestions(questions: SubagentCoordinator["questions"]): void {
-    this.questions.unshift(
-      ...questions.filter((open): boolean =>
-        this.openQuestions.has(open.taskId),
-      ),
+  // A queued child question wakes the parent before the rest finish, so its
+  // answer does not wait on its siblings.
+  private hasQuestion(): boolean {
+    return this.completions.some(
+      ({ status }): boolean => status === "awaiting_input",
     );
   }
 
@@ -1381,6 +1326,7 @@ export async function resumeLostSubagentResults(
     ranges.push(
       [handback, "completed", settledBefore],
       [handback, "failed", settledBefore],
+      [handback, "awaiting_input", settledBefore],
       // A child still running this long past its budget died with its pod.
       [handback, "processing", abandonedBefore],
     );
@@ -1632,9 +1578,7 @@ async function resumeLostSubagentResult(
           child.accountId,
           child.agentId,
         ),
-        status: row.status === "completed" ? "completed" : "failed",
-        ...(row.response !== undefined ? { response: row.response } : {}),
-        ...(row.error !== undefined ? { error: row.error } : {}),
+        ...rowOutcome(row),
       },
       target.agentConfig,
       createAgentHookDispatcher(scope.accountId, target.agentConfig),
@@ -1684,30 +1628,6 @@ async function resumeLostSubagentResult(
   return undefined;
 }
 
-function questionToParentMessage(
-  task: Omit<
-    SubagentCompletion,
-    "status" | "response" | "error" | "visibleResult"
-  >,
-  question: string,
-): UserModelMessage {
-  const metadata = [
-    `taskId: ${task.taskId}`,
-    `agentId: ${task.agentId}`,
-    `conversationKey: ${task.conversationKey}`,
-  ].join("\n");
-
-  return {
-    role: "user",
-    content: [
-      {
-        type: "text",
-        text: `Subagent question for the parent. The subagent is paused until you answer with update_subagent (mode "steer") using this taskId and agentId.\n${metadata}\n\nQuestion:\n${question}`,
-      },
-    ],
-  };
-}
-
 function completionToParentMessage(
   completion: SubagentCompletion,
 ): UserModelMessage {
@@ -1725,6 +1645,17 @@ function completionToParentMessage(
     completion.status === "completed" && visible !== undefined
       ? modelValueToUserParts(visible)
       : [];
+  if (completion.status === "awaiting_input") {
+    return {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: `Subagent question for the parent. The subagent ended its turn on this question. Answer it with run_subagent: pass this conversationKey, this agentId unless it starts with ${VIRTUAL_AGENT_PREFIX}, and your answer as the prompt. It resumes with its work so far.\n${metadata}\n\nQuestion:\n${completion.question ?? "(no question)"}`,
+        },
+      ],
+    };
+  }
   const prefix = `Subagent and async agent result injected into parent conversation.\n${metadata}\n\nResult:\n`;
   const detail =
     completion.status === "running"
@@ -1766,6 +1697,21 @@ function requireParentAccountId(session: Session): string {
   }
 
   return session.accountId;
+}
+
+/** What a lost result's row recorded, as the parent is told it. */
+function rowOutcome(
+  row: AsyncAgentResultRecord,
+): Pick<SubagentCompletion, "status" | "response" | "error" | "question"> {
+  return {
+    status:
+      row.status === "completed" || row.status === "awaiting_input"
+        ? row.status
+        : "failed",
+    ...(row.response !== undefined ? { response: row.response } : {}),
+    ...(row.error !== undefined ? { error: row.error } : {}),
+    ...(row.question !== undefined ? { question: row.question } : {}),
+  };
 }
 
 function sleep(ms: number): Promise<void> {

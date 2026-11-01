@@ -65,15 +65,11 @@ export interface SubagentToolContext {
   conversationKey: string;
 }
 
-/** A persistent subagent's question to its parent; null when no answer comes. */
-export type AskParent = (
-  question: string,
-  abortSignal?: AbortSignal,
-) => Promise<string | null>;
+/** Ends a persistent subagent's turn on a question for its parent; false when one is already asked. */
+export type AskParent = (question: string) => boolean;
 
 /** This turn's live subagents, as the parent's loop and subagent tools see them. */
 export interface SubagentWatch {
-  answerQuestion(taskId: string, answer: string): boolean;
   takeParentMessages(): Promise<UserModelMessage[]>;
 }
 

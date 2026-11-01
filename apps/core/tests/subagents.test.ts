@@ -31,9 +31,10 @@ interface TestCompletion {
   eventId: string;
   agentId: string;
   conversationKey: string;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "awaiting_input";
   response?: unknown;
   error?: string;
+  question?: string;
   visibleResult?: unknown;
 }
 
@@ -67,6 +68,11 @@ interface CoordinatorInternals {
     childSession: unknown,
     task: unknown,
     finalResponse: unknown,
+  ) => Promise<void>;
+  completeAskedRun: (
+    childSession: unknown,
+    task: unknown,
+    question: string,
   ) => Promise<void>;
   createChildTurnContext(
     childSession: unknown,
@@ -422,10 +428,14 @@ describe("SubagentCoordinator", () => {
     expect(messageText(messages[1])).toContain("second result");
   });
 
-  it("wakes the parent with a child's question and routes the answer back", async () => {
+  it("wakes the parent with a child's question before the rest finish", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
-      async (_messages: UserModelMessage[]) => [],
+      async (
+        _messages: UserModelMessage[],
+        _onSaved?: (saved: number) => void,
+        _dedupeKeys?: string[],
+      ): Promise<never[]> => [],
     );
     const coordinator = new SubagentCoordinator(
       {
@@ -439,75 +449,34 @@ describe("SubagentCoordinator", () => {
       Date.now() + 10_000,
     );
     const internals = coordinator as unknown as CoordinatorInternals;
-    internals.pending.set("subagent_1", new Promise<void>(() => {}));
-    internals.pendingMetadata.set("subagent_1", {
-      taskId: "subagent_1",
-      eventId: "event_1",
-      agentId: "agent_research",
-      conversationKey: "child",
-    });
-
-    const answer = coordinator.askParent("subagent_1", "Which account?");
-    expect(coordinator.waitForIdle()).resolves.toBe("question");
-    const [question] = await coordinator.takeParentMessages();
-    expect(messageText(question)).toContain("Which account?");
-    expect(messageText(question)).toContain("taskId: subagent_1");
-    expect(persistModelMessages).toHaveBeenCalledTimes(1);
-
-    expect(coordinator.answerQuestion("subagent_1", "BeeBlast")).toBe(true);
-    expect(answer).resolves.toBe("BeeBlast");
-    expect(coordinator.answerQuestion("subagent_1", "again")).toBe(false);
-  });
-
-  it("drops a question once its child stops or the parent can no longer answer", async () => {
-    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
-    const coordinator = new SubagentCoordinator(
-      parentSession(),
-      {},
-      Date.now() + 10_000,
-    );
-    const internals = coordinator as unknown as CoordinatorInternals;
     for (const taskId of ["subagent_1", "subagent_2"]) {
+      internals.pending.set(taskId, new Promise<void>(() => {}));
       internals.pendingMetadata.set(taskId, {
         taskId: taskId,
         eventId: `event_${taskId}`,
         agentId: "agent_research",
-        conversationKey: "child",
+        conversationKey: `child_${taskId}`,
       });
     }
 
-    const stop = new AbortController();
-    const stopped = coordinator.askParent("subagent_1", "Which?", stop.signal);
-    stop.abort();
-    expect(stopped).resolves.toBeNull();
-    expect(coordinator.answerQuestion("subagent_1", "late")).toBe(false);
-
-    const open = coordinator.askParent("subagent_2", "Which?");
-    coordinator.closeQuestions();
-    expect(open).resolves.toBeNull();
-    expect(coordinator.takeParentMessages()).resolves.toEqual([]);
-    expect(coordinator.askParent("subagent_2", "Again?")).resolves.toBeNull();
-  });
-
-  it("gives a child no answer once the parent's wait budget is spent", async () => {
-    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
-    const coordinator = new SubagentCoordinator(
-      parentSession(),
-      {},
-      Date.now() + 20,
-    );
-    const internals = coordinator as unknown as CoordinatorInternals;
-    internals.pendingMetadata.set("subagent_1", {
+    await internals.completeTask({
       taskId: "subagent_1",
-      eventId: "event_1",
+      eventId: "event_subagent_1",
       agentId: "agent_research",
-      conversationKey: "child",
+      conversationKey: "child_subagent_1",
+      status: "awaiting_input",
+      question: "Which account?",
     });
-
-    expect(
-      coordinator.askParent("subagent_1", "Which account?"),
-    ).resolves.toBeNull();
-    expect(coordinator.askParent("unknown", "Hi?")).resolves.toBeNull();
+    expect(await coordinator.waitForIdle()).toBe("question");
+    const [question] = await coordinator.takeParentMessages();
+    expect(messageText(question)).toContain("Which account?");
+    expect(messageText(question)).toContain(
+      "conversationKey: child_subagent_1",
+    );
+    expect(messageText(question)).toContain("run_subagent");
+    expect(persistModelMessages.mock.calls[0]?.[2]).toEqual([
+      "subagent:event_subagent_1:awaiting_input",
+    ]);
   });
 
   it("keeps queued results when a step's write to the parent fails", async () => {
@@ -620,13 +589,21 @@ describe("SubagentCoordinator", () => {
       );
       const internals = coordinator as unknown as CoordinatorInternals;
       internals.completions.push(completion("subagent_1", "finished"));
+      internals.pending.set("subagent_2", new Promise<void>(() => {}));
       internals.pendingMetadata.set("subagent_2", {
         taskId: "subagent_2",
         eventId: "event_subagent_2",
         agentId: "agent_research",
         conversationKey: "child",
       });
-      const answer = coordinator.askParent("subagent_2", "Which account?");
+      await internals.completeTask({
+        taskId: "subagent_2",
+        eventId: "event_subagent_2",
+        agentId: "agent_research",
+        conversationKey: "child",
+        status: "awaiting_input",
+        question: "Which account?",
+      });
       expect(await coordinator.waitForIdle()).toBe("question");
 
       expect(coordinator.takeParentMessages()).rejects.toThrow("reply lost");
@@ -636,8 +613,6 @@ describe("SubagentCoordinator", () => {
       expect(
         texts.filter((text) => text.includes("Which account?")),
       ).toHaveLength(1);
-      coordinator.answerQuestion("subagent_2", "BeeBlast");
-      expect(await answer).toBe("BeeBlast");
     } finally {
       runtime.mutate = originalMutate;
     }
@@ -766,7 +741,7 @@ describe("SubagentCoordinator", () => {
       status: "completed",
       response: "idle report",
     });
-    // A child that asked a question and is still working.
+    // A child still working.
     const asking = {
       taskId: "subagent_2",
       eventId: "event_subagent_2",
@@ -775,7 +750,6 @@ describe("SubagentCoordinator", () => {
     };
     coordinator["pending"].set(asking.taskId, new Promise((): void => {}));
     coordinator["pendingMetadata"].set(asking.taskId, asking);
-    const question = coordinator.askParent(asking.taskId, "Which?");
 
     try {
       expect(
@@ -783,8 +757,6 @@ describe("SubagentCoordinator", () => {
           .drainCompletionsToParent()
           .catch((error: unknown): string => String(error)),
       ).toBe("Error: convex down");
-      // No pass follows to answer the question it did not save.
-      expect(await question).toBeNull();
       // The working child is detached, so its result resumes the parent too.
       await coordinator["completeTask"]({
         ...asking,
@@ -1420,6 +1392,59 @@ describe("SubagentCoordinator", () => {
     }
   });
 
+  it("the sweep resumes the parent with a lost child question", async (): Promise<void> => {
+    const row: AsyncAgentResultRecord = {
+      ...lostRow("event_question"),
+      status: "awaiting_input",
+      response: undefined,
+      question: "Which region?",
+    };
+    const pages = spyOn(
+      asyncAgentResults,
+      "listOwedAsyncAgentResults",
+    ).mockImplementation(
+      async (options: {
+        handback: SweptHandback;
+        status: string;
+      }): Promise<{
+        page: AsyncAgentResultRecord[];
+        cursor: string;
+        isDone: boolean;
+      }> => ({
+        page:
+          options.handback === row.handback && options.status === row.status
+            ? [row]
+            : [],
+        cursor: "end",
+        isDone: true,
+      }),
+    );
+    const messages: UserModelMessage[] = [];
+    const { resumeLostSubagentResults } =
+      await import("../src/harness/subagents.ts");
+
+    try {
+      await resumeLostSubagentResults(
+        lostParent,
+        async (
+          _parent: unknown,
+          _taskId: string,
+          message: UserModelMessage,
+        ): Promise<SubagentResumeOutcome> => {
+          messages.push(message);
+
+          return "owner";
+        },
+      );
+
+      expect(messages).toHaveLength(1);
+      expect(messageText(messages[0])).toContain("Which region?");
+      expect(messageText(messages[0])).toContain("Subagent question");
+    } finally {
+      pages.mockRestore();
+    }
+  });
+
   it("gives up once on lost results no resume can deliver, and fails only a still-running dead child", async (): Promise<void> => {
     const otherAccountTask = createSubagentTaskId(
       scopedDirectEventId("account_2", "agent_parent", "event_parent"),
@@ -1721,6 +1746,44 @@ describe("SubagentCoordinator", () => {
     } finally {
       runtime.mutate = originalMutation;
     }
+  });
+
+  it("records a child's ask_parent as its awaiting_input outcome and queues it for the parent", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 60_000,
+      { lifecycle: { emit: mock(async () => {}) } as never },
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    const task = persistentChildTask();
+    internals.pending.set(task.taskId, new Promise<void>(() => {}));
+    const settleIngress = mock(
+      async (_status: string, _settlement: unknown): Promise<boolean> => true,
+    );
+    const childSession = {
+      settleIngress: settleIngress,
+      takeNextIngress: async (): Promise<null> => null,
+      releaseConversationLease: async (): Promise<void> => {},
+    };
+
+    await internals.completeAskedRun(childSession, task, "Which region?");
+
+    expect(settleIngress.mock.calls[0]?.[1]).toMatchObject({
+      asyncResult: {
+        eventIds: [task.eventId],
+        outcome: { status: "awaiting_input", question: "Which region?" },
+      },
+    });
+    expect(internals.completions).toEqual([
+      expect.objectContaining({
+        taskId: task.taskId,
+        status: "awaiting_input",
+        question: "Which region?",
+      }),
+    ]);
+    expect(await coordinator.waitForIdle()).toBe("question");
   });
 
   it("settles and hands off an admitted child when turn context creation fails", async () => {

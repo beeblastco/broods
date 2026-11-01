@@ -1460,6 +1460,8 @@ export const runtimeAsyncAgentResultsFields = {
   approvals: v.optional(v.array(toolApprovalSummaryValidator)),
   // Open ask_questions prompts while status is awaiting_input.
   questions: v.optional(v.array(pendingQuestionSummaryValidator)),
+  // A persistent subagent's ask_parent question while status is awaiting_input.
+  question: v.optional(v.string()),
   createdAt: v.string(),
   updatedAt: v.string(),
   expiresAt: v.number(),

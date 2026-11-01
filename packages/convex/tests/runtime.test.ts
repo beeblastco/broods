@@ -666,6 +666,45 @@ describe("runtime persistence", () => {
     });
   });
 
+  test("a subagent's ask_parent question keeps its text and the parent's append stores it", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(internal.runtime.createAsyncAgentResult, {
+      eventId: "child",
+      conversationKey: `acct:${accountId}:agent:child:api:child`,
+      subagent: { parentConversationKey: conversationKey },
+    });
+    await t.mutation(internal.runtime.updateAsyncAgentResult, {
+      eventId: "child",
+      status: "awaiting_input",
+      question: "Which region?",
+    });
+    const row = async (): Promise<{
+      status?: string;
+      question?: string;
+      handback?: string;
+    } | null> =>
+      await t.query(internal.runtime.getAsyncAgentResult, { eventId: "child" });
+    expect(await row()).toMatchObject({
+      status: "awaiting_input",
+      question: "Which region?",
+      handback: "pending",
+    });
+
+    await t.mutation(internal.runtime.appendConversationEvent, {
+      conversationKey: conversationKey,
+      events: [
+        {
+          cursor: "001",
+          dedupeKey: subagentResultDedupeKey("child", "awaiting_input"),
+          event: { role: "user", content: "subagent question" },
+        },
+      ],
+    });
+    expect(await row()).toMatchObject({ handback: "stored" });
+  });
+
   test("a detached subagent result is not downgraded by its finish", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

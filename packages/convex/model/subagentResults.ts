@@ -35,8 +35,8 @@ export const handbackMoveValidator = v.union(
   v.literal("stored"),
 );
 export type HandbackMove = Infer<typeof handbackMoveValidator>;
-/** The status a hand-back key names: only a finished result is owed. */
-type HandbackStatus = "completed" | "failed";
+/** The status a hand-back key names: a finished result, or a subagent's question. */
+type HandbackStatus = "completed" | "failed" | "awaiting_input";
 /** The result row a stored dedupe key names: a subagent's, or an async tool's. */
 export type HandbackKey =
   | { kind: "subagent"; eventId: string; status: HandbackStatus }
@@ -78,7 +78,13 @@ export function parseHandbackDedupeKey(key: string): HandbackKey | undefined {
   if (prefix === undefined) return undefined;
   const separator = key.lastIndexOf(":");
   const status = key.slice(separator + 1);
-  if (status !== "completed" && status !== "failed") return undefined;
+  if (
+    status !== "completed" &&
+    status !== "failed" &&
+    status !== "awaiting_input"
+  ) {
+    return undefined;
+  }
   const id = key.slice(prefix.length, separator);
   if (id.length === 0) return undefined;
 
