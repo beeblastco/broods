@@ -1,4 +1,4 @@
-import { matchesGlob, relative } from "node:path";
+import { matchesGlob } from "node:path";
 
 import { defineRule, type ESTree } from "@oxlint/plugins";
 
@@ -118,13 +118,14 @@ export default defineRule({
   create: (context) => {
     const options = context.options[0] as Options;
     const names = new Set(options.names);
-    const file = relative(context.cwd, context.filename);
     const check = (node: FunctionNode): void => {
       const name = functionName(node);
       const named = name !== undefined && names.has(name);
       if (!named && !narrowsUnknownToRecord(node)) return;
       const allowed = options.allow.some(
-        (entry) => entry.name === name && matchesGlob(file, entry.file),
+        (entry) =>
+          entry.name === name &&
+          matchesGlob(context.filename, `**/${entry.file}`),
       );
       if (allowed) return;
       context.report({

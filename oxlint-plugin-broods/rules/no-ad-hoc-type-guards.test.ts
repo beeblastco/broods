@@ -84,7 +84,7 @@ ruleTester(RULE, { ruleOptions: [{ names: ["isBag"] }] }).invalid(
 );
 
 const allowed = ruleTester(RULE, {
-  filename: "packages/convex/model/objects.ts",
+  filename: "/repo/packages/convex/model/objects.ts",
   ruleOptions: [
     {
       allow: [
