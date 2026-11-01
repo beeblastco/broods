@@ -4,6 +4,7 @@
  * turn into a direct-API SSE run and the SDK maps core's stream parts for us.
  */
 
+import type { EventEmitter } from "node:events";
 import { runAgentTUI } from "@ai-sdk/tui";
 import {
   convertToModelMessages,
@@ -18,7 +19,11 @@ import {
   type UIMessage,
   type UIMessageChunk,
 } from "ai";
-import type { AgentReference, BroodsClient } from "../client.ts";
+import {
+  IngressAcceptedError,
+  type AgentReference,
+  type BroodsClient,
+} from "../client.ts";
 
 type SendMessagesOptions = Parameters<
   ChatTransport<UIMessage>["sendMessages"]
@@ -33,14 +38,79 @@ export interface AgentRunOptions {
 
 /** Run a deployed agent in the AI SDK terminal UI until the user exits. */
 export async function runAgentTui(options: AgentRunOptions): Promise<void> {
+  const transport = new RemoteAgentTransport(options.client, options.agent);
+  const restoreInput = stopTurnOnEscape(transport);
   if (options.prompt !== undefined) void submitPrompt(options.prompt);
-  await runAgentTUI({
-    title: `broods · ${options.agent.name}`,
-    // Tool cards stay expanded: their input and output are what a dev testing
-    // an agent came to see, and the default collapses them once text arrives.
-    tools: "full",
-    transport: new RemoteAgentTransport(options.client, options.agent),
-  });
+  try {
+    await runAgentTUI({
+      title: `broods · ${options.agent.name}`,
+      // Tool cards stay expanded: their input and output are what a dev testing
+      // an agent came to see, and the default collapses them once text arrives.
+      tools: "full",
+      transport: transport,
+    });
+  } finally {
+    restoreInput();
+  }
+}
+
+/** How long a lone Esc waits for the rest of a key sequence split across reads. */
+const ESC_SEQUENCE_WAIT_MS = 30;
+
+const ESC = Buffer.from("\x1b");
+
+/**
+ * The terminal UI quits on Esc, even mid-reply, which drops the conversation.
+ * An Esc pressed while a turn streams stops that turn instead, even if the
+ * turn ends meanwhile; Esc when idle and Ctrl+C still quit. Arrow and page keys
+ * start with Esc too, and a slow link can split them, so a lone Esc is held
+ * briefly: a following `[` or `O` makes it part of that key. Returns the undo.
+ */
+export function stopTurnOnEscape(
+  transport: Pick<RemoteAgentTransport, "stopTurn" | "streaming">,
+  input: EventEmitter = process.stdin,
+): () => void {
+  const emit = input.emit.bind(input);
+  let held:
+    | { timer: ReturnType<typeof setTimeout>; streaming: boolean }
+    | undefined;
+  const settle = (): void => {
+    if (!held) return;
+    clearTimeout(held.timer);
+    const pressedMidTurn = held.streaming;
+    held = undefined;
+    if (pressedMidTurn) transport.stopTurn();
+    else emit("data", ESC);
+  };
+  input.emit = (event: string | symbol, ...args: unknown[]): boolean => {
+    if (event !== "data") return emit(event, ...args);
+    const chunk = Buffer.isBuffer(args[0])
+      ? args[0]
+      : Buffer.from(String(args[0]));
+    if (held && (chunk[0] === 0x5b || chunk[0] === 0x4f)) {
+      clearTimeout(held.timer);
+      held = undefined;
+
+      return emit("data", Buffer.concat([ESC, chunk]));
+    }
+    // Anything else (a second Esc, Ctrl+C) confirms the held Esc first.
+    settle();
+    if (chunk.equals(ESC)) {
+      held = {
+        timer: setTimeout(settle, ESC_SEQUENCE_WAIT_MS),
+        streaming: transport.streaming,
+      };
+
+      return true;
+    }
+
+    return emit(event, ...args);
+  };
+
+  return () => {
+    if (held) clearTimeout(held.timer);
+    input.emit = emit;
+  };
 }
 
 /** Stream a single run as plain text, for redirected or piped output. */
@@ -85,6 +155,10 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   private readonly conversationKey = `tui-${generateId()}`;
   private readonly sentApprovals = new Set<string>();
   private sentUserTurns = 0;
+  /** The streaming turn, which `stopTurn` ends, and how to record it sent. */
+  private activeTurn:
+    | { controller: AbortController; commit: () => void }
+    | undefined;
 
   constructor(
     private readonly client: BroodsClient,
@@ -106,17 +180,48 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
       throw new Error("Nothing new to send: the agent already saw this turn.");
     }
 
-    const stream = this.client.stream(this.agent, {
-      conversationKey: this.conversationKey,
-      events: pending.events as [ModelMessage, ...ModelMessage[]],
-    });
+    const turn = { controller: new AbortController(), commit: pending.commit };
+    const stream = queuedAnswer(
+      this.client,
+      this.client.stream(this.agent, {
+        conversationKey: this.conversationKey,
+        events: pending.events as [ModelMessage, ...ModelMessage[]],
+      }),
+      turn.controller.signal,
+    );
+    this.activeTurn = turn;
+    const signal = options.abortSignal
+      ? AbortSignal.any([options.abortSignal, turn.controller.signal])
+      : turn.controller.signal;
 
     return toUIMessageStream({
-      stream: toReadableStream(stream, options.abortSignal, pending.commit),
+      stream: toReadableStream(stream, signal, pending.commit, () => {
+        if (this.activeTurn === turn) this.activeTurn = undefined;
+      }),
       originalMessages: options.messages,
       generateMessageId: generateId,
       sendSources: true,
     });
+  }
+
+  /** True while a turn streams. */
+  get streaming(): boolean {
+    return this.activeTurn !== undefined;
+  }
+
+  /**
+   * End the streaming turn on screen: the text so far stays and the input comes
+   * back. Core was already sent the turn and finishes its run (the runtime key
+   * has no cancel), so the turn counts as sent and is not repeated next time.
+   * False when no turn is streaming.
+   */
+  stopTurn(): boolean {
+    if (!this.activeTurn) return false;
+    this.activeTurn.commit();
+    this.activeTurn.controller.abort();
+    this.activeTurn = undefined;
+
+    return true;
   }
 
   /**
@@ -163,6 +268,35 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   }
 }
 
+/**
+ * A turn sent while core still runs one Esc stopped is queued behind it, and
+ * core answers 202 instead of a stream. Wait for that turn's answer and stream
+ * it as text, rather than showing the 202 as an error.
+ */
+async function* queuedAnswer(
+  client: BroodsClient,
+  stream: AsyncGenerator<TextStreamPart<ToolSet>>,
+  signal: AbortSignal,
+): AsyncGenerator<TextStreamPart<ToolSet>> {
+  try {
+    yield* stream;
+  } catch (error) {
+    if (!(error instanceof IngressAcceptedError)) throw error;
+    const status = await client.waitForAsyncStatus(error.accepted, {
+      signal: signal,
+    });
+    const answer = [status.response, status.result].find(
+      (value): value is string => typeof value === "string",
+    );
+    if (status.status !== "completed" || answer === undefined) {
+      throw new Error(`The queued turn ended ${status.status}.`);
+    }
+    yield { type: "text-start", id: "queued" };
+    yield { type: "text-delta", id: "queued", text: answer };
+    yield { type: "text-end", id: "queued" };
+  }
+}
+
 /** Resolves as an exhausted read when the signal aborts; never otherwise. */
 function abortedRead(
   signal: AbortSignal | undefined,
@@ -185,6 +319,7 @@ function toReadableStream(
   stream: AsyncGenerator<TextStreamPart<ToolSet>>,
   signal: AbortSignal | undefined,
   onAnswered: () => void,
+  onClosed: () => void = () => {},
 ): ReadableStream<TextStreamPart<ToolSet>> {
   let answered = false;
   // Never awaited: the generator can be parked on a read that never completes,
@@ -193,10 +328,17 @@ function toReadableStream(
 
   return new ReadableStream({
     pull: async function (controller): Promise<void> {
-      const next = await Promise.race([stream.next(), abortedRead(signal)]);
+      const next = await Promise.race([
+        stream.next(),
+        abortedRead(signal),
+      ]).catch((error: unknown) => {
+        onClosed();
+        throw error;
+      });
       if (signal?.aborted) {
         release();
         controller.close();
+        onClosed();
 
         return;
       }
@@ -204,9 +346,14 @@ function toReadableStream(
         answered = true;
         onAnswered();
       }
-      if (next.done) controller.close();
-      else controller.enqueue(next.value);
+      if (next.done) {
+        controller.close();
+        onClosed();
+      } else controller.enqueue(next.value);
     },
-    cancel: release,
+    cancel: () => {
+      release();
+      onClosed();
+    },
   });
 }

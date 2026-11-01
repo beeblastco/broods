@@ -6,8 +6,10 @@ import {
   type UIMessage,
 } from "ai";
 import { BroodsClient, type AgentReference } from "../src/client.ts";
+import { EventEmitter } from "node:events";
 import {
   RemoteAgentTransport,
+  stopTurnOnEscape,
   streamAgentText,
   submitPrompt,
 } from "../src/cli/tui.ts";
@@ -344,4 +346,141 @@ test("aborting stops a turn that is waiting on the model", async () => {
 
   // Without racing the signal this would hang until the server sent more.
   expect((await pending).done).toBe(true);
+});
+
+/** An SSE body that sends `parts` and then stays open, like a long reply. */
+function openSse(...parts: unknown[]): Response {
+  const encoder = new TextEncoder();
+
+  return new Response(
+    new ReadableStream({
+      start: function (controller): void {
+        for (const part of parts)
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(part)}\n\n`),
+          );
+      },
+    }),
+  );
+}
+
+test("stopTurn ends a streaming reply and keeps the text so far", async () => {
+  const { transport } = testTransport([
+    openSse(
+      { type: "text-start", id: "0" },
+      { type: "text-delta", id: "0", text: "Once upon" },
+    ),
+  ]);
+  expect(transport.stopTurn()).toBe(false);
+
+  const turn = readTurn(transport, [userMessage("m1", "tell a story")]);
+  await Bun.sleep(50);
+  expect(transport.stopTurn()).toBe(true);
+  const message = await turn;
+
+  expect(message?.parts).toContainEqual(
+    expect.objectContaining({ type: "text", text: "Once upon" }),
+  );
+  expect(transport.stopTurn()).toBe(false);
+});
+
+test("Esc stops a streaming turn; keys, split keys, Ctrl+C and idle Esc reach the UI", async () => {
+  const input = new EventEmitter();
+  const seen: string[] = [];
+  input.on("data", (chunk: Buffer) => seen.push(String(chunk)));
+  let streaming = true;
+  let stops = 0;
+  const transport = {
+    get streaming(): boolean {
+      return streaming;
+    },
+    stopTurn: (): boolean => {
+      stops += 1;
+      const was = streaming;
+      streaming = false;
+
+      return was;
+    },
+  };
+  const send = (text: string): boolean => input.emit("data", Buffer.from(text));
+
+  const restore = stopTurnOnEscape(transport, input);
+  send("\x1b[A");
+  // An arrow split across two reads is still an arrow, not a stop.
+  send("\x1b");
+  send("[B");
+  expect(stops).toBe(0);
+  // Pressed mid-turn: stops it, and never quits, even if the turn already ended.
+  send("\x1b");
+  streaming = false;
+  await Bun.sleep(60);
+  expect(stops).toBe(1);
+  // A double Esc or Esc then Ctrl+C: the Esc settles at once, the next key passes.
+  streaming = true;
+  send("\x1b");
+  send("\x03");
+  expect(stops).toBe(2);
+  // Idle, Esc reaches the UI (which quits) once no sequence follows.
+  send("\x1b");
+  await Bun.sleep(60);
+  restore();
+  send("x");
+
+  expect(seen).toEqual(["\x1b[A", "\x1b[B", "\x03", "\x1b", "x"]);
+});
+
+test("Esc before the first part counts the turn as sent", async () => {
+  const { transport, bodies } = testTransport([
+    openSse(),
+    sse(
+      { type: "text-start", id: "0" },
+      { type: "text-delta", id: "0", text: "ok" },
+      { type: "text-end", id: "0" },
+      { type: "finish", finishReason: "stop" },
+    ),
+  ]);
+
+  const first = readTurn(transport, [userMessage("m1", "first")]);
+  await Bun.sleep(50);
+  expect(transport.stopTurn()).toBe(true);
+  await first;
+  await readTurn(transport, [
+    userMessage("m1", "first"),
+    userMessage("m2", "second"),
+  ]);
+
+  // Core already has "first": the next turn sends only the new message.
+  expect(bodies[1]?.events).toEqual([
+    { role: "user", content: [{ type: "text", text: "second" }] },
+  ]);
+});
+
+test("a turn queued behind a stopped one streams its answer, not the 202", async () => {
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    baseUrl: "http://core.test",
+    fetch: Object.assign(
+      async (...[input]: Parameters<typeof fetch>): Promise<Response> =>
+        (input instanceof Request ? input.url : input.toString()).endsWith(
+          "/status/run_2",
+        )
+          ? Response.json({ status: "completed", response: "queued answer" })
+          : Response.json(
+              {
+                statusUrl: "http://core.test/status/run_2",
+                runId: "run_2",
+                status: "queued",
+              },
+              { status: 202 },
+            ),
+      { preconnect: fetch.preconnect },
+    ),
+  });
+  const transport = new RemoteAgentTransport(client, AGENT);
+
+  const message = await readTurn(transport, [userMessage("m1", "and then?")]);
+
+  expect(message?.parts).toContainEqual(
+    expect.objectContaining({ type: "text", text: "queued answer" }),
+  );
 });
