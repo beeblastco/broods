@@ -33,14 +33,48 @@ export interface AgentRunOptions {
 
 /** Run a deployed agent in the AI SDK terminal UI until the user exits. */
 export async function runAgentTui(options: AgentRunOptions): Promise<void> {
+  const transport = new RemoteAgentTransport(options.client, options.agent);
+  const restoreKeys = stopTurnOnEscape(transport);
   if (options.prompt !== undefined) void submitPrompt(options.prompt);
-  await runAgentTUI({
-    title: `broods · ${options.agent.name}`,
-    // Tool cards stay expanded: their input and output are what a dev testing
-    // an agent came to see, and the default collapses them once text arrives.
-    tools: "full",
-    transport: new RemoteAgentTransport(options.client, options.agent),
-  });
+  try {
+    await runAgentTUI({
+      title: `broods · ${options.agent.name}`,
+      // Tool cards stay expanded: their input and output are what a dev testing
+      // an agent came to see, and the default collapses them once text arrives.
+      tools: "full",
+      transport: transport,
+    });
+  } finally {
+    restoreKeys();
+  }
+}
+
+/**
+ * The terminal UI quits on Esc, even mid-reply, which drops the conversation.
+ * A lone Esc while a turn streams stops that turn instead; Ctrl+C still quits.
+ * Arrow and page keys arrive as one `\x1b[...` chunk, so they pass untouched.
+ * Returns the undo.
+ */
+export function stopTurnOnEscape(
+  transport: RemoteAgentTransport,
+  input: NodeJS.ReadStream = process.stdin,
+): () => void {
+  const emit = input.emit.bind(input);
+  input.emit = ((event: string | symbol, ...args: unknown[]): boolean => {
+    if (
+      event === "data" &&
+      String(args[0]) === "\x1b" &&
+      transport.stopTurn()
+    ) {
+      return true;
+    }
+
+    return emit(event, ...args);
+  }) as typeof input.emit;
+
+  return () => {
+    input.emit = emit;
+  };
 }
 
 /** Stream a single run as plain text, for redirected or piped output. */
@@ -85,6 +119,8 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   private readonly conversationKey = `tui-${generateId()}`;
   private readonly sentApprovals = new Set<string>();
   private sentUserTurns = 0;
+  /** The streaming turn, which `stopTurn` ends. */
+  private activeTurn: AbortController | undefined;
 
   constructor(
     private readonly client: BroodsClient,
@@ -110,13 +146,32 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
       conversationKey: this.conversationKey,
       events: pending.events as [ModelMessage, ...ModelMessage[]],
     });
+    const turn = new AbortController();
+    this.activeTurn = turn;
+    const signal = options.abortSignal
+      ? AbortSignal.any([options.abortSignal, turn.signal])
+      : turn.signal;
 
     return toUIMessageStream({
-      stream: toReadableStream(stream, options.abortSignal, pending.commit),
+      stream: toReadableStream(stream, signal, pending.commit, () => {
+        if (this.activeTurn === turn) this.activeTurn = undefined;
+      }),
       originalMessages: options.messages,
       generateMessageId: generateId,
       sendSources: true,
     });
+  }
+
+  /**
+   * End the streaming turn where it is: the text so far stays on screen and the
+   * input comes back. False when no turn is streaming.
+   */
+  stopTurn(): boolean {
+    if (!this.activeTurn) return false;
+    this.activeTurn.abort();
+    this.activeTurn = undefined;
+
+    return true;
   }
 
   /**
@@ -185,6 +240,7 @@ function toReadableStream(
   stream: AsyncGenerator<TextStreamPart<ToolSet>>,
   signal: AbortSignal | undefined,
   onAnswered: () => void,
+  onClosed: () => void = () => {},
 ): ReadableStream<TextStreamPart<ToolSet>> {
   let answered = false;
   // Never awaited: the generator can be parked on a read that never completes,
@@ -197,6 +253,7 @@ function toReadableStream(
       if (signal?.aborted) {
         release();
         controller.close();
+        onClosed();
 
         return;
       }
@@ -204,9 +261,14 @@ function toReadableStream(
         answered = true;
         onAnswered();
       }
-      if (next.done) controller.close();
-      else controller.enqueue(next.value);
+      if (next.done) {
+        controller.close();
+        onClosed();
+      } else controller.enqueue(next.value);
     },
-    cancel: release,
+    cancel: () => {
+      release();
+      onClosed();
+    },
   });
 }

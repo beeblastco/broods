@@ -34,7 +34,7 @@ import {
   type StoredAuthConfig,
 } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
-import { USER_TOKEN_SECRET_ENV } from "../user-token.ts";
+import { signUserToken, USER_TOKEN_SECRET_ENV } from "../user-token.ts";
 import { keyHint } from "../../../convex/model/accountSecrets.ts";
 import {
   DEPLOYMENT_REGIONS,
@@ -1246,6 +1246,37 @@ async function deploy(args: string[]): Promise<void> {
   printSyncWarnings(result);
 }
 
+function matchesSecretHint(
+  secret: string | undefined,
+  remoteHint: string | undefined,
+): secret is string {
+  return (
+    secret !== undefined &&
+    remoteHint !== undefined &&
+    keyHint(USER_TOKEN_SECRET_PREFIX, secret) === remoteHint
+  );
+}
+
+/**
+ * The stage's user-token signing secret as this checkout holds it: the shell's
+ * export, else `.env.local`'s. With the stage's masked hint, only the one that
+ * matches it; without one (the runtime-key route sends none), the first set,
+ * which core verifies anyway.
+ */
+async function localUserTokenSecret(
+  remoteHint: string | undefined,
+): Promise<string | undefined> {
+  const fileSecret = parseDotenv(
+    await readTextIfExists(resolve(process.cwd(), ".env.local")),
+  )[USER_TOKEN_SECRET_ENV];
+
+  return [process.env[USER_TOKEN_SECRET_ENV], fileSecret].find((secret) =>
+    remoteHint === undefined
+      ? Boolean(secret)
+      : matchesSecretHint(secret, remoteHint),
+  );
+}
+
 /**
  * Persist the stage's recoverable runtime key after a deploy, and its
  * user-token signing secret when this checkout lacks it: a new agent refuses
@@ -1266,20 +1297,11 @@ async function applyDeploymentKey(
   }
 
   const remoteHint = deployment.userTokenSecretHint;
-  const matches = (secret: string | undefined): boolean =>
-    secret !== undefined &&
-    keyHint(USER_TOKEN_SECRET_PREFIX, secret) === remoteHint;
-  const fileSecret = parseDotenv(
-    await readTextIfExists(resolve(process.cwd(), ".env.local")),
-  )[USER_TOKEN_SECRET_ENV];
-  if (
-    remoteHint &&
-    (matches(process.env[USER_TOKEN_SECRET_ENV]) || matches(fileSecret))
-  ) {
+  if (remoteHint && (await localUserTokenSecret(remoteHint))) {
     // `.env.local` is current, but a stale shell export still wins over it.
     warnShellShadowedEnv(
       USER_TOKEN_SECRET_ENV,
-      !matches(process.env[USER_TOKEN_SECRET_ENV]) &&
+      !matchesSecretHint(process.env[USER_TOKEN_SECRET_ENV], remoteHint) &&
         isShellOwnedEnv(USER_TOKEN_SECRET_ENV),
     );
 
@@ -1438,11 +1460,31 @@ async function dev(args: string[]): Promise<void> {
   // Recorded only after a sync succeeds, so a failed one retries on the next save.
   let lastSourceSignature: string | undefined;
 
+  // Like `convex dev`: stream live agent logs alongside the resource watcher so
+  // the developer sees activity while editing. Started after the first sync
+  // that lands, since a stage with no deployment has no logs to open yet.
+  const logController = new AbortController();
+  let logsStarted = false;
+  let lastSyncFailed = false;
   const syncChanged = async (): Promise<void> => {
     const signature = await sourceSignature();
-    if (signature === lastSourceSignature) return;
+    if (signature === lastSourceSignature) {
+      // Undoing a broken edit lands on what the stage already has: say so,
+      // or the last line on screen stays the failure.
+      if (lastSyncFailed)
+        printSuccess("Back to the synced version. Nothing to push.");
+      lastSyncFailed = false;
+
+      return;
+    }
+    lastSyncFailed = true;
     await runSyncChild(args, childEnv);
+    lastSyncFailed = false;
     lastSourceSignature = signature;
+    if (!logsStarted) {
+      logsStarted = true;
+      void streamDevLogs(args, logController.signal);
+    }
   };
   const printSyncError = (error: unknown): void =>
     console.error(error instanceof Error ? error.message : String(error));
@@ -1477,12 +1519,6 @@ async function dev(args: string[]): Promise<void> {
       timer = setTimeout(runSync, 150);
     },
   );
-
-  // Like `convex dev`: stream live agent logs alongside the resource watcher so
-  // the developer sees activity while editing. Best-effort: with no runtime
-  // key configured yet, it prints a hint and skips without breaking the sync.
-  const logController = new AbortController();
-  void streamDevLogs(args, logController.signal);
 
   process.on("SIGINT", () => {
     logController.abort();
@@ -2003,9 +2039,10 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
       }
       reject(
         new Error(
+          // The child already printed why; say what happens next.
           signal
-            ? `Sync child exited from signal ${signal}`
-            : `Sync child exited with code ${code ?? "unknown"}`,
+            ? `Sync stopped (${signal}). Watching for changes: save a file to retry.`
+            : "Sync failed. Watching for changes: fix it and save a file to retry.",
         ),
       );
     });
@@ -2039,7 +2076,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const pushed = await pushLocalEnvVars(
     client,
     compiled.manifest,
-    await inspectEnvRefs(client, compiled.manifest),
+    await askForUnresolvedEnv(await inspectEnvRefs(client, compiled.manifest)),
   );
   if (pushed.length > 0) printEnvSync(pushed);
 
@@ -2211,6 +2248,31 @@ async function inspectEnvRefs(
     name: name,
     state: envRefState(name, remote),
   }));
+}
+
+/**
+ * In a terminal, asks for each `env()` value neither `.env.local` nor the stage
+ * holds (a new project's model key, say), saves it to `.env.local` and marks it
+ * for the push, so a first `dev` sets up instead of failing on the missing
+ * names. An empty answer leaves the name unresolved and the sync names it.
+ */
+async function askForUnresolvedEnv(refs: EnvRef[]): Promise<EnvRef[]> {
+  const missing = namesInState(refs, "unresolved");
+  if (missing.length === 0 || !process.stdin.isTTY) return refs;
+  console.log(
+    `The project needs ${missing.length === 1 ? "a value" : `${missing.length} values`} no one has set yet. ` +
+      "Input is hidden and saved to .env.local, which stays out of git.",
+  );
+  for (const name of missing) {
+    const value = (await promptSecret(name)).trim();
+    if (value) await writeEnvValue(name, value);
+  }
+
+  return refs.map((ref) =>
+    ref.state === "unresolved" && process.env[ref.name]
+      ? { ...ref, state: "unset" }
+      : ref,
+  );
 }
 
 /**
@@ -3026,6 +3088,10 @@ async function run(args: string[]): Promise<void> {
   // Runtime traffic has to reach the same deployment the control plane resolved.
   // Without an explicit base URL the SDK falls back to prod, which rejects a
   // dev-issued runtime key with a 401.
+  const userToken = await cliUserToken(
+    auth,
+    remote?.deployment?.userTokenSecretHint,
+  );
   const client = new BroodsClient({
     baseUrl:
       optionValue(args, "--base-url") ??
@@ -3033,6 +3099,7 @@ async function run(args: string[]): Promise<void> {
       process.env.BROODS_HOST ??
       auth.baseUrl,
     ...(runtimeKey?.apiKey ? { apiKey: runtimeKey.apiKey } : {}),
+    ...userToken,
   });
   const ref: AgentReference = {
     kind: "agent",
@@ -3058,15 +3125,57 @@ async function run(args: string[]): Promise<void> {
     }
     await streamAgentText({ client: client, agent: ref, prompt: prompt });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("public_access_disabled")) {
-      throw new Error(
-        `Agent "${agentName}" is not publicly accessible (secured by default). ` +
-          "Set publicAccess: true in its config and redeploy, or enable Public access in the dashboard.",
-      );
-    }
-    throw error;
+    throw explainRunError(error, agentName, manifest, "userToken" in userToken);
   }
+}
+
+/**
+ * A new agent refuses the bare runtime key, so `broods run` signs each request
+ * as this developer with the secret `dev` / `deploy` wrote, as a backend would.
+ * None when the checkout lacks the stage's secret: the run then names the fix.
+ */
+async function cliUserToken(
+  auth: StoredAuthConfig,
+  remoteHint: string | undefined,
+): Promise<{ userToken?: () => Promise<string> }> {
+  const secret = await localUserTokenSecret(remoteHint);
+  if (!secret) return {};
+  const userId = (auth.user?.email ?? auth.user?.authId ?? "cli")
+    .replace(/[^A-Za-z0-9._@+=-]/g, "-")
+    .slice(0, 128);
+
+  return { userToken: () => signUserToken({ userId: userId, secret: secret }) };
+}
+
+/** Names the fix for the refusals a deployed agent gives `broods run`. */
+function explainRunError(
+  error: unknown,
+  agentName: string,
+  scope: { project: string; stage: string },
+  signed: boolean,
+): unknown {
+  const message = error instanceof Error ? error.message : String(error);
+  if (signed && message.includes(" 401 ")) {
+    return new Error(
+      `The run was refused: ${USER_TOKEN_SECRET_ENV} here is not ${scope.project}/${scope.stage}'s ` +
+        "signing secret. Use the secret your backend signs with, or rotate it on the dashboard's Runtime key tab.",
+    );
+  }
+  if (message.includes("user_token_required")) {
+    return new Error(
+      `Agent "${agentName}" requires a signed user token, and this checkout has no ${USER_TOKEN_SECRET_ENV} ` +
+        `matching ${scope.project}/${scope.stage}. Put the secret your backend signs with in .env.local, ` +
+        "rotate it on the dashboard's Runtime key tab, or turn off Require user token for this agent.",
+    );
+  }
+  if (message.includes("public_access_disabled")) {
+    return new Error(
+      `Agent "${agentName}" is not publicly accessible (secured by default). ` +
+        "Set publicAccess: true in its config and redeploy, or enable Public access in the dashboard.",
+    );
+  }
+
+  return error;
 }
 
 async function writeStarter(

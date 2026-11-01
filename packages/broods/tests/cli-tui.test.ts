@@ -6,8 +6,10 @@ import {
   type UIMessage,
 } from "ai";
 import { BroodsClient, type AgentReference } from "../src/client.ts";
+import { EventEmitter } from "node:events";
 import {
   RemoteAgentTransport,
+  stopTurnOnEscape,
   streamAgentText,
   submitPrompt,
 } from "../src/cli/tui.ts";
@@ -344,4 +346,65 @@ test("aborting stops a turn that is waiting on the model", async () => {
 
   // Without racing the signal this would hang until the server sent more.
   expect((await pending).done).toBe(true);
+});
+
+/** An SSE body that sends `parts` and then stays open, like a long reply. */
+function openSse(...parts: unknown[]): Response {
+  const encoder = new TextEncoder();
+
+  return new Response(
+    new ReadableStream({
+      start: function (controller): void {
+        for (const part of parts)
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(part)}\n\n`),
+          );
+      },
+    }),
+  );
+}
+
+test("stopTurn ends a streaming reply and keeps the text so far", async () => {
+  const { transport } = testTransport([
+    openSse(
+      { type: "text-start", id: "0" },
+      { type: "text-delta", id: "0", text: "Once upon" },
+    ),
+  ]);
+  expect(transport.stopTurn()).toBe(false);
+
+  const turn = readTurn(transport, [userMessage("m1", "tell a story")]);
+  await Bun.sleep(50);
+  expect(transport.stopTurn()).toBe(true);
+  const message = await turn;
+
+  expect(message?.parts).toContainEqual(
+    expect.objectContaining({ type: "text", text: "Once upon" }),
+  );
+  expect(transport.stopTurn()).toBe(false);
+});
+
+test("a lone Esc stops the streaming turn; other keys and idle Esc pass through", () => {
+  const input = new EventEmitter() as unknown as NodeJS.ReadStream;
+  const seen: string[] = [];
+  input.on("data", (chunk: Buffer) => seen.push(String(chunk)));
+  let streaming = true;
+  const transport = {
+    stopTurn: (): boolean => {
+      const was = streaming;
+      streaming = false;
+
+      return was;
+    },
+  } as unknown as RemoteAgentTransport;
+
+  const restore = stopTurnOnEscape(transport, input);
+  input.emit("data", Buffer.from("\x1b"));
+  input.emit("data", Buffer.from("\x1b[A"));
+  input.emit("data", Buffer.from("\x1b"));
+  restore();
+  input.emit("data", Buffer.from("x"));
+
+  // The first Esc stopped the turn; the arrow and the idle Esc reached the UI.
+  expect(seen).toEqual(["\x1b[A", "\x1b", "x"]);
 });
