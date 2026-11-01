@@ -2882,6 +2882,37 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     }
   });
 
+  test("admits the sweep's retry of a resume that failed before its owner saved it", async (): Promise<void> => {
+    const { t, conversationKey, ownerGeneration, resume } =
+      await busyConversation();
+    const before = await kind.handback(t, "late");
+    await finishBusy(t, conversationKey, ownerGeneration);
+    expect(await resume()).toMatchObject({ outcome: "owner" });
+    const owner = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("runtimeConversationCoordinators")
+          .withIndex("by_conversationKey", (q) =>
+            q.eq("conversationKey", conversationKey),
+          )
+          .unique(),
+    );
+
+    // Its config fails to load, so the run settles failed with nothing saved.
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey: conversationKey,
+      ownerEventId: "resume",
+      ownerGeneration: owner!.ownerGeneration,
+      status: "failed",
+      error: "config unavailable",
+    });
+    expect(await kind.handback(t, "late")).toBe(before);
+
+    // Admitted again, behind the failed run's lease, not refused as a
+    // duplicate of the envelope that never told it.
+    expect(await resume()).toMatchObject({ outcome: "queued" });
+  });
+
   test("stores the result once its owner saves the resume", async (): Promise<void> => {
     const { t, conversationKey, ownerGeneration, resume } =
       await busyConversation();

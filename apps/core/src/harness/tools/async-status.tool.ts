@@ -156,9 +156,16 @@ The result is delivered back into the conversation automatically when it finishe
               namespace: job.namespace,
             });
 
+            // Recorded once the row is settled with what the model gets.
+            const settled = await settleTerminalJob(
+              statusId,
+              executor,
+              job,
+              stopped,
+            );
             await handedOver();
 
-            return settleTerminalJob(statusId, executor, job, stopped);
+            return settled;
           }
 
           if (!executor.jobStatus) {
@@ -180,9 +187,15 @@ The result is delivered back into the conversation automatically when it finishe
             return { status: "unknown", jobId: job.jobId };
           }
 
+          const settled = await settleTerminalJob(
+            statusId,
+            executor,
+            job,
+            status,
+          );
           await handedOver();
 
-          return settleTerminalJob(statusId, executor, job, status);
+          return settled;
         } catch (cause) {
           return toolError(
             cause instanceof Error ? cause.message : String(cause),

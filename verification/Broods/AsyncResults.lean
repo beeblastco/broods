@@ -27,9 +27,9 @@ also completes a resume of the result still queued in that conversation. A resum
 admitted only while the row is not stored and no resume of it is queued or applied, so the
 parent is told a result once, and a turn that dies before its save leaves the result to the
 next resume. A `stored` mark (`markAsyncAgentHandback`) is for a result the parent is never
-told. A resume that expires leaves the row as it was, for the sweep to resume again. Only
-the sweep reads `pending`, which the row carries from its creation, past the parent's
-hold. A tool row's `handback` moves the same way: its settle writes `pending`, the
+told. A resume that ends unsaved, expired or failed, leaves the row as it was, for the sweep
+to resume again. Only the sweep reads `pending`, which the row carries from its creation,
+past the parent's hold. A tool row's `handback` moves the same way: its settle writes `pending`, the
 parent's append, a saved `async_status` read and the save of a continuation (`accept` with
 `toolResultId`) store it, and `markHandback` here stands for `markAsyncToolHandback`, which
 never touches the status the proofs are about.

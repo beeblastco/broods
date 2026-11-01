@@ -19,6 +19,7 @@ import {
   conversationEventsValidator,
   insertConversationEvents,
   markResultStored,
+  type ResultFence,
   writeAsyncAgentResult,
 } from "./runtime";
 import {
@@ -293,7 +294,7 @@ export const accept = internalMutation({
       ownerTaskId: args.ownerTaskId,
       stopRequestedGeneration: undefined,
       leaseExpiresAt: now + args.leaseTtlMs,
-      ...resumeHandOver([baseEnvelope]),
+      unsavedResults: resultFences([baseEnvelope]),
       updatedAt: now,
     });
 
@@ -1138,7 +1139,7 @@ async function checkDuplicateAdmission(
     .query("runtimeIngressEnvelopes")
     .withIndex("by_identity", (q) => q.eq("identity", identity))
     .unique();
-  if (existing && (await expiredUndeliveredResume(ctx, existing))) {
+  if (existing && (await undeliveredResume(ctx, existing))) {
     await ctx.db.delete(existing._id);
   } else if (existing) {
     // The recovery sweep retries a resume under the same identity while the
@@ -1240,15 +1241,17 @@ async function storedResultAdmission(
 }
 
 /**
- * Whether `envelope` is a resume that expired, queued or applied, before its
- * owner saved it. That save marks its result stored, so a result row of its
- * account still not stored is one the conversation never got.
+ * Whether `envelope` is a resume that ended, expired, failed or settled,
+ * without its owner saving it. That save marks its result stored, so a result
+ * row of its account still not stored is one the conversation never got.
  */
-async function expiredUndeliveredResume(
+async function undeliveredResume(
   ctx: QueryCtx,
   envelope: Doc<"runtimeIngressEnvelopes">,
 ): Promise<boolean> {
-  if (envelope.status !== "expired") return false;
+  if (envelope.status === "queued" || envelope.status === "processing") {
+    return false;
+  }
   const rows = [
     await asyncAgentResultRow(ctx, envelope.resultEventId),
     await asyncToolResultRow(ctx, envelope.toolResultId),
@@ -1274,13 +1277,25 @@ async function liveResumeOf(
   },
 ): Promise<boolean> {
   for (const status of EXPIRABLE_STATUSES) {
-    const live = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
-        q.eq("conversationKey", args.conversationKey).eq("status", status),
-      )
-      .take(MAX_DRAIN_ENVELOPES);
-    if (live.some((row): boolean => resumesSameResult(row, args))) return true;
+    const live =
+      args.resultEventId !== undefined
+        ? await ctx.db
+            .query("runtimeIngressEnvelopes")
+            .withIndex("by_resultEventId_and_status", (q) =>
+              q.eq("resultEventId", args.resultEventId).eq("status", status),
+            )
+            .take(MAX_DRAIN_ENVELOPES)
+        : await ctx.db
+            .query("runtimeIngressEnvelopes")
+            .withIndex("by_toolResultId_and_status", (q) =>
+              q.eq("toolResultId", args.toolResultId).eq("status", status),
+            )
+            .take(MAX_DRAIN_ENVELOPES);
+    if (
+      live.some((row): boolean => row.conversationKey === args.conversationKey)
+    ) {
+      return true;
+    }
   }
 
   return false;
@@ -1359,7 +1374,10 @@ async function claimSteering(
     queuedCount: Math.max(0, queue.queuedCount - selected.length),
     queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
     leaseExpiresAt: now + args.leaseTtlMs,
-    ...resumeHandOver(selected),
+    unsavedResults: [
+      ...(coordinator.unsavedResults ?? []),
+      ...(resultFences(selected) ?? []),
+    ],
     updatedAt: now,
   });
 
@@ -1408,8 +1426,8 @@ function ingressStatusResult(
 
 /**
  * Inserts history rows for an owner the fence just accepted, all or none. The
- * write saves what the owner was handed, so after a resume's hand-over it
- * stores the result of each resume the owner is processing, and it completes
+ * write saves what the owner was handed, so it stores the results of the
+ * resumes handed to it since its last write (`unsavedResults`), and it completes
  * each queued resume of a result the write stored: the history tells both
  * now.
  * @returns the coordinator, with its queue counters current
@@ -1427,22 +1445,16 @@ async function insertOwnedEvents(
     coordinator.conversationKey,
     events,
   );
-  if (coordinator.resumeUnsaved) {
-    const applied = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
-        q
-          .eq("conversationKey", coordinator.conversationKey)
-          .eq("status", "processing"),
-      )
-      .take(MAX_DRAIN_ENVELOPES);
-    for (const row of applied) {
-      if (row.ownerGeneration === coordinator.ownerGeneration) {
-        await markDeliveredResultsStored(ctx, row);
-      }
+  if (coordinator.unsavedResults !== undefined) {
+    for (const fence of coordinator.unsavedResults) {
+      await markDeliveredResultsStored(ctx, {
+        accountId: coordinator.accountId,
+        conversationKey: coordinator.conversationKey,
+        ...fence,
+      });
     }
-    await ctx.db.patch(coordinator._id, { resumeUnsaved: undefined });
-    coordinator = { ...coordinator, resumeUnsaved: undefined };
+    await ctx.db.patch(coordinator._id, { unsavedResults: undefined });
+    coordinator = { ...coordinator, unsavedResults: undefined };
   }
   if (stored.length === 0) return coordinator;
   const now = Date.now();
@@ -1677,21 +1689,25 @@ async function markDeliveredResultsStored(
 }
 
 /**
- * The coordinator patch for handing `rows` to an owner: one that carries a
- * late result leaves it for the owner's next history write to store.
+ * The late results `rows` carry, for the owner they are handed to: its next
+ * history write saves them and stores the results. Undefined when none does.
  */
-function resumeHandOver(
+function resultFences(
   rows: Pick<
     Doc<"runtimeIngressEnvelopes">,
     "resultEventId" | "toolResultId"
   >[],
-): { resumeUnsaved?: true } {
-  return rows.some(
-    (row): boolean =>
-      row.resultEventId !== undefined || row.toolResultId !== undefined,
-  )
-    ? { resumeUnsaved: true }
-    : {};
+): ResultFence[] | undefined {
+  const fences = rows.flatMap((row): ResultFence[] => [
+    ...(row.resultEventId !== undefined
+      ? [{ resultEventId: row.resultEventId }]
+      : []),
+    ...(row.toolResultId !== undefined
+      ? [{ toolResultId: row.toolResultId }]
+      : []),
+  ]);
+
+  return fences.length > 0 ? fences : undefined;
 }
 
 /**
@@ -1832,7 +1848,7 @@ async function promoteQueuedGroup(
     queuedCount: Math.max(0, queue.queuedCount - selected.length),
     queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
     leaseExpiresAt: now + options.leaseTtlMs,
-    ...resumeHandOver(selected),
+    unsavedResults: resultFences(selected),
     updatedAt: now,
   });
 

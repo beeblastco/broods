@@ -2,6 +2,7 @@ import { describe, expect, it, spyOn } from "bun:test";
 import * as asyncToolResults from "../src/harness/async-tool-result.ts";
 import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
 import type { ContinuationOutcome } from "../src/harness/responses.ts";
+import * as sandboxes from "../src/harness/sandbox/index.ts";
 import * as log from "../src/shared/log.ts";
 
 type TestToolExecute = {
@@ -264,6 +265,51 @@ describe("async_status", () => {
     } finally {
       read.mockRestore();
       marked.mockRestore();
+    }
+  });
+
+  it("records a polled job's read only once its row is settled with the answer", async (): Promise<void> => {
+    const row: AsyncToolResultRecord = {
+      ...settledRow(),
+      status: "processing",
+      input: { kind: "sandbox_job", namespace: "ns", jobId: "job-1" },
+    };
+    const read = spyOn(
+      asyncToolResults,
+      "getAsyncToolResult",
+    ).mockResolvedValue(row);
+    // The job is done, but fetching its logs fails, so the call answers an error.
+    const executor = spyOn(sandboxes, "createSandboxExecutor").mockReturnValue({
+      jobStatus: async () => ({ state: "completed", exitCode: 0 }),
+      jobLogs: async () => {
+        throw new Error("logs unavailable");
+      },
+    } as unknown as ReturnType<typeof sandboxes.createSandboxExecutor>);
+    const reads: string[] = [];
+    const { default: asyncStatusTool } =
+      await import("../src/harness/tools/async-status.tool.ts");
+    const tools = asyncStatusTool({
+      conversationKey: conversationKey,
+      supportsJobs: true,
+      workspaces: [{ namespace: "ns", sandbox: {} }] as unknown as Parameters<
+        typeof asyncStatusTool
+      >[0]["workspaces"],
+      onResultRead: async (_toolCallId: string, resultId: string) => {
+        reads.push(resultId);
+      },
+    });
+
+    try {
+      await expect(
+        (tools.async_status as unknown as TestToolExecute).execute(
+          { statusId: row.resultId },
+          { toolCallId: "tool-call-poll", messages: [], context: undefined },
+        ),
+      ).rejects.toThrow("logs unavailable");
+      expect(reads).toEqual([]);
+    } finally {
+      read.mockRestore();
+      executor.mockRestore();
     }
   });
 });
