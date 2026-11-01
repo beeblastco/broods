@@ -72,8 +72,7 @@ broods-prod whoami                                # prod: whoami, list, read onl
 cd "$CLAUDE_PROJECT_DIR"                          # back: later steps run in the checkout
 ```
 
-`broods-dev run my-agent "..." < /dev/null` answers in plain text: it signs a user token with the
-`BROODS_USER_TOKEN_SECRET` that `dev` wrote to `.env.local`.
+`broods-dev run my-agent "..." < /dev/null` answers in plain text, with the probe's stage ticket.
 Capture exact commands and output.
 
 ## 6. Dashboard
