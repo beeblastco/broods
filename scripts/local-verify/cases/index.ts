@@ -14,6 +14,7 @@ import { workerSandbox } from "./worker-sandbox.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
+import { mcpTasks } from "./mcp-tasks.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { modelPrices } from "./model-prices.ts";
 import { modelTimeout } from "./model-timeout.ts";
@@ -56,6 +57,7 @@ export const verifyCases: readonly VerifyCase[] = [
   subagentModel,
   subagentResume,
   asyncToolHandback,
+  mcpTasks,
   autoCompaction,
   machineSandbox,
   bashTimeout,

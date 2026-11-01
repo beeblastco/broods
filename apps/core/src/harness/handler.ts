@@ -134,6 +134,7 @@ import {
   type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
+import { handleMcpRequest, MCP_PATH } from "./mcp-tasks.ts";
 import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   admitRun,
@@ -368,6 +369,11 @@ async function handleRequest(
 
   if (event.path === "/v1/cron-runs") {
     return handleCronHttpRequest(event);
+  }
+  if (event.path === MCP_PATH) {
+    return handleMcpRequest(event, (replayed): Promise<Response> =>
+      handleRequest(replayed, context),
+    );
   }
 
   return routeIncomingEvent(
@@ -2195,6 +2201,15 @@ async function handleStatusRequest(
       approvals: asyncResult?.approvals,
       questions: asyncResult?.questions,
       error: (result.error ?? asyncResult?.error) || undefined,
+      createdAt: new Date(result.createdAt).toISOString(),
+      // The polling row moves on its own while the envelope rests: an answered
+      // question or a hand-back updates only the row.
+      lastUpdatedAt: new Date(
+        Math.max(
+          result.updatedAt,
+          asyncResult ? Date.parse(asyncResult.updatedAt) : 0,
+        ),
+      ).toISOString(),
     }),
   );
 }

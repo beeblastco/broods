@@ -100,6 +100,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         { type: "doc", id: "guides/conversations", label: "Conversations" },
+        { type: "doc", id: "guides/mcp-server", label: "Agents as MCP tools" },
         { type: "doc", id: "guides/policies", label: "Policies" },
         { type: "doc", id: "guides/hooks", label: "Hooks" },
         { type: "doc", id: "guides/webhooks", label: "Webhooks" },

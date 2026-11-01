@@ -62,6 +62,10 @@ export interface AsyncStatus {
   stoppedByUser?: boolean;
   approvals?: ToolApprovalSummary[];
   questions?: PendingQuestion[];
+  /** ISO 8601 time the run was accepted. */
+  createdAt?: string;
+  /** ISO 8601 time the run's status last moved. */
+  lastUpdatedAt?: string;
 }
 
 export interface Cron {

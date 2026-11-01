@@ -137,12 +137,13 @@ export const ROUTERS: readonly EdgeRouter[] = [
   },
   // Includes the in-cluster-only paths (`/v1/cron-runs`, `/v1/mcp-service/rpc`):
   // core refuses them without the service token, which is never valid on a
-  // request the edge stamped.
+  // request the edge stamped. `/mcp` is core's MCP Tasks server; it sits off
+  // `/v1` because `/v1/mcp` is the config plane's server CRUD.
   {
     name: "core",
     upstream: "core",
     limit: "http",
-    rules: [{ path: "/v1(?:/.*)?" }],
+    rules: [{ path: "/v1(?:/.*)?" }, { path: "/mcp" }],
   },
 ];
 

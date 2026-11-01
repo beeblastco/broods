@@ -425,6 +425,95 @@ paths:
                       type: authentication_error
                       code: unauthorized
 
+  /mcp:
+    post:
+      tags:
+        - Direct API
+      summary: MCP Tasks server
+      description: |
+        A Model Context Protocol server (revision 2026-07-28, stateless HTTP)
+        with the `io.modelcontextprotocol/tasks` extension. Each agent the
+        credential can run is one tool named by its agent id, with input
+        `{prompt}`. `tools/call` starts a background run in a fresh
+        conversation and answers a task handle (`resultType: "task"`) whose
+        `taskId` is the run id; `tasks/get`, `tasks/update` and `tasks/cancel`
+        follow it. A client that does not declare the tasks extension on the
+        request gets `-32021`. Run reads and writes go through `/v1/runs`, so
+        the same credential rules apply: an account key lists every agent of
+        the account, a member's stage ticket its stage, the runtime key its
+        stage's public agents. A run token lists no tools yet. 2025-era
+        (`initialize`) traffic is refused with `-32022`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: One JSON-RPC 2.0 request with the per-request `_meta` envelope.
+              required: [jsonrpc, method]
+              properties:
+                jsonrpc:
+                  type: string
+                  enum: ["2.0"]
+                id:
+                  oneOf:
+                    - type: string
+                    - type: integer
+                method:
+                  type: string
+                  enum:
+                    [
+                      server/discover,
+                      tools/list,
+                      tools/call,
+                      tasks/get,
+                      tasks/update,
+                      tasks/cancel,
+                    ]
+                params:
+                  type: object
+            examples:
+              callTool:
+                value:
+                  jsonrpc: "2.0"
+                  id: 1
+                  method: tools/call
+                  params:
+                    name: agent_123
+                    arguments:
+                      prompt: Summarize yesterday's support tickets.
+                    _meta:
+                      io.modelcontextprotocol/protocolVersion: "2026-07-28"
+                      io.modelcontextprotocol/clientCapabilities:
+                        extensions:
+                          io.modelcontextprotocol/tasks: {}
+      responses:
+        "200":
+          description: The JSON-RPC response; a protocol error is in its `error`.
+          content:
+            application/json:
+              schema:
+                type: object
+              examples:
+                task:
+                  value:
+                    jsonrpc: "2.0"
+                    id: 1
+                    result:
+                      resultType: task
+                      taskId: run_8c1d4a9e2f1b40d7a3c65e90b7412fda
+                      status: working
+                      createdAt: "2026-11-01T12:00:00.000Z"
+                      lastUpdatedAt: "2026-11-01T12:00:00.000Z"
+                      ttlMs: null
+                      pollIntervalMs: 2000
+        "401":
+          description: Missing or unknown credential, or the admin secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}:
     post:
       tags:
@@ -4257,7 +4346,16 @@ components:
 
     IngressStatus:
       type: object
-      required: [runId, eventId, agentId, conversationKey, status]
+      required:
+        [
+          runId,
+          eventId,
+          agentId,
+          conversationKey,
+          status,
+          createdAt,
+          lastUpdatedAt,
+        ]
       properties:
         runId:
           type: string
@@ -4311,6 +4409,14 @@ components:
         stoppedByUser:
           type: boolean
           description: True when a `failed` status was a deliberate /stop rather than a fault.
+        createdAt:
+          type: string
+          format: date-time
+          description: When the run was accepted.
+        lastUpdatedAt:
+          type: string
+          format: date-time
+          description: When the run's status last moved, including an answered question it resumed from.
 
     PendingQuestion:
       type: object

@@ -215,6 +215,15 @@ const agents: Storage["agents"] = {
 
     return await agentFromConvex(doc);
   },
+  listForAccount: async function (accountId) {
+    const docs = await adminQuery(internal.agent.agents.list, {
+      accountId: accountId,
+    });
+
+    return (await Promise.all(docs.map((doc) => agentFromConvex(doc)))).filter(
+      (record) => record !== null,
+    );
+  },
   listForEndpoint: async function (accountId, endpointId) {
     const docs = await adminQuery(internal.agent.agents.listForEndpoint, {
       accountId: accountId,
