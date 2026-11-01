@@ -48,30 +48,30 @@ other (4 vCPU, 16 GB). Run perf and bench at least 3 times per side; report medi
 ## 5. New CLI and SDK, on this session's own project
 
 Every session acts as the shared probe account and works in its own project,
-`$BROODS_PROJECT` (`cloud-<session id>`). Never touch another `cloud-*` project: a
+`$BROODS_CLOUD_PROJECT` (`cloud-<session id>`), on its default `development` stage. Never touch another `cloud-*` project: a
 parallel session owns it. Shell state does not survive between Bash calls, so the
 session-start hook exports the whole command: `$BROODS_CLI_DEV` (dev, read and write)
 and `$BROODS_CLI_PROD` (prod, read-only). Both run the CLI built from this checkout.
 
 ```bash
 bun run --filter broods build
-mkdir -p /tmp/$BROODS_PROJECT && cd /tmp/$BROODS_PROJECT
+mkdir -p /tmp/$BROODS_CLOUD_PROJECT && cd /tmp/$BROODS_CLOUD_PROJECT   # folder name = project name
 $BROODS_CLI_DEV init
 echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env.local   # dev pushes env() values from .env.local only
-$BROODS_CLI_DEV dev --once --stage claude              # first sync creates the project
+$BROODS_CLI_DEV dev --once                             # first sync creates the project
 $BROODS_CLI_DEV whoami
 $BROODS_CLI_PROD whoami                                # prod: whoami, list, read only
 ```
 
-`broods run` sends no user token, and new agents require one: it answers `403 user_token_required`
-until the agent's "Require user token" switch is off (dashboard, agent Details tab).
+`$BROODS_CLI_DEV run my-agent "..." < /dev/null` answers in plain text: it signs a user token with the
+`BROODS_USER_TOKEN_SECRET` that `dev` wrote to `.env.local`.
 Capture exact commands and output.
 
 ## 6. Dashboard
 
 - local: `bun run local:up -- --dashboard`, then in `apps/dashboard`:
   `E2E_ADMIN_KEY=$(bun scripts/local-stack.ts status --key) E2E_BASE_URL=<printed url> bun run test:app` (and `perf`).
-- dev: `E2E_BASE_URL=https://dashboard.dev.broods.app E2E_PROJECT_ID=<id of $BROODS_PROJECT>`
+- dev: `E2E_BASE_URL=https://dashboard.dev.broods.app E2E_PROJECT_ID=<id of $BROODS_CLOUD_PROJECT>`
   with `E2E_EMAIL`, `E2E_PASSWORD` (the probe). The id is in the dashboard URL of the project.
 - prod: browse read-only with the same user. No writes.
 
@@ -79,7 +79,7 @@ Keep screenshots and traces as evidence.
 
 ## Clean up
 
-Before the final reply: `$BROODS_CLI_DEV project delete "$BROODS_PROJECT" --yes`, unless the user
+Before the final reply: `$BROODS_CLI_DEV project delete "$BROODS_CLOUD_PROJECT" --yes`, unless the user
 asked to keep it (then put its dashboard URL in the report). Run `bun run local:down` in each worktree.
 
 ## 7. Report

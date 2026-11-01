@@ -15,6 +15,7 @@ import {
 import { createHash } from "node:crypto";
 import module from "node:module";
 import { basename, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { watch } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -1416,6 +1417,10 @@ async function update(): Promise<void> {
  * any failure, because a version check must never hold up or fail a sync.
  */
 async function warnOnOutdatedCli(): Promise<void> {
+  // A build from the monorepo carries the workspace version, which is never
+  // the released one (packages/broods/AGENTS.md), so it would always nag.
+  if (!fileURLToPath(import.meta.url).includes(`${sep}node_modules${sep}`))
+    return;
   const latest = await latestPublishedVersion();
   if (latest === null || !isNewerVersion(latest, VERSION)) return;
   printWarning(
@@ -3157,8 +3162,9 @@ function explainRunError(
   const message = error instanceof Error ? error.message : String(error);
   if (signed && message.includes(" 401 ")) {
     return new Error(
-      `The run was refused: ${USER_TOKEN_SECRET_ENV} here is not ${scope.project}/${scope.stage}'s ` +
-        "signing secret. Use the secret your backend signs with, or rotate it on the dashboard's Runtime key tab.",
+      `The run was refused (401): ${scope.project}/${scope.stage} accepted neither the runtime key nor the ` +
+        `user token. Check that ${USER_TOKEN_SECRET_ENV} is the stage's signing secret (the dashboard's ` +
+        "Runtime key tab rotates it) and that no proxy rewrites the Authorization header.",
     );
   }
   if (message.includes("user_token_required")) {
