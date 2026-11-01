@@ -6,9 +6,6 @@
  * the project's sections, everywhere else the account's. Collapsed, it is an
  * icon rail that opens over the page while the pointer is on it.
  */
-import { DASHBOARD_PANELS } from "@/app/(main)/[projectId]/dashboard/panels";
-import { SETTINGS_PANELS } from "@/app/(main)/[projectId]/settings/panels";
-import { ORG_PANELS } from "@/app/(main)/settings/org/panels";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import {
   Sidebar,
@@ -25,6 +22,7 @@ import {
 } from "@/app/components/ui/sidebar";
 import { UserMenu } from "@/app/components/UserMenu";
 import { useHydrated } from "@/app/hooks/useHydrated";
+import { useRouteIntent } from "@/app/hooks/useRouteIntent";
 import {
   ACCOUNT_NAV_ITEMS,
   activeNavItem,
@@ -35,7 +33,6 @@ import {
   stepNavItem,
   tabHref,
 } from "@/app/lib/navigation";
-import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 import { cn } from "@/app/lib/utils";
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
@@ -47,21 +44,11 @@ import {
 } from "next/navigation";
 import { useEffect } from "react";
 
-// The tabs a page loads in a chunk of its own, by section. Intent to open one
-// (hover, focus, press) starts its chunk, which lands early enough to hide the
-// fetch; nothing is fetched for a tab nobody reaches for.
-const TAB_PANELS: Partial<
-  Record<string, Partial<Record<string, () => Promise<unknown>>>>
-> = {
-  "/dashboard": DASHBOARD_PANELS,
-  "/settings": SETTINGS_PANELS,
-  "/settings/org": ORG_PANELS,
-};
-
 export function AppSidebar(): React.JSX.Element {
   const params = useParams<{ projectId?: string }>();
   const pathname = usePathname();
   const router = useRouter();
+  const { handlers } = useRouteIntent();
   const searchParams = useSearchParams();
   const { setOpenMobile, toggleSidebar } = useSidebar();
   const hydrated = useHydrated();
@@ -79,21 +66,6 @@ export function AppSidebar(): React.JSX.Element {
   // stable from the first render and no prefetch wave is thrown away.
   const itemHref = (item: NavItem): string =>
     projectId ? navHref(projectId, item.segment, stageParam) : item.segment;
-  // Home only redirects to a project, so its links are never walked.
-  const prefetchRoute = (item: NavItem, isActive: boolean): void => {
-    if (!isActive && pathname !== "/") {
-      router.prefetch(itemHref(item), FULL_ROUTE_PREFETCH);
-    }
-  };
-  // Navigate on press, not on release: a click spends about 100 ms between
-  // the two. Only a plain left press; modified and middle clicks keep the
-  // browser's own behaviour, and a keyboard Enter still goes through onClick.
-  const isPlainPress = (event: React.MouseEvent): boolean =>
-    event.button === 0 &&
-    !event.metaKey &&
-    !event.ctrlKey &&
-    !event.shiftKey &&
-    !event.altKey;
 
   useShortcut("nav.prev", () =>
     router.push(itemHref(stepNavItem(items, active, -1))),
@@ -125,35 +97,13 @@ export function AppSidebar(): React.JSX.Element {
                 <SidebarMenuItem key={item.segment}>
                   <SidebarMenuButton
                     isActive={isActive && item.tabs.length === 0}
-                    // The whole route, on intent (hover, focus), except
-                    // the page we are on. The default prefetch stops at
-                    // loading.tsx and expires at once, so a click still fetched
-                    // the tree, then its chunks, then data: three trips in a
-                    // row. Prefetching on viewport entry instead loaded every
-                    // route's chunks and data right after each cold load.
+                    // Prefetched on intent, not on viewport entry, which
+                    // loaded every route's chunks and data after each cold load.
                     render={
                       <Link
                         href={itemHref(item)}
                         prefetch={false}
-                        onMouseEnter={() => prefetchRoute(item, isActive)}
-                        onFocus={() => prefetchRoute(item, isActive)}
-                        onMouseDown={(event) => {
-                          if (isPlainPress(event) && !isActive) {
-                            router.push(itemHref(item));
-                          }
-                        }}
-                        onClick={(event) => {
-                          // Pressed already navigated; skip Link's own push.
-                          // The active item has no press push, so its click
-                          // still resets the section to its default tab.
-                          if (
-                            event.detail > 0 &&
-                            isPlainPress(event) &&
-                            !isActive
-                          ) {
-                            event.preventDefault();
-                          }
-                        }}
+                        {...handlers(itemHref(item), isActive)}
                         draggable={false}
                       />
                     }
@@ -172,28 +122,22 @@ export function AppSidebar(): React.JSX.Element {
                   {isActive && activeTab && (
                     <SidebarMenuSub>
                       {item.tabs.map((tab) => {
-                        const load = TAB_PANELS[item.segment]?.[tab.id];
-                        // A failed warm-up stays quiet; the click's load surfaces it.
-                        const warm = load
-                          ? (): void => void load().catch((): void => {})
-                          : undefined;
+                        const href = tabHref(
+                          `${base}${item.segment}`,
+                          tab.id,
+                          searchParams.toString(),
+                        );
 
                         return (
                           <SidebarMenuSubItem key={tab.id}>
                             <SidebarMenuSubButton
                               isActive={tab.id === activeTab.id}
                               variant={tab.danger ? "destructive" : "default"}
-                              onMouseEnter={warm}
-                              onFocus={warm}
-                              onPointerDown={warm}
                               render={
                                 <Link
-                                  href={tabHref(
-                                    `${base}${item.segment}`,
-                                    tab.id,
-                                    searchParams.toString(),
-                                  )}
+                                  href={href}
                                   prefetch={false}
+                                  {...handlers(href, tab.id === activeTab.id)}
                                   draggable={false}
                                 />
                               }

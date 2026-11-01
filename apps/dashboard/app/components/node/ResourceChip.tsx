@@ -14,7 +14,7 @@ export type ChipStatus = { color: string; text: string; title?: string };
  * A sandbox, workspace or MCP node drawn inside a frame: a chip with its icon,
  * name and one status line, at a card's width. Clicking it opens it into a
  * card, which is the same element grown to a card's slot, so the chips under
- * it slide down rather than being covered. Side handles are always mounted so
+ * it move down rather than being covered. Side handles are always mounted so
  * mount and runs-on edges can attach; only sandbox and workspace chips
  * (`mountable`) accept a new mount drawn onto them.
  */
@@ -48,7 +48,7 @@ export function ResourceChip({
       // w-44 by h-11 is FRAME_CHIP_WIDTH by FRAME_CHIP_HEIGHT, the slot the frame
       // leaves; open it fills FRAME_MEMBER_CARD_HEIGHT with a card's padding.
       className={cn(
-        "relative flex w-44 cursor-pointer flex-col rounded-md border border-border bg-card transition-all duration-200 ease-out hover:border-foreground/25",
+        "relative flex w-44 cursor-pointer flex-col rounded-md border border-border bg-card transition-colors hover:border-foreground/25",
         expanded ? "h-24 px-3 py-2.5" : "h-11 justify-center gap-0.5 px-1.5",
       )}
     >

@@ -19,6 +19,41 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - What a page may still set on a component (the `no-restyle` contracts): layout everywhere; typography on text components (Button, Input, Label, Badge, dialog and menu labels, select parts); `gap` on dialog and sheet titles; `pl` on Input for a leading icon; spacing on DialogContent, DialogHeader and TabsList; color and shape on Skeleton; anything on unstyled primitives (Collapsible parts, triggers, close buttons, ResizablePanel, TabsContent).
 - `app/components/ui/**` styles its own internals, so `no-restyle`, `no-arbitrary-values` and `require-static-classes` are off there. `tests/**` may use inline styles. `nodrag` and `nopan` are allowed class names because React Flow reads them from the DOM.
 
+# Taste
+
+People keep this open all day and feel every dropped frame and every wait. A rule here that fights the task in front of you: say so and get the user's yes before breaking it.
+
+Motion
+
+- Only `opacity`, `translate` and `scale` move; colors and shadows may fade. Never width, height, an inset, margin, padding or `transition-all`: a layout transition relays out the canvas on every frame, about 3x the layout time. Use `transition` (Tailwind's default list has no layout property), `transition-colors`, or a named set. `tests/motion.test.ts` fails on a new one.
+- Tokens and utilities live in `app/globals.css`: `duration-fast` (120 ms, hover, tooltips), `duration-base` (160 ms, menus, panels), `duration-slow` (200 ms, dialogs, sheets), `ease-snappy`; `motion-fade` (backdrops), `motion-pop` (Base UI popups), `motion-slide` (sheets), `motion-panel` (docked panels). The `ui` primitives already carry them. A timer that waits one out reads `MOTION_MS` (`app/lib/motion.ts`).
+- Widths snap, content moves. The canvas side panel takes its column in one step and only its content fades in from the edge; on close it fades out over the canvas, inert, then hides; switching nodes replays nothing (`components/canvas/SidePanelSlot.tsx`, `hooks/usePresence.ts`).
+- Nothing waits for motion: content renders in the same commit, input works during an enter, an exiting element is `inert`.
+- Reduced motion: the guard at the end of `globals.css` zeroes every transition and animation. JS motion checks `prefersReducedMotion()`, as the canvas re-centre does.
+- No continuously repainting animation (spinners on live streams, pulses, shimmer, animated edges), and no blur or `backdrop-filter` over content that moves.
+
+Interaction
+
+- Preload on intent: hover, focus and pointer down warm the next route and its tab's chunk (`useRouteIntent`, `app/hooks/useRouteIntent.ts`; `warmTestTab` in `NodeSidePanel.tsx` for a panel tab).
+- Nav links navigate on press, not on release (`useRouteIntent`).
+- Optimistic first: a mutation the user watches land carries `.withOptimisticUpdate` (`app/lib/agentConfigOptimistic.ts`, `app/lib/webhooksOptimistic.ts`).
+- One field is edited inline, not in a modal: Enter or blur commits, Escape cancels (`InlineEdit`, `components/ui/inline-edit.tsx`). A dialog is for a choice with consequences, like a delete.
+- Keyboard parity: what a pointer does, a key does too (`app/lib/shortcuts.ts`, claimed with `useShortcut`).
+
+Effects
+
+- Effects sync with something outside React: a socket, a timer, the DOM, a media query. Derive in render, act in handlers; when a prop change must reset state, adjust it during render (`useEverTrue`, `usePresence`, the name sync in `NodeSidePanel.tsx`).
+
+Composition
+
+- Extend a `ui` component with a variant, size or slot instead of copying its classes (Button `tone` and `variant="nav"`, TabsList `variant="line"`). A look one feature owns stays in that feature's component.
+
+Performance
+
+- A cold page fetches only its own tab: other tabs load through their `panels.ts` loaders, interaction-only components mount on first want (`useEverTrue`), the palette subscribes once it is wanted.
+- Stream updates batch: at most one React commit per 50 ms (`STREAM_COMMIT_INTERVAL_MS` in `useAgentChat.ts`, held by `chatStream.spec.ts`).
+- A list past about 200 rows pages (the Tracing task list's Load more), virtualizes, or sets `content-visibility: auto` on its rows.
+
 # Tests
 
 - `bun run test` is the unit suite (bun test) for pure helpers.

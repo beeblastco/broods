@@ -10,7 +10,7 @@
  * the page already holds (the canvas, the stage list) from its cache and the
  * rest lands one round trip later; the rows re-rank as they change.
  */
-import { NAV_ITEMS, navHref } from "@/app/lib/navigation";
+import { NAV_ITEMS, navHref, tabHref } from "@/app/lib/navigation";
 import type { SearchItem } from "@/app/lib/paletteSearch";
 import { useStage } from "@/app/hooks/useStage";
 import { api } from "@broods/convex/_generated/api";
@@ -89,7 +89,11 @@ export function useDashboardIndex(
         id: `env:${envVar._id}`,
         keywords: ["environment", "variable", "secret"],
         target: {
-          href: navHref(projectId, "/settings", stageId),
+          href: tabHref(
+            `/${projectId}/settings`,
+            "variables",
+            stageId ? `stage=${stageId}` : "",
+          ),
           type: "navigate",
         },
         title: envVar.name,

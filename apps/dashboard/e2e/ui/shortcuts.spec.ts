@@ -89,6 +89,27 @@ test("typing ranks real rows under their headings and Enter runs the top one", a
   await expect(ran(page)).toHaveText(["openNode 7"]);
 });
 
+test("a row that leads to a page starts it once highlighted, by key or pointer", async ({
+  page,
+}) => {
+  await openSurfaces(page);
+  const warmed = page.locator("[data-warmed]");
+  await page.keyboard.press("ControlOrMeta+k");
+
+  // Opening highlights the first row, so Enter's page is already on its way.
+  await expect(warmed).toHaveText("/p/scheduler");
+  await page.keyboard.press("ArrowDown");
+  await expect(warmed).toHaveText("/p/dashboard");
+
+  // A node row opens a node, not a page, so there is nothing to start.
+  await page.keyboard.press("ArrowDown");
+  await expect(rows(page).nth(2)).toHaveAttribute("data-selected", "true");
+  await expect(warmed).toHaveText("/p/dashboard");
+
+  await rows(page).filter({ hasText: "production" }).hover();
+  await expect(warmed).toHaveText("/p?stage=s2");
+});
+
 test("the palette lists the bindings the page has claimed, and drops them when it unmounts", async ({
   page,
 }) => {

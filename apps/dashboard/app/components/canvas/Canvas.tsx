@@ -30,6 +30,7 @@ import {
   isCodeManagedOwner,
 } from "@/app/components/canvas/edgeOwnership";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
+import { SidePanelSlot } from "@/app/components/canvas/SidePanelSlot";
 import { useEverTrue } from "@/app/hooks/useEverTrue";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
@@ -93,6 +94,7 @@ import {
   type ConnectionGraph,
 } from "@/app/lib/canvasConnections";
 import { toErrorMessage } from "@/app/lib/errors";
+import { MOTION_MS, prefersReducedMotion } from "@/app/lib/motion";
 import { reportPerf } from "@/app/lib/perfReport";
 import { focusedNodeIds } from "@/app/lib/canvasFocus";
 import {
@@ -170,7 +172,7 @@ import {
 const NodeSidePanel = dynamic(
   () =>
     import("@/app/components/NodeSidePanel").then((mod) => mod.NodeSidePanel),
-  { loading: () => <div className="h-full w-full" /> },
+  { loading: () => <div className="h-full w-full border-l bg-card" /> },
 );
 const AgentSourcePickerDialog = dynamic(
   () =>
@@ -932,33 +934,31 @@ function CanvasInner({
     if (canWrite) scheduleSave();
   }, [mcpServers, canWrite, setNodes, scheduleSave]);
 
-  // Re-center the focused node as the side panel opens or closes. Two frames:
-  // `setCenter` reads the canvas width ReactFlow's ResizeObserver stores after layout.
+  // Re-center the focused node once the panel has entered: a pan that starts
+  // with it re-renders every card per frame while the panel mounts.
   const lastFocusedNode = useRef<Node | null>(null);
   useEffect(() => {
     const node = selectedNode ?? lastFocusedNode.current;
     if (selectedNode) lastFocusedNode.current = selectedNode;
     if (!node) return;
 
-    let frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(() => {
-        const width = node.measured?.width ?? node.width ?? 0;
-        const height = node.measured?.height ?? node.height ?? 0;
-        void setCenter(
-          node.position.x + width / 2,
-          node.position.y + height / 2,
-          {
-            zoom: getZoom(),
-            duration: 200,
-          },
-        ).catch((error: unknown): void => {
-          console.error("Failed to center the selected canvas node", error);
-        });
-        if (!selectedNode) lastFocusedNode.current = null;
+    const id = window.setTimeout(() => {
+      const width = node.measured?.width ?? node.width ?? 0;
+      const height = node.measured?.height ?? node.height ?? 0;
+      void setCenter(
+        node.position.x + width / 2,
+        node.position.y + height / 2,
+        {
+          zoom: getZoom(),
+          duration: prefersReducedMotion() ? 0 : MOTION_MS.slow,
+        },
+      ).catch((error: unknown): void => {
+        console.error("Failed to center the selected canvas node", error);
       });
-    });
+      if (!selectedNode) lastFocusedNode.current = null;
+    }, MOTION_MS.base);
 
-    return () => cancelAnimationFrame(frame);
+    return () => window.clearTimeout(id);
   }, [selectedNode, setCenter, getZoom]);
 
   /**
@@ -1562,6 +1562,7 @@ function CanvasInner({
       machineConnections: machineConnections,
       mcpServers: mcpServersByNode,
       mountTargetsOf: mountTargetsOf,
+      onRenameNode: updateNodeLabel,
       onSetWorkspaceMount: setWorkspaceMountTarget,
       onToggleFrame: toggleFrame,
       sandboxOrderNumbers: orderNumbers,
@@ -1574,6 +1575,7 @@ function CanvasInner({
       machineConnections,
       mcpServersByNode,
       mountTargetsOf,
+      updateNodeLabel,
       setWorkspaceMountTarget,
       toggleFrame,
       orderNumbers,
@@ -1740,7 +1742,7 @@ function CanvasInner({
 
   return (
     <InfraAnalysisProvider value={infraAnalysis}>
-      <div className="flex size-full overflow-hidden">
+      <div className="relative flex size-full overflow-hidden">
         <div
           ref={canvasContainerRef}
           className="relative h-full min-w-0 flex-1 overflow-hidden"
@@ -1842,22 +1844,20 @@ function CanvasInner({
           )}
         </div>
 
-        {/* No width transition: an animated width relays out the whole
-            canvas and the panel on every frame of the slide. */}
-        <div
-          className={`h-full shrink-0 overflow-hidden ${selectedNode ? "w-2/5" : "w-0"}`}
-        >
-          {sidePanelWanted && (
-            <NodeSidePanel
-              node={selectedNode}
-              selectedAt={selectedAt}
-              onClose={onPaneClick}
-              onRequestDelete={requestNodeDelete}
-              onUpdateNodeLabel={updateNodeLabel}
-              onUpdateNodeData={updateNodeData}
-            />
-          )}
-        </div>
+        {sidePanelWanted && (
+          <SidePanelSlot node={selectedNode}>
+            {(node) => (
+              <NodeSidePanel
+                node={node}
+                selectedAt={selectedAt}
+                onClose={onPaneClick}
+                onRequestDelete={requestNodeDelete}
+                onUpdateNodeLabel={updateNodeLabel}
+                onUpdateNodeData={updateNodeData}
+              />
+            )}
+          </SidePanelSlot>
+        )}
 
         {deleteNode && (
           // Keyed on the card so the typed confirmation does not carry over

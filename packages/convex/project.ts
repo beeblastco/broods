@@ -308,11 +308,14 @@ export const update = mutation({
         ? project.slug
         : await uniqueProjectSlug(ctx, project.orgId, trimmedName);
 
+    // An omitted description is left as is, so a rename cannot undo a concurrent edit.
     await ctx.db.patch(projectId, {
       name: trimmedName,
-      description: description?.trim() || undefined,
       slug: slug,
       updatedAt: Date.now(),
+      ...(description === undefined
+        ? {}
+        : { description: description.trim() || undefined }),
     });
 
     return projectId;

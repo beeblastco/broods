@@ -21,22 +21,27 @@ import {
 } from "@/app/components/ui/command";
 import {
   rankItems,
+  type RankedGroup,
   type SearchGroup,
   type SearchItem,
 } from "@/app/lib/paletteSearch";
 import { formatCombo, SHORTCUTS } from "@/app/lib/shortcuts";
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
+import { useCommandState } from "cmdk";
 import { Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export function CommandPalette({
   items,
   onAsk,
+  onHighlight,
   onSelect,
   onWake,
 }: {
   items: readonly SearchItem[];
   onAsk: (query: string) => void;
+  /** A row became the one Enter would run, by the keyboard or under the pointer. */
+  onHighlight?: (item: SearchItem) => void;
   onSelect: (item: SearchItem) => void;
   /** The palette is about to be wanted: its trigger hovered or focused, or the palette opened. */
   onWake?: () => void;
@@ -129,6 +134,9 @@ export function CommandPalette({
               : "Search nodes, crons, variables, pages, actions..."
           }
         />
+        {onHighlight && (
+          <HighlightWatch groups={groups} onHighlight={onHighlight} />
+        )}
         <CommandList>
           {groups.length === 0 && (
             <CommandEmpty>Nothing here matches.</CommandEmpty>
@@ -162,4 +170,32 @@ export function CommandPalette({
       </CommandDialog>
     </>
   );
+}
+
+const HIGHLIGHT_SETTLE_MS = 120;
+
+/** Reports the highlighted row, which cmdk keeps in its own store. */
+function HighlightWatch({
+  groups,
+  onHighlight,
+}: {
+  groups: readonly RankedGroup[];
+  onHighlight: (item: SearchItem) => void;
+}): null {
+  const value = useCommandState((state) => state.value);
+  const item = useMemo(
+    () =>
+      groups.flatMap((group) => group.items).find((row) => row.id === value),
+    [groups, value],
+  );
+
+  // A row the reader settles on, not every row a held arrow key passes.
+  useEffect(() => {
+    if (!item) return;
+    const id = window.setTimeout(() => onHighlight(item), HIGHLIGHT_SETTLE_MS);
+
+    return () => window.clearTimeout(id);
+  }, [item, onHighlight]);
+
+  return null;
 }
