@@ -36,6 +36,7 @@ import { ClientError, clientErrorResponse } from "./model/clientError";
 import { json, jsonError } from "./model/httpJson";
 import {
   STAGES,
+  GitHubApiError,
   WORKFLOW_PATH,
   administeredInstallations,
   authorizeUrl,
@@ -159,6 +160,8 @@ interface LinkKeys {
   keyIds: Id<"deployKeys">[];
   /** Stages the minting added, removed again if the link fails. */
   stageIds: Id<"stages">[];
+  /** The branches a remapped link deployed from, whose workflow must stop deploying. */
+  previousBranches: string[];
   production?: string;
   development?: string;
 }
@@ -946,6 +949,7 @@ export const mintLinkKeys = internalMutation({
     projectSlug: v.string(),
     keyIds: v.array(v.id("deployKeys")),
     stageIds: v.array(v.id("stages")),
+    previousBranches: v.array(v.string()),
     production: v.optional(v.string()),
     development: v.optional(v.string()),
   }),
@@ -1029,6 +1033,10 @@ export const mintLinkKeys = internalMutation({
       projectSlug: project.slug,
       keyIds: [],
       stageIds: [],
+      previousBranches: [
+        project.repo?.productionBranch,
+        project.repo?.developmentBranch,
+      ].filter((branch): branch is string => branch !== undefined),
     };
     for (const stage of stages) {
       const key = await mint(stage);
@@ -1471,6 +1479,19 @@ async function linkTarget(
   for (const branch of new Set(Object.values(branches))) {
     pulls.push(
       await commitWorkflow(app, token, repo.fullName, branch, workflow),
+    );
+  }
+  // A branch the remap dropped gets the new workflow too, whose job skips it,
+  // or its old one would keep deploying with the stage's new repo secret.
+  const mapped = new Set(Object.values(branches));
+  for (const branch of keys.previousBranches) {
+    if (mapped.has(branch)) continue;
+    await commitWorkflow(app, token, repo.fullName, branch, workflow).catch(
+      (error: unknown) => {
+        // A branch deleted since has no workflow left to run.
+        if (error instanceof GitHubApiError && error.status === 404) return;
+        throw error;
+      },
     );
   }
 

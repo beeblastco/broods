@@ -490,11 +490,25 @@ async function linkFromCli(run: Run): Promise<void> {
       oldKey !== "accepted",
     oldKey,
   );
+  // Dropping dev from the mapping rewrites its workflow, so a push there deploys nothing.
+  await cli.githubLink(slug, {
+    repo: "acme/web",
+    baseUrl: context.edgeUrl,
+    productionBranch: "main",
+    developmentBranch: "staging",
+  });
+  const devWorkflow = github.filesAt(ORG_REPO, "dev")?.get(WORKFLOW_PATH) ?? "";
+  assertStep(
+    "a branch the remap dropped no longer runs the deploy",
+    devWorkflow.includes('branches: ["main", "staging"]') &&
+      !devWorkflow.includes("== 'dev'"),
+    devWorkflow,
+  );
   const status = await cli.githubStatus(slug);
   await cli.githubUnlink(slug);
   assertStep(
     "broods github status shows the link, and unlink clears it",
-    status.repo?.developmentBranch === "dev" &&
+    status.repo?.developmentBranch === "staging" &&
       (await cli.githubStatus(slug)).repo === undefined,
     JSON.stringify(status.repo),
   );

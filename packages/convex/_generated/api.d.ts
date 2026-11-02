@@ -5614,6 +5614,7 @@ export declare const internal: {
       {
         development?: string;
         keyIds: Array<Id<"deployKeys">>;
+        previousBranches: Array<string>;
         production?: string;
         projectId: Id<"projects">;
         projectSlug: string;

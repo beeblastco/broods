@@ -121,7 +121,7 @@ interface UserInstallation {
 }
 
 /** A non-2xx GitHub answer; `status` lets callers tell a protected branch from a bug. */
-class GitHubApiError extends Error {
+export class GitHubApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
