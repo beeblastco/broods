@@ -6,11 +6,10 @@ import * as React from "react";
 
 /**
  * A name edited where it is shown. Mount it in place of the text while a
- * rename is open: it takes focus with the text selected, Enter or blur
- * commits, Escape cancels, and Enter on a blank draft is refused. It inherits
- * the text's font, and its border hangs into the line's margin so the row
- * keeps its height. Enter and Escape hand focus back to whatever had it
- * before, the control that started the rename.
+ * rename is open: it takes focus with the caret at the end, Enter or blur
+ * commits, Escape cancels, and Enter on a blank draft is refused. No border
+ * or fill: it inherits the text's font and box, so only the caret shows the
+ * edit. Enter and Escape hand focus back to the control that started it.
  */
 function InlineEdit({
   value,
@@ -63,17 +62,22 @@ function InlineEdit({
       aria-invalid={refused || undefined}
       autoComplete="off"
       dir="auto"
+      // A blank draft still shows what it was; refused, it turns red.
+      placeholder={value}
       data-slot="inline-edit"
       className={cn(
-        "-my-px w-full min-w-0 flex-1 rounded-sm border border-primary bg-transparent px-1 py-0 shadow-xs outline-none selection:bg-primary selection:text-primary-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30",
-        "aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40",
+        "w-full min-w-0 flex-1 bg-transparent p-0 caret-primary outline-none selection:bg-primary/20",
+        "placeholder:text-muted-foreground aria-invalid:caret-destructive aria-invalid:placeholder:text-destructive",
         className,
       )}
       onChange={(event) => {
         setDraft(event.target.value);
         setRefused(false);
       }}
-      onFocus={(event) => event.currentTarget.select()}
+      onFocus={(event) => {
+        const end = event.currentTarget.value.length;
+        event.currentTarget.setSelectionRange(end, end);
+      }}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing) return;
         if (event.key === "Enter") {

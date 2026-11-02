@@ -15,11 +15,12 @@ function renamed(page: Page): Locator {
   return page.locator("[data-renamed-entry]");
 }
 
-/** Whether the field's whole text is selected, so typing replaces it. */
-async function selectsAll(field: Locator): Promise<boolean> {
+/** Whether the caret sits after the text with nothing selected, so typing appends. */
+async function caretAtEnd(field: Locator): Promise<boolean> {
   return field.evaluate(
     (input: HTMLInputElement) =>
-      input.selectionStart === 0 && input.selectionEnd === input.value.length,
+      input.selectionStart === input.value.length &&
+      input.selectionEnd === input.value.length,
   );
 }
 
@@ -28,7 +29,7 @@ test.describe("the inline edit field", () => {
     await openGallery(page, "inline-edit");
   });
 
-  test("opens with the name selected; Enter commits it trimmed and hands focus back", async ({
+  test("opens with the caret after the name; Enter commits it trimmed and hands focus back", async ({
     page,
   }) => {
     const section = fixture(page, "inline-edit");
@@ -38,15 +39,15 @@ test.describe("the inline edit field", () => {
     const field = section.getByRole("textbox", { name: "Agent name" });
     await expect(field).toBeFocused();
     await expect(field).toHaveValue("Support bot");
-    expect(await selectsAll(field)).toBe(true);
+    expect(await caretAtEnd(field)).toBe(true);
 
-    await page.keyboard.type("  Triage bot  ");
+    await page.keyboard.type(" v2  ");
     await page.keyboard.press("Enter");
 
     await expect(field).toHaveCount(0);
-    await expect(section.locator("[data-name]")).toHaveText("Triage bot");
+    await expect(section.locator("[data-name]")).toHaveText("Support bot v2");
     await expect(trigger).toBeFocused();
-    await expect(renamed(page)).toHaveText(["field Triage bot"]);
+    await expect(renamed(page)).toHaveText(["field Support bot v2"]);
   });
 
   test("Escape cancels and hands focus back", async ({ page }) => {
@@ -69,7 +70,9 @@ test.describe("the inline edit field", () => {
   }) => {
     const section = fixture(page, "inline-edit");
     await section.getByRole("button", { name: "Rename" }).click();
-    await page.keyboard.type("Billing bot");
+    await section
+      .getByRole("textbox", { name: "Agent name" })
+      .fill("Billing bot");
 
     const elsewhere = section.getByRole("textbox", { name: "Somewhere else" });
     await elsewhere.click();
@@ -107,7 +110,9 @@ test.describe("the inline edit field", () => {
     const section = fixture(page, "inline-edit");
     const trigger = section.getByRole("button", { name: "Rename" });
     await trigger.click();
-    await page.keyboard.type(" Support bot ");
+    await section
+      .getByRole("textbox", { name: "Agent name" })
+      .fill(" Support bot ");
     await page.keyboard.press("Enter");
 
     await expect(trigger).toBeFocused();
@@ -129,7 +134,7 @@ test.describe("a canvas card", () => {
 
     const field = section.getByRole("textbox", { name: "Rename triage" });
     await expect(field).toBeFocused();
-    expect(await selectsAll(field)).toBe(true);
+    expect(await caretAtEnd(field)).toBe(true);
 
     // A press and drag in the field selects its text and leaves the card put.
     const before = await card.boundingBox();
@@ -189,7 +194,7 @@ test.describe("a project card", () => {
     const field = section.getByRole("textbox", { name: "Rename alpha" });
     await expect(field).toBeFocused();
 
-    await page.keyboard.type("alpha-2");
+    await page.keyboard.type("-2");
     await page.keyboard.press("Enter");
 
     await expect(
@@ -208,7 +213,7 @@ test.describe("a project card", () => {
   }) => {
     const section = fixture(page, "inline-edit-project");
     await section.getByRole("button", { name: "Rename beta" }).click();
-    await page.keyboard.type("taken");
+    await section.getByRole("textbox", { name: "Rename beta" }).fill("taken");
     await page.keyboard.press("Enter");
 
     await expect(section.getByText("Name already taken.")).toBeVisible();

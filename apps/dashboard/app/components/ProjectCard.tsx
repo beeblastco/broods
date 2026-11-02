@@ -8,6 +8,7 @@
  */
 import { Button } from "@/app/components/ui/button";
 import { InlineEdit } from "@/app/components/ui/inline-edit";
+import { cn } from "@/app/lib/utils";
 import { useRouteIntent } from "@/app/hooks/useRouteIntent";
 import { toErrorMessage } from "@/app/lib/errors";
 import { Folder, Pencil } from "lucide-react";
@@ -32,7 +33,13 @@ export function ProjectCard({
   const [error, setError] = useState<string | null>(null);
 
   return (
-    <div className="group relative flex flex-col items-start gap-2 rounded-lg border border-border bg-card p-4 hover:ring-2 hover:ring-primary/50">
+    <div
+      className={cn(
+        "group relative flex flex-col items-start gap-2 rounded-lg border border-border bg-card p-4",
+        // An open rename is edited in place, with no highlight around it.
+        !renaming && "hover:ring-2 hover:ring-primary/50",
+      )}
+    >
       <button
         type="button"
         aria-label={`Open ${name}`}
