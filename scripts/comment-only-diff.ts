@@ -50,15 +50,10 @@ export function compare(path: string, before: string, after: string): Verdict {
   if (errors.length > 0) {
     return { kind: "runtime", where: `does not parse: ${errors.join("; ")}` };
   }
-  const spans = locate(old.tree, now.tree, [old.span, now.span]);
-  const index = firstDifference(old.directives, now.directives);
-  const where =
-    spans !== undefined
-      ? `${side(before, spans[0])} -> ${side(after, spans[1])}`
-      : index !== undefined
-        ? `directive ${clip(old.directives[index] ?? "none")} -> ${clip(now.directives[index] ?? "none")}`
-        : undefined;
-  if (where === undefined) return { kind: "comment-only" };
+  const file = (source: string): Span => ({ start: 0, end: source.length });
+  const spans = locate(old.tree, now.tree, [file(before), file(after)]);
+  if (spans === undefined) return { kind: "comment-only" };
+  const where = `${side(before, spans[0])} -> ${side(after, spans[1])}`;
   const runtime = transpile(path, before) !== transpile(path, after);
 
   return { kind: runtime ? "runtime" : "types", where: where };
@@ -154,53 +149,19 @@ function render(result: Result): string {
 const clip = (text: string): string =>
   JSON.stringify(text.length > 60 ? `${text.slice(0, 57)}...` : text);
 
-// React's JSX whitespace rule: blank lines go, the rest are trimmed and joined by a space.
-function cleanText(text: string): string {
-  const lines = text.replaceAll("\t", " ").split(/\r\n|\n|\r/);
-
-  return lines
-    .map((line, index) => {
-      const head = index === 0 ? line : line.replace(/^ +/, "");
-
-      return index === lines.length - 1 ? head : head.replace(/ +$/, "");
-    })
-    .filter((line) => line !== "")
-    .join(" ");
-}
-
-// Text, string containers and empty containers merge into one text, as React renders them.
+// React's JSX whitespace rule: edge line breaks drop, inner ones become a space.
 function cleanChildren(node: JSXElement | JSXFragment): void {
-  const kept: JSXChild[] = [];
-  for (const child of node.children) {
-    const text = textOf(child);
-    const last = kept.at(-1);
-    if (text === undefined) {
-      kept.push(child);
-    } else if (last?.type === "JSXText") {
-      last.value += text;
-    } else if (text !== "") {
-      kept.push({
-        type: "JSXText",
-        value: text,
-        raw: null,
-        start: child.start,
-        end: child.end,
-      });
+  node.children = node.children.flatMap((child): JSXChild[] => {
+    if (child.type === "JSXExpressionContainer") {
+      return child.expression.type === "JSXEmptyExpression" ? [] : [child];
     }
-  }
-  node.children = kept;
-}
+    if (child.type !== "JSXText") return [child];
+    const value = child.value
+      .replace(/^[ \t]*(?:\r?\n[ \t]*)+|(?:[ \t]*\r?\n)+[ \t]*$/g, "")
+      .replace(/[ \t]*(?:\r?\n[ \t]*)+/g, " ");
 
-function firstDifference(
-  before: string[],
-  after: string[],
-): number | undefined {
-  const length = Math.max(before.length, after.length);
-  for (let index = 0; index < length; index++) {
-    if (before[index] !== after[index]) return index;
-  }
-
-  return undefined;
+    return value === "" ? [] : [{ ...child, value: value, raw: null }];
+  });
 }
 
 function loaderOf(path: string): Bun.JavaScriptLoader {
@@ -216,34 +177,28 @@ function locate(
   after: Json,
   at: [Span, Span],
 ): [Span, Span] | undefined {
+  const here: [Span, Span] = [spanOf(before) ?? at[0], spanOf(after) ?? at[1]];
   if (
     before === null ||
     after === null ||
     typeof before !== "object" ||
     typeof after !== "object"
   ) {
-    return before === after ? undefined : at;
+    return before === after ? undefined : here;
   }
-  const left = spanOf(before);
-  const right = spanOf(after);
-  const here: [Span, Span] =
-    left === undefined || right === undefined ? at : [left, right];
-  const entries = Object.entries(before);
-  const others = new Map(Object.entries(after));
-  for (const [key, value] of entries) {
+  const left = new Map(Object.entries(before));
+  const right = new Map(Object.entries(after));
+  for (const key of new Set([...left.keys(), ...right.keys()])) {
     if (key === "start" || key === "end") continue;
-    const found = locate(value, others.get(key) ?? null, here);
+    const found = locate(left.get(key) ?? null, right.get(key) ?? null, here);
     if (found !== undefined) return found;
   }
 
-  return entries.length === others.size ? undefined : here;
+  return left.size === right.size ? undefined : here;
 }
 
-// A directive is keyed by how many nodes start before it, so moving it is a change.
-function parse(
-  path: string,
-  source: string,
-): { tree: Json; span: Span; directives: string[]; errors: string[] } {
+// Directives join the tree keyed by how many nodes start before them, so a move is a change.
+function parse(path: string, source: string): { tree: Json; errors: string[] } {
   const parsed = parseSync(path, source, { preserveParens: false });
   new Visitor({
     JSXElement: cleanChildren,
@@ -260,15 +215,15 @@ function parse(
     const found = /^\/\/\/\s*<(?:reference|amd)/.test(text)
       ? [text.trim()]
       : [...text.matchAll(DIRECTIVE)].map((match) => match[0]);
-    const nodes = starts.filter((at) => at < start).length;
+    const after = starts.filter((at) => at < start).length;
 
-    return found.length === 0 ? [] : [`${found.join(" ")} after ${nodes}`];
+    return found.length === 0
+      ? []
+      : [{ text: found.join(" "), after: after, start: start, end: end }];
   });
 
   return {
-    tree: JSON.parse(json),
-    span: { start: 0, end: source.length },
-    directives: directives,
+    tree: [JSON.parse(json), ...directives],
     errors: parsed.errors.map((error) => error.message),
   };
 }
@@ -276,23 +231,14 @@ function parse(
 const side = (source: string, span: Span): string =>
   `line ${source.slice(0, span.start).split("\n").length} ${clip(source.slice(span.start, span.end))}`;
 
-const spanOf = (node: Json[] | { [key: string]: Json }): Span | undefined =>
+const spanOf = (node: Json): Span | undefined =>
+  typeof node === "object" &&
+  node !== null &&
   !Array.isArray(node) &&
   typeof node.start === "number" &&
   typeof node.end === "number"
     ? { start: node.start, end: node.end }
     : undefined;
-
-function textOf(child: JSXChild): string | undefined {
-  if (child.type === "JSXText") return cleanText(child.value);
-  if (child.type !== "JSXExpressionContainer") return undefined;
-  const { expression } = child;
-  if (expression.type === "JSXEmptyExpression") return "";
-
-  return expression.type === "Literal" && typeof expression.value === "string"
-    ? expression.value
-    : undefined;
-}
 
 function transpile(path: string, source: string): string {
   const loader = loaderOf(path);

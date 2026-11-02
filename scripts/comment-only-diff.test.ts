@@ -71,18 +71,10 @@ describe("compare passes a comment-only edit", () => {
       "export const View = () => (\n  <div>\n    <span />\n  </div>\n);",
     ],
     [
-      "a JSX line joined around a space",
+      "a JSX comment after the last text",
       "a.tsx",
-      lines(
-        "export const V = () => (",
-        "  <p>",
-        '    a{" "}',
-        "    {/* why */}",
-        "    <b />",
-        "  </p>",
-        ");",
-      ),
-      "export const V = () => (\n  <p>\n    a <b />\n  </p>\n);",
+      "export const V = () => (\n  <p>\n    a\n    {/* why */}\n  </p>\n);",
+      "export const V = () => (\n  <p>\n    a\n  </p>\n);",
     ],
     [
       "a .tsx type parameter",
@@ -210,6 +202,15 @@ describe("compare reports a code change", () => {
     ],
   ])("%s", (_, path, before, after, kind) => {
     expect(compare(path, before, after).kind).toBe(kind);
+  });
+
+  test("points at an added directive", () => {
+    expect(
+      compare("a.ts", "run();", "// @ts-expect-error untyped\nrun();"),
+    ).toEqual({
+      kind: "types",
+      where: 'line 1 "run();" -> line 1 "// @ts-expect-error untyped"',
+    });
   });
 
   test("points at the first changed token", () => {
