@@ -9,6 +9,7 @@
         "@oxlint/plugins": "1.90.0",
         "@shadcn/lint": "^0.2.3",
         "@types/bun": "^1.4.4",
+        "oxc-parser": "0.148.0",
         "oxfmt": "^0.75.0",
         "oxlint": "1.90.0",
         "oxlint-tsgolint": "7.0.2005",
