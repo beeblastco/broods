@@ -41,6 +41,10 @@ const MAX_HELD = 10_000;
  * next check; one released here drops out at once.
  */
 const held = new Map<string, { id: string; checkedAt: number }>();
+// Bookings on their way to Convex, so a command that arrives while one is in
+// flight (one booked ahead of it, or a parallel command) waits for it instead
+// of sending its own.
+const booking = new Map<string, Promise<string | undefined>>();
 
 function heldKey(provider: SandboxProvider, key: string): string {
   return `${provider}\u0000${key}`;
@@ -78,6 +82,7 @@ async function revalidate(
 
 export function resetHeldReservationsForTests(): void {
   held.clear();
+  booking.clear();
 }
 
 /** A platform Worker's URL and the bearer every call carries. */
@@ -163,6 +168,7 @@ export async function releasePlatformSandbox(
   const key = sandboxReservationKey(request);
   if (!key) return;
   held.delete(heldKey(provider, key));
+  booking.delete(heldKey(provider, key));
   const id =
     request.expectedExternalId ?? (await getSandboxExternalId(provider, key));
   if (!id) return;
@@ -180,7 +186,7 @@ export async function releasePlatformSandbox(
  * Without the account (the dashboard console carries none) an existing
  * reservation is reused by key alone and nothing new is claimed, so the run
  * is ephemeral. Once resolved, the reservation is held in memory and later
- * commands skip Convex (`held`).
+ * commands skip Convex (`held`); while it is on its way, they wait for it.
  */
 export async function reservePlatformSandbox(
   provider: SandboxProvider,
@@ -196,19 +202,42 @@ export async function reservePlatformSandbox(
 
     return hit.id;
   }
-  if (!accountId) {
-    const existing = await getSandboxExternalId(provider, key);
-    if (existing) hold(provider, key, existing);
+  const slot = heldKey(provider, key);
+  const pending = booking.get(slot);
+  // A waiter whose booking failed books on its own, as it would have without one.
+  if (pending)
+    return pending.catch((): Promise<string | undefined> =>
+      reservePlatformSandbox(provider, accountId, key),
+    );
+  // Held only if no release dropped the booking while it was on its way.
+  const booked: Promise<string | undefined> = book(provider, accountId, key)
+    .then((id): string | undefined => {
+      if (id !== undefined && booking.get(slot) === booked)
+        hold(provider, key, id);
 
-    return existing ?? undefined;
+      return id;
+    })
+    .finally((): void => {
+      if (booking.get(slot) === booked) booking.delete(slot);
+    });
+  booking.set(slot, booked);
+
+  return booked;
+}
+
+async function book(
+  provider: SandboxProvider,
+  accountId: string | undefined,
+  key: string,
+): Promise<string | undefined> {
+  if (!accountId) {
+    return (await getSandboxExternalId(provider, key)) ?? undefined;
   }
-  const id = await reserveSandboxInstance(
+
+  return reserveSandboxInstance(
     provider,
     key,
     `${sandboxNamePrefix(key)}-${crypto.randomUUID().slice(0, 8)}`,
     accountId,
   );
-  hold(provider, key, id);
-
-  return id;
 }

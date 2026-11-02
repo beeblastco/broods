@@ -214,3 +214,47 @@ const fastBindings :List(Workerd.Worker.Binding) = [
     (name = "STAGE_TICKET_SECRET", fromEnvironment = "STAGE_TICKET_SECRET"),
     (name = "TERMINAL_TICKET_SECRET", fromEnvironment = "TERMINAL_TICKET_SECRET"),
   ];
+
+# Several engines, one workerd process per CPU core (workerd runs one thread per
+# process): each runs the fast router on its own port (`--socket-addr`), and
+# their queued usage writes go to one writer process on 4369, so one account
+# still has one writer. bench/engine-front.ts sends each agent to one engine.
+# `workerd serve workerd.capnp writerConfig`, then
+# `workerd serve workerd.capnp slimEngineConfig --socket-addr http=127.0.0.1:<port>`.
+const slimEngineConfig :Workerd.Config = (
+  services = [
+    (name = "router", worker = .slimFastRouter),
+    (name = "writes", worker = .engineWrites),
+    (name = "writer", external = (address = "127.0.0.1:4369", http = ())),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4371", http = (), service = "router") ],
+);
+
+const engineWrites :Workerd.Worker = (
+  modules = [ (name = "write-queue.js", esModule = embed "per-task/write-queue.js") ],
+  compatibilityDate = "2026-09-30",
+  globalOutbound = "net",
+  bindings = [ (name = "WRITER", service = "writer") ],
+);
+
+const writerConfig :Workerd.Config = (
+  services = [
+    (name = "writes", worker = .writer),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4369", http = (), service = "writes") ],
+);
+
+const writer :Workerd.Worker = (
+  modules = [ (name = "write-queue.js", esModule = embed "per-task/write-queue.js") ],
+  compatibilityDate = "2026-09-30",
+  globalOutbound = "net",
+  durableObjectNamespaces = [ (className = "WriteQueue", uniqueKey = "broods-bench-write-queue") ],
+  durableObjectStorage = (inMemory = void),
+  bindings = [
+    (name = "QUEUE", durableObjectNamespace = "WriteQueue"),
+    (name = "FORWARDED", text = "1"),
+  ],
+);
+

@@ -115,6 +115,17 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     return execRunResult(request, result, "worker", startedAt);
   }
 
+  /** Books a persistent reservation ahead of its first command; the Worker side needs nothing until then. */
+  async reserveAhead(request: SandboxReservationRef): Promise<void> {
+    const key = sandboxReservationKey(request);
+    if (this.#config.persistent !== true || key === undefined) return;
+    await reservePlatformSandbox(
+      "worker",
+      this.#config.controlPlane?.accountId,
+      key,
+    );
+  }
+
   /** A reservation whose files are stored: kept, not running, since nothing runs between calls. */
   async getInstanceInfo(
     request: SandboxReservationRef,

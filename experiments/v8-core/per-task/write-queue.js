@@ -20,6 +20,12 @@
  * waits for it; the next one waiting then leads. A plain worker cannot hold a
  * queue across requests (workerd cancels a request left waiting on another
  * request's promise as hung); a Durable Object can.
+ *
+ * With several engines (one workerd per CPU core), the queue lives in one
+ * writer process of its own: an engine's copy has a WRITER service binding and
+ * forwards the queued writes there instead of to a local Durable Object, with
+ * their Convex URL in `x-queued-url`. The writer (FORWARDED set) takes that
+ * header as the target; elsewhere the header is ignored.
  */
 
 const BATCHED = {
@@ -134,9 +140,11 @@ function settle(item, response) {
 
 export default {
   fetch: async function (request, env) {
+    const target =
+      (env.FORWARDED && request.headers.get("x-queued-url")) || request.url;
     if (
       request.method !== "POST" ||
-      !new URL(request.url).pathname.endsWith("/api/mutation")
+      !new URL(target).pathname.endsWith("/api/mutation")
     )
       return fetch(request);
     const body = await request.text();
@@ -146,9 +154,16 @@ export default {
     } catch {
       call = undefined;
     }
-    if (!batchedPath(call)) return send(request.url, request.headers, body);
     const headers = new Headers(request.headers);
-    headers.set("x-queued-url", request.url);
+    headers.delete("x-queued-url");
+    if (!batchedPath(call)) return send(target, headers, body);
+    headers.set("x-queued-url", target);
+    if (env.WRITER)
+      return env.WRITER.fetch("http://writer/", {
+        method: "POST",
+        headers: headers,
+        body: body,
+      });
     const account = call.args?.[0]?.accountId ?? "";
 
     return env.QUEUE.get(
