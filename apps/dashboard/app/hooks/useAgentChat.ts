@@ -12,7 +12,13 @@ import {
   readUIMessageStream,
   uiMessageChunkSchema,
 } from "ai";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type {
   PendingQuestion,
   QuestionAnswer,
@@ -328,7 +334,8 @@ export function useAgentChat({
         // A model streams far more chunks than a reader can see: keep the
         // newest snapshot and commit it once per window, so a long answer
         // re-renders (and re-parses its markdown) about 20 times a second
-        // instead of once per chunk.
+        // instead of once per chunk. A transition, so React yields between
+        // markdown blocks; the last snapshot commits at once.
         let pending: UIMessage | null = null;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const commitPending = (): void => {
@@ -352,7 +359,10 @@ export function useAgentChat({
         try {
           for await (const assistantMessage of messageStream) {
             pending = assistantMessage;
-            timer ??= setTimeout(commitPending, STREAM_COMMIT_INTERVAL_MS);
+            timer ??= setTimeout(
+              () => startTransition(commitPending),
+              STREAM_COMMIT_INTERVAL_MS,
+            );
           }
         } finally {
           clearTimeout(timer);

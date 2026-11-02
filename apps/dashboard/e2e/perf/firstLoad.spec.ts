@@ -2,12 +2,11 @@
  * First-load budget. A cold load fetches every JS chunk the page needs before
  * its load event, all at once; on a lossy link that burst is the wait (a prod
  * load once took a minute on 40 chunks). This pins how many chunks and how
- * many bytes of JS that burst may cost per page, against
- * `first-load-budget.json`: more fails the run, fewer asks for a record.
+ * many bytes of JS that burst may cost per page, against the perf baseline
+ * (`e2e/lib/perfBaseline.ts`): more fails the run, fewer asks for a record.
  * Bytes are counted decoded: Chrome's encoded size counts the response
  * headers on a CDN's HTTP/2 responses, about 1 kB a chunk.
- * `E2E_RECORD_FIRST_LOAD=1` rewrites the budget from this run. A `next dev`
- * server ships unbundled dev chunks, so there the budget does not apply.
+ * A `next dev` server ships unbundled dev chunks, so there the budget does not apply.
  */
 import {
   expect,
@@ -16,8 +15,6 @@ import {
   type Page,
   type Request,
 } from "@playwright/test";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   CANVAS_READY,
   hasProbe,
@@ -25,12 +22,9 @@ import {
   readProjectId,
   SIGNED_IN_CONTEXT,
 } from "../lib/session";
+import { checkPerfBaseline } from "../lib/perfBaseline";
 import { waitForReady } from "../lib/timing";
 
-const BUDGET_FILE = join(__dirname, "first-load-budget.json");
-// Chunk hashes and minifier output move the gzip size a little per build.
-const BYTES_HEADROOM = 1.05;
-const RECORD = process.env.E2E_RECORD_FIRST_LOAD === "1";
 // The canvas carries React Flow; the projects page is the shell alone; the
 // dashboard opens on Monitoring, its other tabs load when they are opened.
 const PAGES: ProbePage[] = [
@@ -140,45 +134,22 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
       `First load ${name}: ${load.jsRequests} JS requests, ${Math.round(load.jsBytes / 1024)} kB of JS`,
     );
   }
-  if (RECORD) {
-    const budget = Object.fromEntries(
-      Object.entries(measured).map(([name, load]) => [
-        name,
-        {
-          jsRequests: load.jsRequests,
-          jsBytes: Math.ceil(load.jsBytes * BYTES_HEADROOM),
-        },
+  checkPerfBaseline(
+    "first load",
+    Object.fromEntries(
+      Object.entries(measured).flatMap(([name, load]) => [
+        [
+          `first-load.${name}.jsRequests`,
+          { value: load.jsRequests, gate: "blocking", maxRegressionPct: 0 },
+        ],
+        // Chunk hashes and minifier output move the size a little per build.
+        [
+          `first-load.${name}.jsBytes`,
+          { value: load.jsBytes, gate: "blocking", maxRegressionPct: 5 },
+        ],
       ]),
-    );
-    writeFileSync(BUDGET_FILE, `${JSON.stringify(budget, null, 2)}\n`);
-
-    return;
-  }
-
-  const budget: Partial<Record<string, FirstLoad>> = JSON.parse(
-    readFileSync(BUDGET_FILE, "utf8"),
+    ),
   );
-  for (const [name, load] of Object.entries(measured)) {
-    const allowed = budget[name];
-    if (!allowed) {
-      throw new Error(
-        `${name}: no first-load budget; record one with E2E_RECORD_FIRST_LOAD=1`,
-      );
-    }
-    expect(
-      load.jsRequests,
-      `${name}: JS requests before the load event`,
-    ).toBeLessThanOrEqual(allowed.jsRequests);
-    expect(
-      load.jsBytes,
-      `${name}: JS bytes before the load event`,
-    ).toBeLessThanOrEqual(allowed.jsBytes);
-    if (load.jsRequests < allowed.jsRequests) {
-      console.log(
-        `${name}: fewer JS requests than the budget (${allowed.jsRequests}); record with E2E_RECORD_FIRST_LOAD=1 to lock the gain in`,
-      );
-    }
-  }
 });
 
 /** A JS chunk from the build, served by the app or from an asset prefix. */
