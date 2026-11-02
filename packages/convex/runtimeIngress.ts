@@ -12,7 +12,6 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
-import { isPlainObject } from "./model/objects";
 import {
   asyncAgentOutcomeValidator,
   asyncAgentResultRow,
@@ -20,14 +19,18 @@ import {
   conversationEventsValidator,
   insertConversationEvents,
   markResultStored,
+  type ResultFence,
   writeAsyncAgentResult,
 } from "./runtime";
 import {
   channelTargetRefsFields,
   ingressConfigRefValidator,
+  ingressDeliveryValidator,
   ingressModeValidator,
   ingressStatusValidator,
+  publicDeploymentIngressValidator,
   runtimeHarnessSessionsFields,
+  systemModelMessageValidator,
 } from "./schema";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
 import {
@@ -70,14 +73,14 @@ const RELEASED_PAYLOAD = {
 const appliedEnvelopeValidator = v.object({
   eventId: v.string(),
   events: v.array(v.any()),
-  delivery: v.any(),
+  delivery: ingressDeliveryValidator,
   requestedMode: ingressModeValidator,
   appliedMode: ingressModeValidator,
   appliedToEventId: v.string(),
   contributingEventIds: v.array(v.string()),
   ownerGeneration: v.number(),
   configRef: v.optional(ingressConfigRefValidator),
-  ephemeralSystem: v.optional(v.array(v.any())),
+  ephemeralSystem: v.optional(v.array(systemModelMessageValidator)),
 });
 
 const admissionResultValidator = v.object({
@@ -135,14 +138,7 @@ const ingressStatusResultValidator = v.object({
   error: v.optional(v.string()),
   stoppedByUser: v.optional(v.boolean()),
   result: v.optional(v.any()),
-  publicDeploymentIngress: v.optional(
-    v.object({
-      accountId: v.string(),
-      endpointId: v.string(),
-      stageSlug: v.string(),
-      projectSlug: v.string(),
-    }),
-  ),
+  publicDeploymentIngress: v.optional(publicDeploymentIngressValidator),
 });
 
 const ownerRenewalResultValidator = v.union(
@@ -156,15 +152,7 @@ const stepBoundaryResultValidator = v.object({
   steering: v.union(appliedEnvelopeValidator, v.null()),
 });
 
-// The part of a channel delivery that names who sent the message.
-type DeliverySender = { identity?: { userId?: string } } | null | undefined;
-
-type PublicDeploymentIngress = {
-  accountId: string;
-  endpointId: string;
-  stageSlug: string;
-  projectSlug: string;
-};
+type PublicDeploymentIngress = Infer<typeof publicDeploymentIngressValidator>;
 
 /**
  * Atomically admits an ingress candidate, binds idempotency, and either owns or queues it.
@@ -183,11 +171,11 @@ export const accept = internalMutation({
     idempotencyKey: v.string(),
     payloadDigest: v.string(),
     events: v.array(v.any()),
-    delivery: v.any(),
+    delivery: ingressDeliveryValidator,
     requestedMode: ingressModeValidator,
     configRef: v.optional(ingressConfigRefValidator),
     channelTarget: v.optional(channelTargetValidator),
-    ephemeralSystem: v.optional(v.array(v.any())),
+    ephemeralSystem: v.optional(v.array(systemModelMessageValidator)),
     sizeBytes: v.number(),
     leaseTtlMs: v.number(),
     envelopeTtlMs: v.number(),
@@ -195,8 +183,8 @@ export const accept = internalMutation({
     maxQueuedCount: v.number(),
     maxQueuedBytes: v.number(),
     // The subagent result row a late-result continuation delivers. It is
-    // admitted only while the parent has not stored that result, and marks it
-    // stored once it runs: at once as owner, when applied if it queues.
+    // admitted only while the parent has not stored that result and no other
+    // resume of it is queued or applied; the owner's save stores it.
     resultEventId: v.optional(v.string()),
     // The async tool result row a continuation delivers, fenced the same way.
     toolResultId: v.optional(v.string()),
@@ -292,7 +280,6 @@ export const accept = internalMutation({
     const ownerGeneration = coordinator.ownerGeneration + 1;
     const appliedMode =
       args.requestedMode === "steer" ? "followup" : args.requestedMode;
-    await markDeliveredResultsStored(ctx, baseEnvelope);
     await ctx.db.insert("runtimeIngressEnvelopes", {
       ...baseEnvelope,
       appliedMode: appliedMode,
@@ -307,6 +294,7 @@ export const accept = internalMutation({
       ownerTaskId: args.ownerTaskId,
       stopRequestedGeneration: undefined,
       leaseExpiresAt: now + args.leaseTtlMs,
+      unsavedResults: resultFences([baseEnvelope]),
       updatedAt: now,
     });
 
@@ -371,11 +359,19 @@ export const appendConversationEvent = internalMutation({
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
     events: conversationEventsValidator,
+    // The owner holds no other unsaved row once this write commits, so the
+    // write saves every resume handed to it.
+    savesAll: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const coordinator = await requireOwner(ctx, args);
-    await insertOwnedEvents(ctx, coordinator, args.events);
+    await insertOwnedEvents(
+      ctx,
+      coordinator,
+      args.events,
+      args.savesAll === true,
+    );
 
     return null;
   },
@@ -869,9 +865,14 @@ export const settle = internalMutation({
   },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
-    const coordinator = await requireOwner(ctx, args);
+    let coordinator = await requireOwner(ctx, args);
     if (args.events && args.events.length > 0) {
-      await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(
+        ctx,
+        coordinator,
+        args.events,
+        true,
+      );
     }
     const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
     if (args.asyncResult && settled.ownerFinished) {
@@ -913,7 +914,12 @@ export const stepBoundary = internalMutation({
       return { renewal: "stale" as const, steering: null };
     }
     if (args.events && args.events.length > 0) {
-      await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(
+        ctx,
+        coordinator,
+        args.events,
+        true,
+      );
     }
     if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
       return { renewal: "stopped" as const, steering: null };
@@ -991,9 +997,14 @@ export const takeNext = internalMutation({
     args,
   ): Promise<Infer<typeof appliedEnvelopeValidator> | null> => {
     const now = Date.now();
-    const coordinator = await requireOwner(ctx, { ...args, now: now });
+    let coordinator = await requireOwner(ctx, { ...args, now: now });
     if (args.events && args.events.length > 0) {
-      await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(
+        ctx,
+        coordinator,
+        args.events,
+        true,
+      );
     }
     if (args.settle) {
       await settleAppliedEnvelopes(ctx, coordinator, {
@@ -1053,11 +1064,11 @@ function buildAdmissionEnvelope(
     idempotencyKey: string;
     payloadDigest: string;
     events: unknown[];
-    delivery: unknown;
+    delivery: Infer<typeof ingressDeliveryValidator>;
     requestedMode: Infer<typeof ingressModeValidator>;
     ownerTaskId?: string;
     configRef?: Infer<typeof ingressConfigRefValidator>;
-    ephemeralSystem?: unknown[];
+    ephemeralSystem?: Infer<typeof systemModelMessageValidator>[];
     resultEventId?: string;
     toolResultId?: string;
     sizeBytes: number;
@@ -1151,7 +1162,7 @@ async function checkDuplicateAdmission(
     .query("runtimeIngressEnvelopes")
     .withIndex("by_identity", (q) => q.eq("identity", identity))
     .unique();
-  if (existing && (await expiredUndeliveredResume(ctx, existing))) {
+  if (existing && (await undeliveredResume(ctx, existing))) {
     await ctx.db.delete(existing._id);
   } else if (existing) {
     // The recovery sweep retries a resume under the same identity while the
@@ -1206,7 +1217,8 @@ async function checkDuplicateAdmission(
 
 /**
  * The duplicate `checkDuplicateAdmission` answers for a continuation whose
- * result the conversation already has, or null when it does not. A write that
+ * result the conversation already has or is being told by another resume, or
+ * null when neither. A write that
  * stored the result but lost its reply has it in the conversation already,
  * under the key core wrote it with (`dedupeKeyFor`). Both finished keys are
  * tried: the row can still read `processing` while the conversation holds the
@@ -1215,11 +1227,16 @@ async function checkDuplicateAdmission(
  */
 async function storedResultAdmission(
   ctx: MutationCtx,
-  args: { conversationKey: string; eventId: string },
+  args: {
+    conversationKey: string;
+    eventId: string;
+    resultEventId?: string;
+    toolResultId?: string;
+  },
   result: Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults">,
   dedupeKeyFor: (status: "completed" | "failed") => string,
 ): Promise<Infer<typeof admissionResultValidator> | null> {
-  if (result.handback === "stored") {
+  if (result.handback === "stored" || (await liveResumeOf(ctx, args))) {
     return { outcome: "duplicate" as const, eventId: args.eventId };
   }
   for (const status of ["completed", "failed"] as const) {
@@ -1232,7 +1249,12 @@ async function storedResultAdmission(
       )
       .first();
     if (stored) {
-      await markResultStored(ctx, result.accountId, result);
+      await markResultStored(
+        ctx,
+        result.accountId,
+        args.conversationKey,
+        result,
+      );
 
       return { outcome: "duplicate" as const, eventId: args.eventId };
     }
@@ -1242,15 +1264,17 @@ async function storedResultAdmission(
 }
 
 /**
- * Whether `envelope` is a resume that expired in the queue before it was
- * applied. Applying it marks its result stored, so a result row of its
- * account still not stored is one the conversation never got.
+ * Whether `envelope` is a resume that ended, expired, failed or settled,
+ * without its owner saving it. That save marks its result stored, so a result
+ * row of its account still not stored is one the conversation never got.
  */
-async function expiredUndeliveredResume(
+async function undeliveredResume(
   ctx: QueryCtx,
   envelope: Doc<"runtimeIngressEnvelopes">,
 ): Promise<boolean> {
-  if (envelope.status !== "expired") return false;
+  if (envelope.status === "queued" || envelope.status === "processing") {
+    return false;
+  }
   const rows = [
     await asyncAgentResultRow(ctx, envelope.resultEventId),
     await asyncToolResultRow(ctx, envelope.toolResultId),
@@ -1260,6 +1284,44 @@ async function expiredUndeliveredResume(
     (row): boolean =>
       row?.accountId === envelope.accountId && row.handback !== "stored",
   );
+}
+
+/**
+ * A resume of the same late result still queued or applied in the
+ * conversation, under any identity: it tells the result, and its owner's save
+ * stores it, so a second resume would tell it again.
+ */
+async function liveResumeOf(
+  ctx: QueryCtx,
+  args: {
+    conversationKey: string;
+    resultEventId?: string;
+    toolResultId?: string;
+  },
+): Promise<boolean> {
+  for (const status of EXPIRABLE_STATUSES) {
+    const live =
+      args.resultEventId !== undefined
+        ? await ctx.db
+            .query("runtimeIngressEnvelopes")
+            .withIndex("by_resultEventId_and_status", (q) =>
+              q.eq("resultEventId", args.resultEventId).eq("status", status),
+            )
+            .take(MAX_DRAIN_ENVELOPES)
+        : await ctx.db
+            .query("runtimeIngressEnvelopes")
+            .withIndex("by_toolResultId_and_status", (q) =>
+              q.eq("toolResultId", args.toolResultId).eq("status", status),
+            )
+            .take(MAX_DRAIN_ENVELOPES);
+    if (
+      live.some((row): boolean => row.conversationKey === args.conversationKey)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -1307,7 +1369,6 @@ async function claimSteering(
   const eventIds = selected.map((row) => row.eventId);
   const applicationId = `${args.ownerEventId}:steer:${args.ownerGeneration}:${selected[0]!.sequence}`;
   for (const row of selected) {
-    await markDeliveredResultsStored(ctx, row);
     await ctx.db.patch(row._id, {
       status: "processing",
       appliedMode: "steer",
@@ -1336,6 +1397,10 @@ async function claimSteering(
     queuedCount: Math.max(0, queue.queuedCount - selected.length),
     queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
     leaseExpiresAt: now + args.leaseTtlMs,
+    unsavedResults: [
+      ...(coordinator.unsavedResults ?? []),
+      ...(resultFences(selected) ?? []),
+    ],
     updatedAt: now,
   });
 
@@ -1382,19 +1447,59 @@ function ingressStatusResult(
   };
 }
 
-/** Inserts history rows for an owner the fence just accepted, all or none. */
+/**
+ * Inserts history rows for an owner the fence just accepted, all or none. A
+ * write that leaves the owner no unsaved row (`savesAll`) saves what the owner
+ * was handed, so it stores the results of the resumes handed to it since
+ * (`unsavedResults`). It completes each queued resume of a result the write
+ * stored: the history tells both now.
+ * @returns the coordinator, with its queue counters current
+ */
 async function insertOwnedEvents(
   ctx: MutationCtx,
-  coordinator: Doc<"runtimeConversationCoordinators">,
+  owner: Doc<"runtimeConversationCoordinators">,
   events: Infer<typeof conversationEventsValidator>,
-): Promise<void> {
+  savesAll: boolean,
+): Promise<Doc<"runtimeConversationCoordinators">> {
+  let coordinator = owner;
   await requireActiveAccount(ctx, coordinator.accountId);
-  await insertConversationEvents(
+  const stored = await insertConversationEvents(
     ctx,
     coordinator.accountId,
     coordinator.conversationKey,
     events,
   );
+  if (savesAll && coordinator.unsavedResults !== undefined) {
+    for (const fence of coordinator.unsavedResults) {
+      await markDeliveredResultsStored(ctx, {
+        accountId: coordinator.accountId,
+        conversationKey: coordinator.conversationKey,
+        ...fence,
+      });
+    }
+    await ctx.db.patch(coordinator._id, { unsavedResults: undefined });
+    coordinator = { ...coordinator, unsavedResults: undefined };
+  }
+  if (stored.length === 0) return coordinator;
+  const now = Date.now();
+  const queue = {
+    queuedCount: coordinator.queuedCount,
+    queuedBytes: coordinator.queuedBytes,
+  };
+  for (const row of await queuedPage(ctx, coordinator)) {
+    if (!stored.some((fence): boolean => resumesSameResult(row, fence))) {
+      continue;
+    }
+    await ctx.db.patch(row._id, {
+      ...RELEASED_PAYLOAD,
+      status: "completed",
+      updatedAt: now,
+    });
+    queue.queuedCount = Math.max(0, queue.queuedCount - 1);
+    queue.queuedBytes = Math.max(0, queue.queuedBytes - row.sizeBytes);
+  }
+
+  return await patchQueueCounters(ctx, coordinator, queue, now);
 }
 
 /**
@@ -1432,19 +1537,25 @@ function isPlainUserText(event: unknown): boolean {
  */
 function contiguousModePrefix(
   rows: Doc<"runtimeIngressEnvelopes">[],
-  sender: DeliverySender = rows[0]?.delivery,
+  sender: Infer<typeof ingressDeliveryValidator> | undefined = rows[0]
+    ?.delivery,
 ): Doc<"runtimeIngressEnvelopes">[] {
   if (rows.length === 0) return [];
-  const end = rows.findIndex((row): boolean => {
-    const delivery: DeliverySender = row.delivery;
-
-    return (
+  const senderUserId = deliverySenderUserId(sender);
+  const end = rows.findIndex(
+    (row): boolean =>
       row.requestedMode !== rows[0]!.requestedMode ||
-      delivery?.identity?.userId !== sender?.identity?.userId
-    );
-  });
+      deliverySenderUserId(row.delivery) !== senderUserId,
+  );
 
   return end === -1 ? rows : rows.slice(0, end);
+}
+
+/** Who sent a delivery, for the sender fence; only channel deliveries name one. */
+function deliverySenderUserId(
+  delivery: Infer<typeof ingressDeliveryValidator> | undefined,
+): string | undefined {
+  return delivery?.kind === "channel" ? delivery.identity?.userId : undefined;
 }
 
 /** Inserts a new zeroed coordinator when the conversation has no state yet. */
@@ -1577,26 +1688,50 @@ function isLateControl(
 }
 
 /**
- * Marks the result rows a resume envelope delivers stored, in the mutation
- * that hands it to its owner: `accept` as owner, or the apply of a queued one.
+ * Marks the result rows a resume envelope delivers stored, in the owner's
+ * history write that saves it.
  */
 async function markDeliveredResultsStored(
   ctx: MutationCtx,
   envelope: Pick<
     Doc<"runtimeIngressEnvelopes">,
-    "accountId" | "resultEventId" | "toolResultId"
+    "accountId" | "conversationKey" | "resultEventId" | "toolResultId"
   >,
 ): Promise<void> {
   await markResultStored(
     ctx,
     envelope.accountId,
+    envelope.conversationKey,
     await asyncAgentResultRow(ctx, envelope.resultEventId),
   );
   await markResultStored(
     ctx,
     envelope.accountId,
+    envelope.conversationKey,
     await asyncToolResultRow(ctx, envelope.toolResultId),
   );
+}
+
+/**
+ * The late results `rows` carry, for the owner they are handed to: its next
+ * history write saves them and stores the results. Undefined when none does.
+ */
+function resultFences(
+  rows: Pick<
+    Doc<"runtimeIngressEnvelopes">,
+    "resultEventId" | "toolResultId"
+  >[],
+): ResultFence[] | undefined {
+  const fences = rows.flatMap((row): ResultFence[] => [
+    ...(row.resultEventId !== undefined
+      ? [{ resultEventId: row.resultEventId }]
+      : []),
+    ...(row.toolResultId !== undefined
+      ? [{ toolResultId: row.toolResultId }]
+      : []),
+  ]);
+
+  return fences.length > 0 ? fences : undefined;
 }
 
 /**
@@ -1688,18 +1823,7 @@ async function promoteQueuedGroup(
     leaseTtlMs: number;
     ownerGeneration: number;
   },
-): Promise<{
-  eventId: string;
-  events: unknown[];
-  delivery: unknown;
-  requestedMode: Doc<"runtimeIngressEnvelopes">["requestedMode"];
-  appliedMode: "collect" | "followup";
-  appliedToEventId: string;
-  contributingEventIds: string[];
-  ownerGeneration: number;
-  configRef?: Infer<typeof ingressConfigRefValidator>;
-  ephemeralSystem?: unknown[];
-} | null> {
+): Promise<Infer<typeof appliedEnvelopeValidator> | null> {
   const { coordinator, queue, now } = options;
   const rows = options.rows ?? (await queuedPage(ctx, coordinator));
   const active = rows.filter((row) => row.expiresAt > now);
@@ -1716,7 +1840,6 @@ async function promoteQueuedGroup(
   const eventIds = selected.map((row) => row.eventId);
   const applicationId = `${appliedToEventId}:${appliedMode}:${options.ownerGeneration}:${first.sequence}`;
   for (const row of selected) {
-    await markDeliveredResultsStored(ctx, row);
     await ctx.db.patch(row._id, {
       status: "processing",
       appliedMode: appliedMode,
@@ -1749,6 +1872,7 @@ async function promoteQueuedGroup(
     queuedCount: Math.max(0, queue.queuedCount - selected.length),
     queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
     leaseExpiresAt: now + options.leaseTtlMs,
+    unsavedResults: resultFences(selected),
     updatedAt: now,
   });
 
@@ -1769,35 +1893,11 @@ async function promoteQueuedGroup(
 }
 
 function publicDeploymentIngressFromDelivery(
-  delivery: unknown,
+  delivery: Infer<typeof ingressDeliveryValidator>,
 ): PublicDeploymentIngress | undefined {
-  if (!isPlainObject(delivery)) return undefined;
-  const record = delivery;
-  if (
-    record.kind !== "http" &&
-    record.kind !== "async" &&
-    record.kind !== "websocket"
-  ) {
-    return undefined;
-  }
-  const marker = record.publicDeploymentIngress;
-  if (!isPlainObject(marker)) return undefined;
-  const value = marker;
-  if (
-    typeof value.accountId !== "string" ||
-    typeof value.endpointId !== "string" ||
-    typeof value.stageSlug !== "string" ||
-    typeof value.projectSlug !== "string"
-  ) {
-    return undefined;
-  }
+  if (delivery.kind === "channel") return undefined;
 
-  return {
-    accountId: value.accountId,
-    endpointId: value.endpointId,
-    stageSlug: value.stageSlug,
-    projectSlug: value.projectSlug,
-  };
+  return delivery.publicDeploymentIngress;
 }
 
 /**
@@ -1870,8 +1970,6 @@ async function renewHeldLease(
     updatedAt: now,
   });
 }
-
-/** Requires the account to exist and remain active in the write transaction. */
 
 /** Requires the exact owner event and fencing generation for a mutation. */
 async function requireOwner(

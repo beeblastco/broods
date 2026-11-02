@@ -40,7 +40,7 @@ export interface EdgeRouter {
   name: string;
   upstream: Upstream;
   limit: Limit;
-  /** The path itself is a credential, so the access log skips this router. */
+  /** The path or query carries a credential, so the access log skips this router. */
   secretPath?: true;
   rules: readonly EdgeRule[];
 }
@@ -105,15 +105,29 @@ export const ROUTERS: readonly EdgeRouter[] = [
       { path: `/v1/crons/${SEGMENT}/runs` },
     ],
   },
-  // Channel providers post from shared egress addresses, so no per-address limit.
+  // Channel providers post from shared egress addresses, so no per-address
+  // limit. Two kinds of webhook URL carry a credential in the query string the
+  // access log would record: every Pancake delivery (`?secret=`) and a Meta or
+  // WhatsApp verification GET (`hub.verify_token`). Deliveries are POSTs, so
+  // every other webhook request stays logged.
+  {
+    name: "secret-webhooks",
+    upstream: "core",
+    limit: "none",
+    secretPath: true,
+    rules: [
+      { path: `/v1/webhooks/${SEGMENT}(?:/dev/${SEGMENT})?/pancake` },
+      { path: "/v1/webhooks/.*[^/]", methods: ["GET"] },
+    ],
+  },
   {
     name: "webhooks",
     upstream: "core",
     limit: "none",
     rules: [{ path: "/v1/webhooks/.*[^/]" }],
   },
-  // A media link never expires and its ticket is the path. Channel providers
-  // fetch it from shared egress addresses, like webhooks.
+  // A media link's sealed ticket is the path and carries its own expiry.
+  // Channel providers fetch it from shared egress addresses, like webhooks.
   {
     name: "media",
     upstream: "core",

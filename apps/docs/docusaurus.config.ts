@@ -55,6 +55,58 @@ const LEGACY_REDIRECTS: { from: string; to: string }[] = [
   { from: "/guides/dashboard-links", to: "/guides/observability" },
 ];
 
+const presetOptions: Preset.Options = {
+  docs: {
+    sidebarPath: "./sidebar.ts",
+    routeBasePath: "/",
+    path: "docs",
+    exclude: ["**/*.test.*", "**/_*/**"],
+  },
+};
+
+const themeConfig: Preset.ThemeConfig = {
+  navbar: {
+    logo: {
+      alt: "Broods Logo",
+      src: "img/logo.svg",
+    },
+    items: [
+      {
+        type: "docSidebar",
+        sidebarId: "docs",
+        label: "Docs",
+        position: "left",
+      },
+      {
+        to: "/api-reference",
+        label: "API",
+        position: "left",
+      },
+      {
+        type: "docSidebar",
+        sidebarId: "internals",
+        label: "Internals",
+        position: "left",
+      },
+      {
+        href: "https://dashboard.broods.app/",
+        label: "Dashboard",
+        position: "right",
+      },
+      {
+        href: "https://discord.gg/F48633Uca",
+        label: "Discord",
+        position: "right",
+      },
+      {
+        href: "https://github.com/beeblastco/broods",
+        label: "GitHub",
+        position: "right",
+      },
+    ],
+  },
+};
+
 const config: Config = {
   title: "Broods Docs",
   favicon: "img/broods-favicon.ico",
@@ -75,19 +127,7 @@ const config: Config = {
     locales: ["en"],
   },
 
-  presets: [
-    [
-      "classic",
-      {
-        docs: {
-          sidebarPath: "./sidebar.ts",
-          routeBasePath: "/",
-          path: "docs",
-          exclude: ["**/*.test.*", "**/_*/**"],
-        },
-      } satisfies Preset.Options,
-    ],
-  ],
+  presets: [["classic", presetOptions]],
 
   plugins: [
     [
@@ -143,50 +183,7 @@ const config: Config = {
     },
   ],
 
-  themeConfig: {
-    navbar: {
-      title: "Docs",
-      logo: {
-        alt: "Broods Logo",
-        src: "img/light-broods-full.svg",
-        srcDark: "img/dark-broods-full.svg",
-      },
-      items: [
-        {
-          type: "docSidebar",
-          sidebarId: "docs",
-          label: "Docs",
-          position: "left",
-        },
-        {
-          to: "/api-reference",
-          label: "API",
-          position: "left",
-        },
-        {
-          type: "docSidebar",
-          sidebarId: "internals",
-          label: "Internals",
-          position: "left",
-        },
-        {
-          href: "https://dashboard.broods.app/",
-          label: "Dashboard",
-          position: "right",
-        },
-        {
-          href: "https://discord.gg/F48633Uca",
-          label: "Discord",
-          position: "right",
-        },
-        {
-          href: "https://github.com/beeblastco/broods",
-          label: "GitHub",
-          position: "right",
-        },
-      ],
-    },
-  } satisfies Preset.ThemeConfig,
+  themeConfig: themeConfig,
 };
 
 export default config;

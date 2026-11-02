@@ -172,7 +172,7 @@ const UNSAFE_BUNDLE_FILE_NAMES = [
   /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?$/i,
   /\.(?:pem|key|p12|pfx)$/i,
 ];
-const INLINE_AGENT_HOOK_EVENTS = {
+const INLINE_AGENT_HOOK_EVENTS: Record<keyof AgentHooks, AgentHookEventName> = {
   onStart: "agent.started",
   onStepFinish: "agent.step.finished",
   onToolCall: "tool.call.started",
@@ -183,7 +183,7 @@ const INLINE_AGENT_HOOK_EVENTS = {
   onSubagentFinish: "subagent.task.finished",
   onMessageReceived: "channel.message.received",
   onMessageSending: "channel.message.sending",
-} as const satisfies Record<keyof AgentHooks, AgentHookEventName>;
+};
 
 type InlineAgentHookName = keyof typeof INLINE_AGENT_HOOK_EVENTS;
 

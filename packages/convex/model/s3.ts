@@ -302,15 +302,7 @@ export async function readS3Bytes(
  * @returns the object body decoded as text
  */
 export async function readS3Text(bucket: string, key: string): Promise<string> {
-  const client = await s3Client();
-  const result = await client.send(
-    new GetObjectCommand({ Bucket: bucket, Key: key }),
-  );
-  if (!result.Body) {
-    throw new Error(`S3 object has no body: ${key}`);
-  }
-
-  return result.Body.transformToString();
+  return new TextDecoder().decode(await readS3Bytes(bucket, key));
 }
 
 /**

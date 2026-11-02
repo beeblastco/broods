@@ -502,7 +502,7 @@ describe("tool result images on a custom endpoint", () => {
     statuses: number[],
     calls = 1,
   ): Promise<ChatRequest[]> {
-    const { bodies, chat } = compatibleEndpoint("cx/gpt-6.1-sol", statuses);
+    const { bodies, chat } = compatibleEndpoint("openai/gpt-6.1-sol", statuses);
     const model = wrapLanguageModel({
       model: chat,
       middleware: [
@@ -597,7 +597,7 @@ describe("cache marks on a custom endpoint", () => {
     prompt: LanguageModelV4Message[],
     runMark?: typeof mark,
   ): Promise<ChatRequest | undefined> {
-    const { bodies, chat } = compatibleEndpoint("cc/claude-sonnet-5");
+    const { bodies, chat } = compatibleEndpoint("anthropic/claude-sonnet-5");
     const model = wrapLanguageModel({
       model: chat,
       middleware: [mergeSystemMessagesMiddleware, cacheLatestMessageMiddleware],

@@ -502,8 +502,7 @@ async function decryptAgentFlatPatch(
  * Scoped by `orgId`, never by `authId` alone: an owner with orgs A and B has
  * projects in both, so an authId-keyed lookup can drop A's agent into B's
  * project. The project is created on demand and named after the account, so
- * an org that never went through dashboard onboarding (an adopted service
- * account) still gets one meaningful project rather than a random empty one.
+ * an org that never went through dashboard onboarding still gets one meaningful project rather than a random empty one.
  */
 async function ensureCanvasTarget(
   ctx: MutationCtx,

@@ -14,7 +14,7 @@ type Hit = {
 
 type Point = { x: number; y: number };
 
-const AGENTS = ["tracy", "coder", "reviewer"];
+const AGENTS = ["support", "coder", "reviewer"];
 
 // Chips are measured against frames on screen; a pixel of slack covers the
 // sub-pixel rounding of the fitted zoom.
@@ -60,7 +60,7 @@ test("groups of one are cards, chips sit inside frames, a collapsed frame is one
     '[data-slot="canvas-frame"][data-collapsed="true"]',
   );
 
-  // Computers (2), tracy's workspaces (2), shared workspaces (2).
+  // Computers (2), the support agent's workspaces (2), shared workspaces (2).
   await expect(chips).toHaveCount(6);
   await expect(expanded).toHaveCount(3);
   await expect(collapsed).toHaveCount(1);
@@ -131,7 +131,7 @@ test("every card is one size, every group row another, whatever the card says", 
 
   // A collapsed group is a card, at a card's size.
   const frame = fixture.locator(
-    '.react-flow__node[data-id="frame:tracy:workspace:s3"]',
+    '.react-flow__node[data-id="frame:support:workspace:s3"]',
   );
   await frame.getByRole("button", { name: "Collapse Workspaces" }).click();
   // Polled: the frame box transitions to the card it collapses into.
@@ -155,7 +155,7 @@ test("clicking a chip opens it into a card and pushes the chips under it down", 
       `.react-flow__node[data-id="${id}"] [data-slot="resource-chip"]`,
     );
   const frame = fixture.locator(
-    '.react-flow__node[data-id="frame:tracy:workspace:s3"]',
+    '.react-flow__node[data-id="frame:support:workspace:s3"]',
   );
   const notes = chipOf("notes");
   const repos = chipOf("repos");
@@ -222,7 +222,7 @@ test("mount, inherited and runs-on edges end on the two resources they join, wit
       true,
     ],
     ["inherits:repos-internal-sandbox", ["repos", "internal-sandbox"], true],
-    ["runs-on:blender-kien-mac", ["blender", "kien-mac"], false],
+    ["runs-on:blender-laptop-mac", ["blender", "laptop-mac"], false],
   ] as const) {
     const path = fixture.locator(
       `.react-flow__edge[data-id="${id}"] path.react-flow__edge-path`,
@@ -532,7 +532,7 @@ test("a collapsed frame's dot follows its members", async ({ page }) => {
   await openGallery(page);
   const fixture = page.locator('[data-fixture="canvas-frames"]');
   const mcp = fixture.locator(
-    '.react-flow__node[data-id="frame:tracy:mcp:http"]',
+    '.react-flow__node[data-id="frame:support:mcp:http"]',
   );
 
   // Both url servers are disabled: grey, never green.
@@ -542,12 +542,16 @@ test("a collapsed frame's dot follows its members", async ({ page }) => {
 
   for (const [frameId, label, members] of [
     [
-      "frame:tracy:sandbox:machine",
+      "frame:support:sandbox:machine",
       "Your computer",
-      ["kien-mac", "phicks-mac"],
+      ["laptop-mac", "office-mac"],
     ],
-    ["frame:tracy:workspace:s3", "Workspaces", ["notes", "repos"]],
-    ["frame:coder,tracy:workspace:s3", "Workspaces", ["handbook", "playbook"]],
+    ["frame:support:workspace:s3", "Workspaces", ["notes", "repos"]],
+    [
+      "frame:coder,support:workspace:s3",
+      "Workspaces",
+      ["handbook", "playbook"],
+    ],
   ] as const) {
     const colors = await Promise.all(
       members.map(async (id): Promise<string> =>
@@ -587,15 +591,15 @@ test("every edge's line shows one control: a mount word, a trash, or a lock that
     expect.objectContaining({
       "inherits:repos-internal-sandbox": "mount",
       "mount:internal-sandbox-right-notes-left": "mount",
-      "runs-on:blender-kien-mac": "locked",
+      "runs-on:blender-laptop-mac": "locked",
       "subagent:coder-right-reviewer-left": "delete",
-      "subagent:tracy-right-coder-left": "locked",
-      "xy-edge__tracy-internal-sandbox": "delete",
+      "subagent:support-right-coder-left": "locked",
+      "xy-edge__support-internal-sandbox": "delete",
     }),
   );
   for (const [id, reason] of [
-    ["runs-on:blender-kien-mac", /runs on this computer/],
-    ["subagent:tracy-right-coder-left", /Managed by broods\/ code/],
+    ["runs-on:blender-laptop-mac", /runs on this computer/],
+    ["subagent:support-right-coder-left", /Managed by broods\/ code/],
   ] as const) {
     await expect(
       fixture.locator(`[data-edge-id="${id}"][data-edge-control="locked"]`),
@@ -635,7 +639,7 @@ test("every edge's line shows one control: a mount word, a trash, or a lock that
 
   // Collapsed, the mount re-points to the frame: drawn, so locked.
   const frame = fixture.locator(
-    '.react-flow__node[data-id="frame:tracy:workspace:s3"]',
+    '.react-flow__node[data-id="frame:support:workspace:s3"]',
   );
   await frame.getByRole("button", { name: "Collapse Workspaces" }).click();
   const collapsed = Object.entries(await hoverEveryEdge(fixture)).filter(

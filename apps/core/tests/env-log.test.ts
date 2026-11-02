@@ -267,9 +267,9 @@ describe("logging helpers", () => {
       `bsk_${"a".repeat(43)}`,
     ];
     for (const token of tokens) {
-      expect(redactSensitiveText(`token for the tracy account: ${token}`)).toBe(
-        "token for the tracy account: [redacted]",
-      );
+      expect(
+        redactSensitiveText(`token for the support account: ${token}`),
+      ).toBe("token for the support account: [redacted]");
       expect(redactSerialized({ content: `token:\n${token}` }, [], 1000)).toBe(
         '{"content":"token:\\n[redacted]"}',
       );
@@ -291,8 +291,8 @@ describe("logging helpers", () => {
   it("treats env values as secret unless the name holds a public identity", () => {
     const secrets = collectSecretValues({
       envVars: {
-        GIT_AUTHOR_NAME: "beeblast-tracy",
-        GIT_COMMITTER_EMAIL: "tracy@example.test",
+        GIT_AUTHOR_NAME: "support-bot",
+        GIT_COMMITTER_EMAIL: "support@example.test",
         DATABASE_URL: "postgres://u:db-password@host/db",
         GH_TOKEN: "github-token-value",
         SECRET_NAME: "secret-name-value",

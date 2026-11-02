@@ -16,8 +16,11 @@ export interface Shortcut {
   scope: ShortcutScope;
 }
 
-/** Bindings a page registers; `global` ones work everywhere, the rest only where registered. */
-export const SHORTCUTS = [
+export type ShortcutId = (typeof SHORTCUT_DEFS)[number]["id"];
+
+// The rows, const-typed so `ShortcutId` stays the exact id union; the annotated
+// `SHORTCUTS` export holds every row to the `Shortcut` shape.
+const SHORTCUT_DEFS = [
   {
     combos: ["mod+k"],
     id: "search.open",
@@ -156,7 +159,11 @@ export const SHORTCUTS = [
     label: "Toggle the terminal",
     scope: "table",
   },
-] as const satisfies readonly Shortcut[];
+] as const;
+
+/** Bindings a page registers; `global` ones work everywhere, the rest only where registered. */
+export const SHORTCUTS: readonly (Shortcut & { id: ShortcutId })[] =
+  SHORTCUT_DEFS;
 
 /** Overlay section order. */
 export const SHORTCUT_SCOPES: readonly ShortcutScope[] = [
@@ -182,8 +189,6 @@ const TOKEN_GLYPHS: Record<string, string> = {
   escape: "esc",
   shift: "⇧",
 };
-
-export type ShortcutId = (typeof SHORTCUTS)[number]["id"];
 
 /**
  * True when the press would have activated the focused control. Enter and Space
@@ -252,9 +257,7 @@ export function matchShortcut(
 ): Shortcut | undefined {
   const combo = eventCombo(event, isMac);
 
-  return SHORTCUTS.find((shortcut) =>
-    (shortcut.combos as readonly string[]).includes(combo),
-  );
+  return SHORTCUTS.find((shortcut) => shortcut.combos.includes(combo));
 }
 
 /** Section heading for a scope. */

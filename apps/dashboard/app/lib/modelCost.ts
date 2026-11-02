@@ -42,6 +42,15 @@ export function numberAttribute(
   return typeof value === "number" ? value : 0;
 }
 
+/** A span that called the model: a step, or a phase that reports tokens, like a compaction. */
+export function isModelCallSpan(span: ObservabilitySpanRow): boolean {
+  return (
+    span.kind === "model.step" ||
+    (span.kind === "phase" &&
+      typeof span.attributes?.["model.total_tokens"] === "number")
+  );
+}
+
 /** The model a run's root span names, or null before it names one. */
 export function runModel(root: ObservabilitySpanRow): ModelRef | null {
   const { "model.provider": provider, "model.id": modelId } =
@@ -52,7 +61,7 @@ export function runModel(root: ObservabilitySpanRow): ModelRef | null {
     : null;
 }
 
-/** A model.step span's token counts, 0 for any it does not report. */
+/** A model call span's token counts, 0 for any it does not report. */
 export function stepTokens(step: ObservabilitySpanRow): ModelTokenUsage {
   return {
     inputTokens: numberAttribute(step, "model.input_tokens"),

@@ -124,4 +124,33 @@ export async function queuedCompact(context: VerifyContext): Promise<void> {
         : idle.text.length > 0,
     idle instanceof Error ? idle.message : idle.text,
   );
+
+  if (!context.hasModelKey) return;
+  // A /compact runs no model loop, so its summary's spend is a usage row of
+  // its own: no steps, the summary's tokens.
+  const data = context.convex([
+    "data",
+    "taskUsage",
+    "--order",
+    "desc",
+    "--limit",
+    "200",
+    "--format",
+    "jsonArray",
+  ]);
+  assertStep("taskUsage is readable", data.ok, data.output.slice(-300));
+  // The array starts a line; a log line before it may hold a bracket.
+  const rows: Array<{
+    conversationKey: string;
+    stepCount: number;
+    totalTokens: number;
+  }> = JSON.parse(data.output.slice(data.output.search(/^\[/m)));
+  const compactRows = rows.filter(
+    (row): boolean => row.conversationKey.endsWith(key) && row.stepCount === 0,
+  );
+  assertStep(
+    "/compact recorded its summary tokens on a usage row",
+    compactRows.some((row): boolean => row.totalTokens > 0),
+    JSON.stringify(compactRows),
+  );
 }

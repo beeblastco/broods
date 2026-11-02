@@ -29,7 +29,7 @@
  * dashboard draws with.
  */
 
-import type { CanvasNode } from "../canvas";
+import type { CanvasNode } from "./canvasShapes";
 import {
   ARROW_RUN,
   BUS_INSET,

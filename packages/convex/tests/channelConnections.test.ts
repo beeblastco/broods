@@ -50,8 +50,8 @@ async function seedScope(
     const projectId = await ctx.db.insert("projects", {
       authId: "auth_owner@example.com",
       orgId: orgId,
-      name: "tracy",
-      slug: "tracy",
+      name: "support",
+      slug: "support",
       updatedAt: now,
     });
     const stageId = await ctx.db.insert("stages", {
@@ -118,7 +118,7 @@ async function seedDeployment(
       stageId: scope.stageId,
       status: status,
       endpointId: endpointId,
-      projectSlug: "tracy",
+      projectSlug: "support",
       stageSlug: "development",
       apiKeyHash: `hash-${endpointId}`,
       keyHint: "bsk_…abcd",
@@ -170,7 +170,7 @@ describe("listConnections", () => {
     const agentId = await seedAgent(
       tt,
       scope,
-      "tracy",
+      "support",
       discordConfig("bot-token-1"),
     );
     await seedDeployment(tt, scope, "endpoint-1");
@@ -178,7 +178,7 @@ describe("listConnections", () => {
     expect(await listConnections(tt, "discord")).toEqual([
       {
         agentId: agentId,
-        agentName: "tracy",
+        agentName: "support",
         botToken: "bot-token-1",
         webhookPath: `/v1/webhooks/${scope.accountId}/dev/endpoint-1/discord`,
       },
@@ -188,7 +188,7 @@ describe("listConnections", () => {
   test("a production stage keeps the bare webhook path", async () => {
     const tt = t();
     const scope = await seedScope(tt, "production");
-    await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
+    await seedAgent(tt, scope, "support", discordConfig("bot-token-1"));
     await seedDeployment(tt, scope, "endpoint-1");
 
     const connections = await listConnections(tt, "discord");
@@ -212,7 +212,7 @@ describe("listConnections", () => {
   test("skips a revoked deployment, which has no live webhook", async () => {
     const tt = t();
     const scope = await seedScope(tt);
-    await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
+    await seedAgent(tt, scope, "support", discordConfig("bot-token-1"));
     await seedDeployment(tt, scope, "endpoint-1", "revoked");
 
     expect(await listConnections(tt, "discord")).toEqual([]);
@@ -221,7 +221,7 @@ describe("listConnections", () => {
   test("skips an undeployed stage, which has no endpointId to address", async () => {
     const tt = t();
     const scope = await seedScope(tt);
-    await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
+    await seedAgent(tt, scope, "support", discordConfig("bot-token-1"));
 
     expect(await listConnections(tt, "discord")).toEqual([]);
   });
@@ -232,7 +232,7 @@ describe("listConnections", () => {
     const agentId = await seedAgent(
       tt,
       scope,
-      "tracy",
+      "support",
       discordConfig("bot-token-1"),
     );
     await seedDeployment(tt, scope, "endpoint-1");
@@ -249,7 +249,7 @@ describe("listConnections", () => {
   test("a revoked deployment's rows leave the projection on reconcile", async () => {
     const tt = t();
     const scope = await seedScope(tt);
-    await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
+    await seedAgent(tt, scope, "support", discordConfig("bot-token-1"));
     await seedDeployment(tt, scope, "endpoint-1");
     expect(await listConnections(tt, "discord")).toHaveLength(1);
 
@@ -267,7 +267,7 @@ describe("listConnections", () => {
     const tt = t();
     const first = await seedScope(tt);
     const second = await seedScope(tt);
-    await seedAgent(tt, first, "tracy", discordConfig("bot-token-1"));
+    await seedAgent(tt, first, "support", discordConfig("bot-token-1"));
     await seedAgent(tt, second, "triage", discordConfig("bot-token-2"));
     await seedDeployment(tt, first, "endpoint-1");
     await seedDeployment(tt, second, "endpoint-2");
@@ -283,7 +283,7 @@ describe("listConnections", () => {
   test("returns one row per agent when two share a bot token", async () => {
     const tt = t();
     const scope = await seedScope(tt);
-    await seedAgent(tt, scope, "tracy", discordConfig("shared-token"));
+    await seedAgent(tt, scope, "support", discordConfig("shared-token"));
     await seedAgent(tt, scope, "triage", discordConfig("shared-token"));
     await seedDeployment(tt, scope, "endpoint-1");
 
@@ -295,14 +295,14 @@ describe("listConnections", () => {
     );
     // Named, not counted: two rows for the same agent would also be length 2.
     expect(new Set(connections.map((entry) => entry.agentName))).toEqual(
-      new Set(["tracy", "triage"]),
+      new Set(["support", "triage"]),
     );
   });
 
   test("refuses to answer at all without the encryption secret", async () => {
     const tt = t();
     const scope = await seedScope(tt);
-    await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
+    await seedAgent(tt, scope, "support", discordConfig("bot-token-1"));
     await seedDeployment(tt, scope, "endpoint-1");
     delete process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
 
@@ -320,13 +320,13 @@ describe("listConnections", () => {
     async (channel) => {
       const tt = t();
       const scope = await seedScope(tt);
-      await seedAgent(tt, scope, "tracy", channelConfig(channel, "token-1"));
+      await seedAgent(tt, scope, "support", channelConfig(channel, "token-1"));
       await seedDeployment(tt, scope, "endpoint-1");
 
       expect(await listConnections(tt, channel)).toEqual([
         {
           agentId: expect.any(String),
-          agentName: "tracy",
+          agentName: "support",
           botToken: "token-1",
           webhookPath: `/v1/webhooks/${scope.accountId}/dev/endpoint-1/${channel}`,
         },
@@ -337,7 +337,7 @@ describe("listConnections", () => {
   test("carries the Matrix homeserver and follows a change to it", async () => {
     const tt = t();
     const scope = await seedScope(tt);
-    const agentId = await seedAgent(tt, scope, "tracy", {
+    const agentId = await seedAgent(tt, scope, "support", {
       channels: {
         matrix: { apiUrl: "https://matrix.org", botToken: "syt_token" },
       },
@@ -347,7 +347,7 @@ describe("listConnections", () => {
     expect(await listConnections(tt, "matrix")).toEqual([
       {
         agentId: agentId,
-        agentName: "tracy",
+        agentName: "support",
         apiUrl: "https://matrix.org",
         botToken: "syt_token",
         webhookPath: `/v1/webhooks/${scope.accountId}/dev/endpoint-1/matrix`,
@@ -379,7 +379,7 @@ describe("listConnections", () => {
   test("one channel's token never answers for another", async () => {
     const tt = t();
     const scope = await seedScope(tt);
-    await seedAgent(tt, scope, "tracy", channelConfig("slack", "xoxb-1"));
+    await seedAgent(tt, scope, "support", channelConfig("slack", "xoxb-1"));
     await seedDeployment(tt, scope, "endpoint-1");
 
     expect(await listConnections(tt, "discord")).toEqual([]);

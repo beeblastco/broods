@@ -1,5 +1,5 @@
 /**
- * The OpenAI mark (simple-icons), inlined like BroodsLogo so it paints with
+ * The OpenAI mark (simple-icons), inlined like BroodsMark so it paints with
  * no image request. Takes the text color, so it follows the theme.
  */
 export function ChatGPTLogo({

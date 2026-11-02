@@ -87,29 +87,13 @@ export function createDetachedAsyncToolResult(options: {
     parentEventId: `${eventId}:${tag}:${options.resultId}`,
   });
 }
-/** Inserts a `processing` row for an async tool call; `AsyncToolCoordinator` calls it before the tool starts in the background. */
-export function createPendingAsyncToolResult(options: {
-  resultId: string;
-  parentEventId: string;
-  conversationKey: string;
-  toolName: string;
-  toolCallId: string;
-  input: unknown;
-  delivery?: AsyncToolDelivery;
-  completionToken?: string;
-}): Promise<boolean> {
-  return runtime.mutate("createAsyncToolResult", {
-    ...options,
-    input: redactWithRunSecrets(options.input),
-  });
-}
 /** Reads one async tool row; the handler uses it for callbacks, answers and continuation runs. */
 export function getAsyncToolResult(
   resultId: string,
 ): Promise<AsyncToolResultRecord | null> {
   return runtime.query("getAsyncToolResult", { resultId: resultId });
 }
-/** Settles a still-processing row as completed; the coordinator and `async_status` call it. */
+/** Settles a still-processing row as completed; `async_status` calls it. */
 export async function markAsyncToolResultCompleted(options: {
   resultId: string;
   response?: JSONValue;
@@ -152,18 +136,17 @@ export function listOwedAsyncToolResults(options: {
 }
 /**
  * Moves a finished result's hand-back: `detached` when the run that started it
- * gives up delivering it, `stored` when the model reads it with async_status.
- * A stored row stays stored. The row already holds the result, so a failed
- * write is only logged: a pending row reaches the recovery sweep later.
- * @returns true when a continuation of the result waits in the conversation's
- * queue: the row stays unstored and the caller must not hand the result over
+ * gives up delivering it, `stored` when nothing will ever tell the
+ * conversation. A stored row stays stored. The row already holds the result,
+ * so a failed write is only logged: a pending row reaches the recovery sweep
+ * later.
  */
 export async function markAsyncToolHandback(
   resultId: string,
   handback: HandbackMove,
-): Promise<boolean> {
+): Promise<void> {
   try {
-    return await runtime.mutate("markAsyncToolHandback", {
+    await runtime.mutate("markAsyncToolHandback", {
       resultId: resultId,
       handback: handback,
     });
@@ -173,8 +156,6 @@ export async function markAsyncToolHandback(
       handback: handback,
       error: toErrorMessage(error),
     });
-
-    return false;
   }
 }
 // The segments the runtime appends to the event a person started: a question

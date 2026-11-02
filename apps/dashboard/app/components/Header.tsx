@@ -1,7 +1,7 @@
 "use client";
 
 /** Top header bar above the sidebar, rendered once by the signed-in layout. */
-import { BroodsLogo } from "@/app/components/BroodsLogo";
+import { BroodsMark } from "@/app/components/BroodsMark";
 import { CommandMenu } from "@/app/components/CommandMenu";
 import { OrgSwitcher } from "@/app/components/header/OrgSwitcher";
 import { ProjectHeaderLeft } from "@/app/components/header/ProjectHeaderLeft";
@@ -16,7 +16,7 @@ export function Header(): React.JSX.Element {
   const { role } = useOrgRole();
   const { toggleSidebar } = useSidebar();
 
-  // px-3 and the h-6 mark put the logo's circle on the sidebar icons' axis.
+  // px-3 and the size-6 mark put the logo's circle on the sidebar icons' axis.
   return (
     <header className="flex h-(--header-height) shrink-0 items-center gap-3 border-b border-border px-3">
       <button
@@ -27,7 +27,7 @@ export function Header(): React.JSX.Element {
         draggable={false}
         className="shrink-0 cursor-pointer transition-opacity hover:opacity-80"
       >
-        <BroodsLogo className="h-6 w-auto" />
+        <BroodsMark className="size-6" />
       </button>
 
       {/* Scrolls sideways inside the header when a phone is too narrow for

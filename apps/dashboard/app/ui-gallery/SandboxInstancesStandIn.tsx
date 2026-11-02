@@ -100,14 +100,14 @@ const MACHINES: MachineConnection[] = [
     projectId: PROJECT_ID,
     sandboxConfigId: CONFIG_ID,
     connectionId: "conn-1",
-    hostname: "phicks-mbp.local",
+    hostname: "office-mbp.local",
     platform: "darwin",
     computer: true,
     mcp: [],
     specs: { vcpu: 10, memoryMb: 32768 },
     connectedAt: NOW - 300 * MINUTE,
     lastSeenAt: NOW,
-    name: "phicks-mbp",
+    name: "office-mbp",
   },
 ];
 

@@ -53,7 +53,7 @@ describe("mcp.listByStage", () => {
         disabled: true,
         name: "blender",
         nodeId: "node_blender",
-        sandbox: "kien-mac",
+        sandbox: "laptop-mac",
         stageId: stageId,
         transport: "machine",
       },
@@ -85,7 +85,7 @@ describe("mcp.listByStage", () => {
         nodeId: "node_blender",
         name: "blender",
         transport: "machine",
-        sandbox: "kien-mac",
+        sandbox: "laptop-mac",
         disabled: true,
       },
       {
@@ -201,8 +201,8 @@ async function seed(t: T): Promise<Seeded> {
     const projectId = await ctx.db.insert("projects", {
       authId: OWNER_AUTH_ID,
       orgId: orgId,
-      name: "tracy",
-      slug: "tracy",
+      name: "support",
+      slug: "support",
       updatedAt: now,
     });
     const stage = async (

@@ -53,6 +53,20 @@ const NOT_EXTERNAL = new Set(["process", "node:process"]);
 const SLIM_STUBBED =
   /^(discord\.js|discord-api-types|@discordjs\/[^/]+|@slack\/[^/]+|@microsoft\/teams\.[^/]+|@chat-adapter\/[^/]+|@linear\/sdk|@octokit\/[^/]+|@daytona\/[^/]+|e2b|@vercel\/sandbox|@aws-sdk\/[^/]+|@earendil-works\/[^/]+|jiti|highlight\.js|@ai-sdk\/harness[^/]*|ai-sdk-ollama|@google\/genai|@ai-sdk\/(openai|google|xai|gateway|openai-compatible)|openai|@openrouter\/[^/]+|google-auth-library|@azure\/msal-node)(\/.*)?$/;
 const stub = new URL("./slim-stub.cjs", import.meta.url).pathname;
+// core's publicHostFetch dials the address it checked while presenting the
+// host name for TLS (Bun's `tls.serverName`), which a V8 isolate cannot do.
+// The bundle fetches by name instead. That re-resolves the name after the
+// check, so it weakens core's guard against names that later resolve inward:
+// for this benchmark only, which is why it is patched in here and not in core.
+const PINNED_DIAL = "  url.hostname = validated.address;\n";
+const BY_NAME = `  return fetch(url, {
+    ...(request
+      ? { method: request.method, body: request.body, signal: request.signal }
+      : {}),
+    ...init,
+    redirect: "error",
+  });
+`;
 const result = await Bun.build({
   entrypoints: [process.argv[2] ?? "./entry.ts"],
   outdir: process.argv[3] ?? "./dist",
@@ -82,6 +96,21 @@ const result = await Bun.build({
             loader: "js",
           }));
         }
+        build.onLoad(
+          { filter: /\/apps\/core\/src\/shared\/http\.ts$/ },
+          async (args) => {
+            const source = await Bun.file(args.path).text();
+            if (!source.includes(PINNED_DIAL))
+              throw new Error(
+                `${args.path} changed: update build.ts's fetch-by-name patch`,
+              );
+
+            return {
+              contents: source.replace(PINNED_DIAL, BY_NAME),
+              loader: "ts",
+            };
+          },
+        );
         build.onResolve({ filter: /^bun$/ }, () => ({ path: shim }));
         build.onResolve({ filter: /^(node:)?process$/ }, () => ({
           path: processShim,

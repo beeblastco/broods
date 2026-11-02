@@ -36,6 +36,35 @@ test("a live run shows its failures and retries on the row and the time axis", a
   ).toHaveCount(2);
 });
 
+test("an open span sits under the trace header and folds the task list", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await answerObservabilitySocket(page, { traces: liveRun() });
+  await page.goto(`/ui-gallery?tab=tracing&range=30d&trace=${TRACE_ID}`);
+  const list = page.locator("[data-scroll-pane]").first();
+  await expect.poll(async () => (await list.boundingBox())?.width).toBe(320);
+
+  await page.getByRole("button", { name: "1 failed" }).click();
+  const detail = page.locator('[data-slot="resizable-panel"]').nth(1);
+  await expect(detail).toBeVisible();
+  const header = await page
+    .getByRole("button", { name: "1 failed" })
+    .boundingBox();
+  const detailBox = await detail.boundingBox();
+  expect(detailBox?.y ?? 0).toBeGreaterThanOrEqual(
+    (header?.y ?? 0) + (header?.height ?? 0),
+  );
+  await expect.poll(async () => (await list.boundingBox())?.width).toBe(36);
+
+  // Unfolding by hand holds while the span stays open.
+  await page.getByRole("button", { name: "Show the task list" }).click();
+  await expect.poll(async () => (await list.boundingBox())?.width).toBe(320);
+
+  await page.getByRole("button", { name: "Close details" }).click();
+  await expect(detail).toHaveCount(0);
+});
+
 /** A run still going, started a minute before the frozen clock: a step that retried a 429, a failed tool, a running step. */
 function liveRun(): ObservabilitySpanRow[] {
   const start = NOW_MS - 60_000;

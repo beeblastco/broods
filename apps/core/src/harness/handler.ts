@@ -11,6 +11,7 @@ import type {
   ToolSet,
   UserModelMessage,
 } from "ai";
+import { stripUndefined } from "@broods/convex/model/objects";
 import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
 import {
   extractText,
@@ -88,13 +89,11 @@ import {
   type AsyncToolDelivery,
   type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
-import {
-  AsyncToolCoordinator,
-  completionToParentMessage,
-} from "./async-tools.ts";
+import { completionToParentMessage } from "./async-tools.ts";
 import {
   readAgentFullStream,
   recordFailedTurn,
+  runCompactCommand,
   type ToolApprovalSummary,
 } from "./harness.ts";
 import {
@@ -605,8 +604,8 @@ export async function continueAfterAsyncToolSettlement(
   settled: AsyncToolResultRecord,
 ): Promise<ContinuationOutcome> {
   const scope = parseAccountAgentFromScopedKey(settled.parentEventId);
-  // A result the conversation stores (async_status read it, or the parent's
-  // append wrote it) would be answered twice.
+  // A result the conversation stores (a saved async_status read, or the
+  // parent's append wrote it) would be answered twice.
   if (
     !scope ||
     settled.status === "processing" ||
@@ -1483,15 +1482,10 @@ async function handleNatsWorkerRequest(
         (): number => waitUntilMs(context),
         CONTINUATION_DEPENDENCIES.subagents,
       );
-      const asyncToolCoordinator = new AsyncToolCoordinator(
-        session,
-        (): number => waitUntilMs(context),
-      );
 
       const result = await runParentContinuationLoop({
         session: session,
         subagentCoordinator: subagentCoordinator,
-        asyncToolCoordinator: asyncToolCoordinator,
         initialTurnContext: turnContext,
         agentConfig: event.agentConfig,
         dependencies: CONTINUATION_DEPENDENCIES,
@@ -2171,49 +2165,38 @@ async function handleStatusRequest(
       (asyncResult.status === "processing" && result.status !== "failed"))
       ? asyncResult.status
       : result.status;
-  const conversationKey = result.conversationKey;
 
-  return jsonResponse(200, {
-    runId: event.runId,
-    eventId: event.publicEventId,
-    agentId: event.agentId,
-    conversationKey: eventPublicConversationKey(
-      conversationKey,
-      event.accountId,
-      event.agentId,
-    ),
-    status: status,
-    ...(result?.requestedMode !== undefined
-      ? { requestedMode: result.requestedMode }
-      : {}),
-    ...(result?.appliedMode !== undefined
-      ? { appliedMode: result.appliedMode }
-      : {}),
-    ...(result?.appliedToEventId !== undefined
-      ? {
-          appliedToEventId: publicEventIdForScope(
-            result.appliedToEventId,
-            event.accountId,
-            event.agentId,
-            event.publicEventId,
-          ),
-        }
-      : {}),
-    ...(result?.result !== undefined ? { result: result.result } : {}),
-    ...(result?.stoppedByUser ? { stoppedByUser: true } : {}),
-    ...(asyncResult?.response !== undefined
-      ? { response: asyncResult.response }
-      : {}),
-    ...(asyncResult?.approvals !== undefined
-      ? { approvals: asyncResult.approvals }
-      : {}),
-    ...(asyncResult?.questions !== undefined
-      ? { questions: asyncResult.questions }
-      : {}),
-    ...((result?.error ?? asyncResult?.error)
-      ? { error: result?.error ?? asyncResult?.error }
-      : {}),
-  });
+  return jsonResponse(
+    200,
+    stripUndefined({
+      runId: event.runId,
+      eventId: event.publicEventId,
+      agentId: event.agentId,
+      conversationKey: eventPublicConversationKey(
+        result.conversationKey,
+        event.accountId,
+        event.agentId,
+      ),
+      status: status,
+      requestedMode: result.requestedMode,
+      appliedMode: result.appliedMode,
+      appliedToEventId:
+        result.appliedToEventId !== undefined
+          ? publicEventIdForScope(
+              result.appliedToEventId,
+              event.accountId,
+              event.agentId,
+              event.publicEventId,
+            )
+          : undefined,
+      result: result.result,
+      stoppedByUser: result.stoppedByUser ? true : undefined,
+      response: asyncResult?.response,
+      approvals: asyncResult?.approvals,
+      questions: asyncResult?.questions,
+      error: (result.error ?? asyncResult?.error) || undefined,
+    }),
+  );
 }
 
 /** Appends a direct run's input and builds its turn context; settles and drains on failure. */
@@ -2406,10 +2389,11 @@ async function pushReplyToChannel(
 }
 
 async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
-  await invokeHarnessWorker({
+  const invocation: AsyncWorkerInvocation = {
     kind: "direct-api-async-worker",
     event: event,
-  } satisfies AsyncWorkerInvocation);
+  };
+  await invokeHarnessWorker(invocation);
 }
 
 /** Runs a continuation on the worker kind its original request came in on. */
@@ -2444,10 +2428,11 @@ function onSocket(
 }
 
 async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
-  await invokeHarnessWorker({
+  const invocation: NatsWorkerInvocation = {
     kind: "nats-worker",
     event: event,
-  } satisfies NatsWorkerInvocation);
+  };
+  await invokeHarnessWorker(invocation);
 }
 
 /**
@@ -2995,9 +2980,6 @@ async function streamDirectContinuation(
     (): number => waitUntilMs(context),
     CONTINUATION_DEPENDENCIES.subagents,
   );
-  const asyncToolCoordinator = new AsyncToolCoordinator(session, (): number =>
-    waitUntilMs(context),
-  );
   let transferred = false;
   let terminalFailureDrained = false;
   const checkOwner = ownerCheckForStream(session);
@@ -3010,7 +2992,6 @@ async function streamDirectContinuation(
     const result = await runParentContinuationLoop({
       session: session,
       subagentCoordinator: subagentCoordinator,
-      asyncToolCoordinator: asyncToolCoordinator,
       initialTurnContext: initialTurnContext,
       agentConfig: event.agentConfig,
       dependencies: CONTINUATION_DEPENDENCIES,
@@ -3140,7 +3121,7 @@ async function commandOutcome(
       eventId: session.eventId,
       text: command.text,
       compact: (instructions: string): Promise<number> =>
-        session.compactConversation(instructions),
+        runCompactCommand(session, command.text, instructions),
     });
     const reply = result?.reply ?? "";
     if (send) {

@@ -51,7 +51,7 @@ function tracker(
     tracer: trace.getTracer("test"),
     scope: {
       accountId: "acct_1",
-      project: "tracy",
+      project: "support",
       stage: "development",
       endpointId: "ep_1",
       agentId: "agent_1",

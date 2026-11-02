@@ -72,6 +72,7 @@ import {
 import {
   isSandboxLogId,
   isTraceId,
+  MAX_OBSERVABILITY_BACKFILL,
   type LogLevel,
   type ObservabilityLogEntry,
   type ObservabilitySpanRow,
@@ -1619,7 +1620,7 @@ async function ensureProjectShell(): Promise<void> {
 async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   const path = resolve(process.cwd(), ".env.local");
   const current = await readTextIfExists(path);
-  const values = parseEnv(current);
+  const values = parseDotenv(current);
   const stageValue = values.BROODS_STAGE;
   const missing = [
     "BROODS_DASHBOARD_URL",
@@ -2695,6 +2696,17 @@ async function logs(args: string[]): Promise<void> {
   const limit = Number(
     optionValue(args, "--limit") ?? optionValue(args, "-n") ?? 100,
   );
+  // An out-of-protocol backfill makes the gateway refuse the whole
+  // subscribe, so a typo fails here by name instead.
+  if (
+    !Number.isInteger(limit) ||
+    limit < 0 ||
+    limit > MAX_OBSERVABILITY_BACKFILL
+  ) {
+    throw new Error(
+      `--limit must be an integer between 0 and ${MAX_OBSERVABILITY_BACKFILL}`,
+    );
+  }
   const jsonMode = hasFlag(args, "--json");
 
   const controller = new AbortController();
@@ -2984,19 +2996,17 @@ async function run(args: string[]): Promise<void> {
     (resource) => resource.kind === "agent" && resource.name === agentName,
   );
   if (!agent) throw new Error(`Unknown local agent: ${agentName}`);
-  const remote = await new BroodsSyncClient({
+  const syncClient = new BroodsSyncClient({
     baseUrl: auth.baseUrl,
     token: auth.token,
-  }).getManifest(manifest.project, manifest.stage);
+  });
+  const remote = await syncClient.getManifest(manifest.project, manifest.stage);
   const agentId = remote?.ids.agents[agentName];
   if (!agentId)
     throw new Error(
       `Agent ${agentName} is not synced yet. Run broods dev --once or broods deploy first.`,
     );
-  const runtimeKey = await new BroodsSyncClient({
-    baseUrl: auth.baseUrl,
-    token: auth.token,
-  })
+  const runtimeKey = await syncClient
     .getRuntimeKey(manifest.project, manifest.stage)
     .catch(() => null);
   if (runtimeKey?.apiKey) {
@@ -3115,7 +3125,7 @@ async function writeLocalEnvDefaults(options: {
 }): Promise<void> {
   const path = resolve(process.cwd(), ".env.local");
   const current = await readTextIfExists(path);
-  const values = parseEnv(current);
+  const values = parseDotenv(current);
   // Only pin the values that are known. Guessing a base URL for a deployment
   // we do not host would write an address that never resolves, and guessing a
   // project would pin a scope nobody chose.
@@ -3170,19 +3180,6 @@ async function readTextIfExists(path: string): Promise<string> {
     if ((error as { code?: string }).code === "ENOENT") return "";
     throw error;
   }
-}
-
-function parseEnv(source: string): Record<string, string> {
-  const values: Record<string, string> = {};
-  for (const rawLine of source.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const index = line.indexOf("=");
-    if (index <= 0) continue;
-    values[line.slice(0, index).trim()] = line.slice(index + 1).trim();
-  }
-
-  return values;
 }
 
 function quoteEnv(value: string): string {

@@ -29,7 +29,7 @@ import {
   workspaceGuidanceEnabled,
   workspaceMemoryHarnessEnabled,
 } from "../shared/domain/workspace-config.ts";
-import { logDebug, logError } from "../shared/log.ts";
+import { collectSecretValues, logDebug, logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { sealRunToken } from "../shared/run-token.ts";
 import { channelScopeKeyFromConversation } from "../shared/runtime-keys.ts";
@@ -41,7 +41,10 @@ import {
   type ResolvedAgentSandbox,
   type ResolvedWorkspace,
 } from "../shared/workspaces.ts";
-import type { AsyncToolDelivery } from "./async-tool-result.ts";
+import {
+  markAsyncToolHandback,
+  type AsyncToolDelivery,
+} from "./async-tool-result.ts";
 import {
   ingestInboundAttachments,
   MEDIA_REFERENCE_SCHEME,
@@ -50,6 +53,7 @@ import {
 } from "./channel-media.ts";
 import {
   COMPACTION_MARKER,
+  type CompactionResult,
   isCompactionSummaryMessage,
   summarizeConversation,
 } from "./compaction.ts";
@@ -95,6 +99,13 @@ const APPEND_EVENT_BYTES = 8 * 1_024 * 1_024;
 // events reach long before the byte cap does.
 const APPEND_EVENT_COUNT = 8_000;
 const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
+// Tool outputs that hand the model no result: a hook or the run turned the
+// call into an error or a denial, so a status read in it stores nothing.
+const UNDELIVERED_OUTPUTS: ReadonlySet<string> = new Set([
+  "error-text",
+  "error-json",
+  "execution-denied",
+]);
 // How old the last ownership proof may be before a periodic check reads Convex
 // again. Ownership moves only through this run's own hand-off or lease expiry,
 // and a successful fenced write proves it as well as a read does.
@@ -251,10 +262,13 @@ interface StoredConversationEntry {
 
 // A row this session appends. A writer that retries a failed append sets
 // `dedupeKey`, and Convex stores a row once per key in the conversation.
+// `toolResultIds` are the async tool results an `async_status` read in the row
+// handed the model; the write that saves the row stores them.
 interface AppendedConversationEvent {
   cursor: string;
   dedupeKey?: string;
   event: StoredConversationEvent;
+  toolResultIds?: string[];
 }
 
 export interface StoredConversationEventPage {
@@ -342,6 +356,9 @@ export class Session {
   // Rows a fenced turn still has to write. They ride the next fenced mutation
   // (a step boundary, the settle or takeNext) instead of an append of their own.
   private pendingStoredEvents: AppendedConversationEvent[] = [];
+  // This turn's `async_status` reads: tool call id to the async tool result it
+  // returned. A read stores nothing; the saved row of its tool result does.
+  private readonly toolResultReads = new Map<string, string>();
   private hasLoggedMissingMemoryFile = false;
   private loadedSkillPrompts: SystemModelMessage[] = [];
   private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
@@ -693,9 +710,12 @@ export class Session {
   /**
    * Folds the stored history into a summary under the owner lease. Serves
    * /compact and the harness auto-compaction after a finished turn. Returns
-   * how many messages were summarized; 0 means there was nothing to compact.
+   * how many messages were summarized and what the summary cost; null means
+   * there was nothing to compact.
    */
-  async compactConversation(instructions: string): Promise<number> {
+  async compactConversation(
+    instructions: string,
+  ): Promise<CompactionResult | null> {
     const entries = await this.loadConversationEntries();
     const activeEntries = projectActiveConversationEntries(entries);
     const systemContextSnapshot = createSystemContextSnapshot(entries);
@@ -707,7 +727,7 @@ export class Session {
     );
     // Nothing said since the last summary leaves nothing to fold in.
     if (messages.length === 0 || hasPendingToolApprovalResponse(messages)) {
-      return 0;
+      return null;
     }
     const summary = await summarizeConversation({
       accountId: this.accountId,
@@ -720,11 +740,12 @@ export class Session {
       instructions: instructions,
     });
     if (!summary) {
-      return 0;
+      return null;
     }
-    await this.persistModelMessages([summary]);
+    const { message, ...cost } = summary;
+    await this.persistModelMessages([message]);
 
-    return messages.length;
+    return { ...cost, messageCount: messages.length };
   }
 
   async createEphemeralTurnContext(
@@ -932,9 +953,40 @@ export class Session {
     return this.resolvedRuntime?.workspaces ?? [];
   }
 
-  /** One append mutation, fenced against the owner generation when there is one. */
+  /**
+   * Records that tool call `toolCallId` handed the model the async tool result
+   * `resultId`, for the step save to store. A session that saves no step
+   * stores it now.
+   */
+  async recordToolResultRead(
+    toolCallId: string,
+    resultId: string,
+  ): Promise<void> {
+    if (this.persist) {
+      this.toolResultReads.set(toolCallId, resultId);
+
+      return;
+    }
+    await markAsyncToolHandback(resultId, "stored");
+  }
+
+  /** The agent's own secret values, which every log line and span of its runs drops. */
+  secretValues(): string[] {
+    return collectSecretValues([
+      this.agentConfig,
+      this.sandboxes(),
+      this.resolvedWorkspaces(),
+    ]);
+  }
+
+  /**
+   * One append mutation, fenced against the owner generation when there is one.
+   * `savesAll` says no other row waits to be saved, so the write stores the
+   * results handed to this owner.
+   */
   private async appendConversationEvents(
     events: AppendedConversationEvent[],
+    savesAll = false,
   ): Promise<void> {
     if (this.ownerGeneration !== undefined) {
       const startedAt = performance.now();
@@ -943,6 +995,7 @@ export class Session {
         ownerEventId: this.eventId,
         ownerGeneration: this.ownerGeneration,
         events: events,
+        ...(savesAll ? { savesAll: true } : {}),
       });
       this.confirmOwner(startedAt);
 
@@ -954,7 +1007,10 @@ export class Session {
     });
   }
 
-  /** Writes stored rows in as few appends as Convex accepts, in cursor order. */
+  /**
+   * Writes stored rows in as few appends as Convex accepts, in cursor order. The
+   * last append saves all only when no row waits for a later fenced write.
+   */
   private async appendStoredEvents(
     events: AppendedConversationEvent[],
     onSaved?: (saved: number) => void,
@@ -962,7 +1018,11 @@ export class Session {
     if (events.length === 0) return;
     let saved = 0;
     for (const batch of storedEventBatches(events)) {
-      await this.appendConversationEvents(batch);
+      await this.appendConversationEvents(
+        batch,
+        saved + batch.length === events.length &&
+          this.pendingStoredEvents.length === 0,
+      );
       saved += batch.length;
       onSaved?.(saved);
     }
@@ -1394,6 +1454,21 @@ export class Session {
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
   }
 
+  /** The async tool results the `async_status` reads in a tool message handed over. */
+  private toolResultIdsOf(message: ModelMessage): string[] {
+    if (message.role !== "tool" || this.toolResultReads.size === 0) return [];
+
+    return message.content.flatMap((part): string[] => {
+      const resultId =
+        part.type === "tool-result" &&
+        !UNDELIVERED_OUTPUTS.has(part.output.type)
+          ? this.toolResultReads.get(part.toolCallId)
+          : undefined;
+
+      return resultId === undefined ? [] : [resultId];
+    });
+  }
+
   /**
    * The rows a persisting session writes for these messages, cursors minted
    * here. Media carried as bytes is stored first, so the row keeps its link.
@@ -1419,6 +1494,7 @@ export class Session {
         producer,
       );
       const dedupeKey = dedupeKeys?.[index];
+      const toolResultIds = this.toolResultIdsOf(message);
 
       return event
         ? [
@@ -1426,6 +1502,9 @@ export class Session {
               cursor: this.nextCreatedAt(),
               ...(dedupeKey !== undefined ? { dedupeKey: dedupeKey } : {}),
               event: event,
+              ...(toolResultIds.length > 0
+                ? { toolResultIds: toolResultIds }
+                : {}),
             },
           ]
         : [];

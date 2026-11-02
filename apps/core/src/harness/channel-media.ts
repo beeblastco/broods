@@ -819,8 +819,10 @@ function parseMediaReference(value: unknown): MediaReference | null {
  * The bytes behind a sealed link, read once per turn and kept in the media
  * cache. A link left for the provider is fetched by it again on every model
  * step, and a file the agent deleted would 404 there and fail the whole turn.
- * Null keeps a user part's link (a tool result's becomes a note): not a sealed
- * link, another account's link, a file over
+ * A link on this core's own media route that no longer opens (expired, legacy,
+ * or sealed with a dropped secret) is gone: the route refuses it too. Null
+ * keeps a user part's link (a tool result's becomes a note): a link another
+ * deployment sealed, another account's link, a file over
  * the picture cap or past the turn's budget, or a read error (a file over the media cap among them),
  * which is not proof of a deletion. The account check matters because this
  * read runs on core's own credentials and meters the ticket's account, and
@@ -830,13 +832,19 @@ async function readSealedMedia(
   link: string | null,
   replay: SealedReplay,
 ): Promise<SealedMedia | null> {
-  const ticket = link
-    ? openMediaTicket(
-        link.slice(link.indexOf(MEDIA_PATH_PREFIX) + MEDIA_PATH_PREFIX.length),
-        requireSecretsEnv("MEDIA_TICKET_SECRET"),
-      )
-    : null;
-  if (!link || !ticket || ticket.accountId !== replay.accountId) {
+  if (!link) {
+    return null;
+  }
+  const ticket = openMediaTicket(
+    link.slice(link.indexOf(MEDIA_PATH_PREFIX) + MEDIA_PATH_PREFIX.length),
+    requireSecretsEnv("MEDIA_TICKET_SECRET"),
+  );
+  if (!ticket) {
+    return link.startsWith(`${getHarnessPublicUrl()}${MEDIA_PATH_PREFIX}`)
+      ? { gone: "a linked file" }
+      : null;
+  }
+  if (ticket.accountId !== replay.accountId) {
     return null;
   }
   const cached = cachedMedia(link);

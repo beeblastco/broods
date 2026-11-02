@@ -10,12 +10,14 @@ import { cloudflareSandbox } from "./cloudflare-sandbox.ts";
 import { connections } from "./connections.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
 import { edgeHeaders } from "./edge-headers.ts";
+import { githubRepo } from "./github-repo.ts";
 import { workerSandbox } from "./worker-sandbox.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { modelPrices } from "./model-prices.ts";
+import { modelTimeout } from "./model-timeout.ts";
 import { orgSeatBilling } from "./org-seat-billing.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { productionRegion } from "./production-region.ts";
@@ -25,6 +27,7 @@ import { queuedFollowup } from "./queued-followup.ts";
 import { runToken } from "./run-token.ts";
 import { scopedAccountKey } from "./scoped-account-key.ts";
 import { snapshotStage } from "./snapshot-stage.ts";
+import { statusReadHandback } from "./status-read-handback.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { streamedBurst } from "./streamed-burst.ts";
 import { subagentModel } from "./subagent-model.ts";
@@ -55,6 +58,7 @@ export const verifyCases: readonly VerifyCase[] = [
   subagentModel,
   subagentResume,
   asyncToolHandback,
+  statusReadHandback,
   autoCompaction,
   machineSandbox,
   bashTimeout,
@@ -70,9 +74,11 @@ export const verifyCases: readonly VerifyCase[] = [
   credentialPrefixes,
   scopedAccountKey,
   manifestSync,
+  githubRepo,
   productionRegion,
   projectUsage,
   modelPrices,
+  modelTimeout,
   mcpHeaderEnv,
   workToolWebhooks,
   webhookHandshake,

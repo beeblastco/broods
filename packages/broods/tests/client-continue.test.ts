@@ -30,7 +30,7 @@ function mockClient(
 
 const ref: AgentReference = {
   kind: "agent",
-  name: "tracy",
+  name: "support",
   id: "agent_1",
   project: "demo",
   stage: "development",

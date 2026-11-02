@@ -15,7 +15,7 @@ import {
 } from "../src/harness/session.ts";
 import { sanitizeHookResult } from "../src/harness/hook-runner.ts";
 
-const METADATA = { authorId: "U04ABC", name: "Phicks", ts: 1789000000000 };
+const METADATA = { authorId: "U04ABC", name: "Ada", ts: 1789000000000 };
 
 describe("attachMetadataToLatestUserIngress", () => {
   it("attaches metadata to the newest user event only", () => {

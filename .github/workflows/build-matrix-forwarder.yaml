@@ -7,10 +7,11 @@ on:
       - dev
     paths:
       - "apps/matrix-forwarder/**"
-      # Imported by relative path: the two core modules and the Discord
+      # Imported by relative path: the three core modules and the Discord
       # forwarder helpers. Nothing declares that dependency, so name them here
       # or a rename ships broken.
       - "apps/core/src/shared/env.ts"
+      - "apps/core/src/shared/discord-wire.ts"
       - "apps/core/src/shared/matrix-wire.ts"
       - "apps/discord-forwarder/src/**"
       # Copied into the image, and it owns the config-plane query the forwarder

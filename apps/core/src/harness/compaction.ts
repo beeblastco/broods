@@ -15,6 +15,13 @@ import {
   resolveConfiguredModel,
 } from "./provider.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
+import {
+  addUsageTokenTotals,
+  extractCacheWriteTokens,
+  modelTokenAttributes,
+  usageTokenTotals,
+  type UsageTokenTotals,
+} from "./usage-metering.ts";
 
 // Input tokens of a turn's last model call that start an auto-compaction.
 const DEFAULT_AUTO_COMPACTION_MAX_CONTEXT_LENGTH = 500_000;
@@ -24,6 +31,40 @@ const MIN_SPLIT_MESSAGE_LENGTH = 1_000;
 export const COMPACTION_MARKER = "<session-compaction-summary>";
 const COMPACTION_MARKER_END = "</session-compaction-summary>";
 const COMPACTION_MESSAGE_SEPARATOR = "\n\n";
+
+/** What a compaction's summary model calls cost, for its span, usage and log. */
+export interface CompactionUsage {
+  /** Summed over every summary call; cache writes include the metadata fallback. */
+  usage: UsageTokenTotals;
+  /** One, or more when a history too long for the model was split. */
+  modelCalls: number;
+  /** The agent's model, which wrote the summary. */
+  modelProvider: string;
+  modelId: string;
+}
+
+/** The summary row a compaction persists, and what making it cost. */
+export interface ConversationSummary extends CompactionUsage {
+  message: SystemModelMessage;
+}
+
+/** A persisted compaction: how many messages it folded and what it cost. */
+export interface CompactionResult extends CompactionUsage {
+  messageCount: number;
+}
+
+/**
+ * A compaction that failed after its model was resolved. `spent` is what the
+ * summary calls that did finish cost, so a failed split is still metered.
+ */
+export class CompactionError extends Error {
+  readonly spent: CompactionUsage;
+
+  constructor(cause: unknown, spent: CompactionUsage) {
+    super(toErrorMessage(cause), { cause: cause });
+    this.spent = spent;
+  }
+}
 
 export interface SummarizeConversationInput {
   accountId?: string;
@@ -55,6 +96,17 @@ export function shouldAutoCompact(
   return lastInputTokens >= configuredMax;
 }
 
+/** A compaction's phase span attributes, its tokens named as a model.step's. */
+export function compactionSpanAttributes(
+  result: CompactionResult,
+): Record<string, number> {
+  return {
+    "compaction.message_count": result.messageCount,
+    "compaction.model_calls": result.modelCalls,
+    ...modelTokenAttributes(result.usage),
+  };
+}
+
 export function isCompactionSummaryMessage(
   message: SystemModelMessage,
 ): boolean {
@@ -66,11 +118,12 @@ export function isCompactionSummaryMessage(
 
 /**
  * Unconditional summary generation. Callers decide when to compact and which
- * messages fold in; this produces the summary row from them.
+ * messages fold in; this produces the summary row from them and the token
+ * usage of its summary calls.
  */
 export async function summarizeConversation(
   input: SummarizeConversationInput,
-): Promise<SystemModelMessage | null> {
+): Promise<ConversationSummary | null> {
   const messages = stripReasoningFromMessages(input.messages);
   const compactableContext = [...input.priorSummaries, ...messages];
   if (compactableContext.length === 0) {
@@ -84,6 +137,8 @@ export async function summarizeConversation(
   const providerOptions = providerOptionsFromModelConfig(input.agentConfig);
   const startedAt = Date.now();
   const suffix = formatInstructions(input.instructions);
+  let usage = usageTokenTotals(undefined);
+  let modelCalls = 0;
   const requestSummary = async (blocks: string[]): Promise<string> => {
     const result = await generateText({
       ...modelSettingsFromModelConfig(input.agentConfig),
@@ -112,23 +167,50 @@ export async function summarizeConversation(
       ],
       ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
     });
+    const callUsage = usageTokenTotals(result.usage);
+    usage = addUsageTokenTotals(usage, {
+      ...callUsage,
+      cacheWriteTokens:
+        callUsage.cacheWriteTokens ||
+        extractCacheWriteTokens(
+          configuredModel.providerName,
+          result.providerMetadata,
+        ),
+    });
+    modelCalls += 1;
 
     return result.text;
   };
-  const text = await summarizeBlocks(
-    formatMessagesForCompaction(compactableContext),
-    requestSummary,
+  const spent = (): CompactionUsage => ({
+    usage: usage,
+    modelCalls: modelCalls,
+    modelProvider: configuredModel.providerName,
+    modelId: configuredModel.model.modelId,
+  });
+  let text: string;
+  try {
+    text = await summarizeBlocks(
+      formatMessagesForCompaction(compactableContext),
+      requestSummary,
+    );
+  } catch (error) {
+    throw new CompactionError(error, spent());
+  }
+
+  const durationMs = Date.now() - startedAt;
+  logInfo(
+    `Session context compacted: ${input.messages.length} message(s), ${modelCalls} model call(s), ${usage.inputTokens} in / ${usage.outputTokens} out / ${usage.totalTokens} total token(s), ${durationMs}ms`,
+    {
+      eventType: "session.compacted",
+      conversationKey: input.conversationKey,
+      ...spent(),
+      messageCount: input.messages.length,
+      compactedMessageCount: compactableContext.length,
+      durationMs: durationMs,
+    },
   );
 
-  const summary = createCompactionSummaryMessage(text);
-  logInfo("Session context compacted", {
-    conversationKey: input.conversationKey,
-    messageCount: input.messages.length,
-    compactedMessageCount: compactableContext.length,
-    durationMs: Date.now() - startedAt,
-  });
-
-  return summary;
+  return { ...spent(), message: createCompactionSummaryMessage(text) };
 }
 
 function createCompactionSummaryMessage(summary: string): SystemModelMessage {

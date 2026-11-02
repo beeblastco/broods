@@ -5,19 +5,13 @@
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import {
-  internalMutation,
-  internalQuery,
-  mutation,
-  query,
-} from "../_generated/server";
+import { internalQuery, mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
 import { purgeOrg } from "../model/cascade";
 import { slugifyName } from "../lib/slug";
 import { ClientError } from "../model/clientError";
 import { hasDashboardPermission } from "../model/access";
-import { assertCanCreateOrg, syncUserPlan } from "../model/orgBilling";
-import { isManagedService } from "../model/planLimits";
+import { assertCanCreateOrg } from "../model/orgBilling";
 import {
   getActiveOrgForUser,
   getOrgMembership,
@@ -27,17 +21,6 @@ import {
   type OrgRole,
 } from "../model/ownership/org";
 import { orgsFields } from "../schema";
-
-/**
- * Accounts provisioned straight against the account API, the per-stack service
- * accounts rather than dashboard signups, carry a synthetic `external:<name>` binding
- * instead of an `orgs` id. `accounts.orgId` is a plain string, so that is legal
- * and nothing rejects it, but the consequence is that such an account is
- * unreachable from the dashboard: `orgMembers.orgId` is an `Id<"orgs">`, so no
- * membership row can point at it, and every dashboard read resolves accounts
- * through org membership. Nobody can see or operate it.
- */
-export const EXTERNAL_ORG_PREFIX = "external:";
 
 const orgDoc = v.object({
   ...orgsFields,
@@ -64,107 +47,6 @@ export interface ActiveAccount {
   role: OrgRole;
   user: Doc<"users">;
 }
-
-/**
- * Adopts an `external:`-bound account into a real org owned by a human, so it
- * can be operated like any other account.
- *
- * Internal + un-gated by design: the whole point is that these accounts have no
- * org, so there is no admin to authorize against, and the dashboard's
- * `requireOrgMember` path cannot express this operation. Run it deliberately
- * (`npx convex run`), not from the UI.
- *
- * Always mints a NEW org rather than moving the account into the owner's
- * existing one: `accounts.getByOrgId` resolves with `.unique()`, so a second
- * account bound to an org that already has one makes that query throw for every
- * caller, taking down the org the owner already depends on.
- */
-export const adoptExternalAccount = internalMutation({
-  args: {
-    accountId: v.id("accounts"),
-    ownerEmail: v.string(),
-    orgName: v.string(),
-  },
-  returns: v.object({
-    orgId: v.id("orgs"),
-    slug: v.string(),
-    membershipId: v.id("orgMembers"),
-  }),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{
-    orgId: Id<"orgs">;
-    slug: string;
-    membershipId: Id<"orgMembers">;
-  }> => {
-    const account = await ctx.db.get(args.accountId);
-    if (!account) {
-      throw new Error("Account not found");
-    }
-    // Refuse to re-home an account that a real org already owns: that org's
-    // members would silently lose it.
-    if (!account.orgId.startsWith(EXTERNAL_ORG_PREFIX)) {
-      throw new Error(
-        `Account ${account.username} is already bound to org ${account.orgId}; refusing to move it`,
-      );
-    }
-
-    const email = args.ownerEmail.trim().toLowerCase();
-    const ownerMatches = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", email))
-      .collect();
-    if (ownerMatches.length === 0) {
-      throw new Error(
-        `No user with email ${email}; they must sign in to the dashboard once first`,
-      );
-    }
-    if (ownerMatches.length > 1) {
-      throw new Error(
-        `Multiple users found with email ${email}; database integrity violation`,
-      );
-    }
-    const owner = ownerMatches[0];
-
-    const now = Date.now();
-    const slug = await uniqueOrgSlug(ctx, args.orgName);
-    const orgId = await ctx.db.insert("orgs", {
-      name: args.orgName,
-      slug: slug,
-      ownerAuthId: owner.authId,
-      plan: "free",
-      createdAt: now,
-      // An adopted org is not a first-time signup: without this,
-      // project.openHome treats the owner's first dashboard
-      // visit as onboarding and mints a randomly-named empty project.
-      // This account's agents get their project from the back-sync path
-      // instead, named after the account.
-      onboardedAt: now,
-    });
-    const membershipId = await ctx.db.insert("orgMembers", {
-      orgId: orgId,
-      userId: owner._id,
-      role: "owner",
-      createdAt: now,
-    });
-    // The secret hash is untouched, so whatever service holds this account's
-    // secret keeps authenticating exactly as before.
-    await ctx.db.patch(account._id, { orgId: orgId, updatedAt: now });
-    // The org runs on its owner's plan, like every org they own.
-    if (isManagedService()) await syncUserPlan(ctx, owner.authId);
-
-    console.log("AUDIT external account adopted", {
-      accountId: account._id,
-      username: account.username,
-      previousOrgId: account.orgId,
-      orgId: orgId,
-      ownerId: owner._id,
-    });
-
-    return { orgId: orgId, slug: slug, membershipId: membershipId };
-  },
-});
 
 /**
  * Creates an org owned by the caller, inserts an owner membership row, and sets

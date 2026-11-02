@@ -5,7 +5,7 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx } from "../_generated/server";
-import type { CanvasNode } from "../canvas";
+import type { CanvasNode } from "../model/canvasShapes";
 import {
   collectEnvPlaceholderNames,
   toNestedAgentConfig,

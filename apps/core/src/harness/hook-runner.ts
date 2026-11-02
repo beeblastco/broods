@@ -31,8 +31,19 @@ const MAX_HOOK_RESULT_BYTES = 128 * 1024;
 const MAX_HOOK_STATE_BYTES = 128 * 1024;
 
 // The only fields a hook may mutate at each event. Anything else in the return
-// is dropped; events not listed here are observe-only (return ignored).
-const HOOK_MUTABLE_FIELDS = {
+// is dropped; events not listed here are observe-only (return ignored). Pick's
+// key constraint holds every key to a real AgentHookEventName.
+const HOOK_MUTABLE_FIELDS: Pick<
+  Record<AgentHookEventName, readonly string[]>,
+  | "agent.started"
+  | "agent.finished"
+  | "agent.approval.required"
+  | "tool.call.started"
+  | "tool.result"
+  | "subagent.task.finished"
+  | "channel.message.received"
+  | "channel.message.sending"
+> = {
   "agent.started": ["system", "messages"],
   "agent.finished": ["output"],
   "agent.approval.required": ["approve"],
@@ -43,7 +54,7 @@ const HOOK_MUTABLE_FIELDS = {
   // envelope, projected back onto agent.started payload messages).
   "channel.message.received": ["drop", "text", "metadata"],
   "channel.message.sending": ["drop", "text"],
-} as const satisfies Partial<Record<AgentHookEventName, readonly string[]>>;
+};
 
 // A hook bundle never changes under its sha256 and hooks fire several times a
 // turn, so the encoded source is kept instead of read from S3 at every fire.

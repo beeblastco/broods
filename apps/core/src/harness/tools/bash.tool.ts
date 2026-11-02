@@ -64,7 +64,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
   return {
     bash: tool({
       description: description(context),
-      inputSchema: jsonSchema(inputSchema(context)),
+      inputSchema: jsonSchema<BashInput>(inputSchema(context)),
       execute: async function (input, options) {
         const {
           command,
@@ -72,7 +72,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           sandbox: onSandbox,
           background,
           pty,
-        } = input as BashInput;
+        } = input;
         const trimmed = (command ?? "").trim();
         if (!trimmed) {
           return toolError("Error: command is required");
@@ -122,7 +122,6 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
             return await dispatchBackground(
               context,
               ws,
-              sandbox,
               effective,
               options.toolCallId,
             );
@@ -211,7 +210,6 @@ Usage notes:
 async function dispatchBackground(
   context: SandboxToolContext,
   ws: ResolvedWorkspace | undefined,
-  _sandbox: SandboxExecutorConfig,
   command: string,
   toolCallId: string,
 ): Promise<string> {

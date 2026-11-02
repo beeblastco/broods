@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { DEPLOYMENT_REGIONS } from "./cli/types";
+import { canvasEdgeValidator, canvasNodeValidator } from "./model/canvasShapes";
 import { CONNECTION_TYPE_NAMES } from "./model/connections";
 import { policyDocumentValidator } from "./model/policyDocument";
 import { principalLinkValidator } from "./model/principal";
@@ -30,6 +31,24 @@ export const usersFields = {
   activeOrgId: v.optional(v.id("orgs")),
 };
 
+/** A project's linked GitHub repo; see `github.ts`. */
+export const projectRepoValidator = v.object({
+  installationId: v.number(),
+  repoId: v.number(),
+  /** `owner/name`, kept current by the `repository` webhook. */
+  fullName: v.string(),
+  /** The folder holding `broods/`, relative to the repo root; "" is the root. */
+  rootDirectory: v.string(),
+  productionBranch: v.string(),
+  developmentBranch: v.optional(v.string()),
+  /** The project keys the workflow deploys with, revoked on unlink. */
+  deployKeyIds: v.array(v.id("deployKeys")),
+  /** False when the plan had no environments, so the keys are repo secrets any branch can read. */
+  protectedSecrets: v.boolean(),
+  /** Set when the workflow went in through a PR because the branch is protected. */
+  setupPullRequestUrl: v.optional(v.string()),
+});
+
 export const projectsFields = {
   authId: v.string(),
   /** Org that owns this project. */
@@ -37,6 +56,12 @@ export const projectsFields = {
   name: v.string(),
   description: v.optional(v.string()),
   slug: v.string(),
+  /** The GitHub repo whose pushes deploy this project, when one is linked. */
+  repo: v.optional(projectRepoValidator),
+  /** A link in flight holding its repo, so two projects never set up one repo at once. */
+  linkClaim: v.optional(
+    v.object({ repoId: v.number(), expiresAt: v.number() }),
+  ),
   updatedAt: v.number(),
 };
 
@@ -154,8 +179,8 @@ export const canvasLayoutsFields = {
   authId: v.string(),
   projectId: v.id("projects"),
   stageId: v.id("stages"),
-  nodes: v.array(v.any()),
-  edges: v.array(v.any()),
+  nodes: v.array(canvasNodeValidator),
+  edges: v.array(canvasEdgeValidator),
   updatedAt: v.number(),
 };
 
@@ -924,6 +949,58 @@ export const accountEnvVarsFields = {
 };
 
 /**
+ * A GitHub App installation an org connected: the GitHub user or org whose
+ * repos the org's projects may link. One row per (org, installation).
+ */
+export const githubInstallationsFields = {
+  orgId: v.id("orgs"),
+  installationId: v.number(),
+  /** The GitHub login the App is installed on. */
+  login: v.string(),
+  accountType: v.union(v.literal("User"), v.literal("Organization")),
+  updatedAt: v.number(),
+};
+
+/**
+ * A dashboard round trip through GitHub in flight. `state` comes back on the
+ * callback; `createRepo` is the repo to make with the user's token, absent
+ * for a plain connect. Deleted when the callback lands or it expires.
+ */
+export const githubSignInsFields = {
+  state: v.string(),
+  authId: v.string(),
+  orgId: v.id("orgs"),
+  /** The dashboard path the callback returns to. */
+  returnTo: v.optional(v.string()),
+  createRepo: v.optional(
+    v.object({
+      projectId: v.id("projects"),
+      owner: v.string(),
+      name: v.string(),
+      private: v.boolean(),
+      /** The Broods API the workflow deploys to. */
+      baseUrl: v.string(),
+    }),
+  ),
+  expiresAt: v.number(),
+};
+
+/** The latest run of a linked repo's deploy workflow on one branch, from GitHub's `workflow_run` webhook. */
+export const githubDeploysFields = {
+  projectId: v.id("projects"),
+  branch: v.string(),
+  runId: v.number(),
+  /** A rerun keeps `runId` and raises this. */
+  runAttempt: v.optional(v.number()),
+  sha: v.string(),
+  status: v.string(),
+  /** Set once `status` is `completed`: `success`, `failure`, `cancelled`, ... */
+  conclusion: v.optional(v.string()),
+  url: v.string(),
+  updatedAt: v.number(),
+};
+
+/**
  * A connection: an external account (today the ChatGPT plan) signed in once
  * per account by `broods connect`, one of each type.
  * Core refreshes it in process and writes the rotated tokens back. Tokens are
@@ -1221,6 +1298,12 @@ export const channelTargetRefsFields = {
   channelRecordId: v.optional(v.string()),
 };
 /** Fenced ownership and FIFO counters for one runtime conversation. */
+/** The late result a resume envelope carries, as its fence fields name it. */
+export const resultFenceValidator = v.union(
+  v.object({ resultEventId: v.string() }),
+  v.object({ toolResultId: v.string() }),
+);
+
 export const runtimeConversationCoordinatorsFields = {
   accountId: v.id("accounts"),
   agentId: v.string(),
@@ -1245,6 +1328,9 @@ export const runtimeConversationCoordinatorsFields = {
   leaseExpiresAt: v.optional(v.number()),
   queuedCount: v.number(),
   queuedBytes: v.number(),
+  // The late results of the resumes handed to the current owner, stored by
+  // its next history write that leaves it no unsaved row.
+  unsavedResults: v.optional(v.array(resultFenceValidator)),
   updatedAt: v.number(),
 };
 /**
@@ -1258,6 +1344,70 @@ export const ingressConfigRefValidator = v.object({
     v.object({ channelName: v.string(), ...channelTargetRefsFields }),
   ),
 });
+/**
+ * Who sent a channel message, in provider-neutral terms: core's
+ * `ChannelIdentity` (apps/core/src/shared/channels.ts).
+ */
+export const channelIdentityValidator = v.object({
+  workspaceRef: v.optional(v.string()),
+  channelId: v.optional(v.string()),
+  threadId: v.optional(v.string()),
+  userId: v.optional(v.string()),
+  userName: v.optional(v.string()),
+  userRoles: v.optional(v.array(v.string())),
+});
+/**
+ * One ephemeral system instruction stored on an envelope: the AI SDK's
+ * `SystemModelMessage`. Every core producer parses the message with the SDK's
+ * own `systemModelMessageSchema` (or builds it literally) before it is stored.
+ */
+export const systemModelMessageValidator = v.object({
+  role: v.literal("system"),
+  content: v.string(),
+  providerOptions: v.optional(
+    v.record(v.string(), v.record(v.string(), v.any())),
+  ),
+});
+/** The public deployment scope a run was addressed through, for status URLs. */
+export const publicDeploymentIngressValidator = v.object({
+  accountId: v.string(),
+  endpointId: v.string(),
+  stageSlug: v.string(),
+  projectSlug: v.string(),
+});
+/** Where an envelope's run answers once dispatched: core's `IngressDelivery`. */
+export const ingressDeliveryValidator = v.union(
+  v.object({
+    kind: v.literal("http"),
+    publicEventId: v.string(),
+    publicConversationKey: v.string(),
+    statusUrl: v.optional(v.string()),
+    publicDeploymentIngress: v.optional(publicDeploymentIngressValidator),
+  }),
+  v.object({
+    kind: v.literal("async"),
+    publicEventId: v.string(),
+    publicConversationKey: v.string(),
+    statusUrl: v.string(),
+    publicDeploymentIngress: v.optional(publicDeploymentIngressValidator),
+  }),
+  v.object({
+    kind: v.literal("websocket"),
+    publicEventId: v.string(),
+    publicConversationKey: v.string(),
+    connectionId: v.string(),
+    statusUrl: v.optional(v.string()),
+    publicDeploymentIngress: v.optional(publicDeploymentIngressValidator),
+  }),
+  v.object({
+    kind: v.literal("channel"),
+    channel: v.string(),
+    /** Who sent the message, so a queued turn runs as its own sender. */
+    identity: v.optional(channelIdentityValidator),
+    /** Opaque reply routing (interaction tokens, response URLs); never typed. */
+    source: v.optional(v.record(v.string(), v.any())),
+  }),
+);
 
 /** One accepted transport-neutral ingress item in the conversation FIFO. */
 export const runtimeIngressEnvelopesFields = {
@@ -1276,14 +1426,14 @@ export const runtimeIngressEnvelopesFields = {
   idempotencyKey: v.string(),
   payloadDigest: v.string(),
   events: v.array(v.any()),
-  delivery: v.any(),
+  delivery: ingressDeliveryValidator,
   requestedMode: ingressModeValidator,
   ownerTaskId: v.optional(v.string()),
   // Per-request execution context so a queued envelope runs with its own
   // config and one-turn system, never the previous owner's. The config itself
   // is rebuilt from the ref at dispatch; it never sits here with its secrets.
   configRef: v.optional(ingressConfigRefValidator),
-  ephemeralSystem: v.optional(v.array(v.any())),
+  ephemeralSystem: v.optional(v.array(systemModelMessageValidator)),
   // The subagent or async tool result row a late resume delivers. A queued
   // resume marks it stored only when it is applied, so one that expires in
   // the queue leaves it for the recovery sweep.
@@ -1329,16 +1479,8 @@ export const asyncToolDeliveryValidator = v.union(
   v.object({
     kind: v.literal("channel"),
     channelName: v.string(),
-    identity: v.optional(
-      v.object({
-        workspaceRef: v.optional(v.string()),
-        channelId: v.optional(v.string()),
-        threadId: v.optional(v.string()),
-        userId: v.optional(v.string()),
-        userName: v.optional(v.string()),
-        userRoles: v.optional(v.array(v.string())),
-      }),
-    ),
+    identity: v.optional(channelIdentityValidator),
+    /** Opaque reply routing (interaction tokens, response URLs); never typed. */
     source: v.record(v.string(), v.any()),
   }),
 );
@@ -1351,6 +1493,37 @@ export const subagentTaskValidator = v.object({
   description: v.optional(v.string()),
   parentConversationKey: v.string(),
   parentDelivery: v.optional(asyncToolDeliveryValidator),
+});
+/**
+ * A tool call waiting on a person's approval, as the polling row lists it:
+ * core's `ToolApprovalSummary`. `input` is the model-generated tool input.
+ */
+const toolApprovalSummaryValidator = v.object({
+  approvalId: v.string(),
+  toolCallId: v.string(),
+  toolName: v.string(),
+  input: v.any(),
+});
+/**
+ * One open ask_questions prompt while a run is awaiting_input: core's
+ * `PendingQuestionSummary` over its `ChannelQuestion` rows.
+ */
+const pendingQuestionSummaryValidator = v.object({
+  statusId: v.string(),
+  questions: v.array(
+    v.object({
+      id: v.string(),
+      header: v.string(),
+      question: v.string(),
+      options: v.array(
+        v.object({
+          label: v.string(),
+          description: v.optional(v.string()),
+        }),
+      ),
+    }),
+  ),
+  answerBy: v.string(),
 });
 /** Public async-agent polling and approval state. */
 export const runtimeAsyncAgentResultsFields = {
@@ -1369,9 +1542,9 @@ export const runtimeAsyncAgentResultsFields = {
   ),
   response: v.optional(v.any()),
   error: v.optional(v.string()),
-  approvals: v.optional(v.array(v.any())),
+  approvals: v.optional(v.array(toolApprovalSummaryValidator)),
   // Open ask_questions prompts while status is awaiting_input.
-  questions: v.optional(v.array(v.any())),
+  questions: v.optional(v.array(pendingQuestionSummaryValidator)),
   createdAt: v.string(),
   updatedAt: v.string(),
   expiresAt: v.number(),
@@ -1398,7 +1571,7 @@ export const runtimeAsyncToolResultsFields = {
   ),
   response: v.optional(v.any()),
   error: v.optional(v.string()),
-  delivery: v.optional(v.any()),
+  delivery: v.optional(asyncToolDeliveryValidator),
   completionTokenHash: v.optional(v.string()),
   // Set once the row finishes; see `handbackValidator`.
   handback: v.optional(handbackValidator),
@@ -1721,10 +1894,10 @@ export default defineSchema({
     .index("by_email", ["email"]),
   // Also serves the org's project list, in slug order; the one caller that
   // needs newest-first sorts by `updatedAt`.
-  projects: defineTable(projectsFields).index("by_orgId_and_slug", [
-    "orgId",
-    "slug",
-  ]),
+  projects: defineTable(projectsFields)
+    .index("by_orgId_and_slug", ["orgId", "slug"])
+    .index("by_repoId", ["repo.repoId"])
+    .index("by_linkClaimRepoId", ["linkClaim.repoId"]),
   stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
   stageSyncs: defineTable(stageSyncsFields).index("by_stageId", ["stageId"]),
   agentConfigs: defineTable(agentConfigsFields)
@@ -1875,6 +2048,16 @@ export default defineSchema({
     "by_accountId_and_name",
     ["accountId", "name"],
   ),
+  githubInstallations: defineTable(githubInstallationsFields)
+    .index("by_orgId", ["orgId"])
+    .index("by_installationId", ["installationId"]),
+  githubSignIns: defineTable(githubSignInsFields)
+    .index("by_state", ["state"])
+    .index("by_expiresAt", ["expiresAt"]),
+  githubDeploys: defineTable(githubDeploysFields).index(
+    "by_projectId_and_branch",
+    ["projectId", "branch"],
+  ),
   connections: defineTable(connectionsFields).index("by_accountId_and_type", [
     "accountId",
     "type",
@@ -1936,6 +2119,9 @@ export default defineSchema({
       "sequence",
     ])
     .index("by_accountId_and_runId", ["accountId", "runId"])
+    // A resume of one late result still queued or applied, under any identity.
+    .index("by_resultEventId_and_status", ["resultEventId", "status"])
+    .index("by_toolResultId_and_status", ["toolResultId", "status"])
     // Status leads so maintenance scans only nonterminal rows: terminal rows
     // keep their stale expiresAt for the whole status retention window, and a
     // bare expiresAt index would re-read every one of them each sweep.

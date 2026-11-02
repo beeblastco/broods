@@ -223,7 +223,7 @@ it("ends the root span, publishes it and writes usage in the run's context, then
   const { finalizer } = runFinalizer(recorded);
   setObservabilityContext({
     accountId: "acct_1",
-    project: "tracy",
+    project: "support",
     stage: "development",
     endpointId: "ep_1",
     agentId: "agent_1",
@@ -280,7 +280,7 @@ function runFinalizer(recorded: Recorded): {
     tracer: trace.getTracer("test"),
     scope: {
       accountId: "acct_1",
-      project: "tracy",
+      project: "support",
       stage: "development",
       endpointId: "ep_1",
       agentId: "agent_1",

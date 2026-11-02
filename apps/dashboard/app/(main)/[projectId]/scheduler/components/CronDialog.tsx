@@ -105,29 +105,20 @@ export function CronDialog({
     setPending(true);
     setError(null);
     try {
+      const payload = {
+        name: name.trim(),
+        agentId: agentId as Id<"agents">,
+        input: prompt.trim(),
+        conversationKey: conversationKey.trim() || undefined,
+        scheduleExpression: scheduleExpression.trim(),
+        timezone: timezoneToSave(cron?.timezone, timezone),
+        status: status,
+        description: description.trim() || undefined,
+      };
       if (mode === "create") {
-        await create({
-          name: name.trim(),
-          agentId: agentId as Id<"agents">,
-          input: prompt.trim(),
-          conversationKey: conversationKey.trim() || undefined,
-          scheduleExpression: scheduleExpression.trim(),
-          timezone: timezoneToSave(cron?.timezone, timezone),
-          status: status,
-          description: description.trim() || undefined,
-        });
+        await create(payload);
       } else if (cron) {
-        await update({
-          cronId: cron._id,
-          name: name.trim(),
-          agentId: agentId as Id<"agents">,
-          input: prompt.trim(),
-          conversationKey: conversationKey.trim() || undefined,
-          scheduleExpression: scheduleExpression.trim(),
-          timezone: timezoneToSave(cron?.timezone, timezone),
-          status: status,
-          description: description.trim() || undefined,
-        });
+        await update({ cronId: cron._id, ...payload });
       }
       void analytics.then((posthog): void => {
         posthog.capture(

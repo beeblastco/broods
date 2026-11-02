@@ -113,8 +113,10 @@ export interface RunSpanTracker {
       attributes: SpanAttributes,
     ) => TrackedSpan);
   /**
-   * Emits a closed phase span under the root for non-model work (cold start,
-   * context prepare, compaction), so a slow turn can be attributed. Best-effort.
+   * Emits a closed phase span under the root for work outside the model steps
+   * (cold start, context prepare, compaction), so a slow turn can be
+   * attributed. A phase that calls the model, like compaction, carries its
+   * `model.*` tokens. Best-effort.
    */
   phase: (
     phaseName: string,

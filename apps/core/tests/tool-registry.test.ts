@@ -1,5 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
 import type { ToolApprovalStatus, ToolExecuteFunction, ToolSet } from "ai";
+import * as asyncToolResults from "../src/harness/async-tool-result.ts";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type { SessionMessageResult } from "../src/harness/ingress.ts";
 import type { Session } from "../src/harness/session.ts";
@@ -51,6 +60,60 @@ describe("createTools", () => {
     expect(urlContextMock).not.toHaveBeenCalled();
   });
 
+  it("records an async_status read on the session that saves the step", async (): Promise<void> => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const read = spyOn(
+      asyncToolResults,
+      "getAsyncToolResult",
+    ).mockResolvedValue({
+      resultId: "async_tool_read",
+      parentEventId: "event_parent",
+      conversationKey: "conversation",
+      toolName: "lookup",
+      toolCallId: "call-read",
+      input: {},
+      status: "completed",
+      response: "the answer",
+      handback: "detached",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      expiresAt: Date.now() + 60_000,
+    });
+    const recordToolResultRead = mock(
+      async (_toolCallId: string, _resultId: string): Promise<void> => {},
+    );
+    const context = sandboxContext([
+      { name: "jobs", workspaceId: "ws_jobs", namespace: "ns" },
+    ]);
+    const tools = await createTools(
+      {
+        ...context,
+        workspaces: context.workspaces?.map((workspace): ResolvedWorkspace => ({
+          ...workspace,
+          sandbox: { provider: "lambda", persistent: true },
+        })),
+        session: {
+          agentId: "agent_test",
+          recordToolResultRead: recordToolResultRead,
+        } as unknown as Session,
+      },
+      {},
+    );
+
+    try {
+      await (tools.async_status as unknown as ChannelTestTool).execute(
+        { statusId: "async_tool_read" },
+        { toolCallId: "tool-call-read", messages: [], context: {} },
+      );
+      expect(recordToolResultRead).toHaveBeenCalledWith(
+        "tool-call-read",
+        "async_tool_read",
+      );
+    } finally {
+      read.mockRestore();
+    }
+  });
+
   it("registers computer for any machine it reaches, not only its own sandbox", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const tools = await createTools(
@@ -62,7 +125,7 @@ describe("createTools", () => {
             sandbox: { provider: "lambda", permissionMode: "ask" },
           },
           {
-            name: "kien-mac",
+            name: "laptop-mac",
             sandbox: { provider: "machine", permissionMode: "ask" },
           },
         ],
@@ -797,7 +860,7 @@ describe("createTools", () => {
     });
 
     expect(Object.keys(tools).sort()).toEqual(["googleSearch", "urlContext"]);
-    // enabled/needsApproval/async are registry-level flags and never reach the
+    // enabled/needsApproval are registry-level flags and never reach the
     // provider factory; every other key is passed through as tool args.
     expect(googleSearchMock).toHaveBeenCalledWith({
       searchTypes: {
@@ -807,38 +870,21 @@ describe("createTools", () => {
     expect(urlContextMock).toHaveBeenCalledWith({});
   });
 
-  it("passes async-enabled provider tools through the async coordinator", async () => {
+  it("records needsApproval on the registry and keeps it out of the tool args", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const approvalRequirements = new Map<string, true>();
-    const dispatch: NonNullable<ToolContext["dispatchAsyncTools"]> = mock(
-      (tools, asyncToolModes): ToolSet => {
-        expect([...asyncToolModes]).toEqual(["googleSearch"]);
-        expect(
-          (tools.googleSearch as { needsApproval?: unknown }).needsApproval,
-        ).toBeUndefined();
-
-        return {
-          googleSearch: Object.assign(tools.googleSearch!, { wrapped: true }),
-        };
-      },
-    );
-
     const googleSearchMock = mock((options: unknown) => ({
       provider: "googleSearch",
       options: options,
-      execute: mock(async () => ({ ok: true })),
     }));
 
     const tools = await createTools(
-      Object.assign(
-        {},
-        createToolContext(googleSearchMock, "google", undefined, dispatch),
-        { approvalRequirements: approvalRequirements },
-      ) as never,
+      Object.assign({}, createToolContext(googleSearchMock), {
+        approvalRequirements: approvalRequirements,
+      }) as never,
       {
         tools: {
           googleSearch: {
-            async: true,
             needsApproval: true,
             searchTypes: { webSearch: {} },
           },
@@ -846,8 +892,9 @@ describe("createTools", () => {
       },
     );
 
-    expect(dispatch).toHaveBeenCalledTimes(1);
-    expect((tools.googleSearch as { wrapped?: boolean }).wrapped).toBe(true);
+    expect(
+      (tools.googleSearch as { needsApproval?: unknown }).needsApproval,
+    ).toBeUndefined();
     expect(approvalRequirements.has("googleSearch")).toBe(true);
     expect(googleSearchMock).toHaveBeenCalledWith({
       searchTypes: { webSearch: {} },
@@ -941,7 +988,7 @@ describe("createTools", () => {
     ).toEqual({});
   });
 
-  it("schedules a one-time task and rejects a malformed expression", async () => {
+  it("schedules a one-time task in this conversation", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const create = mock(async function (): Promise<CronRecord> {
       return {
@@ -967,15 +1014,6 @@ describe("createTools", () => {
       conversationKey: "slack:T1:C1",
       scheduleExpression: "at(2027-01-01T09:00:00)",
     });
-
-    expect(
-      channelToolExecute(tools.schedule, {
-        name: "broken",
-        instructions: "Never mind.",
-        schedule: "every monday",
-      }),
-    ).rejects.toThrow(/cron\(\.\.\.\), rate\(\.\.\.\), or at\(\.\.\.\)/);
-    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("lists only the calling agent's scheduled tasks", async () => {
@@ -1127,7 +1165,9 @@ describe("createTools", () => {
     });
   });
 
-  it("validates its own input because the AI SDK does not enforce the schema", async () => {
+  // The input schema (schedule-tool.test.ts) holds the shape; what the config
+  // plane's normalizer refuses still fails here, before any write.
+  it("refuses a timezone the config plane would refuse", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const update = mock(async function (): Promise<CronRecord> {
       return cronSummary();
@@ -1144,17 +1184,6 @@ describe("createTools", () => {
       scheduler: { enabled: true },
     });
 
-    // The model can emit anything: inputSchema is a hint, so an absent required
-    // field must not reach the tool body as a TypeError.
-    expect(channelToolExecute(tools.update_schedule, {})).rejects.toThrow(
-      "cronId is required",
-    );
-    expect(
-      channelToolExecute(tools.update_schedule, {
-        cronId: "cron_mine",
-        status: "cancelled",
-      }),
-    ).rejects.toThrow("status must be active or paused");
     expect(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_mine",
@@ -1553,7 +1582,6 @@ function createToolContext(
   ),
   modelProviderName: ToolContext["modelProviderName"] = "google",
   dispatchSubagents?: ToolContext["dispatchSubagents"],
-  dispatchAsyncTools?: ToolContext["dispatchAsyncTools"],
 ): Omit<ToolContext, "config"> {
   return {
     accountId: "acct_test",
@@ -1566,7 +1594,6 @@ function createToolContext(
       },
     },
     ...(dispatchSubagents ? { dispatchSubagents: dispatchSubagents } : {}),
-    ...(dispatchAsyncTools ? { dispatchAsyncTools: dispatchAsyncTools } : {}),
   };
 }
 

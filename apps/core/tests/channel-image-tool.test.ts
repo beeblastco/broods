@@ -106,13 +106,13 @@ describe("sendImagesTool", () => {
       true,
     );
     // The link must survive on its own: everything the media route needs to find
-    // the file again is sealed into the token, with no expiry to run out.
+    // the file again is sealed into the token.
     expect(
       openMediaTicket(
         sent[0]!.url.slice("https://gateway.test/v1/media/".length),
         [SECRET],
       ),
-    ).toEqual({
+    ).toMatchObject({
       accountId: ACCOUNT,
       workspaceId: "ws_a",
       namespace: NS,
@@ -329,7 +329,7 @@ describe("sendFilesTool", () => {
       openMediaTicket(url.slice("https://gateway.test/v1/media/".length), [
         SECRET,
       ]),
-    ).toEqual({
+    ).toMatchObject({
       accountId: ACCOUNT,
       workspaceId: "ws_a",
       namespace: NS,

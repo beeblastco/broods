@@ -108,9 +108,10 @@ real-shell sandbox, and `run-scripted.sh` then takes `bun:native` and
 timed rounds, so a warm worker is measured warm; without it the first task of
 each agent pays the load.
 
-Core needed two patches to load in a V8 isolate: `shared/cache-digest.ts`
-draws its key on first use, and `shared/http.ts` fetches by hostname on
-workerd. The second weakens the SSRF guard and is for this experiment only.
+Core needed two changes to load in a V8 isolate: `shared/cache-digest.ts`
+draws its key on first use, and `shared/http.ts` must fetch by hostname.
+The second weakens the SSRF guard, so `build.ts` patches it into the bundle
+at build time and core itself is unchanged.
 `entry.ts` waits for the response body and then core's in-flight writes, or
 workerd drops core's usage rows.
 

@@ -209,9 +209,11 @@ export async function publicHostFetch(
   if (isPrivateHostname(hostname)) {
     throw new Error(`Refusing to reach private address ${hostname}`);
   }
+  const request = input instanceof Request ? input : undefined;
+  const signal = init?.signal ?? request?.signal;
   let validated = publicHosts.get(hostname);
   if (!validated || validated.expiresAt <= Date.now()) {
-    const addresses = await dns.lookup(hostname);
+    const addresses = await lookupUntilAborted(hostname, signal);
     const [pinned] = addresses;
     if (!pinned) {
       throw new Error(`${hostname} did not resolve`);
@@ -227,18 +229,6 @@ export async function publicHostFetch(
       publicHosts.clear();
     }
     publicHosts.set(hostname, validated);
-  }
-  const request = input instanceof Request ? input : undefined;
-  // A V8 isolate (workerd) cannot dial an address while presenting another
-  // name for TLS: it reaches the checked host by name instead.
-  if (globalThis.navigator?.userAgent === "Cloudflare-Workers") {
-    return fetch(url, {
-      ...(request
-        ? { method: request.method, body: request.body, signal: request.signal }
-        : {}),
-      ...init,
-      redirect: "error",
-    });
   }
   url.hostname = validated.address;
   const headers = new Headers(init?.headers ?? request?.headers);
@@ -283,4 +273,24 @@ function isPrivateHostname(hostname: string): boolean {
   }
 
   return false;
+}
+
+/**
+ * Resolves a hostname, or rejects as soon as `signal` aborts: a lookup that
+ * never returns must not outlive the request that asked for it.
+ */
+async function lookupUntilAborted(
+  hostname: string,
+  signal: AbortSignal | null | undefined,
+): Promise<Awaited<ReturnType<typeof dns.lookup>>> {
+  if (!signal) return dns.lookup(hostname);
+  signal.throwIfAborted();
+  const { promise: aborted, reject } = Promise.withResolvers<never>();
+  const onAbort = (): void => reject(signal.reason);
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    return await Promise.race([dns.lookup(hostname), aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
 }

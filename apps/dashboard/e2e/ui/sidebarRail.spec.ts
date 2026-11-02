@@ -17,11 +17,12 @@ test("tracing fills the page beside the collapsed icon rail", async ({
     .poll(() => container.boundingBox())
     .toMatchObject({ width: RAIL_WIDTH });
 
-  const split = page.locator('[data-slot="resizable-panel-group"]');
-  const splitBox = await split.boundingBox();
-  expect(splitBox?.x).toBe(RAIL_WIDTH);
-  expect((splitBox?.x ?? 0) + (splitBox?.width ?? 0)).toBe(1280);
-  expect((splitBox?.y ?? 0) + (splitBox?.height ?? 0)).toBe(800);
+  // The task list and the trace beside it, from the rail to both page edges.
+  const body = page.locator("[data-scroll-pane]").first().locator("..");
+  const bodyBox = await body.boundingBox();
+  expect(bodyBox?.x).toBe(RAIL_WIDTH);
+  expect((bodyBox?.x ?? 0) + (bodyBox?.width ?? 0)).toBe(1280);
+  expect((bodyBox?.y ?? 0) + (bodyBox?.height ?? 0)).toBe(800);
 });
 
 // The open rail once let the toolbar's search icon and the sticky table head

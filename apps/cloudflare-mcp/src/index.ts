@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { z } from "zod";
+import { bearerMatches } from "../../cloudflare-sandbox/src/bearer.ts";
 
 const COMPATIBILITY_DATE = "2026-09-29";
 /** Lambda's own synchronous invoke payload cap, so both runtimes take the same batch. */
@@ -212,19 +213,6 @@ export default {
     });
   },
 };
-
-/** Compares equal-length digests in constant time, whatever the guess. */
-async function bearerMatches(request: Request, key: string): Promise<boolean> {
-  const given = request.headers.get("authorization") ?? "";
-  const [left, right] = await Promise.all(
-    [given, `Bearer ${key}`].map(
-      async (value): Promise<ArrayBuffer> =>
-        await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
-    ),
-  );
-
-  return crypto.subtle.timingSafeEqual(left!, right!);
-}
 
 /** A thrown value as one line, capped like every message a batch carries. */
 function boundedMessage(prefix: string, error: unknown): string {

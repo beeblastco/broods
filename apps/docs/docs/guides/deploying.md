@@ -71,6 +71,8 @@ Server, organization, project and stage together decide where a command writes. 
 
 ## Deploying from CI
 
+On GitHub, [link the repo](github.md) and Broods writes the workflow and secrets for you. For any other CI:
+
 Create a project key (`bpdk_...`) for the project and stage in the dashboard. It can sync only that stage. It can set and list environment variables but never read them, and it cannot replace skills or hooks another stage manages.
 
 ```yaml title=".github/workflows/deploy.yaml"

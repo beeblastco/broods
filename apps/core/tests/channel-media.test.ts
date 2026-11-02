@@ -135,6 +135,7 @@ beforeEach(() => {
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.MEDIA_TICKET_SECRET = "media-ticket-secret";
+  delete process.env.MEDIA_TICKET_TTL_SECONDS;
   process.env.PUBLIC_BASE_URL = "https://core.example";
   headS3ObjectMock.mockReset();
   readS3BytesMock.mockReset();
@@ -780,6 +781,39 @@ describe("rehydrateStoredMedia", () => {
     ]);
   });
 
+  // The media route refuses an expired link, so leaving it for the provider
+  // would 404 there and fail every later turn of the conversation.
+  it("says an expired link is gone instead of failing the turn", async (): Promise<void> => {
+    setStorageForTests(storageWithWorkspace());
+    const sealedAt = Date.now() - 31 * 24 * 60 * 60 * 1000;
+    const token = sealMediaTicket(
+      workspaceTicket(),
+      "media-ticket-secret",
+      sealedAt,
+    );
+
+    const messages = await rehydrateStoredMedia(
+      [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              image: `https://core.example/v1/media/${token}`,
+              mediaType: "image/jpeg",
+            },
+          ],
+        },
+      ],
+      modelConfig("openai"),
+      ACCOUNT,
+    );
+
+    expect(messages[0]?.content).toEqual([
+      { type: "text", text: "[a linked file is no longer available]" },
+    ]);
+  });
+
   // A link left in the prompt is fetched by the provider again on every model
   // step, so the turn reads it once and the model is handed bytes.
   it("hands the model a sealed link's bytes, read once per link", async (): Promise<void> => {
@@ -862,25 +896,46 @@ describe("rehydrateStoredMedia", () => {
     expect(
       await rehydrateStoredMedia(stored, modelConfig("openai"), undefined),
     ).toEqual(stored);
-    // A link sealed under a key core does not hold opens to nothing.
-    const forged: ModelMessage[] = [
+    // A link sealed under a key core does not hold opens to nothing. On
+    // another deployment's host it is left for that route to serve; on this
+    // core's own host the route refuses it, so it is gone.
+    const foreignKey = sealMediaTicket(
+      { accountId: ACCOUNT, path: "media/ff01/0-image-1.jpeg" },
+      "not-the-media-ticket-secret",
+    );
+    const elsewhere: ModelMessage[] = [
       {
         role: "user",
         content: [
           {
             type: "image",
-            image: `https://core.example/v1/media/${sealMediaTicket(
-              { accountId: ACCOUNT, path: "media/ff01/0-image-1.jpeg" },
-              "not-the-media-ticket-secret",
-            )}`,
+            image: `https://other.example/v1/media/${foreignKey}`,
             mediaType: "image/jpeg",
           },
         ],
       },
     ];
     expect(
-      await rehydrateStoredMedia(forged, modelConfig("openai"), ACCOUNT),
-    ).toEqual(forged);
+      await rehydrateStoredMedia(elsewhere, modelConfig("openai"), ACCOUNT),
+    ).toEqual(elsewhere);
+    const forged: ModelMessage[] = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            image: `https://core.example/v1/media/${foreignKey}`,
+            mediaType: "image/jpeg",
+          },
+        ],
+      },
+    ];
+    expect(
+      (await rehydrateStoredMedia(forged, modelConfig("openai"), ACCOUNT))[0]
+        ?.content,
+    ).toEqual([
+      { type: "text", text: "[a linked file is no longer available]" },
+    ]);
     expect(headS3ObjectMock).not.toHaveBeenCalled();
     expect(readS3BytesMock).not.toHaveBeenCalled();
     expect(meterWrites).toEqual([]);

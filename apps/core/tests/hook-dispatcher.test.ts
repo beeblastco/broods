@@ -6,7 +6,8 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { ToolSet } from "ai";
+import { tool, type ToolSet } from "ai";
+import { z } from "zod";
 import type { AgentHookEventName } from "../src/shared/domain/agent-config.ts";
 import type { HookDispatcher } from "../src/harness/hook-dispatcher.ts";
 import { wrapToolsWithHooks } from "../src/harness/hook-dispatcher.ts";
@@ -73,6 +74,69 @@ describe("wrapToolsWithHooks", () => {
     )({ query: "original" }, {});
     expect(seen).toEqual({ query: "edited" });
     expect(result).toBe("ok");
+  });
+
+  // The SDK validates the model's args before execute and never sees a hook's
+  // replacement, so the wrapper holds it to the same schema.
+  it("refuses edited args the tool's input schema rejects", async () => {
+    let ran = false;
+    const tools: ToolSet = {
+      search: tool({
+        inputSchema: z.strictObject({ query: z.string().min(1) }),
+        execute: async (): Promise<string> => {
+          ran = true;
+
+          return "ok";
+        },
+      }),
+    };
+    const editTo = (args: unknown): ToolSet =>
+      wrapToolsWithHooks(
+        tools,
+        dispatcherReturning((event) =>
+          event === "tool.call.started"
+            ? { decision: "allow", args: args }
+            : undefined,
+        ),
+      );
+    const run = (wrapped: ToolSet): Promise<unknown> =>
+      (wrapped.search!.execute as (i: unknown, o: unknown) => Promise<unknown>)(
+        { query: "original" },
+        {},
+      );
+
+    expect(run(editTo({ query: "" }))).rejects.toThrow(
+      /invalid args from hook/,
+    );
+    expect(run(editTo({ query: "x", extra: 1 }))).rejects.toThrow(
+      /invalid args from hook/,
+    );
+    expect(ran).toBe(false);
+    expect(await run(editTo({ query: "edited" }))).toBe("ok");
+  });
+
+  it("ignores edited args that are not an object", async () => {
+    let seen: unknown;
+    const tools: ToolSet = {
+      search: fakeTool((input) => {
+        seen = input;
+
+        return "ok";
+      }),
+    };
+    const wrapped = wrapToolsWithHooks(
+      tools,
+      dispatcherReturning((event) =>
+        event === "tool.call.started"
+          ? { decision: "allow", args: null }
+          : undefined,
+      ),
+    );
+    await (
+      wrapped.search!.execute as (i: unknown, o: unknown) => Promise<unknown>
+    )({ query: "original" }, {});
+
+    expect(seen).toEqual({ query: "original" });
   });
 
   it("transforms tool output via a tool.result hook", async () => {
