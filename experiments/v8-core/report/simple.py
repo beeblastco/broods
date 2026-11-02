@@ -269,7 +269,12 @@ HEADLINE = (
     f"Yes. With the database back-and-forth cut, your idea now keeps up with today: "
     f"{tpm_now:.0f} tasks a minute with 20 users at once, against today's {tpm_today:.0f}."
 )
-REAL_LINE = "TODO"
+today_single = [t / 1000 for r in real if r["label"].startswith("bun+machine") and r["level"] == 1 for t in r["taskMs"]]
+REAL_LINE = (
+    f"Still call it a tie, not a win: the AI's own speed swings more than the gap. "
+    f"Today's single tasks took {min(today_single):.0f} to {max(today_single):.0f} s in this run, "
+    f"and the median was {real_today_earlier:.0f} s last time."
+)
 
 page = f"""<title>Broods task isolates</title>
 <meta name="claude:viewport-fit-sides" content="cover">
