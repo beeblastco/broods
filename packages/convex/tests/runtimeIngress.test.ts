@@ -2925,6 +2925,43 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     expect(await kind.handback(t, "late")).toBe("stored");
   });
 
+  test("keeps the result unstored while its owner still holds the resume's row", async (): Promise<void> => {
+    const { t, conversationKey, ownerGeneration, resume } =
+      await busyConversation();
+    const before = await kind.handback(t, "late");
+    await finishBusy(t, conversationKey, ownerGeneration);
+    expect(await resume()).toMatchObject({ outcome: "owner" });
+    const owner = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("runtimeConversationCoordinators")
+          .withIndex("by_conversationKey", (q) =>
+            q.eq("conversationKey", conversationKey),
+          )
+          .unique(),
+    );
+    const append = async (savesAll: boolean): Promise<void> => {
+      await t.mutation(internal.runtimeIngress.appendConversationEvent, {
+        conversationKey: conversationKey,
+        ownerEventId: "resume",
+        ownerGeneration: owner!.ownerGeneration,
+        events: [
+          {
+            cursor: `steer-${crypto.randomUUID()}`,
+            event: { role: "user", content: "steer" },
+          },
+        ],
+        ...(savesAll ? { savesAll: true } : {}),
+      });
+    };
+
+    // A steer saved ahead of the resume's own row.
+    await append(false);
+    expect(await kind.handback(t, "late")).toBe(before);
+    await append(true);
+    expect(await kind.handback(t, "late")).toBe("stored");
+  });
+
   test("stores a queued result only when the owner it is applied to saves it", async (): Promise<void> => {
     const { t, conversationKey, ownerGeneration, resume } =
       await busyConversation();

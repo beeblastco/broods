@@ -328,6 +328,44 @@ describe("step boundary", (): void => {
     });
   });
 
+  it("saves all with an append only once no turn row waits for a boundary", async (): Promise<void> => {
+    const calls: [string, Record<string, unknown>][] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push([name, args]);
+
+      return { renewal: "renewed", steering: null };
+    }) as typeof runtime.mutate;
+    runtime.query = (async (name: string): Promise<unknown> =>
+      name === "listConversationEvents"
+        ? { page: [], isDone: true, continueCursor: null }
+        : null) as typeof runtime.query;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      accountId: "acct_1",
+      agentId: "agent_1",
+      agentConfig: { skills: { enabled: false } },
+      ownerGeneration: 1,
+    });
+    await session.createTurnContext([], [{ role: "user", content: "resume" }]);
+
+    // A steer saved before the turn's own row must not store what was handed over.
+    await session.persistModelMessages([{ role: "user", content: "steer" }]);
+    await session.flushPendingStoredEvents();
+    await session.persistModelMessages([{ role: "user", content: "later" }]);
+
+    expect(
+      calls.map(([name, args]): [string, unknown] => [name, args.savesAll]),
+    ).toEqual([
+      ["appendFencedConversationEvent", undefined],
+      ["appendFencedConversationEvent", true],
+      ["appendFencedConversationEvent", true],
+    ]);
+  });
+
   it("carries a status read's result id on the row of its tool result, unless the call failed", async (): Promise<void> => {
     const calls: [string, Record<string, unknown>][] = [];
     runtime.mutate = (async (

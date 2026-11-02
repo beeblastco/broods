@@ -979,9 +979,14 @@ export class Session {
     ]);
   }
 
-  /** One append mutation, fenced against the owner generation when there is one. */
+  /**
+   * One append mutation, fenced against the owner generation when there is one.
+   * `savesAll` says no other row waits to be saved, so the write stores the
+   * results handed to this owner.
+   */
   private async appendConversationEvents(
     events: AppendedConversationEvent[],
+    savesAll = false,
   ): Promise<void> {
     if (this.ownerGeneration !== undefined) {
       const startedAt = performance.now();
@@ -990,6 +995,7 @@ export class Session {
         ownerEventId: this.eventId,
         ownerGeneration: this.ownerGeneration,
         events: events,
+        ...(savesAll ? { savesAll: true } : {}),
       });
       this.confirmOwner(startedAt);
 
@@ -1001,7 +1007,10 @@ export class Session {
     });
   }
 
-  /** Writes stored rows in as few appends as Convex accepts, in cursor order. */
+  /**
+   * Writes stored rows in as few appends as Convex accepts, in cursor order. The
+   * last append saves all only when no row waits for a later fenced write.
+   */
   private async appendStoredEvents(
     events: AppendedConversationEvent[],
     onSaved?: (saved: number) => void,
@@ -1009,7 +1018,11 @@ export class Session {
     if (events.length === 0) return;
     let saved = 0;
     for (const batch of storedEventBatches(events)) {
-      await this.appendConversationEvents(batch);
+      await this.appendConversationEvents(
+        batch,
+        saved + batch.length === events.length &&
+          this.pendingStoredEvents.length === 0,
+      );
       saved += batch.length;
       onSaved?.(saved);
     }

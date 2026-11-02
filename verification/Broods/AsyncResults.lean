@@ -251,10 +251,11 @@ inductive HandbackCall where
   result when the row is `finished` and writes nothing, only the turn's read ledger
   (`Session.recordToolResultRead`). -/
   | read (finished : Bool)
-  /-- The owner's next history write (`insertOwnedEvents`, from `stepBoundary`, an
-  append or the last write): when it carries the read (`toolResultIds`) or saves an
-  applied resume of the result (`markDeliveredResultsStored`), it stores the row and
-  completes a resume of it still queued, in one transaction. -/
+  /-- The owner's history write that saves the result (`insertOwnedEvents`, from
+  `stepBoundary`, the last write, or an append that leaves the owner no unsaved
+  row): when it carries the read (`toolResultIds`) or saves an applied resume of
+  the result (`markDeliveredResultsStored`), it stores the row and completes a
+  resume of it still queued, in one transaction. -/
   | save
   /-- The owning turn dies before that save: its read ledger is gone, and an applied
   resume's envelope expires with its lease, writing nothing to the row. -/

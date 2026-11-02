@@ -1252,8 +1252,8 @@ export const runtimeConversationCoordinatorsFields = {
   leaseExpiresAt: v.optional(v.number()),
   queuedCount: v.number(),
   queuedBytes: v.number(),
-  // The late results of the resumes handed to the current owner since its
-  // last history write, which saves them and stores the results.
+  // The late results of the resumes handed to the current owner, stored by
+  // its next history write that leaves it no unsaved row.
   unsavedResults: v.optional(v.array(resultFenceValidator)),
   updatedAt: v.number(),
 };

@@ -359,11 +359,19 @@ export const appendConversationEvent = internalMutation({
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
     events: conversationEventsValidator,
+    // The owner holds no other unsaved row once this write commits, so the
+    // write saves every resume handed to it.
+    savesAll: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const coordinator = await requireOwner(ctx, args);
-    await insertOwnedEvents(ctx, coordinator, args.events);
+    await insertOwnedEvents(
+      ctx,
+      coordinator,
+      args.events,
+      args.savesAll === true,
+    );
 
     return null;
   },
@@ -859,7 +867,12 @@ export const settle = internalMutation({
   handler: async (ctx, args): Promise<number> => {
     let coordinator = await requireOwner(ctx, args);
     if (args.events && args.events.length > 0) {
-      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(
+        ctx,
+        coordinator,
+        args.events,
+        true,
+      );
     }
     const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
     if (args.asyncResult && settled.ownerFinished) {
@@ -901,7 +914,12 @@ export const stepBoundary = internalMutation({
       return { renewal: "stale" as const, steering: null };
     }
     if (args.events && args.events.length > 0) {
-      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(
+        ctx,
+        coordinator,
+        args.events,
+        true,
+      );
     }
     if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
       return { renewal: "stopped" as const, steering: null };
@@ -981,7 +999,12 @@ export const takeNext = internalMutation({
     const now = Date.now();
     let coordinator = await requireOwner(ctx, { ...args, now: now });
     if (args.events && args.events.length > 0) {
-      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(
+        ctx,
+        coordinator,
+        args.events,
+        true,
+      );
     }
     if (args.settle) {
       await settleAppliedEnvelopes(ctx, coordinator, {
@@ -1425,17 +1448,18 @@ function ingressStatusResult(
 }
 
 /**
- * Inserts history rows for an owner the fence just accepted, all or none. The
- * write saves what the owner was handed, so it stores the results of the
- * resumes handed to it since its last write (`unsavedResults`), and it completes
- * each queued resume of a result the write stored: the history tells both
- * now.
+ * Inserts history rows for an owner the fence just accepted, all or none. A
+ * write that leaves the owner no unsaved row (`savesAll`) saves what the owner
+ * was handed, so it stores the results of the resumes handed to it since
+ * (`unsavedResults`). It completes each queued resume of a result the write
+ * stored: the history tells both now.
  * @returns the coordinator, with its queue counters current
  */
 async function insertOwnedEvents(
   ctx: MutationCtx,
   owner: Doc<"runtimeConversationCoordinators">,
   events: Infer<typeof conversationEventsValidator>,
+  savesAll: boolean,
 ): Promise<Doc<"runtimeConversationCoordinators">> {
   let coordinator = owner;
   await requireActiveAccount(ctx, coordinator.accountId);
@@ -1445,7 +1469,7 @@ async function insertOwnedEvents(
     coordinator.conversationKey,
     events,
   );
-  if (coordinator.unsavedResults !== undefined) {
+  if (savesAll && coordinator.unsavedResults !== undefined) {
     for (const fence of coordinator.unsavedResults) {
       await markDeliveredResultsStored(ctx, {
         accountId: coordinator.accountId,
