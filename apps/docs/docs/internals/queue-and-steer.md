@@ -53,7 +53,7 @@ flowchart TD
 
 - The idempotency identity is `(accountId, agentId, scopedConversationKey, idempotencyKey)`, with `idempotencyKey` defaulting to `eventId`. The binding lasts as long as the status row, seven days, so an expired envelope cannot run twice.
 - A recovered group comes back with the outcome, and core dispatches it (`dispatchRecoveredIngress`) before handling the newcomer.
-- `activeOwnerOnly` is how [subagent](subagents.md) controls refuse to land on a finished or different task.
+- `activeOwnerOnly` refuses a control that would land on a finished or different task. [Subagent](subagents.md) messages no longer use it: one `steer` admission either starts the idle child's turn or reaches the running one.
 - Each envelope stores its own execution context (resolved config ref, per-run `model` overrides, one-turn `system` messages), and the digest covers it, so a queued request never inherits the previous owner's overrides.
 - `delivery` holds routing ids only: `http`, `async` and `websocket` carry the public event and conversation ids and, for runtime-key ingress, the `publicDeploymentIngress` marker. `channel` carries the channel name, sender `identity` and reply `source`. Never credentials, headers or message copies.
 

@@ -64,7 +64,7 @@ In persistent mode the parent also gets:
 - A running agent reads the message at its next step. An idle child starts a new turn on it, with its work so far.
 - `waitSeconds` waits for the reply up to that long (600 suits most questions, at most 3600). For the parent, its turn waits on that child; past the wait the child keeps going and its reply arrives as a later message. Without `waitSeconds`, a child the message starts reports back as a later message.
 - A child waiting on `"parent"` ends its turn, and the message and its deadline are stored on its result row, so a restart or a parent that stopped waiting does not lose it. It reaches the parent at its next step, wakes it if it is waiting on children, or starts a new parent turn later. If the parent does not reply in time, the child resumes with a note within about 30 seconds of the deadline and carries on; a late reply still arrives as its next message.
-- A child's message to `"parent"` without `wait` is a note: the parent reads it at its next step while the child keeps working.
+- A child's message to `"parent"` without `waitSeconds` is a note: the parent reads it at its next step while the child keeps working.
 - Each message returns an `exchangeId`. Passing it back as `followUp` nudges or asks again in the same exchange.
 - Messages to children, and the notes that wake a child nobody answered, count against 40 per run a person started, across every parent turn that continues it, so two agents cannot keep waking each other.
 

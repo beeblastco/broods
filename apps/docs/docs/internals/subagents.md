@@ -145,8 +145,8 @@ stateDiagram-v2
 - A busy child conversation makes `accept` answer `rejected`, and the task fails with `Subagent conversation is not available: rejected`, injected like any failure.
 - A follow-up drained after the child settles runs as another turn of the same task and is injected like the first answer. Past the parent's wait budget there is no live parent turn, so `transferChildConversation` hands the envelope to its own worker and the result is not injected.
 - A child waiting on `"parent"` holds nothing in memory. The loop stops after the step that sent it (`parentQuestion()`), and `completeRun` records `awaiting_input` with the message and its `answerBy` on the child's result row in its settle, hands the conversation on (`takeNext` or release), and only then tells the parent, so a reply that comes at once finds the conversation free. The message reaches the parent like a result: at its next step, by waking `waitForIdle` before the other children finish, through `resumeParent` once the parent stopped waiting, or from the recovery sweep after a restart. One wait per turn: a second one in the same turn is refused.
-- Any new turn of the child conversation closes its open message: `createAsyncAgentResult` clears `answerBy` on that conversation's rows in the same transaction. Every 30 seconds the ingress recovery sweep lists rows past `answerBy` (`timeOutSubagentQuestions`), closes each with `closeSubagentQuestion`, which only one caller wins, rebuilds the parent's coordinator from the row with its passes closed, and resumes the child with a note through `resumeChild`. The woken child's result resumes the parent like any late one.
-- `messageChild` resolves the address (`<agentId>/<conversationKey>`, a key minted for this parent conversation, a virtual id matching it or an allowed agent), then takes a message turn: `claimMessageTurn` counts at most 40 on a claim keyed by the run's root event, so every parent turn continuing one request shares them, across pods and restarts. It then tries `accept` with `steer` and `activeOwnerOnly`: a running child takes it at its next step. `not_running` resumes the child through `resumeChild`. With `waitSeconds`, `waitForIdle` wakes at the deadline and `detachTask` stops waiting on that child alone, so its reply resumes the parent later; a child started without a wait is detached at once.
+- Any new turn of the child conversation closes its open message: `createAsyncAgentResult` clears `answerBy` on that conversation's rows in the same transaction, and a queued turn the coordinator runs in-process (`runQueuedChildTurn`) creates its own row first, so a message it waits on gets its `answerBy` there. A parent's message closes it too (`closeSubagentQuestion` on the child conversation), even when it only steers a running turn. Every 30 seconds the ingress recovery sweep lists rows past `answerBy` (`timeOutSubagentQuestions`) and hands up to 20 to the worker queue (`dispatchInProcessWorker`), one slot each. Each job closes the question, which only one caller wins, rebuilds the parent's session from the row (its delivery, the delivery policy saw, its trigger and its principal chain, all stored on the row at launch), so a cron parent's child still has no schedule tools and keeps its run token and delegated chain, and resumes the child with a note through `resumeChild`, holding the slot until the child's turn ends. A row whose wake was queued but never started on a pod that shut down stays open for the next pod. The woken child's result resumes the parent like any late one. When the lineage spent its message turns, the child still wakes once, with no line to its parent, so it answers instead of waiting again.
+- `messageChild` resolves the address (`<agentId>/<conversationKey>`, a key minted for this parent conversation, a virtual id matching it or an allowed agent), then takes a message turn: `claimMessageTurn` counts at most 40 on a claim keyed by the run's root event, so every parent turn continuing one request shares them, across pods and restarts. A message that starts no turn gives it back (`releaseMessageTurn`). `resumeChild` hands the message over in one `accept` with `steer`, under the new task's own event and task ids: an idle child admits it as owner and starts a turn on it, a running one takes it at its next step. A parent's message and the sweep that find the same child idle never both start a turn: the later one queues behind the earlier as a steer. With `waitSeconds`, `waitForIdle` wakes at the deadline and `detachTask` stops waiting on that child alone, so its reply resumes the parent later; a child started without a wait is detached at once, and its notes still reach the parent's next step while the pass runs. Results, questions and notes reach the parent in the order they came.
 
 Controls decide admission and ownership in one transaction, so a control never lands on a finished child or a later task on the same conversation:
 
@@ -158,14 +158,14 @@ sequenceDiagram
   participant Ch as Child run
 
   P->>T: message-agents to the child's address
-  T->>CX: accept steer, activeOwnerOnly
+  T->>CX: accept steer, under the new task's ids
   alt child has a live owner
     CX-->>T: queued
     T-->>P: delivered
     Ch->>CX: stepBoundary claims it at the next step
   else child idle
-    CX-->>T: not_running, no envelope written
-    T->>T: resumeChild starts a turn on its conversationKey
+    CX-->>T: owner
+    T->>T: resumeChild starts a turn on the envelope it owns
     T-->>P: resumed
   end
   P->>T: stop_subagent taskId

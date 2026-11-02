@@ -5627,7 +5627,7 @@ export declare const internal: {
     closeSubagentQuestion: FunctionReference<
       "mutation",
       "internal",
-      { eventId: string },
+      { conversationKey: string },
       boolean
     >;
     createAsyncAgentResult: FunctionReference<
@@ -5660,6 +5660,33 @@ export declare const internal: {
                 kind: "channel";
                 source: Record<string, any>;
               };
+          parentPolicyDelivery?:
+            | { kind: "async" }
+            | {
+                connectionId: string;
+                kind: "nats";
+                publicConversationKey: string;
+                publicEventId: string;
+              }
+            | {
+                channelName: string;
+                identity?: {
+                  channelId?: string;
+                  threadId?: string;
+                  userId?: string;
+                  userName?: string;
+                  userRoles?: Array<string>;
+                  workspaceRef?: string;
+                };
+                kind: "channel";
+                source: Record<string, any>;
+              };
+          parentPrincipalChain?: Array<
+            | { channel?: string; id: string; kind: "user"; name?: string }
+            | { keyKind: "account" | "deployment" | "cron"; kind: "api" }
+            | { agentId: string; kind: "agent" }
+          >;
+          parentTrigger?: "cron";
         };
       },
       boolean
@@ -5833,6 +5860,33 @@ export declare const internal: {
                 kind: "channel";
                 source: Record<string, any>;
               };
+          parentPolicyDelivery?:
+            | { kind: "async" }
+            | {
+                connectionId: string;
+                kind: "nats";
+                publicConversationKey: string;
+                publicEventId: string;
+              }
+            | {
+                channelName: string;
+                identity?: {
+                  channelId?: string;
+                  threadId?: string;
+                  userId?: string;
+                  userName?: string;
+                  userRoles?: Array<string>;
+                  workspaceRef?: string;
+                };
+                kind: "channel";
+                source: Record<string, any>;
+              };
+          parentPrincipalChain?: Array<
+            | { channel?: string; id: string; kind: "user"; name?: string }
+            | { keyKind: "account" | "deployment" | "cron"; kind: "api" }
+            | { agentId: string; kind: "agent" }
+          >;
+          parentTrigger?: "cron";
         };
         updatedAt: string;
       } | null
@@ -6148,6 +6202,33 @@ export declare const internal: {
                   kind: "channel";
                   source: Record<string, any>;
                 };
+            parentPolicyDelivery?:
+              | { kind: "async" }
+              | {
+                  connectionId: string;
+                  kind: "nats";
+                  publicConversationKey: string;
+                  publicEventId: string;
+                }
+              | {
+                  channelName: string;
+                  identity?: {
+                    channelId?: string;
+                    threadId?: string;
+                    userId?: string;
+                    userName?: string;
+                    userRoles?: Array<string>;
+                    workspaceRef?: string;
+                  };
+                  kind: "channel";
+                  source: Record<string, any>;
+                };
+            parentPrincipalChain?: Array<
+              | { channel?: string; id: string; kind: "user"; name?: string }
+              | { keyKind: "account" | "deployment" | "cron"; kind: "api" }
+              | { agentId: string; kind: "agent" }
+            >;
+            parentTrigger?: "cron";
           };
           updatedAt: string;
         }>;
@@ -6230,6 +6311,33 @@ export declare const internal: {
                   kind: "channel";
                   source: Record<string, any>;
                 };
+            parentPolicyDelivery?:
+              | { kind: "async" }
+              | {
+                  connectionId: string;
+                  kind: "nats";
+                  publicConversationKey: string;
+                  publicEventId: string;
+                }
+              | {
+                  channelName: string;
+                  identity?: {
+                    channelId?: string;
+                    threadId?: string;
+                    userId?: string;
+                    userName?: string;
+                    userRoles?: Array<string>;
+                    workspaceRef?: string;
+                  };
+                  kind: "channel";
+                  source: Record<string, any>;
+                };
+            parentPrincipalChain?: Array<
+              | { channel?: string; id: string; kind: "user"; name?: string }
+              | { keyKind: "account" | "deployment" | "cron"; kind: "api" }
+              | { agentId: string; kind: "agent" }
+            >;
+            parentTrigger?: "cron";
           };
           updatedAt: string;
         }>;

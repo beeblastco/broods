@@ -461,9 +461,21 @@ export class Session {
 
     return runtime.mutate("claimEvent", {
       accountId: this.accountId,
-      key: `message-turns:${rootEventId(this.eventId)}`,
+      key: messageTurnsKey(this.eventId),
       ttlSeconds: 86400,
       limit: limit,
+    });
+  }
+
+  /** Gives back a message turn that started no turn. */
+  async releaseMessageTurn(): Promise<void> {
+    if (!this.accountId) {
+      throw new Error("Account ID is required for runtime claims");
+    }
+
+    await runtime.mutate("releaseClaim", {
+      accountId: this.accountId,
+      key: messageTurnsKey(this.eventId),
     });
   }
 
@@ -1976,6 +1988,11 @@ function isToolApprovalResponseMessage(
     message.content.length > 0 &&
     message.content.every((part) => part.type === "tool-approval-response")
   );
+}
+
+// One claim per run lineage: the run a person started and every run continuing it.
+function messageTurnsKey(eventId: string): string {
+  return `message-turns:${rootEventId(eventId)}`;
 }
 
 function projectActiveConversationEntries(

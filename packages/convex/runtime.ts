@@ -165,7 +165,8 @@ export const claimEvent = internalMutation({
 });
 
 /**
- * Releases an event claim when processing must be retried.
+ * Releases an event claim when processing must be retried, or one use of a
+ * claim taken up to a limit.
  * @returns null after the release attempt
  */
 export const releaseClaim = internalMutation({
@@ -181,7 +182,14 @@ export const releaseClaim = internalMutation({
     if (row && row.accountId !== args.accountId) {
       throw new Error("Runtime claim does not belong to accountId");
     }
-    if (row?.kind === "event") await ctx.db.delete(row._id);
+    if (!row) return null;
+    // A claim taken up to a limit gives back one use.
+    const count = row.count ?? 1;
+    if (count > 1) {
+      await ctx.db.patch(row._id, { count: count - 1 });
+    } else {
+      await ctx.db.delete(row._id);
+    }
 
     return null;
   },
@@ -601,20 +609,18 @@ export const listOverdueSubagentQuestions = internalQuery({
 });
 
 /**
- * Closes a child's message to its parent so its wait times out once: the
- * sweep calls it before it resumes the child.
- * @returns whether this call closed it
+ * Closes the message a child of `conversationKey` waits on its parent with:
+ * a parent's reply calls it, and the sweep before it wakes the child, so the
+ * wait times out at most once.
+ * @returns whether this call closed one
  */
 export const closeSubagentQuestion = internalMutation({
-  args: { eventId: v.string() },
+  args: { conversationKey: v.string() },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
-    const row = await asyncAgentResultRow(ctx, args.eventId);
-    if (row?.answerBy === undefined) return false;
-    await requireActiveAccount(ctx, row.accountId);
-    await ctx.db.patch(row._id, { answerBy: undefined });
+    await requireActiveKeyAccount(ctx, args.conversationKey);
 
-    return true;
+    return (await closeOpenQuestions(ctx, args.conversationKey)) > 0;
   },
 });
 
@@ -1772,11 +1778,14 @@ function claimKeyForAccount(accountId: string, key: string): string {
   return key;
 }
 
-/** Closes every message a child of `conversationKey` still waits on its parent with. */
+/**
+ * Closes every message a child of `conversationKey` still waits on its parent with.
+ * @returns how many it closed
+ */
 async function closeOpenQuestions(
   ctx: MutationCtx,
   conversationKey: string,
-): Promise<void> {
+): Promise<number> {
   const open = await ctx.db
     .query("runtimeAsyncAgentResults")
     .withIndex("by_conversationKey_and_answerBy", (q) =>
@@ -1784,6 +1793,8 @@ async function closeOpenQuestions(
     )
     .collect();
   for (const row of open) await ctx.db.patch(row._id, { answerBy: undefined });
+
+  return open.length;
 }
 
 /** Compares fixed-length hexadecimal digests without content-dependent exits. */

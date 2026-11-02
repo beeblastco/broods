@@ -73,6 +73,12 @@ describe("runtime persistence", () => {
       true,
       false,
     ]);
+    // A use that started nothing is given back.
+    await t.mutation(internal.runtime.releaseClaim, {
+      accountId: accountId,
+      key: "message-turns:root",
+    });
+    expect([await claim(), await claim()]).toEqual([true, false]);
   });
 
   test("a child's message to its parent closes once: when it times out, or when the child's next turn starts", async (): Promise<void> => {
@@ -104,12 +110,12 @@ describe("runtime persistence", () => {
     expect(await overdue(Date.now())).toEqual(["asked"]);
     expect(
       await t.mutation(internal.runtime.closeSubagentQuestion, {
-        eventId: "asked",
+        conversationKey: childConversation,
       }),
     ).toBe(true);
     expect(
       await t.mutation(internal.runtime.closeSubagentQuestion, {
-        eventId: "asked",
+        conversationKey: childConversation,
       }),
     ).toBe(false);
     expect(await overdue(Date.now())).toEqual([]);

@@ -9,9 +9,11 @@ import type { JSONValue } from "ai";
 import { runtime } from "../shared/convex/runtime.ts";
 import { toErrorMessage } from "../shared/errors.ts";
 import { logError } from "../shared/log.ts";
+import type { PrincipalLink } from "../shared/domain/principal.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import type { ToolApprovalSummary } from "./harness.ts";
 import type { PendingQuestionSummary } from "./questions.ts";
+import type { RunTrigger } from "./session.ts";
 export type AsyncAgentStatus =
   | "processing"
   | "awaiting_approval"
@@ -27,13 +29,17 @@ export type AsyncAgentOutcome =
   | { status: "awaiting_input"; question: string; answerBy: number };
 /**
  * Where a subagent's parent conversation answers, so a late result reaches the
- * parent after a restart too. The task, the child agent and its key come from
- * the row's own `eventId` and `conversationKey`.
+ * parent after a restart too, and who that parent run acted as, so a child
+ * woken without it keeps its restrictions. The task, the child agent and its
+ * key come from the row's own `eventId` and `conversationKey`.
  */
 export interface SubagentTaskRecord {
   description?: string;
   parentConversationKey: string;
   parentDelivery?: AsyncToolDelivery;
+  parentPolicyDelivery?: AsyncToolDelivery;
+  parentTrigger?: RunTrigger;
+  parentPrincipalChain?: PrincipalLink[];
 }
 export interface AsyncAgentResultRecord {
   accountId: string;
@@ -56,9 +62,13 @@ export interface AsyncAgentResultRecord {
   answerBy?: number;
   expiresAt: number;
 }
-/** Closes a child's open message to its parent; true for the one call that closed it. */
-export function closeSubagentQuestion(eventId: string): Promise<boolean> {
-  return runtime.mutate("closeSubagentQuestion", { eventId: eventId });
+/** Closes the message a child waits on its parent with; true for the one call that closed it. */
+export function closeSubagentQuestion(
+  conversationKey: string,
+): Promise<boolean> {
+  return runtime.mutate("closeSubagentQuestion", {
+    conversationKey: conversationKey,
+  });
 }
 export function createPendingAsyncAgentResult(options: {
   eventId: string;

@@ -1412,13 +1412,19 @@ export const asyncToolDeliveryValidator = v.union(
 );
 /**
  * Where a subagent's parent conversation answers, so a result the parent
- * stopped waiting for can still reach it after a restart. The task, the child
- * agent and its key come from the row's own `eventId` and `conversationKey`.
+ * stopped waiting for can still reach it after a restart, and who that parent
+ * run acted as, so a child woken without it keeps the same restrictions. The
+ * task, the child agent and its key come from the row's own `eventId` and
+ * `conversationKey`.
  */
 export const subagentTaskValidator = v.object({
   description: v.optional(v.string()),
   parentConversationKey: v.string(),
   parentDelivery: v.optional(asyncToolDeliveryValidator),
+  // The delivery policy saw, when it is not `parentDelivery`: a nested child's.
+  parentPolicyDelivery: v.optional(asyncToolDeliveryValidator),
+  parentTrigger: v.optional(v.literal("cron")),
+  parentPrincipalChain: v.optional(v.array(principalLinkValidator)),
 });
 /**
  * A tool call waiting on a person's approval, as the polling row lists it:
