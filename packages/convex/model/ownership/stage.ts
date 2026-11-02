@@ -24,7 +24,6 @@ export async function getOwnedStage(
   return stage;
 }
 
-/** `getOwnedStage` for a write, upload or compute call; see `getProjectForWrite`. */
 export async function getStageForWrite(
   ctx: QueryCtx | MutationCtx,
   authId: string,
@@ -39,11 +38,7 @@ export async function getStageForWrite(
     : null;
 }
 
-/**
- * A stage of `projectId` the caller can read: `stageId` when given, else the
- * project's default stage. Null on any miss, so a reactive subscriber holding
- * a just-deleted project or stage gets an empty answer instead of a throw.
- */
+// Null on any miss: a subscriber holding a just-deleted project or stage must not throw.
 export async function getProjectStage(
   ctx: QueryCtx | MutationCtx,
   authId: string,

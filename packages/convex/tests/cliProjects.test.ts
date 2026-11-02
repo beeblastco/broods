@@ -40,7 +40,6 @@ async function seedOrg(t: T): Promise<{
   });
 }
 
-/** An org member with the given role, visible to `getProjectForRole`. */
 async function seedMember(
   t: T,
   orgId: Id<"orgs">,
@@ -63,7 +62,7 @@ async function seedMember(
   });
 }
 
-/** A project with one stage, one agent config and one env var. The slug is kept distinct from the name. */
+// Slug and name differ so a test can tell which one a route matched.
 async function seedProject(
   t: T,
   orgId: Id<"orgs">,
@@ -108,7 +107,6 @@ async function seedProject(
   });
 }
 
-/** A project row with no stage under it, which is what cleanup targets. */
 async function seedEmptyProject(
   t: T,
   orgId: Id<"orgs">,

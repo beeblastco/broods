@@ -1,14 +1,3 @@
-/**
- * The V8 isolate tier that runs account-uploaded hooks: a Node process core
- * spawns because Bun cannot load isolated-vm. Cold is one-shot mode, a fresh
- * runner per call, which is the fallback and the floor of what a first hook
- * costs. Warm is the pooled default, where a tenant's isolate stays resident
- * and each call gets a fresh context.
- *
- * Needs the runner with its native addon built: CI prepares one and points
- * BROODS_TEST_ISOLATE_RUNNER_PATH at it, the same as the isolate tests.
- */
-
 import { createHash } from "node:crypto";
 import {
   shutdownIsolatePool,
@@ -17,9 +6,9 @@ import {
 import { muteCoreLogs, unmuteCoreLogs } from "../fixtures/mute-core-logs.ts";
 import type { BenchCase } from "../runner.ts";
 
+// A runner with its native addon built; CI sets it, the same as for the isolate tests.
 const RUNNER_PATH_ENV = "BROODS_TEST_ISOLATE_RUNNER_PATH";
 
-// A small but real tool: parses its input, does a little work, returns JSON.
 const TOOL_SOURCE = [
   "export default {",
   "  name: 'ledger',",

@@ -1,9 +1,3 @@
-/**
- * Agent-policy validation for the Convex config plane. Ports core's public
- * CRUD normalizer so policy documents keep the account-management API
- * contract. The public projection lives in ./responses.ts.
- */
-
 import { isPlainObject } from "./objects";
 import { ClientError } from "./clientError";
 import {
@@ -28,8 +22,7 @@ export {
 } from "./policyDocument";
 
 export const AGENT_POLICY_ACTIONS = [
-  // Gates the turn itself, before any tool runs: "may this person address the
-  // agent here?". Everything below gates one action inside an admitted turn.
+  // Gates admitting the turn; the rest gate one action inside an admitted turn.
   "agent.invoke",
   "tool.call",
   "workspace.read",
@@ -39,11 +32,6 @@ export const AGENT_POLICY_ACTIONS = [
   "skill.load",
 ] as const;
 
-/**
- * API action namespace for account roles: one read/write pair per config-plane
- * resource route. Roles carry the same PolicyDocument shape as agent policies;
- * each caller passes its action set to `normalizePolicyDocument`.
- */
 export const API_POLICY_ACTIONS = [
   "account:read",
   "account:write",
@@ -71,11 +59,6 @@ export const API_POLICY_ACTIONS = [
   "workspaces:write",
 ] as const;
 
-/**
- * Dashboard permissions: what a member may see and do in the app beyond
- * their tier. Owners and admins hold them all; a custom role grants them
- * to members through its policies (model/access.ts).
- */
 export const DASHBOARD_POLICY_ACTIONS = [
   "keys:read",
   "keys:write",
@@ -83,7 +66,6 @@ export const DASHBOARD_POLICY_ACTIONS = [
   "access:write",
 ] as const;
 
-/** What each dashboard permission opens, for the permission and role lists. */
 export const DASHBOARD_DESCRIPTIONS: Record<DashboardPolicyAction, string> = {
   "keys:read": "See keys",
   "keys:write": "Make, rotate and revoke keys",
@@ -108,21 +90,13 @@ export type ApiPolicyAction = (typeof API_POLICY_ACTIONS)[number];
 
 export type DashboardPolicyAction = (typeof DASHBOARD_POLICY_ACTIONS)[number];
 
-/**
- * A rule's action: a built-in one, or a custom permission the org named
- * (`tool.stripe.refund`). The open string keeps the built-ins suggested.
- */
+// `string & {}` admits a custom permission (`tool.stripe.refund`) yet keeps built-ins suggested.
 export type PolicyAction =
   | AgentPolicyAction
   | ApiPolicyAction
   | DashboardPolicyAction
   | (string & {});
 
-/**
- * Validate a create-policy request body.
- * @param value the raw request body
- * @returns normalized create fields
- */
 export function normalizeCreatePolicyInput(value: unknown): {
   name: string;
   description?: string;
@@ -141,10 +115,6 @@ export function normalizeCreatePolicyInput(value: unknown): {
   };
 }
 
-/**
- * Validate and normalize a versioned policy document. Agent policies accept
- * the runtime action set by default; role policies pass `API_POLICY_ACTIONS`.
- */
 export function normalizePolicyDocument(
   value: unknown,
   allowedActions: readonly string[] = AGENT_POLICY_ACTIONS,
@@ -172,11 +142,6 @@ export function normalizePolicyDocument(
   };
 }
 
-/**
- * Validate an update-policy request body.
- * @param value the raw request body
- * @returns normalized patch fields
- */
 export function normalizeUpdatePolicyInput(value: unknown): {
   name?: string;
   description?: string | null;
@@ -281,8 +246,7 @@ function normalizeConditions(value: unknown, index: number): PolicyCondition[] {
         `policy rules[${index}].conditions[${conditionIndex}].value is invalid`,
       );
     }
-    // A scalar here matches no rego branch, so the condition never fires, which
-    // on notIn means the deny silently never applies. Refuse it instead.
+    // A scalar matches no rego branch, so a notIn deny would silently never apply.
     if (
       (record.operator === "in" || record.operator === "notIn") &&
       !Array.isArray(record.value)

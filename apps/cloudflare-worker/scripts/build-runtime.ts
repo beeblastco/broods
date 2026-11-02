@@ -1,10 +1,3 @@
-/**
- * Bundles `src/runtime.ts` into the one module each sandbox's isolate runs,
- * written to `.generated/runtime.txt` for the host Worker to ship as text.
- * `cloudflare:workers` and `node:zlib` stay imports: workerd provides both,
- * the latter under `nodejs_compat`. Run by `bun run build`, and by the tests.
- */
-
 const RUNTIME_ENTRY = new URL("../src/runtime.ts", import.meta.url).pathname;
 const OUTPUT = new URL("../.generated/runtime.txt", import.meta.url).pathname;
 
@@ -15,6 +8,7 @@ export async function buildRuntime(): Promise<string> {
     target: "browser",
     minify: true,
     external: ["cloudflare:workers"],
+    // workerd provides node:zlib under nodejs_compat.
     plugins: [
       {
         name: "keep-node-zlib",

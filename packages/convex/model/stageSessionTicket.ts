@@ -1,21 +1,11 @@
-/**
- * Short-lived stage session tickets (`bdts_…`). The dashboard mints one for
- * any org member so logs, traces and the test chat run without handing the
- * browser the permanent `bsk_` runtime key; core verifies it and scopes it
- * to the same stage, without the limits it puts on the embeddable key (run
- * overrides, continuing a channel session). Signed with an HMAC derived
- * from the service secret both sides already hold, on WebCrypto so the same
- * code runs in Convex and in core. The signed-ticket format itself is shared:
- * `userToken.ts` seals end-user tokens with it under its own key context.
- */
+// WebCrypto only, so the same code seals in Convex and opens in core.
 
 const ENCODER = new TextEncoder();
 const HMAC_ALGORITHM = { name: "HMAC", hash: "SHA-256" };
 const KEY_CONTEXT = "stage-session-ticket:";
 
 export const STAGE_SESSION_TICKET_PREFIX = "bdts_";
-// Short because a ticket is bearer-only: a rotated key or a removed member
-// is only fully out once every ticket minted before that has expired.
+// Bearer-only, so short: a removed member keeps access until older tickets expire.
 export const STAGE_SESSION_TICKET_TTL_MS = 15 * 60 * 1000;
 
 export interface StageSessionTicket {
@@ -25,18 +15,11 @@ export interface StageSessionTicket {
   projectSlug: string;
   stageId: string;
   stageSlug: string;
-  /**
-   * Set only when the minter may write the stage's sandboxes (an org owner or
-   * admin, through `broods login`). Claiming a `broods machine` record needs
-   * it, because the daemon then receives every exec frame, env secrets
-   * included. A plain member's dashboard ticket never carries it.
-   */
+  // Owner/admin only: a claimed machine gets every exec frame, env secrets included.
   sandboxWrite?: true;
-  /** Unix ms after which the ticket is rejected. */
   expiresAt: number;
 }
 
-/** Verify a ticket's signature and expiry; null for anything else. */
 export async function openStageSessionTicket(
   token: string,
   secret: string,
@@ -67,11 +50,6 @@ export async function sealStageSessionTicket(
   );
 }
 
-/**
- * The signed-ticket format every Broods ticket shares:
- * `<prefix><base64url JSON>.<base64url HMAC-SHA256>`, keyed by a hash of
- * `keyContext` and the secret, so one secret never signs two kinds of ticket.
- */
 export async function sealSignedTicket(
   prefix: string,
   keyContext: string,
@@ -88,11 +66,7 @@ export async function sealSignedTicket(
   return `${prefix}${payload}.${bytesToBase64Url(new Uint8Array(signature))}`;
 }
 
-/**
- * The decoded JSON of a ticket `sealSignedTicket` sealed under the same
- * prefix, context and secret; null for anything else. The caller checks its
- * shape and expiry. WebCrypto's verify compares the MAC in constant time.
- */
+// WebCrypto's verify compares the MAC in constant time.
 export async function openSignedTicket(
   prefix: string,
   keyContext: string,
@@ -178,9 +152,7 @@ function parseTicket(decoded: unknown): StageSessionTicket | null {
   };
 }
 
-// The key is derived, not the raw secret, so a ticket can never stand in for
-// the secret's own use, and the context keeps each ticket kind's key apart.
-// The dashboard's analytics id signs with its own context the same way.
+// A derived key per context: a ticket never stands in for the secret or another ticket kind.
 export async function ticketKey(
   keyContext: string,
   secret: string,

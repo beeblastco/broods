@@ -1,10 +1,5 @@
-/**
- * Bundle bytes reach S3 through Convex file storage instead of riding along as
- * an action argument. A "use node" action caps arguments at 5 MiB, Lambda's
- * invoke-payload quota showing through, which would cap an uploaded bundle
- * well below what the runtime can execute. The stored blob
- * is only a courier: whoever stores it deletes it, pass or fail.
- */
+// Bundles reach S3 through file storage: a "use node" action caps its args at 5 MiB.
+// The stored blob is only a courier; whoever stores it deletes it, pass or fail.
 
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -15,11 +10,9 @@ const BUNDLE_CONTENT_TYPE = "application/javascript";
 
 type PutBundleAction = typeof internal.aws.bundles.putHookBundle;
 
-/** A hosted MCP bundle in S3: the row fields a write stores together. */
 export interface StoredMcpBundle {
   bundleStorageKey: string;
   sha256: string;
-  /** Absent only when carried forward from a row stored before placement existed. */
   workersCompatible?: boolean;
 }
 
@@ -30,13 +23,6 @@ export async function putHookBundle(
   return await putBundle(ctx, internal.aws.bundles.putHookBundle, options);
 }
 
-/**
- * Content-addressed store for a hosted MCP server's bundle: a sha256 matching
- * the existing row reuses its stored key; a connection-only input stores
- * nothing. Large bundles arrive pre-uploaded as `bundleStorageId` (#190) and
- * the S3 writer verifies their declared sha256 against the bytes and marks
- * whether Cloudflare Dynamic Workers can run them.
- */
 export async function storeMcpBundle(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
@@ -52,8 +38,7 @@ export async function storeMcpBundle(
   ) {
     return undefined;
   }
-  // A row stored before placement existed has no flag; storing its bundle
-  // again scans it.
+  // A row stored before placement existed has no flag; storing its bundle again scans it.
   if (
     existing?.sha256 === input.sha256 &&
     existing.bundleStorageKey &&
@@ -69,8 +54,6 @@ export async function storeMcpBundle(
       workersCompatible: existing.workersCompatible,
     };
   }
-  // One courier path for both inputs: an inline bundle is stored first, a
-  // pre-uploaded one already lives there; the blob is deleted pass or fail.
   const storageId =
     input.bundleStorageId !== undefined
       ? (input.bundleStorageId as Id<"_storage">)

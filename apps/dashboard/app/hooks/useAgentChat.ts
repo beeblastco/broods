@@ -1,18 +1,20 @@
 "use client";
 
-/**
- * Streaming chat hook for testing a deployed agent via the core service API.
- * Both transports carry the same AI SDK UI message chunks, SSE over HTTP and
- * one frame per chunk over the WebSocket, parsed into UIMessages the same way.
- */
 import { agentEndpointPath, resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { STREAM_COMMIT_MS } from "@/app/lib/perfReport";
 import type { UIMessage } from "ai";
 import {
   parseJsonEventStream,
   readUIMessageStream,
   uiMessageChunkSchema,
 } from "ai";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type {
   PendingQuestion,
   QuestionAnswer,
@@ -24,12 +26,10 @@ const WEBSOCKET_CONNECT_TIMEOUT_MS = 2000;
 
 type ChatStatus = "ready" | "streaming" | "error";
 
-/** What `useAgentChat` hands its caller: the transcript plus its controls. */
 export interface AgentChat {
   messages: UIMessage[];
   status: ChatStatus;
   error: Error | null;
-  /** Open `ask_questions` prompts; answer them to resume the run. */
   pendingQuestions: PendingQuestion[];
   sendMessage: (text: string) => Promise<void>;
   answerQuestions: (answers: QuestionAnswer[]) => Promise<void>;
@@ -84,13 +84,6 @@ type HttpStreamResult = {
   sessionId?: string;
 };
 
-/**
- * Streams chat messages from the core service and maintains conversation state.
- * @param endpointId Deployment endpoint ID
- * @param apiKey API key for bearer authentication
- * @param projectSlug Optional project slug for the URL path prefix
- * @param stageSlug Optional stage slug for the URL path prefix
- */
 export function useAgentChat({
   endpointId,
   agentId,
@@ -114,7 +107,6 @@ export function useAgentChat({
   );
   const sessionIdRef = useRef<string | undefined>(undefined);
   const abortRef = useRef<AbortController | null>(null);
-  const messagesRef = useRef<UIMessage[]>([]);
   const mainAssistantMessageIdRef = useRef<string | null>(null);
   const continuationMessageIdRef = useRef<string | null>(null);
   const subagentMessageIdsRef = useRef<Record<string, string>>({});
@@ -124,18 +116,14 @@ export function useAgentChat({
   const baseUrl = coreEndpoint.ok ? coreEndpoint.httpBaseUrl : "";
   const websocketBaseUrl = coreEndpoint.ok ? coreEndpoint.websocketBaseUrl : "";
 
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
-
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- aborts the open socket or fetch
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
     };
   }, []);
 
-  // One turn on the wire: the user's text, or `answers` to the open questions
-  // with `userText` as their transcript line.
+  // With `answers`, `userText` is only their transcript line.
   const runTurn = useCallback(
     async (userText: string, answers?: QuestionAnswer[]): Promise<void> => {
       const userMessage: UIMessage = {
@@ -154,6 +142,31 @@ export function useAgentChat({
       mainAssistantMessageIdRef.current = null;
       continuationMessageIdRef.current = null;
       subagentMessageIdsRef.current = {};
+
+      // A model streams far more chunks than a reader can see: queue each chunk's update and
+      // commit the queue once per window, as a transition so React yields between markdown
+      // blocks. The main stream's end commits at once.
+      let queued: Array<(prev: UIMessage[]) => UIMessage[]> = [];
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const commitQueued = (): void => {
+        timer = undefined;
+        const updates = queued;
+        queued = [];
+        // An aborted turn's transcript now belongs to a reset or a newer turn.
+        if (updates.length === 0 || controller.signal.aborted) return;
+        setMessages((prev) =>
+          updates.reduce((messages, update) => update(messages), prev),
+        );
+      };
+      const queueUpdate = (
+        update: (prev: UIMessage[]) => UIMessage[],
+      ): void => {
+        queued.push(update);
+        timer ??= setTimeout(
+          () => startTransition(commitQueued),
+          STREAM_COMMIT_MS,
+        );
+      };
 
       try {
         if (!coreEndpointOk) {
@@ -183,20 +196,19 @@ export function useAgentChat({
               },
               onQuestions: setPendingQuestions,
               onContinuationDelta: (delta) => {
-                setMessages((prev) => {
+                queueUpdate((prev) => {
                   const next = appendAssistantTextDelta({
                     previousMessages: prev,
                     messageId: continuationMessageIdRef.current,
                     delta: delta,
                   });
                   continuationMessageIdRef.current = next.messageId;
-                  messagesRef.current = next.messages;
 
                   return next.messages;
                 });
               },
               onSubagentDelta: ({ taskId, sessionId, delta, agentName }) => {
-                setMessages((prev) => {
+                queueUpdate((prev) => {
                   const currentMessageId =
                     subagentMessageIdsRef.current[taskId] ?? null;
                   const next = upsertSubagentPanel({
@@ -208,7 +220,6 @@ export function useAgentChat({
                     agentName: agentName,
                   });
                   subagentMessageIdsRef.current[taskId] = next.messageId;
-                  messagesRef.current = next.messages;
 
                   return next.messages;
                 });
@@ -220,7 +231,7 @@ export function useAgentChat({
                 phase,
                 toolNames,
               }) => {
-                setMessages((prev) => {
+                queueUpdate((prev) => {
                   const currentMessageId =
                     subagentMessageIdsRef.current[taskId] ?? null;
                   const next = upsertSubagentPanel({
@@ -235,18 +246,15 @@ export function useAgentChat({
                     },
                   });
                   subagentMessageIdsRef.current[taskId] = next.messageId;
-                  messagesRef.current = next.messages;
 
                   return next.messages;
                 });
               },
               onSubagentResult: (output, resultTaskId) => {
-                setMessages((prev) => {
+                queueUpdate((prev) => {
                   const tracked = Object.keys(subagentMessageIdsRef.current);
-                  // Target the task the wire names; without one (older
-                  // servers) fall back to every tracked panel, but attach the
-                  // output only when a single panel is tracked. Copying one
-                  // subagent's result into another's panel misattributes it.
+                  // No taskId (older servers): complete every tracked panel, but attach the
+                  // output only to a lone one, or it lands in another subagent's panel.
                   const taskIds =
                     resultTaskId && tracked.includes(resultTaskId)
                       ? [resultTaskId]
@@ -269,7 +277,6 @@ export function useAgentChat({
                     subagentMessageIdsRef.current[taskId] = next.messageId;
                     nextMessages = next.messages;
                   }
-                  messagesRef.current = nextMessages;
 
                   return nextMessages;
                 });
@@ -323,18 +330,22 @@ export function useAgentChat({
           terminateOnError: true,
         });
 
-        for await (const assistantMessage of messageStream) {
-          setMessages((prev) => {
-            const next = upsertMainAssistantMessage({
-              previousMessages: prev,
-              messageId: mainAssistantMessageIdRef.current,
-              assistantMessage: assistantMessage,
-            });
-            mainAssistantMessageIdRef.current = next.messageId;
-            messagesRef.current = next.messages;
+        try {
+          for await (const assistantMessage of messageStream) {
+            queueUpdate((prev) => {
+              const next = upsertMainAssistantMessage({
+                previousMessages: prev,
+                messageId: mainAssistantMessageIdRef.current,
+                assistantMessage: assistantMessage,
+              });
+              mainAssistantMessageIdRef.current = next.messageId;
 
-            return next.messages;
-          });
+              return next.messages;
+            });
+          }
+        } finally {
+          clearTimeout(timer);
+          commitQueued();
         }
 
         setStatus("ready");
@@ -406,7 +417,6 @@ export function useAgentChat({
   };
 }
 
-/** The transcript line for an answer turn: one `header: choice` per question. */
 function answerTranscript(
   pending: PendingQuestion[],
   answers: QuestionAnswer[],
@@ -552,8 +562,8 @@ async function startWebSocketSseStream(options: {
     stageSlug: stageSlug,
   })}/ws`;
 
-  // The credential rides the subprotocol list, never the URL, so it stays out
-  // of access logs; the gateway selects `broods.v1` to complete the handshake.
+  // The token rides the subprotocol list, never the URL, to stay out of access logs; the
+  // gateway selects `broods.v1` to complete the handshake.
   const socket = new WebSocket(wsUrl, ["broods.v1", `broods.token.${apiKey}`]);
   const encoder = new TextEncoder();
 
@@ -718,9 +728,8 @@ async function startWebSocketSseStream(options: {
         return;
       }
 
-      // Anything else is an AI SDK stream part, the chunk the HTTP body carries
-      // as SSE. The chunk schema downstream drops what it does not know, such
-      // as the gateway's ack and status frames.
+      // Anything else is an AI SDK chunk, re-framed as the HTTP body's SSE; the chunk schema
+      // downstream drops what it does not know, such as the gateway's ack and status frames.
       streamController?.enqueue(
         encoder.encode(`data: ${JSON.stringify(payload)}\n\n`),
       );

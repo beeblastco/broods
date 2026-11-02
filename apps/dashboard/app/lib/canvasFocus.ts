@@ -1,17 +1,8 @@
-/**
- * Focus mode's reach: which cards stay lit when one is selected. Pure, so the
- * rule is testable without a canvas around it. `Canvas` dims everything else.
- */
 import { workspaceSandboxIds } from "@broods/convex/model/canvasFrames";
 import type { Edge, Node } from "@xyflow/react";
 
-/**
- * Every node the seeds connect TO, seeds included. Edges are followed outward
- * only, so a resource never lights up the agent wired into it; mount edges flow
- * both ways, so either end of a workspace↔sandbox link reveals the other. The
- * walk stops at any agent that is not a seed: a subagent callee lights up, its
- * own resources stay dim because they belong to the callee.
- */
+// Outward edges only (mounts both ways), so a resource never lights its agent; the walk
+// stops at a non-seed agent, whose own resources belong to it.
 export function focusedNodeIds(
   nodes: readonly Node[],
   edges: readonly Edge[],
@@ -37,7 +28,6 @@ export function focusedNodeIds(
   return reachable;
 }
 
-/** Directed "connects to", keyed by node id. */
 function adjacency(
   nodes: readonly Node[],
   edges: readonly Edge[],
@@ -53,9 +43,7 @@ function adjacency(
     link(edge.source, edge.target);
     if (edge.type === "mount") link(edge.target, edge.source);
   }
-  // A mount a workspace inherits has no stored edge: the frame layer draws it
-  // from the agent's first sandbox. Walk it here too, or selecting either end
-  // dims a link the board is drawing.
+  // An inherited mount has no stored edge but is drawn, so walk it too.
   for (const [workspaceId, state] of workspaceSandboxIds(nodes, edges)) {
     if (state.kind !== "inherited") continue;
     for (const sandboxId of state.sandboxIds) {

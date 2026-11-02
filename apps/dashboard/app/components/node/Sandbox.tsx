@@ -1,12 +1,5 @@
 "use client";
 
-/**
- * Sandbox node representing a standalone broods sandboxConfig record. A machine
- * sandbox shows its daemon's connection in place of the idle pill. Marked
- * "default" when it is first in the agent's `sandboxes`, or "workspace only"
- * when it only backs a workspace: a chip inside a frame, or a card when it is
- * the only one of its kind.
- */
 import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import {
@@ -25,7 +18,6 @@ import type { NodeProps } from "@xyflow/react";
 import { Box, Monitor } from "lucide-react";
 import { useMemo } from "react";
 
-/** What a sandbox no agent lists says in place of its number. */
 const WORKSPACE_ONLY_NOTE = "workspace only";
 
 export function SandboxNode({
@@ -125,7 +117,6 @@ function MachineSandboxNode({
   );
 }
 
-/** The line an open chip shows under its name: its card's subtitle and features. */
 function chipDetails(
   subtitle: string | undefined,
   persistent: boolean,
@@ -137,10 +128,6 @@ function chipDetails(
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
-/**
- * What a chip adds after its status: "default" for the first sandbox, and for
- * an unnumbered one how many agents share it, or that it only backs a workspace.
- */
 function chipNote(
   orderNumber: number | undefined,
   sharedCount: number,
@@ -153,11 +140,6 @@ function chipNote(
   return workspaceOnly ? ` · ${WORKSPACE_ONLY_NOTE}` : "";
 }
 
-/**
- * A card's subtitle: where it runs, then "default" when it is first in
- * `sandboxes`, or "workspace only" when no agent lists it. The place itself is
- * not printed; inside a frame the chip order carries it.
- */
 function orderSubtitle(
   where: string | null,
   orderNumber: number | undefined,
@@ -173,11 +155,8 @@ function orderSubtitle(
 }
 
 /**
- * A chip placed by its agents' order: the frame stacks members in that order,
- * so the top one is the default and only it says so. A shared sandbox whose
- * agents order it differently has no one place, so it says how many agents
- * share it instead, and one that only backs a workspace says that. Where it
- * runs stays off the line, since the frame header already names it.
+ * The frame stacks members in their agents' order, so only the top chip says "default". A
+ * shared sandbox its agents order differently has no one place: it says how many share it.
  */
 function SandboxChip({
   id,
@@ -195,7 +174,6 @@ function SandboxChip({
   const orderNumber = sandboxOrderNumbers.get(id);
   const sharedCount = useInfraAnalysis().agentRefCounts[id] ?? 0;
   const workspaceOnly = workspaceOnlySandboxIds.has(id);
-  // Open, the note moves to the line under the name, where a card keeps it.
   const expanded = expandedMemberId === id;
   const note = expanded
     ? ""

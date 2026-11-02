@@ -1,11 +1,6 @@
-/**
- * Account records, credentials and signup validation. Account updates and
- * public responses belong to the Convex config plane.
- */
-
 import { ACCOUNT_KEY_PREFIX } from "@broods/convex/model/accountSecrets";
 import { createHash, randomBytes } from "node:crypto";
-import { isPlainObject } from "../object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 
 export type AccountStatus = "active" | "disabled";
 

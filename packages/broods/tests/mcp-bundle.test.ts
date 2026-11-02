@@ -1,7 +1,3 @@
-// Hosted MCP bundles are validated at deploy time: a bundle whose default
-// export cannot serve throws during compile instead of uploading and failing
-// only inside the Lambda.
-
 import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -34,7 +30,6 @@ test("compileProject hashes a hosted MCP server the same from any cwd", async ()
     `handler: (request) => new Response("{}", { status: 200 }),`,
   );
 
-  // A changing hash shows the server as changed on every diff and re-uploads it.
   const compile = async (): Promise<{ bundle: string; sha256: string }> =>
     (
       await compileProject({ cwd: cwd, command: "dev" })
@@ -44,7 +39,7 @@ test("compileProject hashes a hosted MCP server the same from any cwd", async ()
     };
   const first = await compile();
   expect((await compile()).sha256).toBe(first.sha256);
-  // esbuild names each module in a comment; relative to the cwd, the hash would follow it.
+  // esbuild names each module in a comment; an absolute name would tie the hash to the cwd.
   expect(first.bundle).toContain("// mcp-handler.mjs\n");
 });
 
@@ -57,8 +52,6 @@ test("compileProject rejects a handler that is not fetch-style", async () => {
 });
 
 test("compileProject rejects a server that crashes on import", async () => {
-  // The project scan imports every broods/ module, so an import-time crash
-  // surfaces with the author's own error before bundling even starts.
   const cwd = await mcpFixture(
     `handler: (request) => new Response("{}"),`,
     `throw new Error("boom at import");\n`,

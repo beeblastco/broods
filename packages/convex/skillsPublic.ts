@@ -1,11 +1,4 @@
 "use node";
-/**
- * Public skill actions for the Convex config plane: publish, create, and
- * import skill bundles directly against S3.
- * Runs in Node.js runtime for Buffer / crypto / S3 access.
- * The caller supplies their account key as the Bearer token; each action hashes it to
- * resolve and verify the owning account before touching that account's skills.
- */
 
 import { v } from "convex/values";
 import { action, type ActionCtx } from "./_generated/server";
@@ -22,13 +15,6 @@ import {
 const MAX_BUNDLE_BYTES = 30 * 1024 * 1024;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
-/**
- * Create a skill directly from a GitHub repository URL: download and extract
- * the tarball, then store the bundle in S3.
- * @param bearerToken the caller's account key
- * @param githubUrl GitHub tree URL (https://github.com/{owner}/{repo}/tree/{ref}/{path})
- * @returns created skill metadata including the path to use as skill reference
- */
 export const createFromGithub = action({
   args: {
     bearerToken: v.string(),
@@ -45,7 +31,6 @@ export const createFromGithub = action({
   ): Promise<{ name: string; path: string; description: string }> => {
     const { bearerToken, githubUrl } = args;
 
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -63,15 +48,6 @@ export const createFromGithub = action({
   },
 });
 
-/**
- * Create a simple skill from name, description, and markdown content by
- * generating its SKILL.md and storing it in S3.
- * @param bearerToken the caller's account key
- * @param name skill name (lowercase letters, numbers, hyphens, max 64 chars)
- * @param description short description (max 1024 chars)
- * @param content markdown skill instructions
- * @returns created skill metadata including the path to use as skill reference
- */
 export const createFromJson = action({
   args: {
     bearerToken: v.string(),
@@ -90,7 +66,6 @@ export const createFromJson = action({
   ): Promise<{ name: string; path: string; description: string }> => {
     const { bearerToken, name, description, content } = args;
 
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -110,13 +85,6 @@ export const createFromJson = action({
   },
 });
 
-/**
- * Package all workspaceFiles for a skill node and publish them to S3.
- * @param projectId owning project
- * @param nodeId canvas skill node ID
- * @param bearerToken the caller's account key
- * @returns published skill metadata (name, description, path, sizeBytes)
- */
 export const publishSkill = action({
   args: {
     projectId: v.id("projects"),
@@ -140,7 +108,6 @@ export const publishSkill = action({
   }> => {
     const { projectId, nodeId, bearerToken } = args;
 
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -201,13 +168,6 @@ export const publishSkill = action({
   },
 });
 
-/**
- * Resolve the account a Bearer token belongs to.
- * @param ctx action context for the lookup query
- * @param bearerToken the caller's account key
- * @returns the matching account document
- * @throws when the token is not an account key or matches no active account
- */
 async function requireAccountForToken(
   ctx: ActionCtx,
   bearerToken: string,
@@ -221,7 +181,6 @@ async function requireAccountForToken(
       secretHash: await sha256Hex(bearerToken),
     },
   );
-  // A disabled account's key is refused here as on the config HTTP surface.
   if (!account || account.status !== "active") {
     throw new Error("Invalid Bearer token.");
   }

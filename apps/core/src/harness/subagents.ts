@@ -1,8 +1,3 @@
-/**
- * In-process subagent dispatch coordinator.
- * Keep parent/child orchestration here; the model-facing schema stays in tools.
- */
-
 import { timingSafeEqual } from "node:crypto";
 import {
   subagentResultDedupeKey,
@@ -86,7 +81,11 @@ import {
   type AgentLifecycleEmitter,
   type AgentLifecycleEventPayload,
 } from "./lifecycle.ts";
-import { Session, type TurnContextSnapshot } from "./session.ts";
+import {
+  Session,
+  type IngressUserMessage,
+  type TurnContextSnapshot,
+} from "./session.ts";
 import { dispatchInProcessWorker, workerQueueFull } from "./worker-queue.ts";
 import type {
   RunSubagentDispatch,
@@ -106,7 +105,6 @@ import {
 } from "./tools/utils.ts";
 
 const PERSISTENT_SUBAGENT_KEY_PREFIX = "subagent-persistent-";
-// The prefix, a random UUID, and the tag core signs over it (`subagentKeyTag`).
 const PERSISTENT_SUBAGENT_KEY =
   /^subagent-persistent-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-([0-9a-f]{32})$/;
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
@@ -114,34 +112,25 @@ const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
 // agents cannot keep waking each other forever.
 const MESSAGE_TURN_BUDGET = 40;
 const HEARTBEAT_INTERVAL_MS = 15_000;
-// What the parent model reads for a child it stopped waiting for.
 const STILL_RUNNING_NOTE =
   "Still working. Its result will arrive in this conversation as a new message when it finishes, so do not redo this task.";
-// How long the run that detached a result has to deliver it before the
-// recovery sweep takes it over, and the age past which nobody waits for it.
 const LATE_RESULT_GRACE_MS = 2 * 60 * 1000;
 const LATE_RESULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-// Resume outcomes that leave a lost result's row, and the message its finish
-// hook shaped, to the next sweep pass: a queued resume stores the row only when
-// applied, a full conversation has no room, and a duplicate is a resume of it
-// still queued.
+// Retried next sweep pass with the held message: a queued resume stores the row only once
+// applied, a full conversation has no room yet, and a duplicate is a resume still queued.
 const HELD_RESUME_OUTCOMES: ReadonlySet<SubagentResumeOutcome> =
   new Set<SubagentResumeOutcome>(["queued", "capacity", "duplicate"]);
 const LOST_SUBAGENT_ERROR =
   "Subagent stopped without a result: the runtime restarted while it was running.";
 // The parent message of each lost result a sweep pass could not resume yet, so
 // the next pass retries it without running its finish hook again.
-let heldLostResults = new Map<string, UserModelMessage>();
+let heldLostResults = new Map<string, IngressUserMessage>();
 // Wall clock one child turn may take. The loop winds it down to a tools-off
 // answer DEADLINE_WIND_DOWN_MS before; a turn still running that long past the
 // budget, stuck in a tool call, is aborted.
 const SUBAGENT_BUDGET_MS = 15 * 60 * 1000;
-// Past this age a finished child's result is nobody's: a child still
-// processing died with its pod, and a result still `pending` has no live
-// parent run left to store it. A live parent drains a result at its next step
-// boundary, when it yields its slot, or in its last write, within one run budget (a worker slot's, or
-// a child's when the parent is itself a subagent) plus wind-down, and a
-// parent that stopped waiting wrote `detached`, swept after the grace.
+// A live parent stores a result within one run budget (a worker slot's, or a child's when it is
+// a subagent) plus wind-down; past that a `pending` or still-processing row has no owner.
 const PENDING_HANDBACK_MAX_AGE_MS =
   Math.max(SUBAGENT_BUDGET_MS, WORKER_TIMEOUT_BUDGET_MS) +
   DEADLINE_WIND_DOWN_MS +
@@ -181,14 +170,9 @@ type SubagentTaskMetadata = Omit<
   "status" | "response" | "error" | "visibleResult"
 >;
 
-/**
- * One message waiting for the parent's next write, in arrival order: a
- * child's result, question or running notice, or a note it sent without
- * waiting. `completion` is set for all but notes.
- */
+// One message for the parent's next write, in arrival order; `completion` is unset for a note.
 interface QueuedParentMessage {
-  message: UserModelMessage;
-  dedupeKey: string;
+  message: IngressUserMessage;
   completion?: SubagentCompletion;
 }
 
@@ -213,7 +197,6 @@ interface ResolvedSubagentTask extends SubagentChild {
   parentEphemeralSystem: SystemModelMessage[];
   persistent: boolean;
   resuming: boolean;
-  /** Harness children only: a machine of its own instead of the agent's shared one. */
   isolatedSandbox: boolean;
   /** Woken with its lineage's message turns spent: no line to its parent, so it answers. */
   lastTurn: boolean;
@@ -241,34 +224,25 @@ type SubagentIngressDispatcher = (
   session: Session,
   scope: IngressDispatchScope,
 ) => Promise<boolean>;
-/** Where a late result resumes its parent: its run's session, or what the result row kept. */
 export type SubagentParent = Pick<
   Session,
   "accountId" | "agentId" | "eventId" | "conversationKey" | "delivery"
 >;
-/** What a late result's resume did: its admission, or "skip" with no parent to resume. */
 export type SubagentResumeOutcome = IngressAdmission["outcome"] | "skip";
-/**
- * Starts a new parent turn with a child's result or note, once per `taskId`,
- * unless the parent already read the result row `resultEventId`. A note has
- * no row. The recovery sweep passes the `target` it already resolved.
- */
+/** Once per `taskId`, and never when the parent already read row `resultEventId`. */
 type SubagentParentResumer = (
   parent: SubagentParent,
   taskId: string,
-  message: UserModelMessage,
+  message: IngressUserMessage,
   resultEventId: string | undefined,
   target?: ReentryTarget,
 ) => Promise<SubagentResumeOutcome>;
-/** Where a parent conversation re-enters, or null once its agent is gone. */
 type SubagentParentLoader = (
   accountId: string,
   agentId: string,
   conversationKey: string,
 ) => Promise<ReentryTarget | null>;
 
-// Collaborators the handler owns. Every one has a working default, so tests and
-// non-handler callers override only what they exercise.
 export interface SubagentCoordinatorDependencies {
   dispatchAppliedIngress?: DispatchAppliedIngress;
   lifecycle?: AgentLifecycleEmitter;
@@ -287,14 +261,9 @@ export class SubagentCoordinator {
   // through `resumeParent` instead, as a new turn of the parent conversation.
   private readonly detached = new Map<string, SubagentTaskMetadata>();
   private readonly waiters = new Set<() => void>();
-  // Child runs whose outcome is recorded; a later failure never overwrites it.
   private readonly recorded = new Set<string>();
-  // Result rows this pass already decided for the parent: queued for it or
-  // kept from it. A child still in `pendingMetadata` after its result
-  // is one draining a follow-up, and the parent stopping is no news of that row.
+  // Rows already queued for or kept from the parent: detaching must not mark them again.
   private readonly handled = new Set<string>();
-  // The parent's user stop, or the end of the worker slot the children run
-  // on, which every child run listens to.
   private readonly childStop = new AbortController();
   // When the parent stops waiting on a child it messaged with a wait, by taskId.
   private readonly waitDeadlines = new Map<string, number>();
@@ -324,11 +293,8 @@ export class SubagentCoordinator {
     this.publisherFactory =
       dependencies.publisherFactory ??
       ((task) => createSubagentPublisher(parentSession, task));
-    // Defaulting to "no envelope transferred" releases the child lease rather
-    // than stranding it when a caller builds a coordinator without a dispatcher.
     this.dispatchNextIngress =
       dependencies.dispatchNextIngress ?? (async () => false);
-    // Without a resumer a late result is only recorded on its status row.
     this.resumeParent =
       dependencies.resumeParent ??
       (async (): Promise<SubagentResumeOutcome> => "skip");
@@ -342,7 +308,6 @@ export class SubagentCoordinator {
     });
   }
 
-  // A getter follows the worker's budget as a yielding run moves to a new slot.
   private get waitUntilMs(): number {
     return typeof this.waitUntil === "number"
       ? this.waitUntil
@@ -358,8 +323,7 @@ export class SubagentCoordinator {
     parentMessages: ModelMessage[],
     parentEphemeralSystem: SystemModelMessage[] = [],
   ): Promise<RunSubagentDispatchResult> => {
-    // Resolve all inputs before launching anything. If one task is invalid,
-    // the tool call fails without starting a partial batch of child runs.
+    // All resolved first, so one invalid task fails the call before any child starts.
     const resolvedTasks = await Promise.all(
       tasks.map((task) =>
         this.resolveTask(task, parentMessages, parentEphemeralSystem),
@@ -373,7 +337,6 @@ export class SubagentCoordinator {
     return this.pending.size;
   }
 
-  /** Children still working, waited on or not; the root span waits on them. */
   get runningCount(): number {
     return this.pending.size + this.detached.size;
   }
@@ -400,10 +363,8 @@ export class SubagentCoordinator {
       await this.detachOverdueWaits();
 
       if (this.pending.size > 0) {
-        // Awaited, so a heartbeat that finds the run lost ends the wait.
         await options.onHeartbeat?.(this.pending.size);
-        // No step boundary runs while the parent waits, so a user stop reaches
-        // the children here, once per heartbeat interval.
+        // No step boundary runs while the parent waits, so a user stop reaches children here.
         if (
           timerWoke &&
           (await this.parentSession.renewConversationLease()) === "stopped"
@@ -418,20 +379,12 @@ export class SubagentCoordinator {
     return this.pending.size === 0 ? "idle" : "timeout";
   }
 
-  /**
-   * The pass's last write of results. No pass drains after it,
-   * so when it fails each finished result and note it did not save resumes
-   * the parent through `resumeParent`, in order, each child still working is
-   * detached to resume it the same way, and the run still fails.
-   */
+  // The pass's last write: on failure every unsaved result and running child resumes the parent.
   async drainCompletionsToParent(): Promise<number> {
     try {
       return (await this.takeParentMessages()).length;
     } catch (error: unknown) {
-      // A put-back running notice is dropped: its child is detached and
-      // resumes the parent itself. Each result is detached first, so the
-      // recovery sweep retries a resume that fails too; when that write fails
-      // as well the row is still `pending`, and the sweep takes it later.
+      // Marked detached before the resume, so the sweep retries a resume that fails.
       await this.detachPending();
       for (const { message, completion } of this.outbox.splice(0)) {
         if (completion?.status === "running") continue;
@@ -449,7 +402,7 @@ export class SubagentCoordinator {
    * in the order they came, and returns them. The parent's step boundary
    * calls it, so they reach the model mid-pass.
    */
-  async takeParentMessages(): Promise<UserModelMessage[]> {
+  async takeParentMessages(): Promise<IngressUserMessage[]> {
     // A running notice is stale once its child has finished: that child
     // resumed the parent with its result itself, even while the detach that
     // queued the notice was still writing.
@@ -460,22 +413,17 @@ export class SubagentCoordinator {
           completion?.status !== "running" ||
           this.detached.has(completion.taskId),
       );
-    const messages = queued.map(({ message }): UserModelMessage => message);
+    const messages = queued.map(({ message }): IngressUserMessage => message);
     if (messages.length === 0) return messages;
-    // One write for all of them. Each is one stored event, and a large write
-    // takes several appends, so a failure puts back only what no append saved,
-    // and a later step or drain delivers it without repeating the rest. An
-    // append that committed but lost its reply is put back too: its dedupe key
-    // makes the retry store it once.
+    // A large write takes several appends: a failure puts back only what none saved. An
+    // append that committed but lost its reply is put back too; its dedupe key stores it once.
     let saved = 0;
     await this.parentSession
-      .persistModelMessages(
-        messages,
-        (count): void => {
+      .persistModelMessages(messages, {
+        onSaved: (count): void => {
           saved = count;
         },
-        queued.map(({ dedupeKey }): string => dedupeKey),
-      )
+      })
       .catch((error: unknown): never => {
         this.outbox.unshift(...queued.slice(saved));
         throw error;
@@ -484,14 +432,8 @@ export class SubagentCoordinator {
     return messages;
   }
 
-  /**
-   * A parent's message-agents to one of its persistent children, named by the
-   * address run_subagent returned. A running child reads it at its next step;
-   * an idle one, a child waiting on its question among them, starts a turn on
-   * it, which takes one of the lineage's message turns. With a wait the
-   * parent's pass waits on that child up to the wait, then detaches it so its
-   * reply arrives later; without one a child it started is detached now.
-   */
+  // A running child reads it at its next step; an idle one starts a turn (one lineage message
+  // turn). With a wait the pass waits up to it, then detaches the child so its reply comes later.
   messageChild: MessageChild = async (
     to: string,
     message: AgentMessage,
@@ -591,17 +533,8 @@ export class SubagentCoordinator {
     return child;
   }
 
-  /**
-   * Hands `prompt` to a persistent child in one admission, with its work so
-   * far: an idle child starts a turn on it here, a running one reads it at its
-   * next step. So a parent's message and the recovery sweep's note that no
-   * reply came never both start a turn: the later one joins the earlier.
-   * Only a delivered prompt closes what the child waits on its parent with: a
-   * turn it starts closes it with its own row. `charged` is a message turn
-   * the caller took, given back unless a turn starts; without one the
-   * lineage's turns are spent, so the child loses its line to its parent and
-   * answers.
-   */
+  // One admission: an idle child starts a turn, a running one reads it next step, so two
+  // prompts never both start a turn. `charged` is a message turn, given back unless one starts.
   async resumeChild(
     child: SubagentChild,
     prompt: string,
@@ -671,7 +604,6 @@ export class SubagentCoordinator {
     }
     this.outbox.push({
       message: noteToParentMessage(metadata, message),
-      dedupeKey: `subagent-note:${crypto.randomUUID()}`,
     });
 
     return {
@@ -706,11 +638,6 @@ export class SubagentCoordinator {
     this.childStop.abort(new Error(USER_STOP_MESSAGE));
   }
 
-  /**
-   * The parent stops waiting: finished results go in as usual, and each child
-   * still working is reported as running. Those keep running and later resume
-   * the parent conversation with their result through `resumeParent`.
-   */
   async drainCompletionsAndDetachToParent(): Promise<number> {
     if (this.outbox.length === 0 && this.pending.size === 0) {
       return 0;
@@ -742,8 +669,6 @@ export class SubagentCoordinator {
     }
     this.pending.clear();
     this.pendingMetadata.clear();
-    // Only the recovery sweep reads this, for a result this process never
-    // delivers; the live resume needs none of it.
     await Promise.all(
       detaching
         .filter(({ eventId }): boolean => !this.handled.has(eventId))
@@ -785,7 +710,6 @@ export class SubagentCoordinator {
   private enqueue(completion: SubagentCompletion): void {
     this.outbox.push({
       message: completionToParentMessage(completion),
-      dedupeKey: subagentResultDedupeKey(completion.eventId, completion.status),
       completion: completion,
     });
   }
@@ -817,10 +741,8 @@ export class SubagentCoordinator {
         "Subagent conversationKey is only supported in persistent mode",
       );
     }
-    // The key comes from the model, and it shares the child agent's direct-API
-    // namespace, so only a key this runtime minted for this parent may be
-    // resumed: anything else could name another caller's conversation with
-    // that agent, whatever form that caller gave its key.
+    // The key comes from the model and shares the child agent's direct-API namespace: only a
+    // key minted for this parent may resume, or it could name another caller's conversation.
     if (
       task.conversationKey !== undefined &&
       !this.mintedChildKey(accountId, task.conversationKey)
@@ -878,8 +800,7 @@ export class SubagentCoordinator {
         ),
       };
     }
-    // A persistent virtual child is named by its key's UUID, so resuming the
-    // key reaches the same child and its history. A one-off child by its task.
+    // Named by the persistent key UUID, so resuming the key reaches the same child.
     const virtualAgentId = `${VIRTUAL_AGENT_PREFIX}${PERSISTENT_SUBAGENT_KEY.exec(publicKey)?.[1] ?? taskId}`;
 
     return {
@@ -1037,9 +958,7 @@ export class SubagentCoordinator {
     const trackedPublisher = publisher
       ? bestEffortSubagentPublisher(publisher, streamState, task.taskId)
       : undefined;
-    // The child gets its own observability cell, seeded from the parent's. On
-    // the shared cell the parent's pass ending blanked the child's scope, so its
-    // steps never reached the dashboard, and each child relabeled the parent.
+    // Its own cell: on the parent's, the parent's pass ending blanks the child's scope.
     const promise = runWithObservabilityScope(
       () => this.runTask(task, subagentParent, trackedPublisher, preOwned),
       getObservabilityContext(),
@@ -1104,17 +1023,10 @@ export class SubagentCoordinator {
     }
   }
 
-  /**
-   * Ephemeral child turns run on a `persist: false` Session and store nothing.
-   * Persistent child turns write the task prompt and generated child messages
-   * to the child conversation while keeping inherited parent context ephemeral.
-   */
   private async runTask(
     task: ResolvedSubagentTask,
     subagentParent?: SubagentParentContext,
     publisher?: NatsPublisher,
-    // Set when this turn runs an envelope the child already owns, so it reuses
-    // that fencing token instead of admitting the conversation again.
     preOwned?: PreOwnedTurn,
   ): Promise<void> {
     logInfo("Subagent task started", {
@@ -1129,18 +1041,13 @@ export class SubagentCoordinator {
 
     const promptMessage = userText(task.prompt);
     const incoming = preOwned?.events ?? [promptMessage];
-    // Persistent children run through the same conversation coordinator as
-    // top-level runs. Without an owner generation every steer and stop the
-    // session exposes is a silent no-op.
+    // Without an owner generation every steer and stop on the session is a silent no-op.
     const ownerGeneration = preOwned
       ? preOwned.ownerGeneration
       : task.persistent
         ? await this.admitChildConversation(task, promptMessage)
         : undefined;
-    // Inherit the parent's deployment scope (endpoint/project/stage) so the
-    // child's spans and logs publish to the same live dashboard subscription and
-    // its usage rows are counted in the right stage. The trigger is inherited
-    // too: a child of a scheduled run must not reach the schedule tools either.
+    // Inherited trigger: a child of a scheduled run must not reach the schedule tools either.
     const childSession = new Session({
       eventId: task.eventId,
       conversationKey: task.conversationKey,
@@ -1154,7 +1061,6 @@ export class SubagentCoordinator {
       trigger: this.parentSession.trigger,
       persist: task.persistent,
       policyDelivery: this.parentSession.policyDelivery,
-      // The child acts as its own agent, delegated to by the parent's chain.
       principal: this.parentSession.principal
         ? runPrincipal(
             {
@@ -1184,8 +1090,6 @@ export class SubagentCoordinator {
     }, budgetMs + DEADLINE_WIND_DOWN_MS);
     budgetTimer.unref?.();
     try {
-      // Persistent mode writes the task prompt first so the child model response
-      // and tool messages append to that conversation.
       const turnContext = await this.createChildTurnContext(
         childSession,
         task,
@@ -1210,8 +1114,7 @@ export class SubagentCoordinator {
         {
           ...(subagentParent ? { subagentParent: subagentParent } : {}),
           isolatedSandbox: task.isolatedSandbox,
-          // Never yields, even on a slot of its own: near its budget it winds
-          // down to an answer instead.
+          // The child holds no worker slot to yield, so it winds down near its deadline.
           deadlineMs: deadlineMs,
           abortSignal: AbortSignal.any([budget.signal, this.childStop.signal]),
           ...(task.persistent && !task.lastTurn
@@ -1289,14 +1192,8 @@ export class SubagentCoordinator {
     }
   }
 
-  /**
-   * A child turn that answered, or ended waiting on its parent's reply to
-   * `message`: its outcome goes on its row and envelope, the conversation is
-   * handed on, and only then is the parent told, so a parent that replies at
-   * once finds the conversation free or queues behind the next envelope. A
-   * waiting child's message reaches the parent live, on a resume or from the
-   * recovery sweep, and that sweep wakes the child once the wait runs out.
-   */
+  // Row and envelope first, then the conversation is handed on, and only then is the parent
+  // told, so a parent that replies at once finds the conversation free or queues behind it.
   private async completeRun(
     childSession: Session,
     task: ResolvedSubagentTask,
@@ -1371,11 +1268,6 @@ export class SubagentCoordinator {
     }
   }
 
-  /**
-   * Records a child run's outcome on its envelope and polling row in one
-   * mutation, once. A child that owns no envelope, or whose settle fails,
-   * still records the row.
-   */
   private async recordOutcome(
     childSession: Session,
     task: ResolvedSubagentTask,
@@ -1401,11 +1293,6 @@ export class SubagentCoordinator {
     this.notifyCompletion();
   }
 
-  /**
-   * Hands the conversation on, then runs the next queued envelope for this
-   * child as another turn. Ephemeral children never own a generation, so
-   * this is a no-op for them.
-   */
   private async drainChildConversation(
     childSession: Session,
     task: ResolvedSubagentTask,
@@ -1528,11 +1415,6 @@ export class SubagentCoordinator {
     }
   }
 
-  /**
-   * Admits one persistent child conversation into the durable coordinator and
-   * returns its fencing token. A busy conversation is refused rather than
-   * queued so the parent sees the conflict instead of stalling on a dispatch.
-   */
   private async admitChildConversation(
     task: ResolvedSubagentTask,
     promptMessage: UserModelMessage,
@@ -1599,7 +1481,6 @@ export class SubagentCoordinator {
     incoming: ModelMessage[],
     budgetMinutes: number,
   ): Promise<TurnContextSnapshot> {
-    // The child is told its budget so it can pace itself.
     const ephemeralSystem: SystemModelMessage[] = [
       ...task.parentEphemeralSystem,
       {
@@ -1615,9 +1496,6 @@ export class SubagentCoordinator {
     }
 
     await childSession.persistModelMessages(incoming);
-    // `resuming` means the caller supplied an existing public conversationKey.
-    // That is enough to load prior child history; when omitted, this is a new
-    // persistent child conversation with a generated public key.
     if (task.resuming || !task.inheritedContext) {
       return childSession.createTurnContext(ephemeralSystem);
     }
@@ -1669,8 +1547,7 @@ export class SubagentCoordinator {
         this.enqueue(visible);
       }
     } else {
-      // Never told, so the recovery sweep must not tell it either: a finished
-      // row left `pending` would be swept past the parent's hold.
+      // Hidden from the parent: a finished row left `pending` would be swept to it later.
       await markAsyncAgentHandback(completion.eventId, "stored");
     }
     this.handled.add(completion.eventId);
@@ -1699,8 +1576,7 @@ export class SubagentCoordinator {
     });
   }
 
-  // Presentation only, and it runs after the durable result is recorded, so a
-  // webhook failure must never propagate into the run's terminal status.
+  // After the durable record: a webhook failure must never change the run's terminal status.
   private async emitTaskFinished(
     payload: AgentLifecycleEventPayload,
   ): Promise<void> {
@@ -1714,7 +1590,7 @@ export class SubagentCoordinator {
       });
   }
 
-  /** Share the request's hook dispatcher so onSubagentFinish sees the same ctx.state as the loop hooks. */
+  /** Shares the request's dispatcher, so onSubagentFinish sees the loop hooks' ctx.state. */
   attachHooks(hooks: HookDispatcher): void {
     this.hooksPromise = Promise.resolve(hooks);
   }
@@ -1730,11 +1606,7 @@ export class SubagentCoordinator {
     return this.hooksPromise;
   }
 
-  // A result the parent stopped waiting for starts its own parent turn, and
-  // so does a note no pass is left to read, under a task id of its own. A
-  // result's row already holds it, so a failed or refused resume is only
-  // logged: the row is `detached` or still `pending`, and the recovery sweep
-  // retries it from either.
+  // Only logged on failure: the row holds the result and the sweep retries it.
   private async resumeParentWith(
     message: UserModelMessage,
     completion?: SubagentCompletion,
@@ -1777,14 +1649,6 @@ export class SubagentCoordinator {
   }
 }
 
-/**
- * Resumes each parent whose subagent result no live run delivered: the run
- * that detached it died with its pod or its resume failed, or the result is
- * still `pending` past any live parent's hold, because the run that owed it
- * died before its write and its detach. Each pass walks every page, so rows
- * it must retry never crowd the rest out. The ingress recovery sweep calls it
- * on its timer, with the handler's re-entry.
- */
 export async function resumeLostSubagentResults(
   loadParent: SubagentParentLoader,
   resumeParent: SubagentParentResumer,
@@ -1799,11 +1663,10 @@ export async function resumeLostSubagentResults(
       [handback, "completed", settledBefore],
       [handback, "failed", settledBefore],
       [handback, "awaiting_input", settledBefore],
-      // A child still running this long past its budget died with its pod.
       [handback, "processing", abandonedBefore],
     );
   }
-  const held = new Map<string, UserModelMessage>();
+  const held = new Map<string, IngressUserMessage>();
   for (const [handback, status, updatedBefore] of ranges) {
     let cursor: string | null = null;
     let isDone = false;
@@ -1816,11 +1679,8 @@ export async function resumeLostSubagentResults(
         cursor: cursor,
       });
       for (const row of result.page) {
-        // A child listed still running died with its pod: its row is failed,
-        // unless its outcome landed since, and a later pass tells the parent.
-        // Its parent run is gone too, so a pending row is detached in the
-        // same write: the sweep owns it, and delivers the failure after the
-        // grace, not another hold.
+        // Died with its pod, and so did its parent run: a pending row is detached in the same
+        // write, so the failure goes out after the grace rather than another hold.
         if (row.status === "processing") {
           await recordAsyncAgentResult(
             row.eventId,
@@ -1837,7 +1697,7 @@ export async function resumeLostSubagentResults(
           loadParent,
           resumeParent,
           heldLostResults.get(row.eventId),
-        ).catch((error: unknown): UserModelMessage | undefined => {
+        ).catch((error: unknown): IngressUserMessage | undefined => {
           logError("Failed to resume the parent with a lost subagent result", {
             eventId: row.eventId,
             error: toErrorMessage(error),
@@ -1846,10 +1706,7 @@ export async function resumeLostSubagentResults(
           return heldLostResults.get(row.eventId);
         });
         if (retry) held.set(row.eventId, retry);
-        // Counted the first pass that takes it up: each one is a result a
-        // parent run dropped without a trace. A row held from an earlier pass
-        // is not counted again, and a queued resume, which its owner's save
-        // stores without the sweep, is still counted.
+        // Logged once per row: each is a result a parent run dropped without a trace.
         if (handback === "pending" && !heldLostResults.has(row.eventId)) {
           logInfo("Subagent result left pending past the parent's hold", {
             eventId: row.eventId,
@@ -1865,13 +1722,7 @@ export async function resumeLostSubagentResults(
   heldLostResults = held;
 }
 
-/**
- * The windows the recovery sweeps list lost results in, at `now`: rows written
- * within a day, a detached one once the run that detached it had its grace, a
- * pending one only once no live run can still store it, and a child still
- * running that long past its budget, which died with its pod. The async tool
- * sweep (`async-tools.ts`) runs on the same windows.
- */
+/** The async tool sweep (`async-tools.ts`) lists on these same windows. */
 export function lostResultWindows(now: number): {
   updatedAfter: string;
   finishedBefore: (handback: SweptHandback) => string;
@@ -1890,14 +1741,8 @@ export function lostResultWindows(now: number): {
   };
 }
 
-/**
- * Wakes each child whose message to its parent got no reply in time: it
- * resumes with a note and carries on, through a coordinator rebuilt from its
- * row, so its result reaches the parent like any late one. Each wake takes a
- * worker slot for the child's turn, up to MAX_WOKEN_PER_SWEEP a pass, read
- * page by page past rows it cannot take; the next pass takes the rest. The
- * ingress recovery sweep calls it on its timer, with the handler's wiring.
- */
+// Wakes each child whose parent did not reply in time, on a worker slot each, up to
+// MAX_WOKEN_PER_SWEEP a pass. The ingress recovery sweep calls it on its timer.
 export async function timeOutSubagentQuestions(
   loadParent: SubagentParentLoader,
   dependencies: SubagentCoordinatorDependencies,
@@ -1982,13 +1827,6 @@ function bestEffortSubagentPublisher(
   };
 }
 
-/**
- * What the parent sees of a finished child, or null when it is not told. A
- * stopped child was cancelled on purpose, so its progress is no answer. An
- * onSubagentFinish hook's rewrite wins, otherwise subagent.visibility decides.
- * The result is already recorded, so a hook that cannot load or throws only
- * loses its override.
- */
 async function parentVisibleCompletion(
   completion: SubagentCompletion,
   parentAgentConfig: AgentConfig,
@@ -2024,10 +1862,6 @@ async function parentVisibleCompletion(
     : completion;
 }
 
-/**
- * Marks a lost result stored without resuming its parent, logged once: the
- * row then leaves the sweep's list.
- */
 async function giveUpLostSubagentResult(
   eventId: string,
   reason: string,
@@ -2039,17 +1873,8 @@ async function giveUpLostSubagentResult(
   });
 }
 
-/**
- * One finished row of `resumeLostSubagentResults`: it resumes the parent,
- * from `held` when an earlier pass already ran its finish hook. A row no
- * resume can ever deliver is given up. A duplicate is never given up:
- * admission marks the row stored once its conversation has the result, and
- * a resume still queued or applied is stored by its owner's save, or is
- * admitted again by a later pass once it expired. The row's `eventId` is
- * `scopedDirectEventId(account, child agent, taskId)`.
- * @returns the parent message to retry on the next pass, when the
- *   conversation had no room for it, its resume is still queued or failed
- */
+// A duplicate is never given up: admission stores the row once the conversation has it, and
+// a still-queued resume stores it when applied or is admitted again once it expired.
 async function resumeLostSubagentResult(
   row: AsyncAgentResultRecord,
   loadParent: SubagentParentLoader,
@@ -2076,7 +1901,7 @@ async function resumeLostSubagentResult(
       },
       target.agentConfig,
       createAgentHookDispatcher(scope.accountId, target.agentConfig),
-    ).then((visible): UserModelMessage | undefined =>
+    ).then((visible): IngressUserMessage | undefined =>
       visible ? completionToParentMessage(visible) : undefined,
     ));
   if (!message) {
@@ -2122,16 +1947,7 @@ async function resumeLostSubagentResult(
   return undefined;
 }
 
-/**
- * One overdue question of `timeOutSubagentQuestions`, on its worker slot. The
- * child wakes as the parent run that started it: same trigger, principal and
- * policy. The wake closes the question only once delivered, so one that
- * throws or is refused is retried by the next sweep. With the lineage's
- * message turns spent it still wakes, once, with no line to its parent, so it
- * answers instead of waiting again. A child no wake can reach fails instead,
- * and its parent, while there is one, hears it from the lost-result sweep.
- * Returns once its turn ends.
- */
+// Wakes one child as the parent run that started it; returns once its turn ends.
 async function timeOutSubagentQuestion(
   row: AsyncAgentResultRecord,
   loadParent: SubagentParentLoader,
@@ -2215,9 +2031,10 @@ function childAddress(child: {
   return `${child.agentId}/${child.conversationKey}`;
 }
 
+/** The parent's message for a child's result, keyed so saving it stores the result once. */
 function completionToParentMessage(
   completion: SubagentCompletion,
-): UserModelMessage {
+): IngressUserMessage {
   const metadata = [
     `taskId: ${completion.taskId}`,
     `agentId: ${completion.agentId}`,
@@ -2235,6 +2052,7 @@ function completionToParentMessage(
   if (completion.status === "awaiting_input") {
     return {
       role: "user",
+      dedupeKey: subagentResultDedupeKey(completion.eventId, completion.status),
       content: [
         {
           type: "text",
@@ -2251,6 +2069,7 @@ function completionToParentMessage(
 
   return {
     role: "user",
+    dedupeKey: subagentResultDedupeKey(completion.eventId, completion.status),
     content:
       resultParts.length > 0
         ? prependTextToUserParts(prefix, resultParts)
@@ -2281,9 +2100,10 @@ function createSubagentPublisher(
 function noteToParentMessage(
   child: SubagentTaskMetadata,
   message: AgentMessage,
-): UserModelMessage {
+): IngressUserMessage {
   return {
     role: "user",
+    dedupeKey: `subagent-note:${crypto.randomUUID()}`,
     content: [
       {
         type: "text",
@@ -2395,7 +2215,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// A child its parent or the user stopped, as opposed to one that failed.
 function stoppedOnPurpose(completion: SubagentCompletion): boolean {
   return (
     completion.error === PARENT_STOP_MESSAGE ||

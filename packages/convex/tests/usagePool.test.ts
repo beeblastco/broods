@@ -1,10 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * The payer's usage pool: every org one user owns is metered together, the
- * plan's caps stop all of them at once, and each org's own amounts stay its
- * own. Org-count limits are in `stripeBilling.test.ts`, with the Stripe seam.
- */
-
 import { convexTest } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
@@ -26,7 +20,6 @@ const NO_SHARES = {
   egressGb: 0,
 };
 
-// Who is signed in.
 const caller = vi.hoisted(() => ({ authId: "auth_payer" }));
 
 vi.mock("../auth", () => ({
@@ -167,7 +160,6 @@ test("usage metered before the pool existed counts: reads sum the owner's meters
   // The first write starts the row from the meters, the delta counted once.
   await record(t, a.accountId, { egressGb: 3 });
   expect(await pools()).toEqual([{ egressGb: 18, storageGb: 5 }]);
-  // A later write adds to the row and seeds nothing again.
   await record(t, b.accountId, { egressGb: 3 });
   expect(await pools()).toEqual([{ egressGb: 21, storageGb: 5 }]);
   expect((await status(t, a.accountId))?.shares.egressGb).toBe(70);
@@ -264,7 +256,6 @@ test("an account no org owns is metered on its own", async () => {
   ).toEqual([]);
 });
 
-// Makes `authId` a member of the org, as an admin, with a user row if new.
 async function addMember(
   t: T,
   authId: string,
@@ -282,7 +273,6 @@ async function addMember(
   });
 }
 
-// Makes `orgId` the org `authId` sees in the dashboard.
 async function activate(
   t: T,
   authId: string,
@@ -312,7 +302,6 @@ async function record(
   });
 }
 
-// An org `owner` owns, on `plan`, with its account, and active for the owner.
 async function seedOrg(
   t: T,
   owner: string,
@@ -358,7 +347,6 @@ async function status(
 const budgetGet = (t: T, accountId: Id<"accounts">) =>
   t.query(internal.account.budget.get, { accountId: accountId });
 
-// The user row for `authId`, inserted on `plan` if new.
 async function userId(
   ctx: Parameters<Parameters<T["run"]>[0]>[0],
   authId: string,

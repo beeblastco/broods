@@ -22,7 +22,6 @@ const AGENT: AgentReference = {
 
 type RunBody = { conversationKey: string; events: ModelMessage[] };
 
-/** Collect the streamed assistant message the TUI would assemble for a turn. */
 async function readTurn(
   transport: RemoteAgentTransport,
   messages: UIMessage[],
@@ -161,7 +160,6 @@ test("transport forwards only the approval response on an approval round-trip", 
       ],
     },
   ]);
-  // Core owns the conversation, so every turn resumes the same one.
   expect(bodies[1]?.conversationKey).toBe(bodies[0]?.conversationKey as string);
 });
 
@@ -187,7 +185,6 @@ test("transport re-sends only the newest approval when one turn asks twice", asy
   const messages: UIMessage[] = [userMessage("m1", "list files"), assistant];
 
   await readTurn(transport, messages);
-  // Core approves the first call, then stops on a second one in the same turn.
   assistant.parts.push({
     type: "tool-bash",
     toolCallId: "call_2",
@@ -304,7 +301,6 @@ test("a failed run is re-sent, not silently dropped from the conversation", asyn
   await readTurn(transport, messages);
   await readTurn(transport, messages);
 
-  // Core never saw the first attempt, so the same turn has to go out again.
   expect(bodies).toHaveLength(2);
   expect(bodies[1]?.events).toEqual([
     { role: "user", content: [{ type: "text", text: "hello" }] },
@@ -315,7 +311,6 @@ test("aborting stops a turn that is waiting on the model", async () => {
   const controller = new AbortController();
   const client = new BroodsClient({
     apiKey: "test-key",
-    // A run that streams one part and then never produces another.
     fetch: async () =>
       new Response(
         new ReadableStream({
@@ -342,6 +337,5 @@ test("aborting stops a turn that is waiting on the model", async () => {
   const pending = reader.read();
   controller.abort();
 
-  // Without racing the signal this would hang until the server sent more.
   expect((await pending).done).toBe(true);
 });

@@ -1,7 +1,3 @@
-/**
- * Agent policy CRUD for dashboard, CLI sync, and core runtime reads.
- */
-
 import { v } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -36,11 +32,6 @@ const policyStatusValidator = v.union(
   v.literal("deleted"),
 );
 
-/**
- * Creates a dashboard-owned policy in one stage.
- * @param args policy fields
- * @returns created policy id
- */
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
@@ -51,7 +42,6 @@ export const create = mutation({
   },
   returns: v.id("agentPolicies"),
   handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -67,14 +57,11 @@ export const create = mutation({
     const stage = await getOwnedStage(ctx, user.id, args.stageId);
     if (!stage || stage.projectId !== args.projectId)
       throw new Error("Stage not found.");
-    // The project's org owns the policy, not whichever org the caller has
-    // switched to in another tab.
+    // The project's org owns the policy, not the org the caller switched to in another tab.
     const accountId = await accountIdForProject(ctx, args.projectId);
     if (!accountId) throw new Error("Broods account not provisioned.");
 
-    // CLI sync adopts policies by exact (stageId, name), so a
-    // duplicate dashboard name could be claimed non-deterministically by an
-    // unrelated manifest entry on the next `broods deploy`.
+    // CLI sync adopts policies by (stageId, name), so a duplicate would be claimed at random.
     const duplicate = await ctx.db
       .query("agentPolicies")
       .withIndex("by_stageId_and_status_and_name", (q) =>
@@ -107,11 +94,6 @@ export const create = mutation({
   },
 });
 
-/**
- * Internal create path used by account-manage in Convex storage mode.
- * @param args policy fields
- * @returns created policy id
- */
 export const createInternal = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -144,12 +126,6 @@ export const createInternal = internalMutation({
   },
 });
 
-/**
- * Internal lookup by account and runtime policy id.
- * @param accountId owning account
- * @param policyId policy id
- * @returns active policy or null
- */
 export const getById = internalQuery({
   args: { accountId: v.id("accounts"), policyId: v.string() },
   returns: v.union(policyDoc, v.null()),
@@ -168,10 +144,6 @@ export const getById = internalQuery({
   },
 });
 
-/**
- * @param accountId owning account
- * @returns active policies
- */
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(policyDoc),
@@ -204,16 +176,10 @@ export const listPage = internalQuery({
   },
 });
 
-/**
- * @param projectId project containing the policies
- * @param stageId stage containing the policies
- * @returns active policy documents
- */
 export const listForStage = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.array(policyDoc),
   handler: async (ctx, args): Promise<Doc<"agentPolicies">[]> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -225,8 +191,7 @@ export const listForStage = query({
     if (!stage || stage.projectId !== args.projectId)
       throw new Error("Stage not found.");
 
-    // Status leads the range: deletes are soft, so the name-only index range
-    // accumulates tombstones this reactive query would re-read forever.
+    // Status leads the range: soft deletes leave tombstones this query would re-read forever.
     return await ctx.db
       .query("agentPolicies")
       .withIndex("by_stageId_and_status_and_name", (q) =>
@@ -236,16 +201,10 @@ export const listForStage = query({
   },
 });
 
-/**
- * Soft-deletes a dashboard-owned policy.
- * @param policyId policy to delete
- * @returns deleted policy id
- */
 export const remove = mutation({
   args: { policyId: v.id("agentPolicies") },
   returns: v.id("agentPolicies"),
   handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -268,7 +227,6 @@ export const remove = mutation({
   },
 });
 
-/** Soft-deletes an internal account policy. */
 export const removeInternal = internalMutation({
   args: { accountId: v.id("accounts"), policyId: v.string() },
   returns: v.null(),
@@ -291,11 +249,6 @@ export const removeInternal = internalMutation({
   },
 });
 
-/**
- * Updates a dashboard-owned policy.
- * @param args policy patch
- * @returns updated policy id
- */
 export const update = mutation({
   args: {
     policyId: v.id("agentPolicies"),
@@ -305,7 +258,6 @@ export const update = mutation({
   },
   returns: v.id("agentPolicies"),
   handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -329,11 +281,6 @@ export const update = mutation({
   },
 });
 
-/**
- * Internal update path used by account-manage in Convex storage mode.
- * @param args policy patch
- * @returns null
- */
 export const updateInternal = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -386,18 +333,10 @@ export const updateInternal = internalMutation({
   },
 });
 
-/**
- * Counts how many agent configs in a stage reference each policy.
- * Policy assignments live in `extraConfig.policies` on `agentConfigs`.
- * @param projectId project containing the agents
- * @param stageId stage containing the agents
- * @returns record mapping policy id to the number of agents referencing it
- */
 export const usageCounts = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.record(v.string(), v.number()),
   handler: async (ctx, args): Promise<Record<string, number>> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");

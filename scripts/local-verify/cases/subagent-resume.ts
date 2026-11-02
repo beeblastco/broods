@@ -19,11 +19,6 @@ interface ContextPreparedLog {
   historyRows: number;
 }
 
-/**
- * A persistent virtual subagent resumed with the conversationKey it returned
- * is the same child on the same stored conversation, so it still knows what
- * the first task told it.
- */
 export async function subagentResume(context: VerifyContext): Promise<void> {
   if (!context.hasModelKey) {
     console.log(`  skip subagent resume (${MODEL_KEY_HINT})`);
@@ -50,9 +45,7 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
     return;
   }
   assertHandedBackOnce(context, first, key, "completed");
-  // The model gets the exact key, so the check does not hang on it recalling
-  // the key from history: it once started a fresh child and resumed that one.
-  // Matching the resume on this key still catches it reaching another child.
+  // The prompt carries the exact key, so the check never hinges on the model's recall.
   const childKey = publicKey(first.conversationKey);
   const resumed = await startedChild(context, agentId, key, {
     eventId: `${key}-resume`,
@@ -69,8 +62,7 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
       resumed.conversationKey === first.conversationKey,
     JSON.stringify([first, resumed]),
   );
-  // The child's own context, not the parent's answer: the parent's history
-  // holds the code too, so only this shows the child kept its first task.
+  // The parent's history holds the code too, so only the child's own context proves it kept it.
   const prepared = lastJsonLine<ContextPreparedLog>(
     context.coreLogPath,
     (record: ContextPreparedLog): boolean =>
@@ -84,10 +76,6 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
   );
 }
 
-/**
- * Runs one parent turn to completion and returns the child it started, or,
- * with `resumes`, the child it resumed under that key.
- */
 async function startedChild(
   context: VerifyContext,
   agentId: string,
@@ -119,7 +107,6 @@ async function startedChild(
   );
 }
 
-/** The key run_subagent returned, read from the child's scoped conversation key. */
 function publicKey(conversationKey: string): string {
   return conversationKey.slice(
     conversationKey.indexOf(API_SCOPE_MARKER) + API_SCOPE_MARKER.length,

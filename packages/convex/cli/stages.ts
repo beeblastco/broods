@@ -1,15 +1,4 @@
-/**
- * Stage listing and creation for the `broods stage` commands, plus their HTTP
- * endpoint.
- *
- * Creation reuses the dashboard's `duplicateStageContents`, so a cloned
- * stage carries the same agent configs, MCP servers, canvas layout and
- * environment variables the dashboard duplicate button produces.
- *
- * Stage management spans every stage of a project, so the HTTP endpoint
- * authenticates with a `broods login` token rather than a stage-scoped
- * project key.
- */
+// Spans every stage of a project, so it takes a `broods login` token, not a stage-scoped key.
 
 import { v } from "convex/values";
 import {
@@ -102,8 +91,7 @@ export const createByAccount = internalMutation({
       );
     }
 
-    // A brand-new stage is never the default; `cliSync.ensureStage`
-    // repairs the Development-is-default invariant on the next sync.
+    // Never the default: cliSync.ensureStage repairs Development-is-default on the next sync.
     const now = Date.now();
     const stageId = await ctx.db.insert("stages", {
       authId: projectDoc.authId,
@@ -135,7 +123,6 @@ export const createByAccount = internalMutation({
   },
 });
 
-/** HTTP endpoint for `broods stage list` and `broods stage create`. */
 export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
   try {
     const tokenHash = await cliLoginTokenHash(req);
@@ -206,10 +193,6 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
   }
 });
 
-/**
- * Mint a stage session ticket for the logged-in user's project stage. Null
- * when the project, the stage or its first deploy is missing.
- */
 export const mintSessionByAccount = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -233,18 +216,12 @@ export const mintSessionByAccount = internalMutation({
     );
     if (!stage) return null;
 
-    // A `broods login` token resolves only while its user is an org owner or
-    // admin, the role the dashboard requires to control sandboxes, so this
-    // ticket may claim the stage's machine sandboxes.
+    // A login token resolves only for an org owner or admin, so it may claim machine sandboxes.
     return await mintStageSessionTicket(ctx, projectDoc._id, stage._id, true);
   },
 });
 
-/**
- * HTTP endpoint for the CLI's logs, stream and machine commands. They trade
- * the `broods login` token for a 15-minute stage ticket instead of using the
- * runtime key, which is meant to sit in a frontend.
- */
+// Logs, stream and machine trade the login token for a stage ticket, not the frontend key.
 export const sessionHttpHandle = httpAction(
   async (ctx, req): Promise<Response> => {
     try {

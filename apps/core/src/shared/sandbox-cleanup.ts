@@ -1,10 +1,3 @@
-/**
- * Shared cleanup helpers for persistent sandbox reservations. Account deletion,
- * workspace deletion, channel-scoped cleanup, and the sandbox sweeper all need the
- * same provider release path: the provider that reserved the machine, which may
- * no longer be what any config says.
- */
-
 import {
   PLATFORM_WORKER_SANDBOX_PROVIDERS,
   SANDBOX_PROVIDERS,
@@ -31,21 +24,13 @@ import { logWarn } from "./log.ts";
 import { getStorage } from "./storage.ts";
 import { runsOnOwnCredentials } from "./workspaces.ts";
 
-// Every provider that reserves a machine Broods may have to tear down.
 const RELEASABLE_PROVIDERS: readonly SandboxProvider[] =
   SANDBOX_PROVIDERS.filter(
     (provider): boolean => !STATELESS_SANDBOX_PROVIDERS.has(provider),
   );
 
-/**
- * Release the reservations the sweeper found expired. The row goes first, as a
- * compare-and-swap on the id and deadline the sweeper read: a run that reconnected
- * since the listing refreshed the deadline, and tearing the machine down under that
- * run would lose its sandbox. Only once the row is taken is the machine torn down,
- * by the id the sweeper holds. A failed teardown hands the row back, so the
- * sweeper's deferral spaces the retry out instead of the orphan listing offering
- * the same machine every pass.
- */
+// Takes the row first, a CAS on the listed id and deadline: a run that reconnected since then
+// refreshed the deadline and keeps its machine. A failed teardown hands the row back.
 export async function releaseExpiredSandboxes(
   accountId: string,
   reservations: ReservedSandbox[],
@@ -82,8 +67,6 @@ export async function releaseExpiredSandboxes(
       reservation.externalId,
     );
     if (!done) {
-      // The claim refuses if a run mapped the key meanwhile, which is right:
-      // that run's machine is not ours to defer.
       await claimSandboxInstance(
         reservation.provider,
         key,
@@ -100,11 +83,6 @@ export async function releaseExpiredSandboxes(
   return released;
 }
 
-/**
- * Clean delete of reserved sandboxes for the given workspace namespaces. The caller is
- * discarding the namespace, so a row no config could release is dropped with it.
- * Idempotent: a namespace with no reserved sandbox is a cheap no-op.
- */
 export async function releaseReservedSandboxes(
   accountId: string,
   namespaces: string[],
@@ -130,14 +108,8 @@ export async function releaseReservedSandboxes(
   return released;
 }
 
-/**
- * The configs to release through, limited to the account that owns the machine:
- * a release reads a 404 as "already gone", so credentials for another account
- * would drop a live machine's rows. A tenant-owned machine goes through the
- * config that reserved it; a platform-owned one through the platform's
- * credentials. With no instance row to say, only a MicroVM, which always runs
- * on the platform's, gets them.
- */
+// Only the owning account's credentials: a release reads 404 as "already gone", so another
+// account's would drop a live machine's rows.
 function releaseCandidates(
   provider: SandboxProvider,
   records: SandboxConfigRecord[],
@@ -170,12 +142,7 @@ function releaseCandidates(
     : configs;
 }
 
-/**
- * Tears down the machine `provider` reserved under `namespace`, through the
- * provider recorded on the reservation: switching provider or turning
- * `persistent` off leaves the machine where it was.
- * @returns whether the machine is gone; false when nothing was reserved
- */
+// Via the reservation's provider, which may differ from every config's now.
 async function releaseOnProvider(
   accountId: string,
   provider: SandboxProvider,
@@ -202,7 +169,6 @@ async function releaseOnProvider(
   }
   for (const config of releaseCandidates(provider, records, target.instance)) {
     try {
-      // The candidates come from a reserving provider, so every executor releases.
       const executor = providerExecutor(config);
       if (!executor.release) continue;
       await executor.release({
@@ -223,7 +189,6 @@ async function releaseOnProvider(
   return false;
 }
 
-/** Every sandbox config of the account; a failed list leaves only the platform's credentials. */
 async function sandboxConfigs(
   accountId: string,
 ): Promise<SandboxConfigRecord[]> {

@@ -1,8 +1,3 @@
-/**
- * The Workers scan that places hosted MCP bundles: a plain web module goes to
- * Cloudflare, anything that needs Node or code generation goes to Lambda.
- */
-
 import { describe, expect, it } from "vitest";
 import { isWorkersSafeBundle } from "../model/isolateSafety";
 

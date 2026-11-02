@@ -1,9 +1,3 @@
-/**
- * AuditLedgerStore implementation. Appends one row through
- * internal.audit.ledger.record; the chain hash and seq are computed in Convex
- * so core never holds the head. Errors are logged and never reach the run.
- */
-
 import { logError } from "../log.ts";
 import type { Storage } from "../storage.ts";
 import { adminMutation, internal } from "./client.ts";
@@ -11,7 +5,7 @@ import { adminMutation, internal } from "./client.ts";
 export const auditLedger: Storage["auditLedger"] = {
   append: async function (input): Promise<void> {
     try {
-      // Denials and finished runs update the same account audit head.
+      // Queued, not skipQueue: denials and finished runs advance the same account audit head.
       await adminMutation(internal.audit.ledger.record, {
         accountId: input.accountId,
         traceId: input.traceId,

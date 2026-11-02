@@ -17,13 +17,8 @@ const ANSWER = "TEAL";
 // model call and the parent turn its result starts.
 const TIMEOUT_WAKE_MS = 150_000;
 
-/**
- * message-agents both ways: a persistent child waiting on "parent" ends its
- * turn, its message lands on its result row as awaiting_input and reaches the
- * parent once through the same hand-back as a result, and the parent's reply
- * to the child's address resumes it on its stored conversation, so its next
- * turn answers from it.
- */
+// message-agents both ways: a child waiting on "parent" ends its turn, its message reaches the
+// parent once as awaiting_input, and the parent's reply resumes the child's stored conversation.
 export async function subagentMessageAgents(
   context: VerifyContext,
 ): Promise<void> {

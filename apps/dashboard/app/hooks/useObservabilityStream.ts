@@ -1,12 +1,5 @@
 "use client";
 
-/**
- * Streams live logs or traces from the gateway observability WS, merging backfill
- * (spliced first) with live entries (appended): the NATS relay, or the gateway's
- * Loki poll when tailing one sandbox. The list is never cleared into a spinner
- * on reconnect. Protocol: ../observability-contracts.ts.
- */
-
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import {
   useCallback,
@@ -42,11 +35,6 @@ export type ObservabilityStreamStatus =
   | "live"
   | "error";
 
-/**
- * Where the durable backfill (Loki or Tempo) stands for this connection. The
- * live relay keeps flowing whatever this says; it decides only what an empty
- * list means. "none" = no backfill was asked for.
- */
 export type ObservabilityHistoryStatus =
   | "none"
   | "loading"
@@ -54,22 +42,12 @@ export type ObservabilityHistoryStatus =
   | "failed";
 
 interface UseObservabilityStreamOptions {
-  /** Which realtime stream to subscribe to. */
   stream: "logs" | "traces";
-  /** Project slug, used in the WS path. Required to open the socket. */
   projectSlug: string | undefined;
-  /** Stage slug, used in the WS path. Required to open the socket. */
   stageSlug: string | undefined;
-  /** Stage session ticket (`bdts_…`), sent as the `broods.token.` subprotocol. Required to open the socket. */
   apiKey: string | undefined;
-  /** Number of historic entries to request as backfill before live stream. 0 = live only. */
   backfill?: number;
-  /** Minimum log level for live NATS relay (applies to "logs" stream only). Default: INFO. */
   minLevel?: LogLevel;
-  /**
-   * Tail one sandbox instance's guest output instead of the deployment's logs
-   * ("logs" stream only). The last segment of the instance's `logStream`.
-   */
   sandboxId?: string;
 }
 
@@ -79,34 +57,19 @@ interface UseObservabilityStreamResult<T> {
   history: ObservabilityHistoryStatus;
   error: string | null;
   refresh: () => void;
-  /**
-   * Pull one trace by id from Tempo, for a trace older than the backfill
-   * window ("traces" stream only). Its spans merge into `entries`; a miss
-   * lands in `error`. Returns whether the request was sent. False
-   * when the socket is not live, so the caller does not record a request that
-   * never went out.
-   */
+  /** False when the socket is not live, so the caller records no request that never went out. */
   fetchTrace: (traceId: string) => boolean;
 }
 
-// How long Tempo keeps a trace: `tempo.retention` in the infra repo's
-// kubernetes/charts/releases/tempo.yaml. Older traces cannot be fetched.
+// Tempo's `tempo.retention` in the infra repo's tempo chart; older traces cannot be fetched.
 export const TRACE_RETENTION_DAYS = 30;
 const RECONNECT_DELAY_MS = 3_000;
-// Caps the accumulated list (keeping the most recent) so a long tail can't grow
-// unbounded and each merge stays bounded.
 const MAX_ENTRIES = 2_000;
 
-// Module-level cache keyed by the connection key (stream + scope). Switching
-// dashboard tabs unmounts the panel; on remount we seed from this cache so the
-// last entries paint instantly while the socket reconnects and refreshes in the
-// background, with no re-spinner and no wait on the slow durable backfill.
 const STREAM_CACHE = new Map<
   string,
   (ObservabilityLogEntry | ObservabilitySpanRow)[]
 >();
-// Bounds the cache across scopes. Without it every stream/stage/key combo
-// visited in a session pins up to MAX_ENTRIES rows for the page's lifetime.
 const STREAM_CACHE_MAX_KEYS = 8;
 
 export function useObservabilityStream(
@@ -128,9 +91,6 @@ export function useObservabilityStream(
     sandboxId,
   } = options;
 
-  // Cache key for this stream + scope + level; entries are seeded from / written
-  // back to STREAM_CACHE so remounts (tab switches) are instant, and a level
-  // change never keeps rows the new level excludes.
   const connKey = `${stream}|${projectSlug ?? ""}|${stageSlug ?? ""}|${apiKey ?? ""}|${sandboxId ?? ""}|${minLevel ?? ""}`;
 
   const [entries, setEntries] = useState<
@@ -140,10 +100,6 @@ export function useObservabilityStream(
   const [history, setHistory] = useState<ObservabilityHistoryStatus>("none");
   const [error, setError] = useState<string | null>(null);
 
-  // Seed from cache when the connection target changes (e.g. switching
-  // stage) so one stage's entries never bleed into the next while still
-  // painting instantly if we've seen this scope before. React's render-time
-  // "adjust state when a prop changes" pattern, not an effect.
   const [prevConnKey, setPrevConnKey] = useState(connKey);
   if (connKey !== prevConnKey) {
     setPrevConnKey(connKey);
@@ -151,14 +107,10 @@ export function useObservabilityStream(
     setError(null);
   }
 
-  // Live entries received since the last frame, and that frame's request.
   const liveRef = useRef<(ObservabilityLogEntry | ObservabilitySpanRow)[]>([]);
   const frameRef = useRef<number | null>(null);
-  // The scope on screen, set at commit. The old scope's socket closes only in
-  // the passive effect cleanup, after paint, so until then its messages are
-  // dropped here, and what it queued is dropped at commit, before the next
-  // frame could fold it into the new scope's list. Also on unmount.
   const scopeRef = useRef(connKey);
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- socket rAF queue, cut before paint
   useLayoutEffect(() => {
     scopeRef.current = connKey;
 
@@ -169,7 +121,7 @@ export function useObservabilityStream(
     };
   }, [connKey]);
 
-  // Persist the latest list so the next mount with the same scope can seed from it.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- module-level STREAM_CACHE
   useEffect(() => {
     cacheEntries(connKey, entries);
   }, [connKey, entries]);
@@ -177,14 +129,9 @@ export function useObservabilityStream(
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const destroyedRef = useRef(false);
-  // Holds the latest `connect` so the reconnect timer can call it without
-  // `connect` referencing itself (which would capture a stale closure / trip the
-  // "used before declared" lint).
   const connectRef = useRef<() => void>(() => {});
 
   const coreEndpoint = resolveCoreEndpoint();
-  // Extract the ok-guarded fields so the connect deps below stay stable primitives
-  // (and statically checkable by the hooks lint).
   const wsBaseUrl = coreEndpoint.ok ? coreEndpoint.websocketBaseUrl : "";
   const coreErrorMessage = coreEndpoint.ok ? "" : coreEndpoint.message;
 
@@ -202,9 +149,7 @@ export function useObservabilityStream(
     if (s.readyState === WebSocket.OPEN) {
       s.close(1000, "cleanup");
     } else if (s.readyState === WebSocket.CONNECTING) {
-      // Closing mid-handshake makes the browser log "WebSocket is closed
-      // before the connection is established" and counts as a failed
-      // connection; let the handshake finish, then hang up cleanly.
+      // Closing mid-handshake logs a browser error and counts as a failed connection.
       s.onopen = () => s.close(1000, "superseded");
       s.onmessage = null;
       s.onerror = null;
@@ -230,7 +175,6 @@ export function useObservabilityStream(
       return;
     }
     if (!projectSlug || !stageSlug || !apiKey) {
-      // Not enough info yet. Stay idle; reconnects when props settle.
       setStatus("idle");
 
       return;
@@ -294,12 +238,8 @@ export function useObservabilityStream(
       }
 
       if (msg.type === "backfill") {
-        // A traces backfill arrives newest-first in pieces flagged `more`;
-        // the closing piece (no flag) settles history and names a failure
-        // instead of looking empty. Logs and fetchTrace answer in one piece.
         if (!msg.more) setHistory(msg.error ? "failed" : "loaded");
         if (msg.error) setError(msg.error);
-        // Live entries that came first are applied first, as they arrived.
         flushLive();
         setEntries((prev) => mergeBackfill(prev, msg.entries));
 
@@ -307,10 +247,7 @@ export function useObservabilityStream(
       }
 
       if (msg.type === "log" || msg.type === "span") {
-        // A burst arrives as one message per entry. Hold them until the next
-        // frame and fold them in at once, so the list is rebuilt once per
-        // frame instead of once per entry. A full frame's worth folds now:
-        // a hidden tab runs no frames, and the queue must not grow there.
+        // A hidden tab runs no frames, so a full queue folds now instead of growing.
         liveRef.current.push(msg.entry);
         if (liveRef.current.length >= MAX_ENTRIES) flushLive();
         else frameRef.current ??= requestAnimationFrame(flushLive);
@@ -335,14 +272,11 @@ export function useObservabilityStream(
       socketRef.current = null;
 
       if (event.code === 1000) {
-        // Normal close. Do not reconnect.
         setStatus("idle");
 
         return;
       }
 
-      // Unexpected close. Show the failure while waiting, then reconnect after
-      // a delay without clearing existing entries.
       setStatus("error");
       setError(
         (current) =>
@@ -368,16 +302,11 @@ export function useObservabilityStream(
     flushLive,
   ]);
 
-  // Keep the reconnect timer pointed at the latest connect.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- the observability WebSocket
   useEffect(() => {
     connectRef.current = connect;
-  }, [connect]);
-
-  // `connect` already changes whenever a connection parameter does; the other
-  // deps only satisfy the hooks lint. Connecting is the effect's purpose; the
-  // status setState it performs is external-system synchronization.
-  useEffect(() => {
     destroyedRef.current = false;
+    // oxlint-disable-next-line react/set-state-in-effect -- connect marks the socket connecting
     if (projectSlug && stageSlug && apiKey) connect();
 
     return () => {
@@ -415,9 +344,6 @@ export function useObservabilityStream(
   };
 }
 
-// Dedup key: spans use the stable traceId+spanId; logs have no wire id, so fall
-// back to ts + eventType + message. Also the React key for a row: an index key
-// remounts every row when a live entry is prepended.
 export function entryKey(
   entry: ObservabilityLogEntry | ObservabilitySpanRow,
 ): string {
@@ -428,9 +354,6 @@ export function entryKey(
   return `log:${entry.ts}:${entry.eventType}:${entry.message.slice(0, 80)}`;
 }
 
-// Fold one backfill piece into the list: dedup by key, keep the better copy of
-// a span seen twice, newest first, capped. The closing piece of a traces
-// backfill carries no rows and leaves the list untouched.
 export function mergeBackfill<
   T extends ObservabilityLogEntry | ObservabilitySpanRow,
 >(prev: T[], incoming: T[]): T[] {
@@ -450,13 +373,7 @@ export function mergeBackfill<
     : combined;
 }
 
-// Fold one frame's live entries into the list as applying them one by one in
-// arrival order would: a key already listed keeps its slot and the better
-// copy, a new key goes in ahead of every entry no newer than it (so of two at
-// the same time the later arrival leads), newest first. The cap applies once
-// at the end, so an entry the cap would have dropped mid-frame and that
-// re-arrives in the same frame keeps its slot. One key lookup per entry
-// instead of a scan of the list per entry.
+// Same list as applying the batch one entry at a time in arrival order, capped once at the end.
 export function mergeLive<
   T extends ObservabilityLogEntry | ObservabilitySpanRow,
 >(prev: T[], batch: T[]): T[] {
@@ -473,8 +390,6 @@ export function mergeLive<
     const queued = fresh.get(key);
     fresh.set(key, queued ? preferEntry(queued, entry) : entry);
   }
-  // A stable sort, so equal times keep this order: later arrivals first,
-  // then what was already listed. An in-order list comes back unchanged.
   const next = [...fresh.values()]
     .reverse()
     .concat(listed)
@@ -487,7 +402,6 @@ function cacheEntries(
   key: string,
   entries: (ObservabilityLogEntry | ObservabilitySpanRow)[],
 ): void {
-  // Re-insert so iteration order doubles as LRU order.
   STREAM_CACHE.delete(key);
   STREAM_CACHE.set(key, entries);
   while (STREAM_CACHE.size > STREAM_CACHE_MAX_KEYS) {
@@ -503,11 +417,7 @@ function entryTime(
   return "spanId" in entry ? entry.startTimeMs : entry.ts;
 }
 
-// The same span arrives more than once: as it progresses (running -> ok/error) and
-// from two sources (full-fidelity JetStream replay vs a Tempo backfill that
-// truncates large attributes). Keep the better copy so a reload never downgrades a
-// span: a terminal status beats "running", and among equals the richer payload
-// wins. Logs have no such progression, so the incoming copy wins.
+// A span re-arrives as it ends and from Tempo, which truncates attributes: keep the better copy.
 function preferEntry<T extends ObservabilityLogEntry | ObservabilitySpanRow>(
   existing: T,
   incoming: T,
@@ -520,8 +430,6 @@ function preferEntry<T extends ObservabilityLogEntry | ObservabilitySpanRow>(
   if (rank(b.status) !== rank(a.status)) {
     return rank(b.status) > rank(a.status) ? incoming : existing;
   }
-  // Payload chars without serializing: a string's length is free, and a live
-  // root span re-arrives with tens of KB of attributes several times a run.
   const size = (span: ObservabilitySpanRow): number =>
     Object.values(span.attributes ?? {}).reduce<number>(
       (total, value) => total + (typeof value === "string" ? value.length : 1),

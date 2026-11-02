@@ -9,9 +9,7 @@ export type StatusTone =
   | "running"
   | "ended";
 
-// The hue carries the meaning, so each tone needs both themes. The tokens hold
-// the 600 shade on the light card and the 400 shade on the dark, the only
-// shades that clear WCAG AA there.
+// Tokens, not palette: each holds the 600 shade on light and 400 on dark, the only ones at WCAG AA.
 export const STATUS_TONE_BG: Record<StatusTone, string> = {
   ok: "bg-success",
   warn: "bg-warning",
@@ -21,7 +19,6 @@ export const STATUS_TONE_BG: Record<StatusTone, string> = {
   ended: "bg-muted-foreground",
 };
 
-/** Socket state as a tone, shared by the log tail and the live terminal. */
 export const CONNECTION_TONE: Record<
   ObservabilityStreamStatus | "ended",
   StatusTone
@@ -33,15 +30,6 @@ export const CONNECTION_TONE: Record<
   error: "error",
 };
 
-/**
- * Status as a colored dot with no visible word. `label` is what hover and
- * screen readers get; pass the real state when several states share a tone
- * (suspending and terminating both run sky). Inline-block, so it keeps its size
- * straight in a table cell, not only inside a flex row. Relative, so the
- * absolute sr-only label stays inside the table's scroll box: with no
- * positioned ancestor, every row's label stretches the document, and View
- * trace's scrollIntoView then slides the whole page.
- */
 export function StatusDot({
   tone,
   label = tone,
@@ -51,6 +39,8 @@ export function StatusDot({
   label?: string;
   className?: string;
 }): React.JSX.Element {
+  // `relative` keeps the sr-only label in the table's scroll box; unpositioned, each row's
+  // label stretches the document and scrollIntoView slides the whole page.
   return (
     <span
       title={label}
@@ -65,7 +55,6 @@ export function StatusDot({
   );
 }
 
-/** The dot and its word side by side: the word stays foreground, the dot carries the color. */
 export function StatusWord({
   tone,
   children,

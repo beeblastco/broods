@@ -1,5 +1,3 @@
-/** Channel routing fixtures use credentials generated for this test process. */
-
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHmac } from "node:crypto";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
@@ -96,8 +94,7 @@ const WHATSAPP_AGENT = {
 const ORIGINAL_FETCH = globalThis.fetch;
 
 describe("account webhook ingress", () => {
-  // Admitted turns fire typing and reactions through the real adapters, so
-  // every test answers them locally instead of calling Meta, Zalo or Telegram.
+  // Admitted turns fire typing and reactions through the real adapters: answer them locally.
   beforeEach(() => {
     globalThis.fetch = Object.assign(
       async (): Promise<Response> => Response.json({ ok: true }),
@@ -240,8 +237,7 @@ describe("account webhook ingress", () => {
     expect(listings).toBe(2);
     expect(handled).toHaveLength(1);
 
-    // After the listing was cached, the secret rotated, then the deployment
-    // was revoked: neither runs a turn on what the cache still holds.
+    // Cached, then the secret rotated and the deployment was revoked: neither may run a turn.
     current = [
       {
         ...TEST_AGENT,
@@ -531,8 +527,7 @@ describe("account webhook ingress", () => {
   });
 
   it("routes a stage webhook URL to that stage even when a sibling shares credentials", async () => {
-    // Both stages hold the same bot secret, so both verify. The account scan
-    // sorts on agentId and would take `agent_aaa`; the URL must win instead.
+    // Both stages verify one secret; the account scan would pick `agent_aaa`, so the URL must win.
     const productionAgent = { ...ZALO_AGENT, agentId: "agent_aaa" };
     const stageAgent = { ...ZALO_AGENT, agentId: "agent_zzz" };
     const handledEvents: ChannelInboundEvent[] = [];
@@ -569,8 +564,7 @@ describe("account webhook ingress", () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
       agentLoader: async () => ZALO_AGENT,
-      // An endpointId from another account resolves empty upstream. Falling
-      // back here would hand that traffic to whoever the account scan picked.
+      // Another account's endpointId resolves empty; a fallback would hand it to the account scan.
       agentLister: async () => [ZALO_AGENT],
       stageAgentLister: async () => [],
     });
@@ -630,8 +624,7 @@ describe("account webhook ingress", () => {
     });
   });
 
-  // An omitted list still means "everywhere". An empty one is now the explicit
-  // deny-all a declared-nothing connection compiles to.
+  // An empty list is the deny-all a connection that declares no users compiles to.
   it("accepts a Zalo sender when allowedUserIds is omitted and denies when it is empty", async () => {
     const handledEvents: ChannelInboundEvent[] = [];
     for (const allowedUserIds of [undefined, []]) {
@@ -741,8 +734,6 @@ describe("account webhook ingress", () => {
   });
 
   it("hands each number of a shared Meta app to the agent that owns it", async () => {
-    // One Meta app, one app secret, two numbers: both agents verify the POST,
-    // and each must run only the messages sent to its own number.
     const firstAgent = { ...WHATSAPP_AGENT, agentId: "agent_aaa" };
     const secondAgent = {
       ...WHATSAPP_AGENT,
@@ -790,8 +781,6 @@ describe("account webhook ingress", () => {
   });
 
   it("hands each Page of a shared Meta app to the agent that owns it, once", async () => {
-    // One Meta app, one app secret, two Pages: both agents verify the POST and
-    // each learns its own Page from its token.
     stubPageLookup({ "fb-token-a": "page-a", "fb-token-b": "page-b" });
     const firstAgent = messengerAgent("agent_aaa", "fb-token-a");
     const secondAgent = messengerAgent("agent_bbb", "fb-token-b");
@@ -859,8 +848,7 @@ describe("account webhook ingress", () => {
   });
 
   it("still gives a delivery to one agent when two share a channel app", async () => {
-    // Zalo, like Slack, carries no per-entry owner, so both answering would
-    // mean two replies to one message. The lowest agentId takes it.
+    // Zalo carries no per-entry owner, so the lowest agentId takes it rather than both replying.
     const firstAgent = { ...ZALO_AGENT, agentId: "agent_aaa" };
     const secondAgent = { ...ZALO_AGENT, agentId: "agent_bbb" };
     const handledEvents: ChannelInboundEvent[] = [];
@@ -1053,8 +1041,7 @@ describe("account webhook ingress", () => {
   it("hands a Twilio message to the agent that owns the number texted", async () => {
     const originalBaseUrl = process.env.PUBLIC_BASE_URL;
     process.env.PUBLIC_BASE_URL = "https://gateway.broods.test";
-    // Two numbers on one Twilio account share its auth token, so both agents
-    // verify every delivery.
+    // Numbers on one Twilio account share its auth token, so both agents verify every delivery.
     const numberAgent = (agentId: string, phoneNumber: string) => ({
       ...TEST_AGENT,
       agentId: agentId,
@@ -1118,7 +1105,6 @@ describe("account webhook ingress", () => {
   });
 
   describe("a full run queue", () => {
-    // What the adapters sent the provider, by URL and body.
     let sent: string[];
 
     beforeEach(() => {
@@ -1180,8 +1166,7 @@ describe("account webhook ingress", () => {
       );
       await response.afterResponse?.catch(() => {});
 
-      // Meta sends the delivery again; the first message comes back a
-      // duplicate and the second is admitted then.
+      // Meta redelivers on a 503: the first message is then a duplicate, the second is admitted.
       expect(response.statusCode).toBe(503);
       expect(handled).toEqual([
         "acct:acct_test:agent:agent_test:whatsapp:wamid.1",
@@ -1231,8 +1216,7 @@ describe("account webhook ingress", () => {
   });
 });
 
-// Twilio's scheme: the URL, then every field name and value in name order,
-// HMAC-SHA1 with the auth token, base64.
+// Twilio: base64 HMAC-SHA1 over the URL plus each field name and value in name order.
 function twilioSignature(url: string, form: URLSearchParams): string {
   return createHmac("sha1", "twilio-auth-token")
     .update(
@@ -1283,8 +1267,7 @@ function createIncomingEventRouter(
     const waitUntilPromises: Promise<unknown>[] = [];
     const router = createCoreIncomingEventRouter({
       deploymentLoader: async () => null,
-      // These accounts configure no channel records; without a loader the
-      // default reaches the real storage boundary, which these stubs omit.
+      // The default loader reaches the real storage boundary, which these stubs omit.
       channelRecordLoader: async () => null,
       ...options,
       waitUntil: (promise) => {
@@ -1338,8 +1321,6 @@ function createPancakeEvent(): ReturnType<typeof coreRequest> {
   );
 }
 
-// One signed Meta delivery, one entry per message. By default two customers
-// writing to `phone-1`.
 function createWhatsAppBatchEvent(
   messages: { phoneNumberId: string; from: string; id: string }[] = [
     { phoneNumberId: "phone-1", from: "15551111111", id: "wamid.1" },
@@ -1385,7 +1366,6 @@ function createWhatsAppBatchEvent(
   );
 }
 
-// One signed Messenger delivery, one entry per message, all under one app.
 function createMessengerEvent(
   messages: { pageId: string; psid: string; mid: string }[],
 ): ReturnType<typeof coreRequest> {

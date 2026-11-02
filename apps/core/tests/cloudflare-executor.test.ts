@@ -1,13 +1,9 @@
-/**
- * The cloudflare executor against a mocked bridge Worker: what it sends, when
- * it reserves, reuses and destroys a Container, and which instance rows it
- * mirrors for metering. The bridge itself needs workerd and Docker, so it is
- * not run here.
- */
+// The bridge Worker is mocked: running it needs workerd and Docker.
 
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { drainInFlight } from "../src/shared/in-flight.ts";
 import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
+import { resetHeldReservationsForTests } from "../src/harness/sandbox/platform-worker.ts";
 import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
 import {
   CloudflareSandboxExecutor,
@@ -15,7 +11,6 @@ import {
 } from "../src/harness/sandbox/cloudflare-executor.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 
-// A successful bridge exec answer, in the shared exec contract's shape.
 const EXEC_OK = {
   ok: true,
   exit_code: 0,
@@ -57,6 +52,7 @@ let stored: string | null = null;
 let claimWins = true;
 
 beforeEach((): void => {
+  resetHeldReservationsForTests();
   process.env.CLOUDFLARE_SANDBOX_URL = "https://bridge.example.com/";
   process.env.CLOUDFLARE_SANDBOX_API_KEY = "bridge-key";
   stored = null;
@@ -86,21 +82,14 @@ beforeEach((): void => {
     instanceStore,
     "getSandboxExternalId",
   ).mockImplementation(async (): Promise<string | null> => stored);
-  const claimSpy = spyOn(
+  const reserveSpy = spyOn(
     instanceStore,
-    "claimSandboxInstance",
-  ).mockImplementation(
-    async (_provider, _key, externalId): Promise<boolean> => {
-      if (claimWins) stored = externalId;
-      else stored = "winner-id";
+    "reserveSandboxInstance",
+  ).mockImplementation(async (_provider, _key, externalId): Promise<string> => {
+    stored ??= claimWins ? externalId : "winner-id";
 
-      return claimWins;
-    },
-  );
-  const saveSpy = spyOn(
-    instanceStore,
-    "saveSandboxInstance",
-  ).mockImplementation(async (): Promise<void> => {});
+    return stored;
+  });
   const upsertSpy = spyOn(
     sandboxInstances,
     "upsertSandboxInstance",
@@ -118,8 +107,7 @@ beforeEach((): void => {
   restores.push(
     (): void => fetchSpy.mockRestore(),
     (): void => getSpy.mockRestore(),
-    (): void => claimSpy.mockRestore(),
-    (): void => saveSpy.mockRestore(),
+    (): void => reserveSpy.mockRestore(),
     (): void => upsertSpy.mockRestore(),
     (): void => removeSpy.mockRestore(),
   );
@@ -270,7 +258,6 @@ it("refuses a plain-HTTP bridge outside loopback, since every call carries the k
   expect(cloudflareConnection().baseURL).toBe("http://127.0.0.1:8795");
 });
 
-// Lets the queued mirror writes, which run off the command's path, settle.
 async function settled(): Promise<void> {
   await new Promise((resolve): void => {
     setTimeout(resolve, 0);

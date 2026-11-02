@@ -1,8 +1,3 @@
-/**
- * Skills CRUD (`/v1/skills*`): list/create on the collection,
- * get/replace/delete by name. Storage lives behind the aws.skills actions.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
@@ -16,7 +11,6 @@ import {
   writeAudit,
 } from "./shared";
 
-/** Mirrors core's former handleSkillRoute contract. */
 export async function handleSkillRoute(
   ctx: ActionCtx,
   req: Request,

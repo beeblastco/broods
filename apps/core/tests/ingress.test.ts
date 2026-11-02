@@ -65,7 +65,6 @@ function agentRecord(config: AgentConfig): AgentRecord {
   };
 }
 
-// What a /compact that folded `messageCount` messages in one summary call reports.
 function compaction(messageCount: number): CompactionResult {
   return {
     messageCount: messageCount,
@@ -150,8 +149,7 @@ describe("ingress admission payloads", () => {
       channel: { channelName: "telegram", channelRecordId: "rec_1" },
     });
     expect(call).not.toHaveProperty("agentConfig");
-    // The sender rides on the envelope so a queued turn is policed as its own
-    // author, not as whoever owned the run when it was queued.
+    // A queued turn is policed as its own sender, not whoever owned the run when it queued.
     expect(call?.delivery).toEqual(
       expect.objectContaining({
         identity: { userId: "U2", userRoles: ["dev"] },
@@ -183,11 +181,8 @@ describe("ingress admission payloads", () => {
     expect(first!.ephemeralSystem).toEqual([
       { role: "system", content: "one-turn override" },
     ]);
-    // Different model/system overrides must never collapse into the same
-    // idempotent payload identity.
     expect(first!.payloadDigest).not.toBe(second!.payloadDigest);
     expect(second!.payloadDigest).not.toBe(third!.payloadDigest);
-    // Queue byte accounting includes the persisted execution context.
     expect(first!.sizeBytes as number).toBeGreaterThan(
       third!.sizeBytes as number,
     );
@@ -328,7 +323,7 @@ describe("step boundary", (): void => {
     });
   });
 
-  it("saves all with an append only once no turn row waits for a boundary", async (): Promise<void> => {
+  it("saves a resume's message under its result's key, and keeps the key out of the message", async (): Promise<void> => {
     const calls: [string, Record<string, unknown>][] = [];
     runtime.mutate = (async (
       name: string,
@@ -350,19 +345,37 @@ describe("step boundary", (): void => {
       agentConfig: { skills: { enabled: false } },
       ownerGeneration: 1,
     });
-    await session.createTurnContext([], [{ role: "user", content: "resume" }]);
 
-    // A steer saved before the turn's own row must not store what was handed over.
-    await session.persistModelMessages([{ role: "user", content: "steer" }]);
-    await session.flushPendingStoredEvents();
-    await session.persistModelMessages([{ role: "user", content: "later" }]);
+    const turnContext = await session.createTurnContext(
+      [],
+      [
+        {
+          role: "user",
+          content: "the result",
+          dedupeKey: "async-tool:result-1:completed",
+        },
+      ],
+    );
+    await session.stepBoundary([]);
 
-    expect(
-      calls.map(([name, args]): [string, unknown] => [name, args.savesAll]),
-    ).toEqual([
-      ["appendFencedConversationEvent", undefined],
-      ["appendFencedConversationEvent", true],
-      ["appendFencedConversationEvent", true],
+    expect(turnContext.messages).toMatchObject([
+      { role: "user", content: "the result" },
+    ]);
+    expect(turnContext.messages[0]).not.toHaveProperty("dedupeKey");
+    expect(calls[0]?.[1]).toMatchObject({
+      events: [
+        {
+          dedupeKey: "async-tool:result-1:completed",
+          event: { message: { role: "user", content: "the result" } },
+        },
+      ],
+    });
+    expect(calls[0]?.[1]).not.toHaveProperty([
+      "events",
+      0,
+      "event",
+      "message",
+      "dedupeKey",
     ]);
   });
 
@@ -559,7 +572,6 @@ describe("step boundary", (): void => {
         },
       ],
     });
-    // The renewed boundary answered the owner check: no read.
     expect(reads).not.toHaveBeenCalled();
   });
 
@@ -878,7 +890,6 @@ describe("async turn that throws after it settles", (): void => {
     ).toEqual([]);
   });
 
-  /** An async event whose run ends with the final text "answer". */
   function completedEvent(): DirectInboundEvent {
     return {
       ...candidate(),
@@ -890,7 +901,6 @@ describe("async turn that throws after it settles", (): void => {
     };
   }
 
-  /** Stubs a turn that ends with the final text "answer"; returns the settle spy. */
   function stubCompletedTurn(
     writes: Array<{ name: string; status?: unknown }>,
   ): ReturnType<typeof spyOn<typeof ingress, "settleIngress">> {
@@ -904,10 +914,6 @@ describe("async turn that throws after it settles", (): void => {
     );
   }
 
-  /**
-   * Stubs one model turn that `end` finishes through the loop's reply
-   * callbacks, returning the questions it leaves open; returns the settle spy.
-   */
   function stubTurn(
     writes: Array<{ name: string; status?: unknown }>,
     end: (reply: AgentReplyHooks) => Promise<PendingQuestionSummary[]>,
@@ -972,7 +978,6 @@ describe("channel senders", (): void => {
 
   beforeEach((): void => {
     senders = [];
-    // The queued envelope's ref rebuilds its config from this row.
     setStorageForTests({
       agents: { getById: async (): Promise<AgentRecord> => agentRecord({}) },
     } as never);
@@ -1079,7 +1084,6 @@ describe("channel senders", (): void => {
       attachments: [{ type: "image", url: "https://files.test/a.png" }],
     });
 
-    // No admission and no ingestion: the first delivery already did both.
     expect(mutations).toEqual([]);
     expect(senders).toEqual([]);
   });
@@ -1127,7 +1131,6 @@ describe("channel senders", (): void => {
       compact.mockRestore();
     }
 
-    // Only alice's turn reached the history; the command never did.
     expect(senders).toEqual([{ userId: "U1", userRoles: ["admin"] }]);
     expect(compacted).toEqual(["keep the deploy"]);
     expect(replies.at(-1)).toBe("Context compacted. 4 message(s) summarized.");
@@ -1455,7 +1458,6 @@ describe("queued /compact on an async run", (): void => {
     await handler({ kind: "direct-api-async-worker", event: compactEvent() });
 
     expect(compact).toHaveBeenCalledWith("keep the deploy");
-    // The summary's spend lands on a usage row of its own, under the run.
     expect(usage).toHaveBeenCalledTimes(1);
     expect(usage.mock.calls[0]?.[0]).toMatchObject({
       status: "completed",
@@ -1477,7 +1479,6 @@ describe("queued /compact on an async run", (): void => {
         },
       },
     });
-    // The queue drains on behind it.
     expect(takeNext).toHaveBeenCalledTimes(1);
   });
 
@@ -1604,8 +1605,7 @@ describe("live owners at shutdown", (): void => {
     calls.length = 0;
 
     expect(await interruptLiveOwners("restarting")).toBe(2);
-    // The released lease is gone; the transferred one is interrupted at its
-    // new generation, never the one it moved on from.
+    // The transferred lease is interrupted at its new generation, never the one it moved on from.
     expect(calls).toEqual(
       expect.arrayContaining([
         [
@@ -1805,51 +1805,48 @@ describe("session messages", (): void => {
     expect(prepared.publicConversationKey).toBe("tg:target-chat");
   });
 
-  // The record a session ran through is gone, or now binds another agent.
-  for (const [name, refs, record] of [
-    [
-      "a cross-agent session whose record is gone",
-      { credentialAgentId: "agent_holder", channelRecordId: "rec_1" },
-      null,
-    ],
-    [
-      "a session whose pinned record is gone",
-      { channelRecordId: "rec_1" },
-      null,
-    ],
-    [
-      "a session whose record now binds another agent",
-      { channelRecordId: "rec_1" },
-      channelRecord("agent_other"),
-    ],
-  ] as const) {
-    it(`refuses ${name}`, async (): Promise<void> => {
-      runtime.query = (async (): Promise<ConversationDispatchTarget> => ({
-        channelName: "telegram",
-        source: { chatId: "target-chat" },
-        ...refs,
-      })) as never;
-      setStorageForTests({
-        agents: {
-          getById: async (): Promise<AgentRecord> => agentRecord({}),
-        },
-        channelRecords: {
-          getById: async (): Promise<ChannelRecord | null> => record,
-        },
-      } as never);
+  it.each([
+    {
+      name: "a cross-agent session whose record is gone",
+      refs: { credentialAgentId: "agent_holder", channelRecordId: "rec_1" },
+      record: null,
+    },
+    {
+      name: "a session whose pinned record is gone",
+      refs: { channelRecordId: "rec_1" },
+      record: null,
+    },
+    {
+      name: "a session whose record now binds another agent",
+      refs: { channelRecordId: "rec_1" },
+      record: channelRecord("agent_other"),
+    },
+  ])("refuses $name", async ({ refs, record }): Promise<void> => {
+    runtime.query = (async (): Promise<ConversationDispatchTarget> => ({
+      channelName: "telegram",
+      source: { chatId: "target-chat" },
+      ...refs,
+    })) as never;
+    setStorageForTests({
+      agents: {
+        getById: async (): Promise<AgentRecord> => agentRecord({}),
+      },
+      channelRecords: {
+        getById: async (): Promise<ChannelRecord | null> => record,
+      },
+    } as never);
 
-      const refusal = await prepareSessionMessage({
-        accountId: "acct_test",
-        agentId: "agent_test",
-        sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
-        input: { conversationKey: "tg:target-chat", message: "hi" },
-      }).catch((err: unknown): unknown => err);
+    const refusal = await prepareSessionMessage({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
+      input: { conversationKey: "tg:target-chat", message: "hi" },
+    }).catch((err: unknown): unknown => err);
 
-      expect(refusal).toEqual(
-        new Error("Channel session is no longer bound to this agent"),
-      );
-    });
-  }
+    expect(refusal).toEqual(
+      new Error("Channel session is no longer bound to this agent"),
+    );
+  });
 
   it("rejects the current conversation and another agent's conversation", async (): Promise<void> => {
     const options = {
@@ -1877,8 +1874,7 @@ describe("session messages", (): void => {
   });
 
   it("refuses a chat that has never messaged the bot, naming the key format and this conversation's key", async (): Promise<void> => {
-    // No coordinator row means no stored channel target, which is every group
-    // the bot was added to but that has not spoken yet.
+    // No coordinator row means no stored channel target: a group the bot joined that never spoke.
     runtime.query = async function <T>(): Promise<T> {
       return null as T;
     };

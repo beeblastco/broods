@@ -13,19 +13,12 @@ import {
 } from "@xyflow/react";
 import { useImperativeHandle, type Ref } from "react";
 
-/** What the canvas calls into: its connect-end prop, and a clear for the next click or drag. */
 export type CanvasRefusalHandle = {
   clear: () => void;
   onConnectEnd: OnConnectEnd;
 };
 
-/**
- * Why the canvas refuses the connection being drawn: a notice in the canvas's
- * notice strip and a red outline on the card it is about. A child of
- * `<ReactFlow>` on purpose. It follows the line through the flow store, and
- * held in the canvas component that would re-render the whole canvas each time
- * the line crosses a card.
- */
+// Inside <ReactFlow>: held by the canvas, each card the line crosses would re-render it.
 export function CanvasRefusal({
   getGraph,
   ref,
@@ -64,7 +57,6 @@ export function CanvasRefusal({
   );
 }
 
-/** A red box over the refused card or group, in flow coordinates so it pans and zooms. */
 export function RefusedOutline({
   nodeId,
 }: {

@@ -1,7 +1,4 @@
-/**
- * Type contracts inherited from Convex and core domain/runtime modules.
- * Keep this file type-only so the public SDK does not bundle backend code.
- */
+// Type-only on purpose: a value import here would bundle backend code into the public SDK.
 
 import type {
   AgentConfig,
@@ -48,8 +45,6 @@ import type {
 import type { PolicyDocument } from "../../../apps/core/src/shared/domain/policy.ts";
 import type { ChannelReplyIn } from "../../../apps/core/src/shared/domain/channel-record.ts";
 
-// Per-channel inbound `source` shapes, inherited from the channel adapters so
-// the SDK hook typings cannot drift from what core actually emits.
 export type { TelegramSource } from "../../../apps/core/src/shared/telegram-channel.ts";
 export type { GoogleChatSource } from "../../../apps/core/src/shared/gchat-channel.ts";
 export type { GitHubSource } from "../../../apps/core/src/shared/github-channel.ts";
@@ -108,10 +103,7 @@ export type {
   WorkspaceIsolation,
 };
 
-// The sandbox exec contract. `SandboxProvider` is every `config.provider` a
-// sandbox accepts; the exec pair is what a `custom` provider's server speaks:
-// `POST <endpoint>/exec` takes a `SandboxExecRequest` and answers a
-// `SandboxExecResponse`.
+// A `custom` sandbox provider's server answers `POST <endpoint>/exec` with this pair.
 export type { SandboxExecRequest, SandboxExecResponse, SandboxProvider };
 
 export type ProjectDoc = Doc<"projects">;
@@ -121,8 +113,6 @@ export type WorkspaceConfigDoc = Doc<"workspaceConfigs">;
 export type SandboxConfigDoc = Doc<"sandboxConfigs">;
 export type CronDoc = Doc<"crons">;
 
-// Manifest wire types come from the backend's canonical leaf module so the
-// CLI/SDK can't silently drift from the server contract.
 export type {
   CliManifest,
   CliManifestResource,

@@ -1,7 +1,3 @@
-/**
- * Public org (workspace) queries and mutations. Each authenticated user can
- * own multiple orgs; membership is tracked in the `orgMembers` join table.
- */
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
@@ -34,7 +30,6 @@ const orgRoleValidator = v.union(
   v.literal("member"),
 );
 
-/** What `getOrCreateActiveOrg` answers: the active org and whether it still needs an API account. */
 export const orgBootstrapValidator = v.object({
   orgId: v.id("orgs"),
   needsProvision: v.boolean(),
@@ -48,12 +43,6 @@ export interface ActiveAccount {
   user: Doc<"users">;
 }
 
-/**
- * Creates an org owned by the caller, inserts an owner membership row, and sets
- * it as the caller's active org (defense in depth, so create alone activates it
- * without relying on the UI calling setActive). The matching backend `accounts`
- * row is provisioned by `org/lifecycle:provision`.
- */
 export const create = mutation({
   args: {
     name: v.string(),
@@ -62,7 +51,6 @@ export const create = mutation({
   handler: async (ctx, args): Promise<Id<"orgs">> => {
     const { name } = args;
 
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -80,15 +68,10 @@ export const create = mutation({
   },
 });
 
-/**
- * Returns the caller's active org (chosen, else the oldest membership), or null
- * when they have not yet created or joined one.
- */
 export const getActive = query({
   args: {},
   returns: v.union(orgDoc, v.null()),
   handler: async (ctx): Promise<Doc<"orgs"> | null> => {
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       return null;
@@ -108,11 +91,7 @@ export const getActive = query({
   },
 });
 
-/**
- * The active org's broods account id, status and the caller's role, or null
- * when the user has no active org or it is not provisioned. The role only
- * drives what the dashboard shows; every mutation checks it again.
- */
+// The role only shapes what the dashboard shows; every mutation checks it again.
 export const getActiveAccount = query({
   args: {
     requiredRole: v.optional(orgRoleValidator),
@@ -144,7 +123,6 @@ export const getActiveAccount = query({
   },
 });
 
-/** The user id behind an auth id, for actions that record who acted. */
 export const userIdByAuthId = internalQuery({
   args: { authId: v.string() },
   returns: v.union(v.id("users"), v.null()),
@@ -155,12 +133,10 @@ export const userIdByAuthId = internalQuery({
   },
 });
 
-/** One org by id when the caller holds `keys:write` for it, so may mint or rotate its account key; null otherwise. */
 export const getByIdForKeyWriter = internalQuery({
   args: { orgId: v.id("orgs") },
   returns: v.union(orgDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"orgs"> | null> => {
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       return null;
@@ -177,16 +153,10 @@ export const getByIdForKeyWriter = internalQuery({
   },
 });
 
-/**
- * Gets or creates the caller's active org and says whether its API account
- * still needs `org/lifecycle:provision`. `broods login` bootstraps through it
- * before minting a code; the dashboard home does the same in `project.openHome`.
- */
 export const getOrCreate = mutation({
   args: {},
   returns: orgBootstrapValidator,
   handler: async (ctx): Promise<OrgBootstrap> => {
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -196,12 +166,10 @@ export const getOrCreate = mutation({
   },
 });
 
-/** Lists every org the caller is a member of. */
 export const list = query({
   args: {},
   returns: v.array(orgDoc),
   handler: async (ctx): Promise<Doc<"orgs">[]> => {
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       return [];
@@ -228,17 +196,12 @@ export const list = query({
   },
 });
 
-/**
- * Removes an org, its memberships, and its backend `accounts` row plus
- * everything that cascades from it. Owner only.
- */
 export const remove = mutation({
   args: { orgId: v.id("orgs") },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const { orgId } = args;
 
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -254,24 +217,18 @@ export const remove = mutation({
 
     await requireOrgMember(ctx, orgId, user._id, "owner");
 
-    // Full cascade: projects (+ stages/keys/files), account, memberships.
     await purgeOrg(ctx, orgId);
 
     return null;
   },
 });
 
-/**
- * Sets the caller's active org. The user must be a member; the choice is
- * persisted on the users row so future sessions remember it.
- */
 export const setActive = mutation({
   args: { orgId: v.id("orgs") },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const { orgId } = args;
 
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -293,7 +250,7 @@ export const setActive = mutation({
   },
 });
 
-/** Renames an org. Owner/admin only. The plan comes from Stripe, never from here. */
+// The plan comes from Stripe, never from here.
 export const update = mutation({
   args: {
     orgId: v.id("orgs"),
@@ -303,7 +260,6 @@ export const update = mutation({
   handler: async (ctx, args): Promise<null> => {
     const { orgId, name } = args;
 
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -325,15 +281,6 @@ export const update = mutation({
   },
 });
 
-/**
- * Resolves the broods `accounts` doc for the caller's active org, or null when
- * the user is unauthenticated, has no active org, or it has not been
- * provisioned yet. Shared by the account-scoped public queries so the
- * auth -> user -> org -> account chain lives in one place.
- * @param ctx query/mutation context.
- * @param requiredRole minimum org role; omitted means any membership.
- * @returns the account document, or null when none resolves or the role is short.
- */
 export async function getActiveAccountForUser(
   ctx: QueryCtx,
   requiredRole?: OrgRole,
@@ -343,7 +290,6 @@ export async function getActiveAccountForUser(
   return active ? active.account : null;
 }
 
-/** The caller's account, role and user row together; null when none resolves or the role is short. */
 export async function getActiveCaller(
   ctx: QueryCtx,
   requiredRole?: OrgRole,
@@ -356,11 +302,6 @@ export async function getActiveCaller(
   return active;
 }
 
-/**
- * The user's active org, created as "<name>'s Workspace" with an owner
- * membership on first sign-in, and whether its API account is still missing.
- * The one bootstrap behind `getOrCreate` and `project.openHome`.
- */
 export async function getOrCreateActiveOrg(
   ctx: MutationCtx,
   authId: string,
@@ -388,10 +329,6 @@ export async function getOrCreateActiveOrg(
   return { orgId: orgId, needsProvision: account === null };
 }
 
-/**
- * The account behind a user's active org plus the role they hold there. The
- * org owner is an owner even when their membership row says otherwise.
- */
 export async function resolveActiveAccount(
   ctx: QueryCtx,
   authId: string,
@@ -415,11 +352,6 @@ export async function resolveActiveAccount(
   return { account: account, role: role, user: user };
 }
 
-/**
- * Inserts an org the user owns, on their plan, with an owner membership, and
- * makes it their active org. Past their first, refused unless they are on
- * Pro (model/orgBilling.ts).
- */
 async function insertOwnedOrg(
   ctx: MutationCtx,
   user: Doc<"users">,

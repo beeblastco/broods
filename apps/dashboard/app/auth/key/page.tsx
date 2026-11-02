@@ -3,7 +3,6 @@ import { KeyForm } from "@/app/auth/key/KeyForm";
 import { parseReturnTo } from "@/app/lib/authConfig";
 import { selfHosted } from "@/app/lib/selfHostSession";
 
-/** The self-hosted sign-in: the admin key, nothing else. A 404 on a WorkOS deployment. */
 export default async function KeyPage({
   searchParams,
 }: {
@@ -12,8 +11,7 @@ export default async function KeyPage({
     returnTo?: string | string[];
   }>;
 }): Promise<React.JSX.Element> {
-  // Read the query first: it makes the page render per request, so the build
-  // cannot prerender the 404 when the signing key only exists at runtime.
+  // Await first: rendering per request keeps the build from baking in the runtime 404.
   const { error, returnTo } = await searchParams;
   if (!selfHosted) notFound();
 

@@ -1,10 +1,3 @@
-/**
- * The run span tracker: a model.step or tool.call keeps one span id from its
- * running row to its closed row, orphans close with the run's status, a noop
- * tracer still yields ids, phases are best-effort, and retries land on the
- * tool that waited.
- */
-
 import { afterEach, beforeEach, expect, it } from "bun:test";
 import {
   context as otelContextApi,
@@ -27,7 +20,6 @@ const TRACE_ID = "6bd69e2b2e13d333ac4ce563174ee7be";
 const ROOT_SPAN_ID = "53995c3f42cd8ad8";
 const exporter = new InMemorySpanExporter();
 
-/** Rows the tracker published, with how many OTel spans had already finished when each went out. */
 type PublishedRow = { row: ObservabilitySpanRow; finishedSpans: number };
 
 beforeEach(() => {
@@ -42,7 +34,6 @@ beforeEach(() => {
 
 afterEach((): void => trace.disable());
 
-/** A tracker on the global tracer whose rows land in `published`. */
 function tracker(
   published: PublishedRow[],
   overrides: Partial<RunSpanIdentity> = {},

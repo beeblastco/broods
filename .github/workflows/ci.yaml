@@ -154,9 +154,10 @@ jobs:
         with:
           bun-version-file: .bun-version
 
-      # Every test under scripts/: the gate and the dependency watch.
-      - name: Test the scripts
-        run: bun test ./scripts/
+      # The gate and the dependency watch. No install here, so only the tests that
+      # need no package; the rest of scripts/ runs in `validate`.
+      - name: Test the audit gate
+        run: bun test ./scripts/audit-gate.test.ts ./scripts/dependency-watch.test.ts
 
       - name: Check dependency advisories
         run: bun run deps:audit
@@ -274,6 +275,45 @@ jobs:
           bun run local:up -- --perf
           bun run local:perf
 
+      - name: Cache Chromium
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: playwright-${{ runner.os }}-
+
+      - name: Cache the dashboard build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: apps/dashboard/.next/cache
+          key: dashboard-next-${{ hashFiles('bun.lock') }}-${{ github.sha }}
+          restore-keys: dashboard-next-${{ hashFiles('bun.lock') }}-
+
+      - name: Dashboard perf against the baseline
+        # A production build on the stack's fixed fixture, graded against
+        # apps/dashboard/e2e/perf/baseline.json: a blocking number over its
+        # allowance fails the job, a timing one only warns. The table is in
+        # the job summary; the run's numbers are uploaded for a re-baseline.
+        # The @rollout specs run here too: this stack has the PR's own Convex.
+        run: |
+          set -o pipefail
+          (cd apps/dashboard && bunx playwright install chromium)
+          url=$(bun run local:up -- --perf --dashboard | tee /dev/stderr | sed -n 's/.*E2E_BASE_URL=//p')
+          test -n "$url"
+          cd apps/dashboard
+          export E2E_ADMIN_KEY=$(bun ../../scripts/local-stack.ts status --key | tail -1) E2E_BASE_URL=$url
+          # Each run clears test-results, so perf runs last and its numbers survive for the upload.
+          bunx playwright test --project=app --grep @rollout
+          bunx playwright test --project=perf
+
+      - name: Upload dashboard perf numbers
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: dashboard-perf-${{ github.run_id }}
+          path: apps/dashboard/test-results/perf-baseline.json
+          if-no-files-found: ignore
+
       - name: Upload stack logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -388,10 +428,12 @@ jobs:
           cp -r .next/static .next/standalone/apps/dashboard/.next/static
           cp -r public .next/standalone/apps/dashboard/public
           # @rollout tests need Convex functions this build calls that the dev
-          # backend only has after the merge; @post-rollout tests time the
-          # shared dev backend or a CSS transition and flaked here.
-          # e2e-dashboard.yaml runs both after the rollout.
-          bunx playwright test --project=app --project=perf --grep-invert "@rollout|@post-rollout"
+          # backend only has after the merge, and the perf project is graded
+          # against its baseline on the stack: local-stack runs both.
+          # @post-rollout tests time the shared dev backend or a CSS
+          # transition and flaked here. e2e-dashboard.yaml runs all of them
+          # after the rollout.
+          bunx playwright test --project=app --grep-invert "@rollout|@post-rollout"
 
       - name: Upload traces of a failed signed-in run
         if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}

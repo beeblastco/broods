@@ -1,11 +1,3 @@
-/**
- * Cloudflare R2 temporary credentials, signed locally from a parent R2 token
- * the way Cloudflare documents it (r2/api/s3/temporary-credentials): an HS256
- * JWT keyed by the parent secret becomes the session token. No Cloudflare API
- * call. Web Crypto only, so it runs in the default Convex runtime. The parent
- * secret never leaves Convex; only the scoped result does.
- */
-
 import { sha256Hex } from "./accountSecrets";
 import { bytesToBase64Url } from "./stageSessionTicket";
 import { r2AccountId } from "./workspaceRules";
@@ -18,16 +10,11 @@ export interface R2Credentials {
   accessKeyId: string;
   secretAccessKey: string;
   sessionToken: string;
-  /** RFC3339 expiry. */
   expiration: string;
 }
 
-/**
- * Mint one-hour read/write credentials for `bucket`, limited to keys under
- * `prefix`. Used by `workspace.configs.r2Credentials` once it has checked
- * ownership and resolved the parent keys.
- * @throws when the endpoint is not an R2 endpoint or the prefix is not a folder
- */
+// Signed locally as Cloudflare documents (r2/api/s3/temporary-credentials): an HS256 JWT
+// keyed by the parent secret is the session token. Web Crypto only, for the Convex runtime.
 export async function createR2Credentials(params: {
   endpoint: string;
   bucket: string;

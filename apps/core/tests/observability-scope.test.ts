@@ -1,11 +1,3 @@
-/**
- * The self-hosted container serves many tenants concurrently in one process, so
- * the per-request observability context (log-redaction secrets + NATS routing
- * tags) must not leak across concurrent requests. Verifies runWithObservabilityScope
- * gives each async scope a private cell while preserving the module-global
- * fallback used by the Lambda runtime.
- */
-
 import { afterEach, describe, expect, it } from "bun:test";
 import {
   getObservabilityContext,
@@ -39,8 +31,7 @@ describe("observability scope isolation", () => {
     const tenant = (id: string): Promise<void> =>
       runWithObservabilityScope(async () => {
         setObservabilityContext(ctx(id));
-        // Yield repeatedly so the two tenants interleave on the event loop; a
-        // module-global context would be overwritten by the other tenant here.
+        // Yield so the tenants interleave: a module-global context would be overwritten.
         for (let i = 0; i < 5; i += 1) await Promise.resolve();
         seen[id] = getObservabilityContext()?.accountId;
       });
@@ -70,7 +61,6 @@ describe("observability scope isolation", () => {
       setObservabilityContext(ctx("scoped"));
       expect(getObservabilityContext()?.accountId).toBe("scoped");
     });
-    // Outside the scope, the global is untouched by the inner set.
     expect(getObservabilityContext()?.accountId).toBe("global");
   });
 });

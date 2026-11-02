@@ -1,13 +1,6 @@
 "use client";
 
-/**
- * Everything the palette and the copilot can find, as one list of rows.
- *
- * All of it comes from queries the dashboard already subscribes to, so opening
- * the palette costs no round trip: Convex serves the cached documents and the
- * rows re-rank as they change.
- */
-import { NAV_ITEMS, navHref } from "@/app/lib/navigation";
+import { NAV_ITEMS, navHref, tabHref } from "@/app/lib/navigation";
 import type { SearchItem } from "@/app/lib/paletteSearch";
 import { useStage } from "@/app/hooks/useStage";
 import { api } from "@broods/convex/_generated/api";
@@ -16,6 +9,8 @@ import { useQuery } from "convex/react";
 import { usePathname } from "next/navigation";
 import { useMemo } from "react";
 
+// A null project subscribes to nothing: the shell passes null until the palette or dock is
+// first wanted, since most pages never read the index.
 export function useDashboardIndex(
   projectId: Id<"projects"> | null,
 ): readonly SearchItem[] {
@@ -23,13 +18,16 @@ export function useDashboardIndex(
   const { stageId, stageArgs } = useStage();
   const projectArgs = projectId ? { projectId: projectId } : "skip";
 
-  const canvas = useQuery(api.canvas.getByProject, stageArgs);
+  const canvas = useQuery(
+    api.canvas.getByProject,
+    projectId ? stageArgs : "skip",
+  );
   const crons = useQuery(api.agent.crons.listForProject, projectArgs);
   const envVars = useQuery(
     api.environmentVariables.list,
     projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
   );
-  const projects = useQuery(api.project.list, {});
+  const projects = useQuery(api.project.list, projectId ? {} : "skip");
   const stages = useQuery(api.stage.list, projectArgs);
 
   return useMemo(() => {
@@ -83,14 +81,17 @@ export function useDashboardIndex(
         id: `env:${envVar._id}`,
         keywords: ["environment", "variable", "secret"],
         target: {
-          href: navHref(projectId, "/settings", stageId),
+          href: tabHref(
+            `/${projectId}/settings`,
+            "variables",
+            stageId ? `stage=${stageId}` : "",
+          ),
           type: "navigate",
         },
         title: envVar.name,
       });
     }
 
-    // Switching stage keeps you on the page you are on; only the param moves.
     for (const stage of stages ?? []) {
       items.push({
         detail: stage.kind,

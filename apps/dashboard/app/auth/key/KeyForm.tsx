@@ -19,11 +19,6 @@ import {
 
 const WRONG_KEY = "That key does not match this stack.";
 
-/**
- * Admin key form for the self-hosted sign-in. A native POST to /auth/session,
- * which checks the key and answers with a full page load; a wrong key comes
- * back here with `rejected`.
- */
 export function KeyForm({
   rejected,
   returnTo,
