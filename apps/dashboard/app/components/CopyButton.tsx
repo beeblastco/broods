@@ -1,15 +1,10 @@
 "use client";
 
 import { Button } from "@/app/components/ui/button";
+import { useTimeoutFlag } from "@/app/hooks/useTimeoutFlag";
 import { cn } from "@/app/lib/utils";
 import { Check, Copy, X } from "lucide-react";
-import {
-  useEffect,
-  useRef,
-  useState,
-  type MouseEvent,
-  type ReactNode,
-} from "react";
+import { useRef, useState, type MouseEvent, type ReactNode } from "react";
 
 const COPIED_MS = 1500;
 
@@ -112,22 +107,16 @@ export function useCopied(value: string): {
   failed: boolean;
   copy: (event: MouseEvent<HTMLElement>) => void;
 } {
-  const [copiedValue, setCopiedValue] = useState<string | null>(null);
+  // A new object per copy, so a second copy of the same value restarts the timer.
+  const [copiedWrite, setCopiedWrite] = useState<{ value: string } | null>(
+    null,
+  );
+  const copied = useTimeoutFlag(copiedWrite, COPIED_MS);
   const [failedValue, setFailedValue] = useState<string | null>(null);
   const attempt = useRef(0);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- copied timer, write in flight
-  useEffect(
-    () => () => {
-      attempt.current += 1;
-      clearTimeout(timer.current);
-    },
-    [value],
-  );
 
   function copy(event: MouseEvent<HTMLElement>): void {
     const currentAttempt = ++attempt.current;
-    clearTimeout(timer.current);
     setFailedValue(null);
     if (
       !window.isSecureContext ||
@@ -137,7 +126,7 @@ export function useCopied(value: string): {
         !navigator.userActivation.isActive) ||
       !navigator.clipboard
     ) {
-      setCopiedValue(null);
+      setCopiedWrite(null);
       setFailedValue(value);
       return;
     }
@@ -145,20 +134,18 @@ export function useCopied(value: string): {
     void navigator.clipboard.writeText(value).then(
       () => {
         if (currentAttempt !== attempt.current) return;
-        setCopiedValue(value);
-        clearTimeout(timer.current);
-        timer.current = setTimeout(() => setCopiedValue(null), COPIED_MS);
+        setCopiedWrite({ value: value });
       },
       () => {
         if (currentAttempt !== attempt.current) return;
-        setCopiedValue(null);
+        setCopiedWrite(null);
         setFailedValue(value);
       },
     );
   }
 
   return {
-    copied: copiedValue === value,
+    copied: copied?.value === value,
     failed: failedValue === value,
     copy: copy,
   };
