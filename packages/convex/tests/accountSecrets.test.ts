@@ -1,5 +1,3 @@
-/** Account key helper parity tests for config HTTP account rotation. */
-
 import { describe, expect, it } from "vitest";
 import {
   createAccountSecret,

@@ -1,10 +1,3 @@
-/**
- * The provider half of a connection sign-in, run by the config plane:
- * `/v1/account/connections/{type}/start` builds the consent URL and the PUT
- * trades the code the browser brought back for tokens, verifying the ID token
- * before anything is stored. Plain fetch and Web Crypto, so it runs in Convex.
- */
-
 import {
   CHATGPT_AGENT_NAME,
   CHATGPT_DYNAMIC_CLIENT_ID,
@@ -17,27 +10,22 @@ import { ClientError } from "./clientError";
 
 const PROVIDER_TIMEOUT_MS = 10_000;
 
-/** The token endpoint's answer to a code exchange. */
 export interface IssuedTokens {
   accessToken: string;
   refreshToken: string;
   idToken: string;
   /** Epoch ms. */
   expiresAt: number;
-  /** Granted scopes; the requested ones when the provider omits them (RFC 6749 5.1). */
   scopes: string[];
 }
 
-/** The ID token claims a connection keeps. */
 export interface IdTokenClaims {
   email?: string;
 }
 
-/** The OAuth client a sign-in runs on, and the deployment's host id. */
 export interface SignInClient {
   clientId: string;
   hostId: string;
-  /** Who signed in last time, so the consent screen can preselect them. */
   email?: string;
 }
 
@@ -63,7 +51,6 @@ interface Jwk extends JsonWebKey {
   kid?: string;
 }
 
-/** The consent screen a `broods connect` browser opens. */
 export function authorizeUrl(
   type: ConnectionType,
   client: SignInClient,
@@ -90,7 +77,6 @@ export function authorizeUrl(
   return `${meta.authorizeUrl}?${query.toString()}`;
 }
 
-/** Trades the code at the type's token endpoint; both tokens and an ID token must come back. */
 export async function exchangeCode(
   type: ConnectionType,
   client: SignInClient,
@@ -131,7 +117,6 @@ export async function exchangeCode(
   };
 }
 
-/** The model ids a sign-in may call, for types that list them; empty when the list fails. */
 export async function listModels(
   type: ConnectionType,
   accessToken: string,
@@ -156,11 +141,6 @@ export async function listModels(
   }
 }
 
-/**
- * Checks the ID token's RS256 signature against the provider's published
- * keys, then its issuer, audience, expiry and nonce, before anything is
- * stored.
- */
 export async function verifyIdToken(
   type: ConnectionType,
   idToken: string,
@@ -225,7 +205,6 @@ export async function verifyIdToken(
   return claims.email ? { email: claims.email } : {};
 }
 
-/** Base64url bytes, as JWT segments and signatures are encoded. */
 function base64UrlBytes(segment: string): Uint8Array<ArrayBuffer> {
   const base64 = segment.replace(/-/g, "+").replace(/_/g, "/");
   const binary = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="));
@@ -233,7 +212,6 @@ function base64UrlBytes(segment: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
-/** One JWT segment, parsed as JSON. */
 function decodeSegment<T>(segment: string): T {
   return JSON.parse(new TextDecoder().decode(base64UrlBytes(segment))) as T;
 }

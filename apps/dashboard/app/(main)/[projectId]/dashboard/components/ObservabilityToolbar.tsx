@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Shared by the Monitoring and Tracing panels, so a filter added here shows up
- * on both: the token search, the range presets, Refresh, and the volume strip
- * whose drag narrows the range to a custom window.
- */
 import { SearchInput } from "@/app/components/SearchInput";
 import { SegmentedControl } from "@/app/components/SegmentedControl";
 import { RefreshButton, Toolbar } from "@/app/components/Toolbar";
@@ -19,7 +14,6 @@ import {
 } from "@/app/lib/queryTokens";
 import { useMemo, useState } from "react";
 
-/** The one point per entry the strip needs. */
 export interface VolumePoint {
   ts: number;
   severity: "error" | "warn" | "none";
@@ -29,18 +23,13 @@ interface Props {
   search: string;
   onSearchChange: (value: string) => void;
   searchPlaceholder: string;
-  /** Field names the search box turns into chips. */
   searchFields: readonly string[];
   range: RangePreset;
   onRangeChange: (range: RangePreset) => void;
-  /** The drag-picked part of the range, or null for the whole range. */
   window: TimeWindow | null;
   onWindowChange: (window: TimeWindow | null) => void;
-  /** Every entry held, before filters; the strip draws their volume. */
   points: VolumePoint[];
-  /** A time the strip marks with a red line, such as the selected trace or log line. */
   marker?: number;
-  /** The strip's right edge; the panels pass the same clock their filters use. */
   now: number;
   onRefresh: () => void;
   refreshDisabled: boolean;
@@ -48,10 +37,6 @@ interface Props {
   isError: boolean;
 }
 
-/**
- * What an empty logs or traces table should say. "Waiting" alone hid a failed
- * or still-running history query behind the same text as a quiet stage.
- */
 export function emptyStreamMessage(
   history: ObservabilityHistoryStatus,
   error: string | null,
@@ -83,11 +68,8 @@ export function ObservabilityToolbar({
   refreshTitle,
   isError,
 }: Props): React.JSX.Element {
-  // The clock the strip ends at. It freezes while a selection is on the strip,
-  // so the selection does not slide off the left edge as time passes.
-  // The clock the strip was frozen at, bound to the window picked on it: a
-  // window the parent sets or clears (a trace link) thaws it on its own.
-  // Compared by value, since the parent rebuilds the window from the URL.
+  // Frozen while the window picked on the strip stands, so it does not slide off as time
+  // passes; compared by value, since the parent rebuilds the window from the URL.
   const [frozen, setFrozen] = useState<{
     window: TimeWindow;
     now: number;

@@ -1,11 +1,3 @@
-/**
- * The `custom` provider: a server the account runs that speaks the sandbox
- * exec contract (`SandboxExecRequest` in, `SandboxExecResponse` out) on
- * `POST <endpoint>/exec`, the same contract as the lambda-sandbox image.
- * Stateless by design: one run is one request, so there is no reservation,
- * workspace mount, lifecycle or background job here.
- */
-
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "@broods/convex/model/envRefs";
 import type { SandboxExecRequest } from "../../shared/domain/sandbox-config.ts";
 import {
@@ -31,7 +23,6 @@ import {
 
 const PROVIDER = "custom" as const;
 
-/** Test seams: the pinned fetch's injectable options and a shorter client grace. */
 export interface HttpSandboxExecutorSeams {
   transport?: PinnedFetchTransport;
   graceMs?: number;
@@ -59,8 +50,7 @@ export class HttpSandboxExecutor implements SandboxExecutor {
     assertPublicHttpsUrl(endpoint, "custom sandbox endpoint");
     const token = configString(options.token);
     const headers = stringRecord(options.headers);
-    // Refs resolve when the sandbox syncs from code. One left over would go out
-    // as the credential itself.
+    // A ref left over would go out as the credential itself.
     if (
       [token ?? "", ...Object.values(headers)].some((value): boolean =>
         ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(value),
@@ -83,9 +73,7 @@ export class HttpSandboxExecutor implements SandboxExecutor {
         request.principal,
       ),
     };
-    // The address is the boundary: `guardedFetch` refuses every private and
-    // metadata address the name resolves to and pins the socket to the one it
-    // validated. No redirects, so the token goes to the host named or nowhere.
+    // No redirects: the token reaches the public address guardedFetch pinned, or nowhere.
     const response = await guardedFetch(
       `${endpoint.replace(/\/+$/, "")}/exec`,
       {

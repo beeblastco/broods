@@ -1,10 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * Keyset pagination over the config-plane collections: a walk sees every row
- * exactly once, a write landing mid-walk cannot make it skip or repeat one,
- * and a cursor is only good for the collection that issued it.
- */
-
 import { convexTest } from "convex-test";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { Id } from "../_generated/dataModel";
@@ -52,8 +46,7 @@ test("a row inserted during a walk cannot repeat one already seen", async () => 
   const first = await listAgents(t, 2, null);
   expect(first.agents.map((agent) => agent.name)).toEqual(["b", "d"]);
 
-  // Sorts ahead of the page just read. Against an offset cursor the next page
-  // would start at index 2 of ["a", "b", "d", "f"] and hand back "d" twice.
+  // Sorts ahead of the page just read: an offset cursor would hand back "d" twice.
   await insertAgent(t, accountId, "a");
 
   const second = await listAgents(t, 2, first.nextCursor);
@@ -77,9 +70,8 @@ test("no limit still answers with the whole collection", async () => {
 
 test("a page boundary on a non-latin-1 name still issues a cursor", async () => {
   const t = pageTest();
-  // Sorts ascending, so limit=3 puts the boundary on the CJK name. `btoa`
-  // takes Latin-1 only, and Convex's cursor carries the index key it stopped
-  // at, so encoding this one used to throw and answer 500.
+  // limit=3 ends the page on the CJK name: `btoa` takes Latin-1 only, and Convex's
+  // cursor carries the index key it stopped at.
   await seed(t, [
     "a-agent",
     "b-agent",

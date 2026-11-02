@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * Workspace node for a standalone broods workspaceConfig record, referenced by
- * agent config `workspaces[].workspaceId`. Inside a frame it draws as a chip
- * whose status line is the workspace's effective-sandbox state; as a card its
- * status row says the same.
- */
 import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import {
@@ -40,8 +34,6 @@ export function WorkspaceNode({
 
     return (
       <ResourceChip
-        // Open, it reads as its card: the state line under the name, the run
-        // state in the status row, in the state's color.
         details={status.text}
         expanded={expanded}
         icon={<FolderOpen className="size-3.5" />}
@@ -66,8 +58,7 @@ export function WorkspaceNode({
       nodeType="workspace"
       data={nodeData}
       icon={<FolderOpen className="size-3.5" />}
-      // The state line already says mounted, inherited or read-only; the status
-      // row says only the run state, in the state's color.
+      // The state line already says mounted, inherited or read-only: show only the run state.
       liveStatus={{
         color: status.color,
         label: statusConfig[nodeData.status ?? "idle"].text,
@@ -77,10 +68,6 @@ export function WorkspaceNode({
   );
 }
 
-/**
- * The member status on one line: the sandbox it runs on in front of mounted or
- * inherited, then how many agents share it.
- */
 function workspaceChipStatus(
   state: WorkspaceSandboxState | undefined,
   sharedCount: number,

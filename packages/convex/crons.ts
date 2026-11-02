@@ -1,16 +1,11 @@
-/**
- * Scheduled jobs. Distinct from `agent/crons.ts` (per-account agent cron CRUD):
- * this is the Convex platform cron registry. Keep it small, only background
- * maintenance.
- */
+// Platform maintenance only; per-account agent crons live in `agent/crons.ts`.
 
 import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 
-// Expiry is advisory cleanup: admission and drain already check expiresAt
-// inline, so a lower cadence only delays how fast abandoned rows are pruned.
+// Advisory: admission and drain check expiresAt inline, so cadence only delays pruning.
 crons.interval(
   "maintain runtime ingress",
   { minutes: 5 },
@@ -23,9 +18,7 @@ crons.interval(
   internal.config.authFailures.pruneExpired,
   {},
 );
-// Rows past an account's retention go oldest first, never one its sink has
-// not exported, so the chain stays verifiable from the oldest kept row to the
-// head.
+// Oldest first, never a row its sink has not exported, so the chain stays verifiable.
 crons.interval(
   "prune expired audit events",
   { hours: 24 },
@@ -70,8 +63,7 @@ crons.interval(
   internal.usage.pruneExpiredTaskUsage,
   {},
 );
-// Sandbox writes bill their own running time; this catches the ones nothing
-// wrote to within the hour.
+// Sandbox writes bill their own running time; this catches those idle for the hour.
 crons.interval(
   "accrue sandbox usage",
   { hours: 1 },
@@ -90,16 +82,14 @@ crons.interval(
   internal.aws.storageMeter.snapshotAll,
   {},
 );
-// The write seams keep this projection live; the sweep self-heals any seam a
-// future writer forgets.
+// The write seams keep this live; the sweep heals any seam a future writer forgets.
 crons.interval(
   "reconcile channel endpoints",
   { hours: 1 },
   internal.channel.endpointReconcile.reconcile,
   {},
 );
-// models.dev changes rates a few times a week; an hour keeps the dashboard's
-// costs current without refetching its catalogue on every view.
+// models.dev changes rates a few times a week; hourly keeps dashboard costs current.
 crons.interval(
   "crawl model prices",
   { hours: 1 },

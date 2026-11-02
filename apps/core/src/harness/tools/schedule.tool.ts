@@ -1,9 +1,3 @@
-/**
- * Model-facing schedules: create, list, update, cancel. Every schedule belongs
- * to the calling agent and the conversation it was created from.
- * Cron rows and schedule lifecycle stay in the config plane (agent/crons).
- */
-
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import {
@@ -17,8 +11,6 @@ import { toolError, toolText } from "./utils.ts";
 const SCHEDULE_EXPRESSION_DESCRIPTION =
   "Schedule expression. cron(...) takes six fields — minute hour day-of-month month day-of-week year — with ? for whichever day field is unused: cron(0 9 * * ? *) is every day at 09:00, cron(30 8 ? * MON *) is Mondays at 08:30. rate(...) repeats on an interval: rate(2 hours). at(...) fires once at a future local time and then deletes itself: at(2027-01-01T09:00:00).";
 
-// The SDK validates every call against these before `execute` runs and hands a
-// failure back to the model to retry.
 const cronIdSchema = z.string().trim().min(1);
 const scheduleSchema = z
   .string()
@@ -71,11 +63,12 @@ const updateScheduleInput = z.strictObject({
     .optional(),
 });
 
+const listSchedulesInput = z.strictObject({});
+
 export interface ScheduleContext {
   accountId: string;
   agentId: string;
-  // Public conversation key of the session that owns the task. A channel
-  // conversation makes the scheduled run reply in that channel.
+  // Public key; a channel conversation makes the scheduled run reply in that channel.
   conversationKey: string;
 }
 
@@ -97,8 +90,7 @@ export function cancelScheduleTool(context: ScheduleContext): ToolSet {
         "Cancels one of your scheduled tasks for good, by the cronId that schedule or list_schedules reported. Its run history goes with it. A task that already fired once and deleted itself is simply gone.",
       inputSchema: cancelScheduleInput,
       execute: async function ({ cronId }): Promise<string> {
-        // A malformed id is a rejected argument in the config plane, not a
-        // miss, so treat any lookup failure as "no such task".
+        // The config plane rejects a malformed id rather than missing it.
         const existing = await getStorage()
           .crons.getById(context.accountId, cronId)
           .catch(() => null);
@@ -120,7 +112,7 @@ export function listSchedulesTool(context: ScheduleContext): ToolSet {
     list_schedules: tool({
       description:
         "Lists every scheduled task you own, including ones scheduled from other conversations and ones an account owner created for you. `conversationKey` tells you where each task answers.",
-      inputSchema: z.strictObject({}),
+      inputSchema: listSchedulesInput,
       execute: async function (): Promise<{ schedules: ScheduleSummary[] }> {
         const crons = await getStorage().crons.list(
           context.accountId,
@@ -183,8 +175,7 @@ export function updateScheduleTool(context: ScheduleContext): ToolSet {
             "Pass at least one of name, instructions, schedule, timezone or status to change",
           );
         }
-        // Same normalizer the config plane runs, so a rejected field fails here
-        // with a message the model can act on instead of a Convex error frame.
+        // The config plane's own check, so the model gets an actionable message.
         try {
           normalizeUpdateCronInput(patch);
         } catch (error) {
@@ -193,17 +184,14 @@ export function updateScheduleTool(context: ScheduleContext): ToolSet {
           );
         }
 
-        // The config plane only fences on account, so the agent fence is here:
-        // read the task first and refuse one that belongs to another agent.
+        // The config plane fences only on account; the agent fence is here.
         const existing = await getStorage()
           .crons.getById(context.accountId, cronId)
           .catch(() => null);
         if (!existing || existing.agentId !== context.agentId) {
           return toolError(`No scheduled task ${cronId} belongs to this agent`);
         }
-        // Retiming and pausing are safe from anywhere, but rewriting the
-        // instructions would drop model-chosen text into a conversation this
-        // turn is not in.
+        // New instructions would put model-chosen text in a conversation this turn is not in.
         if (
           input.instructions !== undefined &&
           existing.conversationKey !== context.conversationKey

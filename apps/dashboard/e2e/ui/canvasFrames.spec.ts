@@ -3,12 +3,10 @@ import { openGallery } from "../lib/gallery";
 
 type Box = { height: number; width: number; x: number; y: number };
 
-/** What sits on top at one point sampled along an edge's line. */
 type Hit = {
   at: DOMPoint;
   control: string | null | undefined;
   edge: string | null | undefined;
-  /** A card at the line's first or last sample, where the edge meets it. */
   end: boolean;
 };
 
@@ -16,32 +14,21 @@ type Point = { x: number; y: number };
 
 const AGENTS = ["support", "coder", "reviewer"];
 
-// Chips are measured against frames on screen; a pixel of slack covers the
-// sub-pixel rounding of the fitted zoom.
 const SLACK = 1;
 
-// How far an edge's end may sit from a box side: the handle straddles it.
 const HANDLE_SLACK = 8;
 
-// Two runs closer than this, in flow units, draw over each other.
 const OVERLAP_DISTANCE = 2;
 
-// Longest stretch, in flow units, two edges may share before it counts.
 const OVERLAP_LENGTH = 8;
 
-// How far outside its box a handle's edge end may sit, in flow units: React
-// Flow draws the handle straddling the border, plus rounding.
 const HANDLE_OFFSET = 6;
 
-// Distance between the points sampled along an edge path, in flow units.
 const PATH_STEP = 4;
 
-// NODE_WIDTH by NODE_HEIGHT and FRAME_CHIP_HEIGHT, the one size each box draws.
+// Mirror NODE_WIDTH/HEIGHT, FRAME_CHIP_HEIGHT and FRAME_HEADER_HEIGHT/GAP/PADDING.
 const CARD_SIZE = { height: 96, width: 176 };
 const CHIP_HEIGHT = 44;
-
-// FRAME_HEADER_HEIGHT, FRAME_GAP and FRAME_PADDING, the box a frame draws
-// around its rows.
 const FRAME_HEADER = 28;
 const FRAME_GAP = 8;
 const FRAME_PADDING = 8;
@@ -60,19 +47,15 @@ test("groups of one are cards, chips sit inside frames, a collapsed frame is one
     '[data-slot="canvas-frame"][data-collapsed="true"]',
   );
 
-  // Computers (2), the support agent's workspaces (2), shared workspaces (2).
   await expect(chips).toHaveCount(6);
   await expect(expanded).toHaveCount(3);
   await expect(collapsed).toHaveCount(1);
   await expect(collapsed).toContainText("github, linear");
-  // The lone cloud sandbox, hosted and machine servers stay cards.
   for (const id of ["internal-sandbox", "search", "blender"]) {
     const card = fixture.locator(`.react-flow__node[data-id="${id}"]`);
     await expect(card).toBeVisible();
     await expect(card.locator('[data-slot="resource-chip"]')).toHaveCount(0);
   }
-  // A card says "default" in words. The place used to print as a digit beside
-  // it, so the word alone proves nothing: assert the digit is gone too.
   const lone = fixture.locator('.react-flow__node[data-id="internal-sandbox"]');
   await expect(lone).toContainText("default");
   await expect(lone).not.toContainText(/\d\s*·\s*default/);
@@ -107,7 +90,6 @@ test("every card is one size, every group row another, whatever the card says", 
   await fixture.getByRole("button", { name: "Expand MCP · url" }).click();
   const zoom = await flowScale(fixture);
 
-  // Cards: agents, the lone sandbox, the ungrouped servers.
   const cards = await fixture.locator('[data-slot="card"]').all();
   expect(cards.length).toBeGreaterThan(4);
   for (const card of cards) {
@@ -118,7 +100,6 @@ test("every card is one size, every group row another, whatever the card says", 
     ).toEqual([CARD_SIZE.width, CARD_SIZE.height]);
   }
 
-  // Rows inside a group: a card's width, and one height for every kind.
   const chips = await fixture.locator('[data-slot="resource-chip"]').all();
   expect(chips.length).toBeGreaterThan(4);
   for (const chip of chips) {
@@ -129,12 +110,10 @@ test("every card is one size, every group row another, whatever the card says", 
     ).toEqual([CARD_SIZE.width, CHIP_HEIGHT]);
   }
 
-  // A collapsed group is a card, at a card's size.
   const frame = fixture.locator(
     '.react-flow__node[data-id="frame:support:workspace:s3"]',
   );
   await frame.getByRole("button", { name: "Collapse Workspaces" }).click();
-  // Polled: the frame box transitions to the card it collapses into.
   await expect
     .poll(async (): Promise<number[]> => {
       const box = await boxOf(frame);
@@ -160,7 +139,6 @@ test("clicking a chip opens it into a card and pushes the chips under it down", 
   const notes = chipOf("notes");
   const repos = chipOf("repos");
   const grown = CARD_SIZE.height - CHIP_HEIGHT;
-  // The second slot, measured from the frame's top: its header and one row.
   const secondSlot = async (): Promise<number[]> => {
     const [box, slot] = [await boxOf(frame), await boxOf(repos)];
 
@@ -183,7 +161,6 @@ test("clicking a chip opens it into a card and pushes the chips under it down", 
     .poll(secondSlot)
     .toEqual([CARD_SIZE.height, before[1] + grown, before[2] + grown]);
 
-  // Opening another closes it, and the frame goes back to the height it had.
   await repos.click();
   await expect(notes).toHaveAttribute("data-expanded", "false");
   await expect(repos).toHaveAttribute("data-expanded", "true");
@@ -227,7 +204,7 @@ test("mount, inherited and runs-on edges end on the two resources they join, wit
     const path = fixture.locator(
       `.react-flow__edge[data-id="${id}"] path.react-flow__edge-path`,
     );
-    // A path, not visibility: a mount between level handles is a flat line.
+    // Count, not visibility: a mount between level handles is a flat line.
     await expect(path, id).toHaveCount(1);
     const endpoints = await path.evaluate(
       (element: SVGPathElement): Point[] => {
@@ -267,7 +244,6 @@ test("mount, inherited and runs-on edges end on the two resources they join, wit
         ),
       ),
     );
-    // Each end sits on a side of one of the two boxes, one end per box.
     const boxAt = endpoints.map((point): number =>
       boxes.findIndex(
         (box): boolean =>
@@ -331,10 +307,8 @@ test("every agent edge leaves the agent's bottom, enters its target's top and cr
         const at = (distance: number): DOMPoint =>
           path.getPointAtLength(distance).matrixTransform(matrix);
         const found: string[] = [];
-        // A handle sits a few flow px outside its box, so the tolerance
-        // scales with the zoom: flow px times screen px per flow px.
+        // matrix.a is the zoom: screen px per flow px.
         const slack = options.handleOffset * matrix.a + 1;
-        // Within `slack` of the side's line, and between its two ends.
         const onSide = (point: DOMPoint, y: number, rect: DOMRect): boolean =>
           Math.abs(point.y - y) <= slack &&
           point.x >= rect.left &&
@@ -403,7 +377,6 @@ test("mount, inherited and runs-on edges cross no box but the ones holding their
       const length = path.getTotalLength();
       const at = (distance: number): DOMPoint =>
         path.getPointAtLength(distance).matrixTransform(matrix);
-      // The boxes holding either end: a chip's frame, or a card itself.
       const ends = [at(0), at(length)];
       const allowed = new Set(
         rects
@@ -459,7 +432,6 @@ test("edges of different agents or kinds never draw over each other", async ({
 }) => {
   await openGallery(page);
   const fixture = page.locator('[data-fixture="canvas-frames"]');
-  // Every frame open, so every lane is on screen.
   await fixture.getByRole("button", { name: "Expand MCP · url" }).click();
 
   const { checked, overlaps } = await fixture.evaluate(
@@ -523,7 +495,6 @@ test("edges of different agents or kinds never draw over each other", async ({
     { agents: AGENTS, distance: OVERLAP_DISTANCE, length: OVERLAP_LENGTH },
   );
 
-  // Agent, bundle, mount, inherited, runs-on and sub-agent edges all drawn.
   expect(checked).toBe(13);
   expect(overlaps).toEqual([]);
 });
@@ -535,7 +506,6 @@ test("a collapsed frame's dot follows its members", async ({ page }) => {
     '.react-flow__node[data-id="frame:support:mcp:http"]',
   );
 
-  // Both url servers are disabled: grey, never green.
   await expect(mcp.locator('[data-slot="frame-status"]')).toHaveClass(
     /bg-muted-foreground/,
   );
@@ -585,8 +555,6 @@ test("every edge's line shows one control: a mount word, a trash, or a lock that
   const fixture = page.locator('[data-fixture="canvas-frames"]');
   await fixture.getByRole("button", { name: "Expand MCP · url" }).click();
 
-  // A workspace's mount carries its state as a word, drawn or stored alike.
-  // Other stored edges delete; the ones code owns or the canvas draws lock.
   expect(await hoverEveryEdge(fixture)).toEqual(
     expect.objectContaining({
       "inherits:repos-internal-sandbox": "mount",
@@ -607,7 +575,6 @@ test("every edge's line shows one control: a mount word, a trash, or a lock that
     ).toHaveAttribute("title", reason);
   }
 
-  // The word says which: a drawn mount follows its agent, a stored one is drawn.
   for (const [id, word] of [
     ["inherits:repos-internal-sandbox", "inherited"],
     ["mount:internal-sandbox-right-notes-left", "mounted"],
@@ -618,26 +585,22 @@ test("every edge's line shows one control: a mount word, a trash, or a lock that
     ).toHaveText(word);
   }
 
-  // The word sits on something opaque: the edge's dashed line runs under it,
-  // and the hover tint alone would let the dashes read straight through.
   const word = fixture.locator(
     '[data-edge-id="inherits:repos-internal-sandbox"] button',
   );
   await word.hover();
-  // An opaque colour carries no alpha channel: no `rgba(…, 0)`, no `… / 0.1`.
+  // No alpha in the backing, or the dashed line under the word reads through it.
   await expect(
     word.locator("xpath=.."),
     "the backing behind the mount word",
   ).not.toHaveCSS("background-color", /rgba|\//);
 
-  // Clicking it offers the places that workspace can mount, read-only included.
   await word.click();
   const menu = page.locator('[data-slot="dropdown-menu-content"]');
   await expect(menu.getByText("Agent default")).toBeVisible();
   await expect(menu.getByText("No sandbox")).toBeVisible();
   await page.keyboard.press("Escape");
 
-  // Collapsed, the mount re-points to the frame: drawn, so locked.
   const frame = fixture.locator(
     '.react-flow__node[data-id="frame:support:workspace:s3"]',
   );
@@ -661,7 +624,6 @@ async function boxOf(locator: Locator): Promise<Box> {
   return box ?? { height: 0, width: 0, x: 0, y: 0 };
 }
 
-/** The precedence a collapsed frame applies: error, warn, active, idle. */
 function colorRank(color: string): number {
   if (color === "bg-destructive") return 3;
   if (color === "bg-warning") return 2;
@@ -670,14 +632,12 @@ function colorRank(color: string): number {
   return 0;
 }
 
-/** The bg-* class a status dot carries. */
 function dotColor(className: string | null): string {
   return (
     (className ?? "").split(" ").find((name) => name.startsWith("bg-")) ?? ""
   );
 }
 
-/** React Flow's current zoom, so a measured box compares against its flow size. */
 async function flowScale(fixture: Locator): Promise<number> {
   return fixture
     .locator(".react-flow__viewport")
@@ -688,12 +648,8 @@ async function flowScale(fixture: Locator): Promise<number> {
 }
 
 /**
- * Hovers each drawn edge on its line, never on its control (hovering a control
- * reveals it on its own), and returns which control that reveals. Fails an edge
- * with anything but exactly one control, or whose line the pointer can't reach.
- * Excepted: a line wholly under its own control, its own agent's shared trunk
- * or that trunk's controls, or a card at its end. There the edge on top takes
- * the hover, by design; a line over bare canvas never counts as covered.
+ * Hovers each edge on its line, not its control (hovering a control reveals it anyway).
+ * A line wholly under its control, its agent's trunk or an end card is covered, not failed.
  */
 async function hoverEveryEdge(
   fixture: Locator,
@@ -782,7 +738,6 @@ async function hoverEveryEdge(
   return controls;
 }
 
-/** Flow units, to the pixel: a fitted zoom leaves sub-pixel rounding behind. */
 function round(value: number): number {
   return Math.round(value);
 }

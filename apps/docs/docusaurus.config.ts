@@ -1,14 +1,51 @@
-/**
- * Docusaurus configuration for Broods documentation.
- */
-
 import type * as Preset from "@docusaurus/preset-classic";
-import type { Config } from "@docusaurus/types";
+import type { Config, LoadContext, Plugin } from "@docusaurus/types";
+import scalarDocusaurus, { type ScalarOptions } from "@scalar/docusaurus";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const API_REFERENCE: ScalarOptions = {
+  label: "API Reference",
+  route: "/api-reference",
+  // The navbar has its own "API" item; Scalar would add a second link to the page.
+  showNavLink: false,
+  configuration: {
+    spec: {
+      content: fs.readFileSync(
+        path.resolve(__dirname, "docs/api-reference/openapi.yaml"),
+        "utf8",
+      ),
+    },
+  },
+};
+
+// Scalar's plugin minus the 1 MB render-blocking script it puts on every page.
+function apiReferencePlugin(context: LoadContext): Plugin {
+  const plugin = scalarDocusaurus(context, API_REFERENCE);
+
+  return {
+    name: plugin.name,
+    contentLoaded: async function ({ actions }) {
+      await plugin.contentLoaded?.({
+        content: (await plugin.loadContent?.()) ?? {},
+        actions: {
+          ...actions,
+          addRoute: (route) =>
+            actions.addRoute({
+              ...route,
+              component: path.resolve(
+                __dirname,
+                "src/components/ApiReference.tsx",
+              ),
+            }),
+        },
+      });
+    },
+  };
+}
 
 const LEGACY_REDIRECTS: { from: string; to: string }[] = [
   { from: "/getting-started", to: "/quickstart" },
@@ -51,7 +88,6 @@ const LEGACY_REDIRECTS: { from: string; to: string }[] = [
   { from: "/guides/cloudflare-mcp", to: "/guides/tools" },
   { from: "/guides/cloudflare-browser", to: "/guides/sandboxes/browsing" },
   { from: "/guides/sandboxes/cloudflare", to: "/guides/sandboxes/providers" },
-  // Removed in #1066; its URL params now sit in each guide.
   { from: "/guides/dashboard-links", to: "/guides/observability" },
 ];
 
@@ -133,30 +169,10 @@ const config: Config = {
     [
       "@docusaurus/plugin-client-redirects",
       {
-        // Pages that moved in the user docs / internals split. Keep old
-        // bookmarks and search results working.
         redirects: LEGACY_REDIRECTS,
       },
     ],
-    [
-      "@scalar/docusaurus",
-      {
-        id: "api-reference",
-        label: "API Reference",
-        route: "/api-reference",
-        // The navbar already has an "API" item in its own slot. Scalar would
-        // append a second link to the same page.
-        showNavLink: false,
-        configuration: {
-          spec: {
-            content: fs.readFileSync(
-              path.resolve(__dirname, "docs/api-reference/openapi.yaml"),
-              "utf8",
-            ),
-          },
-        },
-      },
-    ],
+    apiReferencePlugin,
     function generatedModulesWebpackMode() {
       return {
         name: "generated-modules-webpack-mode",

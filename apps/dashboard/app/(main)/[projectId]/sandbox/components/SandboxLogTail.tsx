@@ -1,14 +1,12 @@
 "use client";
 
-/**
- * Guest stdout/stderr for one MicroVM, shipped through the CloudWatch-to-Loki
- * bridge. Subscribing with the instance's sandbox id makes the gateway poll
- * Loki for this instance alone. Lines land a few seconds late; that is the
- * bridge, not the tab.
- */
+// One MicroVM's guest output via the CloudWatch-to-Loki bridge: lines land seconds late.
 
 import { CONNECTION_TONE, StatusDot } from "@/app/components/StatusDot";
-import { useObservabilityStream } from "@/app/hooks/useObservabilityStream";
+import {
+  entryKey,
+  useObservabilityStream,
+} from "@/app/hooks/useObservabilityStream";
 import { formatTime } from "@/app/lib/formatTime";
 import Link from "next/link";
 
@@ -16,38 +14,24 @@ const BACKFILL = 200;
 // Core writes "-" for a run with no deployment scope (channel, cron).
 const UNSCOPED = "-";
 
-/**
- * A guest log stream id. Branded because the panel also holds an
- * `Id<"sandboxConfigs">` that Convex names `sandboxId`, and a plain string type
- * lets the two swap silently: the tail would then subscribe with a config id,
- * fail the gateway's UUID check, and render empty with nothing to point at.
- * Only `sandboxLogId` mints one, at the point it validates the stream name.
- */
+// Branded so it cannot swap with the panel's `Id<"sandboxConfigs">` (also called `sandboxId`):
+// the gateway's UUID check would fail and the tail render empty. Only `sandboxLogId` mints one.
 export type SandboxLogId = string & { readonly __brand: "sandboxLogId" };
 
-/** The stage-scoped WS inputs the Sandbox page resolves once for every panel. */
 export interface SandboxObservabilityScope {
   projectSlug: string;
   stageSlug: string;
-  /** The stage session ticket (`bdts_…`). */
   apiKey: string | undefined;
 }
 
 interface Props {
-  /** Last segment of the instance's `logStream`, from `sandboxLogId`. */
   logSandboxId: SandboxLogId;
-  /** Null until the stage has an active deployment. */
   scope: SandboxObservabilityScope | null;
-  /** Monitoring tab, where the stage's viewing key is minted. */
   monitoringHref: string;
 }
 
-/**
- * The id a tail subscribes with, read out of the stream name core wrote at
- * launch: `<accountId>/<project>/<stage>/<uuid>/<mac>`. Undefined when the run
- * had no deployment scope, since the gateway scopes every query on project and
- * stage and such a VM's lines can never match. Undefined for no stream.
- */
+// From `<accountId>/<project>/<stage>/<uuid>/<mac>`. None for an unscoped run: the gateway
+// scopes every query on project and stage, so its lines can never match.
 export function sandboxLogId(
   logStream: string | undefined,
 ): SandboxLogId | undefined {
@@ -109,9 +93,9 @@ export function SandboxLogTail({
           entries
             .slice()
             .reverse()
-            .map((entry, index) => (
+            .map((entry) => (
               <div
-                key={`${entry.ts}-${index}`}
+                key={entryKey(entry)}
                 className="flex gap-3 whitespace-pre-wrap wrap-break-word"
               >
                 <span className="shrink-0 text-terminal-subtle tabular-nums">

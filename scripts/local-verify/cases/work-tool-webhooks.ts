@@ -2,13 +2,6 @@ import type { CreateAgentResult } from "../../../packages/broods/src/account.ts"
 import { BroodsAccountApiError } from "../../../packages/broods/src/account.ts";
 import { assertStep, type VerifyContext } from "../harness.ts";
 
-/**
- * The config plane stores a Linear connection, answers it back with every
- * secret redacted, and refuses a Linear key with no `userName`, since that
- * name is what mentions the agent. The webhook URL reaches core's channel scan
- * through the gateway. An agent with no deployment is no candidate there, so
- * the signature checks themselves are covered by core's channel tests.
- */
 export async function workToolWebhooks(context: VerifyContext): Promise<void> {
   const linear = {
     id: "linear",
@@ -53,6 +46,7 @@ export async function workToolWebhooks(context: VerifyContext): Promise<void> {
     refused,
   );
 
+  // The scan skips an agent with no deployment, so core's channel tests cover the signatures.
   const account = await context.account.getAccount();
   const response = await context.measure(
     "linear webhook",

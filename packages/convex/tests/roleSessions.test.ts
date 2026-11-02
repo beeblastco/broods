@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * Config-plane HTTP tests for account roles: the assume-role exchange
- * (account key and runtime key callers), session expiry, disabled
- * roles, and route enforcement of a role session's policy.
- */
 
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -286,7 +281,6 @@ describe("stage-pinned role sessions", () => {
   }
 
   async function pinnedSession(t: T, seeded: Seeded): Promise<string> {
-    // Pinned to the development stage.
     const roleId = await createRole(t, seeded, {
       scoped: true,
       policy: AGENTS_WRITE_POLICY,

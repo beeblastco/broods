@@ -1,16 +1,5 @@
-/**
- * Runs the real account loop, its outbox, `forwardRoomEvent` and `fanOut`
- * against a fake homeserver and two fake core webhooks, then prints one JSON
- * line of what each saw. Its own process because the crypto module is stubbed
- * with `mock.module`, which would leak into every other test file, and
- * `account.test.ts` needs the real one. The events are plaintext, so the stub
- * only opens and closes, and this runs where the native binary is absent.
- *
- * `/sync` serves the customer messages from `s1` and nothing new from `s2`.
- * From `s3` it answers empty once the long-poll timeout the account asked for
- * runs out, and parks a full 30 second poll, which the account only asks for
- * once nothing in its outbox is waiting. argv[2] picks a `SCRIPTS` entry.
- */
+// Own process: the `mock.module` crypto stub would leak into account.test.ts, which needs
+// the real one. The stub also lets this run where the native binary is absent.
 import { Database } from "bun:sqlite";
 import { mock } from "bun:test";
 import { createHash } from "node:crypto";
@@ -21,31 +10,20 @@ import { join } from "node:path";
 import type { MatrixForwardedEvent } from "../../../core/src/shared/matrix-wire.ts";
 import type { ForwardTarget } from "../../../discord-forwarder/src/forward.ts";
 
-/** One webhook answer, and what happens once it is sent. */
 interface Answer {
-  /** Moves the clock forward, as if that much time passed. */
   clockMs?: number;
-  /** Moves this target's webhook to `/v1/webhooks/<moveTo>/matrix`: a new path, same agent. */
   moveTo?: string;
   status: number | "hang";
-  /** Stops the account before it can try again. */
   stop?: boolean;
 }
 
 interface Script {
-  /** What each target answers, in order; 200 once its list runs out. */
   answers: Record<string, Answer[]>;
-  /** Body size of each customer message, to fill the outbox by bytes. */
   bodyBytes?: number;
-  /** The first message arrives encrypted, and its room key one try late. */
   encryptedFirst?: boolean;
   events?: number;
-  /** Starts a fresh account on the same store once the first stops, this much later. */
   restartAfterMs?: number;
-  /**
-   * How long the first account's webhook POST may hang before it fails; the
-   * real 10 s when unset, and always after a restart.
-   */
+  /** Applies to the first account only; unset, and after a restart, it is the real 10 s. */
   webhookTimeoutMs?: number;
 }
 
@@ -82,18 +60,15 @@ const ACCESS_TOKEN = "syt_delivery";
 const DEVICE_ID = "DEVICE1";
 const ROOM_ID = "!room:example.org";
 const USER_ID = "@bot:example.org";
-// An unknown mode answers nothing and fails every expectation.
 const script: Script = SCRIPTS[process.argv[2] ?? ""] ?? { answers: {} };
 const storeDir = await mkdtemp(join(tmpdir(), "matrix-delivery-"));
 const storePath = join(
   storeDir,
   createHash("sha256").update(`${USER_ID}|${DEVICE_ID}`).digest("hex"),
 );
-/** What each webhook path answered, in order. */
 const deliveries: Record<string, Array<number | "hang">> = Object.fromEntries(
   Object.keys(script.answers).map((target): [string, []] => [target, []]),
 );
-/** The event id of every POST, in order, whatever the answer. */
 const posted: string[] = [];
 let decrypts = 0;
 const realNow = Date.now;
@@ -106,7 +81,6 @@ await mock.module("../../src/crypto.ts", (): object => ({
   RoomCrypto: {
     open: async (): Promise<object> => ({
       close: async (): Promise<void> => {},
-      // The room key arrives after the first try.
       decrypt: async (_roomId: string, event: object): Promise<object> => {
         decrypts += 1;
         if (decrypts === 1) throw new Error("no room key yet");
@@ -142,8 +116,7 @@ const server = Bun.serve({
           webhookUrl: `${url.origin}/v1/webhooks/${answer.moveTo}/matrix`,
         };
       }
-      // Aborted before the answer lands, so the account stops right after
-      // recording it rather than racing on to its next try.
+      // Stopped before the answer lands, so the account records it and does not try again.
       if (answer.stop) stopping = account.stop();
       if (answer.status === "hang") return new Promise((): void => {});
 
@@ -195,7 +168,6 @@ const targets: ForwardTarget[] = Object.keys(script.answers).map(
   }),
 );
 
-// Only the first account's POST is scripted to hang, so only it gets the short timeout.
 let account = startAccount(script.webhookTimeoutMs);
 try {
   await settle();
@@ -217,7 +189,6 @@ try {
   await rm(storeDir, { force: true, recursive: true });
 }
 
-/** Rows left in the account's outbox. */
 function heldEvents(): number {
   try {
     using db = new Database(join(storePath, "outbox.sqlite"), {
@@ -234,7 +205,7 @@ function heldEvents(): number {
   }
 }
 
-/** Waits until the account parks on a full poll or a scripted answer stops it, then stops it. */
+// Settled = parked on a full 30 s poll, which the account only asks for with an empty outbox.
 async function settle(): Promise<void> {
   const parkedBefore = parked;
   stopping = null;
@@ -246,7 +217,6 @@ async function settle(): Promise<void> {
   await (stopping ?? account.stop());
 }
 
-/** Starts an account; `webhookTimeoutMs` unset keeps the real 10 s. */
 function startAccount(
   webhookTimeoutMs?: number,
 ): InstanceType<typeof MatrixAccount> {
@@ -271,7 +241,6 @@ function timeline(): object[] {
     event_id: `$customer-${index}`,
     origin_server_ts: index,
     sender: "@ada:example.org",
-    // The stub decrypts by renaming the type, so the content stays readable.
     type:
       script.encryptedFirst && index === 0
         ? "m.room.encrypted"

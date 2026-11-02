@@ -1,11 +1,6 @@
 "use client";
 
-/**
- * The canvas is imported with the page, not behind a second request. It used
- * to be a lazy chunk so other routes never carried ReactFlow; the header
- * prefetches every route whole now, so that saved nothing, and the extra
- * request wave cost this page its first paint on a slow link.
- */
+// Eager on purpose: the header prefetches routes whole, and a lazy chunk cost first paint.
 import { Canvas } from "@/app/components/canvas/Canvas";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { use } from "react";

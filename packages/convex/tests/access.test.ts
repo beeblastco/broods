@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * A custom role grants a member the dashboard permissions its policies allow,
- * a deny wins over an allow, and an admin holds everything by tier.
- */
-
 import { convexTest } from "convex-test";
 import { expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
@@ -187,7 +182,6 @@ test("a member with a custom role sees the keys its policy allows", async (): Pr
     }),
   ).rejects.toThrow(/No permission/);
 
-  // A rule scoped to one project counts there and nowhere else.
   const [projectA, projectB] = await t.run(
     async (ctx): Promise<[Id<"projects">, Id<"projects">]> => [
       await ctx.db.insert("projects", {
@@ -223,7 +217,6 @@ test("a member with a custom role sees the keys its policy allows", async (): Pr
     await t.query(api.access.viewerPermissions, { projectId: projectB }),
   ).toEqual(["keys:read"]);
 
-  // A policy row made for one stage counts only on that stage.
   const stageId = await t.run(
     async (ctx): Promise<Id<"stages">> =>
       await ctx.db.insert("stages", {
@@ -261,14 +254,11 @@ test("a member with a custom role sees the keys its policy allows", async (): Pr
   expect(await t.query(api.access.viewerPermissions, {})).toEqual([
     "keys:read",
   ]);
-  // The key list says which stages the member may write on.
   const keys = await t.query(api.apiKeys.listForProject, {
     projectId: projectA,
   });
   expect(keys?.writable).toEqual([{ _id: stageId, name: "Production" }]);
 
-  // Each stage answers for itself: a grant on one of projectB's two stages
-  // writes there and nowhere else in the project.
   const [productionB] = await t.run(
     async (ctx): Promise<[Id<"stages">, Id<"stages">]> => [
       await ctx.db.insert("stages", {
@@ -439,8 +429,7 @@ test("access:write may not reach past its ceiling by switching a policy to enfor
     roleId: roleId,
   });
 
-  // An audit policy grants nothing, so its keys:write rule and the role
-  // holding it pass; turning it on is where the ceiling must hold.
+  // An audit policy grants nothing: turning it on is where the ceiling must hold.
   currentAuthId = "auth_member";
   const audit = await t.mutation(api.access.createPolicy, {
     name: "Sleeper",
@@ -504,7 +493,6 @@ test("access:write may not reach past its ceiling by switching a policy to enfor
     ruleId: allowId ?? "",
   });
 
-  // The owner holds everything, so the same switch is theirs to make.
   currentAuthId = "auth_owner";
   await t.mutation(api.access.updatePolicy, {
     policyId: audit,
@@ -512,8 +500,7 @@ test("access:write may not reach past its ceiling by switching a policy to enfor
   });
   await t.mutation(api.access.removeRule, { policyId: masked, ruleId: denyId });
 
-  // A deny that masks nothing comes off a policy that already grants more
-  // than the caller holds: the edit answers only for what it adds.
+  // The edit answers only for what it adds: a no-op deny comes off a wider policy.
   const wide = await t.mutation(api.access.createPolicy, {
     name: "Wide",
     mode: "enforce",
@@ -535,8 +522,7 @@ test("access:write may not reach past its ceiling by switching a policy to enfor
     ruleId: unrelated,
   });
 
-  // A stage rule is weighed with its project, so keys:write held across the
-  // project covers turning on a keys:write rule for one of its stages.
+  // A stage rule is weighed with its project's grants.
   const { projectId, stageId } = await t.run(
     async (
       ctx,
@@ -581,8 +567,7 @@ test("access:write may not reach past its ceiling by switching a policy to enfor
     mode: "enforce",
   });
 
-  // A deny in one policy can mask another policy's allow in the same role, so
-  // dropping it is weighed against every role that holds it.
+  // A deny can mask another policy's allow in the same role: weigh every role holding it.
   currentAuthId = "auth_owner";
   const granting = await t.mutation(api.access.createPolicy, {
     name: "Grants keys",
@@ -679,8 +664,7 @@ test("access:write and members:write may not drop a deny by switching it to audi
     },
   );
 
-  // Ada holds access:write, members:write and keys:write, except keys:write
-  // in the prod project, which a scoped deny takes away.
+  // Ada: access, members and keys:write, except keys:write in prod (a scoped deny).
   currentAuthId = "auth_owner";
   const policy = async (
     name: string,
@@ -720,7 +704,6 @@ test("access:write and members:write may not drop a deny by switching it to audi
     role: "member",
     roleId: roleId,
   });
-  // Bob holds keys:write in prod too.
   const strongId = await t.mutation(api.access.createRole, {
     name: "Prod keys",
     policyIds: [keys.policyId],

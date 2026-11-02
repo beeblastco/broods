@@ -1,16 +1,9 @@
-/**
- * Every keyboard binding in the dashboard, in one list. The `?` overlay, the
- * hints the command palette prints on its rows, and the dispatcher in
- * `ShortcutProvider` all read this and nothing else.
- */
-
 export type ShortcutScope = "global" | "canvas" | "panel" | "table";
 
 export interface Shortcut {
-  /** Accepted key combinations. The first is the one the overlay prints. */
+  /** The first combo is the one the overlay prints. */
   combos: readonly string[];
   id: string;
-  /** Extra words the command palette matches this binding's row on. */
   keywords?: readonly string[];
   label: string;
   scope: ShortcutScope;
@@ -18,8 +11,6 @@ export interface Shortcut {
 
 export type ShortcutId = (typeof SHORTCUT_DEFS)[number]["id"];
 
-// The rows, const-typed so `ShortcutId` stays the exact id union; the annotated
-// `SHORTCUTS` export holds every row to the `Shortcut` shape.
 const SHORTCUT_DEFS = [
   {
     combos: ["mod+k"],
@@ -161,11 +152,9 @@ const SHORTCUT_DEFS = [
   },
 ] as const;
 
-/** Bindings a page registers; `global` ones work everywhere, the rest only where registered. */
 export const SHORTCUTS: readonly (Shortcut & { id: ShortcutId })[] =
   SHORTCUT_DEFS;
 
-/** Overlay section order. */
 export const SHORTCUT_SCOPES: readonly ShortcutScope[] = [
   "global",
   "canvas",
@@ -180,7 +169,6 @@ const SCOPE_TITLES: Record<ShortcutScope, string> = {
   table: "Tables and lists",
 };
 
-/** How a combo token prints. Anything else prints uppercased. */
 const TOKEN_GLYPHS: Record<string, string> = {
   alt: "⌥",
   backspace: "⌫",
@@ -190,11 +178,7 @@ const TOKEN_GLYPHS: Record<string, string> = {
   shift: "⇧",
 };
 
-/**
- * True when the press would have activated the focused control. Enter and Space
- * are how a keyboard clicks a button or follows a link, so a bare binding must
- * not cancel them out from under one.
- */
+// Enter and Space click a focused button or follow a link: a bare binding must not eat them.
 export function activatesFocusedControl(event: KeyboardEvent): boolean {
   if (event.key !== "Enter" && event.key !== " ") return false;
 
@@ -204,29 +188,21 @@ export function activatesFocusedControl(event: KeyboardEvent): boolean {
   );
 }
 
-/**
- * The combo string a key event matches, in the same shape `SHORTCUTS` uses:
- * modifiers in a fixed order, then the key. `mod` is Command on a Mac and
- * Control everywhere else, so one entry covers both.
- */
 export function eventCombo(event: KeyboardEvent, isMac: boolean): string {
   const key = event.key.toLowerCase();
   const parts: string[] = [];
 
   if (isMac ? event.metaKey : event.ctrlKey) parts.push("mod");
   if (event.altKey) parts.push("alt");
-  // Only letters carry shift in a combo. Shift is what produces `?` and `+` in
-  // the first place, so naming it there would never match.
+  // Only letters carry shift: shift is what produces `?` and `+`, so naming it never matches.
   if (event.shiftKey && /^[a-z]$/.test(key)) parts.push("shift");
   parts.push(key);
 
   return parts.join("+");
 }
 
-/** A combo split into the tokens a `<kbd>` renders, one per key. */
 export function formatCombo(combo: string, isMac: boolean): string[] {
-  // "+" is both the separator and a key, so `"+"` splits into two empty
-  // halves and `"mod++"` into one. Drop the empties and put a single `+` back.
+  // "+" is both separator and key: `"+"` splits into two empty halves, `"mod++"` into one.
   const parts = combo.split("+");
   const tokens = parts.filter((part) => part !== "");
   if (parts.at(-1) === "") tokens.push("+");
@@ -240,7 +216,6 @@ export function formatCombo(combo: string, isMac: boolean): string[] {
   });
 }
 
-/** True while the event target takes text, where a bare letter is typing, not a command. */
 export function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
@@ -250,7 +225,6 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
 }
 
-/** The shortcut a key event triggers, or undefined when the event is not one. */
 export function matchShortcut(
   event: KeyboardEvent,
   isMac: boolean,
@@ -260,7 +234,6 @@ export function matchShortcut(
   return SHORTCUTS.find((shortcut) => shortcut.combos.includes(combo));
 }
 
-/** Section heading for a scope. */
 export function scopeTitle(scope: ShortcutScope): string {
   return SCOPE_TITLES[scope];
 }

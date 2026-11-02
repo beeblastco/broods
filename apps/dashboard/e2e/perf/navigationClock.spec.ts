@@ -1,15 +1,7 @@
-/**
- * Controls for the probe's navigation clock, on two throwaway documents the
- * browser serves itself (no server, no account). A link that loads a new
- * document resets `performance.now()`, and the probe once recorded such a
- * navigation as -451 ms, inside budget. It must fail instead, while a real
- * client-side navigation is timed on one unbroken clock.
- */
 import { expect, test, type Page } from "@playwright/test";
 import { timeClientNavigation } from "../lib/timing";
 
 const ORIGIN = "http://navigation-clock.test";
-// The client navigation renders its page this long after the click.
 const CLIENT_RENDER_MS = 50;
 
 const PAGES: Record<string, string> = {
@@ -41,8 +33,7 @@ test("a navigation that loads a new document fails the clock", async ({
   page,
 }) => {
   await openStart(page, "");
-  // The probe's own start document has been open for seconds; the new one's
-  // clock starts at zero, so the raw difference would come out negative.
+  // Age the start document's clock, so the new document's reset would read negative.
   await page.waitForTimeout(500);
 
   await expect(

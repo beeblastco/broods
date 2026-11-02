@@ -18,7 +18,6 @@ import {
 import { useTheme } from "next-themes";
 import { useState } from "react";
 
-/** Agent edge line and arrow color per theme; the canvas passes it as the default edge stroke. */
 export const AGENT_EDGE_STROKE: Record<"dark" | "light", string> = {
   dark: "rgba(255,255,255,0.4)",
   light: "rgba(0,0,0,0.35)",
@@ -26,10 +25,6 @@ export const AGENT_EDGE_STROKE: Record<"dark" | "light", string> = {
 
 const ARROW_ID_PREFIX = "deletable-arrow";
 
-/**
- * Custom edge with a hover-to-delete trash icon, or a lock badge when code owns it. A bundle
- * edge from an agent to a frame is locked when any edge it stands for is.
- */
 export function DeletableEdge({
   id,
   source,
@@ -51,8 +46,7 @@ export function DeletableEdge({
 
   const codeManaged = useCodeManagedEdge(id, source, target);
 
-  // Agent to resource, bottom to top along the lanes the canvas routed for it. An edge the
-  // router skipped (a target above its agent) falls back to a step path.
+  // The router skips a target above its agent; that edge falls back to a step path.
   const [edgePath, labelX, labelY] = data?.route
     ? agentEdgePath(
         { x: sourceX, y: sourceY },
@@ -68,8 +62,6 @@ export function DeletableEdge({
         targetPosition: targetPosition,
       });
 
-  // Code-managed edges can't be deleted here: no red delete-hover, no trash. Canvas marks
-  // them, and bundles of them, `deletable: false`.
   const locked = deletable === false || codeManaged;
   const deleteHover = hovered && !locked;
   const arrowColor = isDark ? AGENT_EDGE_STROKE.dark : AGENT_EDGE_STROKE.light;
@@ -77,10 +69,7 @@ export function DeletableEdge({
 
   return (
     <>
-      {/* Inline marker matching the mount/subagent arrowhead geometry, so every edge kind
-          shares one arrow style and the color can follow the per-edge hover state. Sized in
-          user space (6 × the 1.5 base stroke) so the hover strokeWidth bump to 2 doesn't
-          scale the arrow up. Markers default to strokeWidth units. */}
+      {/* In user space, so the hover stroke bump does not scale the arrow. */}
       <defs>
         <marker
           id={arrowId}
@@ -105,7 +94,7 @@ export function DeletableEdge({
           id={id}
           path={edgePath}
           style={style}
-          // Important, so the hover stroke wins over the default stroke inline in `style`.
+          // Important, to beat the default stroke inline in `style`.
           className={
             deleteHover ? "stroke-destructive/90! stroke-2!" : undefined
           }

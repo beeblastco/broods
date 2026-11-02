@@ -1,8 +1,3 @@
-/**
- * The caller's role in the active org. `canWrite` hides admin-only controls
- * from members; every mutation checks the role again server-side.
- */
-
 import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { api } from "@broods/convex/_generated/api";
 import { useQuery } from "convex/react";
@@ -14,7 +9,6 @@ type ActiveAccount = NonNullable<
 
 export interface OrgRoleState {
   role: ActiveAccount["role"] | null;
-  /** False while loading, so write controls never flash for a member. */
   canWrite: boolean;
 }
 

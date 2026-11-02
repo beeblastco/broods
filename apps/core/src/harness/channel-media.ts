@@ -1,17 +1,5 @@
-/**
- * Inbound channel media, the mirror of the outbound `send-files` / `send-images` path.
- *
- * With a workspace, each attachment is read once and written twice. The row keeps a sealed,
- * non-expiring media ticket into the attachment store, a managed-bucket prefix
- * no sandbox mounts, so replayed turns keep working even after the agent tidies
- * its files. Each turn reads the bytes behind it once and hands the model those,
- * so the provider never fetches the link again on every step. The agent's own
- * copy goes under `media/` in its default workspace, for what the model cannot
- * read natively.
- *
- * With no workspace the row keeps a `broods-media:` reference instead, and the
- * channel is asked for the bytes again on replay, for as long as it keeps them.
- */
+// Inbound channel media. A row keeps a sealed link into the attachment store (no sandbox mounts
+// it), or with no workspace a `broods-media:` reference the channel is asked for again.
 
 import {
   detectMediaType,
@@ -68,71 +56,36 @@ import {
 } from "./sandbox/s3-mount.ts";
 import { toolContentItems, type ToolContentPart } from "./tools/utils.ts";
 
-/** Where an inbound attachment lands, relative to the workspace root. */
 const MEDIA_DIRECTORY = "media";
 
-/**
- * The scheme naming a file the channel still holds. Its own scheme, not
- * `https:`, because nothing but this module may resolve it: the model provider
- * would fetch a bare URL itself, without the bot token it needs and without a
- * way to fail softly when the file is gone.
- */
+// Not `https:`: a provider would fetch that itself, without the bot token or a soft failure.
 export const MEDIA_REFERENCE_SCHEME = "broods-media:";
 
-// Bytes read back from a channel, kept so the same picture is not downloaded
-// again for every turn that replays it. Small on purpose: core's pod has a
-// gigabyte for everything, and the cache is a courtesy, not the storage.
 const MEDIA_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 
-// Sealed-link bytes one turn inlines into the prompt. Every replayed picture
-// rides each model request as base64, and providers cap a request (Anthropic at
-// 32 MB, after base64's third), while the pod holds them all at once. Past it a
-// user part's link stays a link and the provider fetches it, as it did before
-// replay read; a tool result's becomes OMITTED_MEDIA_NOTE. One file inlines
-// only up to the picture cap, so a big PDF stays a link too.
+// Replayed bytes ride every request as base64 and providers cap a request (Anthropic: 32 MB).
 const MAX_REPLAY_BYTES_PER_TURN = 20 * 1024 * 1024;
 
-// Stored pictures one turn replays, the newest. Each rides every model request,
-// and Anthropic refuses more than 100 images in one, or any side over 2000 px
-// once there are more than 20. Older ones become OMITTED_MEDIA_NOTE.
+// Anthropic refuses over 100 images a request, or any side over 2000 px past 20.
 const MAX_REPLAYED_MEDIA = 20;
 
-// Pictures past the cap are dropped this many at a time, so between
-// MAX_REPLAYED_MEDIA - REPLAY_OMIT_BATCH and MAX_REPLAYED_MEDIA replay.
 const REPLAY_OMIT_BATCH = 10;
 
-// What the model reads where a stored picture is not shown this turn.
 const OMITTED_MEDIA_NOTE = "[an earlier image is not shown here]";
 
-// A bound on one message, not on the conversation. Every attachment past it is
-// still named for the agent; only the bytes are left with the provider.
 const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 
-// A stalled provider download must not hold the turn open until the platform
-// kills it; past this the attachment becomes a described failure instead.
 const ATTACHMENT_FETCH_TIMEOUT_MS = 30_000;
 
-// A sniff that only proves "this is a zip" must not overrule a provider that
-// already said which zip it is, since .docx and .xlsx are both zip containers.
+// .docx and .xlsx sniff as zip; that must not overrule the provider's claimed type.
 const UNSPECIFIC_MEDIA_TYPES: ReadonlySet<string> = new Set([
   "application/octet-stream",
   "application/x-zip-compressed",
   "application/zip",
 ]);
 
-/**
- * What each provider reads as a native prompt part beyond pictures, as exact
- * media types or a `type/*` wildcard.
- *
- * A floor, not a ceiling: a media type missing here is not rejected, it is
- * delivered as a workspace file instead of as a part the provider would refuse.
- * Guessing upward is the expensive direction. An unsupported part fails the
- * whole turn, while an under-claimed one costs the agent one `read` call.
- *
- * The model's own `supportedUrls` is not this question. It says which URLs the
- * provider fetches for itself, so bedrock omits the PDFs it does read as bytes
- * and vertex claims `*`. Asking it would demote and promote the wrong things.
- */
+// A floor: an unlisted type becomes a workspace file, as an unsupported part fails the turn.
+// Not the model's `supportedUrls`, which lists what the provider fetches for itself.
 const PROVIDER_NATIVE_MEDIA: Partial<
   Record<AccountModelProviderName, readonly string[]>
 > = {
@@ -144,89 +97,53 @@ const PROVIDER_NATIVE_MEDIA: Partial<
   vertex: ["application/pdf", "audio/*", "video/*"],
 };
 
-// Least-recently-used first, which is the order `cacheMedia` evicts in.
+// Map order is LRU order: a hit re-inserts, eviction takes from the front.
 const mediaCache = new Map<string, Buffer>();
 let mediaCacheBytes = 0;
 
-/** What `ingestInboundAttachments` needs to know about the message's run. */
 export interface InboundMediaContext {
   accountId?: string;
-  /** The agent the message is for; its project is billed the ingress. */
   agentId?: string;
-  /**
-   * Decides which media types go over as native parts, and supplies the
-   * credentials audio is transcribed with. Absent means neither: every
-   * attachment becomes a workspace file, which is the safe direction.
-   */
   agentConfig?: AgentConfig;
-  /** Names the channel in the note the agent reads, and in the logs. */
   channelName: string;
-  /** Scopes the media folder so two messages cannot overwrite each other. */
   eventId: string;
-  /** Where the bytes are stored. Without one, only the current turn sees them. */
   workspace?: ResolvedWorkspace;
 }
 
-/**
- * One attachment paired with the part it produced. A null part means the model
- * gets no prompt part for it, so the note has to describe it.
- */
 interface IngestedAttachment {
   stored: StoredAttachment;
   part: UserContentPart | null;
 }
 
-/**
- * One ingested message in its two forms. `turn` is what the turn starts from:
- * sealed links, and raw bytes for an agent with no workspace. `stored` is what
- * the row keeps: the same sealed links, or a reference that reads the bytes
- * again later. Bytes never appear in `stored`, where a 6 MB picture would
- * become an 8 MB JSON row.
- */
+/** Bytes never go in `stored`: a 6 MB picture would become an 8 MB JSON row. */
 export interface IngestedMediaParts {
   stored: UserContentPart[];
   turn: UserContentPart[];
 }
 
-/** A file a channel still holds, named well enough to ask for it again. */
 interface MediaReference {
   channelName: string;
   mediaType: string;
   name: string;
-  /** What the channel's own adapter needs: a Telegram file id, a Slack URL. */
   metadata: Record<string, string>;
   type: Attachment["type"];
-  /** The reference as stored, which is also what the byte cache is keyed by. */
   url: string;
 }
 
-/**
- * One attachment after ingestion: where its bytes ended up (workspace, channel
- * reference, or memory for this turn only), or why they could not be read.
- */
 interface StoredAttachment {
   name: string;
   mediaType: string;
-  /** The bytes themselves, kept when there is no sealed link (no workspace or no public base URL). */
   data?: Buffer;
-  /** Set once the bytes are in the workspace. */
   path?: string;
-  /** How to ask the channel for these bytes again, when nothing stored them. */
   reference?: string;
-  /** The sealed link the model is handed. Absent with no workspace or no public base URL. */
   url?: string;
-  /** Why the bytes are not available, for the note the agent reads. */
   failure?: string;
-  /** What the audio says, or why it is not known. Absent for everything else. */
   transcript?: TranscriptOutcome;
-  /** Bytes read from the channel, metered as ingress even when a later step failed. */
   receivedBytes: number;
 }
 
-/** A sealed link read back: its bytes, or the name of the file that is gone. */
 type SealedMedia = { bytes: Buffer } | { gone: string };
 
-/** One turn's sealed-link reads: whose links it may open, and bytes left. */
 interface SealedReplay {
   accountId: string | undefined;
   remainingBytes: number;
@@ -234,11 +151,6 @@ interface SealedReplay {
 
 type UserContentPart = Exclude<UserContent, string>[number];
 
-/**
- * Whether this provider reads this media type as a prompt part of its own.
- * Pictures are the one kind every provider takes; everything else has to be
- * listed, exactly or as a `type/*` wildcard.
- */
 export function acceptsNativeMedia(
   provider: AccountModelProviderName | undefined,
   mediaType: string,
@@ -256,13 +168,7 @@ export function acceptsNativeMedia(
   );
 }
 
-/**
- * Reads each attachment once and returns the parts to append to the message.
- *
- * Never throws: an attachment that cannot be read becomes a line of text saying
- * so, because a provider outage should cost the agent one picture, not the turn,
- * and a silent drop would leave the model answering half a message.
- */
+/** Never throws: an unreadable attachment becomes a line of text, so it costs one picture. */
 export async function ingestInboundAttachments(
   attachments: Attachment[],
   context: InboundMediaContext,
@@ -277,8 +183,6 @@ export async function ingestInboundAttachments(
       storeAttachment(attachment, index, context),
     ),
   );
-  // Free to the account; metered once per message so the billing tab can
-  // show the data its channels sent in.
   const receivedBytes = read.reduce((sum, item) => sum + item.receivedBytes, 0);
   if (context.accountId && receivedBytes > 0) {
     recordUsage(
@@ -301,8 +205,6 @@ export async function ingestInboundAttachments(
       continue;
     }
     turn.push(part);
-    // A sealed link is already the same part in both. Bytes are not: the row
-    // keeps the reference that reads them again, or keeps no media at all.
     const kept = item.url ? part : nativePart(item, provider, item.reference);
     if (kept) {
       stored.push(kept);
@@ -318,12 +220,6 @@ export async function ingestInboundAttachments(
   return { stored: stored, turn: turn };
 }
 
-/**
- * The bytes behind one attachment, however this provider carries them.
- * Telegram never sets a URL and signs its download with the bot token; Slack
- * needs a bearer header on a private file. Both hand that over as `fetchData`,
- * so the reader the adapter built is always preferred to the raw URL.
- */
 export async function readAttachmentBytes(
   attachment: Attachment,
   transport?: PinnedFetchTransport,
@@ -343,16 +239,6 @@ export async function readAttachmentBytes(
   return await fetchAttachmentUrl(attachment.url, transport);
 }
 
-/**
- * Reads the media a stored conversation only points at, so a picture sent last
- * week is still a picture this turn.
- *
- * Every reference is resolved through the channel that delivered it, with that
- * channel's own credentials, and every sealed link is read into bytes, which
- * also catches a workspace file the agent deleted. Either one gone becomes a line of text
- * saying so: a photo the sender deleted must cost that message its picture, not
- * cost the conversation every turn from here on.
- */
 export async function rehydrateStoredMedia(
   messages: ModelMessage[],
   agentConfig: AgentConfig,
@@ -374,9 +260,7 @@ export async function rehydrateStoredMedia(
     remainingBytes: MAX_REPLAY_BYTES_PER_TURN,
   };
 
-  // One message at a time, newest first: each read is charged before an older
-  // one starts, so when the budget runs out the oldest pictures stay behind.
-  // A cached link waits on nothing, so only a cold cache pays the sequence.
+  // Newest first, one message at a time, so the oldest pictures are the ones past the budget.
   const replayed: ModelMessage[] = [];
   for (const message of (await withOldMediaOmitted(messages)).toReversed()) {
     replayed.push(await rehydrateMessage(message, agentConfig, replay));
@@ -385,13 +269,7 @@ export async function rehydrateStoredMedia(
   return replayed.toReversed();
 }
 
-/**
- * The bytes win over the provider's claim. Telegram calls every photo a JPEG
- * whatever was uploaded, and Discord labels a voice note `application/ogg`
- * without saying whether it is audio or video. The exception is a sniff that
- * only identifies the container: a .docx really is a zip, and "zip" is a worse
- * answer than the one the provider already gave.
- */
+/** The bytes beat the claim: Telegram calls every photo a JPEG. */
 export function resolveMediaType(
   bytes: Uint8Array,
   claimed: string | undefined,
@@ -407,12 +285,6 @@ export function resolveMediaType(
   return sniffed ?? claimed ?? "application/octet-stream";
 }
 
-/**
- * Moves the media a message carries as bytes into the attachment store, so its
- * row keeps a sealed link `rehydrateStoredMedia` reads back on every later turn
- * instead of dropping the picture. A part that cannot be stored stays as it
- * was, and the row drops it as before.
- */
 export async function sealConversationMedia(
   messages: ModelMessage[],
   accountId: string,
@@ -427,7 +299,6 @@ export async function sealConversationMedia(
       (message.role === "tool" &&
         toolContentItems(message).some(isToolImageBytes)),
   );
-  // With no public base URL there is no link to keep, so nothing is stored.
   if (!carriesMedia || !getHarnessPublicUrl()) {
     return messages;
   }
@@ -439,7 +310,6 @@ export async function sealConversationMedia(
   );
 }
 
-/** Throws the size failure `storeAttachment` turns into the agent's note. */
 function assertWithinLimit(size: number, mediaType: string | null): void {
   const limit = limitForMediaType(mediaType ?? undefined);
   if (size > limit) {
@@ -447,11 +317,7 @@ function assertWithinLimit(size: number, mediaType: string | null): void {
   }
 }
 
-/**
- * The line the agent reads: what arrived, where it landed, and what to do with
- * the parts the model cannot see for itself. The "read it yourself" wording is
- * deliberate. Told only that a file exists, models ask the sender to paste it.
- */
+/** Says "open it yourself": told only that a file exists, models ask the sender to paste it. */
 function attachmentNote(
   ingested: IngestedAttachment[],
   overflow: number,
@@ -480,11 +346,6 @@ function attachmentNote(
   ].join("\n");
 }
 
-/**
- * Audio the model cannot hear for itself, read into words. Skipped where the
- * provider takes the recording natively, since listening to it beats a
- * transcript of it.
- */
 async function audioTranscript(
   bytes: Buffer,
   mediaType: string,
@@ -505,10 +366,6 @@ async function audioTranscript(
   );
 }
 
-/**
- * Bytes for a reference, if this pod still holds them. Re-inserting on a hit
- * keeps the Map in least-recently-used order, which is the order eviction wants.
- */
 function cachedMedia(reference: string): Buffer | undefined {
   const bytes = mediaCache.get(reference);
   if (!bytes) {
@@ -520,10 +377,6 @@ function cachedMedia(reference: string): Buffer | undefined {
   return bytes;
 }
 
-/**
- * Keeps bytes for the next turn that replays this message, evicting the least
- * recently used until the cache is back under its ceiling.
- */
 function cacheMedia(reference: string, bytes: Buffer): void {
   if (bytes.byteLength > MEDIA_CACHE_MAX_BYTES) {
     return;
@@ -544,11 +397,7 @@ function cacheMedia(reference: string, bytes: Buffer): void {
   }
 }
 
-/**
- * Downloads an attachment named only by URL. The URL is untrusted (Zalo and
- * Pancake take it straight from the webhook body), so `guardedFetch` pins the
- * validated public address on every hop and caps the body as it streams.
- */
+/** The URL can come straight from a webhook body, so `guardedFetch` pins a public address. */
 async function fetchAttachmentUrl(
   raw: string,
   transport?: PinnedFetchTransport,
@@ -562,9 +411,6 @@ async function fetchAttachmentUrl(
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`provider answered ${response.status}`);
   }
-  // A zero-copy view, not Buffer.from(bytes): the guard already assembled the
-  // body into a fresh allocation nothing else references, and a second copy of
-  // a 25 MB attachment is pure waste.
   const bytes = Buffer.from(
     response.bodyBytes.buffer,
     response.bodyBytes.byteOffset,
@@ -575,12 +421,10 @@ async function fetchAttachmentUrl(
   return bytes;
 }
 
-/** Whole megabytes, for the size limit in a failure note. */
 function formatBytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
-/** The sealed picture links a message carries, in order. */
 function imageLinks(message: ModelMessage): string[] {
   const links =
     message.role === "user" && typeof message.content !== "string"
@@ -592,15 +436,11 @@ function imageLinks(message: ModelMessage): string[] {
   return links.filter((link): link is string => link !== null);
 }
 
-/**
- * A part this module stored: a channel reference or a sealed media link. Tool
- * results and subagent output are file parts too, and must not be re-gated.
- */
+/** Tool results and subagent output are file parts too, and must not be re-gated. */
 function isStoredMediaPart(part: UserContentPart): boolean {
   return mediaReferenceOf(part) !== null || sealedMediaLink(part) !== null;
 }
 
-/** A tool result's picture that may carry its own bytes, the one tool media a row keeps. */
 function isToolImageBytes(
   item: ToolContentPart,
 ): item is Extract<
@@ -615,17 +455,13 @@ function isToolImageBytes(
   );
 }
 
-/** The byte cap for one attachment: smaller for pictures, which go inline. */
 function limitForMediaType(mediaType: string | undefined): number {
   return mediaType?.startsWith("image/")
     ? MAX_IMAGE_BYTES
     : MAX_ATTACHMENT_BYTES;
 }
 
-/**
- * A tool message with `map` applied to every content item of its results. Each
- * `map` call starts in item order, so its code before an await may count.
- */
+/** Each `map` call starts in item order, so its code before an await may count. */
 async function mapToolItems(
   message: ToolModelMessage,
   map: (item: ToolContentPart) => Promise<ToolContentPart>,
@@ -648,10 +484,6 @@ async function mapToolItems(
   return { ...message, content: content };
 }
 
-/**
- * The bytes a part carries itself. Null for anything that already points
- * elsewhere: a URL, a sealed link, a channel reference, a provider reference.
- */
 function mediaBytes(
   value: ImagePart["image"] | FilePart["data"],
 ): Buffer | null {
@@ -678,11 +510,6 @@ function mediaBytes(
   return null;
 }
 
-/**
- * A name to store the file under. Telegram photos and voice notes both arrive
- * nameless, and a file with no name lands extensionless, so every client, and
- * the media route, would treat it as a raw download.
- */
 function mediaFileName(
   attachment: Attachment,
   mediaType: string,
@@ -696,11 +523,6 @@ function mediaFileName(
   return `${attachment.type}-${index + 1}${extension ? `.${extension}` : ""}`;
 }
 
-/**
- * A workspace path an agent can read back, and a shell will not fight over.
- * The hash keeps two messages that both carry `image.jpg` apart without making
- * the name unreadable.
- */
 function mediaPath(name: string, eventId: string, index: number): string {
   const folder = createHash("sha256")
     .update(eventId)
@@ -714,7 +536,6 @@ function mediaPath(name: string, eventId: string, index: number): string {
   return `${MEDIA_DIRECTORY}/${folder}/${index}-${safeName || "attachment"}`;
 }
 
-/** The channel reference an image or file part carries, or null. */
 function mediaReferenceOf(part: UserContentPart): MediaReference | null {
   if (part.type === "image") {
     return parseMediaReference(part.image);
@@ -726,12 +547,6 @@ function mediaReferenceOf(part: UserContentPart): MediaReference | null {
   return null;
 }
 
-/**
- * How to ask this channel for these bytes again. The chat SDK already names
- * what each provider needs in `fetchMetadata`, a Telegram file id or a Slack
- * private URL, so that map is carried verbatim rather than re-derived, and a
- * provider that names nothing but a URL falls back to it.
- */
 function mediaReferenceUrl(
   attachment: Attachment,
   mediaType: string,
@@ -756,11 +571,6 @@ function mediaReferenceUrl(
   return url.toString();
 }
 
-/**
- * The part the model actually receives. Pictures go over as pictures; anything
- * else only when this provider reads it, because a part a provider refuses
- * fails the whole turn while a file it never saw costs one `read`.
- */
 function nativePart(
   item: StoredAttachment,
   provider: AccountModelProviderName | undefined,
@@ -784,10 +594,6 @@ function nativePart(
   };
 }
 
-/**
- * The reference a stored part points at, or null for anything else: bytes, a
- * sealed workspace link, an ordinary URL the model provider reads for itself.
- */
 function parseMediaReference(value: unknown): MediaReference | null {
   if (
     typeof value !== "string" ||
@@ -815,19 +621,8 @@ function parseMediaReference(value: unknown): MediaReference | null {
   };
 }
 
-/**
- * The bytes behind a sealed link, read once per turn and kept in the media
- * cache. A link left for the provider is fetched by it again on every model
- * step, and a file the agent deleted would 404 there and fail the whole turn.
- * A link on this core's own media route that no longer opens (expired, legacy,
- * or sealed with a dropped secret) is gone: the route refuses it too. Null
- * keeps a user part's link (a tool result's becomes a note): a link another
- * deployment sealed, another account's link, a file over
- * the picture cap or past the turn's budget, or a read error (a file over the media cap among them),
- * which is not proof of a deletion. The account check matters because this
- * read runs on core's own credentials and meters the ticket's account, and
- * nothing else ties a link pasted into a conversation to the account running it.
- */
+// Null keeps the link (a read error is no proof of deletion). The account check alone ties a
+// pasted link to the running account, and this read runs on core's own credentials.
 async function readSealedMedia(
   link: string | null,
   replay: SealedReplay,
@@ -861,8 +656,7 @@ async function readSealedMedia(
     if (!object) {
       return { gone: basename(ticket.path) };
     }
-    // The head's length is charged before the read, so links read side by
-    // side never pass the budget together; the read itself caps the object.
+    // Charged before the read, so links read side by side never pass the budget together.
     const size = object.head.contentLength;
     if (
       size === undefined ||
@@ -885,12 +679,6 @@ async function readSealedMedia(
   }
 }
 
-/**
- * One stored message with its references read back. A reference the channel
- * will not serve, or a workspace link whose file is gone, becomes text in the
- * same position, so the turn still says a file was there and the model stops
- * waiting to be shown it.
- */
 async function rehydrateMessage(
   message: ModelMessage,
   agentConfig: AgentConfig,
@@ -908,10 +696,7 @@ async function rehydrateMessage(
       if (part.type !== "image" && part.type !== "file") {
         return part;
       }
-      // The gate runs again here, against the model running now. A part stored
-      // while the agent was on another provider would otherwise be replayed as
-      // a part that provider refuses, and fail every turn from here on rather
-      // than the one it arrived in.
+      // Re-gated for the current provider: a part stored under another could fail every turn.
       if (
         part.type === "file" &&
         isStoredMediaPart(part) &&
@@ -956,11 +741,7 @@ async function rehydrateMessage(
   return { ...message, content: content };
 }
 
-/**
- * A tool message with its sealed links read back into bytes, or into a line
- * when they cannot be. A link is never left for the provider: Bedrock refuses
- * a URL in a tool result before the request is sent.
- */
+/** A link is never left for the provider: Bedrock refuses a URL in a tool result. */
 async function rehydrateToolMessage(
   message: ToolModelMessage,
   replay: SealedReplay,
@@ -989,12 +770,6 @@ async function rehydrateToolMessage(
   });
 }
 
-/**
- * The bytes behind one reference, read through the channel that delivered it so
- * the provider's own credentials are used. Null rather than a throw: this runs
- * while a turn is being assembled, and one unreadable picture must not take the
- * conversation with it.
- */
 async function resolveMediaReference(
   reference: MediaReference,
   agentConfig: AgentConfig,
@@ -1033,13 +808,6 @@ async function resolveMediaReference(
   }
 }
 
-/**
- * Stores bytes in the attachment store under their hash, so a screenshot sent
- * twice is kept once, and returns the sealed link with the type the bytes name.
- * Undefined for a part that carries no bytes, with no public base URL, or when
- * the bytes are over the attachment cap or cannot be stored: the caller keeps
- * the part as it was.
- */
 async function sealBytes(
   value: ImagePart["image"] | FilePart["data"],
   claimed: string | undefined,
@@ -1082,7 +850,6 @@ async function sealBytes(
   }
 }
 
-/** The sealed media URL a picture points at, or null; a PDF is not one. */
 function sealedImageLink(part: UserContentPart): string | null {
   return part.type === "image" ||
     (part.type === "file" && part.mediaType.startsWith("image"))
@@ -1090,7 +857,6 @@ function sealedImageLink(part: UserContentPart): string | null {
     : null;
 }
 
-/** The public link that opens a ticket; undefined with no public base URL. */
 function sealedLinkFor(ticket: AttachmentMediaTicket): string | undefined {
   const baseUrl = getHarnessPublicUrl();
   if (!baseUrl) {
@@ -1104,7 +870,6 @@ function sealedLinkFor(ticket: AttachmentMediaTicket): string | undefined {
   return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
 }
 
-/** The sealed media URL an image or file part points at, or null. */
 function sealedMediaLink(part: UserContentPart): string | null {
   if (part.type !== "image" && part.type !== "file") {
     return null;
@@ -1116,7 +881,6 @@ function sealedMediaLink(part: UserContentPart): string | null {
     : null;
 }
 
-/** The sealed media URL a tool result's content item points at, or null. */
 function sealedToolLink(item: ToolContentPart): string | null {
   return item.type === "file-url" &&
     item.mediaType?.startsWith("image") === true &&
@@ -1125,7 +889,6 @@ function sealedToolLink(item: ToolContentPart): string | null {
     : null;
 }
 
-/** One message with each picture or file it carries as bytes swapped for a sealed link. */
 async function sealMessageMedia(
   message: ModelMessage,
   accountId: string,
@@ -1157,7 +920,6 @@ async function sealMessageMedia(
     return message;
   }
 
-  // Only a tool's pictures: another file it returns is dropped from the row.
   return mapToolItems(message, async (item): Promise<ToolContentPart> => {
     const sealed = isToolImageBytes(item)
       ? await sealBytes(item.data, item.mediaType, accountId)
@@ -1169,11 +931,6 @@ async function sealMessageMedia(
   });
 }
 
-/**
- * Reads one attachment and stores it in the workspace behind a sealed link, or
- * as a channel reference when there is no workspace. Never throws: a failure
- * comes back as `failure`, so one unreadable picture costs a line of text.
- */
 async function storeAttachment(
   attachment: Attachment,
   index: number,
@@ -1198,9 +955,6 @@ async function storeAttachment(
     const name = mediaFileName(attachment, mediaType, index);
     const transcribing = audioTranscript(bytes, mediaType, context.agentConfig);
     const workspace = context.workspace;
-    // With nothing to store the bytes in, the row keeps a reference to the copy
-    // the channel already has. The bytes just read are cached under it, so the
-    // turns that follow this one do not go back out for the same picture.
     if (!workspace || !context.accountId) {
       const reference = mediaReferenceUrl(
         attachment,
@@ -1255,9 +1009,6 @@ async function storeAttachment(
   }
 }
 
-/**
- * What the audio said, or what to do about not knowing.
- */
 function transcriptLine(item: StoredAttachment): string {
   const transcript = item.transcript;
   if (!transcript) {
@@ -1272,9 +1023,6 @@ function transcriptLine(item: StoredAttachment): string {
   return `\n  Not transcribed: ${transcript.reason}. ${transcriptAdvice(transcript.recovery, item.path)}`;
 }
 
-/**
- * Where the agent goes to open this attachment, or why it cannot.
- */
 function whereItLanded(
   item: StoredAttachment,
   part: UserContentPart | null,
@@ -1293,11 +1041,6 @@ function whereItLanded(
   return "could not be shown: this model does not accept the type, and there is no workspace to store it in.";
 }
 
-/**
- * The messages with every sealed picture before the newest MAX_REPLAYED_MEDIA as
- * a line of text, so a long conversation replays its recent pictures, not all.
- * Other files are not counted: the cap is the providers' limit on images.
- */
 async function withOldMediaOmitted(
   messages: ModelMessage[],
 ): Promise<ModelMessage[]> {
@@ -1305,8 +1048,7 @@ async function withOldMediaOmitted(
   if (over <= 0) {
     return messages;
   }
-  // Whole batches, so the prompt's opening stays the same, and stays cached,
-  // for the next REPLAY_OMIT_BATCH pictures instead of changing every turn.
+  // Whole batches keep the prompt's opening, and its cache, stable across turns.
   let toOmit = Math.ceil(over / REPLAY_OMIT_BATCH) * REPLAY_OMIT_BATCH;
   const omits = (link: string | null): boolean => {
     if (link === null || toOmit <= 0) {
@@ -1338,13 +1080,6 @@ async function withOldMediaOmitted(
   );
 }
 
-/**
- * Writes the workspace copy straight to S3 on the mount's credentials (the
- * assumed role for a bring-your-own bucket) and the attachment store copy on
- * the harness's own role, so no sandbox has to boot, then returns the sealed
- * link. Returns undefined with no public base URL: the files are stored, but a
- * link would resolve nowhere.
- */
 async function writeMediaObject(
   workspace: ResolvedWorkspace,
   accountId: string,

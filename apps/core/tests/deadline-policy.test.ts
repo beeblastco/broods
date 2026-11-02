@@ -1,8 +1,3 @@
-/**
- * The run's deadline policy: when a step boundary near the deadline yields
- * the worker slot, when it winds down instead, and what withdraws a yield.
- */
-
 import { describe, expect, it } from "bun:test";
 import { AGENT_MAX_TURN_UNLIMITED } from "../src/shared/domain/agent-config.ts";
 import {
@@ -65,8 +60,7 @@ describe("createDeadlinePolicy", () => {
   });
 
   it("does not yield at the step cap", () => {
-    // A next pass would start a fresh count, so the cap would never bind; the
-    // step-count rule stops the run at this boundary instead.
+    // A next pass would restart the step count, so the cap would never bind.
     const deadline = policy({ canYield: true, maxTurn: 2, nowMs: 7_000 });
 
     expect(deadline.shouldStop(2, 0)).toBe(false);

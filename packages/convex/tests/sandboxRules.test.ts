@@ -1,9 +1,3 @@
-/**
- * Sandbox config validation tests, ported from core's former
- * sandbox-config.test.ts when the normalizers moved here. Cover provider
- * limits, unsafe option rejection, and public secret redaction.
- */
-
 import { describe, expect, it } from "vitest";
 import type { Doc } from "../_generated/dataModel";
 import { toPublicSandboxConfigResponse } from "../model/responses";

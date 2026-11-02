@@ -10,10 +10,7 @@ const modules = import.meta.glob("../**/*.ts");
 const t = (): TestConvex<typeof schema> => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-// The public queries wrap these helpers behind getProjectForRole, which needs
-// the WorkOS AuthKit component that convex-test does not register here. The
-// derivation below is the part unique to project scoping, so it is tested
-// directly against a real ctx.
+// Tested directly: the public queries need AuthKit, which convex-test does not register.
 
 async function seed(tt: T): Promise<{
   accountId: Id<"accounts">;
@@ -107,9 +104,7 @@ async function seed(tt: T): Promise<{
     const agentB = await mkAgent("other-agent");
     const stranded = await mkAgent("stranded-agent");
 
-    // An agent on a different account entirely, pointed at by a config row
-    // in this project. agentConfigs.agentId is a loose string, so a stale
-    // or hand-edited row can name anything that resolves.
+    // agentConfigs.agentId is a loose string, so a stale row can name another account's agent.
     const foreignAccountId = await ctx.db.insert("accounts", {
       orgId: "org-other",
       username: "someone-elses-account",
@@ -126,7 +121,6 @@ async function seed(tt: T): Promise<{
     });
 
     await mkConfig(projectA, stageA1, agentA1, "one");
-    // Second stage of the same project: must still be found.
     await mkConfig(projectA, stageA2, agentA2, "two");
     await mkConfig(projectB, stageB, agentB, "other");
     // A config row whose agentId never resolves must not crash the scan.
@@ -167,8 +161,6 @@ describe("agentsInProject", () => {
     const tt = t();
     const s = await seed(tt);
 
-    // Otherwise another account's agent metadata surfaces in this
-    // project's scheduler and offers a picker option that cannot work.
     const found = await tt.run((ctx) =>
       agentsInProject(ctx, s.projectA, s.accountId),
     );
@@ -197,8 +189,6 @@ describe("cronsInProject", () => {
     const b = await tt.run((ctx) =>
       cronsInProject(ctx, s.projectB, s.accountId),
     );
-    // Previously every cron on the account showed on one org-wide page, so
-    // this one had somewhere to appear; now it must not leak into a project.
     expect([...a, ...b].map((c) => c._id)).not.toContain(s.cronStranded);
   });
 });

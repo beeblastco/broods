@@ -6,11 +6,6 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-/**
- * A workspace on its own bucket behind a deny-all lambda sandbox can never
- * mount, so the run is refused at resolve time with a clear error. It fails
- * before any model or AWS call, so it needs no model key.
- */
 export async function ownBucketSandbox(context: VerifyContext): Promise<void> {
   const key = `own-bucket-${context.runId}`;
   const sandbox = await context.account.createSandbox({

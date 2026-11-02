@@ -1,8 +1,3 @@
-/**
- * The rendered Traefik routers pick the router the table picks, for raw paths
- * with trailing slashes included, and every router stamps the gateway marker.
- */
-
 import { expect, test } from "bun:test";
 import { resolveRouter } from "../src/routes.ts";
 import {
@@ -78,8 +73,6 @@ test("every router marks the request as public first", (): void => {
   }
 });
 
-// Traefik keeps a bucket per router, so the per-address limit holds only if
-// few routers count against it.
 test("the cluster limits HTTP in three routers and upgrades in one", (): void => {
   const limited = (name: string): string[] =>
     clusterRoutes()
@@ -91,9 +84,8 @@ test("the cluster limits HTTP in three routers and upgrades in one", (): void =>
   expect(limited("limit-http").join()).not.toMatch(/webhooks|media/);
 });
 
-// The config plane's failed-auth limiter trusts the hop Traefik appends to
-// X-Forwarded-For, so the edge must count each peer address itself and never
-// key its own limit on a header the caller writes.
+// The config plane's auth limiter trusts the X-Forwarded-For hop Traefik appends, so the
+// edge must limit by peer address, never by a header the caller writes.
 test("the cluster limits every config route by peer address", (): void => {
   const config = clusterRoutes().filter(
     (route) => route.services[0]?.name === "convex",
@@ -117,9 +109,6 @@ test("the cluster limits every config route by peer address", (): void => {
   );
 });
 
-// Download and media links carry their credential in the path; a Pancake
-// delivery and a Meta verification GET carry one in the query string the
-// access log would record.
 test("credential-bearing routers stay out of the access log", (): void => {
   const unlogged = Object.entries(renderFileConfig(UPSTREAMS).http.routers)
     .filter(([, router]) => router.observability?.accessLogs === false)
@@ -130,7 +119,6 @@ test("credential-bearing routers stay out of the access log", (): void => {
     "broods-edge-secret-webhooks",
     "broods-edge-media",
   ]);
-  // The cluster render carries the same switch on the same routers.
   const clusterUnlogged = clusterRoutes()
     .filter((route) => route.observability?.accessLogs === false)
     .map((route) => route.match);
@@ -191,8 +179,7 @@ function clusterRoutes(): KubeRoute[] {
   return [];
 }
 
-// Evaluates the matchers the renderer emits: OR'ed rules of Method and
-// PathRegexp. The regex syntax used is shared by Go and JavaScript.
+// The regex syntax the renderer emits means the same in Go (Traefik) and JavaScript.
 function ruleMatches(rule: string, method: string, path: string): boolean {
   return topLevelAlternatives(rule).some((member) => {
     const pathRegex = member.match(/PathRegexp\(`([^`]+)`\)/)![1]!;
@@ -205,7 +192,6 @@ function ruleMatches(rule: string, method: string, path: string): boolean {
   });
 }
 
-// Splits a rule on the `||` outside any parentheses or backticks.
 function topLevelAlternatives(rule: string): string[] {
   const members: string[] = [];
   let depth = 0;
