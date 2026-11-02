@@ -115,11 +115,12 @@ export function completionToParentMessage(
 
 /**
  * One row of `resumeLostAsyncToolResults`: its continuation is admitted under
- * the row, so admission stores it, or refuses it as a duplicate once the
+ * the row and stored by its owner's save, or refused as a duplicate once the
  * conversation has it. A conversation with no room keeps the row for the next
  * pass, and so do a resume that throws and a duplicate: admission already
- * marked a stored result, and a continuation still queued marks it when
- * applied, or is admitted again by a later pass once it expired. A row no
+ * marked a stored result, and a continuation still queued or applied is
+ * stored by its owner's save, or admitted again by a later pass once it
+ * expired. A row no
  * resume can ever deliver is marked stored and logged once.
  * @returns whether the row is handled, rather than kept for the next pass
  */

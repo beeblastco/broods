@@ -248,6 +248,27 @@ describe("mcp-runner containment", () => {
   }, 30_000);
 });
 
+describe("mcp-runner outside Lambda", () => {
+  it("leaves the host's other processes alone", async () => {
+    // The stray reap is for Lambda's own UID. On a dev box or CI runner the
+    // same UID runs the shell, the editor and Docker.
+    const bystander = spawn(
+      process.execPath,
+      ["-e", "setTimeout(() => {}, 30000)"],
+      {
+        detached: true,
+        stdio: "ignore",
+      },
+    );
+    try {
+      await invokeHandler(`export default () => new Response("ok");`);
+      expect(isAlive(bystander.pid!)).toBe(true);
+    } finally {
+      bystander.kill("SIGKILL");
+    }
+  }, 30_000);
+});
+
 describe("mcp-runner bundle addressing", () => {
   it("resolves a bundle the event only addresses by URL", async () => {
     // Core spends its 6 MB invoke quota on a presigned GET rather than the

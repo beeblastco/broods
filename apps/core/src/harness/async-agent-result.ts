@@ -86,15 +86,13 @@ export function listOwedAsyncAgentResults(options: {
  * delivering it, `stored` when the parent is never told. A
  * stored row stays stored. The row already holds the result, so a failed
  * write is only logged: a pending row reaches the recovery sweep later.
- * @returns true when a resume of the result waits in the parent's queue: the
- * row stays unstored and the caller must not hand the result over itself
  */
 export async function markAsyncAgentHandback(
   eventId: string,
   handback: HandbackMove,
-): Promise<boolean> {
+): Promise<void> {
   try {
-    return await runtime.mutate("markAsyncAgentHandback", {
+    await runtime.mutate("markAsyncAgentHandback", {
       eventId: eventId,
       handback: handback,
     });
@@ -104,8 +102,6 @@ export async function markAsyncAgentHandback(
       handback: handback,
       error: toErrorMessage(error),
     });
-
-    return false;
   }
 }
 /**

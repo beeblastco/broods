@@ -27,6 +27,7 @@ import { queuedFollowup } from "./queued-followup.ts";
 import { runToken } from "./run-token.ts";
 import { scopedAccountKey } from "./scoped-account-key.ts";
 import { snapshotStage } from "./snapshot-stage.ts";
+import { statusReadHandback } from "./status-read-handback.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { streamedBurst } from "./streamed-burst.ts";
 import { subagentModel } from "./subagent-model.ts";
@@ -58,6 +59,7 @@ export const verifyCases: readonly VerifyCase[] = [
   subagentResume,
   asyncToolHandback,
   mcpTasks,
+  statusReadHandback,
   autoCompaction,
   machineSandbox,
   bashTimeout,
