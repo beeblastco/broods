@@ -1,10 +1,11 @@
 import type { JSONValue } from "@ai-sdk/provider";
 import { detectMediaType, type ToolResultOutput } from "@ai-sdk/provider-utils";
-import type {
-  JSONSchema7,
-  ToolModelMessage,
-  UserContent,
-  UserModelMessage,
+import {
+  toolModelMessageSchema,
+  type JSONSchema7,
+  type ToolModelMessage,
+  type UserContent,
+  type UserModelMessage,
 } from "ai";
 import { z } from "zod";
 import {
@@ -46,72 +47,6 @@ const MODEL_IMAGE_TYPES: ReadonlySet<string> = new Set([
 ]);
 const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
 
-const jsonValueSchema = z.custom<JSONValue>((value) => isJSONValue(value));
-const providerOptionsSchema = z
-  .record(z.string(), z.record(z.string(), jsonValueSchema))
-  .optional();
-const providerReferenceSchema = z.record(z.string(), z.string());
-const toolContentPartSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("text"),
-    text: z.string(),
-    providerOptions: providerOptionsSchema,
-  }),
-  z.object({
-    type: z.literal("file"),
-    data: z.discriminatedUnion("type", [
-      z.object({
-        type: z.literal("data"),
-        data: z.union([
-          z.string(),
-          z.instanceof(Uint8Array),
-          z.instanceof(ArrayBuffer),
-        ]),
-      }),
-      z.object({ type: z.literal("url"), url: z.instanceof(URL) }),
-      z.object({
-        type: z.literal("reference"),
-        reference: providerReferenceSchema,
-      }),
-      z.object({ type: z.literal("text"), text: z.string() }),
-    ]),
-    mediaType: z.string(),
-    filename: z.string().optional(),
-    providerOptions: providerOptionsSchema,
-  }),
-  z.object({
-    type: z.enum(["file-data", "image-data"]),
-    data: z.string(),
-    mediaType: z.string(),
-    filename: z.string().optional(),
-    providerOptions: providerOptionsSchema,
-  }),
-  z.object({
-    type: z.literal("file-url"),
-    url: z.string(),
-    mediaType: z.string().optional(),
-    providerOptions: providerOptionsSchema,
-  }),
-  z.object({
-    type: z.literal("image-url"),
-    url: z.string(),
-    providerOptions: providerOptionsSchema,
-  }),
-  z.object({
-    type: z.enum(["file-id", "image-file-id"]),
-    fileId: z.union([z.string(), providerReferenceSchema]),
-    providerOptions: providerOptionsSchema,
-  }),
-  z.object({
-    type: z.enum(["file-reference", "image-file-reference"]),
-    providerReference: providerReferenceSchema,
-    providerOptions: providerOptionsSchema,
-  }),
-  z.object({
-    type: z.literal("custom"),
-    providerOptions: providerOptionsSchema,
-  }),
-]);
 const toolResultOutputTypeSchema = z.object({
   type: z.enum([
     "text",
@@ -122,30 +57,6 @@ const toolResultOutputTypeSchema = z.object({
     "content",
   ]),
 });
-const toolResultOutputSchema: z.ZodType<ToolResultOutput> =
-  z.discriminatedUnion("type", [
-    z.object({
-      type: z.enum(["text", "error-text"]),
-      value: z.string(),
-      providerOptions: providerOptionsSchema,
-    }),
-    z.object({
-      type: z.enum(["json", "error-json"]),
-      value: jsonValueSchema,
-      providerOptions: providerOptionsSchema,
-    }),
-    z.object({
-      type: z.literal("execution-denied"),
-      reason: z.string().optional(),
-      providerOptions: providerOptionsSchema,
-    }),
-    z.object({
-      type: z.literal("content"),
-      value: z.array(toolContentPartSchema),
-      providerOptions: providerOptionsSchema,
-    }),
-  ]);
-
 export type ToolContentPart = Extract<
   ToolResultOutput,
   { type: "content" }
@@ -466,8 +377,16 @@ function jpegSize(
 export function parseToolResultOutput(
   value: unknown,
 ): ToolResultOutput | undefined {
-  // The input, not zod's copy, which would drop the keys the schema does not name.
-  return toolResultOutputSchema.safeParse(value).success
+  // The SDK's own schema, reached through the tool message a result sits in. The input, not
+  // zod's copy, which would drop the keys the schema does not name.
+  const message = {
+    role: "tool",
+    content: [
+      { type: "tool-result", toolCallId: "", toolName: "", output: value },
+    ],
+  };
+
+  return toolModelMessageSchema.safeParse(message).success
     ? (value as ToolResultOutput)
     : undefined;
 }

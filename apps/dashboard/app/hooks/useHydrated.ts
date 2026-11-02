@@ -9,6 +9,7 @@ export function useHydrated(): boolean {
   );
 }
 
-function subscribeNever(): () => void {
+// A store that never changes, for useSyncExternalStore.
+export function subscribeNever(): () => void {
   return () => {};
 }

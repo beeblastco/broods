@@ -1,6 +1,11 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
 
-import { propertyName, testFramework, testRoot } from "../ast.ts";
+import {
+  FUNCTION_TYPES,
+  propertyName,
+  testFramework,
+  testRoot,
+} from "../ast.ts";
 
 const EACH_FRAMEWORKS = new Set(["", "bun:test", "vitest"]);
 const LOOPS = new Set([
@@ -9,11 +14,6 @@ const LOOPS = new Set([
   "ForOfStatement",
   "ForStatement",
   "WhileStatement",
-]);
-const FUNCTIONS = new Set([
-  "ArrowFunctionExpression",
-  "FunctionDeclaration",
-  "FunctionExpression",
 ]);
 const ITERATING_METHODS = new Set(["flatMap", "forEach", "map"]);
 
@@ -36,7 +36,7 @@ const isIterationCallback = (node: ESTree.Node): boolean => {
 const isInsideLoop = (node: ESTree.Node): boolean => {
   for (let current = node.parent; current; current = current.parent) {
     if (LOOPS.has(current.type)) return true;
-    if (FUNCTIONS.has(current.type)) return isIterationCallback(current);
+    if (FUNCTION_TYPES.has(current.type)) return isIterationCallback(current);
   }
   return false;
 };

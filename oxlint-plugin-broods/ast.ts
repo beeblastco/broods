@@ -2,6 +2,14 @@ import type { Context, ESTree, Scope } from "@oxlint/plugins";
 
 const TEST_FUNCTIONS = new Set(["describe", "it", "suite", "test"]);
 
+export const FUNCTION_TYPES = new Set([
+  "ArrowFunctionExpression",
+  "FunctionDeclaration",
+  "FunctionExpression",
+]);
+
+export type FunctionNode = ESTree.Function | ESTree.ArrowFunctionExpression;
+
 const chainRoot = (node: ESTree.Node): ESTree.Node => {
   if (node.type === "MemberExpression") return chainRoot(node.object);
   if (node.type === "CallExpression") return chainRoot(node.callee);
@@ -25,6 +33,12 @@ export const propertyName = (
     typeof node.property.value === "string"
     ? node.property.value
     : undefined;
+};
+
+// The name a call goes by: `name(...)` or `object.name(...)`.
+export const calleeName = (callee: ESTree.Node): string | undefined => {
+  if (callee.type === "Identifier") return callee.name;
+  return callee.type === "MemberExpression" ? propertyName(callee) : undefined;
 };
 
 export const testFramework = (

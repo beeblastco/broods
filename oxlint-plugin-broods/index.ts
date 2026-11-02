@@ -8,7 +8,6 @@ import noHooklessUseFunction from "./rules/no-hookless-use-function.ts";
 import noInlineSchemaCompile from "./rules/no-inline-schema-compile.ts";
 import noLayoutTransition from "./rules/no-layout-transition.ts";
 import noLowValueComments from "./rules/no-low-value-comments.ts";
-import noRawResizeObserver from "./rules/no-raw-resize-observer.ts";
 import noTestInLoop from "./rules/no-test-in-loop.ts";
 import noUnreasonedStateSync from "./rules/no-unreasoned-state-sync.ts";
 import noUnscopedHas from "./rules/no-unscoped-has.ts";
@@ -26,7 +25,6 @@ export default definePlugin({
     "no-inline-schema-compile": noInlineSchemaCompile,
     "no-layout-transition": noLayoutTransition,
     "no-low-value-comments": noLowValueComments,
-    "no-raw-resize-observer": noRawResizeObserver,
     "no-test-in-loop": noTestInLoop,
     "no-unreasoned-state-sync": noUnreasonedStateSync,
     "no-unscoped-has": noUnscopedHas,

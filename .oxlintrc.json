@@ -143,10 +143,20 @@
         "broods/no-continuous-animation": "error",
         "broods/no-hookless-use-function": "error",
         "broods/no-layout-transition": "error",
-        "broods/no-raw-resize-observer": "error",
         "broods/no-unreasoned-state-sync": "error",
-        "broods/no-unscoped-has": "error"
+        "broods/no-unscoped-has": "error",
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "ResizeObserver",
+            "message": "Use observeResize (app/lib/observeResize.ts): one shared observer for every element."
+          }
+        ]
       }
+    },
+    {
+      "files": ["apps/dashboard/app/lib/observeResize.ts"],
+      "rules": { "no-restricted-globals": "off" }
     },
     {
       "files": ["apps/dashboard/app/components/ui/**"],

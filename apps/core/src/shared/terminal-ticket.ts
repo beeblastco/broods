@@ -12,6 +12,7 @@ const TICKET_VERSION = "st1";
 const SEALED_TICKET = z.object({
   url: z.string(),
   authorization: z.string(),
+  // Defaults to `authorization`; MicroVM shells use `X-aws-proxy-auth`.
   authorizationHeader: z.string().optional(),
   accountId: z.string(),
   expiresAt: z.number(),
@@ -20,14 +21,7 @@ const SEALED_TICKET = z.object({
 export const TERMINAL_TICKET_TTL_MS = 2 * 60 * 1000;
 export const TERMINAL_WEBSOCKET_PATH = "/v1/sandboxes/terminal/ws";
 
-export interface TerminalTicket {
-  url: string;
-  authorization: string;
-  /** Defaults to `authorization`; MicroVM shells use `X-aws-proxy-auth`. */
-  authorizationHeader?: string;
-  accountId: string;
-  expiresAt: number;
-}
+export type TerminalTicket = z.infer<typeof SEALED_TICKET>;
 
 // Null, never a throw, so a caller can try its other live secrets.
 export function openTerminalTicket(

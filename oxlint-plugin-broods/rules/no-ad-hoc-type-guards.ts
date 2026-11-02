@@ -2,12 +2,12 @@ import { matchesGlob } from "node:path";
 
 import { defineRule, type ESTree } from "@oxlint/plugins";
 
+import type { FunctionNode } from "../ast.ts";
+
 type Options = {
   names: Array<string>;
   allow: Array<{ file: string; name: string }>;
 };
-
-type FunctionNode = ESTree.Function | ESTree.ArrowFunctionExpression;
 
 const UNTYPED = new Set(["TSAnyKeyword", "TSUnknownKeyword"]);
 

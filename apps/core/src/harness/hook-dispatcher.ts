@@ -83,7 +83,7 @@ export function createHookDispatcher(
         return undefined;
       }
       const run = queue.then(async () => {
-        const mutations: Record<string, unknown>[] = [];
+        let merged: Record<string, unknown> | undefined;
         for (const record of records) {
           const { mutation, state } = await runCodeHook({
             accountId: accountId,
@@ -94,12 +94,10 @@ export function createHookDispatcher(
             state: runState,
           });
           runState = state;
-          if (mutation) mutations.push(mutation);
+          if (mutation) merged = Object.assign(merged ?? {}, mutation);
         }
 
-        return mutations.length > 0
-          ? Object.fromEntries(mutations.flatMap((m) => Object.entries(m)))
-          : undefined;
+        return merged;
       });
       queue = run.catch(() => undefined);
 

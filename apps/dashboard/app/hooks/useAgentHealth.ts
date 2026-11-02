@@ -1,6 +1,7 @@
 "use client";
 
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { subscribeNever } from "@/app/hooks/useHydrated";
 import { useSyncExternalStore } from "react";
 
 export type AgentHealthStatus = "healthy" | "deploying" | "idle" | "unhealthy";
@@ -20,7 +21,7 @@ export function useAgentHealth(
   agentConfigId: Id<"agentConfigs"> | undefined,
 ): AgentHealthStatus {
   const healthy = useSyncExternalStore(
-    agentConfigId ? subscribe : subscribeNone,
+    agentConfigId ? subscribe : subscribeNever,
     () => healthCache.healthy,
     () => null,
   );
@@ -89,10 +90,6 @@ function notifyListeners(): void {
   for (const listener of listeners) {
     listener();
   }
-}
-
-function subscribeNone(): () => void {
-  return () => {};
 }
 
 function subscribe(listener: () => void): () => void {

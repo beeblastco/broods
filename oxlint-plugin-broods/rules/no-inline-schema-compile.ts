@@ -5,14 +5,9 @@ import {
   type Variable,
 } from "@oxlint/plugins";
 
-import { propertyName } from "../ast.ts";
+import { FUNCTION_TYPES, propertyName } from "../ast.ts";
 
 const ZOD_MODULE_PATTERN = /^zod(?:\/(?:mini|v3|v4|v4-mini))?$/u;
-const FUNCTIONS = new Set([
-  "ArrowFunctionExpression",
-  "FunctionDeclaration",
-  "FunctionExpression",
-]);
 const NOT_SCHEMA = new Set([
   "config",
   "core",
@@ -115,7 +110,7 @@ export default defineRule({
     const perCallFunction = (node: ESTree.Node): boolean => {
       for (let current = node.parent; current; current = current.parent) {
         if (isSchema(current)) return false;
-        if (FUNCTIONS.has(current.type) && !runsOnce(current)) return true;
+        if (FUNCTION_TYPES.has(current.type) && !runsOnce(current)) return true;
       }
       return false;
     };
