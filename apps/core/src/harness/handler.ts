@@ -2044,8 +2044,8 @@ async function prepareDirectTurn(
 }
 
 function directSession(event: DirectInboundEvent): Session {
-  // Where a background job this turn launches reports back; plain API turns only poll.
-  const delivery: AsyncToolDelivery | undefined = event.connectionId
+  // Where a background job this turn launches reports back; plain API turns report by polling.
+  const delivery: AsyncToolDelivery = event.connectionId
     ? {
         kind: "nats",
         connectionId: event.connectionId,
@@ -2061,7 +2061,7 @@ function directSession(event: DirectInboundEvent): Session {
             : {}),
           source: event.replyTarget.source,
         }
-      : undefined;
+      : { kind: "async" };
   if (event.ownerGeneration === undefined) {
     throw new Error("Direct turn is missing its durable owner generation");
   }
