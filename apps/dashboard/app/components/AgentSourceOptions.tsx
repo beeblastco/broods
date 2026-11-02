@@ -2,13 +2,10 @@
 
 /** Shared list of agent config source options used by the empty canvas guide and the source picker dialog. */
 import { Button } from "@/app/components/ui/button";
-import { api } from "@broods/convex/_generated/api";
-import type { Id } from "@broods/convex/_generated/dataModel";
-import { useQuery } from "convex/react";
 import { FileDown, FilePlus, GitBranch, LayoutTemplate } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
-// "create" opens the editor and "github" the project's Git settings; the rest show as coming soon.
+// "create" opens the editor and "github" the project's Git settings, which say when GitHub is not set up; the rest show as coming soon.
 const SOURCE_OPTIONS = [
   {
     key: "github",
@@ -44,13 +41,9 @@ export function AgentSourceOptions({
   onCreateNew?: () => void;
 }): React.JSX.Element {
   const router = useRouter();
-  const { projectId } = useParams<{ projectId?: Id<"projects"> }>();
-  const github = useQuery(
-    api.github.status,
-    projectId ? { projectId: projectId } : "skip",
-  );
+  const { projectId } = useParams<{ projectId?: string }>();
   const actions: Record<SourceKey, (() => void) | undefined> = {
-    github: github?.configured
+    github: projectId
       ? () => router.push(`/${projectId}/settings?tab=git`)
       : undefined,
     template: undefined,
@@ -73,7 +66,7 @@ export function AgentSourceOptions({
           <span className="flex flex-col items-start">
             {label}
             <span className="text-2xs font-normal text-muted-foreground">
-              {key === "github" && !actions.github ? "Coming soon" : hint}
+              {hint}
             </span>
           </span>
         </Button>
