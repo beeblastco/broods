@@ -89,7 +89,7 @@ const TOOL_CALL_RESULT = z.union([
 ]);
 
 /** Core's own request handler, which every run read and write replays through. */
-export type McpReplay = (request: CoreRequest) => Promise<Response>;
+type McpReplay = (request: CoreRequest) => Promise<Response>;
 
 /** A run as `GET /v1/runs/{runId}` answers it; core sets every field named here. */
 export type RunStatus = AsyncStatus &
@@ -106,7 +106,7 @@ export type RunStatus = AsyncStatus &
   >;
 
 /** A task's first run, and the approval reply it now waits on (itself when none). */
-export interface TaskRuns {
+interface TaskRuns {
   root: RunStatus;
   current: RunStatus;
 }
@@ -164,32 +164,31 @@ export function taskFromRuns(runs: TaskRuns): DetailedTaskV2 {
   };
   switch (current.status) {
     case "awaiting_input":
-      return {
-        ...base,
-        status: "input_required",
-        inputRequests: Object.fromEntries(
-          (current.questions ?? []).map((prompt) => [
-            `${QUESTION_KEY_PREFIX}${prompt.statusId}`,
-            questionRequest(prompt),
-          ]),
-        ),
-      };
     case "awaiting_approval":
       return {
         ...base,
         status: "input_required",
-        inputRequests: Object.fromEntries(
-          (current.approvals ?? []).map((approval) => [
+        inputRequests: Object.fromEntries([
+          ...(current.questions ?? []).map((prompt) => [
+            `${QUESTION_KEY_PREFIX}${prompt.statusId}`,
+            questionRequest(prompt),
+          ]),
+          ...(current.approvals ?? []).map((approval) => [
             `${APPROVAL_KEY_PREFIX}${approval.approvalId}`,
             approvalRequest(approval),
           ]),
-        ),
+        ]),
       };
     case "completed":
       return {
         ...base,
         status: "completed",
-        result: toolResult(responseText(current.response), false),
+        result: toolResult(
+          typeof current.response === "string"
+            ? current.response
+            : JSON.stringify(current.response),
+          false,
+        ),
       };
     case "failed":
       if (current.stoppedByUser) {
@@ -280,9 +279,9 @@ async function answerApprovals(
 ): Promise<void> {
   const approvals = run.approvals ?? [];
   const parts = approvals.flatMap((approval) => {
-    const decision = elicitResult(
+    const decision = ElicitResultV2Schema.safeParse(
       responses[`${APPROVAL_KEY_PREFIX}${approval.approvalId}`],
-    );
+    ).data;
 
     return decision
       ? [
@@ -319,9 +318,9 @@ async function answerQuestions(
   responses: Record<string, unknown>,
 ): Promise<void> {
   const answers = (run.questions ?? []).flatMap((prompt) => {
-    const response = elicitResult(
+    const response = ElicitResultV2Schema.safeParse(
       responses[`${QUESTION_KEY_PREFIX}${prompt.statusId}`],
-    );
+    ).data;
 
     return response
       ? [
@@ -403,10 +402,6 @@ async function cancelTask(caller: McpCaller, taskId: string): Promise<void> {
       root.conversationKey,
     ),
   });
-}
-
-function elicitResult(value: unknown): ElicitResultV2 | undefined {
-  return ElicitResultV2Schema.safeParse(value).data;
 }
 
 async function errorText(response: Response): Promise<string> {
@@ -518,10 +513,6 @@ async function resolveTask(
   return { root: root, current: current };
 }
 
-function responseText(response: unknown): string {
-  return typeof response === "string" ? response : JSON.stringify(response);
-}
-
 function runRequest(
   caller: McpCaller,
   method: "GET" | "POST",
@@ -613,33 +604,17 @@ async function startTask(
     return toolResult(await errorText(started), true);
   }
   const accepted = (await started.json()) as AsyncRequestAccepted;
-  // The run is already going, so a failed first read still hands back its id:
-  // a retry would start a second run.
-  const runs = await resolveTask(caller, accepted.runId).catch(
-    (): null => null,
-  );
   const now = new Date().toISOString();
-  const task: DetailedTaskV2 = runs
-    ? taskFromRuns(runs)
-    : {
-        taskId: accepted.runId,
-        status: "working",
-        createdAt: now,
-        lastUpdatedAt: now,
-        ttlMs: null,
-        pollIntervalMs: POLL_INTERVAL_MS,
-      };
-  const { taskId, status, createdAt, lastUpdatedAt, ttlMs, pollIntervalMs } =
-    task;
 
+  // The first tasks/get reports where the run stands; a fresh run is working.
   return {
     resultType: "task",
-    taskId: taskId,
-    status: status,
-    createdAt: createdAt,
-    lastUpdatedAt: lastUpdatedAt,
-    ttlMs: ttlMs,
-    ...(pollIntervalMs !== undefined ? { pollIntervalMs: pollIntervalMs } : {}),
+    taskId: accepted.runId,
+    status: "working",
+    createdAt: now,
+    lastUpdatedAt: now,
+    ttlMs: null,
+    pollIntervalMs: POLL_INTERVAL_MS,
   };
 }
 

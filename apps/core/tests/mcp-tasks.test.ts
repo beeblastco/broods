@@ -4,6 +4,7 @@ import type { AuthContext } from "../src/shared/auth.ts";
 import * as authModule from "../src/shared/auth.ts";
 import * as runtimeModule from "../src/shared/convex/runtime.ts";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
+import type { RunStatus } from "../src/harness/mcp-tasks.ts";
 import type { CoreRequest } from "../src/shared/http.ts";
 import type { AccountRecord } from "../src/shared/domain/accounts.ts";
 import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
@@ -54,7 +55,6 @@ await mock.module("../src/shared/convex/runtime.ts", () => ({
 
 const { handleMcpRequest, taskFromRuns } =
   await import("../src/harness/mcp-tasks.ts");
-type RunStatus = Parameters<typeof taskFromRuns>[0]["root"];
 
 afterEach((): void => {
   stops.length = 0;
@@ -219,22 +219,6 @@ describe("handleMcpRequest", () => {
       events: [{ role: "user", content: "hi" }],
     });
     expect(started.conversationKey).toBe(started.eventId);
-  });
-
-  it("still hands back the task when the first status read fails", async () => {
-    const { result } = await rpc(
-      mcpRequest("tools/call", {
-        name: "agent_1",
-        arguments: { prompt: "hi" },
-      }),
-      replayOf({}),
-    );
-
-    expect(result).toMatchObject({
-      resultType: "task",
-      taskId: "run_1",
-      status: "working",
-    });
   });
 
   it("follows an approval reply sent through tasks/update", async () => {
