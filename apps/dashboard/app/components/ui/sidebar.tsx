@@ -273,7 +273,9 @@ function Sidebar({
       <div
         data-slot="sidebar-gap"
         className={cn(
-          "relative w-(--sidebar-width) bg-transparent",
+          // In step with the container's width transition, or a toggle opens an
+          // empty column beside the page, or covers it, for 200 ms.
+          "relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
           "group-data-[collapsible=offcanvas]:w-0",
           "group-data-[side=right]:rotate-180",
           // Peeking draws over the page, so the gap keeps the rail's width.

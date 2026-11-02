@@ -937,26 +937,34 @@ function CanvasInner({
   // Re-center the focused node once the panel has entered: a pan that starts
   // with it re-renders every card per frame while the panel mounts.
   const lastFocusedNode = useRef<Node | null>(null);
+  // A pan the user starts cancels a re-centre still waiting for the panel.
+  const recenterTimer = useRef<number | undefined>(undefined);
   useEffect(() => {
     const node = selectedNode ?? lastFocusedNode.current;
     if (selectedNode) lastFocusedNode.current = selectedNode;
     if (!node) return;
 
-    const id = window.setTimeout(() => {
-      const width = node.measured?.width ?? node.width ?? 0;
-      const height = node.measured?.height ?? node.height ?? 0;
-      void setCenter(
-        node.position.x + width / 2,
-        node.position.y + height / 2,
-        {
-          zoom: getZoom(),
-          duration: prefersReducedMotion() ? 0 : MOTION_MS.slow,
-        },
-      ).catch((error: unknown): void => {
-        console.error("Failed to center the selected canvas node", error);
-      });
-      if (!selectedNode) lastFocusedNode.current = null;
-    }, MOTION_MS.base);
+    const id = window.setTimeout(
+      () => {
+        recenterTimer.current = undefined;
+        const width = node.measured?.width ?? node.width ?? 0;
+        const height = node.measured?.height ?? node.height ?? 0;
+        void setCenter(
+          node.position.x + width / 2,
+          node.position.y + height / 2,
+          {
+            zoom: getZoom(),
+            duration: prefersReducedMotion() ? 0 : MOTION_MS.slow,
+          },
+        ).catch((error: unknown): void => {
+          console.error("Failed to center the selected canvas node", error);
+        });
+        if (!selectedNode) lastFocusedNode.current = null;
+        // Under reduced motion the panel is there at once, so the node is centred at once too.
+      },
+      prefersReducedMotion() ? 0 : MOTION_MS.base,
+    );
+    recenterTimer.current = id;
 
     return () => window.clearTimeout(id);
   }, [selectedNode, setCenter, getZoom]);
@@ -1691,6 +1699,9 @@ function CanvasInner({
         onEdgesDelete={onEdgesDeleteHandler}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
+        onMoveStart={(event) => {
+          if (event) window.clearTimeout(recenterTimer.current);
+        }}
         nodesDraggable={canWrite}
         nodesConnectable={canWrite}
         snapToGrid

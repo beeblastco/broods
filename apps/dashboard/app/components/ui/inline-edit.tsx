@@ -29,6 +29,8 @@ function InlineEdit({
   className?: string;
 }): React.JSX.Element {
   const [draft, setDraft] = React.useState(value);
+  // The name when the field opened: a rename that lands meanwhile must not read as an edit.
+  const [opened] = React.useState(value);
   const [refused, setRefused] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const returnFocusRef = React.useRef<HTMLElement | null>(null);
@@ -63,7 +65,7 @@ function InlineEdit({
       autoComplete="off"
       dir="auto"
       // A blank draft still shows what it was; refused, it turns red.
-      placeholder={value}
+      placeholder={opened}
       data-slot="inline-edit"
       className={cn(
         "w-full min-w-0 flex-1 bg-transparent p-0 caret-primary outline-none selection:bg-primary/20",
@@ -82,7 +84,7 @@ function InlineEdit({
         if (event.nativeEvent.isComposing) return;
         if (event.key === "Enter") {
           event.preventDefault();
-          const outcome = resolveInlineEdit(draft, value);
+          const outcome = resolveInlineEdit(draft, opened);
           if (outcome.kind === "empty") setRefused(true);
           else close(outcome.kind === "commit" ? outcome.value : null, true);
         } else if (event.key === "Escape") {
@@ -93,7 +95,7 @@ function InlineEdit({
       }}
       onBlur={() => {
         if (settledRef.current) return;
-        const outcome = resolveInlineEdit(draft, value);
+        const outcome = resolveInlineEdit(draft, opened);
         close(outcome.kind === "commit" ? outcome.value : null, false);
       }}
       // Clicks in the field are not clicks on the row or card around it.
