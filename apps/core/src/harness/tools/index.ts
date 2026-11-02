@@ -21,8 +21,6 @@ import {
 import type { Tool as RemoteMcpTool } from "@modelcontextprotocol/client";
 import type { McpRecord } from "../../shared/domain/mcp.ts";
 import { workspaceMemoryHarnessEnabled } from "../../shared/domain/workspace-config.ts";
-import { toErrorMessage } from "../../shared/errors.ts";
-import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
 import { publicConversationKeyFromScoped } from "../../shared/runtime-keys.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
@@ -37,7 +35,6 @@ import type { DispatchAppliedIngress } from "../integrations.ts";
 import type { PendingQuestionSummary } from "../questions.ts";
 import type {
   SandboxCpuSample,
-  SandboxExecutorConfig,
   SandboxRunPrincipal,
 } from "../sandbox/types.ts";
 import type { Session } from "../session.ts";
@@ -48,7 +45,6 @@ import {
 } from "../mcp/client.ts";
 import { mcpTools } from "../mcp/mcp.tool.ts";
 import { sandboxMcpTarget } from "../mcp/sandbox.ts";
-import { createSandboxExecutor } from "../sandbox/index.ts";
 import askParentTool from "./ask-parent.tool.ts";
 import askQuestionsTool from "./ask-questions.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
@@ -176,15 +172,6 @@ export async function createTools(
         conversationKey: context.conversationKey,
       },
     );
-  }
-  // Book the agent's own sandbox while the model thinks, so its first command
-  // finds the booking held instead of waiting on it.
-  if (
-    defaultSandbox?.persistent === true &&
-    runsWithoutNamespace &&
-    hasSandboxReservation
-  ) {
-    bookSandboxAhead(defaultSandbox, context.conversationKey);
   }
   const sandboxTools: ToolSet = {};
 
@@ -600,30 +587,5 @@ function withholdTools(tools: ToolSet, denyTools: string[] | undefined): void {
     if (toolName in tools) {
       delete tools[toolName];
     }
-  }
-}
-
-/** Best-effort: a booking that fails here is made again by the first command. */
-function bookSandboxAhead(
-  sandbox: SandboxExecutorConfig,
-  conversationKey: string,
-): void {
-  const reservationKey = statelessReservationKeyFor(sandbox);
-  if (!reservationKey) return;
-  const failed = (error: unknown): void => {
-    logWarn("sandbox booking ahead of the first command failed", {
-      conversationKey: conversationKey,
-      error: toErrorMessage(error),
-    });
-  };
-  // A config the executor refuses fails the first command, not the run.
-  try {
-    const executor = createSandboxExecutor(sandbox);
-    if (!executor.reserveAhead) return;
-    waitUntil(
-      executor.reserveAhead({ reservationKey: reservationKey }).catch(failed),
-    );
-  } catch (error) {
-    failed(error);
   }
 }

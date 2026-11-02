@@ -78,6 +78,28 @@ runs one arm at one level and prints the database container's CPU per task
 `results/db-before.jsonl` holds the same measurement from before these
 changes.
 
+## Two ideas that did not help
+
+Commit `8f59ca0` built the two fixes the page proposed for the time still
+left inside Broods, and `bench/run-two-ideas.sh` there measured them against
+today and the fast setup at 1, 10 and 20 users, twice
+(`results/two-ideas.jsonl`). Neither beat the fast setup at 20 users, so both
+were taken out again:
+
+- **One workerd per CPU core.** Two or three engines (`slimEngineConfig`)
+  behind a front that keeps each agent on one engine, with one writer
+  process for every engine's usage writes: 167 tasks a minute against 168
+  with one engine, for more CPU per task. One engine at 20 users is busy
+  about a third of the time, so it was never the limit.
+- **Booking the sandbox while the model thinks** (core's `reserveAhead`
+  from `createTools`): 167 against 168, and with a 1 s model delay 97
+  against 94, inside the swing between runs. It saves one database call per
+  new sandbox, which is not where the time goes.
+
+`results/warm-reps.jsonl` is five batches on one warm router (`REPS=5`):
+core CPU per batch does not fall as the workers warm up, so warm-up is not
+why a task costs more CPU in a worker than in today's core.
+
 `restart-cores.sh` with `SANDBOX_PORT=8791` points both long-lived cores at the
 real-shell sandbox, and `run-scripted.sh` then takes `bun:native` and
 `workerd:native` arms, the controls for how much of the gap is the sandbox.

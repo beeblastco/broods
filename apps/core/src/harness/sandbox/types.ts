@@ -288,10 +288,6 @@ export interface SandboxReservedPost
 
 export interface SandboxExecutor {
   run(request: SandboxRunRequest): Promise<SandboxRunResult>;
-  // Best-effort: book a persistent reservation before the first command, so
-  // that command finds it held. Starts nothing, so only providers whose
-  // sandbox exists as soon as it is named offer it. Callers fire and forget.
-  reserveAhead?(request: SandboxReservationRef): Promise<void>;
   // Best-effort: create/resume the reserved sandbox and wait until its pod is
   // Ready, ahead of the first real call, to hide cold-start. No-op for
   // non-persistent configs. Callers feature-detect and fire-and-forget.

@@ -8,7 +8,6 @@
  * bun bench.ts --runtime bun|workerd --sandbox machine|v8 --mode scripted|real
  *   --levels 1,5,10 --reps 3 --runtime-pid N [--sandbox-pid N,N] --runtime-log F
  *   --other-log F --out F [--agent-per-task]
- * --runtime-pid takes a list (a front, its engines and a writer), summed.
  * --other-log is the idle runtime's log: a model call there fails the arm.
  * By default every task runs on one agent, so tasks at once share its sandbox
  * files (one busy agent). --agent-per-task gives each task slot its own agent,
@@ -22,7 +21,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
-import { type ProcSample, sample, sampleOrNaN, watchPeak } from "./proc.ts";
+import { sample, sampleOrNaN, watchPeak } from "./proc.ts";
 import {
   accountClient,
   complexConfig,
@@ -33,16 +32,6 @@ import {
   stackState,
   type Runtime,
 } from "./lib.ts";
-
-function sampleAll(pids: number[]): ProcSample {
-  return pids.map(sample).reduce(
-    (sum, one) => ({
-      cpuMs: sum.cpuMs + one.cpuMs,
-      rssMb: sum.rssMb + one.rssMb,
-    }),
-    { cpuMs: 0, rssMb: 0 },
-  );
-}
 
 const { values: args } = parseArgs({
   options: {
@@ -70,8 +59,7 @@ const sandboxKind = args.sandbox as "machine" | "v8";
 const real = args.mode === "real";
 const apiKey = real ? process.env.ANTHROPIC_API_KEY : "scripted-model";
 if (!apiKey) throw new Error("set ANTHROPIC_API_KEY for --mode real");
-// Several pids (a front, its engines and a writer) are summed.
-const runtimePids = String(args["runtime-pid"]).split(",").map(Number);
+const runtimePid = Number(args["runtime-pid"]);
 const TASK_TIMEOUT_MS = 240_000;
 const sandboxPids = args["sandbox-pid"]
   ? args["sandbox-pid"].split(",").map(Number)
@@ -342,12 +330,12 @@ await Bun.sleep(1000);
 for (const level of args.levels!.split(",").map(Number)) {
   for (let rep = 0; rep < Number(args.reps); rep++) {
     const before = {
-      runtime: sampleAll(runtimePids),
+      runtime: sample(runtimePid),
       sandbox: sandboxPids.map(sampleOrNaN),
       log: logCounts(args["runtime-log"]),
       other: logCounts(args["other-log"]),
     };
-    const stopPeak = watchPeak(runtimePids);
+    const stopPeak = watchPeak([runtimePid]);
     const stopSandboxPeak = watchPeak(sandboxPids);
     const batchStart = performance.now();
     const results = await Promise.all(
@@ -358,7 +346,7 @@ for (const level of args.levels!.split(",").map(Number)) {
     const batchMs = performance.now() - batchStart;
     await Bun.sleep(500);
     const after = {
-      runtime: sampleAll(runtimePids),
+      runtime: sample(runtimePid),
       sandbox: sandboxPids.map(sampleOrNaN),
       log: logCounts(args["runtime-log"]),
       other: logCounts(args["other-log"]),
