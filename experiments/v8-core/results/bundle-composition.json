@@ -1,0 +1,71 @@
+{
+  "source": "sourcemap of dist-task/task-entry.js (core harness route only), bench/bundle-sizes.mjs",
+  "totalBytes": 20344380,
+  "categories": [
+    {
+      "name": "Broods\u2019 own code",
+      "bytes": 671995,
+      "top": [
+        "apps/core/src/harness",
+        "apps/core/src/shared",
+        "packages/convex",
+        "packages/ai-sdk-sandbox/src/index.ts"
+      ]
+    },
+    {
+      "name": "Coding-agent harnesses",
+      "bytes": 5361504,
+      "top": [
+        "jiti",
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-coding-agent",
+        "highlight.js"
+      ]
+    },
+    {
+      "name": "Chat channels",
+      "bytes": 3463143,
+      "top": [
+        "@linear/sdk",
+        "discord.js",
+        "@azure/msal-node",
+        "@microsoft/teams.cards"
+      ]
+    },
+    {
+      "name": "Model provider SDKs",
+      "bytes": 3312522,
+      "top": ["ai-sdk-ollama", "@google/genai", "@ai-sdk/openai", "openai"]
+    },
+    {
+      "name": "Other sandbox providers",
+      "bytes": 2029699,
+      "top": [
+        "@smithy/core",
+        "@daytona/api-client",
+        "@bufbuild/protobuf",
+        "@aws-sdk/client-s3"
+      ]
+    },
+    {
+      "name": "HTTP clients and polyfills",
+      "bytes": 2619798,
+      "top": ["undici", "iconv-lite", "on-finished", "combined-stream"]
+    },
+    {
+      "name": "NATS, MCP, validation",
+      "bytes": 1257957,
+      "top": ["nats", "@modelcontextprotocol/client", "typebox", "nats.ws"]
+    },
+    {
+      "name": "Other libraries",
+      "bytes": 1626316,
+      "top": [
+        "@opentelemetry/semantic-conventions",
+        "grok-mermaid",
+        "workers-ai-provider",
+        "marked"
+      ]
+    }
+  ]
+}

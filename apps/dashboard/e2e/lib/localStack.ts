@@ -145,7 +145,7 @@ export function removeUser(user: StackUser): void {
     "run",
     "--component",
     "workOSAuthKit",
-    "lib:processEvent",
+    "lib:onWebhookEvent",
     JSON.stringify({
       event: {
         id: `evt_e2e_delete_${user.authId}`,
