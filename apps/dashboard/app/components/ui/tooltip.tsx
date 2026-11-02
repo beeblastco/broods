@@ -59,7 +59,7 @@ function TooltipContent({
           // Pretty, not balanced: balance keeps the box at its cap and leaves
           // blank space right of a wrapped sentence.
           className={cn(
-            "bg-foreground text-background w-fit rounded-md px-2 py-1 text-xs text-pretty transition-[transform,opacity] duration-100 data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0",
+            "bg-foreground text-background w-fit origin-(--transform-origin) rounded-md px-2 py-1 text-xs text-pretty motion-pop duration-fast data-instant:duration-0",
             className,
           )}
           {...props}
