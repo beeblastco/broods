@@ -301,8 +301,9 @@ jobs:
           test -n "$url"
           cd apps/dashboard
           export E2E_ADMIN_KEY=$(bun ../../scripts/local-stack.ts status --key | tail -1) E2E_BASE_URL=$url
-          bunx playwright test --project=perf
+          # Each run clears test-results, so perf runs last and its numbers survive for the upload.
           bunx playwright test --project=app --grep @rollout
+          bunx playwright test --project=perf
 
       - name: Upload dashboard perf numbers
         if: always()
