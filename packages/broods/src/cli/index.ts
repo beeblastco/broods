@@ -1989,6 +1989,9 @@ function formatProjectChoice(project: CliOnboardingProject): string {
 // A branch flag: its name, null for `none`, unset when the flag is absent.
 function branchOption(args: string[], name: string): string | null | undefined {
   const value = optionValue(args, name);
+  if (value === undefined && args.some((arg) => arg.startsWith(name))) {
+    throw new Error(`${name} needs a branch name, or none.`);
+  }
 
   return value === "none" ? null : value;
 }

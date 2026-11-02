@@ -54,6 +54,9 @@ describe("deployWorkflow", () => {
     });
 
     expect(workflow).toContain('branches: ["main", "dev"]');
+    expect(workflow).toContain(
+      "if: github.ref_name == 'main' || github.ref_name == 'dev'",
+    );
     expect(workflow).toContain("oven-sh/setup-bun@v2");
     expect(workflow).toContain('working-directory: "."');
     expect(workflow).toContain('working-directory: "apps/web"');
@@ -105,7 +108,7 @@ describe("deployWorkflow", () => {
     expect(workflow).toContain('branches: ["main"]');
     expect(workflow).toContain("environment: ${{ 'broods-development' }}");
     expect(workflow).toContain("BROODS_STAGE: ${{ 'development' }}");
-    expect(workflow).not.toContain("github.ref_name ==");
+    expect(workflow).toContain("if: github.ref_name == 'main'\n");
   });
 });
 

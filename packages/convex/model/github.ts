@@ -452,6 +452,8 @@ export function deployWorkflow(target: WorkflowTarget): string {
     "  cancel-in-progress: false",
     "jobs:",
     "  deploy:",
+    // A manual run from any other branch must not deploy a stage.
+    `    if: ${branches.map((branch) => `github.ref_name == '${branch.replace(/'/g, "''")}'`).join(" || ")}`,
     "    runs-on: ubuntu-latest",
     ...(target.environments
       ? [
