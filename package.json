@@ -38,10 +38,10 @@
     "docs:build": "bun run --filter @broods/docs build"
   },
   "devDependencies": {
-    "@noble/hashes": "1.8.0",
+    "@noble/hashes": "2.4.0",
     "@shadcn/lint": "^0.2.3",
     "@types/bun": "^1.4.4",
-    "oxfmt": "^0.74.0",
+    "oxfmt": "^0.75.0",
     "oxlint": "1.90.0",
     "oxlint-tsgolint": "7.0.2005",
     "tweetnacl": "1.0.3",
