@@ -119,7 +119,7 @@ interface UserInstallation {
 }
 
 /** A non-2xx GitHub answer; `status` lets callers tell a protected branch from a bug. */
-class GitHubApiError extends Error {
+export class GitHubApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
@@ -345,6 +345,27 @@ export async function listInstallationRepos(
   }
 
   return repos;
+}
+
+/** The repo's branch names for a picker, up to 1,000 so a huge repo cannot stall the page. */
+export async function listBranches(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+): Promise<string[]> {
+  const names: string[] = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const branches = await githubRequest<Array<{ name: string }>>(
+      app,
+      token,
+      "GET",
+      `/repos/${fullName}/branches?per_page=100&page=${page}`,
+    );
+    names.push(...branches.map((branch) => branch.name));
+    if (branches.length < 100) break;
+  }
+
+  return names;
 }
 
 /** One repo by id, through the installation that reaches it. */

@@ -384,7 +384,7 @@ broods github connect                    # install the Broods GitHub App on anot
 | `--development-branch <name\|none>` | Branch Development deploys from, created when missing. Default: `dev` beside Production, else the default branch      |
 | `--json`                            | Print the result as JSON                                                                                              |
 
-`none` leaves that stage out: no key for it, and no push deploys it. Naming a Production branch adds the Production stage when the project has none. The two branches must differ. Linking and unlinking need `keys:write` on the project, `connect` an org admin. The commands use your `broods login` and act in its organization.
+`none` leaves that stage out: no key for it, and no push deploys it. Linking the project's repo again changes its branches in place: new keys, the old ones revoked. Naming a Production branch adds the Production stage when the project has none. The two branches must differ. Linking and unlinking need `keys:write` on the project, `connect` an org admin. The commands use your `broods login` and act in its organization.
 
 ## stage
 

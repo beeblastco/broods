@@ -412,12 +412,6 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
     projectId: other.projectId,
     target: target,
   });
-  // A second link would leave the first one's keys behind in GitHub.
-  await run.refused("github:linkRepo", {
-    projectId: imported.projectId,
-    target: target,
-  });
-
   await run.asAdmin("github:unlinkRepo", { projectId: imported.projectId });
   const revoked = deploy(context, agents, slug, "development", development);
   const after = await run.status(imported.projectId);
@@ -466,11 +460,51 @@ async function linkFromCli(run: Run): Promise<void> {
     deployBranches(repo, "broods-development") === "main",
     deployBranches(repo, "broods-development"),
   );
+  // Linking the same repo again remaps it in place: new keys, the old one revoked.
+  const firstKey = repo?.secrets.get("broods-development/BROODS_TOKEN") ?? "";
+  const remapped = await cli.githubLink(slug, {
+    repo: "acme/web",
+    baseUrl: context.edgeUrl,
+    productionBranch: "main",
+    developmentBranch: "dev",
+  });
+  const oldKey = await new BroodsSyncClient({
+    baseUrl: context.edgeUrl,
+    token: firstKey,
+  })
+    .getManifest(slug, "development")
+    .then(
+      () => "accepted",
+      (error: unknown) => String(error),
+    );
+  assertStep(
+    "linking the linked repo again moves its branches and revokes the old key",
+    remapped.productionBranch === "main" &&
+      remapped.developmentBranch === "dev" &&
+      deployBranches(repo, "broods-development") === "dev" &&
+      repo?.secrets.get("broods-development/BROODS_TOKEN") !== firstKey &&
+      oldKey !== "accepted",
+    oldKey,
+  );
+  // Dropping dev from the mapping rewrites its workflow, so a push there deploys nothing.
+  await cli.githubLink(slug, {
+    repo: "acme/web",
+    baseUrl: context.edgeUrl,
+    productionBranch: "main",
+    developmentBranch: "staging",
+  });
+  const devWorkflow = github.filesAt(ORG_REPO, "dev")?.get(WORKFLOW_PATH) ?? "";
+  assertStep(
+    "a branch the remap dropped no longer runs the deploy",
+    devWorkflow.includes('branches: ["main", "staging"]') &&
+      !devWorkflow.includes("== 'dev'"),
+    devWorkflow,
+  );
   const status = await cli.githubStatus(slug);
   await cli.githubUnlink(slug);
   assertStep(
     "broods github status shows the link, and unlink clears it",
-    status.repo?.developmentBranch === "main" &&
+    status.repo?.developmentBranch === "staging" &&
       (await cli.githubStatus(slug)).repo === undefined,
     JSON.stringify(status.repo),
   );
