@@ -217,7 +217,7 @@ The first deploy to `production` that syncs its manifest pins its region, so dat
 
 Like `dev`, it writes the stage's user token signing secret as `BROODS_USER_TOKEN_SECRET` when the stage has none yet, and never rotates an existing one. See [Signing secret](#signing-secret).
 
-`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a manifest rejected before synchronization removes nothing. A later failure can leave committed changes; the deploy is not rolled back. A removed agent takes its cron jobs with it. `deploy` sends no stage revision, so it can replace the last completed sync. An overlapping manifest PUT receives 409 `manifest_conflict`; retry after the active sync finishes.
+`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a manifest rejected before synchronization removes nothing. A later failure can leave committed changes; the deploy is not rolled back. A removed agent takes its cron jobs with it. A cron job is removed only when code declared it: one an agent scheduled at runtime, or you made on the dashboard, survives every prune. `deploy` sends no stage revision, so it can replace the last completed sync. An overlapping manifest PUT receives 409 `manifest_conflict`; retry after the active sync finishes.
 
 ### Signing secret
 
@@ -363,6 +363,28 @@ Projects:
 ```
 
 `delete` removes the project on every stage, including agent configs, canvas, environment variables, project keys, cron schedules, and workspace files with their stored blobs. It needs the org admin role. There is no undo. The prompt shows the counts first. `--yes` skips it. Without a TTY the prompt answers no, so a CI run without `--yes` deletes nothing.
+
+## github
+
+Links the project to a GitHub repo, so a push deploys its stage from your own GitHub Actions. See [GitHub](../guides/github.md).
+
+```bash
+broods github status                     # the link, latest deploy per branch, connected accounts
+broods github repos                      # repos the org's connected accounts let you link
+broods github link acme/web              # main deploys Production, dev deploys Development
+broods github link acme/agent --production-branch none --development-branch main
+broods github unlink [--yes]
+broods github connect                    # install the Broods GitHub App on another account
+```
+
+| Flag                                | Description                                                           |
+| ----------------------------------- | --------------------------------------------------------------------- |
+| `--folder <path>`                   | The folder holding `broods/`, when the repo has several               |
+| `--production-branch <name\|none>`  | Branch Production deploys from. Default: the repo's default branch    |
+| `--development-branch <name\|none>` | Branch Development deploys from, created when missing. Default: `dev` |
+| `--json`                            | Print the result as JSON                                              |
+
+`none` leaves that stage out: no key for it, and no push deploys it. The two branches must differ. Linking and unlinking need `keys:write` on the project, `connect` an org admin. The commands use your `broods login` and act in its organization.
 
 ## stage
 

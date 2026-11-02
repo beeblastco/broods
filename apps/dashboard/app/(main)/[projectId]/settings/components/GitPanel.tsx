@@ -66,7 +66,9 @@ function LinkedRepo({
   const repo = status.repo;
   if (!repo) return <></>;
   const branches = [
-    { stage: "Production", branch: repo.productionBranch },
+    ...(repo.productionBranch
+      ? [{ stage: "Production", branch: repo.productionBranch }]
+      : []),
     ...(repo.developmentBranch
       ? [{ stage: "Development", branch: repo.developmentBranch }]
       : []),
