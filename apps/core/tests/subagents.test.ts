@@ -2531,6 +2531,9 @@ describe("message-agents in the coordinator", () => {
     const task = childTask(key);
     const session = childSession(task);
     const settle = spyOn(session, "settleIngress").mockResolvedValue(true);
+    const persist = spyOn(session, "persistModelMessages").mockResolvedValue(
+      [],
+    );
     coordinator["pending"].set(task.taskId, new Promise<void>(() => {}));
     const queuedAtHandoff: number[] = [];
     spyOn(session, "takeNextIngress").mockImplementation(
@@ -2548,7 +2551,7 @@ describe("message-agents in the coordinator", () => {
     });
 
     // Pruning drops the message-agents call from later turns; this line survives.
-    expect(session.persistModelMessages).toHaveBeenCalledWith([
+    expect(persist).toHaveBeenCalledWith([
       {
         role: "assistant",
         content: [
