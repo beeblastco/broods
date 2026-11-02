@@ -170,6 +170,11 @@
     opacity: 0;
     scale: 0.97;
   }
+
+  /* A submenu opens under the pointer: a scale would move its items as they are aimed at. */
+  &[data-slot$="sub-content"] {
+    scale: none;
+  }
 }
 
 /* A sheet slides from its edge; the side's `data-starting-style:translate-*`
