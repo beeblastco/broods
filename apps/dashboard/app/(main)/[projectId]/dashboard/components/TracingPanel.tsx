@@ -3426,7 +3426,7 @@ function TimelineBar({
   return (
     <div className="relative h-4 w-full">
       <div
-        className="absolute top-1/2 left-(--bar-left) flex h-2 w-(--bar-width) -translate-y-1/2 overflow-hidden rounded-sm transition-timeline"
+        className="absolute top-1/2 left-(--bar-left) flex h-2 w-(--bar-width) -translate-y-1/2 overflow-hidden rounded-sm"
         style={{ "--bar-left": `${leftPct}%`, "--bar-width": `${widthPct}%` }}
         title={title}
       >
@@ -3494,7 +3494,7 @@ function TimelineAxis({
           <span
             key={offset}
             className={cn(
-              "absolute top-0 left-(--tick-left) font-mono tabular-nums transition-timeline",
+              "absolute top-0 left-(--tick-left) font-mono tabular-nums",
               offset > 0 && "-translate-x-1/2",
             )}
             style={{ "--tick-left": `${pct}%` }}
@@ -3505,7 +3505,7 @@ function TimelineAxis({
       {scale.nowMs !== null && (
         <span
           aria-hidden="true"
-          className="absolute -bottom-2 left-(--now-left) size-1.5 -translate-x-1/2 rounded-full bg-info transition-timeline"
+          className="absolute -bottom-2 left-(--now-left) size-1.5 -translate-x-1/2 rounded-full bg-info"
           style={{ "--now-left": `${timelinePct(scale.nowMs, scale)}%` }}
         />
       )}
@@ -3520,7 +3520,7 @@ function TimelineAxis({
             aria-label={`${issue.label}: ${spanLabel(span)}`}
             title={`${formatTime(issue.atMs)} · ${spanLabel(span)} · ${issue.label}${issue.text ? ` · ${issue.text}` : ""}`}
             className={cn(
-              "absolute -bottom-2.5 left-(--mark-left) size-2 -translate-x-1/2 rotate-45 cursor-pointer rounded-xs transition-timeline",
+              "absolute -bottom-2.5 left-(--mark-left) size-2 -translate-x-1/2 rotate-45 cursor-pointer rounded-xs",
               STATUS_TONE_BG[issue.level],
             )}
             style={{ "--mark-left": `${timelinePct(issue.atMs, scale)}%` }}
@@ -3583,7 +3583,7 @@ function TimelineLines({
         <span
           key={`${spanKey(span)}:${issue.atMs}`}
           className={cn(
-            "absolute inset-y-0 left-(--line-left) w-px transition-timeline",
+            "absolute inset-y-0 left-(--line-left) w-px",
             issue.level === "error" ? "bg-destructive/30" : "bg-warning/30",
           )}
           style={{ "--line-left": `${timelinePct(issue.atMs, scale)}%` }}
@@ -3591,7 +3591,7 @@ function TimelineLines({
       ))}
       {scale.nowMs !== null && (
         <span
-          className="absolute inset-y-0 left-(--now-left) w-px bg-info/60 transition-timeline"
+          className="absolute inset-y-0 left-(--now-left) w-px bg-info/60"
           style={{ "--now-left": `${timelinePct(scale.nowMs, scale)}%` }}
         />
       )}

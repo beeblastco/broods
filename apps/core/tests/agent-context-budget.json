@@ -1,0 +1,9 @@
+{
+  "starterSystemPromptBytes": 0,
+  "starterEnvironmentBytes": 390,
+  "starterToolListJsonBytes": 1275,
+  "fullSystemPromptBytes": 3751,
+  "fullEnvironmentBytes": 457,
+  "fullToolListJsonBytes": 27586,
+  "compactionPromptBytes": 440
+}
