@@ -16,6 +16,7 @@ import {
   type WebSocketRoute,
 } from "@playwright/test";
 import type { ObservabilityLogEntry } from "../../../../packages/broods/src/observability-contracts";
+import { checkPerfBaseline } from "../lib/perfBaseline";
 import { PAGE_RENDER_BUDGET_MS, PERF_BUDGETS } from "../../app/lib/perfReport";
 import {
   BASE_URL,
@@ -197,6 +198,20 @@ test("every page renders cold within budget, and every sidebar destination by na
     body: JSON.stringify(samples, null, 2),
     contentType: "application/json",
   });
+  checkPerfBaseline(
+    "render times",
+    Object.fromEntries(
+      samples.map((sample) => [
+        `pages.${sample.kind}.${sample.page}`,
+        {
+          value: Math.round(sample.ms),
+          gate: "informational",
+          maxRegressionPct: 50,
+          slack: 100,
+        },
+      ]),
+    ),
+  );
 
   const over = samples.filter((sample) => sample.ms > RENDER_BUDGET_MS);
   expect(

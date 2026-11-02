@@ -5,37 +5,29 @@
  * it never renders, or a second Authenticate that re-runs every subscription
  * costs bytes on every visit and shows nothing for it. This pins, per page,
  * the result bytes that socket delivers on a cold load and the queries the
- * page subscribes to, against `wire-budget.json`: more fails the run, fewer
+ * page subscribes to, against the perf baseline: more fails the run, fewer
  * asks for a record. Every frame also carries a version envelope of about
  * 200 B, and how many frames the server packs the results into, and how many
  * bare ones it sends as the deployment's clock moves, is timing: the total
- * bytes and the frames are recorded beside the budget but do not gate (on one
+ * bytes and the frames are tracked beside the budget but only flag (on one
  * fixture the canvas total moved 9% between runs, its results not a byte).
  * Bytes are the decoded payloads, the JSON the client parses, so the
  * socket's compression does not move them.
- * `E2E_RECORD_WIRE_BUDGET=1` rewrites the budget from this run. The numbers
- * are the fixture's: only a self-hosted stack (`E2E_ADMIN_KEY`) holds a fixed
+ * The numbers are the fixture's: only a self-hosted stack (`E2E_ADMIN_KEY`) holds a fixed
  * one, so the budget applies only there. A `next dev` server mounts every
  * component twice (Strict Mode), so a query can subscribe, drop and
  * subscribe again: the budget does not apply there either.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   CANVAS_READY,
   probeAccount,
   readProjectId,
   SIGNED_IN_CONTEXT,
 } from "../lib/session";
+import { checkPerfBaseline } from "../lib/perfBaseline";
 import { waitForReady } from "../lib/timing";
 
-const BUDGET_FILE = join(__dirname, "wire-budget.json");
-// The 5% first-load allows. On one fixture the results held to the byte over
-// eight runs; the room is for values that change width when the stack is
-// rebuilt, such as minted tokens and counts.
-const BYTES_HEADROOM = 1.05;
-const RECORD = process.env.E2E_RECORD_WIRE_BUDGET === "1";
 // The client's sync socket: `/api/<version>/sync` on the Convex origin.
 const CONVEX_SYNC = /\/api\/[^/]+\/sync$/;
 // The ready marker is the first content, not the last query: the page has
@@ -220,50 +212,37 @@ test("a cold load stays within its Convex wire budget", async ({ browser }) => {
     body: JSON.stringify(byQuery, null, 2),
     contentType: "application/json",
   });
-  if (RECORD) {
-    writeFileSync(BUDGET_FILE, `${JSON.stringify(measured, null, 2)}\n`);
-
-    return;
-  }
-
-  const budget: Partial<Record<string, WireLoad>> = JSON.parse(
-    readFileSync(BUDGET_FILE, "utf8"),
+  checkPerfBaseline(
+    "Convex wire",
+    Object.fromEntries(
+      Object.entries(measured).flatMap(([name, load]) => [
+        [
+          `wire.${name}.subscriptions`,
+          { value: load.subscriptions, gate: "blocking", maxRegressionPct: 0 },
+        ],
+        // Room for values that change width when the stack is rebuilt, such as minted tokens.
+        [
+          `wire.${name}.resultBytes`,
+          { value: load.resultBytes, gate: "blocking", maxRegressionPct: 5 },
+        ],
+        [
+          `wire.${name}.bytesReceived`,
+          {
+            value: load.bytesReceived,
+            gate: "informational",
+            maxRegressionPct: 30,
+          },
+        ],
+        [
+          `wire.${name}.framesReceived`,
+          {
+            value: load.framesReceived,
+            gate: "informational",
+            maxRegressionPct: 50,
+            slack: 4,
+          },
+        ],
+      ]),
+    ),
   );
-  for (const [name, load] of Object.entries(measured)) {
-    const allowed = budget[name];
-    if (!allowed) {
-      throw new Error(
-        `${name}: no wire budget; record one with E2E_RECORD_WIRE_BUDGET=1`,
-      );
-    }
-    const heaviest = Object.entries(byQuery[name])
-      .slice(0, 5)
-      .map(
-        ([path, wire]) =>
-          `${path} ${wire.subscriptions}x ${wire.resultBytes} B`,
-      )
-      .join(", ");
-    // Soft, so one run names every page over its budget.
-    expect
-      .soft(
-        load.subscriptions,
-        `${name}: Convex query subscriptions on a cold load (heaviest: ${heaviest})`,
-      )
-      .toBeLessThanOrEqual(allowed.subscriptions);
-    expect
-      .soft(
-        load.resultBytes,
-        `${name}: Convex result bytes on a cold load, ${allowed.resultBytes} B + ${Math.round((BYTES_HEADROOM - 1) * 100)}% (heaviest: ${heaviest})`,
-      )
-      .toBeLessThanOrEqual(Math.floor(allowed.resultBytes * BYTES_HEADROOM));
-    // Lower by more than the headroom, so run-to-run noise asks for nothing.
-    if (
-      load.subscriptions < allowed.subscriptions ||
-      load.resultBytes * BYTES_HEADROOM < allowed.resultBytes
-    ) {
-      console.log(
-        `${name}: under the wire budget (${allowed.subscriptions} subscriptions, ${allowed.resultBytes} B of results); record with E2E_RECORD_WIRE_BUDGET=1 to lock the gain in`,
-      );
-    }
-  }
 });
