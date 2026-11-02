@@ -76,26 +76,13 @@ export function createDetachedAsyncToolResult(options: {
     parentEventId: `${eventId}:${tag}:${options.resultId}`,
   });
 }
-export function createPendingAsyncToolResult(options: {
-  resultId: string;
-  parentEventId: string;
-  conversationKey: string;
-  toolName: string;
-  toolCallId: string;
-  input: unknown;
-  delivery?: AsyncToolDelivery;
-  completionToken?: string;
-}): Promise<boolean> {
-  return runtime.mutate("createAsyncToolResult", {
-    ...options,
-    input: redactWithRunSecrets(options.input),
-  });
-}
+/** Reads one async tool row; the handler uses it for callbacks, answers and continuation runs. */
 export function getAsyncToolResult(
   resultId: string,
 ): Promise<AsyncToolResultRecord | null> {
   return runtime.query("getAsyncToolResult", { resultId: resultId });
 }
+/** Settles a still-processing row as completed; `async_status` calls it. */
 export async function markAsyncToolResultCompleted(options: {
   resultId: string;
   response?: JSONValue;

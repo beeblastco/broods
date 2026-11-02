@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { AsyncToolCoordinator } from "../src/harness/async-tools.ts";
 import {
   AGENT_PROCESSING_FAILED,
   runAgentLoopUntilSubagentsIdle,
@@ -87,7 +86,7 @@ describe("runAgentLoopUntilSubagentsIdle", () => {
     mock.restore();
   });
 
-  it("writes finished background tool results before it yields the slot", async () => {
+  it("yields the slot after a cut-off pass and carries on in the next one", async () => {
     const order: string[] = [];
     spyOn(runtime, "mutate").mockResolvedValue(null);
     spyOn(runtime, "query").mockResolvedValue(null);
@@ -96,14 +95,6 @@ describe("runAgentLoopUntilSubagentsIdle", () => {
       system: [],
       ephemeralSystem: [],
       systemContextSnapshot: { cursor: null, messages: [] },
-    });
-    spyOn(
-      AsyncToolCoordinator.prototype,
-      "drainCompletionsToParent",
-    ).mockImplementation(async (): Promise<number> => {
-      order.push("drain tool results");
-
-      return 0;
     });
     spyOn(hookDispatcher, "createAgentHookDispatcher").mockResolvedValue({
       hasHooksFor: (): boolean => false,
@@ -155,11 +146,6 @@ describe("runAgentLoopUntilSubagentsIdle", () => {
       },
     );
 
-    expect(order.slice(0, 4)).toEqual([
-      "pass 1",
-      "drain tool results",
-      "yield slot",
-      "pass 2",
-    ]);
+    expect(order.slice(0, 3)).toEqual(["pass 1", "yield slot", "pass 2"]);
   });
 });

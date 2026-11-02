@@ -789,7 +789,8 @@ describe("createTools", () => {
     });
 
     expect(Object.keys(tools).sort()).toEqual(["googleSearch", "urlContext"]);
-    // Registry flags (enabled, needsApproval, async) never reach the provider factory.
+    // enabled/needsApproval are registry-level flags and never reach the
+    // provider factory; every other key is passed through as tool args.
     expect(googleSearchMock).toHaveBeenCalledWith({
       searchTypes: {
         imageSearch: {},
@@ -798,38 +799,21 @@ describe("createTools", () => {
     expect(urlContextMock).toHaveBeenCalledWith({});
   });
 
-  it("passes async-enabled provider tools through the async coordinator", async () => {
+  it("records needsApproval on the registry and keeps it out of the tool args", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const approvalRequirements = new Map<string, true>();
-    const dispatch: NonNullable<ToolContext["dispatchAsyncTools"]> = mock(
-      (tools, asyncToolModes): ToolSet => {
-        expect([...asyncToolModes]).toEqual(["googleSearch"]);
-        expect(
-          (tools.googleSearch as { needsApproval?: unknown }).needsApproval,
-        ).toBeUndefined();
-
-        return {
-          googleSearch: Object.assign(tools.googleSearch!, { wrapped: true }),
-        };
-      },
-    );
-
     const googleSearchMock = mock((options: unknown) => ({
       provider: "googleSearch",
       options: options,
-      execute: mock(async () => ({ ok: true })),
     }));
 
     const tools = await createTools(
-      Object.assign(
-        {},
-        createToolContext(googleSearchMock, "google", undefined, dispatch),
-        { approvalRequirements: approvalRequirements },
-      ) as never,
+      Object.assign({}, createToolContext(googleSearchMock), {
+        approvalRequirements: approvalRequirements,
+      }) as never,
       {
         tools: {
           googleSearch: {
-            async: true,
             needsApproval: true,
             searchTypes: { webSearch: {} },
           },
@@ -837,8 +821,9 @@ describe("createTools", () => {
       },
     );
 
-    expect(dispatch).toHaveBeenCalledTimes(1);
-    expect((tools.googleSearch as { wrapped?: boolean }).wrapped).toBe(true);
+    expect(
+      (tools.googleSearch as { needsApproval?: unknown }).needsApproval,
+    ).toBeUndefined();
     expect(approvalRequirements.has("googleSearch")).toBe(true);
     expect(googleSearchMock).toHaveBeenCalledWith({
       searchTypes: { webSearch: {} },
@@ -1517,7 +1502,6 @@ function createToolContext(
   ),
   modelProviderName: ToolContext["modelProviderName"] = "google",
   dispatchSubagents?: ToolContext["dispatchSubagents"],
-  dispatchAsyncTools?: ToolContext["dispatchAsyncTools"],
 ): Omit<ToolContext, "config"> {
   return {
     accountId: "acct_test",
@@ -1530,7 +1514,6 @@ function createToolContext(
       },
     },
     ...(dispatchSubagents ? { dispatchSubagents: dispatchSubagents } : {}),
-    ...(dispatchAsyncTools ? { dispatchAsyncTools: dispatchAsyncTools } : {}),
   };
 }
 

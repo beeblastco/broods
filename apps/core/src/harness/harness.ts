@@ -72,7 +72,6 @@ import {
   setObservabilityContext,
 } from "../shared/otel.ts";
 import { recordTaskUsage } from "../shared/telemetry.ts";
-import type { RunAsyncToolDispatch } from "./async-tools.ts";
 import type { RunSessionMessageDispatch } from "./ingress.ts";
 import type { DispatchAppliedIngress } from "./integrations.ts";
 import {
@@ -242,7 +241,6 @@ export interface AgentLoopOptions {
   dispatchSubagents?: RunSubagentDispatch;
   subagentWatch?: SubagentWatch;
   askParent?: AskParent;
-  dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   subagentParent?: SubagentParentContext;
   // Read on the conversation's first turn only; later turns resume on the machine it stored.
@@ -484,7 +482,6 @@ export async function runAgentLoop(
         modelProviderName: configuredModel.providerName,
         modelProvider: configuredModel.provider,
         session: session,
-        dispatchAsyncTools: options.dispatchAsyncTools,
         dispatchAppliedIngress: options.dispatchAppliedIngress,
         dispatchSessionMessage: options.dispatchSessionMessage,
         onSandboxCpu: sandboxCpu.record,

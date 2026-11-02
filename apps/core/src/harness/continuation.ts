@@ -1,8 +1,12 @@
+/**
+ * A parent run's continuation loop and turn settlement; every entrypoint funnels through here.
+ * Ownership writers stay in handler.ts and come in as dependencies.
+ */
+
 import type { JSONValue, SystemModelMessage } from "ai";
 import type { TaskWaitingOn } from "../../../../packages/broods/src/observability-contracts.ts";
 import type { RequestContext } from "../shared/http.ts";
 import { logError } from "../shared/log.ts";
-import { AsyncToolCoordinator } from "./async-tools.ts";
 import {
   DEADLINE_WIND_DOWN_MS,
   runAgentLoop,
@@ -30,7 +34,9 @@ import {
 } from "./subagents.ts";
 
 export const AGENT_PROCESSING_FAILED = "Agent processing failed";
-// Leaves the parent time for the turn that reads the results; the harness winds down in it too.
+// What a subagent wait leaves of the request budget, so the parent
+// still has time for the turn that reads the results before the deadline. The
+// harness yields or winds down in that same window, so they match.
 const WAIT_DEADLINE_MARGIN_MS = DEADLINE_WIND_DOWN_MS;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 
@@ -95,13 +101,9 @@ export async function runAgentLoopUntilSubagentsIdle(
     (): number => waitUntilMs(context),
     dependencies.subagents,
   );
-  const asyncToolCoordinator = new AsyncToolCoordinator(session, (): number =>
-    waitUntilMs(context),
-  );
   const result = await runParentContinuationLoop({
     session: session,
     subagentCoordinator: subagentCoordinator,
-    asyncToolCoordinator: asyncToolCoordinator,
     initialTurnContext: initialTurnContext,
     agentConfig: agentConfig,
     dependencies: dependencies,
@@ -153,10 +155,16 @@ export async function runAgentLoopUntilSubagentsIdle(
   };
 }
 
+/**
+ * Runs parent model passes until there is no runnable injected work.
+ *
+ * Heartbeats are emitted only while this request or worker waits on
+ * in-process subagents. Detached sandbox background jobs settle through their
+ * completion callback, not through pending work here.
+ */
 export async function runParentContinuationLoop(options: {
   session: Session;
   subagentCoordinator: SubagentCoordinator;
-  asyncToolCoordinator: AsyncToolCoordinator;
   initialTurnContext: TurnContextSnapshot;
   agentConfig: DirectInboundEvent["agentConfig"];
   dependencies: ContinuationDependencies;
@@ -184,7 +192,10 @@ export async function runParentContinuationLoop(options: {
     ...overrides,
   });
 
-  // Writes earlier async results into history so a retry sees them instead of redoing the work.
+  // Subagents from earlier steps may still be running or already done when a
+  // pass fails. Wait for them and write their results into
+  // the history, so the next turn ("try again") sees them instead of redoing
+  // the work. A user stop or a reclaimed slot skips the wait.
   const keepAsyncResultsOnFailure = async (
     failed: boolean,
     stopped: boolean,
@@ -192,14 +203,10 @@ export async function runParentContinuationLoop(options: {
     if (!failed || stopped || options.context?.abortSignal?.aborted) {
       return;
     }
-    await waitAndDrainAsyncWork(
-      options.subagentCoordinator,
-      options.asyncToolCoordinator,
-      {
-        onHeartbeat: (pendingCount: number): void | Promise<void> =>
-          options.onHeartbeat?.(pendingCount),
-      },
-    ).catch((error: unknown) =>
+    await waitAndDrainAsyncWork(options.subagentCoordinator, {
+      onHeartbeat: (pendingCount: number): void | Promise<void> =>
+        options.onHeartbeat?.(pendingCount),
+    }).catch((error: unknown) =>
       logError("Failed run could not keep its async results", {
         eventId: options.session.eventId,
         error: error instanceof Error ? error.message : String(error),
@@ -241,17 +248,12 @@ export async function runParentContinuationLoop(options: {
         dispatchAppliedIngress: options.dependencies.dispatchAppliedIngress,
         dispatchSubagents: options.subagentCoordinator.dispatch,
         subagentWatch: options.subagentCoordinator,
-        dispatchAsyncTools: options.asyncToolCoordinator.dispatch,
         dispatchSessionMessage: (
           input: SessionMessageInput,
         ): Promise<SessionMessageResult> =>
           options.dependencies.dispatchSessionMessage(options.session, input),
         pendingWork: (): TaskWaitingOn | undefined =>
-          options.subagentCoordinator.runningCount > 0
-            ? "subagent"
-            : options.asyncToolCoordinator.pendingCount > 0
-              ? "tool"
-              : undefined,
+          options.subagentCoordinator.runningCount > 0 ? "subagent" : undefined,
         hooks: hooks,
         ...(options.context
           ? {
@@ -267,9 +269,9 @@ export async function runParentContinuationLoop(options: {
     traceId = stream.traceId();
 
     await options.consumeStream(stream);
-    // Write finished results first, or the hand-back sweep would also resume them.
+    // The pass gave its slot to the next queued run; the next pass carries on
+    // from the stored tool results once a slot is free again.
     if (stream.yielded()) {
-      await options.asyncToolCoordinator.drainCompletionsToParent();
       turnContext = await resumeAfterYield(
         options.session,
         options.context,
@@ -301,14 +303,10 @@ export async function runParentContinuationLoop(options: {
       return passResult({ didFail: true, failureText: stream.failureText() });
     }
 
-    const injected = await waitAndDrainAsyncWork(
-      options.subagentCoordinator,
-      options.asyncToolCoordinator,
-      {
-        onHeartbeat: (pendingCount: number): void | Promise<void> =>
-          options.onHeartbeat?.(pendingCount),
-      },
-    );
+    const injected = await waitAndDrainAsyncWork(options.subagentCoordinator, {
+      onHeartbeat: (pendingCount: number): void | Promise<void> =>
+        options.onHeartbeat?.(pendingCount),
+    });
     if (injected === 0) {
       return passResult();
     }
@@ -350,6 +348,10 @@ export function turnSettlement(
   };
 }
 
+/**
+ * How long a parent may wait on its subagents: up to the
+ * request budget less the margin, or the default wait with no budget.
+ */
 export function waitUntilMs(context: RequestContext | undefined): number {
   if (context?.deadlineMs && Number.isFinite(context.deadlineMs)) {
     return Math.max(Date.now(), context.deadlineMs - WAIT_DEADLINE_MARGIN_MS);
@@ -377,53 +379,25 @@ async function resumeAfterYield(
   return session.createTurnContext(ephemeralSystem);
 }
 
-/** Detached sandbox jobs settle through their completion callback, so they add no wait here. */
+/**
+ * Between two parent passes: waits for subagents with heartbeats, injects their completions,
+ * and detaches the rest near the deadline. Detached bash jobs hold nothing here.
+ */
 async function waitAndDrainAsyncWork(
   subagentCoordinator: SubagentCoordinator,
-  asyncToolCoordinator: AsyncToolCoordinator,
   options: {
     onHeartbeat?: (pendingCount: number) => void | Promise<void>;
   } = {},
 ): Promise<number> {
-  if (
-    subagentCoordinator.pendingCount === 0 &&
-    asyncToolCoordinator.pendingCount === 0
-  ) {
-    const [subagentCount, asyncToolCount] = await Promise.all([
-      subagentCoordinator.drainCompletionsToParent(),
-      asyncToolCoordinator.drainCompletionsToParent(),
-    ]);
-
-    return subagentCount + asyncToolCount;
+  if (subagentCoordinator.pendingCount === 0) {
+    return subagentCoordinator.drainCompletionsToParent();
   }
 
-  const onHeartbeat = (): void | Promise<void> =>
-    options.onHeartbeat?.(
-      subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount,
-    );
-  const subagentStatus = await subagentCoordinator.waitForIdle({
-    onHeartbeat: onHeartbeat,
-  });
-  if (subagentStatus === "question") {
-    const [subagentCount, asyncToolCount] = await Promise.all([
-      subagentCoordinator.drainCompletionsToParent(),
-      asyncToolCoordinator.drainCompletionsToParent(),
-    ]);
+  // A subagent's question wakes the parent before the rest finish, so its
+  // answer can unblock the child.
+  const status = await subagentCoordinator.waitForIdle(options);
 
-    return subagentCount + asyncToolCount;
-  }
-  const asyncToolStatus = await asyncToolCoordinator.waitForIdle({
-    onHeartbeat: onHeartbeat,
-  });
-
-  const [subagentCount, asyncToolCount] = await Promise.all([
-    subagentStatus === "idle"
-      ? subagentCoordinator.drainCompletionsToParent()
-      : subagentCoordinator.drainCompletionsAndDetachToParent(),
-    asyncToolStatus === "idle"
-      ? asyncToolCoordinator.drainCompletionsToParent()
-      : asyncToolCoordinator.drainCompletionsAndTimeoutsToParent(),
-  ]);
-
-  return subagentCount + asyncToolCount;
+  return status === "timeout"
+    ? subagentCoordinator.drainCompletionsAndDetachToParent()
+    : subagentCoordinator.drainCompletionsToParent();
 }

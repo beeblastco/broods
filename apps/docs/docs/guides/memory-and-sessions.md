@@ -21,7 +21,7 @@ metadata:
 Keep replies to a few sentences unless asked for detail.
 ```
 
-`originSessionId` records the conversation the fact came from, so agents that share a workspace across channels can tell where a memory was learned. A `<memory>` block in the prompt gives the agent today's date, the current conversation, and two rules. The index holds summaries only, and current instructions always outrank memory.
+`originSessionId` records the conversation the fact came from, so agents that share a workspace across channels can tell where a memory was learned. A `<memory>` block in the prompt gives the agent the current conversation and two rules. The index holds summaries only, and current instructions always outrank memory. Today's date comes from the `<environment>` block every run gets.
 
 A workspace without a sandbox still loads `memory/MEMORY.md` into the prompt, but the agent cannot save.
 

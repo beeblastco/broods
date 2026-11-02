@@ -19,7 +19,6 @@ import type {
   ResolvedAgentSandbox,
   ResolvedWorkspace,
 } from "../../shared/workspaces.ts";
-import type { AsyncToolNames, RunAsyncToolDispatch } from "../async-tools.ts";
 import type { RunSessionMessageDispatch } from "../ingress.ts";
 import type { DispatchAppliedIngress } from "../integrations.ts";
 import type { PendingQuestionSummary } from "../questions.ts";
@@ -101,7 +100,6 @@ export interface ToolContext {
   subagentWatch?: SubagentWatch;
   askParent?: AskParent;
   dispatchAppliedIngress?: DispatchAppliedIngress;
-  dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   onToolRetry?: (toolCallId: string, waitMs: number) => void;
@@ -214,7 +212,6 @@ export async function createTools(
     }
   }
   Object.assign(tools, sandboxTools);
-  const asyncToolNames: AsyncToolNames = new Set();
 
   if (context.channel) {
     Object.assign(
@@ -342,7 +339,6 @@ export async function createTools(
         config: externalToolRuntimeConfig(toolConfig),
       }),
     );
-    if (toolConfig.async === true) asyncToolNames.add(toolName);
   }
 
   // Needs a delivery to resume on; a cron-fired run has nobody to answer.
@@ -367,7 +363,7 @@ export async function createTools(
 
   await registerMcpTools(tools, agentConfig, context);
 
-  if (asyncToolNames.size > 0 || hasBackgroundWorkspace) {
+  if (hasBackgroundWorkspace) {
     Object.assign(
       tools,
       asyncStatusTool({
@@ -383,16 +379,13 @@ export async function createTools(
   // Withhold last, so a channel's deny list also covers sandbox and MCP tools.
   withholdTools(tools, agentConfig.denyTools);
 
-  return context.dispatchAsyncTools
-    ? context.dispatchAsyncTools(tools, asyncToolNames)
-    : tools;
+  return tools;
 }
 
 function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
   const {
     enabled: _enabled,
     needsApproval: _needsApproval,
-    async: _async,
     ...runtimeConfig
   } = config;
 
