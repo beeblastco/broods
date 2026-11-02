@@ -44,32 +44,32 @@ export const resourceUpdateInput = z.looseObject(
 
 // A lenient read of stored JSON: the parsed value, or `fallback` when it does not fit.
 export function parseOr<T>(
-  schema: z.ZodMiniType<T>,
+  schema: z.core.$ZodType<T>,
   value: unknown,
   fallback: NoInfer<T>,
 ): T;
 export function parseOr<T>(
-  schema: z.ZodMiniType<T>,
+  schema: z.core.$ZodType<T>,
   value: unknown,
 ): T | undefined;
 export function parseOr<T>(
-  schema: z.ZodMiniType<T>,
+  schema: z.core.$ZodType<T>,
   value: unknown,
   fallback?: T,
 ): T | undefined {
-  const result = schema.safeParse(value);
+  const result = z.safeParse(schema, value);
 
   return result.success ? result.data : fallback;
 }
 
 // Untrusted JSON in: the first issue throws as `${root}${path} ${message}`.
 // A root ending in a space reads as prose: "policy document " + version.
-export function parseInput<S extends z.ZodMiniType>(
+export function parseInput<S extends z.core.$ZodType>(
   schema: S,
   value: unknown,
   root: string,
 ): z.output<S> {
-  const result = schema.safeParse(value, { error: defaultMessage });
+  const result = z.safeParse(schema, value, { error: defaultMessage });
   if (result.success) return result.data;
   const [issue] = result.error.issues;
 
