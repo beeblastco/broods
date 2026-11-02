@@ -58,11 +58,7 @@ db_old = rows("db-before.jsonl")
 
 # Page v4: "now" is the run after the database work; "before" is page v3's run.
 tpm_today = per_minute(db, "bun+machine")
-tpm_today_10 = per_minute(db, "bun+machine", 10)
 tpm_now = per_minute(db, "isolate+v8-fast")
-tpm_now_10 = per_minute(db, "isolate+v8-fast", 10)
-tpm_same = per_minute(db, "bun+native")
-tpm_engine = per_minute(db, "workerd+native")
 tpm_first = per_minute(old, "isolate+v8")
 tpm_before = per_minute(final, "isolate+v8-fast")
 share_before = tpm_before / per_minute(final, "bun+machine")
@@ -75,14 +71,26 @@ lost_before = 1 - rows_kept([r for r in levers if r.get("tasksStarted") == 41], 
 kept_now = rows_kept(db, "isolate+v8-fast")
 
 db_before = db_cpu(db_old, "isolate+v8-fast")
-db_today_then = db_cpu(db_old, "bun+machine")
 db_now = db_cpu(db, "isolate+v8-fast")
 db_today = db_cpu(db, "bun+machine")
 db_same = db_cpu(db, "bun+native")
 calls_before = calls(final, "isolate+v8-fast")
 calls_now = calls(db, "isolate+v8-fast")
 calls_today = calls(db, "bun+machine")
-calls_same = calls(db, "bun+native")
+
+
+def inside(source, label, level=20):
+    # Median time per task not spent waiting on the public docs server, in seconds.
+    return statistics.fmean(r["exMcpP50"] for r in batches(source, label, level)) / 1000
+
+
+in_before = inside(final, "isolate+v8-fast")
+in_now = inside(db, "isolate+v8-fast")
+in_today = inside(db, "bun+machine")
+cpu_now = cpu_per_task(db, "isolate+v8-fast")
+cpu_today = cpu_per_task(db, "bun+machine")
+tpm_today_low = min(20 * 60000 / r["batchMs"] for r in batches(db, "bun+machine", 20))
+tpm_today_high = max(20 * 60000 / r["batchMs"] for r in batches(db, "bun+machine", 20))
 
 cold = {r["label"]: r for r in rows("cold-start-slim.jsonl")}
 start_full = cold["fresh isolate per request"]["p50Ms"] / 1000
@@ -243,6 +251,8 @@ svg .bar.mid { fill: var(--mid); }
 svg .bar.bad { fill: var(--bad); opacity: 0.75; }
 .nums { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 @media (max-width: 480px) { .nums { grid-template-columns: 1fr; } }
+@media (min-width: 760px) { .nums.three { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 759px) { .nums.three { grid-template-columns: 1fr; } }
 .num { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
 .num b { display: block; font-family: var(--mono); font-size: 30px; line-height: 1.2; }
 .num span { color: var(--muted); font-size: 15px; }
@@ -252,11 +262,13 @@ code { font-family: var(--mono); font-size: 0.85em; }
 a { color: var(--accent); }
 """
 
-share_10 = tpm_now_10 / tpm_today_10
 share_20 = tpm_now / tpm_today
 db_cut = 1 - db_now / db_before
 MODAL = "https://modal.com/blog/scaling-to-1-million-concurrent-sandboxes-in-seconds"
-HEADLINE = "TODO"
+HEADLINE = (
+    f"Yes. With the database back-and-forth cut, your idea now keeps up with today: "
+    f"{tpm_now:.0f} tasks a minute with 20 users at once, against today's {tpm_today:.0f}."
+)
 REAL_LINE = "TODO"
 
 page = f"""<title>Broods task isolates</title>
@@ -270,7 +282,7 @@ page = f"""<title>Broods task isolates</title>
 <h1>Your idea: one small worker per task</h1>
 <div class="answer">
 <p>{HEADLINE}</p>
-<p>With 20 users at once your idea now finishes {tpm_now:.0f} tasks a minute, {share_20 * 100:.0f}% of today (before this work: {share_before * 100:.0f}%). With 10 users it does {share_10 * 100:.0f}%. Its workers now give the database {db_now:.0f} ms of work per task, down from {db_before:.0f} ms; today's server gives it {db_same:.0f} ms with the same kind of sandbox.</p>
+<p>That is {share_20 * 100:.0f}% of today, up from {share_before * 100:.0f}% before this work, and inside the swing between runs (today itself did {tpm_today_low:.0f} and {tpm_today_high:.0f}). The database now does {db_cut * 100:.0f}% less work per task for your idea, about as much as for today's server on the same kind of sandbox.</p>
 </div>
 </section>
 
@@ -293,15 +305,21 @@ page = f"""<title>Broods task isolates</title>
 
 <section>
 <h2>The database, per task</h2>
-<div class="nums">
-<div class="num"><b>{db_before:.0f} → {db_now:.0f} ms</b><span>database work per task for your idea, {db_cut * 100:.0f}% less (today's server: {db_today:.0f} ms)</span></div>
+<div class="nums three">
+<div class="num"><b>{db_before:.0f} → {db_now:.0f} ms</b><span>database work per task for your idea, {db_cut * 100:.0f}% less (today's server: {db_today:.0f} ms with its test machine, {db_same:.0f} ms with the same sandbox)</span></div>
 <div class="num"><b>{calls_before:.0f} → {calls_now:.0f}</b><span>database calls per task (today's server: {calls_today:.0f})</span></div>
+<div class="num"><b>{in_before:.1f} → {in_now:.1f} s</b><span>time per task inside Broods, not counting the wait for the docs server (today's server: {in_today:.1f} s)</span></div>
 </div>
+<p>All at 20 users at once. Most calls that are left are ones every task needs, like taking the task and saving each step; the {calls_now - calls_today:.0f} extra book and note the sandbox.</p>
 </section>
 
 <section>
 <h2>What is left</h2>
-<p>Mostly the cost of reaching a sandbox at all, which today's server pays too. On the same real-shell sandbox, today's server does {tpm_same:.0f} tasks a minute; with the test machine it normally uses here, {tpm_today:.0f}. Every new sandbox is still booked in the database before its first command, and in this test every task makes two new ones (its own and its helper's). Modal hides that with warm pools: sandboxes made before anyone asks. Next steps: book the agent's sandbox while the AI is still thinking, and run one worker engine per CPU core.</p>
+<p>Each task still spends about {in_now - in_today:.0f} s longer inside Broods than today ({in_now:.1f} s against {in_today:.1f} s). In this test that hides behind the wait for the docs server; with the real AI it hides behind the AI. Two causes:</p>
+<ul>
+<li><strong>The worker engine.</strong> All 20 workers share one CPU core, and each warms up its own copy of Broods, so a task costs about twice the computer time ({cpu_now:.0f} ms against {cpu_today:.0f} ms; the copies are my best explanation, not measured). Fix: one engine per CPU core, agents spread over them.</li>
+<li><strong>Booking new sandboxes.</strong> Every new sandbox is still booked before its first command, and here each task makes two (its own and its helper's). Modal hides this with warm pools, sandboxes made before anyone asks. Fix: book the agent's sandbox while the AI is still thinking.</li>
+</ul>
 </section>
 
 <section>
