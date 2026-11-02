@@ -6,7 +6,7 @@ import type {
   AgentHookEventName,
   HookAgentConfig,
 } from "../shared/domain/agent-config.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
+import { configObject, parseOr } from "@broods/convex/model/inputSchema";
 import { getStorage } from "../shared/storage.ts";
 import { runCodeHook } from "./hook-runner.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
@@ -132,9 +132,9 @@ export function wrapToolsWithHooks(
         throw new Error(`Tool "${name}" blocked by hook: ${reason}`);
       }
 
-      return isPlainObject(mutation.args)
-        ? hookArgs(tools[name]!, name, mutation.args)
-        : input;
+      const args = parseOr(configObject, mutation.args);
+
+      return args ? hookArgs(tools[name]!, name, args) : input;
     },
     after: async (output: unknown) => {
       if (!wantsResult) return output;

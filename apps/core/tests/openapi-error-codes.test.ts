@@ -10,8 +10,8 @@ const OPENAPI_PATH = `${REPO_ROOT}apps/docs/docs/api-reference/openapi.yaml`;
 const SOURCE_ROOTS = ["apps/core/src", "apps/gateway/src", "packages/convex"];
 const SKIPPED_DIRS = ["_generated/", "node_modules/", "tests/"];
 const CODE_LITERAL = /\bcode: "([a-z_]+)"/g;
-// The MicroVM executor's harness request runs the shell command `true`.
-const NOT_ERROR_CODES = new Set(["true"]);
+// The MicroVM executor runs the shell command `true`; `custom` is zod's issue code.
+const NOT_ERROR_CODES = new Set(["true", "custom"]);
 // The Slack channel directory route relays each failure `reason` as the code.
 const SLACK_DIRECTORY_PATH = "packages/convex/model/slackDirectory.ts";
 const REASON_LITERAL = /\breason: "([a-z_]+)"/g;

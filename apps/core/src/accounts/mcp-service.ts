@@ -21,7 +21,11 @@ import {
   parseJsonBody,
   type CoreRequest,
 } from "../shared/http.ts";
-import { isPlainObject, isStringRecord } from "@broods/convex/model/objects";
+import {
+  configObject,
+  parseOr,
+  stringValues,
+} from "@broods/convex/model/inputSchema";
 import { getStorage } from "../shared/storage.ts";
 import { resolveAgentRuntime } from "../shared/workspaces.ts";
 
@@ -48,8 +52,8 @@ export async function handleMcpServiceRpc(
   accountId: string,
   request: CoreRequest,
 ): Promise<Response> {
-  const body = parseJsonBody(request);
-  if (!isPlainObject(body)) {
+  const body = parseOr(configObject, parseJsonBody(request));
+  if (!body) {
     return errorResponse(400, "Request body must be a JSON object");
   }
   const method = body.method;
@@ -85,7 +89,7 @@ export async function handleMcpServiceRpc(
   if (typeof body.toolName !== "string" || !body.toolName) {
     return errorResponse(400, "tools/call needs a toolName");
   }
-  const args = isPlainObject(body.args) ? body.args : {};
+  const args = parseOr(configObject, body.args, {});
   const started = Date.now();
   const result = await callMcpToolResult(connection, body.toolName, args, {
     abortSignal: AbortSignal.timeout(RPC_TIMEOUT_MS),
@@ -189,23 +193,21 @@ async function explorerSandboxTarget(
 }
 
 function parseProbe(value: unknown): McpProbe | string {
-  if (!isPlainObject(value)) return "rpc needs a serverId or a probe object";
-  const {
-    name,
-    transport,
-    url,
-    headers,
-    bundleStorageKey,
-    sha256,
-    workersCompatible,
-  } = value;
+  const probe = parseOr(configObject, value);
+  if (!probe) return "rpc needs a serverId or a probe object";
+  const { name, transport, url, bundleStorageKey, sha256, workersCompatible } =
+    probe;
   if (typeof name !== "string" || !name) return "probe needs a name";
-  if (headers !== undefined && !isStringRecord(headers)) {
+  const headers =
+    probe.headers === undefined
+      ? undefined
+      : parseOr(stringValues, probe.headers);
+  if (probe.headers !== undefined && !headers) {
     return "probe headers must be a string record";
   }
   const shared = {
     name: name,
-    ...(headers !== undefined ? { headers: headers } : {}),
+    ...(headers ? { headers: headers } : {}),
   };
   if (transport === "http") {
     if (typeof url !== "string" || !url) return "an http probe needs a url";

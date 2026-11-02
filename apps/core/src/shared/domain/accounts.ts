@@ -1,6 +1,6 @@
 import { ACCOUNT_KEY_PREFIX } from "@broods/convex/model/accountSecrets";
 import { createHash, randomBytes } from "node:crypto";
-import { isPlainObject } from "@broods/convex/model/objects";
+import { configObject, parseOr } from "@broods/convex/model/inputSchema";
 
 export type AccountStatus = "active" | "disabled";
 
@@ -34,12 +34,12 @@ export function hashAccountSecret(secret: string): string {
 export function normalizeCreateAccountInput(
   value: unknown,
 ): CreateAccountInput {
-  if (!isPlainObject(value))
-    throw new Error("Request body must include username");
-  if ("config" in value)
+  const input = parseOr(configObject, value);
+  if (!input) throw new Error("Request body must include username");
+  if ("config" in input)
     throw new Error("Agent config is created through /v1/agents");
-  const username = requireString(value.username, "username");
-  const description = optionalString(value.description, "description");
+  const username = requireString(input.username, "username");
+  const description = optionalString(input.description, "description");
 
   return {
     username: username,

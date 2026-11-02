@@ -16,7 +16,9 @@ import type {
   SystemModelMessage,
   streamText,
 } from "ai";
+import { z } from "zod/mini";
 import type { AgentHookEventName } from "@broods/convex/model/accountHooks";
+import { parseOr } from "@broods/convex/model/inputSchema";
 import {
   normalizeAgentConfig,
   type AGENT_HARNESS_DEBUG_LEVELS,
@@ -58,6 +60,17 @@ const RUNTIME_CONFIG_KEYS = [
   "publicAccess",
   "allowRunOverrides",
 ] as const;
+
+// A channel config's `partition`, read leniently: a malformed one partitions nothing.
+const CHANNEL_PARTITION = z.looseObject({
+  partition: z.union([
+    z.looseObject({
+      by: z.literal("shared"),
+      alias: z.optional(z.undefined()),
+    }),
+    z.looseObject({ by: z.literal("conversation"), alias: z.string() }),
+  ]),
+});
 
 export interface AgentConfig {
   agent?: AgentBehaviorConfig;
@@ -635,6 +648,13 @@ export function isChannelTraceEnabled(
     | undefined;
 
   return channelConfig?.trace === "enabled";
+}
+
+export function channelPartitionOf(
+  config: AgentConfig,
+  channelName: string,
+): ChannelPartition | undefined {
+  return parseOr(CHANNEL_PARTITION, config.channels?.[channelName])?.partition;
 }
 
 export function resolveSubagentMode(
