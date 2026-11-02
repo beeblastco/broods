@@ -745,6 +745,7 @@ describe("stored item persistence", () => {
       expect(mutate.mock.calls[0]?.[1]).toMatchObject({
         ownerEventId: "event",
         ownerGeneration: 3,
+        savesAll: true,
         events: [
           { cursor: cursors[0], event: { message: { role: "assistant" } } },
           { cursor: cursors[1], event: { message: { role: "tool" } } },
