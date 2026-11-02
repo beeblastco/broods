@@ -231,9 +231,14 @@ export function installScriptedModel(): void {
     }
     if (convexUrl && url.startsWith(convexUrl)) {
       const body = typeof init?.body === "string" ? init.body : "";
+      const path = /"path":"([^"]+)"/.exec(body)?.[1] ?? new URL(url).pathname;
+      const started = performance.now();
+      const response = await realFetch(input, init);
       console.log(
-        `BENCH_CONVEX ${/"path":"([^"]+)"/.exec(body)?.[1] ?? new URL(url).pathname}`,
+        `BENCH_CONVEX ${path} ${Math.round(performance.now() - started)}`,
       );
+
+      return response;
     }
 
     return realFetch(input, init);
