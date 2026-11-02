@@ -355,7 +355,6 @@ export type AgentToolsConfig = Record<string, AgentToolConfig>;
 export interface AgentToolConfig {
   enabled?: boolean;
   needsApproval?: boolean;
-  async?: boolean;
   config?: Record<string, unknown>;
   [key: string]: unknown;
 }

@@ -89,10 +89,7 @@ import {
   type AsyncToolDelivery,
   type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
-import {
-  AsyncToolCoordinator,
-  completionToParentMessage,
-} from "./async-tools.ts";
+import { completionToParentMessage } from "./async-tools.ts";
 import {
   readAgentFullStream,
   recordFailedTurn,
@@ -1485,15 +1482,10 @@ async function handleNatsWorkerRequest(
         (): number => waitUntilMs(context),
         CONTINUATION_DEPENDENCIES.subagents,
       );
-      const asyncToolCoordinator = new AsyncToolCoordinator(
-        session,
-        (): number => waitUntilMs(context),
-      );
 
       const result = await runParentContinuationLoop({
         session: session,
         subagentCoordinator: subagentCoordinator,
-        asyncToolCoordinator: asyncToolCoordinator,
         initialTurnContext: turnContext,
         agentConfig: event.agentConfig,
         dependencies: CONTINUATION_DEPENDENCIES,
@@ -2988,9 +2980,6 @@ async function streamDirectContinuation(
     (): number => waitUntilMs(context),
     CONTINUATION_DEPENDENCIES.subagents,
   );
-  const asyncToolCoordinator = new AsyncToolCoordinator(session, (): number =>
-    waitUntilMs(context),
-  );
   let transferred = false;
   let terminalFailureDrained = false;
   const checkOwner = ownerCheckForStream(session);
@@ -3003,7 +2992,6 @@ async function streamDirectContinuation(
     const result = await runParentContinuationLoop({
       session: session,
       subagentCoordinator: subagentCoordinator,
-      asyncToolCoordinator: asyncToolCoordinator,
       initialTurnContext: initialTurnContext,
       agentConfig: event.agentConfig,
       dependencies: CONTINUATION_DEPENDENCIES,

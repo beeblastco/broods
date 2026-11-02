@@ -25,9 +25,9 @@ and no resume of it is queued, so the parent is told a result once. A stored mar
 way to a resume already queued: it stores nothing, so the resume tells it. A queued
 resume that expires leaves the row as it was, for the sweep to resume again. Only the sweep reads `pending`, which the row carries from its creation, past the
 parent's hold. A tool row's `handback` moves the same way: its settle writes `pending`,
-the parent's append, `async_status` and the continuation reaching its owner (`accept`
-with `toolResultId`) store it, and `markHandback` here stands for either move of
-`markAsyncToolHandback`, which never touches the status the proofs are about.
+`async_status` and the continuation reaching its owner (`accept` with `toolResultId`)
+store it, and `markHandback` here stands for `markAsyncToolHandback`, which never
+touches the status the proofs are about.
 -/
 
 namespace Broods.AsyncResults
@@ -98,8 +98,8 @@ inductive ToolCall where
   /-- `markAsyncToolResultCompleted` / `Failed` / `settleAsyncToolResultFromCallback`,
   all with `onlyWhenProcessing: true`. -/
   | settle (s : ToolStatus) (reserved : Bool)
-  /-- `markAsyncToolHandback`: moves a finished row's `handback` (`stored` or
-  `detached`), status untouched. -/
+  /-- `markAsyncToolHandback`: marks a finished row's `handback` `stored`, status
+  untouched. -/
   | markHandback
   /-- `bindAsyncToolResultSandbox`. -/
   | bind
