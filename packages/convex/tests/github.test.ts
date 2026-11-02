@@ -54,6 +54,9 @@ describe("deployWorkflow", () => {
     });
 
     expect(workflow).toContain('branches: ["main", "dev"]');
+    expect(workflow).toContain(
+      "if: github.ref_name == 'main' || github.ref_name == 'dev'",
+    );
     expect(workflow).toContain("oven-sh/setup-bun@v2");
     expect(workflow).toContain('working-directory: "."');
     expect(workflow).toContain('working-directory: "apps/web"');
@@ -77,10 +80,11 @@ describe("deployWorkflow", () => {
       installDirectory: "",
       manager: "npm",
       productionBranch: "main",
+      developmentBranch: "dev",
       environments: false,
     });
 
-    expect(workflow).toContain('branches: ["main"]');
+    expect(workflow).toContain('branches: ["main", "dev"]');
     expect(workflow).toContain("actions/setup-node@v4");
     expect(workflow).not.toContain("corepack");
     expect(workflow).toContain("npx --yes broods deploy");
@@ -88,6 +92,23 @@ describe("deployWorkflow", () => {
     expect(workflow).toContain(
       "BROODS_TOKEN: ${{ github.ref_name == 'main' && secrets.BROODS_PRODUCTION_TOKEN || secrets.BROODS_DEVELOPMENT_TOKEN }}",
     );
+  });
+
+  test("a repo deploying one stage runs it on every mapped push, with no ref test", () => {
+    const workflow = deployWorkflow({
+      projectSlug: "support",
+      baseUrl: "https://gateway.broods.app",
+      rootDirectory: "",
+      installDirectory: "",
+      manager: "bun",
+      developmentBranch: "main",
+      environments: true,
+    });
+
+    expect(workflow).toContain('branches: ["main"]');
+    expect(workflow).toContain("environment: ${{ 'broods-development' }}");
+    expect(workflow).toContain("BROODS_STAGE: ${{ 'development' }}");
+    expect(workflow).toContain("if: github.ref_name == 'main'\n");
   });
 });
 
