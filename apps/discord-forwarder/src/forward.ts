@@ -8,10 +8,10 @@ import {
   type ForwardedThread,
   type MessageCreate,
 } from "./discord.ts";
-import { logError, logWarn, type LogFields, tokenHint } from "./log.ts";
+import { logError, logWarn, tokenHint } from "./log.ts";
 
 // Core dedups by message id, so retrying a POST that did land is harmless.
-const DISCORD_FORWARD_ATTEMPTS = 3;
+const ATTEMPTS = 3;
 const RETRY_CEILING_MS = 4_000;
 
 export interface ForwardTarget {
@@ -20,30 +20,7 @@ export interface ForwardTarget {
   webhookUrl: string;
 }
 
-export interface ForwardAuth {
-  /** Default 1: no retry. */
-  attempts?: number;
-  header: string;
-  timeoutMs: number;
-  token: string;
-}
-
-/** Never throws. Resolves the webhook URLs whose last attempt failed in a retryable way. */
-export async function fanOut(
-  targets: readonly ForwardTarget[],
-  body: string,
-  auth: ForwardAuth,
-  fields: LogFields = {},
-): Promise<string[]> {
-  const settled = await Promise.all(
-    targets.map((target): Promise<boolean> => post(target, body, auth, fields)),
-  );
-
-  return targets
-    .filter((_, index): boolean => !settled[index])
-    .map((target): string => target.webhookUrl);
-}
-
+/** Never throws. Posts the event to every agent webhook this bot token serves. */
 export async function forwardMessageCreate(
   data: MessageCreate,
   thread: ForwardedThread | null,
@@ -54,24 +31,20 @@ export async function forwardMessageCreate(
     type: "GATEWAY_MESSAGE_CREATE",
     data: thread ? { ...data, thread: thread } : data,
   });
+  const token = discordForwarderToken(botToken);
 
-  await fanOut(targets, body, {
-    attempts: DISCORD_FORWARD_ATTEMPTS,
-    header: DISCORD_GATEWAY_TOKEN_HEADER,
-    timeoutMs: FETCH_TIMEOUT_MS,
-    token: discordForwarderToken(botToken),
-  });
+  await Promise.all(
+    targets.map((target): Promise<void> => post(target, body, token)),
+  );
 }
 
 async function post(
   target: ForwardTarget,
   body: string,
-  auth: ForwardAuth,
-  fields: LogFields,
-): Promise<boolean> {
-  const attempts = auth.attempts ?? 1;
+  token: string,
+): Promise<void> {
   let retryAfterMs = Number.NaN;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     if (attempt > 1) {
       await Bun.sleep(
         Number.isFinite(retryAfterMs)
@@ -80,35 +53,34 @@ async function post(
       );
       retryAfterMs = Number.NaN;
     }
-    const last = attempt === attempts;
+    const last = attempt === ATTEMPTS;
     try {
       const response = await fetch(target.webhookUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          [auth.header]: auth.token,
+          [DISCORD_GATEWAY_TOKEN_HEADER]: token,
         },
         body: body,
         // The gateway never redirects, so a redirect would hand the token header to another host.
         redirect: "error",
-        signal: AbortSignal.timeout(auth.timeoutMs),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
-      if (response.ok) return true;
+      if (response.ok) return;
       const retryable =
         response.status >= 500 ||
         response.status === 408 ||
         response.status === 429;
       if (last || !retryable) {
         logWarn("Forward rejected by core", {
-          ...fields,
           agentId: target.agentId,
           agentName: target.agentName,
           attempts: attempt,
           status: response.status,
-          tokenHint: tokenHint(auth.token),
+          tokenHint: tokenHint(token),
         });
 
-        return !retryable;
+        return;
       }
       // Seconds form only; an HTTP-date parses to NaN and falls back to the backoff.
       retryAfterMs =
@@ -116,16 +88,13 @@ async function post(
     } catch (error) {
       if (last) {
         logError("Forward failed", {
-          ...fields,
           agentId: target.agentId,
           agentName: target.agentName,
           attempts: attempt,
           error: error instanceof Error ? error.message : String(error),
-          tokenHint: tokenHint(auth.token),
+          tokenHint: tokenHint(token),
         });
       }
     }
   }
-
-  return false;
 }
