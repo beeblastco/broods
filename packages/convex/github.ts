@@ -394,13 +394,19 @@ export const listRepos = action({
       authId: user.id,
       projectId: projectId,
     });
-    const lists = await Promise.all(
+    // One account GitHub no longer answers for must not empty the whole list.
+    const lists = await Promise.allSettled(
       installations.map((installation) =>
         listInstallationRepos(app, installation.installationId),
       ),
     );
+    const listed = lists.flatMap((list) =>
+      list.status === "fulfilled" ? [list.value] : [],
+    );
+    const failed = lists.find((list) => list.status === "rejected");
+    if (listed.length === 0 && failed) throw failed.reason;
 
-    return lists.flat().sort((a, b) => a.fullName.localeCompare(b.fullName));
+    return listed.flat().sort((a, b) => a.fullName.localeCompare(b.fullName));
   },
 });
 
@@ -673,6 +679,17 @@ export const mintLinkKeys = internalMutation({
       token: string;
     }> => {
       const stage = await ensureStage(ctx, project, stageName);
+      // A role may write keys on the project but not on Production.
+      await requireDashboardPermission(
+        ctx,
+        project.orgId,
+        member,
+        "keys:write",
+        {
+          projectId: projectId,
+          stageId: stage._id,
+        },
+      );
 
       return await insertDeployKey(ctx, {
         orgId: project.orgId,
