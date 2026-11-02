@@ -1,10 +1,4 @@
-/**
- * S3 primitives for the Convex config plane. A faithful port of apps/core
- * `src/shared/s3.ts` so objects written here are byte- and
- * metadata-compatible with what core's FUSE mount and skill loader read.
- * Uses the assumed-role client from model/aws.ts. Node-runtime only, import
- * exclusively from `"use node"` actions.
- */
+// Node runtime only ("use node" actions). Metadata must match core's src/shared/s3.ts.
 
 import {
   CopyObjectCommand,
@@ -18,12 +12,9 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { s3Client, type S3Access } from "./aws";
 
-// Match core's posix metadata exactly: the workdir FUSE mount reads these to
-// present owner/group/permissions to the sandbox guest (uid 993 / gid 990).
+// The workdir FUSE mount presents these to the sandbox guest as file owner and group.
 const SANDBOX_GID = "990";
 const SANDBOX_UID = "993";
-// Per-key DeleteObjects codes worth another try, as in core; any other code
-// (AccessDenied) fails the cleanup at once.
 const RETRYABLE_DELETE_CODES = new Set([
   "InternalError",
   "ServiceUnavailable",
@@ -38,15 +29,6 @@ export interface S3ObjectInfo {
   etag?: string;
 }
 
-/**
- * Copy an object while replacing metadata with core-compatible posix metadata.
- * @param sourceBucket source bucket
- * @param sourceKey source object key
- * @param destinationBucket destination bucket
- * @param destinationKey destination object key
- * @param options content type and executable flag
- * @param access optional overrides for a bring-your-own bucket
- */
 export async function copyS3Object(
   sourceBucket: string,
   sourceKey: string,
@@ -71,11 +53,6 @@ export async function copyS3Object(
   );
 }
 
-/**
- * @param bucket target bucket
- * @param key object key
- * @param access optional overrides for a bring-your-own bucket
- */
 export async function deleteS3Object(
   bucket: string,
   key: string,
@@ -85,15 +62,6 @@ export async function deleteS3Object(
   await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
 }
 
-/**
- * Delete every object under a prefix, one listed page (up to 1,000 keys) per
- * DeleteObjects request, one request at a time, as core's `deleteS3Prefix`.
- * @param bucket target bucket
- * @param prefix key prefix
- * @param access optional overrides for a bring-your-own bucket
- * @returns the number of objects deleted
- * @throws when any key could not be deleted, so a partial cleanup never reports success
- */
 export async function deleteS3Prefix(
   bucket: string,
   prefix: string,
@@ -147,12 +115,6 @@ export async function deleteS3Prefix(
   return deleted;
 }
 
-/**
- * Writes an S3 directory marker object for every parent directory of a key.
- * @param bucket target bucket
- * @param key file key whose parent directories should exist
- * @param access optional overrides for a bring-your-own bucket
- */
 export async function ensureS3DirectoryMarkers(
   bucket: string,
   key: string,
@@ -174,13 +136,6 @@ export async function ensureS3DirectoryMarkers(
   }
 }
 
-/**
- * @param bucket source bucket
- * @param key object key
- * @param options expiry in seconds (default 300)
- * @param access optional overrides for a bring-your-own bucket
- * @returns a presigned download URL
- */
 export async function getS3ObjectUrl(
   bucket: string,
   key: string,
@@ -198,11 +153,6 @@ export async function getS3ObjectUrl(
   );
 }
 
-/**
- * Recognize S3 "not found" errors across SDK and status-code shapes.
- * @param error the thrown value
- * @returns true when the error denotes a missing object
- */
 export function isMissingS3Error(error: unknown): boolean {
   if (!error || typeof error !== "object") {
     return false;
@@ -226,13 +176,6 @@ export function isMissingS3Error(error: unknown): boolean {
   );
 }
 
-/**
- * List every object under a prefix, following pagination.
- * @param bucket source bucket
- * @param prefix key prefix
- * @param access optional overrides for a bring-your-own bucket
- * @returns the objects found
- */
 export async function listS3Prefix(
   bucket: string,
   prefix: string,
@@ -274,12 +217,6 @@ export async function listS3Prefix(
   return objects;
 }
 
-/**
- * @param bucket source bucket
- * @param key object key
- * @returns the object body as bytes
- * @throws when the object has no body
- */
 export async function readS3Bytes(
   bucket: string,
   key: string,
@@ -296,22 +233,10 @@ export async function readS3Bytes(
   return result.Body.transformToByteArray();
 }
 
-/**
- * @param bucket source bucket
- * @param key object key
- * @returns the object body decoded as text
- */
 export async function readS3Text(bucket: string, key: string): Promise<string> {
   return new TextDecoder().decode(await readS3Bytes(bucket, key));
 }
 
-/**
- * @param bucket source bucket
- * @param key object key
- * @param access optional overrides for a bring-your-own bucket
- * @returns true when the object exists
- * @throws on non-404 S3 errors
- */
 export async function s3ObjectExists(
   bucket: string,
   key: string,
@@ -320,13 +245,6 @@ export async function s3ObjectExists(
   return (await s3ObjectSize(bucket, key, access)) !== null;
 }
 
-/**
- * @param bucket source bucket
- * @param key object key
- * @param access optional overrides for a bring-your-own bucket
- * @returns the object's size in bytes, or null when it does not exist
- * @throws on non-404 S3 errors
- */
 export async function s3ObjectSize(
   bucket: string,
   key: string,
@@ -347,15 +265,6 @@ export async function s3ObjectSize(
   }
 }
 
-/**
- * Write an object with core-compatible posix metadata.
- * @param bucket target bucket
- * @param key object key
- * @param body string or bytes to store
- * @param options content type and executable flag
- * @param access optional overrides for a bring-your-own bucket
- * @returns the byte size written
- */
 export async function writeS3Object(
   bucket: string,
   key: string,
@@ -381,12 +290,6 @@ export async function writeS3Object(
   return size;
 }
 
-/**
- * Build the posix ownership/permission metadata core stamps on every object.
- * @param kind whether the key is a directory marker or a file
- * @param executable whether a file should be world-executable
- * @returns the S3 user-metadata map
- */
 function posixMetadata(
   kind: "file" | "directory",
   executable = false,

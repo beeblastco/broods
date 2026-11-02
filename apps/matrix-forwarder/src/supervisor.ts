@@ -1,13 +1,3 @@
-/**
- * Holds the live set of Matrix accounts and keeps it equal to what the config
- * planes say it should be.
- *
- * Accounts are keyed by access token, not by agent. Two sync loops on one token
- * deliver every message twice and fight over one crypto store, so a token that
- * serves several targets (the same account deployed to dev and prod) is one
- * account fanning out to each of them.
- */
-
 import type {
   MatrixSendRequest,
   MatrixTypingRequest,
@@ -26,16 +16,14 @@ import type { AccountState, MatrixAccountOptions } from "./account.ts";
 import type { MatrixConnection } from "./connections.ts";
 import { normalizeApiUrl } from "./matrix.ts";
 
-/** Injected so tests never load the native crypto module; `main.ts` passes `MatrixAccount`. */
+// Injected so tests never load the native crypto module.
 type AccountFactory = (options: MatrixAccountOptions) => ForwarderAccount;
 
-/** An access token's desired account: its homeserver and every webhook it serves. */
 interface AccountGroup {
   apiUrl: string;
   targets: ForwardTarget[];
 }
 
-/** The slice of `MatrixAccount` the supervisor and HTTP server drive. */
 export interface ForwarderAccount {
   readonly state: AccountState;
   readonly userId: string | null;
@@ -61,7 +49,6 @@ interface ManagedAccount extends AccountGroup {
 
 export class Forwarder {
   private readonly createAccount: AccountFactory;
-  /** Accounts removed by a reconcile, still closing their crypto store. */
   private readonly detached = new Set<Promise<void>>();
   private readonly managed = new Map<string, ManagedAccount>();
   private readonly storeDir: string;
@@ -71,16 +58,10 @@ export class Forwarder {
     this.storeDir = storeDir;
   }
 
-  /** The running account for an access token, which is how core's sends authenticate. */
   account(accessToken: string): ForwarderAccount | undefined {
     return this.managed.get(accessToken)?.account;
   }
 
-  /**
-   * Starts accounts for tokens that gained a connection, stops the ones that lost
-   * every connection or moved homeserver, and re-points the rest. An unchanged
-   * token keeps its account, so its sync position and open store survive.
-   */
   reconcile(connections: readonly MatrixConnection[]): void {
     const desired = groupConnectionsByToken(connections);
 
@@ -99,8 +80,6 @@ export class Forwarder {
       const urls = webhookUrls(group.targets);
       const existing = this.managed.get(accessToken);
       if (existing) {
-        // reconcile runs on every config change, so warn only when the fan-out
-        // itself moved.
         if (webhookUrls(existing.targets).join(" ") !== urls.join(" ")) {
           warnOnSharedToken("Matrix", accessToken, urls);
         }
@@ -140,11 +119,6 @@ export class Forwarder {
     await Promise.all([...stopping, ...this.detached]);
   }
 
-  /**
-   * Lets a removed account close in its own time. The replacement for its
-   * device waits on the store lock anyway, so only shutdown needs to know the
-   * close is still in flight.
-   */
   private detach(account: ForwarderAccount): void {
     const closing = account
       .stop()
@@ -168,7 +142,6 @@ export class Forwarder {
       targets: (): readonly ForwardTarget[] =>
         this.managed.get(accessToken)?.targets ?? [],
     });
-    // Registered before the account starts, so its first event finds targets.
     this.managed.set(accessToken, {
       account: account,
       apiUrl: group.apiUrl,
@@ -182,12 +155,8 @@ export class Forwarder {
   }
 }
 
-/**
- * One account per access token, fanned out to every webhook the token serves,
- * across planes. A token naming two homeservers is a config error, and the
- * later one is dropped rather than folded in: its agent would otherwise be fed
- * the first homeserver's rooms.
- */
+// One account per token, since two sync loops on one would deliver twice and share a store. A
+// token's second homeserver is dropped, not merged: its agent would get the first one's rooms.
 export function groupConnectionsByToken(
   connections: readonly MatrixConnection[],
 ): Map<string, AccountGroup> {

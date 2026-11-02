@@ -65,7 +65,6 @@ describe("forwarding a room message", () => {
     });
   });
 
-  // `/sync` events carry `unsigned` and friends; the contract names five fields.
   it("drops event fields the contract does not name", () => {
     const trimmed = forwardedEvent({
       encrypted: false,

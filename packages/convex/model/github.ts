@@ -1,9 +1,7 @@
 /**
- * The GitHub half of a linked repo, run by the config plane: the Broods
- * GitHub App's credentials, its REST calls, the deploy workflow Broods commits
- * and the sealed repo secrets it deploys with. A push runs that workflow in
- * the user's own Actions, which calls `broods deploy`, so Broods builds
- * nothing. Plain fetch and Web Crypto, so it runs in Convex.
+ * The GitHub half of a linked repo: the Broods GitHub App's credentials, its REST calls, the deploy
+ * workflow Broods commits and the sealed repo secrets. A push runs that workflow in the user's own
+ * Actions (`broods deploy`), so Broods builds nothing. Plain fetch and Web Crypto, for Convex.
  */
 
 import { blake2b } from "@noble/hashes/blake2b";
@@ -34,6 +32,9 @@ const ENVIRONMENT_SECRET = "BROODS_TOKEN";
 
 const DEVELOPMENT_BRANCHES = ["dev", "development"] as const;
 
+/** The stages a linked repo can deploy, each from its own branch. */
+export const STAGES = ["production", "development"] as const;
+
 const GITHUB_TIMEOUT_MS = 15_000;
 
 const INSTALL: Record<PackageManager, string> = {
@@ -61,6 +62,8 @@ const LOCKFILES: ReadonlyArray<{ file: string; manager: PackageManager }> = [
 ];
 
 type PackageManager = "bun" | "npm" | "pnpm" | "yarn";
+
+export type Stage = (typeof STAGES)[number];
 
 /** The Broods GitHub App this deployment runs as, from its environment. */
 export interface GitHubApp {
@@ -98,17 +101,15 @@ interface BroodsRoot {
 interface WorkflowTarget extends BroodsRoot {
   projectSlug: string;
   baseUrl: string;
-  productionBranch: string;
+  /** Each absent one is a stage this repo does not deploy; at least one is set. */
+  productionBranch?: string;
   developmentBranch?: string;
   /** Keys sit in the per-branch environments, not repo secrets. */
   environments: boolean;
 }
 
-/** Each stage's branch and project key. */
-interface DeployKeys {
-  production: { branch: string; token: string };
-  development: { branch: string; token: string };
-}
+/** The branch and project key of each stage the repo deploys. */
+type DeployKeys = Partial<Record<Stage, { branch: string; token: string }>>;
 
 /** A user's GitHub installation, from `GET /user/installations`. */
 interface UserInstallation {
@@ -118,7 +119,7 @@ interface UserInstallation {
 }
 
 /** A non-2xx GitHub answer; `status` lets callers tell a protected branch from a bug. */
-class GitHubApiError extends Error {
+export class GitHubApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
@@ -295,7 +296,7 @@ export async function administeredInstallations(
   return installations.filter((_installation, index) => administered[index]);
 }
 
-/** The branch Development deploys from when none is named: `dev`, or `development` where `dev` is the default. */
+/** Development's branch when none is named: `dev`, or `development` where `dev` is the default. */
 export function developmentBranchFor(defaultBranch: string): string {
   return (
     DEVELOPMENT_BRANCHES.find((branch) => branch !== defaultBranch) ?? "dev"
@@ -344,6 +345,27 @@ export async function listInstallationRepos(
   }
 
   return repos;
+}
+
+/** The repo's branch names for a picker, up to 1,000 so a huge repo cannot stall the page. */
+export async function listBranches(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+): Promise<string[]> {
+  const names: string[] = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const branches = await githubRequest<Array<{ name: string }>>(
+      app,
+      token,
+      "GET",
+      `/repos/${fullName}/branches?per_page=100&page=${page}`,
+    );
+    names.push(...branches.map((branch) => branch.name));
+    if (branches.length < 100) break;
+  }
+
+  return names;
 }
 
 /** One repo by id, through the installation that reaches it. */
@@ -417,11 +439,15 @@ export function broodsRootsFromPaths(paths: readonly string[]): BroodsRoot[] {
 
 /** The workflow Broods commits: a push to a mapped branch deploys its stage. */
 export function deployWorkflow(target: WorkflowTarget): string {
-  const branches = [target.productionBranch, target.developmentBranch].filter(
-    (branch): branch is string => Boolean(branch),
-  );
+  const mapped = STAGES.filter((stage) => branchOf(target, stage));
+  const branches = mapped.map((stage) => branchOf(target, stage) ?? "");
   // An expression string doubles a single quote, which a branch name may hold.
-  const isProduction = `github.ref_name == '${target.productionBranch.replace(/'/g, "''")}'`;
+  const isProduction = `github.ref_name == '${(target.productionBranch ?? "").replace(/'/g, "''")}'`;
+  // One stage's value as is; with both, the pushed branch picks.
+  const choose = (value: (stage: Stage) => string): string =>
+    mapped.length === 1
+      ? `\${{ ${value(mapped[0] ?? "development")} }}`
+      : `\${{ ${isProduction} && ${value("production")} || ${value("development")} }}`;
   const setup =
     target.manager === "bun"
       ? ["      - uses: oven-sh/setup-bun@v2"]
@@ -445,10 +471,12 @@ export function deployWorkflow(target: WorkflowTarget): string {
     "  cancel-in-progress: false",
     "jobs:",
     "  deploy:",
+    // A manual run from any other branch must not deploy a stage.
+    `    if: ${branches.map((branch) => `github.ref_name == '${branch.replace(/'/g, "''")}'`).join(" || ")}`,
     "    runs-on: ubuntu-latest",
     ...(target.environments
       ? [
-          `    environment: \${{ ${isProduction} && '${DEPLOY_ENVIRONMENTS.production}' || '${DEPLOY_ENVIRONMENTS.development}' }}`,
+          `    environment: ${choose((stage) => `'${DEPLOY_ENVIRONMENTS[stage]}'`)}`,
         ]
       : []),
     "    steps:",
@@ -461,10 +489,10 @@ export function deployWorkflow(target: WorkflowTarget): string {
     "        env:",
     `          BROODS_BASE_URL: ${quote(target.baseUrl)}`,
     `          BROODS_PROJECT: ${quote(target.projectSlug)}`,
-    `          BROODS_STAGE: \${{ ${isProduction} && 'production' || 'development' }}`,
+    `          BROODS_STAGE: ${choose((stage) => `'${stage}'`)}`,
     target.environments
       ? `          BROODS_TOKEN: \${{ secrets.${ENVIRONMENT_SECRET} }}`
-      : `          BROODS_TOKEN: \${{ ${isProduction} && secrets.${DEPLOY_TOKEN_SECRETS.production} || secrets.${DEPLOY_TOKEN_SECRETS.development} }}`,
+      : `          BROODS_TOKEN: ${choose((stage) => `secrets.${DEPLOY_TOKEN_SECRETS[stage]}`)}`,
     "",
   ].join("\n");
 }
@@ -536,7 +564,7 @@ export async function commitWorkflow(
   return pull.html_url;
 }
 
-/** Cuts `branch` from `from`'s head. One that already exists is left as it is, or moved there with `reset`. */
+/** Cuts `branch` from `from`'s head; an existing one is left alone, or moved there with `reset`. */
 export async function createBranch(
   app: GitHubApp,
   token: string,
@@ -581,7 +609,7 @@ export async function sealDeployKeys(
   keys: DeployKeys,
 ): Promise<boolean> {
   try {
-    for (const stage of ["production", "development"] as const) {
+    for (const [stage, key] of deployKeyEntries(keys)) {
       const environment = `/repos/${fullName}/environments/${DEPLOY_ENVIRONMENTS[stage]}`;
       await githubRequest(app, token, "PUT", environment, {
         deployment_branch_policy: {
@@ -589,13 +617,13 @@ export async function sealDeployKeys(
           custom_branch_policies: true,
         },
       });
-      await allowOnlyBranch(app, token, environment, keys[stage].branch);
+      await allowOnlyBranch(app, token, environment, key.branch);
       await setSecret(
         app,
         token,
         `${environment}/secrets`,
         ENVIRONMENT_SECRET,
-        keys[stage].token,
+        key.token,
       );
     }
 
@@ -608,13 +636,13 @@ export async function sealDeployKeys(
       throw error;
     }
   }
-  for (const stage of ["production", "development"] as const) {
+  for (const [stage, key] of deployKeyEntries(keys)) {
     await setSecret(
       app,
       token,
       `/repos/${fullName}/actions/secrets`,
       DEPLOY_TOKEN_SECRETS[stage],
-      keys[stage].token,
+      key.token,
     );
   }
 
@@ -880,6 +908,25 @@ function concat(left: Uint8Array, right: Uint8Array): Uint8Array {
   return joined;
 }
 
+function branchOf(target: WorkflowTarget, stage: Stage): string | undefined {
+  return stage === "production"
+    ? target.productionBranch
+    : target.developmentBranch;
+}
+
+// The stages that have a key, with it.
+function deployKeyEntries(
+  keys: DeployKeys,
+): Array<[Stage, { branch: string; token: string }]> {
+  return STAGES.flatMap(
+    (stage): Array<[Stage, { branch: string; token: string }]> => {
+      const key = keys[stage];
+
+      return key ? [[stage, key]] : [];
+    },
+  );
+}
+
 // DER: one byte below 128, else 0x80 | byte count, then the bytes.
 function derLength(length: number): number[] {
   if (length < 0x80) return [length];
@@ -942,7 +989,7 @@ function isRefusedWrite(status: number): boolean {
   return status === 403 || status === 409 || status === 422;
 }
 
-// PKCS#8 wraps the PKCS#1 key: version 0, the rsaEncryption algorithm, then the key as an octet string.
+// PKCS#8 wraps the PKCS#1 key: version 0, rsaEncryption, then the key as an octet string.
 function pkcs8FromPem(pem: string): ArrayBuffer {
   const der = fromBase64(
     pem.replace(/-----(BEGIN|END) [A-Z ]+-----/g, "").replace(/\s/g, ""),

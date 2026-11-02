@@ -1,29 +1,14 @@
-/**
- * Per-task metering helpers. Flattens the AI SDK v7 `LanguageModelUsage`
- * shape (nested input/output token details) for span attributes and usage rows,
- * meters cache-write tokens with a providerMetadata fallback for providers
- * that only surface cache creation there, keeps one run's sandbox CPU
- * ledger for its usage row, its root span and each tool.call span, tracks
- * each model.step's timing (ttft, streaming windows, retries), and sums one
- * run's token totals across its steps.
- */
-
 import {
   canonicalModelProvider,
   PROVIDER_CACHE_WRITE_FIELDS,
 } from "@broods/convex/model/modelPricing";
 import type { LanguageModelUsage, TextStreamPart, ToolSet } from "ai";
-import { isPlainObject } from "../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import type { ModelAttempt } from "./provider.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
 
-/**
- * Generated-content stream parts: they count toward per-step streaming windows
- * (time-to-first-token / last-token) and are the output that keeps the silent
- * model watchdog in harness.ts from firing. v7 delivers every TextStreamPart
- * to onChunk, so boundary, lifecycle, error and post-execution parts must not
- * qualify.
- */
+// v7 hands onChunk every stream part; only these are generated content, which feeds the
+// streaming windows and keeps the silent-model watchdog in harness.ts quiet.
 export const MODEL_CONTENT_CHUNK_TYPES: ReadonlySet<
   TextStreamPart<ToolSet>["type"]
 > = new Set<TextStreamPart<ToolSet>["type"]>([
@@ -44,7 +29,6 @@ export interface UsageTokenTotals {
   totalTokens: number;
 }
 
-// Absent counts read as 0 so span attributes and usage rows stay numeric.
 export function usageTokenTotals(
   usage: LanguageModelUsage | undefined,
 ): UsageTokenTotals {
@@ -58,7 +42,6 @@ export function usageTokenTotals(
   };
 }
 
-/** Two token tallies added field by field, for usage spread over several calls. */
 export function addUsageTokenTotals(
   a: UsageTokenTotals,
   b: UsageTokenTotals,
@@ -73,10 +56,7 @@ export function addUsageTokenTotals(
   };
 }
 
-/**
- * One model call's tokens as span attributes. The dashboard prices a model.step
- * and a compaction phase by these names (`stepTokens`, `isModelCallSpan`).
- */
+// The dashboard prices model.step and compaction spans by these names (`stepTokens`).
 export function modelTokenAttributes(
   tokens: UsageTokenTotals,
 ): Record<string, number> {
@@ -90,8 +70,6 @@ export function modelTokenAttributes(
   };
 }
 
-// Cache-write tokens for one step; 0 when the provider doesn't break them out,
-// the field is absent, or metadata is missing. Never throws.
 export function extractCacheWriteTokens(
   providerName: string | undefined,
   providerMetadata: Record<string, unknown> | undefined,
@@ -102,15 +80,13 @@ export function extractCacheWriteTokens(
   const field = PROVIDER_CACHE_WRITE_FIELDS[provider];
   if (!field) return 0;
 
-  // providerMetadata shape: { [providerKey]: { [fieldName]: value, ... } }
-  // The top-level key matches the canonical provider name (e.g. "anthropic").
   const providerBlock = providerMetadata[provider];
   if (isPlainObject(providerBlock)) {
     const val = providerBlock[field];
     if (typeof val === "number" && val > 0) return val;
   }
 
-  // Bedrock wraps the Anthropic block under "anthropic" inside the bedrock block.
+  // Bedrock nests the Anthropic block under bedrock.anthropic, or sets the field on bedrock.
   if (provider === "bedrock") {
     const bedrockBlock = providerMetadata["bedrock"];
     if (isPlainObject(bedrockBlock)) {
@@ -119,7 +95,6 @@ export function extractCacheWriteTokens(
         const val = anthropicBlock[field];
         if (typeof val === "number" && val > 0) return val;
       }
-      // Also try the field directly on the bedrock block (provider SDK variation).
       const direct = bedrockBlock[field];
       if (typeof direct === "number" && direct > 0) return direct;
     }
@@ -128,32 +103,18 @@ export function extractCacheWriteTokens(
   return 0;
 }
 
-/** One run's sandbox CPU: the tool registry writes it, spans and the usage row read it. */
 export interface SandboxCpuLedger {
-  /** Passed to the tool registry as `onSandboxCpu`; folds each CPU sample into the usage buckets. */
   record: (sample: SandboxCpuSample) => void;
-  /** That call's compute, handed out once when its tool.call span closes. */
   takeToolCompute: (
     toolCallId: string,
   ) => Pick<SandboxCpuSample, "type" | "cpuUsec"> | undefined;
-  /**
-   * Sandbox CPU so far split by role (agent's own sandbox vs hosted MCP), for
-   * the live root span re-published after each step. Empty until CPU arrives.
-   */
   roleAttributes: () => Record<string, number>;
-  /** Sandbox CPU split per provider, for the finished root span. */
   typeAttributes: () => Record<string, number>;
-  /** One sandboxUsage row per (type, role, tool) bucket. */
   usage: () => SandboxCpuSample[];
 }
 
 export function createSandboxCpuLedger(): SandboxCpuLedger {
-  // Accumulate sandbox CPU per (type, role, tool); each bucket becomes one
-  // sandboxUsage row at finalize. CPU only arrives from sandbox execs and
-  // hosted MCP calls.
   const sandboxUsageByKey = new Map<string, SandboxCpuSample>();
-  // Per-call compute, so the tool.call span can report what that one call cost.
-  // Keyed by call id and consumed once the span closes; usage rows stay aggregated.
   const toolComputeByCallId = new Map<
     string,
     Pick<SandboxCpuSample, "type" | "cpuUsec">
@@ -222,75 +183,42 @@ export function createSandboxCpuLedger(): SandboxCpuLedger {
   };
 }
 
-/** First and last generated chunk of one kind in a step, in epoch ms. */
 interface StreamWindow {
   first: number;
   last: number;
 }
 
-/** Everything one model.step accrues between startStep and closeStep. */
 interface StepTiming {
   startedAt: number | undefined;
-  // First and last generated chunk, attributed to the active step since onChunk
-  // has no step number. They split the step into ttft, streaming and tool wait;
-  // tool results are not generation, so a slow tool never inflates streaming.
+  // onChunk has no step number, so chunks go to the active step.
   firstChunkAt: number | undefined;
   lastChunkAt: number | undefined;
-  // Per-kind windows (first->last delta) so the dashboard can show how long the
-  // model spent streaming reasoning vs text vs tool-call input. They may overlap
-  // slightly for models that interleave.
   reasoning: StreamWindow | undefined;
   text: StreamWindow | undefined;
   toolInput: StreamWindow | undefined;
-  // The SDK retries a failed stream start inside the ttft window with nothing
-  // recorded; attemptRecordingMiddleware fills this per doStream call.
+  // The SDK retries a failed stream start silently; attemptRecordingMiddleware records each try.
   attempts: ModelAttempt[];
 }
 
-/**
- * One run's per-step timing: `runAgentLoop` feeds it from the stream callbacks
- * and reads the step's duration attributes back when the model.step span
- * closes. Timestamps are passed in; it holds nothing but the per-step records.
- */
 export interface StepTimingTracker {
-  /** onStepStart: starts the step's clock and attributes chunks and attempts to it. */
   startStep: (step: number, nowMs: number) => void;
-  /** The step chunks and attempts attribute to; undefined between steps. */
   activeStep: () => number | undefined;
-  /** onStepEnd: stops attributing to `step` unless a newer step already took over. */
   endActiveStep: (step: number) => void;
-  /** When `step` started; undefined before `startStep` and after `closeStep`. */
   stepStartMs: (step: number) => number | undefined;
-  /** onChunk: a generated-content part extends the step's generation and per-kind streaming windows. */
   recordChunk: (
     chunkType: TextStreamPart<ToolSet>["type"],
     nowMs: number,
   ) => void;
-  /**
-   * attemptRecordingMiddleware: one entry per doStream call of the active
-   * step. The SDK awaits onStepStart before every doStream, so there always is
-   * one; an attempt without one is dropped rather than filed on another step.
-   */
+  // The SDK awaits onStepStart before each doStream; an attempt with no step is dropped.
   recordAttempt: (attempt: ModelAttempt) => void;
-  /**
-   * ttft = retry_wait (failed attempts + backoff) + the final attempt's real
-   * server wait, so a retried 429 is distinguishable from queueing. Read on
-   * its own for a step whose every attempt failed and never reached onStepEnd.
-   */
   attemptAttributes: (step: number) => Record<string, string | number>;
-  /**
-   * The step's span attributes: ttft, attempts, streaming, tool wait and the
-   * per-kind streaming windows, each only when observed. Drops the step.
-   */
   closeStep: (
     step: number,
     stepEndMs: number,
   ) => Record<string, string | number>;
-  /** Drops every step once the run is finalized. */
   clear: () => void;
 }
 
-/** One run's step timing; `serialize` renders attempt errors as a span attribute. */
 export function createStepTimingTracker(
   serialize: (value: unknown) => string,
 ): StepTimingTracker {
@@ -374,8 +302,6 @@ export function createStepTimingTracker(
     closeStep: (step, stepEndMs) => {
       const timing = steps.get(step);
       const stepStartMs = timing?.startedAt;
-      // Non-overlapping segments that sum to the step duration; their windows
-      // are defined on StepTiming above.
       const firstTokenMs = timing?.firstChunkAt;
       const lastTokenMs = timing?.lastChunkAt ?? firstTokenMs;
       const ttftMs =
@@ -419,41 +345,18 @@ export function createStepTimingTracker(
   };
 }
 
-/**
- * One run's token totals for its usage row and root span: onStepEnd adds each
- * finished step, onEnd may replace the sum with the turn total, an
- * auto-compaction adds its summary calls after that, finalize reads.
- */
 export interface TaskTotals {
-  /**
-   * onStepEnd: folds a finished step in. An aborted run never reaches onEnd,
-   * and a stopped one gets an empty total there, so finished steps are summed
-   * here. `stepTokens` is the step's flattened usage, which the step span also
-   * reads; `cacheWriteTokensFallback` is the providerMetadata count, metered
-   * only when that usage lacks one. Returns the step's metered cache-write
-   * tokens, which its span reports too.
-   */
+  // onEnd never runs for an aborted run and is empty for a stopped one, so steps sum here.
   addStep: (
     stepNumber: number,
     stepTokens: UsageTokenTotals,
     cacheWriteTokensFallback: number,
   ) => number;
-  /**
-   * Folds in an auto-compaction's summary calls after the turn ends, so the
-   * run's usage row and root span count what the summary cost. Not a step.
-   */
   addCompaction: (tokens: UsageTokenTotals) => void;
-  /**
-   * onEnd: the turn total wins (a harness counts calls no step reported),
-   * unless a stop thrown from prepareStep left it empty: then the step sum
-   * stands. The step count is the turn's either way.
-   */
+  // The turn total wins (a harness counts calls no step reported) unless a stop left it empty.
   finish: (usage: LanguageModelUsage, stepCount: number) => void;
-  /** Steps finished so far, or the turn's count after `finish`. */
   steps: () => number;
-  /** The summed or turn usage; undefined before the first step ends. */
   usage: () => LanguageModelUsage | undefined;
-  /** Cache-write tokens summed over every finished step. */
   cacheWriteTokens: () => number;
 }
 
@@ -507,7 +410,6 @@ export function createTaskTotals(): TaskTotals {
   };
 }
 
-/** A window's length, or undefined when that kind never streamed. */
 function windowMs(window: StreamWindow | undefined): number | undefined {
   return window ? Math.max(0, window.last - window.first) : undefined;
 }

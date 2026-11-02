@@ -1,10 +1,3 @@
-/**
- * The config-plane authorization decision. Every bsts_ request through the
- * gateway resolves to a role and runs `authorize` before anything else, and a
- * default-deny walks the entire rule list, so the miss, not the hit, is the
- * case worth holding a baseline on.
- */
-
 import {
   apiActionForRequest,
   authorize,
@@ -17,8 +10,6 @@ import type {
 } from "../../packages/convex/model/policyRules.ts";
 import type { BenchCase } from "../runner.ts";
 
-// A role a platform team would actually write: broad reads, scoped writes, one
-// explicit deny that has to be reached before an allow can be trusted.
 const POLICY_RULES: readonly PolicyRule[] = [
   {
     id: "read-everything",
@@ -77,9 +68,7 @@ const POLICY: PolicyDocument = {
   rules: [...POLICY_RULES],
 };
 
-// The stage the role is pinned to. A resource off the pin is refused before any
-// rule is read, so both the role and every resource it is asked about carry it;
-// config-plane-authz.test.ts fails if a case stops reaching its decision.
+// A resource off the role's pin is refused before any rule is read, so every resource carries it.
 const PIN = { projectId: "prj_acme", stageId: "stg_production" };
 
 const PRINCIPAL: ApiPrincipal = {
@@ -112,8 +101,7 @@ export const configPlaneAuthzCases: readonly BenchCase[] = [
   {
     name: "convex/api-authorize-default-deny",
     iterations: 200_000,
-    // No rule grants policies:write, so this walks every rule and falls through
-    // to the default deny: the worst case, and the one an attacker drives.
+    // No rule grants policies:write: every rule is walked, the worst case an attacker drives.
     run: (): unknown => {
       return authorize(
         PRINCIPAL,

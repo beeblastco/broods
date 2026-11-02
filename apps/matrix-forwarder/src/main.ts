@@ -1,12 +1,3 @@
-/**
- * Entry point. Subscribes to the config planes' `matrix` connections, reconciles
- * the account set on every change, and serves probes plus core's send and
- * typing calls.
- *
- * Single replica by design: an account's crypto store must never have two
- * writers. See `AGENTS.md` in this folder.
- */
-
 import { watchChannelConnections } from "../../discord-forwarder/src/connections.ts";
 import {
   logError,
@@ -41,8 +32,7 @@ if (import.meta.main) {
     port: server.port,
   });
 
-  // Started after the server: subscribing waits on Convex, and a process that
-  // has not opened its port yet fails the liveness probe.
+  // After the server: subscribing waits on Convex, and a closed port fails the liveness probe.
   const watch = watchChannelConnections(
     "matrix",
     config.planes,
@@ -53,27 +43,21 @@ if (import.meta.main) {
     },
   );
 
-  // Every account closes its store before the process exits, so a SIGTERM
-  // mid-write cannot corrupt it.
   let stopping = false;
   const shutdown = async (exitCode = 0): Promise<void> => {
     if (stopping) return;
     stopping = true;
     try {
       await watch.close();
-      // Stop taking /v1/send and /v1/typing first, so none lands on an account
-      // the forwarder has already dropped and answers 401.
+      // Server first, so no send lands on an account the forwarder already dropped (a 401).
       await server.stop();
       await forwarder.stop();
     } finally {
-      // A store that fails to close must not leave the process up, half stopped.
       process.exit(exitCode);
     }
   };
   process.on("SIGTERM", (): void => void shutdown());
   process.on("SIGINT", (): void => void shutdown());
-  // A stray rejection or throw still closes every crypto store before exiting
-  // non-zero, so the restart finds them intact.
   for (const event of ["unhandledRejection", "uncaughtException"] as const) {
     process.on(event, (error: unknown): void => {
       logError("Matrix forwarder crashed", {

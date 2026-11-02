@@ -3,10 +3,6 @@
 import { DataTableFooter } from "@/app/components/DataTable";
 import { Button } from "@/app/components/ui/button";
 
-/**
- * The footer under a paged list: how many rows show of how many are held,
- * and a button for the next page while older rows remain.
- */
 export function LoadMore({
   shown,
   total,
@@ -18,9 +14,7 @@ export function LoadMore({
 }: {
   shown: number;
   total: number;
-  /** The rows' name, singular and plural: `["line", "lines"]`. */
   noun: [string, string];
-  /** Text after the count, such as ` · $0.0638`. */
   detail?: string;
   pageSize: number;
   remaining: number;

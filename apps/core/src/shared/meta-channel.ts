@@ -1,12 +1,3 @@
-/**
- * What Messenger and Instagram share. Both deliver Meta Graph webhooks: a GET
- * subscription handshake answered with the verify token, an
- * `X-Hub-Signature-256` HMAC over every POST, and one envelope of batched
- * messaging events whose entries each name the Page or account they are for.
- * Both reply through a Chat SDK adapter used as transport only. Each channel
- * file builds its transport and names how the two differ.
- */
-
 import { createHmac } from "node:crypto";
 import type { AdapterPostableMessage, Attachment, Message } from "chat";
 import { timingSafeStringEqual } from "./auth.ts";
@@ -24,11 +15,6 @@ import { logWarn } from "./log.ts";
 
 const SIGNATURE_HEADER = "x-hub-signature-256";
 
-/**
- * The fields of one Messenger or Instagram messaging event read here. Both
- * adapters' event types satisfy it; only Instagram sets the two flags for a
- * deleted or unsupported message.
- */
 export interface MetaMessagingEvent {
   message?: {
     attachments?: readonly unknown[];
@@ -44,11 +30,6 @@ export interface MetaMessagingEvent {
   timestamp: number;
 }
 
-/**
- * Where a Messenger or Instagram message came from. `recipientId` is the Page
- * or Instagram professional account that received it; `threadId` is the Chat
- * SDK thread the reply goes to.
- */
 export interface MetaSource {
   messageId: string;
   recipientId: string;
@@ -56,7 +37,6 @@ export interface MetaSource {
   threadId: string;
 }
 
-/** The part of a Chat SDK Meta adapter a channel drives. */
 export interface MetaTransport<Event extends MetaMessagingEvent> {
   parseMessage(raw: Event): Message<Event>;
   postMessage(
@@ -71,14 +51,10 @@ export interface MetaChannelOptions<Event extends MetaMessagingEvent> {
   allowedUserIds: ReadonlySet<string> | null;
   appSecret: string;
   name: "instagram" | "messenger";
-  /** The Page or account this agent answers for; only its entries run. */
   ownerId(): Promise<string>;
-  /** The webhook `object` this channel subscribes to. */
   object: "instagram" | "page";
-  /** Whether the transport's `postMessage` delivers attachments. */
   postsAttachments: boolean;
   prefix: string;
-  /** Reply chunk size, counted the way the platform counts it. */
   textLimit: MetaTextLimit;
   transport: MetaTransport<Event>;
   verifyToken: string;
@@ -89,7 +65,6 @@ interface MetaTextLimit {
   unit: "bytes" | "chars";
 }
 
-// One messaging event and the Page or account its entry names.
 interface MetaEvent<Event> {
   event: Event;
   recipientId: string;
@@ -100,12 +75,6 @@ interface MetaWebhookPayload<Event> {
   entry?: { id: string; messaging?: Event[] }[];
 }
 
-/**
- * The adapter behind `messenger-channel.ts` and `instagram-channel.ts`. It
- * answers the GET handshake itself, turns every message of a delivery sent to
- * its own Page or account into a turn and replies through the Chat SDK
- * transport.
- */
 export function createMetaChannel<Event extends MetaMessagingEvent>(
   options: MetaChannelOptions<Event>,
 ): ChannelAdapter {
@@ -179,7 +148,6 @@ export function createMetaChannel<Event extends MetaMessagingEvent>(
       if (events.length === 0) {
         return { kind: "ignore", reason: "no message" };
       }
-      // Meta batches events under load; each message is its own turn.
       const ownerId = await options.ownerId();
       const results = events
         .filter((found) => found.recipientId === ownerId)
@@ -204,8 +172,7 @@ export function createMetaChannel<Event extends MetaMessagingEvent>(
         }
       };
 
-      // One body for both: the SDK uploads bytes it can read and links the
-      // rest. The caption goes through sendText, since the SDK truncates it.
+      // The caption goes through sendText, since the SDK truncates it.
       const sendAttachments = async function (
         attachments: ChannelFile[] | ChannelImage[],
         caption?: string,
@@ -236,16 +203,10 @@ export function createMetaChannel<Event extends MetaMessagingEvent>(
   };
 }
 
-// Meta sends the handshake as `hub.*` query parameters on a GET.
 function handshakeParams(req: ChannelRequest): URLSearchParams {
   return new URLSearchParams(req.rawQueryString);
 }
 
-/**
- * Every event in a delivery a person sent: a message or a button tap, with the
- * Page or account it was sent to. Echoes of the agent's own replies,
- * reactions, reads and deliveries are never messages.
- */
 function messageEvents<Event extends MetaMessagingEvent>(
   payload: MetaWebhookPayload<Event>,
 ): MetaEvent<Event>[] {
@@ -265,7 +226,6 @@ function messageEvents<Event extends MetaMessagingEvent>(
   );
 }
 
-// One person's message as a turn, or why it does not run.
 function parseEvent<Event extends MetaMessagingEvent>(
   options: MetaChannelOptions<Event>,
   found: MetaEvent<Event>,
@@ -303,24 +263,18 @@ function parseEvent<Event extends MetaMessagingEvent>(
       channelName: options.name,
       content: parsed.text,
       ...(attachments.length > 0 ? { attachments: attachments } : {}),
-      // A Messenger or Instagram chat is always one person, so the sender is
-      // also the place the reply goes.
+      // A Meta chat is always one person, so the sender is also the channel.
       identity: {
         workspaceRef: found.recipientId,
         channelId: senderId,
         userId: senderId,
       },
-      // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },
     },
   };
 }
 
-/**
- * Cuts a reply into pieces the Send API takes whole, since both adapters
- * truncate past their limit. Breaks at the last whitespace in the back half of
- * a piece, and never inside a code point.
- */
+// Both adapters truncate past their limit, so the reply is split into pieces they take whole.
 function splitMetaText(text: string, limit: MetaTextLimit): string[] {
   const size = (value: string): number =>
     limit.unit === "bytes" ? Buffer.byteLength(value, "utf8") : value.length;
@@ -368,12 +322,8 @@ function toMetaSource(
   };
 }
 
-/**
- * Inbound media as plain URL attachments. The adapters attach a reader that
- * downloads with a bare fetch and no size cap; without it the harness reads
- * the URL through its guarded, capped fetch. Meta CDN links are signed in the
- * URL, so the download needs no token.
- */
+// Drops the adapters' reader (a bare fetch, no size cap) so the harness reads the URL through its
+// guarded, capped fetch. Meta CDN URLs are signed, so the download needs no token.
 function urlAttachments(attachments: Attachment[]): Attachment[] {
   return attachments.flatMap((attachment): Attachment[] =>
     attachment.url ? [{ type: attachment.type, url: attachment.url }] : [],

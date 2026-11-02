@@ -27,7 +27,6 @@ export const OK_AGENT = { system: "Reply with the single word OK." } as const;
 
 export const MODEL_KEY_HINT = "set ANTHROPIC_API_KEY for the full run";
 
-/** `convex run --identity` for the self-host admin, to call a dashboard function as a signed-in member. */
 export const SELF_HOST_IDENTITY = JSON.stringify({
   subject: SELF_HOST_ADMIN.subject,
   issuer: SELF_HOST_ISSUER,
@@ -52,16 +51,13 @@ export interface VerifyContext {
   account: BroodsAccountClient;
   accountSecret: string;
   client: BroodsClient;
-  /** The Convex site directly, as an in-cluster caller reaches it. */
   configPlaneUrl: string;
-  /** Runs the Convex CLI against the stack's backend with its admin key; never throws. */
   convex: (args: readonly string[]) => { ok: boolean; output: string };
   /** `convex` without blocking, for a case that serves a fake the backend calls. */
   convexAsync: (
     args: readonly string[],
   ) => Promise<{ ok: boolean; output: string }>;
   coreLogPath: string;
-  /** The public URL: Traefik, in front of core, the config plane and the gateway. */
   edgeUrl: string;
   /** The fake GitHub's port and the App credentials Convex holds for it. */
   github: typeof LOCAL_GITHUB_APP & {
@@ -74,13 +70,11 @@ export interface VerifyContext {
   measure: <T>(step: string, fn: () => Promise<T>) => Promise<T>;
   model: SmokeModel;
   runId: string;
-  /** The in-cluster service token; valid only on requests that skip the edge. */
+  // Valid only on requests that skip the edge.
   serviceSecret: string;
-  /** The stack's STAGE_TICKET_SECRET, which core derives its run-token key from. */
   stageTicketSecret: string;
 }
 
-/** Thrown by assertStep; verify records the step as the failure. */
 export class VerifyFailure extends Error {
   constructor(
     readonly step: string,
@@ -90,7 +84,6 @@ export class VerifyFailure extends Error {
   }
 }
 
-/** Logs a passed check, or throws VerifyFailure. */
 export function assertStep(
   step: string,
   ok: boolean,
@@ -100,10 +93,7 @@ export function assertStep(
   console.log(`  ok  ${step}`);
 }
 
-/**
- * Creates a machine sandbox and runs its daemon in-process on the account
- * key until `stop`, because the `broods machine` CLI needs a dashboard login.
- */
+// The daemon runs in process on the account key: the `broods machine` CLI needs a login.
 export async function connectMachine(
   context: VerifyContext,
   options: {
@@ -169,7 +159,6 @@ export async function connectMachine(
   };
 }
 
-/** The last JSON line of an append-only log that matches, or null. */
 export function lastJsonLine<T>(
   path: string,
   matches: (record: T) => boolean,
@@ -190,7 +179,6 @@ export function lastJsonLine<T>(
   return null;
 }
 
-/** Repeats attempt with doubling backoff until non-null; null on timeout. */
 export async function pollUntil<T>(
   options: {
     initialIntervalMs: number;
@@ -211,7 +199,6 @@ export async function pollUntil<T>(
   return null;
 }
 
-/** HTTP status of a GET, or null when unreachable. */
 export async function probeHttp(url: string): Promise<number | null> {
   try {
     const response = await fetch(url, {
@@ -224,12 +211,6 @@ export async function probeHttp(url: string): Promise<number | null> {
   }
 }
 
-/**
- * An agent on `sandboxId` writes a marker in one turn and reads it back in
- * the next, so a persistent sandbox is shown to keep a file across calls.
- * The read answers the marker reversed, which no prompt contains, so the
- * model cannot pass it from the conversation without the file.
- */
 export async function persistentSandboxKeepsFile(
   context: VerifyContext,
   input: { key: string; label: string; path: string; sandboxId: string },
@@ -255,6 +236,7 @@ export async function persistentSandboxKeepsFile(
       }),
     );
   const marker = `${input.label}-${context.runId}`;
+  // No prompt holds the reversed marker, so the model cannot pass without reading the file.
   const reversed = marker.split("").reverse().join("");
   const wrote = await turn(
     `Run: echo ${marker} > ${input.path}`,
@@ -270,7 +252,6 @@ export async function persistentSandboxKeepsFile(
   );
 }
 
-/** Starts a background run through the gateway and waits for its final status. */
 export async function runToTerminal(
   context: VerifyContext,
   run: {
@@ -293,7 +274,6 @@ export async function runToTerminal(
   });
 }
 
-/** Claude Haiku 5.5 at medium effort on ANTHROPIC_API_KEY, or on a dummy key that fails at the provider call. */
 export function smokeModel(): { hasModelKey: boolean; model: SmokeModel } {
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
@@ -310,10 +290,6 @@ export function smokeModel(): { hasModelKey: boolean; model: SmokeModel } {
   };
 }
 
-/**
- * Runs a Convex function with the stack's admin key and parses its result.
- * With `identity` (`SELF_HOST_IDENTITY`) a public function runs as that member.
- */
 export function convexResult(
   context: VerifyContext,
   fn: string,

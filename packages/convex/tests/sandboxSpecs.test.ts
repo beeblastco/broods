@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * A sandbox row's verified size: `setSpecs` patches in a size a provider reports
- * after the row exists, and `upsert` keeps a verified size across a reconnect
- * that knows none.
- */
 
 import { convexTest } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
@@ -26,8 +21,7 @@ afterEach(() => {
 });
 
 test("setSpecs bills the time so far at the old size, then only patches the same live machine", async () => {
-  // Seed before NOW: each commit moves the next transaction's clock past it,
-  // so the machine would start a millisecond late.
+  // Seed before NOW: each commit advances the clock, so the machine would start late.
   vi.useFakeTimers({ now: NOW - 1000 });
   const t = specsTest();
   const accountId = await seedAccount(t, "beeblast");
@@ -97,7 +91,6 @@ test("a reconnect without a size keeps the verified one, and a new machine start
   expect(replaced?.specsVerified).toBeUndefined();
 });
 
-// The one sandbox row these tests write.
 async function row(t: T): Promise<Doc<"sandboxInstances"> | null> {
   return await t.run(async (ctx) => ctx.db.query("sandboxInstances").unique());
 }
@@ -123,7 +116,6 @@ async function seedAccount(t: T, name: string): Promise<Id<"accounts">> {
   });
 }
 
-// An e2b row under one reservation key, idling up to an hour.
 async function upsert(
   t: T,
   accountId: Id<"accounts">,

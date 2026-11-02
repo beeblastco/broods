@@ -22,8 +22,6 @@ test("reads BROODS_STAGE", () => {
   expect(stageFromEnv()).toBe("staging");
 });
 
-// Hard rename: a project still carrying the old name must fail loudly rather
-// than quietly resolving to a stage the user did not name.
 test("ignores the pre-rename BROODS_ENVIRONMENT", () => {
   delete process.env.BROODS_STAGE;
   process.env.BROODS_ENVIRONMENT = "development";

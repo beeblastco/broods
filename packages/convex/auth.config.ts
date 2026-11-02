@@ -1,12 +1,3 @@
-/**
- * JWT providers Convex trusts, picked by BROODS_AUTH_PROVIDER. Cloud: WorkOS
- * AuthKit (https://docs.convex.dev/auth/authkit/). Self-hosted: the
- * dashboard's admin-key session, verified against the inline
- * BROODS_SESSION_JWKS so nothing is fetched. The deploy refuses an auth config
- * that reads an unset variable, so each branch reads only its own
- * (tests/authConfig.test.ts).
- */
-
 import {
   authProvider,
   SELF_HOST_ALGORITHM,
@@ -16,6 +7,7 @@ import {
 } from "./model/selfHostAuth";
 
 const authConfig = {
+  // The deploy refuses a config that reads an unset variable: each branch reads only its own.
   providers:
     authProvider() === "self-host"
       ? [

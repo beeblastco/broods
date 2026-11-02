@@ -10,11 +10,6 @@ const TIMEOUT = {
   tools: { bashMs: 300_000 },
 };
 
-/**
- * `model.timeout` takes the AI SDK's own shape: the config plane stores every
- * field as sent, and refuses a misspelled field or a limit that is not a
- * positive integer before it reaches a run.
- */
 export async function modelTimeout(context: VerifyContext): Promise<void> {
   const key = `model-timeout-${context.runId}`;
   const refused = await context.account

@@ -1,10 +1,4 @@
-/**
- * `local-stack perf`: what a turn costs Broods itself, with core started by
- * `up --perf` so the model answers in process. Convex calls per turn are
- * exact on any machine, so a scenario that makes more calls than
- * perf-baseline.json fails. Timings depend on the machine, so drift against
- * the same platform's baseline only warns.
- */
+// Convex calls per turn are exact on any machine, so they gate; timings drift, so they warn.
 
 import { appendFileSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -37,7 +31,6 @@ interface ScenarioResult {
   p95: number;
 }
 
-/** Measures turns, checks their persisted usage, and grades the Convex call budgets. */
 export async function runPerf(
   context: VerifyContext,
   options: { record: boolean; tracePath: string },
@@ -157,7 +150,6 @@ export async function runPerf(
   }
 }
 
-/** Timed like `timed`, and counts the Convex calls each iteration made once core goes quiet. */
 async function counted(
   tracePath: string,
   name: string,
@@ -201,7 +193,6 @@ function platformKey(): string {
   return `${process.platform}-${process.arch}`;
 }
 
-/** Prints the table, appends it to the GitHub job summary, and records or grades against the baseline. */
 function report(results: ScenarioResult[], record: boolean): boolean {
   const baseline = JSON.parse(
     readFileSync(BASELINE_PATH, "utf8"),
@@ -289,7 +280,6 @@ function report(results: ScenarioResult[], record: boolean): boolean {
   return failures.length === 0;
 }
 
-/** Timings for ITERATIONS runs of one scenario. */
 async function timed(
   name: string,
   run: (index: number) => Promise<number>,
@@ -306,7 +296,7 @@ async function timed(
   };
 }
 
-/** Every complete trace line; a line core is still appending has no newline yet and waits for the next read. */
+// Drops a partial last line: core may still be appending it.
 function traceLines(tracePath: string): string[] {
   let text = "";
   try {
@@ -322,7 +312,7 @@ function traceLines(tracePath: string): string[] {
     .map((line): string => (JSON.parse(line) as { fn: string }).fn);
 }
 
-/** Waits until core has made no Convex call for QUIET_MS, so a run's tail writes count toward it. */
+// Core keeps writing after a stream ends; those tail calls belong to that run.
 async function waitForQuiet(tracePath: string): Promise<void> {
   const deadline = Date.now() + QUIET_TIMEOUT_MS;
   let size = -1;

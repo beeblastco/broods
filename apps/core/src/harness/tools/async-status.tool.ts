@@ -1,18 +1,3 @@
-/**
- * async_status. The model-facing tool to check, tail, or stop a background job /
- * async tool call by its statusId.
- *
- * Auto-registered (see tools/index.ts) when the agent has any async tool or a
- * persistent sandbox. A detached sandbox job is polled through the workspace's
- * executor and its row settled here; background jobs also deliver themselves
- * through the sandbox callback, so polling only surfaces the result sooner.
- *
- * `statusId` carries the internal AsyncToolResult `resultId`, renamed at this
- * boundary. `logs`/`stop` exist only when the agent can launch background (bash)
- * jobs, so the description and the action enum are both built from
- * `supportsJobs` to keep the prompt from drifting.
- */
-
 import { jsonSchema, tool, type JSONValue, type ToolSet } from "ai";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import {
@@ -32,13 +17,8 @@ import { toolError } from "./utils.ts";
 const JOB_LOG_LIMIT_BYTES = 64 * 1024;
 
 export interface AsyncStatusContext {
-  // The caller's conversation. A statusId only resolves for its own conversation,
-  // so one agent cannot inspect or stop another tenant's job.
   conversationKey: string;
   workspaces?: ResolvedWorkspace[];
-  // True only when the agent can launch background (bash) jobs. It gates the
-  // `logs`/`stop` actions, which have no meaning for async tool calls (there is
-  // no live process to tail or kill, and those are delivered automatically).
   supportsJobs: boolean;
   // Records that tool call `toolCallId` handed the model the finished result
   // `resultId`; the session stores it with the call's saved step.
@@ -101,23 +81,18 @@ The result is delivered back into the conversation automatically when it finishe
           await context.onResultRead?.(toolCallId, statusId);
         };
         const record = await getAsyncToolResult(statusId);
-        // Resolve only within the caller's own conversation (both missing and
-        // foreign rows return the same not-found, so it is not an oracle).
+        // Missing and foreign rows answer alike, so a statusId is no cross-tenant oracle.
         if (!record || record.conversationKey !== context.conversationKey) {
           return toolError(`Error: no async result found for ${statusId}`);
         }
-        // The model gets the terminal result here. Nothing is stored yet: the
-        // row is stored, and a continuation of it still queued completed, by
-        // the write that saves this call's step, so a turn that dies before
-        // that save leaves the result for the continuation or the sweep.
+        // Awaited: the resume gate reads this row the moment the turn ends. True means a queued
+        // continuation tells the conversation next, so this read hands nothing over.
         if (record.status !== "processing") {
           await handedOver();
 
           return settledResult(record, action);
         }
 
-        // Still processing. A sandbox-job row can be polled live; any other async
-        // tool is delivered automatically when its in-flight work completes.
         const job = sandboxJobRef(record.input);
         if (!job) {
           return {
@@ -229,8 +204,6 @@ function sandboxJobRef(input: unknown): SandboxJobRef | undefined {
   return { namespace: record.namespace, jobId: record.jobId };
 }
 
-// A settled row's answer: for `logs`, a settled background job's captured
-// output alone (mirroring the live tail), else its result or error.
 function settledResult(
   record: AsyncToolResultRecord,
   action: AsyncStatusInput["action"],
@@ -247,8 +220,6 @@ function settledResult(
   return { status: record.status, response: record.response ?? null };
 }
 
-// A settled background-job response carries the captured logs (see
-// settleTerminalJob); non-job async tools return undefined here.
 function settledJobLogs(response: JSONValue | undefined): string | undefined {
   if (!response || typeof response !== "object") return undefined;
   const logs = (response as { logs?: unknown }).logs;

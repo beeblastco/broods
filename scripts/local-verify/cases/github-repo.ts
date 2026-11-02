@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -62,13 +63,9 @@ interface Imported {
 }
 
 /**
- * A GitHub repo link end to end, against a fake GitHub: the admin connects
- * the App, imports a monorepo whose `broods/` sits in `apps/agents`, and
- * Broods seals one project key per stage into repo secrets and commits the
- * deploy workflow (through a PR on the protected `main`, directly on `dev`).
- * The real CLI then deploys each stage with the secret GitHub Actions would
- * hand it, the `workflow_run` webhook lands on the dashboard, and an unlink
- * revokes the keys. Creating a repo and an uninstall run the same way.
+ * A GitHub repo link end to end against a fake GitHub: connect, import a monorepo (`apps/agents`),
+ * seal stage keys and commit the workflow (PR on protected `main`, direct on `dev`), deploy each
+ * stage with the real CLI, land `workflow_run` on the dashboard, unlink; also create and uninstall.
  */
 export async function githubRepo(context: VerifyContext): Promise<void> {
   const asAdmin = async (
@@ -251,9 +248,13 @@ async function link(
   slug: string,
 ): Promise<Imported> {
   const { context, github, asAdmin } = run;
-  // A development branch equal to the default, or a folder with no broods/, is refused.
+  // One branch for both stages, or a folder with no broods/, is refused.
   for (const target of [
-    { rootDirectory: "apps/agents", developmentBranch: "main" },
+    {
+      rootDirectory: "apps/agents",
+      productionBranch: "main",
+      developmentBranch: "main",
+    },
     { rootDirectory: "apps/missing" },
   ]) {
     await run.refused("github:linkRepo", {
@@ -266,7 +267,27 @@ async function link(
       },
     });
   }
-  // Those refusals released their claim on the repo, so the real link goes through.
+  // A link that fails on GitHub after minting takes back the Production stage it added.
+  await run.refused("github:linkRepo", {
+    projectId: projectId,
+    target: {
+      installationId: ORG_INSTALLATION,
+      repoId: ORG_REPO,
+      baseUrl: context.edgeUrl,
+      rootDirectory: "apps/agents",
+      productionBranch: "no-such-branch",
+    },
+  });
+  const stages = (await asAdmin("stage:list", {
+    projectId: projectId,
+  })) as Array<{ kind: string }>;
+  assertStep(
+    "a failed link leaves no Production stage behind",
+    !stages.some((stage) => stage.kind === "production"),
+    JSON.stringify(stages.map((stage) => stage.kind)),
+  );
+  // Those refusals released their claim on the repo, so the real link goes
+  // through. Naming main for Production adds that stage to the project.
   const linked = (await context.measure("link the repo", async () =>
     asAdmin("github:linkRepo", {
       projectId: projectId,
@@ -275,6 +296,7 @@ async function link(
         repoId: ORG_REPO,
         rootDirectory: "apps/agents",
         baseUrl: context.edgeUrl,
+        productionBranch: "main",
       },
     }),
   )) as NonNullable<Status["repo"]>;
@@ -390,12 +412,6 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
     projectId: other.projectId,
     target: target,
   });
-  // A second link would leave the first one's keys behind in GitHub.
-  await run.refused("github:linkRepo", {
-    projectId: imported.projectId,
-    target: target,
-  });
-
   await run.asAdmin("github:unlinkRepo", { projectId: imported.projectId });
   const revoked = deploy(context, agents, slug, "development", development);
   const after = await run.status(imported.projectId);
@@ -405,17 +421,92 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
     revoked.output,
   );
 
-  // Linking again with another development branch leaves dev out of the environment.
-  await run.asAdmin("github:linkRepo", {
-    projectId: imported.projectId,
-    target: { ...target, developmentBranch: "staging" },
+  await linkFromCli(run);
+}
+
+// `broods github link` with no branches and no Production stage: main deploys Development.
+async function linkFromCli(run: Run): Promise<void> {
+  const { context, github } = run;
+  const { slug } = await newProject(run, "gh-cli");
+  const cli = new BroodsSyncClient({
+    baseUrl: context.edgeUrl,
+    token: await cliLogin(run),
   });
-  const repo = github.repos.get(ORG_REPO);
+  const repos = await cli.githubRepos(slug);
   assertStep(
-    "a relink with another branch drops the old branch from the environment",
-    deployBranches(repo, "broods-development") === "staging" &&
-      deployBranches(repo, "broods-production") === "main",
+    "broods github repos lists the org's repo through the edge",
+    repos.some((entry) => entry.fullName === "acme/web"),
+    JSON.stringify(repos),
+  );
+  const linked = await context.measure("broods github link", async () =>
+    cli.githubLink(slug, { repo: "acme/web", baseUrl: context.edgeUrl }),
+  );
+  const repo = github.repos.get(ORG_REPO);
+  const workflow =
+    github
+      .filesAt(ORG_REPO, "broods/deploy-workflow-main")
+      ?.get(WORKFLOW_PATH) ?? "";
+  assertStep(
+    "a CLI link to a project with no Production finds the one broods/ and deploys main to Development",
+    linked.productionBranch === undefined &&
+      linked.developmentBranch === "main" &&
+      linked.rootDirectory === "apps/agents" &&
+      workflow.includes('branches: ["main"]') &&
+      workflow.includes("BROODS_STAGE: ${{ 'development' }}"),
+    workflow,
+  );
+  assertStep(
+    "the relink leaves only main in the Development environment",
+    deployBranches(repo, "broods-development") === "main",
     deployBranches(repo, "broods-development"),
+  );
+  // Linking the same repo again remaps it in place: new keys, the old one revoked.
+  const firstKey = repo?.secrets.get("broods-development/BROODS_TOKEN") ?? "";
+  const remapped = await cli.githubLink(slug, {
+    repo: "acme/web",
+    baseUrl: context.edgeUrl,
+    productionBranch: "main",
+    developmentBranch: "dev",
+  });
+  const oldKey = await new BroodsSyncClient({
+    baseUrl: context.edgeUrl,
+    token: firstKey,
+  })
+    .getManifest(slug, "development")
+    .then(
+      () => "accepted",
+      (error: unknown) => String(error),
+    );
+  assertStep(
+    "linking the linked repo again moves its branches and revokes the old key",
+    remapped.productionBranch === "main" &&
+      remapped.developmentBranch === "dev" &&
+      deployBranches(repo, "broods-development") === "dev" &&
+      repo?.secrets.get("broods-development/BROODS_TOKEN") !== firstKey &&
+      oldKey !== "accepted",
+    oldKey,
+  );
+  // Dropping dev from the mapping rewrites its workflow, so a push there deploys nothing.
+  await cli.githubLink(slug, {
+    repo: "acme/web",
+    baseUrl: context.edgeUrl,
+    productionBranch: "main",
+    developmentBranch: "staging",
+  });
+  const devWorkflow = github.filesAt(ORG_REPO, "dev")?.get(WORKFLOW_PATH) ?? "";
+  assertStep(
+    "a branch the remap dropped no longer runs the deploy",
+    devWorkflow.includes('branches: ["main", "staging"]') &&
+      !devWorkflow.includes("== 'dev'"),
+    devWorkflow,
+  );
+  const status = await cli.githubStatus(slug);
+  await cli.githubUnlink(slug);
+  assertStep(
+    "broods github status shows the link, and unlink clears it",
+    status.repo?.developmentBranch === "staging" &&
+      (await cli.githubStatus(slug)).repo === undefined,
+    JSON.stringify(status.repo),
   );
 }
 
@@ -461,18 +552,18 @@ async function createRepo(run: Run): Promise<string> {
   const main = github.filesAt(created.id, "main");
   const files = [...(main?.keys() ?? [])].sort();
   assertStep(
-    "main holds the starter broods/ and the workflow, and dev carries the workflow too",
+    "main holds the starter broods/ and the workflow, with no dev branch since there is no Production",
     ["README.md", "broods/index.ts", WORKFLOW_PATH].every((file) =>
       files.includes(file),
-    ) && github.filesAt(created.id, "dev")?.has(WORKFLOW_PATH) === true,
+    ) && github.filesAt(created.id, "dev") === null,
     JSON.stringify(files),
   );
   const status = await run.status(projectId);
   assertStep(
     "without environments the keys fall back to repo secrets, set before the workflow lands",
-    created.secrets.size === 2 &&
+    created.secrets.size === 1 &&
       // The starter commit carries no workflow, so only the pushes after it run one.
-      created.secretsAtPush.slice(1).every((count) => count === 2) &&
+      created.secretsAtPush.slice(1).every((count) => count === 1) &&
       status.repo?.protectedSecrets === false &&
       !(main?.get(WORKFLOW_PATH) ?? "").includes("environment:"),
     JSON.stringify({ pushes: created.secretsAtPush, status: status }),
@@ -480,7 +571,8 @@ async function createRepo(run: Run): Promise<string> {
   assertStep(
     "the project is linked to the new repo",
     status.repo?.fullName === `${USER.login}/${name}` &&
-      status.repo.developmentBranch === "dev",
+      status.repo.developmentBranch === "main" &&
+      status.repo.productionBranch === undefined,
     JSON.stringify(status),
   );
   const checkout = join(run.workspace, name);
@@ -559,6 +651,31 @@ function deploy(
     ok: result.status === 0,
     output: `${result.stdout}${result.stderr}`.slice(-600),
   };
+}
+
+// A `broods login` token for the admin: a PKCE login code, exchanged as the CLI does.
+async function cliLogin(run: Run): Promise<string> {
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const { code } = (await run.asAdmin("cli/auth:createLoginCode", {
+    codeChallenge: challenge,
+  })) as { code: string };
+  const response = await fetch(
+    `${run.context.edgeUrl}/v1/account/auth/exchange`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: code, code_verifier: verifier }),
+    },
+  );
+  const body = (await response.json()) as { token?: string };
+  assertStep(
+    "the admin logs the CLI in",
+    Boolean(body.token),
+    String(response.status),
+  );
+
+  return body.token ?? "";
 }
 
 // The branches an environment lets deploy, joined.

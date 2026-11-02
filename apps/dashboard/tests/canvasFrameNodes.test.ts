@@ -31,11 +31,7 @@ import deployedStages from "./fixtures/deployedStages.json";
 
 const NONE = new Set<string>();
 
-/**
- * An agent over a cloud frame (cloud, spare) and a workspace frame (notes
- * mounted on cloud, wiki inheriting it), with a lone machine sandbox and a
- * lone machine MCP server as cards. Members sit on their slots.
- */
+// Members sit on their slots; wiki inherits cloud, the agent's first sandbox.
 const NODES: Node[] = [
   node("agent", "agent", { x: 200, y: 0 }),
   node("cloud", "sandbox", { x: 8, y: 172 }),
@@ -223,7 +219,6 @@ describe("buildFramedGraph", () => {
       sourceHandle: "left",
       targetHandle: "right",
     });
-    // Both end on cloud's right handle: they fan along its side.
     const [mount, inherit] = sides.map((item) => sideRouteOf(item));
     expect(
       Math.abs(mount.sourceFan - inherit.targetFan),
@@ -231,8 +226,7 @@ describe("buildFramedGraph", () => {
   });
 
   test("draws a mount from the sides its ends face, whatever handles it was stored with", () => {
-    // Stored workspace-left to sandbox-right, as the CLI writes it, but the
-    // workspace stands left of the sandbox.
+    // The CLI stores workspace-left to sandbox-right whatever the layout.
     const nodes = [
       node("agent", "agent", { x: 0, y: 0 }),
       node("docs", "workspace", { x: 0, y: 144 }),
@@ -424,8 +418,7 @@ describe("buildFramedGraph", () => {
   test("hands back the previous objects for frames and edges that did not change", () => {
     const first = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null, null);
     const same = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null, first);
-    // The agent card moves 40px; its lanes are relative to its handles, so no
-    // frame and no drawn edge changes.
+    // Lanes are relative to the agent's handles, so moving it redraws no edge.
     const dragged = NODES.map((item) =>
       item.id === "agent" ? { ...item, position: { x: 240, y: 0 } } : item,
     );
@@ -447,8 +440,7 @@ describe("buildFramedGraph", () => {
   });
 
   test("rebuilds only the edge whose gutter flips when the agent crosses its target", () => {
-    // A skill stacked under the cloud frame takes a gutter, on the side the
-    // agent is on.
+    // A skill under the cloud frame takes a gutter on the agent's side.
     const nodes = [...NODES, node("deep", "skill", { x: 0, y: 360 })];
     const edges = [...EDGES, edge("agent", "deep")];
     const first = buildFramedGraph(nodes, edges, SERVERS, NONE, null, null);
@@ -480,7 +472,7 @@ describe("buildFramedGraph", () => {
 });
 
 describe("applyFramedNodeChanges", () => {
-  // Stored before frames: a third cloud sandbox is off its slot.
+  // extra, a third cloud sandbox, is off its slot.
   const legacy = [...NODES, node("extra", "sandbox", { x: 30, y: 400 })];
   const legacyEdges = [...EDGES, edge("agent", "extra")];
 
@@ -566,12 +558,7 @@ function node(
   };
 }
 
-/**
- * Every routed edge as drawn, with each node at its drawn size (frames as
- * set, cards at the minimum, chips at their slot): its corner points, the
- * top-level boxes on the board, the two holding its ends, and who owns its
- * lanes (an agent edge its agent, a side edge its source node).
- */
+// Sizes as drawn: frames as set, cards at the minimum, chips at their slot.
 function drawnPaths(
   nodes: readonly Node[],
   edges: readonly Edge[],
@@ -652,7 +639,6 @@ function agentRouteOf(item: Edge): AgentEdgeRoute {
   return (item.data as { route: AgentEdgeRoute }).route;
 }
 
-/** A stored edge as the canvas hydrates it: a mount's handles come from its id. */
 function hydrateEdge(item: {
   id: string;
   source: string;
@@ -675,10 +661,6 @@ function sideRouteOf(item: Edge): SideEdgeRoute {
   return (item.data as { route: SideEdgeRoute }).route;
 }
 
-/**
- * The longest stretch two orthogonal polylines run along each other within
- * 2px, on parallel segments.
- */
 function sharedRunLength(
   a: readonly XYPosition[],
   b: readonly XYPosition[],

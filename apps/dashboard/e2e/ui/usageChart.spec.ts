@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-/** The chart's top padding, above which no layer may draw. */
 const PAD_TOP_PX = 6;
 // A tween runs 600ms; wait past it before measuring.
 const SETTLE_MS = 800;
@@ -22,8 +21,6 @@ test("a cache-heavy stack fits the chart instead of drawing past its top", async
     );
   const highest = Math.min(...tops);
 
-  // Stacked parts sum to the total the scale is built from, so the tallest
-  // bin sits inside the frame and still fills most of it.
   expect(highest).toBeGreaterThanOrEqual(svg.y + PAD_TOP_PX - 1);
   expect(highest).toBeLessThan(svg.y + svg.height / 2);
 });

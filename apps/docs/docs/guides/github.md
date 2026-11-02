@@ -1,11 +1,15 @@
 # GitHub
 
-Link a project to a GitHub repo and every push to its default or development branch deploys it. Broods commits a workflow to the repo, so the deploy runs in your own GitHub Actions with the same `broods deploy` you run locally.
+Link a project to a GitHub repo and every push to a stage's branch deploys that stage. Broods commits a workflow to the repo, so the deploy runs in your own GitHub Actions with the same `broods deploy` you run locally.
 
-| Branch                             | Deploys to  |
-| ---------------------------------- | ----------- |
-| The default branch, such as `main` | Production  |
-| The development branch, `dev`      | Development |
+Each stage follows one branch, or none. Production gets one only when the project already has a Production stage, or you name a branch for it; Broods never adds Production on its own. By default:
+
+| The project has  | The default branch, such as `main`, deploys | `dev` deploys |
+| ---------------- | ------------------------------------------- | ------------- |
+| Development only | Development                                 | nothing       |
+| Production too   | Production                                  | Development   |
+
+**Settings > Git** has a row per stage with its branch, or Off, and its last deploy. Change one and **Save**: Broods rewrites the workflow, seals new keys for the stages and revokes the old ones, without an unlink. From the CLI, link the same repo again with `--production-branch` and `--development-branch`, or `none` to leave a stage out.
 
 ## Start a project from GitHub
 
@@ -15,7 +19,15 @@ Link a project to a GitHub repo and every push to its default or development bra
 - **Import repo**: pick a repo from a connected GitHub account. Broods finds the `broods/` folder, also inside a monorepo app such as `apps/web/broods/`, and links it.
 - **New repo**: Broods creates the repo under the account you pick, with a `broods/` starter, the workflow and a `dev` branch. GitHub asks you to sign in first, because the repo is created as you.
 
-An existing project links from **Settings > Git**.
+An existing project links from **Settings > Git**, or from the CLI:
+
+```bash
+broods github repos
+broods github link acme/web [--folder apps/web] [--production-branch <name|none>] [--development-branch <name|none>]
+broods github status
+```
+
+See the [CLI reference](../reference/cli.md#github).
 
 The first time, an org admin connects GitHub: the Broods GitHub App installs on your user or organization, on all repos or the ones you pick. Add more accounts the same way. Broods connects only the accounts you administer on GitHub, your own or an organization you are an admin of, because the App reaches every repo of an installation, not just the ones you can see.
 
@@ -23,7 +35,7 @@ The first time, an org admin connects GitHub: the Broods GitHub App installs on 
 
 | In the repo                                              | What it is                                                  |
 | -------------------------------------------------------- | ----------------------------------------------------------- |
-| `.github/workflows/broods.yml` on both branches          | Installs your dependencies and runs `broods deploy --prune` |
+| `.github/workflows/broods.yml` on each mapped branch     | Installs your dependencies and runs `broods deploy --prune` |
 | Environment `broods-production`, secret `BROODS_TOKEN`   | A project key that can deploy only Production               |
 | Environment `broods-development`, secret `BROODS_TOKEN`  | A project key that can deploy only Development              |
 | A `dev` branch, cut from the default branch when missing | Pick another name under Development branch                  |
@@ -42,7 +54,7 @@ A repo deploys one project. Linking a repo another project already deploys from 
 
 ## Gotchas
 
-- The repo is the source of truth for what `broods/` defines. `--prune` removes a resource from the stage when you delete it from code. Resources made on the dashboard stay; code-managed nodes are locked there.
+- The repo is the source of truth for what `broods/` defines. `--prune` removes a resource from the stage when you delete it from code. Resources made on the dashboard stay, and so do cron jobs your agents schedule at runtime; code-managed nodes are locked there.
 - Secrets your agents read with `env("NAME")` are not in the repo. Set them per stage with `broods env set` or on the dashboard before the first push, or the deploy fails naming them.
 - **Unlink** revokes both project keys and forgets the deploy history. The workflow file, the environments and the secrets stay in the repo; delete them there if you no longer want them.
 - Uninstalling the App on GitHub, or removing a repo from it, unlinks every project on those repos.

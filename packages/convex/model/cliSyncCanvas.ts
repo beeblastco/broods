@@ -1,10 +1,3 @@
-/**
- * Canvas layout sync for CLI-managed resources: materializes one node per
- * manifest resource, draws agent→service / mount / subagent edges from the
- * declared refs, stamps workspace read-only badges, and persists the merged
- * layout without touching dashboard-managed nodes or edges.
- */
-
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { CanvasEdge, CanvasNode } from "./canvasShapes";
@@ -83,9 +76,7 @@ export async function syncCanvasLayoutForManifest(
   const agentConfigByName = new Map(
     agentConfigs.map((entry) => [entry.name, entry]),
   );
-  // Servers resolve by name here: the manifest reaching this mutation already
-  // had `config.mcp` keys rewritten to ids, so the node needs the row
-  // to map back.
+  // `config.mcp` keys arrive rewritten to row ids, so edges map back to names through the rows.
   const mcpByName = new Map(
     (
       await ctx.db
@@ -122,9 +113,7 @@ export async function syncCanvasLayoutForManifest(
     sandboxIds: sandboxIds,
   });
 
-  // Point each mcp row at the node the CLI just drew for it. The panel
-  // resolves through `getByNode` (`by_stageId_and_nodeId`), so without this a
-  // CLI-defined server would be invisible on the canvas.
+  // The panel resolves through `by_stageId_and_nodeId`; without this a CLI server is invisible.
   for (const [serverId, nodeId] of materialized.mcpNodeIds) {
     await ctx.db.patch(serverId, { nodeId: nodeId });
   }
@@ -162,7 +151,6 @@ export async function syncCanvasLayoutForManifest(
   });
 }
 
-/** Agent→mcp edges. `config.mcp` is keyed by server row id. */
 function addAgentMcpEdges(
   agentConfig: Record<string, unknown>,
   agentNodeId: string,
@@ -181,7 +169,6 @@ function addAgentMcpEdges(
   }
 }
 
-/** Agent→skill edges from `skills.allowed` (bare names or account/name paths). */
 function addAgentSkillEdges(
   agentConfig: Record<string, unknown>,
   agentNodeId: string,
@@ -198,11 +185,6 @@ function addAgentSkillEdges(
   }
 }
 
-/**
- * Subagent (agent→agent) edges from `subagent.allowed`. The dashboard
- * reconstructs handles + type from the `subagent:` id prefix on load, so the
- * CLI only persists id/source/target, the same way mount edges work.
- */
 function addAgentSubagentEdges(
   agentConfig: Record<string, unknown>,
   agentNodeId: string,
@@ -220,11 +202,6 @@ function addAgentSubagentEdges(
   }
 }
 
-/**
- * Agent→workspace edges plus each workspace's writability tracking: a string
- * sandbox override or an inherited default sandbox marks a writer, while an
- * explicit `sandbox: null` keeps the workspace read-only.
- */
 function addAgentWorkspaceEdges(options: {
   agentConfig: Record<string, unknown>;
   agentNodeId: string;
@@ -254,7 +231,6 @@ function addAgentWorkspaceEdges(options: {
     addDesiredDefaultEdge(desiredEdges, agentNodeId, workspaceNodeId);
     workspaceWriters.referenced.add(workspaceNodeId);
     if (typeof workspaceRef.sandbox === "string") {
-      // Per-workspace sandbox override → writable, drawn as a mount edge.
       workspaceWriters.writers.add(workspaceNodeId);
       const sandboxNodeId = nodeIdByKindName.get(
         `sandbox:${resourceName(workspaceRef.sandbox)}`,
@@ -268,18 +244,13 @@ function addAgentWorkspaceEdges(options: {
           "right",
         );
     } else if (workspaceRef.sandbox !== null && defaultSandboxName) {
-      // Omitted sandbox inherits the default sandbox, sandboxes[0] (writable).
-      // `null` explicitly forces read-only, so it stays a non-writer.
+      // An omitted sandbox inherits the default one; an explicit `null` stays read-only.
       workspaceWriters.writers.add(workspaceNodeId);
     }
   }
 }
 
-/**
- * Default agent→service edge (agent→sandbox, agent→workspace): top/bottom handles,
- * rendered by the dashboard's DeletableEdge. Never animated: an animated edge
- * repaints the canvas every frame.
- */
+// Never animated: an animated edge repaints the canvas every frame.
 function addDesiredDefaultEdge(
   edges: Map<string, CanvasEdge>,
   source: string,
@@ -289,11 +260,7 @@ function addDesiredDefaultEdge(
   edges.set(id, { id: id, source: source, target: target });
 }
 
-/**
- * Side-handle "mount" edge for a workspace↔sandbox relationship, matching the
- * dashboard's id scheme so it renders as the dotted MountEdge. The handles are
- * encoded in the id because the persisted edge keeps only id/source/target.
- */
+// Only id/source/target persist: the dashboard rebuilds edge type and handles from the id.
 function addDesiredMountEdge(
   edges: Map<string, CanvasEdge>,
   source: string,
@@ -305,11 +272,6 @@ function addDesiredMountEdge(
   edges.set(id, { id: id, source: source, target: target });
 }
 
-/**
- * Side-handle "subagent" edge for an agent→agent call relationship. Matches the
- * dashboard's id scheme so it hydrates into the violet SubagentEdge.
- * Source/target are the caller/callee agent nodes.
- */
 function addDesiredSubagentEdge(
   edges: Map<string, CanvasEdge>,
   source: string,
@@ -328,11 +290,6 @@ function cliResourceKeyForNode(node: CanvasNode): string {
   return `${node.type}:${name}`;
 }
 
-/**
- * Draws every agent's edges into `desiredEdges` and stamps each agent node's
- * `sandboxOrder`, the sandbox node ids in `sandboxes` order, so the canvas can
- * number the sandbox edges it draws.
- */
 function collectDesiredAgentEdges(options: {
   desiredResources: CanvasCliResource[];
   nodeIdByKindName: Map<string, string>;
@@ -357,9 +314,6 @@ function collectDesiredAgentEdges(options: {
   )) {
     const agentId = nodeIdByKindName.get(`agent:${agent.name}`);
     if (!agentId || !isPlainObject(agent.config)) continue;
-    // Agent→service edges are default (top/bottom handle) edges, like the
-    // dashboard's own auto-connect. Only workspace↔sandbox uses a side-handle
-    // mount edge.
     const sandboxOrder: string[] = [];
     const sandboxes: unknown[] = Array.isArray(agent.config.sandboxes)
       ? agent.config.sandboxes
@@ -375,6 +329,7 @@ function collectDesiredAgentEdges(options: {
     }
     const agentNode = nextById.get(agentId);
     if (agentNode) {
+      // The canvas numbers an agent's sandbox edges in this order.
       agentNode.data = { ...agentNode.data, sandboxOrder: sandboxOrder };
     }
     const defaultSandbox = defaultSandboxOf(agent.config);
@@ -416,7 +371,6 @@ function edgeIsCliManaged(
   return sourceManagedBy === "cli" && targetManagedBy === "cli";
 }
 
-/** Keep every non-CLI node; drop CLI nodes whose resource left the manifest. */
 function filterDesiredCanvasNodes(
   nextById: Map<string, CanvasNode>,
   desiredNodeKeys: Set<string>,
@@ -464,11 +418,6 @@ function indexExistingCanvas(
   };
 }
 
-/**
- * Upsert one canvas node per desired resource, keeping an existing node's id
- * when the resource already had one. Positions come from the tidy pass in
- * {@link persistCanvasLayout}.
- */
 function materializeCanvasNodes(options: {
   existing: ExistingCanvas;
   agentConfigByName: Map<string, Doc<"agentConfigs">>;
@@ -594,8 +543,7 @@ function materializeCanvasNodes(options: {
         resourceId: resourceId,
         mountName: resource.name,
         description: resource.description,
-        // A sandbox config carries envVars and provider options; the layout is
-        // UI state the dashboard reads back, so only display keys go in.
+        // The layout is UI state the dashboard reads back: display keys only, never envVars.
         config:
           resource.kind === "sandbox"
             ? sandboxDisplayConfig(resource.config)
@@ -614,7 +562,6 @@ function materializeCanvasNodes(options: {
   };
 }
 
-/** Keep non-CLI edges, drop stale CLI edges, and append the newly desired ones. */
 function mergeCanvasEdges(
   existingEdges: CanvasEdge[],
   desiredEdges: Map<string, CanvasEdge>,
@@ -709,10 +656,6 @@ function skillNodeIdForReference(
     : undefined;
 }
 
-/**
- * Stamp the resolved read-only state onto each workspace node already in
- * `nextById`. An explicit `false` clears a stale flag once a writer exists.
- */
 function stampWorkspaceReadOnly(
   nodeIdByKindName: Map<string, string>,
   nextById: Map<string, CanvasNode>,
@@ -745,7 +688,7 @@ function upsertCanvasNode(options: {
   const node = {
     id: id,
     type: kind,
-    // Placeholder: the tidy pass in `persistCanvasLayout` assigns every position.
+    // `persistCanvasLayout`'s tidy pass assigns every position.
     position: { x: 0, y: 0 },
     data: {
       ...(isPlainObject(existing?.data) ? existing.data : {}),

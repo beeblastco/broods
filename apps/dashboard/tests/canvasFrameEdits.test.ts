@@ -20,10 +20,6 @@ import {
 } from "../app/lib/canvasFrameEdits";
 import type { StageMcpServer } from "../app/lib/canvasFrameNodes";
 
-/**
- * A dashboard agent over a cloud frame (alpha, bravo), a workspace mounted on
- * alpha, and a lone cloud card nothing wires yet.
- */
 const NODES: Node[] = [
   node("agent", "agent", { x: 240, y: 0 }, { agentConfigId: "cfg" }),
   node("alpha", "sandbox", { x: 248, y: 172 }),
@@ -74,10 +70,8 @@ describe("reconcileFramePositions", () => {
       { edges: unmounted, mcpServers: [], nodes: nodes },
     );
 
-    // bravo and charlie slide up in the frame that stayed put.
     expect(positionOf(settled, "bravo")).toEqual({ x: 248, y: 172 });
     expect(positionOf(settled, "charlie")).toEqual({ x: 248, y: 224 });
-    // The frame box is 200 wide and 132 tall now; alpha's card clears it.
     expect(clearOf(positionOf(settled, "alpha"), CLOUD_ORIGIN, 200, 132)).toBe(
       true,
     );
@@ -111,7 +105,7 @@ describe("reconcileFramePositions", () => {
       { edges: edges, mcpServers: [], nodes: nodes },
     );
 
-    // The frame's box starts where the notes card stood; its slots go by label.
+    // The frame grows from where notes stood, its slots sorted by label.
     expect(positionOf(settled, "docs")).toEqual({ x: 488, y: 172 });
     expect(positionOf(settled, "notes")).toEqual({ x: 488, y: 224 });
   });
@@ -151,7 +145,6 @@ describe("reconcileFramePositions", () => {
       },
     );
 
-    // The url frame keeps its origin; search's card clears it.
     expect(positionOf(settled, "github")).toEqual({ x: 248, y: 428 });
     expect(
       clearOf(positionOf(settled, "search"), { x: 240, y: 400 }, 200, 132),
@@ -159,8 +152,7 @@ describe("reconcileFramePositions", () => {
   });
 
   test("a frame that gains a member steps clear of the card under it", () => {
-    // `blocker` clears the frame's two-member box by the node margin and no
-    // more, so only the row `lone` adds reaches it.
+    // blocker sits one node margin below the two-member box: only lone's row reaches it.
     const nodes = [...NODES, node("blocker", "workspace", { x: 240, y: 312 })];
     const edges = [...EDGES, edge("agent", "lone")];
     const settled = reconcileFramePositions(
@@ -209,7 +201,6 @@ describe("autoWiredAgentIds", () => {
     expect(autoWiredAgentIds(nodes, ["agent", "coded", "rest"])).toEqual([
       "agent",
     ]);
-    // The nearest agent being code-managed leaves the card unwired.
     expect(autoWiredAgentIds(nodes, ["coded"])).toEqual([]);
   });
 });
@@ -244,8 +235,7 @@ describe("pulling members out of a group", () => {
       setUngrouped(pulled, ["alpha"], false).find((item) => item.id === "alpha")
         ?.data,
     ).toEqual({ label: "alpha" });
-    // A node that already reads that way is handed back as it came, so the
-    // canvas does not re-render it.
+    // An unchanged node keeps its identity so the canvas does not re-render it.
     expect(setUngrouped(NODES, ["alpha"], false)[1]).toBe(NODES[1]);
   });
 
@@ -314,7 +304,6 @@ describe("nodeLinkActions", () => {
         otherType: "sandbox",
       },
     ]);
-    // An agent card gets a row per service it wires.
     expect(
       nodeLinkActions(NODES, EDGES, "agent").map((link) =>
         link.kind === "unlink" ? link.label : link.kind,
@@ -350,7 +339,6 @@ describe("runtime ref guards", () => {
       disabledReason: "notes is mounted on alpha",
       kind: "make-default",
     });
-    // Unmounted, the same move is allowed and puts bravo first.
     const unmounted = EDGES.filter((item) => item.type !== "mount");
     const [allowed] = nodeLinkActions(NODES, unmounted, "bravo");
     expect(allowed).toMatchObject({ disabledReason: null });
@@ -386,7 +374,7 @@ describe("runtime ref guards", () => {
   });
 
   test("renaming a sandbox or workspace in a graph that already breaks the rule is not refused", () => {
-    // bravo is second and backs notes: saved like this before the check existed.
+    // bravo is second yet backs notes, as graphs saved before the check can be.
     const broken = EDGES.map((item) =>
       item.type === "mount" ? { ...item, source: "bravo" } : item,
     );
@@ -569,7 +557,6 @@ function node(
   };
 }
 
-/** A subagent link as the canvas stores it: side handle to side handle. */
 function subagent(source: string, target: string): Edge {
   return {
     id: `subagent:${source}-right-${target}-left`,
@@ -581,7 +568,6 @@ function subagent(source: string, target: string): Edge {
   };
 }
 
-/** Whether a card at `card` stays off the box at `origin`. */
 function clearOf(
   card: Node["position"],
   origin: Node["position"],

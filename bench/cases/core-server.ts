@@ -1,10 +1,3 @@
-/**
- * Core's own front door: the two things `Bun.serve` does to every request
- * before any handler sees it. Route the path to the account or harness
- * handler, and lower the Web Request into the transport-neutral CoreRequest
- * the handlers consume, headers lowered and body read.
- */
-
 import {
   routesToAccountManage,
   toCoreRequest,
@@ -25,8 +18,6 @@ const REQUEST_MIX: ReadonlyArray<{ method: string; pathname: string }> = [
   { method: "POST", pathname: "/v1/cron-runs" },
 ];
 
-// A direct agent invocation as the gateway forwards it: a bearer key, the
-// forwarding chain the ingress appends, and a JSON body of realistic size.
 const INVOKE_URL = new URL(
   "http://core.internal/v1/agents/agt_7f3c9d21?stream=1",
 );

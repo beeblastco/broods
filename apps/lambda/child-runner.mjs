@@ -1,11 +1,5 @@
-/**
- * Node-native runner for hosted MCP server bundles (#331, warm reuse #189,
- * micro-batching #397). The bundle arrives on fd 3 once at spawn; one batch
- * of requests arrives per NDJSON line on stdin, one line per Lambda
- * invocation. Requests run concurrently, each answered by a frame tagged with
- * its id; the batch closes on `end` and the process stays for the next one.
- * An untagged error frame (timeout, bad payload, unhandled rejection) retires it.
- */
+// The bundle arrives once on fd 3; each stdin NDJSON line is one batch. Requests answer in
+// id-tagged frames, `end` closes the batch, and an untagged error frame retires the process.
 
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -14,35 +8,17 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
-// The bundle rides its own pipe rather than base64 inside the request JSON:
-// encoding a 7 MB bundle costs a third more bytes and ~25ms of CPU on both
-// sides of the pipe, for nothing.
 const BUNDLE_FD = 3;
-
-// Wall-clock deadline for one batch; the handler also hard-kills the child,
-// this is the cooperative in-process bound that trips the request signals first.
 const DEFAULT_TIMEOUT_SECONDS = 30;
 
-// The identity the bundle is imported under. Nothing is ever written here, the
-// loader hook answers it from memory, but it has to be a file URL: bundlers
-// emit `createRequire(import.meta.url)`, which rejects a data: URL outright and
-// throws before a line of the server's own code runs.
+// Served from memory by the loader hook, yet it must be a file URL: bundlers emit
+// `createRequire(import.meta.url)`, which throws on a data: URL.
 const BUNDLE_URL = pathToFileURL(
   join(process.env.LAMBDA_TASK_ROOT ?? process.cwd(), "broods-mcp-bundle.mjs"),
 ).href;
 
-// The batch and the timeout race to write the terminal frame; first one wins.
-// `true` also means idle, with nothing in flight before or between batches.
 let settled = true;
-
-// The emitted frame carried an exit code: the process exits once it flushes,
-// so the loop must not read another batch.
 let retiring = false;
-
-// A stray rejection must not crash the runner mid-frame, but it must not
-// serve another call either: mid-batch the child retires after the frame
-// flushes, idle it exits on the spot, and a retiring child is left alone (its
-// exit is already pending on the flush).
 let poisoned = false;
 process.on("unhandledRejection", (reason) => {
   console.error("[mcp-runner] unhandled rejection:", reason);
@@ -53,13 +29,9 @@ process.on("unhandledRejection", (reason) => {
 await runRequestLoop();
 
 async function runRequestLoop() {
-  // Released after the first import: the module lives in V8's cache, so the
-  // raw bytes (up to 50 MB) need not stay pinned for the child's lifetime.
   let bundle = await readBundleBytes();
   const actualSha = createHash("sha256").update(bundle).digest("hex");
   let fetchLike;
-  // One batch per line; the handler serializes invocations, so by the time a
-  // line arrives the previous batch has already emitted its terminal frame.
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of lines) {
     if (line.trim() === "") continue;
@@ -76,8 +48,7 @@ async function runRequestLoop() {
       if (payload.expectedSha256 !== actualSha) {
         throw new Error("bundle hash mismatch inside mcp runner");
       }
-      // Fresh scratch dir per batch: nothing a call writes to HOME/TMPDIR
-      // is visible to the next invocation.
+      // A fresh scratch dir per batch: no invocation sees what another wrote to HOME/TMPDIR.
       if (payload.home !== undefined) {
         process.env.HOME = payload.home;
         process.env.TMPDIR = payload.home;
@@ -110,15 +81,11 @@ async function runRequestLoop() {
       clearTimeout(timeout);
       emitTerminal({ t: "error", error: errorMessage(error) }, cpuBaseline, 1);
     }
-    // A retiring batch has its frame on the wire and its exit pending in the
-    // flush callback; reading another line would race the exit.
     if (retiring) return;
   }
   process.exit(0);
 }
 
-// The bundle default-exports a fetch-style handler (`createMcpHandler(...)`),
-// as a plain function or a { fetch } object.
 function resolveFetchHandler(module) {
   const handler = module.default;
   const fetchLike =
@@ -136,8 +103,6 @@ function resolveFetchHandler(module) {
   return fetchLike;
 }
 
-// Headers are forwarded as core sent them, X-Broods-Agent-Id and
-// X-Broods-Principal included, so the bundle reads them off the Request.
 async function runMcpRequest(fetchLike, mcp, abortSignal) {
   const request = new Request("http://mcp-hosted.internal/mcp", {
     method: mcp.method,
@@ -166,10 +131,7 @@ async function readBundleBytes() {
   return Buffer.concat(chunks);
 }
 
-// Served straight out of memory through a resolve/load hook, never written to
-// disk: /tmp survives in a warm Lambda sandbox, so a bundle on disk is readable
-// by any process that outlives its run. The hook takes the bytes as-is, so the
-// bundle is never decoded to a string on the way in.
+// Never on disk: /tmp survives in a warm Lambda sandbox, readable by later processes.
 async function importBundle(source) {
   registerHooks({
     load: (url, context, next) =>
@@ -185,18 +147,12 @@ async function importBundle(source) {
   return await import(BUNDLE_URL);
 }
 
-// `t` then `id` must stay the first two keys: handler.mjs tells a tagged
-// error from a batch error by line prefix.
+// Every frame leads with `t` (then `id` when tagged): handler.mjs classifies lines by prefix.
 function emitRequestFrame(frame) {
   if (settled) return;
   process.stdout.write(`${JSON.stringify(frame)}\n`);
 }
 
-// CPU is a delta from the batch start, so a reused child reports exactly what
-// one invocation cost. `exitCode` null keeps the process alive; a number
-// retires it after the frame flushes, so the pipe write is never truncated.
-// `t` must stay the frame's first key: handler.mjs classifies terminal frames
-// by line prefix without parsing them.
 function emitTerminal(frame, cpuBaseline, exitCode) {
   if (settled) return;
   settled = true;

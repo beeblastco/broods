@@ -1,9 +1,5 @@
-/**
- * Receives the browser performance beacon and forwards it to the OTLP
- * collector as logs. The forward happens here, not in the browser, so the
- * collector's basic-auth credentials never ship to a client. AuthKit's proxy
- * already gates this path, so only a signed-in session can post.
- */
+// Forwarded from here so the OTLP collector's credentials never reach a client.
+// AuthKit's proxy gates this path.
 import {
   buildOtlpLogPayload,
   parseBeaconEvents,
@@ -20,8 +16,7 @@ const OTLP_TIMEOUT_MS = 5000;
 export async function POST(request: Request): Promise<Response> {
   const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 
-  // Checked before reading so an oversized body is refused rather than
-  // buffered, then again on the real bytes because the header can lie.
+  // The header can lie: refuse an oversized body before buffering, then check the bytes.
   const declared = Number(request.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
     return new Response(null, { status: 413 });
@@ -45,8 +40,6 @@ export async function POST(request: Request): Promise<Response> {
     telemetry: "performance_beacon",
   });
 
-  // Preserve the legacy collector's no-op behavior independently of the
-  // dedicated PostHog logger above.
   if (!endpoint) {
     await flushPostHogDashboardLogs();
 
@@ -66,8 +59,7 @@ export async function POST(request: Request): Promise<Response> {
       signal: AbortSignal.timeout(OTLP_TIMEOUT_MS),
     });
   } catch {
-    // Best-effort, exactly like the harness exporter: telemetry must never
-    // surface as an error in the app the user is using.
+    // Best-effort: telemetry never surfaces as an error in the app.
   } finally {
     await flushPostHogDashboardLogs();
   }

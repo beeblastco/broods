@@ -1,13 +1,6 @@
-/**
- * Re-cuts the root `patches/` for the AI SDK harness adapters that start a
- * bridge. Each adapter reads its bridge files with
- * `new URL("./bridge/<file>", import.meta.url)`, which `bun build --compile`
- * does not embed, so the patch turns them into `with { type: "file" }` imports.
- * It also adds back `dist/bridge/pnpm-lock.yaml` when upstream ships none, since
- * the bootstrap still runs `pnpm install --frozen-lockfile`.
- * Run after bumping an adapter: `bun scripts/harness-bridge-patches.ts`, then
- * `bun install` and `bun run format`.
- */
+// Re-cuts patches/ for the harness adapters: `bun build --compile` does not embed their
+// `new URL("./bridge/...")` assets, and the bridge bootstrap needs a pnpm-lock.yaml.
+// Run after an adapter bump, then `bun install` and `bun run format`.
 
 import { $ } from "bun";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
@@ -58,7 +51,6 @@ await Bun.write(
   `${JSON.stringify(root, null, 2)}\n`,
 );
 
-/** Diffs one pristine adapter tarball against its embedded, lockfile-complete copy. */
 async function adapterPatch(name: string, version: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "harness-bridge-"));
   try {
@@ -87,7 +79,6 @@ async function adapterPatch(name: string, version: string): Promise<string> {
   }
 }
 
-/** Rewrites each bridge `new URL(...)` into an embedded file import. */
 function embedBridgeAssets(source: string): string {
   const imports: string[] = [];
   const rewritten = source.replace(BRIDGE_ASSET, (_match, file: string) => {

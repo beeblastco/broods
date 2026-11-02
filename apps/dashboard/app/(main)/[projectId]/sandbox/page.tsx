@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * Instances are mirrored from broods's runtime into Convex; suspend, resume,
- * terminate and snapshot go through Convex actions that proxy to broods's
- * /v1/sandboxes endpoints.
- */
-
 import { useStage } from "@/app/hooks/useStage";
 import { useStageSession } from "@/app/hooks/useStageSession";
 import { pickTab, SANDBOX_TABS } from "@/app/lib/navigation";
@@ -48,8 +42,6 @@ export default function SandboxPage(): React.JSX.Element {
     machines === undefined ||
     snapshots === undefined ||
     account === undefined;
-  // The instances view is a flush list with a detail column and a dock, like
-  // Monitoring, and scrolls inside itself; the rest keep the usual margins.
   const flush = view === "instances" && !loading && Boolean(account);
 
   return (
@@ -96,12 +88,7 @@ export default function SandboxPage(): React.JSX.Element {
   );
 }
 
-/**
- * The instance panel's Logs tab streams over the same gateway socket as the
- * Monitoring tab: the stage's slugs from its deployment plus a short-lived
- * stage session any member can mint, so the permanent runtime key never has to
- * reach this page.
- */
+// A stage session any member can mint, so the permanent runtime key never reaches this page.
 function useObservabilityScope(
   projectId: Id<"projects">,
   stageId: Id<"stages"> | null,

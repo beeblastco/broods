@@ -51,16 +51,13 @@ import {
 } from "../../sandbox/components/sandboxFormat";
 import { CronDialog, eventsToText } from "./CronDialog";
 
-// The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["agent", "status", "timezone"] as const;
 
-// Six columns of short text; below this the detail panel would wrap them.
+// Below this the detail panel would wrap the six columns.
 const TABLE_MIN_WIDTH = 640;
 
-// The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
 const CRON_ID = parseAsId<"crons">();
 
-// A job with no zone of its own runs in UTC, so that is what the panel says.
 const DEFAULT_TIMEZONE = "UTC";
 
 type Cron = FunctionReturnType<typeof api.agent.crons.listForProject>[number];
@@ -71,16 +68,14 @@ type RunStatus = NonNullable<Cron["lastStatus"]>;
 type Field = (typeof QUERY_FIELDS)[number];
 type Column = "name" | "agent" | "schedule" | "status" | "next" | "last";
 
-/** A job with the facts the list derives once per tick: its agent's name and its next fire. */
 interface CronRow {
   cron: Cron;
   agentName: string;
   zone: string;
-  /** When it fires next, paused or not; null once a one-shot has fired. */
+  // Paused or not; null once a one-shot has fired.
   next: number | null;
 }
 
-// The last run as a word and a dot; never run reads as nothing.
 const RUN_WORD: Record<RunStatus, string> = {
   started: "running",
   completed: "ok",
@@ -93,14 +88,12 @@ const RUN_TONE: Record<RunStatus, StatusTone> = {
   failed: "error",
 };
 
-// One bar per run in the histogram, the color saying how it ended.
 const RUN_BAR: Record<RunStatus, string> = {
   started: "bg-info/70",
   completed: "bg-muted",
   failed: "bg-destructive/70",
 };
 
-// What a `status:` token may name: the job's own state, or its last run's.
 const STATUS_WORDS: Record<string, (cron: Cron) => boolean> = {
   active: (cron) => cron.status === "active",
   paused: (cron) => cron.status === "paused",
@@ -123,15 +116,9 @@ interface Props {
   projectId: Id<"projects">;
   crons: Cron[];
   agents: Array<Pick<Doc<"agents">, "_id" | "name">>;
-  /** Opens the create dialog; absent when the viewer cannot create. */
   onCreate?: () => void;
 }
 
-/**
- * The scheduler, laid out like Monitoring: a search bar, a flush table whose
- * headers sort on click, and a detail panel for the selected job with what
- * the row does not show: its zone, prompt, run history, and the danger zone.
- */
 export function CronsTable({
   projectId,
   crons,
@@ -296,7 +283,6 @@ export function CronsTable({
   );
 }
 
-/** When the job fires next; a paused job still says when it would. */
 function NextRun({
   cron,
   next,
@@ -314,11 +300,6 @@ function NextRun({
   return <span title={formatDateTime(next)}>{untilLabel(next, now)}</span>;
 }
 
-/**
- * The selected job. Edit and Pause sit on the title line; the body holds
- * only what the row does not: zone, conversation, who made it, the prompt,
- * the run history, and the danger zone.
- */
 function CronPanel({
   projectId,
   row,
@@ -329,7 +310,6 @@ function CronPanel({
   projectId: Id<"projects">;
   row: CronRow;
   agents: Props["agents"];
-  /** The table's clock, so a running run's bar grows with it. */
   now: number;
   onClose: () => void;
 }): React.JSX.Element {
@@ -456,11 +436,6 @@ function CronPanel({
   );
 }
 
-/**
- * One bar per run, oldest at the left, as tall as the run was long; red
- * when it failed, sky while it still runs. The same strip Monitoring draws
- * under its toolbar, so a glance says how the job has been doing.
- */
 function RunHistogram({
   runs,
   now,
@@ -468,8 +443,7 @@ function RunHistogram({
   runs: CronRun[];
   now: number;
 }): React.JSX.Element {
-  // `runs` is newest first; the bars read oldest to newest. A run still going
-  // sets no scale: one stuck in `started` would flatten every finished bar.
+  // A run still going sets no scale: one stuck in `started` would flatten every finished bar.
   const timed = runs
     .toReversed()
     .map((run) => ({ run: run, ms: durationMs(run, now) }));
@@ -495,7 +469,6 @@ function RunHistogram({
   );
 }
 
-/** The newest runs: when, how it ended, how long, and a link to its traces. */
 function RunsTable({
   projectId,
   runs,
@@ -547,19 +520,16 @@ function RunsTable({
   );
 }
 
-/** How long a run took, or how long it has been running as of `now`. */
 function durationMs(run: CronRun, now: number): number {
   return Math.max(0, (run.completedAt ?? now) - run.startedAt);
 }
 
-/** The run's length as Tracing prints a span, or a dash while it still runs. */
 function durationLabel(run: CronRun): string {
   if (run.completedAt === undefined) return "—";
 
   return formatDuration(durationMs(run, run.completedAt));
 }
 
-/** Whether a `field:value` token matches the job. */
 function matchesField(row: CronRow, field: Field, value: string): boolean {
   if (field === "agent") return row.agentName.toLowerCase().startsWith(value);
   if (field === "timezone") return row.zone.toLowerCase() === value;

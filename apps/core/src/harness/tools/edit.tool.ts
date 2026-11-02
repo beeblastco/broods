@@ -1,10 +1,3 @@
-/**
- * Edit tool. Exact string replacement in a workspace file (Claude-Code-style:
- * old_string must be unique unless replace_all). Implemented with a Node
- * heredoc; path/strings are base64-passed so no content can break quoting.
- * Only registered for sandbox-backed workspaces (read-only workspaces cannot edit).
- */
-
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
@@ -66,8 +59,7 @@ Usage notes:
 
           return toolText(result.stdout.trim());
         } catch (cause) {
-          // toolError throws, so an in-try call already landed here. Feeding its
-          // message back through would prefix a fatal setup error a second time.
+          // toolError throws; rethrow as is so a fatal setup error is not prefixed twice.
           throw cause instanceof Error ? cause : new Error(String(cause));
         }
       },
@@ -102,8 +94,7 @@ function editScript(
     "if (count === 0) fail(`Error: old_string not found in ${path}`);",
     "if (!replaceAll && count > 1) fail(`Error: old_string is not unique (${count} matches); add context or set replace_all`);",
     "const updated = replaceAll ? data.split(oldString).join(newString) : data.replace(oldString, newString);",
-    // fsync the rewrite so the mount uploads it before the sandbox can freeze or
-    // suspend; a plain writeFileSync can be lost. See docs/internals/storage.md.
+    // fsync so the mount uploads before the sandbox can freeze; see docs/internals/storage.md.
     "const fd = fs.openSync(path, 'w');",
     "try { fs.writeSync(fd, updated, null, 'utf8'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }",
     "const replacements = replaceAll ? count : 1;",

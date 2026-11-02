@@ -47,7 +47,6 @@ describe("agents.listForProduction", (): void => {
   });
 });
 
-/** One account with a project, and an agent in each named stage. */
 async function seed(
   tt: T,
   stages: {
