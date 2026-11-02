@@ -1,9 +1,11 @@
 "use client";
 
+import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
 import {
   NetworkBadge,
   useSideHandlesConnectable,
 } from "@/app/components/node/BaseNode";
+import { InlineEdit } from "@/app/components/ui/inline-edit";
 import { cn } from "@/app/lib/utils";
 import { Handle, Position } from "@xyflow/react";
 
@@ -12,6 +14,7 @@ export type ChipStatus = { color: string; text: string; title?: string };
 /**
  * Opens in place into a card's slot, so the chips under it move down rather than being
  * covered. Side handles stay mounted for edges; only `mountable` chips accept a new mount.
+ * The canvas menu's Rename edits its label in place, as on a card.
  */
 export function ResourceChip({
   details,
@@ -20,6 +23,7 @@ export function ResourceChip({
   label,
   mountable,
   networkOn,
+  nodeId,
   nodeType,
   status,
 }: {
@@ -29,10 +33,14 @@ export function ResourceChip({
   label: string;
   mountable: boolean;
   networkOn?: boolean;
+  nodeId: string;
   nodeType: string;
   status: ChipStatus;
 }): React.JSX.Element {
   const sideHandlesConnectable = useSideHandlesConnectable(nodeType);
+  const { onRenameNode, onRenaming, renamingNodeId } = useCanvasFrames();
+  const renaming =
+    renamingNodeId === nodeId && onRenameNode !== undefined && onRenaming;
 
   return (
     <div
@@ -42,6 +50,7 @@ export function ResourceChip({
       className={cn(
         "relative flex w-44 cursor-pointer flex-col rounded-md border border-border bg-card transition-colors hover:border-foreground/25",
         expanded ? "h-24 px-3 py-2.5" : "h-11 justify-center gap-0.5 px-1.5",
+        renaming && "nodrag nopan",
       )}
     >
       <Handle
@@ -64,9 +73,22 @@ export function ResourceChip({
       ))}
       <div className="flex min-w-0 items-center gap-1 text-xs font-medium text-foreground">
         <span className="shrink-0 text-muted-foreground">{icon}</span>
-        <span className="min-w-0 truncate" title={label}>
-          {label}
-        </span>
+        {renaming ? (
+          <InlineEdit
+            value={label}
+            label={`Rename ${label}`}
+            returnFocusTo=".react-flow__node"
+            onCommit={(next) => {
+              onRenaming(null);
+              onRenameNode(nodeId, next);
+            }}
+            onCancel={() => onRenaming(null)}
+          />
+        ) : (
+          <span className="min-w-0 truncate" title={label}>
+            {label}
+          </span>
+        )}
       </div>
       {expanded && details !== undefined && (
         <div className="mt-1 truncate text-2xs text-muted-foreground">
