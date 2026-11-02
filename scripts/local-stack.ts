@@ -105,6 +105,8 @@ interface InstanceState {
   instanceId: string;
   instanceSecret: string;
   perf?: boolean;
+  /** The dashboard serves the production build, not next dev. */
+  dashboardProduction?: boolean;
   pids: { core?: number; dashboard?: number; gateway?: number };
   /** First port of the instance's block; `ports()` derives the rest. */
   portBase: number;
@@ -857,6 +859,15 @@ async function startDashboard(
   production: boolean,
 ): Promise<void> {
   const url = dashboardUrl(state);
+  // A next dev server must not answer a perf run, nor a build a dev run.
+  if (
+    isProcessAlive(state.pids.dashboard) &&
+    Boolean(state.dashboardProduction) !== production
+  ) {
+    await stopProcess(state.pids.dashboard, "dashboard");
+    state.pids.dashboard = undefined;
+  }
+  state.dashboardProduction = production;
   if (isProcessAlive(state.pids.dashboard)) {
     console.log("dashboard already running");
 

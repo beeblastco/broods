@@ -84,6 +84,19 @@ describe("agent.config.canvasBadges", () => {
         }),
     );
 
+    // A string or list carries no output spec, so the runtime answers in text.
+    const notAnObject = await t.run(
+      async (ctx) =>
+        await ctx.db.insert("agentConfigs", {
+          authId: OWNER_AUTH_ID,
+          name: "string-format",
+          projectId: projectId,
+          stageId: stageId,
+          outputFormat: "json",
+          updatedAt: Date.now(),
+        }),
+    );
+
     const badges = await t.query(api.agent.config.canvasBadges, {
       projectId: projectId,
       stageId: stageId,
@@ -94,6 +107,7 @@ describe("agent.config.canvasBadges", () => {
       skills: ["triage"],
       structuredOutput: false,
     });
+    expect(badges[notAnObject]?.structuredOutput).toBe(false);
   });
 
   test("with no stage reads the project's default stage", async () => {
