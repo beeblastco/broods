@@ -23,7 +23,7 @@ import { ChevronDown, Folder, Plus } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-export function ProjectSelector(): React.JSX.Element {
+export function ProjectSelector(): React.JSX.Element | null {
   const { canWrite } = useOrgRole();
   const queryArgs = useSignedIn() ? {} : "skip";
   const projects = useQuery(api.project.list, queryArgs) as
@@ -39,6 +39,7 @@ export function ProjectSelector(): React.JSX.Element {
     [router],
   );
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- idle-time router prefetch
   useEffect(() => {
     if (projects === undefined || projects.length === 0) return;
 
@@ -61,8 +62,7 @@ export function ProjectSelector(): React.JSX.Element {
     return () => window.clearTimeout(timeoutId);
   }, [projects, prefetchProject, params.projectId]);
 
-  // The header divider next to this is always painted, so rendering nothing
-  // here collapses the row and shifts it back once the query lands.
+  // Hold the slot: the header divider beside this is always painted.
   if (projects === undefined) {
     return <Skeleton className="h-4 w-24 bg-muted" />;
   }
@@ -71,15 +71,12 @@ export function ProjectSelector(): React.JSX.Element {
   const selectedProject = projects.find(
     (p: Doc<"projects">) => p._id === currentProjectId,
   );
-  // The trigger states what is true right now, never another project's name.
   const displayName = selectedProject?.name ?? "Select project";
   const userName = currentUser?.name?.split(" ")[0] ?? "";
   const projectsLabel = userName ? `${userName}'s projects` : "Projects";
 
-  // An org with no projects has nothing to pick from: skip the menu and put the
-  // create action itself in the header, one click from the same dialog.
   if (projects.length === 0) {
-    if (!canWrite) return <></>;
+    if (!canWrite) return null;
 
     return (
       <>

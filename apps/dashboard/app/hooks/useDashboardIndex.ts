@@ -1,15 +1,5 @@
 "use client";
 
-/**
- * Everything the palette and the copilot can find, as one list of rows.
- *
- * A null project subscribes to nothing. The shell passes null until the
- * palette or the dock is first wanted: the index rides above every page, and
- * on most of them nothing ever reads it, so streaming the canvas layout there
- * is bytes for a palette that may never open. Once live, Convex serves what
- * the page already holds (the canvas, the stage list) from its cache and the
- * rest lands one round trip later; the rows re-rank as they change.
- */
 import { NAV_ITEMS, navHref, tabHref } from "@/app/lib/navigation";
 import type { SearchItem } from "@/app/lib/paletteSearch";
 import { useStage } from "@/app/hooks/useStage";
@@ -19,6 +9,8 @@ import { useQuery } from "convex/react";
 import { usePathname } from "next/navigation";
 import { useMemo } from "react";
 
+// A null project subscribes to nothing: the shell passes null until the palette or dock is
+// first wanted, since most pages never read the index.
 export function useDashboardIndex(
   projectId: Id<"projects"> | null,
 ): readonly SearchItem[] {
@@ -100,7 +92,6 @@ export function useDashboardIndex(
       });
     }
 
-    // Switching stage keeps you on the page you are on; only the param moves.
     for (const stage of stages ?? []) {
       items.push({
         detail: stage.kind,

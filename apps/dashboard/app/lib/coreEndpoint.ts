@@ -1,8 +1,6 @@
 "use client";
 
-// Only a production build falls back to the production gateway. A dev
-// server with the variable unset used to dial it silently, and every ticket
-// its stage's core minted was then refused by a gateway with other secrets.
+// Production only: the prod gateway refuses every ticket a dev stage's core mints.
 const DEFAULT_CORE_BASE_URL =
   process.env.NODE_ENV === "production"
     ? "https://gateway.broods.app"
@@ -12,10 +10,6 @@ export type CoreEndpoint =
   | { ok: true; httpBaseUrl: string; websocketBaseUrl: string }
   | { ok: false; message: string };
 
-/**
- * Path of a deployed agent's run endpoint: stage scoped when both slugs are
- * known, bare otherwise. Append `/ws` for its socket.
- */
 export function agentEndpointPath(scope: {
   endpointId: string;
   projectSlug?: string;
@@ -29,7 +23,6 @@ export function agentEndpointPath(scope: {
   return `/v1${prefix}/agents/${encodeURIComponent(scope.endpointId)}`;
 }
 
-/** Resolve the configured core HTTP/WebSocket base URLs without throwing during render. */
 export function resolveCoreEndpoint(): CoreEndpoint {
   const candidates = [
     process.env.NEXT_PUBLIC_BROODS_BASE_URL,

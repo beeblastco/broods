@@ -1411,9 +1411,8 @@ describe("runtime ingress", () => {
         });
       }
     }
-    // The parent's write stored two results and lost its reply before the
-    // rows were marked: core detached one, and the other's row still reads
-    // processing because its settle has not landed.
+    // The parent's write stored two results and lost its reply before marking them: core
+    // detached one, and the other still reads processing as its settle has not landed.
     await t.mutation(internal.runtime.markAsyncAgentHandback, {
       eventId: "stored",
       handback: "detached",
@@ -2311,8 +2310,7 @@ describe("runtime ingress", () => {
     const accountId = await createActiveAccount(t);
     const keyFor = (name: string): string =>
       `acct:${accountId}:agent:test-agent:api:${name}`;
-    // 120 queued envelopes ahead of the released one, in both expiry and key
-    // order: more than one recovery page used to read.
+    // 120 envelopes ahead of the released one in both expiry and key order: past one page.
     for (const name of ["busy-a", "busy-b"]) {
       for (let index = 0; index <= 60; index += 1) {
         await t.mutation(internal.runtimeIngress.accept, {
@@ -2672,7 +2670,6 @@ describe("harness checkpoints", () => {
   });
 });
 
-// One kind of result a late resume delivers, and how a test drives its row.
 interface LateResultKind {
   name: string;
   mode: "followup" | "steer";
@@ -2856,8 +2853,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     };
   }
 
-  // The owner `busy` finishing with nothing queued, which releases the
-  // conversation.
+  // With nothing queued, this releases the conversation.
   async function finishBusy(
     t: TestConvex<typeof schema>,
     conversationKey: string,

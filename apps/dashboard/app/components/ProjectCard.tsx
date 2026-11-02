@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * One project on the projects page. A press anywhere on the card opens it; a
- * writer renames it in place from the pencil beside its name. The open
- * control is a layer under the name rather than around it, so the rename
- * field and its button are not nested inside another button.
- */
 import { Button } from "@/app/components/ui/button";
 import { InlineEdit } from "@/app/components/ui/inline-edit";
 import { cn } from "@/app/lib/utils";
@@ -25,13 +19,14 @@ export function ProjectCard({
   description?: string;
   href: string;
   canWrite: boolean;
-  /** Saves a trimmed, changed name; the caller's optimistic update shows it at once. */
+  /** Must update optimistically: the field closes before the save lands. */
   onRename: (name: string) => Promise<unknown>;
 }): React.JSX.Element {
   const { handlers } = useRouteIntent();
   const [renaming, setRenaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The open button is a layer under the name, not around it: buttons must not nest.
   return (
     <div
       className={cn(

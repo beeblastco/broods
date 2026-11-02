@@ -1,8 +1,6 @@
 /**
- * Functional check before any timing: the complex agent (MCP, bash with files,
- * a delegated subagent) on Bun core + machine sandbox, core on workerd + V8
- * worker sandbox, and Bun core + V8 worker sandbox. Prints every tool call
- * and the final text so a human can read what each runtime actually did.
+ * Functional check before timing: runs the complex agent on each runtime + sandbox pair and prints
+ * every tool call and the final text for a human to read.
  */
 
 import { runMachineDaemon } from "../../../packages/broods/src/cli/machine.ts";

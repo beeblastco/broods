@@ -1,11 +1,9 @@
-// How long one worker slot may run a turn. The run token TTL follows it.
+// The run token TTL follows this.
 export const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
   "WORKER_TIMEOUT_BUDGET_MS",
   10 * 60 * 1000,
 );
-// How many worker slots one run may take in turn by yielding near its
-// deadline: an hour at the default budget, so a run that never ends still
-// stops costing tokens.
+// An hour at the default budget, so a run that never ends still stops costing tokens.
 export const MAX_RUN_SLOTS = positiveIntegerEnv("MAX_RUN_SLOTS", 6);
 
 export function requireEnv(name: string): string {
@@ -36,8 +34,6 @@ export function optionalEnv(name: string): string | undefined {
   return value ? value : undefined;
 }
 
-// Positive-integer env parsing that can never yield NaN: a malformed value
-// falls back instead of silently disabling numeric guards downstream.
 export function positiveIntegerEnv(name: string, fallback: number): number {
   const raw = optionalEnv(name);
   const parsed = raw === undefined ? fallback : Number(raw);
@@ -45,10 +41,6 @@ export function positiveIntegerEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : fallback;
 }
 
-// The harness's own public base URL, the gateway front door. Background-job
-// callbacks and async status URLs need an absolute URL to reach this service.
-// Undefined when PUBLIC_BASE_URL is unset, so callers can degrade to poll-only
-// delivery.
 export function getHarnessPublicUrl(): string | undefined {
   const configured = optionalEnv("PUBLIC_BASE_URL");
 

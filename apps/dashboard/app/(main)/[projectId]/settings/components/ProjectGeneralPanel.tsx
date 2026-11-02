@@ -27,8 +27,7 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [syncedProject, setSyncedProject] = useState(project);
 
-  // Sync editable fields from the project as it loads or changes (set during
-  // render instead of in an effect to avoid a cascading re-render).
+  // Adjusted during render, not in an effect, to skip a cascading re-render.
   if (project && project !== syncedProject) {
     setSyncedProject(project);
     setName(project.name);

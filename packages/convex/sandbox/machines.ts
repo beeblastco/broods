@@ -1,11 +1,3 @@
-/**
- * Connection state of `machine` sandboxes. Core holds each `broods machine`
- * daemon's socket and mirrors its connect, a heartbeat every minute and its
- * disconnect here, so the dashboard can list the computer beside the cloud
- * instances. `connectionId` changes on every connect: a replaced socket's late
- * heartbeat or disconnect names the old id and changes nothing.
- */
-
 import { v, type ObjectType } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
@@ -34,7 +26,6 @@ type ConnectionRef = ObjectType<typeof connectionRef>;
 
 type NamedConnection = Doc<"machineConnections"> & { name: string };
 
-/** A daemon claimed its sandbox; it takes the row over from any earlier connection. */
 export const connected = internalMutation({
   args: {
     ...connectionRef,
@@ -51,8 +42,7 @@ export const connected = internalMutation({
     const now = Date.now();
     const row = {
       ...args,
-      // The client drops an undefined arg, so a daemon that sent no size must
-      // still unset the size an earlier connection left.
+      // The client drops undefined args: a size-less daemon must still unset an old size.
       specs: args.specs,
       projectId: config.projectId,
       stageId: config.stageId,
@@ -82,11 +72,10 @@ export const disconnected = internalMutation({
   },
 });
 
-/** The stage's computers that ever connected, named after their current sandbox config. */
 export const listForActiveOrg = query({
   args: {
     projectId: v.id("projects"),
-    // Absent reads the project's default stage, as canvas.getByProject does.
+    // Absent reads the project's default stage.
     stageId: v.optional(v.id("stages")),
   },
   returns: v.array(namedConnection),
@@ -145,7 +134,7 @@ async function connectionFor(
     .unique();
 }
 
-// The row, only while this connection still holds it.
+// connectionId changes on every connect, so a replaced socket's late write changes nothing.
 async function heldConnection(
   ctx: MutationCtx,
   ref: ConnectionRef,

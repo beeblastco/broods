@@ -1,10 +1,3 @@
-/**
- * The self-hosted stack's backend as its admin, for a spec that stages state
- * no dashboard user can: Convex env, a second user, a subscription filed the
- * way the Stripe webhook files one. Runs `scripts/local-stack.ts convex`, so
- * it reaches only the stack of this worktree, and only when the suite runs
- * against one (`E2E_ADMIN_KEY`).
- */
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,7 +17,6 @@ const LOCAL_STACK = join(
   "local-stack.ts",
 );
 
-/** A user the stack knows: `--identity` for `convex run`, plus who they are. */
 export interface StackUser {
   authId: string;
   email: string;
@@ -32,14 +24,12 @@ export interface StackUser {
   identity: string;
 }
 
-/** The stack's admin, the user the dashboard signs in as. */
 export const STACK_ADMIN = stackUser(
   SELF_HOST_ADMIN.subject,
   SELF_HOST_ADMIN.email,
   "Admin",
 );
 
-/** Run the Convex CLI against the stack. Throws with its last lines on failure. */
 export function convex(args: string[]): string {
   const result = spawnSync("bun", [LOCAL_STACK, "convex", ...args], {
     encoding: "utf8",
@@ -53,10 +43,6 @@ export function convex(args: string[]): string {
   return result.stdout;
 }
 
-/**
- * Run a Convex function, as `user` or with no identity for an internal one.
- * @returns the function's result, which `convex run` prints as JSON after any log lines
- */
 export function run(
   user: StackUser | null,
   fn: string,
@@ -68,18 +54,17 @@ export function run(
     fn,
     JSON.stringify(args),
   ]);
+  // `convex run` prints any log lines before the JSON result.
   const start = output.search(/^[[{"\d]/m);
 
   return start < 0 ? null : JSON.parse(output.slice(start));
 }
 
-/** An org the stack knows, by id and name. */
 export interface OrgRow {
   _id: string;
   name: string;
 }
 
-/** The org the stack's admin has active. */
 export function activeOrg(): OrgRow {
   const org = run(STACK_ADMIN, "org/orgs:getActive", {});
   if (
@@ -94,7 +79,6 @@ export function activeOrg(): OrgRow {
   return { _id: idOf(org._id), name: idOf(org.name) };
 }
 
-/** A function's string result, such as a new document's id. */
 export function idOf(value: unknown): string {
   if (typeof value !== "string") {
     throw new Error(`Expected a string, got ${JSON.stringify(value)}`);
@@ -103,7 +87,6 @@ export function idOf(value: unknown): string {
   return value;
 }
 
-/** A user who signed in once, in our users table and the AuthKit component's. */
 export function addUser(
   authId: string,
   email: string,
@@ -132,13 +115,7 @@ export function addUser(
   return stackUser(authId, email, name);
 }
 
-/**
- * Delete a user `addUser` made, from both stores: ours, with their
- * memberships and the orgs only they belong to, the way a WorkOS deletion
- * finishes, then the AuthKit component's, the way its `user.deleted` event
- * does. Run it with the managed service off, so a seat they free calls no
- * Stripe.
- */
+// Run with the managed service off, so a seat the user frees calls no Stripe.
 export function removeUser(user: StackUser): void {
   run(null, "org/workosUserDeletion:finalize", { authId: user.authId });
   convex([
@@ -157,10 +134,6 @@ export function removeUser(user: StackUser): void {
   ]);
 }
 
-/**
- * File a user's Pro subscription, which covers every org they own, as the
- * Stripe webhook does once it has read one back. Nothing here reaches Stripe.
- */
 export function fileSubscription(
   payer: StackUser,
   subscriptionId: string,

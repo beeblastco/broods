@@ -1,15 +1,8 @@
 import { expect, test } from "bun:test";
-import { Glob } from "bun";
 import { readFileSync } from "node:fs";
 import { MOTION_MS } from "../app/lib/motion";
 
 const APP = new URL("../app/", import.meta.url).pathname;
-
-// The rail's open-on-hover waits out its width transition (see sidebarRail.spec.ts).
-const KNOWN = new Set(["components/ui/sidebar.tsx"]);
-
-const LAYOUT_TRANSITION =
-  /\btransition-all\b|\btransition-\[[^\]]*\b(?:width|height|inset|left|right|top|bottom|margin|padding)\b[^\]]*\]|\btransition(?:-property)?:[^;]*\b(?:all|width|height|inset|left|right|top|bottom|margin|padding)\b/;
 
 test("MOTION_MS mirrors the duration tokens in globals.css", () => {
   const css = readFileSync(`${APP}globals.css`, "utf8");
@@ -18,11 +11,10 @@ test("MOTION_MS mirrors the duration tokens in globals.css", () => {
   }
 });
 
-test("nothing in app/ transitions a layout property", () => {
-  const offenders = [...new Glob("**/*.{ts,tsx,css}").scanSync(APP)].filter(
-    (file) =>
-      !KNOWN.has(file) &&
-      LAYOUT_TRANSITION.test(readFileSync(`${APP}${file}`, "utf8")),
+// TS and TSX are linted by broods/no-layout-transition; CSS is not.
+test("globals.css transitions no layout property", () => {
+  const css = readFileSync(`${APP}globals.css`, "utf8");
+  expect(css).not.toMatch(
+    /\btransition(?:-property)?:[^;]*\b(?:all|width|height|inset|left|right|top|bottom|margin|padding)\b/,
   );
-  expect(offenders).toEqual([]);
 });

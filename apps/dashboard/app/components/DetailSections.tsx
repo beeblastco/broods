@@ -7,34 +7,25 @@ import type { JSONValue } from "convex/values";
 import { ChevronRight } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
-// Above this a payload stays plain text: its JSON tree would mount tens of
-// thousands of nodes.
+// Past this a JSON tree would mount tens of thousands of nodes.
 const JSON_VIEW_MAX_CHARS = 100_000;
 
-// The label column and the value beside it, shared by every row kind.
 const ROW_GRID = "grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] px-2 py-1";
 
-/** One line in a Details section. Values read in mono (ids, counts) unless `words`, and copy on click. */
 export interface DetailRow {
   key: string;
   label: string;
   value: string;
   words?: true;
-  /** Red for an error message. */
   tone?: "error";
 }
 
-/** A line that holds a widget on the same grid instead of text to copy. */
 export interface ControlRow {
   key: string;
   label: string;
   control: ReactNode;
 }
 
-/**
- * Collapsible section of labeled rows, each copying its value on click. Shared
- * by the Tracing and Monitoring detail panes so both read the same.
- */
 export function DetailFields({
   label,
   rows,
@@ -52,11 +43,6 @@ export function DetailFields({
   );
 }
 
-/**
- * The labeled rows alone, a value copying on click or a control on the same
- * grid, for a panel with no section to fold. By default they sit flush with
- * the panel's padding.
- */
 export function DetailRows({
   rows,
   className = "-mx-2",
@@ -97,11 +83,6 @@ export function DetailRows({
   );
 }
 
-/**
- * Collapsible payload: the header row over the value, JSON as a folding code
- * view and anything else pre-wrapped, with a copy button in the corner. Starts
- * expanded when `open`; the body only mounts while expanded.
- */
 export function DetailPayload({
   label,
   open,
@@ -134,11 +115,6 @@ export function DetailPayload({
   );
 }
 
-/**
- * A payload's text: JSON as a folding code view, where a string with line
- * breaks reads as lines, and anything else pre-wrapped. Used by the detail
- * pane and by the trace's open payload rows; `className` sets height and inset.
- */
 export function PayloadBody({
   value,
   className,
@@ -146,8 +122,7 @@ export function PayloadBody({
   value: string;
   className: string;
 }): React.JSX.Element {
-  // Parsing a large payload is the expensive part; the parent re-renders on
-  // every stream message while a run is live.
+  // The parent re-renders on every stream message while a run is live.
   const json = useMemo(
     () => (value.length <= JSON_VIEW_MAX_CHARS ? parseJson(value) : undefined),
     [value],
@@ -193,7 +168,6 @@ function SectionSummary({
   );
 }
 
-/** The payload as JSON when it is an object or array, otherwise undefined. */
 function parseJson(text: string): JSONValue | undefined {
   const trimmed = text.trimStart();
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;

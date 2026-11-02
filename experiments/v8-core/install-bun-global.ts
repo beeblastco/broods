@@ -1,8 +1,6 @@
 /**
- * Side effects that must run before any core module evaluates: the Bun shim,
- * and `redirect: "error"`, which core uses on every outbound call but workerd's
- * fetch does not accept. It becomes "manual" plus a thrown error on a redirect,
- * which is what "error" means.
+ * Runs before any core module: installs the Bun shim, and turns `redirect: "error"` (workerd's
+ * fetch rejects it) into "manual" plus a thrown error on a redirect.
  */
 
 import "bun";

@@ -37,8 +37,7 @@ import {
   waitFor,
 } from "./helpers/machine.ts";
 
-// Gateway routing is covered in apps/gateway/tests/route.test.ts; importing
-// main.ts here would pull the gateway into core's typecheck.
+// Importing the gateway's main.ts would pull it into core's typecheck; route.test.ts covers it.
 
 const ECHO_SERVER = join(
   import.meta.dir,
@@ -202,7 +201,6 @@ function daemonController(): AbortController {
   return controller;
 }
 
-/** A raw socket from `host` that claims `my-mac` straight into core and holds it. */
 function holdRecord(coreBaseUrl: string, host: string): Promise<WebSocket> {
   return new Promise((resolve, reject): void => {
     const socket = new WebSocket(machineSocketUrl(coreBaseUrl), {

@@ -1,5 +1,4 @@
 /// <reference types="vite/client" />
-/** Deleting a policy an agent or a channel record still lists must refuse. */
 
 import { convexTest, type TestConvex } from "convex-test";
 import { expect, test } from "vitest";
@@ -13,7 +12,6 @@ const modules = import.meta.glob("../**/*.ts");
 const ACCOUNT_SECRET = "bask_test-owner-secret";
 const AUTH_ID = "auth_owner";
 
-/** Where the policy and the agent that lists it sit relative to each other. */
 interface SeedOptions {
   policyHasStage: boolean;
   agentInPolicyStage: boolean;

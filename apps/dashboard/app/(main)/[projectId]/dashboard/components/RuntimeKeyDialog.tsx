@@ -29,8 +29,7 @@ const DESCRIPTION = "Runs and observes this stage. Rotate it when it leaks.";
 
 const DOCS_URL = "https://docs.broods.app/reference/sdk";
 
-// VSCode Dark+ token palette, applied by a tiny tokenizer below so the snippet
-// reads like an editor without pulling in a full highlighter dependency.
+// VSCode Dark+ colors for a tiny tokenizer, not a whole highlighter dependency.
 const COLOR = {
   comment: "text-code-comment",
   string: "text-code-string",
@@ -49,32 +48,25 @@ type RevealedKey = NonNullable<
   FunctionReturnType<typeof api.agent.deployments.revealKeyForStage>
 >;
 
-/** Who minted the key and when it last authenticated; absent fields render as nothing. */
 type RuntimeKeyMeta = Omit<RevealedKey, "apiKey">;
 
 interface DialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The plaintext runtime key (bsk_…) for the active stage. */
   apiKey: string;
-  /** Whether the key was just minted (changes the title). */
   justCreated?: boolean;
 }
 
 interface ViewProps {
   apiKey: string;
-  /** The reveal query's result; its metadata shows only while it describes `apiKey`. */
   revealed?: RevealedKey | null;
   onRotate?: () => Promise<void>;
-  /** The project and stage the key belongs to, for the Deployment section. */
   projectId?: Id<"projects">;
-  /** The stage whose user-token signing secret the tab manages. */
   stageId?: Id<"stages">;
   projectSlug?: string;
   stageSlug?: string;
 }
 
-/** Opened by the dashboard page right after it mints the stage's first key. */
 export function RuntimeKeyDialog({
   open,
   onOpenChange,
@@ -97,11 +89,6 @@ export function RuntimeKeyDialog({
   );
 }
 
-/**
- * The dashboard's "Runtime key" tab in the Convex settings shape: a title and
- * one sentence on the left, the control on the right, one rule between
- * sections, no card, no numbered steps, no tabs.
- */
 export function RuntimeKeyView({
   apiKey,
   revealed,
@@ -181,7 +168,6 @@ export function RuntimeKeyView({
   );
 }
 
-/** One settings section: words on the left, the control on the right. */
 function SettingsRow({
   title,
   description,
@@ -202,7 +188,6 @@ function SettingsRow({
   );
 }
 
-/** A labeled value with its controls beside it. */
 function ValueRow({
   label,
   children,
@@ -218,7 +203,6 @@ function ValueRow({
   );
 }
 
-/** The masked key with reveal, copy and, on the tab, rotate. */
 function KeyRow({
   apiKey,
   onRotate,
@@ -253,7 +237,6 @@ function KeyRow({
   );
 }
 
-/** The three lines that reach a first run, and where to read on. */
 function ConnectSnippet({
   apiKey,
   gatewayUrl,
@@ -323,7 +306,6 @@ function ConnectSnippet({
   );
 }
 
-/** Copies a cURL request for the stage; the plain HTTP route for anyone without the SDK. */
 function CurlLink({ gatewayUrl }: { gatewayUrl: string }): React.JSX.Element {
   const snippet = [
     `curl -N ${gatewayUrl}/v1/runs \\`,
@@ -381,7 +363,6 @@ function highlight(code: string): ReactNode[] {
   return out;
 }
 
-// "Created Sep 2 by Ada, last used 4m ago", dropping each part the row does not know.
 function KeyMetaLine({ meta }: { meta?: RuntimeKeyMeta }): React.JSX.Element {
   const now = useNow();
   const created = meta?.createdAt
@@ -465,10 +446,6 @@ function RotateButton({
   );
 }
 
-/**
- * The stage's user-token signing secret: its hint, and generate or rotate,
- * which shows the new secret this once.
- */
 function SigningSecretRow({
   projectId,
   stageId,

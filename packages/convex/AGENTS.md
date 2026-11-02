@@ -14,10 +14,9 @@ WorkOS AuthKit do SSO with Google OAuth. `users` table sync from WorkOS webhooks
 
 `BROODS_AUTH_PROVIDER` pick the sign-in and every deployment set it (`workos` on dev and prod, `deploy-convex.yaml` set it before each deploy; `self-host` on a local stack). self-hosted: `auth.config.ts` trust only the dashboard's admin-key session (`model/selfHostAuth.ts`, `BROODS_SESSION_JWKS`), never WorkOS, and `user.ensureSynced` seed the admin into the AuthKit component's users table, so `authKit.getAuthUser` work the same. the deploy evaluate `auth.config.ts` on the backend and refuse it when it read any unset variable, and there is no way to probe for one, so each branch read only its own variables and `tests/authConfig.test.ts` evaluate both branches the way the backend do. a new variable in `auth.config.ts` = add it to that test's env set, or the deploy fail.
 
-every authenticated public function use `authKit.getAuthUser(ctx)`. public API that need a user must carry this block, comment included:
+every authenticated public function use `authKit.getAuthUser(ctx)`. public API that need a user must carry this check:
 
 ```typescript
-// Check authenticated user
 const user = await authKit.getAuthUser(ctx);
 if (!user) {
   throw new Error("User not found or not authenticated");

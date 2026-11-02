@@ -71,14 +71,4 @@ request in
 
 ## Style
 
-on top of root style: every file open with a block docstring, one blank line before the first import.
-
-```ts
-/**
- * ...
- */
-
-import ...
-```
-
-keep it short: what the file boundary is, what belong there, where near-by logic go. never list functions in it.
+root style, comment rule included: a file header only when path and exports do not tell the file's role: ≤3 lines, the file boundary and where near-by logic go, never a function list, one blank line before the first import.

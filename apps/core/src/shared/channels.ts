@@ -1,5 +1,3 @@
-/** Shared HTTP and channel adapter contracts for inbound webhook traffic. */
-
 import type { SystemModelMessage, UserContent, UserModelMessage } from "ai";
 import type { Attachment, StreamOptions } from "chat";
 import { z } from "zod";
@@ -10,19 +8,14 @@ import { logWarn, redactSensitiveText } from "./log.ts";
 import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 import { getObservabilityContext } from "./otel.ts";
 
-/** Reach every room or sender, instead of only the listed ids. */
 export const CHANNEL_REACH_WILDCARD = "*";
 
-// What a Retry tap or typed reply sends after a failed run.
 const RETRY_REPLY = "Retry";
 
-// The id an ask_questions button carries back: statusId, question, option.
-// 53 bytes at most, under Telegram's 64-byte callback_data cap.
+// At most 53 bytes, under Telegram's 64-byte callback_data cap.
 const QUESTION_BUTTON_PATTERN = /^q:(async_tool_[0-9a-f-]{36}):(\d+):(\d+)$/;
 
-// The fix to append to any other provider error, first match wins. A provider
-// that already says when to retry ("try again in 37s", "later") gets no hint,
-// so that entry stays ahead of the quota and rate limit ones.
+// First match wins, so an error that already says when to retry stays ahead of the rest.
 const ERROR_HINTS: [RegExp, string | null][] = [
   [/\b(try|retry) (again )?(in \d|later)/i, null],
   [
@@ -37,7 +30,6 @@ const ERROR_HINTS: [RegExp, string | null][] = [
   [/ran out of time/i, "Send a message to continue where I left off."],
 ];
 
-// Channels whose plain messages are parsed for slash commands like /new.
 const INLINE_COMMAND_CHANNELS = new Set([
   "discord",
   "gchat",
@@ -52,59 +44,33 @@ const INLINE_COMMAND_CHANNELS = new Set([
   "zalo",
 ]);
 
-// Any JSON object. Fields stay as the provider sent them, nulls included; each
-// adapter reads what it needs through its own payload type.
 const WEBHOOK_BODY = z.looseObject({});
 
 export type ChannelIngressEvent =
   | UserModelMessage
   | (SystemModelMessage & { persist?: false });
 
-/**
- * A document or picture handed to a channel for delivery. The Chat SDK's own
- * attachment shape, narrowed: a workspace file has no address of its own, so it
- * always travels as a URL the provider fetches for itself. `type` is fixed per
- * alias because that is the field an adapter maps onto the provider's photo or
- * document endpoint.
- */
 export type ChannelFile = Attachment & { type: "file"; url: string };
 
 export type ChannelImage = Attachment & { type: "image"; url: string };
 
 export interface ChannelActions {
   sendText(text: string): Promise<void>;
-  // Optional document delivery. Omitted by providers with no document endpoint
-  // at all (Zalo bots take photos and stickers and nothing else), which is why
-  // `send-files` posts download links as text rather than failing.
   sendFiles?(files: ChannelFile[], caption?: string): Promise<void>;
-  // Optional picture delivery, the same shape so one tool core serves both.
-  // A batch arrives whole and the provider decides how to spend it: Telegram
-  // groups it into one album, Zalo has no album and sends them in sequence.
   sendImages?(images: ChannelImage[], caption?: string): Promise<void>;
-  // Optional native rendering for an ask_questions prompt (inline buttons).
-  // Providers without one omit it and the numbered `text` goes out as plain
-  // text, answered by a reply.
   sendQuestions?(prompt: ChannelQuestionPrompt): Promise<void>;
-  // Optional buttons under a message; a tap arrives as the person sending that
-  // reply. Providers without them omit it and the reply is spelled out instead.
+  // A tap arrives as if the person had sent that reply.
   sendReplyButtons?(text: string, replies: string[]): Promise<void>;
-  // Optional provider-native sticker delivery. Providers decide whether the
-  // value is a sticker id, file id, or public URL.
   sendSticker?(sticker: string): Promise<void>;
   sendTyping(): Promise<void>;
   supportsReactions?: boolean;
-  // Reactions target the inbound message. Omitting the emoji uses the channel's
-  // configured acknowledgement reaction.
   reactToMessage(emoji?: string): Promise<void>;
-  // Optional native SDK/platform streaming. Channels omit it when the provider
-  // lacks SDK streaming support, in which case the harness sends one final reply.
   stream?(
     textStream: AsyncIterable<unknown>,
     options?: StreamOptions,
   ): Promise<string | null>;
 }
 
-/** One question the agent asks through ask_questions, as a channel renders it. */
 export interface ChannelQuestion {
   id: string;
   header: string;
@@ -112,7 +78,6 @@ export interface ChannelQuestion {
   options: ChannelQuestionOption[];
 }
 
-/** A button click on a posted question, by position. */
 export interface ChannelQuestionAnswer {
   statusId: string;
   questionIndex: number;
@@ -124,10 +89,6 @@ export interface ChannelQuestionOption {
   description?: string;
 }
 
-/**
- * What a channel posts for one ask_questions call. `text` is the numbered
- * fallback every provider can send; a button carries `statusId` back.
- */
 export interface ChannelQuestionPrompt {
   statusId: string;
   questions: ChannelQuestion[];
@@ -148,23 +109,13 @@ export interface ChannelResponse {
   body?: string;
 }
 
-/**
- * Where a message came from and who sent it, in provider-neutral terms.
- * `source` stays opaque because it carries reply-routing secrets (interaction
- * tokens, response URLs); this is the part policy and channel lookup may read.
- */
+// What policy may read; reply-routing secrets (interaction tokens) stay in the opaque `source`.
 export interface ChannelIdentity {
-  /** Team, guild, or repository owner the channel belongs to. */
   workspaceRef?: string;
-  /** Channel, chat, or repository the message arrived in. */
   channelId?: string;
-  /** Thread inside the channel, when the message is threaded. */
   threadId?: string;
-  /** Provider id of the person who sent it. */
   userId?: string;
-  /** Display name for that person, when the provider gives one cheaply. */
   userName?: string;
-  /** Roles that person holds in this channel. Filled from the channel record. */
   userRoles?: string[];
 }
 
@@ -173,22 +124,13 @@ export interface InboundMessage {
   conversationKey: string;
   channelName: string;
   content: UserContent;
-  /**
-   * Pictures, documents, voice notes and videos that arrived with the message, in
-   * the wide Chat SDK attachment shape because inbound is whatever the provider
-   * sent. Adapters name the attachment and leave the bytes alone, so parsing
-   * stays cheap. `fetchData` is the adapter's own authenticated reader (Telegram
-   * resolves a file id through getFile and signs the download with the bot token;
-   * Slack sends a bearer header for a private file). `ingestChannelAttachments`
-   * calls it after parse and before admission, inside the ACK budget, so a
-   * queued turn still carries its media.
-   */
+  // Named, not read: `ingestChannelAttachments` calls each `fetchData` before admission,
+  // inside the ACK budget, so a queued turn still carries its media.
   attachments?: Attachment[];
   events?: ChannelIngressEvent[];
   identity?: ChannelIdentity;
   source: Record<string, unknown>;
-  // Present when the message is a click on an ask_questions button rather than
-  // typed text; `content` then carries the chosen label for the transcript.
+  // An ask_questions button click; `content` then carries the chosen label.
   answer?: ChannelQuestionAnswer;
 }
 
@@ -196,12 +138,8 @@ export interface ParsedChannelMessage {
   kind: "message";
   message: InboundMessage;
   ack?: ChannelResponse;
-  /**
-   * Set when the provider, or the forwarder in front of it, sends this
-   * delivery again after a 5xx. A full run queue then answers 503 with
-   * Retry-After so the message comes back; unset, the channel is told the
-   * agent is busy and the delivery is acked, since a 5xx would lose it.
-   */
+  // A full run queue answers 503 + Retry-After only when the sender redelivers on a 5xx;
+  // otherwise a 5xx would lose the message, so the busy reply is acked.
   redelivers?: true;
 }
 
@@ -211,8 +149,6 @@ export interface ParsedChannelContext {
   ack?: ChannelResponse;
 }
 
-// Several turns in one delivery, when a provider batches them into one POST.
-// Each runs on its own, in order; `ack` answers the whole delivery.
 export interface ParsedChannelBatch {
   kind: "batch";
   results: Array<ParsedChannelMessage | ParsedChannelContext>;
@@ -227,10 +163,6 @@ export interface ParsedChannelCleanup {
   ack?: ChannelResponse;
 }
 
-/**
- * What the webhook should do before the agent runs. Some providers need an
- * immediate HTTP response; others can be acknowledged and processed later.
- */
 export type ChannelParseResult =
   | ParsedChannelMessage
   | ParsedChannelContext
@@ -239,47 +171,27 @@ export type ChannelParseResult =
   | { kind: "ignore"; reason?: string; response?: ChannelResponse }
   | { kind: "response"; reason?: string; response: ChannelResponse };
 
-/** A verified webhook body, or the ignore an adapter returns when it is not a JSON object. */
 export type ChannelWebhookBody<T> =
   | { kind: "payload"; payload: T }
   | { kind: "ignore"; reason: "invalid_payload" };
 
 export interface ChannelAdapter {
   readonly name: string;
-  /**
-   * Set when one provider app can serve several agents and every entry of a
-   * delivery names its owner (a WhatsApp number, a Page, an Instagram account). Each agent whose
-   * credentials verify the delivery parses it and keeps only its own entries.
-   * Unset, the lowest verifying agentId takes the whole delivery.
-   */
+  // Every agent that verifies a delivery keeps the entries it owns (a WhatsApp number, a Page).
+  // Unset, the lowest verifying agentId takes the whole delivery.
   readonly routesEachEntry?: true;
   canHandle(req: ChannelRequest): boolean;
   authenticate(req: ChannelRequest): boolean | Promise<boolean>;
-  /**
-   * Async when a channel must check external state before deciding to run the
-   * agent.
-   */
   parse(req: ChannelRequest): ChannelParseResult | Promise<ChannelParseResult>;
   actions(msg: InboundMessage): ChannelActions;
-  /**
-   * Rewrite the reply routing a channel record's `replyIn` asks for.
-   * Only providers where the runtime chooses between a thread and the channel
-   * implement it; the rest have one place to reply and omit it.
-   */
   applyReplyIn?(
     source: Record<string, unknown>,
     replyIn: ChannelReplyIn,
   ): Record<string, unknown>;
-  /**
-   * Rebuild the reader for an attachment named only by its `fetchMetadata`,
-   * so a picture can be downloaded again on a later turn. Providers whose SDK
-   * adapter implements it delegate straight to the transport; the rest omit it
-   * and their attachments are re-read from the URL they arrived with.
-   */
+  // Rebuilds the reader from `fetchMetadata` for a later turn; absent, the URL is re-read.
   rehydrateAttachment?(attachment: Attachment): Attachment;
 }
 
-/** An SDK attachment reader's bytes, which some adapters hand back unwrapped. */
 export async function readFetchedBytes(
   fetchData: () => Promise<Buffer | ArrayBuffer>,
 ): Promise<Buffer> {
@@ -288,14 +200,7 @@ export async function readFetchedBytes(
   return Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
 }
 
-/**
- * Bytes for an attachment, for providers that upload rather than fetch. A
- * workspace file arrives with `fetchData` so the object is read straight from
- * storage and only when a provider asks; a picture named by public URL has no
- * such reader. The model picks that URL, so it goes through the same pinned
- * guard as an inbound attachment: no private or metadata address, no other
- * scheme, no unbounded body.
- */
+// The model picks the URL, so it gets the same pinned guard as an inbound attachment.
 export async function channelAttachmentBytes(
   attachment: ChannelFile | ChannelImage,
 ): Promise<Buffer> {
@@ -319,11 +224,7 @@ export async function channelAttachmentBytes(
   );
 }
 
-/**
- * Providers decide whether to preview a file from its name, so a nameless
- * upload would arrive extensionless and render as a generic download. Workspace
- * files are named already; this is for a picture named only by URL.
- */
+// Providers pick a preview from the name, so a nameless upload still needs an extension.
 export function channelAttachmentName(
   attachment: ChannelFile | ChannelImage,
 ): string {
@@ -337,10 +238,6 @@ export function channelAttachmentName(
     : `file${attachment.type === "image" ? ".png" : ""}`;
 }
 
-/**
- * Splits a reply into pieces a provider with a hard length cap accepts, never
- * inside a surrogate pair. Zalo and Twilio send each piece as its own message.
- */
 export function chunkChannelText(text: string, limit: number): string[] {
   if (text.length === 0) {
     return [""];
@@ -379,10 +276,6 @@ export function extractText(content: UserContent): string {
     .join("");
 }
 
-/**
- * The chat line for a failed turn. Pass the channel so a fix that needs a slash
- * command is only offered where the channel parses one.
- */
 export function formatChannelErrorText(
   error: string,
   channelName?: string,
@@ -390,11 +283,6 @@ export function formatChannelErrorText(
   return `⚠️ ${simplifyErrorText(error, supportsInlineCommands(channelName))}`;
 }
 
-/**
- * Posts a failed run's error with a way to retry it: a Retry button where the
- * provider has buttons, a line saying to reply "retry" everywhere else. Either
- * way the retry is a normal message, so the next turn picks up the kept work.
- */
 export async function sendChannelFailure(
   channel: ChannelActions,
   text: string,
@@ -408,12 +296,6 @@ export async function sendChannelFailure(
   );
 }
 
-/**
- * The reach gate. Answered from the webhook payload alone, so an unwanted room
- * or sender is dropped before any record read or policy call (the deployment
- * load still runs ahead of it). No list, or the wildcard, lets everything
- * through; an id the payload never carried matches nothing.
- */
 export function isAllowedId(
   allowed: ReadonlySet<string> | null | undefined,
   id: string | undefined,
@@ -424,11 +306,6 @@ export function isAllowedId(
   return allowed.has(id);
 }
 
-/**
- * Adapters call this in `parse`, after `authenticate`, instead of a bare
- * `JSON.parse`. A malformed or non-object body is logged without its content
- * and comes back as an `invalid_payload` ignore the adapter returns as is.
- */
 export function parseChannelWebhookBody<T extends object>(
   channel: string,
   body: string,
@@ -454,11 +331,9 @@ export function parseChannelWebhookBody<T extends object>(
     return { kind: "ignore", reason: "invalid_payload" };
   }
 
-  // The one cast: the object is the provider payload the adapter's type describes.
   return { kind: "payload", payload: result.data as T };
 }
 
-/** The click a button id stands for; undefined when it is not a question button. */
 export function parseQuestionButtonId(
   id: string | undefined,
 ): ChannelQuestionAnswer | undefined {
@@ -472,7 +347,6 @@ export function parseQuestionButtonId(
   };
 }
 
-/** The id a channel puts on one ask_questions option button. */
 export function questionButtonId(
   statusId: string,
   questionIndex: number,
@@ -481,25 +355,17 @@ export function questionButtonId(
   return `q:${statusId}:${questionIndex}:${optionIndex}`;
 }
 
-/**
- * No list stays null, which the reach gate reads as open. An empty `Set` means
- * the opposite, so the distinction cannot be dropped at the call site.
- */
+// No list stays null, which the reach gate reads as open; an empty Set blocks everyone.
 export function reachSet(ids: string[] | undefined): Set<string> | null {
   return ids ? new Set(ids) : null;
 }
 
-/** Whether plain messages on this channel are parsed for slash commands. */
 export function supportsInlineCommands(
   channelName: string | undefined,
 ): boolean {
   return channelName !== undefined && INLINE_COMMAND_CHANNELS.has(channelName);
 }
 
-// Provider/runtime errors reach the chat wrapped ("Failed after 6 attempts. Last
-// error: AI_APICallError: Request too large for gpt-6-luna in organization …").
-// Keep the provider's own reason so the chat says what actually failed, drop the
-// wrappers, OpenAI's org id and docs link, and add the one step that fixes it.
 function simplifyErrorText(raw: string, commands: boolean): string {
   const text = redactSensitiveText(
     raw,

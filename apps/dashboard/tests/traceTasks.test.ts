@@ -227,7 +227,6 @@ describe("task list line", () => {
       taskChannel({ ...task, conversationKey: key });
 
     expect(channelOf("tg:1")).toBe("Telegram");
-    // Stored keys are scoped to the account and agent.
     expect(channelOf("acct:a:agent:b:tg:7495331456")).toBe("Telegram");
     expect(channelOf("gh:owner/repo:pr:1")).toBe("GitHub");
     expect(channelOf("slack:T1:C1")).toBe("Slack");
@@ -306,7 +305,7 @@ describe("waterfall issues", () => {
       "run-search",
       "run-step-0-bash",
     ]);
-    // The failed tool sits under its step, which a click must open.
+    // path lists the spans a click must open to reach the issue.
     expect(
       issues.all.map(({ path }) => path.map((span) => span.spanId)),
     ).toEqual([[], ["run-step-0"]]);
@@ -364,7 +363,6 @@ describe("waterfall issues", () => {
     expect(axisTicks(12_000)).toEqual([0, 5_000, 10_000]);
     expect(axisTicks(82_000)).toEqual([0, 30_000, 60_000]);
     expect(axisTicks(400)).toEqual([0, 200, 400]);
-    // A run that waited three days on a person steps in whole hours.
     expect(axisTicks(72 * 3_600_000)).toEqual(
       [0, 24, 48, 72].map((hours) => hours * 3_600_000),
     );
@@ -412,7 +410,6 @@ describe("taskCosts", () => {
     expect(costs.get("trace-parent:parent")?.usd).toBeCloseTo(4);
     expect(costs.get("trace-parent:parent")?.partial).toBe(false);
     expect(costs.get("trace-sub:sub")?.usd).toBeCloseTo(1);
-    // Each model step keeps its own price for its waterfall row.
     expect(costs.get("trace-parent:parent-model")?.usd).toBeCloseTo(3);
   });
 

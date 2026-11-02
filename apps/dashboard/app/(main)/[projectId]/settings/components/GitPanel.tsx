@@ -83,7 +83,7 @@ function LinkedRepo({
 }: {
   projectId: Id<"projects">;
   status: GitStatus;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const unlink = useMutation(api.github.unlinkRepo);
   const linkRepo = useAction(api.github.linkRepo);
   const submit = useSubmit();
@@ -98,7 +98,7 @@ function LinkedRepo({
     mapping.production !== current.production;
   const endpoint = resolveCoreEndpoint();
 
-  if (!repo) return <></>;
+  if (!repo) return null;
 
   async function handleSave(): Promise<void> {
     if (!repo || !endpoint.ok) return;
@@ -431,14 +431,14 @@ function StageBranches({
   );
 }
 
-function MappingProblem({ mapping }: { mapping: Mapping }): React.JSX.Element {
+function MappingProblem({
+  mapping,
+}: {
+  mapping: Mapping;
+}): React.JSX.Element | null {
   const problem = mappingProblem(mapping);
 
-  return problem ? (
-    <p className="text-xs text-destructive">{problem}</p>
-  ) : (
-    <></>
-  );
+  return problem ? <p className="text-xs text-destructive">{problem}</p> : null;
 }
 
 // A run in words: still deploying, deployed, or failed.
@@ -454,7 +454,8 @@ function DeployWord({ deploy }: { deploy: Deploy }): React.JSX.Element {
   );
 }
 
-// The linked repo's branches for the pickers; null while they load, [] when GitHub cannot list them.
+// The linked repo's branches for the pickers: null while they load, [] when GitHub cannot
+// list them.
 function useRepoBranches(
   projectId: Id<"projects">,
   status: GitStatus,
@@ -466,6 +467,7 @@ function useRepoBranches(
   // A save can cut a new branch, so the list reloads when the mapping changes.
   const mapped = `${status.repo?.productionBranch}|${status.repo?.developmentBranch}`;
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- fetches the repo's branches from GitHub
   useEffect(() => {
     if (installationId === undefined || repoId === undefined) return;
     if (!status.canLink) return;

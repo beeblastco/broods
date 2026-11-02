@@ -1,5 +1,4 @@
 /// <reference types="vite/client" />
-/** Agent sandboxes travel by name in a manifest and by id at rest. */
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -27,7 +26,6 @@ const SECRET_HASH = "hash-sandbox-refs";
 const t = () => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-/** Seeds the org, account and owner membership a CLI sync writes against. */
 async function seedAccount(tt: T): Promise<Id<"accounts">> {
   return await tt.run(async (ctx) => {
     const now = Date.now();
@@ -182,7 +180,6 @@ describe("cli sync sandbox refs", () => {
 });
 
 describe("cli sync browser sandbox", () => {
-  /** A browser agent on `sandboxes`, alongside the declared sandbox `web`. */
   function manifest(
     sandboxes: string[] | undefined,
     web: Record<string, unknown>,

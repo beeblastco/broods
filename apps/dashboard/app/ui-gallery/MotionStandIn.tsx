@@ -36,11 +36,6 @@ const CARDS: CardNode[] = [
   { id: "files", position: { x: 240, y: 0 }, data: { label: "files" } },
 ];
 
-/**
- * The canvas side panel's presence on a real ReactFlow, with a stand-in for
- * the panel (the real one reads Convex), and one of each popup primitive, so
- * a spec can read their transitions and the layout work they cost.
- */
 export function MotionStandIn(): React.JSX.Element {
   const [selected, setSelected] = useState<CardNode | null>(null);
   const hydrated = useHydrated();

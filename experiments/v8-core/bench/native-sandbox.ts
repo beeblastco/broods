@@ -1,14 +1,6 @@
 /**
- * A real-shell sandbox behind the same HTTP API as apps/cloudflare-worker
- * (POST /v1/sandboxes/:id/exec, GET and DELETE /v1/sandboxes/:id), so core's
- * `worker` provider can use it unchanged by pointing CLOUDFLARE_WORKER_URL here.
- * Each command runs in real bash with the sandbox's own folder as the working
- * directory; a persistent sandbox keeps its folder between commands.
- *
- * It stands in for a Linux sandbox a worker reaches over HTTP (a microVM or
- * container pool). It isolates nothing beyond the folder: bench use only, on
- * loopback. A production one adds the VM or container's own overhead.
- *
+ * Real-bash sandbox behind apps/cloudflare-worker's HTTP API, for core's `worker` provider via
+ * CLOUDFLARE_WORKER_URL. Each sandbox is a folder; it isolates nothing else: loopback bench only.
  * bun native-sandbox.ts <port> <key-file> <root-dir>
  */
 
@@ -28,8 +20,7 @@ interface ExecRequest {
   persist: boolean;
 }
 
-// One command per sandbox at a time, in arrival order, like the V8 sandbox's
-// stored files; a second caller waits instead of getting a 409.
+// One command per sandbox at a time; a second caller waits instead of getting a 409.
 const queues = new Map<string, Promise<unknown>>();
 
 function capped(

@@ -3,11 +3,8 @@
 import { usePresence } from "@/app/hooks/usePresence";
 
 /**
- * The side panel beside the canvas, as the last children of a `relative flex`
- * row. The canvas gives up and takes back its width in one step; only the
- * panel's content moves. It fades in from the edge on open, and on close it
- * fades out over the canvas, inert, before it hides. Switching nodes keeps it
- * shown, so nothing replays.
+ * Last children of a `relative flex` row. The width snaps; only the content fades, and on
+ * close it fades out over the canvas, inert, before it hides.
  */
 export function SidePanelSlot<T>({
   node,

@@ -10,7 +10,10 @@ const loadCreateProjectDialog = (): Promise<typeof Dialog> =>
 
 const CreateProjectDialog = dynamic(loadCreateProjectDialog);
 
-/** The new-project dialog, fetched the first time it opens, so its repo picker is not in every page's first load. */
+/**
+ * The new-project dialog, fetched the first time it opens, so its repo picker is not in every
+ * page's first load.
+ */
 export function LazyCreateProjectDialog(
   props: ComponentProps<typeof Dialog>,
 ): React.JSX.Element | null {

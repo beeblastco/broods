@@ -1,9 +1,7 @@
 /**
- * The GitHub half of a linked repo, run by the config plane: the Broods
- * GitHub App's credentials, its REST calls, the deploy workflow Broods commits
- * and the sealed repo secrets it deploys with. A push runs that workflow in
- * the user's own Actions, which calls `broods deploy`, so Broods builds
- * nothing. Plain fetch and Web Crypto, so it runs in Convex.
+ * The GitHub half of a linked repo: the Broods GitHub App's credentials, its REST calls, the deploy
+ * workflow Broods commits and the sealed repo secrets. A push runs that workflow in the user's own
+ * Actions (`broods deploy`), so Broods builds nothing. Plain fetch and Web Crypto, for Convex.
  */
 
 import { blake2b } from "@noble/hashes/blake2b";
@@ -298,7 +296,7 @@ export async function administeredInstallations(
   return installations.filter((_installation, index) => administered[index]);
 }
 
-/** The branch Development deploys from when none is named: `dev`, or `development` where `dev` is the default. */
+/** Development's branch when none is named: `dev`, or `development` where `dev` is the default. */
 export function developmentBranchFor(defaultBranch: string): string {
   return (
     DEVELOPMENT_BRANCHES.find((branch) => branch !== defaultBranch) ?? "dev"
@@ -566,7 +564,7 @@ export async function commitWorkflow(
   return pull.html_url;
 }
 
-/** Cuts `branch` from `from`'s head. One that already exists is left as it is, or moved there with `reset`. */
+/** Cuts `branch` from `from`'s head; an existing one is left alone, or moved there with `reset`. */
 export async function createBranch(
   app: GitHubApp,
   token: string,
@@ -991,7 +989,7 @@ function isRefusedWrite(status: number): boolean {
   return status === 403 || status === 409 || status === 422;
 }
 
-// PKCS#8 wraps the PKCS#1 key: version 0, the rsaEncryption algorithm, then the key as an octet string.
+// PKCS#8 wraps the PKCS#1 key: version 0, rsaEncryption, then the key as an octet string.
 function pkcs8FromPem(pem: string): ArrayBuffer {
   const der = fromBase64(
     pem.replace(/-----(BEGIN|END) [A-Z ]+-----/g, "").replace(/\s/g, ""),

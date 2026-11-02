@@ -18,10 +18,7 @@ interface PanelFrame {
   title: string;
 }
 
-/**
- * Presses `button` and reads the panel in the commit that follows, before a
- * frame of its transition has passed: what a user sees and can do at once.
- */
+// Reads the panel in the commit after the press, before a frame of its transition passes.
 async function pressAndRead(page: Page, button: string): Promise<PanelFrame> {
   return page.evaluate(
     async ([selector, panelSelector]) => {
@@ -85,7 +82,6 @@ test.describe("canvas side panel", () => {
     expect(open.canvasWidth).toBeCloseTo(WIDTH * 0.6, 0);
     expect(open.running).toBeGreaterThan(0);
     expect(open.opacity).toBeLessThan(0.9);
-    // Mid-fade, it already takes the pointer and the keyboard.
     expect(open.inputTakesPointer).toBe(true);
     expect(open.inputFocused).toBe(true);
     await page.keyboard.type("hello");
@@ -112,7 +108,6 @@ test.describe("canvas side panel", () => {
     await settled(page);
     const closing = await pressAndRead(page, "[data-close]");
     expect(closing.canvasWidth).toBe(WIDTH);
-    // Still showing what it showed, but a click lands on the canvas.
     expect(closing.hidden).toBe(false);
     expect(closing.closing).toBe(true);
     expect(closing.title).toBe("support-agent");
@@ -148,8 +143,6 @@ test.describe("canvas side panel", () => {
     await expect(page.locator(PANEL)).toBeHidden({ timeout: 100 });
   });
 
-  // The open and the close each relay out the row once; the fade itself is
-  // compositor work. A width transition here relaid out the canvas per frame.
   test("the transitions add no layout work after the step", async ({
     page,
   }) => {
@@ -216,7 +209,6 @@ test.describe("popups", () => {
   test("menus, tooltips, dialogs and sheets move only opacity, scale or translate, on the token durations", async ({
     page,
   }) => {
-    // A plain `transition` class runs on the fast token by default.
     expect(
       (await timing(page, 'nav[aria-label="Motion"] [data-close]')).duration,
     ).toBe("0.12s");
@@ -264,8 +256,7 @@ test.describe("popups", () => {
     page,
   }) => {
     const menu = page.locator('[data-slot="dropdown-menu-content"]');
-    // Base UI drops `data-starting-style` a frame after it mounts the popup,
-    // which is when the transitions start: the first ten frames' worth.
+    // Base UI drops `data-starting-style`, starting the transitions, a frame after mount.
     const opened = (): Promise<string[]> =>
       page.evaluate(async () => {
         document

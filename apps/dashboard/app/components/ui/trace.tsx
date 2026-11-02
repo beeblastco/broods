@@ -10,12 +10,7 @@ import {
   CollapsibleTrigger,
 } from "@/app/components/ui/collapsible";
 
-/**
- * shadcn Trace (base-ui variant): a list of lines, each an icon, a title and
- * an optional description, that can expand, link or open a dialog. The running
- * shimmer is left out: the dashboard allows no continuously repainting
- * animation, so a running line reads through its title and status dot.
- */
+// shadcn Trace without its running shimmer: no continuously repainting animation here.
 function Trace({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -35,7 +30,6 @@ function TraceLine({
   status,
   ...props
 }: React.ComponentProps<"span"> & {
-  /** `xs` for a line inside a text-xs table, such as the tracing waterfall. */
   size?: "sm" | "xs";
   status?: "running" | "error" | "pending";
 }) {
@@ -72,7 +66,6 @@ function TraceTitle({
   strong,
   ...props
 }: React.ComponentProps<"span"> & {
-  /** Foreground instead of the line's muted color, for a heading line such as a step. */
   strong?: boolean;
 }) {
   return (
@@ -150,7 +143,6 @@ function TraceCollapsibleContent({
   size = "sm",
   ...props
 }: React.ComponentProps<typeof CollapsibleContent> & {
-  /** `xs` to match a `TraceLine` of that size. */
   size?: "sm" | "xs";
 }) {
   return (

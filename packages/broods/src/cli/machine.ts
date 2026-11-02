@@ -1,10 +1,3 @@
-/**
- * `broods machine <sandbox>`: runs core's exec frames with `bash -lc` on this
- * computer, in the user's own environment, and reconnects until core refuses.
- * With --computer it also answers computer frames through desktop.ts, and
- * with --mcp MCP frames through mcp-host.ts.
- */
-
 import { spawn } from "node:child_process";
 import { statfsSync } from "node:fs";
 import { availableParallelism, homedir, hostname, totalmem } from "node:os";
@@ -46,22 +39,17 @@ const RECONNECT_MIN_MS = 1_000;
 
 export interface MachineDaemonOptions {
   baseUrl: string;
-  /** Serve the computer tool through the desktop helper. */
   computer?: boolean;
-  /** Called per connection and per refresh, each time for a fresh stage ticket. */
+  /** Called per connection and per refresh; each call mints a fresh stage ticket. */
   credential: () => Promise<string>;
-  /** Working directory for an exec that names none. */
   cwd: string;
-  /** Take the record over from another daemon. */
   force?: boolean;
   log: (line: string) => void;
-  /** A `.mcp.json` whose stdio servers agents may call. */
   mcpFile?: string;
   sandbox: string;
   signal: AbortSignal;
 }
 
-/** Aborting `signal`, the socket's lifetime, kills the command's process group. */
 export function runExec(
   frame: MachineExecFrame,
   defaultCwd: string,
@@ -124,13 +112,11 @@ export function runExec(
   });
 }
 
-/** Serves core until the signal aborts. Throws core's reason on a refusal. */
 export async function runMachineDaemon(
   options: MachineDaemonOptions,
 ): Promise<void> {
   const WebSocketImpl = resolveWebSocket();
-  // What lets this process, and only this process, reclaim its record after a
-  // network drop. A restart is a new daemon to core.
+  // Lets only this process reclaim its record after a network drop; a restart is a new daemon.
   const instance = crypto.randomUUID();
   // MCP first: a bad file fails before the desktop helper starts.
   const mcp = options.mcpFile
@@ -145,7 +131,6 @@ export async function runMachineDaemon(
       try {
         token = await options.credential();
       } catch (error) {
-        // A refused login is final; an unreachable backend is a reconnect.
         if (error instanceof StageSessionRefusedError) throw error;
         options.log(
           `stage session unavailable (${error instanceof Error ? error.message : String(error)}), retrying in ${Math.round(delayMs / 1000)}s`,
@@ -181,7 +166,6 @@ export async function runMachineDaemon(
   }
 }
 
-/** Keeps the first `limit` bytes of a stream. */
 class OutputBuffer {
   readonly #chunks: Buffer[] = [];
   readonly #limit: number;
@@ -226,7 +210,6 @@ function describeComputerFrame(frame: MachineComputerFrame): string {
   return parts.join(" ");
 }
 
-// This computer's CPUs, memory and home disk, so the dashboard can show its size.
 function hardwareSpecs(): MachineHelloFrame["specs"] {
   const storageGb = homeDiskGb();
 
@@ -237,7 +220,6 @@ function hardwareSpecs(): MachineHelloFrame["specs"] {
   };
 }
 
-// Size of the disk holding the home folder, or undefined when the OS will not say.
 function homeDiskGb(): number | undefined {
   try {
     const disk = statfsSync(homedir());
@@ -256,8 +238,7 @@ function oneLine(text: string): string {
     : line;
 }
 
-// Lazy, so the embedded Swift source loads only with --computer. Starting
-// before the first connect surfaces a missing compiler or grant right away.
+// Started before the first connect, so a missing compiler or grant surfaces right away.
 async function openDesktop(
   log: (line: string) => void,
 ): Promise<DesktopDriver> {
@@ -273,7 +254,6 @@ async function openDesktop(
   return driver;
 }
 
-// Lazy, so the MCP client loads only with --mcp. Servers spawn on first use.
 async function openMcpHost(
   file: string,
   log: (line: string) => void,
@@ -313,7 +293,6 @@ async function serveMcp(
   }
 }
 
-/** One connection, from hello until close. */
 function serveOnce(
   options: MachineDaemonOptions,
   token: string,
@@ -333,9 +312,8 @@ function serveOnce(
     const send = (frame: MachineDaemonFrame): void => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(frame));
     };
-    // Core closes a ticket's socket at its expiry, killing any command still
-    // running, so a fresh ticket goes in at half the time left, and again at
-    // half of what is left then until core answers with a new deadline.
+    // Core closes a ticket's socket at expiry, killing running commands, so a fresh ticket goes
+    // in at half the time left, then half of what remains, until core sends a new deadline.
     let refresh: ReturnType<typeof setTimeout> | undefined;
     const refreshBefore = (expiresAt: number): void => {
       clearTimeout(refresh);

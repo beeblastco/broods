@@ -7,17 +7,10 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-// What `/compact` replies when it found history to fold.
 const COMPACTED_REPLY = /^Context compacted\. \d+ message\(s\) summarized\.$/;
 
-/**
- * Auto-compaction folds the history once a turn has finished. A `/compact`
- * after that turn then finds nothing new on an agent whose threshold the turn
- * crossed, and the whole turn still there on an agent that turned it off.
- */
 export async function autoCompaction(context: VerifyContext): Promise<void> {
   if (!context.hasModelKey) {
-    // Without a model no turn finishes, so nothing auto-compacts.
     console.log(`  skip auto-compaction (${MODEL_KEY_HINT})`);
     return;
   }

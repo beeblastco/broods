@@ -1,9 +1,3 @@
-/**
- * Unit tests for the API authorization decision contract: default deny,
- * allow rules, deny precedence, resource-id selectors, and the HTTP
- * method-to-action mapping.
- */
-
 import { describe, expect, test } from "vitest";
 import {
   apiActionForRequest,

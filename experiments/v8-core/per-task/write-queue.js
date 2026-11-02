@@ -1,29 +1,9 @@
 /**
- * The outbound side of every task worker: requests pass straight through,
- * except the two usage writes that land on one account-wide row. Each
- * finished run writes its usage and its `run.completed` audit row in one
- * Convex mutation that moves the account's audit chain head, and sandbox
- * commands add to the account's monthly meter. Today's core sends both from
- * its one ConvexHttpClient, which queues its usage writes; separate task
- * workers each have their own client, so their writes race on those rows and
- * Convex retries or drops the losers.
- *
- * So the writes go to one writer per account and kind (a Durable Object,
- * `WriteQueue`), which sends them as a group commit: whatever arrived while
- * the last write was in flight goes out as one batch mutation
- * (`usage:recordTaskUsages`, `account/budget:recordMany`) that applies each
- * write in order, each still deduplicated by its own task or write id. Every
- * caller gets the answer its own call would have got. A batch Convex refuses
- * is sent again one write at a time, so one bad write fails only its caller.
- * Broods itself does not carry the two batch mutations (they are in commit
- * 4631eaa), so against it every batch falls back to one write at a time.
- *
- * The batch is sent from a caller's own request, the first one waiting, which
- * waits for it; the next one waiting then leads. A plain worker cannot hold a
- * queue across requests (workerd cancels a request left waiting on another
- * request's promise as hung); a Durable Object can.
+ * Outbound proxy for task workers. Usage and budget writes from separate workers race on one
+ * account row, so each account and kind goes to one Durable Object (a plain worker cannot hold a
+ * queue across requests) that sends what queued as one batch mutation, or one at a time if refused.
+ * Broods lacks the batch mutations (commit 4631eaa), so against it every write goes alone.
  */
-
 const BATCHED = {
   "usage:recordTaskUsage": "usage:recordTaskUsages",
   "account/budget:record": "account/budget:recordMany",
@@ -80,7 +60,6 @@ export class WriteQueue {
         settle(item, new Response(await response.arrayBuffer(), response));
       }
     } catch (error) {
-      // The caller gets a plain 502; the error itself stays in the log.
       console.error("write queue: Convex unreachable", error);
       for (const item of batch)
         if (!item.response)

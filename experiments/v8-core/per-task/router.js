@@ -1,17 +1,7 @@
 /**
- * One fresh V8 isolate per request: the "each agent task is its own function
- * call" model. The router holds core's bundle as text and, for every request,
- * asks the Worker Loader for a worker under a name never used before, so
- * nothing (module state, caches, connections) carries over from one task to
- * the next. The loaded worker gets the same flags and env as core on workerd.
- *
- * ROUTER_KEY=agent instead keeps one worker per agent: a task for an agent
- * that already has a loaded worker reuses it, so only an agent's first task
- * pays the load. The agent comes from the run request's JSON body; anything
- * else (health checks, callbacks) gets a fresh worker as before.
- *
- * An OUTBOUND service binding becomes every loaded worker's outbound fetch,
- * so one shared worker (per-task/write-queue.js) can queue their writes.
+ * Loads core's bundle into a fresh worker per request, so nothing carries over between tasks.
+ * ROUTER_KEY=agent keeps one worker per agent (from the run body's agentId) instead. An OUTBOUND
+ * binding becomes every loaded worker's outbound fetch (per-task/write-queue.js).
  */
 
 import BUNDLE from "bundle";

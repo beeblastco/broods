@@ -40,12 +40,9 @@ export interface AsyncToolCompletion {
 }
 
 /**
- * Resumes each conversation whose async tool result no live run delivered:
- * the run that detached it died with its pod or its resume failed, or the
- * result is still `pending` past any live run's hold, because the run that
- * owed it died before its write and its detach. Each pass walks every page,
- * so rows it must retry never crowd the rest out. The ingress recovery sweep
- * calls it on its timer, after the subagent pass.
+ * The ingress recovery sweep: resumes each conversation whose async tool result no live run
+ * delivered (detached by a run that died, or `pending` past any run's hold). Walks every page,
+ * so retried rows never crowd the rest out.
  */
 export async function resumeLostAsyncToolResults(
   resumeConversation: AsyncToolSettlementResumer,
@@ -69,9 +66,7 @@ export async function resumeLostAsyncToolResults(
             row,
             resumeConversation,
           );
-          // Counted once it is handled: each one is a result a run dropped
-          // without a trace. A row kept for the next pass is not counted
-          // again each pass.
+          // Logged once, when handled: each is a result a run dropped without a trace.
           if (handled && handback === "pending") {
             logInfo("Async tool result left pending past the run's hold", {
               resultId: row.resultId,
@@ -88,11 +83,7 @@ export async function resumeLostAsyncToolResults(
   }
 }
 
-/**
- * Formats an async tool result as the user message injected into the parent;
- * the handler's continuation run uses it. Keyed by the result, so saving it
- * stores the result once.
- */
+/** The user message that hands a settled async tool result to the parent conversation. */
 export function completionToParentMessage(
   completion: AsyncToolCompletion,
 ): IngressUserMessage {
@@ -123,14 +114,9 @@ export function completionToParentMessage(
 }
 
 /**
- * One row of `resumeLostAsyncToolResults`: its continuation is admitted under
- * the row and stored by its owner's save, or refused as a duplicate once the
- * conversation has it. A conversation with no room keeps the row for the next
- * pass, and so do a resume that throws and a duplicate: admission already
- * marked a stored result, and a continuation still queued or applied is
- * stored by its owner's save, or admitted again by a later pass once it
- * expired. A row no
- * resume can ever deliver is marked stored and logged once.
+ * One row of the sweep. Its continuation is stored by its owner's save, or refused as a duplicate.
+ * A full conversation, a throwing resume or a duplicate keeps the row for the next pass; a row no
+ * resume can deliver is marked stored and logged once.
  * @returns whether the row is handled, rather than kept for the next pass
  */
 async function resumeLostAsyncToolResult(
@@ -158,6 +144,8 @@ async function resumeLostAsyncToolResult(
 
     return true;
   }
+  // Kept: a duplicate is already marked stored, or its queued continuation marks it
+  // when applied, or expires and a later pass admits it again.
   if (admission === "capacity" || admission === "duplicate") return false;
   await markAsyncToolHandback(row.resultId, "stored");
   logInfo("Gave up on a lost async tool result", {

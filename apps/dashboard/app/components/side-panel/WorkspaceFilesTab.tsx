@@ -1,6 +1,5 @@
 "use client";
 
-/** VSCode-style file explorer for a workspace canvas node with drag-and-drop upload. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { IconTooltip } from "@/app/components/IconTooltip";
 import {
@@ -60,23 +59,19 @@ type RuntimeFileCacheEntry = {
   cachedAt: number;
 };
 
-/** What a navigation key does on the focused row. */
 type TreeKeyTarget = { focus: string } | { toggle: string };
 
 const RUNTIME_FILE_CACHE_PREFIX = "broods.workspace-files.v1";
-// The tree/preview split per browser. The library's default store reads
-// localStorage during the server render, which has none.
+// The library's default store reads localStorage during the server render.
 const SPLIT_STORAGE: LayoutStorage = {
   getItem: (key) =>
     typeof window === "undefined" ? null : window.localStorage.getItem(key),
   setItem: (key, value) => window.localStorage.setItem(key, value),
 };
-// How often the file list is re-read from core. Slow is fine: the focus and
-// visibility refreshes cover active use.
+// Slow on purpose: the focus and visibility refreshes cover active use.
 const RUNTIME_FILES_POLL_MS = 15_000;
 const runtimeFileCache = new Map<string, RuntimeFileCacheEntry>();
 
-/** The workspace node's files from Convex or the runtime workspace, with upload, rename and delete. */
 export function WorkspaceFilesTab({
   projectId,
   nodeId,
@@ -158,6 +153,7 @@ export function WorkspaceFilesTab({
     [applyRuntimeFiles, listRuntimeFiles, projectId, workspaceId],
   );
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- loads the list from core via Convex
   useEffect(() => {
     if (!projectId || !workspaceId) return;
     let cancelled = false;
@@ -176,7 +172,7 @@ export function WorkspaceFilesTab({
     void pending
       .then((next) => {
         if (!cancelled && request === refreshRequestRef.current)
-          // oxlint-disable-next-line no-callback-in-promise -- state applier, not an error-first callback.
+          // oxlint-disable-next-line no-callback-in-promise -- state setter, not a Node callback
           applyRuntimeFiles(next);
       })
       .catch((err) => {
@@ -194,6 +190,7 @@ export function WorkspaceFilesTab({
     };
   }, [applyRuntimeFiles, cacheKey, listRuntimeFiles, projectId, workspaceId]);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- a poll timer and focus listeners
   useEffect(() => {
     if (!workspaceId) return;
     const refreshWhenVisible = (): void => {
@@ -291,9 +288,7 @@ export function WorkspaceFilesTab({
           }
         }
 
-        // Failures are caught per entry: one bad file (too large, rejected)
-        // must not abort the loop. That would strand the remaining paths in
-        // `uploading` as permanent spinner rows and silently skip them.
+        // Caught per entry: one bad file must not strand the rest in `uploading`.
         let entryError: string | null = null;
         for (const { file, path } of entries) {
           try {
@@ -344,8 +339,6 @@ export function WorkspaceFilesTab({
         if (workspaceId) await refreshRuntimeFiles(false, true);
       } catch (err) {
         setError(toErrorMessage(err));
-        // The folder-creation path can fail before the loop starts; clear
-        // every pending path so no row is left spinning forever.
         setUploading((prev) => {
           const next = new Set(prev);
           for (const { path } of entries) next.delete(path);
@@ -436,8 +429,7 @@ export function WorkspaceFilesTab({
     [convex, nodeId, projectId, runtimeFileUrl, workspaceId],
   );
 
-  // Runtime files are read through Convex, so the bucket needs no CORS rule;
-  // Convex storage URLs already allow the dashboard to fetch them.
+  // Runtime files are read through Convex, so their bucket needs no CORS rule.
   const loadFile = useCallback(
     async (file: FileRecord): Promise<FileContent> => {
       if (isImageFile(file.name)) {
@@ -486,11 +478,7 @@ export function WorkspaceFilesTab({
   );
 }
 
-/**
- * The explorer itself: toolbar, drop zone and a keyboard-navigable file tree.
- * Data-free so the UI gallery can render it. One row is the tab stop; arrows
- * move the selection, Enter toggles a folder, F2 renames and Delete asks first.
- */
+// Data-free so the UI gallery can render it.
 export function WorkspaceFilesView({
   files,
   uploading,
@@ -505,22 +493,18 @@ export function WorkspaceFilesView({
   loadFile,
   fileUrl,
 }: {
-  /** Undefined while loading. */
   files: FileRecord[] | undefined;
   uploading: Set<string>;
   error: string | null;
   canWrite: boolean;
   isRefreshing?: boolean;
-  /** Shows the refresh button when set. */
   onRefresh?: () => void;
   onDismissError: () => void;
   onUpload: (entries: UploadEntry[], folders: string[]) => Promise<void>;
   onDelete: (node: FileRecord) => Promise<void>;
-  /** Resolves whether the rename landed; the view keeps the old row when it did not. */
   onRename: (node: FileRecord, newName: string) => Promise<boolean>;
-  /** The preview's contents; keep it stable, a new function reloads the open file. */
+  /** Keep it stable: a new function reloads the open file. */
   loadFile: (file: FileRecord) => Promise<FileContent>;
-  /** A short-lived URL for Download. */
   fileUrl: (file: FileRecord) => Promise<string>;
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -544,8 +528,6 @@ export function WorkspaceFilesView({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
-  // The row that takes focus once a rename or a delete dialog ends, as soon as
-  // it renders, unless the user already moved focus out of the tree.
   const pendingFocusRef = useRef<string | null>(null);
 
   const tree = useMemo(
@@ -560,6 +542,7 @@ export function WorkspaceFilesView({
     ? selected
     : (visible[0]?.path ?? null);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- focuses the row's DOM node
   useEffect(() => {
     const path = pendingFocusRef.current;
     if (!path) return;
@@ -613,8 +596,7 @@ export function WorkspaceFilesView({
 
     const fileEntries: UploadEntry[] = [];
     const folderPaths: string[] = [];
-    // The drag data store closes once this handler first yields, so every
-    // item is read before the first await.
+    // The drag data store closes at this handler's first await: read every item before it.
     const dropped = Array.from(e.dataTransfer.items)
       .filter((item) => item.kind === "file")
       .map((item) => item.webkitGetAsEntry?.() ?? item.getAsFile());
@@ -630,8 +612,7 @@ export function WorkspaceFilesView({
     await upload(fileEntries, folderPaths);
   };
 
-  // A member's drop is refused rather than ignored: an uncancelled drop opens
-  // the file in the tab and leaves the dashboard.
+  // A member's drop is cancelled too: an uncancelled drop opens the file and leaves the page.
   const handleDragEnter = (e: React.DragEvent<HTMLDivElement>): void => {
     e.preventDefault();
     if (!canWrite) return;
@@ -676,7 +657,6 @@ export function WorkspaceFilesView({
     e.target.value = "";
   };
 
-  // Selecting a file previews it in the transient tab.
   const select = (node: FileNode): void => {
     setSelected(node.path);
     if (!node.isFolder) previewTabs.show(node.path);
@@ -688,8 +668,6 @@ export function WorkspaceFilesView({
     rowElement(treeRef.current, path)?.focus();
   };
 
-  // Row clicks and keys are delegated here, so each row is a plain treeitem.
-  // A row press, by click or Enter/Space: select it and toggle a folder.
   const activate = (node: FileNode): void => {
     select(node);
     if (node.isFolder) toggleFolder(node.path);
@@ -715,7 +693,6 @@ export function WorkspaceFilesView({
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       activate(node);
-      // Enter keeps the file open in its own tab; Space only previews it.
       if (e.key === "Enter" && !node.isFolder) previewTabs.pin(node.path);
 
       return;
@@ -770,7 +747,6 @@ export function WorkspaceFilesView({
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
-      {/* Toolbar */}
       <div className="flex shrink-0 items-center justify-end gap-0.5 px-3 py-2">
         {onRefresh && (
           <IconTooltip label="Refresh workspace files">
@@ -811,7 +787,6 @@ export function WorkspaceFilesView({
         )}
       </div>
 
-      {/* Hidden inputs */}
       <input
         ref={fileInputRef}
         type="file"
@@ -819,7 +794,6 @@ export function WorkspaceFilesView({
         className="hidden"
         onChange={handleFileInputChange}
       />
-      {/* webkitdirectory lets the user pick an entire folder */}
       <input
         ref={folderInputRef}
         type="file"
@@ -830,7 +804,6 @@ export function WorkspaceFilesView({
         onChange={handleFileInputChange}
       />
 
-      {/* Error banner */}
       {error && (
         <div className="mx-3 mb-2 rounded-md bg-destructive/10 px-3 py-2 text-2xs text-destructive">
           {error}
@@ -843,8 +816,7 @@ export function WorkspaceFilesView({
         </div>
       )}
 
-      {/* File tree, and the preview below it once a file is open. The group
-          is always rendered, so opening the first file keeps the tree's focus. */}
+      {/* Always rendered, so opening the first file keeps the tree's focus. */}
       <ResizablePanelGroup
         orientation="vertical"
         className="min-h-0 flex-1"
@@ -899,7 +871,6 @@ export function WorkspaceFilesView({
                     onRenameCancel={endRename}
                   />
                 ))}
-                {/* In-flight uploads not yet reflected in DB */}
                 {Array.from(uploading).map((path) => {
                   const alreadyInTree = files.some((f) => f.path === path);
                   if (alreadyInTree) return null;
@@ -941,7 +912,6 @@ export function WorkspaceFilesView({
         )}
       </ResizablePanelGroup>
 
-      {/* Drag-over overlay */}
       {isDragOver && (
         <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded bg-primary/5">
           <div className="flex size-12 items-center justify-center rounded-full border-2 border-dashed border-primary/50 bg-background">
@@ -1019,7 +989,6 @@ function buildTree(files: FileRecord[]): FileNode[] {
   return roots;
 }
 
-/** The row under a click or key event, by the `data-path` its treeitem carries. */
 function nodeAt(
   visible: FileNode[],
   target: EventTarget,
@@ -1030,14 +999,12 @@ function nodeAt(
   return visible.find((node) => node.path === path);
 }
 
-/** The path a file or folder moves to when renamed in place. */
 export function renamedPath(path: string, newName: string): string {
   const slash = path.lastIndexOf("/");
 
   return slash === -1 ? newName : `${path.slice(0, slash)}/${newName}`;
 }
 
-/** The row that takes over when a row and everything under it goes: the next one, else the one before. */
 function rowAfterRemoval(visible: FileNode[], path: string): string | null {
   const index = visible.findIndex((node) => node.path === path);
   const after = visible
@@ -1047,7 +1014,6 @@ function rowAfterRemoval(visible: FileNode[], path: string): string | null {
   return after?.path ?? visible[index - 1]?.path ?? null;
 }
 
-/** A row's treeitem element, by the `data-path` it carries. */
 function rowElement(
   tree: HTMLElement | null,
   path: string,
@@ -1058,7 +1024,6 @@ function rowElement(
   );
 }
 
-/** The WAI-ARIA tree moves: arrows walk the visible rows, Right and Left open, close and climb. */
 function treeKeyTarget(
   key: string,
   node: FileNode,
@@ -1096,7 +1061,6 @@ function treeKeyTarget(
   }
 }
 
-/** The rows a user can reach: every root, and the children of open folders, in order. */
 function visibleNodes(nodes: FileNode[], expanded: Set<string>): FileNode[] {
   return nodes.flatMap((node) =>
     node.children && expanded.has(node.path)
@@ -1310,7 +1274,6 @@ function TreeRow({
         style={{ "--indent": `${4 + depth * 16}px` }}
         title={isRenaming ? undefined : node.path}
       >
-        {/* chevron / spacer */}
         <span className="flex w-4 shrink-0 items-center justify-center">
           {node.isFolder ? (
             isExpanded ? (
@@ -1321,7 +1284,6 @@ function TreeRow({
           ) : null}
         </span>
 
-        {/* icon */}
         {node.isFolder ? (
           isExpanded ? (
             <FolderOpen className="mr-1.5 size-3.5 shrink-0 text-folder" />
@@ -1332,7 +1294,6 @@ function TreeRow({
           <ExtIcon name={node.name} />
         )}
 
-        {/* rename input, or the name with its size hint and actions */}
         {isRenaming ? (
           <span className="flex min-w-0 flex-1 font-mono">
             <InlineEdit
@@ -1361,8 +1322,7 @@ function TreeRow({
               </span>
             )}
 
-            {/* Pointer shortcuts, visible on hover or when selected. Out of the
-                tab order: the tree has one tab stop and F2 / Delete do the same. */}
+            {/* Out of the tab order: the tree has one tab stop and F2 / Delete do the same. */}
             <span
               className={cn(
                 "flex shrink-0 items-center gap-0.5",
@@ -1411,7 +1371,6 @@ function TreeRow({
         )}
       </div>
 
-      {/* children */}
       {node.isFolder &&
         isExpanded &&
         node.children?.map((child, index, siblings) => (

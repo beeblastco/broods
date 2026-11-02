@@ -1,8 +1,3 @@
-/**
- * Parent-dispatched subagent tool.
- * Keep model-facing input validation here; execution orchestration lives in the harness.
- */
-
 import {
   jsonSchema,
   tool,
@@ -24,7 +19,6 @@ export interface RunSubagentTaskInput {
   agentId?: string;
   prompt: string;
   conversationKey?: string;
-  /** Run a harness subagent on a machine of its own instead of its agent's shared one. */
   isolated?: boolean;
 }
 
@@ -33,7 +27,6 @@ export type RunSubagentTaskDispatch = {
   agentId: string;
   description?: string;
   conversationKey: string;
-  /** The child's run id; what an `attach` names and `statusPath` resolves. */
   runId: string;
   statusPath: string;
   status: "running";
@@ -154,8 +147,7 @@ function normalizeInput(
   return tasks.map((task, index) => normalizeTask(task, index, mode));
 }
 
-// Models often send null for an optional field they mean to leave out, so null
-// reads as omitted here and in normalizeTask.
+// Models send null for an optional field they mean to omit.
 function normalizeOptionalString(
   value: unknown,
   name: string,

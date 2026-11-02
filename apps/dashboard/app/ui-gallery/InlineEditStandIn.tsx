@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * Renames in place and links that go on the press, with nothing behind them.
- *
- * The field, the canvas card and the project card are the real components;
- * every rename they commit lands in `[data-renamed]`. The links are the real
- * `useRouteIntent` handlers pointed back at this page, so `?opened=` says which
- * one was followed and `[data-opened]` reads it back.
- */
 import {
   CANVAS_EDGE_TYPES,
   CANVAS_NODE_TYPES,
@@ -56,9 +48,11 @@ const CARD_ANALYSIS = analyzeCanvasInfra(CARD_NODES, []);
 
 export function InlineEditStandIn(): React.JSX.Element {
   const hydrated = useHydrated();
-  const [renamed, setRenamed] = useState<readonly string[]>([]);
+  const [renamed, setRenamed] = useState<
+    ReadonlyArray<{ id: number; entry: string }>
+  >([]);
   const record = (entry: string): void =>
-    setRenamed((current) => [...current, entry]);
+    setRenamed((current) => [...current, { id: current.length, entry: entry }]);
 
   return (
     <main
@@ -110,8 +104,8 @@ export function InlineEditStandIn(): React.JSX.Element {
       </section>
 
       <ol data-renamed className="font-mono text-2xs text-muted-foreground">
-        {renamed.map((entry, index) => (
-          <li key={`${entry}-${index}`} data-renamed-entry>
+        {renamed.map(({ id, entry }) => (
+          <li key={id} data-renamed-entry>
             {entry}
           </li>
         ))}
@@ -120,7 +114,6 @@ export function InlineEditStandIn(): React.JSX.Element {
   );
 }
 
-/** A heading that renames from the button beside it, as a panel title would. */
 function NameField({
   onRename,
 }: {
@@ -159,7 +152,6 @@ function NameField({
   );
 }
 
-/** One writable agent card on a real canvas, renamed by a double-click of its name. */
 function CardCanvas({
   onRename,
 }: {
@@ -218,7 +210,6 @@ function CardCanvas({
   );
 }
 
-/** A project card whose rename sticks the way the optimistic update makes it. */
 function ProjectCardStandIn({
   initialName,
   href,
@@ -250,10 +241,6 @@ function ProjectCardStandIn({
   );
 }
 
-/**
- * A link, a button and a menu item on the shared handlers, and a current link
- * that resets.
- */
 function PressLinks(): React.JSX.Element {
   const { handlers } = useRouteIntent();
   const opened = useSearchParams().get("opened");

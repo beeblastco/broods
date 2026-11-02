@@ -51,13 +51,12 @@ function TooltipContent({
         alignOffset={alignOffset}
         side={side}
         sideOffset={sideOffset}
-        // The z-index has to sit here, not on the popup: see select.tsx.
+        // Base UI transforms the positioner, making it the stacking context: z-index goes here.
         className="isolate z-50"
       >
         <TooltipPrimitive.Popup
           data-slot="tooltip-content"
-          // Pretty, not balanced: balance keeps the box at its cap and leaves
-          // blank space right of a wrapped sentence.
+          // Pretty, not balanced: balance keeps the box at its cap width.
           className={cn(
             "bg-foreground text-background w-fit origin-(--transform-origin) rounded-md px-2 py-1 text-xs text-pretty motion-pop duration-fast data-instant:duration-0",
             className,

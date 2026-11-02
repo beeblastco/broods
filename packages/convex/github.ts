@@ -1,10 +1,8 @@
 /**
- * GitHub repo links for the dashboard. An org admin connects the Broods
- * GitHub App once; a project then imports a repo (Broods finds its
- * `broods/`) or creates one, and Broods commits a workflow plus one project
- * key per stage as repo secrets. A push to the production or development
- * branch then deploys that stage from the user's own Actions, and the
- * `workflow_run` webhook brings the result back to the dashboard.
+ * GitHub repo links. An org admin connects the Broods GitHub App once; a project imports a repo
+ * (Broods finds its `broods/`) or creates one, and Broods commits a workflow plus a project key
+ * per stage as repo secrets. A push to the production or development branch deploys that stage
+ * from the user's own Actions; the `workflow_run` webhook brings the result to the dashboard.
  */
 
 import { type Infer, v } from "convex/values";
@@ -120,7 +118,10 @@ const statusValidator = v.object({
   configured: v.boolean(),
   /** Whether the caller may connect GitHub accounts: an org admin. */
   canConnect: v.boolean(),
-  /** Whether the caller may link or unlink this project's repo (`keys:write`), or, with no project, create one (org admin). */
+  /**
+   * Whether the caller may link or unlink this project's repo (`keys:write`), or, with no project,
+   * create one (org admin).
+   */
   canLink: v.boolean(),
   /** GitHub's web root for repo links; absent without an App. */
   webUrl: v.optional(v.string()),
@@ -166,7 +167,10 @@ interface LinkKeys {
   development?: string;
 }
 
-/** `POST /v1/account/github/link`: a repo by `owner/name`, and where its `broods/` sits when it has several. */
+/**
+ * `POST /v1/account/github/link`: a repo by `owner/name`, and where its `broods/` sits when it has
+ * several.
+ */
 interface CliLinkRequest {
   repo?: string;
   folder?: string;
@@ -201,7 +205,7 @@ interface RepositoryEvent {
   repository: { id: number; full_name: string };
 }
 
-/** What the dashboard shows: the org's GitHub accounts, and the project's link and latest deploys. */
+/** What the dashboard shows: the org's GitHub accounts, the project's link and latest deploys. */
 export const status = query({
   args: { projectId: v.optional(v.id("projects")) },
   returns: statusValidator,
@@ -320,7 +324,10 @@ export const begin = mutation({
   },
 });
 
-/** `begin` without a new repo, for a `broods login` token in its org: installs the App on another account. */
+/**
+ * `begin` without a new repo, for a `broods login` token in its org: installs the App on another
+ * account.
+ */
 export const beginFor = internalMutation({
   args: { authId: v.string(), orgId: v.id("orgs") },
   returns: v.object({ url: v.string() }),
@@ -1048,7 +1055,10 @@ export const mintLinkKeys = internalMutation({
   },
 });
 
-/** Deletes the keys and stages a link made but never used, and its repo claim, after a GitHub call failed. */
+/**
+ * Deletes the keys and stages a link made but never used, and its repo claim, after a GitHub call
+ * failed.
+ */
 export const revokeKeys = internalMutation({
   args: {
     projectId: v.id("projects"),

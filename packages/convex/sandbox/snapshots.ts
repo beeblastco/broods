@@ -1,14 +1,3 @@
-/**
- * Sandbox snapshot/image registry. Mirrors broods's image build state so the
- * dashboard can list snapshots with their unified build status, and locks each
- * snapshot to the account and stage of the sandbox it was taken from.
- * `listForActiveOrg` is the dashboard read; `upsert` is the create-or-refresh
- * writer broods calls when a snapshot is captured (or its build status changes);
- * `findByImage` is how core checks a sandbox may boot the image it pins, and
- * `assertSnapshotInScope` is the same check on every config write that points
- * a sandbox at a snapshot.
- */
-
 import { v } from "convex/values";
 import {
   internalMutation,
@@ -31,16 +20,9 @@ const sandboxSnapshotListRow = v.object({
   ...sandboxSnapshotsFields,
   _id: v.id("sandboxSnapshots"),
   _creationTime: v.number(),
-  /** The stage the snapshot was taken on, for the dashboard to show. */
   stageName: v.optional(v.string()),
 });
 
-/**
- * Public query: lists sandbox snapshots/images for the caller's active org,
- * each with the name of the stage it was taken on. Used by the dashboard
- * Sandbox tab's Snapshots view and the sandbox node's Snapshot picker.
- * @returns the account's snapshot rows, or `[]` when no org/account resolves.
- */
 export const listForActiveOrg = query({
   args: {},
   returns: v.array(sandboxSnapshotListRow),
@@ -79,14 +61,8 @@ export const listForActiveOrg = query({
   },
 });
 
-/**
- * Internal query: the snapshot row for one provider image, so core can refuse
- * to boot a snapshot of another account or stage and read the variant it was
- * built from. Image ids are unique per capture, so a row of another account
- * comes back too: core must refuse it, not boot it as a provider image.
- * @returns the row's owner, scope, base image and status, or null when no
- * account registered the image (a provider image, not a Broods snapshot)
- */
+// Another account's row comes back too: core must refuse it, not boot it as a provider
+// image. null means no account registered the image.
 export const findByImage = internalQuery({
   args: {
     accountId: v.optional(v.id("accounts")),
@@ -119,10 +95,6 @@ export const findByImage = internalQuery({
   },
 });
 
-/**
- * Internal query for the config HTTP actions: `assertSnapshotInScope`, which
- * throws its refusal as a client error (400).
- */
 export const assertInScope = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -137,16 +109,7 @@ export const assertInScope = internalQuery({
   },
 });
 
-/**
- * Refuses a config write that points a sandbox of `scope` at a registered
- * snapshot it could not boot: another account's, another stage's, or one
- * taken before snapshots recorded their stage. A name no account registered
- * is a provider image and passes.
- * @param ctx query or mutation context
- * @param accountId the sandbox config's account
- * @param scope the sandbox config's scope
- * @param snapshot the config's `snapshot`, when it sets one
- */
+// A name no account registered is a provider image and passes.
 export async function assertSnapshotInScope(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
@@ -165,18 +128,6 @@ export async function assertSnapshotInScope(
   if (refusal) throw new ClientError(refusal);
 }
 
-/**
- * Create-or-refresh a snapshot/image row, keyed by (account, scope, name).
- * Called by broods when a snapshot is captured from a running sandbox or when
- * the image pipeline reports a build-status transition.
- * @param accountId the owning account.
- * @param scope the stage (or account) of the sandbox the snapshot was taken from.
- * @param name the snapshot name (unique per account and scope).
- * @param provider the sandbox compute backend the image targets.
- * @param baseImage the base image/template the snapshot derived from.
- * @param externalImageId the provider-side image id/ARN.
- * @param status the unified build status; defaults to `active`.
- */
 export const upsert = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -195,8 +146,7 @@ export const upsert = internalMutation({
         q.eq("accountId", args.accountId).eq("name", args.name),
       )
       .collect();
-    // The same name on another stage is another snapshot: a dev capture must
-    // never repoint the row a production sandbox boots from.
+    // The same name on another stage is another snapshot: dev must never repoint prod's.
     const existing = named.find(
       (row) =>
         snapshotBootRefusal(row, {
@@ -205,8 +155,7 @@ export const upsert = internalMutation({
         }) === null,
     );
 
-    // Pinned configs name the provider image, so repointing a name at another
-    // provider's image would strand every sandbox booting the old one.
+    // Configs pin the provider image: another provider's would strand their sandboxes.
     if (existing && existing.provider !== args.provider) {
       throw new ClientError(
         `snapshot name "${args.name}" is already a ${existing.provider} snapshot; pick another name`,
@@ -257,9 +206,8 @@ type SnapshotImage = Pick<
   "accountId" | "scope" | "baseImage" | "status"
 >;
 
-// The row registering one provider image, the caller's own first should two
-// accounts ever hold the same id. An image whose row moved on to a newer
-// capture, or whose account is gone, still answers from its lock, as inactive.
+// The caller's own row first, should two accounts share an id. An image whose row moved
+// on, or whose account is gone, still answers from its lock, as inactive.
 async function snapshotByImage(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts"> | undefined,

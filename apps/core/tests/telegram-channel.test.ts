@@ -543,7 +543,6 @@ describe("telegram channel adapter", () => {
       },
     });
 
-    // A captionless photo used to be dropped for having no text.
     expect(parsed.content).toBe("");
     // Telegram offers a photo at several sizes; the largest is the one to read.
     expect(parsed.attachments?.[0]).toMatchObject({
@@ -587,8 +586,7 @@ describe("telegram channel adapter", () => {
         message: {
           ...createMessage({ chat: GROUP_CHAT }),
           caption: caption,
-          // A caption's mentions are indexed against caption_entities, so a
-          // gate reading `entities` never sees them.
+          // Caption mentions index caption_entities, so a gate reading `entities` misses them.
           caption_entities: entityFor(caption, "@support_bot", "mention"),
           photo: [{ file_id: "p1", file_unique_id: "u1", width: 8, height: 8 }],
         },
@@ -617,8 +615,7 @@ describe("telegram channel adapter", () => {
     // The file_id is what send-sticker takes to send the same sticker back.
     expect(parsed.content).toBe("🎉 [sticker file_id: st-1]");
 
-    // A .tgs or .webm sticker is not a picture any model can read, and the
-    // emoji says more than a failed download would.
+    // A .tgs or .webm sticker is no picture a model can read; the emoji says more.
     const animated = await parseTelegram({
       update_id: 34,
       message: {
@@ -630,8 +627,6 @@ describe("telegram channel adapter", () => {
   });
 
   it("carries the emoji as the text of a caption-less animated sticker", async () => {
-    // With no attachment and no caption, the emoji is all the message has.
-    // Without it the turn would arrive entirely empty.
     const parsed = await parseTelegram({
       update_id: 36,
       message: {
@@ -654,7 +649,6 @@ describe("telegram channel adapter", () => {
       globalThis.fetch = ORIGINAL_FETCH;
     });
 
-    // The file body the tenant host answers, behind a getFile that names it.
     async function readTenantPhoto(file: () => Response): Promise<Buffer> {
       globalThis.fetch = Object.assign(
         async (input: string | URL | Request): Promise<Response> => {
@@ -741,7 +735,6 @@ describe("telegram channel adapter", () => {
       } finally {
         restoreDns();
       }
-      // It stopped at the cap rather than reading on.
       expect(sent).toBeLessThan(MAX_ATTACHMENT_BYTES + 4 * chunk.byteLength);
     });
   });
@@ -765,8 +758,6 @@ describe("telegram channel adapter", () => {
   });
 });
 
-// The normalized message a Telegram update produces, or a thrown error naming
-// why the update was refused.
 async function parseTelegram(
   payload: Record<string, unknown>,
 ): Promise<InboundMessage> {
@@ -801,8 +792,7 @@ function createGatedAdapter(
   );
 }
 
-// Telegram tags each `@name` and `/command` in the text with an entity, and the
-// mention gate reads those rather than searching the text.
+// The mention gate reads Telegram's per-token entities, not the text.
 function entityFor(
   text: string,
   token: string,

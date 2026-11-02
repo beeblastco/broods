@@ -1,16 +1,8 @@
 /**
- * Bundles entry.ts for workerd with Bun's bundler: core's dependencies use
- * Bun-only import attributes (`with { type: "file" }`) that esbuild refuses.
- * Node built-ins stay external; workerd's nodejs_compat provides them.
+ * Bundles entry.ts for workerd with Bun's bundler (core's deps use Bun-only import attributes).
  * Usage: [SLIM=1] [SOURCEMAP=1] bun build.ts [entry] [outdir] (default ./entry.ts into ./dist).
- *
- * SLIM=1 swaps the packages the benchmark agent never uses (chat channels,
- * other sandbox and model providers, coding-agent harnesses) for a stub that
- * throws as soon as anything calls or constructs it. A task that still passes
- * on a slim bundle therefore never needed them; it is how small a task-only
- * runtime could be, not a build to ship.
+ * SLIM=1 stubs packages the bench agent never uses, to size a task-only runtime; not for shipping.
  */
-
 import { builtinModules } from "node:module";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -53,15 +45,8 @@ const NOT_EXTERNAL = new Set(["process", "node:process"]);
 const SLIM_STUBBED =
   /^(discord\.js|discord-api-types|@discordjs\/[^/]+|@slack\/[^/]+|@microsoft\/teams\.[^/]+|@chat-adapter\/[^/]+|@linear\/sdk|@octokit\/[^/]+|@daytona\/[^/]+|e2b|@vercel\/sandbox|@aws-sdk\/[^/]+|@earendil-works\/[^/]+|jiti|highlight\.js|@ai-sdk\/harness[^/]*|ai-sdk-ollama|@google\/genai|@ai-sdk\/(openai|google|xai|gateway|openai-compatible)|openai|@openrouter\/[^/]+|google-auth-library|@azure\/msal-node)(\/.*)?$/;
 const stub = new URL("./slim-stub.cjs", import.meta.url).pathname;
-// Two lines of core that do not run in a V8 isolate, patched into the bundle
-// only, by file and exact text; a patch whose text is gone fails the build.
-// - publicHostFetch dials the address it checked while presenting the host
-//   name for TLS (Bun's `tls.serverName`), which an isolate cannot do, so the
-//   bundle fetches by name. That re-resolves the name after the check and so
-//   weakens core's guard against names that later resolve inward: for this
-//   benchmark only, which is why it lives here and not in core.
-// - cacheDigest draws its key at module scope, where an isolate refuses random
-//   bytes, so the bundle draws it on first use.
+// Bundle-only patches by exact text (missing text fails the build). http.ts fetches by name,
+// which weakens core's inward-resolve guard: bench only. cache-digest.ts draws its key lazily.
 const PATCHES: Record<string, [string, string][]> = {
   "apps/core/src/shared/http.ts": [
     [
@@ -98,7 +83,6 @@ const result = await Bun.build({
   target: "node",
   format: "esm",
   minify: true,
-  // SOURCEMAP=1 writes <bundle>.js.map for bench/bundle-sizes.mjs.
   sourcemap: process.env.SOURCEMAP === "1" ? "external" : "none",
   // workerd leaves import.meta.url undefined; createRequire needs a file URL.
   define: { "import.meta.url": JSON.stringify("file:///bundle/entry.js") },
@@ -138,8 +122,7 @@ const result = await Bun.build({
         build.onResolve({ filter: /^(node:)?process$/ }, () => ({
           path: processShim,
         }));
-        // Bun ships its own "ws" and "undici" and treats them as built-ins;
-        // workerd has neither, so bundle the packages the importer depends on.
+        // Bun treats "ws" and "undici" as built-ins; workerd has neither, so bundle them.
         build.onResolve({ filter: /^(ws|undici)$/ }, (args) => ({
           path: packageEntry(args.path, args.importer),
         }));

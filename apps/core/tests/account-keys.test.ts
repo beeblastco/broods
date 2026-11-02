@@ -97,7 +97,6 @@ describe("account key cache", () => {
       await decryptAccountBlob(ACCOUNT, "agents:encryptedConfig", stale),
     ).toEqual(VALUE);
 
-    // A rotation happened in the config plane: the row now names a new key.
     const rotated = await createWrappedAccountKey(ACCOUNT, [SECRET]);
     const fresh = await new AccountCipher(ACCOUNT, [SECRET], [rotated]).encrypt(
       "agents:encryptedConfig",

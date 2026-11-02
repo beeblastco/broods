@@ -18,7 +18,7 @@ const buttonVariants = cva(
         ghost:
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
-        // Header switchers. Pass data-active={isCurrent}; an open menu trigger lights up on its own.
+        // Header switchers: pass data-active; an open menu trigger lights up on its own.
         nav: "text-muted-foreground hover:bg-accent/50 hover:text-foreground active:bg-accent/70 data-popup-open:bg-accent data-popup-open:text-foreground data-[active=true]:bg-accent data-[active=true]:text-foreground",
       },
       size: {
@@ -31,7 +31,6 @@ const buttonVariants = cva(
         "icon-sm": "size-8",
         "icon-lg": "size-10",
       },
-      // Text color layered over the variant, for buttons that stay quiet until hovered.
       tone: {
         default: "",
         muted: "text-muted-foreground hover:text-foreground",

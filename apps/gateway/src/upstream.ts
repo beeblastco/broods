@@ -1,25 +1,18 @@
 import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 import { USER_TOKEN_HEADER } from "./utils.ts";
 
-/** What core binds a socket credential to. */
 export type CredentialScope = {
   accountId: string;
   projectSlug: string;
   stageSlug: string;
   endpointIds: string[];
-  /** Unix ms a stage ticket dies at, as core verified it. A runtime key has none. */
+  // Unix ms; a runtime key has none.
   expiresAt?: number;
-  /** Where core keys the signed user's conversations, when a user token rode along. */
   conversationPrefix?: string;
-  /** Unix ms that user token dies at, as core verified it. */
   userTokenExpiresAt?: number;
 };
 
-/**
- * A socket credential checked against core. `invalid` means core refused the
- * token; `unavailable` means core could not answer, which is an outage and not
- * the caller's fault.
- */
+// `unavailable` is core not answering: an outage, not a bad login.
 export type SocketScope =
   | { kind: "resolved"; scope: CredentialScope }
   | { kind: "invalid" }
@@ -30,21 +23,13 @@ type FetchLike = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-/**
- * Core's scope lookup per socket. Each socket asks its own, because core
- * takes different credentials on each: the observability socket only a
- * member's stage ticket, the agent socket the stage's runtime key too.
- */
+// Observability takes only a member's stage ticket; the agent socket a runtime key too.
 const SCOPE_PATHS = {
   agent: "/v1/internal/agent-socket-scope",
   observability: "/v1/internal/observability-scope",
 } as const;
 
-/**
- * Resolves the scope a socket token grants, before the upgrade opens. A user
- * token goes along, so a forged or expired one fails the upgrade as a bad
- * login, counted by the auth-failure limiter.
- */
+// The user token goes along so a forged or expired one fails the upgrade as a bad login.
 export async function resolveSocketScope(
   socket: keyof typeof SCOPE_PATHS,
   token: string,

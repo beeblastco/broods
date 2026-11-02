@@ -1,18 +1,5 @@
-/**
- * Stateless MCP client for registered servers (#331). Wraps the official v2
- * SDK pinned to spec 2026-07-28. The issue's scope is that revision only, no
- * older versions, so a 2025-era server is refused at negotiation. One client
- * per operation, no session state. An "http" row dials its url; a "hosted"
- * row runs the same transport with every request routed through the Lambda
- * host (hosted.ts). A "machine" row never dials: the daemon on the user's
- * computer runs the MCP client for its stdio server, and core relays the
- * listing and each call over the machine socket; on a lambda sandbox the VM
- * runs it and core relays each request over HTTP (sandbox.ts). The version
- * probe and tool listings are cached in-process per server row (keyed by row version, resolved headers,
- * oauth config and a lambda row's sandbox, so an edit is a cache miss), honoring the ttlMs the spec
- * puts on cacheable results. A row with oauth mints a bearer token (oauth.ts)
- * at connect time.
- */
+// One stateless client per operation, pinned to MCP spec 2026-07-28: older servers are refused.
+// A "machine" row never dials: the user's daemon or a lambda VM runs the client and core relays.
 
 import {
   Client,
@@ -64,8 +51,7 @@ import { sandboxMcpRequest, type SandboxMcpTarget } from "./sandbox.ts";
 
 export const MCP_AGENT_ID_HEADER = "X-Broods-Agent-Id";
 export const MCP_PRINCIPAL_HEADER = "X-Broods-Principal";
-// Core alone names the caller. Header names are case-insensitive on the wire,
-// where a tenant's own copy would be joined with the real one.
+// Core alone names the caller; a tenant's copy in any letter case would join the real one.
 const PRINCIPAL_HEADER_NAMES: ReadonlySet<string> = new Set([
   MCP_AGENT_ID_HEADER.toLowerCase(),
   MCP_PRINCIPAL_HEADER.toLowerCase(),
@@ -73,16 +59,12 @@ const PRINCIPAL_HEADER_NAMES: ReadonlySet<string> = new Set([
 
 const CLIENT_INFO = { name: "broods-core", version: "1.0.0" };
 const DEFAULT_TTL_MS = 5 * 60_000;
-// How long reading one picture a result links to may take.
 const LINKED_IMAGE_TIMEOUT_MS = 30_000;
 const MAX_CACHE_ENTRIES = 256;
 const MAX_TTL_MS = 60 * 60_000;
 
-// A rate-limited tool call waits out the window and tries again before the
-// model hears about it: a step's parallel calls to one server trip a per-minute
-// cap together, and the model's retry would only trip it again. The wait is the
-// one the server's message names, like Firecrawl's "please retry after 47s",
-// else a growing pause.
+// A step's parallel calls trip a per-minute cap together and a model retry would trip it again,
+// so core waits what the message names ("retry after 47s"), else backs off, and retries itself.
 const RATE_LIMIT_RETRIES = 3;
 const RATE_LIMIT_PATTERN = /\b429\b|rate limit/i;
 const RATE_LIMIT_WAIT_PATTERN =
@@ -94,25 +76,16 @@ const discoverCache = new Map<string, CachedDiscover>();
 const toolListCache = new Map<string, CachedListing>();
 let testOverrides: McpTestOverrides | null = null;
 
-/** One server's resolved connection: the row plus the final request headers. */
 export interface McpConnection {
   record: McpRecord;
   headers: Record<string, string>;
-  /** Who is calling, on every request; not part of the listing cache key. */
   principalHeaders?: Record<string, string>;
-  /** The agent whose run calls; a hosted row runs as `accountId:agentId`. Unset on an account-surface probe. */
   agentId?: string;
-  /** Set when the row carries oauth; the Authorization header is minted from it. */
   oauth?: ResolvedMcpOauth;
-  /** A one-shot probe: skips the listing and version caches so it never evicts a saved row's entries. */
   uncached?: boolean;
-  /** Set when a "machine" row names a lambda sandbox: its VM runs the server, not a daemon. */
   sandbox?: SandboxMcpTarget;
 }
 
-/** Per-call options. onCpuUsec fires only for hosted rows, off the Lambda's
- * terminal frame, so the harness can meter the run's compute. onRetry fires
- * after each rate-limit wait it retries on, so the tool.call span can show it. */
 export interface McpCallOptions {
   abortSignal?: AbortSignal;
   onCpuUsec?: (cpuUsec: number) => void;
@@ -138,11 +111,6 @@ type McpTestOverrides = {
   ) => Promise<CallToolResult>;
 };
 
-/**
- * Call one remote tool for the agent loop. An isError result surfaces as a
- * thrown Error so the harness records a tool failure and feeds the message
- * back to the model, instead of handing it an error payload as data.
- */
 export async function callMcpTool(
   connection: McpConnection,
   toolName: string,
@@ -174,8 +142,6 @@ export async function callMcpTool(
     );
   }
 
-  // An image is something the model can look at, so a result carrying one goes
-  // through as content parts instead of being flattened to text.
   if (
     result.content.some(
       (block): boolean => block.type === "image" || isImageLink(block),
@@ -187,10 +153,6 @@ export async function callMcpTool(
   return result.structuredContent ?? renderContent(result.content);
 }
 
-/**
- * Call one remote tool and return the raw result, isError included. Stateless:
- * a fresh client and POST per call.
- */
 export async function callMcpToolResult(
   connection: McpConnection,
   toolName: string,
@@ -201,8 +163,7 @@ export async function callMcpToolResult(
     return await testOverrides.callTool(connection, toolName, args);
   }
   if (connection.record.transport === "machine") {
-    // The daemon's or VM's own SDK client produced this, but it crossed a
-    // socket and the relay only checks the envelope, so the payload is checked here.
+    // The relay checks only the envelope, so the payload is validated here.
     const relayed = connection.sandbox
       ? await sandboxMcpRequest(
           connection.sandbox,
@@ -234,12 +195,6 @@ export async function callMcpToolResult(
   );
 }
 
-/**
- * List a server's tools, from the per-server cache when fresh. The cache
- * holds the in-flight promise, so concurrent cold runs share one listing;
- * its TTL is the listing's own ttlMs, clamped. A hosted server boots its
- * bundle for a cold listing, so onCpuUsec meters that too.
- */
 export async function listMcpTools(
   connection: McpConnection,
   onCpuUsec?: (cpuUsec: number) => void,
@@ -247,9 +202,7 @@ export async function listMcpTools(
   if (testOverrides?.listTools) {
     return await testOverrides.listTools(connection);
   }
-  // Uncached: the daemon answers from the live server process. A lambda
-  // sandbox row is cached like a remote one, so a run does not wake its VM
-  // just to learn a listing that changes only with the row.
+  // A daemon answers live, uncached; a lambda VM's listing is cached so a run never wakes it.
   if (connection.record.transport === "machine" && !connection.sandbox) {
     const tools = await runMachineMcpList(connection.record);
     if (!tools.every((tool) => isSpecType.Tool(tool))) {
@@ -308,20 +261,12 @@ export async function listMcpTools(
   return await pending;
 }
 
-/**
- * Build the connection for a server row: row headers and oauth overlaid with
- * the agent config's (those resolved their ${NAME} refs at sync). A value
- * still carrying a placeholder never reaches the wire, and neither does a
- * header claiming one of the principal names. The principal names the agent
- * whose run calls, unset on an account-surface probe.
- */
 export function mcpConnection(
   record: McpRecord,
   configHeaders: Record<string, string> | undefined,
   configOauth?: AgentMcpEntry["oauth"],
   principal?: Principal,
 ): McpConnection {
-  // Header names are case-insensitive: the agent's spelling replaces the row's.
   const overridden = new Set(
     Object.keys(configHeaders ?? {}).map((name) => name.toLowerCase()),
   );
@@ -359,13 +304,9 @@ export function mcpConnection(
   };
 }
 
-/** Every header one request carries: row and config headers, the principal, then a minted bearer. */
 export async function mcpRequestHeaders(
   connection: McpConnection,
 ): Promise<Record<string, string>> {
-  // Minted (or served from the token cache) per connect: clients are
-  // per-operation, so every request carries a token outside its refresh
-  // margin instead of a static header that expires mid-conversation.
   return {
     ...connection.headers,
     ...connection.principalHeaders,
@@ -377,7 +318,6 @@ export async function mcpRequestHeaders(
   };
 }
 
-/** Tests only: stub the network edge, and drop any cached state. */
 export function setMcpForTests(overrides: McpTestOverrides | null): void {
   testOverrides = overrides;
   discoverCache.clear();
@@ -385,16 +325,8 @@ export function setMcpForTests(overrides: McpTestOverrides | null): void {
   clearMcpOauthTokens();
 }
 
-/**
- * One cache identity per server row version, resolved header set, oauth
- * config and, for a lambda row, what its sandbox boots (image or snapshot),
- * installs and starts the server with, so a row, credential or sandbox edit is
- * a miss instead of stale data for a TTL. These ride the key only as a
- * process-keyed digest: a Map key lives process-wide for up to an hour and
- * must not hold secrets in clear. A hosted row adds the agent: its answers
- * come from that agent's own child. A lambda row's listing does not depend on
- * which VM answered, so every conversation shares it.
- */
+// Digested: a key lives up to an hour and must not hold secrets in clear. A hosted row adds the
+// agent, since its answers come from that agent's own child.
 export function cacheKeyFor(connection: McpConnection): string {
   const headers = Object.entries(connection.headers).sort(([a], [b]) =>
     a < b ? -1 : 1,
@@ -418,7 +350,6 @@ export function cacheKeyFor(connection: McpConnection): string {
   return `${connection.record.serverId}:${connection.record.updatedAt}:${identity}:${agent}`;
 }
 
-/** The chain as a remote server sees it: ids and kinds, never a display name. The ledger and the OPA input keep the name. */
 function chainWithoutNames(chain: PrincipalLink[]): PrincipalLink[] {
   return chain.map((link): PrincipalLink => {
     if (link.kind !== "user") return link;
@@ -428,7 +359,6 @@ function chainWithoutNames(chain: PrincipalLink[]): PrincipalLink[] {
   });
 }
 
-/** A cacheable result's ttlMs (typed unknown by the SDK), defaulted and clamped. */
 function clampTtlMs(ttlMs: unknown): number {
   return Math.min(
     typeof ttlMs === "number" && ttlMs > 0 ? ttlMs : DEFAULT_TTL_MS,
@@ -436,11 +366,6 @@ function clampTtlMs(ttlMs: unknown): number {
   );
 }
 
-/**
- * Connect a fresh pinned client, adopting the cached version probe when one
- * is fresh (zero extra round trips); a stale adoption falls back to one fresh
- * negotiation.
- */
 async function connectClient(
   connection: McpConnection,
   key: string,
@@ -460,12 +385,11 @@ async function connectClient(
       new URL(hosted ? HOSTED_MCP_URL : connection.record.url!),
       {
         requestInit: { headers: headers },
-        // A tenant url is dialed from inside the cluster, so it gets the same
-        // resolve, refuse-private and pin treatment as a model endpoint.
+        // Dialed from inside the cluster: resolve, refuse private addresses, pin.
         fetch: hosted ? hostedMcpFetch(connection, onCpuUsec) : publicHostFetch,
       },
     );
-    // The list pins the cached `prior` path too, which ignores the pin.
+    // supportedProtocolVersions also pins the cached `prior` path, which ignores the `pin` mode.
     const client = new Client(CLIENT_INFO, {
       supportedProtocolVersions: [MCP_PROTOCOL_VERSION],
       versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } },
@@ -502,17 +426,10 @@ async function connectClient(
   return client;
 }
 
-/**
- * A result's content as model content parts: images as image data, within the
- * limits on what one result may show, a linked image read into image data, the
- * rest as text, and any structuredContent as one more JSON text part.
- */
 async function imageContentOutput(
   content: CallToolResult["content"],
   structured: CallToolResult["structuredContent"],
 ): Promise<ToolResultOutput> {
-  // Only as many links are read as one result may show, so a result naming a
-  // hundred pictures never holds them all in memory at once.
   const links = new Set(
     content.filter(isImageLink).slice(0, MAX_RESULT_IMAGES),
   );
@@ -523,7 +440,6 @@ async function imageContentOutput(
           { type: "image-data", data: block.data, mediaType: block.mimeType },
         ];
       }
-      // A linked picture keeps its line, so the model still knows its source.
       const text: ToolContentPart = {
         type: "text",
         text: renderContent([block]),
@@ -548,7 +464,6 @@ async function imageContentOutput(
   };
 }
 
-/** A resource link to a picture core can read. */
 function isImageLink(
   block: CallToolResult["content"][number],
 ): block is Extract<
@@ -562,11 +477,6 @@ function isImageLink(
   );
 }
 
-/**
- * A linked picture as image data, read through the same pinned guard as an
- * inbound attachment: no private or metadata address, no unbounded body.
- * Undefined when it cannot be read, so the link stays a line of text.
- */
 async function linkedImage(
   uri: string,
   mediaType: string,
@@ -581,7 +491,6 @@ async function linkedImage(
       throw new Error(`answered ${response.status}`);
     }
 
-    // A view, not a copy: the guard assembled the body into a fresh allocation.
     const bytes = response.bodyBytes;
 
     return {
@@ -604,7 +513,6 @@ async function linkedImage(
   }
 }
 
-/** The agent id, and its chain when known (base64url JSON, ids and kinds only), so a server can authorize per agent. */
 function principalHeaders(principal: Principal): Record<string, string> {
   const chain = delegatedChain(principal);
 
@@ -620,7 +528,6 @@ function principalHeaders(principal: Principal): Record<string, string> {
   };
 }
 
-/** Drop oldest entries so a long-lived core process stays bounded. */
 function pruneCache(cache: Map<string, unknown>): void {
   while (cache.size >= MAX_CACHE_ENTRIES) {
     const oldest = cache.keys().next().value;
@@ -629,7 +536,6 @@ function pruneCache(cache: Map<string, unknown>): void {
   }
 }
 
-/** How long a rate-limited call waits before its retry; null when the failure is something else. */
 function rateLimitWaitMs(message: string, attempt: number): number | null {
   if (!RATE_LIMIT_PATTERN.test(message)) return null;
   const [, amount, unit] = RATE_LIMIT_WAIT_PATTERN.exec(message) ?? [];
@@ -641,10 +547,6 @@ function rateLimitWaitMs(message: string, attempt: number): number | null {
   return Math.min(Math.ceil(askedMs), MAX_RATE_LIMIT_WAIT_MS);
 }
 
-/**
- * Text view of a result's content. Non-text blocks are named instead of
- * silently dropped, so an image-only result never reads as an empty success.
- */
 function renderContent(content: CallToolResult["content"]): string {
   return content
     .map((block): string => {
@@ -665,13 +567,6 @@ function renderContent(content: CallToolResult["content"]): string {
     .join("\n");
 }
 
-/**
- * Merge the row's oauth credentials with the agent config's overrides (config
- * wins per field) and refuse values still carrying ${NAME} refs, mirroring
- * the header rule: secrets resolve into the agent config at sync, never on
- * the row. tokenUrl comes from the row alone: registration is the one place
- * that checked it is https, and the agent config is only a string record.
- */
 function resolveOauth(
   record: McpRecord,
   configOauth: AgentMcpEntry["oauth"],
@@ -700,11 +595,11 @@ function resolveOauth(
     clientId: resolved("clientId"),
     clientSecret: resolved("clientSecret"),
     refreshToken: resolved("refreshToken"),
+    // From the row alone: registration is the one place that checked it is https.
     tokenUrl: record.oauth?.tokenUrl ?? DEFAULT_OAUTH_TOKEN_URL,
   };
 }
 
-/** Waits `ms`, or less when the signal aborts first. */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.resolve();
 

@@ -1,10 +1,4 @@
-/**
- * Channel record CRUD scoped to an account. Mirrors sandboxConfigs.ts: the doc
- * _id is the public channelRecordId and every mutation revalidates the doc's
- * accountId. `getByExternalId` is the inbound-webhook lookup. It answers
- * "which record owns this Slack channel?" before an agent is chosen.
- * The config blob is plaintext: bindings and policy ids, never credentials.
- */
+// The config blob is plaintext: bindings and policy ids, never credentials.
 
 import { v } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
@@ -71,11 +65,6 @@ export const create = internalMutation({
   },
 });
 
-/**
- * Resolve the active record for one place. Deleted rows never match, so a
- * removed record falls the webhook back to its agent-scoped behaviour instead
- * of routing to an agent the operator has detached.
- */
 export const getByExternalId = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -84,11 +73,8 @@ export const getByExternalId = internalQuery({
   },
   returns: v.union(channelRecordDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"channelRecords"> | null> => {
-    // Deleting a record leaves the row in place, so a place that has been
-    // rebound a few times holds one active row and a pile of dead ones.
-    // `status` is in the index key rather than a filter: this runs on every
-    // inbound message, and reading the whole history to discard it would make
-    // the hot path cost grow with how often the channel has changed hands.
+    // status in the index key, not a filter: every inbound message runs this, and a
+    // rebound place keeps its tombstones.
     return await ctx.db
       .query("channelRecords")
       .withIndex("by_accountId_platform_external", (q) =>
@@ -102,11 +88,7 @@ export const getByExternalId = internalQuery({
   },
 });
 
-/**
- * Look up a channel record by the public string id. The validator accepts
- * `v.string()` (not `v.id`) so unknown / non-Convex-id values resolve to `null`
- * (= "not found") instead of throwing at the adapter boundary.
- */
+// v.string(), not v.id: a foreign id resolves to null instead of throwing at the adapter.
 export const getById = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -126,11 +108,7 @@ export const getById = internalQuery({
   },
 });
 
-/**
- * Every record including soft-deleted tombstones. Account-deletion cleanup
- * (core's `removeAllForAccount`) depends on seeing the dead rows; listing
- * surfaces use `listActive`.
- */
+// Includes tombstones: core's removeAllForAccount must see the dead rows.
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(channelRecordDoc),
@@ -144,10 +122,6 @@ export const list = internalQuery({
   },
 });
 
-/**
- * Active records only, so listing a long-churned account does not read its
- * pile of tombstones. Same shape as `list`.
- */
 export const listActive = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(channelRecordDoc),
@@ -215,8 +189,7 @@ export const update = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const { accountId, channelRecordId, ...patch } = args;
     const doc = await loadOwnedRecord(ctx, accountId, channelRecordId);
-    // Reactivating has to re-check the invariant create enforces, or two active
-    // rows can own one place and getByExternalId picks an arbitrary one.
+    // Re-check create's one-active-row invariant, or getByExternalId picks an arbitrary row.
     if (patch.status === "active" && doc.status !== "active") {
       const active = (
         await ctx.db

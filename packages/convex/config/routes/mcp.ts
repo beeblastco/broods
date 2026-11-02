@@ -1,10 +1,3 @@
-/**
- * MCP server CRUD (`/v1/mcp*`): list/create on the stage-scoped
- * collection, get/patch/delete by id. A `url` registers an external server
- * core connects to; a `bundle` uploads a hosted one, which the platform runs on Lambda or Workers.
- * Secrets stay in account env vars as ${NAME} refs on the header values.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -24,7 +17,6 @@ import {
   writeAudit,
 } from "./shared";
 
-/** The fields that decide where a row's agents send their resolved headers and oauth. */
 const MCP_DESTINATION_FIELDS = [
   "transport",
   "url",
@@ -90,12 +82,6 @@ export async function handleMcpRoute(
   return methodNotAllowed(["GET", "PATCH", "DELETE"]);
 }
 
-/**
- * `POST /v1/mcp/uploads`: mint a storage upload URL for a bundle too large to
- * ride the JSON body (#190); register the result as `bundleStorageId`. The
- * blob is a courier that registration deletes. Minting counts against the
- * account's hourly upload quota.
- */
 export async function handleMcpUploadsRoute(
   ctx: ActionCtx,
   req: Request,
@@ -119,7 +105,6 @@ async function handleMcpCollectionRoute(
   accountId: Id<"accounts">,
   actor: AuditActor,
 ): Promise<Response> {
-  // Servers belong to one stage, so the collection routes need a scope.
   const scope = await resolveMcpScope(ctx, req, accountId);
   if (!scope.ok) return scope.response;
 
@@ -204,9 +189,8 @@ async function patchMcpRoute(
   const input = await normalizeMcpInput(await req.json(), {
     requireConnection: false,
   });
-  // Agents resolve `${NAME}` in their `config.mcp.<id>` headers and oauth and
-  // send the values wherever this row points, so a role that repoints it must
-  // be able to read every name those agents carry for it.
+  // Agents send their resolved `${NAME}` headers and oauth wherever this row points, so a
+  // role that repoints it must be able to read every name those agents carry for it.
   if (
     role &&
     MCP_DESTINATION_FIELDS.some(
@@ -267,7 +251,6 @@ async function patchMcpRoute(
     : jsonError(404, "MCP server not found");
 }
 
-/** Resolve the `?project=&stage=` collection scope to project/stage ids. */
 async function resolveMcpScope(
   ctx: ActionCtx,
   req: Request,

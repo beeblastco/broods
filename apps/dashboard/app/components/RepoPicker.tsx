@@ -60,6 +60,7 @@ export function RepoPicker({
   const installationCount = status?.installations.length ?? 0;
   const canLink = status?.canLink ?? false;
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- fetches the repos GitHub lets the app see
   useEffect(() => {
     if (installationCount === 0 || !canLink) return;
     let cancelled = false;

@@ -10,16 +10,9 @@ import {
 import { useReactFlow } from "@xyflow/react";
 import type { ReactNode } from "react";
 
-/**
- * How the canvas frames the whole architecture, on first paint and on every
- * press of the fit-view control. ReactFlow reads a bare `padding` number as a
- * fraction of the viewport, so 0.1 leaves a tenth of the frame as margin and
- * the architecture fills the rest. `maxZoom` caps how far a one-node stage
- * blows its card up.
- */
+// A bare `padding` is a fraction of the viewport; `maxZoom` stops a one-node stage blowing up.
 export const FIT_VIEW_OPTIONS = { maxZoom: 1.5, padding: 0.1 } as const;
 
-/** Top-left corners of the four cells in the tidy icon's 2x2 grid. */
 const TIDY_ICON_CELLS = [
   { x: 1.5, y: 1.5 },
   { x: 8, y: 1.5 },
@@ -76,7 +69,6 @@ export function CanvasControls({
           label="Tidy up: re-lay out every node by its wiring"
           onClick={onTidy}
         >
-          {/* Stroke is set once here; SVG presentation attributes inherit. */}
           <svg
             width="14"
             height="14"
@@ -102,7 +94,6 @@ export function CanvasControls({
   );
 }
 
-/** One icon control; the label is both its tooltip and its accessible name. */
 function ControlButton({
   label,
   onClick,

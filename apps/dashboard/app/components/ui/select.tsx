@@ -48,8 +48,7 @@ interface SelectScrollButtonProps {
   className?: string;
 }
 
-// Root.Props is generic over <Value, Multiple>, which a wrapper function cannot
-// forward without losing inference — re-export the primitive directly.
+// Root is generic over <Value, Multiple>: a wrapper function would lose the inference.
 const Select = SelectPrimitive.Root;
 
 function SelectGroup({ ...props }: SelectPrimitive.Group.Props) {
@@ -91,8 +90,7 @@ function SelectContent({
   alignOffset,
   side,
   sideOffset = 4,
-  // Overlay mode (true) clips the popup mid-list when the selected item can't
-  // line up with the trigger; drop below the trigger like the other menus.
+  // Overlay mode clips the popup mid-list when the selected item can't line up.
   alignItemWithTrigger = false,
   ...props
 }: SelectContentProps) {
@@ -104,10 +102,7 @@ function SelectContent({
         side={side}
         sideOffset={sideOffset}
         alignItemWithTrigger={alignItemWithTrigger}
-        // Base UI transforms the positioner, so it is the stacking context the
-        // page sees; a z-index on the popup inside it cannot lift the popup
-        // over page chrome. The Monitoring table's sticky z-10 head covered
-        // and swallowed clicks on whichever option it overlapped.
+        // Base UI transforms the positioner, making it the stacking context: z-index goes here.
         className="isolate z-50"
       >
         <SelectPrimitive.Popup
@@ -180,8 +175,7 @@ function SelectScrollUpButton({ className }: SelectScrollButtonProps) {
   return (
     <SelectPrimitive.ScrollUpArrow
       data-slot="select-scroll-up-button"
-      // Base UI lays the arrow over the list, so a solid background would hide
-      // the first row behind it; fade it instead.
+      // Base UI lays the arrow over the list: a solid background would hide the first row.
       className={cn(
         "top-0 flex w-full cursor-pointer items-center justify-center bg-linear-to-b from-popover to-popover/0 py-1",
         className,

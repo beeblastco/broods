@@ -1,7 +1,6 @@
 /**
- * Shared bench helpers: the local stack's state, an account on it, and SDK
- * clients aimed at one runtime (Bun core or core on workerd). Setup always goes
- * through the edge, so both runtimes run agents from the same config plane.
+ * Shared bench helpers: local stack state, an account, and SDK clients aimed at one runtime.
+ * Setup always goes through the edge, so every runtime reads the same config plane.
  */
 
 import { createHash } from "node:crypto";
@@ -123,10 +122,7 @@ function stackConvex(args: string[]): string {
   return result.stdout.toString();
 }
 
-/**
- * An org-backed account, the way `local-stack verify` makes one: manifest sync
- * and stage resources need an org, which admin-API accounts lack.
- */
+/** An org-backed account: manifest sync and stage resources need an org, admin-API ones lack it. */
 export function createOrgAccount(slug: string): string {
   const path = join(tmpdir(), `bench-org-${slug}.jsonl`);
   writeFileSync(

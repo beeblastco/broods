@@ -1,31 +1,16 @@
-/**
- * A stage's runtime-variable values and the rules for removing one. Keep the
- * encrypted-blob read here so callers never re-implement it. Read-only: the
- * write that re-resolves what reads a variable is `environmentWrites.ts`, which
- * sits above both this reader and the config refreshes it drives.
- */
-
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { accountCipher, requireAccountIdForProject } from "./accountKeys";
 import { ClientError } from "./clientError";
 
-// How many referencing workspaces an env var delete refusal reads and names.
 const REFERENCING_WORKSPACES_SHOWN = 10;
 
-/**
- * Refuses to remove a variable that a synced resource still reads through
- * `env("NAME")`, which would leave it holding an unresolvable `${NAME}`.
- * @throws naming the resources that still reference it.
- */
 export async function assertEnvironmentVariableUnreferenced(
   ctx: QueryCtx | MutationCtx,
   projectId: Id<"projects">,
   stageId: Id<"stages">,
   name: string,
 ): Promise<void> {
-  // Both tables record their `env()` refs the same way, as a `runtimeVariables`
-  // key, which is what the refresh helpers match on too.
   const agents = await ctx.db
     .query("agentConfigs")
     .withIndex("by_projectId_and_stageId", (q) =>
@@ -64,11 +49,7 @@ export async function assertEnvironmentVariableUnreferenced(
   );
 }
 
-/**
- * The workspaces in one stage, or the account-scoped ones when `stageId` is
- * undefined, whose R2 keys reference env var `name`. Indexed, so it reads only
- * referencing rows; the first few are enough to refuse a delete and name them.
- */
+// An undefined `stageId` reads the account-scoped workspaces, not every stage.
 export async function workspacesReferencingEnvVar(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
@@ -103,12 +84,6 @@ export async function workspacesReferencingEnvVar(
   ];
 }
 
-/**
- * Reads the environment variables for a `(projectId, stageId)`, every one or
- * only `names`, and returns a `name -> plaintext value` map. A name the stage
- * lacks is absent. Non-string values decode to `""`.
- * @throws when `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is not configured.
- */
 export async function loadEnvironmentVariableValues(
   ctx: QueryCtx | MutationCtx,
   projectId: Id<"projects">,

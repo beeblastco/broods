@@ -1,19 +1,12 @@
 /**
- * Splits each bench batch's time into model time and tool time from core's own
- * structured log, and adds up the tokens the model used. A batch's events are
- * the runtime's model.step.finished / tool.call.finished lines inside the
- * batch's time window; arms never overlap in time, so nothing is shared.
- * A step's model time is its duration minus its slowest tool (tools in one
- * step run in parallel). Model steps in the other runtimes' logs inside the
- * same window are counted too: any there means a run leaked across arms.
- *
- * bun analyze-log.ts <rows.jsonl> bun=<log> workerd=<log> isolate=<log> [--json out]
+ * Splits each bench batch into model and tool time (step duration minus its slowest tool) and
+ * tokens, from core's log inside the batch's window. Model steps in other runtimes' logs there mean
+ * a run leaked across arms. bun analyze-log.ts <rows.jsonl> bun=<log> workerd=<log> isolate=<log>
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
 
-// claude-haiku-5-5 list prices per million tokens (Anthropic API, prompts up
-// to 100K tokens); cache reads at 0.1x input and 5-minute cache writes at 1.25x.
+// claude-haiku-5-5 list prices per million tokens; cache read 0.1x, 5-minute cache write 1.25x.
 const PRICE = { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 };
 
 interface Usage {
@@ -109,8 +102,7 @@ const out = rows
       cacheWrite += e.usage?.inputTokenDetails?.cacheWriteTokens ?? 0;
       output += e.usage?.outputTokens ?? 0;
     }
-    // One invocation per run (parent, subagent, follow-up), finished or failed
-    // (a subagent its parent stopped): set against the audit rows.
+    // One invocation per run (parent, subagent, follow-up), finished or failed.
     const runs = events.filter(
       (x) =>
         x.eventType === "model.invocation.finished" ||

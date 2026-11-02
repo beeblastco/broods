@@ -111,24 +111,20 @@ interface Props {
   apiKey: string | undefined;
 }
 
-// Task groups rendered before the "Load more" pager.
 const PAGE_SIZE = 50;
 
 type SpanStatus = ObservabilitySpanRow["status"];
 
-// A Continue click on one failed task. `error` is null from the click until
-// the continuation's trace arrives, which then replaces the button.
+// `error` stays null from the click until the continuation's trace replaces the button.
 interface ContinueAttempt {
   error: string | null;
 }
 
-// One collapsible payload section, with the count line on its header.
 interface PayloadSection extends DetailRow {
   open?: boolean;
   summary: string;
 }
 
-// A task reads as the request's outcome, so its status column uses these words.
 const TASK_STATUS_WORD: Record<SpanStatus, string> = {
   running: "Running",
   waiting: "Waiting",
@@ -145,8 +141,7 @@ const STATUS_TONE: Record<SpanStatus, StatusTone> = {
   error: "error",
 };
 
-// The synthetic span that stands for the time between a run that closed on
-// something open and the next run of its task.
+// Not a core span: the dashboard adds it for the gap between a paused run and the next one.
 const WAIT_SPAN_NAME = "task.wait";
 
 const WAITING_ON_LABEL: Record<TaskWaitingOn, string> = {
@@ -161,11 +156,7 @@ const WAIT_BAR: Partial<Record<SpanStatus, string>> = {
   needs_input: "bg-needs-input/50",
 };
 
-// Collapsible payload sections. Each row shows the count that describes it, so
-// Details never repeats those counts. The per-tool `tool.output` on each child
-// span is the authoritative "what the model saw", so the step-level
-// model.tool_results is left out as a confusing dupe. What the span produced
-// comes first, then what went into the model. `open` sections start expanded.
+// model.tool_results is left out: each tool span's tool.output is what the model saw.
 const PAYLOAD_SECTIONS: ReadonlyArray<{
   charsKey?: string;
   countKey?: string;
@@ -179,7 +170,6 @@ const PAYLOAD_SECTIONS: ReadonlyArray<{
   { key: "model.tool_calls", label: "Tool calls" },
   { key: "tool.input", label: "Tool input", open: true },
   { key: "tool.output", label: "Tool output", open: true },
-  // What a run waiting on the person asked them, on its wait row.
   { key: "task.questions", label: "Questions" },
   {
     key: "model.input",
@@ -195,7 +185,6 @@ const PAYLOAD_SECTIONS: ReadonlyArray<{
     countLabel: "parts",
     charsKey: "model.system_chars",
   },
-  // The live <environment> block the run's last message carried.
   { key: "agent.environment", label: "Environment" },
   {
     key: "agent.tools",
@@ -205,8 +194,7 @@ const PAYLOAD_SECTIONS: ReadonlyArray<{
   },
 ];
 
-// Context prepare loads, each timed on its own. They overlap, so they do not
-// add up to the span.
+// Each prepare load is timed on its own; they overlap, so they do not sum to the span.
 const PREPARE_TIMINGS: ReadonlyArray<{ key: string; label: string }> = [
   { key: "prepare.history_ms", label: "history" },
   { key: "prepare.runtime_ms", label: "runtime" },
@@ -224,8 +212,6 @@ interface DetailField {
   words?: true;
 }
 
-// Token rows come in two spellings: the task root writes usage.*, a model step
-// writes model.*.
 const TOKEN_FIELDS: ReadonlyArray<DetailField> = [
   {
     key: "input_tokens",
@@ -241,8 +227,6 @@ const TOKEN_FIELDS: ReadonlyArray<DetailField> = [
   },
 ];
 
-// Labeled Details rows, shown when the span carries `key`; `extraKey` adds a
-// second value after it.
 const DETAIL_FIELDS: ReadonlyArray<DetailField> = [
   { key: "model.id", label: "Model" },
   { key: "model.provider", label: "Provider", words: true },
@@ -264,8 +248,6 @@ const DETAIL_FIELDS: ReadonlyArray<DetailField> = [
   { key: "task.root_id", label: "Resumes task" },
 ];
 
-// Attribute keys the panel already shows as its title, header, a section row, a
-// timing chip or a labeled Details row. Details lists every other key raw.
 const SHOWN_KEYS: ReadonlySet<string> = new Set([
   ...PAYLOAD_SECTIONS.flatMap((section) => [
     section.key,
@@ -300,14 +282,10 @@ const SHOWN_KEYS: ReadonlySet<string> = new Set([
   "wait.open",
 ]);
 
-// Search text per span object, built on first search. See spanSearchText.
 const SPAN_SEARCH_TEXT = new WeakMap<ObservabilitySpanRow, string>();
 
-// One bar hue per span kind, checked for colorblind (protan/deutan) separation
-// on both surfaces, including against the error red that can replace a root
-// bar. Bars step deeper where a hue would wash out on one surface (task keeps
-// violet-500 on dark: violet-400 collapses into model.step's blue-400 under
-// deuteranopia). The shades per theme live in the --span-* tokens in globals.css.
+// Hues checked for protan/deutan separation on both themes, error red included;
+// the shades per theme live in the --span-* tokens in globals.css.
 const KIND_BAR: Record<ObservabilitySpanRow["kind"], string> = {
   task: "bg-span-task/70",
   cron: "bg-span-cron/70",
@@ -317,8 +295,6 @@ const KIND_BAR: Record<ObservabilitySpanRow["kind"], string> = {
   phase: "bg-span-phase/70",
 };
 
-// The icon a tool call's line opens with, matched on the tool's name; any
-// other tool gets the wrench.
 const TOOL_ICONS: ReadonlyArray<{ icon: LucideIcon; test: RegExp }> = [
   { icon: Terminal, test: /^(bash|shell|sh|exec|terminal|run_command)/i },
   { icon: FileText, test: /^(read|write|edit|cat|ls|list|glob|grep|search)/i },
@@ -326,32 +302,24 @@ const TOOL_ICONS: ReadonlyArray<{ icon: LucideIcon; test: RegExp }> = [
   { icon: MessageCircleQuestionMark, test: /approv|question|ask/i },
 ];
 
-// The icon a step's note line opens with; the line's title is the kind itself.
 const NOTE_ICONS: Record<NoteKind, LucideIcon> = {
   thought: Brain,
   answer: MessageSquare,
   question: MessageCircleQuestionMark,
 };
 
-// Avatars a task row stacks before "+N" for the rest of its subagents.
 const STACK_AVATARS = 4;
 
-// How many characters of a tool's first string argument its line shows.
 const TOOL_SUMMARY_CHARS = 80;
 
-// A root task/subtask still "running" past this likely never reported its
-// terminal span (crash/freeze or a lost publish), so we treat it as finished.
-// Otherwise it reads as running forever.
+// A root still "running" past this most likely lost its end span (crash, lost publish).
 const TASK_MAX_RUNTIME_MS = 16 * 60 * 1000;
 
-// A provider throttle, shown as "rate limit" and matched by `error:rate_limit`.
 const RATE_LIMIT = /rate.?limit|429/i;
 
-// How much of an error the task list shows as the failure cause.
 const CAUSE_CHARS = 40;
 
-// Conversation key prefixes core writes per channel (runtime-keys.ts). Any
-// other key came in through the API.
+// The prefixes core writes per channel (runtime-keys.ts); any other key came via the API.
 const CHANNEL_PREFIXES: ReadonlyArray<{ label: string; prefix: string }> = [
   { prefix: "tg:", label: "Telegram" },
   { prefix: "slack:", label: "Slack" },
@@ -371,7 +339,6 @@ const CHANNEL_PREFIXES: ReadonlyArray<{ label: string; prefix: string }> = [
   { prefix: "cron:", label: "Cron" },
 ];
 
-// `status:` values, in the span's words and the task list's.
 const STATUS_ALIASES: Readonly<Record<string, SpanStatus>> = {
   ok: "ok",
   done: "ok",
@@ -382,44 +349,36 @@ const STATUS_ALIASES: Readonly<Record<string, SpanStatus>> = {
   needs_input: "needs_input",
 };
 
-// The waterfall's min-w-xl, so dragging the detail divider never pushes the
-// waterfall's columns out of view.
+// = min-w-xl, so dragging the detail divider never pushes the waterfall's columns out of view.
 const WATERFALL_MIN_WIDTH = 576;
 
-// Where the browser remembers that the task list is folded to its rail.
+// The Started column's w-22, which a wide row's indent starts past.
+const STARTED_COLUMN_WIDTH = "5.5rem";
+
 const LIST_RAIL_KEY = "tracing:list-rail";
 
-// A live run's clock: its now line, running bars and durations move once a second.
 const LIVE_TICK_MS = 1000;
 
-// Room past the now line on a live run, so the newest bars are not pinned to the edge.
 const LIVE_HEADROOM = 1.1;
 
-// The selected run's time scale, from TimelineClock to the parts that move on its tick.
 const TimelineScaleContext = createContext<TimelineScale>({
   nowMs: null,
   spanMs: 1,
   startMs: 0,
 });
 
-// Time axis steps, smallest first; the axis takes the first that spans the run
-// in AXIS_MAX_STEPS or fewer, so at most four labels share a narrow column.
 const AXIS_STEPS_MS = [
   100, 200, 500, 1_000, 2_000, 5_000, 10_000, 15_000, 30_000, 60_000, 120_000,
   300_000, 600_000, 900_000, 1_800_000, 3_600_000, 7_200_000,
 ];
 const AXIS_MAX_STEPS = 3;
 
-// A tick this close to the axis end would overflow the column, so it is left out.
 const AXIS_LAST_TICK_PCT = 94;
 
-// The Timeline column's width, for its colgroup and the lines over it: up to
-// 40% of the waterfall while Span keeps 18rem beside Started, Status and
-// Duration (15.25rem), never under 22%.
+// Span keeps 18rem beside Started, Status and Duration (15.25rem); 22–40% of the width.
 const TIMELINE_WIDTH = "clamp(22cqw, 100cqw - 33.25rem, 40cqw)";
 
-// One matcher per `field:value` search token. Values arrive lowercased. A task
-// matches on its own runs and on its subagents'.
+// Values arrive lowercased.
 const QUERY_MATCHERS: Record<
   TaskQueryField,
   (group: SpanGroup, value: string) => boolean
@@ -460,40 +419,21 @@ const QUERY_MATCHERS: Record<
     ),
 };
 
-// One run: a request's first run is the row, and every later pass, answer
-// continuation and wait between them nests under it. A subagent is its own
-// group, listed under the request at the top of its chain, and appears in
-// the parent's waterfall as one line that opens it.
+// A request's first run is the row; its later passes, continuations and waits nest under it.
 export interface SpanGroup {
   root: ObservabilitySpanRow;
-  // The run's status: its latest pass decides, and a finished request with a
-  // subagent still running is waiting on it.
   status: SpanStatus;
-  // The latest pass. It is live while isTaskRunning holds, judged when read
-  // so a pass past its limit ends without waiting for the stream.
   latest: ObservabilitySpanRow;
   childrenByParent: Map<string, ObservabilitySpanRow[]>;
-  // Root first, then every child, for search and selection.
   spans: ObservabilitySpanRow[];
-  // Absolute time window the waterfall bars are scaled against (covers spans like
-  // cold start that begin before the root task span).
   windowStart: number;
   windowSpan: number;
-  // Effective task duration used to size the top-level bar on a scale shared
-  // across tasks, so a longer task always reads as a longer bar. Running tasks
-  // fall back to elapsed window so their bar grows as steps stream in.
   taskDurationMs: number;
-  // The next task or cron in the same conversation. Once it exists the failed
-  // task was picked up, so it links there instead of offering Continue.
   nextRun: ObservabilitySpanRow | null;
-  // The trace that started a subagent; null on a request's own run.
   parentTraceId: string | null;
-  // Every subagent under this request, at any depth, in start order. Empty on
-  // a subagent's own group.
   subagents: SpanGroup[];
 }
 
-// The `field:value` tokens the search box understands, in the placeholder's order.
 export const TASK_QUERY_FIELDS = [
   "status",
   "channel",
@@ -506,11 +446,8 @@ export const TASK_QUERY_FIELDS = [
 
 type TaskQueryField = (typeof TASK_QUERY_FIELDS)[number];
 
-// The parsed search box: every `field:value` token must match, and the free
-// words, rejoined, must appear in one span's search text.
 export type TaskQuery = Query<TaskQueryField>;
 
-// Something that went wrong on one span: a failure, or retries it got past.
 export interface SpanIssue {
   atMs: number;
   level: Extract<StatusTone, "error" | "warn">;
@@ -518,36 +455,28 @@ export interface SpanIssue {
   text: string;
 }
 
-// A step's text lines: its reasoning, and its response, which is the question
-// when the run stopped on it to ask the person.
 type NoteKind = "thought" | "answer" | "question";
 
-// The run's issues in time order, each with the rows above it that must be
-// open for it to render; per span id the issues under it; and per span id
-// its own.
+export interface RunIssue {
+  issue: SpanIssue;
+  path: ObservabilitySpanRow[];
+  span: ObservabilitySpanRow;
+}
+
 export interface RunIssues {
-  all: Array<{
-    issue: SpanIssue;
-    path: ObservabilitySpanRow[];
-    span: ObservabilitySpanRow;
-  }>;
-  below: Map<string, SpanIssue[]>;
+  all: RunIssue[];
+  below: Map<string, RunIssue[]>;
   own: Map<string, SpanIssue>;
 }
 
-// The time scale every bar, axis tick and line of the selected run reads.
-// `nowMs` is set while the run is live.
 interface TimelineScale {
   nowMs: number | null;
   spanMs: number;
   startMs: number;
 }
 
-// What every waterfall row of the selected run reads and calls.
 interface WaterfallView {
-  /** Each run's and model step's price by `spanKey`, see taskCosts. */
   costs: ReadonlyMap<string, TaskCost | null>;
-  /** The run a pick or a link landed on, ringed for a moment. */
   focusTraceId: string | null;
   group: SpanGroup;
   issues: RunIssues;
@@ -556,18 +485,14 @@ interface WaterfallView {
   onSelect: (key: string) => void;
   selectedKey: string | null;
   toggle: (key: string) => void;
-  // Rows the person flipped from their default: a step starts open, anything
-  // else closed.
   toggled: Set<string>;
 }
 
-// One row of the task list: a request, or one of its subagents under it.
 interface ListRow {
   group: SpanGroup;
   parent: SpanGroup | null;
 }
 
-// The task list on the left: its rows, or a rail of their status dots.
 interface TaskListPaneProps {
   rail: boolean;
   rows: ListRow[];
@@ -575,25 +500,20 @@ interface TaskListPaneProps {
   stackChoices: ReadonlyMap<string, boolean>;
   onSelect: (root: ObservabilitySpanRow) => void;
   onToggleStack: (root: ObservabilitySpanRow, open: boolean) => void;
-  // Each task's price by `spanKey(root)`, see taskCosts.
   costs: ReadonlyMap<string, TaskCost | null>;
-  // What the list says when it has no rows.
   emptyMessage: string;
-  // Tasks loaded and in all, counted by request; subagent rows are extra.
   shown: number;
   total: number;
   remaining: number;
   onLoadMore: () => void;
 }
 
-/** A task's price in USD; `partial` when some of its steps have no price. */
 export interface TaskCost {
   usd: number;
   partial: boolean;
 }
 
-// The list row's props, primitives and stable callbacks so the memoized row
-// skips a flush that left them as they were.
+// Primitives and stable callbacks only, so the memoized row skips an unchanged flush.
 interface TaskListRowProps {
   root: ObservabilitySpanRow;
   status: SpanStatus;
@@ -601,7 +521,7 @@ interface TaskListRowProps {
   taskDurationMs: number;
   cause: string | null;
   isSubagent: boolean;
-  // The subagents' names, newline-joined so the memo compares one string.
+  subagentKeys: string;
   subagentNames: string;
   isSelected: boolean;
   stackOpen: boolean;
@@ -614,23 +534,14 @@ export function TracingPanel({
   stageSlug,
   apiKey,
 }: Props): React.JSX.Element {
-  // The selected task's trace, so a link opens on it (a log's View trace,
-  // an agent's link). Written on every pick, dropped when it is missing or a
-  // filter changes.
   const [focusTraceId, setFocusTraceId] = useQueryState(
     "trace",
     parseAsTraceId,
   );
   const [toggled, setToggled] = useState<Set<string>>(new Set());
-  // The task list folded to a rail of status dots, so one trace gets the width.
-  // Desktop only: on a phone the list stacks above the trace, so a rail of
-  // full-width dot rows saves nothing.
   const [railChosen, setRail] = useRemembered(LIST_RAIL_KEY, false);
-  // Unfolded by hand while a span is open, until no span is open.
   const [listKept, setListKept] = useState(false);
   const isMobile = useIsMobile();
-  // Whether a request's subagent rows list, where the person chose; with no
-  // choice they list while the selected run is that request or under it.
   const [stackChoices, setStackChoices] = useState<
     ReadonlyMap<string, boolean>
   >(new Map());
@@ -644,9 +555,7 @@ export function TracingPanel({
     window: timeWindow,
     setWindow: setTimeWindow,
   } = useObservabilityView(TRACE_VIEW);
-  // A filter change drops `trace` from the URL: a link carrying a run the new
-  // filters hide would reopen with them cleared. The pick on screen stays.
-  // Search changes per key, so only the first one writes.
+  // Drop ?trace= on a filter change: a link to a run it hides would reopen with it cleared.
   const dropTrace = (): void => {
     if (focusTraceId !== null) void setFocusTraceId(null);
   };
@@ -677,18 +586,12 @@ export function TracingPanel({
       backfill: 100,
     });
 
-  // Memoized: the filtered list keys on it, and a fresh object each render
-  // would rebuild the list, and everything downstream of it, every time.
   const bounds = useMemo(
     () => effectiveWindow(timeWindow, range, now),
     [timeWindow, range, now],
   );
 
-  // Every request in the buffer, before filters. Focus resolution runs against
-  // this so a filtered-out trace is never mistaken for one absent from history.
   const allGroups = useMemo(() => groupSpans(entries), [entries]);
-  // Every run, a request's or a subagent's, by the traces it ran, for a
-  // subagent's chain and a `?trace=` pick.
   const groupByTrace = useMemo(() => {
     const byTrace = new Map<string, SpanGroup>();
     for (const group of allGroups) {
@@ -700,8 +603,6 @@ export function TracingPanel({
     return byTrace;
   }, [allGroups]);
 
-  // The filter runs on the deferred value, so typing stays responsive while a
-  // full buffer is searched.
   const deferredFilter = useDeferredValue(filter);
   const groups = useMemo(() => {
     const query = parseQuery(deferredFilter, TASK_QUERY_FIELDS);
@@ -730,8 +631,6 @@ export function TracingPanel({
   );
   const remaining = groups.length - visibleGroups.length;
 
-  // The run on the right: the pick, a subagent included. With no pick, or a
-  // pick the filters hid, the first listed request stands in.
   const selectedGroup = useMemo(() => {
     for (const group of visibleGroups) {
       if (spanKey(group.root) === selectedTaskKey) return group;
@@ -743,7 +642,6 @@ export function TracingPanel({
 
     return visibleGroups[0] ?? null;
   }, [visibleGroups, selectedTaskKey]);
-  // The list: every request, and its subagents while its stack is open.
   const listRows = useMemo<ListRow[]>(
     () =>
       visibleGroups.flatMap((group): ListRow[] => [
@@ -764,23 +662,16 @@ export function TracingPanel({
     () => taskCosts(visibleGroups, rates, ratesLoading),
     [visibleGroups, rates, ratesLoading],
   );
-  // The span open in the side panel, resolved against the selected run so
-  // it tracks live updates and closes when its run leaves the view.
   const selectedSpan =
     selectedGroup?.spans.find((span) => spanKey(span) === selectedKey) ?? null;
-  // An open span folds the list to its rail, so the waterfall keeps its width
-  // beside the detail. Render-time adjustment, not an effect.
   if (!selectedSpan && listKept) setListKept(false);
   const rail =
     !isMobile && (railChosen || (selectedSpan !== null && !listKept));
-  // The selected run's chain, a request down to the subagent on screen.
   const chain = useMemo(
     () => (selectedGroup ? chainFor(selectedGroup, groupByTrace) : []),
     [selectedGroup, groupByTrace],
   );
 
-  // Reset paging when the filters change so "Load more" starts from the top.
-  // Render-time adjustment, not an effect.
   const filterSignature = `${filter}|${range}|${timeWindow?.from}|${timeWindow?.to}`;
   const [prevFilterSignature, setPrevFilterSignature] =
     useState(filterSignature);
@@ -789,38 +680,28 @@ export function TracingPanel({
     setVisibleCount(PAGE_SIZE);
   }
 
-  // A new `?trace=` (a log's "View trace", a link, a pick): select that run,
-  // page it into the list and scroll its row into view, once per trace, so a
-  // later filter edit is not re-fought.
+  // A ?trace= focuses once (focusedRef), so a later filter edit is not re-fought.
   const focusedRef = useRef<string | null>(null);
-  // The focus key a one-trace Tempo fetch was already sent for, so a miss
-  // ends in a notice instead of another fetch.
   const fetchedRef = useRef<string | null>(null);
   const [missingTrace, setMissingTrace] = useState<string | null>(null);
-  // A new focus target retires the notice about the previous one.
   const [prevFocusTraceId, setPrevFocusTraceId] = useState(focusTraceId);
   if (focusTraceId !== prevFocusTraceId) {
     setPrevFocusTraceId(focusTraceId);
     if (focusTraceId) setMissingTrace(null);
   }
-  // Bumped by focusTrace to force a re-focus of the same trace (the ref dedup
-  // below would otherwise swallow a repeat click on the same subagent link).
   const [refocusNonce, setRefocusNonce] = useState(0);
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- router ?trace=, DOM row scroll
   useEffect(() => {
     if (!focusTraceId) return;
     const focusKey = `${focusTraceId}:${refocusNonce}`;
     if (focusedRef.current === focusKey) return;
     const index = groups.findIndex((group) => hasTrace(group, focusTraceId));
     if (index === -1) {
-      // The trace is in the buffer but a filter is hiding it: clear the filters
-      // so it lists, then let the effect re-run and select it. Only a trace
-      // absent from the whole buffer is a candidate for a Tempo fetch.
       const hidden = allGroups.find((group) => hasTrace(group, focusTraceId));
       if (hidden) {
         setFilter("");
         setRange("30d");
-        // A trace fetched by id can predate the widest preset: open a window
-        // from its start, else the preset alone lists it.
+        // A trace fetched by id can predate the widest preset: open a window from its start.
         const start = hidden.root.startTimeMs;
         setTimeWindow(
           start < now - rangeMs("30d")
@@ -830,10 +711,8 @@ export function TracingPanel({
 
         return;
       }
-      // Not in the recent history: ask Tempo for that one trace, once the
-      // backfill has settled so the two answers cannot race. Record the request
-      // only if it actually went out, so a closed socket doesn't get reported as
-      // a miss without ever asking. A second real miss is reported.
+      // Only once the backfill settled, so the two answers cannot race; marked as asked only
+      // if the socket sent it.
       if (history === "loading" || history === "none") return;
       if (fetchedRef.current !== focusKey) {
         if (fetchTrace(focusTraceId)) fetchedRef.current = focusKey;
@@ -846,20 +725,16 @@ export function TracingPanel({
 
       return;
     }
-    // A subagent's trace selects the subagent, under its request, whose
-    // stack opens again if the person had closed it.
     const target = groupByTrace.get(focusTraceId) ?? groups[index];
+    // oxlint-disable-next-line react/set-state-in-effect -- selection follows router ?trace=
     setSelectedTaskKey(spanKey(target.root));
     if (target !== groups[index]) openStack(groups[index]);
-    // A request beyond the current page isn't listed yet: page it in and
-    // finish on the re-run (visibleCount is a dep).
     if (index >= visibleCount) {
       setVisibleCount(index + 1);
 
       return;
     }
-    // A subagent's row lists once its request's stack opens for it, on the
-    // re-run (listRows is a dep).
+    // A subagent's row exists once its stack opens, on the re-run (listRows is a dep).
     const element = document.getElementById(`task-${target.root.traceId}`);
     if (!element) return;
     focusedRef.current = focusKey;
@@ -881,7 +756,6 @@ export function TracingPanel({
     setFocusTraceId,
   ]);
 
-  // Drops a request's closed choice, so its subagent rows list again.
   const openStack = (request: SpanGroup): void => {
     const key = spanKey(request.root);
     setStackChoices((current) => {
@@ -893,14 +767,9 @@ export function TracingPanel({
     });
   };
 
-  // A click or j/k pick: select the run and put its trace in the URL. The
-  // focus effect is told it already ran, so it does not scan and scroll again,
-  // and a held j/k writes the URL once it settles.
   const pickTask = useCallback(
     (root: ObservabilitySpanRow): void => {
       setSelectedTaskKey(spanKey(root));
-      // A picked run opens with no span, so returning to a run never
-      // reopens its old detail (and folds the list) under the click.
       setSelectedKey(null);
       focusedRef.current = `${root.traceId}:${refocusNonce}`;
       void setFocusTraceId(root.traceId, {
@@ -909,7 +778,6 @@ export function TracingPanel({
     },
     [refocusNonce, setFocusTraceId],
   );
-  // A click on a request's avatar stack: list or hide its subagent rows.
   const toggleStack = useCallback(
     (root: ObservabilitySpanRow, open: boolean): void => {
       setStackChoices((current) => new Map(current).set(spanKey(root), open));
@@ -917,9 +785,8 @@ export function TracingPanel({
     [],
   );
 
-  // j and k walk the listed rows, open subagents included. `/` is the
-  // toolbar's own table.filter binding. Not in SHORTCUTS: `k` there is the
-  // canvas's Add skill, and a key is claimed once.
+  // Not in SHORTCUTS: `k` there is the canvas's Add skill, and a key is claimed once.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- window keydown listener
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
       if (event.key !== "j" && event.key !== "k") return;
@@ -932,7 +799,6 @@ export function TracingPanel({
         return;
       }
       const listed = listRows.findIndex((row) => row.group === selectedGroup);
-      // A selected subagent whose stack is closed steps from its request.
       const index =
         listed !== -1
           ? listed
@@ -946,8 +812,6 @@ export function TracingPanel({
         Math.max(0, index + (event.key === "j" ? 1 : -1)),
       );
       event.preventDefault();
-      // Stepping past the last listed request pages the next one in; its
-      // row exists on the next frame, after the list re-rendered.
       const paged = nextIndex >= listRows.length;
       if (paged) setVisibleCount(visibleCount + 1);
       const next = paged ? groups[visibleCount] : listRows[nextIndex]?.group;
@@ -968,9 +832,7 @@ export function TracingPanel({
     setToggled((current) => flipped(current, key));
   };
 
-  // Jump to another run (a subagent's line, a next run). Reuses the `?trace=`
-  // focus effect above, which selects and scrolls to it. Bumps the nonce (not
-  // the ref) so re-clicking the same link re-focuses.
+  // Bumps the nonce, not the ref, so re-clicking the same link focuses it again.
   const focusTrace = useCallback(
     (traceId: string) => {
       setRefocusNonce((nonce) => nonce + 1);
@@ -979,9 +841,6 @@ export function TracingPanel({
     [setFocusTraceId],
   );
 
-  // Re-enters the failed task's conversation with `continue: true` on the
-  // stage's run endpoint. Keyed by trace, so a second click cannot fire while
-  // the first is live.
   const continueTask = async (root: ObservabilitySpanRow): Promise<void> => {
     const settle = (error: string | null): void =>
       setContinueAttempts((current) =>
@@ -1071,8 +930,7 @@ export function TracingPanel({
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <TaskListPane
-          // An empty list opens with its message: with no trace selected
-          // there is no header holding the fold to open it again.
+          // Never a rail while empty: with no trace selected, no header holds the fold.
           rail={rail && listRows.length > 0}
           rows={listRows}
           selectedGroup={selectedGroup}
@@ -1141,13 +999,8 @@ export function TracingPanel({
   );
 }
 
-/**
- * Newest request first. A request is every run one event started: the passes
- * that share its event id and the runs an answer or finished job resumed
- * (task.root_id). A subagent (parent.trace_id) is its own group under the
- * request at the top of its chain; one whose parent never arrived lists on
- * its own.
- */
+/** Newest first. A request is every run one event started, resumes (task.root_id) included; a
+ * subagent (parent.trace_id) lists under its chain's top request, or alone without one. */
 export function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
   const roots = spans.filter((span) => isRootSpanKind(span.kind));
   const childrenByTrace = new Map<string, ObservabilitySpanRow[]>();
@@ -1214,7 +1067,7 @@ export function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
     }
   }
 
-  // Walk newest to oldest, so the last task seen per conversation is the next one.
+  // Newest first, so the last run seen per conversation is the next one.
   const newerRun = new Map<string, ObservabilitySpanRow>();
   for (const group of groups) {
     const { root } = group;
@@ -1227,13 +1080,8 @@ export function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
   return groups;
 }
 
-/**
- * Each listed task's price by `spanKey(root)`: its model steps at their run's
- * rates, a request with its subagents. `partial` when some step's model has
- * no price, so the sum is a floor; null when none has one; absent before any
- * step ran or before the first rates arrive. While a new model set `loading`,
- * a step without a rate yet is left out instead of counted as unpriced.
- */
+/** `partial`: some step's model has no price (the sum is a floor); null: none has one; absent:
+ * no step ran or no rates yet. While `loading`, a step with no rate yet is skipped. */
 export function taskCosts(
   groups: SpanGroup[],
   rates: Array<ModelRef & ModelTokenRates> | undefined,
@@ -1276,7 +1124,6 @@ export function taskCosts(
   return costs;
 }
 
-/** The task list's failure cause: "rate limit", or the start of the error. */
 export function failureCause(group: SpanGroup): string | null {
   const error = taskError(group);
   if (!error) return null;
@@ -1287,7 +1134,6 @@ export function failureCause(group: SpanGroup): string | null {
     : error;
 }
 
-/** Whether a request passes the search box: every field token, then the free text. */
 export function matchesTaskQuery(group: SpanGroup, query: TaskQuery): boolean {
   if (
     !query.fields.every(({ field, value }) =>
@@ -1303,7 +1149,6 @@ export function matchesTaskQuery(group: SpanGroup, query: TaskQuery): boolean {
   );
 }
 
-/** Where a task came in, from its conversation key; a cron root is Cron. */
 export function taskChannel(root: ObservabilitySpanRow): string {
   if (root.kind === "cron") return "Cron";
   const key = unscopedConversationKey(root.conversationKey ?? "");
@@ -1314,11 +1159,6 @@ export function taskChannel(root: ObservabilitySpanRow): string {
   );
 }
 
-/**
- * The time axis ticks for a window `spanMs` long, as offsets from its start.
- * A window past the longest step (a run that waited days on a person) steps
- * in whole hours.
- */
 export function axisTicks(spanMs: number): number[] {
   const step =
     AXIS_STEPS_MS.find((candidate) => spanMs / candidate <= AXIS_MAX_STEPS) ??
@@ -1330,40 +1170,36 @@ export function axisTicks(spanMs: number): number[] {
   );
 }
 
-/**
- * Every issue in the run in time order, and the issues under each span, read
- * down the same tree the waterfall renders: a subagent is one leaf line.
- * Each issue keeps the rows above it, so a click can open them.
- */
 export function runIssues(group: SpanGroup): RunIssues {
-  const all: RunIssues["all"] = [];
-  const below = new Map<string, SpanIssue[]>();
+  const all: RunIssue[] = [];
+  const below = new Map<string, RunIssue[]>();
   const own = new Map<string, SpanIssue>();
   const walk = (
     span: ObservabilitySpanRow,
     path: ObservabilitySpanRow[],
-  ): SpanIssue[] => {
+  ): RunIssue[] => {
     const isTaskRow = span === group.root;
     const children = rowChildren(span, isTaskRow, group);
     // The task row is always open, so it is never on a path.
     const inside = isTaskRow ? path : [...path, span];
     const under = children.flatMap((child) => walk(child, inside));
     below.set(span.spanId, under);
-    // A failure counts once, where it happened: core closes the open step and
-    // tool with the run's error, so a span that failed with a failure under it
-    // passed that one up. The task row stands for the whole request, so a
-    // first pass that failed and was continued is not its issue either.
+    // A failure counts once, where it happened: core closes the open step and tool with the
+    // run's error, and the task row (the whole request) only fails when the request did.
     const found = spanIssue(span);
     const passedUp =
       found?.level === "error" &&
-      under.some((item) => item.level === "error" && item.text === found.text);
+      under.some(
+        ({ issue }) => issue.level === "error" && issue.text === found.text,
+      );
     const issue =
       passedUp || (isTaskRow && group.status !== "error") ? null : found;
     if (!issue) return under;
     own.set(span.spanId, issue);
-    all.push({ issue: issue, path: path, span: span });
+    const entry = { issue: issue, path: path, span: span };
+    all.push(entry);
 
-    return [issue, ...under];
+    return [entry, ...under];
   };
   walk(group.root, []);
   all.sort((left, right) => left.issue.atMs - right.issue.atMs);
@@ -1371,10 +1207,6 @@ export function runIssues(group: SpanGroup): RunIssues {
   return { all: all, below: below, own: own };
 }
 
-/**
- * What went wrong on a span: it failed, or it retried a model call or a rate
- * limited tool before it went through.
- */
 export function spanIssue(span: ObservabilitySpanRow): SpanIssue | null {
   if (span.status === "error") {
     return {
@@ -1399,7 +1231,6 @@ export function spanIssue(span: ObservabilitySpanRow): SpanIssue | null {
   };
 }
 
-/** Two prices summed: null only when both are, partial when either is. */
 function addCost(
   sum: TaskCost | null | undefined,
   cost: TaskCost | null,
@@ -1410,7 +1241,6 @@ function addCost(
   return { usd: sum.usd + cost.usd, partial: sum.partial || cost.partial };
 }
 
-/** A request's spans and its subagents', for search. */
 function allSpans(group: SpanGroup): ObservabilitySpanRow[] {
   return [
     ...group.spans,
@@ -1418,7 +1248,6 @@ function allSpans(group: SpanGroup): ObservabilitySpanRow[] {
   ];
 }
 
-/** The step whose response is the question a run stopped on, when it stopped on one. */
 function askedStepId(
   run: ObservabilitySpanRow,
   childrenByParent: Map<string, ObservabilitySpanRow[]>,
@@ -1430,7 +1259,6 @@ function askedStepId(
   )?.spanId;
 }
 
-/** A retried model call's failed attempts on one line; core sends them as a JSON array. */
 function attemptErrors(span: ObservabilitySpanRow): string {
   const raw = attributeText(span.attributes?.["model.attempt_errors"]);
   if (!raw) return "";
@@ -1450,7 +1278,6 @@ function attributeText(value: unknown): string | undefined {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
-/** A time axis tick, short enough to sit five to a column: `0`, `500ms`, `15s`, `1m 30s`, `15h`. */
 function axisLabel(ms: number): string {
   if (ms === 0) return "0";
   if (ms < 1000) return `${ms}ms`;
@@ -1463,8 +1290,6 @@ function axisLabel(ms: number): string {
   return minor > 0 ? `${major}${unit} ${minor}${minorUnit}` : `${major}${unit}`;
 }
 
-// Only a failed top-level task can be continued: a subtask belongs to its
-// parent's run, and a task that finished has nothing to pick up.
 function canContinue(group: SpanGroup): boolean {
   return (
     (group.root.kind === "task" || group.root.kind === "cron") &&
@@ -1472,7 +1297,6 @@ function canContinue(group: SpanGroup): boolean {
   );
 }
 
-/** A run's chain: the request at the top, then each subagent down to `group`. */
 function chainFor(
   group: SpanGroup,
   groupByTrace: Map<string, SpanGroup>,
@@ -1491,7 +1315,6 @@ function chainFor(
   return chain;
 }
 
-/** A run's price as its trace header shows it: `$0.0012`, `$0.0012+` when partial, or "not priced". */
 function costLabel(cost: TaskCost | null | undefined): string | undefined {
   if (cost === undefined) return undefined;
   if (cost === null) return "not priced";
@@ -1499,12 +1322,6 @@ function costLabel(cost: TaskCost | null | undefined): string | undefined {
   return `${formatUsd(cost.usd)}${cost.partial ? "+" : ""}`;
 }
 
-/**
- * The footer's ` · $0.0638 · 1 not priced` over the listed requests, "" before
- * any is priced. With more pages to load it adds "shown", since the count
- * covers every matching task and the price only the loaded ones; a partial
- * price adds "+".
- */
 function costTotal(
   rows: ListRow[],
   costs: ReadonlyMap<string, TaskCost | null>,
@@ -1525,7 +1342,6 @@ function costTotal(
   return `${price}${unpriced > 0 ? ` · ${unpriced} not priced` : ""}`;
 }
 
-/** Labeled fields first, then the run identity, then every key the panel does not already show. */
 function detailRows(span: ObservabilitySpanRow): DetailRow[] {
   const attributes = span.attributes ?? {};
   const labeled = DETAIL_FIELDS.flatMap(
@@ -1584,7 +1400,6 @@ function displayAttribute(value: unknown): string {
   return value;
 }
 
-/** The set with `key` added when absent, removed when present. */
 function flipped(current: Set<string>, key: string): Set<string> {
   const next = new Set(current);
   if (next.has(key)) {
@@ -1596,29 +1411,22 @@ function flipped(current: Set<string>, key: string): Set<string> {
   return next;
 }
 
-/** A task's dot: a stale "running" reads as ended. */
 function groupTone(group: SpanGroup): StatusTone {
   return group.status === "running" && !isTaskRunning(group.latest)
     ? "ended"
     : STATUS_TONE[group.status];
 }
 
-/** Whether a request or one of its subagents ran that trace. */
 function hasTrace(group: SpanGroup, traceId: string): boolean {
   return allSpans(group).some(
     (span) => isRootSpanKind(span.kind) && span.traceId === traceId,
   );
 }
 
-/** Whether a waterfall row is open: a step starts open, anything else closed, and `toggled` flips that. */
 function isRowOpen(span: ObservabilitySpanRow, toggled: Set<string>): boolean {
   return (span.kind === "model.step") !== toggled.has(spanKey(span));
 }
 
-/**
- * Whether a request's subagent rows list: the person's choice for it, else
- * while the selected run is the request or one of its subagents.
- */
 function isStackOpen(
   group: SpanGroup,
   selected: SpanGroup | null,
@@ -1631,7 +1439,6 @@ function isStackOpen(
   );
 }
 
-/** A live "running" span under a task that already finished never reported its end. */
 function isStale(span: ObservabilitySpanRow, taskRunning: boolean): boolean {
   return span.status === "running" && !taskRunning;
 }
@@ -1643,13 +1450,11 @@ function isTaskRunning(root: ObservabilitySpanRow): boolean {
   );
 }
 
-/** KIND_BAR lookup with a fallback: core can ship a new span kind before
- * this dashboard build knows it, and that must not take down the panel. */
+// Core can ship a span kind before this build knows it.
 function kindBar(kind: ObservabilitySpanRow["kind"]): string {
   return KIND_BAR[kind] ?? KIND_BAR["tool.call"];
 }
 
-/** Every model the groups' runs name, subagents included. */
 function listedModels(groups: SpanGroup[]): ModelRef[] {
   return [...groups, ...groups.flatMap((group) => group.subagents)].flatMap(
     (group) =>
@@ -1661,7 +1466,6 @@ function listedModels(groups: SpanGroup[]): ModelRef[] {
   );
 }
 
-/** A step's reasoning or response when it has one; core writes the key empty on a step without. */
 function noteText(span: ObservabilitySpanRow, key: string): string | undefined {
   const value = span.attributes?.[key];
   if (value === undefined || value === null) return undefined;
@@ -1679,11 +1483,6 @@ function numericAttribute(
   return typeof value === "number" ? value : undefined;
 }
 
-/**
- * The run a subagent lists under: the request at the top of its parent
- * chain, or the subagent at the top when the request never arrived. That
- * top subagent itself lists on its own, as does any subagent in a cycle.
- */
 function ownerOf(
   subagent: SpanGroup,
   taskByTrace: Map<string, SpanGroup>,
@@ -1703,7 +1502,6 @@ function ownerOf(
   return undefined;
 }
 
-/** A subagent's parent trace, for its link and its place in the list. */
 function parentTraceOf(span: ObservabilitySpanRow): string | undefined {
   const parentTraceId = span.attributes?.["parent.trace_id"];
 
@@ -1712,8 +1510,6 @@ function parentTraceOf(span: ObservabilitySpanRow): string | undefined {
     : undefined;
 }
 
-// A section shows the count that describes it; the char count is added when
-// the span reports one, or stands in when there is no count at all.
 function payloadSections(span: ObservabilitySpanRow): PayloadSection[] {
   return PAYLOAD_SECTIONS.flatMap(
     ({ charsKey, countKey, countLabel, ...section }): PayloadSection[] => {
@@ -1737,10 +1533,6 @@ function payloadSections(span: ObservabilitySpanRow): PayloadSection[] {
   );
 }
 
-/**
- * The spans listed under a row, for the waterfall and its issues alike. A
- * subagent is one leaf line: its own run lists on its own.
- */
 function rowChildren(
   span: ObservabilitySpanRow,
   isTaskRow: boolean,
@@ -1751,7 +1543,6 @@ function rowChildren(
     : (group.childrenByParent.get(span.spanId) ?? []);
 }
 
-/** A row's name. A later run nested under its task reads as resumed. */
 function rowLabel(span: ObservabilitySpanRow): string {
   return span.kind === "task" || span.kind === "cron"
     ? "resumed"
@@ -1762,7 +1553,6 @@ function spanKey(span: ObservabilitySpanRow): string {
   return `${span.traceId}:${span.spanId}`;
 }
 
-/** The span's own name: the request for a root, the agent for a subagent, the tool or step for a child. */
 function spanLabel(span: ObservabilitySpanRow): string {
   if (span.kind === "tool.call") {
     const toolName = span.attributes?.["tool.name"];
@@ -1787,9 +1577,7 @@ function spanLabel(span: ObservabilitySpanRow): string {
   return typeof taskId === "string" ? taskId : span.traceId;
 }
 
-// Lowercased search text, built once per span object. The stream replaces a
-// span object when it updates instead of mutating it, so the cache never serves
-// stale text, and a keystroke re-serializes nothing.
+// Safe to cache: the stream replaces a span object when it updates, never mutates it.
 function spanSearchText(span: ObservabilitySpanRow): string {
   const cached = SPAN_SEARCH_TEXT.get(span);
   if (cached !== undefined) return cached;
@@ -1813,7 +1601,6 @@ function spanSearchText(span: ObservabilitySpanRow): string {
   return text;
 }
 
-/** A model step's reasoning and response texts, when it has them; nothing for any other span. */
 function stepNotes(span: ObservabilitySpanRow): {
   reasoning: string | undefined;
   response: string | undefined;
@@ -1826,7 +1613,6 @@ function stepNotes(span: ObservabilitySpanRow): {
   };
 }
 
-/** Total tokens, in the root's spelling or a model step's. */
 function spanTokens(span: ObservabilitySpanRow): number | undefined {
   return (
     numericAttribute(span, "usage.total_tokens") ??
@@ -1834,10 +1620,6 @@ function spanTokens(span: ObservabilitySpanRow): number | undefined {
   );
 }
 
-/**
- * The traces a run itself ran: its root and its resumed passes, never the
- * subagents it delegated to, which are runs of their own.
- */
 function runTraceIds(group: SpanGroup): string[] {
   return group.spans
     .filter(
@@ -1848,23 +1630,16 @@ function runTraceIds(group: SpanGroup): string[] {
     .map((span) => span.traceId);
 }
 
-/** Keeps a click inside a line's own control from selecting the row. */
 function stopRowClick(event: MouseEvent): void {
   event.stopPropagation();
 }
 
-/** The agent a subagent run is, for its avatar and name. */
 function subagentName(span: ObservabilitySpanRow): string {
   const agentId = span.attributes?.["agent.id"] ?? span.agentId;
 
   return typeof agentId === "string" && agentId ? agentId : "subagent";
 }
 
-/**
- * One run's rows, window and status, from its passes and their children.
- * `subtasksByParent` adds each subagent this run started as one leaf line;
- * the subagent's own spans belong to its own group.
- */
 function taskGroup(
   runs: ObservabilitySpanRow[],
   childrenByTrace: Map<string, ObservabilitySpanRow[]>,
@@ -1893,9 +1668,6 @@ function taskGroup(
   const spanIds = new Set([root.spanId, ...members.map((span) => span.spanId)]);
   const childrenByParent = new Map<string, ObservabilitySpanRow[]>();
   for (const member of members) {
-    // A subagent nests under the run that started it, a later pass or a wait
-    // under the task row. Orphans (a parent that never arrived) fall back to
-    // their own run so they still render.
     const parentId =
       member.parentSpanId && spanIds.has(member.parentSpanId)
         ? member.parentSpanId
@@ -1916,8 +1688,7 @@ function taskGroup(
 
   const last = runs.at(-1) ?? root;
   const live = isTaskRunning(last);
-  // An open wait runs until now, which would stretch the window; its row shows
-  // the elapsed time instead.
+  // An open wait runs until now and would stretch the window; its row shows the elapsed time.
   const timed = [root, ...members].filter(
     (span) => span.attributes?.["wait.open"] !== true,
   );
@@ -1945,7 +1716,6 @@ function taskGroup(
   };
 }
 
-/** The failed task's error: its latest run's, else the first span's that has one. */
 function taskError(group: SpanGroup): string | null {
   if (group.status !== "error") return null;
   const failed = group.spans.filter((span) => span.error);
@@ -1956,7 +1726,6 @@ function taskError(group: SpanGroup): string | null {
   );
 }
 
-/** The request a run belongs to: the event it resumed, its own, or its trace. */
 function taskKey(root: ObservabilitySpanRow): string {
   const taskId =
     root.attributes?.["task.root_id"] ?? root.attributes?.["task.id"];
@@ -1964,19 +1733,16 @@ function taskKey(root: ObservabilitySpanRow): string {
   return typeof taskId === "string" && taskId ? taskId : root.traceId;
 }
 
-/** Where a moment falls on the timeline, as a percent of its width. */
 function timelinePct(ms: number, scale: TimelineScale): number {
   return ((ms - scale.startMs) / scale.spanMs) * 100;
 }
 
-/** The icon a tool call's line opens with. */
 function toolIcon(span: ObservabilitySpanRow): LucideIcon {
   const name = spanLabel(span);
 
   return TOOL_ICONS.find(({ test }) => test.test(name))?.icon ?? Wrench;
 }
 
-/** The first string argument of a tool call, on one line, for its title. */
 function toolSummary(span: ObservabilitySpanRow): string | undefined {
   const input = span.attributes?.["tool.input"];
   let parsed: unknown = input;
@@ -2004,18 +1770,10 @@ function toolSummary(span: ObservabilitySpanRow): string | undefined {
     : text;
 }
 
-/**
- * The conversation key a person would recognise: core scopes stored keys as
- * `acct:<account>:agent:<agent>:<key>`, so the tail is the channel's own key.
- */
 function unscopedConversationKey(key: string): string {
   return key.replace(/^acct:[^:]+:agent:[^:]+:/, "");
 }
 
-/**
- * The wait after a run that closed on something open: until the next run of the
- * task starts, or still open when there is none.
- */
 function waitSpan(
   run: ObservabilitySpanRow,
   next: ObservabilitySpanRow | undefined,
@@ -2052,21 +1810,18 @@ function waitSpan(
   };
 }
 
-/**
- * A request's subagents as overlapping avatars, four at most and "+N" for the
- * rest. Clicking it lists or hides their rows; it sits beside the row's own
- * button, not inside it.
- */
 function AvatarStack({
+  keys,
   names,
   open,
   onToggle,
 }: {
+  keys: string[];
   names: string[];
   open: boolean;
   onToggle: () => void;
 }): React.JSX.Element {
-  const shown = names.slice(0, STACK_AVATARS);
+  const shown = keys.slice(0, STACK_AVATARS);
 
   return (
     <button
@@ -2077,10 +1832,10 @@ function AvatarStack({
       title={names.join(", ")}
       className="flex shrink-0 cursor-pointer items-center self-end rounded pr-3 pb-1.5 pl-1"
     >
-      {shown.map((name, index) => (
+      {shown.map((key, index) => (
         <DitherAvatarSVG
-          key={`${name}:${index}`}
-          seed={name}
+          key={key}
+          seed={names[index]}
           size={14}
           className={cn(
             "shrink-0 ring-2 ring-background",
@@ -2097,10 +1852,6 @@ function AvatarStack({
   );
 }
 
-/**
- * Continue for a failed task in the waterfall header: the button, "Continuing…"
- * until the continuation's trace arrives, then a link to that next run.
- */
 function ContinueAction({
   attempt,
   nextRun,
@@ -2149,10 +1900,6 @@ function ContinueAction({
   );
 }
 
-/**
- * A failed span's error, on its own line right under the span's row, so it
- * reads without opening anything. Selects the span.
- */
 function ErrorRow({
   depth,
   isSelected,
@@ -2172,11 +1919,12 @@ function ErrorRow({
         isSelected && "bg-accent",
       )}
     >
-      {/* Past the Started column (w-22), then the row's own indent. */}
       <td
         colSpan={5}
         className="relative pt-0 pr-3 pb-1.5 pl-(--row-indent) text-destructive"
-        style={{ "--row-indent": `calc(5.5rem + ${depth * 18 + 12}px)` }}
+        style={{
+          "--row-indent": `calc(${STARTED_COLUMN_WIDTH} + ${depth * 18 + 12}px)`,
+        }}
         title={text}
       >
         <span
@@ -2192,11 +1940,6 @@ function ErrorRow({
   );
 }
 
-/**
- * A row under a step that is not a span of its own: the step's reasoning or
- * its answer, read off the step's attributes. Opens on the text, selects the
- * step.
- */
 function NoteRow({
   depth,
   icon,
@@ -2235,11 +1978,6 @@ function NoteRow({
   );
 }
 
-/**
- * A row across all five columns, indented like a Span cell at `depth`: a
- * step's note line, or an open line's payload. With `onClick` it selects a
- * span, like a row.
- */
 function WideRow({
   children,
   depth,
@@ -2262,12 +2000,13 @@ function WideRow({
         isSelected && "bg-accent",
       )}
     >
-      {/* Past the Started column (w-22), then the row's own indent. */}
       <td
         colSpan={5}
         aria-label={label}
         className="py-1.5 pr-3 pl-(--row-indent)"
-        style={{ "--row-indent": `calc(5.5rem + ${depth * 18 + 12}px)` }}
+        style={{
+          "--row-indent": `calc(${STARTED_COLUMN_WIDTH} + ${depth * 18 + 12}px)`,
+        }}
       >
         {children}
       </td>
@@ -2275,7 +2014,6 @@ function WideRow({
   );
 }
 
-/** A row's duration cell; a span that runs to now counts up on the clock's tick. */
 function RowDuration({
   durationMs,
   runsToNow,
@@ -2298,11 +2036,6 @@ function RowDuration({
   );
 }
 
-/**
- * A line's chevron trigger. The open state lives in the waterfall, not here,
- * because what it opens is the `PayloadRow` under the line, not a panel
- * inside the cell: the payload then reads at the table's full width.
- */
 function FoldTrigger({
   children,
   isOpen,
@@ -2321,12 +2054,7 @@ function FoldTrigger({
   );
 }
 
-/**
- * What an open line holds, as its own row under the line so the line keeps
- * its start, duration and bar on one short row and the text gets the whole
- * table width, pane open or not. Hangs off a rule under the line's icon. Not
- * clickable, so a drag selects its text; the line above selects the span.
- */
+/** Not clickable, so a drag selects its text; the line above selects the span. */
 function PayloadRow({
   children,
   ...row
@@ -2340,7 +2068,6 @@ function PayloadRow({
   );
 }
 
-/** One payload of an open line, capped in height and scrolling inside itself. */
 function PayloadText({
   label,
   value,
@@ -2364,10 +2091,6 @@ function PayloadText({
   );
 }
 
-/**
- * A task row reads the whole request's status as a dot and a word; any other
- * row shows a dot only when its span is not ok.
- */
 function RowStatus({
   span,
   group,
@@ -2417,17 +2140,14 @@ function SpanDetails({
 }: {
   span: ObservabilitySpanRow;
 }): React.JSX.Element {
-  // Pretty-printing a large payload is the expensive part, and the parent
-  // re-renders on every stream message while a run is live.
+  // Pretty-printing is costly, and the parent re-renders on every message of a live run.
   const { sections, rows } = useMemo(
     () => ({ sections: payloadSections(span), rows: detailRows(span) }),
     [span],
   );
   const modelId = span.attributes?.["model.id"];
 
-  // minmax(0,1fr) lets the grid track shrink below its content's min-content
-  // width; without it a long unbroken run in a payload widens the track past
-  // the panel and the text spills off the tinted background.
+  // minmax(0,1fr): a long unbroken payload would otherwise widen the track past the panel.
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
       <SpanTimings span={span} />
@@ -2436,8 +2156,6 @@ function SpanDetails({
           {span.error}
         </div>
       )}
-      {/* Flat sections: a clickable header row over a soft-tinted payload surface.
-          No bordered card around each one, which would nest a box in a box. */}
       {(sections.length > 0 || rows.length > 0) && (
         <div className="min-w-0 divide-y divide-border/40 rounded-md bg-card/30">
           {sections.map(({ key, label, open, summary, value }) => (
@@ -2464,7 +2182,6 @@ function SpanDetails({
   );
 }
 
-/** A context prepare, cold start or wait: its name, the messages it loaded, the questions it asked. */
 function PhaseLine({
   cost,
   isOpen,
@@ -2478,11 +2195,9 @@ function PhaseLine({
 }): React.JSX.Element {
   const name = spanLabel(span);
   const Icon = span.name === WAIT_SPAN_NAME ? MessageCircleQuestionMark : Zap;
-  // The history a prepare read, or the messages a compaction folded.
   const messages =
     numericAttribute(span, "prepare.history_rows") ??
     numericAttribute(span, "compaction.message_count");
-  // Only a phase that called the model, like a compaction, has tokens and a price.
   const tokens = spanTokens(span);
   const line = (
     <TraceLine size="xs">
@@ -2510,12 +2225,6 @@ function PhaseLine({
   );
 }
 
-/**
- * The Span cell: the row's name as a Trace line. A step is a title, its
- * price and tokens and a chevron that folds its lines; a tool call opens on
- * its input and output; a subagent is its avatar and name and opens its own
- * run; a phase is its name.
- */
 function SpanLine({
   cost,
   hasChildren,
@@ -2566,7 +2275,6 @@ function SpanLine({
   );
 }
 
-/** A model step or a resumed pass: the name, the price, the tokens, and the chevron that folds what ran under it. */
 function StepLine({
   cost,
   hasChildren,
@@ -2587,7 +2295,6 @@ function StepLine({
   return (
     <TraceLine size="xs">
       <TraceTitle strong>{name}</TraceTitle>
-      {/* A running step has no tokens yet, so it has no price to show. */}
       {cost !== undefined && tokens !== undefined && (
         <TraceDescription>{cost}</TraceDescription>
       )}
@@ -2614,7 +2321,6 @@ function StepLine({
   );
 }
 
-/** A subagent the run started: its avatar, name and duration; opens its own run. */
 function SubagentLine({
   onFocusTrace,
   span,
@@ -2649,7 +2355,6 @@ function SubagentLine({
   );
 }
 
-/** A tool call: its icon, name and first argument; opens its input and output under the row. Its error has its own row. */
 function ToolLine({
   isOpen,
   onToggle,
@@ -2686,7 +2391,6 @@ function ToolLine({
   );
 }
 
-/** What an open tool call or wait row shows under its line: the tool's input and output, or the wait's questions. */
 function spanPayload(span: ObservabilitySpanRow): ReactNode {
   const input = span.attributes?.["tool.input"];
   const output = span.attributes?.["tool.output"];
@@ -2707,12 +2411,6 @@ function spanPayload(span: ObservabilitySpanRow): ReactNode {
   );
 }
 
-/**
- * One waterfall row. The task row (depth 0) is always open and reads the whole
- * request's status and duration. An issue on the row marks its edge;
- * `below` counts the issues under it and, while it is closed, marks them on
- * its bar.
- */
 function SpanRow({
   span,
   depth,
@@ -2740,19 +2438,18 @@ function SpanRow({
   group: SpanGroup;
   taskRunning: boolean;
   highlighted: boolean;
-  /** The row's price, see costLabel; only a step's line shows it. */
   cost: string | undefined;
   onFocusTrace: (traceId: string) => void;
   issue: SpanIssue | null;
-  below: SpanIssue[];
+  below: RunIssue[];
   live: boolean;
 }): React.JSX.Element {
   const isTaskRow = depth === 0;
-  // A running span runs to now. The task row reads the whole request, which
-  // is live while its latest pass is, so it runs to now too.
   const runsToNow = isTaskRow ? live : span.status === "running" && taskRunning;
   const durationMs = isTaskRow ? group.taskDurationMs : span.durationMs;
-  const belowErrors = below.filter((item) => item.level === "error").length;
+  const belowErrors = below.filter(
+    ({ issue }) => issue.level === "error",
+  ).length;
 
   return (
     <tr
@@ -2763,7 +2460,6 @@ function SpanRow({
         isSelected && "bg-accent",
         !isRootSpanKind(span.kind) && "text-foreground/80",
         highlighted && "animate-trace-flash",
-        // A span that arrives while the run is live fades in once.
         live && "starting:opacity-0",
       )}
     >
@@ -2846,7 +2542,6 @@ function SpanRow({
   );
 }
 
-/** Where a context prepare or a model step spent its time, as chips above the sections. */
 function SpanTimings({
   span,
 }: {
@@ -2882,9 +2577,7 @@ function SpanTimings({
 
   return (
     <div className="grid gap-1.5 text-xs text-muted-foreground">
-      {/* Step time, split so a slow step shows where it went. "Streaming" is
-          ONLY model token generation. Tool execution is the separate "tool
-          wait" (and the child tool spans), never folded into streaming. */}
+      {/* "streaming" is token generation only; tool execution is "tool wait". */}
       <div className="flex flex-wrap gap-x-4 gap-y-1">
         <TimingChip label="first token" ms={ttftMs} />
         <TimingChip label="streaming" ms={streamMs} />
@@ -2913,11 +2606,6 @@ function SpanTimings({
   );
 }
 
-/**
- * A bare chevron before the selected trace's title: folds the task list to its
- * rail and back. Padded for a 22px hit area, pulled back so it takes no room.
- * Desktop only.
- */
 function TaskListFold({
   rail,
   onToggle,
@@ -2943,12 +2631,6 @@ function TaskListFold({
   );
 }
 
-/**
- * The task list, or its rail: one row or one dot per task. The rail keeps the
- * order, the status and the selection of the list in 36px, so one trace gets
- * the width without losing where you are. The selected trace's first button
- * folds it, and the pane slides between the two widths.
- */
 function TaskListPane({
   rail,
   rows,
@@ -2991,6 +2673,9 @@ function TaskListPane({
             taskDurationMs={group.taskDurationMs}
             cause={failureCause(group)}
             isSubagent={parent !== null}
+            subagentKeys={group.subagents
+              .map((subagent) => spanKey(subagent.root))
+              .join("\n")}
             subagentNames={group.subagents
               .map((subagent) => subagentName(subagent.root))
               .join("\n")}
@@ -3021,14 +2706,6 @@ function TaskListPane({
   );
 }
 
-/**
- * One row of the task list: dot, request and duration, then start time and
- * the failure cause or open wait. A subagent row is indented under its
- * request and names its agent, with its task after the time. A request with
- * subagents ends in their avatar stack. The button's id is the `?trace=` focus
- * target. Memoized on the root span, which the stream keeps across flushes,
- * and the row's primitives.
- */
 const TaskListRow = memo(function TaskListRow({
   root,
   status,
@@ -3036,6 +2713,7 @@ const TaskListRow = memo(function TaskListRow({
   taskDurationMs,
   cause,
   isSubagent,
+  subagentKeys,
   subagentNames,
   isSelected,
   stackOpen,
@@ -3093,6 +2771,7 @@ const TaskListRow = memo(function TaskListRow({
       </button>
       {subagentNames !== "" && (
         <AvatarStack
+          keys={subagentKeys.split("\n")}
           names={subagentNames.split("\n")}
           open={stackOpen}
           onToggle={() => onToggleStack(root, !stackOpen)}
@@ -3102,11 +2781,6 @@ const TaskListRow = memo(function TaskListRow({
   );
 });
 
-/**
- * One task on the rail: its status dot, ringed when selected, indented for a
- * subagent. Hover names the task and its time; the id is the same focus
- * target as the list row, so j/k and a trace link still scroll to it.
- */
 function TaskRailDot({
   root,
   status,
@@ -3149,13 +2823,6 @@ function TaskRailDot({
   );
 }
 
-/**
- * The selected run on the right: its request, or its chain for a subagent,
- * its price, conversation and trace, the copy actions for the user's own coding
- * agent, Continue when a request failed, the count of what went wrong, then
- * its waterfall scaled to that run alone. The header opens with the task
- * list's fold, next to the list it folds.
- */
 function TaskWaterfall({
   attempt,
   chain,
@@ -3171,11 +2838,8 @@ function TaskWaterfall({
 }: {
   attempt: ContinueAttempt | undefined;
   chain: SpanGroup[];
-  /** The run's price, see costLabel; undefined before any model step. */
   cost: string | undefined;
-  /** The open span's details, beside the waterfall under the header. */
   detail: ReactNode;
-  /** The task list's fold button, first in the header. */
   fold: React.ReactNode;
   onCloseDetail: () => void;
   onContinue: () => void;
@@ -3192,9 +2856,7 @@ function TaskWaterfall({
   const view: WaterfallView = { ...panelView, issues: issues, live: live };
   const failures = issues.all.filter(({ issue }) => issue.level === "error");
   const retries = issues.all.filter(({ issue }) => issue.level === "warn");
-  // Opens an issue's span in the side panel, opens the rows folded above it,
-  // and scrolls its row into view once they render.
-  const showSpan = ({ path, span }: RunIssues["all"][number]): void => {
+  const showSpan = ({ path, span }: RunIssue): void => {
     const key = spanKey(span);
     if (key !== view.selectedKey) view.onSelect(key);
     for (const row of path) {
@@ -3368,11 +3030,6 @@ function TaskWaterfall({
   );
 }
 
-/**
- * One waterfall bar positioned within the task's time window. Model steps split
- * into a muted invoke-wait (time-to-first-token) segment and a solid streaming
- * segment so a slow step shows where the time went.
- */
 function TimelineBar({
   span,
   runsToNow,
@@ -3384,7 +3041,7 @@ function TimelineBar({
   runsToNow: boolean;
   taskRunning: boolean;
   failed: boolean;
-  marks: SpanIssue[];
+  marks: RunIssue[];
 }): React.JSX.Element {
   const scale = useContext(TimelineScaleContext);
   const stale = isStale(span, taskRunning);
@@ -3406,8 +3063,7 @@ function TimelineBar({
     Math.min((shownMs / scale.spanMs) * 100, 100 - leftPct),
   );
 
-  // A retried model call waits before its first token, so the retry wait
-  // leads the bar and the rest of the time to first token follows it.
+  // A retried call waits before its first token, so the retry wait leads the bar.
   const retryMs = numericAttribute(span, "model.retry_wait_ms") ?? 0;
   const ttftMs = numericAttribute(span, "model.ttft_ms");
   const retryFrac = Math.min(1, retryMs / shownMs);
@@ -3450,15 +3106,15 @@ function TimelineBar({
               "ring-1 ring-inset ring-foreground/40 dark:ring-background/70",
           )}
         />
-        {marks.map((mark, index) => (
+        {marks.map(({ issue, span: marked }) => (
           <span
-            key={index}
+            key={spanKey(marked)}
             className={cn(
               "absolute inset-y-0 left-(--mark-left) w-0.5",
-              STATUS_TONE_BG[mark.level],
+              STATUS_TONE_BG[issue.level],
             )}
             style={{
-              "--mark-left": `${Math.min(100, Math.max(0, ((mark.atMs - span.startTimeMs) / shownMs) * 100))}%`,
+              "--mark-left": `${Math.min(100, Math.max(0, ((issue.atMs - span.startTimeMs) / shownMs) * 100))}%`,
             }}
           />
         ))}
@@ -3467,17 +3123,12 @@ function TimelineBar({
   );
 }
 
-/**
- * The selected run's time axis, in the Timeline header: ticks that rescale as
- * a live run grows, the now dot, and a marker where each issue happened that
- * opens its span.
- */
 function TimelineAxis({
   issues,
   onPick,
 }: {
-  issues: RunIssues["all"];
-  onPick: (entry: RunIssues["all"][number]) => void;
+  issues: RunIssue[];
+  onPick: (entry: RunIssue) => void;
 }): React.JSX.Element {
   const scale = useContext(TimelineScaleContext);
 
@@ -3531,11 +3182,7 @@ function TimelineAxis({
   );
 }
 
-/**
- * Holds the selected run's time scale for the bars, durations, axis and lines
- * inside it. While the run is live it ticks once a second, so bars grow
- * toward the now line and only those parts re-render, not the rows.
- */
+/** On a live run's tick only the parts that read the scale re-render, not the rows. */
 function TimelineClock({
   children,
   group,
@@ -3546,8 +3193,7 @@ function TimelineClock({
   live: boolean;
 }): React.JSX.Element {
   const now = useNow(live ? LIVE_TICK_MS : null);
-  // The clock can trail the stream by a tick, so now is never earlier than
-  // the newest span. Keyed per run, a switch to a live run starts it fresh.
+  // The clock can trail the stream by a tick, so now never precedes the newest span.
   const nowMs = Math.max(group.windowStart + group.windowSpan, now);
   const scale: TimelineScale = live
     ? {
@@ -3560,15 +3206,7 @@ function TimelineClock({
   return <TimelineScaleContext value={scale}>{children}</TimelineScaleContext>;
 }
 
-/**
- * The now line and a faint line at each issue, drawn once over the timeline
- * column of every row. `--timeline-left` is where that column's bars start.
- */
-function TimelineLines({
-  issues,
-}: {
-  issues: RunIssues["all"];
-}): React.JSX.Element {
+function TimelineLines({ issues }: { issues: RunIssue[] }): React.JSX.Element {
   const scale = useContext(TimelineScaleContext);
 
   return (
@@ -3618,14 +3256,6 @@ function TimingChip({
   );
 }
 
-/**
- * A span's row, then what ran under it when open: a step's reasoning, its
- * tool calls and its answer. A step starts open, anything else closed, and
- * `view.toggled` flips that. `enclosingRootLive` is whether the nearest
- * enclosing root run is live; a resumed pass is itself a root and judged on
- * its own freshness. A subagent is one leaf line here: its own run lists on
- * its own.
- */
 function renderSpanRows(
   span: ObservabilitySpanRow,
   depth: number,
@@ -3642,7 +3272,6 @@ function renderSpanRows(
   const { reasoning, response } = stepNotes(span);
   const hasNotes = reasoning !== undefined || response !== undefined;
   const isRoot = isRootSpanKind(span.kind);
-  // A root is judged on its own freshness; a child on its enclosing root's liveness.
   const rootLive = isRoot ? isTaskRunning(span) : enclosingRootLive;
   const asking = isRoot
     ? askedStepId(span, view.group.childrenByParent)
@@ -3719,7 +3348,6 @@ function renderSpanRows(
   return rows;
 }
 
-/** A step's thought, answer or question line, then its text as a payload row when open. */
 function noteRows(
   key: string,
   kind: NoteKind,
@@ -3759,7 +3387,6 @@ function noteRows(
   return rows;
 }
 
-/** The request a subagent was given, for its row's second line. */
 function taskInput(root: ObservabilitySpanRow): string {
   const input = root.attributes?.["task.input"];
 

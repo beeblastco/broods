@@ -1,12 +1,4 @@
-/**
- * The flat ↔ nested agent config codec, and the only copy of it. Convex
- * mutations cannot import from the Next.js app tree, so this is the end that
- * both sides share: `apps/dashboard/app/lib/agentConfigCodec.ts` re-exports
- * from here and keeps only its own UI helpers.
- *
- * Encryption of the stored blob is not here: `./envelope.ts` is the codec
- * both core and the config plane use.
- */
+// The only copy: Convex cannot import the Next.js app, so the dashboard re-exports this one.
 
 import { v, type Infer } from "convex/values";
 import { isPlainObject } from "./objects";
@@ -17,16 +9,13 @@ import {
 import { ClientError } from "./clientError";
 import type { AgentConfig } from "./agentRules";
 
-// Global clone of the shared pattern for iteration/replacement.
 const ACCOUNT_ENV_PLACEHOLDER_PATTERN_G = new RegExp(
   ACCOUNT_ENV_PLACEHOLDER_PATTERN.source,
   "g",
 );
-/** Account and stage environment variable names, the ones `${NAME}` references reach. */
 const ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 const ENV_PLACEHOLDER_PATTERN_G = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
-// `model.output` types that answer with data. The agent card has always counted
-// `json_schema` and an output with no type as structured, so it still does.
+// `undefined` too: the agent card has always counted an untyped output as structured.
 const STRUCTURED_OUTPUT_TYPES = new Set<string | undefined>([
   undefined,
   "json_schema",
@@ -36,8 +25,7 @@ const STRUCTURED_OUTPUT_TYPES = new Set<string | undefined>([
   "json",
 ]);
 
-// Every AgentConfig branch with no flat column. One missing here is dropped from
-// extraConfig, so the next push re-encrypts the agent without it.
+// A branch missing here is dropped from extraConfig: the next push stores the agent without it.
 const NESTED_BRANCHES = [
   "agent",
   "harness",
@@ -59,14 +47,7 @@ const NESTED_BRANCHES = [
   "policies",
 ] as const;
 
-// Removed branches, kept only so a write answers with a pointer instead of dropping
-// the value silently. `workspace` (singular) is the pre-records shape; `sandbox`
-// (singular) became the first entry of `sandboxes`.
-/**
- * The one answer to a config that still names the removed `sandbox` key. It
- * lives here, not in agentRules, so the dashboard bundle that imports this codec
- * does not pull in the rules' server-side imports.
- */
+// Here, not in agentRules: the dashboard bundles this file and must not pull in the rules.
 export const SANDBOX_REMOVED_MESSAGE =
   "config.sandbox was removed; list sandbox ids in config.sandboxes, the first is the default";
 
@@ -95,11 +76,6 @@ export interface FlatAgentConfig {
   extraConfig?: Record<string, unknown>;
 }
 
-/**
- * The flat columns {@link fromNestedAgentConfig} pulls back out of a nested
- * broods AgentConfig, so the canvas's flat `agentConfigs` row can mirror what
- * the API caller wrote. Anything with no flat column lands in `extraConfig`.
- */
 export interface FlatPatch {
   provider?: string;
   modelId?: string;
@@ -129,11 +105,7 @@ export const agentCanvasBadgeValidator = v.object({
 
 export type AgentCanvasBadge = Infer<typeof agentCanvasBadgeValidator>;
 
-/**
- * Projects a config row to its canvas badge. The canvas badges query and the
- * dashboard's optimistic config update both use it, so a side-panel edit
- * redraws the card at once and the server's answer matches it.
- */
+// Shared by the badges query and the optimistic update, so the server's answer matches it.
 export function agentCanvasBadge(config: {
   outputFormat?: { type?: string } | null;
   extraConfig?: Pick<AgentConfig, "publicAccess" | "skills">;
@@ -156,10 +128,6 @@ export function agentCanvasBadge(config: {
   };
 }
 
-/**
- * Refuses an env var name a `${NAME}` ref could not reach. The account env
- * route, every stage env write and the CLI's stage env names call it.
- */
 export function assertEnvVarName(name: string): void {
   if (!ENV_VAR_NAME_PATTERN.test(name) || name.length > 64) {
     throw new ClientError(
@@ -168,7 +136,6 @@ export function assertEnvVarName(name: string): void {
   }
 }
 
-/** Collect valid `${NAME}` references from strings nested anywhere in a config. */
 export function collectEnvPlaceholderNames(
   value: unknown,
   names = new Set<string>(),
@@ -202,8 +169,6 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
     ? { ...(model.providerOptions as Record<string, unknown>) }
     : undefined;
   const tools = isPlainObject(nested.tools) ? { ...nested.tools } : undefined;
-  // A removed branch is rejected on write. Dropping it silently would let someone
-  // configure a workspace, see it saved, and never learn nothing reads it.
   for (const [branch, hint] of Object.entries(REMOVED_BRANCH_HINTS)) {
     if (nested[branch] !== undefined) {
       throw new ClientError(hint);
@@ -222,12 +187,10 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
   return patch;
 }
 
-/** True when a string consists ONLY of `${NAME}` placeholder tokens. */
 export function isEntirelyEnvPlaceholders(value: string): boolean {
   return ACCOUNT_ENV_REFS_ONLY_PATTERN.test(value);
 }
 
-/** Replace valid uppercase account env-var `${NAME}` placeholders recursively. */
 export function substituteAccountEnvPlaceholders<T>(
   config: T,
   variables: Record<string, string>,
@@ -239,7 +202,6 @@ export function substituteAccountEnvPlaceholders<T>(
   );
 }
 
-/** Replace `${KEY}` placeholders recursively using values from `variables`. */
 export function substituteEnvPlaceholders<T>(
   config: T,
   variables: Record<string, string>,
@@ -254,15 +216,11 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
   const model = buildNestedModelBranch(flat, extra);
   const tools = buildNestedToolsBranch(flat, extra);
 
-  // Read never throws on a removed branch: rows written before it was removed
-  // still carry the blob, and reading one must not fail. A dead `workspace` is
-  // dropped, so writing the read back clears it. A stale `sandbox` is carried
-  // instead: dropping it would run the agent without its default and say
-  // nothing, so core refuses the config by name until a CLI sync or canvas
-  // save rewrites the row.
   return assembleNestedConfig(extra, agent, model, tools);
 }
 
+// Reads never throw on a removed branch. A dead `workspace` is dropped; a stale `sandbox` or
+// `policy` is carried so core refuses it by name instead of running the agent without it.
 function assembleNestedConfig(
   extra: Record<string, unknown>,
   agent: Record<string, unknown>,
@@ -287,14 +245,10 @@ function assembleNestedConfig(
     ...(extra.denyTools ? { denyTools: extra.denyTools } : {}),
     ...(extra.skills ? { skills: extra.skills } : {}),
     ...(extra.subagent ? { subagent: extra.subagent } : {}),
-    // Removed branch, carried so the validator refuses it by name instead of
-    // the agent silently running without the policy it expected.
     ...(extra.policy ? { policy: extra.policy } : {}),
     ...(extra.scheduler ? { scheduler: extra.scheduler } : {}),
     ...(extra.browser ? { browser: extra.browser } : {}),
     ...(extra.policies ? { policies: extra.policies } : {}),
-    // Top-level scalar carried in extraConfig so it flows through every
-    // flat-row builder unchanged; surfaced as nested `publicAccess` (issue #65).
     ...(typeof extra.publicAccess === "boolean"
       ? { publicAccess: extra.publicAccess }
       : {}),
@@ -375,11 +329,7 @@ function buildNestedToolsBranch(
   return tools;
 }
 
-/**
- * Everything {@link fromNestedAgentConfig} has no flat column for, preserved
- * as the `extraConfig` blob. The branch copies arrive already stripped of the
- * fields the patch absorbed.
- */
+// The branch copies must arrive already stripped of the fields the patch absorbed.
 function collectExtraConfig(
   nested: NestedAgentConfig,
   agent: Record<string, unknown> | undefined,
@@ -401,7 +351,6 @@ function collectExtraConfig(
       continue;
     if (nested[branch] !== undefined) extra[branch] = nested[branch];
   }
-  // Preserve the top-level public-endpoint opt-in inside extraConfig (issue #65).
   if (typeof nested.publicAccess === "boolean")
     extra.publicAccess = nested.publicAccess;
   if (typeof nested.allowRunOverrides === "boolean")
@@ -410,7 +359,6 @@ function collectExtraConfig(
   return extra;
 }
 
-/** Move flat-column `agent` fields out of the branch copy onto the patch. */
 function extractAgentFields(
   agent: Record<string, unknown>,
   patch: FlatPatch,
@@ -425,7 +373,6 @@ function extractAgentFields(
   }
 }
 
-/** Move flat-column `model` fields (and providerOptions scalars) onto the patch. */
 function extractModelFields(
   model: Record<string, unknown>,
   modelOptions: Record<string, unknown> | undefined,
@@ -458,7 +405,6 @@ function extractModelFields(
   }
 }
 
-/** Split `tools.googleSearch` into the flat enabled flag + remaining config. */
 function extractSearchToolFields(
   googleSearch: Record<string, unknown>,
   patch: FlatPatch,
@@ -471,12 +417,8 @@ function extractSearchToolFields(
   if (Object.keys(search).length > 0) patch.searchToolConfig = search;
 }
 
-/**
- * Provider sub-objects (e.g. `anthropic`, `openai`) merge key-by-key rather
- * than replacing wholesale, because reasoning is kept in `extraConfig.model`
- * while the other provider options are kept in the flat column. `overlay` wins
- * on direct key conflicts.
- */
+// Provider sub-objects merge key by key: reasoning lives in `extraConfig.model`, the other
+// provider options in the flat column. `overlay` wins a direct conflict.
 function mergeProviderOptions(
   base: unknown,
   overlay: unknown,
@@ -534,7 +476,7 @@ function substitutePlaceholders<T>(
   if (isPlainObject(config)) {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(config)) {
-      // Same prototype-pollution guard as the config merge helpers.
+      // Prototype-pollution guard, as in the config merge helpers.
       if (key === "__proto__" || key === "constructor" || key === "prototype")
         continue;
       result[key] = substitutePlaceholders(value, variables, pattern);

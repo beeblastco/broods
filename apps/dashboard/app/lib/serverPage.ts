@@ -1,4 +1,4 @@
-/** Helpers for server pages that act as the signed-in caller: `broods login` and the GitHub callback. */
+/** Helpers for server pages acting as the signed-in caller: `broods login`, the GitHub callback. */
 
 import { currentSession, selfHosted } from "@/app/lib/selfHostSession";
 import { withAuth } from "@workos-inc/authkit-nextjs";

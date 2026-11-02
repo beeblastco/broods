@@ -15,6 +15,7 @@ export function usePresence<T>(value: T | null): {
   if (value !== null && value !== retained) setRetained(value);
   const closing = value === null && retained !== null;
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- exit transition timer
   useEffect(() => {
     if (!closing) return;
     const timer = window.setTimeout(

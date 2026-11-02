@@ -1,10 +1,3 @@
-/**
- * Twilio channel adapter, for SMS and MMS on a Twilio number or Messaging
- * Service. The Chat SDK adapter is the transport: it checks Twilio's
- * signature, reads the form Twilio posts and sends the reply. SMS has no typing
- * indicator and no reactions, so those actions do nothing.
- */
-
 import { TwilioAdapter, TwilioFormatConverter } from "@chat-adapter/twilio";
 import {
   parseTwilioWebhookBody,
@@ -32,8 +25,6 @@ const TWILIO_DEFAULT_USER_NAME = "twilio-bot";
 const TWILIO_TEXT_LIMIT = 1600;
 const TWILIO_FETCH_TIMEOUT_MS = 30_000;
 const TWILIO_FORMAT = new TwilioFormatConverter();
-// Twilio reads the webhook answer as TwiML. An empty one sends no reply of its
-// own, since the agent replies through the API once it has run.
 const TWIML_EMPTY: ChannelResponse = {
   statusCode: 200,
   headers: { "content-type": "application/xml" },
@@ -48,27 +39,19 @@ export interface TwilioChannelOptions {
   authToken: string;
   messagingServiceSid?: string;
   phoneNumber?: string;
-  /** Where core is reached publicly; the signed URL is this plus the request path. */
   publicBaseUrl?: string;
   statusCallbackUrl?: string;
-  /** Tests only: the pinned-fetch seam, see `PinnedFetchTransport`. */
   transport?: PinnedFetchTransport;
   userName?: string;
   webhookUrl?: string;
 }
 
 export interface TwilioSource {
-  /** The person's number, where the reply goes. */
   from: string;
   messageSid: string;
-  /** The Twilio number they texted. */
   to: string;
 }
 
-/**
- * Builds the Twilio adapter from one agent's `config.channels.twilio`.
- * `integrations.ts` calls it per request, so it holds no state of its own.
- */
 export function createTwilioChannel(
   options: TwilioChannelOptions,
 ): ChannelAdapter {
@@ -91,9 +74,8 @@ export function createTwilioChannel(
       return transport.rehydrateAttachment(attachment);
     },
 
-    // One Twilio account can point several numbers at the same URL, all
-    // signed with its one auth token, so a message to another number must
-    // leave this agent out of the credential scan instead of being dropped.
+    // One auth token signs every number an account points here, so a text to another number
+    // must skip this agent, not be dropped by it.
     canHandle: function (req): boolean {
       if (req.method !== "POST" || !(TWILIO_SIGNATURE_HEADER in req.headers)) {
         return false;
@@ -107,8 +89,7 @@ export function createTwilioChannel(
       );
     },
 
-    // Twilio signs the URL it called plus every form field, so the check needs
-    // the public URL, not the one core was reached on behind Traefik.
+    // Twilio signs the URL it called, so this needs the public URL, not the one behind Traefik.
     authenticate: async function (req): Promise<boolean> {
       const url =
         options.webhookUrl ??
@@ -143,7 +124,6 @@ export function createTwilioChannel(
 
     parse: function (req): ChannelParseResult {
       const payload = readTwilioForm(req.body);
-      // Delivery receipts ride the same URL when statusCallbackUrl points here.
       if (payload.kind !== "text") {
         return {
           kind: "ignore",
@@ -195,8 +175,6 @@ export function createTwilioChannel(
 
     actions: function (msg): ChannelActions {
       const source = toTwilioSource(msg.source);
-      // A Messaging Service picks the sending number itself; without one the
-      // reply comes from the number the person texted.
       const threadId = transport.encodeThreadId({
         recipient: source.from,
         sender: options.messagingServiceSid ?? source.to,
@@ -208,9 +186,7 @@ export function createTwilioChannel(
             await transport.postMessage(threadId, { raw: chunk });
           }
         },
-        // MMS by URL: Twilio fetches each picture itself. No sendFiles, since
-        // most carriers drop documents, so `send-files` sends links instead.
-        // A long caption goes first as text, the pictures ride its last part.
+        // No sendFiles: most carriers drop documents, so `send-files` sends links instead.
         sendImages: async function (images, caption): Promise<void> {
           const chunks = renderTwilioText(caption ?? "");
           for (const chunk of chunks.slice(0, -1)) {
@@ -232,15 +208,12 @@ export function createTwilioChannel(
   };
 }
 
-// Renders Markdown the way the adapter would, then splits the result: the
-// adapter cuts anything past 1600 characters without a word, and rendering
-// can grow a piece (a table becomes an ASCII block).
 function renderTwilioText(text: string): string[] {
   return chunkChannelText(TWILIO_FORMAT.fromMarkdown(text), TWILIO_TEXT_LIMIT);
 }
 
-// Every inbound message carries `SmsStatus=received`, and the adapter reads a
-// status with no Body as a delivery receipt, which drops a picture sent alone.
+// Every inbound message carries `SmsStatus=received`, and the adapter reads a status with no
+// Body as a delivery receipt, which drops a picture sent alone.
 function readTwilioForm(body: string): TwilioWebhookPayload {
   const form = new URLSearchParams(body);
   for (const name of ["MessageStatus", "SmsStatus"]) {
@@ -266,13 +239,7 @@ function toTwilioSource(source: Record<string, unknown>): TwilioSource {
   };
 }
 
-/**
- * The adapter's `fetch`. Every URL it reaches is the tenant's: `apiUrl` from
- * config, and media URLs from a webhook signed with the tenant's own token.
- * `guardedFetch` pins each hop to a checked public address and caps the body.
- * Media answers with a redirect to Twilio's CDN, which rules out
- * `publicHostFetch`.
- */
+// Tenant URLs whose media redirects to Twilio's CDN, which `publicHostFetch` would refuse.
 function twilioFetch(
   transport: PinnedFetchTransport | undefined,
 ): typeof fetch {

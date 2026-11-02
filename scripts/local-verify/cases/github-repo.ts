@@ -63,13 +63,9 @@ interface Imported {
 }
 
 /**
- * A GitHub repo link end to end, against a fake GitHub: the admin connects
- * the App, imports a monorepo whose `broods/` sits in `apps/agents`, and
- * Broods seals one project key per stage into repo secrets and commits the
- * deploy workflow (through a PR on the protected `main`, directly on `dev`).
- * The real CLI then deploys each stage with the secret GitHub Actions would
- * hand it, the `workflow_run` webhook lands on the dashboard, and an unlink
- * revokes the keys. Creating a repo and an uninstall run the same way.
+ * A GitHub repo link end to end against a fake GitHub: connect, import a monorepo (`apps/agents`),
+ * seal stage keys and commit the workflow (PR on protected `main`, direct on `dev`), deploy each
+ * stage with the real CLI, land `workflow_run` on the dashboard, unlink; also create and uninstall.
  */
 export async function githubRepo(context: VerifyContext): Promise<void> {
   const asAdmin = async (
@@ -428,7 +424,7 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
   await linkFromCli(run);
 }
 
-// `broods github link` with no branches, for a project with no Production stage: main deploys Development.
+// `broods github link` with no branches and no Production stage: main deploys Development.
 async function linkFromCli(run: Run): Promise<void> {
   const { context, github } = run;
   const { slug } = await newProject(run, "gh-cli");

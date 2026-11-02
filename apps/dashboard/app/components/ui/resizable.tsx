@@ -4,10 +4,7 @@ import { cn } from "@/app/lib/utils";
 import { GripVerticalIcon } from "lucide-react";
 import * as ResizablePrimitive from "react-resizable-panels";
 
-/**
- * Resizable split. The library's cursor is off, since it restyles the whole
- * page on handle hover; the group shows the handle's cursor while it is pressed.
- */
+// The library's cursor restyles the whole page on handle hover; the group shows it instead.
 function ResizablePanelGroup({
   className,
   ...props
@@ -29,7 +26,7 @@ function ResizablePanel({ ...props }: ResizablePrimitive.PanelProps) {
   return <ResizablePrimitive.Panel data-slot="resizable-panel" {...props} />;
 }
 
-/** The 10px `after:` hit area matches the library's default fine-pointer drag target. */
+// The 10px `after:` hit area matches the library's default fine-pointer drag target.
 function ResizableHandle({
   withHandle,
   className,

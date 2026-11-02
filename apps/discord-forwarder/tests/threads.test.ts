@@ -52,8 +52,6 @@ describe("thread directory", () => {
     expect(stub.requests).toHaveLength(1);
   });
 
-  // Forwarding without `thread` would key a threaded message to the wrong
-  // conversation, so a lookup that still fails rejects and the message drops.
   it("retries a rate limit once after Retry-After, then rejects", async (): Promise<void> => {
     const stub = stubChannel(null, 429);
     const directory = new ThreadDirectory("token-a");

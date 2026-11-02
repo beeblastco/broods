@@ -1,14 +1,3 @@
-/**
- * Opt-in live coverage for the Broods Harness path on AWS Lambda MicroVMs.
- *
- * This creates only uniquely named synthetic MicroVM reservations and keeps
- * persistence in memory. It never reads or mutates shared Convex state and
- * always terminates resources in `finally`.
- *
- * Run with:
- *   MICROVM_HARNESS_TEST=1 bun test tests/sandbox-microvm-harness.integration.test.ts
- */
-
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "bun:test";
 import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
@@ -23,6 +12,8 @@ const ENABLED = process.env.MICROVM_HARNESS_TEST === "1";
 const reservations = useLiveReservations();
 if (ENABLED) allowNetwork();
 
+// Touches only uniquely named synthetic reservations, never shared Convex state.
+// skip: a live AWS run, opt in with MICROVM_HARNESS_TEST=1
 describe.skipIf(!ENABLED)(
   "Broods Lambda MicroVM Harness integration (live)",
   () => {
@@ -137,8 +128,7 @@ function liveCompute(): SandboxExecutorConfig & {
     snapshot: snapshot,
     network: { mode: "allow-all" },
     timeout: 180,
-    // Without an account the reservation claim is skipped, which reads as a
-    // lost create race.
+    // Without an account the reservation claim is skipped, which reads as a lost create race.
     controlPlane: {
       accountId: "microvm-live-test",
       name: "MicroVM Harness live test",

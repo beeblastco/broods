@@ -1,15 +1,5 @@
-/**
- * Turns the flat canvas graph into what React Flow draws: sandbox, workspace
- * and MCP nodes an agent reaches sit as chips inside frame nodes, once two of
- * them share a group.
- *
- * The saved layout stays flat (one node per resource, absolute positions, one
- * edge per agent→member link). Frames, their slots and every edge drawn here
- * that is not in the flat list exist only on screen; `canvasFrameEdits.ts`
- * keeps flat positions in step with them when an edit changes a frame. Each
- * drawn agent and side edge carries its lanes in `data.route`, so no two edges
- * draw over each other.
- */
+// The saved layout stays flat: frames, their slots and the edges drawn here exist only on
+// screen, and `canvasFrameEdits.ts` keeps flat positions in step when an edit moves a frame.
 import type { api } from "@broods/convex/_generated/api";
 import {
   agentEdgePoints,
@@ -54,27 +44,18 @@ import {
 } from "@xyflow/react";
 import type { FunctionReturnType } from "convex/server";
 
-/** Id prefix of the one edge drawn from an agent to a frame. */
 export const BUNDLE_EDGE_PREFIX = "bundle:";
 
-/** A collapsed frame is one card: header, member names, summary, at a card's size. */
 export const COLLAPSED_FRAME_HEIGHT = NODE_HEIGHT;
 
-/**
- * The id a pending drop's slot holds in a frame's member list. No node carries
- * it: it sits in the list only so the frame's own geometry leaves a gap for the
- * card about to land, and the chips under it move down.
- */
+// No node carries it: it sits in a member list only so the frame leaves a gap for a drop.
 export const DROP_SLOT_ID = "canvas-drop-slot";
 
 const EDGE_CORNER_RADIUS = 8;
 
-/** An agent edge's drawn data: its lanes, when the router placed it. */
 export type AgentEdgeData = { route?: AgentEdgeRoute };
 
-/** The display graph plus what the canvas needs to map edits back to flat state. */
 export type FramedGraph = {
-  /** Bundle edge id → the flat agent→member edge ids it stands for. */
   bundles: ReadonlyMap<string, string[]>;
   edges: Edge[];
   frames: CanvasFrame[];
@@ -83,60 +64,36 @@ export type FramedGraph = {
 
 export type FrameNodeData = {
   collapsed: boolean;
-  /**
-   * Set while this frame is taking a card, which is a drop it will accept: a
-   * refused one is outlined instead. `slotY` is where the slot opens inside the
-   * box, and null for a collapsed frame, which draws no chips to open one.
-   */
+  /** Only for a drop it accepts; `slotY` is null while collapsed. */
   drop?: { slotY: number | null };
   frame: CanvasFrame;
-  /** Flat member nodes in slot order, for the collapsed card's names and summary. */
   members: Node[];
 };
 
 export type FrameNodeType = Node<FrameNodeData, "frame">;
 
-/** The frame taking a dragged card, and the slot it would take in it. */
 export type PendingDrop = { frameId: string; slot: number };
 
-/**
- * Why a side edge is drawn rather than stored: a mount re-pointed to a
- * collapsed frame, a workspace's inherited sandbox, or a machine MCP server's
- * computer. A drawn edge can't be deleted, so it shows a lock saying why.
- */
 export type DrawnEdgeKind = "collapsed" | "inherited" | "runsOn";
 
-/** A side edge's drawn data: its lanes once routed, and why it is drawn, if it is. */
 export type SideEdgeData = { drawn?: DrawnEdgeKind; route?: SideEdgeRoute };
 
 export type StageMcpServer = FunctionReturnType<
   typeof api.mcp.listByStage
 >[number];
 
-/**
- * Path of an agent edge from the agent's bottom handle to its target's top
- * handle along its lanes, as `[path, labelX, labelY]` like React Flow's path
- * helpers. The label sits on the gutter run, or on the final drop.
- */
 export function agentEdgePath(
   source: XYPosition,
   target: XYPosition,
   route: AgentEdgeRoute,
 ): [string, number, number] {
   const points = agentEdgePoints(source, target, route);
-  // The third leg is the gutter run, or the final drop when there is none.
+  // The label sits on the third leg: the gutter run, or the final drop when there is none.
   const [from, to] = [points[2], points[3]];
 
   return [roundedPath(points, EDGE_CORNER_RADIUS), from.x, (from.y + to.y) / 2];
 }
 
-/**
- * Flat nodes after React Flow's node changes. A measurement or selection
- * applies by id and moves nothing, so a layout saved before frames keeps its
- * stored positions until someone edits it. A position change is a drag: it
- * applies to the drawn graph and flattens back, so a dragged frame carries its
- * members and every member lands on its slot, which that drag then saves.
- */
 export function applyFramedNodeChanges(
   changes: NodeChange[],
   nodes: Node[],
@@ -144,12 +101,11 @@ export function applyFramedNodeChanges(
   mcpServers: readonly StageMcpServer[] | undefined,
   collapsed: ReadonlySet<string>,
 ): Node[] {
+  // Only a drag re-flattens, so a layout saved before frames keeps its positions.
   if (!changes.some((change) => change.type === "position")) {
     return applyNodeChanges(changes, nodes);
   }
-  // Nodes only: a drag moves no edge in flat state, so it routes none. No open
-  // chip either: flat positions are the packed ones, so a chip a click opened
-  // never writes its 52px into the saved layout.
+  // No open chip: its taller slot must never be written into the saved layout.
   const frames = framesOf(deriveGroups(nodes, edges, mcpServers));
   const displayNodes = framedNodes(
     nodes,
@@ -167,15 +123,6 @@ export function applyFramedNodeChanges(
   );
 }
 
-/**
- * React Flow nodes and edges for display. Each frame comes right before its
- * first member, so React Flow sees every parent ahead of its children and
- * flattening restores the flat order. Members sit at their slots whatever
- * their stored positions. `expandedMemberId` is the selected node: while it is
- * a chip in an open frame it fills a card's slot and pushes the chips under it
- * down. Every node and edge equal to one in `previous` is that same object, so
- * an unchanged frame or edge does not re-render.
- */
 export function buildFramedGraph(
   nodes: readonly Node[],
   edges: readonly Edge[],
@@ -215,12 +162,8 @@ export function buildFramedGraph(
   };
 }
 
-/**
- * The groups of a flat graph, one-member groups included. MCP nodes stay
- * ungrouped until the stage's server list has loaded: before that each one
- * looks unsaved, so all of them would pack into one "MCP" frame and split
- * into overlapping frames when it lands.
- */
+// MCP nodes stay ungrouped until the server list loads: each looks unsaved before, so
+// all would pack into one frame and then split into overlapping ones.
 export function deriveGroups(
   nodes: readonly Node[],
   edges: readonly Edge[],
@@ -233,7 +176,6 @@ export function deriveGroups(
   );
 }
 
-/** Removing a bundle edge removes every agent→member edge it stands for. */
 export function expandBundleEdgeRemoval(
   changes: readonly EdgeChange[],
   bundles: ReadonlyMap<string, string[]>,
@@ -248,12 +190,6 @@ export function expandBundleEdgeRemoval(
   });
 }
 
-/**
- * Display nodes back to flat state: no frames, members at absolute positions.
- * Everything the display added goes with them, so a drag saves the same node
- * shape the database sent.
- */
-/** The side handles two boxes face each other with, by where they stand. */
 export function facingHandles(
   source: Node | undefined,
   target: Node | undefined,
@@ -298,18 +234,12 @@ export function flattenFramedNodes(displayNodes: readonly Node[]): Node[] {
   });
 }
 
-/** The stage's MCP rows keyed by the canvas node each one owns. */
 export function serversByNode(
   mcpServers: readonly StageMcpServer[],
 ): Map<string, StageMcpServer> {
   return new Map(mcpServers.map((server) => [server.nodeId, server]));
 }
 
-/**
- * Path of a side edge between its two side handles along its lanes, as
- * `[path, labelX, labelY]`. The label sits on the middle run: the vertical
- * one of a straight step, or the run under the boxes of a detour.
- */
 export function sideEdgePath(
   source: XYPosition,
   target: XYPosition,
@@ -326,10 +256,6 @@ export function sideEdgePath(
   ];
 }
 
-/**
- * Step path for an edge the router skipped, with the routed edges' corners and
- * a last run long enough for the arrowhead to lie straight.
- */
 export function stepEdgePath(
   params: Omit<GetSmoothStepPathParams, "borderRadius" | "offset">,
 ): [string, number, number] {
@@ -374,10 +300,6 @@ function addBundle(
   };
 }
 
-/**
- * Top-level boxes an agent edge runs between and around, and the box of every
- * visible node a side edge can end on, chips at their absolute place.
- */
 function displayBoxes(
   displayNodes: readonly Node[],
   expandedMemberId: string | null,
@@ -404,8 +326,6 @@ function displayBoxes(
     if (!parent) continue;
     handleBoxes.set(node.id, {
       box: {
-        // A side handle sits at the box's middle until the box is a card's
-        // height, so an open chip's edges meet it where the card draws them.
         height:
           node.id === expandedMemberId
             ? FRAME_MEMBER_CARD_HEIGHT
@@ -421,14 +341,6 @@ function displayBoxes(
   return { boxes: boxes, handleBoxes: handleBoxes };
 }
 
-/** The side handles two nodes face each other with: left and right by where they stand. */
-/**
- * Agent→member edges collapse into one bundle edge per agent and frame. Mount
- * and runs-on edges touching a collapsed frame's member re-point to the frame
- * on the same side. Runs-on edges come from the MCP rows: a machine server
- * points at the sandbox it runs on. A workspace with no mount of its own gets
- * a drawn edge to the sandbox it inherits.
- */
 function framedEdges(
   nodes: readonly Node[],
   edges: readonly Edge[],
@@ -466,8 +378,7 @@ function framedEdges(
       display.push(edge);
       continue;
     }
-    // A mount is drawn from the sides its two ends face, whichever handles
-    // it was drawn or synced with, so it steps straight wherever tidy puts it.
+    // Faced from where its ends stand, not its stored handles, so it steps straight.
     const handles = facingHandles(byId.get(edge.source), byId.get(edge.target));
     const source = endpoint(edge.source);
     const target = endpoint(edge.target);
@@ -502,7 +413,7 @@ function framedEdges(
   return { bundles: bundles, edges: display };
 }
 
-/** Members get their frame as parent and a slot-relative position; frames go in before them. */
+// React Flow needs every parent ahead of its children, so a frame precedes its first member.
 function framedNodes(
   nodes: readonly Node[],
   frames: readonly CanvasFrame[],
@@ -517,10 +428,8 @@ function framedNodes(
   for (const frame of frames) {
     const members = frame.memberIds.flatMap((id) => byId.get(id) ?? []);
     const isCollapsed = collapsed.has(frame.id);
-    // A collapsed frame hides its chips, so nothing in it is open.
     const expanded = isCollapsed ? undefined : (expandedMemberId ?? undefined);
     const taking = pendingDrop !== null && pendingDrop.frameId === frame.id;
-    // A collapsed frame is one card: it draws no chips, so it leaves no gap.
     const pending = taking && !isCollapsed ? pendingDrop.slot : null;
     const shape =
       pending === null
@@ -543,8 +452,7 @@ function framedNodes(
       },
       height: size.height,
       id: frame.id,
-      // Set up front: a frame object without `measured` makes React Flow
-      // drop its handle bounds and measure it again.
+      // Without `measured`, React Flow drops the frame's handle bounds and re-measures it.
       measured: size,
       position: frameOriginOf(members.map((member) => member.position)),
       type: "frame",
@@ -574,12 +482,6 @@ function framedNodes(
   });
 }
 
-/**
- * Dashed edge from a workspace to each sandbox it inherits, facing it: one per
- * distinct default of the agents wired to it, since each agent runs the
- * workspace on its own. Drawn, never stored: the inheritance follows from the
- * agents' own edges.
- */
 function inheritedEdges(
   nodes: readonly Node[],
   edges: readonly Edge[],
@@ -611,12 +513,10 @@ function inheritedEdges(
   );
 }
 
-/** Length of an axis-aligned leg. */
 function legLength(a: XYPosition, b: XYPosition): number {
   return Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
 }
 
-/** Each framed node's frame, by member id. */
 function memberFrames(
   frames: readonly CanvasFrame[],
 ): Map<string, CanvasFrame> {
@@ -628,10 +528,6 @@ function memberFrames(
   return frameOf;
 }
 
-/**
- * `next` with every item equal to one in `previous` swapped for that object,
- * and `previous` itself when nothing changed at all.
- */
 function reuseUnchanged<T extends { id: string }>(
   previous: T[],
   next: T[],
@@ -654,10 +550,6 @@ function reuseUnchanged<T extends { id: string }>(
   return unchanged ? previous : reused;
 }
 
-/**
- * An orthogonal polyline with its corners rounded. Repeated points are
- * dropped, and a corner's radius shrinks to fit the shorter of its two legs.
- */
 function roundedPath(points: readonly XYPosition[], radius: number): string {
   const [first, ...rest] = points.filter(
     (point, index) =>
@@ -690,12 +582,6 @@ function roundedPath(points: readonly XYPosition[], radius: number): string {
   return commands.join(" ");
 }
 
-/**
- * Display edges with their lanes in `data.route`: agent edges (bottom to top,
- * between two top-level boxes) and side edges (mount, inherited and runs-on,
- * between two side handles). Hidden members are no box; their edges already
- * re-point.
- */
 function routeEdges(
   displayNodes: readonly Node[],
   edges: readonly Edge[],
@@ -738,7 +624,7 @@ function routeEdges(
     if (edge.type === "subagent" || !source || !target) continue;
     sideEdges.push({
       id: edge.id,
-      // Drawn edge ids lead with their kind: mount, inherits, runs-on, collapsed.
+      // Side edge ids lead with their kind: mount, inherits, runs-on, collapsed.
       kind: edge.id.slice(0, edge.id.indexOf(":")),
       source: source,
       target: target,
@@ -753,10 +639,6 @@ function routeEdges(
   });
 }
 
-/**
- * Dotted edge from each machine MCP server to the sandbox it runs on, the one
- * named by the row's `sandbox`. It leaves from the side facing that sandbox.
- */
 function runsOnEdges(
   nodes: readonly Node[],
   mcpServers: McpServersByNode,
@@ -785,24 +667,15 @@ function runsOnEdges(
   );
 }
 
-/** An edge's fields, and its style or data two levels down, where a route sits. */
 function sameEdge(a: Edge, b: Edge): boolean {
   return sameValue(a, b, 4);
 }
 
-/**
- * A node's fields by value one level down (position, measured, style). A
- * frame's data is compared down to its member list, since it is rebuilt on
- * every change; any other node's data is the flat node's own object.
- */
+// A frame's data is rebuilt on every change, so it compares deeper, down to its members.
 function sameNode(a: Node, b: Node): boolean {
   return sameValue(a, b, a.type === "frame" && b.type === "frame" ? 4 : 2);
 }
 
-/**
- * Equal by identity, or arrays and plain objects whose entries are equal
- * this way, down to `depth` levels. Past that only identity counts.
- */
 function sameValue(a: unknown, b: unknown, depth: number): boolean {
   if (a === b) return true;
   if (
@@ -834,7 +707,6 @@ function sameValue(a: unknown, b: unknown, depth: number): boolean {
   );
 }
 
-/** A drawn side edge nobody stores, deletes or reconnects: inherited or runs-on. */
 function sideEdge(
   id: string,
   source: string,
@@ -855,7 +727,6 @@ function sideEdge(
   };
 }
 
-/** The point `distance` along the axis-aligned leg from `from` to `to`. */
 function stepToward(
   from: XYPosition,
   to: XYPosition,
@@ -867,7 +738,6 @@ function stepToward(
   };
 }
 
-/** A frame's member ids, with {@link DROP_SLOT_ID} in the slot a drop would take. */
 export function withDropSlot(
   memberIds: readonly string[],
   slot: number,

@@ -1,11 +1,9 @@
 "use client";
 
-/** Shared list of agent config source options used by the empty canvas guide and the source picker dialog. */
 import { Button } from "@/app/components/ui/button";
 import { FileDown, FilePlus, GitBranch, LayoutTemplate } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
-// "create" opens the editor and "github" the project's Git settings, which say when GitHub is not set up; the rest show as coming soon.
 const SOURCE_OPTIONS = [
   {
     key: "github",
