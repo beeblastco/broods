@@ -982,15 +982,14 @@ function sidePairs(
         ? [[edge.source, edge.target, "mount"]]
         : [],
     ),
-    ...[...states].flatMap(
-      ([workspaceId, state]): [string, string, string][] =>
-        state.kind === "inherited"
-          ? state.sandboxIds.map((sandboxId): [string, string, string] => [
-              workspaceId,
-              sandboxId,
-              "inherits",
-            ])
-          : [],
+    ...[...states].flatMap(([workspaceId, state]): [string, string, string][] =>
+      state.kind === "inherited"
+        ? state.sandboxIds.map((sandboxId): [string, string, string] => [
+            workspaceId,
+            sandboxId,
+            "inherits",
+          ])
+        : [],
     ),
     ...[...runsOnSandboxIds(nodes, mcpServers)].map(
       ([mcpId, sandboxId]): [string, string, string] => [
