@@ -3,8 +3,10 @@
 // Default-runtime callers reach S3 through these; Node actions use model/skills directly.
 
 import { v } from "convex/values";
+import { z } from "zod/mini";
+
 import { internalAction } from "../_generated/server";
-import { isPlainObject } from "../model/objects";
+import { configObject, parseInput, parseOr } from "../model/inputSchema";
 import {
   createJsonSkillFiles,
   createOrReplaceSkill,
@@ -18,6 +20,24 @@ import {
   type StoredSkill,
 } from "../model/skills";
 import { ClientError } from "../model/clientError";
+
+const SKILL_INPUT = z.looseObject(
+  {
+    source: z.optional(z.unknown()),
+    files: z.optional(z.unknown()),
+    url: z.optional(z.unknown()),
+  },
+  { error: "Request body must be an object" },
+);
+const JSON_SKILL = z.looseObject({
+  name: z.string(),
+  description: z.string(),
+  content: z.string(),
+});
+const SKILL_FILE = z.looseObject({
+  path: z.string(),
+  contentBase64: z.string(),
+});
 
 const skillMetadata = v.object({
   name: v.string(),
@@ -87,43 +107,29 @@ export const remove = internalAction({
 async function resolveSkillBundleFiles(
   input: unknown,
 ): Promise<SkillBundleFile[]> {
-  if (!isPlainObject(input)) {
-    throw new ClientError("Request body must be an object");
-  }
-
-  const record = input;
+  const record = parseInput(SKILL_INPUT, input, "");
   switch (record.source) {
     case "json": {
-      if (
-        typeof record.name !== "string" ||
-        typeof record.description !== "string" ||
-        typeof record.content !== "string"
-      ) {
+      const skill = parseOr(JSON_SKILL, record);
+      if (!skill) {
         throw new ClientError(
           "JSON skills require name, description, and content strings",
         );
       }
 
-      return createJsonSkillFiles(
-        record.name,
-        record.description,
-        record.content,
-      );
+      return createJsonSkillFiles(skill.name, skill.description, skill.content);
     }
     case "files": {
       if (!Array.isArray(record.files) || record.files.length === 0) {
         throw new ClientError("files must be a non-empty array");
       }
 
-      return record.files.map((item) => {
-        if (!isPlainObject(item)) {
+      return record.files.map((item: unknown) => {
+        if (!parseOr(configObject, item)) {
           throw new ClientError("Each file must be an object");
         }
-        const candidate = item;
-        if (
-          typeof candidate.path !== "string" ||
-          typeof candidate.contentBase64 !== "string"
-        ) {
+        const candidate = parseOr(SKILL_FILE, item);
+        if (!candidate) {
           throw new ClientError("Each file requires path and contentBase64");
         }
 

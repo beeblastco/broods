@@ -26,11 +26,11 @@ export const create = mutation({
     if (!caller) throw new Error(CRON_ADMIN_REQUIRED);
     await requireActiveAccount(ctx, caller.account._id);
 
-    const cron = (await ctx.runMutation(internal.agent.crons.create, {
+    const cron = await ctx.runMutation(internal.agent.crons.create, {
       accountId: caller.account._id,
       input: args,
       createdBy: caller.user._id,
-    })) as { cronId: string };
+    });
 
     return { cronId: cron.cronId };
   },

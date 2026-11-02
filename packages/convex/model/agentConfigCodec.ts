@@ -1,7 +1,7 @@
 // The only copy: Convex cannot import the Next.js app, so the dashboard re-exports this one.
 
 import { v, type Infer } from "convex/values";
-import { isPlainObject } from "./objects";
+import { configObject, parseOr } from "./inputSchema";
 import {
   ACCOUNT_ENV_PLACEHOLDER_PATTERN,
   ACCOUNT_ENV_REFS_ONLY_PATTERN,
@@ -152,25 +152,25 @@ export function collectEnvPlaceholderNames(
 
     return names;
   }
-  if (isPlainObject(value)) {
-    for (const item of Object.values(value))
-      collectEnvPlaceholderNames(item, names);
+  if (typeof value === "object" && value !== null) {
+    const items: unknown[] = Object.values(value);
+    for (const item of items) collectEnvPlaceholderNames(item, names);
   }
 
   return names;
 }
 
 export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
-  if (!isPlainObject(nested)) return { extraConfig: {} };
+  const config = parseOr(configObject, nested);
+  if (!config) return { extraConfig: {} };
 
-  const agent = isPlainObject(nested.agent) ? { ...nested.agent } : undefined;
-  const model = isPlainObject(nested.model) ? { ...nested.model } : undefined;
-  const modelOptions = isPlainObject(model?.providerOptions)
-    ? { ...(model.providerOptions as Record<string, unknown>) }
-    : undefined;
-  const tools = isPlainObject(nested.tools) ? { ...nested.tools } : undefined;
+  const agent = parseOr(configObject, config.agent);
+  const model = parseOr(configObject, config.model);
+  const modelOptions = parseOr(configObject, model?.providerOptions);
+  const tools = parseOr(configObject, config.tools);
+  const googleSearch = parseOr(configObject, tools?.googleSearch);
   for (const [branch, hint] of Object.entries(REMOVED_BRANCH_HINTS)) {
-    if (nested[branch] !== undefined) {
+    if (config[branch] !== undefined) {
       throw new ClientError(hint);
     }
   }
@@ -179,10 +179,8 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
 
   if (agent) extractAgentFields(agent, patch);
   if (model) extractModelFields(model, modelOptions, patch);
-  if (tools?.googleSearch && isPlainObject(tools.googleSearch)) {
-    extractSearchToolFields(tools.googleSearch, patch);
-  }
-  patch.extraConfig = collectExtraConfig(nested, agent, model, tools);
+  if (googleSearch) extractSearchToolFields(googleSearch, patch);
+  patch.extraConfig = collectExtraConfig(config, agent, model, tools);
 
   return patch;
 }
@@ -210,7 +208,7 @@ export function substituteEnvPlaceholders<T>(
 }
 
 export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
-  const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
+  const extra = parseOr(configObject, flat.extraConfig, {});
 
   const agent = buildNestedAgentBranch(flat, extra);
   const model = buildNestedModelBranch(flat, extra);
@@ -423,17 +421,13 @@ function mergeProviderOptions(
   base: unknown,
   overlay: unknown,
 ): Record<string, unknown> {
-  const result: Record<string, unknown> = isPlainObject(base)
-    ? { ...base }
-    : {};
-  if (isPlainObject(overlay)) {
-    for (const [key, value] of Object.entries(overlay)) {
-      const existing = result[key];
-      result[key] =
-        isPlainObject(existing) && isPlainObject(value)
-          ? { ...existing, ...value }
-          : value;
-    }
+  const result = parseOr(configObject, base, {});
+  for (const [key, value] of Object.entries(
+    parseOr(configObject, overlay, {}),
+  )) {
+    const existing = parseOr(configObject, result[key]);
+    const next = parseOr(configObject, value);
+    result[key] = existing && next ? { ...existing, ...next } : value;
   }
 
   return result;
@@ -445,8 +439,9 @@ function pruneEmpty(
   const cleaned: Record<string, unknown> = {};
   for (const [key, raw] of Object.entries(value)) {
     if (raw === undefined) continue;
-    if (isPlainObject(raw)) {
-      const child = pruneEmpty(raw);
+    const branch = parseOr(configObject, raw);
+    if (branch) {
+      const child = pruneEmpty(branch);
       if (child) cleaned[key] = child;
       continue;
     }
@@ -473,9 +468,10 @@ function substitutePlaceholders<T>(
       substitutePlaceholders(item, variables, pattern),
     ) as unknown as T;
   }
-  if (isPlainObject(config)) {
+  if (typeof config === "object" && config !== null) {
     const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(config)) {
+    const entries: [string, unknown][] = Object.entries(config);
+    for (const [key, value] of entries) {
       // Prototype-pollution guard, as in the config merge helpers.
       if (key === "__proto__" || key === "constructor" || key === "prototype")
         continue;

@@ -1,4 +1,18 @@
-import { isPlainObject } from "./objects";
+import { z } from "zod/mini";
+
+import { parseOr } from "./inputSchema";
+
+// conversations.list, read leniently: a malformed channel is skipped, not the page.
+const SLACK_PAGE = z.looseObject({
+  ok: z.optional(z.unknown()),
+  error: z.optional(z.unknown()),
+  channels: z.optional(z.unknown()),
+  response_metadata: z.optional(z.unknown()),
+});
+const SLACK_CHANNEL = z.looseObject({ id: z.string(), name: z.string() });
+const SLACK_RESPONSE_METADATA = z.looseObject({
+  next_cursor: z.optional(z.string()),
+});
 
 export type SlackDirectoryEntry = {
   id: string;
@@ -17,8 +31,10 @@ export type SlackDirectoryResult =
       retryAfterSeconds?: number;
     };
 
+type SlackPage = z.output<typeof SLACK_PAGE>;
+
 type SlackDirectoryPage =
-  | { data: Record<string, unknown> }
+  | { data: SlackPage }
   | { failure: Extract<SlackDirectoryResult, { ok: false }> };
 
 export const SLACK_DIRECTORY_PAGE_CAP = 10;
@@ -51,21 +67,19 @@ export async function fetchSlackChannelDirectory(
 
 function appendSlackDirectoryEntries(
   channels: SlackDirectoryEntry[],
-  data: Record<string, unknown>,
+  data: SlackPage,
 ): void {
-  const pageChannels = Array.isArray(data.channels) ? data.channels : [];
+  const pageChannels: unknown[] = Array.isArray(data.channels)
+    ? data.channels
+    : [];
   for (const entry of pageChannels) {
-    if (
-      !isPlainObject(entry) ||
-      typeof entry.id !== "string" ||
-      typeof entry.name !== "string"
-    )
-      continue;
+    const channel = parseOr(SLACK_CHANNEL, entry);
+    if (!channel) continue;
     channels.push({
-      id: entry.id,
-      name: entry.name,
-      isPrivate: entry.is_private === true,
-      isMember: entry.is_member === true,
+      id: channel.id,
+      name: channel.name,
+      isPrivate: channel.is_private === true,
+      isMember: channel.is_member === true,
     });
   }
 }
@@ -115,10 +129,9 @@ async function fetchSlackDirectoryPage(
       },
     };
   }
-  let data: Record<string, unknown>;
+  let data: SlackPage;
   try {
-    const parsed: unknown = await response.json();
-    data = isPlainObject(parsed) ? parsed : {};
+    data = parseOr(SLACK_PAGE, await response.json(), {});
   } catch {
     data = {};
   }
@@ -129,19 +142,15 @@ async function fetchSlackDirectoryPage(
   return { data: data };
 }
 
-function nextSlackCursor(data: Record<string, unknown>): string | undefined {
-  const metadata = isPlainObject(data.response_metadata)
-    ? data.response_metadata
-    : undefined;
-
-  return typeof metadata?.next_cursor === "string" &&
-    metadata.next_cursor.length > 0
-    ? metadata.next_cursor
-    : undefined;
+function nextSlackCursor(data: SlackPage): string | undefined {
+  return (
+    parseOr(SLACK_RESPONSE_METADATA, data.response_metadata)?.next_cursor ||
+    undefined
+  );
 }
 
 function slackApiErrorResult(
-  data: Record<string, unknown>,
+  data: SlackPage,
 ): Extract<SlackDirectoryResult, { ok: false }> {
   const error = typeof data.error === "string" ? data.error : "unknown_error";
   if (error === "missing_scope") {

@@ -14,7 +14,8 @@ import {
   getProjectForRole,
   getProjectForWrite,
 } from "../model/ownership/project";
-import { isPlainObject, stableJson } from "../model/objects";
+import { configObject, parseOr } from "../model/inputSchema";
+import { stableJson } from "../model/objects";
 import { roleHoldingPolicy } from "../model/access";
 import { assertPolicyUnreferenced } from "../model/policyReferences";
 import { normalizePolicyDocument } from "../model/policyRules";
@@ -357,7 +358,7 @@ export const usageCounts = query({
 
     const counts: Record<string, number> = {};
     for (const agent of agents) {
-      const extra = isPlainObject(agent.extraConfig) ? agent.extraConfig : {};
+      const extra = parseOr(configObject, agent.extraConfig, {});
       const policyIds = Array.isArray(extra.policies) ? extra.policies : [];
       for (const policyId of policyIds) {
         if (typeof policyId === "string") {

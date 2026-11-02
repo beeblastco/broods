@@ -1,5 +1,5 @@
 import { hexFromBytes, sha256Hex } from "./accountSecrets";
-import { isPlainObject } from "./objects";
+import { configObject, parseOr } from "./inputSchema";
 
 const BLOB_VERSION_PREFIX = "v2:";
 const DEK_BYTES = 32;
@@ -223,9 +223,7 @@ export class AccountCipher {
     if (keyId === null) return null;
     try {
       const plaintext = await this.decryptEnvelope(keyId, scope, blob);
-      const parsed: unknown = JSON.parse(plaintext);
-
-      return isPlainObject(parsed) ? parsed : null;
+      return parseOr(configObject, JSON.parse(plaintext)) ?? null;
     } catch {
       return null;
     }

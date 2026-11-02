@@ -854,6 +854,10 @@ const UPDATE_AGENT_INPUT = z.extend(resourceUpdateInput, {
   status: z.optional(z.enum(["active", "disabled"])),
 });
 
+// Lenient reads of a stored or manifest config: a branch that does not fit is skipped.
+export const storedRefList = z.looseObject({ allowed: z.array(z.unknown()) });
+export const storedWorkspaceRef = z.looseObject({ workspaceId: z.string() });
+
 export type AgentConfig = z.output<typeof AGENT_CONFIG>;
 export type AgentWorkspaceRef = z.output<typeof WORKSPACE_REF>;
 export type AgentModelConfig = z.output<typeof MODEL>;

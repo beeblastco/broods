@@ -1,9 +1,14 @@
+import { z } from "zod/mini";
+
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { storedWorkspaceRef } from "./agentRules";
 import { normalizeChannelRecordConfig } from "./channelRules";
 import { resourceName, type CliResource } from "./cliSync";
-import { isPlainObject } from "./objects";
 import { ClientError } from "./clientError";
+import { configObject, parseInput, parseOr } from "./inputSchema";
+
+const AGENT_BINDING = z.looseObject({ agentId: z.string() });
 
 // Must land exactly where the local manifest normalizes, or the `broods dev` diff never settles.
 export function channelRecordManifestConfig(
@@ -14,20 +19,20 @@ export function channelRecordManifestConfig(
     workspaceNames: Record<string, string>;
   },
 ): Record<string, unknown> {
-  const config = isPlainObject(record.config)
-    ? (record.config as Record<string, unknown>)
-    : {};
+  const config = parseOr(configObject, record.config, {});
   const { agentBindings, policyIds, workspaces, ...rest } = config;
 
   return {
     platform: record.platform,
     externalId: record.externalId,
     ...(record.workspaceRef ? { workspaceRef: record.workspaceRef } : {}),
-    agents: (Array.isArray(agentBindings) ? agentBindings : []).map((entry) =>
-      isPlainObject(entry) && typeof entry.agentId === "string"
-        ? (names.agentNames[entry.agentId] ?? entry.agentId)
-        : entry,
-    ),
+    agents: (Array.isArray(agentBindings) ? agentBindings : []).map((entry) => {
+      const binding = parseOr(AGENT_BINDING, entry);
+
+      return binding
+        ? (names.agentNames[binding.agentId] ?? binding.agentId)
+        : entry;
+    }),
     ...rest,
     ...(Array.isArray(policyIds)
       ? {
@@ -40,16 +45,17 @@ export function channelRecordManifestConfig(
       : {}),
     ...(Array.isArray(workspaces)
       ? {
-          workspaces: workspaces.map((entry) =>
-            isPlainObject(entry) && typeof entry.workspaceId === "string"
+          workspaces: workspaces.map((entry) => {
+            const ref = parseOr(storedWorkspaceRef, entry);
+
+            return ref
               ? {
-                  ...entry,
+                  ...ref,
                   workspaceId:
-                    names.workspaceNames[entry.workspaceId] ??
-                    entry.workspaceId,
+                    names.workspaceNames[ref.workspaceId] ?? ref.workspaceId,
                 }
-              : entry,
-          ),
+              : entry;
+          }),
         }
       : {}),
   };
@@ -227,9 +233,6 @@ function resolveChannelRecordRefs(
   workspaceRef: unknown;
   config: unknown;
 } {
-  if (!isPlainObject(raw)) {
-    throw new ClientError("channelRecord config must be an object");
-  }
   const {
     platform,
     externalId,
@@ -238,7 +241,7 @@ function resolveChannelRecordRefs(
     policies,
     workspaces,
     ...rest
-  } = raw as Record<string, unknown>;
+  } = parseInput(configObject, raw, "channelRecord config");
   const agentBindings = (Array.isArray(agents) ? agents : []).map(
     (entry, index) => {
       const agentName = typeof entry === "string" ? entry : "";
@@ -266,15 +269,17 @@ function resolveChannelRecordRefs(
         : {}),
       ...(Array.isArray(workspaces)
         ? {
-            workspaces: workspaces.map((entry) =>
-              isPlainObject(entry) && typeof entry.workspaceId === "string"
+            workspaces: workspaces.map((entry) => {
+              const ref = parseOr(storedWorkspaceRef, entry);
+
+              return ref
                 ? {
-                    ...entry,
+                    ...ref,
                     workspaceId:
-                      ids.workspaceIds[entry.workspaceId] ?? entry.workspaceId,
+                      ids.workspaceIds[ref.workspaceId] ?? ref.workspaceId,
                   }
-                : entry,
-            ),
+                : entry;
+            }),
           }
         : {}),
     },

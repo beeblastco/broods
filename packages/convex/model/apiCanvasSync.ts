@@ -4,7 +4,9 @@ import type { CanvasEdge, CanvasNode } from "./canvasShapes";
 import { accountCipher, hasEncryptionSecret } from "./accountKeys";
 import { applyTidyLayout } from "./canvasLayout";
 import { loadMcpServersByNode } from "./mcp";
-import { isPlainObject, stableJson } from "./objects";
+import { storedRefList, storedWorkspaceRef } from "./agentRules";
+import { configObject, parseOr } from "./inputSchema";
+import { stableJson } from "./objects";
 
 type ExistingApiCanvas = {
   existingByAgentConfigId: Map<string, CanvasNode>;
@@ -149,7 +151,7 @@ function indexExistingCanvas(layout: Doc<"canvasLayouts">): ExistingApiCanvas {
     id: String(node.id),
     type: node.type,
     position: node.position ?? { x: 0, y: 0 },
-    data: isPlainObject(node.data) ? node.data : {},
+    data: parseOr(configObject, node.data, {}),
   }));
   const existingEdges: CanvasEdge[] = (layout.edges as CanvasEdge[]).map(
     (edge) => ({
@@ -348,12 +350,8 @@ async function wireAgentConfig(
     });
   }
 
-  const skills = nested.skills;
-  if (
-    isPlainObject(skills) &&
-    skills.enabled !== false &&
-    Array.isArray(skills.allowed)
-  ) {
+  const skills = parseOr(storedRefList, nested.skills);
+  if (skills && skills.enabled !== false) {
     wireAgentSkills(sync, {
       agent: agent,
       agentNodeId: agentNode.id,
@@ -361,8 +359,8 @@ async function wireAgentConfig(
     });
   }
 
-  const subagent = nested.subagent;
-  if (isPlainObject(subagent) && Array.isArray(subagent.allowed)) {
+  const subagent = parseOr(storedRefList, nested.subagent);
+  if (subagent) {
     wireAgentSubagents(sync, {
       agentNodeId: agentNode.id,
       allowed: subagent.allowed,
@@ -436,8 +434,9 @@ async function wireAgentWorkspaces(
     defaultSandboxNodeId: string | null;
   },
 ): Promise<void> {
-  for (const ref of options.workspaces) {
-    if (!isPlainObject(ref) || typeof ref.workspaceId !== "string") continue;
+  for (const entry of options.workspaces) {
+    const ref = parseOr(storedWorkspaceRef, entry);
+    if (!ref) continue;
     const normalized = sync.ctx.db.normalizeId(
       "workspaceConfigs",
       ref.workspaceId,
