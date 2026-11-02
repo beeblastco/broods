@@ -1098,6 +1098,7 @@ export declare const api: {
       "public",
       { installationId: number; projectId?: Id<"projects">; repoId: number },
       {
+        branches: Array<string>;
         repo: {
           defaultBranch: string;
           fullName: string;
@@ -1166,6 +1167,7 @@ export declare const api: {
           updatedAt: number;
           url: string;
         }>;
+        hasProduction: boolean;
         installations: Array<{
           accountType: "User" | "Organization";
           installationId: number;
@@ -5612,6 +5614,7 @@ export declare const internal: {
       {
         development?: string;
         keyIds: Array<Id<"deployKeys">>;
+        previousBranches: Array<string>;
         production?: string;
         projectId: Id<"projects">;
         projectSlug: string;
@@ -5691,6 +5694,7 @@ export declare const internal: {
           updatedAt: number;
           url: string;
         }>;
+        hasProduction: boolean;
         installations: Array<{
           accountType: "User" | "Organization";
           installationId: number;

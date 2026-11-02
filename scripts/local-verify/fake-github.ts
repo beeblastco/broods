@@ -394,6 +394,15 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
     ],
     [
       "GET",
+      /^\/branches$/,
+      ({ repo }): Response =>
+        json(
+          200,
+          [...repo.branches.keys()].map((name) => ({ name: name })),
+        ),
+    ],
+    [
+      "GET",
       /^\/contents\/(.+)$/,
       ({ match, query, repo }): Response => {
         const files = filesAt(repo.id, query.get("ref") ?? repo.defaultBranch);
