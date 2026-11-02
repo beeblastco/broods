@@ -1,0 +1,6 @@
+{
+  "slimEntryBytes": 2937954,
+  "fullEntryBytes": 20712735,
+  "taskEntryBytes": 20691534,
+  "how": "SLIM=1 bun build.ts ./entry.ts ./dist-slim; bun build.ts; bun build.ts ./task-entry.ts ./dist-task"
+}
