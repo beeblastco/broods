@@ -2,6 +2,7 @@ import { describe, expect, it, spyOn } from "bun:test";
 import * as asyncToolResults from "../src/harness/async-tool-result.ts";
 import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
 import type { ContinuationOutcome } from "../src/harness/responses.ts";
+import * as sandboxes from "../src/harness/sandbox/index.ts";
 import * as log from "../src/shared/log.ts";
 
 type TestToolExecute = {
@@ -128,7 +129,7 @@ describe("resumeLostAsyncToolResults", () => {
     const marked = spyOn(
       asyncToolResults,
       "markAsyncToolHandback",
-    ).mockResolvedValue(false);
+    ).mockResolvedValue(undefined);
     const info = spyOn(log, "logInfo");
     const outcomes: Record<string, ContinuationOutcome> = {
       async_tool_resumed: {
@@ -212,58 +213,107 @@ describe("resumeLostAsyncToolResults", () => {
 });
 
 describe("async_status", () => {
-  it("hands a settled result over unless its continuation already waits in the queue", async (): Promise<void> => {
-    const conversationKey = "acct:account_1:agent:agent_1:api:chat";
-    const row: AsyncToolResultRecord = {
-      resultId: "async_tool_read",
-      parentEventId: "acct:account_1:agent:agent_1:api:event_parent",
-      conversationKey: conversationKey,
-      toolName: "lookup",
-      toolCallId: "call-read",
-      input: {},
-      status: "completed",
-      response: "the answer",
-      handback: "pending",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      expiresAt: Date.now() + 60_000,
-    };
+  const conversationKey = "acct:account_1:agent:agent_1:api:chat";
+  const settledRow = (): AsyncToolResultRecord => ({
+    resultId: "async_tool_read",
+    parentEventId: "acct:account_1:agent:agent_1:api:event_parent",
+    conversationKey: conversationKey,
+    toolName: "lookup",
+    toolCallId: "call-read",
+    input: {},
+    status: "completed",
+    response: "the answer",
+    handback: "detached",
+    createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    expiresAt: Date.now() + 60_000,
+  });
+
+  it("always hands a settled result over, stores nothing, and records the read for the step save", async (): Promise<void> => {
+    const row = settledRow();
     const read = spyOn(
       asyncToolResults,
       "getAsyncToolResult",
     ).mockResolvedValue(row);
-    // Queued first, so the read leaves it to the continuation; then not.
-    const marked = spyOn(asyncToolResults, "markAsyncToolHandback")
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false);
+    const marked = spyOn(
+      asyncToolResults,
+      "markAsyncToolHandback",
+    ).mockResolvedValue(undefined);
+    const reads: Array<[string, string]> = [];
     const { default: asyncStatusTool } =
       await import("../src/harness/tools/async-status.tool.ts");
     const tools = asyncStatusTool({
       conversationKey: conversationKey,
       supportsJobs: false,
+      onResultRead: async (
+        toolCallId: string,
+        resultId: string,
+      ): Promise<void> => {
+        reads.push([toolCallId, resultId]);
+      },
     });
-    const check = (): Promise<unknown> =>
-      (tools.async_status as unknown as TestToolExecute).execute(
-        { statusId: row.resultId },
-        { toolCallId: "tool-call-read", messages: [], context: undefined },
-      );
 
     try {
-      expect(await check()).toEqual({
-        status: "completed",
-        delivery: "automatic",
-      });
-      expect(await check()).toEqual({
-        status: "completed",
-        response: "the answer",
-      });
-      expect(marked.mock.calls).toEqual([
-        [row.resultId, "stored"],
-        [row.resultId, "stored"],
-      ]);
+      expect(
+        await (tools.async_status as unknown as TestToolExecute).execute(
+          { statusId: row.resultId },
+          { toolCallId: "tool-call-read", messages: [], context: undefined },
+        ),
+      ).toEqual({ status: "completed", response: "the answer" });
+      expect(marked).not.toHaveBeenCalled();
+      expect(reads).toEqual([["tool-call-read", row.resultId]]);
     } finally {
       read.mockRestore();
       marked.mockRestore();
+    }
+  });
+
+  it("records a polled job's read only once its row is settled with the answer", async (): Promise<void> => {
+    const row: AsyncToolResultRecord = {
+      ...settledRow(),
+      status: "processing",
+      input: { kind: "sandbox_job", namespace: "ns", jobId: "job-1" },
+    };
+    const read = spyOn(
+      asyncToolResults,
+      "getAsyncToolResult",
+    ).mockResolvedValue(row);
+    // The job is done, but fetching its logs fails, so the call answers an error.
+    const executor = spyOn(sandboxes, "createSandboxExecutor").mockReturnValue({
+      jobStatus: async () => ({ state: "completed", exitCode: 0 }),
+      jobLogs: async () => {
+        throw new Error("logs unavailable");
+      },
+    } as unknown as ReturnType<typeof sandboxes.createSandboxExecutor>);
+    const reads: string[] = [];
+    const { default: asyncStatusTool } =
+      await import("../src/harness/tools/async-status.tool.ts");
+    const tools = asyncStatusTool({
+      conversationKey: conversationKey,
+      supportsJobs: true,
+      workspaces: [{ namespace: "ns", sandbox: {} }] as unknown as Parameters<
+        typeof asyncStatusTool
+      >[0]["workspaces"],
+      onResultRead: async (_toolCallId: string, resultId: string) => {
+        reads.push(resultId);
+      },
+    });
+
+    try {
+      const failure = await (tools.async_status as unknown as TestToolExecute)
+        .execute(
+          { statusId: row.resultId },
+          { toolCallId: "tool-call-poll", messages: [], context: undefined },
+        )
+        .then(
+          (): undefined => undefined,
+          (cause: unknown): unknown => cause,
+        );
+      expect(String(failure)).toContain("logs unavailable");
+      expect(reads).toEqual([]);
+    } finally {
+      read.mockRestore();
+      executor.mockRestore();
     }
   });
 });
