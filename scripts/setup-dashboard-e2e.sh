@@ -298,8 +298,14 @@ if confirm "Create the probe in production now?"; then
   step "Switch the environment to Production, then User Management → Users → Create user"
   step "  with the same email and password as staging."
   step "Radar → Restrictions: allow that email. Production shows CI a bot check otherwise."
-  set_env_secret production DASHBOARD_E2E_EMAIL "$E2E_EMAIL"
-  set_env_secret production DASHBOARD_E2E_PASSWORD "$E2E_PASSWORD"
+  step "Sign in once at https://dashboard.broods.app as the probe, then pin the project it opens:"
+  step "  gh variable set DASHBOARD_E2E_PROJECT_ID --env production --body <id from the URL>"
+  if confirm "Done in WorkOS? Write the two login secrets to 'production'?"; then
+    set_env_secret production DASHBOARD_E2E_EMAIL "$E2E_EMAIL"
+    set_env_secret production DASHBOARD_E2E_PASSWORD "$E2E_PASSWORD"
+  else
+    SKIPPED+=("production environment secrets")
+  fi
 else
   note "Skipped. The 'deployed' job on main fails on its first step until these exist."
 fi
