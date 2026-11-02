@@ -1,5 +1,3 @@
-import { matchesGlob } from "node:path";
-
 import { defineRule, type ESTree } from "@oxlint/plugins";
 
 import { type FunctionNode, functionName } from "../ast.ts";
@@ -99,7 +97,7 @@ export default defineRule({
       const allowed = options.allow.some(
         (entry) =>
           entry.name === name &&
-          matchesGlob(context.filename, `**/${entry.file}`),
+          `/${context.filename}`.endsWith(`/${entry.file}`),
       );
       if (allowed) return;
       context.report({
