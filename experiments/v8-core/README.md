@@ -162,6 +162,7 @@ subagent sees its parent's files, as it does on a machine.
 results; `python3 report/simple.py results page.html` builds the short page
 published at https://claude.ai/artifact/2qS6mM9RgPqgnrAeuSLCnt (from version 3 on, the
 faster setups: `fast-d0`, `fast-final`, `real-fast`; version 4 adds the
-database work: `db-final`, `db-before`, `real-db`). Every number on it is read
+database work: `db-final`, `db-before`, `real-db`; version 5 leads with the
+two ideas that did not help: `two-ideas`, `warm-reps`). Every number on it is read
 from the rows; only prices and the bundle size are typed in. `research.md` holds
 the research behind it, with sources.

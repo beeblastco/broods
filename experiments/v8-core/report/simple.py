@@ -1,6 +1,7 @@
 """Builds the short, plain page on the worker-per-task idea: where it stands
 after the speed-up work. Every number is read from results/; only prices and
-the bundle size come from files written by the build.
+the bundle size come from files written by the build. Version 5 leads with
+the two ideas tried after the database work (two-ideas, warm-reps).
 
 python3 report/simple.py results out.html
 """
@@ -109,7 +110,10 @@ done = sum(r["ok"] for r in analysis)
 model_share = sum(r["modelMsPerTask"] * r["ok"] for r in analysis) / sum(r["p50"] * r["ok"] for r in analysis)
 usd_per_task = sum(r["usdPerTask"] * r["ok"] for r in analysis) / done
 
-quick = [r for r in levers + final + db if r.get("kind") == "batch"]
+ideas = rows("two-ideas.jsonl")
+warm = [r for r in rows("warm-reps.jsonl") if r.get("kind") == "batch"]
+
+quick = [r for r in levers + final + db + ideas if r.get("kind") == "batch"]
 quick_passed = sum(r["ok"] for r in quick)
 quick_total = sum(r["level"] for r in quick)
 
@@ -117,66 +121,32 @@ build = json.loads((RESULTS / "slim-build.json").read_text())
 full_mb = build["fullEntryBytes"] / 1e6
 slim_mb = build["slimEntryBytes"] / 1e6
 
+# Page v5: one run, every arm interleaved, 20 users at once unless named.
+v5_today = per_minute(ideas, "bun+machine")
+v5_now = per_minute(ideas, "isolate+v8-fast")
+v5_engines = per_minute(ideas, "isolate+v8-eng3")
+v5_book = per_minute(ideas, "isolate+v8-book")
+v5_slow_now = per_minute(ideas, "isolate+v8-fast-d1000")
+v5_slow_book = per_minute(ideas, "isolate+v8-book-d1000")
+busy = statistics.fmean(r["runtimeCpuMs"] / r["batchMs"] for r in batches(ideas, "isolate+v8-fast", 20))
+cpu_one = cpu_per_task(ideas, "isolate+v8-fast")
+cpu_three = cpu_per_task(ideas, "isolate+v8-eng3")
+warm_first = warm[0]["runtimeCpuMs"] / 1000
+warm_later = [r["runtimeCpuMs"] / 1000 for r in warm[1:]]
+db_v5_today = db_cpu(ideas, "bun+machine")
+db_v5_now = db_cpu(ideas, "isolate+v8-fast")
+
 
 def t(x, y, s, cls="t", anchor="middle"):
     return f'<text x="{x}" y="{y}" class="{cls}" text-anchor="{anchor}">{s}</text>'
 
 
-def arrow(x, y1, y2):
-    return (
-        f'<line x1="{x}" y1="{y1}" x2="{x}" y2="{y2 - 7}" class="ln"/>'
-        f'<polygon points="{x},{y2} {x - 5},{y2 - 8} {x + 5},{y2 - 8}" class="ln-head"/>'
-    )
-
-
-def bottom(y, sandbox):
-    return (
-        f'<rect x="40" y="{y}" width="190" height="48" rx="8" class="svc"/>' + t(135, y + 30, "AI model")
-        + f'<rect x="250" y="{y}" width="190" height="48" rx="8" class="svc"/>' + t(345, y + 30, sandbox)
-    )
-
-
-TODAY = (
-    '<svg viewBox="0 0 480 300" role="img" class="pic" aria-label="Today: one always-on Broods server runs every task.">'
-    '<rect x="20" y="16" width="440" height="160" rx="12" class="big"/>'
-    + t(240, 48, "One Broods server, always on", "t b")
-    + "".join(
-        f'<rect x="{40 + i * 140}" y="66" width="120" height="48" rx="8" class="task"/>' + t(100 + i * 140, 96, f"task {'ABC'[i]}")
-        for i in range(3)
-    )
-    + t(240, 150, "every task shares one program", "t s")
-    + arrow(135, 176, 230)
-    + arrow(345, 176, 230)
-    + bottom(232, "Shell sandbox")
-    + "</svg>"
-)
-
-IDEA = (
-    '<svg viewBox="0 0 480 300" role="img" class="pic" aria-label="Your idea now: each agent gets its own small worker that stays ready between its tasks; usage is written by one shared writer, in batches; commands run in a real shell sandbox.">'
-    '<rect x="150" y="8" width="180" height="34" rx="17" class="pill"/>'
-    + t(240, 31, "a user clicks")
-    + "".join(
-        arrow(85 + i * 155, 42, 62)
-        + f'<rect x="{15 + i * 155}" y="62" width="140" height="64" rx="8" class="worker"/>'
-        + t(85 + i * 155, 89, f"agent {'ABC'[i]}", "t b")
-        + t(85 + i * 155, 112, "own worker, ready", "t s")
-        for i in range(3)
-    )
-    + '<rect x="15" y="136" width="450" height="40" rx="8" class="shared"/>'
-    + t(240, 162, "one writer for usage writes, in batches", "t s")
-    + arrow(135, 176, 230)
-    + arrow(345, 176, 230)
-    + bottom(232, "Real shell sandbox")
-    + "</svg>"
-)
-
-
 def bar_chart():
     items = [
-        ("Today", tpm_today, ""),
-        ("Your idea, first try", tpm_first, "bad"),
-        ("Your idea, before the database work", tpm_before, "mid"),
-        ("Your idea, now", tpm_now, "hl"),
+        ("Today", v5_today, ""),
+        ("Your idea, as it is", v5_now, "hl"),
+        ("+ one engine per CPU core", v5_engines, "mid"),
+        ("+ sandbox booked while the AI thinks", v5_book, "mid"),
     ]
     top = max(v for _, v, _ in items)
     out = []
@@ -188,8 +158,8 @@ def bar_chart():
         out.append(t(w + 10, y + 51, f"{value:.0f}", "t num", "start"))
     return (
         '<svg viewBox="0 0 480 284" role="img" class="chart" aria-label="'
-        f"Tasks finished per minute with 20 users at once: today {tpm_today:.0f}, first try {tpm_first:.0f}, "
-        f"before the database work {tpm_before:.0f}, now {tpm_now:.0f}."
+        f"Tasks finished per minute with 20 users at once: today {v5_today:.0f}, your idea as it is {v5_now:.0f}, "
+        f"with one engine per CPU core {v5_engines:.0f}, with the sandbox booked early {v5_book:.0f}."
         '">' + "".join(out) + "</svg>"
     )
 
@@ -262,19 +232,8 @@ code { font-family: var(--mono); font-size: 0.85em; }
 a { color: var(--accent); }
 """
 
-share_20 = tpm_now / tpm_today
 db_cut = 1 - db_now / db_before
 MODAL = "https://modal.com/blog/scaling-to-1-million-concurrent-sandboxes-in-seconds"
-HEADLINE = (
-    f"Yes. With the database back-and-forth cut, your idea now keeps up with today: "
-    f"{tpm_now:.0f} tasks a minute with 20 users at once, against today's {tpm_today:.0f}."
-)
-today_single = [t / 1000 for r in real if r["label"].startswith("bun+machine") and r["level"] == 1 for t in r["taskMs"]]
-REAL_LINE = (
-    f"Still call it a tie, not a win: the AI's own speed swings more than the gap. "
-    f"Today's single tasks took {min(today_single):.0f} to {max(today_single):.0f} s in this run, "
-    f"and the median was {real_today_earlier:.0f} s last time."
-)
 
 page = f"""<title>Broods task isolates</title>
 <meta name="claude:viewport-fit-sides" content="cover">
@@ -286,70 +245,39 @@ page = f"""<title>Broods task isolates</title>
 <section>
 <h1>Your idea: one small worker per task</h1>
 <div class="answer">
-<p>{HEADLINE}</p>
-<p>That is {share_20 * 100:.0f}% of today, up from {share_before * 100:.0f}% before this work, and inside the swing between runs (today itself did {tpm_today_low:.0f} and {tpm_today_high:.0f}). The database now does {db_cut * 100:.0f}% less work per task for your idea, about as much as for today's server on the same kind of sandbox.</p>
+<p>I tried both ideas. Neither made your idea faster, so I took them out again.</p>
+<p>With 20 users at once, your idea did {v5_now:.0f} tasks a minute as it is, {v5_engines:.0f} with one engine per CPU core, and {v5_book:.0f} with the sandbox booked while the AI thinks. Today's server did {v5_today:.0f} in the same run ({tpm_today:.0f} in the last one; it swings).</p>
 </div>
 </section>
 
 <section>
 <h2>What I measured</h2>
-<p>Tasks finished per minute with 20 users at once (higher is better):</p>
+<p>Tasks finished per minute with 20 users at once (higher is better), every setup taking turns in one run, twice:</p>
 <figure class="bars">{bar_chart()}</figure>
 </section>
 
 <section>
-<h2>What Modal does, and what I copied</h2>
-<p>Modal runs up to a million sandboxes at once. <a href="{MODAL}">Their post</a> comes down to one rule: keep the database out of the way of making and using a sandbox, and write the bookkeeping later, in batches. Four of their ideas fit Broods:</p>
-<ol>
-<li><strong>Look it up once, then go straight there.</strong> Modal's app gets a sandbox's address once and sends every command straight to it. Broods now remembers each sandbox's booking: a command on a sandbox it already knows makes no database call, and it checks back once a minute in the background.</li>
-<li><strong>Bookkeeping later, not on the way.</strong> In Modal's words: "We have no data stores in the critical path." Broods now notes a sandbox in the database once per task instead of after every command, and adds up a second of command usage into one write.</li>
-<li><strong>One writer, in batches.</strong> Modal's machines bundle messages for many sandboxes into one call. Your idea's workers now hand their usage writes to one writer per account, which sends whatever has piled up as one batch. Before, 20 workers fought over the same usage record and the database kept redoing the losers' work.</li>
-<li><strong>Book in one step.</strong> Booking a new sandbox took two database trips (look, then claim). Now it takes one, and two tasks racing for the same sandbox both get the same one.</li>
-</ol>
-</section>
-
-<section>
-<h2>The database, per task</h2>
-<div class="nums three">
-<div class="num"><b>{db_before:.0f} → {db_now:.0f} ms</b><span>database work per task for your idea, {db_cut * 100:.0f}% less (today's server: {db_today:.0f} ms with its test machine, {db_same:.0f} ms with the same sandbox)</span></div>
-<div class="num"><b>{calls_before:.0f} → {calls_now:.0f}</b><span>database calls per task (today's server: {calls_today:.0f})</span></div>
-<div class="num"><b>{in_before:.1f} → {in_now:.1f} s</b><span>time per task inside Broods, not counting the wait for the docs server (today's server: {in_today:.1f} s)</span></div>
-</div>
-<p>All at 20 users at once. Most calls that are left are ones every task needs, like taking the task and saving each step; the {calls_now - calls_today:.0f} extra book and note the sandbox.</p>
-</section>
-
-<section>
-<h2>What is left</h2>
-<p>Each task still spends about {in_now - in_today:.0f} s longer inside Broods than today ({in_now:.1f} s against {in_today:.1f} s). In this test that hides behind the wait for the docs server; with the real AI it hides behind the AI. Two causes:</p>
+<h2>Why neither helped</h2>
 <ul>
-<li><strong>The worker engine.</strong> All 20 workers share one CPU core, and each warms up its own copy of Broods, so a task costs about twice the computer time ({cpu_now:.0f} ms against {cpu_today:.0f} ms; the copies are my best explanation, not measured). Fix: one engine per CPU core, agents spread over them.</li>
-<li><strong>Booking new sandboxes.</strong> Every new sandbox is still booked before its first command, and here each task makes two (its own and its helper's). Modal hides this with warm pools, sandboxes made before anyone asks. Fix: book the agent's sandbox while the AI is still thinking.</li>
+<li><strong>More engines.</strong> With 20 users, the one engine was busy only about {busy * 100:.0f}% of the time, so there was no queue for more engines to clear. Three engines only cost more computer time per task ({cpu_three:.0f} ms against {cpu_one:.0f} ms with one).</li>
+<li><strong>Booking early.</strong> It takes one quick database call out of the way of each new sandbox. Even with a slower AI (1 second per answer) the gain, {v5_slow_now:.0f} to {v5_slow_book:.0f} tasks a minute, was smaller than the swing between runs.</li>
+<li><strong>Warm-up was not the cause either.</strong> My guess last time was that each worker warms up its own copy of Broods. Five rounds on the same workers cost the same computer time ({warm_first:.1f} s for the first round of 20 tasks, then {min(warm_later):.1f} to {max(warm_later):.1f} s).</li>
 </ul>
 </section>
 
 <section>
-<h2>The two designs</h2>
-<div class="pair">
-<figure><figcaption>Today</figcaption>{TODAY}</figure>
-<figure><figcaption>Your idea, now</figcaption>{IDEA}</figure>
-</div>
+<h2>What is left</h2>
+<p>Your idea still finishes about {(1 - v5_now / v5_today) * 100:.0f}% fewer tasks a minute than today in this run, and asks the database for a little more work per task ({db_v5_now:.0f} ms against {db_v5_today:.0f} ms). I have now ruled out the engine, the booking and warm-up; I do not have a measured cause for the rest yet. The next step would be to follow one task through both setups, step by step, to see where its extra time goes.</p>
 </section>
 
 <section>
-<h2>With the real AI model</h2>
-<div class="nums">
-<div class="num"><b>{real_today:.0f} s</b><span>per task today</span></div>
-<div class="num"><b>{real_now:.0f} s</b><span>per task with your idea, now</span></div>
-</div>
-<p>{REAL_LINE} About {model_share * 100:.0f}% of every task is waiting for the AI to answer, and the AI is almost the whole bill (about ${usd_per_task:.3f} per task).</p>
-</section>
-
-<section>
-<h2>Earlier changes</h2>
+<h2>Where it stands</h2>
 <ol>
-<li><strong>Keep each agent's worker ready</strong> instead of starting one from zero for every task: computer time per task went from {cpu_last:.0f} ms to {cpu_v3:.0f} ms.</li>
-<li><strong>Run commands in a real shell</strong> instead of a JavaScript copy of bash: {sbx_js / sbx_shell:.0f} times less computer time.</li>
-<li><strong>One shared line for usage writes</strong>: before it, about {lost_before * 100:.0f}% of the usage rows were lost at 20 users; now {kept_now * 100:.0f}% arrive.</li>
+<li><strong>Database work</strong>, from <a href="{MODAL}">Modal's ideas</a> (look up once, bookkeeping later, writes in batches, booking in one step): {db_cut * 100:.0f}% less database work per task for your idea. Built into Broods on this branch with tests; it helps today's server too.</li>
+<li><strong>Each agent keeps a ready worker</strong>: computer time per task went from {cpu_last:.0f} ms to {cpu_v3:.0f} ms.</li>
+<li><strong>Commands run in a real shell</strong> instead of a JavaScript copy of bash: {sbx_js / sbx_shell:.0f} times less computer time.</li>
+<li><strong>One shared writer for usage</strong>: {kept_now * 100:.0f}% of usage rows arrive, against about {(1 - lost_before) * 100:.0f}% before.</li>
+<li><strong>With the real AI</strong> it is a tie: {real_today:.0f} s per task today, {real_now:.0f} s with your idea. About {model_share * 100:.0f}% of a task is waiting for the AI, and the AI is almost the whole bill (about ${usd_per_task:.3f} per task).</li>
 </ol>
 </section>
 
@@ -358,14 +286,14 @@ page = f"""<title>Broods task isolates</title>
 <ol>
 <li>Load only the parts of Broods a task uses ({full_mb:.1f} MB down to {slim_mb:.1f} MB). Tested.</li>
 <li>Give each agent its own worker, kept ready, and drop it when the agent goes quiet. Tested, apart from dropping idle ones.</li>
-<li>The database changes above. Built into Broods on this branch with tests; they help today's server too.</li>
+<li>The database changes above. In Broods on this branch, with tests.</li>
 <li>Run commands in tiny virtual machines (Firecracker or E2B) behind the sandbox Broods already talks to. Tested with a plain shell standing in, which protects nothing yet.</li>
 <li>Move the rest of what tasks share today (the task queue and the sandbox lock) into shared services, like the usage writer. Not built yet.</li>
 </ol>
 </section>
 
 <section>
-<p class="small">Tested on a local copy of Broods only, never on production, on a 4-core machine. {quick_passed} of {quick_total} quick test tasks and {real_passed} of {real_total} real AI tasks passed. Code, raw numbers and research notes with sources: branch <code>claude/project-thread-met53d</code>, folder <code>experiments/v8-core</code> (<code>research.md</code>).</p>
+<p class="small">Tested on a local copy of Broods only, never on production, on a 4-core machine. {quick_passed} of {quick_total} quick test tasks and {real_passed} of {real_total} real AI tasks passed. Code, raw numbers and research notes with sources: branch <code>claude/project-thread-met53d</code>, folder <code>experiments/v8-core</code> (<code>README.md</code>, <code>research.md</code>).</p>
 </section>
 </main>
 """
