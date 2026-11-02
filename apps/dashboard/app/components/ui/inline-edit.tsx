@@ -17,7 +17,7 @@ function InlineEdit({
   /** Also called for a commit that changed nothing. */
   onCancel: () => void;
   className?: string;
-}) {
+}): React.JSX.Element {
   const [draft, setDraft] = React.useState(value);
   const [refused, setRefused] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
