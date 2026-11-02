@@ -4,16 +4,27 @@
  * Worker itself is tested in its own workspace under Miniflare.
  */
 
-import { afterEach, beforeEach, expect, it, mock, spyOn } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  expect,
+  it,
+  mock,
+  setSystemTime,
+  spyOn,
+} from "bun:test";
 import { MAX_TIMEOUT_MS } from "../../cloudflare-worker/src/limits.ts";
 import * as planLimits from "../src/harness/plan-limits.ts";
 import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
+import { resetHeldReservationsForTests } from "../src/harness/sandbox/platform-worker.ts";
 import {
+  resetMirroredForTests,
   WorkerSandboxExecutor,
   workerConnection,
 } from "../src/harness/sandbox/worker-executor.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
+import { drainInFlight } from "../src/shared/in-flight.ts";
 import { requestUrl } from "./helpers/http.ts";
 import { WORKER_MAX_TIMEOUT_SECONDS } from "@broods/convex/model/sandboxRules";
 
@@ -54,6 +65,8 @@ interface WorkerCall {
 const calls: WorkerCall[] = [];
 const mirrored: string[] = [];
 const metered: string[] = [];
+// The reservation calls that reach Convex, in order.
+const convex: string[] = [];
 let stored: string | null = null;
 let claimWins = true;
 
@@ -65,7 +78,10 @@ beforeEach((): void => {
   calls.length = 0;
   mirrored.length = 0;
   metered.length = 0;
-  spyOn(planLimits, "recordUsage").mockImplementation(
+  convex.length = 0;
+  resetHeldReservationsForTests();
+  resetMirroredForTests();
+  spyOn(planLimits, "recordUsageSoon").mockImplementation(
     (accountId, usage, source): void => {
       metered.push(
         `${accountId} ${JSON.stringify(usage)} ${source?.projectId ?? "-"} ${source?.agentId ?? "-"} ${source?.workspaceId ?? "-"}`,
@@ -86,19 +102,35 @@ beforeEach((): void => {
     return new Response(null, { status: 204 });
   });
   spyOn(instanceStore, "getSandboxExternalId").mockImplementation(
-    async (): Promise<string | null> => stored,
+    async (): Promise<string | null> => {
+      convex.push("get");
+
+      return stored;
+    },
   );
   // A claim is a compare-and-swap: only the first one under a key wins.
   spyOn(instanceStore, "claimSandboxInstance").mockImplementation(
     async (_provider, _key, externalId): Promise<boolean> => {
+      convex.push("claim");
       if (stored !== null) return false;
       stored = claimWins ? externalId : "winner-id";
 
       return claimWins;
     },
   );
+  // Claim-or-reuse in one trip: the stored id, else this one (or a racing winner's).
+  spyOn(instanceStore, "reserveSandboxInstance").mockImplementation(
+    async (_provider, _key, externalId): Promise<string> => {
+      convex.push("reserve");
+      stored ??= claimWins ? externalId : "winner-id";
+
+      return stored;
+    },
+  );
   spyOn(instanceStore, "saveSandboxInstance").mockImplementation(
-    async (): Promise<void> => {},
+    async (): Promise<void> => {
+      convex.push("save");
+    },
   );
   spyOn(instanceStore, "deleteSandboxInstance").mockImplementation(
     async (_provider, key): Promise<boolean> => {
@@ -116,6 +148,7 @@ beforeEach((): void => {
 
 afterEach((): void => {
   mock.restore();
+  setSystemTime();
   delete process.env.CLOUDFLARE_WORKER_URL;
   delete process.env.CLOUDFLARE_WORKER_API_KEY;
 });
@@ -234,6 +267,68 @@ it("reserves one persistent sandbox, keeps its files across runs and mirrors it"
   expect(calls[0]?.url).toBe(calls[1]?.url);
   expect(calls[0]?.url).toContain(`/v1/sandboxes/${stored}/exec`);
   expect(calls[0]?.body).toMatchObject({ persist: true });
+  expect(mirrored).toEqual([
+    "upsert acct:workspace false",
+    "upsert acct:workspace false",
+  ]);
+});
+
+it("holds a reservation in memory, so later commands on it make no Convex call", async (): Promise<void> => {
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run(request);
+  await executor.run(request);
+  await executor.run(request);
+
+  expect(convex).toEqual(["reserve"]);
+  expect(new Set(calls.map((call): string => call.url)).size).toBe(1);
+});
+
+it("re-reads a held reservation and pushes its deadline out in the background once a minute", async (): Promise<void> => {
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run(request);
+  setSystemTime(new Date(Date.now() + 61_000));
+  await executor.run(request);
+  await executor.run(request);
+  await drainInFlight();
+
+  expect(convex).toEqual(["reserve", "get", "save"]);
+});
+
+it("lets go of a held reservation repointed elsewhere at its next check", async (): Promise<void> => {
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run(request);
+  const first = stored;
+  stored = "fp-p-other";
+  setSystemTime(new Date(Date.now() + 61_000));
+  await executor.run(request);
+  await drainInFlight();
+  await executor.run(request);
+
+  expect(calls.map((call): string => call.url)).toEqual([
+    `https://worker.example.com/v1/sandboxes/${first}/exec`,
+    `https://worker.example.com/v1/sandboxes/${first}/exec`,
+    "https://worker.example.com/v1/sandboxes/fp-p-other/exec",
+  ]);
+  expect(convex).toEqual(["reserve", "get", "reserve"]);
+});
+
+it("lets go of a held reservation when it releases it", async (): Promise<void> => {
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run(request);
+  await executor.release({ reservationKey: request.reservationKey });
+  stored = null;
+  await executor.run(request);
+
+  expect(convex.filter((call): boolean => call === "reserve")).toHaveLength(2);
+});
+
+it("mirrors a reserved sandbox once per task", async (): Promise<void> => {
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run({ ...request, metadata: { taskId: "task-1" } });
+  await executor.run({ ...request, metadata: { taskId: "task-1" } });
+  await executor.run({ ...request, metadata: { taskId: "task-2" } });
+  await settled();
+
   expect(mirrored).toEqual([
     "upsert acct:workspace false",
     "upsert acct:workspace false",

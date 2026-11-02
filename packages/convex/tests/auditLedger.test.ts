@@ -120,6 +120,65 @@ describe("chain", () => {
     expect(rows[0]?.detailsJson).not.toContain("rm -rf");
   });
 
+  test("a batch of usage writes chains each run in order and skips a retried one", async () => {
+    const t = ledgerTest();
+    const accountId = await seedAccount(t);
+    const usage = (taskId: string) => ({
+      accountId: accountId,
+      endpointId: "ep-1",
+      agentId: "agent-1",
+      conversationKey: "conv-1",
+      taskId: taskId,
+      modelProvider: "anthropic",
+      modelId: "claude-test",
+      finishedAt: 1_700_000_001_000,
+      durationMs: 1000,
+      status: "completed" as const,
+      inputTokens: 100,
+      outputTokens: 20,
+      reasoningTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 120,
+      runtimeKind: "container",
+      runtimeWallMs: 1000,
+      runtimeMemoryMb: 512,
+      sandboxUsage: [],
+      stepCount: 1,
+      toolCallCount: 0,
+    });
+    await t.mutation(internal.usage.recordTaskUsage, usage("evt-0#t"));
+
+    expect(
+      await t.mutation(internal.usage.recordTaskUsages, {
+        items: [
+          usage("evt-1#t"),
+          usage("evt-0#t"),
+          usage("evt-2#t"),
+          usage("evt-1#t"),
+        ],
+      }),
+    ).toEqual([null, null, null, null]);
+    const rows = await allRows(t, accountId);
+    expect(rows.map((row) => [row.seq, row.resource.id])).toEqual([
+      [1, "evt-0"],
+      [2, "evt-1"],
+      [3, "evt-2"],
+    ]);
+    expect(
+      await t.query(internal.audit.ledger.verifyChain, {
+        accountId: accountId,
+      }),
+    ).toEqual({ ok: true, checkedFrom: 1, checkedTo: 3 });
+    const rollup = await t.run((ctx) =>
+      ctx.db
+        .query("usageRollups")
+        .filter((q) => q.eq(q.field("grain"), "day"))
+        .first(),
+    );
+    expect(rollup).toMatchObject({ invocations: 3, totalTokens: 360 });
+  });
+
   // A receiver recomputing the hash in another language sorts keys by code
   // point; locale collation would put "a" before "B".
   test("the hash input sorts keys by code point", () => {

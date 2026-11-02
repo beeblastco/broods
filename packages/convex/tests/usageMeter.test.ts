@@ -452,6 +452,36 @@ test("a retried usage write with the same id counts once", async () => {
   expect(meter?.egressGb).toBe(1);
 });
 
+test("a batch of usage writes adds each once, by its own id", async () => {
+  const t = meterTest();
+  const accountId = await seedAccount(t);
+  await t.mutation(internal.account.budget.record, {
+    accountId: accountId,
+    usage: { egressGb: 1 },
+    writeId: "write-1",
+  });
+
+  expect(
+    await t.mutation(internal.account.budget.recordMany, {
+      items: [
+        // A retry of a write the meter already holds.
+        { accountId: accountId, usage: { egressGb: 1 }, writeId: "write-1" },
+        { accountId: accountId, usage: { egressGb: 2 }, writeId: "write-2" },
+        { accountId: accountId, usage: { workerMs: 500 }, writeId: "write-3" },
+        { accountId: accountId, usage: { egressGb: 2 }, writeId: "write-2" },
+        // An account that no longer exists is dropped, not the batch.
+        { accountId: "gone", usage: { egressGb: 9 }, writeId: "write-4" },
+      ],
+    }),
+  ).toEqual([null, null, null, null, null]);
+
+  const meter = await t.run(async (ctx) =>
+    ctx.db.query("usageMeters").unique(),
+  );
+  expect(meter?.egressGb).toBe(3);
+  expect(meter?.workerMs).toBe(500);
+});
+
 describe("budget", () => {
   test("is not enforced unless this is the managed service", async () => {
     const t = meterTest();

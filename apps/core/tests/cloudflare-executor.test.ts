@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { drainInFlight } from "../src/shared/in-flight.ts";
 import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
+import { resetHeldReservationsForTests } from "../src/harness/sandbox/platform-worker.ts";
 import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
 import {
   CloudflareSandboxExecutor,
@@ -57,6 +58,7 @@ let stored: string | null = null;
 let claimWins = true;
 
 beforeEach((): void => {
+  resetHeldReservationsForTests();
   process.env.CLOUDFLARE_SANDBOX_URL = "https://bridge.example.com/";
   process.env.CLOUDFLARE_SANDBOX_API_KEY = "bridge-key";
   stored = null;
@@ -97,6 +99,14 @@ beforeEach((): void => {
       return claimWins;
     },
   );
+  const reserveSpy = spyOn(
+    instanceStore,
+    "reserveSandboxInstance",
+  ).mockImplementation(async (_provider, _key, externalId): Promise<string> => {
+    stored ??= claimWins ? externalId : "winner-id";
+
+    return stored;
+  });
   const saveSpy = spyOn(
     instanceStore,
     "saveSandboxInstance",
@@ -119,6 +129,7 @@ beforeEach((): void => {
     (): void => fetchSpy.mockRestore(),
     (): void => getSpy.mockRestore(),
     (): void => claimSpy.mockRestore(),
+    (): void => reserveSpy.mockRestore(),
     (): void => saveSpy.mockRestore(),
     (): void => upsertSpy.mockRestore(),
     (): void => removeSpy.mockRestore(),

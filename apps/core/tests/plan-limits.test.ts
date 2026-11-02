@@ -17,6 +17,7 @@ import {
   BudgetExhaustedError,
   planRefusalResponse,
   recordUsage,
+  recordUsageSoon,
   refundRun,
   resetPlanLimitsForTests,
 } from "../src/harness/plan-limits.ts";
@@ -259,6 +260,32 @@ describe("recordUsage", () => {
     await drainInFlight();
 
     expect(recorded).toEqual([{ ingressGb: 0.5 }]);
+  });
+
+  it("sums a second of one account and source's usage into one write, which shutdown drains", async () => {
+    recordUsageSoon(
+      ACCOUNT_ID,
+      { workerMs: 5, workerRequests: 1 },
+      { agentId: "a" },
+    );
+    recordUsageSoon(
+      ACCOUNT_ID,
+      { workerMs: 7, workerRequests: 1 },
+      { agentId: "a" },
+    );
+    recordUsageSoon(
+      ACCOUNT_ID,
+      { workerMs: 3, workerRequests: 1 },
+      { agentId: "b" },
+    );
+
+    expect(recorded).toEqual([]);
+    await drainInFlight();
+
+    expect(recorded).toEqual([
+      { workerMs: 12, workerRequests: 2 },
+      { workerMs: 3, workerRequests: 1 },
+    ]);
   });
 });
 

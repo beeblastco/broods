@@ -15,7 +15,7 @@ import {
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
-import { recordUsage } from "../plan-limits.ts";
+import { recordUsageSoon } from "../plan-limits.ts";
 import { getSandboxExternalId } from "./instance-store.ts";
 import {
   callPlatformWorker,
@@ -50,6 +50,14 @@ const WORKER_OVERHEAD_MS = 15_000;
 // Commands in flight per reserved sandbox, so two never start from the same
 // stored files; the Worker's conditional write stays as the guard behind it.
 const runsByReservation = new Map<string, Promise<unknown>>();
+// The task each reserved sandbox was last mirrored for. The instance row's
+// "last used" fields move per task, so a task's later commands skip the write.
+const mirroredFor = new Map<string, string>();
+const MAX_MIRRORED = 10_000;
+
+export function resetMirroredForTests(): void {
+  mirroredFor.clear();
+}
 
 const statusResult = z.object({ exists: z.boolean() });
 
@@ -132,6 +140,7 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       request,
       async (id): Promise<void> => {
+        mirroredFor.delete(id);
         await callPlatformWorker(
           workerConnection(),
           LABEL,
@@ -189,13 +198,14 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
   }
 
   // Nothing runs between commands, so each one is metered as it ends: its
-  // time on the Worker, plus the request. The platform always pays for an
+  // time on the Worker, plus the request, summed with the run's other
+  // commands into one write (`recordUsageSoon`). The platform always pays for an
   // isolate, so only a config with no account goes unmetered. The project is
   // the config's, else the one the run's agent or workspace belongs to.
   #meter(durationMs: number, metadata: SandboxRunMetadata | undefined): void {
     const plane = this.#config.controlPlane;
     if (!plane) return;
-    recordUsage(
+    recordUsageSoon(
       plane.accountId,
       { workerMs: durationMs, workerRequests: 1 },
       {
@@ -213,12 +223,19 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
   }
 
   // Mirrors a reservation into Convex once a command answered, so a Worker
-  // that refused is never billed. Recoverable, so it never holds up the command.
+  // that refused is never billed: once per task, since the row's "last used"
+  // fields only move per task. Recoverable, so it never holds up the command.
   #mirror(
     key: string,
     id: string,
     metadata: SandboxRunRequest["metadata"],
   ): void {
+    const task = metadata?.taskId;
+    if (task !== undefined) {
+      if (mirroredFor.get(id) === task) return;
+      if (mirroredFor.size >= MAX_MIRRORED) mirroredFor.clear();
+      mirroredFor.set(id, task);
+    }
     void queueMirrorWrite(id, (): Promise<void> =>
       upsertSandboxInstance(
         this.#config.controlPlane,

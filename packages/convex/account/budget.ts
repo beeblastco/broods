@@ -15,6 +15,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import {
   internalMutation,
   internalQuery,
+  type MutationCtx,
   query,
   type QueryCtx,
 } from "../_generated/server";
@@ -235,6 +236,34 @@ export const listWorkspaces = internalQuery({
   },
 });
 
+const recordArgs = {
+  accountId: v.string(),
+  usage: v.object({
+    hostedMcpGbSeconds: v.optional(usageQuantityFields.hostedMcpGbSeconds),
+    hostedMcpRequests: v.optional(usageQuantityFields.hostedMcpRequests),
+    workerMs: v.optional(usageQuantityFields.workerMs),
+    workerRequests: v.optional(usageQuantityFields.workerRequests),
+    storageGbMonths: v.optional(usageQuantityFields.storageGbMonths),
+    egressGb: v.optional(usageQuantityFields.egressGb),
+    ingressGb: v.optional(usageQuantityFields.ingressGb),
+  }),
+  /** When the usage happened, if not now; picks the meter month. */
+  at: v.optional(v.number()),
+  /** Same on every retry of one write, so a retry is applied once. */
+  writeId: v.optional(v.string()),
+  source: v.optional(usageSourceValidator),
+  /** Storage snapshot only: GB-months of `usage` that each project's workspaces hold. */
+  projectStorage: v.optional(
+    v.array(
+      v.object({
+        projectId: v.id("projects"),
+        storageGbMonths: v.number(),
+      }),
+    ),
+  ),
+};
+const recordValidator = v.object(recordArgs);
+
 /**
  * Add usage core measured to the account's meter, and to the project it came
  * from when the write names one, directly or by the agent or workspace that
@@ -244,65 +273,62 @@ export const listWorkspaces = internalQuery({
  * size it measured.
  */
 export const record = internalMutation({
-  args: {
-    accountId: v.string(),
-    usage: v.object({
-      hostedMcpGbSeconds: v.optional(usageQuantityFields.hostedMcpGbSeconds),
-      hostedMcpRequests: v.optional(usageQuantityFields.hostedMcpRequests),
-      workerMs: v.optional(usageQuantityFields.workerMs),
-      workerRequests: v.optional(usageQuantityFields.workerRequests),
-      storageGbMonths: v.optional(usageQuantityFields.storageGbMonths),
-      egressGb: v.optional(usageQuantityFields.egressGb),
-      ingressGb: v.optional(usageQuantityFields.ingressGb),
-    }),
-    /** When the usage happened, if not now; picks the meter month. */
-    at: v.optional(v.number()),
-    /** Same on every retry of one write, so a retry is applied once. */
-    writeId: v.optional(v.string()),
-    source: v.optional(usageSourceValidator),
-    /** Storage snapshot only: GB-months of `usage` that each project's workspaces hold. */
-    projectStorage: v.optional(
-      v.array(
-        v.object({
-          projectId: v.id("projects"),
-          storageGbMonths: v.number(),
-        }),
-      ),
-    ),
-  },
+  args: recordArgs,
   returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const accountId = ctx.db.normalizeId("accounts", args.accountId);
-    const account = accountId ? await ctx.db.get(accountId) : null;
-    if (!account) return null;
-    const now = Date.now();
-    if (args.writeId !== undefined) {
-      const writeId = args.writeId;
-      const applied = await ctx.db
-        .query("usageWrites")
-        .withIndex("by_writeId", (q) => q.eq("writeId", writeId))
-        .first();
-      if (applied) return null;
-      await ctx.db.insert("usageWrites", { writeId: writeId, createdAt: now });
-    }
-    const at = args.at ?? now;
-    const projectId = args.source
-      ? await usageProject(ctx, account, args.source)
-      : undefined;
-    await addUsage(ctx, account._id, args.usage, at, projectId);
-    for (const share of args.projectStorage ?? []) {
-      await addProjectUsage(
-        ctx,
-        account._id,
-        share.projectId,
-        { storageGbMonths: share.storageGbMonths },
-        at,
-      );
-    }
+  handler: (ctx, args): Promise<null> => recordOne(ctx, args),
+});
 
-    return null;
+/**
+ * `record` for several writes in one transaction, in order, each still
+ * applied once by its own `writeId`. A shared writer that drains a queue of
+ * usage writes sends them this way, so the account's meter row is written
+ * once per batch instead of each write racing the others for it.
+ */
+export const recordMany = internalMutation({
+  args: { items: v.array(recordValidator) },
+  returns: v.array(v.null()),
+  handler: async (ctx, args): Promise<null[]> => {
+    const results: null[] = [];
+    for (const item of args.items) results.push(await recordOne(ctx, item));
+
+    return results;
   },
 });
+
+async function recordOne(
+  ctx: MutationCtx,
+  args: Infer<typeof recordValidator>,
+): Promise<null> {
+  const accountId = ctx.db.normalizeId("accounts", args.accountId);
+  const account = accountId ? await ctx.db.get(accountId) : null;
+  if (!account) return null;
+  const now = Date.now();
+  if (args.writeId !== undefined) {
+    const writeId = args.writeId;
+    const applied = await ctx.db
+      .query("usageWrites")
+      .withIndex("by_writeId", (q) => q.eq("writeId", writeId))
+      .first();
+    if (applied) return null;
+    await ctx.db.insert("usageWrites", { writeId: writeId, createdAt: now });
+  }
+  const at = args.at ?? now;
+  const projectId = args.source
+    ? await usageProject(ctx, account, args.source)
+    : undefined;
+  await addUsage(ctx, account._id, args.usage, at, projectId);
+  for (const share of args.projectStorage ?? []) {
+    await addProjectUsage(
+      ctx,
+      account._id,
+      share.projectId,
+      { storageGbMonths: share.storageGbMonths },
+      at,
+    );
+  }
+
+  return null;
+}
 
 /** Daily cron: forget write ids older than a day, one bounded batch per run. */
 export const pruneUsageWrites = internalMutation({

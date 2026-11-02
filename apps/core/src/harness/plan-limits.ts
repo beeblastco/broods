@@ -168,9 +168,61 @@ export function recordUsage(
   waitUntil(getStorage().budgets.record(accountId, usage, source));
 }
 
+// Usage that arrives in many small amounts (one per worker command) waits this
+// long and is summed per account and source into one write, so a task's
+// commands cost one budget write, not one each. Budget reads are already up to
+// `BUDGET_TTL_MS` stale, so a second's delay changes no decision.
+const USAGE_LINGER_MS = 1_000;
+const lingering = new Map<
+  string,
+  {
+    accountId: string;
+    usage: Parameters<Storage["budgets"]["record"]>[1];
+    source?: UsageSource;
+  }
+>();
+
+/** `recordUsage`, summed with the same account and source's usage of the next second. */
+export function recordUsageSoon(
+  accountId: string,
+  usage: Parameters<Storage["budgets"]["record"]>[1],
+  source?: UsageSource,
+): void {
+  const key = JSON.stringify([
+    accountId,
+    source?.projectId ?? null,
+    source?.agentId ?? null,
+    source?.workspaceId ?? null,
+  ]);
+  const pending = lingering.get(key);
+  if (pending) {
+    const sum = pending.usage as Record<string, number | undefined>;
+    for (const [name, amount] of Object.entries(usage))
+      sum[name] = (sum[name] ?? 0) + (amount ?? 0);
+
+    return;
+  }
+  const entry = { accountId: accountId, usage: { ...usage }, source: source };
+  lingering.set(key, entry);
+  waitUntil(
+    new Promise((resolve): void => {
+      setTimeout(resolve, USAGE_LINGER_MS);
+    }).then((): Promise<void> => {
+      lingering.delete(key);
+
+      return getStorage().budgets.record(
+        entry.accountId,
+        entry.usage,
+        entry.source,
+      );
+    }),
+  );
+}
+
 export function resetPlanLimitsForTests(): void {
   windows.clear();
   budgets.clear();
+  lingering.clear();
 }
 
 // A failed lookup admits: enforcement is a cost ceiling, not an auth check,

@@ -2337,6 +2337,36 @@ export declare const internal: {
         },
         null
       >;
+      recordMany: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          items: Array<{
+            accountId: string;
+            at?: number;
+            projectStorage?: Array<{
+              projectId: Id<"projects">;
+              storageGbMonths: number;
+            }>;
+            source?: {
+              agentId?: string;
+              projectId?: string;
+              workspaceId?: string;
+            };
+            usage: {
+              egressGb?: number;
+              hostedMcpGbSeconds?: number;
+              hostedMcpRequests?: number;
+              ingressGb?: number;
+              storageGbMonths?: number;
+              workerMs?: number;
+              workerRequests?: number;
+            };
+            writeId?: string;
+          }>;
+        },
+        Array<null>
+      >;
     };
     connections: {
       disconnect: FunctionReference<
@@ -6187,6 +6217,27 @@ export declare const internal: {
       { accountId: Id<"accounts">; key: string },
       null
     >;
+    reserveSandboxReservation: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        accountId: Id<"accounts">;
+        externalId: string;
+        provider:
+          | "sandbox"
+          | "lambda"
+          | "e2b"
+          | "daytona"
+          | "vercel"
+          | "cloudflare"
+          | "worker"
+          | "machine"
+          | "custom";
+        reservationKey: string;
+        ttlSeconds?: number;
+      },
+      string
+    >;
     saveSandboxReservation: FunctionReference<
       "mutation",
       "internal",
@@ -7219,6 +7270,48 @@ export declare const internal: {
         totalTokens: number;
       },
       null
+    >;
+    recordTaskUsages: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        items: Array<{
+          accountId: Id<"accounts">;
+          agentId: string;
+          cacheWriteTokens: number;
+          cachedInputTokens: number;
+          conversationKey: string;
+          durationMs: number;
+          endpointId: string;
+          finishedAt: number;
+          inputPreview?: string;
+          inputTokens: number;
+          modelId: string;
+          modelProvider: string;
+          outputTokens: number;
+          principalChain?: Array<
+            | { channel?: string; id: string; kind: "user"; name?: string }
+            | { keyKind: "account" | "deployment" | "cron"; kind: "api" }
+            | { agentId: string; kind: "agent" }
+          >;
+          reasoningTokens: number;
+          runtimeKind: string;
+          runtimeMemoryMb: number;
+          runtimeWallMs: number;
+          sandboxUsage: Array<{
+            cpuUsec: number;
+            role: "agent" | "tool";
+            toolName?: string;
+            type: string;
+          }>;
+          status: "completed" | "failed";
+          stepCount: number;
+          taskId: string;
+          toolCallCount: number;
+          totalTokens: number;
+        }>;
+      },
+      Array<null>
     >;
   };
   workspace: {
