@@ -1,10 +1,3 @@
-/**
- * Shared logging helpers. This module redacts every line at the single chokepoint,
- * then emits it in order: stdout (CloudWatch fallback, all levels), OTLP
- * (best-effort, all levels), and NATS (INFO/WARN/ERROR only, requires an
- * observability context from setObservabilityContext()).
- */
-
 import type { ObservabilityLogEntry } from "../../../../packages/broods/src/observability-contracts.ts";
 import {
   ensureObservabilityStream,
@@ -18,21 +11,13 @@ const BEARER_SECRET_PATTERN = /\bBearer\s+[^\s,;]+/gi;
 const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
-// Every Broods credential (b-prefix, long base64url body) at a word start or
-// after an escaped `\n`, `\r`, `\t` or a `%XX` byte, so short ids like `bsk_id`
-// stay readable.
-// Identical in apps/lambda/sandbox-log-forwarder.mjs; keep them in step.
+// This and the next pattern are copied in apps/lambda/sandbox-log-forwarder.mjs: keep in step.
 const BROODS_CREDENTIAL_PATTERN =
   /(?=b)(?<=^|[^A-Za-z0-9_]|\\[nrt]|%[0-9A-Fa-f]{2})b(?:sk|ask|pdk|cli|code|sts|dts|rt)_[A-Za-z0-9_.-]{20,}/g;
-// GitHub, OpenAI, Anthropic, AWS, Slack (bot, user, session, refresh, app),
-// Google (API key, OAuth access token) and JWT tokens. A prefixed token may
-// follow `-` or `_` (`credential-ghp_...`); a JWT never starts inside a `-`/`_`
-// run, so its branch stays linear.
-// Identical in apps/lambda/sandbox-log-forwarder.mjs; keep them in step.
+// A JWT never starts inside a `-`/`_` run, so its own lookbehind keeps that branch linear.
 const PROVIDER_CREDENTIAL_PATTERN =
   /(?=[gsAxey])(?:(?<=^|[^A-Za-z0-9]|\\[nrt]|%[0-9A-Fa-f]{2})(?:gh[oprsu]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-[A-Za-z0-9_-]{32,}|A[KS]IA[A-Z0-9]{16}(?![A-Za-z0-9])|xox[abcdeoprs]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35}|ya29\.[A-Za-z0-9_-]{20,})|(?<=^|[^A-Za-z0-9_-]|\\[nrt]|%[0-9A-Fa-f]{2})eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g;
-// Env names that hold who someone is, never a credential. Not every `*_NAME`:
-// a SASL or SMTP user name is often a key.
+// Not every `*_NAME`: a SASL or SMTP user name is often a key.
 const PUBLIC_ENV_NAME_PATTERN =
   /(?:^|[^a-z0-9])email$|^GIT_(?:AUTHOR|COMMITTER)_NAME$/i;
 const WHITESPACE_PATTERN = /\s/g;
@@ -69,8 +54,6 @@ export function collectSecretValues(value: unknown): string[] {
         nested &&
         typeof nested === "object"
       ) {
-        // A `{ NAME: value }` map, or `[{ key, value }]` entries. Every value
-        // is secret unless its name holds a public identity.
         const entries: [string | undefined, unknown][] = Array.isArray(nested)
           ? nested.map((entry: unknown): [string | undefined, unknown] =>
               entry && typeof entry === "object" && "value" in entry
@@ -99,10 +82,6 @@ export function collectSecretValues(value: unknown): string[] {
   return [...secrets].filter((secret) => secret.length >= 4);
 }
 
-/**
- * Deep-redact an arbitrary value. Sensitive keys are replaced wholesale, while
- * every nested string is scrubbed against the supplied secret-value set.
- */
 export function redact(
   value: unknown,
   secretValues: readonly string[] = sensitiveEnvValues(),
@@ -110,11 +89,6 @@ export function redact(
   return redactValue(value, matchableSecrets(secretValues));
 }
 
-/**
- * Serializes a value for a span attribute with sensitive keys and secrets
- * redacted, cut to `maxChars`. Only the kept prefix is scrubbed, so a long
- * history costs one `JSON.stringify` instead of a deep redact.
- */
 export function redactSerialized(
   value: unknown,
   secretValues: readonly string[],
@@ -138,10 +112,8 @@ export function redactSerialized(
       JSON.stringify(secret).slice(1, -1),
     ]),
   );
-  // A secret can straddle a window's end, so the last `overlap` chars of a
-  // scrubbed window are never kept, and a window ends at whitespace so it
-  // never cuts a token the patterns match. The window grows when replacements
-  // shrank it below `maxChars`.
+  // A secret can straddle a window's end, so its last `overlap` chars are never kept, and
+  // it ends at whitespace so no pattern token is cut. It doubles if redaction shrank it.
   const overlap = secrets[0]?.length ?? 0;
   for (let size = maxChars + overlap; ; size *= 2) {
     WHITESPACE_PATTERN.lastIndex = size;
@@ -161,13 +133,8 @@ export function redactSerialized(
   }
 }
 
-/**
- * Scrubs every nested string of the run's secret values and Broods' own key
- * formats, and nothing else: keys are left alone and the log patterns for
- * `Basic`, `Bearer` and query strings do not run, unlike `redact`. For text
- * and tool data that is read back, stream frames and stored tool rows: prose
- * and a `nextPageToken` must reach the reader as they were.
- */
+// Unlike `redact`, keeps keys and skips the log patterns (`Bearer`, query tokens): this data is
+// read back, so prose and a `nextPageToken` must arrive as they were.
 export function redactWithRunSecrets(
   value: string,
   secretValues?: readonly string[],
@@ -183,7 +150,6 @@ export function redactWithRunSecrets(
   return redactRunValue(value, matchableSecrets(secretValues));
 }
 
-/** The sensitive env values plus the secrets the observability context holds for this run. */
 export function runSecretValues(): string[] {
   return [
     ...sensitiveEnvValues(),
@@ -191,7 +157,6 @@ export function runSecretValues(): string[] {
   ];
 }
 
-/** Redact a free-form string using sensitive env values plus task-local secrets. */
 export function redactSensitiveText(
   value: string,
   additionalSecretValues: readonly string[] = [],
@@ -276,7 +241,6 @@ function emit(
   }
 }
 
-/** The `key` or `name` an env entry or secret record is listed under. */
 function entryName(record: object): string | undefined {
   if ("key" in record && typeof record.key === "string") return record.key;
 
@@ -298,7 +262,7 @@ function isSensitiveEnvName(name: string): boolean {
   );
 }
 
-/** Secrets long enough to match, longest first so one inside another never leaves a tail. */
+// Longest first, so a secret inside another never leaves a tail.
 function matchableSecrets(secretValues: readonly string[]): string[] {
   return [...new Set(secretValues.filter((secret) => secret.length >= 4))].sort(
     (left, right) => right.length - left.length,
@@ -313,9 +277,6 @@ function publishNats(
   if (!connPromise) return;
 
   const ctx = getObservabilityContext();
-  // Skip when the task isn't deployment-scoped (channel/cron paths have empty
-  // project/stage/endpoint): no dashboard tab subscribes those, so publishing
-  // to a malformed subject is wasted. Durable OTLP + stdout still capture it.
   if (!ctx || !ctx.endpointId || !ctx.project || !ctx.stage) return;
 
   const subject = logsSubject(
@@ -327,21 +288,16 @@ function publishNats(
 
   connPromise
     .then(async (conn) => {
-      // Ensure the durable stream captures this line for dashboard replay;
-      // memoized, so ~free after the first call. Live publish proceeds regardless.
       await ensureObservabilityStream(conn).catch(() => {});
       conn.publish(subject, ENCODER.encode(JSON.stringify(entry)));
     })
-    .catch(() => {
-      // Best-effort; NATS hiccup must never lose durable (OTLP) data.
-    });
+    .catch(() => {});
 }
 
 function redactString(value: string, secretValues: readonly string[]): string {
   return scrubSecrets(value, matchableSecrets(secretValues));
 }
 
-/** Recurses for `redactWithRunSecrets` over secrets already from `matchableSecrets`. */
 function redactRunValue(value: unknown, secrets: readonly string[]): unknown {
   if (typeof value === "string") return replaceSecretValues(value, secrets);
   if (value === null || typeof value !== "object") return value;
@@ -375,7 +331,6 @@ function redactValue(value: unknown, secrets: readonly string[]): unknown {
   return out;
 }
 
-/** Replaces each secret (already from `matchableSecrets`) and Broods' own key formats. */
 function replaceSecretValues(
   value: string,
   secrets: readonly string[],
@@ -389,7 +344,6 @@ function replaceSecretValues(
   return redacted;
 }
 
-/** A log string: each secret (already from `matchableSecrets`), then anything shaped like a credential. */
 function scrubSecrets(value: string, secrets: readonly string[]): string {
   let redacted = replaceSecretValues(value, secrets);
   redacted = redacted.replace(BEARER_SECRET_PATTERN, "Bearer [redacted]");

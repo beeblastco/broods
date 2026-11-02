@@ -1,16 +1,8 @@
-/**
- * File-spooled Harness process over a blocking sandbox shell transport.
- * The launcher detaches the real command, while short shell calls poll output,
- * status, and cancellation so providers without a native streaming process API
- * can still satisfy the AI SDK Harness process contract.
- */
-
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { shellQuote } from "./utils.ts";
 
-// Raw bytes per chunk read. Base64 grows them to 240 KB, under the 256 KB of
-// stdout one MicroVM exec returns.
+// Base64 grows a chunk to 240 KB, under the 256 KB of stdout one MicroVM exec returns.
 const FILE_CHUNK_BYTES = 180 * 1024;
 const PROCESS_POLL_INTERVAL_MS = 25;
 
@@ -28,11 +20,7 @@ export interface HarnessShellExecutor {
   }>;
 }
 
-/**
- * One chunk of a sandbox file from `offset`, or null when the file does not exist.
- * Process output streams poll it, and MicroVM `readFile` loops it, comparing
- * `stamp` (size, inode, change time) across chunks to catch a file that changed.
- */
+/** `stamp` (size, inode, ctime) lets a chunked reader catch a file that changed mid-read. */
 export async function readFileChunk(
   executor: HarnessShellExecutor,
   path: string,

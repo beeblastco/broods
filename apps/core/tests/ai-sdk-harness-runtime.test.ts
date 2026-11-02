@@ -1,8 +1,4 @@
-/**
- * Each probe runs in a child process so importing the real driver cannot prime
- * Bun's module cache ahead of executor tests that install module-level fakes.
- * Live bridge bootstrap and connectivity are covered by the opt-in integration test.
- */
+// Probes run in a child process so the real driver cannot prime Bun's module cache for fakes.
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,8 +32,7 @@ const ADAPTERS_PATH = resolve(
 );
 const BRIDGE_TYPES = ["claude-code", "codex", "deepagents", "opencode"];
 
-// Core ships as a `bun build --compile` binary, which only carries the bridge
-// files root `patches/` turn into embedded imports, lockfiles included.
+// The compiled core binary only carries bridge files root `patches/` turn into embedded imports.
 describe("createAiSdkHarnessAdapter", () => {
   it("builds every bridge bootstrap inside a compiled binary", async () => {
     const dir = await mkdtemp(join(tmpdir(), "harness-bootstrap-"));
@@ -157,9 +152,6 @@ describe("createConfiguredHarnessAgent", () => {
     });
   });
 
-  // The harness resolves the active user tool set per turn, so the agent
-  // exposes no filtered tool map to read back. What core owns is the
-  // `activeTools` it derives from `harness.activeTools` minus `denyTools`.
   it("maps tool filters and diagnostics into OpenCode", async () => {
     const result = await runProbe(`
       const runtime = module.createConfiguredHarnessAgent({
@@ -210,8 +202,7 @@ describe("createConfiguredHarnessAgent", () => {
     ).not.toContain("bash");
   });
 
-  // The harness pauses a turn on its `askUserQuestions` builtin and waits for
-  // an answer core never supplies; people are asked through `ask_questions`.
+  // The harness `askUserQuestions` builtin waits for an answer core never supplies.
   it("keeps the harness question prompt off where the adapter declares it", async () => {
     const result = await runProbe(`
       const runtime = module.createConfiguredHarnessAgent({
@@ -266,9 +257,7 @@ describe("createConfiguredHarnessAgent", () => {
     });
   });
 
-  // OpenCode derives credential discovery from its own provider name, and a
-  // custom endpoint label resolves to Anthropic, so the OpenAI-compatible key
-  // would never reach the sandbox.
+  // OpenCode maps a custom endpoint label to Anthropic, so an OpenAI-compatible key never lands.
   it("rejects unsupported providers for OpenCode", async () => {
     const result = await runProbe(`
       try {

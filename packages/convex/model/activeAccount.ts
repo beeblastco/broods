@@ -1,13 +1,6 @@
-/**
- * Account guards for writes made on behalf of one account: runtime writes
- * from core (runtime keys embed it as `acct:<accountId>:...`) and the
- * dashboard's direct writes, uploads and compute calls.
- */
-
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
-/** @throws when the key has no `acct:<id>:` prefix. */
 export function accountIdFromKey(value: string): string {
   const match = /^acct:([^:]+):/.exec(value);
   if (!match?.[1]) throw new Error("Runtime key is not account scoped");
@@ -15,7 +8,6 @@ export function accountIdFromKey(value: string): string {
   return match[1];
 }
 
-/** @throws when the account is missing or disabled. */
 export async function requireActiveAccount(
   ctx: QueryCtx,
   accountId: Id<"accounts">,
@@ -26,10 +18,7 @@ export async function requireActiveAccount(
   }
 }
 
-/**
- * @throws when the org's account is disabled. An org with no account yet has
- * nothing to suspend.
- */
+// An org with no account yet has nothing to suspend.
 export async function requireActiveOrgAccount(
   ctx: QueryCtx,
   orgId: Id<"orgs">,
@@ -41,10 +30,6 @@ export async function requireActiveOrgAccount(
   if (account) await requireActiveAccount(ctx, account._id);
 }
 
-/**
- * The active account a runtime key belongs to.
- * @throws when the key is unscoped or its account is missing or disabled.
- */
 export async function requireActiveKeyAccount(
   ctx: MutationCtx,
   key: string,

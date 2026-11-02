@@ -1,8 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * The daily storage snapshot's split by project: each project is billed what
- * its own workspaces hold, and the account the whole size.
- */
 
 import { convexTest } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";

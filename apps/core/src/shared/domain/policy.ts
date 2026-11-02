@@ -1,9 +1,4 @@
-/**
- * Agent policy runtime contracts: records and the OPA decision
- * input/output shapes. Document validation lives in the config
- * plane (packages/convex/model/policyRules.ts); runtime decisions are made by
- * OPA using the same document/input shape.
- */
+// OPA makes the runtime decision from these same document and input shapes.
 
 import type {
   PolicyAction,
@@ -36,23 +31,17 @@ export interface PolicyDecisionInput {
   stage?: string;
   endpointId?: string;
   agentId?: string;
-  /** The agent the run acts as and its delegation chain (`principal.chain[0]` is the requester, when known). */
   principal?: Principal;
   conversationKey?: string;
   delivery?: string;
   /** Adapter name, e.g. "slack". The place is `channelId`, not this. */
   channel?: string;
-  /** Provider id of the channel the turn arrived in, e.g. a Slack channel id. */
   channelId?: string;
-  /** Thread inside that channel, when the turn is threaded. */
   threadId?: string;
-  /** The person who addressed the agent, so a rule can be scoped to people. */
   userId?: string;
   userName?: string;
-  /** Ids of the channel record's roles the user holds, when one is configured. */
   userRoles?: string[];
   toolName?: string;
-  /** MCP registration id behind the tool, when the tool is a remote MCP tool. */
   mcpId?: string;
   workspaceId?: string;
   workspaceName?: string;
@@ -74,6 +63,5 @@ export interface PolicyDecision {
   mode: PolicyMode;
   reason: string;
   matchedRuleIds: string[];
-  /** Deny rules that fired but only recorded, because their policy is auditing. */
   auditedRuleIds: string[];
 }

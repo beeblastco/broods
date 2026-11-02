@@ -10,7 +10,6 @@ test("a live run shows its failures and retries on the row and the time axis", a
   await answerObservabilitySocket(page, { traces: liveRun() });
   await page.goto(`/ui-gallery?tab=tracing&range=30d&trace=${TRACE_ID}`);
 
-  // The failed tool's error reads under its row, without opening it.
   await expect(
     page.getByText("2 tests failed: coupon applied twice"),
   ).toBeVisible();
@@ -18,8 +17,6 @@ test("a live run shows its failures and retries on the row and the time axis", a
   await expect(page.getByRole("button", { name: "1 failed" })).toBeVisible();
   await expect(page.getByRole("button", { name: "1 retried" })).toBeVisible();
 
-  // Each issue has a marker on the axis that opens its span, even folded
-  // away under its closed step.
   await page.getByRole("button", { name: "Collapse spans" }).first().click();
   await expect(
     page.getByRole("button", { name: "run_checkout_tests", exact: true }),
@@ -30,7 +27,6 @@ test("a live run shows its failures and retries on the row and the time axis", a
   await expect(
     page.getByRole("button", { name: "run_checkout_tests", exact: true }),
   ).toBeInViewport();
-  // The side panel opens on it, its error included.
   await expect(
     page.getByText("2 tests failed: coupon applied twice"),
   ).toHaveCount(2);
@@ -57,7 +53,6 @@ test("an open span sits under the trace header and folds the task list", async (
   );
   await expect.poll(async () => (await list.boundingBox())?.width).toBe(36);
 
-  // Unfolding by hand holds while the span stays open.
   await page.getByRole("button", { name: "Show the task list" }).click();
   await expect.poll(async () => (await list.boundingBox())?.width).toBe(320);
 
@@ -65,7 +60,6 @@ test("an open span sits under the trace header and folds the task list", async (
   await expect(detail).toHaveCount(0);
 });
 
-/** A run still going, started a minute before the frozen clock: a step that retried a 429, a failed tool, a running step. */
 function liveRun(): ObservabilitySpanRow[] {
   const start = NOW_MS - 60_000;
   const span = (

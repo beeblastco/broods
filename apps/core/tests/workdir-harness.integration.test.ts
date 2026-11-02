@@ -1,9 +1,3 @@
-/**
- * Live Workdir coverage for the complete Broods Harness sandbox path.
- * This test uses a real Workdir server while keeping reservation persistence
- * local, so it never reads or mutates a shared Convex deployment.
- */
-
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
@@ -33,6 +27,7 @@ afterEach(() => {
   restoreEnvironment("WORKDIR_URL", originalWorkdirUrl);
 });
 
+// skip: opt-in live run against a real Workdir server, set WORKDIR_TEST_URL
 describe.skipIf(!URL)("Broods Workdir Harness integration (live)", () => {
   it("creates, executes, reads, writes, resumes, and destroys a real sandbox", async () => {
     const reservationKey = `broods-harness-live-${randomUUID()}`;

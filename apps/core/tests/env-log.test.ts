@@ -219,7 +219,6 @@ describe("logging helpers", () => {
     expect(redactWithRunSecrets(`key bsk_${"a".repeat(43)}`)).toBe(
       "key [redacted]",
     );
-    // A frame's timestamp stays what JSON.stringify would have written.
     expect(
       redactWithRunSecrets({ timestamp: new Date("2026-01-02T03:04:05Z") }),
     ).toEqual({ timestamp: "2026-01-02T03:04:05.000Z" });
@@ -248,8 +247,7 @@ describe("logging helpers", () => {
   });
 
   it("redacts third-party credential formats in logs and span attributes", () => {
-    // Fake tokens in each provider's shape; none is a real credential. The AWS
-    // id is split so the secret scan does not flag it.
+    // Fake tokens in each provider's shape; the AWS id is split so the secret scan skips it.
     const tokens = [
       `ghp_${"a1B2".repeat(9)}`,
       `ghs_${"a1B2".repeat(9)}`,
@@ -277,13 +275,11 @@ describe("logging helpers", () => {
         "next=%2Fauth%3D[redacted]",
       );
     }
-    // A prefixed provider token glued to a word by `-` or `_` is still caught.
     expect(
       redactSensitiveText(`credential-${tokens[0]} key_${tokens[3]}`),
     ).toBe("credential-[redacted] key_[redacted]");
     // Read-back data keeps them: the agent may need a token it was handed.
     expect(redactWithRunSecrets(tokens[0])).toBe(tokens[0]);
-    // Ids that only contain a prefix stay readable.
     const ids = `task-${"0f1e2d3c-4b5a-6978".repeat(2)} AKIA${"ABCDEFGHIJ234567"}XY ghp_short`;
     expect(redactSensitiveText(ids)).toBe(ids);
   });
@@ -316,11 +312,9 @@ describe("logging helpers", () => {
 
   it("never leaks a secret that straddles a truncated attribute's cut", () => {
     const secret = "s3cr3t-value-long";
-    // One straddles the cut itself; the other straddles the scrubbed window's
-    // end and is pulled under the cut once the secret before it shrinks.
+    // atWindow's second secret is pulled under the cut once the first one shrinks.
     const atCut = `${"x".repeat(45)}${secret}${"y".repeat(100)}`;
     const atWindow = `${secret}${"z".repeat(34)}${secret}${"y".repeat(100)}`;
-    // A token the patterns match, longer than any literal secret.
     const atToken = `${"x".repeat(40)} bsk_${"a".repeat(43)} ${"y".repeat(100)}`;
 
     for (const text of [atCut, atWindow, atToken]) {

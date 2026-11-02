@@ -1,11 +1,3 @@
-/**
- * Shell script builders shared by the persistent executors that use POSIX shell
- * state for detached background jobs and onCreate/onResume lifecycle hooks.
- * Job state lives in marker files under `jobsDir`:
- * `<id>.running` (live; holds the launching boot id), `.log` (output), `.exit`
- * (code), `.pid` (session leader, for stop).
- */
-
 import { Buffer } from "node:buffer";
 import type { SandboxJobCallback, SandboxJobStatus } from "./types.ts";
 import { shellQuote } from "./utils.ts";
@@ -13,22 +5,18 @@ import { shellQuote } from "./utils.ts";
 const BOOT_ID_FILE = "/proc/sys/kernel/random/boot_id";
 
 export interface LaunchOptions {
-  // Reject the launch once this many jobs are already running in the sandbox.
   maxConcurrentJobs: number;
-  // Optional completion callback the job POSTs when it exits.
   callback?: SandboxJobCallback;
 }
 
-// Env for the exec that launches a job; the token never rides the script text.
+// The token rides the launching exec's env, never the script text.
 export function callbackEnv(
   callback: SandboxJobCallback | undefined,
 ): Record<string, string> {
   return callback ? { __CB_TOKEN: callback.token } : {};
 }
 
-// POSTs the job's outcome back to the harness so the conversation resumes without
-// the model having to poll. python3 is on PATH in every sandbox image; failures
-// (no egress, no python) are swallowed and the model can still poll async_status.
+// python3 ships in every sandbox image; a failed POST is swallowed and async_status still polls.
 export function callbackSnippet(
   callback: SandboxJobCallback,
   logFile: string,
@@ -61,12 +49,7 @@ export function generateJobId(): string {
   return `job_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/**
- * Launch `code` as a detached session. The wrapper is base64-encoded so the
- * user's code passes through the shell untouched. Stamps the marker with the
- * current boot id so a later poll can tell "still running" from "killed when the
- * sandbox was recreated". Exits non-zero (caller throws) if the job cap is hit.
- */
+// The boot id in `.running` lets a poll tell a live job from one lost to a sandbox recreate.
 export function launchScript(
   jobsDir: string,
   jobId: string,
@@ -99,12 +82,6 @@ export function launchScript(
   ].join("\n");
 }
 
-/**
- * onCreate/onResume hook script for providers without native lifecycle
- * callbacks (daytona/sandbox; vercel keeps its own in vercel-executor.ts).
- * onCreate runs once, guarded by a marker file in the workDir; onResume runs on
- * every acquisition. Returns undefined when no hooks are configured.
- */
 export function lifecycleScript(
   workDir: string,
   onCreate?: string[],
@@ -112,8 +89,7 @@ export function lifecycleScript(
 ): string | undefined {
   if (!onCreate?.length && !onResume?.length) return undefined;
   const marker = shellQuote(`${workDir}/.fp-setup-done`);
-  // Runs sharing a machine can acquire it at once; the lock keeps onCreate to one
-  // of them, and a lock older than 10 minutes is taken as left by a killed run.
+  // Runs sharing a machine run onCreate once; a lock held 10 minutes was left by a killed run.
   const lock = shellQuote(`${workDir}/.fp-setup-lock`);
 
   return [
@@ -176,9 +152,7 @@ export function statusScript(jobsDir: string, jobId: string): string {
   assertSafeJobId(jobId);
   const f = (ext: string): string => shellQuote(`${jobsDir}/${jobId}.${ext}`);
 
-  // Exit recorded => terminal. Otherwise the job is "running" only if it was
-  // launched in this boot AND its session leader is still alive; a boot-id
-  // mismatch (sandbox recreated) or a dead pid with no exit means it was killed.
+  // A boot-id mismatch (sandbox recreated) or a dead pid with no exit means the job was killed.
   return [
     `if [ -f ${f("exit")} ]; then echo "done $(cat ${f("exit")})";`,
     `elif [ -f ${f("running")} ]; then`,
@@ -203,8 +177,6 @@ export function stopScript(jobsDir: string, jobId: string): string {
   ].join("; ");
 }
 
-// Job ids land inside shell-quoted file paths; reject anything that could
-// traverse out of jobsDir.
 function assertSafeJobId(jobId: string): void {
   if (!/^[A-Za-z0-9_-]+$/.test(jobId)) {
     throw new Error(`Invalid job id: ${jobId}`);

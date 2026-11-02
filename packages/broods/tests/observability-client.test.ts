@@ -95,7 +95,6 @@ test("reconnects transient log sockets and de-duplicates overlap backfill", asyn
   await stream.return(undefined);
 });
 
-// The tail used to retry a dead gateway forever without a word.
 test("reports each reconnect and gives up after a minute down", async () => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const attempts: string[] = [];
@@ -132,7 +131,6 @@ test("reports each reconnect and gives up after a minute down", async () => {
   }
 });
 
-// `broods dev` tails for the whole session, so an outage must not end it.
 test("keeps reconnecting past a minute down when asked to", async () => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
@@ -163,7 +161,6 @@ test("keeps reconnecting past a minute down when asked to", async () => {
   await result;
 });
 
-// A socket that opened but never answered used to hang the tail for good.
 test("reconnects a socket the gateway never answers", async () => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
@@ -246,7 +243,6 @@ test("does not include the credential in connection errors", async () => {
   expect(result).rejects.not.toThrow("do-not-leak");
 });
 
-// Lets awaited credentials and queued socket events run while timers are fake.
 async function flushMicrotasks(): Promise<void> {
   for (let turn = 0; turn < 10; turn++) await Promise.resolve();
 }

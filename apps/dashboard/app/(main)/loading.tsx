@@ -17,6 +17,7 @@ export default function DashboardLoading(): React.JSX.Element {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 3 }).map((_, i) => (
               <div
+                // oxlint-disable-next-line react/no-array-index-key -- fixed skeleton placeholders
                 key={i}
                 className="rounded-lg border border-border overflow-hidden"
               >

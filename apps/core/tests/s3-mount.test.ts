@@ -52,7 +52,6 @@ const RULE_ENV_NAMES = [
   "ALLOW_PRIVATE_STORAGE_ENDPOINTS",
 ];
 
-// Each account's Broods-assigned external id, as the config plane hands it out.
 const externalIdLookups: string[] = [];
 let externalIdSpy: { mockRestore(): void } | undefined;
 
@@ -216,8 +215,7 @@ describe("mountAttribution", () => {
     expect(
       mountAttribution(config, { namespace: own, metadata: metadata }),
     ).toEqual({ accountId: "acct_1", agentId: "agent_1" });
-    // A shared root or a conversation folder outlives one run's credentials,
-    // so the next agent on the same sandbox would carry this agent's name.
+    // A shared or conversation folder outlives the run: the next agent would wear this name.
     for (const namespace of [
       NS,
       `${NS}/support/fs-conversation`,
@@ -310,7 +308,6 @@ describe("resolveS3Mount", () => {
       ],
     });
 
-    // No agent (an account-level mount) still attributes the account.
     await resolveS3Mount({
       storage: undefined,
       namespace: NS,
@@ -323,8 +320,7 @@ describe("resolveS3Mount", () => {
       Tags: [{ Key: "broods:account", Value: "acct_1" }],
     });
 
-    // A developer's trust policy only grants sts:AssumeRole, so the session
-    // name is the one attribution that must not break their mount.
+    // A developer's trust policy grants only sts:AssumeRole, so no SourceIdentity or Tags.
     await resolveS3Mount({
       storage: BYO_STORAGE,
       namespace: NS,
@@ -336,7 +332,6 @@ describe("resolveS3Mount", () => {
     expect(lastAssumeRoleInput).not.toHaveProperty("SourceIdentity");
     expect(lastAssumeRoleInput).not.toHaveProperty("Tags");
 
-    // An unattributed mount keeps the plain session name.
     await resolveS3Mount({
       storage: undefined,
       namespace: NS,

@@ -1,18 +1,3 @@
-/**
- * AWS Lambda MicroVM sandbox executor (provider string stays "lambda").
- *
- * A MicroVM is a Firecracker-isolated, snapshot-resumable VM that runs the
- * lambda-sandbox image as a long-lived HTTP server. We `RunMicrovm` to get an
- * `{endpoint, microvmId}`, mint a short-lived auth token, and POST the SAME
- * wire-compatible exec request the image already understands to
- * `https://<endpoint>/exec` with the `X-aws-proxy-auth` / `X-aws-proxy-port`
- * headers. Only the transport changes from the old Invoke path.
- *
- * The workspace S3 mount happens INSIDE the VM (mount-s3 in the image's `/run`
- * hook), fed short-lived, namespace-scoped assume-role creds via `runHookPayload`,
- * so the harness's own broad creds never reach the VM.
- */
-
 import {
   CreateMicrovmAuthTokenCommand,
   CreateMicrovmImageCommand,
@@ -44,7 +29,7 @@ import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { optionalEnv, requireEnv } from "../../shared/env.ts";
 import { isTimeoutError, toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
-import { isPlainObject } from "../../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import { getObservabilityContext } from "../../shared/otel.ts";
 import { stripTrailingSlashes } from "../../shared/paths.ts";
 import {
@@ -114,133 +99,86 @@ import {
   truncateText,
 } from "./utils.ts";
 
-// The image serves the exec API on this port; the proxy maps external 443 -> 8080.
 const MICROVM_PROXY_PORT = 8080;
-// Auth tokens are short-lived (well under the 60-min cap) so a leaked one expires
-// fast, and reused until close to expiry so a warm exec costs no control-plane call.
 const AUTH_TOKEN_TTL_MINUTES = 15;
 const AUTH_TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
-// A freshly run MicroVM restores its snapshot in ~1-10s; the proxy returns 502/503
-// while it warms. Retry the first exec within this budget before giving up, polling
-// fast at first (a resumed VM is usually ready in well under a second) then backing
-// off. A flat delay put its whole value on the floor of every single call.
 const WARMUP_BUDGET_MS = 30_000;
 const WARMUP_RETRY_MIN_DELAY_MS = 150;
 const WARMUP_RETRY_MAX_DELAY_MS = 750;
-// A cached endpoint is a guess, so it gets a short warm-up before the call falls back
-// to the authoritative reservation instead of spending the full budget on a dead VM. A
-// warm VM answers in well under this; anything slower is a restore the authoritative
-// path handles with the full budget, or a VM that is gone.
 const CACHED_WARMUP_BUDGET_MS = 1_200;
-// The control plane's refusals of a RunMicrovm that mean "no room right now".
 const CAPACITY_EXCEPTIONS: ReadonlySet<string> = new Set([
   "InsufficientCapacityException",
   "ServiceQuotaExceededException",
   "ThrottlingException",
   "TooManyRequestsException",
 ]);
-// A reserved VM's endpoint is stable for the life of its microvmId and survives
-// suspend (the proxy auto-resumes on ingress), so the reservation lookup + GetMicrovm
-// pair is pure overhead on a repeat call. The TTL bounds how long a reservation that
-// moved on another pod can go unnoticed here; a stale entry costs one failed POST and
-// CACHED_WARMUP_BUDGET_MS before the authoritative path takes over.
+// An endpoint outlives suspend, so caching it is safe; the TTL caps how long a reservation
+// moved by another pod goes unnoticed here.
 const RESERVED_ENDPOINT_TTL_MS = 3 * 60_000;
 const CACHE_MAX_ENTRIES = 512;
-// MicroVMs live at most 8h; we still bound each instance with a maximumDuration as
-// a backstop (ephemeral VMs are terminated in `finally` long before this).
 const MAX_MICROVM_DURATION_SECONDS = 28_800;
 const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 
 const PROVIDER = "lambda" as const;
-// Hex chars of the log stream name HMAC. Keep in step with the forwarder.
+// Must match apps/lambda/sandbox-log-forwarder.mjs.
 const LOG_STREAM_MAC_LENGTH = 16;
 
-// The sandbox serves these to mountpoint-s3, which re-fetches as its session ages.
-// Sessions last an hour and a persistent VM outlives that, so refresh on this
-// interval, comfortably inside the hour, and cheap (one STS call per VM per cycle).
+// STS sessions last 1h and a reserved VM outlives one, so push fresh mount creds well inside it.
 const MOUNT_CREDENTIAL_REFRESH_MS = 30 * 60_000;
 const MOUNT_CREDENTIALS_PATH = "/workspace/credentials";
 
-// The `/run` hook's own budget in the published image. A mount still missing after
-// this is one the hook has already given up on, not one still being established.
 const MOUNT_ASSERT_BUDGET_MS = 30_000;
 const MOUNT_ASSERT_MIN_DELAY_MS = 250;
 const MOUNT_ASSERT_MAX_DELAY_MS = 2_000;
 
-// When each reservation's mount credentials next need pushing. Module scope for the
-// same reason as the token cache, and capped the same way: a reservation that ends
-// without release() would otherwise leave its entry here for the life of the pod.
+// Module-scope caches, since an executor is built per request; evictToCap bounds each one.
 const mountCredentialRefreshes = new Map<string, { expiresAt: number }>();
-
-// Minted tokens are per-MicroVM and valid for AUTH_TOKEN_TTL_MINUTES, so minting one
-// per exec burns a control-plane round trip on every call. Cached at module scope
-// because an executor is constructed per request, and dropped again on terminate.
 const authTokens = new Map<string, { token: string; expiresAt: number }>();
-
-// Burst totals each MicroVM last reported, so an exec that did not grow them
-// costs no Convex write. Module scope and capped like the token cache.
 const burstReported = new Map<
   string,
   { vcpuSeconds: number; gbSeconds: number; expiresAt: number }
 >();
-// Growth below this is left for a later report; the totals only grow.
 const BURST_REPORT_MIN_GROWTH = 0.01;
 const BURST_REPORT_TTL_MS = 24 * 60 * 60 * 1000;
-// Reserved endpoints, keyed by reservation key. Same module-scope reasoning as the
-// token cache: an executor is constructed per request, so an instance field never hits.
 const reservedEndpoints = new Map<
   string,
   { microvmId: string; endpoint: string; image: string; expiresAt: number }
 >();
 
-// The proxy authenticates shell WebSocket upgrades with this header; the value
-// comes from CreateMicrovmShellAuthToken. 30 minutes bounds a terminal session's
-// credential without cutting normal interactive use short.
-// A snapshot's zips pass through this prefix of the filesystem bucket, and the
-// build reads the result from the artifact bucket's MicroVM image prefix, the
-// only one the platform build role may read.
+// The VM reaches only the filesystem bucket, so zips stage there; the build role may read
+// only the artifact bucket's MicroVM image prefix.
 const SNAPSHOT_STAGING_PREFIX = "sandbox-snapshots/";
 const SNAPSHOT_ARTIFACT_PREFIX = "microvm-images/broods-snapshots/";
 const SNAPSHOT_IMAGE_PREFIX = "broods-snapshot-";
-// The in-VM capture walks the disk, tars the changes and uploads them.
 const SNAPSHOT_CAPTURE_TIMEOUT_SECONDS = 600;
 
 export const MICROVM_SHELL_AUTH_HEADER = "X-aws-proxy-auth";
 const SHELL_TOKEN_TTL_MINUTES = 30;
 
-// /exec retries any fetch error but its own timeout, and the proxy's 502/503: a
-// refused or reset connection is the VM still restoring its snapshot, while a
-// timeout means the command ran past its budget and a retry would run it twice.
+// A refused or reset connection is a VM still restoring, but a timeout means the command ran
+// past its budget, and retrying would run it twice.
 const EXEC_RETRY: GuestRetry = {
   fetchError: (err: unknown): boolean => !isTimeoutError(err),
   warmingStatus: true,
 };
-// A guest route, probed ready first, retries only a connection that never
-// opened: a reset, drop or 502/503 can land after the guest took the request,
-// and an MCP tool must not run twice.
+// Only a connection that never opened: a reset or 502/503 can follow a call the guest ran.
 const GUEST_ROUTE_RETRY: GuestRetry = {
   fetchError: (err: unknown): boolean =>
     err instanceof Error && "code" in err && err.code === "ConnectionRefused",
   warmingStatus: false,
 };
 
-// The most one guest answer may hold: room for an MCP result carrying images up
-// to MAX_IMAGE_BYTES as base64, far past any /exec output limit.
 const GUEST_RESPONSE_MAX_BYTES = 16 * 1024 * 1024;
 
-// The VM's burst totals, as the image reports them on guest routes.
 const burstTotals = z.object({
   vcpu_seconds: z.number(),
   gb_seconds: z.number(),
 });
 
-// One POST to the guest: retry while the VM warms, or its answer.
 type Warming<T> =
   | { retry: true; status: number | string }
   | { retry: false; response: T };
 
-// When a guest POST is sent again: on which fetch errors, and whether the
-// proxy's 502/503 count as the VM still warming.
 interface GuestRetry {
   fetchError: (err: unknown) => boolean;
   warmingStatus: boolean;
@@ -249,19 +187,13 @@ interface GuestRetry {
 export interface MicrovmHarnessReservation {
   readonly microvmId: string;
   readonly endpoint: string;
-  // True only when this call created the VM, so the caller owns its teardown.
   readonly isFirstCreate: boolean;
 }
 
-// A reservation whose VM cannot be reconnected because it reached a terminal state
-// or booted another image. GetMicrovm still answers for a TERMINATED VM, so this is
-// the only signal that separates "recreate it" from a transient control-plane
-// failure. A SandboxGoneError, so a resumed Harness session starts a fresh one.
+// The VM is terminal or runs another image: recreate it rather than retry.
 class MicrovmGoneError extends SandboxGoneError {}
 
-// The proxy never accepted the request inside the warm-up budget, so the exec
-// definitely did not run. That is the only failure safe to retry against another VM.
-// Any error raised after a 2xx may have already run the caller's code once.
+// The proxy never took the request, so it never ran: the one failure safe to retry elsewhere.
 class MicrovmNotReadyError extends Error {}
 
 export class MicrovmSandboxExecutor implements SandboxExecutor {
@@ -276,8 +208,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     this.#client = client;
   }
 
-  // A `shared` machine is kept when its first setup fails: another conversation
-  // may already hold it, and the unset onCreate marker makes the next acquire retry.
+  // A shared VM survives a failed setup: another conversation may already hold it.
   async acquireHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
@@ -343,8 +274,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
-    // Refresh the dashboard mirror so a resumed turn's trace/task lands on the
-    // row; recoverable on the next call, so it never holds up the session.
     void queueMirrorWrite(reservation.microvmId, () =>
       upsertSandboxInstance(
         this.#config.controlPlane,
@@ -360,8 +289,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return reservation;
   }
 
-  // Harness state lives under `~/.ai-sdk-harness`, so every command gets the
-  // reservation's HOME, the same one its lifecycle hooks run in.
+  // Harness state lives under `~/.ai-sdk-harness`, so every command gets the reservation's HOME.
   async runHarnessCommand(request: {
     microvmId: string;
     endpoint: string;
@@ -383,8 +311,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       },
     });
     request.abortSignal?.throwIfAborted();
-    // Cut output ends in the server's truncation marker, which harness callers
-    // would parse or decode as data.
+    // Cut output ends in the server's truncation marker, which callers would read as data.
     if (response.truncated === true) {
       throw new Error("MicroVM harness command output passed the exec cap");
     }
@@ -403,20 +330,12 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return this.#authToken(microvmId, port);
   }
 
-  // One JSON POST to a route the sandbox image serves beside /exec, for the MCP
-  // relay's /mcp. Like run(), it tries this pod's cached endpoint first, and
-  // otherwise reaches the VM the way bash does on the same target: the workspace
-  // mount and the lifecycle in bash's directory. As for bash, a failed lifecycle
-  // keeps the shared VM and a failed mount on the create that made it releases it.
   async postReserved(request: SandboxReservedPost): Promise<unknown> {
     if (!this.#persistent(request)) {
       throw new Error(
         "a guest route needs a persistent lambda (MicroVM) sandbox reservation",
       );
     }
-    // Readiness is probed apart from the call: once the VM answers, the call is
-    // sent once, since a 502/503 then may be a lost answer to a call that ran.
-    // The image reports the VM's burst totals in a header on guest routes.
     const post = async (
       target: { microvmId: string; endpoint: string },
       budgetMs: number,
@@ -426,7 +345,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         this.#ready(target, readyBy, request.abortSignal),
       );
 
-      // The send shares the probe's budget: what the probe left, at least one try.
       return this.#whileWarming(
         target.microvmId,
         Math.max(0, readyBy - Date.now()),
@@ -451,14 +369,12 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     };
     const cached = this.#cachedTarget(request);
     if (cached) {
-      // MCP-only use keeps the workspace mount's credentials fresh, like bash.
       await this.#refreshMountCredentials(
         reach,
         cached.microvmId,
         cached.endpoint,
       );
       try {
-        // The lifecycle's onResume runs for a cached MCP call as for cached bash.
         await this.#runLifecycle(
           cached.microvmId,
           cached.endpoint,
@@ -485,10 +401,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const startedAt = Date.now();
     const persistent = this.#persistent(request);
     const payload = this.#execPayload(request);
-    // A reserved VM already reached this pod is exec'd straight through its cached
-    // endpoint, skipping both the reservation lookup and GetMicrovm. Only `run` takes
-    // that shortcut. It is the hot path, and the one with a fallback when the guess
-    // turns out to be dead. Ephemeral runs never cache: they have no reservation.
     const cached = persistent ? this.#cachedTarget(request) : null;
     if (cached) {
       await this.#refreshMountCredentials(
@@ -531,10 +443,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         startedAt,
       );
     } finally {
-      // The result is already in hand, so teardown must not be on the caller's clock.
-      // The row, which bills the VM, goes only once the VM is gone; a failed
-      // terminate keeps billing it until the stale-row sweep. The removal is queued
-      // after the upsert and burst writes, so a slow upsert cannot recreate it.
+      // Off the caller's clock. The billing row goes only once the VM is gone, queued after
+      // the upsert and burst writes so a slow upsert cannot recreate it.
       if (!persistent) {
         waitUntil(
           this.#terminate(microvmId).then(
@@ -548,10 +458,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  // Detached background work survives the harness request because a persistent
-  // MicroVM is not terminated after the call. The job is launched as a setsid
-  // session that POSTs its result to the completion callback when it exits; it is
-  // snapshotted/restored with the VM across suspend/resume (same boot id).
   async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
     const key = this.#requirePersistent(request);
     const acquired = await this.#acquire(request);
@@ -615,8 +521,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async stopJob(request: SandboxJobRequest): Promise<SandboxJobStatus> {
     const { microvmId, endpoint, jobsDir } = await this.#jobContext(request);
     await this.#shell(microvmId, endpoint, stopScript(jobsDir, request.jobId));
-    // Report the real terminal state: a job that had already finished keeps its
-    // own exit code instead of being recorded as killed.
     const result = await this.#shell(
       microvmId,
       endpoint,
@@ -642,10 +546,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       );
   }
 
-  // Capture the reserved VM as a new MicroVM image. AWS cannot snapshot a running
-  // VM, so the VM tars what changed since it started onto the zip of the image it
-  // booted from, and AWS builds that with the source image's own settings. The
-  // build takes minutes, so the result is "building" until snapshotStatus says not.
   async snapshot(
     request: SandboxReservationRef,
   ): Promise<SandboxSnapshotResult> {
@@ -670,8 +570,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (!artifact) {
       throw new Error(`MicroVM image ${vm.imageArn} has no S3 code artifact`);
     }
-    // The VM reaches the filesystem bucket under every network mode, but not the
-    // artifact bucket, so the zips pass through a staging prefix there.
     const staging = requireEnv("FILESYSTEM_BUCKET_NAME");
     const snapshotId = randomUUID().replaceAll("-", "").slice(0, 20);
     const stagedSource = `${SNAPSHOT_STAGING_PREFIX}${snapshotId}/source.zip`;
@@ -728,7 +626,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         }),
       )
       .catch(async (error: unknown): Promise<never> => {
-        // No image will read the artifact, so it goes with the failed build.
         await deleteS3Object(artifact.bucket, artifactKey).catch(() => {});
         throw error;
       });
@@ -743,8 +640,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     };
   }
 
-  // A snapshot image's build: active once AWS has a version that can run, failed
-  // when the build failed with none.
   async snapshotStatus(
     externalImageId: string,
   ): Promise<SandboxSnapshotBuildState> {
@@ -791,8 +686,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     reservedEndpoints.delete(key);
     mountCredentialRefreshes.delete(key);
     if (!microvmId) return;
-    // Like the other providers, a VM that may still be running keeps its row, so
-    // a later release can find and retry it.
     if (!(await this.#terminate(microvmId))) {
       throw new Error(`failed to terminate MicroVM ${microvmId}`);
     }
@@ -804,12 +697,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     ).catch(() => {});
   }
 
-  // Image and version are platform choices: tenants cannot build MicroVM images,
-  // so a `snapshot` pin may only name another image in the same AWS account and
-  // region as the runtime default, and MICROVM_IMAGE_VERSION only versions that
-  // default. Anything else would boot a foreign image under the platform role.
-  // An `image` variant is the default's sibling `<name>-<variant>`, which the
-  // sandbox image workflow publishes next to it.
+  // A pin must stay in the default image's account and region: anything else would boot a
+  // foreign image under the platform role, and tenants cannot build MicroVM images.
   #image(): { imageIdentifier: string; imageVersion?: string } {
     const fallback = optionalEnv("MICROVM_IMAGE_IDENTIFIER");
     const pinned = configString(this.#config.snapshot);
@@ -848,7 +737,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     };
   }
 
-  // The image name this sandbox boots, compared against a cached or reserved VM's.
   #imageName(): string {
     return microvmImageName(this.#image().imageIdentifier);
   }
@@ -914,8 +802,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return key;
   }
 
-  // Job markers live beside the workspace mount (not under the S3 mount) so the tiny
-  // files stay on the VM's native disk and ride suspend/resume with the same VM.
   #jobsDir(key: string): string {
     return `${this.#workspaceRoot()}/.fp-jobs/${key}`;
   }
@@ -926,7 +812,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const key = sandboxReservationKey(request);
     const cached = key ? reservedEndpoints.get(key) : undefined;
     if (!cached || cached.expiresAt <= Date.now()) return null;
-    // A changed image goes through #acquire, whose reconnect replaces the VM.
     if (cached.image !== this.#imageName()) {
       return null;
     }
@@ -939,9 +824,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   ): Promise<MicrovmHarnessReservation> {
     if (!this.#persistent(request)) {
       const created = await this.#runMicrovm(request);
-      // An ephemeral VM is still real, chargeable compute for the length of the call,
-      // so it shows in the dashboard too, keyed by microvmId (it has no reservation)
-      // and dropped again by run()'s teardown.
       void queueMirrorWrite(created.microvmId, () =>
         upsertSandboxInstance(
           this.#config.controlPlane,
@@ -968,8 +850,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (existing) {
       try {
         const reconnected = await this.#reconnect(existing);
-        // Reservation refresh and dashboard mirror are both recoverable on the next
-        // call, so they never hold up an exec that already has its endpoint.
         void saveSandboxInstance(
           PROVIDER,
           key,
@@ -993,10 +873,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           isFirstCreate: false,
         };
       } catch (error) {
-        // Recreate only when the VM is unusable for good, meaning unknown to the
-        // provider or terminal. A slow resume or transient control-plane error must propagate
-        // instead: replacing a still-allocated (e.g. suspended) VM leaks it and burns
-        // the account's MicroVM memory quota until nothing can launch.
+        // Recreate only a VM gone for good. Replacing a still-allocated (e.g. suspended) one
+        // leaks it and burns the MicroVM memory quota until nothing can launch.
         if (!isMicrovmGone(error)) throw error;
         await deleteSandboxInstance(
           PROVIDER,
@@ -1034,9 +912,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         return { ...this.#cacheTarget(key, created), isFirstCreate: true };
       }
     } catch (error) {
-      // The claim may already have committed even when its caller rejects. Tear down
-      // both sides conditionally so a failed acquisition cannot leak the new VM or
-      // erase a concurrent winner's reservation.
+      // The claim may have committed despite the rejection, so undo both sides conditionally.
       await Promise.allSettled([
         this.#terminate(created.microvmId),
         deleteSandboxInstance(
@@ -1048,7 +924,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       ]);
       throw error;
     }
-    // Lost a concurrent create race: discard our duplicate and reconnect to the winner.
     const winner = await getSandboxExternalId(PROVIDER, key);
     await this.#terminate(created.microvmId);
     const reconnected = winner
@@ -1066,8 +941,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   ): { microvmId: string; endpoint: string } {
     const now = Date.now();
     evictToCap(reservedEndpoints, now);
-    // Only the exec target is cached and returned; a fresh launch also carries its
-    // log stream, which the mirror row keeps and the reservation must not.
     const entry = { microvmId: target.microvmId, endpoint: target.endpoint };
     reservedEndpoints.set(key, {
       ...entry,
@@ -1078,21 +951,14 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return entry;
   }
 
-  // Fetch a reserved VM's endpoint, resuming it first if it idled into SUSPENDED.
-  // The resume is deliberately not polled to RUNNING: the endpoint survives suspend
-  // and #exec already retries the proxy's 502/503 while the snapshot restores, so
-  // waiting here only added a fixed delay to every warm call. A record with no
-  // endpoint is the one case with nothing to POST to, so that alone still waits.
+  // A resumed VM is not polled to RUNNING: its endpoint outlives suspend and #exec retries the
+  // proxy's 502/503 while it restores. Only a record with no endpoint waits.
   async #reconnect(
     microvmId: string,
   ): Promise<{ microvmId: string; endpoint: string }> {
     let info = await this.#client.send(
       new GetMicrovmCommand({ microvmIdentifier: microvmId }),
     );
-    // A sandbox whose image changed must not keep reaching the VM the old image
-    // booted: stop it, before any resume, and the caller creates one from the new
-    // image. A VM that reports no image is left alone, since stopping a healthy
-    // VM on a partial answer costs more than one call on the old image.
     if (
       !isTerminalMicrovmState(info.state) &&
       info.imageArn &&
@@ -1121,9 +987,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         );
       }
     }
-    // A terminal VM is not coming back, and GetMicrovm still answers for one, so the
-    // caller has to be told to recreate rather than retry this id forever. Checked
-    // after the resume too: a VM can reach a terminal state while we wait on it.
+    // GetMicrovm still answers for a terminal VM; re-checked as one can end while we wait.
     if (isTerminalMicrovmState(info.state)) {
       throw new MicrovmGoneError(`MicroVM ${microvmId} is ${info.state}`);
     }
@@ -1132,16 +996,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return { microvmId: microvmId, endpoint: info.endpoint };
   }
 
-  // Exec against a cached reservation endpoint. Returns null when that VM never
-  // accepted the request, because it was terminated or the reservation moved to
-  // another VM, so the caller re-acquires from the authoritative record. Any other failure
-  // propagates: past the proxy, the caller's code may already have run.
   async #execReserved(
     target: { microvmId: string; endpoint: string },
     request: SandboxRunRequest,
     payload: SandboxExecRequest,
   ): Promise<SandboxExecResponse | null> {
-    // Mirrors every call, queued per VM so an ephemeral VM's removal lands after it.
     void queueMirrorWrite(target.microvmId, () =>
       upsertSandboxInstance(
         this.#config.controlPlane,
@@ -1204,9 +1063,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     logStream: string,
   ): Promise<RunMicrovmRequest> {
     const image = this.#image();
-    // Every account's snapshot images live in the platform account, so one boots
-    // only in the account and stage that built it, and a snapshot image no
-    // account registered boots nowhere.
+    // All snapshot images sit in the platform account, so boot one only for its own account.
     const imageName = image.imageIdentifier.split(":")[6] ?? "";
     if (imageName.startsWith(SNAPSHOT_IMAGE_PREFIX)) {
       const registered = await assertSnapshotBootable(
@@ -1217,8 +1074,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         throw new Error("config.snapshot names a snapshot of another account");
       }
     }
-    // Role and log group are platform resources, so they come from the runtime
-    // env only. An account naming the build role would get its IMDS credentials.
+    // From the runtime env only: an account naming the build role would get its IMDS creds.
     const executionRoleArn = optionalEnv("MICROVM_EXECUTION_ROLE_ARN");
     const logGroup = optionalEnv("MICROVM_LOG_GROUP_NAME");
     const persistent = this.#persistent(request);
@@ -1256,15 +1112,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     };
   }
 
-  // CloudWatch stream name for this VM's guest output. The sandbox log forwarder
-  // splits it on "/" to label the tenant, so nothing between CloudWatch and Loki
-  // ever has to look a microvmId up. "-" marks a run with no deployment scope
-  // (channel, cron): those lines still reach Loki for operators and stay out of
-  // the dashboard, exactly like core's own NATS sink skips them. One fresh id per
-  // launch, since the microvmId does not exist until RunMicrovm returns. The
-  // last segment signs the rest with the OTLP client secret the forwarder also
-  // holds: a guest can reach the VM role and create any stream in the group, so
-  // the forwarder labels only what core signed. Unsigned names ship unlabeled.
+  // `<account>/<project>/<stage>/<uuid>[/<mac>]`, parsed by the log forwarder to label the tenant.
+  // A guest can create any stream in the group, so the forwarder labels only names core signed.
   #logStream(): string {
     const scope = getObservabilityContext();
     const name = [
@@ -1283,9 +1132,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return `${name}/${mac}`;
   }
 
-  // Per-VM init delivered to the image's /run hook. Carries the workspace mount
-  // (namespace + scoped, short-lived assume-role creds) so the VM mounts S3 itself.
-  // Absent for stateless (no-workspace) runs.
+  // The VM mounts S3 itself on these scoped creds, so core's own creds never reach it.
   async #runHookPayload(
     request: SandboxRunRequest,
   ): Promise<string | undefined> {
@@ -1323,22 +1170,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     };
   }
 
-  // Map the account network mode onto egress connectors. allow-all uses the default
-  // INTERNET_EGRESS (no connector). restricted/deny-all need a VPC egress connector
-  // (provisioned in SST, ARN passed via env); without one we fail closed instead of
-  // silently launching with the MicroVM service's default internet egress.
-  // A persistent (reserved) VM also attaches the AWS-managed SHELL_INGRESS
-  // connector so the dashboard terminal can mint shell auth tokens later.
-  // Connectors are fixed at RunMicrovm and cannot be added to a live VM.
+  // Fail closed without the egress connector: the service default is open internet. Connectors
+  // are fixed at RunMicrovm, so a reserved VM takes SHELL_INGRESS up front for the terminal.
   #networkConnectors(
     persistent: boolean,
   ): Pick<
     RunMicrovmRequest,
     "egressNetworkConnectors" | "ingressNetworkConnectors"
   > {
-    // ALL_INGRESS cannot be combined with other ingress connectors (AWS rejects
-    // it); HTTP_INGRESS + SHELL_INGRESS restore the default HTTP path and add
-    // the shell endpoint.
+    // AWS rejects ALL_INGRESS beside other connectors; HTTP_INGRESS restores the default path.
     const ingress = persistent
       ? {
           ingressNetworkConnectors: [
@@ -1355,7 +1195,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         `MicroVM sandbox cannot enforce ${network.mode} egress without MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`,
       );
     }
-    // The connector's security group is fixed at deploy time; config validation refuses this first.
     if (
       (network.allowDomains?.length ?? 0) > 0 ||
       (network.allowCidrs?.length ?? 0) > 0
@@ -1369,8 +1208,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   }
 
   #execPayload(request: SandboxRunRequest): SandboxExecRequest {
-    // A persistent run with no workspace has no namespace to keep `~` in, so it
-    // gets the same HOME as its hooks and jobs.
     const home =
       this.#persistent(request) && !request.namespace
         ? this.#workDir(this.#workspaceKey(request))
@@ -1422,8 +1259,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return response;
   }
 
-  // Repeat `post` while the VM is still warming (the proxy's 502/503, or a
-  // refused connection while the snapshot restores), up to `budgetMs`.
   async #whileWarming<T>(
     microvmId: string,
     budgetMs: number,
@@ -1444,10 +1279,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  // Forward the guest's burst totals in the background once they grow past the
-  // last billed report. Convex bills only growth, so a repeat is harmless, and a
-  // report is cached only once it billed a row, so a failed write or one that
-  // beat the row is sent again on the next exec. Lower totals are a fresh VM.
+  // Convex bills only growth, so a resend is harmless; totals below the last mean a fresh VM.
   #reportBurst(microvmId: string, burst: SandboxExecResponse["burst"]): void {
     const accountId = this.#config.controlPlane?.accountId;
     if (!burst || !accountId) return;
@@ -1481,10 +1313,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     );
   }
 
-  // One JSON POST to a guest route through the VM proxy, parsed by `parse`.
-  // `retry` says which fetch errors, and whether the proxy's 502/503, mean the
-  // guest cannot have taken the request. A 504 means the proxy gave up on a
-  // guest that may be running it, so it is fatal like any other non-2xx.
+  // A 504 is fatal: the proxy gave up on a guest that may still be running the call.
   async #post<T>(
     target: { microvmId: string; endpoint: string },
     request: SandboxGuestPost,
@@ -1531,9 +1360,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return { retry: false, response: parse(text, res.headers) };
   }
 
-  // One GET of the guest's /healthz, given up at `readyBy`. Any answer but 2xx,
-  // or a failed fetch that is not the caller's abort, means the VM is not
-  // serving yet. It runs nothing.
   async #ready(
     target: { microvmId: string; endpoint: string },
     readyBy: number,
@@ -1576,8 +1402,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (!Number.isInteger(port) || port < 1 || port > 65_535) {
       throw new Error(`MicroVM auth token port is invalid: ${port}`);
     }
-    // Cached per (VM, port): a token is scoped to the ports it was minted for, so the
-    // bridge port must never be handed the proxy port's token.
+    // Keyed per port: a token is scoped to the ports it was minted for.
     const cacheKey = `${microvmId}:${port}`;
     const now = Date.now();
     const cached = authTokens.get(cacheKey);
@@ -1604,10 +1429,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return token;
   }
 
-  // Control/lifecycle bash for onCreate/onResume hooks and background-job marker
-  // scripts. No workspace cwd, since those scripts use absolute paths. With no
-  // namespace the guest points HOME and TMPDIR at a dir it deletes on return, so
-  // `home` (the workspace) keeps what a hook installs or a job runs under `~`.
   async #shell(
     microvmId: string,
     endpoint: string,
@@ -1642,15 +1463,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     };
   }
 
-  // Refuse to hand back a workspace VM whose S3 mount never came up. The `/run` hook
-  // establishes it, but a hook failure leaves the mount point as a plain directory on
-  // the VM's own disk. Writes look fine and are lost when the VM goes. Only on the
-  // create that runs the hook, so the warm path never pays for it.
-  //
-  // The VM answers /exec as soon as it boots, which is before `/run` has finished
-  // mounting, so a single immediate check reports every healthy workspace as broken.
-  // Poll instead, up to the hook's own timeout. Past that the hook itself has given
-  // up and the mount is never coming.
+  // A failed `/run` hook leaves a plain local dir whose writes die with the VM. /exec answers
+  // before the hook finishes mounting, so poll up to the image's own hook budget.
   async #assertWorkspaceMounted(
     microvmId: string,
     endpoint: string,
@@ -1681,10 +1495,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (key) markMountCredentialsFresh(key);
   }
 
-  // Everything a persistent workspace VM owes the caller before any work lands on
-  // it: a mount proven live on the create that established it, and fresh scoped
-  // credentials on every later acquire. Both entry points go through here, since a
-  // background job on a degraded mount writes to local disk just as silently.
   async #prepareWorkspaceMount(
     request: SandboxRunRequest,
     acquired: { microvmId: string; endpoint: string; isFirstCreate: boolean },
@@ -1699,8 +1509,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
       return;
     }
-    // The `/run` payload just delivered fresh credentials, so the endpoint is
-    // already stocked. Start the refresh clock instead of pushing again.
     this.#markMountCredentialsFresh(request);
     try {
       await this.#assertWorkspaceMounted(
@@ -1709,19 +1517,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         workDir,
       );
     } catch (error) {
-      // The VM is already claimed and cached by now, and the assertion only runs on
-      // a create, so leaving it reserved would hand every later call a VM writing
-      // to local disk, exactly the failure this check exists to catch. Drop the
-      // reservation so the next call builds a fresh one.
+      // Release it, or every later call reuses a VM writing to local disk.
       await this.release(request).catch(() => {});
       throw error;
     }
   }
 
-  // Keep the sandbox's credential endpoint stocked so its mount survives past the
-  // one-hour STS session the `/run` payload was minted with. Best-effort: a failed
-  // push is retried on the next call, well inside the session's remaining life, and
-  // must never fail the exec the caller is actually waiting on.
+  // Best effort: a failed push is retried next call and must never fail the caller's exec.
   async #refreshMountCredentials(
     request: SandboxRunRequest,
     microvmId: string,
@@ -1736,8 +1538,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       const mount = await resolveS3Mount(
         this.#s3Context(request.namespace, request),
       );
-      // No credentials means no mount role, so there is nothing to rotate. Start
-      // the clock anyway instead of re-resolving the mount on every single exec.
       if (!mount.credentials) {
         markMountCredentialsFresh(key);
 
@@ -1756,8 +1556,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           body: JSON.stringify(mount.credentials),
         },
       );
-      // A 404 is an older image with no credential endpoint: it mounted with static
-      // keys and there is nothing to refresh, so stop asking on every call.
+      // A 404 is an older image with no credential endpoint: nothing to refresh.
       if (res.ok || res.status === 404) {
         markMountCredentialsFresh(key);
       }
@@ -1812,9 +1611,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     };
   }
 
-  /** Terminates the VM; resolves whether it is gone, never rejects. */
   async #terminate(microvmId: string): Promise<boolean> {
-    // Tokens are cached per (VM, port), so drop every port's entry for this VM.
     for (const key of authTokens.keys()) {
       if (key.startsWith(`${microvmId}:`)) authTokens.delete(key);
     }
@@ -1827,19 +1624,12 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       );
   }
 
-  // Drop an ephemeral VM's dashboard row; its reservation key is the microvmId.
   async #unmirror(microvmId: string): Promise<void> {
     const accountId = this.#config.controlPlane?.accountId;
     if (accountId) await removeSandboxInstance(accountId, microvmId);
   }
 }
 
-/**
- * Mints the live-shell WebSocket target for a reserved MicroVM: the VM endpoint
- * plus a short-lived shell auth token. account-manage seals both into a terminal
- * ticket; the gateway dials the URL with the token in X-aws-proxy-auth. Fails for
- * VMs launched without the SHELL_INGRESS connector (reservations that predate it).
- */
 export async function microvmShellConnection(
   microvmId: string,
   client = new LambdaMicrovms({ region: process.env.AWS_REGION }),
@@ -1866,8 +1656,6 @@ export async function microvmShellConnection(
   };
 }
 
-// A guest's answer as text, refused once it passes GUEST_RESPONSE_MAX_BYTES so
-// a runaway answer never sits whole in core's memory.
 async function boundedText(res: Response, path: string): Promise<string> {
   const tooLarge = (): Error =>
     new Error(
@@ -1899,9 +1687,6 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// A run that dies before its teardown leaks one entry per VM, so drop the expired ones
-// whenever a cache reaches its cap, and the oldest entry too when they were all still
-// live, since the cap has to hold either way.
 function evictToCap<T extends { expiresAt: number }>(
   cache: Map<string, T>,
   now: number,
@@ -1938,8 +1723,6 @@ function isTerminalMicrovmState(state: MicrovmState | undefined): boolean {
   return state === "TERMINATED" || state === "TERMINATING";
 }
 
-// AWS-managed ingress connectors live under a service-owned ARN namespace,
-// parameterized only by region and name (HTTP_INGRESS / SHELL_INGRESS / NO_INGRESS).
 function managedIngressConnectorArn(name: string): string {
   const region = optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION");
   if (!region) throw new Error("MicroVM ingress connectors require AWS_REGION");
@@ -1973,14 +1756,10 @@ function markMountCredentialsFresh(key: string): void {
   });
 }
 
-// In-VM mount directory: one workspace per VM, so the base segment is enough.
-// An image ARN without any version qualifier, so two versions compare equal.
 function microvmImageName(arn: string): string {
   return arn.split(":").slice(0, 7).join(":");
 }
 
-// `arn:aws:lambda:<region>:<account>:microvm-image`, or undefined for anything
-// that is not a MicroVM image ARN.
 function microvmImageScope(arn: string): string | undefined {
   const parts = arn.split(":");
   if (parts[0] !== "arn" || parts[2] !== "lambda") return undefined;
@@ -1989,8 +1768,6 @@ function microvmImageScope(arn: string): string | undefined {
   return parts.slice(0, 6).join(":");
 }
 
-// `arn:aws:lambda:<region>:<account>:microvm-image:<name>[:...]` → the same ARN
-// for `<name>-<variant>`, dropping any version qualifier of the default.
 function microvmImageVariant(arn: string, variant: string): string | undefined {
   const scope = microvmImageScope(arn);
   const name = arn.split(":")[6];
@@ -1999,8 +1776,6 @@ function microvmImageVariant(arn: string, variant: string): string | undefined {
   return `${scope}:${name}-${variant}`;
 }
 
-// The burst totals a guest route sends in its `x-sandbox-burst` header. A
-// missing or malformed header bills nothing rather than failing the call.
 function burstHeader(headers: Headers): SandboxExecResponse["burst"] {
   const header = headers.get("x-sandbox-burst");
   if (!header) return undefined;
@@ -2013,7 +1788,6 @@ function burstHeader(headers: Headers): SandboxExecResponse["burst"] {
   }
 }
 
-// The bucket and key of an `s3://bucket/key` code artifact URI.
 function s3Location(
   uri: string | undefined,
 ): { bucket: string; key: string } | undefined {

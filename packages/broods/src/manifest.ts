@@ -1,7 +1,3 @@
-/**
- * Compiles `broods/` TypeScript resources into the SaaS CLI manifest.
- */
-
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -60,7 +56,6 @@ import {
   type WorkspaceResource,
 } from "./resources.ts";
 
-/** Reach every room the app can see, instead of only the declared channels. */
 const CHANNEL_REACH_WILDCARD = "*";
 const ENV_PLACEHOLDER_GLOBAL_PATTERN = new RegExp(
   ACCOUNT_ENV_PLACEHOLDER_PATTERN.source,
@@ -100,7 +95,6 @@ type ExportedValue = {
   value: unknown;
 };
 
-// The auth half of an MCP server config, copied under each agent entry.
 type McpAuth = {
   headers?: Record<string, unknown>;
   oauth?: Record<string, unknown>;
@@ -112,8 +106,6 @@ type ExportedResource = {
   resource: AnyResource;
 };
 
-// Stands in for the SDK inside a hosted MCP handler's bundle: the resource
-// helpers only shape config at author time, so returning the input is enough.
 const SDK_STUB_SOURCE = `const passthrough = (input) => input;
 export const defineAgent = passthrough;
 export const defineBroods = passthrough;
@@ -156,10 +148,7 @@ export const env = (name) => ({ __beeblastEnv: true, name });
 export default {};
 `;
 
-// Server bounds: 1 MB for isolate-run hooks, 50 MB for hosted MCP bundles
-// (#190); past the inline threshold a bundle travels through an upload URL
-// instead of the manifest body (sync.ts). The MCP values mirror
-// packages/convex/model/mcp.ts (the published CLI cannot import the backend).
+// MCP limits copy packages/convex/model/mcp.ts, which is not a leaf module the CLI can import.
 // Change both or the CLI accepts what the config plane rejects.
 const MAX_BUNDLE_FILE_BYTES = 10_000_000;
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
@@ -261,26 +250,18 @@ export async function compileProject(
 }
 
 /**
- * Collects the distinct account/environment variable names referenced via
- * `env("NAME")` (the `{ __beeblastEnv }` marker) across every resource config in a
- * compiled manifest, plus the `${NAME}` refs in MCP headers (a server's and an
- * agent's own), sorted.
- * `dev` uses this to auto-sync exactly those vars from the local environment
- * to the cloud, never unrelated `.env.local` keys.
+ * The env vars `dev` syncs: `env("NAME")` anywhere, `${NAME}` only where the sync resolves it
+ * (workspace configs, agent mcp entries, MCP server headers). Never unrelated `.env` keys.
  */
 export function collectEnvRefNames(manifest: CliManifest): string[] {
   const names = new Set<string>();
 
   for (const resource of manifest.resources) {
-    // A workspace's R2 keys may be `${NAME}` refs, which its rules refuse
-    // anywhere else in it.
     collectEnvRefNamesFromValue(
       resource.config,
       names,
       resource.kind === "workspace",
     );
-    // `${NAME}` refs count where the sync resolves them: agent mcp entries,
-    // which carry each server's headers and oauth, and the server's own headers.
     const config = resource.config as { headers?: unknown; mcp?: unknown };
     if (resource.kind === "agent")
       collectEnvRefNamesFromValue(config.mcp, names, true);
@@ -374,24 +355,11 @@ async function loadExports(files: string[]): Promise<ExportedValue[]> {
   return values;
 }
 
-/** Guards against stacking one loader hook per `compileProject` call. */
 let typeScriptLoaderRegistered = false;
 
-/**
- * Teaches Node how to `import()` the project's `.ts` resource files.
- *
- * Node erases type syntax and nothing else, so an `enum`, a decorator or a
- * parameter property in `broods/` throws there while loading fine under Bun.
- * Handing the source to esbuild, already a dependency for bundling custom
- * tools, makes both runtimes compile the same file, which is what lets
- * `broods` run on plain `node`. A load hook keeps each module's own URL, so a
- * resource that reads a file relative to `import.meta.url` still resolves
- * against its source directory. The resolve hook gives a relative import node
- * cannot find the `.ts` file Bun would: `./prompts` or `./auth.config` with
- * `.ts` or `/index.ts` added, and `./prompts.js` as `./prompts.ts`.
- * No-op under Bun, which loads TypeScript natively and ships no
- * `registerHooks`.
- */
+// Node only strips types, so an enum or decorator in broods/ would throw where Bun loads it;
+// esbuild compiles it as Bun would. A load hook keeps each module URL for `import.meta.url`.
+// Bun has no `registerHooks`.
 function registerTypeScriptLoader(): void {
   if (typeScriptLoaderRegistered) return;
   typeScriptLoaderRegistered = true;
@@ -410,14 +378,14 @@ function registerTypeScriptLoader(): void {
           try {
             return nextResolve(candidate, context);
           } catch {
-            // Try the next candidate; the original error reports the miss.
+            // The original error reports the miss.
           }
         }
         throw error;
       }
     },
     load: (url, context, nextLoad): module.LoadFnOutput => {
-      // `loadExports` appends a cache-busting query the file system cannot see.
+      // Drop the cache-busting query `loadExports` adds.
       const [href] = url.split("?");
       if (
         href === undefined ||
@@ -468,11 +436,7 @@ async function findConfig(
   };
 }
 
-/**
- * Top-level agent config keys the code-first input accepts. Mirrors
- * `AgentDefinitionConfig` in resources.ts; keep both in sync when core gains a
- * new agent field.
- */
+// Keep in sync with `AgentDefinitionConfig` in resources.ts.
 const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "agent",
   "harness",
@@ -495,7 +459,6 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "allowRunOverrides",
 ]);
 
-/** Common typos mapped to the key the author almost certainly meant. */
 const AGENT_KEY_SUGGESTIONS: Record<string, string> = {
   workspace: "workspaces",
   skill: "skills",
@@ -510,21 +473,12 @@ const AGENT_KEY_SUGGESTIONS: Record<string, string> = {
   system: "agent",
 };
 
-/**
- * Rejects unknown top-level keys on a resource config so a typo such as
- * `workspace:` (instead of `workspaces:`) fails loudly at compile time, the way
- * a Convex validator rejects unknown fields, instead of the sync pipeline
- * dropping it without a word. Runs during `dev`/`deploy`, so it shows up in the
- * watch loop even though the CLI transpiles resource files without typechecking
- * them.
- * @throws when an agent config carries a key outside the known set
- */
+// Resource files load without a typecheck and sync drops unknown keys, so a typo throws here.
 function assertKnownConfigKeys(resource: AnyResource): void {
   if (resource.kind !== "agent") return;
   const config = resource.config as Record<string, unknown>;
   for (const key of Object.keys(config)) {
     if (KNOWN_AGENT_CONFIG_KEYS.has(key)) continue;
-    // A removed key gets its migration, not the generic allowed-keys list.
     if (key === "sandbox") {
       throw new Error(
         `Agent "${resource.name}" config.sandbox was removed; use sandboxes, the first is the default`,
@@ -540,11 +494,6 @@ function assertKnownConfigKeys(resource: AnyResource): void {
   }
 }
 
-/**
- * Runtime validation for code-first workspace storage. TypeScript catches this
- * when callers typecheck, but `broods dev/deploy` must also fail before
- * upload because the CLI imports resource modules without typechecking them.
- */
 function assertSupportedWorkspaceStorage(resource: AnyResource): void {
   if (resource.kind !== "workspace") return;
   const config = resource.config as unknown as Record<string, unknown>;
@@ -640,8 +589,6 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
           .map((entry) => resolveLocalWorkspace(entry, workspaceResources))
           .filter((entry): entry is WorkspaceResource => Boolean(entry))
       : [];
-    // Only the per-conversation split needs a channel partition; "agent" splits
-    // on its own.
     const partitionedWorkspaces = attachedWorkspaces.filter(
       (workspace) => workspace.config.partitioned === "conversation",
     );
@@ -692,15 +639,12 @@ function assertPartitionShape(
       `${name} partition.alias is required when partition.by is conversation`,
     );
   }
-  // The alias becomes a path segment under the workspace root, so keep it to
-  // characters that cannot escape or confuse the mount.
+  // A path segment under the workspace root: no separators, and not `.` or `..`.
   if (!/^[A-Za-z0-9._-]+$/.test(partition.alias)) {
     throw new Error(
       `${name} partition.alias must use only letters, numbers, dots, underscores, or hyphens`,
     );
   }
-  // The charset above still admits the two relative segments, which would walk
-  // the alias out of its own namespace.
   if (partition.alias === "." || partition.alias === "..") {
     throw new Error(`${name} partition.alias must not be "." or ".."`);
   }
@@ -731,8 +675,6 @@ function assertSupportedWorkspaceSandboxMounts(resources: AnyResource[]): void {
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
     const config = resource.config as Record<string, unknown>;
-    // Resource files are transpiled without a typecheck, so a string `sandboxes`
-    // must not yield its first character.
     const defaultSandbox = resolveLocalSandbox(
       Array.isArray(config.sandboxes) ? config.sandboxes[0] : undefined,
       sandboxes,
@@ -805,10 +747,6 @@ function sandboxProvider(sandbox: SandboxResource): string {
     : "lambda";
 }
 
-// Resource files skip the typecheck and CLI sync keeps unknown names as-is, so a
-// wrong shape here would reach a stage as a sandbox id. A sandbox referenced as a
-// resource but never exported is not compiled into the manifest either, so its
-// name would resolve to nothing at sync.
 function assertAgentSandboxes(resources: AnyResource[]): void {
   const exportedSandboxNames = new Set(
     resources
@@ -961,11 +899,6 @@ function compileChannels(
 
 type DeclaredReach = Map<AnyConnectionDefinition, Set<string>>;
 
-/**
- * A connection with no declared channel answers nowhere, which is never what
- * anyone means. Make the author choose here rather than discover the silence
- * on a live webhook.
- */
 function assertConnectionReach(
   resources: ExportedResource[],
   reach: DeclaredReach,
@@ -986,11 +919,6 @@ function assertConnectionReach(
   }
 }
 
-/**
- * The rooms a connection answers in: every channel declared against it, plus
- * any id named on the connection itself. The wildcard swallows the rest, since
- * "everywhere" and "these two rooms" cannot both be true.
- */
 function connectionReach(
   connection: AnyConnectionDefinition,
   reach: DeclaredReach,
@@ -1001,11 +929,7 @@ function connectionReach(
   return [...new Set([...(reach.get(connection) ?? []), ...named])];
 }
 
-/**
- * A connection reaches exactly the rooms declared as channels against it. That
- * list becomes the adapter's allow list, so an undeclared room is dropped while
- * parsing the webhook, before any record read or policy call.
- */
+// The adapter's allow list: an undeclared room drops before any record read or policy call.
 function declaredReach(resources: AnyResource[]): DeclaredReach {
   const reach: DeclaredReach = new Map();
   for (const resource of resources) {
@@ -1057,9 +981,7 @@ async function toManifestResources(
     const config = resource.config as Record<string, unknown>;
     const ids = channelExternalIds(resource.name, config.externalId);
 
-    // Suffix with the id, never an index: deleting the first of three would
-    // renumber the rest, so cliSync would prune and recreate rows that never
-    // changed.
+    // Suffix by id, not index, so dropping one id does not rename and recreate the rest.
     return ids.map((id) => ({
       kind: resource.kind,
       name: ids.length === 1 ? resource.name : `${resource.name}-${id}`,
@@ -1081,10 +1003,6 @@ async function toManifestResources(
   ];
 }
 
-/**
- * The ids one channel declares. A single string stays one record; a list fans
- * out to one record per id, so several rooms share one set of rules.
- */
 function channelExternalIds(name: string, value: unknown): string[] {
   if (value === undefined) return [];
   if (typeof value === "string") {
@@ -1117,11 +1035,6 @@ function channelExternalIds(name: string, value: unknown): string[] {
   return value;
 }
 
-/**
- * A record whose id is `*` matches only a chat whose id is literally an
- * asterisk, so it binds nothing while still opening the connection's reach. It
- * deploys clean and the bot looks wired up, so refuse it here.
- */
 function assertNotReachWildcard(name: string, id: string): void {
   if (id !== CHANNEL_REACH_WILDCARD) return;
 
@@ -1146,8 +1059,6 @@ async function normalizeConfig(
 
   if (resource.kind === "workspace") {
     const config = { ...(resource.config as Record<string, unknown>) };
-    // Authoring says `partitioned`; storage says `isolation` (the shape check
-    // above already refused anything but a level).
     const isolation = config.partitioned;
     delete config.partitioned;
     if (isolation !== undefined) config.isolation = isolation;
@@ -1177,8 +1088,7 @@ async function normalizeConfig(
     config.name = config.name ?? resource.name;
     if (config.status === undefined) config.status = "active";
     delete config.agent;
-    // Mirror the agent direct API: collapse the `input` shorthand into the
-    // canonical events list so local and remote manifests diff identically.
+    // Expand `input` like the direct API does, so local and remote manifests diff equal.
     if (typeof config.input === "string") {
       config.events = [
         { role: "user", content: [{ type: "text", text: config.input }] },
@@ -1209,13 +1119,8 @@ const KNOWN_HARNESS_KEYS = new Set([
 ]);
 const KNOWN_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
 
-/**
- * Suggest the canonical key for a common misspelling, else "". A setting the SDK
- * has never heard of is fine, since it reaches the provider's Vercel AI SDK
- * factory untouched. But a casing slip on one of the few keys broods reads
- * itself (`apiKey`, `base_url`, `gatewayId`) would do nothing at all, so those
- * still throw.
- */
+// Unknown settings reach the provider's AI SDK factory as-is; only a slip on a key broods reads
+// itself would silently do nothing.
 function suggestProviderKey(key: string): string {
   if (CANONICAL_PROVIDER_KEYS.has(key)) {
     return "";
@@ -1228,12 +1133,6 @@ function suggestProviderKey(key: string): string {
   return "";
 }
 
-/**
- * Validates each agent's `config.provider` at compile time so a misspelled
- * option, most commonly the camel `baseUrl` instead of `base_url`/`baseURL`,
- * throws inside the `broods dev` watcher (and `deploy`) instead of arriving as
- * a 400 at run time. Values may be `env("NAME")` refs, so only keys are checked.
- */
 export function validateProviderConfig(
   agentName: string,
   provider: unknown,
@@ -1286,7 +1185,6 @@ function validateHarnessConfig(agentName: string, harness: unknown): void {
     throw new Error(`Agent "${agentName}" config.harness must be an object`);
   }
   const config = harness as Record<string, unknown>;
-  // Checked before unknown keys so a JS author gets the migration, not a typo hint.
   if ("sandbox" in config) {
     throw new Error(
       `Agent "${agentName}" harness sandbox was removed; list it first in the agent's sandboxes`,
@@ -1418,10 +1316,7 @@ function validateHarnessStringArray(
   }
 }
 
-/**
- * Same cap as the Convex validator, which CLI sync never runs: core reads
- * every listed skill on each turn.
- */
+// CLI sync skips the Convex validator, so its checks are mirrored here.
 function assertSkillCap(
   resource: Extract<AnyResource, { kind: "agent" }>,
 ): void {
@@ -1450,7 +1345,6 @@ function normalizeAgentConfig(
       )
     : undefined;
   if (sandboxes) config.sandboxes = sandboxes;
-  // CLI sync never runs the Convex validator, so this mirrors its repeat check.
   sandboxes?.forEach((sandbox, index): void => {
     if (sandboxes.indexOf(sandbox) === index) return;
     throw new Error(
@@ -1497,8 +1391,7 @@ function normalizeAgentConfig(
     const workspaces = config.workspaces.map((workspace) =>
       normalizeWorkspaceRef(workspace, resource.name),
     );
-    // Only the first sandbox mounts workspaces, so a later one that also backs a
-    // workspace would be the same machine reachable with and without the mount.
+    // Only the first sandbox mounts workspaces; a later one would expose it unmounted.
     for (const workspace of workspaces) {
       const index = sandboxes?.indexOf(workspace.sandbox) ?? -1;
       if (index >= 1) {
@@ -1509,7 +1402,7 @@ function normalizeAgentConfig(
     }
     config.workspaces = workspaces;
   }
-  // After the workspace-backing check, in the same order as core and Convex.
+  // Same check order as core and Convex.
   if (config.harness && !sandboxes?.length) {
     throw new Error(
       `Agent "${resource.name}" runs a harness, so it needs sandboxes; the first runs the harness`,
@@ -1614,10 +1507,7 @@ function stripInlineHookKeys(
   return result;
 }
 
-// `handler.toString()` on an object-method-shorthand hook (`onStart(ctx) {}`)
-// yields `onStart(ctx) {}`, which is not a valid expression when emitted as an
-// object-literal value in the bundle. Prefix `function ` to make it a named
-// function expression; arrows and function expressions pass through untouched.
+// A method-shorthand hook stringifies as `onStart(ctx) {}`, not an expression; prefix `function`.
 function toHookFunctionExpression(source: string): string {
   const trimmed = source.trim();
   if (
@@ -1651,10 +1541,6 @@ function transpileInlineHookBundle(
   }
 }
 
-/**
- * Resolves the policies attached to an agent down to the names the manifest
- * stores. Attachment is only the list: each policy carries its own mode.
- */
 function normalizePolicyRefs(
   refs: unknown,
   agentName: string,
@@ -1674,11 +1560,7 @@ function normalizePolicyRefs(
   return names.length > 0 ? names : undefined;
 }
 
-/**
- * Import the built bundle and require the fetch-style default export the
- * Lambda host expects (same shape check the child-runner applies), so a
- * server that can never serve throws at deploy time instead of uploading.
- */
+// Same default-export check as the Lambda child-runner, so an unservable bundle fails at deploy.
 async function assertServableMcpBundle(
   manifestPath: string,
   bundle: string,
@@ -1714,13 +1596,11 @@ async function assertServableMcpBundle(
   }
 }
 
-/** Run one esbuild bundle build, mapping failures to a deploy-time error. */
 async function buildBundleModule(options: {
   stdin: StdinOptions;
   label: string;
   manifestPath: string;
   plugins?: Plugin[];
-  /** A Workers build resolves the Workers export conditions and no Node builtins. */
   workers?: boolean;
 }): Promise<string> {
   const build = await esbuild({
@@ -1737,8 +1617,6 @@ async function buildBundleModule(options: {
     logLevel: "silent",
     plugins: options.plugins ?? [],
   }).catch((error: unknown) => {
-    // esbuild throws BuildFailure for source errors, but a plain Error for
-    // install/platform problems, so report that cause instead of masking it.
     const details = isBuildFailure(error)
       ? error.errors
           .map((entry) => entry.text)
@@ -1782,13 +1660,6 @@ async function normalizeSkillConfig(
   };
 }
 
-/**
- * An mcp resource with `url` syncs as-is (external server); one with `sandbox`
- * syncs the sandbox's name (the daemon there serves it); one with `handler`
- * bundles the module that declared it, so the handler stays inline next to the
- * `defineMcp` call, one file per server, and the row becomes
- * `transport: "hosted"` on the backend (#331 phase 2).
- */
 async function normalizeMcpConfig(
   entry: ExportedResource,
   config: McpDefinitionConfig,
@@ -1815,8 +1686,7 @@ async function normalizeMcpConfig(
 
   const manifestPath = relative(projectRoot, entry.file).split("\\").join("/");
   assertSafeBundlePath(manifestPath, "MCP server");
-  // An in-memory shim picks the handler off the resource export and the stub
-  // keeps the SDK out; a temp path would change the bundle sha256 every build.
+  // stdin, not a temp file: a temp path would change the bundle sha256 every build.
   const build = (workers: boolean): Promise<string> =>
     buildBundleModule({
       stdin: {
@@ -1830,10 +1700,7 @@ async function normalizeMcpConfig(
       plugins: [sdkStubPlugin()],
       workers: workers,
     });
-  // Ship the Workers build only when the config plane will place it on
-  // Workers: runtime "auto", within the 10 MB Worker cap, passing the same
-  // scan and loading as a handler. Anything else ships the Node build,
-  // which runs on Lambda.
+  // The config plane's Workers placement rules; any other bundle runs on Lambda as a Node build.
   const workersBundle =
     config.runtime === "lambda"
       ? undefined
@@ -1859,14 +1726,12 @@ async function normalizeMcpConfig(
   return {
     ...(rewriteValues(rest) as Record<string, unknown>),
     bundle: bundle,
-    // The server hashes an inline bundle itself; the diff compares this.
+    // For the diff; the server hashes an inline bundle itself.
     sha256: sha256Hex(bundle),
   };
 }
 
-// The stub replaces "broods" imports (see SDK_STUB_SOURCE), so `defineMcp`
-// passes its input through and the handler sits flat on the export; a module
-// importing the SDK source directly still nests it under `config`.
+// Flat via the SDK stub; nested under `config` when a module imports the SDK source directly.
 function mcpShimSource(entry: ExportedResource): string {
   return (
     `import * as __exports from ${JSON.stringify(entry.file)};\n` +
@@ -1875,9 +1740,6 @@ function mcpShimSource(entry: ExportedResource): string {
   );
 }
 
-// Hosted MCP handlers live beside `defineAgent(...)` calls that import the
-// SDK. Alias those imports to inert stubs so the bundle carries the handler,
-// not the client.
 function sdkStubPlugin(): Plugin {
   return {
     name: "broods-sdk-stub",
@@ -1894,12 +1756,7 @@ function sdkStubPlugin(): Plugin {
   };
 }
 
-/**
- * Copies each connected MCP server's headers and oauth credentials under the
- * agent's own entry. Core reads a server's secrets only from the agent config,
- * where the sync resolves their refs; the agent's own value wins, and header
- * names compare case-insensitively.
- */
+// Core reads MCP secrets only from the agent config, so copy each server's in; the agent's win.
 function withMcpServerAuth(
   resource: CliManifestResource,
   servers: Map<string, McpAuth>,
@@ -1915,7 +1772,7 @@ function withMcpServerAuth(
     const headers = Object.entries(config?.headers ?? {}).filter(
       ([name]) => !own.has(name.toLowerCase()),
     );
-    // The token endpoint stays on the server row, where registration checked it.
+    // `tokenUrl` stays on the server row, where registration checked it.
     const { tokenUrl: _tokenUrl, ...oauth } = config?.oauth ?? {};
 
     return [
@@ -1939,13 +1796,7 @@ function withMcpServerAuth(
   };
 }
 
-/**
- * Normalizes one agent `workspaces` entry into the manifest wire shape
- * `{ name, workspaceId, sandbox? }`. Accepts a bare `defineWorkspace(...)`
- * resource or the `{ workspace, sandbox? }` override form; the workspace name
- * doubles as the `workspaceId` placeholder that the backend resolves to a real
- * id, and a per-workspace `sandbox` (resource, name, or `null`) is preserved.
- */
+// The name doubles as the `workspaceId` placeholder the backend resolves to a real id.
 function normalizeWorkspaceRef(
   entry: unknown,
   agentName: string,
@@ -1998,8 +1849,7 @@ function resolveContainedResourcePath(
   );
 }
 
-// The SDK says `connection` and `agents`; storage says `platform` and
-// `agentBindings`. Drop the credentials too, or `rewriteValues` inlines them.
+// Drop `connection` before `rewriteValues`, or its credentials get inlined.
 function normalizeChannelConfig(name: string, value: unknown): unknown {
   const config = { ...(value as Record<string, unknown>) };
   const connection = config.connection;

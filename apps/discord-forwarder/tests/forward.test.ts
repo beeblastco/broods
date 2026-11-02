@@ -174,7 +174,6 @@ describe("forwarding a gateway message", () => {
     expect(seen.calls).toBe(1);
   });
 
-  // Matrix awaits each delivery in its sync loop, so it does not opt in.
   it("tries once for a caller that does not ask for more", async (): Promise<void> => {
     const seen = scriptFetch([503]);
     const pending = await fanOut([TARGETS[0]!], "{}", {
@@ -187,7 +186,6 @@ describe("forwarding a gateway message", () => {
     expect(pending).toEqual([TARGETS[0]!.webhookUrl]);
   });
 
-  // Matrix retries the targets this resolves, so a 4xx must not be one.
   it("resolves only the targets that could still take it", async (): Promise<void> => {
     const auth = { header: "x-token", timeoutMs: 1_000, token: "token-a" };
     const first = [TARGETS[0]!.webhookUrl];
@@ -221,7 +219,6 @@ describe("forwarding a gateway message", () => {
   });
 });
 
-/** Answers each POST with the next status or response, or throws for "reset". */
 function scriptFetch(statuses: readonly (number | "reset" | Response)[]): {
   calls: number;
 } {
@@ -238,7 +235,6 @@ function scriptFetch(statuses: readonly (number | "reset" | Response)[]): {
   return seen;
 }
 
-/** Runs `work` to completion with the retry backoff fast-forwarded. */
 async function withoutWaiting(work: Promise<void>): Promise<void> {
   jest.useFakeTimers();
   let done = false;

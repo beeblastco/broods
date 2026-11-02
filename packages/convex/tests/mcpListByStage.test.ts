@@ -1,5 +1,4 @@
 /// <reference types="vite/client" />
-/** The canvas reads every MCP server a stage's nodes own in one query. */
 
 import { convexTest } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
@@ -9,8 +8,7 @@ import schema from "../schema";
 
 const OWNER_AUTH_ID = "auth_owner";
 
-// The query reads its caller through the WorkOS component, which the test
-// runtime does not register. The org owner is the caller here.
+// convex-test does not register the WorkOS component the query reads its caller from.
 vi.mock("../auth", () => ({
   authKit: { getAuthUser: async () => ({ id: OWNER_AUTH_ID }) },
 }));
@@ -179,7 +177,6 @@ async function insertServers(
   });
 }
 
-/** An org its owner can read, one project, and two of its stages. */
 async function seed(t: T): Promise<Seeded> {
   return await t.run(async (ctx) => {
     const now = Date.now();

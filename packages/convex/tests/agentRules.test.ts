@@ -1,5 +1,3 @@
-/** Agent config rules, the one copy the config plane and core both run. */
-
 import { describe, expect, it } from "vitest";
 import {
   assertAgentRuntimeRefs,
@@ -54,8 +52,7 @@ describe("agent rules", () => {
     ).toThrow(
       'config.sandboxes[1] "sb_browser" also backs workspace "repo"; only the first sandbox can back a workspace',
     );
-    // Each index is judged in turn, so the later mount at [1] wins over the
-    // repeat at [2], as in core.
+    // Each index is judged in turn, as in core: the mount at [1] wins over the repeat at [2].
     expect(() =>
       normalizeAgentConfig({
         sandboxes: ["sb_a", "sb_b", "sb_b"],
@@ -396,14 +393,12 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ model: { provider: "deepseek" } }),
     ).not.toThrow();
-    // It reaches the AI SDK as a model id, which is string-only.
     expect(() =>
       normalizeAgentConfig({ model: { transcriptionModelId: 42 } }),
     ).toThrow("config.model.transcriptionModelId must be a string");
     expect(() =>
       normalizeAgentConfig({ model: { transcriptionModelId: "whisper-1" } }),
     ).not.toThrow();
-    // Every shape of the AI SDK's TimeoutConfiguration, as streamText takes it.
     for (const timeout of [
       60_000,
       {},
@@ -471,8 +466,7 @@ describe("agent rules", () => {
         provider: { cloudflare: { gatewayId: "broods-dev_1" } },
       }),
     ).not.toThrow();
-    // An upstream key in a literal header is as secret as an apiKey; a header
-    // made only of an env ref is not. Outside headers only refs are shown.
+    // A literal header holding an upstream key is as secret as an apiKey; an env ref is not.
     expect(
       redactConfigSecrets({
         provider: {
@@ -543,7 +537,6 @@ describe("agent rules", () => {
         normalizeAgentConfig({ provider: { [inherited]: { apiKey: "k" } } }),
       ).toThrow("is not a supported provider");
     }
-    // Settings a provider's AI SDK factory owns pass straight through.
     expect(() =>
       normalizeAgentConfig({
         provider: { vertex: { apiKey: "k", project: "p", location: "us" } },
@@ -574,8 +567,7 @@ describe("agent rules", () => {
     ).toThrow(
       "config.provider.custom.base_url must not point to a private or internal address",
     );
-    // Every endpoint a factory reads is held to the base URL's rule, not only
-    // the two spellings broods names itself.
+    // Every endpoint a factory reads is held to the base URL's rule, not just broods's two.
     expect(() =>
       normalizeAgentConfig({
         provider: {
@@ -675,8 +667,7 @@ describe("agent rules", () => {
     expect(() => normalizeAgentConfig({ policies: [1] })).toThrow(
       "config.policies must be an array of non-empty strings",
     );
-    // Harness-owned names stay rejected; free-form provider tool names are
-    // resolved against the configured provider by core at run time.
+    // Harness-owned names stay rejected; core resolves provider tool names at run time.
     expect(() =>
       normalizeAgentConfig({ tools: { bash: { enabled: true } } }),
     ).toThrow("config.tools.bash is not a supported tool");
@@ -699,8 +690,7 @@ describe("agent rules", () => {
     ).toThrow(
       "config.channels.slack.partition.alias is only supported when config.channels.slack.partition.by is conversation",
     );
-    // The channel configs take an index signature, so the retired spellings of
-    // partition only fail if this rejects them.
+    // Channel configs take an index signature: only this rejects retired partition keys.
     expect(() =>
       normalizeAgentConfig({
         channels: {
@@ -758,8 +748,7 @@ describe("agent rules", () => {
   });
 
   it("refuses Messenger and Instagram credentials core could not run", () => {
-    // Core builds no adapter without all of them, so the channel would
-    // silently never answer.
+    // Core builds no adapter without all of them, so the channel would silently never answer.
     expect(() =>
       normalizeAgentConfig({
         channels: {
@@ -791,7 +780,6 @@ describe("agent rules", () => {
         },
       }),
     ).toThrow("config.channels.messenger.appSecret must be a non-empty string");
-    // A patch may rotate one secret alone; the merged config still has the rest.
     expect(
       normalizeAgentConfigPatch({
         channels: { messenger: { id: "fb", pageAccessToken: "rotated" } },
@@ -908,8 +896,7 @@ describe("agent rules", () => {
         sandboxes: ["sandbox_1"],
       }),
     ).toThrow('config.harness.debug has unknown option "subystems"');
-    // The harness runs its own loop, so broods-side policy and structured
-    // output would silently not apply.
+    // The harness runs its own loop: broods-side policy and structured output would not apply.
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "codex" },
@@ -1051,8 +1038,7 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ tools: { tool_legacy: { enabled: true } } }),
     ).toThrow("config.tools.tool_legacy is not a supported tool");
-    // Custom tools keyed config.tools by row id and are gone. A row id that
-    // starts with a digit is no provider tool name, so it is refused.
+    // Removed custom tools keyed config.tools by row id; a digit-led id names no provider tool.
     expect(() =>
       normalizeAgentConfig({
         tools: { "1s78zwc4z4q5ysxm74fgrhd13s88xxt": { enabled: true } },
@@ -1101,9 +1087,8 @@ describe("agent rules", () => {
   });
 
   it("drops dangerous keys instead of rewriting the merged prototype", () => {
-    // JSON.parse makes "__proto__" an own key, so a plain assignment would
-    // route it to the setter and hide the value from every own-key walk,
-    // including the normalize pass that runs right after the merge.
+    // JSON.parse makes "__proto__" an own key; a plain assignment would route it to the
+    // setter and hide it from every own-key walk, the normalize after the merge included.
     const patch: Record<string, unknown> = JSON.parse(
       '{"__proto__":{"polluted":"yes"},"name":"ok"}',
     );
@@ -1131,7 +1116,6 @@ describe("agent rules", () => {
       provider: { apiKey: "secret" },
       list: ["prefix-eu", "${lowercase}"],
     });
-    // Dangerous keys are dropped, not copied, when rebuilding the config.
     const polluted: Record<string, unknown> = JSON.parse(
       '{"__proto__": {"x": 1}, "safe": "${REGION}"}',
     );
@@ -1198,7 +1182,6 @@ describe("mergeCanvasSandboxes", () => {
   });
 });
 
-// The rules a canvas save checks before it stores the refs it drew.
 describe("assertAgentRuntimeRefs", () => {
   it("leaves branches a canvas save never touches to their owner", () => {
     expect(() =>

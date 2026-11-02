@@ -29,7 +29,6 @@ import { useState } from "react";
 
 const ARROW_ID_PREFIX = "mount-arrow";
 
-/** The one control an edge's midpoint shows, and what it needs to render. */
 type MountEdgeControl =
   | { kind: "delete" }
   | { kind: "locked"; reason: string }
@@ -39,11 +38,6 @@ type MountEdgeControl =
       workspaceId: string;
     };
 
-/**
- * Edge for workspace↔sandbox mount relationships, and the drawn edge from a workspace to the
- * sandbox it inherits. Renders via side handles with bidirectional arrows to show data flows
- * in both directions, along the lanes the canvas routed for it.
- */
 export function MountEdge({
   id,
   source,
@@ -65,7 +59,6 @@ export function MountEdge({
   const workspaceId = useWorkspaceEnd(source, target);
   const workspaceState = useInfraAnalysis().workspaceStates[workspaceId ?? ""];
 
-  // An edge the router skipped (no measured handle yet) falls back to a step path.
   const [edgePath, labelX, labelY] = data?.route
     ? sideEdgePath(
         { x: sourceX, y: sourceY },
@@ -94,7 +87,6 @@ export function MountEdge({
 
   return (
     <>
-      {/* Inline marker defs so each mount edge owns its arrowheads */}
       <defs>
         <marker
           id={arrowId}
@@ -118,10 +110,8 @@ export function MountEdge({
         <BaseEdge
           id={id}
           path={edgePath}
-          // Keep the teal stroke but honor focus-mode dimming: pull only `opacity` from the
-          // incoming style (which also carries the gray default stroke we must not apply).
-          // xyflow's unlayered edge-path rule outranks utilities, so the stroke is important
-          // and the width goes through xyflow's own variable.
+          // Only `opacity` comes from `style`, which also carries the gray default stroke.
+          // xyflow's unlayered edge-path rule outranks utilities, hence `!` and its width var.
           className={cn(
             "opacity-(--edge-opacity)",
             deleteHover ? "stroke-destructive/90!" : "stroke-canvas-mount/80!",
@@ -170,14 +160,7 @@ export function MountEdge({
   );
 }
 
-/**
- * What this edge's midpoint offers. A collapsed group hides the cards a
- * re-pointed mount belongs to, and a mount code owns is re-synced from the
- * project it was deployed from: both can only say why. Any other
- * workspace↔sandbox edge carries its mount state as a word that opens the
- * menu, drawn or stored alike, so the board reads the same either way. A
- * reader has no menu, so it keeps the lock or trash it had.
- */
+// Collapsed or code-owned mounts can only say why; a writer's mount word opens the menu.
 function mountEdgeControl({
   canWrite,
   codeManaged,
@@ -216,9 +199,8 @@ function mountEdgeControl({
   return { kind: "delete" };
 }
 
-/** The workspace end of a mount edge, or null when neither end is one. */
 function useWorkspaceEnd(source: string, target: string): string | null {
-  // A string, so the selector stays referentially stable across store updates.
+  // A string, so the selector result stays stable across store updates.
   return useStore((state): string | null => {
     if (state.nodeLookup.get(source)?.type === "workspace") return source;
 

@@ -10,9 +10,7 @@ const modules = import.meta.glob("../**/*.ts");
 const t = () => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-// One login can own projects in several orgs. Scoping the suffix to the login
-// leaked one org's naming into another, so `client-lamy` reused in a second org
-// silently became `client-lamy-1` and every slug-keyed path read the wrong name.
+// One login can own projects in several orgs, so the slug suffix is scoped per org.
 
 async function seedOrg(tt: T, slug: string): Promise<Id<"orgs">> {
   return await tt.run(

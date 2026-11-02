@@ -36,11 +36,6 @@ const SORT_KEY: Record<Column, (row: Row) => SortKey> = {
   at: (row) => row.at,
 };
 
-/**
- * A list on the kit with every header sortable and two of them filterable,
- * so a spec can open the header menu, pick a value and see the chip land in
- * the search box, and the Filter button reach the same menu.
- */
 export function DataTableStandIn(): React.JSX.Element {
   const list = useListState({
     rows: ROWS,

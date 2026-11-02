@@ -1,39 +1,21 @@
-/**
- * Watches one channel's connections in every config plane the process serves.
- *
- * A Convex websocket subscription replaces the old fixed-interval poll: the
- * query re-runs only when a plane's `channelConnections` table actually
- * changes, so the standing function-call load is zero while nothing changes
- * and a new bot token reconciles the moment it is written.
- *
- * `packages/convex/channel/connections.ts` does the decryption, so this process
- * never holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET`, only one deploy key per plane,
- * the same credential core authenticates storage reads with. Neither that query
- * nor the watch below is Discord-specific: `apps/matrix-forwarder` imports the
- * watch and asks it for `matrix`.
- */
-
 import type { ChannelConnection } from "@broods/convex/channel/connections";
 import { ConvexClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import type { ConfigPlane } from "./config.ts";
 import { logWarn } from "./log.ts";
 
-// Built by name rather than read off the generated `internal` api, whose types
-// pull the whole backend into this build. ConvexClient only takes public refs,
-// so this one claims to be; deploy-key auth is what permits the internalQuery.
+// By name: the generated api types pull the whole backend in. ConvexClient takes only public
+// refs, so this claims to be one; deploy-key auth is what admits the internalQuery.
 const listConnections = makeFunctionReference<
   "query",
   { channel: string },
   ChannelConnection[]
 >("channel/connections:listConnections");
 
-/** Handle over every plane subscription; close it on shutdown. */
 export interface ConnectionWatch {
   close(): Promise<void>;
 }
 
-/** A config-plane row with its own plane's gateway front door joined on. */
 export interface ForwarderConnection {
   agentId: string;
   agentName: string;
@@ -41,21 +23,11 @@ export interface ForwarderConnection {
   webhookUrl: string;
 }
 
-/**
- * Flattens what the planes answered, treating a silent plane as contributing
- * nothing rather than as an outage. Throws only when every plane was silent,
- * which is the one case the caller must not reconcile on.
- *
- * Separate from the transport so the rule is pinned by a test: getting it wrong
- * once meant a backend that was not live yet stopped every other plane from
- * ever opening a socket.
- */
+/** A silent (null) plane adds nothing; throws when every plane, or the empty list, is silent. */
 export function combinePlaneAnswers<T>(
   planeNames: readonly string[],
   answers: readonly (T[] | null)[],
 ): T[] {
-  // `every` is true for an empty list too, which is the right answer: a process
-  // with no planes has nothing to watch and must not report itself ready.
   if (answers.every((answer): boolean => answer === null)) {
     throw new Error(`No config plane answered: ${planeNames.join(", ")}`);
   }
@@ -63,11 +35,6 @@ export function combinePlaneAnswers<T>(
   return answers.flatMap((answer): T[] => answer ?? []);
 }
 
-/**
- * Resolves a plane's rows against its own gateway. The config plane returns a
- * path and never learns which front door sits in front of it, which is what lets
- * one process serve deployments that answer on different hosts.
- */
 export function planeConnections(
   plane: ConfigPlane,
   rows: readonly ChannelConnection[],
@@ -80,20 +47,7 @@ export function planeConnections(
   }));
 }
 
-/**
- * One entry per deployed agent that configures a bot token for `channel`, across
- * every plane, delivered whenever any plane's answer changes. `resolve` turns
- * one plane's rows into the caller's connection shape, `planeConnections` for
- * Discord.
- *
- * A plane is isolated from its neighbours: the websocket client reconnects on
- * its own, and until a plane answers again its last snapshot keeps contributing,
- * so a blip cannot look like "every token here was deleted" and close its
- * sockets. A plane that has never answered contributes nothing, which is what
- * lets this process serve a deployment whose backend is not live yet, and
- * `onChange` never fires before at least one plane has answered, so total
- * silence never reconciles at all.
- */
+/** A plane's last answer stands while it reconnects, so a blip cannot close its sockets. */
 export function watchChannelConnections<T>(
   channel: string,
   planes: readonly ConfigPlane[],
@@ -135,11 +89,9 @@ export function watchChannelConnections<T>(
   };
 }
 
-/** A websocket client for one plane, authenticated with its deploy key. */
 function planeClient(plane: ConfigPlane): ConvexClient {
   const client = new ConvexClient(plane.convexUrl);
-  // setAdminAuth is marked @internal and stripped from the public typings,
-  // the same as on ConvexHttpClient in apps/core.
+  // setAdminAuth is @internal and stripped from the public typings.
   (client as unknown as { setAdminAuth(key: string): void }).setAdminAuth(
     plane.deployKey,
   );

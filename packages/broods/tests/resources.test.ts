@@ -8,8 +8,6 @@ import { collectEnvRefNames, compileProject } from "../src/manifest.ts";
 import { defineSandbox, env } from "../src/resources.ts";
 import { diffManifests } from "../src/sync.ts";
 
-// Resolve the SDK entrypoint relative to this test file so generated fixtures
-// import it regardless of the cwd the suite runs from (repo root or package dir).
 const RESOURCES_MODULE = join(import.meta.dir, "..", "src", "resources.ts");
 
 let tempDirs: string[] = [];
@@ -241,8 +239,7 @@ export const support = defineAgent({
 `,
   );
 
-  // The resource and the bare name map to the same record, so the repeat only
-  // shows after mapping.
+  // A resource and its bare name map to one record, so the repeat shows only after mapping.
   expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" sandboxes[2] "runner" is listed more than once',
   );
@@ -292,8 +289,7 @@ export const support = defineAgent({
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
-  // A resource and a bare name both land as the record name; order is kept
-  // because the first entry is the default.
+  // Both land as the record name, in order: the first entry is the default.
   expect(
     manifest.resources.find(
       (resource) => resource.kind === "agent" && resource.name === "support",
@@ -1485,8 +1481,7 @@ export const support = defineAgent({
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const hook = manifest.resources.find((resource) => resource.kind === "hook");
   const bundle = (hook?.config as { bundle: string }).bundle;
-  // Shorthand `onStart(ctx) {}` toString is not a valid expression on its own;
-  // the manifest must emit it as a function expression or the bundle won't parse.
+  // A shorthand method's toString is no expression; the bundle needs `function onStart`.
   expect(bundle).toContain('"agent.started": function onStart');
   expect(bundle).toContain('"agent.finished": async function onFinish');
 });
@@ -1593,7 +1588,6 @@ export const reader = defineAgent({
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const agent = manifest.resources.find((entry) => entry.kind === "agent");
 
-  // `broods dev` pushes the agent's own ref too, or the sync refuses it.
   expect(collectEnvRefNames(manifest)).toEqual([
     "READER_TEAM",
     "SEARCH_TOKEN",
@@ -1851,13 +1845,11 @@ export const oneMinuteCron = defineCron({
     "utf8",
   );
 
-  // Renamed namespace + export-name keys pointing at the unchanged ids contract.
   expect(api).toContain("crons: {");
   expect(api).toContain('oneMinuteCron: ids.crons["one-minute-cron-test"],');
   expect(api).toContain('myRepo: ids.workspaces["my-repo"],');
   expect(api).not.toContain("crons: ids.crons");
   expect(api).not.toContain('"one-minute-cron-test":');
-  // Kinds with no local resources stay as an empty literal.
   expect(api).toContain("sandboxes: {}");
 });
 
@@ -2113,7 +2105,6 @@ export const support = defineAgent({
 `,
   );
 
-  // The wrapper is gone: naming it must point at the list, not be dropped.
   expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" has an unknown config key "policy". Did you mean "policies"?',
   );
@@ -2511,8 +2502,7 @@ test("runtime config loads .env.local without manual client wiring", async () =>
     join(cwd, ".env.local"),
     [
       "BROODS_DASHBOARD_URL=https://dashboard.dev.broods.app",
-      // Pin baseUrl too: without it the field falls back to ~/.broods/config.json
-      // stored auth, which exists on logged-in dev machines but not in CI.
+      // Pin baseUrl too, or it falls back to stored auth only logged-in dev machines have.
       "BROODS_BASE_URL=https://gateway.dev.broods.app",
       "BROODS_TOKEN=bcli_test",
       "BROODS_PROJECT=sandbox-stateless",
@@ -2628,8 +2618,7 @@ export const internal = defineZaloChannel({
     { platform: "zalo", externalId: "7789", denyTools: ["web_search"] },
     { platform: "zalo", externalId: "7790", denyTools: ["web_search"] },
   ]);
-  // Every declared id has to reach the gate. Miss this and the bot answers in
-  // one room of three, with no error anywhere.
+  // Miss one id and the bot answers in one room of three, with no error anywhere.
   const agent = manifest.resources.find(
     (resource) => resource.kind === "agent" && resource.name === "staff",
   );
@@ -2666,9 +2655,7 @@ test("compileProject rejects an unusable channel id list", async () => {
 });
 
 test("compileProject rejects a wildcard as a channel id", async () => {
-  // Deploys clean today and binds nothing: the record never matches a room,
-  // while the id still opens the connection's reach so the bot answers
-  // everywhere with none of the channel's rules.
+  // "*" never matches a room yet opens the connection's reach: the bot answers everywhere.
   const bare = await fixtureProject("", zaloChannelSource(`chatId: "*"`));
   expect(compileProject({ cwd: bare, command: "dev" })).rejects.toThrow(
     'Channel "lamy-internal" cannot use "*" as its id',

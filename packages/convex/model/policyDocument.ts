@@ -1,14 +1,6 @@
-/**
- * The policy document as the `agentPolicies` and `accountRoles` tables
- * store it: a version, a mode, and rules over actions with optional
- * resource selectors and conditions. Only `convex/values` is imported here,
- * so the schema can read it without a cycle; the normalizer and the
- * evaluators live beside it in `policyRules.ts`.
- */
-
+// Imports only `convex/values`, so the schema can read it without a cycle.
 import { v, type Infer } from "convex/values";
 
-/** The condition operators a rule may use, with the word the lists print. */
 export const POLICY_CONDITION_OPERATORS = [
   { value: "equals", label: "=" },
   { value: "notEquals", label: "≠" },
@@ -36,10 +28,9 @@ const policyConditionValidator = v.object({
   ),
 });
 
-/** Which things a rule's actions reach; `resourceIds` is for API-action rules, "*" matching every id. */
+// `resourceIds` is for API-action rules, where "*" matches every id.
 const policyResourceSelectorValidator = v.object({
   toolNames: v.optional(v.array(v.string())),
-  /** MCP registration ids, for scoping tool.call rules per server (#331). */
   mcpIds: v.optional(v.array(v.string())),
   workspaceIds: v.optional(v.array(v.string())),
   workspaceNames: v.optional(v.array(v.string())),
@@ -57,11 +48,7 @@ const policyRuleValidator = v.object({
   conditions: v.optional(v.array(policyConditionValidator)),
 });
 
-/**
- * Versioned policy document accepted by account-management CRUD, as the
- * `agentPolicies` and `accountRoles` tables store it. `mode` says how hard
- * the policy bites where it is attached; omitted reads as `audit`.
- */
+// An omitted `mode` reads as "audit".
 export const policyDocumentValidator = v.object({
   version: v.literal(1),
   mode: v.optional(v.union(v.literal("enforce"), v.literal("audit"))),

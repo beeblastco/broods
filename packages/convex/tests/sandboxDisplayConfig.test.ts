@@ -1,5 +1,4 @@
 /// <reference types="vite/client" />
-/** The canvas projection of a sandbox config: display keys in, secrets out. */
 
 import { describe, expect, test } from "vitest";
 import { sandboxDisplayConfig } from "../model/sandboxDisplayConfig";
