@@ -28,22 +28,21 @@ The rules are the ones `POST /v1/runs` applies: a tool you can see is a run you 
 
 ## Task states
 
-| Run status                             | Task                                                            |
-| -------------------------------------- | --------------------------------------------------------------- |
-| `accepted`, `queued`, `processing`     | `working`                                                       |
-| `awaiting_input`                       | `input_required`, one form per open question, options as a list |
-| `awaiting_approval`                    | `input_required`, one "Allow tool?" checkbox per tool call      |
-| `completed`                            | `completed`, the agent's final text as the tool result          |
-| `failed`, `expired`                    | `completed` with `isError: true` and the error as text          |
-| Stopped with `tasks/cancel` or `/stop` | `cancelled`                                                     |
+| Run status                             | Task                                                               |
+| -------------------------------------- | ------------------------------------------------------------------ |
+| `accepted`, `queued`, `processing`     | `working`                                                          |
+| `awaiting_input`                       | `input_required`, one form per open question, options as a list    |
+| `awaiting_approval`                    | `input_required`, one form with an "Allow?" checkbox per tool call |
+| `completed`                            | `completed`, the agent's final text as the tool result             |
+| `failed`, `expired`                    | `completed` with `isError: true` and the error as text             |
+| Stopped with `tasks/cancel` or `/stop` | `cancelled`                                                        |
 
-Answer a form with `tasks/update`. A question answered with `decline` or `cancel` reaches the agent as "The user declined to answer." An approval is allowed only when its checkbox is accepted as true; anything else denies it.
+Answer a form with `tasks/update`. A question answered with `decline` or `cancel` reaches the agent as "The user declined to answer." An approval is allowed only when its checkbox is accepted as true; anything else, including declining the form, denies it.
 
 ## Gotchas
 
 - The client must declare the `io.modelcontextprotocol/tasks` extension on each request. Without it a tool call answers `-32021`.
 - The server speaks MCP revision 2026-07-28 only. A 2025-era client that opens with `initialize` gets `-32022`.
-- Answer every approval of a task in one `tasks/update`. A partial set is held back until the rest arrive.
 - `tasks/cancel` stops the run at its next model step. A task waiting on a form has no live run, so it stays waiting; answer it or leave it to expire.
 - Each call is a new conversation. To keep context across calls, use [conversations](conversations.md) on `/v1/runs` instead.
 

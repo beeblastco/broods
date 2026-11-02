@@ -158,6 +158,23 @@ describe("status route ingress/async merge", () => {
     expect(payload.response).toEqual({ answer: "done" });
   });
 
+  it("reports a failed continuation over the settled envelope", async () => {
+    ingressRow = ingress({ result: { status: "awaiting_input" } });
+    asyncRow = {
+      eventId: SCOPED_EVENT_ID,
+      conversationKey: SCOPED_CONVERSATION_KEY,
+      status: "failed",
+      error: "boom",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:01.000Z",
+      expiresAt: 1780000000,
+    };
+
+    const payload = await responseJson(await statusRequest());
+    expect(payload.status).toBe("failed");
+    expect(payload.error).toBe("boom");
+  });
+
   it("serves pure ingress statuses unchanged when no async record exists", async () => {
     ingressRow = ingress({ status: "queued" });
     asyncRow = null;

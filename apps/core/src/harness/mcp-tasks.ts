@@ -53,7 +53,6 @@ import { getIngressStatusByEventId } from "./ingress.ts";
 
 export const MCP_PATH = "/mcp";
 
-const ALLOW_FIELD = "allow";
 const APPROVAL_KEY_PREFIX = "approval-";
 // An approval reply's event id is the waiting run's plus this, so a task can
 // find the reply that carries it on without storing anything.
@@ -173,10 +172,14 @@ export function taskFromRuns(runs: TaskRuns): DetailedTaskV2 {
             `${QUESTION_KEY_PREFIX}${prompt.statusId}`,
             questionRequest(prompt),
           ]),
-          ...(current.approvals ?? []).map((approval) => [
-            `${APPROVAL_KEY_PREFIX}${approval.approvalId}`,
-            approvalRequest(approval),
-          ]),
+          ...(current.approvals?.length
+            ? [
+                [
+                  `${APPROVAL_KEY_PREFIX}${current.runId}`,
+                  approvalRequest(current.approvals),
+                ],
+              ]
+            : []),
         ]),
       };
     case "completed":
@@ -184,9 +187,11 @@ export function taskFromRuns(runs: TaskRuns): DetailedTaskV2 {
         ...base,
         status: "completed",
         result: toolResult(
-          typeof current.response === "string"
-            ? current.response
-            : JSON.stringify(current.response),
+          current.response === undefined
+            ? ""
+            : typeof current.response === "string"
+              ? current.response
+              : JSON.stringify(current.response),
           false,
         ),
       };
@@ -271,33 +276,26 @@ function agentTool(agent: AgentRecord): ToolV2 {
   };
 }
 
-/** Every pending approval as one boolean form; the reply waits until all are answered. */
+/**
+ * The run's one approval form, answered whole: one reply carries every
+ * decision, and its event id can be sent once.
+ */
 async function answerApprovals(
   caller: McpCaller,
   run: RunStatus,
   responses: Record<string, unknown>,
 ): Promise<void> {
-  const approvals = run.approvals ?? [];
-  const parts = approvals.flatMap((approval) => {
-    const decision = ElicitResultV2Schema.safeParse(
-      responses[`${APPROVAL_KEY_PREFIX}${approval.approvalId}`],
-    ).data;
-
-    return decision
-      ? [
-          {
-            type: "tool-approval-response",
-            approvalId: approval.approvalId,
-            approved:
-              decision.action === "accept" &&
-              decision.content?.[ALLOW_FIELD] === true,
-          },
-        ]
-      : [];
-  });
-  // One reply carries every decision of the run, and its event id can be
-  // sent once, so a partial set waits for the rest.
-  if (parts.length === 0 || parts.length < approvals.length) return;
+  const decision = ElicitResultV2Schema.safeParse(
+    responses[`${APPROVAL_KEY_PREFIX}${run.runId}`],
+  ).data;
+  if (!decision) return;
+  const parts = (run.approvals ?? []).map((approval) => ({
+    type: "tool-approval-response",
+    approvalId: approval.approvalId,
+    approved:
+      decision.action === "accept" &&
+      decision.content?.[approval.approvalId] === true,
+  }));
   await sendRunRequest(
     caller,
     {
@@ -363,18 +361,26 @@ async function approvalReply(
   return reply?.runId ? readRun(caller, reply.runId) : null;
 }
 
-function approvalRequest(approval: ToolApprovalSummary): ElicitRequestV2 {
+/** Every tool call waiting on approval as one checkbox of a single form. */
+function approvalRequest(approvals: ToolApprovalSummary[]): ElicitRequestV2 {
   return {
     method: "elicitation/create",
     params: {
       mode: "form",
-      message: `The agent wants to run ${approval.toolName} with ${JSON.stringify(approval.input)}.`,
+      message: "The agent wants to run these tools.",
       requestedSchema: {
         type: "object",
-        properties: {
-          [ALLOW_FIELD]: { type: "boolean", title: "Allow tool?" },
-        },
-        required: [ALLOW_FIELD],
+        properties: Object.fromEntries(
+          approvals.map((approval) => [
+            approval.approvalId,
+            {
+              type: "boolean",
+              title: `Allow ${approval.toolName}?`,
+              description: JSON.stringify(approval.input),
+            },
+          ]),
+        ),
+        required: approvals.map((approval) => approval.approvalId),
       },
     },
   };

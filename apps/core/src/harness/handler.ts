@@ -2163,11 +2163,14 @@ async function handleStatusRequest(
   // The async agent record keeps the public approval contract: while it is
   // nonterminal its status (processing/awaiting_approval) overrides the
   // envelope's terminal settle so pollers keep waiting and see approvals
-  // top-level, exactly as before durable ingress statuses existed.
+  // top-level, exactly as before durable ingress statuses existed. A failed
+  // record wins too: an answered question's continuation fails on the row
+  // after the envelope already settled.
   const status =
     asyncResult &&
     (asyncResult.status === "awaiting_approval" ||
       asyncResult.status === "awaiting_input" ||
+      asyncResult.status === "failed" ||
       (asyncResult.status === "processing" && result.status !== "failed"))
       ? asyncResult.status
       : result.status;

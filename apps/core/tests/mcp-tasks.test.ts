@@ -1,3 +1,8 @@
+/**
+ * MCP Tasks server tests: how `/mcp` maps runs onto tasks, and how tool calls,
+ * task updates and cancels replay through core's own run routes.
+ */
+
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { TASKS_EXTENSION_ID_V2 } from "@modelcontextprotocol/ext-tasks/core/v2";
 import type { AuthContext } from "../src/shared/auth.ts";
@@ -9,7 +14,14 @@ import type { CoreRequest } from "../src/shared/http.ts";
 import type { AccountRecord } from "../src/shared/domain/accounts.ts";
 import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
 
-const ACCOUNT = { accountId: "acct_1" } as AccountRecord;
+const ACCOUNT: AccountRecord = {
+  accountId: "acct_1",
+  username: "tester",
+  secretHash: "hash",
+  status: "active",
+  createdAt: "2026-06-01T00:00:00.000Z",
+  updatedAt: "2026-06-01T00:00:00.000Z",
+};
 const CREDENTIALS: Record<string, AuthContext> = {
   account: { kind: "account", account: ACCOUNT },
   frontend: {
@@ -70,6 +82,9 @@ describe("taskFromRuns", () => {
     for (const status of ["accepted", "queued", "processing"] as const) {
       expect(at({ status: status }).status).toBe("working");
     }
+    expect(at({ status: "completed" })).toMatchObject({
+      result: { content: [{ type: "text", text: "" }], isError: false },
+    });
     expect(at({ status: "completed", response: "done" })).toMatchObject({
       status: "completed",
       result: { content: [{ type: "text", text: "done" }], isError: false },
@@ -243,7 +258,7 @@ describe("handleMcpRequest", () => {
       mcpRequest("tasks/update", {
         taskId: "run_1",
         inputResponses: {
-          "approval-ap_1": { action: "accept", content: { allow: true } },
+          "approval-run_1": { action: "accept", content: { ap_1: true } },
         },
       }),
       replay,
