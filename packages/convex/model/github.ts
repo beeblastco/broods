@@ -499,9 +499,10 @@ export async function commitWorkflow(
       throw error;
     }
   }
-  // One setup branch per target, so each PR carries only its own base's history.
+  // One setup branch per target, reset to its base so a PR closed earlier
+  // still leaves a commit to open a new one from.
   const setupBranch = `broods/deploy-workflow-${branch}`;
-  await createBranch(app, token, fullName, branch, setupBranch);
+  await createBranch(app, token, fullName, branch, setupBranch, true);
   await putFile(
     app,
     token,
@@ -535,13 +536,14 @@ export async function commitWorkflow(
   return pull.html_url;
 }
 
-/** Cuts `branch` from `from`'s head; a branch that already exists is left as it is. */
+/** Cuts `branch` from `from`'s head. One that already exists is left as it is, or moved there with `reset`. */
 export async function createBranch(
   app: GitHubApp,
   token: string,
   fullName: string,
   from: string,
   branch: string,
+  reset = false,
 ): Promise<void> {
   const head = await githubRequest<{ object: { sha: string } }>(
     app,
@@ -549,10 +551,22 @@ export async function createBranch(
     "GET",
     `/repos/${fullName}/git/ref/heads/${encodeURIComponent(from)}`,
   );
-  await githubRequest(app, token, "POST", `/repos/${fullName}/git/refs`, {
-    ref: `refs/heads/${branch}`,
-    sha: head.object.sha,
-  }).catch(ignoreStatus(422));
+  try {
+    await githubRequest(app, token, "POST", `/repos/${fullName}/git/refs`, {
+      ref: `refs/heads/${branch}`,
+      sha: head.object.sha,
+    });
+  } catch (error) {
+    if (!(error instanceof GitHubApiError) || error.status !== 422) throw error;
+    if (!reset) return;
+    await githubRequest(
+      app,
+      token,
+      "PATCH",
+      `/repos/${fullName}/git/refs/heads/${encodeURIComponent(branch)}`,
+      { sha: head.object.sha, force: true },
+    );
+  }
 }
 
 /**
@@ -638,14 +652,22 @@ export async function startRepo(
   repo: GitHubRepo,
   files: Record<string, string>,
 ): Promise<void> {
-  // An install on selected repos does not reach a new one until it is added.
-  await githubRequest(
-    app,
-    userToken,
-    "PUT",
-    `/user/installations/${repo.installationId}/repositories/${repo.repoId}`,
-  );
   const token = await installationToken(app, repo.installationId);
+  // An install on all repos reaches the new one; one on selected repos needs it added.
+  const reached = await getRepo(app, token, repo.installationId, repo.repoId)
+    .then(() => true)
+    .catch((error: unknown) => {
+      if (error instanceof GitHubApiError && error.status === 404) return false;
+      throw error;
+    });
+  if (!reached) {
+    await githubRequest(
+      app,
+      userToken,
+      "PUT",
+      `/user/installations/${repo.installationId}/repositories/${repo.repoId}`,
+    );
+  }
   const branch = encodeURIComponent(repo.defaultBranch);
   const head = await githubRequest<{ object: { sha: string } }>(
     app,
@@ -897,13 +919,6 @@ async function getFile(
     if (error instanceof GitHubApiError && error.status === 404) return null;
     throw error;
   }
-}
-
-function ignoreStatus(status: number): (error: unknown) => void {
-  return (error: unknown): void => {
-    if (error instanceof GitHubApiError && error.status === status) return;
-    throw error;
-  };
 }
 
 // The lockfile nearest above `root`, walking up to the repo root; npm when none.
