@@ -1,6 +1,10 @@
 "use client";
 
-import { RepoPicker, type RepoChoice } from "@/app/components/RepoPicker";
+import {
+  ConnectGitHubButton,
+  RepoPicker,
+  type RepoChoice,
+} from "@/app/components/RepoPicker";
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -27,6 +31,7 @@ import { toErrorMessage } from "@/app/lib/errors";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { useRouter } from "next/navigation";
 import { analytics } from "@/app/lib/analytics";
 import { useEffect, useRef, useState } from "react";
@@ -46,7 +51,9 @@ export async function randomProjectName(): Promise<string> {
 }
 
 /** How a new project starts: empty, from an existing repo, or with a new repo. */
-type Source = "empty" | "import" | "new";
+const SOURCES = ["empty", "import", "new"] as const;
+
+type Source = (typeof SOURCES)[number];
 
 /**
  * Dialog that creates a new project, Railway-style: empty, imported from a
@@ -124,6 +131,10 @@ export function CreateProjectDialog({
     const session = closes.current;
     try {
       if (source !== "empty" && !endpoint.ok) throw new Error(endpoint.message);
+      // GitHub's repo name rule, checked before the project exists.
+      if (source === "new" && !/^[A-Za-z0-9._-]{1,100}$/.test(name.trim())) {
+        throw new Error("Repo names use letters, digits, '.', '-' and '_'.");
+      }
       const id =
         createdId ??
         (await createProject({ name: name.trim(), description: undefined }));
@@ -156,7 +167,7 @@ export function CreateProjectDialog({
           target: {
             installationId: repo.installationId,
             repoId: repo.repoId,
-            rootDirectory: repo.rootDirectory.replace(/^\/+|\/+$/g, ""),
+            rootDirectory: repo.rootDirectory,
             baseUrl: baseUrl,
           },
         });
@@ -170,7 +181,6 @@ export function CreateProjectDialog({
     }
   }
 
-  const owners = github?.installations ?? [];
   const ready =
     name.trim().length > 0 &&
     (source === "empty" ||
@@ -194,7 +204,9 @@ export function CreateProjectDialog({
             {github?.configured && (
               <Tabs
                 value={source}
-                onValueChange={(next) => setSource(next as Source)}
+                onValueChange={(next) =>
+                  setSource(SOURCES.find((entry) => entry === next) ?? "empty")
+                }
               >
                 <TabsList className="w-full">
                   <TabsTrigger value="empty" className="cursor-pointer">
@@ -237,9 +249,9 @@ export function CreateProjectDialog({
               disabled={createdId !== null}
               autoFocus
             />
-            {source === "new" && (
+            {source === "new" && github && (
               <NewRepoFields
-                owners={owners.map((installation) => installation.login)}
+                github={github}
                 owner={owner}
                 onOwnerChange={setOwner}
                 isPrivate={isPrivate}
@@ -277,21 +289,21 @@ export function CreateProjectDialog({
 
 // Where the new repo goes and whether it is private.
 function NewRepoFields({
-  owners,
+  github,
   owner,
   onOwnerChange,
   isPrivate,
   onPrivateChange,
 }: {
-  owners: string[];
+  github: FunctionReturnType<typeof api.github.status>;
   owner: string | null;
   onOwnerChange: (owner: string) => void;
   isPrivate: boolean;
   onPrivateChange: (isPrivate: boolean) => void;
 }): React.JSX.Element {
-  // No account yet: the picker shows Connect GitHub (or who to ask).
+  const owners = github.installations.map((installation) => installation.login);
   if (owners.length === 0) {
-    return <RepoPicker value={null} onChange={() => undefined} />;
+    return <ConnectGitHubButton disabled={!github.canConnect} />;
   }
 
   return (

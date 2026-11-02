@@ -17,15 +17,15 @@ Link a project to a GitHub repo and every push to its default or development bra
 
 An existing project links from **Settings > Git**.
 
-The first time, an org admin connects GitHub: the Broods GitHub App installs on your user or organization, on all repos or the ones you pick. Add more accounts the same way.
+The first time, an org admin connects GitHub: the Broods GitHub App installs on your user or organization, on all repos or the ones you pick. Add more accounts the same way. Broods connects only the accounts you administer on GitHub, your own or an organization you are an admin of, because the App reaches every repo of an installation, not just the ones you can see.
 
 ## What linking writes
 
 | In the repo                                              | What it is                                                  |
 | -------------------------------------------------------- | ----------------------------------------------------------- |
 | `.github/workflows/broods.yml` on both branches          | Installs your dependencies and runs `broods deploy --prune` |
-| Secret `BROODS_PRODUCTION_TOKEN`                         | A project key that can deploy only Production               |
-| Secret `BROODS_DEVELOPMENT_TOKEN`                        | A project key that can deploy only Development              |
+| Environment `broods-production`, secret `BROODS_TOKEN`   | A project key that can deploy only Production               |
+| Environment `broods-development`, secret `BROODS_TOKEN`  | A project key that can deploy only Development              |
 | A `dev` branch, cut from the default branch when missing | Pick another name under Development branch                  |
 
 The workflow detects bun, pnpm, yarn or npm from the lockfile nearest above `broods/`. It is a normal file: change the Node version, add tests before the deploy, or move the step into your own pipeline.
@@ -34,7 +34,7 @@ A protected default branch refuses a direct commit, so Broods opens a pull reque
 
 Each key sits in an environment only its branch may deploy from, so a workflow on any other branch cannot read Production's key. GitHub Free has no environments on private repos; there the keys go in as repo secrets `BROODS_PRODUCTION_TOKEN` and `BROODS_DEVELOPMENT_TOKEN`, which any branch's workflow can read, and **Settings > Git** says so.
 
-A repo deploys one project. Linking a repo another project already deploys from is refused until you unlink it there. The development branch must differ from the default branch.
+A repo deploys one project. Linking a repo another project already deploys from is refused until you unlink it there, and a linked project unlinks before it links another. The development branch must differ from the default branch; where `dev` is the default, Broods uses `development`.
 
 ## Deploy status
 

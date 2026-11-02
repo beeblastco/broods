@@ -5,7 +5,12 @@ import { dirname, join } from "node:path";
 
 import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
 import type { Doc } from "../../../packages/convex/_generated/dataModel.ts";
-import { startFakeGitHub, type FakeGitHub } from "../fake-github.ts";
+import { WORKFLOW_PATH } from "../../../packages/convex/model/github.ts";
+import {
+  startFakeGitHub,
+  type FakeGitHub,
+  type FakeRepo,
+} from "../fake-github.ts";
 import {
   assertStep,
   convexOutputJson,
@@ -16,10 +21,10 @@ import {
 const REPO_ROOT = join(import.meta.dir, "..", "..", "..");
 const CLI = join(REPO_ROOT, "packages", "broods", "src", "cli", "index.ts");
 const SDK = join(REPO_ROOT, "packages", "broods", "src", "index.ts");
-const WORKFLOW = ".github/workflows/broods.yml";
 const USER = { login: "octo", code: "octo-code" };
 const USER_INSTALLATION = 101;
 const ORG_INSTALLATION = 202;
+const MEMBER_INSTALLATION = 303;
 const ORG_REPO = 9001;
 
 interface Status {
@@ -80,6 +85,12 @@ export async function githubRepo(context: VerifyContext): Promise<void> {
     installations: [
       { id: USER_INSTALLATION, login: USER.login, type: "User" },
       { id: ORG_INSTALLATION, login: "acme", type: "Organization" },
+      {
+        id: MEMBER_INSTALLATION,
+        login: "partner",
+        type: "Organization",
+        role: "member",
+      },
     ],
     user: USER,
   });
@@ -110,13 +121,14 @@ export async function githubRepo(context: VerifyContext): Promise<void> {
   try {
     await setAppEnv(run, appEnv);
     await asAdmin("org/orgs:setActive", { orgId: orgId });
-    context.convex([
-      "run",
-      "--identity",
-      SELF_HOST_IDENTITY,
-      "org/lifecycle:provision",
-      JSON.stringify({ orgId: orgId }),
-    ]);
+    const provisioned = context.convex(
+      adminRun("org/lifecycle:provision", { orgId: orgId }),
+    );
+    assertStep(
+      "the org is provisioned",
+      provisioned.ok,
+      provisioned.output.slice(-300),
+    );
     const imported = await importRepo(run);
     await deployFromRepo(run, imported);
     const created = await createRepo(run);
@@ -190,10 +202,13 @@ async function connect(run: Run, projectId: string): Promise<void> {
     finished.returnTo === undefined,
     JSON.stringify(finished),
   );
+  // The user only belongs to partner, whose App token would reach every partner repo.
+  const connected = (await run.status(projectId)).installations;
   assertStep(
-    "both installations the user reaches are connected",
-    (await run.status(projectId)).installations.length === 2,
-    JSON.stringify((await run.status(projectId)).installations),
+    "only the accounts the user administers are connected",
+    connected.length === 2 &&
+      !connected.some((i) => i.installationId === MEMBER_INSTALLATION),
+    JSON.stringify(connected),
   );
   await run.refused("github:finish", { state: state, code: USER.code });
 }
@@ -266,10 +281,10 @@ async function link(
   assertStep(
     "the protected main gets the workflow through a PR",
     linked.setupPullRequestUrl === "https://github.com/acme/web/pull/1" &&
-      github.filesAt(ORG_REPO, "main")?.has(WORKFLOW) === false,
+      github.filesAt(ORG_REPO, "main")?.has(WORKFLOW_PATH) === false,
     JSON.stringify(linked),
   );
-  const workflow = github.filesAt(ORG_REPO, "dev")?.get(WORKFLOW) ?? "";
+  const workflow = github.filesAt(ORG_REPO, "dev")?.get(WORKFLOW_PATH) ?? "";
   const expected = [
     'branches: ["main", "dev"]',
     'working-directory: "apps/agents"',
@@ -280,8 +295,9 @@ async function link(
   assertStep(
     "dev gets the workflow directly, the same one the PR carries",
     expected.every((line) => workflow.includes(line)) &&
-      github.filesAt(ORG_REPO, "broods/deploy-workflow-main")?.get(WORKFLOW) ===
-        workflow,
+      github
+        .filesAt(ORG_REPO, "broods/deploy-workflow-main")
+        ?.get(WORKFLOW_PATH) === workflow,
     workflow,
   );
   const { production, development } = sealedKeys(github, linked, workflow);
@@ -362,16 +378,22 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
     JSON.stringify({ late: late, rerun: rerun }),
   );
 
+  const target = {
+    installationId: ORG_INSTALLATION,
+    repoId: ORG_REPO,
+    rootDirectory: "apps/agents",
+    baseUrl: context.edgeUrl,
+  };
   // A second project cannot take over the repo's one workflow and its keys.
   const other = await newProject(run, "gh-dupe");
   await run.refused("github:linkRepo", {
     projectId: other.projectId,
-    target: {
-      installationId: ORG_INSTALLATION,
-      repoId: ORG_REPO,
-      rootDirectory: "apps/agents",
-      baseUrl: context.edgeUrl,
-    },
+    target: target,
+  });
+  // A second link would leave the first one's keys behind in GitHub.
+  await run.refused("github:linkRepo", {
+    projectId: imported.projectId,
+    target: target,
   });
 
   await run.asAdmin("github:unlinkRepo", { projectId: imported.projectId });
@@ -381,6 +403,19 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
     "unlinking revokes the keys and clears the link and its runs",
     !revoked.ok && after.repo === undefined && after.deploys.length === 0,
     revoked.output,
+  );
+
+  // Linking again with another development branch leaves dev out of the environment.
+  await run.asAdmin("github:linkRepo", {
+    projectId: imported.projectId,
+    target: { ...target, developmentBranch: "staging" },
+  });
+  const repo = github.repos.get(ORG_REPO);
+  assertStep(
+    "a relink with another branch drops the old branch from the environment",
+    deployBranches(repo, "broods-development") === "staging" &&
+      deployBranches(repo, "broods-production") === "main",
+    deployBranches(repo, "broods-development"),
   );
 }
 
@@ -426,19 +461,20 @@ async function createRepo(run: Run): Promise<string> {
   const main = github.filesAt(created.id, "main");
   const files = [...(main?.keys() ?? [])].sort();
   assertStep(
-    "its first commit holds broods/ and the workflow, and dev is cut from it",
-    ["README.md", "broods/index.ts", WORKFLOW].every((file) =>
+    "main holds the starter broods/ and the workflow, and dev carries the workflow too",
+    ["README.md", "broods/index.ts", WORKFLOW_PATH].every((file) =>
       files.includes(file),
-    ) && github.filesAt(created.id, "dev") !== null,
+    ) && github.filesAt(created.id, "dev")?.has(WORKFLOW_PATH) === true,
     JSON.stringify(files),
   );
   const status = await run.status(projectId);
   assertStep(
-    "without environments the keys fall back to repo secrets, set before the first push",
+    "without environments the keys fall back to repo secrets, set before the workflow lands",
     created.secrets.size === 2 &&
-      created.secretsAtPush.every((count) => count === 2) &&
+      // The starter commit carries no workflow, so only the pushes after it run one.
+      created.secretsAtPush.slice(1).every((count) => count === 2) &&
       status.repo?.protectedSecrets === false &&
-      !(main?.get(WORKFLOW) ?? "").includes("environment:"),
+      !(main?.get(WORKFLOW_PATH) ?? "").includes("environment:"),
     JSON.stringify({ pushes: created.secretsAtPush, status: status }),
   );
   assertStep(
@@ -525,6 +561,14 @@ function deploy(
   };
 }
 
+// The branches an environment lets deploy, joined.
+function deployBranches(
+  repo: FakeRepo | undefined,
+  environment: string,
+): string {
+  return [...(repo?.environments?.get(environment)?.values() ?? [])].join();
+}
+
 // The Broods GitHub App env Convex reads, pointed at the fake this case serves.
 // One line per var in the env file, so the PEM's newlines go in escaped.
 function githubAppEnv(context: VerifyContext): Record<string, string> {
@@ -576,10 +620,8 @@ function sealedKeys(
       development.startsWith("bpdk_") &&
       production !== development &&
       repo?.secrets.size === 2 &&
-      [...(repo.environments?.get("broods-production") ?? [])].join() ===
-        "main" &&
-      [...(repo.environments?.get("broods-development") ?? [])].join() ===
-        "dev" &&
+      deployBranches(repo, "broods-production") === "main" &&
+      deployBranches(repo, "broods-development") === "dev" &&
       linked.protectedSecrets &&
       workflow.includes("BROODS_TOKEN: ${{ secrets.BROODS_TOKEN }}"),
     JSON.stringify([...(repo?.secrets.keys() ?? [])]),
@@ -622,7 +664,7 @@ function workflowRun(
     workflow_run: {
       id: id,
       run_attempt: attempt,
-      path: WORKFLOW,
+      path: WORKFLOW_PATH,
       head_branch: "dev",
       head_sha: "abc123",
       status: conclusion ? "completed" : "in_progress",
