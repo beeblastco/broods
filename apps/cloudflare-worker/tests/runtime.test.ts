@@ -1,10 +1,3 @@
-/**
- * Runs the real Worker in local workerd (Miniflare) with a real Worker Loader
- * and R2, so auth, the isolate boundary, persistence and the network policy
- * are checked against the runtime, not a mock. The outbound service stands in
- * for the web.
- */
-
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { buildRuntime } from "../scripts/build-runtime.ts";
@@ -75,7 +68,6 @@ it("runs a script with its positionals in the requested directory", async (): Pr
 
 it("keeps a reserved sandbox's files between calls and drops them on delete", async (): Promise<void> => {
   expect(await exists("sb-keep")).toBe(false);
-  // A command that only reads stores no disk, not even its working directory.
   await exec("sb-keep", { script: "ls", persist: true });
   expect(await exists("sb-keep")).toBe(false);
   await exec("sb-keep", {
@@ -96,7 +88,6 @@ it("keeps a reserved sandbox's files between calls and drops them on delete", as
 });
 
 it("stores only the first of two calls that raced on one disk and answers the other 409", async (): Promise<void> => {
-  // The first call holds its disk open while the second reads the same one.
   const [first, second] = await Promise.all([
     send("sb-race", { script: "sleep 1; echo one > one.txt", persist: true }),
     send("sb-race", { script: "echo two > two.txt", persist: true }),
@@ -173,13 +164,11 @@ it("caps each stream at the output limit on a character boundary", async (): Pro
     script: "yes | head -c 5000",
     outputLimitBytes: 1024,
   });
-  // Three-byte characters: 1024 bytes cut one in half, so 341 whole ones stay.
   const wide = await exec("sb-wide", {
     script: "printf '€%.0s' $(seq 1 400)",
     outputLimitBytes: 1024,
   });
 
-  // Past just-bash's old total cap: cut, not dropped.
   const huge = await exec("sb-huge", {
     script:
       "awk 'BEGIN{for(i=0;i<60000;i++) print \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}'",

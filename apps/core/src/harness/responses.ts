@@ -1,10 +1,3 @@
-/**
- * The HTTP and SSE answers the harness handler gives a run: admission
- * refusals, the 202s of async, socket and continuation runs, the SSE error and
- * empty bodies, and the pump that writes an agent stream out as frames. What
- * a run does stays in handler.ts; only the response shapes live here.
- */
-
 import { getHarnessPublicUrl } from "../shared/env.ts";
 import { errorResponse, jsonResponse } from "../shared/http.ts";
 import { publicEventIdForScope } from "../shared/runtime-keys.ts";
@@ -50,7 +43,6 @@ export function continuationResponse(
   });
 }
 
-/** The 202 a socket turn gets: the NATS scope the gateway streams the run from. */
 export function natsStartResponse(
   event: DirectInboundEvent,
   publicEventId: string,
@@ -58,8 +50,7 @@ export function natsStartResponse(
 ): Response {
   return jsonResponse(202, {
     eventId: publicEventId,
-    // Always sent, so the gateway can poll status in-cluster even when no
-    // public statusUrl exists (PUBLIC_BASE_URL unset).
+    // The gateway polls status in-cluster with it when no public statusUrl exists.
     runId: event.runId,
     conversationKey: event.publicConversationKey,
     status: "processing",
@@ -73,7 +64,6 @@ export function natsStartResponse(
   });
 }
 
-// The SSE body and the NATS worker share this pump; only `send` differs.
 export async function pipeAgentStream(
   stream: AgentLoopStream,
   send: (chunk: Record<string, unknown>) => Promise<void>,
@@ -209,8 +199,7 @@ export function directAdmissionResponse(
       : errorSseResponse(message, 409);
   }
   const publicEventId = publicEventIdFromScoped(admission.eventId, event);
-  // A duplicate answers with the first admission's run id, never the one this
-  // retry minted, so an idempotent POST keeps pointing at one run.
+  // A duplicate gets the first admission's run id, so an idempotent POST names one run.
   const runId = admission.runId ?? event.runId;
   const statusUrl = directStatusUrl({ runId: runId });
 

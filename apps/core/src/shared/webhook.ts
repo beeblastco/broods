@@ -1,5 +1,3 @@
-/** Outbound webhook signing and delivery. */
-
 import { createHmac } from "node:crypto";
 import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 import { assertPublicHttpsUrl, type PinnedFetchTransport } from "./http.ts";
@@ -14,16 +12,11 @@ export async function fireWebhook(
   payload: unknown,
   transport?: PinnedFetchTransport,
 ): Promise<void> {
-  // Protocol only, because a name is all this can see: configs may predate
-  // validation, and `guardedFetch` accepts http as well as https.
+  // guardedFetch pins checked public addresses but accepts http; https and no redirects keep
+  // the signed payload on TLS.
   assertPublicHttpsUrl(config.url, "webhook url");
   const body = JSON.stringify(payload);
   const signature = createWebhookSignature(config.secret, body);
-  // The address is the boundary, not the name. `guardedFetch` resolves once,
-  // refuses every private and metadata address the name resolves to, and pins
-  // the socket to the address it validated, so a name that resolves publicly
-  // during the check cannot resolve privately at connect. It revalidates each
-  // redirect too, which is why the old `redirect: "error"` is gone.
   const response = await guardedFetch(
     config.url,
     {
@@ -34,9 +27,6 @@ export async function fireWebhook(
       },
       body: body,
     },
-    // No redirects: the payload and its signature go to the host the account
-    // named or nowhere. Every hop would be revalidated, but http is a valid
-    // hop, so following one could carry a signed payload off TLS.
     { ...transport, redirectLimit: 0 },
   );
 

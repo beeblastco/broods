@@ -1,17 +1,11 @@
 "use client";
 
-/**
- * CodeMirror editor for tool source and read-only file previews: JavaScript
- * and TypeScript highlighting and bracket matching. Formatting lives in
- * `@/app/lib/formatSource` so importing it does not drag CodeMirror in.
- */
 import { javascript } from "@codemirror/lang-javascript";
 import { oneDark } from "@codemirror/theme-one-dark";
 import CodeMirror from "@uiw/react-codemirror";
 import { useTheme } from "next-themes";
 import { useCallback, useMemo } from "react";
 
-/** `plain` shows text with no highlighting. */
 export type CodeLanguage = "javascript" | "typescript" | "plain";
 
 const EXTENSIONS = {
@@ -20,6 +14,7 @@ const EXTENSIONS = {
   plain: [],
 };
 
+// Formatting lives in `@/app/lib/formatSource`, so importing it never pulls in CodeMirror.
 export function CodeEditor({
   value,
   onChange,
@@ -31,7 +26,6 @@ export function CodeEditor({
   onChange: (next: string) => void;
   readOnly?: boolean;
   language?: CodeLanguage;
-  /** A CSS height; "100%" fills a parent that has one. */
   height?: string;
 }): React.JSX.Element {
   const { resolvedTheme } = useTheme();

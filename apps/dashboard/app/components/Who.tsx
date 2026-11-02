@@ -19,40 +19,30 @@ import { navHref } from "@/app/lib/navigation";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
-/** How many avatars a group shows before folding the rest into a count. */
 const GROUP_MAX = 3;
 
-/** A member as the backend names them; the shape every `createdBy` carries. */
 export interface Person {
   name: string;
   avatarUrl?: string | null;
 }
 
-/** Anyone a cell names: a person, an agent, or the platform itself. */
 export type Actor =
   | Person
   | { kind: "agent"; name: string; agentId: Id<"agents"> }
   | { kind: "platform" };
 
-/** The platform as an actor: built-in rows and minted keys say Broods made them. */
 export const PLATFORM: Actor = { kind: "platform" };
 
-/**
- * Avatar plus name, the one shape every Created by, Invited by and Agent cell
- * uses. An agent's name links to the canvas with that agent's card open.
- */
 export function Who({
   actor,
   projectId,
 }: {
   actor: Actor;
-  /** Where an agent name links; a cell outside a project shows it plain. */
   projectId?: Id<"projects">;
 }): React.JSX.Element {
   const stage = useSearchParams().get("stage");
 
-  // A flex row, not inline: even middle-aligned, a 16px inline box sits on
-  // the line box and lifts the row by a pixel or two.
+  // flex, not inline: a 16px inline box sits on the line box and lifts the row a pixel.
   return (
     <span className="flex items-center gap-1.5">
       <ActorAvatar actor={actor} />
@@ -71,7 +61,6 @@ export function Who({
   );
 }
 
-/** Several actors as one avatar group; the names are the tooltip. */
 export function WhoGroup({ actors }: { actors: Actor[] }): React.JSX.Element {
   const shown = actors.slice(0, GROUP_MAX);
   const rest = actors.length - shown.length;
@@ -83,6 +72,7 @@ export function WhoGroup({ actors }: { actors: Actor[] }): React.JSX.Element {
         aria-label={actors.map(actorName).join(", ")}
       >
         {shown.map((actor, index) => (
+          // oxlint-disable-next-line react/no-array-index-key -- group slots; actors carry no id
           <ActorAvatar key={index} actor={actor} />
         ))}
         {rest > 0 && <AvatarGroupCount>+{rest}</AvatarGroupCount>}
@@ -92,11 +82,6 @@ export function WhoGroup({ actors }: { actors: Actor[] }): React.JSX.Element {
   );
 }
 
-/**
- * The cell avatar alone: a person's picture or initials, an agent's dither,
- * the Broods mark. The height of its text line, so a row with one stays the
- * height of a row without.
- */
 export function ActorAvatar({ actor }: { actor: Actor }): React.JSX.Element {
   if ("kind" in actor && actor.kind === "agent") {
     return (
@@ -123,7 +108,6 @@ export function ActorAvatar({ actor }: { actor: Actor }): React.JSX.Element {
   );
 }
 
-/** What a Created by cell calls the actor: the platform is Broods, anyone else their name. */
 export function actorName(actor: Actor): string {
   return "kind" in actor && actor.kind === "platform" ? "Broods" : actor.name;
 }

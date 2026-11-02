@@ -1,8 +1,3 @@
-/**
- * Harness skill prompt loading for model context.
- * Keep account skill CRUD in account-manage and shared rules in _shared.
- */
-
 import type { HarnessAgentSkill } from "@ai-sdk/harness/agent";
 import { MAX_CONFIGURED_SKILLS } from "@broods/convex/model/skillLimits";
 import { MAX_SKILL_METADATA_BYTES } from "@broods/convex/model/skillRules";
@@ -36,14 +31,9 @@ import {
   type SkillMetadata,
 } from "../shared/skills.ts";
 
-// Skills are re-staged fresh on every `load_skill`: the account skill bucket is the
-// source of truth, and each load copies a clean read/run checkout into the run path so
-// the agent can execute bundled scripts in the sandbox. The canonical copy lives under
-// `.claude/skills/<name>`; the same bundle is mirrored into SKILL_MIRROR_DIRS for tools
-// that expect those locations.
+// Every load_skill re-stages a clean copy from the skills bucket, the source of truth.
 const SKILL_CANONICAL_DIR = ".claude/skills";
 const SKILL_MIRROR_DIRS = [".agents/skills"];
-// S3 calls one skill load keeps in flight against the skills bucket.
 const SKILL_READ_CONCURRENCY = 8;
 
 interface SkillBundleSandboxStage {
@@ -74,9 +64,7 @@ export async function listConfiguredSkillMetadata(
   );
 }
 
-// Runs every turn, so it reads only the head of each SKILL.md that holds the
-// frontmatter, a few at a time. A head that does not parse, such as frontmatter
-// running past it, skips that skill rather than failing the turn.
+// Runs every turn, so it reads only each SKILL.md head; one that does not parse is skipped.
 export async function listSkillMetadataForConfig(
   accountId: string,
   skillPaths: string[] = [],
@@ -101,11 +89,7 @@ export async function listSkillMetadataForConfig(
   return metadata.filter((entry): entry is SkillMetadata => entry !== null);
 }
 
-// The listing's sizes hold every configured skill to the bundle budget before
-// any file is read, and each read is refused past its listed size, so a file
-// swapped for a larger one after the listing is not downloaded either. A skill
-// whose SKILL.md cannot be read is left out, as in the metadata list; only a
-// missing one fails the run.
+// Each read is capped at its listed size, so a file grown after the listing stays in budget.
 export async function loadConfiguredHarnessSkills(
   accountId: string | undefined,
   agentConfig: AgentConfig,
@@ -143,7 +127,7 @@ export async function loadConfiguredHarnessSkills(
   const loaded = await Promise.all(
     listed.map(
       async ({ skillPath, files }): Promise<HarnessAgentSkill | null> => {
-        // The listing sorts SKILL.md first.
+        // listSkillSourceFiles sorts SKILL.md first.
         const [skillFile, ...resources] = files;
         if (skillFile?.path !== SKILL_FILE) {
           throw new SkillNotFoundError(skillPath);
@@ -195,8 +179,7 @@ export async function loadConfiguredSkillPrompt(
   if (!allowedSkillPaths.includes(skillPath)) {
     throw new Error(`Skill is not configured for this agent: ${skillPath}`);
   }
-  // `skills.allowed` is only checked to be strings, so the tool holds the
-  // ownership line itself rather than lean on the metadata listing failing.
+  // `skills.allowed` is only checked to be strings, so ownership is enforced here.
   if (!accountId) {
     throw new Error("Skills require an account-scoped run");
   }
@@ -236,7 +219,6 @@ export async function loadSkillContent(
 
   const skillText = await readSkillText(skillPath, SKILL_FILE);
   const skill = parseSkillMarkdown(skillText);
-  // Each bundled file once, so a repeated path cannot multiply the reads.
   const safeResourcePaths = [
     ...new Set(resourcePaths.map(normalizeBundlePath)),
   ].filter((resource) => resource !== SKILL_FILE);
@@ -321,8 +303,6 @@ function formatLoadedSkillPrompt(
     ? `\n\n## Sandbox files\n\nThis skill's helper files are staged inside the current sandbox at \`${staged.stagedPath}\`. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or direct executable paths when the file has a shebang.${mirrorText}`
     : "\n\n## Sandbox files\n\nThe skill instructions are loaded. No sandbox staging path is available for bundled helper files in this turn, so bundled scripts are not available to execute.";
 
-  // See https://github.com/microsoft/agent-framework/discussions/4239: loaded skills stay in
-  // refreshed system instructions instead of polluting chat history.
   return `<loaded-skill path="${loaded.path}" name="${loaded.skill.name}">
 ${parts}${sandboxText}
 </loaded-skill>`;
@@ -365,9 +345,7 @@ function mirrorStagePrefixes(
   );
 }
 
-// The skill paths an agent lists, each once, capped and checked for ownership
-// before any is read. A config stored before the config-time cap keeps running
-// on its first MAX_CONFIGURED_SKILLS skills.
+// A config saved before the config-time cap keeps running on its first MAX_CONFIGURED_SKILLS.
 function ownedSkillPaths(accountId: string, skillPaths: string[]): string[] {
   const unique = [...new Set(skillPaths)];
   if (unique.length > MAX_CONFIGURED_SKILLS) {
@@ -383,8 +361,6 @@ function ownedSkillPaths(accountId: string, skillPaths: string[]): string[] {
   return used;
 }
 
-// A SKILL.md read doubles as the existence check: a 404 fails the turn as a
-// missing skill, and any other read or parse error skips the skill.
 async function readSkillOrSkip<T>(
   skillPath: string,
   read: Promise<T>,
@@ -402,8 +378,6 @@ async function readSkillOrSkip<T>(
   });
 }
 
-// Holds one load's S3 calls to SKILL_READ_CONCURRENCY in flight. A finished
-// call hands its slot straight to the next waiting one.
 function skillReadLimit(): <T>(call: () => Promise<T>) => Promise<T> {
   let active = 0;
   const waiting: Array<() => void> = [];

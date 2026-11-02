@@ -9,7 +9,6 @@ const textareaVariants = cva(
     variants: {
       variant: {
         default: "",
-        // JSON, config, and tool input editors.
         code: "bg-muted/50 font-mono text-xs",
       },
     },

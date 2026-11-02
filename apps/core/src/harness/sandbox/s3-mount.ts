@@ -1,29 +1,3 @@
-/**
- * Workspace S3 mount resolution, shared by the runtime-mount providers (workdir,
- * daytona, vercel). Turns a workspace's storage config (bucket / region /
- * endpoint / prefix / auth) plus the managed defaults into a concrete mount
- * target with credentials. Platform credentials only ever reach the managed
- * bucket (`workspaceStorageOwnAuth`). Four credential sources, in precedence:
- *   - `assumeRole` (bring-your-own bucket): assume the developer's cross-account
- *     role, scoped to their bucket/prefix. Keyless; always sends the account's
- *     Broods-assigned ExternalId, so no other account can reach that role.
- *   - `r2` (bring-your-own R2 bucket): the config plane signs R2 temporary
- *     credentials scoped to bucket/prefix. The parent keys never leave Convex.
- *   - managed + platform role (SANDBOX_MOUNT_ROLE_ARN): assume the broods role,
- *     scoped to the namespace prefix of the managed bucket.
- *   - managed + no role: no harness-resolved credentials. The provider supplies
- *     them another way (workdir's declarative org secrets / sandbox envVars).
- *
- * Credentials are always short-lived and scoped to the mount's own prefix, so the
- * harness's broad creds never reach a sandbox (any code the agent runs can read
- * the mount env). mount-s3 reads them from the standard env credential chain.
- * A session minted for a sandbox names who it serves: the agent on that agent's
- * own folder, the account on a mount other agents can reuse. The name is on
- * every role, SourceIdentity plus session tags on the platform role, so
- * CloudTrail ties each S3 call back to an account, and to one agent where the
- * mount is one agent's alone.
- */
-
 import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
 import {
   assertStorageEndpoint,
@@ -40,38 +14,24 @@ import { getStorage } from "../../shared/storage.ts";
 import type { SandboxExecutorConfig, SandboxRunRequest } from "./types.ts";
 import { configString, shellQuote } from "./utils.ts";
 
-// A cached bring-your-own read target is reused until its credentials are this
-// close to expiry: longer than the 300s presign a read target can back, plus
-// room for clock skew.
+// Past the 300s presign a read target can back, plus clock skew.
 const READ_TARGET_REFRESH_MARGIN_MS = 10 * 60 * 1000;
-// R2 temporary credentials die the moment their parent token is revoked, so a
-// rotated token reaches harness reads within this long, not near expiry.
+// R2 temporary credentials die with their parent token, so a rotation reaches reads this fast.
 const R2_READ_TARGET_REUSE_MS = 60 * 1000;
-// The mount's assume-role session lasts an hour and mount-s3 takes its credentials as
-// process env, so the only way to hand it new ones is to replace the daemon. Remount
-// with this much of the session left, rather than letting it expire into I/O errors.
+// mount-s3 reads its credentials from env once, so remount before the 1h session expires.
 const MOUNT_MAX_AGE_SECONDS = 45 * 60;
 const MOUNT_SESSION_NAME = "fp-sandbox-mount";
-// STS caps RoleSessionName and SourceIdentity at 64 characters; the session
-// name is `${MOUNT_SESSION_NAME}-${identity}`, so the identity gets the rest.
+// STS caps RoleSessionName and SourceIdentity at 64 characters.
 const SESSION_IDENTITY_MAX_LENGTH = 64 - MOUNT_SESSION_NAME.length - 1;
-// Bring-your-own read targets keyed by everything the session is scoped to.
-// The pending promise is cached, so parallel first reads of one workspace share
-// a single STS (or R2 mint) round trip and, through s3.ts, a single S3 client.
 const readTargetCache = new Map<
   string,
   { target: Promise<S3ReadTarget>; staleAt: number }
 >();
 
 export interface ResolvedS3Mount extends S3MountIdentity {
-  // Present when the harness resolved credentials (assume-role / R2 / platform role).
-  // Absent => the provider must supply credentials itself (workdir declarative
-  // org secrets, or static keys in the sandbox envVars).
   credentials?: S3MountCredentials;
 }
 
-// Who a sandbox mount session is minted for. Absent on harness-side reads, which
-// run on core's own identity or a read-only session nobody executes code under.
 export interface S3MountAttribution {
   accountId: string;
   agentId?: string;
@@ -80,7 +40,6 @@ export interface S3MountAttribution {
 export interface S3MountContext {
   storage: WorkspaceStorageConfig | undefined;
   namespace: string;
-  // broods-managed bucket fallback (FILESYSTEM_BUCKET_NAME) when storage omits one.
   managedBucket?: string;
   region?: string;
   endpoint?: string;
@@ -91,35 +50,26 @@ export interface S3MountCredentials {
   AWS_ACCESS_KEY_ID: string;
   AWS_SECRET_ACCESS_KEY: string;
   AWS_SESSION_TOKEN: string;
-  // RFC3339 expiry. A sandbox that serves these to mountpoint-s3 needs it to know
-  // when to re-fetch; without it the session reads as non-expiring.
+  // Without it, mountpoint-s3 treats the session as non-expiring.
   AWS_CREDENTIAL_EXPIRATION?: string;
 }
 
 export interface S3MountIdentity {
   bucket: string;
-  // Key prefix the mount exposes and the session is scoped to; non-empty, "/"-terminated.
   prefix: string;
   region?: string;
   endpoint?: string;
 }
 
-// Where a harness-side read of a workspace lands: the bucket + key prefix, plus the
-// S3 access for a bring-your-own bucket (undefined => default client / managed bucket).
-// `credentialsExpireAt` is set only for an assumed session. A presigned URL cannot
-// outlive the credentials that signed it, so a caller minting one must clamp to it.
 export interface S3ReadTarget {
   bucket: string;
   prefix: string;
   access?: S3Access;
+  // A presigned URL cannot outlive the credentials that signed it, so clamp one to this.
   credentialsExpireAt?: Date;
 }
 
-// Assume `roleArn` with a session policy narrowed to `bucket/prefix/*`; the prefix
-// must end in "/" so `agents/` never also matches `agents-archive/`. The session
-// is named for `attribution`; the platform role, whose trust policy grants
-// sts:SetSourceIdentity and sts:TagSession, also gets it as SourceIdentity and
-// session tags.
+// The prefix ends in "/" so `agents/` never also matches `agents-archive/`.
 export async function assumeScopedMountCredentials(params: {
   roleArn: string;
   bucket: string;
@@ -154,6 +104,7 @@ export async function assumeScopedMountCredentials(params: {
 
   const attribution = params.attribution;
   const identity = attribution && sessionIdentity(attribution);
+  // Only the platform role's trust policy grants sts:SetSourceIdentity and sts:TagSession.
   const platformRole = params.roleArn === optionalEnv("SANDBOX_MOUNT_ROLE_ARN");
   const result = await new STSClient({}).send(
     new AssumeRoleCommand({
@@ -196,8 +147,6 @@ export async function assumeScopedMountCredentials(params: {
   };
 }
 
-// The mount context an executor resolves a run's workspace against: the config's
-// storage, else the managed bucket, with `options` overriding the env defaults.
 export function executorS3Context(
   config: SandboxExecutorConfig,
   request: Pick<SandboxRunRequest, "namespace" | "metadata">,
@@ -222,12 +171,8 @@ export function executorS3Context(
   };
 }
 
-// Exits 0 when the workspace is mounted on credentials younger than
-// MOUNT_MAX_AGE_SECONDS, and leaves `$stamp_file` set for the remount that writes it.
-// Age comes from a stamp written with the harness's clock, not the guest's, which a
-// Firecracker pause freezes. The stamp sits on agent-writable disk, so anything that
-// is not a plain epoch (non-digits, a leading zero that dash refuses as octal, more
-// than ten digits, a future time) reads as "unknown age" and fails the check.
+// Age is on the harness clock, since a Firecracker pause freezes the guest's. The stamp is
+// agent-writable, so anything but a plain epoch (dash reads a leading 0 as octal) fails.
 export function freshMountScript(mountPath: string, now: number): string {
   return [
     `stamp_file=${shellQuote(`${mountPath}.mounted-at`)};`,
@@ -238,9 +183,7 @@ export function freshMountScript(mountPath: string, now: number): string {
   ].join("\n");
 }
 
-// The attribution an executor attaches to a sandbox mount: the account, plus the
-// run's agent only on that agent's own folder, because any other mount's
-// credentials are reused by the next agent. Undefined without an account.
+// The agent is named only on its own folder: any other mount's creds serve the next agent too.
 export function mountAttribution(
   config: { controlPlane?: Pick<SandboxControlPlane, "accountId"> },
   request: Pick<SandboxRunRequest, "namespace" | "metadata">,
@@ -255,10 +198,6 @@ export function mountAttribution(
   return { accountId: accountId, agentId: ownFolder ? agentId : undefined };
 }
 
-// The mount role for a workspace: its own role for a bucket it names, else the
-// platform role (SANDBOX_MOUNT_ROLE_ARN). Undefined => no role; the provider
-// supplies credentials another way, or the bucket is R2. Sync, so the mount
-// strategy can branch on it.
 export function mountRoleArn(
   storage: WorkspaceStorageConfig | undefined,
 ): string | undefined {
@@ -283,7 +222,6 @@ export async function resolveS3Mount(
 
     return {
       ...identity,
-      // R2 signs for region "auto"; validation refuses any other.
       region: "auto",
       credentials: {
         AWS_ACCESS_KEY_ID: minted.accessKeyId,
@@ -307,12 +245,9 @@ export async function resolveS3Mount(
   return { ...identity, ...(credentials ? { credentials: credentials } : {}) };
 }
 
-// Resolve the mount identity (bucket / prefix / region / endpoint). No STS call.
-// A bring-your-own bucket uses its own layout under a required prefix; the shared
-// managed bucket is partitioned by namespace. Every mount and read resolves here,
-// so the storage access rule is enforced here.
 export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
   const storage = ctx.storage;
+  // Every mount and read resolves here, so the storage access rule is enforced here.
   if (storage) workspaceStorageOwnAuth(storage);
   if (!storage?.endpoint && ctx.endpoint) {
     assertStorageEndpoint(ctx.endpoint, "options.s3Endpoint");
@@ -345,10 +280,6 @@ export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
   };
 }
 
-// Resolve a harness read target. The managed bucket is read directly on the
-// harness's own role (no per-read STS) exactly as before; a bring-your-own bucket
-// gets short-lived, prefix-scoped creds (its role, or minted R2 creds), reused
-// until they near expiry, or for a minute on R2.
 export async function resolveS3ReadTarget(
   ctx: S3MountContext,
 ): Promise<S3ReadTarget> {
@@ -385,9 +316,6 @@ export async function resolveS3ReadTarget(
   return pending;
 }
 
-// Build the resolver context for a harness-side read of a workspace's storage,
-// using the env defaults (managed bucket / region) the harness runs with. The
-// bring-your-own endpoint, when set, rides storage.endpoint.
 export function workspaceReadContext(
   storage: WorkspaceStorageConfig | undefined,
   namespace: string,
@@ -411,9 +339,7 @@ function joinPrefix(
   return joined ? `${joined}/` : "";
 }
 
-// A customer role is always assumed with its account's external id, which
-// Broods assigns, so another account naming the same role is refused by its
-// trust policy. The platform role (managed bucket) takes none.
+// The Broods-assigned external id keeps another account from assuming the same customer role.
 async function mountExternalId(
   storage: WorkspaceStorageConfig | undefined,
 ): Promise<string | undefined> {
@@ -431,7 +357,6 @@ function namespaceIsolationSuffix(namespace: string): string | undefined {
   return separator >= 0 ? namespace.slice(separator + 1) : undefined;
 }
 
-// A target without assumed credentials never expires.
 function nearsExpiry(target: S3ReadTarget): boolean {
   return (
     target.credentialsExpireAt !== undefined &&
@@ -465,8 +390,6 @@ async function readTargetFromMount(ctx: S3MountContext): Promise<S3ReadTarget> {
   };
 }
 
-// The agent a session serves, or the account when no agent is known, in the
-// `[\w+=,.@-]` alphabet STS allows for session names and SourceIdentity (no colon).
 function sessionIdentity(attribution: S3MountAttribution): string {
   return (attribution.agentId ?? `acct-${attribution.accountId}`)
     .replace(/[^\w+=,.@-]/g, "-")

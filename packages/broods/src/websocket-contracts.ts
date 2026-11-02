@@ -1,7 +1,3 @@
-/**
- * Shared WebSocket wire message contracts used by the SDK client and gateway.
- */
-
 import type { AgentRunEventInput, AgentRunOverrides } from "./run-input.ts";
 import type { AgentStreamPart } from "./stream.ts";
 
@@ -45,9 +41,8 @@ export type AgentRunAnswerInput = {
 };
 
 /**
- * A frame too large for NATS arrives as its own `type` with `truncated: true`
- * and `originalBytes`, its payload dropped. Read the full result from the run
- * status.
+ * A frame too large for NATS keeps its `type`, gains `truncated: true` and `originalBytes`,
+ * and drops its payload: read the full result from the run status.
  */
 export type WebSocketStreamMessage =
   | AgentStreamPart
@@ -97,9 +92,8 @@ export type WebSocketServerMessage =
   | WebSocketStreamMessage;
 
 /**
- * Durable-stream envelope around one stream part. The SDK unwraps `data` for
- * handlers and surfaces the envelope itself through `onOutput` so clients can
- * persist `cursor` for attach-based resume.
+ * The SDK unwraps `data` for handlers and passes this envelope to `onOutput`, so a client
+ * can persist `cursor` to resume with `attach`.
  */
 export type WebSocketOutputMessage = {
   type: "output";

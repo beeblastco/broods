@@ -1,10 +1,3 @@
-/**
- * Shared primitives for CLI manifest sync: account/project/stage resolution,
- * manifest validation, env-ref and resource-ref rewriting, sandbox config
- * decryption, and the rename-comparison snapshots the sync passes use.
- * The registered Convex functions live in `cli/sync.ts`.
- */
-
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
@@ -36,11 +29,7 @@ import { ClientError } from "./clientError";
 // Exceeds Convex's 30-minute HTTP action limit plus a 10-minute child Node action.
 const MANIFEST_SYNC_TIMEOUT_MS = 45 * 60_000;
 
-/**
- * Resource kinds owned by the account service and snapshotted per stage in
- * `cliExternalResources`. The one list behind every "is this external" filter
- * and the per-kind id lookups, so adding a kind cannot half-land.
- */
+// Kinds the account service owns, snapshotted per stage in `cliExternalResources`.
 export const EXTERNAL_RESOURCE_KINDS = ["skill", "hook", "mcp"] as const;
 
 export type CliResource = CliManifestResource;
@@ -67,10 +56,6 @@ export function asObject(value: unknown): Record<string, unknown> {
   return value;
 }
 
-/**
- * Refuse a browser agent whose first sandbox cannot run Obscura. A sandbox name
- * this manifest does not declare is left to core, which checks it at run start.
- */
 export function assertBrowserSandboxes(resources: CliResource[]): void {
   const sandboxes = new Map(
     resources
@@ -82,6 +67,7 @@ export function assertBrowserSandboxes(resources: CliResource[]): void {
     if (plainRecord(config.browser).enabled !== true) continue;
     const name = defaultSandboxOf(config);
     const sandbox = name === undefined ? undefined : sandboxes.get(name);
+    // Core checks a sandbox this manifest does not declare at run start.
     if (name !== undefined && sandbox === undefined) continue;
     const sandboxConfig = plainRecord(sandbox?.config);
     const problem = browserSandboxRefusal(
@@ -95,22 +81,16 @@ export function assertBrowserSandboxes(resources: CliResource[]): void {
   }
 }
 
-/**
- * Rejects a manifest whose `env("NAME")` has no value stored for the stage,
- * which would otherwise reach the runtime as a literal `${NAME}`. `stage` names
- * the stage in the suggested commands.
- */
 export function assertEnvRefsResolved(
   resources: CliResource[],
   envValues: Record<string, string>,
   stage: string,
 ): void {
-  // Reuses the rewrite walker so collection cannot drift from substitution.
+  // The rewrite walker collects, so collection cannot drift from substitution.
   const referenced = new Set<string>();
   for (const resource of resources) {
     rewriteEnvRefs(asObject(resource.config), referenced);
-    // MCP headers and oauth, and a workspace's R2 keys, name their values as
-    // `${NAME}` strings, not env() refs.
+    // MCP headers and oauth and a workspace's R2 keys hold `${NAME}` strings, not env() refs.
     const config = asObject(resource.config);
     if (resource.kind === "agent") {
       collectEnvPlaceholderNames(config.mcp, referenced);
@@ -129,7 +109,7 @@ export function assertEnvRefsResolved(
     .filter((name) => envValues[name] === undefined)
     .sort();
   if (missing.length === 0) return;
-  // `broods env` defaults to the dev stage, so the commands must name this one.
+  // `broods env` defaults to the dev stage.
   const flag = `--stage ${stage}`;
 
   throw new ClientError(
@@ -138,11 +118,6 @@ export function assertEnvRefsResolved(
   );
 }
 
-/**
- * Refuse a stage-scoped workspace or sandbox whose name an account-scoped row
- * (created through the REST API, no stage) already holds, rather than silently
- * creating a second row with the same name and a different runtime id.
- */
 export async function assertNoAccountScopedResourceConflict(
   ctx: MutationCtx,
   options: {
@@ -240,12 +215,6 @@ export async function authIdForAccount(
   return org?.ownerAuthId ?? null;
 }
 
-/**
- * Claims the stage's next manifest revision for a sync. A sync that sends the
- * revision it read is refused when another sync claimed one since; one that
- * sends none claims only after the previous sync has finished.
- * @returns the revision this sync writes
- */
 export async function claimManifestRevision(
   ctx: MutationCtx,
   stageId: Id<"stages">,
@@ -363,8 +332,7 @@ export async function ensureProject(
   const created = await ctx.db.get(projectId);
   if (!created) throw new Error("Failed to create project");
 
-  // Seed a Development default so the dashboard lands on Development even when
-  // the first CLI command deploys straight to Production.
+  // Seeded so the dashboard lands on Development even when the first deploy is Production.
   await ctx.db.insert("stages", {
     authId: org.ownerAuthId,
     projectId: projectId,
@@ -409,14 +377,11 @@ export async function ensureStage(
       }
     }
 
-    // As patched, so a caller reads the kind this call just set.
     return existing.kind !== kind || existing.name !== fixed.name
       ? { ...existing, ...fixed }
       : existing;
   }
 
-  // Only Development is ever the default; Production/custom stages are
-  // never auto-defaulted, even when created first.
   const stageId = await ctx.db.insert("stages", {
     authId: project.authId,
     projectId: project._id,
@@ -439,12 +404,7 @@ export async function ensureStage(
   return created;
 }
 
-/**
- * The region a manifest PUT pins on Production, or undefined when there is
- * nothing to pin: another stage, or Production already pinned. The first
- * deploy pins the manifest's region, else eu-west-1. Data stays where it was
- * first deployed, so a deploy naming another region is refused, not moved.
- */
+// Data stays where Production first deployed: another region is refused, never moved.
 export function deploymentRegionToPin(
   stage: Doc<"stages">,
   region: DeploymentRegion | undefined,
@@ -475,7 +435,6 @@ export function deploymentRegionToPin(
   return region ?? LIVE_DEPLOYMENT_REGIONS[0];
 }
 
-/** A stage env var name from the CLI, trimmed and held to the one env name rule. */
 export function envName(value: string): string {
   const trimmed = value.trim();
   assertEnvVarName(trimmed);
@@ -489,7 +448,6 @@ export function isExternalResourceKind(
   return (EXTERNAL_RESOURCE_KINDS as readonly string[]).includes(kind);
 }
 
-/** The stage's manifest revision: 0 until its first sync. */
 export async function manifestRevision(
   ctx: QueryCtx | MutationCtx,
   stageId: Id<"stages">,
@@ -539,7 +497,6 @@ export function renameComparableResource(
   };
 }
 
-/** Releases only this sync's claim, including when validation or an upload failed. */
 export async function releaseManifestSync(
   ctx: MutationCtx,
   stageId: Id<"stages">,
@@ -557,10 +514,7 @@ export function resourceName(value: string): string {
   return trimmed;
 }
 
-/**
- * Stand-in ids, shaped like native Convex ids, for the named resources a sync
- * would create, so its id-keyed rules can run before any row exists.
- */
+// Shaped like Convex ids, so id-keyed rules can run before the sync creates any row.
 export function placeholderIds(names: string[]): Record<string, string> {
   return Object.fromEntries(
     names.map((name, index): [string, string] => [
@@ -710,8 +664,7 @@ export function rewriteResourceRefs(
   if (Array.isArray(result.policies)) {
     result.policies = rewriteRefList(result.policies, policyIds);
   }
-  // `config.mcp` keys must end up as mcp row ids; a name that fails to
-  // map fails normalizeMcpConfig loudly rather than being left behind.
+  // A key that fails to map to an mcp row id fails normalizeMcpConfig loudly.
   if (isPlainObject(result.mcp)) {
     result.mcp = remapKeys(result.mcp, mcpIds);
   }
@@ -770,7 +723,6 @@ function rewriteEnvRefsValue(value: unknown, envNames: Set<string>): unknown {
   return value;
 }
 
-// Swap each string entry for its table value; anything else passes through.
 function rewriteRefList(
   entries: unknown[],
   table: Record<string, string>,

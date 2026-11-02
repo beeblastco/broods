@@ -119,9 +119,7 @@ describe("queued ingress recovery", () => {
         return { page: [], cursor: "end", isDone: true };
       },
     );
-    // One list a window: detached and pending subagent rows in completed,
-    // failed and processing; then detached and pending tool rows in
-    // completed and failed.
+    // One list per window: 2 handbacks x 3 subagent statuses, then x 2 tool statuses.
     const windows = 6;
     const toolWindows = 4;
     try {
@@ -136,7 +134,6 @@ describe("queued ingress recovery", () => {
 
       expect(pages).toHaveBeenCalledTimes(windows);
       expect(toolPages).toHaveBeenCalledTimes(toolWindows);
-      // The subagent pass runs first, whole.
       expect(listed.indexOf("tool")).toBe(windows);
     } finally {
       queued.mockRestore();
@@ -226,9 +223,8 @@ describe("queued ingress recovery", () => {
       "agent_parent",
       "chat",
     );
-    // One child finished but its run died before telling the parent; the
-    // other died with the pod while it ran, long past its budget, so its row
-    // is failed and the next sweep tells the parent.
+    // One child finished but its run died before telling the parent; the other died with the pod,
+    // long past its budget, so the sweep fails its row and tells the parent.
     const longAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const taskIds = [
       createSubagentTaskId(parentEventId),

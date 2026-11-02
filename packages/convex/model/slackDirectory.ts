@@ -1,9 +1,3 @@
-/**
- * Slack channel-directory fetcher backing the config plane's
- * GET /v1/agents/{id}/channels/slack/directory route. Kept free of Convex
- * imports so the pagination and error mapping are unit-testable.
- */
-
 import { isPlainObject } from "./objects";
 
 export type SlackDirectoryEntry = {
@@ -13,7 +7,6 @@ export type SlackDirectoryEntry = {
   isMember: boolean;
 };
 
-/** Directory outcome: the sorted channel list, or an HTTP status + reason for the route to relay. */
 export type SlackDirectoryResult =
   | { ok: true; channels: SlackDirectoryEntry[]; truncated: boolean }
   | {
@@ -21,7 +14,6 @@ export type SlackDirectoryResult =
       status: number;
       error: string;
       reason: "ratelimited" | "missing_scope" | "invalid_auth" | "slack_error";
-      /** Slack's own backoff, relayed so the caller does not have to guess. */
       retryAfterSeconds?: number;
     };
 
@@ -29,21 +21,12 @@ type SlackDirectoryPage =
   | { data: Record<string, unknown> }
   | { failure: Extract<SlackDirectoryResult, { ok: false }> };
 
-/** Defensive page cap so a huge workspace can't spin the action forever. */
 export const SLACK_DIRECTORY_PAGE_CAP = 10;
 
-/** Upper bound for each Slack API call so a stalled request can't hang the action. */
 export const SLACK_DIRECTORY_TIMEOUT_MS = 15_000;
 
-/** End-to-end pagination budget so slow-but-responsive pages fail fast as a truncated result instead of hitting upstream action timeouts. */
 export const SLACK_DIRECTORY_TOTAL_BUDGET_MS = 45_000;
 
-/**
- * Paginate Slack conversations.list (Tier 2, ~20 req/min) into a directory
- * result. `truncated` is true when the page cap or time budget was hit while
- * Slack still reported another cursor; malformed entries are skipped rather
- * than returned.
- */
 export async function fetchSlackChannelDirectory(
   botToken: string,
   fetchImpl: typeof fetch = fetch,
@@ -52,8 +35,6 @@ export async function fetchSlackChannelDirectory(
   const deadline = Date.now() + SLACK_DIRECTORY_TOTAL_BUDGET_MS;
   let cursor: string | undefined;
   for (let page = 0; page < SLACK_DIRECTORY_PAGE_CAP; page++) {
-    // Later pages only run while the overall budget holds; what's already
-    // collected is returned as a truncated result below.
     if (page > 0 && Date.now() >= deadline) break;
     const result = await fetchSlackDirectoryPage(botToken, cursor, fetchImpl);
     if ("failure" in result) {
@@ -89,7 +70,6 @@ function appendSlackDirectoryEntries(
   }
 }
 
-/** Fetch one conversations.list page and map transport/API errors to results. */
 async function fetchSlackDirectoryPage(
   botToken: string,
   cursor: string | undefined,
@@ -149,7 +129,6 @@ async function fetchSlackDirectoryPage(
   return { data: data };
 }
 
-/** Non-empty `response_metadata.next_cursor`, or undefined when pagination ends. */
 function nextSlackCursor(data: Record<string, unknown>): string | undefined {
   const metadata = isPlainObject(data.response_metadata)
     ? data.response_metadata
@@ -161,7 +140,6 @@ function nextSlackCursor(data: Record<string, unknown>): string | undefined {
     : undefined;
 }
 
-/** Map a non-ok Slack API payload to the status + reason the route relays. */
 function slackApiErrorResult(
   data: Record<string, unknown>,
 ): Extract<SlackDirectoryResult, { ok: false }> {

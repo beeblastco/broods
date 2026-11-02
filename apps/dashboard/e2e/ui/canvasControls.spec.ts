@@ -38,7 +38,6 @@ test("the save pill shows a save, clears after it lands, and keeps a failure", a
   await expect(pill).toContainText("Couldn't save");
   await expect(pill.getByRole("button", { name: "Retry" })).toBeVisible();
 
-  // The pill never overlaps the controls: it is centred, they are on the left.
   const controlsBox = (await controls
     .getByRole("button", { name: "Zoom in" })
     .boundingBox())!;

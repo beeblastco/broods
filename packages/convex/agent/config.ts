@@ -1,14 +1,13 @@
-/**
- * Agent config CRUD for the canvas UI. Scoped to authenticated user.
- */
-
 import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx } from "../_generated/server";
 import type { CanvasNode } from "../model/canvasShapes";
 import {
+  agentCanvasBadge,
   collectEnvPlaceholderNames,
   toNestedAgentConfig,
+  type AgentCanvasBadge,
+  agentCanvasBadgeValidator,
 } from "../model/agentConfigCodec";
 import {
   assertAgentRuntimeRefs,
@@ -28,7 +27,7 @@ import {
   appendAuditEvent,
   type AuditActor,
 } from "../model/auditEvents";
-import { getOwnedStage } from "../model/ownership/stage";
+import { getOwnedStage, getProjectStage } from "../model/ownership/stage";
 import {
   getProjectForRole,
   getProjectForWrite,
@@ -176,9 +175,6 @@ export const create = mutation({
       }
     }
 
-    // Provision the broods agents row so the harness can resolve
-    // this config by its public agentId. No-ops if the org isn't yet
-    // provisioned with a broods account.
     const accountId = await accountIdForProject(ctx, projectId);
     if (accountId) {
       await ensureAgentsRowForConfig(ctx, configId, authUser.id, accountId);
@@ -215,10 +211,39 @@ export const getById = query({
       return masked;
     }
 
-    // extraConfig holds the literal channel tokens and webhook secrets the
-    // dashboard writes. Members read them masked; only admins save the config
-    // back, so a mask never overwrites a stored secret.
+    // Only admins save the config back, so a member's mask never overwrites a stored secret.
     return redactConfigSecrets(masked);
+  },
+});
+
+// One subscription per canvas; no badge field carries a secret a member must not read.
+export const canvasBadges = query({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.optional(v.id("stages")),
+  },
+  returns: v.record(v.id("agentConfigs"), agentCanvasBadgeValidator),
+  handler: async (
+    ctx,
+    { projectId, stageId },
+  ): Promise<Record<Id<"agentConfigs">, AgentCanvasBadge>> => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    // Empty, not a throw: a subscriber still holding a deleted stage must not crash.
+    const stage = await getProjectStage(ctx, authUser.id, projectId, stageId);
+    if (!stage) return {};
+
+    const configs = await ctx.db
+      .query("agentConfigs")
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectId).eq("stageId", stage._id),
+      )
+      .collect();
+
+    return Object.fromEntries(
+      configs.map((config) => [config._id, agentCanvasBadge(config)]),
+    );
   },
 });
 
@@ -238,23 +263,14 @@ export const remove = mutation({
     }
     await assertAgentConfigAdmin(ctx, authUser.id, existing);
 
-    // Code is the source of truth for CLI-managed agents: the dashboard may
-    // edit them (changes are overwritten on the next sync) but must not delete
-    // them. Removal happens by deleting them from `broods/` and running
-    // `broods deploy --prune`.
+    // Dashboard edits to code-managed agents are overwritten on sync; deletes are refused.
     if (existing.managedBy === "cli") {
       throw new Error(
         "This agent is managed by code. Remove it from your project and run `broods deploy --prune` to delete it.",
       );
     }
 
-    // Note: the stage's runtime key is shared across all its agents
-    // (stage-scoped), so deleting one agent config must NOT delete it. The key
-    // is only removed when the whole stage is deleted (see stage.ts).
-
-    // Clean up the linked broods `agents` row if present so the
-    // harness side stays consistent with the dashboard's canvas. A row under
-    // another account is never this config's to delete.
+    // The runtime key is stage-scoped: it goes with the stage, never with one agent.
     const accountId = await accountIdForProject(ctx, existing.projectId);
     const normalized = existing.agentId
       ? ctx.db.normalizeId("agents", existing.agentId)
@@ -309,7 +325,6 @@ export const update = mutation({
   handler: async (ctx, args): Promise<Id<"agentConfigs">> => {
     const { configId, ...updates } = args;
 
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -342,8 +357,6 @@ export const update = mutation({
       await bindStageEnvRefs(ctx, configId);
     }
 
-    // Keep the broods `agents` row aligned; this also provisions
-    // the runtime row when an org account was created after the config.
     const accountId = await accountIdForProject(ctx, existing.projectId);
     if (accountId) {
       await ensureAgentsRowForConfig(ctx, configId, user.id, accountId);
@@ -375,11 +388,6 @@ export const update = mutation({
   },
 });
 
-/**
- * Updates the broods runtime resource references derived from the canvas graph.
- * This preserves unrelated extraConfig branches while replacing the sandbox
- * list (in canvas order) and the workspaces.
- */
 export const updateRuntimeRefs = mutation({
   args: {
     configId: v.id("agentConfigs"),
@@ -390,7 +398,6 @@ export const updateRuntimeRefs = mutation({
   handler: async (ctx, args): Promise<Id<"agentConfigs">> => {
     const { configId, sandboxes: canvasSandboxes, workspaces } = args;
 
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -402,16 +409,12 @@ export const updateRuntimeRefs = mutation({
     }
     await assertAgentConfigAdmin(ctx, user.id, existing);
 
-    // Code-managed agents get their wiring from their owner (CLI deploy or
-    // account API); canvas-derived refs must not overwrite it. Before the
-    // API wiring was drawn on the canvas, a save on a layout holding a bare
-    // API agent node derived "no refs" here and stripped the live config.
+    // Code-managed agents get their wiring from their owner, never from the canvas.
     if (existing.managedBy === "cli" || existing.managedBy === "api") {
       return configId;
     }
 
-    // Sandboxes with no node on this stage's canvas were never on screen to
-    // remove, so they stay listed after the ones the canvas draws.
+    // Sandboxes this canvas never drew were never on screen to remove, so they stay.
     const layout = await ctx.db
       .query("canvasLayouts")
       .withIndex("by_projectId_and_stageId", (q) =>
@@ -441,14 +444,11 @@ export const updateRuntimeRefs = mutation({
     } else {
       delete extraConfig.workspaces;
     }
-    // Old nested AgentWorkspaceConfig and the single default `sandbox` are no
-    // longer part of broods's runtime contract.
+    // Retired keys, no longer in the runtime contract.
     delete extraConfig.sandbox;
     delete extraConfig.workspace;
 
-    // Provisioning stays unconditional. A canvas save is where an agent whose
-    // org gained an account after the config was made first gets its row.
-    // A replaced foreign link counts as provisioned too.
+    // Unconditional: a canvas save is where an agent whose org gained an account gets its row.
     const accountId = await accountIdForProject(ctx, existing.projectId);
     const agentRowId = accountId
       ? await ensureAgentsRowForConfig(ctx, configId, user.id, accountId)
@@ -456,9 +456,7 @@ export const updateRuntimeRefs = mutation({
     const provisionedNow =
       agentRowId !== null && agentRowId !== existing.agentId;
 
-    // Skip the patch and encryption push when nothing changed. Every canvas
-    // save derives refs for all agents, so most calls land here. A row created
-    // just above still needs the push, or it stays empty until the next edit.
+    // Most saves change nothing, but a row provisioned just above still needs the push.
     if (
       !provisionedNow &&
       JSON.stringify(extraConfig) ===
@@ -467,8 +465,7 @@ export const updateRuntimeRefs = mutation({
       return configId;
     }
 
-    // A drawn edge can still name refs the config API refuses, like a
-    // workspace mounted on a later sandbox. Refuse them here, not at run time.
+    // A drawn edge can name refs the config API refuses: reject them now, not at run time.
     assertAgentRuntimeRefs(
       toNestedAgentConfig({ ...existing, extraConfig: extraConfig }),
     );
@@ -484,12 +481,6 @@ export const updateRuntimeRefs = mutation({
   },
 });
 
-/**
- * Updates the broods `subagent.allowed` branch for one caller agent from the
- * canvas's agent→agent edges. Resolves each callee config's linked `agentId`
- * (provisioning its `agents` row when missing) into the allow-list, enabling
- * subagent calls when non-empty and clearing the branch when empty.
- */
 export const updateSubagentRefs = mutation({
   args: {
     configId: v.id("agentConfigs"),
@@ -499,7 +490,6 @@ export const updateSubagentRefs = mutation({
   handler: async (ctx, args): Promise<Id<"agentConfigs">> => {
     const { configId, calleeConfigIds } = args;
 
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -511,14 +501,11 @@ export const updateSubagentRefs = mutation({
     }
     await assertAgentConfigAdmin(ctx, user.id, existing);
 
-    // Code-managed agents own their subagent allow-list; see updateRuntimeRefs.
     if (existing.managedBy === "cli" || existing.managedBy === "api") {
       return configId;
     }
 
-    // Map each callee config to its broods agents-row id, skipping
-    // self-calls, configs outside this project (it can belong to another
-    // account) and any config the caller can't provision.
+    // A config outside this project can belong to another account.
     const accountId = await accountIdForProject(ctx, existing.projectId);
     const allowed: string[] = [];
     for (const calleeId of calleeConfigIds) {
@@ -537,7 +524,6 @@ export const updateSubagentRefs = mutation({
 
     const extraConfig = { ...asRecord(existing.extraConfig) };
     const prevSubagent = asRecord(extraConfig.subagent);
-    // Preserve any context/mode the caller already set; only swap enabled+allowed.
     const nextSubagent =
       allowed.length > 0
         ? { ...prevSubagent, enabled: true, allowed: allowed }
@@ -570,15 +556,10 @@ export const updateSubagentRefs = mutation({
   },
 });
 
-/**
- * Whether a runtime-key request to this agent needs a signed user token. Null
- * while the config has no live `agents` row yet.
- */
 export const userTokenRequirement = query({
   args: { configId: v.id("agentConfigs") },
   returns: v.union(v.boolean(), v.null()),
   handler: async (ctx, { configId }): Promise<boolean | null> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -594,16 +575,11 @@ export const userTokenRequirement = query({
   },
 });
 
-/**
- * Turn the user-token requirement on or off for one agent. Admin only, and
- * allowed on code-managed agents too: it is a security switch on the agent
- * row, not part of the config a sync owns.
- */
+// Allowed on code-managed agents: a security switch on the agent row, not synced config.
 export const setRequireUserToken = mutation({
   args: { configId: v.id("agentConfigs"), required: v.boolean() },
   returns: v.null(),
   handler: async (ctx, { configId, required }): Promise<null> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -638,7 +614,6 @@ export const setRequireUserToken = mutation({
   },
 });
 
-/** The config's `agents` row, when it lives under the project's own account. */
 async function linkedAgentRow(
   ctx: Parameters<typeof getProjectForRole>[0],
   config: Doc<"agentConfigs">,
@@ -660,7 +635,6 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-/** Members read agent configs; every write needs the org admin role. */
 async function assertAgentConfigAdmin(
   ctx: Parameters<typeof getProjectForRole>[0],
   authId: string,
@@ -671,12 +645,8 @@ async function assertAgentConfigAdmin(
   }
 }
 
-/**
- * Binds every `${NAME}` the config references to the stage variable of that
- * name, as a CLI sync does, so setting the variable later re-resolves the
- * agent. A name the stage lacks keeps the agent's earlier value, else empty.
- * A config with no reference left releases every variable it bound.
- */
+// As a CLI sync does, so setting the stage variable later re-resolves the agent. A name
+// the stage lacks keeps the agent's earlier value, else empty.
 async function bindStageEnvRefs(
   ctx: MutationCtx,
   configId: Id<"agentConfigs">,
@@ -703,7 +673,6 @@ async function bindStageEnvRefs(
   await ctx.db.patch(configId, { runtimeVariables: runtimeVariables });
 }
 
-/** Returns true when the caller may read a project-scoped agent config. */
 async function canAccessAgentConfig(
   ctx: Parameters<typeof getProjectForRole>[0],
   authId: string,
@@ -712,11 +681,7 @@ async function canAccessAgentConfig(
   return Boolean(await getProjectForRole(ctx, authId, config.projectId));
 }
 
-/**
- * Stored sandbox ids still worth keeping: those on the canvas, and those whose
- * row still exists. A node deleted on the canvas leaves the layout too, and
- * the layout save already deleted its dashboard row, so it must not linger.
- */
+// A sandbox deleted on the canvas already lost its row, so it must not linger here.
 async function liveStoredSandboxes(
   ctx: MutationCtx,
   stored: unknown,
@@ -734,7 +699,6 @@ async function liveStoredSandboxes(
   return live;
 }
 
-/** Hide secret values from browser reads while preserving variable names. */
 function maskRuntimeVariables<
   T extends { runtimeVariables?: Array<{ key: string; value: string }> },
 >(config: T): T {
@@ -747,11 +711,6 @@ function maskRuntimeVariables<
   };
 }
 
-/**
- * A new agent's provider settings. The key is a `${NAME}` ref to a stage
- * variable, as the CLI starter's env("OPENAI_API_KEY"), which
- * bindStageEnvRefs resolves.
- */
 function newProviderSettings(
   provider: AccountModelProviderName,
   baseUrl: string | undefined,
@@ -764,9 +723,6 @@ function newProviderSettings(
   };
 }
 
-/**
- * Record a dashboard agent config mutation when the project has a provisioned account.
- */
 async function recordAgentConfigAudit(
   ctx: MutationCtx,
   actor: AuditActor,

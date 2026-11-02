@@ -1,9 +1,10 @@
 "use client";
 
 import { useSignedIn } from "@/app/hooks/useSignedIn";
-import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
+import { LazyCreateProjectDialog } from "@/app/components/LazyCreateProjectDialog";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
+import { useRouteIntent } from "@/app/hooks/useRouteIntent";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,7 +23,7 @@ import { ChevronDown, Folder, Plus } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-export function ProjectSelector(): React.JSX.Element {
+export function ProjectSelector(): React.JSX.Element | null {
   const { canWrite } = useOrgRole();
   const queryArgs = useSignedIn() ? {} : "skip";
   const projects = useQuery(api.project.list, queryArgs) as
@@ -30,6 +31,7 @@ export function ProjectSelector(): React.JSX.Element {
     | undefined;
   const currentUser = useQuery(api.user.getCurrent, queryArgs);
   const router = useRouter();
+  const { handlers } = useRouteIntent();
   const params = useParams<{ projectId?: string }>();
   const [dialogOpen, setDialogOpen] = useState(false);
   const prefetchProject = useCallback(
@@ -37,6 +39,7 @@ export function ProjectSelector(): React.JSX.Element {
     [router],
   );
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- idle-time router prefetch
   useEffect(() => {
     if (projects === undefined || projects.length === 0) return;
 
@@ -59,8 +62,7 @@ export function ProjectSelector(): React.JSX.Element {
     return () => window.clearTimeout(timeoutId);
   }, [projects, prefetchProject, params.projectId]);
 
-  // The header divider next to this is always painted, so rendering nothing
-  // here collapses the row and shifts it back once the query lands.
+  // Hold the slot: the header divider beside this is always painted.
   if (projects === undefined) {
     return <Skeleton className="h-4 w-24 bg-muted" />;
   }
@@ -69,15 +71,12 @@ export function ProjectSelector(): React.JSX.Element {
   const selectedProject = projects.find(
     (p: Doc<"projects">) => p._id === currentProjectId,
   );
-  // The trigger states what is true right now, never another project's name.
   const displayName = selectedProject?.name ?? "Select project";
   const userName = currentUser?.name?.split(" ")[0] ?? "";
   const projectsLabel = userName ? `${userName}'s projects` : "Projects";
 
-  // An org with no projects has nothing to pick from: skip the menu and put the
-  // create action itself in the header, one click from the same dialog.
   if (projects.length === 0) {
-    if (!canWrite) return <></>;
+    if (!canWrite) return null;
 
     return (
       <>
@@ -91,7 +90,10 @@ export function ProjectSelector(): React.JSX.Element {
           New Project
         </Button>
 
-        <CreateProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+        <LazyCreateProjectDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+        />
       </>
     );
   }
@@ -125,9 +127,7 @@ export function ProjectSelector(): React.JSX.Element {
               {projects.map((project: Doc<"projects">) => (
                 <DropdownMenuItem
                   key={project._id}
-                  onClick={() => router.push(`/${project._id}`)}
-                  onMouseEnter={() => prefetchProject(project._id)}
-                  onFocus={() => prefetchProject(project._id)}
+                  {...handlers(`/${project._id}`)}
                   data-active={project._id === currentProjectId}
                   className="cursor-pointer"
                 >
@@ -155,7 +155,7 @@ export function ProjectSelector(): React.JSX.Element {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <CreateProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      <LazyCreateProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} />
     </>
   );
 }

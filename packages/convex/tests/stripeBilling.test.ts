@@ -5,8 +5,7 @@ import Stripe from "stripe";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, components, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-// The package exports no schema or test helper, so load the component's own
-// build straight from disk to register it.
+// The package exports no schema or test helper, so register its built schema from disk.
 import stripeSchema from "../node_modules/@convex-dev/stripe/dist/component/schema.js";
 import schema from "../schema";
 import { currentOf, proQuantity, seatsForQuantity } from "../model/orgBilling";
@@ -28,10 +27,8 @@ const stripeCalls = vi.hoisted(() => ({
   subscriptions: vi.fn(),
 }));
 
-// Who is signed in.
 const caller = vi.hoisted(() => ({ authId: "auth_payer" }));
 
-// The org `seedPayer` made for the payer.
 let payerOrgId: Id<"orgs">;
 
 vi.mock("../auth", () => ({
@@ -44,8 +41,7 @@ vi.mock("../auth", () => ({
   },
 }));
 
-// Real Stripe for signing and verifying events; the calls the webhook makes are
-// stubbed so no test reaches the Stripe API. This covers our modules only:
+// Real Stripe signs and verifies; its API calls are stubbed. Only our modules see this mock:
 // @convex-dev/stripe loads its own copy, so tests spy on `stripeClient`.
 vi.mock("stripe", async (importOriginal) => {
   const { default: RealStripe } =
@@ -110,8 +106,7 @@ describe("stripe webhook plan sync", () => {
   });
 });
 
-// Stripe delivers events out of order and more than once, so the webhook reads
-// the subscription back from Stripe instead of trusting the event's snapshot.
+// Stripe delivers out of order and more than once, so the webhook re-reads the subscription.
 describe("stripe webhook ordering", () => {
   test("a delayed older update cannot restore Pro after cancellation", async () => {
     const t = billingTest();
@@ -193,8 +188,7 @@ describe("stripe webhook ordering", () => {
     await sendEvent(t, "customer.subscription.created", subscription("active"));
     stripeCalls.live.set(SUBSCRIPTION_ID, subscription("canceled"));
 
-    // Neither payload carries a `created`, so they tie; the order they arrive
-    // in does not decide the plan.
+    // Neither payload has a `created`, so they tie and arrival order does not decide the plan.
     await deliver(
       t,
       "evt_deleted",
@@ -396,8 +390,6 @@ describe("stripe webhook ordering", () => {
   });
 });
 
-// Pro belongs to the owner: one subscription, filed under them, puts every
-// org they own on Pro. Only they start it, change its seats or open its portal.
 describe("owner billing", () => {
   test("a subscription puts every org the owner owns on Pro, and cancelling frees them all", async () => {
     const t = billingTest();
@@ -731,9 +723,8 @@ describe("owner billing", () => {
   });
 });
 
-// Pro gives the owner 2 developer seats, a pool across every org they own:
-// each developer takes one, however many of those orgs they are in. The owner
-// pays for each seat past those before the developer it is for can join.
+// Pro's 2 developer seats pool across the owner's orgs: one per developer, however many orgs.
+// Each seat past those is paid before its developer can join.
 describe("seat pool", () => {
   test("a Hobby owner has no developer seats, so their invite is refused", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
@@ -828,7 +819,6 @@ describe("seat pool", () => {
       },
       { userId: expect.any(String), name: "auth_dev_two", orgs: ["Payer Org"] },
     ]);
-    // The pool is full, so someone new needs a seat in any of the orgs.
     await expect(
       t.mutation(api.org.members.add, {
         orgId: second,
@@ -1117,8 +1107,6 @@ describe("seat pool", () => {
   });
 });
 
-// A Pro owner creates as many orgs as they like, each on Pro. Everyone else
-// keeps the one Hobby workspace made for them.
 describe("creating an org", () => {
   test("a Hobby user cannot create a second org", async () => {
     vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
@@ -1240,7 +1228,6 @@ beforeEach(() => {
   vi.stubEnv("STRIPE_WEBHOOK_SECRET", WEBHOOK_SECRET);
   vi.stubEnv("STRIPE_PRO_PRICE_ID", "price_pro");
   vi.stubEnv("STRIPE_SEAT_PRICE_ID", "price_seat");
-  // Stripe has every customer the component filed, unless a test says not.
   stripeCalls.retrieveCustomer.mockImplementation(
     async (id: string): Promise<Record<string, unknown>> => ({
       id: id,
@@ -1300,13 +1287,11 @@ async function orgPlan(t: T, orgId: Id<"orgs">): Promise<string | undefined> {
   return await t.run(async (ctx) => (await ctx.db.get(orgId))?.plan);
 }
 
-/** The payer and the Hobby org they own. */
 async function seedPayer(t: T): Promise<void> {
   await seedUser(t, AUTH_ID, "payer@example.com");
   payerOrgId = await seedOrg(t, "Payer Org");
 }
 
-/** An org `ownerAuthId` owns, on Hobby, with their owner membership. */
 async function seedOrg(
   t: T,
   name: string,
@@ -1347,7 +1332,7 @@ async function seedUser(t: T, authId: string, email: string): Promise<void> {
   });
 }
 
-/** A user, new unless seeded already, who joined an org as an admin before seats were counted. */
+/** Joined as an admin before seats were counted, so no seat check runs. */
 async function addMember(
   t: T,
   authId: string,
@@ -1377,7 +1362,6 @@ async function addMember(
   });
 }
 
-/** The payer on Pro at `quantity` units, their 2 included developer seats taken in their org. */
 async function seedIncludedSeatsTaken(
   t: T,
   quantity = 1,
@@ -1415,7 +1399,6 @@ async function ownedOrgCount(t: T): Promise<number> {
   });
 }
 
-/** Stripe's answer to a seat change: the subscription at its new units, its Pro line kept. */
 async function updateLive(
   id: string,
   params: Stripe.SubscriptionUpdateParams,
@@ -1429,10 +1412,7 @@ async function updateLive(
   return next;
 }
 
-/**
- * Make a subscription event's object what Stripe holds now, then deliver the
- * event and require a 200.
- */
+/** Unlike `deliver`, first makes a subscription event's object what Stripe holds now. */
 async function sendEvent(
   t: T,
   type: string,
@@ -1449,7 +1429,6 @@ async function sendEvent(
   expect((await deliver(t, eventId, type, object)).status).toBe(200);
 }
 
-/** POST a signed Stripe event to the webhook route. Stripe's state stays as is. */
 async function deliver(
   t: T,
   eventId: string,
@@ -1476,7 +1455,6 @@ async function deliver(
   });
 }
 
-/** A subscription as Stripe returns it, its Pro line then any extra seats; by default the payer's. */
 function subscription(
   status: Stripe.Subscription.Status,
   id = SUBSCRIPTION_ID,
@@ -1505,7 +1483,6 @@ function subscription(
   };
 }
 
-/** A subscription's seat line at `quantity` units. */
 function seatItem(quantity: number): Record<string, unknown> {
   return {
     id: ITEM_ID,

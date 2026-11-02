@@ -1,5 +1,3 @@
-/** Zalo channel adapter, on the official Zalo Bot API. */
-
 import type { Attachment } from "chat";
 import { timingSafeStringEqual } from "./auth.ts";
 import type {
@@ -17,8 +15,6 @@ import { ZALO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const ZALO_API_BASE = "https://bot-api.zaloplatforms.com";
 const ZALO_CHAT_TYPES = ["PRIVATE", "GROUP"] as const;
-// Message events Zalo delivers, each mapped to the reason its payload is
-// unusable. Anything else arrives as message.unsupported.received.
 const ZALO_MESSAGE_EVENTS: Record<string, string> = {
   "message.text.received": "missing_text",
   "message.image.received": "missing_photo",
@@ -27,7 +23,7 @@ const ZALO_MESSAGE_EVENTS: Record<string, string> = {
 };
 const ZALO_REQUEST_TIMEOUT_MS = 10_000;
 const ZALO_TEXT_LIMIT = 2000;
-// .aac is the only audio format the Zalo Bot API deals in.
+// The only audio format the Zalo Bot API deals in.
 const ZALO_VOICE_EXTENSION = ".aac";
 const ZALO_VOICE_MEDIA_TYPE = "audio/aac";
 
@@ -52,8 +48,6 @@ interface ZaloMessage {
   };
   date?: number;
   text?: string;
-  // Media payloads. Zalo sends the picture, sticker and voice note as URLs it
-  // hosts itself, never as bytes.
   photo?: string;
   caption?: string;
   sticker?: string;
@@ -101,15 +95,10 @@ export function createZaloActions(
         });
       }
     },
-    // No sendFiles: the Zalo Bot API is sendMessage, sendPhoto, sendSticker and
-    // sendChatAction, with no document endpoint to attach anything to. Leaving
-    // it off is what routes `send-files` to its download-link fallback.
+    // No sendFiles: the Bot API has no document endpoint, so `send-files` falls back to a link.
     sendImages: async function (images, caption): Promise<void> {
-      // Zalo has no album, so a batch goes out as consecutive photos with the
-      // caption on the first: repeating it would read as the same message sent
-      // once per picture.
+      // No albums: consecutive photos, the caption on the first only.
       for (const [index, image] of images.entries()) {
-        // Zalo fetches the picture itself, so it only ever accepts a public URL.
         const photo = zaloHttpUrl(image.url);
         if (!photo) {
           throw new Error(
@@ -440,17 +429,7 @@ function zaloHttpUrl(raw: unknown): string | null {
     : null;
 }
 
-/**
- * What a Zalo update carries: its text, and the media beside it.
- *
- * Zalo hosts every attachment as a plain URL with no token on it, so an attachment
- * here is just that link. The harness reads it once, stores it in the workspace and
- * hands the model a durable one. Zalo's own URL would work for exactly one turn: it
- * is dropped when the message is persisted, and Zalo's links expire anyway.
- *
- * Returns null when the event named media the payload did not carry, which the
- * caller reports as the event's missing-content reason.
- */
+// Zalo's media links are tokenless and expire; the harness stores a durable copy on first read.
 function zaloMessageMedia(
   eventName: string,
   message: ZaloMessage | undefined,
@@ -488,9 +467,7 @@ function zaloMessageMedia(
       if (!voice) {
         return null;
       }
-      // Zalo deals in one audio format. Anything else is a link it has given us
-      // a name for but no content type, so it goes over as text and the turn
-      // survives instead of failing at the provider.
+      // Anything but .aac has no content type to give, so it goes as text, not to the provider.
       const isVoiceNote = new URL(voice).pathname
         .toLowerCase()
         .endsWith(ZALO_VOICE_EXTENSION);

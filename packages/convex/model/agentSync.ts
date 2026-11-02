@@ -1,16 +1,3 @@
-/**
- * Keeps the broods `agents` row in sync with the dashboard's `agentConfigs`.
- *
- * Broods's harness queries `agents` (not `agentConfigs`) when invoking
- * an agent. Cherry-coke owns the canvas-side `agentConfigs` row; this helper
- * provisions the matching `agents` row in the same Convex transaction and
- * records its `_id` back on `agentConfigs.agentId` so the side panel's
- * "Agent ID" row surfaces a value broods actually accepts.
- *
- * The encrypted `AgentConfig` blob (model/provider/workspace/tools) requires
- * ACCOUNT_CONFIG_ENCRYPTION_SECRET to match broods's runtime secret.
- */
-
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
@@ -39,21 +26,7 @@ import { deleteCron } from "./cronSchedules";
 import { loadMcpServersByNode } from "./mcp";
 import { stableJson } from "./objects";
 
-/**
- * Reverse sync: when an `agents` row is inserted via the API path (not via
- * the canvas), provision a matching `agentConfigs` row + canvas node on the
- * account's project/stage so the agent appears on the canvas
- * immediately. This is what puts an API-created agent under a project at all.
- * `agentConfigs.projectId` is the only link between the account plane and
- * the project plane. Silently no-ops when:
- *   - no org/owner can be found for the account
- *   - an agentConfigs row already references this agent
- *
- * The created agentConfigs row is intentionally minimal (name + agentId
- * pointer). The canvas user can edit the rest via the Config tab; that
- * edit path already pushes the encrypted nested AgentConfig back onto
- * this same `agents` row.
- */
+// agentConfigs.projectId is the only link from the account plane to a project.
 export async function backSyncCanvasFromAgentRow(
   ctx: MutationCtx,
   agentRowId: Id<"agents">,
@@ -73,8 +46,6 @@ export async function backSyncCanvasFromAgentRow(
   const orgId = ctx.db.normalizeId("orgs", account.orgId);
   if (!orgId) return;
 
-  // The longest-standing owner, else the longest-standing member: one read,
-  // and the same pick every time regardless of index order.
   const members = await ctx.db
     .query("orgMembers")
     .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", orgId))
@@ -94,8 +65,6 @@ export async function backSyncCanvasFromAgentRow(
     user.authId,
   );
 
-  // Mirror what the API caller configured (provider, model, prompt, tools)
-  // onto the canvas fields, without resolved secrets.
   const flat = await decryptAgentFlatPatch(ctx, agent);
 
   const now = Date.now();
@@ -118,9 +87,7 @@ export async function backSyncCanvasFromAgentRow(
     )
     .unique();
 
-  // The origin is a placeholder: the tidy pass assigns the real spot from the
-  // graph, so an API-created agent never lands on top of an existing card. The
-  // first-node case needs no pass, since a lone agent belongs at the origin.
+  // Placeholder origin: the tidy pass places it; a lone first node belongs at the origin.
   const nextNode = {
     id: String(now),
     type: "agent" as const,
@@ -153,19 +120,13 @@ export async function backSyncCanvasFromAgentRow(
     });
   }
 
-  // Draw the wiring the config blob declares (sandbox, workspaces, skills)
-  // as locked canvas nodes/edges next to the agent node.
   await syncApiAgentCanvasWiring(ctx, {
     projectId: project._id,
     stageId: stage._id,
   });
 }
 
-/**
- * Deletes an `agents` row with everything keyed by it: its crons and their
- * schedules now, its conversations and run state in background batches. Every
- * path that deletes an agent (dashboard, config API, CLI, stage) comes here.
- */
+// Every agent delete (dashboard, config API, CLI, stage) goes through here.
 export async function deleteAgentRow(
   ctx: MutationCtx,
   agent: Doc<"agents">,
@@ -184,14 +145,7 @@ export async function deleteAgentRow(
   });
 }
 
-/**
- * Points `agentConfigs[configId].agentId` at a live `agents` row.
- * Idempotent: if `agentId` is already set and the row it names belongs to
- * `accountId`, this returns it unchanged.
- *
- * `accountId` is the account of the config's project, never the caller's
- * active org: that is dashboard state and can name a different tenant.
- */
+// accountId is the config's project account, never the caller's active org (another tenant).
 export async function ensureAgentsRowForConfig(
   ctx: MutationCtx,
   configId: Id<"agentConfigs">,
@@ -205,8 +159,7 @@ export async function ensureAgentsRowForConfig(
     const normalized = ctx.db.normalizeId("agents", config.agentId);
     if (normalized) {
       const existing = await ctx.db.get(normalized);
-      // A row under another account is a mis-filed agent from an earlier sync,
-      // not this account's agent: recreate rather than keep handing it back.
+      // A row under another account was mis-filed by an earlier sync: recreate, never reuse.
       if (existing?.accountId === accountId) return existing._id;
     }
   }
@@ -219,7 +172,6 @@ export async function ensureAgentsRowForConfig(
     accountId: account._id,
     name: config.name,
     description: config.description,
-    // New agents take a runtime key only with a signed user token.
     requireUserToken: true,
     createdAt: now,
     updatedAt: now,
@@ -230,13 +182,6 @@ export async function ensureAgentsRowForConfig(
   return agentId;
 }
 
-/**
- * Reverse-update sync: when an `agents` row is updated via API (PATCH
- * /v1/agents/<id>), decrypt the new blob and refresh the linked
- * `agentConfigs` flat fields + extraConfig so the canvas Details/Config tabs
- * reflect what the API caller just changed. No-op if no linked config or no
- * decryptable blob.
- */
 export async function mirrorAgentRowOntoConfig(
   ctx: MutationCtx,
   agentRowId: Id<"agents">,
@@ -251,13 +196,10 @@ export async function mirrorAgentRowOntoConfig(
   if (!linkedConfig) return;
 
   const flat = await decryptAgentFlatPatch(ctx, agent);
-  // The public API just wrote this agent, so the API owns it from here on,
-  // except CLI-managed configs, whose ownership the next `broods deploy`
-  // re-asserts anyway.
+  // The API owns what it just wrote, except CLI configs: the next deploy re-asserts those.
   const ownership =
     linkedConfig.managedBy === "cli" ? {} : { managedBy: "api" as const };
   if (!flat) {
-    // At minimum mirror name/description, even when we can't decrypt.
     await ctx.db.patch(linkedConfig._id, {
       name: agent.name,
       description: agent.description,
@@ -287,8 +229,6 @@ export async function mirrorAgentRowOntoConfig(
     updatedAt: Date.now(),
   });
 
-  // Re-mirror the wiring (sandbox, workspaces, skills) onto the canvas so the
-  // Architecture view tracks what the API caller just configured.
   if (
     linkedConfig.managedBy !== "cli" &&
     linkedConfig.projectId &&
@@ -301,18 +241,6 @@ export async function mirrorAgentRowOntoConfig(
   }
 }
 
-/**
- * Builds the nested broods `AgentConfig` from the flat row, substitutes
- * `${ENV}` placeholders from `runtimeVariables`, encrypts with the shared
- * AES-256-GCM secret, and writes the result onto the linked `agents` row.
- *
- * Silently no-ops when the `agentConfigs` row has no linked `agentId`
- *      (`ensureAgentsRowForConfig` hasn't run yet, e.g. because the org is
- *      not provisioned with a broods account).
- * Throws when a linked core agent exists but the shared encryption secret is
- * missing, because otherwise the runtime would keep stale or empty config.
- * Writes only a row that `accountId`, the config's project account, owns.
- */
 export async function pushEncryptedConfigToAgentRow(
   ctx: MutationCtx,
   configId: Id<"agentConfigs">,
@@ -349,8 +277,8 @@ export async function pushEncryptedConfigToAgentRow(
     extraConfig: config.extraConfig as Record<string, unknown> | undefined,
   });
   const resolved = substituteEnvPlaceholders(nested, variables);
-  // Every `broods dev` save re-pushes every agent. A fresh IV would rewrite an
-  // unchanged row and then rebuild the account's whole channel projection.
+  // `broods dev` re-pushes every agent; a fresh IV on an unchanged one would rewrite the row
+  // and rebuild the account's whole channel projection.
   const current =
     agent.encryptedConfig && agent.encryptionIv && agent.encryptionTag
       ? await cipher.decrypt("agents:encryptedConfig", {
@@ -371,11 +299,6 @@ export async function pushEncryptedConfigToAgentRow(
   await refreshAccountChannelEndpoints(ctx, accountId);
 }
 
-/**
- * Updates agent runtime secrets for configs that already reference an
- * environment variable, then re-pushes their encrypted harness config. Pass
- * `undefined` as the value to clear the secret when the variable is removed.
- */
 export async function refreshAgentConfigsForEnvironmentVariable(
   ctx: MutationCtx,
   projectId: Id<"projects">,
@@ -422,11 +345,6 @@ export async function refreshAgentConfigsForEnvironmentVariable(
   }
 }
 
-/**
- * Mirrors name/description edits from `agentConfigs` onto the linked
- * `agents` row when one exists. Silently no-ops if the row is missing or not
- * owned by `accountId`. The next `ensureAgentsRowForConfig` call provisions it.
- */
 export async function syncAgentRowFields(
   ctx: MutationCtx,
   configId: Id<"agentConfigs">,
@@ -456,14 +374,8 @@ export async function syncAgentRowFields(
   });
 }
 
-/**
- * Decrypt an agent row's config blob and flatten it for the `agentConfigs`
- * mirror. Null when the secret or blob is missing, or the blob cannot be
- * decrypted.
- */
-// The flat columns are plaintext that any org member can read. Mirror the
-// source blob, which keeps `${NAME}` placeholders. A row with no source only
-// has the resolved blob, and its secret-shaped values are masked first.
+// The flat columns are plaintext to every org member: mirror the source blob, which keeps
+// `${NAME}` placeholders, or else the resolved blob with its secrets masked.
 async function decryptAgentFlatPatch(
   ctx: MutationCtx,
   agent: Doc<"agents">,
@@ -495,15 +407,7 @@ async function decryptAgentFlatPatch(
   return resolved ? fromNestedAgentConfig(redactConfigSecrets(resolved)) : null;
 }
 
-/**
- * Resolves the project + stage an account's API-created agents belong
- * to, creating them when the org has none.
- *
- * Scoped by `orgId`, never by `authId` alone: an owner with orgs A and B has
- * projects in both, so an authId-keyed lookup can drop A's agent into B's
- * project. The project is created on demand and named after the account, so
- * an org that never went through dashboard onboarding still gets one meaningful project rather than a random empty one.
- */
+// Scoped by orgId, never authId: an owner of orgs A and B would get A's agent in B's project.
 async function ensureCanvasTarget(
   ctx: MutationCtx,
   orgId: Id<"orgs">,
@@ -512,9 +416,7 @@ async function ensureCanvasTarget(
 ): Promise<{ project: Doc<"projects">; stage: Doc<"stages"> }> {
   const now = Date.now();
 
-  // Oldest project in the org, so repeated calls converge on one target
-  // instead of scattering agents across whichever project sorted first. The
-  // index orders by slug, so oldest is picked here.
+  // The index orders by slug; taking the oldest keeps repeated calls on one project.
   const existingProject = oldest(
     await ctx.db
       .query("projects")
@@ -535,8 +437,7 @@ async function ensureCanvasTarget(
       }),
     ))!;
 
-  // by_projectId, not by_authId_and_projectId: the stage may have been
-  // created by a different org member than the one we're syncing as.
+  // Not by authId: another org member may have created the stage.
   const existingStage = await ctx.db
     .query("stages")
     .withIndex("by_projectId", (q) => q.eq("projectId", project._id))
@@ -558,10 +459,6 @@ async function ensureCanvasTarget(
   return { project: project, stage: stage };
 }
 
-/**
- * The flat `agentConfigs` columns mirrored from a decrypted patch, with the
- * back-sync defaults applied when the blob was absent or undecryptable.
- */
 function flatAgentConfigFields(
   flat: FlatPatch | null,
 ): Pick<

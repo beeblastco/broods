@@ -1,7 +1,3 @@
-/**
- * HarnessAgent construction over Broods-owned persistent sandboxes.
- */
-
 import {
   HarnessAgent,
   type HarnessAgentAdapter,
@@ -33,11 +29,8 @@ import {
   type AiSdkHarnessSandbox,
 } from "./sandbox.ts";
 
-/**
- * The harness pauses the turn on this builtin and waits for the host to answer
- * through `pendingToolResults`, which core does not drive. Core asks people
- * through its own `ask_questions` tool, so the native prompt stays off.
- */
+// The harness pauses on this builtin for a `pendingToolResults` answer core never sends;
+// core asks through its own `ask_questions` tool instead.
 const HARNESS_QUESTION_TOOL_NAME = "askUserQuestions";
 
 interface HarnessAgentCommonOptions {
@@ -48,12 +41,7 @@ interface HarnessAgentCommonOptions {
   id?: string;
   inactiveTools?: string[];
   instructions?: string;
-  /** The invoking run's identity, mirrored onto the reserved sandbox. */
   metadata?: SandboxRunMetadata;
-  /**
-   * Model the harness runtime selects for every turn. `@ai-sdk/harness` 1.0.104
-   * dropped the per-adapter `model` setting, so it rides on the agent instead.
-   */
   model?: string;
   onUsage?: (usage: SandboxUsage) => void;
   permissionMode?: HarnessAgentPermissionMode;
@@ -104,9 +92,7 @@ export interface ConfiguredHarnessAgentOptions {
   compute: SandboxExecutorConfig;
   id?: string;
   instructions: string;
-  /** The invoking run's identity, mirrored onto the reserved sandbox. */
   metadata?: SandboxRunMetadata;
-  /** Receives the machine's CPU, memory and disk once it is acquired. */
   onUsage?: (usage: SandboxUsage) => void;
   reservationKey: string;
   /** Other conversations reserve the same machine, so a session ending leaves it running. */
@@ -116,7 +102,6 @@ export interface ConfiguredHarnessAgentOptions {
   tools: ToolSet;
 }
 
-/** Builds the harness agent and its machine from an agent config; the run loop in `harness.ts` calls it for agents with `config.harness`. */
 export function createConfiguredHarnessAgent(
   options: ConfiguredHarnessAgentOptions,
 ): AiSdkHarnessRuntime {
@@ -150,7 +135,6 @@ export function createConfiguredHarnessAgent(
   });
 }
 
-/** Builds a harness agent on a MicroVM from raw adapter settings; only tests call it. */
 export function createMicrovmHarnessAgent(
   options: MicrovmHarnessAgentOptions,
 ): AiSdkHarnessRuntime {
@@ -160,7 +144,6 @@ export function createMicrovmHarnessAgent(
   });
 }
 
-/** Builds a harness agent on a Workdir sandbox from raw adapter settings; only tests call it. */
 export function createWorkdirHarnessAgent(
   options: WorkdirHarnessAgentOptions,
 ): AiSdkHarnessRuntime {
@@ -170,7 +153,6 @@ export function createWorkdirHarnessAgent(
   });
 }
 
-/** Constructs the `HarnessAgent` on a reserved sandbox, dropping tools the adapter already ships and its native question prompt. */
 function createHarnessAgent(
   options: HarnessAgentCommonOptions,
   sandbox: AiSdkHarnessSandbox["sandbox"],
@@ -228,7 +210,6 @@ function createHarnessAgent(
   return new HarnessAgent<HarnessAgentAdapter, ToolSet>(settings);
 }
 
-/** Shared tail of every agent factory here: reserves the sandbox, then builds the agent on it. */
 function createHarnessRuntime(
   options: HarnessAgentCommonOptions & {
     compute: AiSdkHarnessCompute;
@@ -253,7 +234,6 @@ function createHarnessRuntime(
   };
 }
 
-/** The agent's `onLog` hook: forwards harness diagnostics to core logs at their own level. */
 function logHarnessDiagnostic(diagnostic: HarnessDiagnostic): void {
   const data = {
     eventType: "harness.diagnostic",
@@ -276,7 +256,6 @@ function logHarnessDiagnostic(diagnostic: HarnessDiagnostic): void {
   }
 }
 
-/** Turns `harness.activeTools`, `harness.inactiveTools` and `denyTools` into one allow or deny list for `createConfiguredHarnessAgent`. */
 function resolveHarnessToolFiltering(
   agentConfig: AgentConfig,
 ): HarnessToolFiltering {
@@ -298,7 +277,6 @@ function resolveHarnessToolFiltering(
     : {};
 }
 
-/** Drops core tools whose names the adapter already ships as builtins, so `createHarnessAgent` registers each name once. */
 function withoutHarnessBuiltinTools(
   tools: ToolSet,
   harness: HarnessAgentAdapter,
@@ -310,7 +288,6 @@ function withoutHarnessBuiltinTools(
   );
 }
 
-/** Adds the adapter's native question tool to the filtering so `createHarnessAgent` never exposes it. */
 function withoutHarnessQuestionPrompt(
   options: HarnessAgentCommonOptions,
 ): HarnessToolFiltering {

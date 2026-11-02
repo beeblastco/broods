@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * Scoped to the project in the URL rather than the whole org. A cron's project
- * comes from the agent it runs, so the picker and the table only ever show
- * agents this project owns.
- */
-
 import { EmptyState } from "@/app/components/EmptyState";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import { Button } from "@/app/components/ui/button";
@@ -36,9 +30,7 @@ export default function CronsPage({
   const account = useQuery(api.org.orgs.getActiveAccount, {});
 
   const [createOpen, setCreateOpen] = useState(false);
-  // A cron runs an agent, so with none in this project the dialog's picker
-  // would be empty and the form unsubmittable. Undefined means still loading,
-  // which is also not usable yet.
+  // With no agent (or still loading) the dialog's picker would be empty and unsubmittable.
   const canCreate =
     canWrite && account?.status === "active" && Boolean(agents?.length);
 
@@ -47,8 +39,6 @@ export default function CronsPage({
   const loading =
     crons === undefined || agents === undefined || account === undefined;
 
-  // The list fills the page edge to edge like Monitoring; the states before
-  // it have one line or card to show and keep the usual margins.
   const body = (): React.JSX.Element => {
     if (loading) {
       return (

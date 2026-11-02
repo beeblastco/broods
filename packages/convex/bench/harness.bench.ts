@@ -1,8 +1,4 @@
-/**
- * The in-memory Convex the root benchmark suite drives. It lives in this
- * package so `convex-test` and the generated API resolve from here; the suite
- * imports only this file. Nothing in it touches a deployment.
- */
+// Root bench suite's in-memory Convex; lives here so convex-test and the generated API resolve.
 
 import { convexTest, type TestConvex } from "convex-test";
 import type { FunctionReference } from "convex/server";
@@ -108,14 +104,9 @@ export interface RuntimeFunctions {
   };
 }
 
-// The generated API's types reach back into every Convex source through
-// `typeof import(...)`, which would put the whole package under the suite's
-// stricter tsconfig. Core reaches it with `require()` for the same reason; the
-// shapes above are the calls the suite makes, and Convex validates them at
-// runtime regardless.
+// require(): the generated API's types would pull every Convex source under the suite's tsconfig.
 export const internal: RuntimeFunctions = require("../_generated/api").internal;
 
-/** The env ref substitution the config plane runs at sync time, same reason. */
 export const envCodec: {
   collectEnvPlaceholderNames(value: unknown): Set<string>;
   substituteAccountEnvPlaceholders<T>(
@@ -126,25 +117,18 @@ export const envCodec: {
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-// convex-test loads every module in the deployment, and `auth.ts` constructs
-// AuthKit at import time, which validates these. Dummy values, the same ones
-// vitest.config.ts sets; nothing here authenticates.
+// Dummy values (as in vitest.config.ts): auth.ts constructs AuthKit at import time.
 process.env.BROODS_AUTH_PROVIDER ??= "workos";
 process.env.WORKOS_CLIENT_ID ??= "client_test";
 process.env.WORKOS_API_KEY ??= "sk_test";
 process.env.WORKOS_WEBHOOK_SECRET ??= "whsec_test";
 
-/**
- * The module map convex-test needs, built with the filesystem instead of
- * vitest's `import.meta.glob` so it works under Bun. Every function module in
- * the package, keyed the way convex-test expects: relative to this file.
- */
+// Built from the filesystem, not vitest's import.meta.glob, so it works under Bun.
 const modules: Record<string, () => Promise<unknown>> = {};
 for (const path of listFunctionModules(PACKAGE_ROOT)) {
   modules[`../${relative(PACKAGE_ROOT, path)}`] = () => import(path);
 }
 
-/** A fresh, empty in-memory deployment. Cheap: modules load on first use. */
 export function createRuntimeTest(): RuntimeTest {
   return convexTest(schema, modules);
 }

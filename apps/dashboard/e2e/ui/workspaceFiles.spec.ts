@@ -2,12 +2,6 @@ import { expect, test } from "@playwright/test";
 import type { Locator, Page } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-/**
- * The workspace file explorer by keyboard, against the fixture in
- * `app/ui-gallery/WorkspaceFilesStandIn`. The view is the real one; every
- * upload, rename and delete it asks for lands in `[data-files-log]`.
- */
-
 // The app's own dialogs, not Next's dev error overlay.
 const DIALOG = '[data-slot="dialog-content"]';
 
@@ -26,10 +20,8 @@ function log(scope: Locator): Locator {
 }
 
 /**
- * Drops one file on the explorer the way a browser does: enter, over, drop.
- * Returns whether the page cancelled the drop: an uncancelled drop opens the
- * file in the tab. A synthetic DataTransfer ignores `dropEffect`, so the
- * no-drop cursor is not asserted here.
+ * Returns whether the page cancelled the drop: an uncancelled one opens the file in the tab.
+ * A synthetic DataTransfer ignores `dropEffect`, so the no-drop cursor is not asserted.
  */
 async function dropFile(scope: Locator, name: string): Promise<boolean> {
   return scope.getByRole("tree").evaluate((zone, fileName) => {
@@ -92,7 +84,6 @@ test("Tab enters the tree once and arrows walk, open and close folders", async (
   await page.keyboard.press("Enter");
   await expect(docs).toHaveAttribute("aria-expanded", "true");
 
-  // One tab stop: Tab leaves the tree instead of walking every row and button.
   await expect(writer.locator('[role="treeitem"][tabindex="0"]')).toHaveCount(
     1,
   );
@@ -122,13 +113,11 @@ test("F2 renames the focused row, Escape cancels, focus stays on the row", async
   );
   await expect(log(writer)).toHaveText(["rename notes.txt todo.txt"]);
 
-  // Keys typed into the input stay there: arrows do not move the selection.
   await page.keyboard.press("F2");
   await page.keyboard.press("ArrowUp");
   const again = writer.getByRole("textbox", { name: "Rename todo.txt" });
   await expect(again).toBeFocused();
 
-  // A refused rename keeps the row it started from, selected and focused.
   await again.fill("README.md");
   await page.keyboard.press("Enter");
   await expect(log(writer)).toHaveText([
@@ -160,7 +149,6 @@ test("Delete asks first, Escape keeps the file, confirming removes it", async ({
   await dialog.getByRole("textbox").press("Enter");
   await expect(row(writer, "README.md")).toHaveCount(0);
   await expect(log(writer)).toHaveText(["delete README.md"]);
-  // The last row went, so the one before it takes focus and the selection.
   await expect(row(writer, "notes.txt")).toBeFocused();
   await expect(row(writer, "notes.txt")).toHaveAttribute(
     "aria-selected",
@@ -195,7 +183,6 @@ test("a member can browse but not rename, delete or drop", async ({ page }) => {
   await page.keyboard.press("Delete");
   await expect(page.locator(DIALOG)).toHaveCount(0);
 
-  // Refused, not ignored: the drop is cancelled, so the browser never opens the file.
   expect(await dropFile(member, "dropped.txt")).toBe(true);
   await expect(member.getByText("Drop to upload")).toHaveCount(0);
   await expect(row(member, "dropped.txt")).toHaveCount(0);

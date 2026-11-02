@@ -1,6 +1,5 @@
 /// <reference types="vite/client" />
-// The dashboard's PostHog id counts one person once on every device without
-// telling PostHog who they are: stable per user, keyed by its own secret.
+// The PostHog id counts a person once across devices without telling PostHog who they are.
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";

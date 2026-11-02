@@ -1,9 +1,4 @@
-/**
- * The custom provider against a real TLS server on loopback rather than a
- * stubbed `fetch`: `HttpSandboxExecutor` connects through the pinned guard,
- * which resolves the name itself and opens the socket to the address it
- * validated, so there is no global for a stub to replace.
- */
+// A real TLS server: the pinned guard opens its own socket, so no fetch stub can stand in.
 
 import { describe, expect, it } from "bun:test";
 import {
@@ -120,7 +115,6 @@ describe("HttpSandboxExecutor", () => {
         graceMs: 50,
       });
 
-      // A TimeoutError, which runSandbox answers as a timed-out run.
       expect(executor.run(run({ timeoutSeconds: 0.1 }))).rejects.toMatchObject({
         name: "TimeoutError",
         message: "timed out",
@@ -243,9 +237,8 @@ function seams(): HttpSandboxExecutorSeams {
   return { transport: loopbackTransport() };
 }
 
-// A null answer never responds, so the client deadline is what ends the call.
-// A request whose code is "fail" is answered 401, like a server refusing a token,
-// and "big-fail" 502 with a page-sized body, like a proxy in front of it.
+// A null answer never responds, so the client deadline ends the call. Code "fail" is
+// answered 401 and "big-fail" 502 with a page-sized body, like a proxy in front.
 async function withExecServer(
   answer: SandboxExecResponse | Record<string, unknown> | unknown[] | null,
   test: (endpoint: string, received: Received[]) => Promise<void>,

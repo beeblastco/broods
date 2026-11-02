@@ -10,8 +10,6 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 const MONTH = "2026-10";
 const DAYS_SO_FAR = 16;
 
-// Four projects of one Pro org, each busy on its own resources, plus usage no
-// project made (an account-wide workspace, chat attachments).
 const PROJECTS: Array<{
   id: string;
   name: string;
@@ -78,10 +76,6 @@ const CAPS = {
   egressGb: 10,
 };
 
-/**
- * Resources on fixed data: one org's month across four projects, as the
- * "Support bot" Usage tab or the organization's Usage page shows it.
- */
 export function AllowanceStandIn({
   view,
 }: {
@@ -99,7 +93,6 @@ export function AllowanceStandIn({
   );
 }
 
-// A day's amount for the day-th day: a weekly rhythm so the bars move.
 function dayAmounts(perDay: UsageAmounts, day: number): UsageAmounts {
   const wave = 0.55 + ((day * 37) % 9) / 10;
 
@@ -162,8 +155,7 @@ const ORG_SHARES = {
   storageGb: percent(ORG_TOTALS.storageGb ?? 0, CAPS.storageGb),
   egressGb: percent(ORG_TOTALS.egressGb, CAPS.egressGb),
 };
-// The owner's other org on the same pool, busy on egress: the pool sits
-// above this org on every cap and has used egress up.
+// The owner's other org shares the pool and has used its egress up.
 const POOL_TOTALS: UsageAmounts = {
   sandboxHours: ORG_TOTALS.sandboxHours + 37.1,
   hostedMcpHours: ORG_TOTALS.hostedMcpHours + 0.8,

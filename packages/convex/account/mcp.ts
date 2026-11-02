@@ -1,10 +1,3 @@
-/**
- * Internal MCP server registration API (issue #331 phase 1). Rows are scoped
- * to one (projectId, stageId); core resolves a stage's servers at agent
- * registration time and connects over the stateless HTTP transport. Names are
- * unique per stage because they namespace the server's tools (`name__tool`).
- */
-
 import { v } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
@@ -21,7 +14,6 @@ import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
 
-/** Full mcp row validator, shared with the dashboard-facing mcp service. */
 export const mcpDoc = v.object({
   ...mcpFields,
   _id: v.id("mcp"),
@@ -56,8 +48,7 @@ export const create = internalMutation({
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
     }
-    // Every caller derives the scope from the same secret, but the project's
-    // org is what actually ties a server to this account. Check it here.
+    // The project's org, not the caller's scope, is what ties a server to this account.
     const project = await ctx.db.get(args.projectId);
     if (
       !project ||
@@ -135,10 +126,7 @@ export const getById = internalQuery({
   },
 });
 
-/**
- * What each agent on the server's stage sets for it under `config.mcp`, read
- * from the `agentConfigs` mirror, which keeps `${NAME}` refs unresolved.
- */
+// Read from the `agentConfigs` mirror, which keeps `${NAME}` refs unresolved.
 export const agentEntries = internalQuery({
   args: { accountId: v.id("accounts"), serverId: v.id("mcp") },
   returns: v.array(v.any()),
@@ -152,7 +140,6 @@ export const agentEntries = internalQuery({
       )
       .collect();
 
-    // `extraConfig` is a `v.any()` column, so only the one key read is named.
     return agents
       .map(
         (agent) =>
@@ -225,8 +212,7 @@ export const remove = internalMutation({
       );
     }
 
-    // Release the canvas node: a tombstone that keeps `nodeId` shadows the row
-    // a later deploy creates under the same deterministic node id.
+    // A tombstone keeping `nodeId` would shadow the row a later deploy makes on that node.
     await ctx.db.patch(normalized, {
       status: "deleted",
       deletedAt: Date.now(),
@@ -238,8 +224,6 @@ export const remove = internalMutation({
   },
 });
 
-// Unlike the CLI's `ensureScopeBySecretHash` this never creates: an unknown
-// slug is a client error, not a reason to spawn a project.
 export const resolveScope = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -293,7 +277,6 @@ export const update = internalMutation({
     allowedTools: v.optional(v.array(v.string())),
     disabled: v.optional(v.boolean()),
     sourceCode: v.optional(v.string()),
-    // A declarative sync names the optional fields its manifest left out.
     clear: v.optional(
       v.array(
         v.union(...MCP_CLEARABLE_FIELDS.map((field) => v.literal(field))),
@@ -317,8 +300,6 @@ export const update = internalMutation({
     if (args.name !== undefined && args.name !== doc.name) {
       await requireNameFree(ctx, doc.stageId, args.name);
     }
-    // The normalizer only sees one body; the row the patch produces is
-    // what has to hold.
     const patch = {
       ...Object.fromEntries(
         (args.clear ?? []).map((field) => [field, undefined]),
@@ -333,6 +314,7 @@ export const update = internalMutation({
   },
 });
 
+// Names namespace the server's tools (`name__tool`), so they are unique per stage.
 async function requireNameFree(
   ctx: MutationCtx,
   stageId: Id<"stages">,
@@ -349,7 +331,6 @@ async function requireNameFree(
   }
 }
 
-/** The other transports' connection fields, cleared when a row switches to `transport`. */
 function transportClears(
   transport: McpTransport | undefined,
 ): Partial<Doc<"mcp">> {
@@ -378,13 +359,6 @@ function transportClears(
   return {};
 }
 
-/**
- * The fields an update writes. Provided args win; a transport switch clears
- * the other side's connection fields so a hosted row never carries a stale
- * url or oauth and vice versa; a bundle change that brings no source (a CLI sync over
- * a dashboard-authored row) clears the stored source rather than letting it
- * drift from the running bundle.
- */
 function updatePatch(
   args: {
     name?: string;
@@ -430,6 +404,7 @@ function updatePatch(
     ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
     ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
     ...transportClears(args.transport),
+    // A new bundle with no source (a CLI sync over a dashboard row) drops the stale source.
     ...(args.sha256 !== undefined &&
     args.sha256 !== doc.sha256 &&
     args.sourceCode === undefined

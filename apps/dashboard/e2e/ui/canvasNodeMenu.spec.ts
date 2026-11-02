@@ -1,11 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-/**
- * Right-click on a card used to open "Add service" unless the card happened to
- * have a chip action. Every card now gets its own menu: a row per link, its
- * group, and Delete, with what code owns listed but locked.
- */
 test("a card's menu lists its links, locks the code-managed ones, and offers its group", async ({
   page,
 }) => {
@@ -33,10 +28,6 @@ test("a card's menu lists its links, locks the code-managed ones, and offers its
   await expect(handbook).toContainText("group handbook");
 });
 
-/**
- * A read-only workspace mounts nowhere, so it has no edge to carry its mount
- * word. Its menu is the only way back off read-only, and it renames cards too.
- */
 test("a workspace's menu renames the card and lists where it can mount", async ({
   page,
 }) => {
@@ -56,11 +47,6 @@ test("a workspace's menu renames the card and lists where it can mount", async (
   await expect(handbook).toContainText("rename handbook");
 });
 
-/**
- * Every row the keyboard can also reach prints its key, so the menu is where
- * the shortcut is learned. A locked row has none, because pressing it would do
- * nothing.
- */
 test("the card menu prints the key beside every row that has one", async ({
   page,
 }) => {
@@ -85,7 +71,6 @@ test("the card menu prints the key beside every row that has one", async ({
       .locator('kbd[aria-label="Backspace"]'),
   ).toBeVisible();
 
-  // Code owns this card's delete, so that row is locked and carries no key.
   await page.keyboard.press("Escape");
   await fixture.getByTestId("menu-target-coder").click({ button: "right" });
   const locked = menu.getByRole("menuitem", { name: /Delete/ });

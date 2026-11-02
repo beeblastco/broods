@@ -19,13 +19,6 @@ interface AsyncToolRow {
   handback?: string;
 }
 
-/**
- * An async tool result (an `ask_questions` prompt, the detached row a
- * background job leaves too) is handed back to its conversation once: the
- * answer's continuation is admitted under the row, which marks it `stored`, the
- * conversation holds the injected result one time, and the resumed turn
- * answers from it.
- */
 export async function asyncToolHandback(context: VerifyContext): Promise<void> {
   if (!context.hasModelKey) {
     console.log(`  skip async tool hand-back (${MODEL_KEY_HINT})`);
@@ -79,8 +72,7 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
     `status ${answered.status} ${JSON.stringify(accepted)}`,
   );
 
-  // Admission stored the row in its own transaction, so no sweep or second
-  // continuation delivers it again.
+  // Admission stores the row in its own transaction, so no sweep delivers it twice.
   const row = convexResult(
     context,
     "runtime:getAsyncToolResult",

@@ -1,4 +1,3 @@
-/** Shared guards and transforms for Convex config blobs that store unknown object-shaped data. */
 export function isPlainObject(
   value: unknown,
 ): value is Record<string, unknown> {
@@ -23,12 +22,10 @@ export function remapKeys(
   );
 }
 
-/** Deterministic JSON (keys sorted recursively) for small payload comparisons. */
 export function stableJson(value: unknown): string {
   return JSON.stringify(sortJson(value));
 }
 
-/** Drop `undefined`-valued entries so optional fields stay absent, not null. */
 export function stripUndefined<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined),
@@ -40,8 +37,7 @@ function sortJson(value: unknown): unknown {
   if (isPlainObject(value)) {
     return Object.fromEntries(
       Object.entries(value)
-        // Code-unit order, not locale collation: a hash over this output
-        // must come out the same in any runtime or language.
+        // Code-unit order, not locale collation: a hash of it must match in any runtime.
         .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
         .map(([key, entry]) => [key, sortJson(entry)]),
     );
