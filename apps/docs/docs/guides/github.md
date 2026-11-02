@@ -9,7 +9,7 @@ Each stage follows one branch, or none. Production gets one only when the projec
 | Development only | Development                                 | nothing       |
 | Production too   | Production                                  | Development   |
 
-Name other branches with `--production-branch` and `--development-branch`, or `none` to leave a stage out.
+**Settings > Git** has a row per stage with its branch, or Off, and its last deploy. Change one and **Save**: Broods rewrites the workflow, seals new keys for the stages and revokes the old ones, without an unlink. From the CLI, link the same repo again with `--production-branch` and `--development-branch`, or `none` to leave a stage out.
 
 ## Start a project from GitHub
 

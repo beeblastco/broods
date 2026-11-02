@@ -349,6 +349,22 @@ export async function listInstallationRepos(
   return repos;
 }
 
+/** Up to the first 100 branch names, enough for a picker. */
+export async function listBranches(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+): Promise<string[]> {
+  const branches = await githubRequest<Array<{ name: string }>>(
+    app,
+    token,
+    "GET",
+    `/repos/${fullName}/branches?per_page=100`,
+  );
+
+  return branches.map((branch) => branch.name);
+}
+
 /** One repo by id, through the installation that reaches it. */
 export async function getRepo(
   app: GitHubApp,
