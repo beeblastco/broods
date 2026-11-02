@@ -39,7 +39,8 @@ export const projectRepoValidator = v.object({
   fullName: v.string(),
   /** The folder holding `broods/`, relative to the repo root; "" is the root. */
   rootDirectory: v.string(),
-  productionBranch: v.string(),
+  /** The branch each stage deploys from; an absent one is a stage this repo does not deploy. */
+  productionBranch: v.optional(v.string()),
   developmentBranch: v.optional(v.string()),
   /** The project keys the workflow deploys with, revoked on unlink. */
   deployKeyIds: v.array(v.id("deployKeys")),
@@ -1622,6 +1623,12 @@ export const cronsFields = {
   lastRunId: v.optional(v.id("cronRuns")),
   // The member who made it in the dashboard; a job made over the API has none.
   createdBy: v.optional(v.id("users")),
+  /**
+   * `"cli"` when a `broods/` project declares it, so `deploy --prune` may drop
+   * it once the code no longer does. A job an agent or the dashboard scheduled
+   * has none and survives every prune.
+   */
+  managedBy: v.optional(v.literal("cli")),
   createdAt: v.number(),
   updatedAt: v.number(),
 };

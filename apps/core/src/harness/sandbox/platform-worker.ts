@@ -8,10 +8,9 @@
 
 import { optionalEnv } from "../../shared/env.ts";
 import {
-  claimSandboxInstance,
   deleteSandboxInstance,
   getSandboxExternalId,
-  saveSandboxInstance,
+  reserveSandboxInstance,
 } from "./instance-store.ts";
 import type { SandboxProvider, SandboxReleaseRequest } from "./types.ts";
 import {
@@ -26,6 +25,40 @@ const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
   "localhost",
 ]);
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
+// How long a held reservation is trusted before the next command books it
+// again, which re-reads the row, checks the account and pushes the idle
+// deadline out. Far inside the 7-day TTL.
+const REVALIDATE_MS = 60_000;
+const MAX_HELD = 10_000;
+
+/**
+ * Reservations this process already resolved, by provider and key. The process
+ * that runs a sandbox's commands keeps the key-to-id mapping in memory, so a
+ * command on a held reservation makes no Convex call; once a hold is
+ * `REVALIDATE_MS` old, the next command takes the booking trip again. A key
+ * released or repointed elsewhere, or an account no longer active, is noticed
+ * then; one released here drops out at once.
+ */
+const held = new Map<string, { id: string; checkedAt: number }>();
+
+function heldKey(provider: SandboxProvider, key: string): string {
+  return `${provider}\u0000${key}`;
+}
+
+// Re-holding moves the key to the end, so the cap drops the longest unused.
+function hold(provider: SandboxProvider, key: string, id: string): void {
+  const entry = heldKey(provider, key);
+  held.delete(entry);
+  if (held.size >= MAX_HELD) {
+    const oldest = held.keys().next().value;
+    if (oldest !== undefined) held.delete(oldest);
+  }
+  held.set(entry, { id: id, checkedAt: Date.now() });
+}
+
+export function resetHeldReservationsForTests(): void {
+  held.clear();
+}
 
 /** A platform Worker's URL and the bearer every call carries. */
 export interface PlatformWorkerConnection {
@@ -109,42 +142,49 @@ export async function releasePlatformSandbox(
 ): Promise<void> {
   const key = sandboxReservationKey(request);
   if (!key) return;
+  const entry = heldKey(provider, key);
+  held.delete(entry);
   const id =
     request.expectedExternalId ?? (await getSandboxExternalId(provider, key));
   if (!id) return;
   await drop(id);
   await queueMirrorWrite(id, async (): Promise<void> => {});
   await deleteSandboxInstance(provider, key, accountId, id);
+  // A command that came in while this ran may have held the id again.
+  if (held.get(entry)?.id === id) held.delete(entry);
 }
 
 /**
- * The reservation under `key`: the existing id, else a fresh claim. The
- * Worker-side resource exists as soon as it is named, so reserving is only
- * the claim, and the loser of a race takes the winner's id and creates
- * nothing. An existing reservation is reused by key alone (the dashboard
- * console carries no account), its deadline refreshed before the command so
- * the sweeper cannot take the row from under it; claiming a new one needs
- * the account, so without it the run is ephemeral.
+ * The reservation under `key`: the existing id, else a fresh claim, in one
+ * Convex round trip. The Worker-side resource exists as soon as it is named,
+ * so reserving is only the claim, and the loser of a race takes the winner's
+ * id and creates nothing. An existing reservation's deadline is refreshed
+ * before the command so the sweeper cannot take the row from under it.
+ * Without the account (the dashboard console carries none) an existing
+ * reservation is reused by key alone and nothing new is claimed, so the run
+ * is ephemeral. Once resolved, the reservation is held in memory and the
+ * commands of the next `REVALIDATE_MS` skip Convex (`held`).
  */
 export async function reservePlatformSandbox(
   provider: SandboxProvider,
   accountId: string | undefined,
   key: string,
 ): Promise<string | undefined> {
-  const existing = await getSandboxExternalId(provider, key);
-  if (existing) {
-    await saveSandboxInstance(provider, key, existing, accountId);
+  const hit = held.get(heldKey(provider, key));
+  if (hit && Date.now() - hit.checkedAt < REVALIDATE_MS) return hit.id;
+  if (!accountId) {
+    const existing = await getSandboxExternalId(provider, key);
+    if (existing) hold(provider, key, existing);
 
-    return existing;
+    return existing ?? undefined;
   }
-  if (!accountId) return undefined;
-  const id = `${sandboxNamePrefix(key)}-${crypto.randomUUID().slice(0, 8)}`;
-  if (await claimSandboxInstance(provider, key, id, accountId)) return id;
-  const winner = await getSandboxExternalId(provider, key);
-  if (!winner)
-    throw new Error(
-      `failed to reserve a ${provider} sandbox (lost the reservation race)`,
-    );
+  const id = await reserveSandboxInstance(
+    provider,
+    key,
+    `${sandboxNamePrefix(key)}-${crypto.randomUUID().slice(0, 8)}`,
+    accountId,
+  );
+  hold(provider, key, id);
 
-  return winner;
+  return id;
 }
