@@ -1,5 +1,3 @@
-/** Teams adapter: Bot Framework token check, activity parsing, and the reply send. */
-
 import { decodeThreadId, TeamsAdapter } from "@chat-adapter/teams";
 import { JwtValidator } from "@microsoft/teams.apps/dist/middleware/index.js";
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
@@ -13,8 +11,7 @@ const CHANNEL_CONVERSATION = "19:general@thread.tacv2;messageid=1700000000000";
 const SERVICE_URL = "https://smba.trafficmanager.net/emea/";
 const SIGNING_KEY = generateKeyPairSync("rsa", { modulusLength: 2048 });
 
-// The validator's key lookup is private; standing in for Microsoft's key set
-// is the only way to check real signatures offline.
+// The validator's key lookup is private: the only offline way to check real signatures.
 interface SigningKeySource {
   getSigningKey(
     header: unknown,
@@ -186,7 +183,6 @@ function channel(): ReturnType<typeof createTeamsChannel> {
   });
 }
 
-// A channel message as the Bot Framework posts it, the bot mentioned first.
 function channelActivity(text: string): Record<string, unknown> {
   return {
     type: "message",
@@ -231,7 +227,6 @@ function delivery(
   };
 }
 
-// An RS256 JWT signed with the test key, valid for ten minutes.
 function signedToken(claims: Record<string, string>): string {
   const encode = (value: object): string =>
     Buffer.from(JSON.stringify(value)).toString("base64url");

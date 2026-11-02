@@ -1,10 +1,3 @@
-/**
- * Enforcement wiring for OPA-backed policy. Mode rides on the policy document,
- * and the rego applies it, so the harness acts on the verdict it is given. What
- * is left to check here is the OPA-unreachable path, which must fail closed only
- * where something actually enforces, plus OPA_API_TOKEN authentication.
- */
-
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import {
   channelPolicyIdentity,
@@ -61,7 +54,6 @@ const ENFORCED_DENIAL = {
   auditedRuleIds: [],
 };
 
-// Stands in for what the rego returns once it has applied the policy's mode.
 let opaResult: Record<string, unknown> | undefined = ENFORCED_DENIAL;
 
 const seenAuthHeaders: Array<string | null> = [];
@@ -189,10 +181,8 @@ describe("agent policy enforce mode", () => {
     expect(approval).toBeDefined();
     const status = await approval!(toolCallEvent);
     expect(decisionType(status)).toBe("denied");
-    // The principal reaches OPA whole, so a rule can read the chain.
     expect(seenPolicyInputs[0]).toMatchObject({ principal: principal });
-    // An enforced denial is an account event: it lands on the audit ledger
-    // with the tool, the rule and the chain, never the tool input.
+    // An enforced denial is an audit-ledger event, and never carries the tool input.
     expect(auditWrites).toHaveLength(1);
     expect(auditWrites[0]).toMatchObject({
       accountId: "acct_1",
@@ -238,8 +228,7 @@ describe("agent policy enforce mode", () => {
     expect(drained).toBe(true);
   });
 
-  // An auditing policy is downgraded by the rego, not here: the harness must
-  // pass that verdict straight through rather than second-guessing it.
+  // The rego downgrades an auditing policy; the harness passes that verdict straight through.
   it("approves the verdict an auditing policy produced", async () => {
     auditWrites.length = 0;
     policyMode = "audit";
@@ -280,8 +269,7 @@ describe("agent policy enforce mode", () => {
     });
   });
 
-  // The mode lives in a document this path did read, so an outage must not turn
-  // a policy nobody has promoted yet into one that refuses.
+  // The mode comes from the document, so an outage must not make an unpromoted policy refuse.
   it("stays open when OPA is unreachable and nothing enforces", async () => {
     policyMode = "audit";
     try {
@@ -339,8 +327,6 @@ describe("agent policy enforce mode", () => {
     );
     await approval!(toolCallEvent);
 
-    // The rego resolves any dotted path on input, so a rule can already say
-    // "deny unless input.channelId is C042OPS" with no policy-engine change.
     expect(seenPolicyInputs).toContainEqual(
       expect.objectContaining({
         channel: "slack",
@@ -353,8 +339,7 @@ describe("agent policy enforce mode", () => {
   });
 
   it("omits channel identity fields that the provider did not supply", () => {
-    // No identity means nobody knows the roles, so the attribute stays absent
-    // and a negated operator cannot match on it.
+    // No identity means the roles are unknown: absent, so a negated operator cannot match.
     expect(channelPolicyIdentity(undefined)).toEqual({});
     expect(channelPolicyIdentity({ channelId: "C1" })).toEqual({
       channelId: "C1",
@@ -390,7 +375,6 @@ describe("agent.invoke gate", () => {
     });
   });
 
-  // The same rule, from a policy nobody promoted: reported, and let through.
   it("reports an audited denial and still admits the turn", async () => {
     policyMode = "audit";
     opaResult = {
@@ -428,8 +412,7 @@ describe("agent.invoke gate", () => {
   });
 
   it("sends a deny-all document for a policy that resolves to nothing", async (): Promise<void> => {
-    // A deleted policy used to vanish from the set. If it was the only
-    // enforcing one, both gates dropped to audit and let everything through.
+    // A deleted policy must not drop out of the set and silently downgrade the gates to audit.
     setStorageForTests({
       agentPolicies: { getById: async (): Promise<null> => null },
     } as unknown as Storage);
@@ -461,8 +444,7 @@ describe("agent.invoke gate", () => {
   });
 
   it("sends the actor and channel to OPA as agent.invoke", async () => {
-    // Drive its own evaluation: asserting on a sibling test's recorded input
-    // passes only when that test ran first, and breaks under -t or .only.
+    // Drive its own evaluation so the test still holds under -t or .only.
     await evaluateChannelInvoke(agentConfig(), {
       accountId: "acct_1",
       agentId: "agent_1",

@@ -1,20 +1,3 @@
-/**
- * Who pays and how many developers a Pro owner may seat. Pro belongs to the
- * owner, not to one org: one Stripe subscription per user, filed under their
- * authId. Pro is one €20 unit and gives the owner
- * `PRO_INCLUDED_DEVELOPER_SEATS` developer seats; each seat past those is one
- * more €20 unit on the seat line (`proQuantity`). The seats are a pool across every org the owner
- * owns: each distinct developer (a member who is not the owner) in any of
- * them takes one seat, however many of those orgs they are in. A Hobby
- * (free) owner has no developer seats and keeps one workspace; creating
- * more orgs needs Pro, up to `PLAN_LIMITS.pro.maxOwnedOrgs`
- * (`assertCanCreateOrg`). A Hobby user still joins any org that invites
- * them, on its owner's seat. The rules hold only on the managed service
- * (`isManagedService`). `orgs.plan` follows its owner's subscription and
- * names the caps core enforces against the owner's pool
- * (`model/usageMeter.ts`); `users.plan` is the owner's own.
- */
-
 import type Stripe from "stripe";
 import { components, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -23,55 +6,39 @@ import { ClientError } from "./clientError";
 import { userByAuthId } from "./ownership/org";
 import { isManagedService, PLAN_LIMITS, type Plan } from "./planLimits";
 
-/** Developer seats Pro includes, for its one unit. */
 export const PRO_INCLUDED_DEVELOPER_SEATS = 2;
 
-/** One unit a month in euros: Pro (`STRIPE_PRO_PRICE_ID`) or one extra seat (`STRIPE_SEAT_PRICE_ID`). */
+// Must match both Stripe prices, `STRIPE_PRO_PRICE_ID` and `STRIPE_SEAT_PRICE_ID`.
 export const UNIT_PRICE_EUR = 20;
 
-// A subscription in one of these statuses is over: it no longer blocks a new
-// checkout and is not the one billing shows.
 const ENDED_STATUSES: ReadonlyArray<Stripe.Subscription.Status> = [
   "canceled",
   "incomplete_expired",
 ];
 
-// Statuses that grant the paid plan.
 const PAID_STATUSES: ReadonlyArray<Stripe.Subscription.Status> = [
   "active",
   "trialing",
 ];
 
-/** Whether a subscription status means it is over. */
 export function isEnded(status: string): boolean {
   return ENDED_STATUSES.some((ended) => ended === status);
 }
 
-/** Whether a subscription status grants the paid plan. */
 export function isPaid(status: string): boolean {
   return PAID_STATUSES.some((paid) => paid === status);
 }
 
-/**
- * The Stripe quantity a Pro owner with `developers` seated developers pays
- * for: Pro itself, plus one unit per developer past the included seats.
- */
 export function proQuantity(developers: number): number {
   return 1 + Math.max(0, developers - PRO_INCLUDED_DEVELOPER_SEATS);
 }
 
-/** The developer seats `quantity` paid units give: the included ones on the first unit, one more per unit after. */
 export function seatsForQuantity(quantity: number): number {
   return PRO_INCLUDED_DEVELOPER_SEATS + quantity - 1;
 }
 
-/**
- * The subscription an owner's billing acts on: the paid one with the most
- * units, the oldest on a tie, else the oldest that has not ended (one waiting
- * on a payment). Any other paid one is a duplicate that nothing counts; the
- * most units wins so an owner who paid per org before the pool keeps every
- * seat they paid for.
- */
+// The paid one with most units wins, so an owner who paid per org before seats were
+// pooled keeps every seat; any other paid one is a duplicate nothing counts.
 export function currentOf<Sub extends { status: string; quantity?: number }>(
   subs: ReadonlyArray<Sub>,
 ): Sub | undefined {
@@ -86,7 +53,6 @@ export function currentOf<Sub extends { status: string; quantity?: number }>(
   return paid ?? subs.find((sub) => !isEnded(sub.status));
 }
 
-/** The developer seats an owner's subscriptions give: what the one billing acts on buys while paid, else none. */
 export function seatsOf(
   subs: ReadonlyArray<{ status: string; quantity?: number }>,
 ): number {
@@ -97,15 +63,10 @@ export function seatsOf(
     : 0;
 }
 
-/** The plan an owner's subscriptions grant: pro while one is paid. */
 export function planOf(subs: ReadonlyArray<{ status: string }>): Plan {
   return subs.some((sub) => isPaid(sub.status)) ? "pro" : "free";
 }
 
-/**
- * The developers an owner seats: every member of an org they own who is not
- * them, each once, with the orgs they are in.
- */
 export async function developersOf(
   ctx: QueryCtx,
   ownerAuthId: string,
@@ -133,13 +94,6 @@ export async function developersOf(
   return developers;
 }
 
-/**
- * Refuse to add `userId` to an org when its owner has no developer seat for
- * them. While the owner pays, someone already seated in another of their
- * orgs joins free; anyone else needs a free seat, which the owner buys first
- * (`stripe:addSeat`), so the invite lands only once it is paid. An owner who
- * does not pay has no seats, so nobody joins, seated or not.
- */
 export async function assertFreeSeat(
   ctx: QueryCtx,
   org: Doc<"orgs">,
@@ -166,10 +120,6 @@ export async function assertFreeSeat(
   );
 }
 
-/**
- * Give back the seat of a developer who just left one of an org's owner's
- * orgs, or the seats of an org about to be deleted (`stripe:syncSeatsInternal`).
- */
 export async function releaseSeat(
   ctx: MutationCtx,
   orgId: Id<"orgs">,
@@ -182,14 +132,6 @@ export async function releaseSeat(
   });
 }
 
-/**
- * Refuse a new org past what its owner's plan allows, and give the plan it
- * starts on: its owner's. Owning none, everyone gets one: the Hobby workspace
- * made for them. A Pro owner creates up to `maxOwnedOrgs`, all drawing on
- * their one pool of caps. A subscription that waits on a payment is not Pro
- * until Stripe has it. A self-hosted install bills no one: every org starts
- * free and the rule does not apply.
- */
 export async function assertCanCreateOrg(
   ctx: QueryCtx,
   ownerAuthId: string,
@@ -216,7 +158,6 @@ export async function assertCanCreateOrg(
   );
 }
 
-/** Recompute an owner's plan from their subscriptions, and put every org they own on it. */
 export async function syncUserPlan(
   ctx: MutationCtx,
   authId: string,

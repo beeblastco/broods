@@ -3,14 +3,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-/**
- * Renames ship no compatibility shim. A project still carrying `--env` or
- * BROODS_ENVIRONMENT used to resolve to Development and act on a stage the user
- * never named, which is the one failure the hard break exists to prevent; a
- * dropped command name has to say where it went rather than land on the
- * unknown-command page.
- */
-
 const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
 
 const workdirs: string[] = [];
@@ -84,8 +76,6 @@ test("rejects a project still carrying BROODS_ENVIRONMENT", async () => {
   expect(result.stderr).toContain("production");
 });
 
-// BROODS_STAGE is the whole migration, so a project that has already been
-// migrated must not trip the guard just because the old key lingers.
 test("allows BROODS_ENVIRONMENT alongside an explicit BROODS_STAGE", async () => {
   const cwd = await projectDir([
     'BROODS_PROJECT="demo-app"',

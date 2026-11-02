@@ -1,11 +1,3 @@
-/**
- * ask_questions: model-facing tool that puts one to three structured
- * questions to the person behind the conversation without holding the run.
- * It leaves the same detached async-tool row a background bash job does and
- * posts the prompt where the turn came from; ../questions.ts matches the
- * answer and handler.ts resumes the conversation.
- */
-
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import type { ChannelQuestion } from "../../shared/channels.ts";
@@ -32,10 +24,7 @@ import { toolError } from "./utils.ts";
 
 const MAX_HEADER_LENGTH = 12;
 
-// The SDK validates every call against this before `execute` runs and hands a
-// failure back to the model to retry. Strict objects, because
-// `pendingQuestionSummaryValidator` refuses an unknown key on the outcome
-// write just as hard as a missing one.
+// Strict: pendingQuestionSummaryValidator rejects an unknown key on the outcome write.
 const askQuestionsInput = z.strictObject({
   questions: z
     .array(
@@ -91,9 +80,7 @@ export interface AskQuestionsContext {
   eventId: string;
   delivery?: AsyncToolDelivery;
   channel?: ChannelToolContext;
-  // Tells the harness to end the turn after this step.
   onBlockingQuestion?: (question: PendingQuestionSummary) => void;
-  // Tells the harness a question is open, blocking or not.
   onDetachedResult?: (resultId: string) => void;
 }
 
@@ -178,7 +165,6 @@ The tool returns a statusId at once and the answer is delivered into this conver
   };
 }
 
-// The failure reason, or null once the prompt is out.
 async function postToChannel(
   channel: ChannelToolContext,
   statusId: string,
@@ -201,8 +187,6 @@ async function postToChannel(
   return null;
 }
 
-// The input schema holds every shape and count rule; id uniqueness is the one
-// it cannot say.
 function validateQuestions(questions: ChannelQuestion[]): string | null {
   const ids = new Set<string>();
   for (const question of questions) {

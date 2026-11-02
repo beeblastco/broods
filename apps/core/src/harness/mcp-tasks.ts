@@ -1,15 +1,8 @@
 /**
- * The runtime `/mcp` endpoint: Broods as an MCP Tasks server (protocol
- * 2026-07-28 with the `io.modelcontextprotocol/tasks` extension). Each agent
- * the caller's key can run is one tool; calling it starts a background run in
- * a fresh conversation and answers a task handle whose id is the run id.
- *
- * A translator that holds no state. Every run read and write goes back through
- * core's own run routes (`POST /v1/runs`, `GET /v1/runs/{runId}`) with the
- * caller's headers, so auth, stage scope, public access, user tokens and plan
- * limits keep one home in integrations.ts. Run mechanics stay in handler.ts.
+ * `/mcp`: an MCP Tasks server where each runnable agent is one tool and a call starts a run
+ * whose id is the task id. Holds no state: every read and write goes through core's own
+ * `/v1/runs` routes with the caller's headers, so auth and limits stay in integrations.ts.
  */
-
 import {
   CallToolResultV2Schema,
   CreateTaskResultV2Schema,

@@ -55,14 +55,12 @@ describe("in-process worker dispatch", () => {
       }
     };
 
-    // Default cap is 8; dispatch 10 so two must queue.
     for (let i = 0; i < 10; i += 1) {
       dispatchInProcessWorker("test-worker", run(i));
     }
     await waitForStarted(8);
     expect(started).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
 
-    // Finishing one worker pulls the next queued payload, in FIFO order.
     releases.shift()!();
     await waitForStarted(9);
     expect(started).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
@@ -100,7 +98,6 @@ describe("in-process worker dispatch", () => {
         async (): Promise<void> => {},
         lease,
       );
-      // A short wait costs no Convex call.
       jest.advanceTimersByTime(QUEUED_LEASE_RENEW_INTERVAL_MS - 1);
       expect(mutate).not.toHaveBeenCalled();
       jest.advanceTimersByTime(1);
@@ -186,7 +183,6 @@ describe("in-process worker dispatch", () => {
       jest.advanceTimersByTime(QUEUED_LEASE_RENEW_INTERVAL_MS);
       expect(mutate).toHaveBeenCalledTimes(16);
 
-      // A sweep still in flight is not started over by the next tick.
       jest.advanceTimersByTime(QUEUED_LEASE_RENEW_INTERVAL_MS);
       expect(mutate).toHaveBeenCalledTimes(16);
 
@@ -260,7 +256,6 @@ describe("in-process worker dispatch", () => {
     await flushMicrotasks();
     expect(started).not.toContain("queued");
 
-    // The yield frees the slot for the queued run; the yielder waits its turn.
     await Bun.sleep(2);
     releases.shift()!();
     await flushMicrotasks();
@@ -276,7 +271,6 @@ describe("in-process worker dispatch", () => {
   });
 
   it("logs and swallows worker failures like a fire-and-forget invoke", async () => {
-    // Must not reject or throw; the failure only surfaces through logError.
     dispatchInProcessWorker("test-worker", async () => {
       throw new Error("worker exploded");
     });
@@ -287,7 +281,6 @@ describe("in-process worker dispatch", () => {
 describe("streamed runs", (): void => {
   let settle: ReturnType<typeof spyOn<typeof ingress, "settleIngress">>;
   let modelPasses: number;
-  // Turns prepared: loading history and storing the new input.
   let prepared: number;
   let releases: (() => void)[];
 
@@ -334,7 +327,6 @@ describe("streamed runs", (): void => {
         };
       },
     );
-    // The pass ends before any model call; only when it starts matters.
     spyOn(harness, "runAgentLoop").mockImplementation(
       async (): Promise<never> => {
         modelPasses += 1;
@@ -381,7 +373,6 @@ describe("streamed runs", (): void => {
     );
   }
 
-  /** Queues runs until `leave` places are left. */
   function fillWorkerQueue(leave = 0): void {
     for (let index = leave; index < MAX_PENDING_WORKER_RUNS; index += 1) {
       dispatchInProcessWorker("queued", async (): Promise<void> => {});
@@ -401,7 +392,6 @@ describe("streamed runs", (): void => {
     const responses = await Promise.all([streamedRun(1), streamedRun(2)]);
     await Bun.sleep(20);
 
-    // The streams are open, but no model pass starts while every slot is busy.
     expect(responses.map((response): number => response.status)).toEqual([
       200, 200,
     ]);
@@ -491,8 +481,6 @@ describe("streamed runs", (): void => {
   });
 
   it("queues a streamed run that passed the door even when the queue filled behind it", async (): Promise<void> => {
-    // A burst fills the queue while this run is being recorded, all but the
-    // place the run holds.
     spyOn(ingress, "acceptIngress").mockImplementation(
       async (): Promise<ingress.IngressAdmission> => {
         fillWorkerQueue(1);
@@ -511,7 +499,6 @@ describe("streamed runs", (): void => {
 
   it("queues a background run that passed the door even when the queue filled behind it", async (): Promise<void> => {
     process.env.PUBLIC_BASE_URL = "https://api.example.test";
-    // Every mutation succeeds, so the run's polling row is created.
     spyOn(runtime, "mutate").mockResolvedValue(true);
     spyOn(ingress, "acceptIngress").mockImplementation(
       async (): Promise<ingress.IngressAdmission> => {
@@ -615,7 +602,6 @@ describe("streamed runs", (): void => {
     });
     try {
       expect((await streamedRun(1, true)).status).toBe(202);
-      // That run waits in the queue, in its last place.
       fillWorkerQueue(1);
 
       const response = await streamedRun(2, true);
@@ -660,8 +646,7 @@ describe("streamed runs", (): void => {
     }
 
     it("turns a message away on a full queue before the plan counts it or ingress records it", async (): Promise<void> => {
-      // One run a minute: a turned-away message that kept its count would
-      // refuse the redelivery.
+      // One run a minute: a turned-away message that kept its count would refuse redelivery.
       spyOn(getStorage().budgets, "get").mockResolvedValue({
         enforced: true,
         plan: "free",

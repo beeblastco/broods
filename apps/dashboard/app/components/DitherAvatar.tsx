@@ -1,6 +1,5 @@
 "use client";
 
-/** Deterministic dithered avatar generated from a seed string (e.g. an agent name). */
 import { cn } from "@/app/lib/utils";
 import type { CSSProperties } from "react";
 
@@ -8,9 +7,7 @@ const GRID = 34;
 const SIZE = 200;
 const SCALE = 6;
 const TRANSLATE_Y = 3;
-// The dither is pure in its seed and costs a 34x34 pass plus a path build,
-// which every agent card used to redo on each drag frame. Cached per seed;
-// bounded so a session that churns through names cannot grow it forever.
+// Cached per seed: every agent card redrew it on each drag frame. Bounded for name churn.
 const MARKUP_CACHE = new Map<string, string>();
 const MARKUP_CACHE_MAX = 256;
 
@@ -28,7 +25,6 @@ export type DitherAvatarProps = {
   style?: CSSProperties;
 };
 
-/** Renders the seeded dither avatar as an inline `<svg>` (crisp at any scale). */
 export function DitherAvatarSVG({
   seed,
   size = 40,
@@ -100,7 +96,6 @@ function dither(density: number[][]): number[][] {
   return result;
 }
 
-/** The `<svg>` inner markup for a seed, from the cache when it has been drawn before. */
 function ditherAvatarMarkup(seed: string): string {
   const cached = MARKUP_CACHE.get(seed);
   if (cached !== undefined) return cached;

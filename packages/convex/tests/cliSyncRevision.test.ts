@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * The manifest PUT claims the stage's next revision. A PUT sent with the
- * revision it read is refused once another sync claimed one, before it writes
- * anything; overlapping PUTs must be refused even when they send no revision.
- */
 
 import cronsComponent from "@convex-dev/crons/test";
 import { convexTest, type TestConvex } from "convex-test";
@@ -307,7 +302,6 @@ async function get(tt: T): Promise<Response> {
   );
 }
 
-/** PUTs one agent per name, with `revision` when the caller read one. */
 async function put(
   tt: T,
   agents: string[],

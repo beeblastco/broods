@@ -3,20 +3,10 @@
 import { CanvasNotice, CanvasPill } from "@/app/components/canvas/CanvasNotice";
 import { useEffect, useState } from "react";
 
-// How long "Saved" stays up before the pill clears. Without it the pill was
-// permanent from the first save on.
 const SAVED_PILL_MS = 2_000;
 
 export type CanvasSaveState = "idle" | "saving" | "saved" | "error";
 
-/**
- * The canvas autosave pill, in the canvas's notice strip. "Saving…" and a
- * failed save stay up as long as they hold; "Saved" clears itself after a
- * moment, and comes back for the next save because that passes through
- * "saving" first. A failure says why when the save reported a reason, and
- * wears the same red box as a refused connection so every canvas error reads
- * the same way in the same place.
- */
 export function CanvasSaveStatus({
   state,
   message,
@@ -27,13 +17,13 @@ export function CanvasSaveStatus({
   onRetry: () => void;
 }): React.JSX.Element | null {
   const [savedShown, setSavedShown] = useState(false);
-  // Render-time adjust: a fresh "saved" shows at once; the timer below hides it.
   const [prevState, setPrevState] = useState(state);
   if (state !== prevState) {
     setPrevState(state);
     setSavedShown(state === "saved");
   }
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- timer that hides the Saved pill
   useEffect(() => {
     if (state !== "saved") return;
     const timer = setTimeout(() => setSavedShown(false), SAVED_PILL_MS);

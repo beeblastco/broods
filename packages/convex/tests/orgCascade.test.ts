@@ -103,8 +103,7 @@ test("org deletion drains account contents in scheduled batches", async () => {
         wrappedKey: "iv.sealed",
         createdAt: now,
       });
-      // Account-scoped rows no project purge reaches, more than one deletion
-      // batch holds, so the drain must reschedule itself at least once.
+      // More account rows than one deletion batch holds: the drain must reschedule.
       for (let index = 0; index < 150; index += 1) {
         await ctx.db.insert("accountEnvVars", {
           accountId: accountId,
@@ -123,8 +122,7 @@ test("org deletion drains account contents in scheduled batches", async () => {
       await purgeOrg(ctx, orgId);
     });
 
-    // Org-plane rows go inside the purge transaction; account contents drain
-    // through scheduled batches afterwards.
+    // Org-plane rows go in the purge transaction; account contents drain afterwards.
     await t.run(async (ctx) => {
       expect(await ctx.db.get(orgId)).toBeNull();
       expect(await ctx.db.get(memberId)).toBeNull();

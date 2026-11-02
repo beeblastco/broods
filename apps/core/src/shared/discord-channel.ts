@@ -1,5 +1,3 @@
-/** Discord channel adapter. */
-
 import { DiscordAdapter, type DiscordThreadId } from "@chat-adapter/discord";
 import { ConsoleLogger, type Attachment, type FileUpload } from "chat";
 import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
@@ -24,15 +22,10 @@ import { logWarn } from "./log.ts";
 import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 import { DISCORD_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
-// Discord channel types that are threads. A message inside one of these keys its
-// conversation to the thread, with the parent channel as its channel scope.
 const DISCORD_THREAD_CHANNEL_TYPES = new Set([10, 11, 12]);
 
-// One bound for the direct REST calls and CDN downloads, so a stalled Discord
-// response cannot hold the turn open until the platform kills it.
 const DISCORD_FETCH_TIMEOUT_MS = 30_000;
 
-// Discord sticker format ids, and the CDN extension each is served under.
 // Format 3 is Lottie, a JSON animation with no raster form, so it is absent.
 const DISCORD_STICKER_EXTENSIONS: Record<number, string | undefined> = {
   1: "png",
@@ -40,11 +33,6 @@ const DISCORD_STICKER_EXTENSIONS: Record<number, string | undefined> = {
   4: "gif",
 };
 
-/**
- * Identity used to decide whether a guild message is addressed to the agent.
- * Without `botUserId` Discord messages cannot be attributed to a mention, so the
- * adapter keeps answering every message rather than going silent.
- */
 export interface DiscordChannelOptions {
   botUserId?: string;
   mentionRoleIds?: string[];
@@ -56,12 +44,6 @@ interface DiscordForwardedEventPayload {
   data?: unknown;
 }
 
-/**
- * One Discord upload. `duration_secs` and `waveform` are set only on a recorded
- * voice message, and they are the only dependable sign of one: Discord labels
- * the same file `application/ogg`, which says nothing about whether it holds
- * audio or video.
- */
 interface DiscordAttachment {
   id?: string;
   url?: string;
@@ -79,7 +61,6 @@ interface DiscordGatewayMessageData {
   sticker_items?: Array<{
     id?: string;
     name?: string;
-    /** 1 PNG, 2 APNG, 3 Lottie, 4 GIF. */
     format_type?: number;
   }>;
   author?: {
@@ -148,16 +129,10 @@ export interface DiscordSource {
   userId?: string;
 }
 
-// The Chat SDK's direct Discord webhook path (`handleWebhook()` + ChatInstance)
-// cannot be used wholesale: `integrations.ts` must first do account/agent lookup,
-// per-tenant config scoping, durable session setup, and Convex conversation
-// history writes. The SDK also keeps the lower-level hooks this needs protected
-// (`verifySignature`, `parseSlashCommand`, requestContext), so this subclass is an
-// access shim, plus the tenant `apiUrl` guard on the SDK's REST call.
+// `integrations.ts` must scope the tenant before the SDK's `handleWebhook` could run, so this
+// subclass only exposes the protected hooks it needs and guards a tenant `apiUrl`.
 class BroodsDiscordAdapter extends DiscordAdapter {
-  // A tenant `apiUrl` is their host, so the bot token only goes there pinned to
-  // a checked public address with redirects refused. Discord itself keeps the
-  // SDK's own call.
+  // A tenant `apiUrl` gets the bot token only pinned to a checked public address.
   protected override async discordFetch(
     path: string,
     method: string,
@@ -278,9 +253,7 @@ export function createDiscordChannel(
       if (gatewayEvent) {
         return gatewayEvent;
       }
-      // A request on the forwarder credential skipped Discord's signature
-      // check, so it may only carry forwarded gateway events: an unsigned
-      // interaction body on that header must not reach the command paths.
+      // The forwarder credential skips the signature check: only gateway events may use it.
       if (DISCORD_GATEWAY_TOKEN_HEADER in req.headers) {
         return unsupportedInteractionResponse();
       }
@@ -354,10 +327,7 @@ export function createDiscordChannel(
         };
       }
 
-      // Discord sends the interaction's channel object, so a command typed inside
-      // a thread resolves to the same parent+thread key the gateway path builds.
-      // Without this the two paths disagree and /new clears the wrong conversation.
-      // Gating on the parent also matters: a thread id is never declarable.
+      // Key a command in a thread as the gateway path does, or /new clears the wrong one.
       const thread = toDiscordInteractionThread(payload);
       if (!isAllowedId(allowedChannelIds, thread.channelId)) {
         logWarn("Discord channel not in allow list", {
@@ -425,7 +395,6 @@ export function createDiscordChannel(
               ? { userId: payload.member?.user?.id ?? payload.user?.id }
               : {}),
           },
-          // Spread so the typed source reaches a Record<string, unknown> field.
           source: { ...source },
         },
       };
@@ -474,26 +443,17 @@ function createDiscordActions(
   };
 
   return {
-    // Discord ignores an outbound URL attachment entirely. The API takes a
-    // multipart upload and nothing else, so both deliveries read the bytes and
-    // hand them over as one message. One body serves both because Discord
-    // decides which to render inline from the file itself; they stay separate
-    // keys so a channel can still advertise one without the other.
+    // Discord ignores URL attachments, so both read the bytes into one multipart message.
     sendFiles: sendAttachments,
     sendImages: sendAttachments,
 
-    // Discord sends a sticker by id and by nothing else. There is no URL form
-    // and no upload, so the model names one the bot can reach: a sticker from
-    // a guild the bot is in, or a standard pack. The Chat SDK's postMessage has
-    // no field for it, which is why this is the one send that goes direct.
+    // Stickers go by id only, a field the Chat SDK lacks, so this send goes direct.
     sendSticker: async function (sticker): Promise<void> {
       const value = sticker.trim();
       if (!/^\d+$/.test(value)) {
         throw new Error("Discord sendSticker needs a numeric sticker id");
       }
-      // `threadId` on the source is the SDK's encoded composite, not an id
-      // Discord's REST API would accept, so it is decoded back to the channel
-      // the message actually lives in. A thread posts to the thread.
+      // REST takes the real channel or thread id, not the SDK's encoded composite.
       const decoded = discord.decodeThreadId(threadId);
       const target = decoded.threadId ?? decoded.channelId;
       if (!target) {
@@ -549,9 +509,6 @@ function createDiscordActions(
   };
 }
 
-// Bytes read once per attachment, in parallel, because Discord takes the whole
-// batch in one multipart request and rejects a message with no content and no
-// files anyway.
 async function discordUploads(
   attachments: ChannelFile[] | ChannelImage[],
 ): Promise<FileUpload[]> {
@@ -564,14 +521,7 @@ async function discordUploads(
   );
 }
 
-/**
- * The uploads and stickers on a Discord message, as Chat SDK attachments.
- *
- * Discord's CDN URLs are signed and expire, so each attachment is read while
- * the turn runs rather than linked and fetched later. That is what the reader
- * on every attachment is for. Nothing here is authenticated: a Discord upload
- * URL is a bearer credential in itself, which is also why it is never persisted.
- */
+// CDN URLs are signed, expiring bearer credentials: read during the turn, never persisted.
 function discordAttachments(data: DiscordGatewayMessageData): Attachment[] {
   const uploads = (data.attachments ?? []).flatMap(
     (attachment): Attachment[] => {
@@ -603,17 +553,11 @@ function discordAttachments(data: DiscordGatewayMessageData): Attachment[] {
   return [...uploads, ...discordStickers(data.sticker_items ?? [])];
 }
 
-// A voice message is the one case where the structure beats the label: Discord
-// sends it as `application/ogg`, which a MIME prefix reads as neither audio nor
-// video, but only a voice message carries a duration and a waveform.
 function discordAttachmentType(
   attachment: DiscordAttachment,
   mimeType: string | undefined,
 ): Attachment["type"] {
-  if (
-    attachment.duration_secs !== undefined ||
-    attachment.waveform !== undefined
-  ) {
+  if (isVoiceMessage(attachment)) {
     return "audio";
   }
   if (mimeType?.startsWith("image/")) return "image";
@@ -623,19 +567,11 @@ function discordAttachmentType(
   return "file";
 }
 
-// Dropping the claimed type on a voice message is deliberate: keeping
-// `application/ogg` would let it override the sniff that identifies the real
-// codec, and the label is the part that is wrong.
+// A voice message's `application/ogg` label would override the sniff of its real codec.
 function discordMediaType(attachment: DiscordAttachment): string | undefined {
-  const isVoice =
-    attachment.duration_secs !== undefined || attachment.waveform !== undefined;
-
-  return isVoice ? undefined : attachment.content_type;
+  return isVoiceMessage(attachment) ? undefined : attachment.content_type;
 }
 
-// Discord serves a sticker from a well-known CDN path keyed by its id. Lottie
-// stickers (format 3) are a JSON animation, not a picture, so only the raster
-// formats are worth fetching. The sticker's name carries the rest.
 function discordStickers(
   stickers: NonNullable<DiscordGatewayMessageData["sticker_items"]>,
 ): Attachment[] {
@@ -660,7 +596,6 @@ function discordStickers(
   });
 }
 
-// One direct Discord REST call, for the sends the Chat SDK models no field for.
 async function callDiscordApi(
   apiUrl: string | undefined,
   botToken: string,
@@ -684,8 +619,7 @@ async function callDiscordApi(
   }
 }
 
-// The url comes from a forwarded gateway event the tenant can write, so it gets
-// the same private-address guard and size cap as every other channel's media.
+// The tenant can write the forwarded event, so its URL gets the private-address guard.
 async function fetchDiscordFile(url: string): Promise<Buffer> {
   const response = await guardedFetch(url, undefined, {
     binary: true,
@@ -699,12 +633,6 @@ async function fetchDiscordFile(url: string): Promise<Buffer> {
   return Buffer.from(response.bodyBytes);
 }
 
-/**
- * Prefix the sender so the agent knows who is talking in a multi-person guild
- * channel, and turn `<@id>` mentions into readable names. Mentions that only
- * target the bot are dropped, and a command keeps its bare text so the leading
- * token still parses.
- */
 function formatDiscordMessageText(
   content: string,
   data: DiscordGatewayMessageData,
@@ -747,10 +675,7 @@ function gatewayAck(): Extract<ChannelParseResult, { kind: "response" }> {
   };
 }
 
-// `author.bot` is optional on purpose: Discord omits the field entirely for
-// human authors, so requiring a boolean here rejected every real message and
-// left the forwarder to invent a field Discord never sends. An absent flag means
-// human, which is how `data.author.bot` reads at the call site.
+// Discord omits `author.bot` for a human author, so an absent flag means human.
 function isGatewayMessage(
   data: DiscordGatewayMessageData,
 ): data is Required<
@@ -770,6 +695,13 @@ function isGatewayMessage(
     typeof data.author.id === "string" &&
     typeof data.author.username === "string" &&
     (data.author.bot === undefined || typeof data.author.bot === "boolean"),
+  );
+}
+
+// Only a recorded voice message carries these; Discord labels it `application/ogg`.
+function isVoiceMessage(attachment: DiscordAttachment): boolean {
+  return (
+    attachment.duration_secs !== undefined || attachment.waveform !== undefined
   );
 }
 
@@ -859,7 +791,6 @@ function parseForwardedGatewayEvent(
   const threadId = discord.encodeThreadId(thread);
   const attachments = discordAttachments(data);
   const content = data.content.trim();
-  // A picture, a voice message or a sticker on its own is still a message.
   if (!content && attachments.length === 0) {
     return {
       kind: "ignore",
@@ -868,9 +799,7 @@ function parseForwardedGatewayEvent(
     };
   }
 
-  // Only a message addressed to the agent runs it; the rest is stored so a later
-  // mention still sees what the channel said. Without a configured botUserId a
-  // mention cannot be recognised, so every message keeps running the agent.
+  // Unaddressed messages are kept as context; with no botUserId no mention is recognisable.
   const runAgent = !options.botUserId || mentionsDiscordBot(data, options);
   const omittedUserIds = new Set(
     options.botUserId && runAgent ? [options.botUserId] : [],
@@ -894,8 +823,7 @@ function parseForwardedGatewayEvent(
   };
 
   return {
-    // No `redelivers`: the forwarder gives up after a few tries in about 10 s,
-    // so a full run queue answers with the busy reply the chat can see.
+    // No `redelivers`: the forwarder gives up within about 10 s.
     kind: runAgent ? "message" : "context",
     ack: gatewayAck().response,
     message: {
@@ -913,7 +841,6 @@ function parseForwardedGatewayEvent(
           ? { userName: data.author.global_name || data.author.username }
           : {}),
       },
-      // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },
     },
   };

@@ -39,8 +39,6 @@ describe("resolving a plane's matrix rows", () => {
     ).toHaveLength(1);
   });
 
-  // Every sync carries the access token, so a row stored before the config
-  // check required https never gets to send it in the clear.
   it("skips a row whose homeserver is not https", () => {
     expect(
       planeMatrixConnections(PLANE, [

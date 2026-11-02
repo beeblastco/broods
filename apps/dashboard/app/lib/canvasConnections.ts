@@ -1,13 +1,3 @@
-/**
- * The rule that decides whether an edge the user drags is allowed, and the
- * sentence that says why not. React Flow asks while the line is still in the
- * air, the canvas shows the reason at the top, and nothing else is checked
- * before the edge is saved.
- *
- * Pure and exported on purpose: the rules are subtle enough that the
- * `/ui-gallery` connection fixture drives this exact function, so a spec can
- * drag a real edge and get the real answer.
- */
 import {
   connectionEdge,
   isCodeManagedEdge,
@@ -22,16 +12,8 @@ import {
 import { runtimeRefsProblemText } from "@/app/lib/canvasRuntimeRefs";
 import type { Connection, Edge } from "@xyflow/react";
 
-/** The graph a connection is judged against. */
 export type ConnectionGraph = Pick<FlatGraph, "edges" | "nodes">;
 
-/**
- * Why the canvas refuses this connection, as the sentence the refusal notice
- * shows, or null when it is accepted. Refused when either end is missing, when
- * the two ends already share an edge, when code owns the wiring, when only one
- * end sits on a side handle, or when the edge would leave an agent with a
- * workspace mounted on a sandbox that is not its first.
- */
 export function connectionRefusal(
   graph: ConnectionGraph,
   connection: Connection | Edge,
@@ -53,8 +35,7 @@ export function connectionRefusal(
     (tgtNode.type === "workspace" || tgtNode.type === "sandbox");
   const isAgentPair = srcNode.type === "agent" && tgtNode.type === "agent";
 
-  // Subagent links are directional (A→B and B→A coexist), so dedupe by
-  // direction; every other pair allows a single edge either way.
+  // Subagent links are directional: A→B and B→A coexist.
   const duplicate = isAgentPair
     ? graph.edges.some(
         (edge) =>
@@ -63,17 +44,12 @@ export function connectionRefusal(
       )
     : hasEdgeBetween(graph.edges, connection.source, connection.target);
   if (duplicate) return `${srcLabel} is already connected to ${tgtLabel}.`;
-  // Code owns this wiring: the agent would ignore the edge, the canvas would
-  // lock it, and the next deploy would remove it.
   if (
     isCodeManagedEdge(
       connectionEdge(connection, srcNode.type === "agent"),
       (nodeId) => (nodeId === srcNode.id ? srcNode : tgtNode),
     )
   ) {
-    // Names the ends code owns, which covers the one that owns the link. The
-    // id fallback can lock an edge with neither end owned, so name the source
-    // when nothing else is there to name.
     const owned = [srcNode, tgtNode]
       .filter((node) => isCodeManagedOwner(node.data.managedBy))
       .map(cardLabel);
@@ -87,11 +63,8 @@ export function connectionRefusal(
     srcLabel,
     tgtLabel,
   );
-  // A subagent link carries no runtime refs, so its handles are its only rule.
   if (wrongHandles !== null || isAgentPair) return wrongHandles;
 
-  // An edge that would back a workspace from an agent's later sandbox is
-  // refused too. A problem the graph already had is not this edge's to answer for.
   const problem = introducedRuntimeRefsProblem(
     { edges: graph.edges, nodes: graph.nodes },
     {
@@ -111,7 +84,6 @@ export function connectionRefusal(
   return problem ? `${runtimeRefsProblemText(problem)}.` : null;
 }
 
-/** Whether these two nodes already share an edge, in either direction. */
 export function hasEdgeBetween(
   edges: readonly Edge[],
   a: string,
@@ -124,12 +96,7 @@ export function hasEdgeBetween(
   );
 }
 
-/**
- * Side handles serve mounts (workspace↔sandbox) and subagent links
- * (agent↔agent) only; those pairs must use the sides on BOTH ends, never the
- * top/bottom handles. A half-side edge would encode a null handle into its id
- * and fail to hydrate after a reload.
- */
+// A half-side edge encodes a null handle into its id and fails to hydrate after a reload.
 function handleRefusal(
   connection: Connection | Edge,
   kind: "mount" | "service" | "subagent",

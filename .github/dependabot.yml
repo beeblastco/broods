@@ -46,8 +46,9 @@ updates:
       # @convex-dev/crons schedules with, so the two never disagree.
       - dependency-name: cron-parser
         update-types: ["version-update:semver-major"]
-      # @posthog/ai holds sdk-trace-base on 2.x, which wants api below 1.10, so the
-      # OpenTelemetry packages stay on that line together until it moves.
+      # @daytona/sdk and @pulumi/pulumi hold sdk-trace-base on 2.x, which wants api
+      # below 1.10, so the OpenTelemetry packages stay on that line together until
+      # both move.
       - dependency-name: "@opentelemetry/*"
         versions: [">=0.300.0 <1.0.0", ">=1.10.0 <2.0.0", ">=3.0.0"]
       # @convex-dev/workos-authkit takes @workos-inc/node up to 10; a newer

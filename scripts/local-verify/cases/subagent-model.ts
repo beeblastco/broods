@@ -9,7 +9,7 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-// A second model the stack's Anthropic key serves, unlike the parent's.
+// Differs from the parent's model; the stack's Anthropic key serves both.
 const SUBAGENT_MODEL_ID = "claude-sonnet-5-5";
 
 interface SubagentStartedLog {
@@ -25,11 +25,6 @@ interface ModelStepLog {
   toolCalls?: { toolName: string }[];
 }
 
-/**
- * A virtual subagent runs on `subagent.model` and still calls the parent's
- * tools: its bash step runs on the parent's sandbox, on the configured model,
- * while the parent stays on its own.
- */
 export async function subagentModel(context: VerifyContext): Promise<void> {
   if (!context.hasModelKey) {
     console.log(`  skip subagent model (${MODEL_KEY_HINT})`);

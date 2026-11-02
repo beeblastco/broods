@@ -1,10 +1,3 @@
-/**
- * Grep tool. Content search across the workspace, backed by ripgrep (`rg`), or
- * GNU `grep -rE` when the sandbox image ships without it. Mirrors a useful
- * subset of grep. Only registered for
- * sandbox-backed workspaces (read-only workspaces expose read/glob only).
- */
-
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
@@ -17,7 +10,6 @@ import {
 import { shellQuote } from "../sandbox/utils.ts";
 import { toolError, toolText } from "./utils.ts";
 
-// Vendored trees grep skips like rg does, unless the search path is inside one.
 const VENDORED_DIRS = [".git", "node_modules"];
 
 type OutputMode = "content" | "files_with_matches" | "count";
@@ -58,8 +50,7 @@ Usage notes:
             onSandboxCpu: context.onSandboxCpu,
             metadata: sandboxRunMetadata(context, ws),
           });
-          // rg and grep agree: exit 0 = matches, 1 = no matches (not an error), >=2 = error.
-          // A warning on a no-match run (e.g. grep's "stray \\") explains the miss.
+          // rg and grep: exit 1 is no match, not an error; its stderr can explain the miss.
           if (result.exitCode === 1) {
             return toolText(
               ["No matches found", result.stderr.trim()]
@@ -83,8 +74,7 @@ Usage notes:
 
           return toolText(output.trim() || "No matches found");
         } catch (cause) {
-          // toolError throws, so an in-try call already landed here. Feeding its
-          // message back through would prefix a fatal setup error a second time.
+          // toolError throws; rethrow as is so a fatal setup error is not prefixed twice.
           throw cause instanceof Error ? cause : new Error(String(cause));
         }
       },
@@ -92,8 +82,7 @@ Usage notes:
   };
 }
 
-// An rg glob as one grep flag. grep matches names only, so `**/*.py` narrows to
-// `*.py` (lossy); a negated directory glob like `!dist/**` skips that directory.
+// grep matches names only, so `**/*.py` narrows to `*.py`; `!dist/**` skips that directory.
 function grepGlobFlag(glob: string): string {
   const exclude = glob.startsWith("!");
   const pattern = glob.replace(/^!/, "");
@@ -143,8 +132,6 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
   };
 }
 
-// The sandbox script for one search: ripgrep when the image has it, else GNU grep
-// with the same flags, so a custom image without rg still searches.
 function searchCommand(input: GrepInput): string {
   const mode: OutputMode = input.output_mode ?? "files_with_matches";
   const flags: string[] = [];
@@ -165,7 +152,6 @@ function searchCommand(input: GrepInput): string {
     input.pattern,
     ...(path ? ["--", path] : []),
   ];
-  // -I skips binaries like rg; no path searches the cwd with clean relative names.
   const grep = [
     "grep",
     "-rIE",

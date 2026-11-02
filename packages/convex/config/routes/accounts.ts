@@ -1,8 +1,3 @@
-/**
- * Account self-management (`/v1/account*`) and admin account routes
- * (`/v1/accounts*`): metadata reads/patches and secret rotation.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc } from "../../_generated/dataModel";
@@ -47,12 +42,6 @@ type AccountUpdateInput = {
   auditRetentionDays?: number | null;
 };
 
-/**
- * @param ctx Convex action context
- * @param req incoming HTTP request
- * @param route parsed account route
- * @returns HTTP response matching core account-management payloads
- */
 export async function handleAccountRoute(
   ctx: ActionCtx,
   req: Request,
@@ -112,7 +101,6 @@ export async function handleAccountRoute(
   return methodNotAllowed(["POST"]);
 }
 
-/** `/v1/account*`: the caller's own account, by its key or a role session. */
 async function handleSelfAccountRoute(
   ctx: ActionCtx,
   req: Request,
@@ -127,8 +115,7 @@ async function handleSelfAccountRoute(
   const actor = auditActorForAuth(accountAuth);
 
   if (accountAuth.kind === "role") {
-    // Rotating the master secret from a session or scoped key would be
-    // privilege escalation, so no role policy can grant it.
+    // Rotating the master secret would be privilege escalation: no role policy can grant it.
     if (route.kind === "selfRotate") {
       return jsonError(
         403,
@@ -167,11 +154,6 @@ async function handleSelfAccountRoute(
   return methodNotAllowed(["POST"]);
 }
 
-/**
- * Parse account config-plane pathnames, including unknown admin subpaths.
- * @param pathname request pathname
- * @returns parsed account route, or null when not account HTTP
- */
 export function parseAccountRoute(pathname: string): AccountHttpRoute | null {
   if (pathname === "/v1/account") return { kind: "self" };
   if (pathname === "/v1/account/rotate-secret") return { kind: "selfRotate" };
@@ -191,11 +173,6 @@ export function parseAccountRoute(pathname: string): AccountHttpRoute | null {
   return { kind: "adminUnknown" };
 }
 
-/**
- * Normalize account metadata patches with core's error strings.
- * @param value raw JSON body
- * @returns normalized account update input
- */
 function normalizeAccountUpdateInput(value: unknown): AccountUpdateInput {
   if (!isPlainObject(value))
     throw new ClientError("Request body must be an object");
@@ -228,11 +205,7 @@ function normalizeAccountUpdateInput(value: unknown): AccountUpdateInput {
   return normalized;
 }
 
-/**
- * `PATCH /v1/account` for the caller's own account. Retention decides when
- * ledger rows are deleted, so a role that sets `auditRetentionDays` needs
- * audit:write on top of the account:write the route already checked.
- */
+// Retention decides when ledger rows are deleted, so setting it also needs audit:write.
 async function patchSelfResponse(
   ctx: ActionCtx,
   req: Request,
@@ -253,11 +226,6 @@ async function patchSelfResponse(
   return await updateAccountResponse(ctx, auth.account._id, actor, input);
 }
 
-/**
- * Audit retention in whole days, or null to return to the default.
- * @param value raw value
- * @returns days, or null for the default
- */
 function retentionDays(value: unknown): number | null {
   if (value === null) return null;
   if (
@@ -274,12 +242,6 @@ function retentionDays(value: unknown): number | null {
   return value;
 }
 
-/**
- * Normalize an optional string field, omitting empty strings.
- * @param value raw value
- * @param name field name for error messages
- * @returns trimmed string or undefined
- */
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string")
@@ -289,11 +251,6 @@ function optionalString(value: unknown, name: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-/**
- * @param value raw value
- * @param name field name for error messages
- * @returns trimmed string
- */
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new ClientError(`${name} must be a non-empty string`);
@@ -302,12 +259,6 @@ function requireString(value: unknown, name: string): string {
   return value.trim();
 }
 
-/**
- * Rotate an account key: store the new hash and return the one-time plaintext.
- * @param ctx Convex action context
- * @param accountId account id to rotate
- * @returns rotate-secret response
- */
 async function rotateAccountSecretResponse(
   ctx: ActionCtx,
   accountId: string,
@@ -340,10 +291,6 @@ async function rotateAccountSecretResponse(
     : jsonError(404, "Account not found");
 }
 
-/**
- * @param account account document
- * @returns public account record
- */
 function toPublicAccount(account: Doc<"accounts">): Record<string, unknown> {
   return {
     accountId: account._id,
@@ -358,12 +305,6 @@ function toPublicAccount(account: Doc<"accounts">): Record<string, unknown> {
   };
 }
 
-/**
- * @param ctx Convex action context
- * @param accountId account id to update
- * @param input raw update body
- * @returns update response
- */
 async function updateAccountResponse(
   ctx: ActionCtx,
   accountId: string,

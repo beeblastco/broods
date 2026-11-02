@@ -105,8 +105,7 @@ describe("slack channel adapter", () => {
     expect(parsed.message.conversationKey).toBe(
       "slack:T1:C1:1713916800.000004",
     );
-    // Group-channel messages include the sender's user id so the agent knows
-    // who is talking in a multi-user channel.
+    // Group messages carry the sender so the agent knows who is talking.
     expect(parsed.message.content).toEqual([
       { type: "text", text: "Alex: hello channel" },
     ]);
@@ -249,8 +248,7 @@ describe("slack channel adapter", () => {
     }
 
     expect(parsed.ack).toEqual({ statusCode: 200 });
-    // Both app_mention and message events for the same user message share the
-    // same ts, so using ts as the eventId lets session.claim() dedupe them.
+    // app_mention and message events for one message share its ts, so the eventId dedupes them.
     expect(parsed.message.eventId).toBe("slack:T1:C1:1713916800.000002");
     expect(parsed.message.conversationKey).toBe(
       "slack:T1:C1:1713916800.000002",
@@ -291,8 +289,7 @@ describe("slack channel adapter", () => {
       throw new Error("Expected Slack app mention to be accepted");
     }
 
-    // "Alex: /new" would make the first token "Alex:" and the command would
-    // reach the model as ordinary text instead of clearing the thread.
+    // An "Alex: " prefix would hide the command from the parser and send it to the model as text.
     expect(parsed.message.content).toEqual([{ type: "text", text: "/new" }]);
   });
 
@@ -411,8 +408,7 @@ describe("slack channel adapter", () => {
   });
 
   it("keeps only the final step's text when earlier tool-call steps also answered", async () => {
-    // Some models repeat the answer alongside their tool calls; concatenating
-    // every step's text posts the reply twice ("I'm Bob!\n\nMy name is Bob!").
+    // Some models repeat the answer alongside their tool calls, which would post it twice.
     const chunks = await collect(
       toSlackStream(
         (async function* () {
@@ -512,9 +508,7 @@ describe("slack channel adapter", () => {
   });
 
   it("gives each thinking segment its own task so it interleaves with tools", async () => {
-    // Adapters reuse the same reasoning id (reasoning-0) on every step; a
-    // shared task id would merge all thinking into one block pinned at the
-    // top of the card instead of following the execution order.
+    // Adapters reuse reasoning-0 on every step; one task id would merge all thinking in one block.
     const chunks = await collect(
       toSlackStream(
         (async function* () {
@@ -566,10 +560,8 @@ describe("slack channel adapter", () => {
   });
 
   it("coalesces rapid reasoning deltas into one append without duplication", async () => {
-    // Every task_update costs a blocking Slack API round trip, so deltas that
-    // arrive within the flush interval must merge into a single append. Each
-    // suffix is still sent exactly once, because chat.appendStream appends details,
-    // so re-sending accumulated text would render "TheThe user is…".
+    // Each task_update is a blocking Slack round trip, so deltas within the interval merge;
+    // chat.appendStream appends, so each suffix is sent exactly once.
     const chunks = await collect(
       toSlackStream(
         (async function* () {
@@ -605,8 +597,7 @@ describe("slack channel adapter", () => {
         (async function* () {
           yield { type: "reasoning-start", id: "r1" };
           yield { type: "reasoning-delta", id: "r1", text: "first" };
-          // The interval check reads Date.now(), so moving the frozen clock
-          // past it stands in for a long think.
+          // The interval check reads Date.now(), so moving the frozen clock fakes a long think.
           setSystemTime(new Date(Date.now() + 550));
           yield { type: "reasoning-delta", id: "r1", text: " second" };
           yield { type: "reasoning-delta", id: "r1", text: " third" };
@@ -621,8 +612,6 @@ describe("slack channel adapter", () => {
           typeof chunk === "object" && chunk !== null && "details" in chunk,
       )
       .map((chunk) => (chunk as { details: string }).details);
-    // The delta arriving after the interval flushes what has accumulated so
-    // far; the remainder flushes at reasoning-end.
     expect(details).toEqual(["first second", " third"]);
   });
 
@@ -646,7 +635,6 @@ describe("slack channel adapter", () => {
       )
       .map((chunk) => (chunk as { details: string }).details);
     expect(details).toHaveLength(1);
-    // The ellipsis is inside the 1200-char budget, not appended past it.
     expect(details[0]).toBe(`${"x".repeat(1197)}...`);
     expect(details[0]!.length).toBe(1200);
   });
@@ -676,7 +664,6 @@ describe("slack channel adapter", () => {
     }
 
     expect(parsed.message.conversationKey).toBe("slack:T1:D1");
-    // DMs are not prefixed with the user id because there is only one user.
     expect(parsed.message.content).toEqual([
       { type: "text", text: "hello dm" },
     ]);
@@ -720,8 +707,6 @@ describe("slack channel adapter", () => {
     });
   });
 
-  // Threading a group reply is the default, so `inline` is the value that has
-  // to change something. Without it the record field decides nothing.
   it("posts to the channel under inline, and opens a thread under always-thread", async () => {
     const adapter = createTestSlackChannel(null);
 
@@ -780,8 +765,7 @@ describe("slack channel adapter", () => {
   });
 
   it("accepts a file upload instead of dropping it as an unsupported subtype", async () => {
-    // Slack delivers an ordinary message carrying a file as subtype
-    // `file_share`, so refusing every subtype dropped every file ever sent.
+    // Slack sends an ordinary message carrying a file as subtype `file_share`.
     const message = await parseFileShare();
 
     expect(message.attachments).toEqual([
@@ -821,8 +805,7 @@ describe("slack channel adapter", () => {
     const message = await parseFileShare({
       id: "F2",
       name: "audio_message.webm",
-      // Slack labels a recorded clip video/* even though there is no picture in
-      // it; left alone it is offered to the model as a video and refused.
+      // Slack labels a recorded clip video/*; offered as a video, the model would refuse it.
       mimetype: "video/webm",
       subtype: "slack_audio",
       url_private: "https://files.slack.com/files-pri/T1-F2/audio_message.webm",
@@ -835,8 +818,7 @@ describe("slack channel adapter", () => {
   });
 
   it("refuses to send the bot token to a host that is not Slack", async () => {
-    // The file URL arrives inside the webhook body, so a poisoned one would
-    // otherwise be handed the workspace's token.
+    // The file URL comes from the webhook body, so a poisoned one must never get the token.
     const message = await parseFileShare({
       id: "F3",
       name: "steal.png",

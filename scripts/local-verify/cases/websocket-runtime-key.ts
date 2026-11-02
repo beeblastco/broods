@@ -14,20 +14,10 @@ import {
 } from "../harness.ts";
 
 const SOCKET_TIMEOUT_MS = 30_000;
-// The gateway streams a turn from JetStream. The local stack, in CI too, runs
-// no NATS unless NATS_URL is set; a deployed gateway does.
 const NO_NATS = "Gateway requires NATS_URL";
 
-/**
- * The stage's runtime key, as `broods dev` writes it to BROODS_API_KEY, on the
- * gateway's sockets: it opens its stage's agent socket, is refused a private
- * agent's turn and run, and never opens the logs socket. A new agent requires
- * a signed user token, which this stack cannot sign (the signing secret is
- * minted from a dashboard session), so the public agent's turn and run are
- * refused too, for that reason and no other; `user-token.ts` covers the
- * token itself. The upgrade and attach checks need neither a model key nor
- * NATS. Without NATS the turns skip.
- */
+// This stack cannot sign a user token (its secret comes from a dashboard session), so a new
+// public agent refuses the bare runtime key too; `user-token.ts` covers the token itself.
 export async function websocketRuntimeKey(
   context: VerifyContext,
 ): Promise<void> {
@@ -86,7 +76,6 @@ export async function websocketRuntimeKey(
   const privateAgent = reference("private", privateId);
   const stagePath = `/v1/projects/${deployment.projectSlug}/stages/${deployment.stageSlug}`;
 
-  /** The status the edge answers a WebSocket upgrade with. */
   const upgrade = async (path: string): Promise<number> => {
     const response = await fetch(`${context.edgeUrl}${path}`, {
       headers: {
@@ -129,7 +118,6 @@ export async function websocketRuntimeKey(
     baseUrl: context.edgeUrl,
     apiKey: runtimeKey,
   });
-  /** Every frame one socket view delivered, and the error it ended on. */
   const collect = async (
     open: (handlers: {
       onMessage: (message: WebSocketServerMessage) => void;
@@ -179,8 +167,7 @@ export async function websocketRuntimeKey(
         ),
       ),
     );
-  // A run is accepted over HTTP, then attached to over the socket. The attach
-  // asks core for the run's status with the runtime key before any NATS read.
+  // The attach asks core for the run's status before any NATS read, so it needs no NATS.
   const attach = async (
     agent: AgentReference,
     apiKey: string,
@@ -213,7 +200,8 @@ export async function websocketRuntimeKey(
     );
   };
 
-  // A run of the private agent only a member's stage ticket can start.
+  // Only a member's stage ticket starts a private agent's run, and it needs no user token;
+  // the socket then attaches with the bare runtime key.
   const ticket = await sealStageSessionTicket(
     {
       accountId: deployment.accountId,
@@ -235,8 +223,6 @@ export async function websocketRuntimeKey(
       !privateAttach.frames.some((frame): boolean => frame.type === "attached"),
     JSON.stringify(privateAttach),
   );
-  // Started with the ticket, which speaks for the stage and needs no user
-  // token; read back over the socket with the bare runtime key.
   const publicAttach = await attach(publicAgent, ticket);
   assertStep(
     "the runtime key without a user token cannot attach to a new agent's run",

@@ -10,17 +10,6 @@ import {
 
 const VERCEL_ENV = ["VERCEL_TOKEN", "VERCEL_TEAM_ID", "VERCEL_PROJECT_ID"];
 
-/**
- * The vercel provider through the config plane: an idle window past Vercel's
- * 24 hour session cap is refused. With VERCEL_TOKEN, VERCEL_TEAM_ID and
- * VERCEL_PROJECT_ID on core and a model key, an agent writes a file in one turn
- * and hashes it in the next on the same reserved Vercel sandbox. A hash is
- * something the model cannot make up from the conversation, and the Vercel
- * images ship `sha256sum` but not `rev`. With FILESYSTEM_BUCKET_NAME and
- * SANDBOX_MOUNT_ROLE_ARN too, an agent on a reserved sandbox writes a
- * workspace file that another agent hashes from a fresh one, which only the
- * S3 mount can carry across.
- */
 export async function vercelSandbox(context: VerifyContext): Promise<void> {
   const key = `vercel-${context.runId}`;
   const refused = await context.account
@@ -81,6 +70,7 @@ export async function vercelSandbox(context: VerifyContext): Promise<void> {
     agentId,
     key,
     "vercel read",
+    // A hash the model cannot invent from the chat; Vercel images ship sha256sum, not rev.
     "Run: sha256sum /tmp/marker",
   );
   assertStep(
@@ -103,8 +93,7 @@ export async function vercelSandbox(context: VerifyContext): Promise<void> {
   await workspaceCrossesSandboxes(context, `${key}-ws`);
 }
 
-// A file one agent writes in the workspace on a reserved sandbox, hashed by
-// another agent on an ephemeral sandbox that boots fresh for that call.
+// Only the S3 mount can carry the file from the reserved sandbox to a freshly booted one.
 async function workspaceCrossesSandboxes(
   context: VerifyContext,
   key: string,
@@ -165,7 +154,6 @@ async function workspaceCrossesSandboxes(
   );
 }
 
-// An agent that runs exactly the command it is given on one sandbox.
 async function commandAgent(
   context: VerifyContext,
   name: string,

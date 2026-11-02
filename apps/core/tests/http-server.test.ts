@@ -1,10 +1,3 @@
-/**
- * server.ts keeps its logic in exported functions rather than inside the
- * `import.meta.main` block: CoreRequest synthesis, path routing, waitUntil
- * draining, and the router that dispatches between the handlers. These tests
- * cover them without starting a server.
- */
-
 import { describe, expect, it } from "bun:test";
 import type { CoreRequest, RequestContext } from "../src/shared/http.ts";
 import { drainInFlight, waitUntil } from "../src/shared/in-flight.ts";
@@ -52,7 +45,6 @@ describe("toCoreRequest", () => {
     expect(request.query.get("limit")).toBe("2");
     expect(request.query.get("q")).toBe("a b");
     expect(request.method).toBe("POST");
-    // Rightmost XFF entry (the proxy-appended peer), not the spoofable leftmost.
     expect(request.clientIp).toBe("10.0.0.1");
     expect(request.headers["x-custom-header"]).toBe("Value-Kept");
     expect(request.headers["content-type"]).toBe("application/json");
@@ -60,7 +52,6 @@ describe("toCoreRequest", () => {
   });
 
   it("derives clientIp from the rightmost X-Forwarded-For entry (proxy-appended, unspoofable)", async () => {
-    // Client prepends spoofed entries; traefik appends the real peer last.
     const request = await buildCoreRequest({
       method: "POST",
       headers: { "x-forwarded-for": "1.1.1.1, 2.2.2.2, 203.0.113.7" },
@@ -96,10 +87,7 @@ describe("routesToAccountManage", () => {
   });
 
   it("routes config-plane CRUD paths and invocations to the harness", () => {
-    // Account metadata/rotation plus agent, skills, tools, workspace files,
-    // cron, policy, workspace, and sandbox config CRUD are Convex config-plane
-    // routes (gateway-forwarded); a core hit falls through to the harness 404
-    // path. Invocations are harness-owned.
+    // Convex owns config-plane CRUD (gateway-forwarded); a core hit falls to the harness 404.
     const configPlanePaths = [
       "/v1/agents",
       "/v1/agents/my-agent",
@@ -152,12 +140,10 @@ describe("waitUntil drain", () => {
     const drain = drainInFlight().then((): void => {
       drained = true;
     });
-    // Tracked work settles on microtasks alone, so one macrotask turn is enough
-    // for the drain to resolve if it were not waiting on `release`.
+    // Work settles on microtasks: one macrotask turn resolves any drain not waiting on `release`.
     await new Promise<void>((resolve) => setImmediate(resolve));
     const early = { drained: drained, afterDone: afterDone };
-    // Released before asserting, so a failure here cannot leave the tracked
-    // promise in the shared set for later drains to wait on.
+    // Released first so a failed assert cannot leave the promise for later drains to wait on.
     release();
     await drain;
     expect(early).toEqual({ drained: false, afterDone: false });

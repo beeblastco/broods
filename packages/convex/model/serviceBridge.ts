@@ -1,10 +1,3 @@
-/**
- * The Convex-to-core service-auth bridge. Dashboard-facing actions reach
- * broods core (sandbox lifecycle verbs, MCP runtime verbs) with the shared
- * service token plus the account scope in X-Account-Id; core's
- * resolveBearerAuth service-token branch checks both.
- */
-
 /** Set by the gateway on every upstream request; the service token is refused with it. */
 export const VIA_GATEWAY_HEADER = "x-broods-via-gateway";
 

@@ -25,26 +25,14 @@ const TRACE_RETENTION_MS = TRACE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 interface Props {
   projectId: Id<"projects">;
   stageId: Id<"stages"> | null;
-  /** The clicked bin. */
   bin: { startMs: number; binSeconds: number };
-  /** Tokens the selected bin shows for the filtered models, for each trace's share. */
   binTokens: number;
-  /** The model filter as `provider::model` keys, or null for every model. */
+  /** `provider::model` keys, or null for every model. */
   models: string[] | null;
-  /** Rates by `provider::model` key, as the usage panel prices its totals. */
   rates: ReadonlyMap<string, ModelTokenRates>;
   onClose: () => void;
 }
 
-/**
- * The trace list that opens beside the token chart when a bin is clicked:
- * links to the traces behind that bin, heaviest first, with a search over
- * their prompts and trace ids. Each row carries the start of its prompt, as
- * Tracing labels it, wrapped to two lines and cut with an ellipsis, the
- * tokens it contributed and their estimated cost; the trace itself opens in
- * the Tracing tab until it ages out of Tempo. The rail matches the chart's
- * height and scrolls inside, so opening it never moves the content below.
- */
 export function UsageTraceRail({
   projectId,
   stageId,
@@ -66,7 +54,7 @@ export function UsageTraceRail({
     models: models ?? undefined,
   });
 
-  // Rows written before trace ids joined the task id have nothing to link to.
+  // Older rows have no trace id in their task id, so nothing to link to.
   const traced = (result?.tasks ?? []).flatMap((task) =>
     task.traceId
       ? [
@@ -90,7 +78,6 @@ export function UsageTraceRail({
           (t.inputPreview ?? "").toLowerCase().includes(needle),
       )
     : traced;
-  // Only the stage and the trace travel; the usage range and bin stay here.
   const traceHref = (traceId: string): string =>
     tabHref(pathname, "tracing", searchParams.toString(), { trace: traceId });
 
@@ -137,9 +124,9 @@ export function UsageTraceRail({
           {needle ? "No traces match." : "No traces listed for this time."}
         </p>
       )}
-      {shown.map((row, i) => (
+      {shown.map((row) => (
         <UsageTraceRow
-          key={`${row.traceId}-${i}`}
+          key={row.traceId}
           traceId={row.traceId}
           totalTokens={row.totalTokens}
           inputPreview={row.inputPreview}
@@ -157,10 +144,6 @@ export function UsageTraceRail({
   );
 }
 
-/**
- * One rail row: prompt, cost and tokens, then the trace id and its share of
- * the bin. A link to Tracing, or plain text once the trace has aged out.
- */
 function UsageTraceRow({
   traceId,
   totalTokens,
@@ -172,11 +155,8 @@ function UsageTraceRow({
   traceId: string;
   totalTokens: number;
   inputPreview: string | null;
-  /** Estimated USD, null when the model has no price. */
   cost: number | null;
-  /** The Tracing link, null once Tempo has dropped the trace. */
   href: string | null;
-  /** The row's fraction of the bin's tokens, null for an empty bin. */
   share: number | null;
 }): React.JSX.Element {
   const body = (
@@ -223,7 +203,6 @@ function UsageTraceRow({
   );
 }
 
-/** The rail's frame: the chart's height beside it, up to that height when stacked. */
 function Rail({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="max-h-112.5 overflow-y-auto overscroll-contain border-t border-border lg:h-112.5 lg:border-t-0 lg:border-l">
