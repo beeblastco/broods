@@ -48,8 +48,8 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
-import { getStorage } from "../shared/storage.ts";
 import { getIngressStatusByEventId } from "./ingress.ts";
+import { listRunnableAgents } from "./integrations.ts";
 
 export const MCP_PATH = "/mcp";
 
@@ -183,6 +183,12 @@ export function taskFromRuns(runs: TaskRuns): DetailedTaskV2 {
         ]),
       };
     case "completed":
+      // An answered question's continuation that fails settles the row
+      // completed with only an error.
+      if (current.response === undefined && current.error) {
+        return failedTask(base, current.error);
+      }
+
       return {
         ...base,
         status: "completed",
@@ -215,7 +221,7 @@ function createTaskServer(caller: McpCaller): Server {
   server.setRequestHandler(
     "tools/list",
     async (): Promise<{ tools: ToolV2[] }> => ({
-      tools: (await runnableAgents(caller.auth)).map(agentTool),
+      tools: (await listRunnableAgents(caller.auth)).map(agentTool),
     }),
   );
   server.setRequestHandler(
@@ -484,14 +490,11 @@ async function readRun(
   );
 
   if (response.ok) return (await response.json()) as RunStatus;
-  if (response.status >= 500) {
-    throw new ProtocolError(
-      ProtocolErrorCode.InternalError,
-      await errorText(response),
-    );
-  }
-
-  return null;
+  if (response.status === 404) return null;
+  throw new ProtocolError(
+    ProtocolErrorCode.InternalError,
+    await errorText(response),
+  );
 }
 
 function requireTaskCapability(ctx: ServerContext): void {
@@ -534,34 +537,6 @@ function runRequest(
     headers: { ...caller.request.headers, "content-type": "application/json" },
     body: body === undefined ? "" : JSON.stringify(body),
   };
-}
-
-/**
- * The agents this credential may start runs on. A member's stage ticket runs
- * its whole stage; the embeddable key only public agents, and only with a user
- * token where one is required. A run token lists none until peer calls land,
- * and neither does a user token that lists its conversations, since a task
- * always opens a fresh one.
- */
-async function runnableAgents(auth: McpAuth): Promise<AgentRecord[]> {
-  const agents = getStorage().agents;
-  if (auth.kind === "account") {
-    return agents.listForAccount(auth.account.accountId);
-  }
-  if (auth.kind !== "deployment") return [];
-  if (!auth.stageTicket && auth.user?.conversations !== undefined) return [];
-  const stage = await agents.listForEndpoint(
-    auth.account.accountId,
-    auth.endpointId,
-  );
-
-  return auth.stageTicket
-    ? stage
-    : stage.filter(
-        (agent) =>
-          agent.config.publicAccess === true &&
-          (agent.requireUserToken !== true || auth.user !== undefined),
-      );
 }
 
 /**
@@ -610,15 +585,17 @@ async function startTask(
     return toolResult(await errorText(started), true);
   }
   const accepted = (await started.json()) as AsyncRequestAccepted;
+  // The run is already going, so a failed first read still hands back its id:
+  // a retry would start a second run.
+  const run = await readRun(caller, accepted.runId).catch((): null => null);
   const now = new Date().toISOString();
 
-  // The first tasks/get reports where the run stands; a fresh run is working.
   return {
     resultType: "task",
     taskId: accepted.runId,
-    status: "working",
-    createdAt: now,
-    lastUpdatedAt: now,
+    status: run ? taskFromRuns({ root: run, current: run }).status : "working",
+    createdAt: run?.createdAt ?? now,
+    lastUpdatedAt: run?.lastUpdatedAt ?? now,
     ttlMs: null,
     pollIntervalMs: POLL_INTERVAL_MS,
   };

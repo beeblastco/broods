@@ -2567,6 +2567,36 @@ function assertOneDirectPayloadShape(
 }
 
 /**
+ * The agents this credential may start runs on. A member's stage ticket runs
+ * its whole stage; the embeddable key only public agents, and only with a user
+ * token where one is required. A run token lists none until peer calls land,
+ * and neither does a user token that lists its conversations, since a task
+ * always opens a fresh one.
+ */
+export async function listRunnableAgents(
+  auth: AuthContext,
+): Promise<AgentRecord[]> {
+  const agents = getStorage().agents;
+  if (auth.kind === "account") {
+    return agents.listForAccount(auth.account.accountId);
+  }
+  if (auth.kind !== "deployment") return [];
+  if (!auth.stageTicket && auth.user?.conversations !== undefined) return [];
+  const stage = await agents.listForEndpoint(
+    auth.account.accountId,
+    auth.endpointId,
+  );
+
+  return auth.stageTicket
+    ? stage
+    : stage.filter(
+        (agent) =>
+          agent.config.publicAccess === true &&
+          (agent.requireUserToken !== true || auth.user !== undefined),
+      );
+}
+
+/**
  * Throws unless the agent is in the credential's stage, and public for the
  * embeddable runtime key. True for that key, false for a member's ticket or
  * no credential.

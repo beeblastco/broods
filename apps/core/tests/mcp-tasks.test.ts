@@ -93,6 +93,10 @@ describe("taskFromRuns", () => {
       status: "completed",
       result: { content: [{ type: "text", text: "boom" }], isError: true },
     });
+    expect(at({ status: "completed", error: "lost" })).toMatchObject({
+      status: "completed",
+      result: { content: [{ type: "text", text: "lost" }], isError: true },
+    });
     expect(at({ status: "expired" })).toMatchObject({
       status: "completed",
       result: { isError: true },
@@ -295,6 +299,16 @@ describe("handleMcpRequest", () => {
       status: "completed",
       result: { content: [{ type: "text", text: "listed" }] },
     });
+  });
+
+  it("reports a refused status read as an error, not a missing task", async () => {
+    const { error } = await rpc(mcpRequest("tasks/get", { taskId: "run_1" }), {
+      posts: [],
+      replay: async (): Promise<Response> =>
+        Response.json({ error: { message: "Slow down" } }, { status: 429 }),
+    });
+
+    expect(error?.code).toBe(-32603);
   });
 
   it("stops the task's conversation on cancel", async () => {

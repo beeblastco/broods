@@ -48,6 +48,7 @@ import {
   errorResponse,
   jsonResponse,
   methodNotAllowed,
+  normalizePath,
   parseJsonBody,
   type CoreRequest,
   type RequestContext,
@@ -370,7 +371,7 @@ async function handleRequest(
   if (event.path === "/v1/cron-runs") {
     return handleCronHttpRequest(event);
   }
-  if (event.path === MCP_PATH) {
+  if (normalizePath(event.path) === MCP_PATH) {
     return handleMcpRequest(event, (replayed): Promise<Response> =>
       handleRequest(replayed, context),
     );
@@ -2163,14 +2164,11 @@ async function handleStatusRequest(
   // The async agent record keeps the public approval contract: while it is
   // nonterminal its status (processing/awaiting_approval) overrides the
   // envelope's terminal settle so pollers keep waiting and see approvals
-  // top-level, exactly as before durable ingress statuses existed. A failed
-  // record wins too: an answered question's continuation fails on the row
-  // after the envelope already settled.
+  // top-level, exactly as before durable ingress statuses existed.
   const status =
     asyncResult &&
     (asyncResult.status === "awaiting_approval" ||
       asyncResult.status === "awaiting_input" ||
-      asyncResult.status === "failed" ||
       (asyncResult.status === "processing" && result.status !== "failed"))
       ? asyncResult.status
       : result.status;

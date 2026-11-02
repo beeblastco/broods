@@ -42,9 +42,14 @@ interface Task {
  */
 export async function mcpTasks(context: VerifyContext): Promise<void> {
   const key = `mcp-tasks-${context.runId}`;
-  const discovered = await mcp(context, "server/discover", {});
+  const discovered = await mcp(
+    context,
+    "server/discover",
+    {},
+    { path: "/mcp/" },
+  );
   assertStep(
-    "/mcp advertises the tasks extension",
+    "/mcp/ advertises the tasks extension",
     JSON.stringify(discovered.result?.capabilities ?? {}).includes(
       TASKS_EXTENSION,
     ),
@@ -191,10 +196,10 @@ async function mcp(
   context: VerifyContext,
   method: string,
   params: Record<string, unknown>,
-  options: { capabilities?: object } = {},
+  options: { capabilities?: object; path?: string } = {},
 ): Promise<McpResponse> {
   const name = params.taskId ?? params.name;
-  const response = await fetch(`${context.edgeUrl}/mcp`, {
+  const response = await fetch(`${context.edgeUrl}${options.path ?? "/mcp"}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${context.accountSecret}`,
