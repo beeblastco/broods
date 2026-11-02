@@ -951,9 +951,9 @@ describe("runAgentLoop", () => {
     const boundary = stepBoundary.mock.calls.at(-1);
     const last = persistModelMessages.mock.calls.at(-1);
     expect((boundary?.[0] as ModelMessage[]).length).toBe(2);
-    expect((last?.[2] as string[]).slice(0, 2)).toEqual(
-      (boundary?.[1] as { dedupeKeys: string[] }).dedupeKeys,
-    );
+    expect(
+      (last?.[1] as { dedupeKeys: string[] }).dedupeKeys.slice(0, 2),
+    ).toEqual((boundary?.[1] as { dedupeKeys: string[] }).dedupeKeys);
   });
 
   it("winds down with a tool-free last step near the deadline", async (): Promise<void> => {
@@ -1710,8 +1710,7 @@ describe("runAgentLoop", () => {
           ],
         },
       ],
-      undefined,
-      expect.any(Array),
+      { dedupeKeys: expect.any(Array) },
     );
     const toolApproval = streamTextMock.mock.calls[0]?.[0].toolApproval as (
       event: unknown,
@@ -1812,8 +1811,7 @@ describe("runAgentLoop", () => {
           ],
         },
       ],
-      undefined,
-      expect.any(Array),
+      { dedupeKeys: expect.any(Array) },
     );
   });
 

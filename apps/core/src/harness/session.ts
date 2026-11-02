@@ -672,20 +672,22 @@ export class Session {
   }
 
   /**
-   * @param onSaved called after each append Convex accepts, with how many of
-   * the stored events are saved so far. A large batch takes several appends,
-   * so a caller that retries a failure can skip what is already saved.
-   * @param dedupeKeys one per message, for a caller that retries a failed
-   * write: Convex stores a row once per key, so a write that committed but
-   * lost its reply is not stored twice.
+   * @param options.onSaved called after each append Convex accepts, with how
+   * many of the stored events are saved so far. A large batch takes several
+   * appends, so a caller that retries a failure can skip what is already saved.
+   * @param options.dedupeKeys one per message, the keys a step boundary already
+   * saved them under: Convex stores a row once per key, so a write that
+   * committed but lost its reply is not stored twice.
    */
   async persistModelMessages(
-    messages: ModelMessage[],
-    onSaved?: (saved: number) => void,
-    dedupeKeys?: string[],
+    messages: ConversationIngressEvent[],
+    options: {
+      onSaved?: (saved: number) => void;
+      dedupeKeys?: string[];
+    } = {},
   ): Promise<string[]> {
-    const events = await this.storedEvents(messages, dedupeKeys);
-    await this.appendStoredEvents(events, onSaved);
+    const events = await this.storedEvents(messages, options.dedupeKeys);
+    await this.appendStoredEvents(events, options.onSaved);
 
     return events.map((entry): string => entry.cursor);
   }
@@ -1474,7 +1476,7 @@ export class Session {
    * here. Media carried as bytes is stored first, so the row keeps its link.
    */
   private async storedEvents(
-    messages: ModelMessage[],
+    messages: ConversationIngressEvent[],
     dedupeKeys?: string[],
   ): Promise<AppendedConversationEvent[]> {
     if (!this.persist) return [];
@@ -1493,11 +1495,10 @@ export class Session {
         this.eventId,
         producer,
       );
+      const source = messages[index];
       const dedupeKey =
         dedupeKeys?.[index] ??
-        ("dedupeKey" in message && typeof message.dedupeKey === "string"
-          ? message.dedupeKey
-          : undefined);
+        (source?.role === "user" ? source.dedupeKey : undefined);
       const toolResultIds = this.toolResultIdsOf(message);
 
       return event
@@ -1630,8 +1631,9 @@ export async function ingestChannelAttachments(
   };
 }
 
-// Projection attaches metadata/createdAt for hook payloads; model calls must
-// receive clean AI SDK message shapes, so they pass through this first.
+// Projection attaches metadata/createdAt for hook payloads, and a result's
+// message carries its dedupeKey; model calls must receive clean AI SDK message
+// shapes, so they pass through this first.
 export function stripEnvelopeFieldsFromMessages(
   messages: ModelMessage[],
 ): ModelMessage[] {
@@ -1648,11 +1650,10 @@ export function stripEnvelopeFieldsFromMessages(
       createdAt: _createdAt,
       dedupeKey: _dedupeKey,
       ...rest
-    } = message as ModelMessage & {
-      metadata?: unknown;
-      createdAt?: string;
-      dedupeKey?: string;
-    };
+    } = message as ModelMessage &
+      Partial<Pick<IngressUserMessage, "metadata" | "dedupeKey">> & {
+        createdAt?: string;
+      };
 
     return rest as ModelMessage;
   });
@@ -1985,7 +1986,7 @@ function projectActiveConversationEntries(
 }
 
 // Conversation projection. User messages carry envelope metadata/createdAt for
-// hook payloads; stripEnvelopeFieldsFromMessages removes both for model calls.
+// hook payloads; stripEnvelopeFieldsFromMessages removes them for model calls.
 function projectEntriesToMessages(
   entries: StoredConversationEntry[],
   model: string | undefined,

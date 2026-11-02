@@ -66,7 +66,7 @@ export const conversationEventsValidator = v.array(
   }),
 );
 
-/** The late result a history row stores, by the field a resume envelope names it. */
+/** A late result a history write stored, by the field a resume envelope names it by. */
 export type ResultFence = { resultEventId: string } | { toolResultId: string };
 
 /** How an async run ended, or what it waits on, as its polling row records it. */

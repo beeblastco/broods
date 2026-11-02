@@ -3113,7 +3113,6 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     },
   );
 
-  // The key the parent's own append of the finished result carries.
   test("the parent's own append completes a queued resume of the result", async (): Promise<void> => {
     const { t, conversationKey, ownerGeneration, resume } =
       await busyConversation();

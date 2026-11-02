@@ -5,12 +5,7 @@
 
 import type { JSONValue } from "@ai-sdk/provider";
 import { detectMediaType, type ToolResultOutput } from "@ai-sdk/provider-utils";
-import type {
-  JSONSchema7,
-  ToolModelMessage,
-  UserContent,
-  UserModelMessage,
-} from "ai";
+import type { JSONSchema7, ToolModelMessage, UserContent } from "ai";
 import {
   applyRunOverrides,
   type AgentConfig,
@@ -26,6 +21,7 @@ import {
   type AsyncAgentResultRecord,
 } from "../async-agent-result.ts";
 import { getIngressStatusByEventId } from "../ingress.ts";
+import type { IngressUserMessage } from "../session.ts";
 
 export const SUBAGENT_TOOL_PROPERTIES: Record<string, JSONSchema7> = {
   taskId: {
@@ -74,7 +70,7 @@ export type AskParent = (
 /** This turn's live subagents, as the parent's loop and subagent tools see them. */
 export interface SubagentWatch {
   answerQuestion(taskId: string, answer: string): boolean;
-  takeParentMessages(): Promise<UserModelMessage[]>;
+  takeParentMessages(): Promise<IngressUserMessage[]>;
 }
 
 export interface SubagentToolInput {

@@ -257,8 +257,9 @@ inductive HandbackCall where
   queued, in one transaction. A write that commits but loses its reply saves the
   row once: its retry is keyed the same. -/
   | save
-  /-- The owning turn dies before that save: its read ledger is gone, and an applied
-  resume's envelope expires with its lease, writing nothing to the row. -/
+  /-- The owning turn ends without that save: it dies, so its read ledger is gone,
+  or a boundary claimed the resume but lost its reply, so the owner never saw it.
+  The applied envelope settles or expires, writing nothing to the row. -/
   | crash
   /-- The parent's own append of the result (`insertConversationEvents`), which
   stores the row and completes a resume of it still queued, in the same

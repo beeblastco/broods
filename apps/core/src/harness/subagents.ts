@@ -120,7 +120,7 @@ const LOST_SUBAGENT_ERROR =
   "Subagent stopped without a result: the runtime restarted while it was running.";
 // The parent message of each lost result a sweep pass could not resume yet, so
 // the next pass retries it without running its finish hook again.
-let heldLostResults = new Map<string, UserModelMessage>();
+let heldLostResults = new Map<string, IngressUserMessage>();
 // Wall clock one child turn may take. The loop winds it down to a tools-off
 // answer DEADLINE_WIND_DOWN_MS before; a turn still running that long past the
 // budget, stuck in a tool call, is aborted.
@@ -199,7 +199,7 @@ export type SubagentResumeOutcome = IngressAdmission["outcome"] | "skip";
 type SubagentParentResumer = (
   parent: SubagentParent,
   taskId: string,
-  message: UserModelMessage,
+  message: IngressUserMessage,
   resultEventId: string,
   target?: ReentryTarget,
 ) => Promise<SubagentResumeOutcome>;
@@ -239,8 +239,7 @@ export class SubagentCoordinator {
   // Questions children asked, queued for the parent's next step.
   private readonly questions: Array<{
     taskId: string;
-    message: UserModelMessage;
-    dedupeKey: string;
+    message: IngressUserMessage;
   }> = [];
   // Set once no parent pass can answer, so ask_parent returns at once.
   private questionsClosed = false;
@@ -436,7 +435,7 @@ export class SubagentCoordinator {
    * Moves queued results and questions into the parent conversation and returns
    * them. The parent's step boundary calls it, so they reach the model mid-pass.
    */
-  async takeParentMessages(): Promise<UserModelMessage[]> {
+  async takeParentMessages(): Promise<IngressUserMessage[]> {
     // A running notice is stale once its child has finished: that child
     // resumed the parent with its result itself, even while the detach that
     // queued the notice was still writing.
@@ -449,28 +448,21 @@ export class SubagentCoordinator {
     const questions = this.questions.splice(0);
     const messages = [
       ...completions.map(completionToParentMessage),
-      ...questions.map((question): UserModelMessage => question.message),
+      ...questions.map((question): IngressUserMessage => question.message),
     ];
     if (messages.length === 0) return messages;
     // One write for all of them. Each is one stored event, and a large write
     // takes several appends, so a failure puts back only what no append saved,
     // and a later step or drain delivers it without repeating the rest. An
-    // append that committed but lost its reply is put back too: its dedupe key
-    // makes the retry store it once.
+    // append that committed but lost its reply is put back too: each message's
+    // dedupe key makes the retry store it once.
     let saved = 0;
     await this.parentSession
-      .persistModelMessages(
-        messages,
-        (count): void => {
+      .persistModelMessages(messages, {
+        onSaved: (count): void => {
           saved = count;
         },
-        [
-          ...completions.map(({ eventId, status }): string =>
-            subagentResultDedupeKey(eventId, status),
-          ),
-          ...questions.map(({ dedupeKey }): string => dedupeKey),
-        ],
-      )
+      })
       .catch((error: unknown): never => {
         this.completions.unshift(...completions.slice(saved));
         this.restoreQuestions(
@@ -517,7 +509,6 @@ export class SubagentCoordinator {
     this.questions.push({
       taskId: taskId,
       message: questionToParentMessage(metadata, question),
-      dedupeKey: `subagent-question:${crypto.randomUUID()}`,
     });
     this.notifyCompletion();
     const result = await answer;
@@ -1389,7 +1380,7 @@ export async function resumeLostSubagentResults(
       [handback, "processing", abandonedBefore],
     );
   }
-  const held = new Map<string, UserModelMessage>();
+  const held = new Map<string, IngressUserMessage>();
   for (const [handback, status, updatedBefore] of ranges) {
     let cursor: string | null = null;
     let isDone = false;
@@ -1423,7 +1414,7 @@ export async function resumeLostSubagentResults(
           loadParent,
           resumeParent,
           heldLostResults.get(row.eventId),
-        ).catch((error: unknown): UserModelMessage | undefined => {
+        ).catch((error: unknown): IngressUserMessage | undefined => {
           logError("Failed to resume the parent with a lost subagent result", {
             eventId: row.eventId,
             error: toErrorMessage(error),
@@ -1593,8 +1584,8 @@ async function resumeLostSubagentResult(
   row: AsyncAgentResultRecord,
   loadParent: SubagentParentLoader,
   resumeParent: SubagentParentResumer,
-  held: UserModelMessage | undefined,
-): Promise<UserModelMessage | undefined> {
+  held: IngressUserMessage | undefined,
+): Promise<IngressUserMessage | undefined> {
   const task = row.subagent;
   const child = parseAccountAgentScopedKey(row.eventId);
   const taskId = child
@@ -1642,7 +1633,7 @@ async function resumeLostSubagentResult(
       },
       target.agentConfig,
       createAgentHookDispatcher(scope.accountId, target.agentConfig),
-    ).then((visible): UserModelMessage | undefined =>
+    ).then((visible): IngressUserMessage | undefined =>
       visible ? completionToParentMessage(visible) : undefined,
     ));
   if (!message) {
@@ -1694,7 +1685,7 @@ function questionToParentMessage(
     "status" | "response" | "error" | "visibleResult"
   >,
   question: string,
-): UserModelMessage {
+): IngressUserMessage {
   const metadata = [
     `taskId: ${task.taskId}`,
     `agentId: ${task.agentId}`,
@@ -1703,6 +1694,7 @@ function questionToParentMessage(
 
   return {
     role: "user",
+    dedupeKey: `subagent-question:${crypto.randomUUID()}`,
     content: [
       {
         type: "text",

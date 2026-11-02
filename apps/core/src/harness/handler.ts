@@ -9,7 +9,6 @@ import type {
   TextStreamPart,
   ToolModelMessage,
   ToolSet,
-  UserModelMessage,
 } from "ai";
 import { stripUndefined } from "@broods/convex/model/objects";
 import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
@@ -146,6 +145,7 @@ import {
   ingestChannelAttachments,
   Session,
   type ConversationIngressEvent,
+  type IngressUserMessage,
 } from "./session.ts";
 import {
   ASK_QUESTIONS_TOOL_NAME,
@@ -657,7 +657,7 @@ export async function continueAfterAsyncToolSettlement(
 export async function resumeAfterSubagentResult(
   parent: SubagentParent,
   taskId: string,
-  message: UserModelMessage,
+  message: IngressUserMessage,
   resultEventId: string,
   target?: ReentryTarget,
 ): Promise<SubagentResumeOutcome> {
@@ -723,7 +723,7 @@ async function resumeConversation(options: {
   conversationKey: string;
   delivery: AsyncToolDelivery | undefined;
   asyncResultEventId?: string;
-  message: UserModelMessage;
+  message: IngressUserMessage;
   requestedMode: IngressMode;
   resultEventId?: string;
   toolResultId?: string;

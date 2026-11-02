@@ -821,8 +821,10 @@ describe("stored item persistence", () => {
             role: "user" as const,
             content: [{ type: "text" as const, text: answer }],
           })),
-          (count): void => {
-            saved.push(count);
+          {
+            onSaved: (count): void => {
+              saved.push(count);
+            },
           },
         ),
       ).rejects.toThrow("convex down");

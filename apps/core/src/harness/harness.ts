@@ -748,10 +748,12 @@ export async function runAgentLoop(
   // Each response message is saved under one key for the whole run, so the
   // last write after a boundary whose reply was lost saves none of it twice.
   const responseRunKey = crypto.randomUUID();
-  const responseDedupeKeys = (messages: ModelMessage[]): string[] =>
+  const responseDedupeKeys = (
+    from: number,
+    messages: ModelMessage[],
+  ): string[] =>
     messages.map(
-      (_message, index): string =>
-        `${responseRunKey}:${persistedResponseCount + index}`,
+      (_message, index): string => `${responseRunKey}:${from + index}`,
     );
   const runAbort = new AbortController();
   let terminalError: Error | undefined;
@@ -935,7 +937,7 @@ export async function runAgentLoop(
       const step = responseMessages.slice(persistedResponseCount);
       const { renewal, steering } = await session.stepBoundary(step, {
         claimSteering: !deadline.isWindingDown(),
-        dedupeKeys: responseDedupeKeys(step),
+        dedupeKeys: responseDedupeKeys(persistedResponseCount, step),
       });
       if (renewal === "stopped") {
         throw new Error(stopMessage);
@@ -972,7 +974,10 @@ export async function runAgentLoop(
       const parentMessages =
         (await options.subagentWatch?.takeParentMessages()) ?? [];
       if (parentMessages.length > 0) {
-        stepMessages = [...stepMessages, ...parentMessages];
+        stepMessages = [
+          ...stepMessages,
+          ...stripEnvelopeFieldsFromMessages(parentMessages),
+        ];
         logInfo("Subagent messages applied at AI SDK step boundary", {
           eventId: session.eventId,
           messageCount: parentMessages.length,
@@ -1392,8 +1397,9 @@ export async function runAgentLoop(
           approvalRequests.length > 0
             ? withApprovalToolCalls(unpersisted, approvalRequests)
             : unpersisted,
-          undefined,
-          responseDedupeKeys(unpersisted),
+          {
+            dedupeKeys: responseDedupeKeys(persistedResponseCount, unpersisted),
+          },
         );
         persistedResponseCount = responseMessages.length;
 

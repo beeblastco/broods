@@ -543,13 +543,13 @@ describe("SubagentCoordinator", () => {
     const persistModelMessages = mock(
       async (
         _messages: UserModelMessage[],
-        _onSaved?: (saved: number) => void,
+        _options?: { onSaved?: (saved: number) => void },
       ): Promise<never[]> => [],
     );
     // A write too large for one append saves its first append, then fails.
     persistModelMessages.mockImplementationOnce(
-      async (_messages, onSaved): Promise<never[]> => {
-        onSaved?.(1);
+      async (_messages, options): Promise<never[]> => {
+        options?.onSaved?.(1);
         throw new Error("convex down");
       },
     );
@@ -649,13 +649,13 @@ describe("SubagentCoordinator", () => {
     const persistModelMessages = mock(
       async (
         _messages: UserModelMessage[],
-        _onSaved?: (saved: number) => void,
+        _options?: { onSaved?: (saved: number) => void },
       ): Promise<never[]> => [],
     );
     // The expiry write saves its first append, then fails.
     persistModelMessages.mockImplementationOnce(
-      async (_messages, onSaved): Promise<never[]> => {
-        onSaved?.(1);
+      async (_messages, options): Promise<never[]> => {
+        options?.onSaved?.(1);
         throw new Error("convex down");
       },
     );

@@ -375,10 +375,13 @@ describe("step boundary", (): void => {
         },
       ],
     });
-    const [row] = (calls[0]?.[1].events ?? []) as {
-      event: { message: Record<string, unknown> };
-    }[];
-    expect(row?.event.message).not.toHaveProperty("dedupeKey");
+    expect(calls[0]?.[1]).not.toHaveProperty([
+      "events",
+      0,
+      "event",
+      "message",
+      "dedupeKey",
+    ]);
   });
 
   it("carries a status read's result id on the row of its tool result, unless the call failed", async (): Promise<void> => {
