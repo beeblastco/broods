@@ -1,5 +1,6 @@
 "use client";
 
+import { prefersReducedMotion } from "@/app/lib/motion";
 import { resampleRows } from "@/app/lib/usageChart";
 import { useEffect, useRef, useState } from "react";
 
@@ -17,9 +18,7 @@ export function useTween(target: number[][]): number[][] {
 
   useEffect(() => {
     const from = resampleRows(shownRef.current, target.length);
-    const reduced = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
+    const reduced = prefersReducedMotion();
     let start: number | null = null;
     let frame = 0;
     const step = (now: number): void => {

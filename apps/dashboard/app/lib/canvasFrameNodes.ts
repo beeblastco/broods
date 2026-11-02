@@ -63,7 +63,7 @@ export const COLLAPSED_FRAME_HEIGHT = NODE_HEIGHT;
 /**
  * The id a pending drop's slot holds in a frame's member list. No node carries
  * it: it sits in the list only so the frame's own geometry leaves a gap for the
- * card about to land, and the chips under it slide down on their own transition.
+ * card about to land, and the chips under it move down.
  */
 export const DROP_SLOT_ID = "canvas-drop-slot";
 
@@ -535,9 +535,6 @@ function framedNodes(
     const slotPositions = frameMemberPositions({ x: 0, y: 0 }, shape, expanded);
     const dropSlot = slotPositions.get(DROP_SLOT_ID);
     frameNodes.set(frame.id, {
-      // Grows and shrinks with the chip a click opens, with a collapse, and
-      // around the slot a card being dropped on it opens.
-      className: "transition-box duration-200 ease-out",
       data: {
         collapsed: isCollapsed,
         frame: frame,
@@ -565,9 +562,6 @@ function framedNodes(
     if (!frame || !frameNode) return [node];
     const member: Node = {
       ...node,
-      // Slides to its new slot when the chip above it opens or closes. Only
-      // the transform, which a frame drag never writes on a member.
-      className: "transition-transform duration-200 ease-out",
       draggable: false,
       parentId: frame.id,
       position: slots.get(node.id) ?? { x: 0, y: 0 },
