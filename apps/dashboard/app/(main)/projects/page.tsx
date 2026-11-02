@@ -1,7 +1,7 @@
 "use client";
 
 import { useSignedIn } from "@/app/hooks/useSignedIn";
-import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
+import { LazyCreateProjectDialog } from "@/app/components/LazyCreateProjectDialog";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
@@ -106,7 +106,7 @@ export default function ProjectsPage(): React.JSX.Element {
         )}
       </div>
 
-      <CreateProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      <LazyCreateProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} />
     </div>
   );
 }

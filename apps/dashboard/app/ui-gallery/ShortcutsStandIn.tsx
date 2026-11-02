@@ -190,6 +190,7 @@ function Surfaces(): React.JSX.Element {
     ask: ask,
     completed: completed,
     isOpen: isOpen,
+    items: ITEMS,
     messages: messages,
     runAction: run,
     runStep: (messageId, index, action) => {
@@ -198,6 +199,8 @@ function Surfaces(): React.JSX.Element {
       setCompleted((prev) => new Set(prev).add(`${messageId}:${index}`));
     },
     setOpen: setOpen,
+    // The fixture's rows are fixed, so there is nothing to subscribe to.
+    wakeIndex: () => {},
   };
 
   return (

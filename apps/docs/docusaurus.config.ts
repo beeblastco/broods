@@ -3,12 +3,55 @@
  */
 
 import type * as Preset from "@docusaurus/preset-classic";
-import type { Config } from "@docusaurus/types";
+import type { Config, LoadContext, Plugin } from "@docusaurus/types";
+import scalarDocusaurus, { type ScalarOptions } from "@scalar/docusaurus";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const API_REFERENCE: ScalarOptions = {
+  label: "API Reference",
+  route: "/api-reference",
+  // The navbar already has an "API" item in its own slot. Scalar would
+  // append a second link to the same page.
+  showNavLink: false,
+  configuration: {
+    spec: {
+      content: fs.readFileSync(
+        path.resolve(__dirname, "docs/api-reference/openapi.yaml"),
+        "utf8",
+      ),
+    },
+  },
+};
+
+// Scalar's plugin as is, minus the 1 MB render-blocking script it injects
+// into every page: its route renders a component that loads the bundle itself.
+function apiReferencePlugin(context: LoadContext): Plugin {
+  const plugin = scalarDocusaurus(context, API_REFERENCE);
+
+  return {
+    name: plugin.name,
+    contentLoaded: async function ({ actions }) {
+      await plugin.contentLoaded?.({
+        content: (await plugin.loadContent?.()) ?? {},
+        actions: {
+          ...actions,
+          addRoute: (route) =>
+            actions.addRoute({
+              ...route,
+              component: path.resolve(
+                __dirname,
+                "src/components/ApiReference.tsx",
+              ),
+            }),
+        },
+      });
+    },
+  };
+}
 
 const LEGACY_REDIRECTS: { from: string; to: string }[] = [
   { from: "/getting-started", to: "/quickstart" },
@@ -138,25 +181,7 @@ const config: Config = {
         redirects: LEGACY_REDIRECTS,
       },
     ],
-    [
-      "@scalar/docusaurus",
-      {
-        id: "api-reference",
-        label: "API Reference",
-        route: "/api-reference",
-        // The navbar already has an "API" item in its own slot. Scalar would
-        // append a second link to the same page.
-        showNavLink: false,
-        configuration: {
-          spec: {
-            content: fs.readFileSync(
-              path.resolve(__dirname, "docs/api-reference/openapi.yaml"),
-              "utf8",
-            ),
-          },
-        },
-      },
-    ],
+    apiReferencePlugin,
     function generatedModulesWebpackMode() {
       return {
         name: "generated-modules-webpack-mode",

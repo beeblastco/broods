@@ -1,9 +1,14 @@
 /**
  * Clock helpers for the render-budget probe (`e2e/perf`): wait for a page's
- * ready marker without rounding the timing up, and time a client-side
- * navigation on the document's own clock.
+ * ready marker without rounding the timing up, time a client-side navigation
+ * on the document's own clock, and record how long the main thread blocks.
  */
-import { expect, type Locator, type Page } from "@playwright/test";
+import {
+  expect,
+  type JSHandle,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 
 const READY_TIMEOUT_MS = 30_000;
 
@@ -52,4 +57,19 @@ export async function timeClientNavigation(
   ).toBe(true);
 
   return ms;
+}
+
+/**
+ * Starts recording the page's long tasks, every main-thread block of 50 ms or
+ * more from here on. `jsonValue()` on the handle reads their durations so far.
+ */
+export async function watchLongTasks(page: Page): Promise<JSHandle<number[]>> {
+  return await page.evaluateHandle(() => {
+    const durations: number[] = [];
+    new PerformanceObserver((list) => {
+      durations.push(...list.getEntries().map((entry) => entry.duration));
+    }).observe({ type: "longtask" });
+
+    return durations;
+  });
 }

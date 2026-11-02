@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -405,17 +406,56 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
     revoked.output,
   );
 
-  // Linking again with another development branch leaves dev out of the environment.
-  await run.asAdmin("github:linkRepo", {
-    projectId: imported.projectId,
-    target: { ...target, developmentBranch: "staging" },
+  await linkFromCli(run, imported.slug);
+}
+
+// `broods github` relinks the repo so main deploys Development and nothing deploys Production.
+async function linkFromCli(run: Run, slug: string): Promise<void> {
+  const { context, github } = run;
+  const cli = new BroodsSyncClient({
+    baseUrl: context.edgeUrl,
+    token: await cliLogin(run),
   });
-  const repo = github.repos.get(ORG_REPO);
+  const repos = await cli.githubRepos(slug);
   assertStep(
-    "a relink with another branch drops the old branch from the environment",
-    deployBranches(repo, "broods-development") === "staging" &&
-      deployBranches(repo, "broods-production") === "main",
+    "broods github repos lists the org's repo through the edge",
+    repos.some((entry) => entry.fullName === "acme/web"),
+    JSON.stringify(repos),
+  );
+  const linked = await context.measure("broods github link", async () =>
+    cli.githubLink(slug, {
+      repo: "acme/web",
+      baseUrl: context.edgeUrl,
+      productionBranch: null,
+      developmentBranch: "main",
+    }),
+  );
+  const repo = github.repos.get(ORG_REPO);
+  const workflow =
+    github
+      .filesAt(ORG_REPO, "broods/deploy-workflow-main")
+      ?.get(WORKFLOW_PATH) ?? "";
+  assertStep(
+    "a CLI link with main for Development finds the one broods/ and deploys no Production",
+    linked.productionBranch === undefined &&
+      linked.developmentBranch === "main" &&
+      linked.rootDirectory === "apps/agents" &&
+      workflow.includes('branches: ["main"]') &&
+      workflow.includes("BROODS_STAGE: ${{ 'development' }}"),
+    workflow,
+  );
+  assertStep(
+    "the relink leaves only main in the Development environment",
+    deployBranches(repo, "broods-development") === "main",
     deployBranches(repo, "broods-development"),
+  );
+  const status = await cli.githubStatus(slug);
+  await cli.githubUnlink(slug);
+  assertStep(
+    "broods github status shows the link, and unlink clears it",
+    status.repo?.developmentBranch === "main" &&
+      (await cli.githubStatus(slug)).repo === undefined,
+    JSON.stringify(status.repo),
   );
 }
 
@@ -559,6 +599,31 @@ function deploy(
     ok: result.status === 0,
     output: `${result.stdout}${result.stderr}`.slice(-600),
   };
+}
+
+// A `broods login` token for the admin: a PKCE login code, exchanged as the CLI does.
+async function cliLogin(run: Run): Promise<string> {
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const { code } = (await run.asAdmin("cli/auth:createLoginCode", {
+    codeChallenge: challenge,
+  })) as { code: string };
+  const response = await fetch(
+    `${run.context.edgeUrl}/v1/account/auth/exchange`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: code, code_verifier: verifier }),
+    },
+  );
+  const body = (await response.json()) as { token?: string };
+  assertStep(
+    "the admin logs the CLI in",
+    Boolean(body.token),
+    String(response.status),
+  );
+
+  return body.token ?? "";
 }
 
 // The branches an environment lets deploy, joined.
