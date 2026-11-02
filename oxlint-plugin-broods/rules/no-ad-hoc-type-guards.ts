@@ -2,7 +2,7 @@ import { matchesGlob } from "node:path";
 
 import { defineRule, type ESTree } from "@oxlint/plugins";
 
-import type { FunctionNode } from "../ast.ts";
+import { type FunctionNode, functionName } from "../ast.ts";
 
 type Options = {
   names: Array<string>;
@@ -10,32 +10,6 @@ type Options = {
 };
 
 const UNTYPED = new Set(["TSAnyKeyword", "TSUnknownKeyword"]);
-
-const keyName = (
-  key: ESTree.PropertyKey,
-  computed: boolean,
-): string | undefined =>
-  !computed && key.type === "Identifier" ? key.name : undefined;
-
-const functionName = (node: FunctionNode): string | undefined => {
-  if (node.id) return node.id.name;
-  const { parent } = node;
-  if (parent.type === "VariableDeclarator") {
-    return parent.init === node && parent.id.type === "Identifier"
-      ? parent.id.name
-      : undefined;
-  }
-  if (
-    parent.type === "Property" ||
-    parent.type === "MethodDefinition" ||
-    parent.type === "PropertyDefinition"
-  ) {
-    return parent.value === node
-      ? keyName(parent.key, parent.computed)
-      : undefined;
-  }
-  return undefined;
-};
 
 const isStringKeyed = (type: ESTree.TSType): boolean => {
   if (type.type === "TSTypeReference") {
