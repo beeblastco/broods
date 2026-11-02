@@ -7,7 +7,13 @@ import {
   readUIMessageStream,
   uiMessageChunkSchema,
 } from "ai";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type {
   PendingQuestion,
   QuestionAnswer,
@@ -300,6 +306,7 @@ export function useAgentChat({
         });
 
         // Commit the newest snapshot once per window, not per chunk: a commit re-parses markdown.
+        // A transition, so React yields between markdown blocks; the last one commits at once.
         let pending: UIMessage | null = null;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const commitPending = (): void => {
@@ -322,7 +329,10 @@ export function useAgentChat({
         try {
           for await (const assistantMessage of messageStream) {
             pending = assistantMessage;
-            timer ??= setTimeout(commitPending, STREAM_COMMIT_INTERVAL_MS);
+            timer ??= setTimeout(
+              () => startTransition(commitPending),
+              STREAM_COMMIT_INTERVAL_MS,
+            );
           }
         } finally {
           clearTimeout(timer);

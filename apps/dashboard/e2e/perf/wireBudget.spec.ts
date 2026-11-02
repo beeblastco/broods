@@ -1,17 +1,13 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   CANVAS_READY,
   probeAccount,
   readProjectId,
   SIGNED_IN_CONTEXT,
 } from "../lib/session";
+import { checkPerfBaseline } from "../lib/perfBaseline";
 import { waitForReady } from "../lib/timing";
 
-const BUDGET_FILE = join(__dirname, "wire-budget.json");
-const BYTES_HEADROOM = 1.05;
-const RECORD = process.env.E2E_RECORD_WIRE_BUDGET === "1";
 const CONVEX_SYNC = /\/api\/[^/]+\/sync$/;
 // The ready marker is the first content, not the last query: settle on a quiet socket.
 const QUIET_MS = 1_500;
@@ -183,48 +179,37 @@ test("a cold load stays within its Convex wire budget", async ({ browser }) => {
     body: JSON.stringify(byQuery, null, 2),
     contentType: "application/json",
   });
-  if (RECORD) {
-    writeFileSync(BUDGET_FILE, `${JSON.stringify(measured, null, 2)}\n`);
-
-    return;
-  }
-
-  const budget: Partial<Record<string, WireLoad>> = JSON.parse(
-    readFileSync(BUDGET_FILE, "utf8"),
+  checkPerfBaseline(
+    "Convex wire",
+    Object.fromEntries(
+      Object.entries(measured).flatMap(([name, load]) => [
+        [
+          `wire.${name}.subscriptions`,
+          { value: load.subscriptions, gate: "blocking", maxRegressionPct: 0 },
+        ],
+        // Room for values that change width when the stack is rebuilt, such as minted tokens.
+        [
+          `wire.${name}.resultBytes`,
+          { value: load.resultBytes, gate: "blocking", maxRegressionPct: 5 },
+        ],
+        [
+          `wire.${name}.bytesReceived`,
+          {
+            value: load.bytesReceived,
+            gate: "informational",
+            maxRegressionPct: 30,
+          },
+        ],
+        [
+          `wire.${name}.framesReceived`,
+          {
+            value: load.framesReceived,
+            gate: "informational",
+            maxRegressionPct: 50,
+            slack: 4,
+          },
+        ],
+      ]),
+    ),
   );
-  for (const [name, load] of Object.entries(measured)) {
-    const allowed = budget[name];
-    if (!allowed) {
-      throw new Error(
-        `${name}: no wire budget; record one with E2E_RECORD_WIRE_BUDGET=1`,
-      );
-    }
-    const heaviest = Object.entries(byQuery[name])
-      .slice(0, 5)
-      .map(
-        ([path, wire]) =>
-          `${path} ${wire.subscriptions}x ${wire.resultBytes} B`,
-      )
-      .join(", ");
-    expect
-      .soft(
-        load.subscriptions,
-        `${name}: Convex query subscriptions on a cold load (heaviest: ${heaviest})`,
-      )
-      .toBeLessThanOrEqual(allowed.subscriptions);
-    expect
-      .soft(
-        load.resultBytes,
-        `${name}: Convex result bytes on a cold load, ${allowed.resultBytes} B + ${Math.round((BYTES_HEADROOM - 1) * 100)}% (heaviest: ${heaviest})`,
-      )
-      .toBeLessThanOrEqual(Math.floor(allowed.resultBytes * BYTES_HEADROOM));
-    if (
-      load.subscriptions < allowed.subscriptions ||
-      load.resultBytes * BYTES_HEADROOM < allowed.resultBytes
-    ) {
-      console.log(
-        `${name}: under the wire budget (${allowed.subscriptions} subscriptions, ${allowed.resultBytes} B of results); record with E2E_RECORD_WIRE_BUDGET=1 to lock the gain in`,
-      );
-    }
-  }
 });

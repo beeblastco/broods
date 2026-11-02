@@ -1,10 +1,12 @@
 // Local Broods stack: Convex and Traefik in docker, core and gateway as watched bun processes.
 // One stack per worktree, on its own port block, with state under ~/.broods-local/<instance>/.
+// `up --dashboard` serves next dev, or with `--perf` the production build perf numbers need.
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -317,7 +319,7 @@ async function up(
 
   if (dashboard) {
     await measureStep(perf, "dashboard", async () => {
-      await startDashboard(state);
+      await startDashboard(state, perfMode);
       saveState(state);
       await waitForHttp(`${dashboard}/healthz`, "dashboard");
     });
@@ -777,8 +779,12 @@ function startCore(state: InstanceState): void {
   });
 }
 
-// Mirrors apps/dashboard `dev` (run by node); this env wins over .env.local.
-async function startDashboard(state: InstanceState): Promise<void> {
+// Mirrors apps/dashboard `dev` (run by node), or serves the standalone build the image ships;
+// this env wins over .env.local.
+async function startDashboard(
+  state: InstanceState,
+  production: boolean,
+): Promise<void> {
   const url = dashboardUrl(state);
   if (isProcessAlive(state.pids.dashboard)) {
     console.log("dashboard already running");
@@ -792,26 +798,62 @@ async function startDashboard(state: InstanceState): Promise<void> {
   }
 
   const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
-  state.pids.dashboard = spawnDetached({
-    args: [
-      join(dashboardDir, "node_modules", ".bin", "next"),
-      "dev",
-      "--port",
-      String(ports(state).dashboard),
-    ],
-    command: "node",
+  // Empty WORKOS_* so the stack proves sign-in works without WorkOS.
+  const env = {
+    ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
+    BROODS_BASE_URL: edgeUrl,
+    BROODS_SESSION_SIGNING_KEY: state.secrets.sessionSigningKey,
+    NEXT_PUBLIC_BROODS_BASE_URL: edgeUrl,
+    NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${ports(state).convexApi}`,
+    WORKOS_API_KEY: "",
+    WORKOS_CLIENT_ID: "",
+    WORKOS_COOKIE_PASSWORD: "",
+  };
+  const port = String(ports(state).dashboard);
+  if (!production) {
+    state.pids.dashboard = spawnDetached({
+      args: [
+        join(dashboardDir, "node_modules", ".bin", "next"),
+        "dev",
+        "--port",
+        port,
+      ],
+      command: "node",
+      cwd: dashboardDir,
+      env: env,
+      instanceId: state.instanceId,
+      logName: "dashboard",
+    });
+
+    return;
+  }
+
+  execFileSync("bun", ["run", "build"], {
     cwd: dashboardDir,
-    // Empty WORKOS_* so the stack proves sign-in works without WorkOS.
-    env: {
-      ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
-      BROODS_BASE_URL: edgeUrl,
-      BROODS_SESSION_SIGNING_KEY: state.secrets.sessionSigningKey,
-      NEXT_PUBLIC_BROODS_BASE_URL: edgeUrl,
-      NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${ports(state).convexApi}`,
-      WORKOS_API_KEY: "",
-      WORKOS_CLIENT_ID: "",
-      WORKOS_COOKIE_PASSWORD: "",
+    env: { ...process.env, ...env },
+    stdio: "inherit",
+  });
+  const standalone = join(
+    dashboardDir,
+    ".next",
+    "standalone",
+    "apps",
+    "dashboard",
+  );
+  cpSync(
+    join(dashboardDir, ".next", "static"),
+    join(standalone, ".next", "static"),
+    {
+      recursive: true,
     },
+  );
+  cpSync(join(dashboardDir, "public"), join(standalone, "public"), {
+    recursive: true,
+  });
+  state.pids.dashboard = spawnDetached({
+    args: ["server.js"],
+    cwd: standalone,
+    env: { ...env, HOSTNAME: "127.0.0.1", NODE_ENV: "production", PORT: port },
     instanceId: state.instanceId,
     logName: "dashboard",
   });

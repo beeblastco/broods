@@ -5,8 +5,6 @@ import {
   type Page,
   type Request,
 } from "@playwright/test";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   CANVAS_READY,
   hasProbe,
@@ -14,11 +12,9 @@ import {
   readProjectId,
   SIGNED_IN_CONTEXT,
 } from "../lib/session";
+import { checkPerfBaseline } from "../lib/perfBaseline";
 import { waitForReady } from "../lib/timing";
 
-const BUDGET_FILE = join(__dirname, "first-load-budget.json");
-const BYTES_HEADROOM = 1.05;
-const RECORD = process.env.E2E_RECORD_FIRST_LOAD === "1";
 const PAGES: ProbePage[] = [
   {
     name: "canvas",
@@ -123,45 +119,22 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
       `First load ${name}: ${load.jsRequests} JS requests, ${Math.round(load.jsBytes / 1024)} kB of JS`,
     );
   }
-  if (RECORD) {
-    const budget = Object.fromEntries(
-      Object.entries(measured).map(([name, load]) => [
-        name,
-        {
-          jsRequests: load.jsRequests,
-          jsBytes: Math.ceil(load.jsBytes * BYTES_HEADROOM),
-        },
+  checkPerfBaseline(
+    "first load",
+    Object.fromEntries(
+      Object.entries(measured).flatMap(([name, load]) => [
+        [
+          `first-load.${name}.jsRequests`,
+          { value: load.jsRequests, gate: "blocking", maxRegressionPct: 0 },
+        ],
+        // Chunk hashes and minifier output move the size a little per build.
+        [
+          `first-load.${name}.jsBytes`,
+          { value: load.jsBytes, gate: "blocking", maxRegressionPct: 5 },
+        ],
       ]),
-    );
-    writeFileSync(BUDGET_FILE, `${JSON.stringify(budget, null, 2)}\n`);
-
-    return;
-  }
-
-  const budget: Partial<Record<string, FirstLoad>> = JSON.parse(
-    readFileSync(BUDGET_FILE, "utf8"),
+    ),
   );
-  for (const [name, load] of Object.entries(measured)) {
-    const allowed = budget[name];
-    if (!allowed) {
-      throw new Error(
-        `${name}: no first-load budget; record one with E2E_RECORD_FIRST_LOAD=1`,
-      );
-    }
-    expect(
-      load.jsRequests,
-      `${name}: JS requests before the load event`,
-    ).toBeLessThanOrEqual(allowed.jsRequests);
-    expect(
-      load.jsBytes,
-      `${name}: JS bytes before the load event`,
-    ).toBeLessThanOrEqual(allowed.jsBytes);
-    if (load.jsRequests < allowed.jsRequests) {
-      console.log(
-        `${name}: fewer JS requests than the budget (${allowed.jsRequests}); record with E2E_RECORD_FIRST_LOAD=1 to lock the gain in`,
-      );
-    }
-  }
 });
 
 function isStaticScript(url: string): boolean {

@@ -10,6 +10,7 @@ import type { api } from "../../../../packages/convex/_generated/api";
 import type { Id } from "../../../../packages/convex/_generated/dataModel";
 import { PAGE_RENDER_BUDGET_MS, PERF_BUDGETS } from "../../app/lib/perfReport";
 import { run, STACK_ADMIN } from "../lib/localStack";
+import { checkPerfBaseline } from "../lib/perfBaseline";
 import {
   BASE_URL,
   hasProbe,
@@ -31,6 +32,10 @@ const DELTA_INTERVAL_MS = 8;
 // stream: the user's message, the status, code highlighting, Convex updates.
 const COMMIT_WINDOW_MS = 50;
 const COMMIT_HEADROOM = 1.5;
+// A mid-range laptop: a fast runner at full speed hides the long tasks a slower machine has.
+const CPU_SLOWDOWN = 4;
+// Total blocking time counts each long task past this.
+const BLOCKING_MS = 50;
 const COMMIT_MARK = "e2e-react-commit";
 const ANSWER_END = "END-OF-STREAM";
 const ANSWER_ID = "chat-stream-answer";
@@ -151,15 +156,16 @@ test("a long streamed answer on the agent Test tab reaches the screen without a 
     }) as FunctionReturnType<typeof api.stage.list>;
     const stage = stages.find((candidate) => candidate.isDefault);
     if (!stage) throw new Error("The probe's project has no default stage");
-    const scope = {
+    const scope: FunctionArgs<typeof api.agent.deployments.ensureForStage> = {
       projectId: projectId as Id<"projects">,
       stageId: stage._id,
-    } satisfies FunctionArgs<typeof api.agent.deployments.ensureForStage>;
-    run(STACK_ADMIN, "agent/config:create", {
+    };
+    const agent: FunctionArgs<typeof api.agent.config.create> = {
       ...scope,
       name: SEEDED_AGENT,
       position: { x: 0, y: 0 },
-    } satisfies FunctionArgs<typeof api.agent.config.create>);
+    };
+    run(STACK_ADMIN, "agent/config:create", agent);
     run(STACK_ADMIN, "agent/deployments:ensureForStage", scope);
     await waitForReady(agentNode);
   }
@@ -174,6 +180,8 @@ test("a long streamed answer on the agent Test tab reaches the screen without a 
   );
   await composer.fill("Write the long deployment guide.");
 
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: CPU_SLOWDOWN });
   const longTasks = await watchLongTasks(page);
   const commitsFrom = await page.evaluate(() => performance.now());
   await composer.press("Enter");
@@ -204,6 +212,9 @@ test("a long streamed answer on the agent Test tab reaches the screen without a 
     longTasks: tasks.length,
     longestTaskMs: Math.round(longestMs),
     totalLongTaskMs: Math.round(tasks.reduce((sum, ms) => sum + ms, 0)),
+    blockingMs: Math.round(
+      tasks.reduce((sum, ms) => sum + Math.max(0, ms - BLOCKING_MS), 0),
+    ),
   };
   console.log(
     `Chat stream ${new URL(BASE_URL).host} ${JSON.stringify(result)}`,
@@ -211,6 +222,37 @@ test("a long streamed answer on the agent Test tab reaches the screen without a 
   await test.info().attach("chat-stream", {
     body: JSON.stringify(result, null, 2),
     contentType: "application/json",
+  });
+  checkPerfBaseline("chat stream", {
+    "chat-stream.commits": {
+      value: commits,
+      gate: "blocking",
+      maxRegressionPct: 20,
+    },
+    "chat-stream.longTasks": {
+      value: result.longTasks,
+      gate: "informational",
+      maxRegressionPct: 50,
+      slack: 2,
+    },
+    "chat-stream.blockingMs": {
+      value: result.blockingMs,
+      gate: "informational",
+      maxRegressionPct: 100,
+      slack: 50,
+    },
+    "chat-stream.longestTaskMs": {
+      value: result.longestTaskMs,
+      gate: "informational",
+      maxRegressionPct: 50,
+      slack: 25,
+    },
+    "chat-stream.visibleMs": {
+      value: result.visibleMs,
+      gate: "informational",
+      maxRegressionPct: 100,
+      slack: 100,
+    },
   });
   // Paced frames leave no backlog on the browser protocol, so the page's own budget holds.
   expect(
