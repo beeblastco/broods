@@ -48,6 +48,7 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
+import { asyncToolContinuationEventId } from "./async-tool-result.ts";
 import { getIngressStatusByEventId } from "./ingress.ts";
 import { listRunnableAgents } from "./integrations.ts";
 
@@ -348,23 +349,34 @@ async function answerQuestions(
   );
 }
 
-/** The approval reply that carries a waiting run on, once one was sent. */
-async function approvalReply(
+/**
+ * The run that carries a waiting one on once its input arrived: the approval
+ * reply, or the continuation core starts for an answered question.
+ */
+async function nextRun(
   caller: McpCaller,
   waiting: RunStatus,
 ): Promise<RunStatus | null> {
   const accountId = caller.auth.account.accountId;
-  const reply = await getIngressStatusByEventId({
-    accountId: accountId,
-    agentId: waiting.agentId,
-    eventId: scopedDirectEventId(
-      accountId,
-      waiting.agentId,
-      `${waiting.eventId}${APPROVAL_EVENT_SUFFIX}`,
-    ),
-  });
+  const eventIds =
+    waiting.status === "awaiting_approval"
+      ? [`${waiting.eventId}${APPROVAL_EVENT_SUFFIX}`]
+      : (waiting.questions ?? []).map((prompt) =>
+          asyncToolContinuationEventId({
+            parentEventId: waiting.eventId,
+            resultId: prompt.statusId,
+          }),
+        );
+  for (const eventId of eventIds) {
+    const next = await getIngressStatusByEventId({
+      accountId: accountId,
+      agentId: waiting.agentId,
+      eventId: scopedDirectEventId(accountId, waiting.agentId, eventId),
+    });
+    if (next?.runId) return readRun(caller, next.runId);
+  }
 
-  return reply?.runId ? readRun(caller, reply.runId) : null;
+  return null;
 }
 
 /** Every tool call waiting on approval as one checkbox of a single form. */
@@ -506,7 +518,7 @@ function requireTaskCapability(ctx: ServerContext): void {
   }
 }
 
-/** Follows each approval reply from the task's run to the one it now waits on. */
+/** Follows each answered prompt from the task's run to the one it now stands at. */
 async function resolveTask(
   caller: McpCaller,
   taskId: string,
@@ -514,10 +526,13 @@ async function resolveTask(
   const root = await readRun(caller, taskId);
   if (!root) throw unknownTask(taskId);
   let current = root;
-  while (current.status === "awaiting_approval") {
-    const reply = await approvalReply(caller, current);
-    if (!reply) break;
-    current = reply;
+  while (
+    current.status === "awaiting_approval" ||
+    current.status === "awaiting_input"
+  ) {
+    const next = await nextRun(caller, current);
+    if (!next) break;
+    current = next;
   }
 
   return { root: root, current: current };

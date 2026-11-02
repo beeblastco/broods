@@ -281,14 +281,15 @@ sequenceDiagram
   M->>H: GET /v1/runs/:runId
   M-->>C: resultType task, taskId = runId
   C->>M: tasks/get
-  M->>H: GET /v1/runs/:runId, then each approval reply
+  M->>H: GET /v1/runs/:runId, then each run that carried it on
   M-->>C: working, input_required, completed or cancelled
 ```
 
 - Task id: the run id, 122 random bits. There is no `tasks/list`, and every task call replays the caller's credential, so a task one key cannot read is `-32602` like an unknown one.
 - Tools: `tools/list` reads `agents.listForAccount` for an account key and `listForEndpoint` for a stage key, filtered to public agents for the embeddable key. A `brt_` run token lists none until peer calls land with their own allow-list and cycle guard.
-- Questions: an answer goes back as `POST /v1/runs {answers}`. The resumed turn writes its outcome to the asking run's polling row (`asyncResultEventId`), so the task's own run carries on.
-- Approvals: a reply is a new run with nothing pointing back. `tasks/update` sends it under the event id `<waiting eventId>:approval`, and `tasks/get` follows that id with `getIngressStatusByEventId` from run to run. No row or schema field records the link, and the fixed id makes a retried update a duplicate admission.
+- Questions: an answer goes back as `POST /v1/runs {answers}`. Core continues the run under `<root eventId>:async-tools:<statusId>` (`asyncToolContinuationEventId`), and the asking run's row keeps saying `awaiting_input`, so `tasks/get` follows that id to the continuation.
+- Approvals: a reply is a new run with nothing pointing back. `tasks/update` sends it under the event id `<waiting eventId>:approval`, and `tasks/get` follows that id.
+- Both links are found with `getIngressStatusByEventId` from run to run. No row or schema field records them, and the fixed approval id makes a retried update a duplicate admission.
 - Cancel: `stopIngressOwner` on the task's conversation, the path `/stop` and `stop_subagent` take, for a key that may start runs. The run ends `failed` with `stoppedByUser`, which maps to `cancelled`.
 - Timestamps: `createdAt` and `lastUpdatedAt` come from `GET /v1/runs/{runId}`. `lastUpdatedAt` is the later of the envelope and its polling row, since an answered question moves only the row.
 

@@ -174,6 +174,17 @@ export function rootEventId(eventId: string): string {
   return index === -1 ? eventId : eventId.slice(0, index);
 }
 /**
+ * The event a settled result continues its run under, once per result: a
+ * run's async tool results all share its root event id, and a detached row's
+ * parent event already names the row.
+ */
+export function asyncToolContinuationEventId(
+  row: Pick<AsyncToolResultRecord, "parentEventId" | "resultId">,
+): string {
+  return `${rootEventId(row.parentEventId)}:async-tools:${row.resultId}`;
+}
+
+/**
  * Settles a still-processing row from outside the run, for background job
  * callbacks and question answers. Null when already settled. `secretValues`
  * are the run's own, from a caller that no run's context covers.

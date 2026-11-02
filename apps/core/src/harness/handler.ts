@@ -84,6 +84,7 @@ import {
 } from "./async-agent-result.ts";
 import {
   getAsyncToolResult,
+  asyncToolContinuationEventId,
   rootEventId,
   settleAsyncToolResultFromCallback,
   verifyAsyncToolCompletionToken,
@@ -2744,15 +2745,6 @@ async function invokeHarnessWorker(
           ownerGeneration: event.ownerGeneration,
         },
   );
-}
-
-// One continuation per result, under the event a person started: a run's
-// async tool results all share its event id, and a detached row's parent
-// event already names the row.
-function asyncToolContinuationEventId(
-  row: Pick<AsyncToolResultRecord, "parentEventId" | "resultId">,
-): string {
-  return `${rootEventId(row.parentEventId)}:async-tools:${row.resultId}`;
 }
 
 /**

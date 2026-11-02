@@ -301,6 +301,38 @@ describe("handleMcpRequest", () => {
     });
   });
 
+  it("follows an answered question to the run that continues it", async () => {
+    const replay = replayOf({
+      run_1: run({
+        runId: "run_1",
+        eventId: "mcp-1",
+        status: "awaiting_input",
+        questions: [
+          {
+            statusId: "q1",
+            answerBy: "2026-11-02T00:00:00.000Z",
+            questions: [],
+          },
+        ],
+      }),
+      run_2: run({ runId: "run_2", status: "completed", response: "Blue" }),
+    });
+    approvalReplies.set(
+      "acct:acct_1:agent:agent_1:api:mcp-1:async-tools:q1",
+      "run_2",
+    );
+    const { result } = await rpc(
+      mcpRequest("tasks/get", { taskId: "run_1" }),
+      replay,
+    );
+
+    expect(result).toMatchObject({
+      taskId: "run_1",
+      status: "completed",
+      result: { content: [{ type: "text", text: "Blue" }] },
+    });
+  });
+
   it("reports a refused status read as an error, not a missing task", async () => {
     const { error } = await rpc(mcpRequest("tasks/get", { taskId: "run_1" }), {
       posts: [],
