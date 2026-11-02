@@ -428,8 +428,11 @@ function positiveEnvInt(name, fallback) {
 // ancestors. A bundle can setsid() out of the group killGroup reaches, and the
 // survivor would share /proc with the next account's child in this warm
 // environment. Runs before each spawn, so a new child never starts next to one.
-// No-op off Linux. The function has no extensions; one would be killed here.
+// Only inside Lambda, where the UID runs nothing else, and so off Linux too;
+// anywhere else it would kill the host's own processes. The function has no
+// extensions; one would be killed here.
 function reapStrays() {
+  if (!process.env.LAMBDA_TASK_ROOT) return;
   let pids;
   try {
     pids = readdirSync("/proc").filter((name) => /^\d+$/.test(name));
