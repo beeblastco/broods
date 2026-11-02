@@ -3,9 +3,12 @@
 /**
  * Everything the palette and the copilot can find, as one list of rows.
  *
- * All of it comes from queries the dashboard already subscribes to, so opening
- * the palette costs no round trip: Convex serves the cached documents and the
- * rows re-rank as they change.
+ * A null project subscribes to nothing. The shell passes null until the
+ * palette or the dock is first wanted: the index rides above every page, and
+ * on most of them nothing ever reads it, so streaming the canvas layout there
+ * is bytes for a palette that may never open. Once live, Convex serves what
+ * the page already holds (the canvas, the stage list) from its cache and the
+ * rest lands one round trip later; the rows re-rank as they change.
  */
 import { NAV_ITEMS, navHref } from "@/app/lib/navigation";
 import type { SearchItem } from "@/app/lib/paletteSearch";
@@ -23,13 +26,16 @@ export function useDashboardIndex(
   const { stageId, stageArgs } = useStage();
   const projectArgs = projectId ? { projectId: projectId } : "skip";
 
-  const canvas = useQuery(api.canvas.getByProject, stageArgs);
+  const canvas = useQuery(
+    api.canvas.getByProject,
+    projectId ? stageArgs : "skip",
+  );
   const crons = useQuery(api.agent.crons.listForProject, projectArgs);
   const envVars = useQuery(
     api.environmentVariables.list,
     projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
   );
-  const projects = useQuery(api.project.list, {});
+  const projects = useQuery(api.project.list, projectId ? {} : "skip");
   const stages = useQuery(api.stage.list, projectArgs);
 
   return useMemo(() => {

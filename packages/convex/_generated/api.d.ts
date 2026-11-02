@@ -399,6 +399,19 @@ export declare const api: {
       >;
     };
     config: {
+      canvasBadges: FunctionReference<
+        "query",
+        "public",
+        { projectId: Id<"projects">; stageId?: Id<"stages"> },
+        Record<
+          Id<"agentConfigs">,
+          {
+            publicAccess: boolean;
+            skills: Array<string>;
+            structuredOutput: boolean;
+          }
+        >
+      >;
       create: FunctionReference<
         "mutation",
         "public",

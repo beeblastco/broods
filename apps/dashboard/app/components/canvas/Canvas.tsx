@@ -30,6 +30,7 @@ import {
   isCodeManagedOwner,
 } from "@/app/components/canvas/edgeOwnership";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
+import { useEverTrue } from "@/app/hooks/useEverTrue";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
@@ -255,6 +256,9 @@ type FlowPosition = { x: number; y: number };
 
 /** The stage-scoped queries `Canvas` runs for `CanvasInner`; undefined while loading. */
 type StageData = {
+  agentBadges:
+    | FunctionReturnType<typeof api.agent.config.canvasBadges>
+    | undefined;
   canvasLayout: FunctionReturnType<typeof api.canvas.getByProject> | undefined;
   mcpServers: FunctionReturnType<typeof api.mcp.listByStage> | undefined;
   machineConnections:
@@ -269,6 +273,7 @@ export function Canvas({
 }): React.JSX.Element {
   const { stageId, stageArgs } = useStage();
   const canvasLayout = useQuery(api.canvas.getByProject, stageArgs);
+  const agentBadges = useQuery(api.agent.config.canvasBadges, stageArgs);
   const mcpServers = useQuery(api.mcp.listByStage, stageArgs);
   const machineConnections = useQuery(
     api.sandbox.machines.listForActiveOrg,
@@ -285,6 +290,7 @@ export function Canvas({
       <CanvasInner
         key={`${projectId}:${stageId ?? "loading"}`}
         projectId={projectId}
+        agentBadges={stageId ? agentBadges : undefined}
         canvasLayout={stageId ? canvasLayout : undefined}
         mcpServers={stageId ? mcpServers : undefined}
         machineConnections={stageId ? machineConnections : undefined}
@@ -465,6 +471,7 @@ function findNearestAgentNode(
 
 function CanvasInner({
   projectId,
+  agentBadges,
   canvasLayout,
   mcpServers,
   machineConnections,
@@ -925,31 +932,33 @@ function CanvasInner({
     if (canWrite) scheduleSave();
   }, [mcpServers, canWrite, setNodes, scheduleSave]);
 
-  // Re-center the focused node after the side panel finishes its width transition,
-  // so it stays visually centered as the canvas shrinks or grows back.
+  // Re-center the focused node as the side panel opens or closes. Two frames:
+  // `setCenter` reads the canvas width ReactFlow's ResizeObserver stores after layout.
   const lastFocusedNode = useRef<Node | null>(null);
   useEffect(() => {
     const node = selectedNode ?? lastFocusedNode.current;
     if (selectedNode) lastFocusedNode.current = selectedNode;
     if (!node) return;
 
-    const id = window.setTimeout(() => {
-      const width = node.measured?.width ?? node.width ?? 0;
-      const height = node.measured?.height ?? node.height ?? 0;
-      void setCenter(
-        node.position.x + width / 2,
-        node.position.y + height / 2,
-        {
-          zoom: getZoom(),
-          duration: 200,
-        },
-      ).catch((error: unknown): void => {
-        console.error("Failed to center the selected canvas node", error);
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        const width = node.measured?.width ?? node.width ?? 0;
+        const height = node.measured?.height ?? node.height ?? 0;
+        void setCenter(
+          node.position.x + width / 2,
+          node.position.y + height / 2,
+          {
+            zoom: getZoom(),
+            duration: 200,
+          },
+        ).catch((error: unknown): void => {
+          console.error("Failed to center the selected canvas node", error);
+        });
+        if (!selectedNode) lastFocusedNode.current = null;
       });
-      if (!selectedNode) lastFocusedNode.current = null;
-    }, 220);
+    });
 
-    return () => window.clearTimeout(id);
+    return () => cancelAnimationFrame(frame);
   }, [selectedNode, setCenter, getZoom]);
 
   /**
@@ -1547,6 +1556,7 @@ function CanvasInner({
   );
   const framesContext = useMemo(
     () => ({
+      agentBadges: agentBadges,
       canWrite: canWrite,
       expandedMemberId: expandedMemberId,
       machineConnections: machineConnections,
@@ -1558,6 +1568,7 @@ function CanvasInner({
       workspaceOnlySandboxIds: workspaceOnly,
     }),
     [
+      agentBadges,
       canWrite,
       expandedMemberId,
       machineConnections,
@@ -1831,8 +1842,10 @@ function CanvasInner({
           )}
         </div>
 
+        {/* No width transition: an animated width relays out the whole
+            canvas and the panel on every frame of the slide. */}
         <div
-          className={`h-full shrink-0 overflow-hidden transition-all duration-200 ease-out ${selectedNode ? "w-2/5" : "w-0"}`}
+          className={`h-full shrink-0 overflow-hidden ${selectedNode ? "w-2/5" : "w-0"}`}
         >
           {sidePanelWanted && (
             <NodeSidePanel
@@ -1898,16 +1911,4 @@ function CanvasInner({
       </div>
     </InfraAnalysisProvider>
   );
-}
-
-/**
- * True from the first render in which `flag` was true. Mounts a lazy
- * component on first use and keeps it mounted, so its close animation and
- * state survive without loading its chunk before it is wanted.
- */
-function useEverTrue(flag: boolean): boolean {
-  const [seen, setSeen] = useState(flag);
-  if (flag && !seen) setSeen(true);
-
-  return seen || flag;
 }
