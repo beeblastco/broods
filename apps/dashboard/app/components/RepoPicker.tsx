@@ -27,6 +27,8 @@ export interface RepoChoice {
   repoId: number;
   fullName: string;
   rootDirectory: string;
+  /** The repo's branches, its default first. */
+  branches: string[];
 }
 
 /**
@@ -98,6 +100,7 @@ export function RepoPicker({
         repoId: repo.repoId,
         fullName: repo.fullName,
         rootDirectory: inspected.roots[0]?.rootDirectory ?? "",
+        branches: inspected.branches,
       });
     } catch (err) {
       if (pick === latestPick.current) setError(toErrorMessage(err));

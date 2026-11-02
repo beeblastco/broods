@@ -31,10 +31,12 @@ import {
 import { slugifyName } from "./lib/slug";
 import { randomToken } from "./model/accountSecrets";
 import { ensureStage } from "./model/cliSync";
+import { deleteStageContents } from "./stage";
 import { ClientError, clientErrorResponse } from "./model/clientError";
 import { json, jsonError } from "./model/httpJson";
 import {
   STAGES,
+  GitHubApiError,
   WORKFLOW_PATH,
   administeredInstallations,
   authorizeUrl,
@@ -49,6 +51,7 @@ import {
   githubApp,
   installUrl,
   installationToken,
+  listBranches,
   listInstallationRepos,
   listUserInstallations,
   requireGitHubApp,
@@ -75,10 +78,6 @@ import {
 
 const SIGN_IN_TTL_MS = 10 * 60 * 1000;
 
-const stageValidator = v.union(
-  v.literal("production"),
-  v.literal("development"),
-);
 /** How long a link in flight holds its repo before another project may take it. */
 const LINK_CLAIM_TTL_MS = 10 * 60 * 1000;
 
@@ -125,6 +124,8 @@ const statusValidator = v.object({
   canLink: v.boolean(),
   /** GitHub's web root for repo links; absent without an App. */
   webUrl: v.optional(v.string()),
+  /** Whether the project has a Production stage, which a link deploys by default. */
+  hasProduction: v.boolean(),
   installations: v.array(installationValidator),
   repo: v.optional(projectRepoValidator),
   deploys: v.array(deployValidator),
@@ -136,9 +137,15 @@ const linkTargetValidator = v.object({
   rootDirectory: v.string(),
   /** The Broods API the workflow deploys to: the dashboard's own gateway. */
   baseUrl: v.string(),
-  /** The branch Production deploys from: the default branch when unset, none when null. */
+  /**
+   * The branch Production deploys from, none when null. Unset: the default
+   * branch when the project already has a Production stage, else none.
+   */
   productionBranch: v.optional(v.union(v.string(), v.null())),
-  /** The branch Development deploys from: `dev` when unset (created when missing), none when null. */
+  /**
+   * The branch Development deploys from, created when missing; none when
+   * null. Unset: `dev` beside Production, else the default branch.
+   */
   developmentBranch: v.optional(v.union(v.string(), v.null())),
 });
 
@@ -151,6 +158,10 @@ interface LinkKeys {
   projectId: Id<"projects">;
   projectSlug: string;
   keyIds: Id<"deployKeys">[];
+  /** Stages the minting added, removed again if the link fails. */
+  stageIds: Id<"stages">[];
+  /** The branches a remapped link deployed from, whose workflow must stop deploying. */
+  previousBranches: string[];
   production?: string;
   development?: string;
 }
@@ -242,6 +253,7 @@ async function readStatus(
     canConnect: false,
     canLink: false,
     webUrl: app?.webUrl,
+    hasProduction: false,
     installations: [],
     deploys: [],
   };
@@ -249,6 +261,12 @@ async function readStatus(
   const isAdmin = await isOrgAdmin(ctx, org, member);
   const project = projectId ? await ctx.db.get(projectId) : null;
   const linked = project?.orgId === org._id ? project : null;
+  const stages = linked
+    ? await ctx.db
+        .query("stages")
+        .withIndex("by_projectId", (q) => q.eq("projectId", linked._id))
+        .collect()
+    : [];
   const deploys = linked
     ? await ctx.db
         .query("githubDeploys")
@@ -261,6 +279,7 @@ async function readStatus(
   return {
     ...empty,
     canConnect: isAdmin,
+    hasProduction: stages.some((stage) => stage.kind === "production"),
     canLink: linked
       ? await hasDashboardPermission(ctx, org._id, member, "keys:write", {
           projectId: linked._id,
@@ -412,7 +431,6 @@ export const finish = action({
     const keys = await ctx.runMutation(internal.github.mintLinkKeys, {
       authId: user.id,
       projectId: request.projectId,
-      stages: [...STAGES],
     });
     await withKeys(ctx, keys, async (): Promise<void> => {
       const created = await createGitHubRepo(app, userToken, installation, {
@@ -547,11 +565,20 @@ export const inspectRepo = action({
     installationId: v.number(),
     repoId: v.number(),
   },
-  returns: v.object({ repo: repoValidator, roots: v.array(rootValidator) }),
+  returns: v.object({
+    repo: repoValidator,
+    roots: v.array(rootValidator),
+    /** The repo's branches, the default first, for the branch pickers. */
+    branches: v.array(v.string()),
+  }),
   handler: async (
     ctx,
     args,
-  ): Promise<{ repo: GitHubRepo; roots: Infer<typeof rootValidator>[] }> => {
+  ): Promise<{
+    repo: GitHubRepo;
+    roots: Infer<typeof rootValidator>[];
+    branches: string[];
+  }> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -571,22 +598,35 @@ async function inspectFor(
     installationId: number;
     repoId: number;
   },
-): Promise<{ repo: GitHubRepo; roots: Infer<typeof rootValidator>[] }> {
+): Promise<{
+  repo: GitHubRepo;
+  roots: Infer<typeof rootValidator>[];
+  branches: string[];
+}> {
   const app = requireGitHubApp();
   await requireInstallation(ctx, authId, args.projectId, args.installationId);
   const token = await installationToken(app, args.installationId);
   const repo = await getRepo(app, token, args.installationId, args.repoId);
+  const [roots, branches] = await Promise.all([
+    findBroodsRoots(app, token, repo.fullName, repo.defaultBranch),
+    listBranches(app, token, repo.fullName),
+  ]);
 
   return {
     repo: repo,
-    roots: await findBroodsRoots(app, token, repo.fullName, repo.defaultBranch),
+    roots: roots,
+    branches: [
+      repo.defaultBranch,
+      ...branches.filter((branch) => branch !== repo.defaultBranch),
+    ],
   };
 }
 
 /**
- * Links an existing repo: mints a project key per stage, seals them into
- * repo secrets, and commits the workflow to both branches (through a PR when
- * a branch is protected). A linked project unlinks first.
+ * Links an existing repo: mints a project key per mapped stage, seals them
+ * into the repo, and commits the workflow to each mapped branch (through a PR
+ * when a branch is protected). Linking the project's own repo again changes
+ * its branches in place; another repo needs an unlink first.
  */
 export const linkRepo = action({
   args: { projectId: v.id("projects"), target: linkTargetValidator },
@@ -607,15 +647,22 @@ async function linkFor(
   ctx: ActionCtx,
   authId: string,
   projectId: Id<"projects">,
-  target: LinkTarget,
+  asked: LinkTarget,
 ): Promise<ProjectRepo> {
+  // A blank branch is no answer, so it takes the default rather than "".
+  const target = {
+    ...asked,
+    productionBranch: blankToUnset(asked.productionBranch),
+    developmentBranch: blankToUnset(asked.developmentBranch),
+  };
   const app = requireGitHubApp();
   await requireInstallation(ctx, authId, projectId, target.installationId);
   const keys = await ctx.runMutation(internal.github.mintLinkKeys, {
     authId: authId,
     projectId: projectId,
     repoId: target.repoId,
-    stages: STAGES.filter((stage) => branchTarget(target, stage) !== null),
+    productionBranch: target.productionBranch,
+    developmentBranch: target.developmentBranch,
   });
 
   return await withKeys(ctx, keys, (): Promise<ProjectRepo> =>
@@ -889,25 +936,49 @@ export const mintLinkKeys = internalMutation({
     authId: v.string(),
     projectId: v.id("projects"),
     repoId: v.optional(v.number()),
-    /** The stages the repo deploys; each gets its own key. */
-    stages: v.array(stageValidator),
+    /**
+     * The link's branch asks, as in `LinkTarget`. Production deploys when a
+     * branch is named for it, or by default when the project already has a
+     * Production stage; Development unless null.
+     */
+    productionBranch: linkTargetValidator.fields.productionBranch,
+    developmentBranch: linkTargetValidator.fields.developmentBranch,
   },
   returns: v.object({
     projectId: v.id("projects"),
     projectSlug: v.string(),
     keyIds: v.array(v.id("deployKeys")),
+    stageIds: v.array(v.id("stages")),
+    previousBranches: v.array(v.string()),
     production: v.optional(v.string()),
     development: v.optional(v.string()),
   }),
   handler: async (
     ctx,
-    { authId, projectId, repoId, stages },
+    { authId, projectId, repoId, productionBranch, developmentBranch },
   ): Promise<LinkKeys> => {
+    const project = await requireLinkAccess(ctx, authId, projectId);
+    // Caught before a stage is made; one that only defaults can clash shows up on GitHub.
+    if (productionBranch && productionBranch === developmentBranch) {
+      throw new ClientError(
+        `Production and Development need different branches; both are ${productionBranch}.`,
+      );
+    }
+    const existing = await ctx.db
+      .query("stages")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+      .collect();
+    const production =
+      productionBranch === undefined
+        ? existing.some((stage) => stage.kind === "production")
+        : productionBranch !== null;
+    const stages = STAGES.filter((stage) =>
+      stage === "production" ? production : developmentBranch !== null,
+    );
     if (stages.length === 0) {
       throw new ClientError("Map at least one stage to a branch.");
     }
-    const project = await requireLinkAccess(ctx, authId, projectId);
-    requireUnlinked(project);
+    requireLinkable(project, repoId);
     if ((project.linkClaim?.expiresAt ?? 0) > Date.now()) {
       throw new ClientError(
         `${project.name} is linking a repo right now. Try again shortly.`,
@@ -933,6 +1004,9 @@ export const mintLinkKeys = internalMutation({
       token: string;
     }> => {
       const stage = await ensureStage(ctx, project, stageName);
+      if (!existing.some((entry) => entry._id === stage._id)) {
+        keys.stageIds.push(stage._id);
+      }
       // A role may write keys on the project but not on Production.
       await requireDashboardPermission(
         ctx,
@@ -958,6 +1032,11 @@ export const mintLinkKeys = internalMutation({
       projectId: projectId,
       projectSlug: project.slug,
       keyIds: [],
+      stageIds: [],
+      previousBranches: [
+        project.repo?.productionBranch,
+        project.repo?.developmentBranch,
+      ].filter((branch): branch is string => branch !== undefined),
     };
     for (const stage of stages) {
       const key = await mint(stage);
@@ -969,13 +1048,25 @@ export const mintLinkKeys = internalMutation({
   },
 });
 
-/** Deletes keys a link minted but never used, and its repo claim, after a GitHub call failed. */
+/** Deletes the keys and stages a link made but never used, and its repo claim, after a GitHub call failed. */
 export const revokeKeys = internalMutation({
-  args: { projectId: v.id("projects"), keyIds: v.array(v.id("deployKeys")) },
+  args: {
+    projectId: v.id("projects"),
+    keyIds: v.array(v.id("deployKeys")),
+    /** Stages the minting added; nothing but its keys is in them yet. */
+    stageIds: v.array(v.id("stages")),
+  },
   returns: v.null(),
-  handler: async (ctx, { projectId, keyIds }): Promise<null> => {
+  handler: async (ctx, { projectId, keyIds, stageIds }): Promise<null> => {
     for (const keyId of keyIds) {
       if (await ctx.db.get(keyId)) await ctx.db.delete(keyId);
+    }
+    for (const stageId of stageIds) {
+      const stage = await ctx.db.get(stageId);
+      if (stage) {
+        await deleteStageContents(ctx, stage);
+        await ctx.db.delete(stageId);
+      }
     }
     if (await ctx.db.get(projectId)) {
       await ctx.db.patch(projectId, { linkClaim: undefined });
@@ -985,7 +1076,7 @@ export const revokeKeys = internalMutation({
   },
 });
 
-/** Stores the link once GitHub holds the keys. */
+/** Stores the link once GitHub holds the keys, revoking a relinked repo's old ones. */
 export const saveLink = internalMutation({
   args: {
     authId: v.string(),
@@ -995,8 +1086,14 @@ export const saveLink = internalMutation({
   returns: v.null(),
   handler: async (ctx, { authId, projectId, repo }): Promise<null> => {
     // Rechecked here: another link may have landed while GitHub was set up.
-    requireUnlinked(await requireLinkAccess(ctx, authId, projectId));
+    const project = await requireLinkAccess(ctx, authId, projectId);
+    requireLinkable(project, repo.repoId);
     await requireRepoFree(ctx, repo.repoId, projectId);
+    // GitHub holds the new keys by now, so the old ones can go.
+    for (const keyId of project.repo?.deployKeyIds ?? []) {
+      if (repo.deployKeyIds.includes(keyId)) continue;
+      if (await ctx.db.get(keyId)) await ctx.db.delete(keyId);
+    }
     await ctx.db.patch(projectId, {
       repo: repo,
       linkClaim: undefined,
@@ -1140,14 +1237,13 @@ function isStaleRun(
   return row.status === "completed" && run.status !== "completed";
 }
 
-// The stage's branch as the link asked: a name, unset for the default, or null for none.
-function branchTarget(
-  target: LinkTarget,
-  stage: Stage,
+// A branch with surrounding space trimmed; a blank one is unset.
+function blankToUnset(
+  branch: string | null | undefined,
 ): string | null | undefined {
-  return stage === "production"
-    ? target.productionBranch
-    : target.developmentBranch;
+  if (typeof branch !== "string") return branch;
+
+  return branch.trim() || undefined;
 }
 
 // The org's owner, or any member.
@@ -1286,9 +1382,13 @@ async function requireRepoFree(
   }
 }
 
-// One link per project: a second would leave the first one's keys and workflow behind.
-function requireUnlinked(project: Doc<"projects">): void {
-  if (project.repo) {
+// One repo per project. Linking the linked repo again changes its branches in
+// place; another repo would leave the first one's keys and workflow behind.
+function requireLinkable(
+  project: Doc<"projects">,
+  repoId: number | undefined,
+): void {
+  if (project.repo && project.repo.repoId !== repoId) {
     throw new ClientError(
       `${project.name} already deploys from ${project.repo.fullName}. Unlink it first.`,
     );
@@ -1320,18 +1420,21 @@ async function linkTarget(
       `${repo.fullName} has no broods/ in ${target.rootDirectory || "its root"} on ${repo.defaultBranch}.`,
     );
   }
-  const production = branchTarget(target, "production");
-  const development = branchTarget(target, "development");
+  // The stages minted a key are the ones the repo deploys. With no
+  // Production, the default branch deploys Development.
   const branches: Partial<Record<Stage, string>> = {
-    ...(production === null
-      ? {}
-      : { production: production?.trim() || repo.defaultBranch }),
-    ...(development === null
-      ? {}
-      : {
+    ...(keys.production
+      ? { production: target.productionBranch?.trim() || repo.defaultBranch }
+      : {}),
+    ...(keys.development
+      ? {
           development:
-            development?.trim() || developmentBranchFor(repo.defaultBranch),
-        }),
+            target.developmentBranch?.trim() ||
+            (keys.production
+              ? developmentBranchFor(repo.defaultBranch)
+              : repo.defaultBranch),
+        }
+      : {}),
   };
   // One branch for both would deploy every push to Production and Development at once.
   if (branches.production && branches.production === branches.development) {
@@ -1378,6 +1481,15 @@ async function linkTarget(
       await commitWorkflow(app, token, repo.fullName, branch, workflow),
     );
   }
+  await retireBranches(
+    app,
+    token,
+    repo.fullName,
+    keys.previousBranches.filter(
+      (branch) => !Object.values(branches).includes(branch),
+    ),
+    workflow,
+  );
 
   const linked: ProjectRepo = {
     installationId: repo.installationId,
@@ -1399,6 +1511,26 @@ async function linkTarget(
   return linked;
 }
 
+// Branches a remap dropped get the new workflow too, whose job skips them, or
+// their old one would keep deploying with the stage's new repo secret.
+async function retireBranches(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+  dropped: string[],
+  workflow: string,
+): Promise<void> {
+  for (const branch of dropped) {
+    await commitWorkflow(app, token, fullName, branch, workflow).catch(
+      (error: unknown) => {
+        // A branch deleted since has no workflow left to run.
+        if (error instanceof GitHubApiError && error.status === 404) return;
+        throw error;
+      },
+    );
+  }
+}
+
 // Runs the GitHub half of a link; revokes the fresh keys when it fails.
 async function withKeys<T>(
   ctx: ActionCtx,
@@ -1411,6 +1543,7 @@ async function withKeys<T>(
     await ctx.runMutation(internal.github.revokeKeys, {
       projectId: keys.projectId,
       keyIds: keys.keyIds,
+      stageIds: keys.stageIds,
     });
     throw error;
   }
