@@ -2,13 +2,14 @@
 
 How subagent runs execute inside core: dispatch, the parent continuation loop, control of a running child, and who may watch a child's stream. Configuration and model-facing behavior are in the [subagents guide](../guides/subagents.md). Paths are relative to `apps/core/`.
 
-| File                           | Owns                                                                        |
-| ------------------------------ | --------------------------------------------------------------------------- |
-| `src/harness/subagents.ts`     | `SubagentCoordinator`: dispatch, child runs, the result and question queues |
-| `src/harness/handler.ts`       | `runParentContinuationLoop`, `waitAndDrainAsyncWork`, SSE heartbeats        |
-| `src/harness/harness.ts`       | `prepareStep`, where queued child messages join the parent mid-pass         |
-| `src/harness/tools/`           | `run-subagent`, `update-subagent`, `stop-subagent` and `ask-parent` tools   |
-| `src/harness/status-access.ts` | Who may read a child's status with a runtime key                            |
+| File                           | Owns                                                                                                  |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `src/harness/subagents.ts`     | `SubagentCoordinator`: dispatch, child runs, the result and question queues                           |
+| `src/harness/continuation.ts`  | `runParentContinuationLoop`, `waitAndDrainAsyncWork`, `runAgentLoopUntilSubagentsIdle`, `waitUntilMs` |
+| `src/harness/handler.ts`       | the SSE heartbeat writer, the WebSocket `waiting` frames                                              |
+| `src/harness/harness.ts`       | `prepareStep`, where queued child messages join the parent mid-pass                                   |
+| `src/harness/tools/`           | `run-subagent`, `update-subagent`, `stop-subagent` and `ask-parent` tools                             |
+| `src/harness/status-access.ts` | Who may read a child's status with a runtime key                                                      |
 
 ## Execution model
 
@@ -23,7 +24,7 @@ flowchart TD
   Out -->|"failed, not a stop"| Keep["wait and drain children,<br/>so a retry sees their results"]
   Keep --> Failed["return failed"]
   Out -->|"stopped"| Failed
-  Out -->|"clean"| Pend{"children or<br/>async tools pending?"}
+  Out -->|"clean"| Pend{"children<br/>pending?"}
   Pend -->|"no"| Drain["drain queued completions"]
   Pend -->|"yes"| Wait["waitForIdle<br/>heartbeat every 15 s"]
   Wait -->|"idle, or a child asked a question"| Drain
@@ -37,7 +38,7 @@ flowchart TD
   Rebuild --> Pass
 ```
 
-The wait budget ends 3 minutes before the request or worker deadline, or 8 minutes out when there is none (`waitUntilMs` in `handler.ts`). When it runs out, `drainCompletionsAndDetachToParent` tells the parent each child still working is `running` and detaches it. A detached child keeps running, and its result resumes the parent conversation through `resumeAfterSubagentResult`: a `followup` continuation admitted once per task (`<root event>:async-subagent:<task nonce>`) on the delivery of the turn that started it, the same path a settled background job takes. Until then the parent root span ends `waiting` on `subagent`. A queued question ends the wait early so the parent can answer while other children keep running. Results, `running` notices and questions reach the parent transcript in one write. A write too large for one append takes several, and a failed one at a step boundary puts back only what no append saved, for the next step. Each row carries a dedupe key, the child's result event id and status or a question's own id, and `runtimeConversationEvents` stores one row per key in a conversation, so a write that committed but lost its reply is not stored again by that retry. The pass's last write (`drainCompletionsToParent`, which the detach ends with too) has no next step: when it fails the run fails, and each finished result no append saved resumes the parent through `resumeAfterSubagentResult` like a detached child's, its row marked `detached` first so the recovery sweep retries a resume that fails too. Each child still working is detached the same way (`detachPending`), so its result resumes the parent too, and no question gets an answer. Unsaved `running` notices are dropped, since those children report back themselves. `runtimeIngress.accept` refuses a late resume as a duplicate when the parent conversation already stores that result's dedupe key, under either finished status, and marks the row stored. When the store also refuses the `detached` write and the resume, the row stays `pending`, and the recovery sweep delivers it once no live parent run can still be holding it; so does every result of a parent run that dies before it stops waiting.
+The wait budget ends 3 minutes before the request or worker deadline, or 8 minutes out when there is none (`waitUntilMs` in `continuation.ts`). The loop waits on subagents only: a detached background job or open question adds no pending work, and its result resumes the conversation on its own. When it runs out, `drainCompletionsAndDetachToParent` tells the parent each child still working is `running` and detaches it. A detached child keeps running, and its result resumes the parent conversation through `resumeAfterSubagentResult`: a `followup` continuation admitted once per task (`<root event>:async-subagent:<task nonce>`) on the delivery of the turn that started it, the same path a settled background job takes. Until then the parent root span ends `waiting` on `subagent`. A queued question ends the wait early so the parent can answer while other children keep running. Results, `running` notices and questions reach the parent transcript in one write. A write too large for one append takes several, and a failed one at a step boundary puts back only what no append saved, for the next step. Each row carries a dedupe key, the child's result event id and status or a question's own id, and `runtimeConversationEvents` stores one row per key in a conversation, so a write that committed but lost its reply is not stored again by that retry. The pass's last write (`drainCompletionsToParent`, which the detach ends with too) has no next step: when it fails the run fails, and each finished result no append saved resumes the parent through `resumeAfterSubagentResult` like a detached child's, its row marked `detached` first so the recovery sweep retries a resume that fails too. Each child still working is detached the same way (`detachPending`), so its result resumes the parent too, and no question gets an answer. Unsaved `running` notices are dropped, since those children report back themselves. `runtimeIngress.accept` refuses a late resume as a duplicate when the parent conversation already stores that result's dedupe key, under either finished status, and marks the row stored. When the store also refuses the `detached` write and the resume, the row stays `pending`, and the recovery sweep delivers it once no live parent run can still be holding it; so does every result of a parent run that dies before it stops waiting.
 
 ### Late results are told once, and survive a restart
 
@@ -93,7 +94,7 @@ The comment lines are ignored by SSE clients but keep idle proxies from closing 
 
 ### Async, WebSocket and channels
 
-Background runs, the WebSocket worker and channel turns run the same loop on an in-process worker, without heartbeats. The parent's envelope settles only after the continuation, so the async result, the WebSocket `done` frame or the channel reply already includes the children's work. `runtimeAsyncAgentResults` keeps each child's status for polling.
+Background runs, cron-fired runs, the WebSocket worker and channel turns run the same loop on an in-process worker. Of those, only the WebSocket worker sends its client a heartbeat while it waits, as `{ type: "waiting" }` frames. The parent's envelope settles only after the continuation, so the async result, the WebSocket `done` frame or the channel reply already includes the work of every child that finished within the parent's wait. A child still running past it is detached, and its result reaches the parent later as a follow-up turn. `runtimeAsyncAgentResults` keeps each child's status for polling.
 
 ```mermaid
 sequenceDiagram
@@ -143,7 +144,7 @@ stateDiagram-v2
 
 - A busy child conversation makes `accept` answer `rejected`, and the task fails with `Subagent conversation is not available: rejected`, injected like any failure.
 - A follow-up drained after the child settles runs as another turn of the same task and is injected like the first answer. Past the parent's wait budget there is no live parent turn, so `transferChildConversation` hands the envelope to its own worker and the result is not injected.
-- `ask_parent` blocks the child on `askParent` for up to 5 minutes, never past the wait budget. `update_subagent` in `steer` mode on a child with an open question answers it (`answered`) instead of queuing a steer. Open questions resolve empty when the budget runs out, the child stops, or the parent pass ends in a failure, approval or question of its own.
+- `ask_parent` blocks the child on `askParent` for up to 5 minutes, never past the wait budget. A child has one open question at a time. A second question, a question after the parent closed questions, or an aborted one returns `null` at once. `update_subagent` in `steer` mode on a child with an open question answers it (`answered`) instead of queuing a steer. Open questions resolve empty when the budget runs out, the child stops, or the parent pass ends in a failure, approval or question of its own.
 
 Controls decide admission and ownership in one transaction, so a control never lands on a finished child or a later task on the same conversation:
 
