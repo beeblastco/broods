@@ -201,6 +201,7 @@ Repo links ([GitHub](../guides/github.md)) need a GitHub App of your own. Withou
 | Request user authorization (OAuth) during installation | on                                                                                                                 |
 | Webhook URL                                            | `{CONVEX_SITE_URL}/github/webhook`                                                                                 |
 | Repository permissions                                 | Administration, Contents, Environments, Pull requests, Secrets, Workflows: read and write. Actions, Metadata: read |
+| Organization permissions                               | Members: read, so Broods connects only orgs the user is an admin of                                                |
 | Subscribe to events                                    | Workflow run, Repository                                                                                           |
 
 The App receives installation events without a subscription. Generate a private key and a client secret, then set the six `GITHUB_APP_*` variables. `GITHUB_APP_PRIVATE_KEY` takes the PEM as GitHub hands it, newlines escaped as `\n` or not. `GITHUB_API_URL` and `GITHUB_WEB_URL` point at GitHub Enterprise Server instead of github.com. The code is in `packages/convex/github.ts`.

@@ -25,8 +25,8 @@ export interface FakeRepo {
   protectedBranches: Set<string>;
   /** Decrypted Actions secrets, so a case can deploy with what Broods sealed; `env/NAME` for an environment's. */
   secrets: Map<string, string>;
-  /** Environment → the branches its deployment policy allows; null on a plan without environments. */
-  environments: Map<string, Set<string>> | null;
+  /** Environment → its deployment policies (id → branch); null on a plan without environments. */
+  environments: Map<string, Map<number, string>> | null;
   /** How many secrets existed at each branch write, to prove they landed before the first push. */
   secretsAtPush: number[];
   pulls: Array<{ head: string; base: string; url: string }>;
@@ -37,6 +37,8 @@ export interface FakeInstallation {
   id: number;
   login: string;
   type: "User" | "Organization";
+  /** The signed-in user's role in this org; admin when unset. */
+  role?: "admin" | "member";
 }
 
 /** The fake's state and helpers a case reads and seeds. */
@@ -92,16 +94,10 @@ interface RepoCall extends Call {
   repo: FakeRepo;
 }
 
-type Route = [
+type Route<T = Call> = [
   method: string,
   pattern: RegExp,
-  handle: (call: Call) => Response,
-];
-
-type RepoRoute = [
-  method: string,
-  pattern: RegExp,
-  handle: (call: RepoCall) => Response,
+  handle: (call: T) => Response,
 ];
 
 /**
@@ -164,6 +160,7 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
     return created;
   };
   const userOf = (call: Call): string | undefined => userTokens.get(call.auth);
+  let policyIds = 0;
 
   const routes: Route[] = [
     [
@@ -198,6 +195,30 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
         installationTokens.set(token, id);
 
         return json(201, { token: token });
+      },
+    ],
+    [
+      "GET",
+      /^\/user$/,
+      (call): Response => {
+        const login = userOf(call);
+
+        return login ? json(200, { login: login }) : badCredentials();
+      },
+    ],
+    [
+      "GET",
+      /^\/user\/memberships\/orgs\/([^/]+)$/,
+      (call): Response => {
+        if (!userOf(call)) return badCredentials();
+        const org = [...installations.values()].find(
+          (entry) =>
+            entry.type === "Organization" && entry.login === call.match[1],
+        );
+
+        return org
+          ? json(200, { role: org.role ?? "admin", state: "active" })
+          : notFound();
       },
     ],
     [
@@ -281,7 +302,7 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
     ],
   ];
 
-  const repoRoutes: RepoRoute[] = [
+  const repoRoutes: Route<RepoCall>[] = [
     [
       "GET",
       /^\/git\/trees\/(.+)$/,
@@ -373,14 +394,6 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
     ],
     [
       "GET",
-      /^\/branches\/(.+)$/,
-      ({ match, repo }): Response =>
-        repo.branches.has(match[1] ?? "")
-          ? json(200, { name: match[1] })
-          : json(404, { message: "Branch not found" }),
-    ],
-    [
-      "GET",
       /^\/contents\/(.+)$/,
       ({ match, query, repo }): Response => {
         const files = filesAt(repo.id, query.get("ref") ?? repo.defaultBranch);
@@ -462,9 +475,24 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
         }
         const name = match[1] ?? "";
         if (!repo.environments.has(name))
-          repo.environments.set(name, new Set());
+          repo.environments.set(name, new Map());
 
         return json(200, { name: name });
+      },
+    ],
+    [
+      "GET",
+      /^\/environments\/([\w-]+)\/deployment-branch-policies$/,
+      ({ match, repo }): Response => {
+        const policies = repo.environments?.get(match[1] ?? "");
+        if (!policies) return notFound();
+
+        return json(200, {
+          branch_policies: [...policies].map(([id, name]) => ({
+            id: id,
+            name: name,
+          })),
+        });
       },
     ],
     [
@@ -473,10 +501,18 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
       ({ body, match, repo }): Response => {
         const policies = repo.environments?.get(match[1] ?? "");
         if (!policies) return notFound();
-        policies.add(String(body.name));
+        policies.set((policyIds += 1), String(body.name));
 
         return json(200, { name: body.name });
       },
+    ],
+    [
+      "DELETE",
+      /^\/environments\/([\w-]+)\/deployment-branch-policies\/(\d+)$/,
+      ({ match, repo }): Response =>
+        repo.environments?.get(match[1] ?? "")?.delete(Number(match[2]))
+          ? new Response(null, { status: 204 })
+          : notFound(),
     ],
     [
       "GET",
@@ -601,7 +637,7 @@ function blobSha(content: string): string {
 
 // The first route whose method and pattern match answers; 404 otherwise.
 function dispatch<T>(
-  table: ReadonlyArray<[string, RegExp, (call: T) => Response]>,
+  table: ReadonlyArray<Route<T>>,
   method: string,
   path: string,
   call: (match: RegExpMatchArray) => T,

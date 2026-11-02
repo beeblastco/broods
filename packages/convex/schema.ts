@@ -949,12 +949,6 @@ export const accountEnvVarsFields = {
 };
 
 /**
- * A connection: an external account (today the ChatGPT plan) signed in once
- * per account by `broods connect`, one of each type.
- * Core refreshes it in process and writes the rotated tokens back. Tokens are
- * sealed under the account's envelope key and never leave through the API.
- */
-/**
  * A GitHub App installation an org connected: the GitHub user or org whose
  * repos the org's projects may link. One row per (org, installation).
  */
@@ -1006,6 +1000,12 @@ export const githubDeploysFields = {
   updatedAt: v.number(),
 };
 
+/**
+ * A connection: an external account (today the ChatGPT plan) signed in once
+ * per account by `broods connect`, one of each type.
+ * Core refreshes it in process and writes the rotated tokens back. Tokens are
+ * sealed under the account's envelope key and never leave through the API.
+ */
 export const connectionsFields = {
   accountId: v.id("accounts"),
   type: v.union(...CONNECTION_TYPE_NAMES.map((name) => v.literal(name))),

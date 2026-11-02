@@ -10,26 +10,29 @@ import { blake2b } from "@noble/hashes/blake2b";
 import nacl from "tweetnacl";
 
 import { ClientError } from "./clientError";
+import { bytesToBase64Url } from "./stageSessionTicket";
 
 export const WORKFLOW_PATH = ".github/workflows/broods.yml";
-export const WORKFLOW_NAME = "Broods deploy";
+const WORKFLOW_NAME = "Broods deploy";
 
 /**
  * The GitHub Environments holding each stage's project key as `BROODS_TOKEN`,
  * each open only to its own branch, so a pushed branch cannot read Production's.
  */
-export const DEPLOY_ENVIRONMENTS = {
+const DEPLOY_ENVIRONMENTS = {
   production: "broods-production",
   development: "broods-development",
 } as const;
 
 /** Repo-level secrets, the fallback where the plan has no environments on a private repo. */
-export const DEPLOY_TOKEN_SECRETS = {
+const DEPLOY_TOKEN_SECRETS = {
   production: "BROODS_PRODUCTION_TOKEN",
   development: "BROODS_DEVELOPMENT_TOKEN",
 } as const;
 
 const ENVIRONMENT_SECRET = "BROODS_TOKEN";
+
+const DEVELOPMENT_BRANCHES = ["dev", "development"] as const;
 
 const GITHUB_TIMEOUT_MS = 15_000;
 
@@ -57,7 +60,7 @@ const LOCKFILES: ReadonlyArray<{ file: string; manager: PackageManager }> = [
   { file: "package-lock.json", manager: "npm" },
 ];
 
-export type PackageManager = "bun" | "npm" | "pnpm" | "yarn";
+type PackageManager = "bun" | "npm" | "pnpm" | "yarn";
 
 /** The Broods GitHub App this deployment runs as, from its environment. */
 export interface GitHubApp {
@@ -83,7 +86,7 @@ export interface GitHubRepo {
 }
 
 /** Where `broods/` sits in a repo and how its dependencies install. */
-export interface BroodsRoot {
+interface BroodsRoot {
   /** The folder holding `broods/`; "" is the repo root. */
   rootDirectory: string;
   /** The folder with the lockfile, the repo root for most monorepos. */
@@ -92,7 +95,7 @@ export interface BroodsRoot {
 }
 
 /** What the workflow needs to know about the project it deploys. */
-export interface WorkflowTarget extends BroodsRoot {
+interface WorkflowTarget extends BroodsRoot {
   projectSlug: string;
   baseUrl: string;
   productionBranch: string;
@@ -102,20 +105,20 @@ export interface WorkflowTarget extends BroodsRoot {
 }
 
 /** Each stage's branch and project key. */
-export interface DeployKeys {
+interface DeployKeys {
   production: { branch: string; token: string };
   development: { branch: string; token: string };
 }
 
 /** A user's GitHub installation, from `GET /user/installations`. */
-export interface UserInstallation {
+interface UserInstallation {
   installationId: number;
   login: string;
   accountType: "User" | "Organization";
 }
 
 /** A non-2xx GitHub answer; `status` lets callers tell a protected branch from a bug. */
-export class GitHubApiError extends Error {
+class GitHubApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
@@ -251,6 +254,51 @@ export async function listUserInstallations(
           },
         ]
       : [],
+  );
+}
+
+/**
+ * The installations the signed-in user administers: their own account, or an
+ * org they are an admin of. Reaching one repo of an org is not enough, since
+ * the App's token for that installation reaches every repo in it.
+ */
+export async function administeredInstallations(
+  app: GitHubApp,
+  userToken: string,
+  installations: readonly UserInstallation[],
+): Promise<UserInstallation[]> {
+  const user = await githubRequest<{ login: string }>(
+    app,
+    userToken,
+    "GET",
+    "/user",
+  );
+  const administered = await Promise.all(
+    installations.map(async (installation): Promise<boolean> => {
+      if (installation.accountType === "User") {
+        return installation.login.toLowerCase() === user.login.toLowerCase();
+      }
+      const membership = await githubRequest<{ role: string; state: string }>(
+        app,
+        userToken,
+        "GET",
+        `/user/memberships/orgs/${installation.login}`,
+      ).catch((error: unknown) => {
+        if (error instanceof GitHubApiError && error.status < 500) return null;
+        throw error;
+      });
+
+      return membership?.role === "admin" && membership.state === "active";
+    }),
+  );
+
+  return installations.filter((_installation, index) => administered[index]);
+}
+
+/** The branch Development deploys from when none is named: `dev`, or `development` where `dev` is the default. */
+export function developmentBranchFor(defaultBranch: string): string {
+  return (
+    DEVELOPMENT_BRANCHES.find((branch) => branch !== defaultBranch) ?? "dev"
   );
 }
 
@@ -453,16 +501,7 @@ export async function commitWorkflow(
   }
   // One setup branch per target, so each PR carries only its own base's history.
   const setupBranch = `broods/deploy-workflow-${branch}`;
-  const head = await githubRequest<{ object: { sha: string } }>(
-    app,
-    token,
-    "GET",
-    `/repos/${fullName}/git/ref/heads/${encodeURIComponent(branch)}`,
-  );
-  await githubRequest(app, token, "POST", `/repos/${fullName}/git/refs`, {
-    ref: `refs/heads/${setupBranch}`,
-    sha: head.object.sha,
-  }).catch(ignoreStatus(422));
+  await createBranch(app, token, fullName, branch, setupBranch);
   await putFile(
     app,
     token,
@@ -496,26 +535,24 @@ export async function commitWorkflow(
   return pull.html_url;
 }
 
-/** Whether `branch` exists in the repo. */
-export async function branchExists(
+/** Cuts `branch` from `from`'s head; a branch that already exists is left as it is. */
+export async function createBranch(
   app: GitHubApp,
   token: string,
   fullName: string,
+  from: string,
   branch: string,
-): Promise<boolean> {
-  try {
-    await githubRequest(
-      app,
-      token,
-      "GET",
-      `/repos/${fullName}/branches/${encodeURIComponent(branch)}`,
-    );
-
-    return true;
-  } catch (error) {
-    if (error instanceof GitHubApiError && error.status === 404) return false;
-    throw error;
-  }
+): Promise<void> {
+  const head = await githubRequest<{ object: { sha: string } }>(
+    app,
+    token,
+    "GET",
+    `/repos/${fullName}/git/ref/heads/${encodeURIComponent(from)}`,
+  );
+  await githubRequest(app, token, "POST", `/repos/${fullName}/git/refs`, {
+    ref: `refs/heads/${branch}`,
+    sha: head.object.sha,
+  }).catch(ignoreStatus(422));
 }
 
 /**
@@ -538,13 +575,7 @@ export async function sealDeployKeys(
           custom_branch_policies: true,
         },
       });
-      await githubRequest(
-        app,
-        token,
-        "POST",
-        `${environment}/deployment-branch-policies`,
-        { name: keys[stage].branch, type: "branch" },
-      ).catch(ignoreStatus(409));
+      await allowOnlyBranch(app, token, environment, keys[stage].branch);
       await setSecret(
         app,
         token,
@@ -576,19 +607,12 @@ export async function sealDeployKeys(
   return false;
 }
 
-/**
- * Creates `owner/name` with the user's token and lets the installation reach
- * it. `prepare` then runs (sealing the keys, so the first push finds them)
- * and answers the files to commit on the default branch, with
- * `developmentBranch` cut from that commit.
- */
+/** Creates `owner/name` as the signed-in user, on the installation's account. */
 export async function createRepo(
   app: GitHubApp,
   userToken: string,
   installation: UserInstallation,
   repo: { name: string; private: boolean },
-  prepare: (created: GitHubRepo) => Promise<Record<string, string>>,
-  developmentBranch: string,
 ): Promise<GitHubRepo> {
   const path =
     installation.accountType === "Organization"
@@ -599,22 +623,75 @@ export async function createRepo(
     private: repo.private,
     auto_init: true,
   });
-  try {
-    return await startRepo(
-      app,
-      userToken,
-      installation,
-      created,
-      prepare,
-      developmentBranch,
-    );
-  } catch (error) {
-    // The repo exists now, and a retry with its name would be refused.
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new ClientError(
-      `Created ${created.full_name}, but setting it up failed (${reason}). Link it with Import repo once it has broods/, or delete it on GitHub and try again.`,
-    );
-  }
+
+  return toRepo(installation.installationId, created);
+}
+
+/**
+ * Lets the installation reach a repo the user just created and commits
+ * `files` on its default branch. Nothing in them may run a workflow: the
+ * deploy keys are sealed after this.
+ */
+export async function startRepo(
+  app: GitHubApp,
+  userToken: string,
+  repo: GitHubRepo,
+  files: Record<string, string>,
+): Promise<void> {
+  // An install on selected repos does not reach a new one until it is added.
+  await githubRequest(
+    app,
+    userToken,
+    "PUT",
+    `/user/installations/${repo.installationId}/repositories/${repo.repoId}`,
+  );
+  const token = await installationToken(app, repo.installationId);
+  const branch = encodeURIComponent(repo.defaultBranch);
+  const head = await githubRequest<{ object: { sha: string } }>(
+    app,
+    token,
+    "GET",
+    `/repos/${repo.fullName}/git/ref/heads/${branch}`,
+  );
+  const parent = await githubRequest<{ tree: { sha: string } }>(
+    app,
+    token,
+    "GET",
+    `/repos/${repo.fullName}/git/commits/${head.object.sha}`,
+  );
+  const tree = await githubRequest<{ sha: string }>(
+    app,
+    token,
+    "POST",
+    `/repos/${repo.fullName}/git/trees`,
+    {
+      base_tree: parent.tree.sha,
+      tree: Object.entries(files).map(([path, content]) => ({
+        path: path,
+        mode: "100644",
+        type: "blob",
+        content: content,
+      })),
+    },
+  );
+  const commit = await githubRequest<{ sha: string }>(
+    app,
+    token,
+    "POST",
+    `/repos/${repo.fullName}/git/commits`,
+    {
+      message: "feat: start a Broods project",
+      tree: tree.sha,
+      parents: [head.object.sha],
+    },
+  );
+  await githubRequest(
+    app,
+    token,
+    "PATCH",
+    `/repos/${repo.fullName}/git/refs/heads/${branch}`,
+    { sha: commit.sha },
+  );
 }
 
 /** The files a new repo starts with: a `broods/` project that deploys green. */
@@ -645,27 +722,23 @@ export async function verifyWebhookSignature(
   body: string,
   signature: string | null,
 ): Promise<boolean> {
-  if (!signature?.startsWith("sha256=")) return false;
+  const digest = signature?.match(/^sha256=([0-9a-f]{64})$/)?.[1];
+  if (!digest) return false;
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
     { name: "HMAC", hash: "SHA-256" },
     false,
-    ["sign"],
+    ["verify"],
   );
-  const mac = await crypto.subtle.sign(
+
+  // WebCrypto's verify compares the MAC in constant time.
+  return await crypto.subtle.verify(
     "HMAC",
     key,
+    Uint8Array.from(digest.match(/../g) ?? [], (pair) => parseInt(pair, 16)),
     new TextEncoder().encode(body),
   );
-  const expected = `sha256=${hex(new Uint8Array(mac))}`;
-  if (expected.length !== signature.length) return false;
-  let diff = 0;
-  for (let index = 0; index < expected.length; index += 1) {
-    diff |= expected.charCodeAt(index) ^ signature.charCodeAt(index);
-  }
-
-  return diff === 0;
 }
 
 /**
@@ -732,7 +805,7 @@ export async function githubRequest<T = unknown>(
 async function appJwt(app: GitHubApp): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const encode = (value: object): string =>
-    base64Url(new TextEncoder().encode(JSON.stringify(value)));
+    bytesToBase64Url(new TextEncoder().encode(JSON.stringify(value)));
   const signingInput = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({
     iat: now - 60,
     exp: now + 540,
@@ -751,14 +824,30 @@ async function appJwt(app: GitHubApp): Promise<string> {
     new TextEncoder().encode(signingInput),
   );
 
-  return `${signingInput}.${base64Url(new Uint8Array(signature))}`;
+  return `${signingInput}.${bytesToBase64Url(new Uint8Array(signature))}`;
 }
 
-function base64Url(bytes: Uint8Array): string {
-  return toBase64(bytes)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+// Leaves `branch` as the only branch the environment deploys from, dropping an earlier link's.
+async function allowOnlyBranch(
+  app: GitHubApp,
+  token: string,
+  environment: string,
+  branch: string,
+): Promise<void> {
+  const policies = `${environment}/deployment-branch-policies`;
+  const { branch_policies } = await githubRequest<{
+    branch_policies: Array<{ id: number; name: string }>;
+  }>(app, token, "GET", `${policies}?per_page=100`);
+  for (const policy of branch_policies) {
+    if (policy.name === branch) continue;
+    await githubRequest(app, token, "DELETE", `${policies}/${policy.id}`);
+  }
+  if (!branch_policies.some((policy) => policy.name === branch)) {
+    await githubRequest(app, token, "POST", policies, {
+      name: branch,
+      type: "branch",
+    });
+  }
 }
 
 function concat(left: Uint8Array, right: Uint8Array): Uint8Array {
@@ -808,12 +897,6 @@ async function getFile(
     if (error instanceof GitHubApiError && error.status === 404) return null;
     throw error;
   }
-}
-
-function hex(bytes: Uint8Array): string {
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
-    "",
-  );
 }
 
 function ignoreStatus(status: number): (error: unknown) => void {
@@ -912,79 +995,6 @@ async function setSecret(
     encrypted_value: sealSecret(key.key, value),
     key_id: key.key_id,
   });
-}
-
-// Everything after the repo exists: reach it, seal the keys, commit the starter, cut the development branch.
-async function startRepo(
-  app: GitHubApp,
-  userToken: string,
-  installation: UserInstallation,
-  created: RawRepo,
-  prepare: (created: GitHubRepo) => Promise<Record<string, string>>,
-  developmentBranch: string,
-): Promise<GitHubRepo> {
-  // An install on selected repos does not reach a new one until it is added.
-  await githubRequest(
-    app,
-    userToken,
-    "PUT",
-    `/user/installations/${installation.installationId}/repositories/${created.id}`,
-  );
-  const files = await prepare(toRepo(installation.installationId, created));
-  const token = await installationToken(app, installation.installationId);
-  const fullName = created.full_name;
-  const branch = created.default_branch;
-  const head = await githubRequest<{ object: { sha: string } }>(
-    app,
-    token,
-    "GET",
-    `/repos/${fullName}/git/ref/heads/${encodeURIComponent(branch)}`,
-  );
-  const parent = await githubRequest<{ tree: { sha: string } }>(
-    app,
-    token,
-    "GET",
-    `/repos/${fullName}/git/commits/${head.object.sha}`,
-  );
-  const tree = await githubRequest<{ sha: string }>(
-    app,
-    token,
-    "POST",
-    `/repos/${fullName}/git/trees`,
-    {
-      base_tree: parent.tree.sha,
-      tree: Object.entries(files).map(([path, content]) => ({
-        path: path,
-        mode: "100644",
-        type: "blob",
-        content: content,
-      })),
-    },
-  );
-  const commit = await githubRequest<{ sha: string }>(
-    app,
-    token,
-    "POST",
-    `/repos/${fullName}/git/commits`,
-    {
-      message: "feat: start a Broods project",
-      tree: tree.sha,
-      parents: [head.object.sha],
-    },
-  );
-  await githubRequest(
-    app,
-    token,
-    "PATCH",
-    `/repos/${fullName}/git/refs/heads/${encodeURIComponent(branch)}`,
-    { sha: commit.sha },
-  );
-  await githubRequest(app, token, "POST", `/repos/${fullName}/git/refs`, {
-    ref: `refs/heads/${developmentBranch}`,
-    sha: commit.sha,
-  });
-
-  return toRepo(installation.installationId, created);
 }
 
 function toBase64(bytes: Uint8Array): string {

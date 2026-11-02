@@ -32,16 +32,17 @@ import { ensureStage } from "./model/cliSync";
 import { ClientError } from "./model/clientError";
 import {
   WORKFLOW_PATH,
+  administeredInstallations,
   authorizeUrl,
-  branchExists,
   commitWorkflow,
+  createBranch,
   createRepo as createGitHubRepo,
   deployWorkflow,
+  developmentBranchFor,
   exchangeUserCode,
   findBroodsRoots,
   getRepo,
   githubApp,
-  githubRequest,
   installUrl,
   installationToken,
   listInstallationRepos,
@@ -49,6 +50,7 @@ import {
   requireGitHubApp,
   sealDeployKeys,
   starterFiles,
+  startRepo,
   verifyWebhookSignature,
   type GitHubApp,
   type GitHubRepo,
@@ -60,17 +62,20 @@ import {
   userByAuthId,
 } from "./model/ownership/org";
 import { getProjectForWrite } from "./model/ownership/project";
-import { projectRepoValidator } from "./schema";
+import {
+  githubInstallationsFields,
+  githubSignInsFields,
+  projectRepoValidator,
+} from "./schema";
 
 const SIGN_IN_TTL_MS = 10 * 60 * 1000;
-const DEFAULT_DEVELOPMENT_BRANCH = "dev";
 /** How long a link in flight holds its repo before another project may take it. */
 const LINK_CLAIM_TTL_MS = 10 * 60 * 1000;
 
 const installationValidator = v.object({
-  installationId: v.number(),
-  login: v.string(),
-  accountType: v.union(v.literal("User"), v.literal("Organization")),
+  installationId: githubInstallationsFields.installationId,
+  login: githubInstallationsFields.login,
+  accountType: githubInstallationsFields.accountType,
 });
 
 const repoValidator = v.object({
@@ -180,19 +185,17 @@ export const status = query({
 
     const member = await userByAuthId(ctx, user.id);
     const org = member ? await getActiveOrgForUser(ctx, member._id) : null;
+    const app = githubApp();
     const empty = {
-      configured: githubApp() !== null,
+      configured: app !== null,
       canConnect: false,
       canLink: false,
-      webUrl: githubApp()?.webUrl,
+      webUrl: app?.webUrl,
       installations: [],
       deploys: [],
     };
     if (!member || !org) return empty;
-    const membership = await getOrgMembership(ctx, org._id, member._id);
-    const isAdmin =
-      org.ownerAuthId === user.id ||
-      Boolean(membership && orgRoleMeets(membership.role, "admin"));
+    const isAdmin = await isOrgAdmin(ctx, org, member);
     const project = projectId ? await ctx.db.get(projectId) : null;
     const linked = project?.orgId === org._id ? project : null;
     const deploys = linked
@@ -212,7 +215,7 @@ export const status = query({
             projectId: linked._id,
           })
         : isAdmin,
-      installations: (await orgInstallations(ctx, org._id)).map(toInstallation),
+      installations: await orgInstallations(ctx, org._id),
       repo: linked?.repo,
       deploys: deploys.map((deploy) => ({
         branch: deploy.branch,
@@ -233,17 +236,8 @@ export const status = query({
  */
 export const begin = mutation({
   args: {
-    /** The dashboard path the callback returns to. */
-    returnTo: v.optional(v.string()),
-    createRepo: v.optional(
-      v.object({
-        projectId: v.id("projects"),
-        owner: v.string(),
-        name: v.string(),
-        private: v.boolean(),
-        baseUrl: v.string(),
-      }),
-    ),
+    returnTo: githubSignInsFields.returnTo,
+    createRepo: githubSignInsFields.createRepo,
   },
   returns: v.object({ url: v.string() }),
   handler: async (ctx, { createRepo, returnTo }): Promise<{ url: string }> => {
@@ -315,77 +309,68 @@ export const finish = action({
       authId: user.id,
     });
     const userToken = await exchangeUserCode(app, args.code);
-    const installations = await listUserInstallations(app, userToken);
-    if (
-      args.installationId !== undefined &&
-      !installations.some((i) => i.installationId === args.installationId)
-    ) {
-      throw new ClientError("That GitHub installation is not yours.");
-    }
-    await ctx.runMutation(internal.github.storeInstallations, {
-      orgId: signIn.orgId,
-      installations: installations,
-    });
     const request = signIn.createRepo;
-    if (!request) return { returnTo: signIn.returnTo };
+    if (!request) {
+      const installations = await administeredInstallations(
+        app,
+        userToken,
+        await listUserInstallations(app, userToken),
+      );
+      if (
+        args.installationId !== undefined &&
+        !installations.some((i) => i.installationId === args.installationId)
+      ) {
+        throw new ClientError("You are not an admin of that GitHub account.");
+      }
+      await ctx.runMutation(internal.github.storeInstallations, {
+        orgId: signIn.orgId,
+        installations: installations,
+      });
 
-    const installation = installations.find(
+      return { returnTo: signIn.returnTo };
+    }
+
+    // A new repo goes under an account an org admin already connected.
+    const installation = (
+      await ctx.runQuery(internal.github.linkAccess, {
+        authId: user.id,
+        projectId: request.projectId,
+      })
+    ).find(
       (entry) => entry.login.toLowerCase() === request.owner.toLowerCase(),
     );
     if (!installation) {
-      throw new ClientError(
-        `Install the Broods GitHub App on ${request.owner} first.`,
-      );
+      throw new ClientError(`Connect ${request.owner} to Broods first.`);
     }
     const keys = await ctx.runMutation(internal.github.mintLinkKeys, {
       authId: user.id,
       projectId: request.projectId,
     });
-    let environments = false;
-    const repo = await withKeys(ctx, keys, (): Promise<GitHubRepo> =>
-      createGitHubRepo(
-        app,
-        userToken,
-        installation,
-        { name: request.name, private: request.private },
-        async (created: GitHubRepo): Promise<Record<string, string>> => {
-          environments = await setDeploySecrets(
-            app,
-            created,
-            DEFAULT_DEVELOPMENT_BRANCH,
-            keys,
-          );
-
-          return {
-            ...starterFiles(keys.projectSlug),
-            [WORKFLOW_PATH]: deployWorkflow({
-              projectSlug: keys.projectSlug,
-              baseUrl: request.baseUrl,
-              rootDirectory: "",
-              installDirectory: "",
-              manager: "npm",
-              productionBranch: created.defaultBranch,
-              developmentBranch: DEFAULT_DEVELOPMENT_BRANCH,
-              environments: environments,
-            }),
-          };
-        },
-        DEFAULT_DEVELOPMENT_BRANCH,
-      ),
-    );
-    await ctx.runMutation(internal.github.saveLink, {
-      authId: user.id,
-      projectId: request.projectId,
-      repo: {
-        installationId: repo.installationId,
-        repoId: repo.repoId,
-        fullName: repo.fullName,
-        rootDirectory: "",
-        productionBranch: repo.defaultBranch,
-        developmentBranch: DEFAULT_DEVELOPMENT_BRANCH,
-        deployKeyIds: keys.keyIds,
-        protectedSecrets: environments,
-      },
+    await withKeys(ctx, keys, async (): Promise<void> => {
+      const created = await createGitHubRepo(app, userToken, installation, {
+        name: request.name,
+        private: request.private,
+      });
+      try {
+        await startRepo(
+          app,
+          userToken,
+          created,
+          starterFiles(keys.projectSlug),
+        );
+        await linkTarget(ctx, app, user.id, keys, {
+          installationId: created.installationId,
+          repoId: created.repoId,
+          rootDirectory: "",
+          baseUrl: request.baseUrl,
+        });
+      } catch (error) {
+        // The repo exists now, and a retry with its name would be refused.
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new ClientError(
+          `Created ${created.fullName}, but setting it up failed (${reason}). Link it with Import repo, or delete it on GitHub and try again.`,
+        );
+      }
     });
 
     return { projectId: request.projectId, returnTo: signIn.returnTo };
@@ -462,7 +447,7 @@ export const inspectRepo = action({
 /**
  * Links an existing repo: mints a project key per stage, seals them into
  * repo secrets, and commits the workflow to both branches (through a PR when
- * a branch is protected). A relink replaces the old keys.
+ * a branch is protected). A linked project unlinks first.
  */
 export const linkRepo = action({
   args: { projectId: v.id("projects"), target: linkTargetValidator },
@@ -481,16 +466,10 @@ export const linkRepo = action({
       projectId: projectId,
       repoId: target.repoId,
     });
-    const repo = await withKeys(ctx, keys, (): Promise<ProjectRepo> =>
-      setUpRepo(app, target, keys),
-    );
-    await ctx.runMutation(internal.github.saveLink, {
-      authId: user.id,
-      projectId: projectId,
-      repo: repo,
-    });
 
-    return repo;
+    return await withKeys(ctx, keys, (): Promise<ProjectRepo> =>
+      linkTarget(ctx, app, user.id, keys, target),
+    );
   },
 });
 
@@ -588,7 +567,7 @@ export const linkAccess = internalQuery({
       ? (await requireLinkAccess(ctx, authId, projectId)).orgId
       : await requireOrgAdmin(ctx, authId);
 
-    return (await orgInstallations(ctx, orgId)).map(toInstallation);
+    return await orgInstallations(ctx, orgId);
   },
 });
 
@@ -596,17 +575,9 @@ export const linkAccess = internalQuery({
 export const takeSignIn = internalMutation({
   args: { state: v.string(), authId: v.string() },
   returns: v.object({
-    orgId: v.id("orgs"),
-    returnTo: v.optional(v.string()),
-    createRepo: v.optional(
-      v.object({
-        projectId: v.id("projects"),
-        owner: v.string(),
-        name: v.string(),
-        private: v.boolean(),
-        baseUrl: v.string(),
-      }),
-    ),
+    orgId: githubSignInsFields.orgId,
+    returnTo: githubSignInsFields.returnTo,
+    createRepo: githubSignInsFields.createRepo,
   }),
   handler: async (
     ctx,
@@ -631,14 +602,17 @@ export const takeSignIn = internalMutation({
   },
 });
 
-/** Upserts the installations a signed-in GitHub user reaches for the org. */
+/** Upserts the installations a signed-in GitHub user administers for the org. */
 export const storeInstallations = internalMutation({
   args: { orgId: v.id("orgs"), installations: v.array(installationValidator) },
   returns: v.null(),
   handler: async (ctx, { orgId, installations }): Promise<null> => {
     // The org may have been deleted while the user was on GitHub.
     if (!(await ctx.db.get(orgId))) return null;
-    const existing = await orgInstallations(ctx, orgId);
+    const existing = await ctx.db
+      .query("githubInstallations")
+      .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+      .collect();
     for (const installation of installations) {
       const row = existing.find(
         (entry) => entry.installationId === installation.installationId,
@@ -673,6 +647,12 @@ export const mintLinkKeys = internalMutation({
   }),
   handler: async (ctx, { authId, projectId, repoId }): Promise<LinkKeys> => {
     const project = await requireLinkAccess(ctx, authId, projectId);
+    requireUnlinked(project);
+    if ((project.linkClaim?.expiresAt ?? 0) > Date.now()) {
+      throw new ClientError(
+        `${project.name} is linking a repo right now. Try again shortly.`,
+      );
+    }
     if (repoId !== undefined) {
       // Written in the same transaction as the check, so two links racing for
       // one repo conflict and the retried one sees this claim.
@@ -732,7 +712,7 @@ export const revokeKeys = internalMutation({
   },
 });
 
-/** Stores the link once GitHub holds the keys, revoking the previous link's. */
+/** Stores the link once GitHub holds the keys. */
 export const saveLink = internalMutation({
   args: {
     authId: v.string(),
@@ -741,23 +721,9 @@ export const saveLink = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, { authId, projectId, repo }): Promise<null> => {
-    const project = await requireLinkAccess(ctx, authId, projectId);
     // Rechecked here: another link may have landed while GitHub was set up.
+    requireUnlinked(await requireLinkAccess(ctx, authId, projectId));
     await requireRepoFree(ctx, repo.repoId, projectId);
-    for (const keyId of project.repo?.deployKeyIds ?? []) {
-      if (repo.deployKeyIds.includes(keyId)) continue;
-      if (await ctx.db.get(keyId)) await ctx.db.delete(keyId);
-    }
-    // Runs are kept per branch name, so another repo's would show as this one's.
-    if (project.repo && project.repo.repoId !== repo.repoId) {
-      const deploys = await ctx.db
-        .query("githubDeploys")
-        .withIndex("by_projectId_and_branch", (q) =>
-          q.eq("projectId", projectId),
-        )
-        .collect();
-      for (const deploy of deploys) await ctx.db.delete(deploy._id);
-    }
     await ctx.db.patch(projectId, {
       repo: repo,
       linkClaim: undefined,
@@ -901,6 +867,18 @@ function isStaleRun(
   return row.status === "completed" && run.status !== "completed";
 }
 
+// The org's owner, or a member with the admin role.
+async function isOrgAdmin(
+  ctx: QueryCtx,
+  org: Doc<"orgs">,
+  member: Doc<"users">,
+): Promise<boolean> {
+  if (org.ownerAuthId === member.authId) return true;
+  const membership = await getOrgMembership(ctx, org._id, member._id);
+
+  return membership !== null && orgRoleMeets(membership.role, "admin");
+}
+
 // A dashboard path, or undefined when a URL parser resolves it to another origin (`//x`, `/\\x`).
 function localPath(value: string | undefined): string | undefined {
   if (!value?.startsWith("/")) return undefined;
@@ -909,14 +887,21 @@ function localPath(value: string | undefined): string | undefined {
   return new URL(value, base).origin === base ? value : undefined;
 }
 
+// The org's connected accounts, as the dashboard and a link see them.
 async function orgInstallations(
   ctx: QueryCtx,
   orgId: Id<"orgs">,
-): Promise<Doc<"githubInstallations">[]> {
-  return await ctx.db
+): Promise<Infer<typeof installationValidator>[]> {
+  const rows = await ctx.db
     .query("githubInstallations")
     .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
     .collect();
+
+  return rows.map((row) => ({
+    installationId: row.installationId,
+    login: row.login,
+    accountType: row.accountType,
+  }));
 }
 
 // Throws unless `installationId` is one of the project's org's.
@@ -960,11 +945,7 @@ async function requireOrgAdmin(
   const member = await userByAuthId(ctx, authId);
   const org = member ? await getActiveOrgForUser(ctx, member._id) : null;
   if (!member || !org) throw new ClientError("Join an organization first.");
-  const membership = await getOrgMembership(ctx, org._id, member._id);
-  if (
-    org.ownerAuthId !== authId &&
-    !(membership && orgRoleMeets(membership.role, "admin"))
-  ) {
+  if (!(await isOrgAdmin(ctx, org, member))) {
     throw new ClientError(
       "Only an org admin can connect GitHub.",
       "unauthorized",
@@ -1004,29 +985,22 @@ async function requireRepoFree(
   }
 }
 
-// Seals both keys before any workflow can run; true when they sit in per-branch environments.
-async function setDeploySecrets(
-  app: GitHubApp,
-  repo: GitHubRepo,
-  developmentBranch: string,
-  keys: LinkKeys,
-): Promise<boolean> {
-  return await sealDeployKeys(
-    app,
-    await installationToken(app, repo.installationId),
-    repo.fullName,
-    {
-      production: { branch: repo.defaultBranch, token: keys.production },
-      development: { branch: developmentBranch, token: keys.development },
-    },
-  );
+// One link per project: a second would leave the first one's keys and workflow behind.
+function requireUnlinked(project: Doc<"projects">): void {
+  if (project.repo) {
+    throw new ClientError(
+      `${project.name} already deploys from ${project.repo.fullName}. Unlink it first.`,
+    );
+  }
 }
 
-// Secrets, the development branch, then the workflow on both branches.
-async function setUpRepo(
+// Secrets, the development branch, the workflow on both branches, then the stored link.
+async function linkTarget(
+  ctx: ActionCtx,
   app: GitHubApp,
-  target: LinkTarget,
+  authId: string,
   keys: LinkKeys,
+  target: LinkTarget,
 ): Promise<ProjectRepo> {
   const token = await installationToken(app, target.installationId);
   const repo = await getRepo(app, token, target.installationId, target.repoId);
@@ -1046,40 +1020,26 @@ async function setUpRepo(
     );
   }
   const developmentBranch =
-    target.developmentBranch?.trim() || DEFAULT_DEVELOPMENT_BRANCH;
+    target.developmentBranch?.trim() ||
+    developmentBranchFor(repo.defaultBranch);
   // On one branch every push would go to Production and Development would never deploy.
   if (developmentBranch === repo.defaultBranch) {
     throw new ClientError(
       `The development branch must differ from ${repo.defaultBranch}, which deploys Production.`,
     );
   }
-  const environments = await setDeploySecrets(
+  // Sealed before the workflow lands, so its first run finds the keys.
+  const environments = await sealDeployKeys(app, token, repo.fullName, {
+    production: { branch: repo.defaultBranch, token: keys.production },
+    development: { branch: developmentBranch, token: keys.development },
+  });
+  await createBranch(
     app,
-    repo,
+    token,
+    repo.fullName,
+    repo.defaultBranch,
     developmentBranch,
-    keys,
   );
-  if (
-    developmentBranch !== repo.defaultBranch &&
-    !(await branchExists(app, token, repo.fullName, developmentBranch))
-  ) {
-    const head = await githubRequest<{ object: { sha: string } }>(
-      app,
-      token,
-      "GET",
-      `/repos/${repo.fullName}/git/ref/heads/${encodeURIComponent(repo.defaultBranch)}`,
-    );
-    await githubRequest(
-      app,
-      token,
-      "POST",
-      `/repos/${repo.fullName}/git/refs`,
-      {
-        ref: `refs/heads/${developmentBranch}`,
-        sha: head.object.sha,
-      },
-    );
-  }
   const workflow = deployWorkflow({
     ...root,
     projectSlug: keys.projectSlug,
@@ -1095,18 +1055,15 @@ async function setUpRepo(
     repo.defaultBranch,
     workflow,
   );
-  const developmentPull =
-    developmentBranch === repo.defaultBranch
-      ? undefined
-      : await commitWorkflow(
-          app,
-          token,
-          repo.fullName,
-          developmentBranch,
-          workflow,
-        );
+  const developmentPull = await commitWorkflow(
+    app,
+    token,
+    repo.fullName,
+    developmentBranch,
+    workflow,
+  );
 
-  return {
+  const linked: ProjectRepo = {
     installationId: repo.installationId,
     repoId: repo.repoId,
     fullName: repo.fullName,
@@ -1117,16 +1074,13 @@ async function setUpRepo(
     protectedSecrets: environments,
     setupPullRequestUrl: productionPull ?? developmentPull,
   };
-}
+  await ctx.runMutation(internal.github.saveLink, {
+    authId: authId,
+    projectId: keys.projectId,
+    repo: linked,
+  });
 
-function toInstallation(
-  row: Doc<"githubInstallations">,
-): Infer<typeof installationValidator> {
-  return {
-    installationId: row.installationId,
-    login: row.login,
-    accountType: row.accountType,
-  };
+  return linked;
 }
 
 // Runs the GitHub half of a link; revokes the fresh keys when it fails.

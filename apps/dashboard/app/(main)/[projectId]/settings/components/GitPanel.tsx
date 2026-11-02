@@ -6,8 +6,8 @@ import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
+import { useSubmit } from "@/app/hooks/useSubmit";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
-import { toErrorMessage } from "@/app/lib/errors";
 import { formatDateTime } from "@/app/lib/formatTime";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -61,8 +61,8 @@ function LinkedRepo({
   status: GitStatus;
 }): React.JSX.Element {
   const unlink = useMutation(api.github.unlinkRepo);
+  const submit = useSubmit();
   const [confirming, setConfirming] = useState(false);
-  const [isUnlinking, setIsUnlinking] = useState(false);
   const repo = status.repo;
   if (!repo) return <></>;
   const branches = [
@@ -73,12 +73,8 @@ function LinkedRepo({
   ];
 
   async function handleUnlink(): Promise<void> {
-    setIsUnlinking(true);
-    try {
-      await unlink({ projectId: projectId });
+    if (await submit.run(() => unlink({ projectId: projectId }))) {
       setConfirming(false);
-    } finally {
-      setIsUnlinking(false);
     }
   }
 
@@ -144,15 +140,19 @@ function LinkedRepo({
           </Button>
         </div>
       )}
+      {submit.error && (
+        <p className="text-xs text-destructive">{submit.error}</p>
+      )}
       {confirming && (
         <DeleteConfirmDialog
           open={true}
           onOpenChange={setConfirming}
           resourceName={repo.fullName}
           resourceType="repository link"
+          verb="Unlink"
           critical={false}
           onConfirm={handleUnlink}
-          isDeleting={isUnlinking}
+          isDeleting={submit.pending}
         />
       )}
     </Section>
@@ -180,8 +180,8 @@ function BranchRow({
             rel="noreferrer"
             className="cursor-pointer truncate text-xs text-muted-foreground hover:underline"
           >
-            <span className={deployTone(deploy)}>{deployLabel(deploy)}</span>{" "}
-            {deploy.sha.slice(0, 7)} · {formatDateTime(deploy.updatedAt)}
+            <DeployWord deploy={deploy} /> {deploy.sha.slice(0, 7)} ·{" "}
+            {formatDateTime(deploy.updatedAt)}
           </a>
         ) : (
           <span className="text-xs text-muted-foreground">No deploy yet</span>
@@ -197,32 +197,26 @@ function LinkRepo({
   projectId: Id<"projects">;
 }): React.JSX.Element {
   const linkRepo = useAction(api.github.linkRepo);
+  const submit = useSubmit();
   const [choice, setChoice] = useState<RepoChoice | null>(null);
-  const [developmentBranch, setDevelopmentBranch] = useState("dev");
-  const [isLinking, setIsLinking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Empty lets the server pick: dev, or development where dev is the default branch.
+  const [developmentBranch, setDevelopmentBranch] = useState("");
   const endpoint = resolveCoreEndpoint();
 
   async function handleLink(): Promise<void> {
     if (!choice || !endpoint.ok) return;
-    setIsLinking(true);
-    setError(null);
-    try {
-      await linkRepo({
+    await submit.run(() =>
+      linkRepo({
         projectId: projectId,
         target: {
           installationId: choice.installationId,
           repoId: choice.repoId,
-          rootDirectory: choice.rootDirectory.replace(/^\/+|\/+$/g, ""),
+          rootDirectory: choice.rootDirectory,
           baseUrl: endpoint.httpBaseUrl,
-          developmentBranch: developmentBranch.trim() || undefined,
+          developmentBranch: developmentBranch || undefined,
         },
-      });
-    } catch (err) {
-      setError(toErrorMessage(err));
-    } finally {
-      setIsLinking(false);
-    }
+      }),
+    );
   }
 
   return (
@@ -240,6 +234,7 @@ function LinkRepo({
             <Input
               id="git-dev-branch"
               value={developmentBranch}
+              placeholder="dev"
               onChange={(event) => setDevelopmentBranch(event.target.value)}
             />
           </div>
@@ -251,28 +246,33 @@ function LinkRepo({
           <div>
             <Button
               size="sm"
-              className={isLinking ? "cursor-not-allowed" : "cursor-pointer"}
-              disabled={isLinking || !endpoint.ok}
+              className={
+                submit.pending ? "cursor-not-allowed" : "cursor-pointer"
+              }
+              disabled={submit.pending || !endpoint.ok}
               onClick={() => void handleLink()}
             >
-              {isLinking ? "Linking..." : "Link repository"}
+              {submit.pending ? "Linking..." : "Link repository"}
             </Button>
           </div>
         )}
-        {error && <p className="text-xs text-destructive">{error}</p>}
+        {submit.error && (
+          <p className="text-xs text-destructive">{submit.error}</p>
+        )}
       </div>
     </Section>
   );
 }
 
-function deployLabel(deploy: Deploy): string {
-  if (deploy.status !== "completed") return "Deploying";
+// A run in words: still deploying, deployed, or failed.
+function DeployWord({ deploy }: { deploy: Deploy }): React.JSX.Element {
+  if (deploy.status !== "completed") {
+    return <span className="text-info">Deploying</span>;
+  }
 
-  return deploy.conclusion === "success" ? "Deployed" : "Failed";
-}
-
-function deployTone(deploy: Deploy): string {
-  if (deploy.status !== "completed") return "text-info";
-
-  return deploy.conclusion === "success" ? "text-success" : "text-destructive";
+  return deploy.conclusion === "success" ? (
+    <span className="text-success">Deployed</span>
+  ) : (
+    <span className="text-destructive">Failed</span>
+  );
 }
