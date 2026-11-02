@@ -77,11 +77,14 @@ export interface AgentMessage {
   waitSeconds?: number;
 }
 
-/** What a `message-agents` send did. */
+/** What a `message-agents` send did; a turn it started has run_subagent's handles. */
 export interface AgentMessageResult {
   status: "delivered" | "resumed" | "not_delivered";
   exchangeId: string;
   note: string;
+  taskId?: string;
+  runId?: string;
+  statusPath?: string;
 }
 
 /** A persistent subagent's line to its parent, behind its `message-agents` tool. */

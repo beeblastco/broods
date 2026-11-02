@@ -648,18 +648,19 @@ export async function continueAfterAsyncToolSettlement(
 }
 
 /**
- * Resumes the parent conversation with a subagent result that came in after
- * the parent run stopped waiting for it. The child's task id keeps it to one
- * continuation, which queues behind whatever turn holds the conversation, and
- * none at all once the parent read `resultEventId` itself. The coordinator
- * calls it, and so does the recovery sweep for a result a restart lost, with
- * the `target` it already loaded; the sweep reads the admission it returns.
+ * Resumes the parent conversation with a subagent result, or a note with no
+ * `resultEventId`, that came in after the parent run stopped reading them.
+ * The task id keeps it to one continuation, which queues behind whatever
+ * turn holds the conversation, and none at all once the parent read
+ * `resultEventId` itself. The coordinator calls it, and so does the recovery
+ * sweep for a result a restart lost, with the `target` it already loaded;
+ * the sweep reads the admission it returns.
  */
 export async function resumeAfterSubagentResult(
   parent: SubagentParent,
   taskId: string,
   message: UserModelMessage,
-  resultEventId: string,
+  resultEventId: string | undefined,
   target?: ReentryTarget,
 ): Promise<SubagentResumeOutcome> {
   // The task id's own nonce, under the root event, so a chain of late results
