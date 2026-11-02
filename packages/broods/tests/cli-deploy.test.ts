@@ -8,7 +8,8 @@ import { tmpdir } from "node:os";
  * runtime key: a new agent refuses the bare runtime key, so a checkout without
  * the secret could not sign a token. It rotates the secret only when the
  * stage has none or this checkout lacks a non-production stage's, and never
- * prints it. `--region` rides the manifest as Production's region.
+ * prints it. In CI it writes neither, since that checkout is thrown away.
+ * `--region` rides the manifest as Production's region.
  */
 
 const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
@@ -159,6 +160,17 @@ test("deploy mints the first signing secret into .env.local without printing it"
   expect(result.envLocal).toContain(`BROODS_USER_TOKEN_SECRET="${SECRET}"`);
   expect(result.output).toContain("Wrote a new user token signing secret");
   expect(result.output).not.toContain(SECRET);
+});
+
+test("deploy in CI writes neither the runtime key nor a signing secret", async () => {
+  const cwd = await projectDir();
+  const backend = serveBackend({ stageKind: "production" });
+
+  const result = await runDeploy(cwd, backend.baseUrl, { CI: "true" });
+
+  expect(result.exitCode).toBe(0);
+  expect(backend.rotations).toEqual([]);
+  expect(result.envLocal).toBe('BROODS_PROJECT="demo-app"\n');
 });
 
 test("deploy keeps a production stage's existing secret when this checkout lacks it", async () => {
