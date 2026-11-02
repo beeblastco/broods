@@ -745,7 +745,6 @@ describe("stored item persistence", () => {
       expect(mutate.mock.calls[0]?.[1]).toMatchObject({
         ownerEventId: "event",
         ownerGeneration: 3,
-        savesAll: true,
         events: [
           { cursor: cursors[0], event: { message: { role: "assistant" } } },
           { cursor: cursors[1], event: { message: { role: "tool" } } },
@@ -822,8 +821,10 @@ describe("stored item persistence", () => {
             role: "user" as const,
             content: [{ type: "text" as const, text: answer }],
           })),
-          (count): void => {
-            saved.push(count);
+          {
+            onSaved: (count): void => {
+              saved.push(count);
+            },
           },
         ),
       ).rejects.toThrow("convex down");

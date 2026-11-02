@@ -118,10 +118,20 @@ const STORED_TOOL_MESSAGE_BYTES = 768 * 1024;
 // firing a cron. It names the root trace span and withholds every schedule tool.
 export type RunTrigger = "cron";
 
+/**
+ * A user message as ingress carries it. `metadata` is opaque hook data
+ * persisted on the stored-event envelope, never inside the model message (see
+ * StoredEventBase). `dedupeKey` keys the row it is saved as: a resume's message
+ * carries its result's hand-back key, so saving the row stores the result and
+ * a retried write saves it once.
+ */
+export type IngressUserMessage = UserModelMessage & {
+  metadata?: unknown;
+  dedupeKey?: string;
+};
+
 export type ConversationIngressEvent =
-  // `metadata` is opaque hook data persisted on the stored-event envelope,
-  // never inside the model message. See StoredEventBase.
-  | (UserModelMessage & { metadata?: unknown })
+  | IngressUserMessage
   | AssistantModelMessage
   | ToolModelMessage
   | (SystemModelMessage & { persist?: boolean });
@@ -495,13 +505,16 @@ export class Session {
    * messages, reports a stop or a lost lease, renews the lease, and claims the
    * steers waiting to join this turn, unless `claimSteering` is false. The
    * first boundary also carries the turn's own input. A stale boundary stores
-   * nothing and drops it: the conversation has moved on.
+   * nothing and drops it: the conversation has moved on. `dedupeKeys` keys the
+   * step's rows, one per message, so a later write of them saves nothing twice.
    */
   async stepBoundary(
     messages: ModelMessage[],
-    options: { claimSteering: boolean } = { claimSteering: true },
+    options: { claimSteering: boolean; dedupeKeys?: string[] } = {
+      claimSteering: true,
+    },
   ): Promise<StepBoundary> {
-    const events = await this.storedEvents(messages);
+    const events = await this.storedEvents(messages, options.dedupeKeys);
     if (this.ownerGeneration === undefined) {
       await this.appendStoredEvents(events);
 
@@ -659,20 +672,22 @@ export class Session {
   }
 
   /**
-   * @param onSaved called after each append Convex accepts, with how many of
-   * the stored events are saved so far. A large batch takes several appends,
-   * so a caller that retries a failure can skip what is already saved.
-   * @param dedupeKeys one per message, for a caller that retries a failed
-   * write: Convex stores a row once per key, so a write that committed but
-   * lost its reply is not stored twice.
+   * @param options.onSaved called after each append Convex accepts, with how
+   * many of the stored events are saved so far. A large batch takes several
+   * appends, so a caller that retries a failure can skip what is already saved.
+   * @param options.dedupeKeys one per message, the keys a step boundary already
+   * saved them under: Convex stores a row once per key, so a write that
+   * committed but lost its reply is not stored twice.
    */
   async persistModelMessages(
-    messages: ModelMessage[],
-    onSaved?: (saved: number) => void,
-    dedupeKeys?: string[],
+    messages: ConversationIngressEvent[],
+    options: {
+      onSaved?: (saved: number) => void;
+      dedupeKeys?: string[];
+    } = {},
   ): Promise<string[]> {
-    const events = await this.storedEvents(messages, dedupeKeys);
-    await this.appendStoredEvents(events, onSaved);
+    const events = await this.storedEvents(messages, options.dedupeKeys);
+    await this.appendStoredEvents(events, options.onSaved);
 
     return events.map((entry): string => entry.cursor);
   }
@@ -979,14 +994,9 @@ export class Session {
     ]);
   }
 
-  /**
-   * One append mutation, fenced against the owner generation when there is one.
-   * `savesAll` says no other row waits to be saved, so the write stores the
-   * results handed to this owner.
-   */
+  /** One append mutation, fenced against the owner generation when there is one. */
   private async appendConversationEvents(
     events: AppendedConversationEvent[],
-    savesAll = false,
   ): Promise<void> {
     if (this.ownerGeneration !== undefined) {
       const startedAt = performance.now();
@@ -995,7 +1005,6 @@ export class Session {
         ownerEventId: this.eventId,
         ownerGeneration: this.ownerGeneration,
         events: events,
-        ...(savesAll ? { savesAll: true } : {}),
       });
       this.confirmOwner(startedAt);
 
@@ -1007,10 +1016,7 @@ export class Session {
     });
   }
 
-  /**
-   * Writes stored rows in as few appends as Convex accepts, in cursor order. The
-   * last append saves all only when no row waits for a later fenced write.
-   */
+  /** Writes stored rows in as few appends as Convex accepts, in cursor order. */
   private async appendStoredEvents(
     events: AppendedConversationEvent[],
     onSaved?: (saved: number) => void,
@@ -1018,11 +1024,7 @@ export class Session {
     if (events.length === 0) return;
     let saved = 0;
     for (const batch of storedEventBatches(events)) {
-      await this.appendConversationEvents(
-        batch,
-        saved + batch.length === events.length &&
-          this.pendingStoredEvents.length === 0,
-      );
+      await this.appendConversationEvents(batch);
       saved += batch.length;
       onSaved?.(saved);
     }
@@ -1474,7 +1476,7 @@ export class Session {
    * here. Media carried as bytes is stored first, so the row keeps its link.
    */
   private async storedEvents(
-    messages: ModelMessage[],
+    messages: ConversationIngressEvent[],
     dedupeKeys?: string[],
   ): Promise<AppendedConversationEvent[]> {
     if (!this.persist) return [];
@@ -1493,7 +1495,10 @@ export class Session {
         this.eventId,
         producer,
       );
-      const dedupeKey = dedupeKeys?.[index];
+      const source = messages[index];
+      const dedupeKey =
+        dedupeKeys?.[index] ??
+        (source?.role === "user" ? source.dedupeKey : undefined);
       const toolResultIds = this.toolResultIdsOf(message);
 
       return event
@@ -1527,9 +1532,11 @@ export function createStoredEventFromModelMessage(
     case "user": {
       // Opaque hook metadata rides the stored envelope; the persisted model
       // message stays a clean AI SDK shape.
-      const { metadata, ...userMessage } = message as UserModelMessage & {
-        metadata?: unknown;
-      };
+      const {
+        metadata,
+        dedupeKey: _dedupeKey,
+        ...userMessage
+      } = message as IngressUserMessage;
 
       return toStoredConversationEvent(
         sanitizeUserMessage(userMessage),
@@ -1624,20 +1631,29 @@ export async function ingestChannelAttachments(
   };
 }
 
-// Projection attaches metadata/createdAt for hook payloads; model calls must
-// receive clean AI SDK message shapes, so they pass through this first.
+// Projection attaches metadata/createdAt for hook payloads, and a result's
+// message carries its dedupeKey; model calls must receive clean AI SDK message
+// shapes, so they pass through this first.
 export function stripEnvelopeFieldsFromMessages(
   messages: ModelMessage[],
 ): ModelMessage[] {
   return messages.map((message) => {
-    if (!("metadata" in message) && !("createdAt" in message)) {
+    if (
+      !("metadata" in message) &&
+      !("createdAt" in message) &&
+      !("dedupeKey" in message)
+    ) {
       return message;
     }
     const {
       metadata: _metadata,
       createdAt: _createdAt,
+      dedupeKey: _dedupeKey,
       ...rest
-    } = message as ModelMessage & { metadata?: unknown; createdAt?: string };
+    } = message as ModelMessage &
+      Partial<Pick<IngressUserMessage, "metadata" | "dedupeKey">> & {
+        createdAt?: string;
+      };
 
     return rest as ModelMessage;
   });
@@ -1970,7 +1986,7 @@ function projectActiveConversationEntries(
 }
 
 // Conversation projection. User messages carry envelope metadata/createdAt for
-// hook payloads; stripEnvelopeFieldsFromMessages removes both for model calls.
+// hook payloads; stripEnvelopeFieldsFromMessages removes them for model calls.
 function projectEntriesToMessages(
   entries: StoredConversationEntry[],
   model: string | undefined,

@@ -15,7 +15,6 @@ import { sha256Hex } from "./model/accountSecrets";
 import {
   asyncToolDeliveryValidator,
   reservedSandboxValidator,
-  resultFenceValidator,
   runtimeAsyncAgentResultsFields,
   runtimeAsyncToolResultsFields,
   runtimeConversationEventsFields,
@@ -67,8 +66,8 @@ export const conversationEventsValidator = v.array(
   }),
 );
 
-/** The late result a resume envelope carries, as its fence fields name it. */
-export type ResultFence = Infer<typeof resultFenceValidator>;
+/** A late result a history write stored, by the field a resume envelope names it by. */
+export type ResultFence = { resultEventId: string } | { toolResultId: string };
 
 /** How an async run ended, or what it waits on, as its polling row records it. */
 export const asyncAgentOutcomeValidator = v.object({
@@ -638,8 +637,8 @@ export async function asyncAgentResultRow(
 /**
  * Marks a subagent or async tool result's hand-back stored inside the history
  * write of `conversationKey` that saves it: the parent's append of the result
- * row, a saved `async_status` read, or the owner's save of a resume carrying
- * it. Only a row of `accountId` told to `conversationKey` moves: a subagent's
+ * row, a saved `async_status` read, or the owner's save of a resume's message,
+ * keyed like that append. Only a row of `accountId` told to `conversationKey` moves: a subagent's
  * parent conversation, an async tool's own.
  * @returns whether the row is that conversation's, stored now
  */

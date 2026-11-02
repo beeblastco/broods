@@ -19,7 +19,6 @@ import {
   conversationEventsValidator,
   insertConversationEvents,
   markResultStored,
-  type ResultFence,
   writeAsyncAgentResult,
 } from "./runtime";
 import {
@@ -294,7 +293,6 @@ export const accept = internalMutation({
       ownerTaskId: args.ownerTaskId,
       stopRequestedGeneration: undefined,
       leaseExpiresAt: now + args.leaseTtlMs,
-      unsavedResults: resultFences([baseEnvelope]),
       updatedAt: now,
     });
 
@@ -359,19 +357,11 @@ export const appendConversationEvent = internalMutation({
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
     events: conversationEventsValidator,
-    // The owner holds no other unsaved row once this write commits, so the
-    // write saves every resume handed to it.
-    savesAll: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const coordinator = await requireOwner(ctx, args);
-    await insertOwnedEvents(
-      ctx,
-      coordinator,
-      args.events,
-      args.savesAll === true,
-    );
+    await insertOwnedEvents(ctx, coordinator, args.events);
 
     return null;
   },
@@ -867,12 +857,7 @@ export const settle = internalMutation({
   handler: async (ctx, args): Promise<number> => {
     let coordinator = await requireOwner(ctx, args);
     if (args.events && args.events.length > 0) {
-      coordinator = await insertOwnedEvents(
-        ctx,
-        coordinator,
-        args.events,
-        true,
-      );
+      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
     if (args.asyncResult && settled.ownerFinished) {
@@ -914,12 +899,7 @@ export const stepBoundary = internalMutation({
       return { renewal: "stale" as const, steering: null };
     }
     if (args.events && args.events.length > 0) {
-      coordinator = await insertOwnedEvents(
-        ctx,
-        coordinator,
-        args.events,
-        true,
-      );
+      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
       return { renewal: "stopped" as const, steering: null };
@@ -999,12 +979,7 @@ export const takeNext = internalMutation({
     const now = Date.now();
     let coordinator = await requireOwner(ctx, { ...args, now: now });
     if (args.events && args.events.length > 0) {
-      coordinator = await insertOwnedEvents(
-        ctx,
-        coordinator,
-        args.events,
-        true,
-      );
+      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     if (args.settle) {
       await settleAppliedEnvelopes(ctx, coordinator, {
@@ -1397,10 +1372,6 @@ async function claimSteering(
     queuedCount: Math.max(0, queue.queuedCount - selected.length),
     queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
     leaseExpiresAt: now + args.leaseTtlMs,
-    unsavedResults: [
-      ...(coordinator.unsavedResults ?? []),
-      ...(resultFences(selected) ?? []),
-    ],
     updatedAt: now,
   });
 
@@ -1449,19 +1420,16 @@ function ingressStatusResult(
 
 /**
  * Inserts history rows for an owner the fence just accepted, all or none. A
- * write that leaves the owner no unsaved row (`savesAll`) saves what the owner
- * was handed, so it stores the results of the resumes handed to it since
- * (`unsavedResults`). It completes each queued resume of a result the write
- * stored: the history tells both now.
+ * row keyed by a result (a resume's message, a read's tool result) stores it,
+ * and the write completes each queued resume of a result it stored: the
+ * history tells it now.
  * @returns the coordinator, with its queue counters current
  */
 async function insertOwnedEvents(
   ctx: MutationCtx,
-  owner: Doc<"runtimeConversationCoordinators">,
+  coordinator: Doc<"runtimeConversationCoordinators">,
   events: Infer<typeof conversationEventsValidator>,
-  savesAll: boolean,
 ): Promise<Doc<"runtimeConversationCoordinators">> {
-  let coordinator = owner;
   await requireActiveAccount(ctx, coordinator.accountId);
   const stored = await insertConversationEvents(
     ctx,
@@ -1469,17 +1437,6 @@ async function insertOwnedEvents(
     coordinator.conversationKey,
     events,
   );
-  if (savesAll && coordinator.unsavedResults !== undefined) {
-    for (const fence of coordinator.unsavedResults) {
-      await markDeliveredResultsStored(ctx, {
-        accountId: coordinator.accountId,
-        conversationKey: coordinator.conversationKey,
-        ...fence,
-      });
-    }
-    await ctx.db.patch(coordinator._id, { unsavedResults: undefined });
-    coordinator = { ...coordinator, unsavedResults: undefined };
-  }
   if (stored.length === 0) return coordinator;
   const now = Date.now();
   const queue = {
@@ -1688,53 +1645,6 @@ function isLateControl(
 }
 
 /**
- * Marks the result rows a resume envelope delivers stored, in the owner's
- * history write that saves it.
- */
-async function markDeliveredResultsStored(
-  ctx: MutationCtx,
-  envelope: Pick<
-    Doc<"runtimeIngressEnvelopes">,
-    "accountId" | "conversationKey" | "resultEventId" | "toolResultId"
-  >,
-): Promise<void> {
-  await markResultStored(
-    ctx,
-    envelope.accountId,
-    envelope.conversationKey,
-    await asyncAgentResultRow(ctx, envelope.resultEventId),
-  );
-  await markResultStored(
-    ctx,
-    envelope.accountId,
-    envelope.conversationKey,
-    await asyncToolResultRow(ctx, envelope.toolResultId),
-  );
-}
-
-/**
- * The late results `rows` carry, for the owner they are handed to: its next
- * history write saves them and stores the results. Undefined when none does.
- */
-function resultFences(
-  rows: Pick<
-    Doc<"runtimeIngressEnvelopes">,
-    "resultEventId" | "toolResultId"
-  >[],
-): ResultFence[] | undefined {
-  const fences = rows.flatMap((row): ResultFence[] => [
-    ...(row.resultEventId !== undefined
-      ? [{ resultEventId: row.resultEventId }]
-      : []),
-    ...(row.toolResultId !== undefined
-      ? [{ toolResultId: row.toolResultId }]
-      : []),
-  ]);
-
-  return fences.length > 0 ? fences : undefined;
-}
-
-/**
  * Whether `envelope` and the admission `args` resume the same late result;
  * `checkDuplicateAdmission` answers such a retry as a duplicate even when its
  * payload drifted.
@@ -1872,7 +1782,6 @@ async function promoteQueuedGroup(
     queuedCount: Math.max(0, queue.queuedCount - selected.length),
     queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
     leaseExpiresAt: now + options.leaseTtlMs,
-    unsavedResults: resultFences(selected),
     updatedAt: now,
   });
 

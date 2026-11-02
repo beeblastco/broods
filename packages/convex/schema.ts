@@ -1299,12 +1299,6 @@ export const channelTargetRefsFields = {
   channelRecordId: v.optional(v.string()),
 };
 /** Fenced ownership and FIFO counters for one runtime conversation. */
-/** The late result a resume envelope carries, as its fence fields name it. */
-export const resultFenceValidator = v.union(
-  v.object({ resultEventId: v.string() }),
-  v.object({ toolResultId: v.string() }),
-);
-
 export const runtimeConversationCoordinatorsFields = {
   accountId: v.id("accounts"),
   agentId: v.string(),
@@ -1329,9 +1323,6 @@ export const runtimeConversationCoordinatorsFields = {
   leaseExpiresAt: v.optional(v.number()),
   queuedCount: v.number(),
   queuedBytes: v.number(),
-  // The late results of the resumes handed to the current owner, stored by
-  // its next history write that leaves it no unsaved row.
-  unsavedResults: v.optional(v.array(resultFenceValidator)),
   updatedAt: v.number(),
 };
 /**

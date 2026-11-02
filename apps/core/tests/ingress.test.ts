@@ -328,7 +328,7 @@ describe("step boundary", (): void => {
     });
   });
 
-  it("saves all with an append only once no turn row waits for a boundary", async (): Promise<void> => {
+  it("saves a resume's message under its result's key, and keeps the key out of the message", async (): Promise<void> => {
     const calls: [string, Record<string, unknown>][] = [];
     runtime.mutate = (async (
       name: string,
@@ -350,19 +350,37 @@ describe("step boundary", (): void => {
       agentConfig: { skills: { enabled: false } },
       ownerGeneration: 1,
     });
-    await session.createTurnContext([], [{ role: "user", content: "resume" }]);
 
-    // A steer saved before the turn's own row must not store what was handed over.
-    await session.persistModelMessages([{ role: "user", content: "steer" }]);
-    await session.flushPendingStoredEvents();
-    await session.persistModelMessages([{ role: "user", content: "later" }]);
+    const turnContext = await session.createTurnContext(
+      [],
+      [
+        {
+          role: "user",
+          content: "the result",
+          dedupeKey: "async-tool:result-1:completed",
+        },
+      ],
+    );
+    await session.stepBoundary([]);
 
-    expect(
-      calls.map(([name, args]): [string, unknown] => [name, args.savesAll]),
-    ).toEqual([
-      ["appendFencedConversationEvent", undefined],
-      ["appendFencedConversationEvent", true],
-      ["appendFencedConversationEvent", true],
+    expect(turnContext.messages).toMatchObject([
+      { role: "user", content: "the result" },
+    ]);
+    expect(turnContext.messages[0]).not.toHaveProperty("dedupeKey");
+    expect(calls[0]?.[1]).toMatchObject({
+      events: [
+        {
+          dedupeKey: "async-tool:result-1:completed",
+          event: { message: { role: "user", content: "the result" } },
+        },
+      ],
+    });
+    expect(calls[0]?.[1]).not.toHaveProperty([
+      "events",
+      0,
+      "event",
+      "message",
+      "dedupeKey",
     ]);
   });
 
