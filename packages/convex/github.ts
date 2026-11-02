@@ -1481,19 +1481,15 @@ async function linkTarget(
       await commitWorkflow(app, token, repo.fullName, branch, workflow),
     );
   }
-  // A branch the remap dropped gets the new workflow too, whose job skips it,
-  // or its old one would keep deploying with the stage's new repo secret.
-  const mapped = new Set(Object.values(branches));
-  for (const branch of keys.previousBranches) {
-    if (mapped.has(branch)) continue;
-    await commitWorkflow(app, token, repo.fullName, branch, workflow).catch(
-      (error: unknown) => {
-        // A branch deleted since has no workflow left to run.
-        if (error instanceof GitHubApiError && error.status === 404) return;
-        throw error;
-      },
-    );
-  }
+  await retireBranches(
+    app,
+    token,
+    repo.fullName,
+    keys.previousBranches.filter(
+      (branch) => !Object.values(branches).includes(branch),
+    ),
+    workflow,
+  );
 
   const linked: ProjectRepo = {
     installationId: repo.installationId,
@@ -1513,6 +1509,26 @@ async function linkTarget(
   });
 
   return linked;
+}
+
+// Branches a remap dropped get the new workflow too, whose job skips them, or
+// their old one would keep deploying with the stage's new repo secret.
+async function retireBranches(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+  dropped: string[],
+  workflow: string,
+): Promise<void> {
+  for (const branch of dropped) {
+    await commitWorkflow(app, token, fullName, branch, workflow).catch(
+      (error: unknown) => {
+        // A branch deleted since has no workflow left to run.
+        if (error instanceof GitHubApiError && error.status === 404) return;
+        throw error;
+      },
+    );
+  }
 }
 
 // Runs the GitHub half of a link; revokes the fresh keys when it fails.
