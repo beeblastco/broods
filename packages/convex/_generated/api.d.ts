@@ -5604,9 +5604,10 @@ export declare const internal: {
       "internal",
       {
         authId: string;
+        developmentBranch?: string | null;
+        productionBranch?: string | null;
         projectId: Id<"projects">;
         repoId?: number;
-        stages: Array<"production" | "development">;
       },
       {
         development?: string;

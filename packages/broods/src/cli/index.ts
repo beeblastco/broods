@@ -338,8 +338,9 @@ GitHub Actions: Broods seals a project key per stage into the repo and commits
 Subcommands:
   status               The project's link, latest deploy per branch, and accounts
   repos                Repos the org's connected GitHub accounts let you link
-  link <owner/repo>    Link a repo; by default main deploys Production and dev
-                       (created when missing) deploys Development
+  link <owner/repo>    Link a repo; by default the default branch deploys
+                       Development, or Production when the project has that
+                       stage, with dev (created when missing) for Development
   unlink               Unlink and revoke the keys; the repo keeps its workflow
   connect              Open the page that installs the Broods GitHub App on an
                        account (org admins)
@@ -347,9 +348,9 @@ Subcommands:
 Options:
   --folder <path>                The folder holding broods/, when there are several
   --production-branch <name|none>   Branch Production deploys from; none for no
-                                 Production deploys (default: the repo's default)
+                                 Production deploys
   --development-branch <name|none>  Branch Development deploys from; none for
-                                 no Development deploys (default: dev)
+                                 no Development deploys
   --json                         Print the result as JSON
   --yes                          Skip the unlink confirmation
 

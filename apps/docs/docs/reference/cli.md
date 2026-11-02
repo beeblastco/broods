@@ -371,20 +371,20 @@ Links the project to a GitHub repo, so a push deploys its stage from your own Gi
 ```bash
 broods github status                     # the link, latest deploy per branch, connected accounts
 broods github repos                      # repos the org's connected accounts let you link
-broods github link acme/web              # main deploys Production, dev deploys Development
-broods github link acme/agent --production-branch none --development-branch main
+broods github link acme/web              # main deploys Development, or Production when the project has it
+broods github link acme/web --production-branch main --development-branch dev
 broods github unlink [--yes]
 broods github connect                    # install the Broods GitHub App on another account
 ```
 
-| Flag                                | Description                                                           |
-| ----------------------------------- | --------------------------------------------------------------------- |
-| `--folder <path>`                   | The folder holding `broods/`, when the repo has several               |
-| `--production-branch <name\|none>`  | Branch Production deploys from. Default: the repo's default branch    |
-| `--development-branch <name\|none>` | Branch Development deploys from, created when missing. Default: `dev` |
-| `--json`                            | Print the result as JSON                                              |
+| Flag                                | Description                                                                                                           |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `--folder <path>`                   | The folder holding `broods/`, when the repo has several                                                               |
+| `--production-branch <name\|none>`  | Branch Production deploys from. Default: the repo's default branch when the project has a Production stage, else none |
+| `--development-branch <name\|none>` | Branch Development deploys from, created when missing. Default: `dev` beside Production, else the default branch      |
+| `--json`                            | Print the result as JSON                                                                                              |
 
-`none` leaves that stage out: no key for it, and no push deploys it. The two branches must differ. Linking and unlinking need `keys:write` on the project, `connect` an org admin. The commands use your `broods login` and act in its organization.
+`none` leaves that stage out: no key for it, and no push deploys it. Naming a Production branch adds the Production stage when the project has none. The two branches must differ. Linking and unlinking need `keys:write` on the project, `connect` an org admin. The commands use your `broods login` and act in its organization.
 
 ## stage
 

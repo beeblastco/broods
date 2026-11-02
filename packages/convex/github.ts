@@ -75,10 +75,6 @@ import {
 
 const SIGN_IN_TTL_MS = 10 * 60 * 1000;
 
-const stageValidator = v.union(
-  v.literal("production"),
-  v.literal("development"),
-);
 /** How long a link in flight holds its repo before another project may take it. */
 const LINK_CLAIM_TTL_MS = 10 * 60 * 1000;
 
@@ -136,9 +132,15 @@ const linkTargetValidator = v.object({
   rootDirectory: v.string(),
   /** The Broods API the workflow deploys to: the dashboard's own gateway. */
   baseUrl: v.string(),
-  /** The branch Production deploys from: the default branch when unset, none when null. */
+  /**
+   * The branch Production deploys from, none when null. Unset: the default
+   * branch when the project already has a Production stage, else none.
+   */
   productionBranch: v.optional(v.union(v.string(), v.null())),
-  /** The branch Development deploys from: `dev` when unset (created when missing), none when null. */
+  /**
+   * The branch Development deploys from, created when missing; none when
+   * null. Unset: `dev` beside Production, else the default branch.
+   */
   developmentBranch: v.optional(v.union(v.string(), v.null())),
 });
 
@@ -412,7 +414,6 @@ export const finish = action({
     const keys = await ctx.runMutation(internal.github.mintLinkKeys, {
       authId: user.id,
       projectId: request.projectId,
-      stages: [...STAGES],
     });
     await withKeys(ctx, keys, async (): Promise<void> => {
       const created = await createGitHubRepo(app, userToken, installation, {
@@ -615,7 +616,8 @@ async function linkFor(
     authId: authId,
     projectId: projectId,
     repoId: target.repoId,
-    stages: STAGES.filter((stage) => branchTarget(target, stage) !== null),
+    productionBranch: target.productionBranch,
+    developmentBranch: target.developmentBranch,
   });
 
   return await withKeys(ctx, keys, (): Promise<ProjectRepo> =>
@@ -889,8 +891,13 @@ export const mintLinkKeys = internalMutation({
     authId: v.string(),
     projectId: v.id("projects"),
     repoId: v.optional(v.number()),
-    /** The stages the repo deploys; each gets its own key. */
-    stages: v.array(stageValidator),
+    /**
+     * The link's branch asks, as in `LinkTarget`. Production deploys when a
+     * branch is named for it, or by default when the project already has a
+     * Production stage; Development unless null.
+     */
+    productionBranch: linkTargetValidator.fields.productionBranch,
+    developmentBranch: linkTargetValidator.fields.developmentBranch,
   },
   returns: v.object({
     projectId: v.id("projects"),
@@ -901,12 +908,24 @@ export const mintLinkKeys = internalMutation({
   }),
   handler: async (
     ctx,
-    { authId, projectId, repoId, stages },
+    { authId, projectId, repoId, productionBranch, developmentBranch },
   ): Promise<LinkKeys> => {
+    const project = await requireLinkAccess(ctx, authId, projectId);
+    const production =
+      productionBranch === undefined
+        ? (
+            await ctx.db
+              .query("stages")
+              .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+              .collect()
+          ).some((stage) => stage.kind === "production")
+        : productionBranch !== null;
+    const stages = STAGES.filter((stage) =>
+      stage === "production" ? production : developmentBranch !== null,
+    );
     if (stages.length === 0) {
       throw new ClientError("Map at least one stage to a branch.");
     }
-    const project = await requireLinkAccess(ctx, authId, projectId);
     requireUnlinked(project);
     if ((project.linkClaim?.expiresAt ?? 0) > Date.now()) {
       throw new ClientError(
@@ -1140,16 +1159,6 @@ function isStaleRun(
   return row.status === "completed" && run.status !== "completed";
 }
 
-// The stage's branch as the link asked: a name, unset for the default, or null for none.
-function branchTarget(
-  target: LinkTarget,
-  stage: Stage,
-): string | null | undefined {
-  return stage === "production"
-    ? target.productionBranch
-    : target.developmentBranch;
-}
-
 // The org's owner, or any member.
 async function isOrgMember(
   ctx: QueryCtx,
@@ -1320,18 +1329,21 @@ async function linkTarget(
       `${repo.fullName} has no broods/ in ${target.rootDirectory || "its root"} on ${repo.defaultBranch}.`,
     );
   }
-  const production = branchTarget(target, "production");
-  const development = branchTarget(target, "development");
+  // The stages minted a key are the ones the repo deploys. With no
+  // Production, the default branch deploys Development.
   const branches: Partial<Record<Stage, string>> = {
-    ...(production === null
-      ? {}
-      : { production: production?.trim() || repo.defaultBranch }),
-    ...(development === null
-      ? {}
-      : {
+    ...(keys.production
+      ? { production: target.productionBranch?.trim() || repo.defaultBranch }
+      : {}),
+    ...(keys.development
+      ? {
           development:
-            development?.trim() || developmentBranchFor(repo.defaultBranch),
-        }),
+            target.developmentBranch?.trim() ||
+            (keys.production
+              ? developmentBranchFor(repo.defaultBranch)
+              : repo.defaultBranch),
+        }
+      : {}),
   };
   // One branch for both would deploy every push to Production and Development at once.
   if (branches.production && branches.production === branches.development) {
