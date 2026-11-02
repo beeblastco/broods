@@ -1,6 +1,6 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
 
-import { propertyName, testFramework } from "../ast.ts";
+import { propertyName, testFunction } from "../ast.ts";
 
 const SKIP_MODIFIERS = new Set(["fixme", "skip", "skipIf", "todo", "todoIf"]);
 const REASON_COMMENT_PATTERN = /^\s*\*?\s*skip:\s*\S/mu;
@@ -45,7 +45,7 @@ export default defineRule({
     MemberExpression: (node): void => {
       const modifier = propertyName(node);
       if (modifier === undefined || !SKIP_MODIFIERS.has(modifier)) return;
-      if (testFramework(context, node.object) === undefined) return;
+      if (testFunction(context, node.object) === undefined) return;
       if (passesReason(node)) return;
       const comments = context.sourceCode.getCommentsBefore(statementOf(node));
       if (comments.some(({ value }) => REASON_COMMENT_PATTERN.test(value))) {

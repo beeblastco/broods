@@ -91,4 +91,21 @@ describe(RULE, () => {
     `,
     [{ line: 2, message: "Use describe.each(cases)(name, fn)" }],
   );
+
+  rule.invalid(
+    "follows import aliases and namespace imports",
+    `
+      import { test as check } from "bun:test";
+      import * as tests from "bun:test";
+
+      for (const value of [1, 2]) {
+        check(\`handles \${value}\`, () => {});
+        tests.test(\`handles \${value}\`, () => {});
+      }
+    `,
+    [
+      { line: 5, message: "Use test.each" },
+      { line: 6, message: "Use test.each" },
+    ],
+  );
 });

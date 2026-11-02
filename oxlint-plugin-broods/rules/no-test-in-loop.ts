@@ -1,11 +1,6 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
 
-import {
-  FUNCTION_TYPES,
-  propertyName,
-  testFramework,
-  testRoot,
-} from "../ast.ts";
+import { FUNCTION_TYPES, propertyName, testFunction } from "../ast.ts";
 
 const EACH_FRAMEWORKS = new Set(["", "bun:test", "vitest"]);
 const LOOPS = new Set([
@@ -51,17 +46,16 @@ export default defineRule({
   },
   create: (context) => ({
     CallExpression: (node): void => {
-      const root = testRoot(node.callee);
-      if (root === undefined || usesEach(node.callee)) return;
+      const test = testFunction(context, node.callee);
+      if (test === undefined || usesEach(node.callee)) return;
       const { parent } = node;
       if (parent.type === "MemberExpression") return;
       if (parent.type === "CallExpression" && parent.callee === node) return;
-      const framework = testFramework(context, node.callee);
-      if (framework === undefined || !EACH_FRAMEWORKS.has(framework)) return;
+      if (!EACH_FRAMEWORKS.has(test.source)) return;
       if (!isInsideLoop(node)) return;
       context.report({
         node: node.callee,
-        message: `Use ${root}.each(cases)(name, fn) instead of declaring ${root}() in a loop.`,
+        message: `Use ${test.name}.each(cases)(name, fn) instead of declaring ${test.name}() in a loop.`,
       });
     },
   }),

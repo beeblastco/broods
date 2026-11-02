@@ -66,4 +66,19 @@ describe(RULE, () => {
     `,
     [{ line: 1, message: "Drop `.only`" }],
   );
+
+  rule.invalid(
+    "follows import aliases and namespace imports",
+    `
+      import { test as check } from "bun:test";
+      import * as tests from "bun:test";
+
+      check.only("focused", () => {});
+      tests.test.only("focused", () => {});
+    `,
+    [
+      { line: 4, message: "Drop `.only`" },
+      { line: 5, message: "Drop `.only`" },
+    ],
+  );
 });

@@ -16,13 +16,6 @@ const chainRoot = (node: ESTree.Node): ESTree.Node => {
   return node;
 };
 
-export const testRoot = (node: ESTree.Node): string | undefined => {
-  const root = chainRoot(node);
-  return root.type === "Identifier" && TEST_FUNCTIONS.has(root.name)
-    ? root.name
-    : undefined;
-};
-
 export const propertyName = (
   node: ESTree.MemberExpression,
 ): string | undefined => {
@@ -41,22 +34,43 @@ export const calleeName = (callee: ESTree.Node): string | undefined => {
   return callee.type === "MemberExpression" ? propertyName(callee) : undefined;
 };
 
-export const testFramework = (
+// The test function a call chain starts from, followed through its import: `test`,
+// `{ test as check }` and `tests.test` all resolve, with their module ("" for a global).
+export const testFunction = (
   context: Context,
   node: ESTree.Node,
-): string | undefined => {
+): { name: string; source: string } | undefined => {
   const root = chainRoot(node);
-  if (root.type !== "Identifier" || !TEST_FUNCTIONS.has(root.name)) {
-    return undefined;
-  }
+  if (root.type !== "Identifier") return undefined;
   let scope: Scope | null = context.sourceCode.getScope(root);
   for (; scope !== null; scope = scope.upper) {
     const definition = scope.set.get(root.name)?.defs[0];
     if (definition === undefined) continue;
-    return definition.type === "ImportBinding" &&
-      definition.parent?.type === "ImportDeclaration"
-      ? definition.parent.source.value
+    if (
+      definition.type !== "ImportBinding" ||
+      definition.parent?.type !== "ImportDeclaration"
+    ) {
+      return undefined;
+    }
+    const source = definition.parent.source.value;
+    const specifier = definition.node;
+    const name =
+      specifier.type === "ImportSpecifier"
+        ? specifier.imported.type === "Identifier"
+          ? specifier.imported.name
+          : String(specifier.imported.value)
+        : specifier.type === "ImportNamespaceSpecifier" &&
+            root.parent?.type === "MemberExpression" &&
+            root.parent.object === root
+          ? propertyName(root.parent)
+          : undefined;
+
+    return name !== undefined && TEST_FUNCTIONS.has(name)
+      ? { name: name, source: source }
       : undefined;
   }
-  return "";
+
+  return TEST_FUNCTIONS.has(root.name)
+    ? { name: root.name, source: "" }
+    : undefined;
 };

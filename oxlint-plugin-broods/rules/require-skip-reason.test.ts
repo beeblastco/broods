@@ -94,4 +94,19 @@ describe(RULE, () => {
     `,
     [{ line: 5, message: COMMENT }],
   );
+
+  rule.invalid(
+    "follows import aliases and namespace imports",
+    `
+      import { test as check } from "bun:test";
+      import * as tests from "bun:test";
+
+      check.skip("pending", () => {});
+      tests.test.skip("pending", () => {});
+    `,
+    [
+      { line: 4, message: COMMENT },
+      { line: 5, message: COMMENT },
+    ],
+  );
 });
