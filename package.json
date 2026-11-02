@@ -43,7 +43,7 @@
     "docs:build": "bun run --filter @broods/docs build"
   },
   "devDependencies": {
-    "@noble/hashes": "1.8.0",
+    "@noble/hashes": "2.4.0",
     "@oxlint/plugins": "1.90.0",
     "@shadcn/lint": "^0.2.3",
     "@types/bun": "^1.4.4",
