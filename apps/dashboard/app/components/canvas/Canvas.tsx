@@ -32,6 +32,7 @@ import {
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import { SidePanelSlot } from "@/app/components/canvas/SidePanelSlot";
 import { useEverTrue } from "@/app/hooks/useEverTrue";
+import { useLatestRef } from "@/app/hooks/useLatestRef";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
@@ -497,12 +498,9 @@ function CanvasInner({
     [nodes, edges, mcpServers, collapsedFrames, expandedMemberId, drop],
   );
 
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- refs the flow callbacks read
-  useEffect(() => {
-    nodesRef.current = nodes;
-    edgesRef.current = edges;
-    framedGraphRef.current = framedGraph;
-  }, [nodes, edges, framedGraph]);
+  useLatestRef(nodesRef, nodes);
+  useLatestRef(edgesRef, edges);
+  useLatestRef(framedGraphRef, framedGraph);
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {

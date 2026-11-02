@@ -1,6 +1,7 @@
 "use client";
 
 import type { AgentProvider } from "@/app/components/side-panel/DetailsTab";
+import { useLatestRef } from "@/app/hooks/useLatestRef";
 import {
   fromNestedAgentConfig,
   toNestedAgentConfig,
@@ -11,7 +12,7 @@ import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useStore } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
 
 type ReactFlowState = {
   edges: Array<{ source: string; target: string }>;
@@ -40,13 +41,9 @@ export function useConnectedAgentConfig(
 
   // Writes queue on the freshest config: each re-projects the whole config, so one built on
   // a stale reactive snapshot would undo the edit before it.
-  const latestConfig = useRef<FlatAgentConfig | null | undefined>(
-    agentConfig as FlatAgentConfig | undefined,
-  );
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- mirrors the Convex query into a ref
-  useEffect(() => {
-    latestConfig.current = agentConfig as FlatAgentConfig | undefined;
-  }, [agentConfig]);
+  const config = agentConfig as FlatAgentConfig | undefined;
+  const latestConfig = useRef<FlatAgentConfig | null | undefined>(config);
+  useLatestRef(latestConfig, config);
   const writeChain = useRef<Promise<void>>(Promise.resolve());
 
   const updateBranch = useCallback(
