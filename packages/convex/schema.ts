@@ -1080,10 +1080,6 @@ export const subagentTaskValidator = v.object({
   description: v.optional(v.string()),
   parentConversationKey: v.string(),
   parentDelivery: v.optional(asyncToolDeliveryValidator),
-  // The delivery policy saw, when it is not `parentDelivery`: a nested child's.
-  parentPolicyDelivery: v.optional(asyncToolDeliveryValidator),
-  parentTrigger: v.optional(v.literal("cron")),
-  parentPrincipalChain: v.optional(v.array(principalLinkValidator)),
 });
 const toolApprovalSummaryValidator = v.object({
   approvalId: v.string(),
@@ -1127,9 +1123,6 @@ export const runtimeAsyncAgentResultsFields = {
   questions: v.optional(v.array(pendingQuestionSummaryValidator)),
   // A persistent subagent's message-agents to its parent while status is awaiting_input.
   question: v.optional(v.string()),
-  // When that message stops waiting on the parent's reply, in ms. Cleared once
-  // the child's next turn starts or core's sweep times the wait out.
-  answerBy: v.optional(v.number()),
   createdAt: v.string(),
   updatedAt: v.string(),
   expiresAt: v.number(),
@@ -1610,8 +1603,6 @@ export default defineSchema({
     .index("by_eventId", ["eventId"])
     .index("by_accountId", ["accountId"])
     .index("by_conversationKey", ["conversationKey"])
-    .index("by_conversationKey_and_answerBy", ["conversationKey", "answerBy"])
-    .index("by_answerBy", ["answerBy"])
     .index("by_expiresAt", ["expiresAt"])
     .index("by_handback_and_status_and_updatedAt", [
       "handback",

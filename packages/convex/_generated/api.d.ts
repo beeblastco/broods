@@ -5968,12 +5968,6 @@ export declare const internal: {
       { conversationKey: string },
       { deleted: number; hasMore: boolean }
     >;
-    closeSubagentQuestion: FunctionReference<
-      "mutation",
-      "internal",
-      { conversationKey: string },
-      boolean
-    >;
     createAsyncAgentResult: FunctionReference<
       "mutation",
       "internal",
@@ -6004,33 +5998,6 @@ export declare const internal: {
                 kind: "channel";
                 source: Record<string, any>;
               };
-          parentPolicyDelivery?:
-            | { kind: "async" }
-            | {
-                connectionId: string;
-                kind: "nats";
-                publicConversationKey: string;
-                publicEventId: string;
-              }
-            | {
-                channelName: string;
-                identity?: {
-                  channelId?: string;
-                  threadId?: string;
-                  userId?: string;
-                  userName?: string;
-                  userRoles?: Array<string>;
-                  workspaceRef?: string;
-                };
-                kind: "channel";
-                source: Record<string, any>;
-              };
-          parentPrincipalChain?: Array<
-            | { channel?: string; id: string; kind: "user"; name?: string }
-            | { keyKind: "account" | "deployment" | "cron"; kind: "api" }
-            | { agentId: string; kind: "agent" }
-          >;
-          parentTrigger?: "cron";
         };
       },
       boolean
@@ -6149,7 +6116,6 @@ export declare const internal: {
         _creationTime: number;
         _id: Id<"runtimeAsyncAgentResults">;
         accountId: Id<"accounts">;
-        answerBy?: number;
         approvals?: Array<{
           approvalId: string;
           input: any;
@@ -6204,33 +6170,6 @@ export declare const internal: {
                 kind: "channel";
                 source: Record<string, any>;
               };
-          parentPolicyDelivery?:
-            | { kind: "async" }
-            | {
-                connectionId: string;
-                kind: "nats";
-                publicConversationKey: string;
-                publicEventId: string;
-              }
-            | {
-                channelName: string;
-                identity?: {
-                  channelId?: string;
-                  threadId?: string;
-                  userId?: string;
-                  userName?: string;
-                  userRoles?: Array<string>;
-                  workspaceRef?: string;
-                };
-                kind: "channel";
-                source: Record<string, any>;
-              };
-          parentPrincipalChain?: Array<
-            | { channel?: string; id: string; kind: "user"; name?: string }
-            | { keyKind: "account" | "deployment" | "cron"; kind: "api" }
-            | { agentId: string; kind: "agent" }
-          >;
-          parentTrigger?: "cron";
         };
         updatedAt: string;
       } | null
@@ -6480,104 +6419,6 @@ export declare const internal: {
         }>;
       }
     >;
-    listOverdueSubagentQuestions: FunctionReference<
-      "query",
-      "internal",
-      { before: number; cursor: string | null },
-      {
-        cursor: string;
-        isDone: boolean;
-        page: Array<{
-          _creationTime: number;
-          _id: Id<"runtimeAsyncAgentResults">;
-          accountId: Id<"accounts">;
-          answerBy?: number;
-          approvals?: Array<{
-            approvalId: string;
-            input: any;
-            toolCallId: string;
-            toolName: string;
-          }>;
-          conversationKey: string;
-          createdAt: string;
-          error?: string;
-          eventId: string;
-          expiresAt: number;
-          handback?: "pending" | "detached" | "stored";
-          question?: string;
-          questions?: Array<{
-            answerBy: string;
-            questions: Array<{
-              header: string;
-              id: string;
-              options: Array<{ description?: string; label: string }>;
-              question: string;
-            }>;
-            statusId: string;
-          }>;
-          response?: any;
-          status:
-            | "processing"
-            | "awaiting_approval"
-            | "awaiting_input"
-            | "completed"
-            | "failed";
-          subagent?: {
-            description?: string;
-            parentConversationKey: string;
-            parentDelivery?:
-              | { kind: "async" }
-              | {
-                  connectionId: string;
-                  kind: "nats";
-                  publicConversationKey: string;
-                  publicEventId: string;
-                }
-              | {
-                  channelName: string;
-                  identity?: {
-                    channelId?: string;
-                    threadId?: string;
-                    userId?: string;
-                    userName?: string;
-                    userRoles?: Array<string>;
-                    workspaceRef?: string;
-                  };
-                  kind: "channel";
-                  source: Record<string, any>;
-                };
-            parentPolicyDelivery?:
-              | { kind: "async" }
-              | {
-                  connectionId: string;
-                  kind: "nats";
-                  publicConversationKey: string;
-                  publicEventId: string;
-                }
-              | {
-                  channelName: string;
-                  identity?: {
-                    channelId?: string;
-                    threadId?: string;
-                    userId?: string;
-                    userName?: string;
-                    userRoles?: Array<string>;
-                    workspaceRef?: string;
-                  };
-                  kind: "channel";
-                  source: Record<string, any>;
-                };
-            parentPrincipalChain?: Array<
-              | { channel?: string; id: string; kind: "user"; name?: string }
-              | { keyKind: "account" | "deployment" | "cron"; kind: "api" }
-              | { agentId: string; kind: "agent" }
-            >;
-            parentTrigger?: "cron";
-          };
-          updatedAt: string;
-        }>;
-      }
-    >;
     listOwedAsyncAgentResults: FunctionReference<
       "query",
       "internal",
@@ -6600,7 +6441,6 @@ export declare const internal: {
           _creationTime: number;
           _id: Id<"runtimeAsyncAgentResults">;
           accountId: Id<"accounts">;
-          answerBy?: number;
           approvals?: Array<{
             approvalId: string;
             input: any;
@@ -6655,33 +6495,6 @@ export declare const internal: {
                   kind: "channel";
                   source: Record<string, any>;
                 };
-            parentPolicyDelivery?:
-              | { kind: "async" }
-              | {
-                  connectionId: string;
-                  kind: "nats";
-                  publicConversationKey: string;
-                  publicEventId: string;
-                }
-              | {
-                  channelName: string;
-                  identity?: {
-                    channelId?: string;
-                    threadId?: string;
-                    userId?: string;
-                    userName?: string;
-                    userRoles?: Array<string>;
-                    workspaceRef?: string;
-                  };
-                  kind: "channel";
-                  source: Record<string, any>;
-                };
-            parentPrincipalChain?: Array<
-              | { channel?: string; id: string; kind: "user"; name?: string }
-              | { keyKind: "account" | "deployment" | "cron"; kind: "api" }
-              | { agentId: string; kind: "agent" }
-            >;
-            parentTrigger?: "cron";
           };
           updatedAt: string;
         }>;
@@ -6878,7 +6691,6 @@ export declare const internal: {
       "mutation",
       "internal",
       {
-        answerBy?: number;
         approvals?: Array<{
           approvalId: string;
           input: any;
@@ -7512,7 +7324,6 @@ export declare const internal: {
         asyncResult?: {
           eventIds: Array<string>;
           outcome: {
-            answerBy?: number;
             approvals?: Array<{
               approvalId: string;
               input: any;

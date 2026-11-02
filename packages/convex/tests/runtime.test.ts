@@ -81,53 +81,6 @@ describe("runtime persistence", () => {
     expect([await claim(), await claim()]).toEqual([true, false]);
   });
 
-  test("a child's message to its parent closes once: when it times out, or when the child's next turn starts", async (): Promise<void> => {
-    const t = runtimeTest();
-    const accountId = await createActiveAccount(t);
-    const childConversation = `acct:${accountId}:agent:child:api:child`;
-    const ask = async (eventId: string, answerBy: number): Promise<void> => {
-      await t.mutation(internal.runtime.createAsyncAgentResult, {
-        eventId: eventId,
-        conversationKey: childConversation,
-        subagent: { parentConversationKey: conversationKeyFor(accountId) },
-      });
-      await t.mutation(internal.runtime.updateAsyncAgentResult, {
-        eventId: eventId,
-        status: "awaiting_input",
-        question: "Which region?",
-        answerBy: answerBy,
-      });
-    };
-    const overdue = async (before: number): Promise<string[]> =>
-      (
-        await t.query(internal.runtime.listOverdueSubagentQuestions, {
-          before: before,
-          cursor: null,
-        })
-      ).page.map(({ eventId }): string => eventId);
-
-    await ask("asked", Date.now() - 1_000);
-    expect(await overdue(Date.now())).toEqual(["asked"]);
-    expect(
-      await t.mutation(internal.runtime.closeSubagentQuestion, {
-        conversationKey: childConversation,
-      }),
-    ).toBe(true);
-    expect(
-      await t.mutation(internal.runtime.closeSubagentQuestion, {
-        conversationKey: childConversation,
-      }),
-    ).toBe(false);
-    expect(await overdue(Date.now())).toEqual([]);
-
-    await ask("asked-again", Date.now() + 60_000);
-    await t.mutation(internal.runtime.createAsyncAgentResult, {
-      eventId: "replied",
-      conversationKey: childConversation,
-    });
-    expect(await overdue(Date.now() + 120_000)).toEqual([]);
-  });
-
   test("orders conversation events", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

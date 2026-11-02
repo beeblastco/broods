@@ -170,14 +170,14 @@ export async function runAgentLoopUntilSubagentsIdle(
 }
 
 // Runs parent passes until no injected work is runnable. Heartbeats only while it waits on
-// in-process subagents; once the passes end, a child's note is refused.
+// in-process subagents; once the passes end, children still waiting on a reply are woken.
 export async function runParentContinuationLoop(
   options: ParentPassOptions,
 ): Promise<ParentContinuationResult> {
   try {
     return await runParentPasses(options);
   } finally {
-    options.subagentCoordinator.closePasses();
+    await options.subagentCoordinator.closePasses();
   }
 }
 
@@ -393,8 +393,7 @@ async function waitAndDrainAsyncWork(
     return subagentCoordinator.drainCompletionsToParent();
   }
 
-  // A subagent's question wakes the parent before the rest finish, so its
-  // answer does not wait on the other children.
+  // A subagent's question or note wakes the parent before the rest finish.
   const status = await subagentCoordinator.waitForIdle(options);
 
   return status === "timeout"

@@ -66,7 +66,6 @@ export const asyncAgentOutcomeValidator = v.object({
   approvals: runtimeAsyncAgentResultsFields.approvals,
   questions: runtimeAsyncAgentResultsFields.questions,
   question: runtimeAsyncAgentResultsFields.question,
-  answerBy: runtimeAsyncAgentResultsFields.answerBy,
 });
 
 const asyncAgentDoc = v.object({
@@ -440,7 +439,6 @@ export const createAsyncAgentResult = internalMutation({
     if (existing) {
       return false;
     }
-    await closeOpenQuestions(ctx, args.conversationKey);
     const now = new Date().toISOString();
     await ctx.db.insert("runtimeAsyncAgentResults", {
       accountId: accountId,
@@ -502,46 +500,6 @@ export const listOwedAsyncAgentResults = internalQuery({
       cursor: result.continueCursor,
       isDone: result.isDone,
     };
-  },
-});
-
-export const listOverdueSubagentQuestions = internalQuery({
-  args: { before: v.number(), cursor: v.union(v.string(), v.null()) },
-  returns: v.object({
-    page: v.array(asyncAgentDoc),
-    cursor: v.string(),
-    isDone: v.boolean(),
-  }),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{
-    page: Doc<"runtimeAsyncAgentResults">[];
-    cursor: string;
-    isDone: boolean;
-  }> => {
-    const result = await ctx.db
-      .query("runtimeAsyncAgentResults")
-      .withIndex("by_answerBy", (q) =>
-        q.gte("answerBy", 0).lt("answerBy", args.before),
-      )
-      .paginate({ cursor: args.cursor, numItems: OWED_RESULT_PAGE_SIZE });
-
-    return {
-      page: await activeAccountRows(ctx, result.page),
-      cursor: result.continueCursor,
-      isDone: result.isDone,
-    };
-  },
-});
-
-export const closeSubagentQuestion = internalMutation({
-  args: { conversationKey: v.string() },
-  returns: v.boolean(),
-  handler: async (ctx, args): Promise<boolean> => {
-    await requireActiveKeyAccount(ctx, args.conversationKey);
-
-    return (await closeOpenQuestions(ctx, args.conversationKey)) > 0;
   },
 });
 
@@ -653,7 +611,6 @@ export async function writeAsyncAgentResult(
     approvals: outcome.approvals,
     questions: outcome.questions,
     question: outcome.question,
-    answerBy: outcome.answerBy,
     ...(handback === "detached" && row.handback !== "stored"
       ? { handback: handback }
       : {}),
@@ -1563,21 +1520,6 @@ function claimKeyForAccount(accountId: string, key: string): string {
   }
 
   return key;
-}
-
-async function closeOpenQuestions(
-  ctx: MutationCtx,
-  conversationKey: string,
-): Promise<number> {
-  const open = await ctx.db
-    .query("runtimeAsyncAgentResults")
-    .withIndex("by_conversationKey_and_answerBy", (q) =>
-      q.eq("conversationKey", conversationKey).gte("answerBy", 0),
-    )
-    .collect();
-  for (const row of open) await ctx.db.patch(row._id, { answerBy: undefined });
-
-  return open.length;
 }
 
 function constantTimeDigestEqual(actual: string, expected: string): boolean {

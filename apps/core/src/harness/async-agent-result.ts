@@ -7,11 +7,9 @@ import type { JSONValue } from "ai";
 import { runtime } from "../shared/convex/runtime.ts";
 import { toErrorMessage } from "../shared/errors.ts";
 import { logError } from "../shared/log.ts";
-import type { PrincipalLink } from "../shared/domain/principal.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import type { ToolApprovalSummary } from "./harness.ts";
 import type { PendingQuestionSummary } from "./questions.ts";
-import type { RunTrigger } from "./session.ts";
 export type AsyncAgentStatus =
   | "processing"
   | "awaiting_approval"
@@ -23,15 +21,12 @@ export type AsyncAgentOutcome =
   | { status: "failed"; error: string }
   | { status: "awaiting_approval"; approvals: ToolApprovalSummary[] }
   | { status: "awaiting_input"; questions: PendingQuestionSummary[] }
-  | { status: "awaiting_input"; question: string; answerBy: number };
-// Stored so a late result reaches the parent after a restart, with who the parent run acted as.
+  | { status: "awaiting_input"; question: string };
+// Stored so a late result still reaches the parent after a restart.
 export interface SubagentTaskRecord {
   description?: string;
   parentConversationKey: string;
   parentDelivery?: AsyncToolDelivery;
-  parentPolicyDelivery?: AsyncToolDelivery;
-  parentTrigger?: RunTrigger;
-  parentPrincipalChain?: PrincipalLink[];
 }
 export interface AsyncAgentResultRecord {
   accountId: string;
@@ -47,17 +42,7 @@ export interface AsyncAgentResultRecord {
   approvals?: ToolApprovalSummary[];
   questions?: PendingQuestionSummary[];
   question?: string;
-  // When `question` stops waiting on the parent's reply, until closed.
-  answerBy?: number;
   expiresAt: number;
-}
-/** Closes the message a child waits on its parent with; true for the one call that closed it. */
-export function closeSubagentQuestion(
-  conversationKey: string,
-): Promise<boolean> {
-  return runtime.mutate("closeSubagentQuestion", {
-    conversationKey: conversationKey,
-  });
 }
 export function createPendingAsyncAgentResult(options: {
   eventId: string;
@@ -83,20 +68,6 @@ export function listOwedAsyncAgentResults(options: {
   isDone: boolean;
 }> {
   return runtime.query("listOwedAsyncAgentResults", options);
-}
-/** One page of child messages to a parent whose reply is overdue at `before`. */
-export function listOverdueSubagentQuestions(
-  before: number,
-  cursor: string | null,
-): Promise<{
-  page: AsyncAgentResultRecord[];
-  cursor: string;
-  isDone: boolean;
-}> {
-  return runtime.query("listOverdueSubagentQuestions", {
-    before: before,
-    cursor: cursor,
-  });
 }
 /**
  * Moves a subagent result's hand-back: `detached` when this run gives up, `stored` when the

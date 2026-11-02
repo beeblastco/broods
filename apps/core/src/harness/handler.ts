@@ -211,7 +211,7 @@ const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
   "waiting",
 ]);
 const textEncoder = new TextEncoder();
-export const CONTINUATION_DEPENDENCIES: ContinuationDependencies = {
+const CONTINUATION_DEPENDENCIES: ContinuationDependencies = {
   dispatchSessionMessage: dispatchSessionMessage,
   subagents: {
     dispatchAppliedIngress: dispatchAppliedIngress,

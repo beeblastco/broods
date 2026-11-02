@@ -13,9 +13,8 @@ import {
 } from "../harness.ts";
 
 const ANSWER = "TEAL";
-// The recovery sweep runs every 30s; this leaves room for the woken child's
-// model call and the parent turn its result starts.
-const TIMEOUT_WAKE_MS = 150_000;
+// Room for the woken child's model call and the parent turn its result starts.
+const WAKE_MS = 120_000;
 
 // message-agents both ways: a child waiting on "parent" ends its turn, its message reaches the
 // parent once as awaiting_input, and the parent's reply resumes the child's stored conversation.
@@ -50,32 +49,29 @@ export async function subagentMessageAgents(
   );
 }
 
-/**
- * A child whose parent never replies is not stuck: once its wait runs out the
- * recovery sweep closes the question, wakes the child on its stored
- * conversation, and the child's answer reaches the parent like a late result.
- */
-export async function subagentQuestionTimeout(
+// A child whose parent ends its turn without replying is not stuck: the parent's pass end wakes it
+// once on its stored conversation, and its answer reaches the parent like a late result.
+export async function subagentNoReplyWake(
   context: VerifyContext,
 ): Promise<void> {
   if (!context.hasModelKey) {
-    console.log(`  skip subagent question timeout (${MODEL_KEY_HINT})`);
+    console.log(`  skip subagent no-reply wake (${MODEL_KEY_HINT})`);
     return;
   }
-  const key = `subagent-timeout-${context.runId}`;
+  const key = `subagent-no-reply-${context.runId}`;
   const asked = await askingChild(context, key, {
-    child: `If you have not messaged your parent yet, call message-agents exactly once with to 'parent', text 'Which color?' and waitSeconds 1, and nothing else. If your parent did not reply, pick a color yourself and reply with it.`,
+    child: `If you have not messaged your parent yet, call message-agents exactly once with to 'parent', text 'Which color?' and waitSeconds 600, and nothing else. If your parent did not reply, pick a color yourself and reply with it.`,
     parent:
       "Never call message-agents. When a subagent message arrives, reply with exactly WAITING. When a subagent result arrives, reply with exactly that result.",
   });
   const woken = await context.measure(
-    "the sweep wakes the unanswered child",
+    "the parent's pass end wakes the unanswered child",
     (): Promise<AsyncAgentRow> =>
       pollUntil(
         {
           initialIntervalMs: 1_000,
           maxIntervalMs: 5_000,
-          timeoutMs: TIMEOUT_WAKE_MS,
+          timeoutMs: WAKE_MS,
         },
         async (): Promise<AsyncAgentRow> => {
           const child = startedChildLog(
@@ -97,11 +93,6 @@ export async function subagentQuestionTimeout(
     "the woken child carried on and its answer reached the parent",
     woken !== null,
     asked.conversationKey,
-  );
-  assertStep(
-    "the timed-out question is closed",
-    childResultRow(context, asked)?.answerBy === undefined,
-    JSON.stringify(childResultRow(context, asked)),
   );
 }
 

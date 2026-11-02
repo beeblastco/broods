@@ -35,12 +35,9 @@ import {
 } from "../shared/runtime-keys.ts";
 import { subagentKeyTag } from "../shared/run-token.ts";
 import { WORKER_TIMEOUT_BUDGET_MS } from "../shared/env.ts";
-import type { RequestContext } from "../shared/http.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
-  closeSubagentQuestion,
   createPendingAsyncAgentResult,
-  listOverdueSubagentQuestions,
   listOwedAsyncAgentResults,
   markAsyncAgentHandback,
   recordAsyncAgentResult,
@@ -86,7 +83,6 @@ import {
   type IngressUserMessage,
   type TurnContextSnapshot,
 } from "./session.ts";
-import { dispatchInProcessWorker, workerQueueFull } from "./worker-queue.ts";
 import type {
   RunSubagentDispatch,
   RunSubagentDispatchResult,
@@ -135,16 +131,13 @@ const PENDING_HANDBACK_MAX_AGE_MS =
   Math.max(SUBAGENT_BUDGET_MS, WORKER_TIMEOUT_BUDGET_MS) +
   DEADLINE_WIND_DOWN_MS +
   LATE_RESULT_GRACE_MS;
-// Children one sweep wakes, each on its own worker slot; the next sweep takes the rest.
-const MAX_WOKEN_PER_SWEEP = 20;
+const SUBAGENT_BUDGET_INSTRUCTION = `You are a subagent with a ${SUBAGENT_BUDGET_MS / 60_000}-minute budget for this task. Pace yourself: near the end your tools are turned off and you must answer with what you have.`;
+const SUBAGENT_BUDGET_EXCEEDED = `Subagent ran far past its ${SUBAGENT_BUDGET_MS / 60_000}-minute budget and was cut off before it answered.`;
+const MESSAGE_TURNS_SPENT = `Agents in this run already started ${MESSAGE_TURN_BUDGET} turns by messaging each other. Finish with what you have.`;
 const NO_REPLY_NOTE =
-  "No reply from your parent in time. Carry on with your best judgment and say what you assumed. A late reply still arrives as a later message.";
+  "No reply from your parent: it ended its turn or stopped waiting on you. Carry on with your best judgment and say what you assumed. A late reply still arrives as a later message.";
 const NO_TURNS_LEFT_NOTE =
-  "No reply from your parent in time, and this run has no message turns left, so you cannot message your parent again. Finish now with your best judgment and say what you assumed.";
-// Questions this pod is waking, so a sweep does not queue one twice.
-const wakingQuestions = new Set<string>();
-const UNWAKEABLE_ERROR =
-  "Subagent could not be woken after its parent left its message unanswered";
+  "No reply from your parent, and this run has no message turns left, so you cannot message your parent again. Finish now with your best judgment and say what you assumed.";
 
 interface SubagentCompletion {
   taskId: string;
@@ -249,8 +242,6 @@ export interface SubagentCoordinatorDependencies {
   publisherFactory?: SubagentPublisherFactory;
   dispatchNextIngress?: SubagentIngressDispatcher;
   resumeParent?: SubagentParentResumer;
-  /** The worker slot the children run on, when the coordinator holds one: they end with it. */
-  slot?: Pick<RequestContext, "deadlineMs" | "abortSignal">;
 }
 
 export class SubagentCoordinator {
@@ -267,8 +258,9 @@ export class SubagentCoordinator {
   private readonly childStop = new AbortController();
   // When the parent stops waiting on a child it messaged with a wait, by taskId.
   private readonly waitDeadlines = new Map<string, number>();
-  // Set once no parent pass runs any more: a child started after it, such as
-  // one the recovery sweep wakes, reports through `resumeParent`.
+  // Questions written to the parent and not replied to yet, by child key: woken at closePasses.
+  private readonly asked = new Map<string, SubagentTaskMetadata>();
+  // Set once no parent pass runs any more: a child started after it reports through `resumeParent`.
   private closed = false;
   private hooksPromise?: Promise<HookDispatcher>;
 
@@ -277,8 +269,6 @@ export class SubagentCoordinator {
   private readonly dispatchNextIngress: SubagentIngressDispatcher;
   private readonly resumeParent: SubagentParentResumer;
   private readonly dispatchAppliedIngress: DispatchAppliedIngress;
-  // When the worker slot the children run on ends, if they run on one.
-  private readonly slotDeadlineMs: number;
 
   constructor(
     private readonly parentSession: Session,
@@ -301,11 +291,6 @@ export class SubagentCoordinator {
     // Without a dispatcher a recovered envelope waits for the recovery sweep.
     this.dispatchAppliedIngress =
       dependencies.dispatchAppliedIngress ?? (async (): Promise<void> => {});
-    const slot = dependencies.slot;
-    this.slotDeadlineMs = slot?.deadlineMs ?? Number.POSITIVE_INFINITY;
-    slot?.abortSignal?.addEventListener("abort", (): void => {
-      this.childStop.abort(slot.abortSignal?.reason);
-    });
   }
 
   private get waitUntilMs(): number {
@@ -329,6 +314,15 @@ export class SubagentCoordinator {
         this.resolveTask(task, parentMessages, parentEphemeralSystem),
       ),
     );
+    // A resume is a reply too: it takes a message turn and answers an open question.
+    for (const task of resolvedTasks.filter(
+      ({ resuming }): boolean => resuming,
+    )) {
+      if (!(await this.parentSession.claimMessageTurn(MESSAGE_TURN_BUDGET))) {
+        throw new Error(MESSAGE_TURNS_SPENT);
+      }
+      this.asked.delete(task.publicConversationKey);
+    }
 
     return this.launch(resolvedTasks);
   };
@@ -345,10 +339,10 @@ export class SubagentCoordinator {
     options: {
       onHeartbeat?: (pendingCount: number) => void | Promise<void>;
     } = {},
-  ): Promise<"idle" | "question" | "timeout"> {
+  ): Promise<"idle" | "message" | "timeout"> {
     while (
       this.pending.size > 0 &&
-      !this.hasQuestion() &&
+      !this.hasChildMessage() &&
       Date.now() < this.waitUntilMs
     ) {
       const heartbeatAt = Math.min(
@@ -374,7 +368,7 @@ export class SubagentCoordinator {
       }
     }
 
-    if (this.hasQuestion()) return "question";
+    if (this.hasChildMessage()) return "message";
 
     return this.pending.size === 0 ? "idle" : "timeout";
   }
@@ -384,15 +378,7 @@ export class SubagentCoordinator {
     try {
       return (await this.takeParentMessages()).length;
     } catch (error: unknown) {
-      // Marked detached before the resume, so the sweep retries a resume that fails.
-      await this.detachPending();
-      for (const { message, completion } of this.outbox.splice(0)) {
-        if (completion?.status === "running") continue;
-        if (completion) {
-          await markAsyncAgentHandback(completion.eventId, "detached");
-        }
-        await this.resumeParentWith(message, completion);
-      }
+      await this.handOverToParent();
       throw error;
     }
   }
@@ -428,6 +414,11 @@ export class SubagentCoordinator {
         this.outbox.unshift(...queued.slice(saved));
         throw error;
       });
+    for (const { completion } of queued) {
+      if (completion?.status === "awaiting_input") {
+        this.asked.set(completion.conversationKey, completion);
+      }
+    }
 
     return messages;
   }
@@ -448,10 +439,7 @@ export class SubagentCoordinator {
       note: note,
     });
     if (!(await this.parentSession.claimMessageTurn(MESSAGE_TURN_BUDGET))) {
-      return result(
-        "not_delivered",
-        `Agents in this run already started ${MESSAGE_TURN_BUDGET} turns by messaging each other. Finish with what you have.`,
-      );
+      return result("not_delivered", MESSAGE_TURNS_SPENT);
     }
     const waitUntil =
       message.waitSeconds === undefined
@@ -463,6 +451,9 @@ export class SubagentCoordinator {
       `Message from your parent (exchange ${message.exchangeId}${message.followUp ? ", follow-up" : ""}):\n${message.text}`,
       true,
     );
+    if (outcome === "owner" || outcome === "queued") {
+      this.asked.delete(child.publicConversationKey);
+    }
     if (outcome === "queued") {
       if (running && waitUntil !== undefined) {
         this.waitDeadlines.set(running, waitUntil);
@@ -571,14 +562,26 @@ export class SubagentCoordinator {
         });
       }
       if (admission.outcome === "owner") {
+        const ownerGeneration = ownedGeneration(admission);
         await this.launch([task], {
-          ownerGeneration: ownedGeneration(admission),
+          ownerGeneration: ownerGeneration,
           events: events,
+        }).catch(async (error: unknown): Promise<never> => {
+          // Admitted but never started: settle and release, or the child stays busy for good.
+          const owner = new Session({
+            eventId: task.eventId,
+            conversationKey: task.conversationKey,
+            accountId: requireParentAccountId(this.parentSession),
+            agentId: task.agentId,
+            ownerGeneration: ownerGeneration,
+          });
+          await owner
+            .settleIngress("failed", { error: toErrorMessage(error) })
+            .catch((): boolean => false);
+          await owner.releaseConversationLease().catch((): void => {});
+          throw error;
         });
         started = true;
-      }
-      if (admission.outcome === "queued") {
-        await closeSubagentQuestion(child.conversationKey);
       }
 
       return { outcome: admission.outcome, task: toDispatch(task) };
@@ -605,6 +608,7 @@ export class SubagentCoordinator {
     this.outbox.push({
       message: noteToParentMessage(metadata, message),
     });
+    this.notifyCompletion();
 
     return {
       status: "delivered",
@@ -614,20 +618,15 @@ export class SubagentCoordinator {
   }
 
   /**
-   * Waits for every child this coordinator started to settle, waited on or
-   * not. The recovery sweep holds a worker slot for the child it wakes so.
+   * The parent's passes are over: what no pass will read resumes the parent instead, and each
+   * child still waiting on its question is woken once to carry on. A child's note is refused.
    */
-  async settled(): Promise<void> {
-    while (this.runningCount > 0) await this.nextStateChange();
-  }
-
-  /**
-   * No parent pass runs from now on: a child's note is refused, and a child
-   * started later, as the recovery sweep wakes one, resumes the parent with
-   * its result instead.
-   */
-  closePasses(): void {
+  async closePasses(): Promise<void> {
     this.closed = true;
+    await this.handOverToParent();
+    const waiting = [...this.asked.values()];
+    this.asked.clear();
+    for (const question of waiting) await this.wakeChild(question);
   }
 
   /**
@@ -659,7 +658,9 @@ export class SubagentCoordinator {
   private async detachPending(): Promise<SubagentTaskMetadata[]> {
     // A child whose result is queued is only settling its lease.
     const answered = new Set(
-      this.outbox.map(({ completion }) => completion?.taskId),
+      this.outbox.map(
+        ({ completion }): string | undefined => completion?.taskId,
+      ),
     );
     const detaching = [...this.pendingMetadata.values()].filter(
       ({ taskId }): boolean => !answered.has(taskId),
@@ -712,6 +713,40 @@ export class SubagentCoordinator {
       message: completionToParentMessage(completion),
       completion: completion,
     });
+  }
+
+  // What no pass will write resumes the parent; rows go detached first so the sweep retries.
+  private async handOverToParent(): Promise<void> {
+    await this.detachPending();
+    for (const { message, completion } of this.outbox.splice(0)) {
+      if (completion?.status === "running") continue;
+      if (completion) {
+        await markAsyncAgentHandback(completion.eventId, "detached");
+      }
+      await this.resumeParentWith(message, completion);
+    }
+  }
+
+  // Once per question no live pass will answer. With the run's message turns spent the child
+  // gets no line to its parent, so it answers. It runs detached: no pass waits on it.
+  private async wakeChild(question: SubagentTaskMetadata): Promise<void> {
+    if (this.childStop.signal.aborted) return;
+    try {
+      const child = await this.resolveAddress(childAddress(question));
+      const charged =
+        await this.parentSession.claimMessageTurn(MESSAGE_TURN_BUDGET);
+      const { outcome, task } = await this.resumeChild(
+        child,
+        charged ? NO_REPLY_NOTE : NO_TURNS_LEFT_NOTE,
+        charged,
+      );
+      if (outcome === "owner") await this.detachTask(task.taskId, false);
+    } catch (error) {
+      logError("Failed to wake a subagent its parent left unanswered", {
+        taskId: question.taskId,
+        error: toErrorMessage(error),
+      });
+    }
   }
 
   private async detachOverdueWaits(): Promise<void> {
@@ -911,7 +946,7 @@ export class SubagentCoordinator {
     );
 
     await Promise.all(
-      resolvedTasks.map((task) =>
+      resolvedTasks.map((task): Promise<void> =>
         this.lifecycle.emit("subagent.task.started", {
           taskId: task.taskId,
           agentId: task.agentId,
@@ -923,7 +958,7 @@ export class SubagentCoordinator {
       ),
     );
 
-    const dispatches = resolvedTasks.map((task) => {
+    const dispatches = resolvedTasks.map((task): RunSubagentTaskDispatch => {
       // Intentionally not awaited: child agents run concurrently while the
       // parent model can keep streaming or later wait for injected results.
       this.startTask(task, subagentParent, preOwned);
@@ -960,7 +995,8 @@ export class SubagentCoordinator {
       : undefined;
     // Its own cell: on the parent's, the parent's pass ending blanks the child's scope.
     const promise = runWithObservabilityScope(
-      () => this.runTask(task, subagentParent, trackedPublisher, preOwned),
+      (): Promise<void> =>
+        this.runTask(task, subagentParent, trackedPublisher, preOwned),
       getObservabilityContext(),
     )
       .then(async () => {
@@ -1073,28 +1109,17 @@ export class SubagentCoordinator {
     });
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
-    // A child on a worker slot gets no more than the slot has left.
-    const deadlineMs = Math.min(
-      Date.now() + SUBAGENT_BUDGET_MS,
-      this.slotDeadlineMs,
-    );
-    const budgetMs = deadlineMs - Date.now();
-    const budgetMinutes = Math.round(budgetMs / 60_000);
+    const deadlineMs = Date.now() + SUBAGENT_BUDGET_MS;
     const budget = new AbortController();
     const budgetTimer = setTimeout((): void => {
-      budget.abort(
-        new Error(
-          `Subagent ran far past its ${budgetMinutes}-minute budget and was cut off before it answered.`,
-        ),
-      );
-    }, budgetMs + DEADLINE_WIND_DOWN_MS);
+      budget.abort(new Error(SUBAGENT_BUDGET_EXCEEDED));
+    }, SUBAGENT_BUDGET_MS + DEADLINE_WIND_DOWN_MS);
     budgetTimer.unref?.();
     try {
       const turnContext = await this.createChildTurnContext(
         childSession,
         task,
         incoming,
-        budgetMinutes,
       );
       const stream = await runAgentLoop(
         childSession,
@@ -1221,11 +1246,7 @@ export class SubagentCoordinator {
       task,
       finish.status === "completed"
         ? finish
-        : {
-            status: "awaiting_input",
-            question: finish.message.text,
-            answerBy: Date.now() + (finish.message.waitSeconds ?? 0) * 1000,
-          },
+        : { status: "awaiting_input", question: finish.message.text },
     );
     // The durable outcome is authoritative. A hand-off or queued-turn failure
     // must not turn this task into a second, failed completion.
@@ -1320,15 +1341,18 @@ export class SubagentCoordinator {
 
       return null;
     }
-    const next = await childSession.takeNextIngress().catch((error) => {
-      logError("Subagent queued ingress read failed", {
-        taskId: task.taskId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    const next = await childSession
+      .takeNextIngress()
+      .catch((error: unknown): null => {
+        logError("Subagent queued ingress read failed", {
+          taskId: task.taskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
 
-      return null;
-    });
-    if (!next) await childSession.releaseConversationLease().catch(() => {});
+        return null;
+      });
+    if (!next)
+      await childSession.releaseConversationLease().catch((): void => {});
 
     return next;
   }
@@ -1350,8 +1374,7 @@ export class SubagentCoordinator {
       inheritedContext: false,
     };
     try {
-      // Its own row: starting it closes the message the child waited on its
-      // parent with, and a message it waits on now is recorded there.
+      // Its own row, so its result or question is as durable as the first turn's.
       await this.createChildResultRow(turn);
       await this.runTask(turn, subagentParent, publisher, {
         ownerGeneration: next.ownerGeneration,
@@ -1402,7 +1425,7 @@ export class SubagentCoordinator {
     const transferred = await this.dispatchNextIngress(
       childSession,
       this.childDispatchScope(task),
-    ).catch((error) => {
+    ).catch((error: unknown): boolean => {
       logError("Subagent queued ingress dispatch failed", {
         taskId: task.taskId,
         error: error instanceof Error ? error.message : String(error),
@@ -1411,7 +1434,7 @@ export class SubagentCoordinator {
       return false;
     });
     if (!transferred) {
-      await childSession.releaseConversationLease().catch(() => {});
+      await childSession.releaseConversationLease().catch((): void => {});
     }
   }
 
@@ -1449,27 +1472,16 @@ export class SubagentCoordinator {
     };
   }
 
-  /**
-   * The polling row of one child turn, `pending` for this parent from the
-   * start. It keeps who the parent run acted as, so a child the recovery
-   * sweep wakes runs under the same restrictions.
-   */
+  // The polling row of one child turn, `pending` for this parent from the start.
   private createChildResultRow(task: ResolvedSubagentTask): Promise<boolean> {
-    const parent = this.parentSession;
-
     return createPendingAsyncAgentResult({
       eventId: task.eventId,
       conversationKey: task.conversationKey,
       subagent: {
         ...(task.description ? { description: task.description } : {}),
-        parentConversationKey: parent.conversationKey,
-        ...(parent.delivery ? { parentDelivery: parent.delivery } : {}),
-        ...(parent.policyDelivery && parent.policyDelivery !== parent.delivery
-          ? { parentPolicyDelivery: parent.policyDelivery }
-          : {}),
-        ...(parent.trigger ? { parentTrigger: parent.trigger } : {}),
-        ...(parent.principal?.chain
-          ? { parentPrincipalChain: parent.principal.chain }
+        parentConversationKey: this.parentSession.conversationKey,
+        ...(this.parentSession.delivery
+          ? { parentDelivery: this.parentSession.delivery }
           : {}),
       },
     });
@@ -1479,14 +1491,10 @@ export class SubagentCoordinator {
     childSession: Session,
     task: ResolvedSubagentTask,
     incoming: ModelMessage[],
-    budgetMinutes: number,
   ): Promise<TurnContextSnapshot> {
     const ephemeralSystem: SystemModelMessage[] = [
       ...task.parentEphemeralSystem,
-      {
-        role: "system",
-        content: `You are a subagent with a ${budgetMinutes}-minute budget for this task. Pace yourself: near the end your tools are turned off and you must answer with what you have.`,
-      },
+      { role: "system", content: SUBAGENT_BUDGET_INSTRUCTION },
     ];
     if (!task.persistent) {
       return childSession.createEphemeralTurnContext(
@@ -1606,13 +1614,19 @@ export class SubagentCoordinator {
     return this.hooksPromise;
   }
 
-  // Only logged on failure: the row holds the result and the sweep retries it.
+  // A new parent turn takes a message turn, never refused so the message arrives; failures are
+  // only logged, the row holds it for the sweep. A question also wakes its child: no pass waits.
   private async resumeParentWith(
-    message: UserModelMessage,
+    message: IngressUserMessage,
     completion?: SubagentCompletion,
   ): Promise<void> {
-    const taskId =
-      completion?.taskId ?? createSubagentTaskId(this.parentSession.eventId);
+    await this.parentSession
+      .claimMessageTurn(MESSAGE_TURN_BUDGET)
+      .catch((): boolean => false);
+    // Keyed by the turn's own row, as the sweep keys it: a queued turn shares its first's taskId.
+    const taskId = completion
+      ? rowTaskId(completion.eventId) || completion.taskId
+      : createSubagentTaskId(this.parentSession.eventId);
     await this.resumeParent(
       this.parentSession,
       taskId,
@@ -1625,13 +1639,16 @@ export class SubagentCoordinator {
         error: error instanceof Error ? error.message : String(error),
       });
     });
+    if (completion?.status === "awaiting_input") {
+      await this.wakeChild(completion);
+    }
   }
 
-  // A queued child question wakes the parent before the rest finish, so its
-  // answer does not wait on its siblings.
-  private hasQuestion(): boolean {
+  // A question or note wakes the parent before the rest finish, so it does not wait on siblings.
+  private hasChildMessage(): boolean {
     return this.outbox.some(
-      ({ completion }): boolean => completion?.status === "awaiting_input",
+      ({ completion }): boolean =>
+        !completion || completion.status === "awaiting_input",
     );
   }
 
@@ -1741,47 +1758,6 @@ export function lostResultWindows(now: number): {
   };
 }
 
-// Wakes each child whose parent did not reply in time, on a worker slot each, up to
-// MAX_WOKEN_PER_SWEEP a pass. The ingress recovery sweep calls it on its timer.
-export async function timeOutSubagentQuestions(
-  loadParent: SubagentParentLoader,
-  dependencies: SubagentCoordinatorDependencies,
-): Promise<void> {
-  const now = Date.now();
-  let woken = 0;
-  let cursor: string | null = null;
-  let isDone = false;
-  while (!isDone) {
-    const result = await listOverdueSubagentQuestions(now, cursor);
-    for (const row of result.page) {
-      if (woken >= MAX_WOKEN_PER_SWEEP || workerQueueFull()) return;
-      if (wakingQuestions.has(row.eventId)) continue;
-      woken += 1;
-      wakingQuestions.add(row.eventId);
-      dispatchInProcessWorker(
-        "subagent-wake",
-        async (slot: RequestContext): Promise<void> => {
-          try {
-            await timeOutSubagentQuestion(row, loadParent, {
-              ...dependencies,
-              slot: slot,
-            });
-          } catch (error) {
-            logError("Failed to wake a subagent its parent left unanswered", {
-              eventId: row.eventId,
-              error: toErrorMessage(error),
-            });
-          } finally {
-            wakingQuestions.delete(row.eventId);
-          }
-        },
-      );
-    }
-    cursor = result.cursor;
-    isDone = result.isDone;
-  }
-}
-
 export async function pipeSubagentNatsStream(
   stream: AgentLoopStream,
   publisher: NatsPublisher,
@@ -1879,24 +1855,49 @@ async function resumeLostSubagentResult(
   row: AsyncAgentResultRecord,
   loadParent: SubagentParentLoader,
   resumeParent: SubagentParentResumer,
-  held: UserModelMessage | undefined,
-): Promise<UserModelMessage | undefined> {
-  const parent = await rowParent(row, loadParent);
-  if (typeof parent === "string") {
-    await giveUpLostSubagentResult(row.eventId, parent);
+  held: IngressUserMessage | undefined,
+): Promise<IngressUserMessage | undefined> {
+  const task = row.subagent;
+  const child = parseAccountAgentScopedKey(row.eventId);
+  const taskId = child
+    ? publicEventIdForScope(row.eventId, child.accountId, child.agentId, "")
+    : "";
+  const parentEventId = subagentParentEventId(taskId);
+  const scope = parentEventId
+    ? parseAccountAgentScopedKey(parentEventId)
+    : null;
+  // Only a parent of the row's own account is ever resumed.
+  if (!task || !child || !parentEventId || scope?.accountId !== row.accountId) {
+    await giveUpLostSubagentResult(
+      row.eventId,
+      "no parent of the row's account to resume",
+    );
 
     return undefined;
   }
-  const { taskId, parentEventId, scope, task, target } = parent;
+  const target = await loadParent(
+    scope.accountId,
+    scope.agentId,
+    task.parentConversationKey,
+  );
+  if (!target) {
+    await giveUpLostSubagentResult(row.eventId, "parent agent is gone");
+
+    return undefined;
+  }
   const message =
     held ??
     (await parentVisibleCompletion(
       {
         taskId: taskId,
         eventId: row.eventId,
-        agentId: parent.childAgentId,
+        agentId: child.agentId,
         ...(task.description ? { description: task.description } : {}),
-        conversationKey: parent.childKey,
+        conversationKey: publicConversationKeyFromScoped(
+          row.conversationKey,
+          child.accountId,
+          child.agentId,
+        ),
         ...rowOutcome(row),
       },
       target.agentConfig,
@@ -1945,82 +1946,6 @@ async function resumeLostSubagentResult(
   }
 
   return undefined;
-}
-
-// Wakes one child as the parent run that started it; returns once its turn ends.
-async function timeOutSubagentQuestion(
-  row: AsyncAgentResultRecord,
-  loadParent: SubagentParentLoader,
-  dependencies: SubagentCoordinatorDependencies,
-): Promise<void> {
-  const parent = await rowParent(row, loadParent);
-  if (typeof parent === "string") {
-    await recordAsyncAgentResult(row.eventId, {
-      status: "failed",
-      error: `${UNWAKEABLE_ERROR}: ${parent}.`,
-    });
-
-    return;
-  }
-  const { task, target, scope } = parent;
-  const session = new Session({
-    eventId: parent.parentEventId,
-    conversationKey: task.parentConversationKey,
-    accountId: scope.accountId,
-    agentId: scope.agentId,
-    agentConfig: target.agentConfig,
-    delivery: task.parentDelivery,
-    policyDelivery: task.parentPolicyDelivery,
-    trigger: task.parentTrigger,
-    principal: runPrincipal(scope, task.parentPrincipalChain),
-    endpointId: target.endpointId,
-    projectSlug: target.projectSlug,
-    stageSlug: target.stageSlug,
-  });
-  // No parent pass runs here, so the woken child resumes the parent itself.
-  const coordinator = new SubagentCoordinator(
-    session,
-    target.agentConfig,
-    0,
-    dependencies,
-  );
-  coordinator.closePasses();
-  const child = await coordinator
-    .resolveAddress(
-      childAddress({
-        agentId: parent.childAgentId,
-        conversationKey: parent.childKey,
-      }),
-    )
-    .catch((error: unknown): string => toErrorMessage(error));
-  if (typeof child === "string") {
-    // Such as a parent that left persistent mode: the failure goes on a row
-    // of its own, which closes the question, detached for the sweep to deliver.
-    const eventId = scopedDirectEventId(
-      scope.accountId,
-      parent.childAgentId,
-      createSubagentTaskId(parent.parentEventId),
-    );
-    await createPendingAsyncAgentResult({
-      eventId: eventId,
-      conversationKey: row.conversationKey,
-      subagent: task,
-    });
-    await recordAsyncAgentResult(
-      eventId,
-      { status: "failed", error: `${UNWAKEABLE_ERROR}: ${child}` },
-      { handback: "detached" },
-    );
-
-    return;
-  }
-  const charged = await session.claimMessageTurn(MESSAGE_TURN_BUDGET);
-  await coordinator.resumeChild(
-    child,
-    charged ? NO_REPLY_NOTE : NO_TURNS_LEFT_NOTE,
-    charged,
-  );
-  await coordinator.settled();
 }
 
 /** The address message-agents reaches a child at: `<agentId>/<conversationKey>`. */
@@ -2150,65 +2075,13 @@ function rowOutcome(
   };
 }
 
-/**
- * The parent a subagent row reports to, with where it re-enters, or why no
- * parent can be resumed. The row's `eventId` is
- * `scopedDirectEventId(account, child agent, taskId)`.
- */
-async function rowParent(
-  row: AsyncAgentResultRecord,
-  loadParent: SubagentParentLoader,
-): Promise<
-  | {
-      taskId: string;
-      parentEventId: string;
-      scope: { accountId: string; agentId: string };
-      task: NonNullable<AsyncAgentResultRecord["subagent"]>;
-      target: ReentryTarget;
-      childAgentId: string;
-      childKey: string;
-    }
-  | string
-> {
-  const task = row.subagent;
-  const child = parseAccountAgentScopedKey(row.eventId);
-  const taskId = child
-    ? publicEventIdForScope(row.eventId, child.accountId, child.agentId, "")
-    : "";
-  const parentEventId = subagentParentEventId(taskId);
-  const scope = parentEventId
-    ? parseAccountAgentScopedKey(parentEventId)
-    : null;
-  // Only a parent of the row's own account is ever resumed.
-  if (
-    !task ||
-    !child ||
-    !parentEventId ||
-    !scope ||
-    scope.accountId !== row.accountId
-  ) {
-    return "no parent of the row's account to resume";
-  }
-  const target = await loadParent(
-    scope.accountId,
-    scope.agentId,
-    task.parentConversationKey,
-  );
-  if (!target) return "parent agent is gone";
+// The task id a child turn's row is keyed by: `scopedDirectEventId(account, agent, taskId)`.
+function rowTaskId(eventId: string): string {
+  const child = parseAccountAgentScopedKey(eventId);
 
-  return {
-    taskId: taskId,
-    parentEventId: parentEventId,
-    scope: scope,
-    task: task,
-    target: target,
-    childAgentId: child.agentId,
-    childKey: publicConversationKeyFromScoped(
-      row.conversationKey,
-      child.accountId,
-      child.agentId,
-    ),
-  };
+  return child
+    ? publicEventIdForScope(eventId, child.accountId, child.agentId, "")
+    : "";
 }
 
 function sleep(ms: number): Promise<void> {

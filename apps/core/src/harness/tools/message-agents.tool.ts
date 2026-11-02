@@ -41,10 +41,10 @@ export default function messageAgentsTool(context: {
         "Send a message to another agent of your subagent family and, with waitSeconds, get its reply.",
         `to is ${targets.join(", or ")}.`,
         "A running agent reads it at its next step; an idle one starts a new turn on it.",
-        `waitSeconds waits for the reply up to that long (600 suits most questions, at most ${MAX_AGENT_WAIT_SECONDS}). When it runs out you carry on, and a late reply still arrives as a later message. Leave it out to send without waiting.`,
+        `waitSeconds waits for the reply up to that long (at most ${MAX_AGENT_WAIT_SECONDS}); then you carry on and a late reply arrives as a later message. Leave it out to send without waiting.`,
         ...(context.parent
           ? [
-              'Waiting on "parent" ends your turn after this step; the reply arrives as your next message with your work intact. Use it when a decision is theirs or you lack context only they have, not for progress updates.',
+              'Waiting on "parent" (any waitSeconds) ends your turn after this step; its reply, or a note to carry on if it ends its turn without one, arrives as your next message. Use it when a decision is theirs or only they have the context, not for progress updates.',
             ]
           : []),
         "To nudge or ask again in the same exchange, pass the exchangeId you got back as followUp.",

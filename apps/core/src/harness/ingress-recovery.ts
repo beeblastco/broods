@@ -5,7 +5,6 @@ import { logError, logInfo } from "../shared/log.ts";
 import { publicConversationKeyFromScoped } from "../shared/runtime-keys.ts";
 import { resumeLostAsyncToolResults } from "./async-tools.ts";
 import {
-  CONTINUATION_DEPENDENCIES,
   continueAfterAsyncToolSettlement,
   dispatchAppliedIngress,
   loadReentryTarget,
@@ -13,10 +12,7 @@ import {
 } from "./handler.ts";
 import { recoverQueuedIngress, type RecoveredIngress } from "./ingress.ts";
 import type { IngressDispatchScope } from "./integrations.ts";
-import {
-  resumeLostSubagentResults,
-  timeOutSubagentQuestions,
-} from "./subagents.ts";
+import { resumeLostSubagentResults } from "./subagents.ts";
 
 const RECOVERY_INTERVAL_MS = 30_000;
 // Everything one sweep promotes lands on this pod's worker queue; the next sweep resumes here.
@@ -109,14 +105,6 @@ async function sweepQueuedIngress(): Promise<void> {
     resumeAfterSubagentResult,
   ).catch((err: unknown): void => {
     logError("Lost subagent result recovery failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  });
-  await timeOutSubagentQuestions(
-    loadReentryTarget,
-    CONTINUATION_DEPENDENCIES.subagents,
-  ).catch((err: unknown): void => {
-    logError("Unanswered subagent question recovery failed", {
       error: err instanceof Error ? err.message : String(err),
     });
   });

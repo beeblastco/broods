@@ -32,7 +32,7 @@ import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { streamedBurst } from "./streamed-burst.ts";
 import {
   subagentMessageAgents,
-  subagentQuestionTimeout,
+  subagentNoReplyWake,
 } from "./subagent-message-agents.ts";
 import { subagentModel } from "./subagent-model.ts";
 import { subagentResume } from "./subagent-resume.ts";
@@ -61,7 +61,7 @@ export const verifyCases: readonly VerifyCase[] = [
   subagentModel,
   subagentResume,
   subagentMessageAgents,
-  subagentQuestionTimeout,
+  subagentNoReplyWake,
   asyncToolHandback,
   statusReadHandback,
   autoCompaction,
