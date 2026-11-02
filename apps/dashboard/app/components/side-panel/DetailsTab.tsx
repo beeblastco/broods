@@ -42,7 +42,7 @@ import {
 } from "@/app/lib/agentConfigCodec";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { toErrorMessage } from "@/app/lib/errors";
-import { isPlainObject } from "@/app/lib/utils";
+import { configObject, parseOr } from "@broods/convex/model/inputSchema";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
@@ -58,13 +58,6 @@ export type StageDeployment = {
   stageSlug: string;
   keyHint?: string;
   updatedAt: number;
-};
-
-type OutputFormatConfig = {
-  type?: string;
-  schema?: unknown;
-  name?: string;
-  description?: string;
 };
 
 export type AgentProvider = AccountModelProviderName;
@@ -176,9 +169,10 @@ export function DetailsTab({
         "tools",
       ) as Record<string, unknown>)
     : {};
-  const googleSearchCfg = isPlainObject(allTools.googleSearch)
-    ? (allTools.googleSearch as Record<string, unknown>)
-    : { enabled: agentConfig?.searchToolEnabled };
+  const googleSearchCfg: Record<string, unknown> = parseOr(
+    configObject,
+    allTools.googleSearch,
+  ) ?? { enabled: agentConfig?.searchToolEnabled };
   const googleSearchEnabled = googleSearchCfg.enabled === true;
 
   const modelBranch = agentConfig
@@ -225,13 +219,11 @@ export function DetailsTab({
     readAgentBranch<{ enabled?: boolean }>(agentConfig, "browser").enabled ===
     true;
 
-  const outputFormat =
-    agentConfig?.outputFormat && isPlainObject(agentConfig.outputFormat)
-      ? (agentConfig.outputFormat as OutputFormatConfig)
-      : undefined;
+  const outputFormat = parseOr(configObject, agentConfig?.outputFormat);
   const outputFormatEnabled = outputFormat !== undefined;
-  const schemaFromConfigText = isPlainObject(outputFormat?.schema)
-    ? JSON.stringify(outputFormat.schema, null, 2)
+  const configSchema = parseOr(configObject, outputFormat?.schema);
+  const schemaFromConfigText = configSchema
+    ? JSON.stringify(configSchema, null, 2)
     : "";
   const displayOutputSchemaText = hasEditedOutputSchema
     ? outputSchemaText
@@ -284,8 +276,8 @@ export function DetailsTab({
 
   function parseSchemaText(input: string): Record<string, unknown> | null {
     try {
-      const parsed = JSON.parse(input);
-      if (!isPlainObject(parsed)) {
+      const parsed = parseOr(configObject, JSON.parse(input));
+      if (!parsed) {
         setOutputSchemaError("Schema must be a JSON object.");
 
         return null;
@@ -310,9 +302,7 @@ export function DetailsTab({
       return;
     }
 
-    const existingSchema = isPlainObject(outputFormat?.schema)
-      ? (outputFormat.schema as Record<string, unknown>)
-      : undefined;
+    const existingSchema = parseOr(configObject, outputFormat?.schema);
     setOutputSchemaError(null);
 
     if (existingSchema) {
@@ -907,13 +897,9 @@ export function DetailsTab({
 function readCustomBaseUrl(
   agentConfig: Doc<"agentConfigs"> | null | undefined,
 ): string {
-  const extraConfig = isPlainObject(agentConfig?.extraConfig)
-    ? agentConfig.extraConfig
-    : {};
-  const provider = isPlainObject(extraConfig.provider)
-    ? extraConfig.provider
-    : {};
-  const custom = isPlainObject(provider.custom) ? provider.custom : {};
+  const extraConfig = parseOr(configObject, agentConfig?.extraConfig, {});
+  const provider = parseOr(configObject, extraConfig.provider, {});
+  const custom = parseOr(configObject, provider.custom, {});
   const value =
     typeof custom.base_url === "string" ? custom.base_url : custom.baseURL;
 
