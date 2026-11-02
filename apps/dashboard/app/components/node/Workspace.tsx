@@ -39,6 +39,7 @@ export function WorkspaceNode({
         icon={<FolderOpen className="size-3.5" />}
         label={nodeData.label}
         mountable={true}
+        nodeId={id}
         nodeType="workspace"
         status={
           expanded
