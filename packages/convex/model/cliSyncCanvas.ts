@@ -15,7 +15,7 @@ import {
   type CliResource,
 } from "./cliSync";
 import { loadMcpServersByNode } from "./mcp";
-import { configObject, parseOr } from "./inputSchema";
+import { configObject, parseOr } from "./storedJson";
 import { stableJson } from "./objects";
 import { sandboxDisplayConfig } from "./sandboxDisplayConfig";
 

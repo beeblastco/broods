@@ -1,6 +1,6 @@
 import type { ToolSet } from "ai";
 import { z } from "zod/mini";
-import { configObject, parseOr } from "@broods/convex/model/inputSchema";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import type { ToolContext } from "./index.ts";
 
 // How the AI SDK serializes a provider tool. Its lazy schemas do not survive JSON, so only

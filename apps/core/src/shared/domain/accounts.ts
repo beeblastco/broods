@@ -1,6 +1,6 @@
 import { ACCOUNT_KEY_PREFIX } from "@broods/convex/model/accountSecrets";
 import { createHash, randomBytes } from "node:crypto";
-import { configObject, parseOr } from "@broods/convex/model/inputSchema";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 
 export type AccountStatus = "active" | "disabled";
 

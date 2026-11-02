@@ -66,7 +66,7 @@ import {
   type CoreRequest,
 } from "../shared/http.ts";
 import { logDebug, logError, logWarn } from "../shared/log.ts";
-import { configObject, parseOr } from "@broods/convex/model/inputSchema";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
 import { getStorage } from "../shared/storage.ts";

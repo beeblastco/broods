@@ -8,7 +8,7 @@ import type {
   TextStreamPart,
   ToolSet,
 } from "ai";
-import { configObject, parseOr } from "@broods/convex/model/inputSchema";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import type { ModelAttempt } from "./provider.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
 

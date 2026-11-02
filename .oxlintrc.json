@@ -13,6 +13,14 @@
       {
         "allow": [
           {
+            "file": "apps/dashboard/app/lib/agentConfigCodec.ts",
+            "name": "isPlainObject"
+          },
+          {
+            "file": "packages/convex/model/agentConfigCodec.ts",
+            "name": "isPlainObject"
+          },
+          {
             "file": "packages/convex/model/modelsDev.ts",
             "name": "isPlainObject"
           }

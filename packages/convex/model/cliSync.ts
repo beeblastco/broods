@@ -14,7 +14,8 @@ import {
 } from "./agentConfigCodec";
 import type { AccountCipher } from "./envelope";
 import { defaultSandboxOf } from "./agentRules";
-import { configObject, parseInput, parseOr } from "./inputSchema";
+import { parseInput } from "./inputSchema";
+import { configObject, parseOr } from "./storedJson";
 import { remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
 import {

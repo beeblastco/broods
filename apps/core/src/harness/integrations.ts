@@ -84,7 +84,7 @@ import {
   createMatrixChannel,
   MATRIX_FORWARDER_URL_ENV,
 } from "../shared/matrix-channel.ts";
-import { configObject, parseOr } from "@broods/convex/model/inputSchema";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import {
   getObservabilityContext,
   mintTraceId,

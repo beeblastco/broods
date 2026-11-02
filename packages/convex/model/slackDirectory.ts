@@ -1,6 +1,6 @@
 import { z } from "zod/mini";
 
-import { parseOr } from "./inputSchema";
+import { parseOr } from "./storedJson";
 
 // conversations.list, read leniently: a malformed channel is skipped, not the page.
 const SLACK_PAGE = z.looseObject({

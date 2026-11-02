@@ -1,5 +1,5 @@
 import { hexFromBytes, sha256Hex } from "./accountSecrets";
-import { configObject, parseOr } from "./inputSchema";
+import { configObject, parseOr } from "./storedJson";
 
 const BLOB_VERSION_PREFIX = "v2:";
 const DEK_BYTES = 32;

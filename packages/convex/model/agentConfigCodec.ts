@@ -1,7 +1,6 @@
 // The only copy: Convex cannot import the Next.js app, so the dashboard re-exports this one.
 
 import { v, type Infer } from "convex/values";
-import { configObject, parseOr } from "./inputSchema";
 import {
   ACCOUNT_ENV_PLACEHOLDER_PATTERN,
   ACCOUNT_ENV_REFS_ONLY_PATTERN,
@@ -161,16 +160,16 @@ export function collectEnvPlaceholderNames(
 }
 
 export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
-  const config = parseOr(configObject, nested);
-  if (!config) return { extraConfig: {} };
+  if (!isPlainObject(nested)) return { extraConfig: {} };
 
-  const agent = parseOr(configObject, config.agent);
-  const model = parseOr(configObject, config.model);
-  const modelOptions = parseOr(configObject, model?.providerOptions);
-  const tools = parseOr(configObject, config.tools);
-  const googleSearch = parseOr(configObject, tools?.googleSearch);
+  const agent = isPlainObject(nested.agent) ? { ...nested.agent } : undefined;
+  const model = isPlainObject(nested.model) ? { ...nested.model } : undefined;
+  const modelOptions = isPlainObject(model?.providerOptions)
+    ? { ...(model.providerOptions as Record<string, unknown>) }
+    : undefined;
+  const tools = isPlainObject(nested.tools) ? { ...nested.tools } : undefined;
   for (const [branch, hint] of Object.entries(REMOVED_BRANCH_HINTS)) {
-    if (config[branch] !== undefined) {
+    if (nested[branch] !== undefined) {
       throw new ClientError(hint);
     }
   }
@@ -179,8 +178,10 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
 
   if (agent) extractAgentFields(agent, patch);
   if (model) extractModelFields(model, modelOptions, patch);
-  if (googleSearch) extractSearchToolFields(googleSearch, patch);
-  patch.extraConfig = collectExtraConfig(config, agent, model, tools);
+  if (tools?.googleSearch && isPlainObject(tools.googleSearch)) {
+    extractSearchToolFields(tools.googleSearch, patch);
+  }
+  patch.extraConfig = collectExtraConfig(nested, agent, model, tools);
 
   return patch;
 }
@@ -208,7 +209,7 @@ export function substituteEnvPlaceholders<T>(
 }
 
 export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
-  const extra = parseOr(configObject, flat.extraConfig, {});
+  const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
 
   const agent = buildNestedAgentBranch(flat, extra);
   const model = buildNestedModelBranch(flat, extra);
@@ -421,13 +422,17 @@ function mergeProviderOptions(
   base: unknown,
   overlay: unknown,
 ): Record<string, unknown> {
-  const result = parseOr(configObject, base, {});
-  for (const [key, value] of Object.entries(
-    parseOr(configObject, overlay, {}),
-  )) {
-    const existing = parseOr(configObject, result[key]);
-    const next = parseOr(configObject, value);
-    result[key] = existing && next ? { ...existing, ...next } : value;
+  const result: Record<string, unknown> = isPlainObject(base)
+    ? { ...base }
+    : {};
+  if (isPlainObject(overlay)) {
+    for (const [key, value] of Object.entries(overlay)) {
+      const existing = result[key];
+      result[key] =
+        isPlainObject(existing) && isPlainObject(value)
+          ? { ...existing, ...value }
+          : value;
+    }
   }
 
   return result;
@@ -439,9 +444,8 @@ function pruneEmpty(
   const cleaned: Record<string, unknown> = {};
   for (const [key, raw] of Object.entries(value)) {
     if (raw === undefined) continue;
-    const branch = parseOr(configObject, raw);
-    if (branch) {
-      const child = pruneEmpty(branch);
+    if (isPlainObject(raw)) {
+      const child = pruneEmpty(raw);
       if (child) cleaned[key] = child;
       continue;
     }
@@ -482,4 +486,9 @@ function substitutePlaceholders<T>(
   }
 
   return config;
+}
+
+// The canvas first load bundles this file; any zod import there ships zod's whole 85 KB chunk.
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

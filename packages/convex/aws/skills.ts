@@ -6,7 +6,8 @@ import { v } from "convex/values";
 import { z } from "zod/mini";
 
 import { internalAction } from "../_generated/server";
-import { configObject, parseInput, parseOr } from "../model/inputSchema";
+import { parseInput } from "../model/inputSchema";
+import { configObject, parseOr } from "../model/storedJson";
 import {
   createJsonSkillFiles,
   createOrReplaceSkill,

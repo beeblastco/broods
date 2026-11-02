@@ -6,7 +6,7 @@ import type {
   HookAgentConfig,
 } from "../shared/domain/agent-config.ts";
 import { logError } from "../shared/log.ts";
-import { configObject, parseOr } from "@broods/convex/model/inputSchema";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { readS3Bytes } from "../shared/s3.ts";
 import { streamIsolatePayload } from "./isolate/executor.ts";
 import { toolBundlesBucket } from "./frames.ts";

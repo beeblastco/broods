@@ -4,8 +4,8 @@ import { z } from "zod/mini";
 
 import { SANDBOX_REMOVED_MESSAGE } from "./agentConfigCodec";
 import { mergeConfigObjects } from "./configValues";
+import { workspaceOnLaterSandbox } from "./sandboxMounts";
 import {
-  configObject,
   nonEmptyString,
   nonEmptyStrings,
   parseInput,
@@ -16,6 +16,7 @@ import {
   stringRecord,
   wholeValue,
 } from "./inputSchema";
+import { configObject } from "./storedJson";
 import { AGENT_HOOK_EVENT_NAMES } from "./accountHooks";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
@@ -30,11 +31,6 @@ export type { AccountModelProviderName } from "./modelProviders";
 // patch: a partial config checked before its merge; cross-branch rules wait for the merge.
 export type AgentConfigCheckOptions = { patch?: boolean };
 
-export type LaterSandboxMount = {
-  index: number;
-  sandboxId: string;
-  workspace: AgentWorkspaceRef;
-};
 const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
 // Input tokens; above every model context window shipped today.
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 10_000_000;
@@ -995,20 +991,6 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
   return new URL(value);
 }
 
-export function findLaterSandboxMount(
-  sandboxes: readonly string[],
-  workspaces: readonly AgentWorkspaceRef[] | null | undefined,
-): LaterSandboxMount | undefined {
-  for (const [index, sandboxId] of sandboxes.entries()) {
-    const workspace = workspaceOnLaterSandbox(sandboxes, index, workspaces);
-    if (workspace) {
-      return { index: index, sandboxId: sandboxId, workspace: workspace };
-    }
-  }
-
-  return undefined;
-}
-
 // Shape only: core resolves at run time whether the provider ships the tool.
 export function isProviderToolName(toolName: string): boolean {
   return (
@@ -1228,19 +1210,6 @@ function removeNullConfigValues(value: object): Record<string, unknown> {
       return [[key, entry]];
     }),
   );
-}
-
-// Only the first sandbox mounts workspaces; a later one runs with none.
-function workspaceOnLaterSandbox(
-  sandboxes: readonly string[],
-  index: number,
-  workspaces: readonly AgentWorkspaceRef[] | null | undefined,
-): AgentWorkspaceRef | undefined {
-  return index === 0
-    ? undefined
-    : (workspaces ?? undefined)?.find(
-        (ref): boolean => ref.sandbox === sandboxes[index],
-      );
 }
 
 function isPrivateIpv4(a: number, b: number): boolean {

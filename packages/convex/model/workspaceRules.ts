@@ -11,12 +11,12 @@ import {
 } from "./envRefs";
 import { ClientError } from "./clientError";
 import {
-  configObject,
   nonEmptyString,
   parseInput,
   resourceCreateInput,
   resourceUpdateInput,
 } from "./inputSchema";
+import { configObject } from "./storedJson";
 import {
   WORKSPACE_ISOLATION_LEVELS,
   type WorkspaceIsolation,

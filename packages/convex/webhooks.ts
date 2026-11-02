@@ -15,7 +15,7 @@ import {
   appendAuditEvent,
   type AuditActor,
 } from "./model/auditEvents";
-import { configObject, parseOr } from "./model/inputSchema";
+import { configObject, parseOr } from "./model/storedJson";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForWrite } from "./model/ownership/project";
 

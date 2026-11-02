@@ -25,7 +25,7 @@ import {
   configObject,
   parseOr,
   stringValues,
-} from "@broods/convex/model/inputSchema";
+} from "@broods/convex/model/storedJson";
 import { getStorage } from "../shared/storage.ts";
 import { resolveAgentRuntime } from "../shared/workspaces.ts";
 

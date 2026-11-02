@@ -18,7 +18,7 @@ import type {
 } from "ai";
 import { z } from "zod/mini";
 import type { AgentHookEventName } from "@broods/convex/model/accountHooks";
-import { parseOr } from "@broods/convex/model/inputSchema";
+import { parseOr } from "@broods/convex/model/storedJson";
 import {
   normalizeAgentConfig,
   type AGENT_HARNESS_DEBUG_LEVELS,

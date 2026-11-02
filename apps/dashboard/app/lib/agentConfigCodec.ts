@@ -6,7 +6,6 @@ export {
 
 import { toNestedAgentConfig } from "@broods/convex/model/agentConfigCodec";
 import type { FlatAgentConfig } from "@broods/convex/model/agentConfigCodec";
-import { configObject, parseOr } from "@broods/convex/model/inputSchema";
 
 // Only these are cleared on rewrite, so options the UI doesn't manage survive.
 const REASONING_PROVIDER_KEYS: Record<string, string[]> = {
@@ -21,10 +20,14 @@ export function applyModelReasoning(
   next: { budgetTokens?: number; effort?: string },
 ): Record<string, unknown> {
   const result: Record<string, unknown> = { ...model };
-  const providerOptions = parseOr(configObject, result.providerOptions, {});
+  const providerOptions: Record<string, unknown> = isPlainObject(
+    result.providerOptions,
+  )
+    ? { ...result.providerOptions }
+    : {};
   for (const [slot, keys] of Object.entries(REASONING_PROVIDER_KEYS)) {
-    const sub = parseOr(configObject, providerOptions[slot]);
-    if (!sub) continue;
+    if (!isPlainObject(providerOptions[slot])) continue;
+    const sub = { ...providerOptions[slot] };
     for (const key of keys) delete sub[key];
     if (Object.keys(sub).length > 0) providerOptions[slot] = sub;
     else delete providerOptions[slot];
@@ -33,7 +36,9 @@ export function applyModelReasoning(
   const slot = reasoningSlot(provider);
   const slice = slot ? reasoningSlice(slot, next) : undefined;
   if (slot && slice) {
-    const existing = parseOr(configObject, providerOptions[slot], {});
+    const existing = isPlainObject(providerOptions[slot])
+      ? providerOptions[slot]
+      : {};
     providerOptions[slot] = { ...existing, ...slice };
   }
 
@@ -58,7 +63,7 @@ export function readAgentBranch<T extends Record<string, unknown>>(
 }
 
 export function readAgentPolicies(extraConfig: unknown): string[] {
-  const policies = parseOr(configObject, extraConfig)?.policies;
+  const policies = isPlainObject(extraConfig) ? extraConfig.policies : null;
 
   return Array.isArray(policies)
     ? policies.filter((entry): entry is string => typeof entry === "string")
@@ -69,16 +74,30 @@ export function readModelReasoning(modelBranch: Record<string, unknown>): {
   budgetTokens?: number;
   effort?: string;
 } {
-  const providerOptions = parseOr(
-    configObject,
-    modelBranch.providerOptions,
-    {},
-  );
-  const anthropic = parseOr(configObject, providerOptions.anthropic, {});
-  const openai = parseOr(configObject, providerOptions.openai, {});
-  const google = parseOr(configObject, providerOptions.google, {});
-  const anthropicThinking = parseOr(configObject, anthropic.thinking, {});
-  const googleThinking = parseOr(configObject, google.thinkingConfig, {});
+  const providerOptions = isPlainObject(modelBranch.providerOptions)
+    ? modelBranch.providerOptions
+    : {};
+  const anthropic: Record<string, unknown> = isPlainObject(
+    providerOptions.anthropic,
+  )
+    ? providerOptions.anthropic
+    : {};
+  const openai: Record<string, unknown> = isPlainObject(providerOptions.openai)
+    ? providerOptions.openai
+    : {};
+  const google: Record<string, unknown> = isPlainObject(providerOptions.google)
+    ? providerOptions.google
+    : {};
+  const anthropicThinking: Record<string, unknown> = isPlainObject(
+    anthropic.thinking,
+  )
+    ? anthropic.thinking
+    : {};
+  const googleThinking: Record<string, unknown> = isPlainObject(
+    google.thinkingConfig,
+  )
+    ? google.thinkingConfig
+    : {};
 
   const budgetTokens =
     typeof anthropicThinking.budgetTokens === "number"
@@ -137,4 +156,9 @@ function reasoningSlot(
     return provider;
 
   return undefined;
+}
+
+// The canvas first load bundles this file; any zod import there ships zod's whole 85 KB chunk.
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

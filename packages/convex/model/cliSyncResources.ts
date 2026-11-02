@@ -38,7 +38,7 @@ import {
 } from "./cliSync";
 import { normalizeChannelRecordResource } from "./cliSyncChannels";
 import { storedRefList } from "./agentRules";
-import { parseOr } from "./inputSchema";
+import { parseOr } from "./storedJson";
 import { stableJson } from "./objects";
 import {
   assertPolicyUnreferenced,

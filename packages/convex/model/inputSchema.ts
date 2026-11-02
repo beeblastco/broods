@@ -1,13 +1,10 @@
 import { z } from "zod/mini";
 
 import { ClientError } from "./clientError";
+import { stringValues } from "./storedJson";
 
 type Issue = z.core.$ZodIssue;
 type RawIssue = z.core.$ZodRawIssue;
-
-export const stringValues = z.record(z.string(), z.string());
-
-export const configObject = z.record(z.string(), z.unknown());
 
 export const nonEmptyString = z
   .string({ error: "must be a non-empty string" })
@@ -41,26 +38,6 @@ export const resourceUpdateInput = z.looseObject(
   },
   { error: "Request body must be an object" },
 );
-
-// A lenient read of stored JSON: the parsed value, or `fallback` when it does not fit.
-export function parseOr<T>(
-  schema: z.core.$ZodType<T>,
-  value: unknown,
-  fallback: NoInfer<T>,
-): T;
-export function parseOr<T>(
-  schema: z.core.$ZodType<T>,
-  value: unknown,
-): T | undefined;
-export function parseOr<T>(
-  schema: z.core.$ZodType<T>,
-  value: unknown,
-  fallback?: T,
-): T | undefined {
-  const result = z.safeParse(schema, value);
-
-  return result.success ? result.data : fallback;
-}
 
 // Untrusted JSON in: the first issue throws as `${root}${path} ${message}`.
 // A root ending in a space reads as prose: "policy document " + version.

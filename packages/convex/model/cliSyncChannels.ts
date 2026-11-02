@@ -6,7 +6,8 @@ import { storedWorkspaceRef } from "./agentRules";
 import { normalizeChannelRecordConfig } from "./channelRules";
 import { resourceName, type CliResource } from "./cliSync";
 import { ClientError } from "./clientError";
-import { configObject, parseInput, parseOr } from "./inputSchema";
+import { parseInput } from "./inputSchema";
+import { configObject, parseOr } from "./storedJson";
 
 const AGENT_BINDING = z.looseObject({ agentId: z.string() });
 

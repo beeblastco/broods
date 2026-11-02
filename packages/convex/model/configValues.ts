@@ -2,7 +2,7 @@ import {
   ACCOUNT_ENV_REFS_ONLY_PATTERN,
   CREDENTIAL_HEADER_VALUE_PATTERN,
 } from "./envRefs";
-import { configObject, parseOr } from "./inputSchema";
+import { configObject, parseOr } from "./storedJson";
 import { isSecretName } from "./secretNames";
 
 export const REDACTED_SECRET_VALUE = "********";

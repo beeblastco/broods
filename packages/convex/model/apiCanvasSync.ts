@@ -5,7 +5,7 @@ import { accountCipher, hasEncryptionSecret } from "./accountKeys";
 import { applyTidyLayout } from "./canvasLayout";
 import { loadMcpServersByNode } from "./mcp";
 import { storedRefList, storedWorkspaceRef } from "./agentRules";
-import { configObject, parseOr } from "./inputSchema";
+import { configObject, parseOr } from "./storedJson";
 import { stableJson } from "./objects";
 
 type ExistingApiCanvas = {

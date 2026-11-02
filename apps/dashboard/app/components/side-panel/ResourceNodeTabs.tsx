@@ -1,6 +1,5 @@
 "use client";
 
-import { z } from "zod/mini";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import {
@@ -35,7 +34,7 @@ import {
   machineState,
 } from "@/app/lib/machineConnection";
 import { snapshotImage, snapshotOptions } from "@/app/lib/sandboxSnapshots";
-import { configObject, parseOr } from "@broods/convex/model/inputSchema";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { api } from "@broods/convex/_generated/api";
 import type { StorageTrust } from "@broods/convex/model/storageTrust";
 import { CopyRow } from "@/app/components/CopyButton";
@@ -62,7 +61,6 @@ const SANDBOX_DEFAULT_CONFIG = {
 
 // The switch derives from all of these, so a prefix-only workspace still shows it on.
 const OWN_BUCKET_FIELDS = ["bucket", "region", "endpoint", "prefix"] as const;
-const NETWORK_MODE = z.looseObject({ mode: z.optional(z.string()) });
 
 // Always on: switching one off is code-only, so the panel reports it and never edits it.
 const HARNESS_FEATURES = [
@@ -117,7 +115,7 @@ export function SandboxResourceDetailsTab({
 }): React.JSX.Element {
   const config = parseOr(configObject, data.config, SANDBOX_DEFAULT_CONFIG);
   // Core's egress is `network.mode` (allow-all, deny-all, restricted), not an `internet` flag.
-  const network = parseOr(NETWORK_MODE, config.network, {});
+  const network = parseOr(configObject, config.network, {});
   // Convex rejects sizing, persistence and egress rules on a machine record.
   const machine = config.provider === "machine";
   const provider =

@@ -5,7 +5,7 @@ import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { assertEnvVarName } from "../../model/agentConfigCodec";
 import { type AuditActor } from "../../model/auditEvents";
-import { parseOr } from "../../model/inputSchema";
+import { parseOr } from "../../model/storedJson";
 import { collectionPage, json, methodNotAllowed, writeAudit } from "./shared";
 import { ClientError } from "../../model/clientError";
 

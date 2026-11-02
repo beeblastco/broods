@@ -14,7 +14,7 @@ import {
   getProjectForRole,
   getProjectForWrite,
 } from "../model/ownership/project";
-import { configObject, parseOr } from "../model/inputSchema";
+import { configObject, parseOr } from "../model/storedJson";
 import { stableJson } from "../model/objects";
 import { roleHoldingPolicy } from "../model/access";
 import { assertPolicyUnreferenced } from "../model/policyReferences";

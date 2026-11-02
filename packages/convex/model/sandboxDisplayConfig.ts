@@ -1,4 +1,4 @@
-import { configObject, parseOr } from "./inputSchema";
+import { configObject, parseOr } from "./storedJson";
 
 // Layouts are read back verbatim: never envVars or options, which hold credentials. A key
 // the config tab edits but this list drops is wiped from the stored config on canvas save.
