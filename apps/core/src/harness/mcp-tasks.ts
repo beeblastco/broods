@@ -490,7 +490,8 @@ async function readRun(
   );
 
   if (response.ok) return (await response.json()) as RunStatus;
-  if (response.status === 404) return null;
+  // A run id core never issued is a 400, one it doesn't know a 404.
+  if (response.status === 400 || response.status === 404) return null;
   throw new ProtocolError(
     ProtocolErrorCode.InternalError,
     await errorText(response),
