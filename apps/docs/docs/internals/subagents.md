@@ -15,7 +15,7 @@ How subagent runs execute inside core: dispatch, the parent continuation loop, c
 
 `run_subagent` creates a pending result row per task, returns the task ids at once, and starts the children as promises inside the same request or worker, not as separate processes. The parent's model stream keeps going.
 
-A child result that arrives while the parent streams waits in the coordinator's in-memory queue. A child's `message-agents` to `"parent"` with `wait` is a result too: it ends the child's turn as `awaiting_input` with the message as `question` on its result row, so it rides the same queue, hand-back and recovery sweep. A note without `wait` waits in its own in-memory queue for the same step boundary. At the parent's next step boundary `prepareStep` takes it (`takeParentMessages`) and adds it as `user` messages, the same way a [steer](queue-and-steer.md#the-step-boundary) joins a run. What arrives after the pass goes through the continuation loop:
+A child result that arrives while the parent streams waits in the coordinator's in-memory queue. A child's `message-agents` to `"parent"` with `waitSeconds` is a result too: it ends the child's turn as `awaiting_input` with the message as `question` on its result row, so it rides the same queue, hand-back and recovery sweep. A note without `waitSeconds` waits in its own in-memory queue for the same step boundary. At the parent's next step boundary `prepareStep` takes it (`takeParentMessages`) and adds it as `user` messages, the same way a [steer](queue-and-steer.md#the-step-boundary) joins a run. What arrives after the pass goes through the continuation loop:
 
 ```mermaid
 flowchart TD
@@ -123,7 +123,7 @@ Inherited context (`context: "inherited"`) goes straight into the child model ca
 
 ## Persistent children and control
 
-In `persistent` mode, the default, each child is admitted through the same [conversation coordinator](queue-and-steer.md) as a top-level run, with mode `reject`, under a key `subagent-persistent-<uuid>-<tag>`. The tag is an HMAC derived from `STAGE_TICKET_SECRET` over the account, parent agent and UUID, so `run_subagent` only resumes keys core minted for that parent. A virtual child in this mode is named `virtual_subagent_<uuid>` after its key, so resuming the key reaches the same child and its stored conversation; an ephemeral one is named after its task. There is no subagent-specific control API: the control tools use the normal ingress path on the child's conversation.
+In `persistent` mode, the default, each child is admitted through the same [conversation coordinator](queue-and-steer.md) as a top-level run, with mode `reject`, under a key `subagent-persistent-<uuid>-<tag>`. The tag is an HMAC derived from `STAGE_TICKET_SECRET` over the account, parent agent, parent conversation and UUID, so `run_subagent` and `message-agents` only reach children that parent conversation started. A virtual child in this mode is named `virtual_subagent_<uuid>` after its key, so resuming the key reaches the same child and its stored conversation; an ephemeral one is named after its task. There is no subagent-specific control API: the control tools use the normal ingress path on the child's conversation.
 
 ```mermaid
 stateDiagram-v2
@@ -144,9 +144,9 @@ stateDiagram-v2
 
 - A busy child conversation makes `accept` answer `rejected`, and the task fails with `Subagent conversation is not available: rejected`, injected like any failure.
 - A follow-up drained after the child settles runs as another turn of the same task and is injected like the first answer. Past the parent's wait budget there is no live parent turn, so `transferChildConversation` hands the envelope to its own worker and the result is not injected.
-- A child waiting on `"parent"` holds nothing in memory but its reply timer. The loop stops after the step that sent it (`parentQuestion()`), and `completeAskedRun` records `awaiting_input` with the message on the child's result row in its settle, then arms the timer. The message reaches the parent like a result: at its next step, by waking `waitForIdle` before the other children finish, through `resumeParent` once the parent stopped waiting, or from the recovery sweep after a restart. One wait per turn: a second one in the same turn is refused.
-- `messageChild` resolves the address (`<agentId>/<conversationKey>`, a key minted for this parent, a virtual id matching it or an allowed agent) and clears that child's reply timer. It then tries `accept` with `steer` and `activeOwnerOnly`: a running child takes it at its next step. `not_running` resumes the child through `dispatch`, the same path as `run_subagent` with its `conversationKey`, counted against the 40-turn wake budget. With `wait`, `waitForIdle` wakes at the deadline and `detachTask` stops waiting on that child alone, so its reply resumes the parent later; a child started without `wait` is detached at once.
-- The reply timer is in memory. It resumes the child with a note once the wait passes, through `dispatch`. After the parent's passes end (`closePasses`), a child started this way is detached so its result resumes the parent. A restart loses the timer; the parent still gets the message from the sweep and can reply late.
+- A child waiting on `"parent"` holds nothing in memory. The loop stops after the step that sent it (`parentQuestion()`), and `completeRun` records `awaiting_input` with the message and its `answerBy` on the child's result row in its settle, hands the conversation on (`takeNext` or release), and only then tells the parent, so a reply that comes at once finds the conversation free. The message reaches the parent like a result: at its next step, by waking `waitForIdle` before the other children finish, through `resumeParent` once the parent stopped waiting, or from the recovery sweep after a restart. One wait per turn: a second one in the same turn is refused.
+- Any new turn of the child conversation closes its open message: `createAsyncAgentResult` clears `answerBy` on that conversation's rows in the same transaction. Every 30 seconds the ingress recovery sweep lists rows past `answerBy` (`timeOutSubagentQuestions`), closes each with `closeSubagentQuestion`, which only one caller wins, rebuilds the parent's coordinator from the row with its passes closed, and resumes the child with a note through `resumeChild`. The woken child's result resumes the parent like any late one.
+- `messageChild` resolves the address (`<agentId>/<conversationKey>`, a key minted for this parent conversation, a virtual id matching it or an allowed agent), then takes a message turn: `claimMessageTurn` counts at most 40 on a claim keyed by the run's root event, so every parent turn continuing one request shares them, across pods and restarts. It then tries `accept` with `steer` and `activeOwnerOnly`: a running child takes it at its next step. `not_running` resumes the child through `resumeChild`. With `waitSeconds`, `waitForIdle` wakes at the deadline and `detachTask` stops waiting on that child alone, so its reply resumes the parent later; a child started without a wait is detached at once.
 
 Controls decide admission and ownership in one transaction, so a control never lands on a finished child or a later task on the same conversation:
 
@@ -165,7 +165,7 @@ sequenceDiagram
     Ch->>CX: stepBoundary claims it at the next step
   else child idle
     CX-->>T: not_running, no envelope written
-    T->>T: dispatch resumes the child on its conversationKey
+    T->>T: resumeChild starts a turn on its conversationKey
     T-->>P: resumed
   end
   P->>T: stop_subagent taskId

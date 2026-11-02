@@ -7,7 +7,6 @@
 
 import { jsonSchema, tool, type ToolSet } from "ai";
 import {
-  DEFAULT_AGENT_WAIT_SECONDS,
   MAX_AGENT_WAIT_SECONDS,
   toolError,
   type AgentMessage,
@@ -21,8 +20,7 @@ const PARENT = "parent";
 interface MessageAgentsInput {
   to: string;
   text: string;
-  wait?: boolean;
-  timeoutSeconds?: number;
+  waitSeconds?: number;
   followUp?: string;
 }
 
@@ -40,10 +38,10 @@ export default function messageAgentsTool(context: {
   return {
     "message-agents": tool({
       description: [
-        "Send a message to another agent of your subagent family and, with wait, get its reply.",
+        "Send a message to another agent of your subagent family and, with waitSeconds, get its reply.",
         `to is ${targets.join(", or ")}.`,
         "A running agent reads it at its next step; an idle one starts a new turn on it.",
-        `wait: true waits for the reply up to timeoutSeconds (default ${DEFAULT_AGENT_WAIT_SECONDS}, at most ${MAX_AGENT_WAIT_SECONDS}). When it times out you carry on, and a late reply still arrives as a later message.`,
+        `waitSeconds waits for the reply up to that long (600 suits most questions, at most ${MAX_AGENT_WAIT_SECONDS}). When it runs out you carry on, and a late reply still arrives as a later message. Leave it out to send without waiting.`,
         ...(context.parent
           ? [
               'Waiting on "parent" ends your turn after this step; the reply arrives as your next message with your work intact. Use it when a decision is theirs or you lack context only they have, not for progress updates.',
@@ -59,13 +57,9 @@ export default function messageAgentsTool(context: {
             type: "string",
             description: "The message, with the context the reader needs.",
           },
-          wait: {
-            type: "boolean",
-            description: "Wait for the reply. Default false.",
-          },
-          timeoutSeconds: {
+          waitSeconds: {
             type: "number",
-            description: "How long a wait lasts, in seconds.",
+            description: `Seconds to wait for the reply, at most ${MAX_AGENT_WAIT_SECONDS}. Leave it out to not wait.`,
           },
           followUp: {
             type: "string",
@@ -81,13 +75,19 @@ export default function messageAgentsTool(context: {
         if (!text) {
           return toolError("Error: message-agents requires a non-empty text");
         }
+        const followUp = input.followUp?.trim();
         const message: AgentMessage = {
           text: text,
-          exchangeId:
-            input.followUp?.trim() || `ex_${crypto.randomUUID().slice(0, 8)}`,
-          followUp: Boolean(input.followUp?.trim()),
-          ...(input.wait === true
-            ? { waitSeconds: waitSeconds(input.timeoutSeconds) }
+          exchangeId: followUp || `ex_${crypto.randomUUID().slice(0, 8)}`,
+          followUp: Boolean(followUp),
+          ...(input.waitSeconds !== undefined &&
+          Number.isFinite(input.waitSeconds)
+            ? {
+                waitSeconds: Math.min(
+                  Math.max(Math.round(input.waitSeconds), 1),
+                  MAX_AGENT_WAIT_SECONDS,
+                ),
+              }
             : {}),
         };
         const to = input.to.trim();
@@ -120,12 +120,4 @@ export default function messageAgentsTool(context: {
       },
     }),
   };
-}
-
-function waitSeconds(requested: number | undefined): number {
-  if (requested === undefined || !Number.isFinite(requested)) {
-    return DEFAULT_AGENT_WAIT_SECONDS;
-  }
-
-  return Math.min(Math.max(Math.round(requested), 1), MAX_AGENT_WAIT_SECONDS);
 }

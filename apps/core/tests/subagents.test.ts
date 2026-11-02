@@ -5,8 +5,11 @@ import * as asyncAgentResults from "../src/harness/async-agent-result.ts";
 import type { SweptHandback } from "@broods/convex/model/subagentResults";
 import type { AsyncAgentResultRecord } from "../src/harness/async-agent-result.ts";
 import * as hookDispatcher from "../src/harness/hook-dispatcher.ts";
+import * as ingress from "../src/harness/ingress.ts";
 import type { ReentryTarget } from "../src/harness/integrations.ts";
+import { Session } from "../src/harness/session.ts";
 import type { SubagentResumeOutcome } from "../src/harness/subagents.ts";
+import type { AgentMessage } from "../src/harness/tools/utils.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import * as log from "../src/shared/log.ts";
@@ -64,20 +67,10 @@ interface CoordinatorInternals {
     Omit<TestCompletion, "status" | "response" | "error">
   >;
   completeTask: (completion: TestCompletion) => Promise<void>;
-  completeSuccessfulRun: (
+  completeRun: (
     childSession: unknown,
     task: unknown,
-    finalResponse: unknown,
-  ) => Promise<void>;
-  completeAskedRun: (
-    childSession: unknown,
-    task: unknown,
-    message: {
-      text: string;
-      exchangeId: string;
-      followUp: boolean;
-      waitSeconds?: number;
-    },
+    finish: { status: "completed"; response: unknown },
   ) => Promise<void>;
   createChildTurnContext(
     childSession: unknown,
@@ -110,6 +103,10 @@ interface CoordinatorInternals {
     promptMessage: UserModelMessage,
   ): Promise<number>;
   drainChildConversation(childSession: unknown, task: unknown): Promise<void>;
+  handOffChildConversation(
+    childSession: unknown,
+    task: unknown,
+  ): Promise<unknown>;
 }
 
 describe("SubagentCoordinator", () => {
@@ -1755,66 +1752,6 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("records a child's wait on its parent as its awaiting_input outcome and queues it for the parent", async () => {
-    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
-    const coordinator = new SubagentCoordinator(
-      parentSession(),
-      { subagent: { enabled: true, mode: "persistent" } },
-      Date.now() + 60_000,
-      { lifecycle: { emit: mock(async () => {}) } as never },
-    );
-    const internals = coordinator as unknown as CoordinatorInternals;
-    const task = persistentChildTask();
-    internals.pending.set(task.taskId, new Promise<void>(() => {}));
-    const settleIngress = mock(
-      async (_status: string, _settlement: unknown): Promise<boolean> => true,
-    );
-    const persistModelMessages = mock(
-      async (_messages: unknown[]): Promise<void> => {},
-    );
-    const childSession = {
-      persistModelMessages: persistModelMessages,
-      settleIngress: settleIngress,
-      takeNextIngress: async (): Promise<null> => null,
-      releaseConversationLease: async (): Promise<void> => {},
-    };
-
-    await internals.completeAskedRun(childSession, task, {
-      text: "Which region?",
-      exchangeId: "ex_1",
-      followUp: false,
-      waitSeconds: 3600,
-    });
-
-    // Pruning drops the message-agents call from later turns; this line survives.
-    expect(persistModelMessages.mock.calls[0]?.[0]).toEqual([
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "text",
-            text: "I messaged my parent and am waiting for the reply (exchange ex_1): Which region?",
-          },
-        ],
-      },
-    ]);
-
-    expect(settleIngress.mock.calls[0]?.[1]).toMatchObject({
-      asyncResult: {
-        eventIds: [task.eventId],
-        outcome: { status: "awaiting_input", question: "Which region?" },
-      },
-    });
-    expect(internals.completions).toEqual([
-      expect.objectContaining({
-        taskId: task.taskId,
-        status: "awaiting_input",
-        question: "Which region?",
-      }),
-    ]);
-    expect(await coordinator.waitForIdle()).toBe("question");
-  });
-
   it("settles and hands off an admitted child when turn context creation fails", async () => {
     const originalMutation = runtime.mutate.bind(runtime);
     const mutations: string[] = [];
@@ -1876,7 +1813,7 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("settles a completed child's envelope and row together, and keeps the row when that settle and the drain fail", async () => {
+  it("settles a completed child's envelope and row together, and keeps the row when that settle and the hand-off fail", async () => {
     const originalMutation = runtime.mutate.bind(runtime);
     const mutations: string[] = [];
     runtime.mutate = mock(async (name: string) => {
@@ -1893,8 +1830,8 @@ describe("SubagentCoordinator", () => {
     );
     const internals = coordinator as unknown as CoordinatorInternals;
     const completeTask = mock(async () => {});
-    const drainChildConversation = mock(async () => {
-      throw new Error("queued drain failed");
+    const handOffChildConversation = mock(async () => {
+      throw new Error("hand-off failed");
     });
     const settleIngress = mock(
       async (_status: string, _options: unknown): Promise<boolean> => {
@@ -1902,16 +1839,15 @@ describe("SubagentCoordinator", () => {
       },
     );
     internals.completeTask = completeTask;
-    internals.drainChildConversation = drainChildConversation;
+    internals.handOffChildConversation = handOffChildConversation;
     const task = persistentChildTask();
 
     try {
       expect(
-        internals.completeSuccessfulRun(
-          { settleIngress: settleIngress } as never,
-          task,
-          "finished",
-        ),
+        internals.completeRun({ settleIngress: settleIngress }, task, {
+          status: "completed",
+          response: "finished",
+        }),
       ).resolves.toBeUndefined();
       expect(settleIngress).toHaveBeenCalledWith("completed", {
         result: "finished",
@@ -1923,7 +1859,7 @@ describe("SubagentCoordinator", () => {
       expect(mutations).toContain("updateAsyncAgentResult");
       expect(completeTask).toHaveBeenCalledTimes(1);
       expect(settleIngress).toHaveBeenCalledTimes(1);
-      expect(drainChildConversation).toHaveBeenCalledTimes(1);
+      expect(handOffChildConversation).toHaveBeenCalledTimes(1);
     } finally {
       runtime.mutate = originalMutation;
     }
@@ -2312,7 +2248,7 @@ describe("SubagentCoordinator", () => {
       { lifecycle: { emit: mock(async () => {}) } as never },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
-    internals.completeSuccessfulRun = mock(async () => {});
+    internals.completeRun = mock(async () => {});
 
     try {
       await internals.runTask({
@@ -2324,7 +2260,7 @@ describe("SubagentCoordinator", () => {
       });
 
       expect(boundary).toHaveBeenCalledTimes(1);
-      expect(internals.completeSuccessfulRun).toHaveBeenCalledTimes(1);
+      expect(internals.completeRun).toHaveBeenCalledTimes(1);
       expect(mutations).toEqual([]);
       expect(queries).not.toContain("listConversationEvents");
     } finally {
@@ -2485,61 +2421,181 @@ const LOST_TASK_IDS = new Map<string, string>();
 // A finished subagent row a parent stopped waiting on, the same for each
 // `name`: its task, and so its parent conversation, is its own.
 describe("message-agents in the coordinator", () => {
-  const UUID = "11111111-2222-4333-8444-555555555555";
+  const UUID = "22222222-3333-4444-8555-666666666666";
+  const PARENT_CONVERSATION = "acct:account_1:agent:agent_parent:api:conv_1";
+  const PARENT_EVENT = "acct:account_1:agent:agent_parent:api:event_parent";
 
-  async function persistentCoordinator(
-    mutate: (name: string, args: Record<string, unknown>) => unknown,
-  ) {
-    spyOn(runtime, "mutate").mockImplementation(
-      mock(async (name: string, args: Record<string, unknown>) =>
-        mutate(name, args),
-      ) as never,
-    );
+  // A parent run's coordinator: `eventId` names the run, the conversation is
+  // shared, and `turns` is its lineage's durable message-turn count.
+  async function parentRun(options: {
+    eventId?: string;
+    conversationKey?: string;
+    turns?: Map<string, number>;
+  }) {
+    const turns = options.turns ?? new Map<string, number>();
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
-      parentSession(),
+      parentSession({
+        conversationKey: options.conversationKey ?? PARENT_CONVERSATION,
+        eventId: options.eventId ?? PARENT_EVENT,
+        claimMessageTurn: async (limit: number): Promise<boolean> => {
+          const spent = turns.get("lineage") ?? 0;
+          if (spent >= limit) return false;
+          turns.set("lineage", spent + 1);
+
+          return true;
+        },
+      }),
       { subagent: { enabled: true, mode: "persistent" } },
       Date.now() + 60_000,
-      { lifecycle: { emit: mock(async () => {}) } as never },
+      { lifecycle: { emit: mock(async (): Promise<void> => {}) } },
+    );
+    const resume = spyOn(coordinator, "resumeChild").mockImplementation(
+      async (child, prompt) => ({
+        taskId: `subagent~${prompt.length}`,
+        agentId: child.agentId,
+        conversationKey: child.publicConversationKey,
+        runId: CHILD_RUN_ID,
+        statusPath: `/v1/runs/${CHILD_RUN_ID}`,
+        status: "running",
+      }),
     );
     const key: string = coordinator["mintChildKey"]("account_1", UUID);
-    const dispatched: Array<Record<string, unknown>> = [];
-    coordinator.dispatch = mock(
-      async (tasks: Array<Record<string, unknown>>) => {
-        dispatched.push(...tasks);
-
-        return { tasks: [] };
-      },
-    ) as never;
 
     return {
       coordinator: coordinator,
-      internals: coordinator as unknown as CoordinatorInternals,
-      address: `virtual_subagent_${UUID}/${key}`,
+      resume: resume,
       key: key,
-      dispatched: dispatched,
+      address: `virtual_subagent_${UUID}/${key}`,
+      turns: turns,
     };
   }
 
-  function agentMessage(overrides: Record<string, unknown> = {}) {
+  function childTask(publicKey: string) {
+    const agentId = `virtual_subagent_${UUID}`;
+
     return {
-      text: "status?",
+      taskId: "subagent~task_1",
+      runId: CHILD_RUN_ID,
+      eventId: scopedDirectEventId("account_1", agentId, "subagent~task_1"),
+      agentId: agentId,
+      agentConfig: {},
+      publicConversationKey: publicKey,
+      conversationKey: scopedDirectConversationKey(
+        "account_1",
+        agentId,
+        publicKey,
+      ),
+      prompt: "research",
+      inheritedContext: false,
+      parentMessages: [],
+      parentEphemeralSystem: [],
+      persistent: true,
+      resuming: false,
+      isolatedSandbox: false,
+    };
+  }
+
+  function childSession(task: ReturnType<typeof childTask>): Session {
+    const session = new Session({
+      eventId: task.eventId,
+      conversationKey: task.conversationKey,
+      accountId: "account_1",
+      agentId: task.agentId,
+    });
+    spyOn(session, "persistModelMessages").mockResolvedValue([]);
+    spyOn(session, "settleIngress").mockResolvedValue(true);
+    spyOn(session, "takeNextIngress").mockResolvedValue(null);
+    spyOn(session, "releaseConversationLease").mockResolvedValue(undefined);
+
+    return session;
+  }
+
+  function message(overrides: Partial<AgentMessage> = {}): AgentMessage {
+    return {
+      text: "Which region?",
       exchangeId: "ex_1",
       followUp: false,
       ...overrides,
     };
   }
 
-  it("steers a running child, then stops waiting on it at the wait's end", async () => {
-    const accepted: Array<Record<string, unknown>> = [];
-    const { coordinator, internals, address, key } =
-      await persistentCoordinator((name, args) => {
-        if (name === "acceptIngress") accepted.push(args);
+  beforeEach((): void => {
+    spyOn(asyncAgentResults, "markAsyncAgentHandback").mockResolvedValue(
+      undefined,
+    );
+  });
 
-        return name === "acceptIngress" ? { outcome: "queued" } : true;
-      });
-    internals.pending.set("subagent_1", new Promise<void>(() => {}));
-    internals.pendingMetadata.set("subagent_1", {
+  it("records a child's wait on its parent and hands its conversation on before the parent sees it", async (): Promise<void> => {
+    const { coordinator, key } = await parentRun({});
+    const task = childTask(key);
+    const session = childSession(task);
+    const settle = spyOn(session, "settleIngress").mockResolvedValue(true);
+    coordinator["pending"].set(task.taskId, new Promise<void>(() => {}));
+    const queuedAtHandoff: number[] = [];
+    spyOn(session, "takeNextIngress").mockImplementation(
+      async (): Promise<null> => {
+        queuedAtHandoff.push(coordinator["completions"].length);
+
+        return null;
+      },
+    );
+    const before = Date.now();
+
+    await coordinator["completeRun"](session, task, {
+      status: "awaiting_input",
+      message: message({ waitSeconds: 600 }),
+    });
+
+    // Pruning drops the message-agents call from later turns; this line survives.
+    expect(session.persistModelMessages).toHaveBeenCalledWith([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "I messaged my parent and am waiting for the reply (exchange ex_1): Which region?",
+          },
+        ],
+      },
+    ]);
+    expect(settle).toHaveBeenCalledWith(
+      "completed",
+      expect.objectContaining({
+        asyncResult: {
+          eventIds: [task.eventId],
+          outcome: {
+            status: "awaiting_input",
+            question: "Which region?",
+            answerBy: expect.any(Number),
+          },
+        },
+      }),
+    );
+    // The wait's deadline is on the row, for the recovery sweep.
+    const outcome = settle.mock.calls[0]?.[1]?.asyncResult?.outcome;
+    expect(
+      outcome && "answerBy" in outcome ? outcome.answerBy : 0,
+    ).toBeGreaterThanOrEqual(before + 600_000);
+    // A reply that comes at once finds the conversation free.
+    expect(queuedAtHandoff).toEqual([0]);
+    expect(coordinator["completions"]).toEqual([
+      expect.objectContaining({
+        taskId: task.taskId,
+        status: "awaiting_input",
+        question: "Which region?",
+      }),
+    ]);
+    expect(await coordinator.waitForIdle()).toBe("question");
+  });
+
+  it("steers a running child, then stops waiting on it at the wait's end", async (): Promise<void> => {
+    const { coordinator, key, address } = await parentRun({});
+    const accept = spyOn(ingress, "acceptIngress").mockResolvedValue({
+      outcome: "queued",
+    });
+    coordinator["pending"].set("subagent_1", new Promise<void>(() => {}));
+    coordinator["pendingMetadata"].set("subagent_1", {
       taskId: "subagent_1",
       eventId: "event_1",
       agentId: `virtual_subagent_${UUID}`,
@@ -2547,124 +2603,145 @@ describe("message-agents in the coordinator", () => {
     });
 
     expect(
-      await coordinator.messageChild(
-        address,
-        agentMessage({ waitSeconds: 0.02 }),
-      ),
+      await coordinator.messageChild(address, message({ waitSeconds: 0.02 })),
     ).toMatchObject({ status: "delivered", exchangeId: "ex_1" });
-    expect(accepted[0]).toMatchObject({
-      activeOwnerOnly: true,
-      requestedMode: "steer",
-      conversationKey: `acct:account_1:agent:virtual_subagent_${UUID}:api:${key}`,
-    });
+    expect(accept).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activeOwnerOnly: true,
+        requestedMode: "steer",
+        conversationKey: `acct:account_1:agent:virtual_subagent_${UUID}:api:${key}`,
+      }),
+    );
     expect(await coordinator.waitForIdle()).toBe("idle");
-    expect(internals.completions).toEqual([
+    expect(coordinator["completions"]).toEqual([
       expect.objectContaining({ taskId: "subagent_1", status: "running" }),
     ]);
   });
 
-  it("tells the parent a child running outside this turn replies later, instead of waiting on it", async () => {
-    const { coordinator, internals, address } = await persistentCoordinator(
-      (name) => (name === "acceptIngress" ? { outcome: "queued" } : true),
-    );
+  it("tells the parent a child running outside this turn replies later, instead of waiting on it", async (): Promise<void> => {
+    const { coordinator, address } = await parentRun({});
+    spyOn(ingress, "acceptIngress").mockResolvedValue({ outcome: "queued" });
 
     // The steer lands, but no child of this coordinator owns the conversation.
     expect(
-      await coordinator.messageChild(
-        address,
-        agentMessage({ waitSeconds: 60 }),
-      ),
+      await coordinator.messageChild(address, message({ waitSeconds: 60 })),
     ).toMatchObject({
       status: "delivered",
       note: expect.stringContaining("arrives as a later message"),
     });
-    expect(internals.pending.size).toBe(0);
+    expect(coordinator.pendingCount).toBe(0);
     expect(await coordinator.waitForIdle()).toBe("idle");
   });
 
-  it("resumes an idle child, and refuses once the family spent its wake budget", async () => {
-    const { coordinator, address, dispatched } = await persistentCoordinator(
-      (name) => (name === "acceptIngress" ? { outcome: "not_running" } : true),
-    );
+  it("resumes an idle child on its own conversation with the parent's message", async (): Promise<void> => {
+    const { coordinator, key, address, resume } = await parentRun({});
+    spyOn(ingress, "acceptIngress").mockResolvedValue({
+      outcome: "not_running",
+    });
 
     expect(
-      await coordinator.messageChild(address, agentMessage()),
+      await coordinator.messageChild(address, message({ text: "eu-west" })),
     ).toMatchObject({ status: "resumed" });
-    expect(dispatched[0]).toEqual({
-      conversationKey: address.slice(address.indexOf("/") + 1),
-      prompt: expect.stringContaining("status?"),
-    });
-    for (let index = 1; index < 40; index += 1) {
-      await coordinator.messageChild(address, agentMessage());
-    }
-    expect(
-      await coordinator.messageChild(address, agentMessage()),
-    ).toMatchObject({ status: "not_delivered" });
-    expect(dispatched).toHaveLength(40);
+    expect(resume).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: `virtual_subagent_${UUID}`,
+        publicConversationKey: key,
+      }),
+      expect.stringContaining("eu-west"),
+    );
   });
 
-  it("refuses an address this parent did not mint", async () => {
-    const { coordinator } = await persistentCoordinator(() => true);
+  it("refuses an address this parent did not mint", async (): Promise<void> => {
+    const { coordinator } = await parentRun({});
 
     expect(
       coordinator.messageChild(
         `virtual_subagent_${UUID}/subagent-persistent-${UUID}-${"0".repeat(32)}`,
-        agentMessage(),
+        message(),
       ),
     ).rejects.toThrow("not the address of one of your persistent subagents");
-    expect(
-      coordinator.messageChild("no-slash", agentMessage()),
-    ).rejects.toThrow("not the address");
+    expect(coordinator.messageChild("no-slash", message())).rejects.toThrow(
+      "not the address",
+    );
   });
 
-  it("wakes a child its parent left unanswered past the wait, unless the parent messages it first", async () => {
-    const { internals, coordinator, address, dispatched } =
-      await persistentCoordinator((name) =>
-        name === "acceptIngress" ? { outcome: "not_running" } : true,
-      );
-    const task = {
-      ...persistentChildTask(),
-      agentId: `virtual_subagent_${UUID}`,
-      publicConversationKey: address.slice(address.indexOf("/") + 1),
-    };
-    const childSession = {
-      persistModelMessages: async (): Promise<void> => {},
-      settleIngress: async (): Promise<boolean> => true,
-      takeNextIngress: async (): Promise<null> => null,
-      releaseConversationLease: async (): Promise<void> => {},
-    };
+  it("refuses a child that another conversation of the same agent started", async (): Promise<void> => {
+    const { address } = await parentRun({});
+    const other = await parentRun({
+      conversationKey: "acct:account_1:agent:agent_parent:api:conv_2",
+    });
+    spyOn(ingress, "acceptIngress").mockResolvedValue({ outcome: "queued" });
 
-    await internals.completeAskedRun(
-      childSession,
-      task,
-      agentMessage({ waitSeconds: 0.02 }),
+    expect(
+      other.coordinator.messageChild(address, message({ waitSeconds: 60 })),
+    ).rejects.toThrow("not the address of one of your persistent subagents");
+  });
+
+  it("keeps a reply from a later parent run, so no false no-reply turn follows", async (): Promise<void> => {
+    const first = await parentRun({});
+    const later = await parentRun({
+      eventId: `${PARENT_EVENT}:async-subagent:abc`,
+    });
+    spyOn(ingress, "acceptIngress").mockResolvedValue({
+      outcome: "not_running",
+    });
+    const task = childTask(first.key);
+
+    await first.coordinator["completeRun"](childSession(task), task, {
+      status: "awaiting_input",
+      message: message({ waitSeconds: 0.02 }),
+    });
+    await later.coordinator.messageChild(
+      first.address,
+      message({ text: "eu-west", waitSeconds: 60 }),
     );
     await Bun.sleep(60);
-    expect(dispatched).toEqual([
-      {
-        conversationKey: task.publicConversationKey,
-        prompt: expect.stringContaining("No reply from your parent"),
-      },
-    ]);
 
-    await internals.completeAskedRun(
-      childSession,
-      task,
-      agentMessage({ waitSeconds: 0.05 }),
-    );
-    await coordinator.messageChild(address, agentMessage({ text: "go ahead" }));
-    await Bun.sleep(80);
-    expect(dispatched.map(({ prompt }) => String(prompt))).toEqual([
-      expect.stringContaining("No reply from your parent"),
-      expect.stringContaining("go ahead"),
-    ]);
+    expect(later.resume).toHaveBeenCalledTimes(1);
+    expect(first.resume).not.toHaveBeenCalled();
   });
 
-  it("hands a child's note to the parent's next step, and refuses it once passes ended", async () => {
-    const { coordinator, internals, key } = await persistentCoordinator(
-      () => true,
-    );
-    internals.pendingMetadata.set("subagent_1", {
+  it("charges messages that queue on a running child to the turn budget", async (): Promise<void> => {
+    const { coordinator, address } = await parentRun({});
+    spyOn(ingress, "acceptIngress").mockResolvedValue({ outcome: "queued" });
+
+    for (let sent = 0; sent < 40; sent += 1) {
+      await coordinator.messageChild(address, message({ waitSeconds: 60 }));
+    }
+
+    expect(
+      await coordinator.messageChild(address, message({ waitSeconds: 60 })),
+    ).toMatchObject({ status: "not_delivered" });
+  });
+
+  it("keeps the turn budget across the parent runs of one lineage", async (): Promise<void> => {
+    const first = await parentRun({});
+    spyOn(ingress, "acceptIngress").mockResolvedValue({
+      outcome: "not_running",
+    });
+    for (let sent = 0; sent < 40; sent += 1) {
+      await first.coordinator.messageChild(
+        first.address,
+        message({ waitSeconds: 60 }),
+      );
+    }
+    const later = await parentRun({
+      eventId: `${PARENT_EVENT}:async-subagent:abc`,
+      turns: first.turns,
+    });
+
+    expect(
+      await later.coordinator.messageChild(
+        first.address,
+        message({ waitSeconds: 60 }),
+      ),
+    ).toMatchObject({ status: "not_delivered" });
+    expect(later.resume).not.toHaveBeenCalled();
+  });
+
+  it("hands a child's note to the parent's next step, and refuses it once passes ended", async (): Promise<void> => {
+    const { coordinator, key } = await parentRun({});
+    coordinator["pendingMetadata"].set("subagent_1", {
       taskId: "subagent_1",
       eventId: "event_1",
       agentId: `virtual_subagent_${UUID}`,
@@ -2672,19 +2749,70 @@ describe("message-agents in the coordinator", () => {
     });
 
     expect(
-      coordinator.noteFromChild(
-        "subagent_1",
-        agentMessage({ text: "halfway" }),
-      ),
+      coordinator.noteFromChild("subagent_1", message({ text: "halfway" })),
     ).toMatchObject({ status: "delivered" });
     const [note] = await coordinator.takeParentMessages();
     expect(messageText(note)).toContain("halfway");
     expect(messageText(note)).toContain(`virtual_subagent_${UUID}/${key}`);
 
     coordinator.closePasses();
-    expect(
-      coordinator.noteFromChild("subagent_1", agentMessage()),
-    ).toMatchObject({ status: "not_delivered" });
+    expect(coordinator.noteFromChild("subagent_1", message())).toMatchObject({
+      status: "not_delivered",
+    });
+  });
+
+  it("the sweep wakes a child its parent left unanswered, once, from its row alone", async (): Promise<void> => {
+    const { key } = await parentRun({});
+    const { SubagentCoordinator, timeOutSubagentQuestions } =
+      await import("../src/harness/subagents.ts");
+    const agentId = `virtual_subagent_${UUID}`;
+    const row: AsyncAgentResultRecord = {
+      accountId: "account_1",
+      eventId: scopedDirectEventId(
+        "account_1",
+        agentId,
+        createSubagentTaskId(PARENT_EVENT),
+      ),
+      conversationKey: scopedDirectConversationKey("account_1", agentId, key),
+      subagent: { parentConversationKey: PARENT_CONVERSATION },
+      handback: "stored",
+      status: "awaiting_input",
+      question: "Which region?",
+      answerBy: Date.now() - 1_000,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      expiresAt: Date.now() + 60_000,
+    };
+    spyOn(asyncAgentResults, "listOverdueSubagentQuestions").mockResolvedValue({
+      page: [row],
+      cursor: "",
+      isDone: true,
+    });
+    // Only the first sweep closes it.
+    spyOn(asyncAgentResults, "closeSubagentQuestion")
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+    spyOn(Session.prototype, "claimMessageTurn").mockResolvedValue(true);
+    const resume = spyOn(
+      SubagentCoordinator.prototype,
+      "resumeChild",
+    ).mockImplementation(async (child) => ({
+      taskId: "subagent~woken",
+      agentId: child.agentId,
+      conversationKey: child.publicConversationKey,
+      runId: CHILD_RUN_ID,
+      statusPath: `/v1/runs/${CHILD_RUN_ID}`,
+      status: "running",
+    }));
+
+    await timeOutSubagentQuestions(lostParent, {});
+    await timeOutSubagentQuestions(lostParent, {});
+
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(resume).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: agentId, publicConversationKey: key }),
+      expect.stringContaining("No reply from your parent"),
+    );
   });
 });
 
@@ -2756,6 +2884,7 @@ function parentSession(overrides: Record<string, unknown> = {}) {
     accountId: "account_1",
     agentId: "agent_parent",
     eventId: "acct:account_1:agent:agent_parent:api:event_parent",
+    conversationKey: "acct:account_1:agent:agent_parent:api:conv_1",
     persistModelMessages: mock(async () => []),
     renewConversationLease: async (): Promise<string> => "renewed",
     ...overrides,

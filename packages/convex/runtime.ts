@@ -78,6 +78,7 @@ export const asyncAgentOutcomeValidator = v.object({
   approvals: runtimeAsyncAgentResultsFields.approvals,
   questions: runtimeAsyncAgentResultsFields.questions,
   question: runtimeAsyncAgentResultsFields.question,
+  answerBy: runtimeAsyncAgentResultsFields.answerBy,
 });
 
 const asyncAgentDoc = v.object({
@@ -121,7 +122,8 @@ interface SandboxReservationPage {
 }
 
 /**
- * Atomically claims a dedupe key until its expiry.
+ * Atomically claims a dedupe key until its expiry, up to `limit` times (once
+ * by default). The expiry runs from the first claim.
  * @returns whether this invocation acquired the claim
  */
 export const claimEvent = internalMutation({
@@ -129,6 +131,7 @@ export const claimEvent = internalMutation({
     accountId: v.id("accounts"),
     key: v.string(),
     ttlSeconds: v.number(),
+    limit: v.optional(v.number()),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -143,7 +146,11 @@ export const claimEvent = internalMutation({
     }
     const now = Math.floor(Date.now() / 1000);
     if (existing && existing.expiresAt >= now) {
-      return false;
+      const count = existing.count ?? 1;
+      if (count >= (args.limit ?? 1)) return false;
+      await ctx.db.patch(existing._id, { count: count + 1 });
+
+      return true;
     }
     if (existing) await ctx.db.delete(existing._id);
     await ctx.db.insert("runtimeClaims", {
@@ -462,6 +469,8 @@ export const clearConversation = internalMutation({
  * row starts its hand-back `pending`: the parent owes the result its write
  * from the start, so a child whose parent and pod die before any detach is
  * the recovery sweep's once no live run can hold it, not unseen for 7 days.
+ * A new turn of a conversation closes the message it waited on its parent
+ * with, so that wait never times out behind it.
  * @returns whether a new result row was created
  */
 export const createAsyncAgentResult = internalMutation({
@@ -480,6 +489,7 @@ export const createAsyncAgentResult = internalMutation({
     if (existing) {
       return false;
     }
+    await closeOpenQuestions(ctx, args.conversationKey);
     const now = new Date().toISOString();
     await ctx.db.insert("runtimeAsyncAgentResults", {
       accountId: accountId,
@@ -552,6 +562,59 @@ export const listOwedAsyncAgentResults = internalQuery({
       cursor: result.continueCursor,
       isDone: result.isDone,
     };
+  },
+});
+
+/**
+ * One page of child messages to a parent whose reply is overdue at `before`,
+ * oldest first. Core's recovery sweep times each one out.
+ * @returns the page and the cursor for the next one
+ */
+export const listOverdueSubagentQuestions = internalQuery({
+  args: { before: v.number(), cursor: v.union(v.string(), v.null()) },
+  returns: v.object({
+    page: v.array(asyncAgentDoc),
+    cursor: v.string(),
+    isDone: v.boolean(),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    page: Doc<"runtimeAsyncAgentResults">[];
+    cursor: string;
+    isDone: boolean;
+  }> => {
+    const result = await ctx.db
+      .query("runtimeAsyncAgentResults")
+      .withIndex("by_answerBy", (q) =>
+        q.gte("answerBy", 0).lt("answerBy", args.before),
+      )
+      .paginate({ cursor: args.cursor, numItems: OWED_RESULT_PAGE_SIZE });
+
+    return {
+      page: await activeAccountRows(ctx, result.page),
+      cursor: result.continueCursor,
+      isDone: result.isDone,
+    };
+  },
+});
+
+/**
+ * Closes a child's message to its parent so its wait times out once: the
+ * sweep calls it before it resumes the child.
+ * @returns whether this call closed it
+ */
+export const closeSubagentQuestion = internalMutation({
+  args: { eventId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const row = await asyncAgentResultRow(ctx, args.eventId);
+    if (row?.answerBy === undefined) return false;
+    await requireActiveAccount(ctx, row.accountId);
+    await ctx.db.patch(row._id, { answerBy: undefined });
+
+    return true;
   },
 });
 
@@ -700,6 +763,7 @@ export async function writeAsyncAgentResult(
     approvals: outcome.approvals,
     questions: outcome.questions,
     question: outcome.question,
+    answerBy: outcome.answerBy,
     ...(handback === "detached" && row.handback !== "stored"
       ? { handback: handback }
       : {}),
@@ -1706,6 +1770,20 @@ function claimKeyForAccount(accountId: string, key: string): string {
   }
 
   return key;
+}
+
+/** Closes every message a child of `conversationKey` still waits on its parent with. */
+async function closeOpenQuestions(
+  ctx: MutationCtx,
+  conversationKey: string,
+): Promise<void> {
+  const open = await ctx.db
+    .query("runtimeAsyncAgentResults")
+    .withIndex("by_conversationKey_and_answerBy", (q) =>
+      q.eq("conversationKey", conversationKey).gte("answerBy", 0),
+    )
+    .collect();
+  for (const row of open) await ctx.db.patch(row._id, { answerBy: undefined });
 }
 
 /** Compares fixed-length hexadecimal digests without content-dependent exits. */

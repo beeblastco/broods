@@ -223,8 +223,9 @@ const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
 ]);
 const textEncoder = new TextEncoder();
 // What every parent run's continuation loop takes from the handler: the
-// functions that move conversation ownership.
-const CONTINUATION_DEPENDENCIES: ContinuationDependencies = {
+// functions that move conversation ownership. The recovery sweep wakes
+// children with the same subagent wiring.
+export const CONTINUATION_DEPENDENCIES: ContinuationDependencies = {
   dispatchSessionMessage: dispatchSessionMessage,
   subagents: {
     dispatchAppliedIngress: dispatchAppliedIngress,

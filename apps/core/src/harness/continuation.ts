@@ -189,7 +189,7 @@ export async function runAgentLoopUntilSubagentsIdle(
  * Heartbeats are emitted only while this request or worker waits on
  * in-process subagents. Detached sandbox background jobs settle through their
  * completion callback, not through pending work here. Once the passes end, a
- * child started later (a reply timeout waking it) resumes the parent instead.
+ * child's note to the parent is refused, since no pass is left to read it.
  */
 export async function runParentContinuationLoop(
   options: ParentPassOptions,

@@ -5589,7 +5589,12 @@ export declare const internal: {
     claimEvent: FunctionReference<
       "mutation",
       "internal",
-      { accountId: Id<"accounts">; key: string; ttlSeconds: number },
+      {
+        accountId: Id<"accounts">;
+        key: string;
+        limit?: number;
+        ttlSeconds: number;
+      },
       boolean
     >;
     claimSandboxReservation: FunctionReference<
@@ -5618,6 +5623,12 @@ export declare const internal: {
       "internal",
       { conversationKey: string },
       { deleted: number; hasMore: boolean }
+    >;
+    closeSubagentQuestion: FunctionReference<
+      "mutation",
+      "internal",
+      { eventId: string },
+      boolean
     >;
     createAsyncAgentResult: FunctionReference<
       "mutation",
@@ -5767,6 +5778,7 @@ export declare const internal: {
         _creationTime: number;
         _id: Id<"runtimeAsyncAgentResults">;
         accountId: Id<"accounts">;
+        answerBy?: number;
         approvals?: Array<{
           approvalId: string;
           input: any;
@@ -6070,6 +6082,77 @@ export declare const internal: {
         }>;
       }
     >;
+    listOverdueSubagentQuestions: FunctionReference<
+      "query",
+      "internal",
+      { before: number; cursor: string | null },
+      {
+        cursor: string;
+        isDone: boolean;
+        page: Array<{
+          _creationTime: number;
+          _id: Id<"runtimeAsyncAgentResults">;
+          accountId: Id<"accounts">;
+          answerBy?: number;
+          approvals?: Array<{
+            approvalId: string;
+            input: any;
+            toolCallId: string;
+            toolName: string;
+          }>;
+          conversationKey: string;
+          createdAt: string;
+          error?: string;
+          eventId: string;
+          expiresAt: number;
+          handback?: "pending" | "detached" | "stored";
+          question?: string;
+          questions?: Array<{
+            answerBy: string;
+            questions: Array<{
+              header: string;
+              id: string;
+              options: Array<{ description?: string; label: string }>;
+              question: string;
+            }>;
+            statusId: string;
+          }>;
+          response?: any;
+          status:
+            | "processing"
+            | "awaiting_approval"
+            | "awaiting_input"
+            | "completed"
+            | "failed";
+          subagent?: {
+            description?: string;
+            parentConversationKey: string;
+            parentDelivery?:
+              | { kind: "async" }
+              | {
+                  connectionId: string;
+                  kind: "nats";
+                  publicConversationKey: string;
+                  publicEventId: string;
+                }
+              | {
+                  channelName: string;
+                  identity?: {
+                    channelId?: string;
+                    threadId?: string;
+                    userId?: string;
+                    userName?: string;
+                    userRoles?: Array<string>;
+                    workspaceRef?: string;
+                  };
+                  kind: "channel";
+                  source: Record<string, any>;
+                };
+          };
+          updatedAt: string;
+        }>;
+      }
+    >;
     listOwedAsyncAgentResults: FunctionReference<
       "query",
       "internal",
@@ -6092,6 +6175,7 @@ export declare const internal: {
           _creationTime: number;
           _id: Id<"runtimeAsyncAgentResults">;
           accountId: Id<"accounts">;
+          answerBy?: number;
           approvals?: Array<{
             approvalId: string;
             input: any;
@@ -6321,6 +6405,7 @@ export declare const internal: {
       "mutation",
       "internal",
       {
+        answerBy?: number;
         approvals?: Array<{
           approvalId: string;
           input: any;
@@ -6955,6 +7040,7 @@ export declare const internal: {
         asyncResult?: {
           eventIds: Array<string>;
           outcome: {
+            answerBy?: number;
             approvals?: Array<{
               approvalId: string;
               input: any;

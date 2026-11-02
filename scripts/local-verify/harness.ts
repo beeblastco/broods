@@ -4,6 +4,7 @@ import type { BroodsAccountClient } from "../../packages/broods/src/account.ts";
 import { runMachineDaemon } from "../../packages/broods/src/cli/machine.ts";
 import type { BroodsClient } from "../../packages/broods/src/client.ts";
 import type { AsyncStatus } from "../../packages/broods/src/types.ts";
+import type { internal } from "../../packages/convex/_generated/api.js";
 import {
   SELF_HOST_ADMIN,
   SELF_HOST_ISSUER,
@@ -18,6 +19,9 @@ const RUN_POLL_TIMEOUT_MS = 120_000;
 export const OK_AGENT = { system: "Reply with the single word OK." } as const;
 
 export const MODEL_KEY_HINT = "set ANTHROPIC_API_KEY for the full run";
+
+// The scope every runtime key carries, `acct:<account>:agent:<agent>`, ends here.
+export const API_SCOPE_MARKER = ":api:";
 
 /** `convex run --identity` for the self-host admin, to call a dashboard function as a signed-in member. */
 export const SELF_HOST_IDENTITY = JSON.stringify({
@@ -39,6 +43,29 @@ export interface MachineConnection {
 }
 
 export type VerifyCase = (context: VerifyContext) => Promise<void>;
+
+/** What a Convex function reference returns, read off the generated API. */
+type ConvexReturn<F> = F extends { _returnType: infer R } ? R : never;
+
+/** A run's polling row, as `runtime:getAsyncAgentResult` returns it. */
+export type AsyncAgentRow = ConvexReturn<
+  typeof internal.runtime.getAsyncAgentResult
+>;
+
+/** A conversation's stored events, as `runtime:listConversationEvents` returns them. */
+export type ConversationEvents = ConvexReturn<
+  typeof internal.runtime.listConversationEvents
+>;
+
+/** Core's log line for a subagent turn it starts. */
+export interface SubagentStartedLog {
+  agentId: string;
+  conversationKey: string;
+  message: string;
+  parentEventId: string;
+  resuming: boolean;
+  taskId: string;
+}
 
 export interface VerifyContext {
   account: BroodsAccountClient;
@@ -292,16 +319,17 @@ export function smokeModel(): { hasModelKey: boolean; model: SmokeModel } {
 }
 
 /**
- * Runs a Convex function with the stack's admin key and parses its result.
+ * Runs a Convex function with the stack's admin key and parses its result,
+ * typed `T` by a caller that names the function's return type.
  * With `identity` (`SELF_HOST_IDENTITY`) a public function runs as that member.
  */
-export function convexResult(
+export function convexResult<T = unknown>(
   context: VerifyContext,
   fn: string,
   args: Record<string, unknown>,
   step: string,
   identity?: string,
-): unknown {
+): T {
   const cli = context.convex([
     "run",
     ...(identity ? ["--identity", identity] : []),
@@ -314,5 +342,83 @@ export function convexResult(
   // for a function that returns null.
   const start = cli.output.search(/^[[{"\dn]/m);
 
-  return start < 0 ? null : JSON.parse(cli.output.slice(start));
+  return JSON.parse(start < 0 ? "null" : cli.output.slice(start));
+}
+
+/**
+ * A child's result reached its parent exactly once: the child's row is in
+ * `status` and stored with its parent, and the parent's conversation holds one
+ * injected message for the task, so no late resume or sweep repeats it.
+ */
+export function assertHandedBackOnce(
+  context: VerifyContext,
+  child: SubagentStartedLog,
+  parentKey: string,
+  status: "completed" | "awaiting_input",
+): void {
+  const row = childResultRow(context, child);
+  assertStep(
+    `the child's ${status} row is stored with its parent`,
+    row?.status === status && row.handback === "stored",
+    JSON.stringify(row),
+  );
+  const history = convexResult<ConversationEvents>(
+    context,
+    "runtime:listConversationEvents",
+    {
+      conversationKey: `${scopeOf(child.parentEventId)}${API_SCOPE_MARKER}${parentKey}`,
+    },
+    "read the parent's conversation",
+  );
+  const injected = history.page.filter((entry): boolean => {
+    const text = JSON.stringify(entry.event);
+
+    return (
+      text.includes(`taskId: ${child.taskId}`) &&
+      text.includes(`status: ${status}`)
+    );
+  });
+  assertStep(
+    `the parent's conversation holds the child's ${status} once`,
+    injected.length === 1,
+    JSON.stringify(injected),
+  );
+}
+
+/** A child turn's polling row, read by its task id. */
+export function childResultRow(
+  context: VerifyContext,
+  child: SubagentStartedLog,
+): AsyncAgentRow {
+  return convexResult<AsyncAgentRow>(
+    context,
+    "runtime:getAsyncAgentResult",
+    {
+      eventId: `${scopeOf(child.conversationKey)}${API_SCOPE_MARKER}${child.taskId}`,
+    },
+    "read the child's result row",
+  );
+}
+
+/** `acct:<account>:agent:<agent>`, the scope a scoped key or event id carries. */
+export function scopeOf(scopedKey: string): string {
+  return scopedKey.slice(0, scopedKey.indexOf(API_SCOPE_MARKER));
+}
+
+/**
+ * The last child core started for the parent turn whose event id ends in
+ * `:<eventKey>`, among those `matches` keeps.
+ */
+export function startedChildLog(
+  context: VerifyContext,
+  eventKey: string,
+  matches: (record: SubagentStartedLog) => boolean = (): boolean => true,
+): SubagentStartedLog | null {
+  return lastJsonLine<SubagentStartedLog>(
+    context.coreLogPath,
+    (record: SubagentStartedLog): boolean =>
+      record.message === "Subagent task started" &&
+      record.parentEventId.endsWith(`:${eventKey}`) &&
+      matches(record),
+  );
 }

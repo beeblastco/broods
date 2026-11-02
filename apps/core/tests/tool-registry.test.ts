@@ -13,6 +13,10 @@ import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type { SessionMessageResult } from "../src/harness/ingress.ts";
 import type { Session } from "../src/harness/session.ts";
 import type { ToolContext } from "../src/harness/tools/index.ts";
+import type {
+  AgentMessage,
+  AgentMessageResult,
+} from "../src/harness/tools/utils.ts";
 import {
   resetStorageForTests,
   setStorageForTests,
@@ -780,13 +784,19 @@ describe("createTools", () => {
 
   it("gives a persistent child message-agents to reach its parent", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
-    const context = createToolContext(undefined, "google") as unknown as Record<
-      string,
-      unknown
-    >;
-    context.parentLink = { ask: () => true, note: () => ({}) };
+    const context = {
+      ...createToolContext(undefined, "google"),
+      parentLink: {
+        ask: (): boolean => true,
+        note: (message: AgentMessage): AgentMessageResult => ({
+          status: "delivered",
+          exchangeId: message.exchangeId,
+          note: "",
+        }),
+      },
+    };
 
-    expect(Object.keys(await createTools(context as never, {}))).toEqual([
+    expect(Object.keys(await createTools(context, {}))).toEqual([
       "message-agents",
     ]);
   });

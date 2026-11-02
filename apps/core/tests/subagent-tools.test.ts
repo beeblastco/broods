@@ -295,7 +295,7 @@ it("message-agents waits on the parent once a turn, notes without a wait, and re
   const tool = tools["message-agents"];
 
   expect(
-    execute(tool, { to: "parent", text: " Use staging? ", wait: true }),
+    execute(tool, { to: "parent", text: " Use staging? ", waitSeconds: 600 }),
   ).resolves.toMatchObject({ status: "delivered" });
   expect(asked[0]).toMatchObject({
     text: "Use staging?",
@@ -303,7 +303,7 @@ it("message-agents waits on the parent once a turn, notes without a wait, and re
     waitSeconds: 600,
   });
   expect(
-    execute(tool, { to: "parent", text: "And prod?", wait: true }),
+    execute(tool, { to: "parent", text: "And prod?", waitSeconds: 60 }),
   ).rejects.toThrow("already wait");
   expect(
     execute(tool, { to: "parent", text: "halfway there" }),
@@ -315,8 +315,7 @@ it("message-agents waits on the parent once a turn, notes without a wait, and re
   await execute(tool, {
     to: "agent_child/subagent-persistent-x",
     text: "status?",
-    wait: true,
-    timeoutSeconds: 99_999,
+    waitSeconds: 99_999,
     followUp: "ex_1234",
   });
   expect(sent[0]).toEqual({

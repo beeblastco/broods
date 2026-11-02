@@ -29,7 +29,10 @@ import { snapshotStage } from "./snapshot-stage.ts";
 import { statusReadHandback } from "./status-read-handback.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { streamedBurst } from "./streamed-burst.ts";
-import { subagentMessageAgents } from "./subagent-message-agents.ts";
+import {
+  subagentMessageAgents,
+  subagentQuestionTimeout,
+} from "./subagent-message-agents.ts";
 import { subagentModel } from "./subagent-model.ts";
 import { subagentResume } from "./subagent-resume.ts";
 import { subagentStop } from "./subagent-stop.ts";
@@ -58,6 +61,7 @@ export const verifyCases: readonly VerifyCase[] = [
   subagentModel,
   subagentResume,
   subagentMessageAgents,
+  subagentQuestionTimeout,
   asyncToolHandback,
   statusReadHandback,
   autoCompaction,

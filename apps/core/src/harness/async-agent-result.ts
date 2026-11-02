@@ -24,7 +24,7 @@ export type AsyncAgentOutcome =
   | { status: "failed"; error: string }
   | { status: "awaiting_approval"; approvals: ToolApprovalSummary[] }
   | { status: "awaiting_input"; questions: PendingQuestionSummary[] }
-  | { status: "awaiting_input"; question: string };
+  | { status: "awaiting_input"; question: string; answerBy: number };
 /**
  * Where a subagent's parent conversation answers, so a late result reaches the
  * parent after a restart too. The task, the child agent and its key come from
@@ -52,7 +52,13 @@ export interface AsyncAgentResultRecord {
   approvals?: ToolApprovalSummary[];
   questions?: PendingQuestionSummary[];
   question?: string;
+  // When `question` stops waiting on the parent's reply, until closed.
+  answerBy?: number;
   expiresAt: number;
+}
+/** Closes a child's open message to its parent; true for the one call that closed it. */
+export function closeSubagentQuestion(eventId: string): Promise<boolean> {
+  return runtime.mutate("closeSubagentQuestion", { eventId: eventId });
 }
 export function createPendingAsyncAgentResult(options: {
   eventId: string;
@@ -82,6 +88,20 @@ export function listOwedAsyncAgentResults(options: {
   isDone: boolean;
 }> {
   return runtime.query("listOwedAsyncAgentResults", options);
+}
+/** One page of child messages to a parent whose reply is overdue at `before`. */
+export function listOverdueSubagentQuestions(
+  before: number,
+  cursor: string | null,
+): Promise<{
+  page: AsyncAgentResultRecord[];
+  cursor: string;
+  isDone: boolean;
+}> {
+  return runtime.query("listOverdueSubagentQuestions", {
+    before: before,
+    cursor: cursor,
+  });
 }
 /**
  * Moves a subagent result's hand-back: `detached` when this run gives up

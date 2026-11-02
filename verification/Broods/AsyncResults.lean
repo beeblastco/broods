@@ -200,7 +200,7 @@ def worker (catchSettles catchRecords : Bool) (e : Ending) (throwAt : Option Nat
   exec (recover catchSettles catchRecords) (program e) throwAt start
 
 /-- The outcomes a child's turn records: an answer, or a message to its parent it waits on
-(`completeSuccessfulRun` and `completeAskedRun`). -/
+(`completeRun`). -/
 def ChildFinish : Finish → Bool
   | .completed | .awaitingInput => true
   | _ => false

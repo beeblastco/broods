@@ -1,5 +1,6 @@
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
+  API_SCOPE_MARKER,
   MODEL_KEY_HINT,
   assertStep,
   convexResult,
@@ -8,7 +9,6 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-const API_SCOPE_MARKER = ":api:";
 const CONTINUATION_TIMEOUT_MS = 120_000;
 const QUESTION_ID = "color";
 const ANSWER = "Blue";

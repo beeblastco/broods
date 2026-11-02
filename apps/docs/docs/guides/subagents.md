@@ -46,7 +46,7 @@ export const lead = defineAgent({
 
 ## How the model uses it
 
-One `run_subagent` call starts up to 10 tasks. Each task has a `prompt`, and optionally the `agentId` of an allowed agent and a `conversationKey` to resume an earlier child. Only a key an earlier `run_subagent` call returned resumes: core signs each key for the account and parent agent that minted it and refuses any other, so a model cannot be talked into opening a direct-API caller's conversation with the child agent. The call returns at once with a `taskId`, `runId` and `conversationKey` per task. Results are injected into the parent automatically when they finish: at the parent's next step if it is still working, or as one batch after its pass.
+One `run_subagent` call starts up to 10 tasks. Each task has a `prompt`, and optionally the `agentId` of an allowed agent and a `conversationKey` to resume an earlier child. Only a key an earlier `run_subagent` call returned resumes: core signs each key for the account, parent agent and parent conversation that minted it and refuses any other, so a model cannot be talked into opening a direct-API caller's conversation with the child agent. The call returns at once with a `taskId`, `runId` and `conversationKey` per task. Results are injected into the parent automatically when they finish: at the parent's next step if it is still working, or as one batch after its pass.
 
 A child that runs a Pi `harness` shares one machine with every other conversation of that agent, each in its own work folder. Set `isolated: true` on a task to give a new conversation a machine of its own, for untrusted code, clashing installs or tests other work could contaminate. The machine a conversation starts on is the one it resumes on. An isolated machine is released after a day idle; the shared one after a week. Claude Code, Codex, Deep Agents and OpenCode always get one machine per conversation, because their bridge binds a fixed port.
 
@@ -59,14 +59,14 @@ In persistent mode the parent also gets:
 | `message-agents` | Messages a child by the `address` `run_subagent` returned. See below.                                          |
 | `stop_subagent`  | Stops the child at its next step. A stopped child sends no report: its partial work is not sent to the parent. |
 
-`message-agents` works both ways: the parent messages a child by its address, and a persistent child messages `"parent"`. It takes `to`, `text`, and optionally `wait`, `timeoutSeconds` and `followUp`.
+`message-agents` works both ways: the parent messages a child by its address, and a persistent child messages `"parent"`. It takes `to`, `text`, and optionally `waitSeconds` and `followUp`.
 
 - A running agent reads the message at its next step. An idle child starts a new turn on it, with its work so far.
-- `wait: true` waits for the reply, up to `timeoutSeconds` (default 600, at most 3600). For the parent, its turn waits on that child; past the timeout the child keeps going and its reply arrives as a later message. Without `wait`, a child the message starts reports back as a later message.
-- A child waiting on `"parent"` ends its turn, and the message is stored on its result row, so a restart or a parent that stopped waiting does not lose it. It reaches the parent at its next step, wakes it if it is waiting on children, or starts a new parent turn later. If the parent does not reply in time, the child resumes with a note and carries on; a late reply still arrives as its next message.
+- `waitSeconds` waits for the reply up to that long (600 suits most questions, at most 3600). For the parent, its turn waits on that child; past the wait the child keeps going and its reply arrives as a later message. Without `waitSeconds`, a child the message starts reports back as a later message.
+- A child waiting on `"parent"` ends its turn, and the message and its deadline are stored on its result row, so a restart or a parent that stopped waiting does not lose it. It reaches the parent at its next step, wakes it if it is waiting on children, or starts a new parent turn later. If the parent does not reply in time, the child resumes with a note within about 30 seconds of the deadline and carries on; a late reply still arrives as its next message.
 - A child's message to `"parent"` without `wait` is a note: the parent reads it at its next step while the child keeps working.
 - Each message returns an `exchangeId`. Passing it back as `followUp` nudges or asks again in the same exchange.
-- Messages can start at most 40 turns per parent run, so two agents cannot keep waking each other.
+- Messages to children, and the notes that wake a child nobody answered, count against 40 per run a person started, across every parent turn that continues it, so two agents cannot keep waking each other.
 
 A parent can only message or stop children its conversation started, in this turn or an earlier one. From outside, a predefined persistent child is an ordinary conversation of its agent. Stop or steer it through the normal run endpoints with its `conversationKey`. A virtual child's agent id is `virtual_subagent_<uuid>`, which no agent endpoint knows, so read it with `GET /v1/runs/{runId}` and control it through the parent's tools.
 

@@ -65,8 +65,7 @@ export interface SubagentToolContext {
   conversationKey: string;
 }
 
-/** How long a `message-agents` wait lasts unless the caller sets it, and its cap. */
-export const DEFAULT_AGENT_WAIT_SECONDS = 10 * 60;
+/** The longest a `message-agents` sender waits for the reply. */
 export const MAX_AGENT_WAIT_SECONDS = 60 * 60;
 
 /** A `message-agents` send: `exchangeId` labels the exchange, and a follow-up reuses it. */
@@ -79,9 +78,11 @@ export interface AgentMessage {
 }
 
 /** What a `message-agents` send did. */
-export type AgentMessageResult =
-  | { status: "delivered" | "resumed"; exchangeId: string; note: string }
-  | { status: "not_delivered"; exchangeId: string; note: string };
+export interface AgentMessageResult {
+  status: "delivered" | "resumed" | "not_delivered";
+  exchangeId: string;
+  note: string;
+}
 
 /** A persistent subagent's line to its parent, behind its `message-agents` tool. */
 export interface ParentLink {

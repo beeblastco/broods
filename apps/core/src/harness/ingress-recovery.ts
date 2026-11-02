@@ -2,8 +2,9 @@
  * Starts queued work that no live owner will drain. Admission recovers a
  * conversation when its next message arrives; this covers the ones nobody
  * writes to again, such as the queue behind a run a previous pod handed back
- * at shutdown or died holding, and a late subagent result whose run died
- * before it resumed the parent. Runs on boot and on a timer; Convex promotes
+ * at shutdown or died holding, a late subagent result whose run died
+ * before it resumed the parent, and a child whose question its parent left
+ * unanswered past the wait. Runs on boot and on a timer; Convex promotes
  * each queue and admits each late result atomically, so an overlapping pod
  * never runs one twice.
  */
@@ -12,6 +13,7 @@ import { logError, logInfo } from "../shared/log.ts";
 import { publicConversationKeyFromScoped } from "../shared/runtime-keys.ts";
 import { resumeLostAsyncToolResults } from "./async-tools.ts";
 import {
+  CONTINUATION_DEPENDENCIES,
   continueAfterAsyncToolSettlement,
   dispatchAppliedIngress,
   loadReentryTarget,
@@ -19,7 +21,10 @@ import {
 } from "./handler.ts";
 import { recoverQueuedIngress, type RecoveredIngress } from "./ingress.ts";
 import type { IngressDispatchScope } from "./integrations.ts";
-import { resumeLostSubagentResults } from "./subagents.ts";
+import {
+  resumeLostSubagentResults,
+  timeOutSubagentQuestions,
+} from "./subagents.ts";
 
 // A lease handed back at shutdown is picked up within this, or on boot.
 const RECOVERY_INTERVAL_MS = 30_000;
@@ -82,7 +87,8 @@ function recoveryScope(entry: RecoveredIngress): IngressDispatchScope {
  * queued conversations at a time, from where the last pass stopped. Each entry
  * is its own conversation, so a page dispatches together. A dispatch that
  * fails settles its envelope and drains on, like any other. Then resume the
- * parents of late subagent results no live run delivered, and the
+ * parents of late subagent results no live run delivered, wake the children
+ * whose parent left their question unanswered past its wait, and resume the
  * conversations of async tool results no live run delivered.
  */
 async function sweepQueuedIngress(): Promise<void> {
@@ -127,6 +133,14 @@ async function sweepQueuedIngress(): Promise<void> {
     resumeAfterSubagentResult,
   ).catch((err: unknown): void => {
     logError("Lost subagent result recovery failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+  await timeOutSubagentQuestions(
+    loadReentryTarget,
+    CONTINUATION_DEPENDENCIES.subagents,
+  ).catch((err: unknown): void => {
+    logError("Unanswered subagent question recovery failed", {
       error: err instanceof Error ? err.message : String(err),
     });
   });

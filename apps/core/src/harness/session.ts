@@ -43,6 +43,7 @@ import {
 } from "../shared/workspaces.ts";
 import {
   markAsyncToolHandback,
+  rootEventId,
   type AsyncToolDelivery,
 } from "./async-tool-result.ts";
 import {
@@ -445,6 +446,24 @@ export class Session {
       accountId: this.accountId,
       key: this.eventId,
       ttlSeconds: 86400,
+    });
+  }
+
+  /**
+   * Takes one of the turns this run's lineage may start by messaging its
+   * subagents: the run a person started and every run continuing it share
+   * `limit`, so two agents cannot keep waking each other.
+   */
+  async claimMessageTurn(limit: number): Promise<boolean> {
+    if (!this.accountId) {
+      throw new Error("Account ID is required for runtime claims");
+    }
+
+    return runtime.mutate("claimEvent", {
+      accountId: this.accountId,
+      key: `message-turns:${rootEventId(this.eventId)}`,
+      ttlSeconds: 86400,
+      limit: limit,
     });
   }
 
