@@ -155,7 +155,7 @@
       "devDependencies": {
         "@types/aws-lambda": "8.10.164",
         "@types/bun": "^1.4.4",
-        "@types/node": "^26.6.5",
+        "@types/node": "^26.6.6",
         "selfsigned": "^5.5.0",
       },
       "peerDependencies": {
@@ -209,7 +209,7 @@
       "devDependencies": {
         "@playwright/test": "^1.64.1",
         "@tailwindcss/postcss": "^4.3.3",
-        "@types/node": "^26.6.5",
+        "@types/node": "^26.6.6",
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
         "bun-types": "^1.4.4",
@@ -248,7 +248,7 @@
       "devDependencies": {
         "@docusaurus/tsconfig": "^3.10.2",
         "@docusaurus/types": "3.10.2",
-        "@types/node": "^26.6.5",
+        "@types/node": "^26.6.6",
         "@types/react": "19.3.0",
         "webpack": "5.112.2",
       },
