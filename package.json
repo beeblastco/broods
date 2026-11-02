@@ -61,7 +61,6 @@
     "@microsoft/teams.apps": {
       "@azure/msal-node": "7.1.1"
     },
-    "@types/react": "19.2.18",
     "@vercel/cli-config": {
       "zod": "4.6.7"
     },
