@@ -399,6 +399,19 @@ export declare const api: {
       >;
     };
     config: {
+      canvasBadges: FunctionReference<
+        "query",
+        "public",
+        { projectId: Id<"projects">; stageId?: Id<"stages"> },
+        Record<
+          Id<"agentConfigs">,
+          {
+            publicAccess: boolean;
+            skills: Array<string>;
+            structuredOutput: boolean;
+          }
+        >
+      >;
       create: FunctionReference<
         "mutation",
         "public",
@@ -1057,6 +1070,126 @@ export declare const api: {
       Id<"environmentVariables">
     >;
   };
+  github: {
+    begin: FunctionReference<
+      "mutation",
+      "public",
+      {
+        createRepo?: {
+          baseUrl: string;
+          name: string;
+          owner: string;
+          private: boolean;
+          projectId: Id<"projects">;
+        };
+        returnTo?: string;
+      },
+      { url: string }
+    >;
+    finish: FunctionReference<
+      "action",
+      "public",
+      { code: string; installationId?: number; state: string },
+      { projectId?: Id<"projects">; returnTo?: string }
+    >;
+    inspectRepo: FunctionReference<
+      "action",
+      "public",
+      { installationId: number; projectId?: Id<"projects">; repoId: number },
+      {
+        repo: {
+          defaultBranch: string;
+          fullName: string;
+          installationId: number;
+          private: boolean;
+          repoId: number;
+        };
+        roots: Array<{
+          installDirectory: string;
+          manager: "bun" | "npm" | "pnpm" | "yarn";
+          rootDirectory: string;
+        }>;
+      }
+    >;
+    linkRepo: FunctionReference<
+      "action",
+      "public",
+      {
+        projectId: Id<"projects">;
+        target: {
+          baseUrl: string;
+          developmentBranch?: string;
+          installationId: number;
+          repoId: number;
+          rootDirectory: string;
+        };
+      },
+      {
+        deployKeyIds: Array<Id<"deployKeys">>;
+        developmentBranch?: string;
+        fullName: string;
+        installationId: number;
+        productionBranch: string;
+        protectedSecrets: boolean;
+        repoId: number;
+        rootDirectory: string;
+        setupPullRequestUrl?: string;
+      }
+    >;
+    listRepos: FunctionReference<
+      "action",
+      "public",
+      { projectId?: Id<"projects"> },
+      Array<{
+        defaultBranch: string;
+        fullName: string;
+        installationId: number;
+        private: boolean;
+        repoId: number;
+      }>
+    >;
+    status: FunctionReference<
+      "query",
+      "public",
+      { projectId?: Id<"projects"> },
+      {
+        canConnect: boolean;
+        canLink: boolean;
+        configured: boolean;
+        deploys: Array<{
+          branch: string;
+          conclusion?: string;
+          sha: string;
+          status: string;
+          updatedAt: number;
+          url: string;
+        }>;
+        installations: Array<{
+          accountType: "User" | "Organization";
+          installationId: number;
+          login: string;
+        }>;
+        repo?: {
+          deployKeyIds: Array<Id<"deployKeys">>;
+          developmentBranch?: string;
+          fullName: string;
+          installationId: number;
+          productionBranch: string;
+          protectedSecrets: boolean;
+          repoId: number;
+          rootDirectory: string;
+          setupPullRequestUrl?: string;
+        };
+        webUrl?: string;
+      }
+    >;
+    unlinkRepo: FunctionReference<
+      "mutation",
+      "public",
+      { projectId: Id<"projects"> },
+      null
+    >;
+  };
   logs: {
     fetchModelRates: FunctionReference<
       "query",
@@ -1399,8 +1532,20 @@ export declare const api: {
         _id: Id<"projects">;
         authId: string;
         description?: string;
+        linkClaim?: { expiresAt: number; repoId: number };
         name: string;
         orgId: Id<"orgs">;
+        repo?: {
+          deployKeyIds: Array<Id<"deployKeys">>;
+          developmentBranch?: string;
+          fullName: string;
+          installationId: number;
+          productionBranch: string;
+          protectedSecrets: boolean;
+          repoId: number;
+          rootDirectory: string;
+          setupPullRequestUrl?: string;
+        };
         slug: string;
         updatedAt: number;
       }
@@ -1414,8 +1559,20 @@ export declare const api: {
         _id: Id<"projects">;
         authId: string;
         description?: string;
+        linkClaim?: { expiresAt: number; repoId: number };
         name: string;
         orgId: Id<"orgs">;
+        repo?: {
+          deployKeyIds: Array<Id<"deployKeys">>;
+          developmentBranch?: string;
+          fullName: string;
+          installationId: number;
+          productionBranch: string;
+          protectedSecrets: boolean;
+          repoId: number;
+          rootDirectory: string;
+          setupPullRequestUrl?: string;
+        };
         slug: string;
         updatedAt: number;
       }>
@@ -5412,6 +5569,118 @@ export declare const internal: {
       >;
     };
   };
+  github: {
+    linkAccess: FunctionReference<
+      "query",
+      "internal",
+      { authId: string; projectId?: Id<"projects"> },
+      Array<{
+        accountType: "User" | "Organization";
+        installationId: number;
+        login: string;
+      }>
+    >;
+    mintLinkKeys: FunctionReference<
+      "mutation",
+      "internal",
+      { authId: string; projectId: Id<"projects">; repoId?: number },
+      {
+        development: string;
+        keyIds: Array<Id<"deployKeys">>;
+        production: string;
+        projectId: Id<"projects">;
+        projectSlug: string;
+      }
+    >;
+    recordDeploy: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        branch: string;
+        conclusion?: string;
+        repoId: number;
+        runAttempt?: number;
+        runId: number;
+        sha: string;
+        status: string;
+        url: string;
+      },
+      null
+    >;
+    removeInstallation: FunctionReference<
+      "mutation",
+      "internal",
+      { installationId: number },
+      null
+    >;
+    renameRepo: FunctionReference<
+      "mutation",
+      "internal",
+      { fullName: string; repoId: number },
+      null
+    >;
+    revokeKeys: FunctionReference<
+      "mutation",
+      "internal",
+      { keyIds: Array<Id<"deployKeys">>; projectId: Id<"projects"> },
+      null
+    >;
+    saveLink: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        authId: string;
+        projectId: Id<"projects">;
+        repo: {
+          deployKeyIds: Array<Id<"deployKeys">>;
+          developmentBranch?: string;
+          fullName: string;
+          installationId: number;
+          productionBranch: string;
+          protectedSecrets: boolean;
+          repoId: number;
+          rootDirectory: string;
+          setupPullRequestUrl?: string;
+        };
+      },
+      null
+    >;
+    storeInstallations: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        installations: Array<{
+          accountType: "User" | "Organization";
+          installationId: number;
+          login: string;
+        }>;
+        orgId: Id<"orgs">;
+      },
+      null
+    >;
+    takeSignIn: FunctionReference<
+      "mutation",
+      "internal",
+      { authId: string; state: string },
+      {
+        createRepo?: {
+          baseUrl: string;
+          name: string;
+          owner: string;
+          private: boolean;
+          projectId: Id<"projects">;
+        };
+        orgId: Id<"orgs">;
+        returnTo?: string;
+      }
+    >;
+    unlinkRepos: FunctionReference<
+      "mutation",
+      "internal",
+      { repoIds: Array<number> },
+      null
+    >;
+  };
   mcp: {
     nodeContext: FunctionReference<
       "query",
@@ -5555,7 +5824,12 @@ export declare const internal: {
       "internal",
       {
         conversationKey: string;
-        events: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
       },
       null
     >;
@@ -6274,13 +6548,13 @@ export declare const internal: {
       "mutation",
       "internal",
       { eventId: string; handback: "detached" | "stored" },
-      boolean
+      null
     >;
     markAsyncToolHandback: FunctionReference<
       "mutation",
       "internal",
       { handback: "detached" | "stored"; resultId: string },
-      boolean
+      null
     >;
     pruneExpired: FunctionReference<"mutation", "internal", {}, number>;
     releaseClaim: FunctionReference<
@@ -6618,9 +6892,15 @@ export declare const internal: {
       "internal",
       {
         conversationKey: string;
-        events: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
         ownerEventId: string;
         ownerGeneration: number;
+        savesAll?: boolean;
       },
       null
     >;
@@ -6969,7 +7249,12 @@ export declare const internal: {
         };
         conversationKey: string;
         error?: string;
-        events?: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events?: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
         ownerEventId: string;
         ownerGeneration: number;
         result?: any;
@@ -6983,7 +7268,12 @@ export declare const internal: {
       {
         claimSteering?: boolean;
         conversationKey: string;
-        events?: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events?: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
         leaseTtlMs: number;
         ownerEventId: string;
         ownerGeneration: number;
@@ -7081,7 +7371,12 @@ export declare const internal: {
       "internal",
       {
         conversationKey: string;
-        events?: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events?: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
         leaseTtlMs: number;
         ownerEventId: string;
         ownerGeneration: number;

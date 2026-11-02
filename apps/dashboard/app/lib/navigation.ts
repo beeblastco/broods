@@ -55,6 +55,7 @@ export const SANDBOX_TABS = [
 
 export const SETTINGS_TABS = [
   { id: "general", label: "General" },
+  { id: "git", label: "Git" },
   { id: "variables", label: "Environment variables" },
   { id: "keys", label: "Keys" },
   { id: "webhooks", label: "Webhooks" },

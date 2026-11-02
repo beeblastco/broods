@@ -11,23 +11,22 @@ To deploy one, copy the folder into a `broods/` project dir and register it with
 
 The `broods/` bundle authenticates the way a developer does: `broods login` in the browser, driven by its onboard script. The `maintain/` bundle authenticates with account roles, shipped in [#355](https://github.com/beeblastco/broods/pull/355). A role is a scoped credential you exchange for a short-lived session. The Roles section of `apps/docs/docs/guides/security.md` is the reference; the skills do not restate it.
 
-For the agent bundle, mint a role pinned to the agent's own stage and hand the agent either a session token or the runtime key plus the role id, through the env store.
+For the agent bundle, mint a role pinned to the agent's own stage and give its `agents:write` rule `resources.resourceIds: ["<agentId>"]`, so the agent can patch only itself. Hand the agent the runtime key plus the role id through the sandbox config's `envVars` as `env("NAME")` references. Prefer that to a stored session token, which expires within 12 hours.
 
 ## What the skills ask for but nothing enforces
 
 Each of these is prose in a `SKILL.md` today. An agent that ignores it meets no error, so treat this as the work left on #58, not as behavior you can rely on.
 
-| Rule                                                                                   | Where it would belong                                                                                               |
-| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| An agent may not patch the fields that bound it (`policies`, `denyTools`, `scheduler`) | field granularity in the agents PATCH normalizer, or its own action in `API_POLICY_ACTIONS`                         |
-| An agent may only patch its own id                                                     | an agent binding on `accountRoles`, which today scopes by project and stage only                                    |
-| A cron-fired run may not touch schedules                                               | `apps/core/src/harness/tools/index.ts` fences the tools, `/v1/crons` does not. deny `crons:write` in the run's role |
-| A sandbox may only use an image the channel record allows                              | `sandboxImages` is stored and validated but read by no runtime code                                                 |
+| Rule                                                                                   | Where it would belong                                                                                                                                                                               |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An agent may not patch the fields that bound it (`policies`, `denyTools`, `scheduler`) | field granularity in the agents PATCH normalizer, or its own action in `API_POLICY_ACTIONS`                                                                                                         |
+| A cron-fired run may not touch schedules                                               | `apps/core/src/harness/tools/index.ts` fences the tools and a pinned role cannot create crons, but `PATCH` and `DELETE /v1/crons/{id}` stay open. there is no per-run role to deny `crons:write` in |
+| A sandbox may only use an image the channel record allows                              | `sandboxImages` is stored and validated but read by no runtime code                                                                                                                                 |
 
 ## Remaining phases
 
 - Sandbox images: `applyChannelRecord` copies `sandboxImages` onto the runtime config, and provisioning rejects anything outside it, as an allow-list rather than a default (see #74).
-- A self-handle tool in `apps/core/src/harness/tools/`, exposing a deployed agent to itself for self-update and self-configuration. It does the role exchange server-side, so a raw token never reaches the model loop, and it takes the agent id from the run context the way `schedule.tool.ts` already does, which turns three of the four prose rules above into code. The agent-scope counterpart to the MCP server: MCP serves agents outside the platform, a built-in tool serves the one inside it, because only the built-in tool knows which agent is calling.
+- A self-handle tool in `apps/core/src/harness/tools/`, exposing a deployed agent to itself for self-update and self-configuration. It does the role exchange server-side, so a raw token never reaches the model loop, and it takes the agent id from the run context the way `schedule.tool.ts` already does, which turns two of the three prose rules above into code. The agent-scope counterpart to the MCP server: MCP serves agents outside the platform, a built-in tool serves the one inside it, because only the built-in tool knows which agent is calling.
 - Dreaming as a documented preset rather than new infrastructure. The operator sets it up once:
 
 ```ts
@@ -39,4 +38,4 @@ defineCron({
 });
 ```
 
-The fired run reads `maintain/references/dreaming.md`: review the window, extract one lesson, patch its own instructions or skills, log the diff.
+The fired run reads `maintain/references/dreaming.md`: review the window, extract one lesson, patch its instructions or its `skills.allowed` list, log the diff.

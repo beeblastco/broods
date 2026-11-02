@@ -1,18 +1,50 @@
 "use client";
 
-import { AllowanceUsage } from "@/app/(main)/[projectId]/dashboard/components/AllowanceUsage";
 import { ORG_TABS, pickTab } from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useQuery } from "convex/react";
+import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
-import { ApiAccessPanel } from "./components/ApiAccessPanel";
-import { MembersPanel } from "./components/MembersPanel";
-import { OrgDangerPanel } from "./components/OrgDangerPanel";
+import { useEffect } from "react";
 import { OrgGeneralPanel } from "./components/OrgGeneralPanel";
-import { OrgPoliciesPanel } from "./components/OrgPoliciesPanel";
-import { PermissionsPanel } from "./components/PermissionsPanel";
-import { RolesPanel } from "./components/RolesPanel";
+import {
+  loadAllowanceUsage,
+  loadApiAccessPanel,
+  loadMembersPanel,
+  loadOrgDangerPanel,
+  loadOrgPoliciesPanel,
+  loadPermissionsPanel,
+  loadRolesPanel,
+  ORG_PANELS,
+} from "./panels";
+
+/** The line a padded tab shows while it queries, held while its chunk loads. */
+function ColumnLoading(): React.JSX.Element {
+  return <p className="text-sm text-muted-foreground">Loading…</p>;
+}
+
+/** The same line in an edge-to-edge tab, which pads its own content. */
+function FlushLoading(): React.JSX.Element {
+  return <p className="px-6 pt-6 text-sm text-muted-foreground">Loading…</p>;
+}
+
+// General is the default tab and ships with the page; the others load the
+// first time they are opened. Each passes `loading`, which is what gives it a
+// Suspense boundary of its own: without one its download suspends up to the
+// route's loading.tsx. The option object is spelled out at each call:
+// Turbopack reads it statically.
+const AllowanceUsage = dynamic(loadAllowanceUsage, { loading: ColumnLoading });
+const MembersPanel = dynamic(loadMembersPanel, { loading: FlushLoading });
+const RolesPanel = dynamic(loadRolesPanel, { loading: FlushLoading });
+const OrgPoliciesPanel = dynamic(loadOrgPoliciesPanel, {
+  loading: FlushLoading,
+});
+const PermissionsPanel = dynamic(loadPermissionsPanel, {
+  loading: FlushLoading,
+});
+const ApiAccessPanel = dynamic(loadApiAccessPanel, { loading: FlushLoading });
+const OrgDangerPanel = dynamic(loadOrgDangerPanel, { loading: ColumnLoading });
 
 // The key, member and access lists are laid out like Monitoring: the toolbar, the
 // table and the detail panel fill the page edge to edge, nothing scrolls but
@@ -29,6 +61,13 @@ export default function OrgSettingsPage(): React.JSX.Element {
   const org = useQuery(api.org.orgs.getActive, {});
   const searchParams = useSearchParams();
   const tab = pickTab(ORG_TABS, searchParams.get("tab"));
+
+  // No panel renders before the org query answers. A cold load onto a
+  // split-out tab fetches its chunk alongside that query, not after it. A
+  // failed fetch stays quiet here; the panel's own load surfaces it.
+  useEffect(() => {
+    void ORG_PANELS[tab.id]?.().catch((): void => {});
+  }, [tab]);
 
   const renderPanel = (): React.JSX.Element | null => {
     if (!org) return null;

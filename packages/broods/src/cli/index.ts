@@ -200,8 +200,9 @@ ${GLOBAL_OPTIONS}`,
   deploy: `Usage: broods deploy [options]
 
 Syncs Production once and writes BROODS_API_KEY to .env.local, plus
-BROODS_USER_TOKEN_SECRET when the stage has no signing secret yet. Ignores
-BROODS_STAGE by design. Pass --stage to deploy anywhere else.
+BROODS_USER_TOKEN_SECRET when the stage has no signing secret yet. With CI
+set it writes neither. Ignores BROODS_STAGE by design. Pass --stage to deploy
+anywhere else.
 
 Options:
   --prune               Allow deploy to delete undeclared remote resources
@@ -1252,14 +1253,15 @@ async function deploy(args: string[]): Promise<void> {
  * the bare runtime key, so `signUserToken` needs the secret from the first
  * sync. The secret is shown once, so having none locally means rotating it.
  * A production stage that already has one keeps it: some backend may sign
- * with it, and rotating would void every token it hands out.
+ * with it, and rotating would void every token it hands out. CI skips both:
+ * its checkout is thrown away, so a secret minted there could never be read.
  */
 async function applyDeploymentKey(
   client: BroodsSyncClient,
   manifest: CliManifest,
   deployment: RemoteManifestResponse["deployment"],
 ): Promise<void> {
-  if (!deployment) return;
+  if (!deployment || process.env.CI) return;
   if (deployment.apiKey) {
     await writeEnvValue("BROODS_API_KEY", deployment.apiKey);
     printSuccess(`Wrote BROODS_API_KEY (${deployment.keyHint}) to .env.local`);
