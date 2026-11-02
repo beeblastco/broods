@@ -107,9 +107,18 @@ const STORED_TOOL_MESSAGE_BYTES = 768 * 1024;
 
 export type RunTrigger = "cron";
 
+/**
+ * A user message as ingress carries it. `metadata` is hook data kept on the stored-event envelope,
+ * never in the model message. `dedupeKey` keys its saved row: a resume carries its result's
+ * hand-back key, so saving the row stores the result, once even on a retried write.
+ */
+export type IngressUserMessage = UserModelMessage & {
+  metadata?: unknown;
+  dedupeKey?: string;
+};
+
 export type ConversationIngressEvent =
-  // Opaque hook data, stored on the event envelope and never in the model message.
-  | (UserModelMessage & { metadata?: unknown })
+  | IngressUserMessage
   | AssistantModelMessage
   | ToolModelMessage
   | (SystemModelMessage & { persist?: boolean });
@@ -395,9 +404,11 @@ export class Session {
   // A stale boundary stores nothing and drops its rows: the conversation has moved on.
   async stepBoundary(
     messages: ModelMessage[],
-    options: { claimSteering: boolean } = { claimSteering: true },
+    options: { claimSteering: boolean; dedupeKeys?: string[] } = {
+      claimSteering: true,
+    },
   ): Promise<StepBoundary> {
-    const events = await this.storedEvents(messages);
+    const events = await this.storedEvents(messages, options.dedupeKeys);
     if (this.ownerGeneration === undefined) {
       await this.appendStoredEvents(events);
 
@@ -535,12 +546,14 @@ export class Session {
   }
 
   async persistModelMessages(
-    messages: ModelMessage[],
-    onSaved?: (saved: number) => void,
-    dedupeKeys?: string[],
+    messages: ConversationIngressEvent[],
+    options: {
+      onSaved?: (saved: number) => void;
+      dedupeKeys?: string[];
+    } = {},
   ): Promise<string[]> {
-    const events = await this.storedEvents(messages, dedupeKeys);
-    await this.appendStoredEvents(events, onSaved);
+    const events = await this.storedEvents(messages, options.dedupeKeys);
+    await this.appendStoredEvents(events, options.onSaved);
 
     return events.map((entry): string => entry.cursor);
   }
@@ -804,7 +817,6 @@ export class Session {
 
   private async appendConversationEvents(
     events: AppendedConversationEvent[],
-    savesAll = false,
   ): Promise<void> {
     if (this.ownerGeneration !== undefined) {
       const startedAt = performance.now();
@@ -813,7 +825,6 @@ export class Session {
         ownerEventId: this.eventId,
         ownerGeneration: this.ownerGeneration,
         events: events,
-        ...(savesAll ? { savesAll: true } : {}),
       });
       this.confirmOwner(startedAt);
 
@@ -832,11 +843,7 @@ export class Session {
     if (events.length === 0) return;
     let saved = 0;
     for (const batch of storedEventBatches(events)) {
-      await this.appendConversationEvents(
-        batch,
-        saved + batch.length === events.length &&
-          this.pendingStoredEvents.length === 0,
-      );
+      await this.appendConversationEvents(batch);
       saved += batch.length;
       onSaved?.(saved);
     }
@@ -1259,7 +1266,7 @@ export class Session {
    * here. Media carried as bytes is stored first, so the row keeps its link.
    */
   private async storedEvents(
-    messages: ModelMessage[],
+    messages: ConversationIngressEvent[],
     dedupeKeys?: string[],
   ): Promise<AppendedConversationEvent[]> {
     if (!this.persist) return [];
@@ -1278,7 +1285,10 @@ export class Session {
         this.eventId,
         producer,
       );
-      const dedupeKey = dedupeKeys?.[index];
+      const source = messages[index];
+      const dedupeKey =
+        dedupeKeys?.[index] ??
+        (source?.role === "user" ? source.dedupeKey : undefined);
       const toolResultIds = this.toolResultIdsOf(message);
 
       return event
@@ -1308,9 +1318,13 @@ export function createStoredEventFromModelMessage(
 
   switch (message.role) {
     case "user": {
-      const { metadata, ...userMessage } = message as UserModelMessage & {
-        metadata?: unknown;
-      };
+      // Opaque hook metadata rides the stored envelope; the persisted model
+      // message stays a clean AI SDK shape.
+      const {
+        metadata,
+        dedupeKey: _dedupeKey,
+        ...userMessage
+      } = message as IngressUserMessage;
 
       return toStoredConversationEvent(
         sanitizeUserMessage(userMessage),
@@ -1398,14 +1412,22 @@ export function stripEnvelopeFieldsFromMessages(
   messages: ModelMessage[],
 ): ModelMessage[] {
   return messages.map((message) => {
-    if (!("metadata" in message) && !("createdAt" in message)) {
+    if (
+      !("metadata" in message) &&
+      !("createdAt" in message) &&
+      !("dedupeKey" in message)
+    ) {
       return message;
     }
     const {
       metadata: _metadata,
       createdAt: _createdAt,
+      dedupeKey: _dedupeKey,
       ...rest
-    } = message as ModelMessage & { metadata?: unknown; createdAt?: string };
+    } = message as ModelMessage &
+      Partial<Pick<IngressUserMessage, "metadata" | "dedupeKey">> & {
+        createdAt?: string;
+      };
 
     return rest as ModelMessage;
   });

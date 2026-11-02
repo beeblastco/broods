@@ -5,7 +5,6 @@ import {
   type JSONSchema7,
   type ToolModelMessage,
   type UserContent,
-  type UserModelMessage,
 } from "ai";
 import { z } from "zod";
 import {
@@ -23,6 +22,7 @@ import {
   type AsyncAgentResultRecord,
 } from "../async-agent-result.ts";
 import { getIngressStatusByEventId } from "../ingress.ts";
+import type { IngressUserMessage } from "../session.ts";
 
 export const SUBAGENT_TOOL_PROPERTIES: Record<string, JSONSchema7> = {
   taskId: {
@@ -75,7 +75,7 @@ export type AskParent = (
 
 export interface SubagentWatch {
   answerQuestion(taskId: string, answer: string): boolean;
-  takeParentMessages(): Promise<UserModelMessage[]>;
+  takeParentMessages(): Promise<IngressUserMessage[]>;
 }
 
 export interface SubagentToolInput {

@@ -38,6 +38,7 @@ describe("completionToParentMessage", () => {
       },
     });
 
+    expect(message.dedupeKey).toBe("async-tool:async_tool_1:completed");
     expect(message.content).toEqual([
       {
         type: "text",

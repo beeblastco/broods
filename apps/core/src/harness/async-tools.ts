@@ -5,8 +5,11 @@
  * conversation. The rows themselves live in `async-tool-result.ts`.
  */
 
-import { SWEPT_HANDBACKS } from "@broods/convex/model/subagentResults";
-import type { JSONValue, UserModelMessage } from "ai";
+import {
+  asyncToolResultDedupeKey,
+  SWEPT_HANDBACKS,
+} from "@broods/convex/model/subagentResults";
+import type { JSONValue } from "ai";
 import { toErrorMessage } from "../shared/errors.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import {
@@ -15,6 +18,7 @@ import {
   type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
 import type { ContinuationOutcome } from "./responses.ts";
+import type { IngressUserMessage } from "./session.ts";
 import { lostResultWindows } from "./subagents.ts";
 import {
   modelValueToUserParts,
@@ -82,7 +86,7 @@ export async function resumeLostAsyncToolResults(
 /** The user message that hands a settled async tool result to the parent conversation. */
 export function completionToParentMessage(
   completion: AsyncToolCompletion,
-): UserModelMessage {
+): IngressUserMessage {
   const metadata = [
     `statusId: ${completion.resultId}`,
     `toolName: ${completion.toolName}`,
@@ -96,6 +100,7 @@ export function completionToParentMessage(
 
   return {
     role: "user",
+    dedupeKey: asyncToolResultDedupeKey(completion.resultId, completion.status),
     content:
       resultParts.length > 0
         ? prependTextToUserParts(prefix, resultParts)

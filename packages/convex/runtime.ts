@@ -11,7 +11,6 @@ import { sha256Hex } from "./model/accountSecrets";
 import {
   asyncToolDeliveryValidator,
   reservedSandboxValidator,
-  resultFenceValidator,
   runtimeAsyncAgentResultsFields,
   runtimeAsyncToolResultsFields,
   runtimeConversationEventsFields,
@@ -56,8 +55,8 @@ export const conversationEventsValidator = v.array(
   }),
 );
 
-/** The late result a resume envelope carries, as its fence fields name it. */
-export type ResultFence = Infer<typeof resultFenceValidator>;
+/** A late result a history write stored, by the field a resume envelope names it by. */
+export type ResultFence = { resultEventId: string } | { toolResultId: string };
 
 /** How an async run ended, or what it waits on, as its polling row records it. */
 export const asyncAgentOutcomeValidator = v.object({
