@@ -26,6 +26,9 @@ const FLUSH_DELAY_MS = 10_000;
  */
 export const PAGE_RENDER_BUDGET_MS = 1000;
 
+// How long streamed chat chunks gather before one render commits them.
+export const STREAM_COMMIT_MS = 50;
+
 /**
  * What a real user's paint and navigation are held to. Tighter than the
  * probe budget on purpose: that one carries runner noise, and loosening it

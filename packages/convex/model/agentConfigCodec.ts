@@ -8,6 +8,7 @@
  * both core and the config plane use.
  */
 
+import { v, type Infer } from "convex/values";
 import { isPlainObject } from "./objects";
 import {
   ACCOUNT_ENV_PLACEHOLDER_PATTERN,
@@ -117,14 +118,16 @@ export interface FlatPatch {
 export type NestedAgentConfig = Record<string, unknown>;
 
 /** The bits of one agent config its canvas card and its skill cards draw. */
-export interface AgentCanvasBadge {
-  /** Callers need no runtime key, so the card's globe shows green. */
-  publicAccess: boolean;
-  /** Skill refs the agent loads: `skills.allowed` while skills are on, else none. */
-  skills: string[];
-  /** The model answers with data instead of text. */
-  structuredOutput: boolean;
-}
+export const agentCanvasBadgeValidator = v.object({
+  // Callers need no runtime key, so the card's globe shows green.
+  publicAccess: v.boolean(),
+  // Skill refs the agent loads: `skills.allowed` while skills are on, else none.
+  skills: v.array(v.string()),
+  // The model answers with data instead of text.
+  structuredOutput: v.boolean(),
+});
+
+export type AgentCanvasBadge = Infer<typeof agentCanvasBadgeValidator>;
 
 /**
  * Projects a config row to its canvas badge. The canvas badges query and the
