@@ -2227,8 +2227,8 @@ async function prepareDirectTurn(
 function directSession(event: DirectInboundEvent): Session {
   // A WebSocket-origin turn carries a connectionId; a background job it launches
   // republishes to the durable conversation stream so a reconnecting client
-  // replays it. Plain direct/async API turns have no delivery target (poll only).
-  const delivery: AsyncToolDelivery | undefined = event.connectionId
+  // replays it. Plain direct/async API turns deliver by status polling.
+  const delivery: AsyncToolDelivery = event.connectionId
     ? {
         kind: "nats",
         connectionId: event.connectionId,
@@ -2244,7 +2244,7 @@ function directSession(event: DirectInboundEvent): Session {
             : {}),
           source: event.replyTarget.source,
         }
-      : undefined;
+      : { kind: "async" };
   if (event.ownerGeneration === undefined) {
     throw new Error("Direct turn is missing its durable owner generation");
   }

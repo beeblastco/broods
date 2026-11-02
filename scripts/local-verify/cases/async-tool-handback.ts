@@ -52,12 +52,11 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
       }),
   );
   const statusId = asked.questions?.[0]?.statusId;
-  if (asked.status !== "awaiting_input" || statusId === undefined) {
-    console.log(
-      `  skip async tool hand-back (the agent asked nothing: ${JSON.stringify(asked)})`,
-    );
-    return;
-  }
+  assertStep(
+    "the plain HTTP run asked with ask_questions",
+    asked.status === "awaiting_input" && statusId !== undefined,
+    JSON.stringify(asked),
+  );
 
   const answered = await fetch(`${context.edgeUrl}/v1/runs`, {
     method: "POST",
@@ -94,12 +93,12 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
     JSON.stringify(row),
   );
 
-  // The resumed turn runs under the event that asked, once per result: the
-  // question row's parent is the asking turn's scoped event id.
+  // The resumed turn runs under the event that asked, once per result.
   const scope = row.parentEventId.slice(
     0,
     row.parentEventId.indexOf(API_SCOPE_MARKER),
   );
+  const askEventId = `${scope}${API_SCOPE_MARKER}${key}-ask`;
   const resumed = await pollUntil(
     {
       initialIntervalMs: 500,
@@ -110,7 +109,7 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
       const continuation = convexResult(
         context,
         "runtime:getAsyncAgentResult",
-        { eventId: `${row.parentEventId}:async-tools:${statusId}` },
+        { eventId: `${askEventId}:async-tools:${statusId}` },
         "read the resumed turn's row",
       ) as { status: string; response?: unknown } | null;
 

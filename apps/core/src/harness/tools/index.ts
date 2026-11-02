@@ -399,8 +399,9 @@ export async function createTools(
     );
   }
 
-  // ask_questions needs a delivery to resume on: a channel or a WebSocket turn.
-  // A subagent session carries none, and a cron-fired run has nobody typing.
+  // ask_questions needs a delivery to resume on: a channel, a WebSocket turn or
+  // the direct API's status polling. A subagent session carries none, and a
+  // cron-fired run has nobody typing.
   const session = context.session;
   if (session?.delivery !== undefined && session.trigger !== "cron") {
     Object.assign(

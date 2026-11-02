@@ -13,6 +13,7 @@ import * as ingress from "../src/harness/ingress.ts";
 import type { ChannelInboundEvent } from "../src/harness/integrations.ts";
 import { resetPlanLimitsForTests } from "../src/harness/plan-limits.ts";
 import { Session } from "../src/harness/session.ts";
+import { createTools } from "../src/harness/tools/index.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import { getStorage, resetStorageForTests } from "../src/shared/storage.ts";
 import { coreRequest } from "./helpers/http.ts";
@@ -285,6 +286,7 @@ describe("in-process worker dispatch", () => {
 });
 
 describe("streamed runs", (): void => {
+  let agentLoop: ReturnType<typeof spyOn<typeof harness, "runAgentLoop">>;
   let settle: ReturnType<typeof spyOn<typeof ingress, "settleIngress">>;
   let modelPasses: number;
   // Turns prepared: loading history and storing the new input.
@@ -335,7 +337,7 @@ describe("streamed runs", (): void => {
       },
     );
     // The pass ends before any model call; only when it starts matters.
-    spyOn(harness, "runAgentLoop").mockImplementation(
+    agentLoop = spyOn(harness, "runAgentLoop").mockImplementation(
       async (): Promise<never> => {
         modelPasses += 1;
         throw new Error("model pass reached");
@@ -414,6 +416,24 @@ describe("streamed runs", (): void => {
     );
     expect(modelPasses).toBe(2);
     for (const body of bodies) expect(body).toContain("model pass reached");
+  });
+
+  it("offers ask_questions to a plain HTTP run, answered by status polling", async (): Promise<void> => {
+    const response = await streamedRun(1);
+    await drainWorkerQueue();
+    await response.text();
+
+    const [session] = agentLoop.mock.calls[0]!;
+    const tools = await createTools(
+      {
+        conversationKey: session.conversationKey,
+        session: session,
+        modelProviderName: "anthropic",
+        modelProvider: undefined,
+      },
+      {},
+    );
+    expect(Object.keys(tools)).toEqual(["ask_questions"]);
   });
 
   it("starts nothing for a client that left while it waited", async (): Promise<void> => {

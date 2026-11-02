@@ -287,10 +287,10 @@ export interface SessionOptions {
   accountId?: string;
   agentId?: string;
   agentConfig?: AgentConfig;
-  // Where a deferred result spawned in this turn (a detached background job)
-  // should be delivered when it settles in a later invocation. Carries the
-  // originating chat channel or WebSocket connection; absent for plain
-  // direct/async API turns, which fall back to status polling.
+  // Where a deferred result spawned in this turn (a detached background job,
+  // an ask_questions prompt) should be delivered when it settles in a later
+  // invocation: the originating chat channel, the WebSocket connection, or
+  // `async` (status polling) for plain direct API turns.
   delivery?: AsyncToolDelivery;
   // A subagent replies to its parent, not to the channel, so it has no
   // `delivery`. Its policy input still has to name the parent's place and person.
