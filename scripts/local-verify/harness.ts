@@ -14,6 +14,14 @@ const MACHINE_CONNECT_TIMEOUT_MS = 15_000;
 const RUN_POLL_INTERVAL_MS = 200;
 const RUN_POLL_TIMEOUT_MS = 120_000;
 
+/** The fake GitHub App the local stack's Convex is configured with. */
+export const LOCAL_GITHUB_APP = {
+  appId: "1",
+  slug: "broods-local",
+  clientId: "local-github-client",
+  clientSecret: "local-github-client-secret",
+} as const;
+
 /** The prompt for a case that only needs the run to answer. */
 export const OK_AGENT = { system: "Reply with the single word OK." } as const;
 
@@ -48,9 +56,20 @@ export interface VerifyContext {
   configPlaneUrl: string;
   /** Runs the Convex CLI against the stack's backend with its admin key; never throws. */
   convex: (args: readonly string[]) => { ok: boolean; output: string };
+  /** `convex` without blocking, for a case that serves a fake the backend calls. */
+  convexAsync: (
+    args: readonly string[],
+  ) => Promise<{ ok: boolean; output: string }>;
   coreLogPath: string;
   /** The public URL: Traefik, in front of core, the config plane and the gateway. */
   edgeUrl: string;
+  /** The fake GitHub's port and the App credentials Convex holds for it. */
+  github: typeof LOCAL_GITHUB_APP & {
+    port: number;
+    /** PKCS#1 PEM; the fake checks the App's JWTs against its public half. */
+    privateKey: string;
+    webhookSecret: string;
+  };
   hasModelKey: boolean;
   measure: <T>(step: string, fn: () => Promise<T>) => Promise<T>;
   model: SmokeModel;
@@ -310,9 +329,12 @@ export function convexResult(
   ]);
   assertStep(step, cli.ok, cli.output.slice(-300));
 
-  // `convex run` prints the result as JSON after any log lines, and nothing
-  // for a function that returns null.
-  const start = cli.output.search(/^[[{"\dn]/m);
+  return convexOutputJson(cli.output);
+}
 
-  return start < 0 ? null : JSON.parse(cli.output.slice(start));
+/** The result `convex run` printed: JSON after any log lines, nothing for null. */
+export function convexOutputJson(output: string): unknown {
+  const start = output.search(/^[[{"\dn]/m);
+
+  return start < 0 ? null : JSON.parse(output.slice(start));
 }

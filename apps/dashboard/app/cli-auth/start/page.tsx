@@ -8,9 +8,8 @@
 import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
 import { toErrorMessage } from "@/app/lib/errors";
-import { currentSession, selfHosted } from "@/app/lib/selfHostSession";
+import { firstParam, signedInAccessToken } from "@/app/lib/serverPage";
 import { api } from "@broods/convex/_generated/api";
-import { withAuth } from "@workos-inc/authkit-nextjs";
 import { ConvexHttpClient } from "convex/browser";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -79,21 +78,6 @@ function advertisedBaseUrl(): string {
     throw new Error("login base URL is not configured; set BROODS_BASE_URL");
 
   return new URL(convexUrl.replace(".convex.cloud", ".convex.site")).origin;
-}
-
-function firstParam(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
-
-// A self-hosted session token is the Convex token itself. The proxy already
-// sent a signed-out caller to the key page with this link as `returnTo`.
-async function signedInAccessToken(): Promise<string> {
-  if (!selfHosted)
-    return (await withAuth({ ensureSignedIn: true })).accessToken;
-  const session = await currentSession();
-  if (!session) redirect("/auth/sign-in");
-
-  return session.token;
 }
 
 function isLocalCallback(value: string): boolean {

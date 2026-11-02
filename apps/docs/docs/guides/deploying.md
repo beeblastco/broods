@@ -10,7 +10,7 @@ How code in `broods/` reaches a stage, how secrets get there, and how to run it 
 | `broods dev --once` | same                                  | yes                        | no                  |
 | `broods deploy`     | `production`, or `stages.deploy`      | no                         | no                  |
 
-Both commands compile `broods/`, validate it, sync it, regenerate `broods/_generated/`, and write the runtime key to `.env.local` as `BROODS_API_KEY`. When the stage has no user token signing secret yet they also mint one and write it as `BROODS_USER_TOKEN_SECRET`; a stage that already has one keeps it, and the CLI warns when this checkout does not hold it ([details](../reference/cli.md#signing-secret)). A broken config fails before anything is written.
+Both commands compile `broods/`, validate it, sync it, regenerate `broods/_generated/`, and write the runtime key to `.env.local` as `BROODS_API_KEY`. When the stage has no user token signing secret yet they also mint one and write it as `BROODS_USER_TOKEN_SECRET`; a stage that already has one keeps it, and the CLI warns when this checkout does not hold it ([details](../reference/cli.md#signing-secret)). In CI (`CI` set) `deploy` writes neither. A broken config fails before anything is written.
 
 `deploy` ignores `BROODS_STAGE`. After `broods stage use staging`, `broods deploy` still writes to production, or to the stage `defineBroods({ stages: { deploy } })` names. Pass `--stage staging` to deploy elsewhere.
 
@@ -70,6 +70,8 @@ The key only reaches agents in its own stage that set `publicAccess: true`. It c
 Server, organization, project and stage together decide where a command writes. Run `broods whoami` when in doubt. The full rules, including shell exports winning over `.env.local`, are in the [CLI reference](../reference/cli.md).
 
 ## Deploying from CI
+
+On GitHub, [link the repo](github.md) and Broods writes the workflow and secrets for you. For any other CI:
 
 Create a project key (`bpdk_...`) for the project and stage in the dashboard. It can sync only that stage. It can set and list environment variables but never read them, and it cannot replace skills or hooks another stage manages.
 

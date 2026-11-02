@@ -1,7 +1,7 @@
 "use client";
 
 import { useSignedIn } from "@/app/hooks/useSignedIn";
-import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
+import { LazyCreateProjectDialog } from "@/app/components/LazyCreateProjectDialog";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { useRouteIntent } from "@/app/hooks/useRouteIntent";
@@ -93,7 +93,10 @@ export function ProjectSelector(): React.JSX.Element {
           New Project
         </Button>
 
-        <CreateProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+        <LazyCreateProjectDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+        />
       </>
     );
   }
@@ -155,7 +158,7 @@ export function ProjectSelector(): React.JSX.Element {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <CreateProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      <LazyCreateProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} />
     </>
   );
 }
