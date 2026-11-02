@@ -6,13 +6,20 @@
  * one frame per chunk over the WebSocket, parsed into UIMessages the same way.
  */
 import { agentEndpointPath, resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { STREAM_COMMIT_MS } from "@/app/lib/perfReport";
 import type { UIMessage } from "ai";
 import {
   parseJsonEventStream,
   readUIMessageStream,
   uiMessageChunkSchema,
 } from "ai";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type {
   PendingQuestion,
   QuestionAnswer,
@@ -155,6 +162,37 @@ export function useAgentChat({
       continuationMessageIdRef.current = null;
       subagentMessageIdsRef.current = {};
 
+      // A model streams far more chunks than a reader can see: queue each chunk's update and
+      // commit the queue once per window, as a transition so React yields between markdown
+      // blocks. The main stream's end commits at once.
+      let queued: Array<(prev: UIMessage[]) => UIMessage[]> = [];
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const commitQueued = (): void => {
+        timer = undefined;
+        const updates = queued;
+        queued = [];
+        // An aborted turn's transcript now belongs to a reset or a newer turn.
+        if (updates.length === 0 || controller.signal.aborted) return;
+        setMessages((prev) => {
+          const next = updates.reduce(
+            (messages, update) => update(messages),
+            prev,
+          );
+          messagesRef.current = next;
+
+          return next;
+        });
+      };
+      const queueUpdate = (
+        update: (prev: UIMessage[]) => UIMessage[],
+      ): void => {
+        queued.push(update);
+        timer ??= setTimeout(
+          () => startTransition(commitQueued),
+          STREAM_COMMIT_MS,
+        );
+      };
+
       try {
         if (!coreEndpointOk) {
           throw new Error(coreEndpointMessage);
@@ -183,20 +221,19 @@ export function useAgentChat({
               },
               onQuestions: setPendingQuestions,
               onContinuationDelta: (delta) => {
-                setMessages((prev) => {
+                queueUpdate((prev) => {
                   const next = appendAssistantTextDelta({
                     previousMessages: prev,
                     messageId: continuationMessageIdRef.current,
                     delta: delta,
                   });
                   continuationMessageIdRef.current = next.messageId;
-                  messagesRef.current = next.messages;
 
                   return next.messages;
                 });
               },
               onSubagentDelta: ({ taskId, sessionId, delta, agentName }) => {
-                setMessages((prev) => {
+                queueUpdate((prev) => {
                   const currentMessageId =
                     subagentMessageIdsRef.current[taskId] ?? null;
                   const next = upsertSubagentPanel({
@@ -208,7 +245,6 @@ export function useAgentChat({
                     agentName: agentName,
                   });
                   subagentMessageIdsRef.current[taskId] = next.messageId;
-                  messagesRef.current = next.messages;
 
                   return next.messages;
                 });
@@ -220,7 +256,7 @@ export function useAgentChat({
                 phase,
                 toolNames,
               }) => {
-                setMessages((prev) => {
+                queueUpdate((prev) => {
                   const currentMessageId =
                     subagentMessageIdsRef.current[taskId] ?? null;
                   const next = upsertSubagentPanel({
@@ -235,13 +271,12 @@ export function useAgentChat({
                     },
                   });
                   subagentMessageIdsRef.current[taskId] = next.messageId;
-                  messagesRef.current = next.messages;
 
                   return next.messages;
                 });
               },
               onSubagentResult: (output, resultTaskId) => {
-                setMessages((prev) => {
+                queueUpdate((prev) => {
                   const tracked = Object.keys(subagentMessageIdsRef.current);
                   // Target the task the wire names; without one (older
                   // servers) fall back to every tracked panel, but attach the
@@ -269,7 +304,6 @@ export function useAgentChat({
                     subagentMessageIdsRef.current[taskId] = next.messageId;
                     nextMessages = next.messages;
                   }
-                  messagesRef.current = nextMessages;
 
                   return nextMessages;
                 });
@@ -323,18 +357,22 @@ export function useAgentChat({
           terminateOnError: true,
         });
 
-        for await (const assistantMessage of messageStream) {
-          setMessages((prev) => {
-            const next = upsertMainAssistantMessage({
-              previousMessages: prev,
-              messageId: mainAssistantMessageIdRef.current,
-              assistantMessage: assistantMessage,
-            });
-            mainAssistantMessageIdRef.current = next.messageId;
-            messagesRef.current = next.messages;
+        try {
+          for await (const assistantMessage of messageStream) {
+            queueUpdate((prev) => {
+              const next = upsertMainAssistantMessage({
+                previousMessages: prev,
+                messageId: mainAssistantMessageIdRef.current,
+                assistantMessage: assistantMessage,
+              });
+              mainAssistantMessageIdRef.current = next.messageId;
 
-            return next.messages;
-          });
+              return next.messages;
+            });
+          }
+        } finally {
+          clearTimeout(timer);
+          commitQueued();
         }
 
         setStatus("ready");

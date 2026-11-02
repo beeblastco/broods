@@ -16,6 +16,7 @@ import {
   type WebSocketRoute,
 } from "@playwright/test";
 import type { ObservabilityLogEntry } from "../../../../packages/broods/src/observability-contracts";
+import { checkPerfBaseline } from "../lib/perfBaseline";
 import { PAGE_RENDER_BUDGET_MS, PERF_BUDGETS } from "../../app/lib/perfReport";
 import {
   BASE_URL,
@@ -25,7 +26,11 @@ import {
   readProjectId,
   SIGNED_IN_CONTEXT,
 } from "../lib/session";
-import { timeClientNavigation, waitForReady } from "../lib/timing";
+import {
+  timeClientNavigation,
+  waitForReady,
+  watchLongTasks,
+} from "../lib/timing";
 
 interface ProbePage {
   name: string;
@@ -193,14 +198,21 @@ test("every page renders cold within budget, and every sidebar destination by na
     body: JSON.stringify(samples, null, 2),
     contentType: "application/json",
   });
-
-  const over = samples.filter((sample) => sample.ms > RENDER_BUDGET_MS);
-  expect(
-    over.map(
-      (sample) => `${sample.kind} ${sample.page}: ${Math.round(sample.ms)} ms`,
+  checkPerfBaseline(
+    "render times",
+    Object.fromEntries(
+      samples.map((sample) => [
+        `pages.${sample.kind}.${sample.page}`,
+        {
+          value: Math.round(sample.ms),
+          gate: "informational",
+          maxRegressionPct: 50,
+          slack: 100,
+          ceiling: RENDER_BUDGET_MS,
+        },
+      ]),
     ),
-    `pages over the ${RENDER_BUDGET_MS} ms render budget`,
-  ).toEqual([]);
+  );
 });
 
 // A busy stage on Monitoring: history on screen and a line open, then a burst
@@ -266,14 +278,7 @@ test("a live log burst on Monitoring reaches the screen without blocking the pag
       entry: logLine(`burst ${line}`, at, line % 100 === 0 ? 8_000 : 300),
     });
   });
-  const longTasks = await page.evaluateHandle(() => {
-    const durations: number[] = [];
-    new PerformanceObserver((list) => {
-      durations.push(...list.getEntries().map((entry) => entry.duration));
-    }).observe({ type: "longtask" });
-
-    return durations;
-  });
+  const longTasks = await watchLongTasks(page);
   const start = performance.now();
   for (const message of burst) route.send(message);
   await waitForReady(

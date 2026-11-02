@@ -1,35 +1,22 @@
 "use client";
 
 /** Skill node. Enabled when its label is in the connected agent's `skills.allowed[]`. */
+import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
-import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
-import {
-  readAgentBranch,
-  type FlatAgentConfig,
-} from "@/app/lib/agentConfigCodec";
+import { useReachableAgentConfigId } from "@/app/hooks/useConnectedAgentConfig";
 import { enabledMemberStatus } from "@/app/lib/memberStatus";
 import { includesSkillRef } from "@/app/lib/skillRefs";
 import type { NodeProps } from "@xyflow/react";
 import { Sparkles } from "lucide-react";
-import { useMemo } from "react";
-
-type SkillsSlice = { enabled?: boolean; allowed?: string[] };
 
 export function SkillNode({ id, data }: NodeProps): React.JSX.Element {
   const baseData = data as BaseNodeData;
-  const { agentConfig } = useConnectedAgentConfig(id);
+  const agentConfigId = useReachableAgentConfigId(id);
+  const { agentBadges } = useCanvasFrames();
+  const badge = agentConfigId ? agentBadges?.[agentConfigId] : undefined;
   const path = (baseData.label ?? "").trim();
-
-  const enabled = useMemo(() => {
-    if (!path) return false;
-    const skills = readAgentBranch<SkillsSlice>(
-      agentConfig as FlatAgentConfig | undefined,
-      "skills",
-    );
-    if (skills.enabled !== true) return false;
-
-    return includesSkillRef(skills.allowed, path);
-  }, [agentConfig, path]);
+  const enabled =
+    badge !== undefined && path !== "" && includesSkillRef(badge.skills, path);
 
   return (
     <BaseNode
@@ -38,7 +25,7 @@ export function SkillNode({ id, data }: NodeProps): React.JSX.Element {
       data={baseData}
       icon={<Sparkles className="size-3.5" />}
       // Grey when disabled, like a disabled MCP server.
-      liveStatus={agentConfig ? enabledMemberStatus(enabled) : undefined}
+      liveStatus={badge ? enabledMemberStatus(enabled) : undefined}
     />
   );
 }

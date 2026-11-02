@@ -399,6 +399,19 @@ export declare const api: {
       >;
     };
     config: {
+      canvasBadges: FunctionReference<
+        "query",
+        "public",
+        { projectId: Id<"projects">; stageId?: Id<"stages"> },
+        Record<
+          Id<"agentConfigs">,
+          {
+            publicAccess: boolean;
+            skills: Array<string>;
+            structuredOutput: boolean;
+          }
+        >
+      >;
       create: FunctionReference<
         "mutation",
         "public",
@@ -593,6 +606,7 @@ export declare const api: {
           lastError?: string;
           lastInvokedAt?: number;
           lastStatus?: "started" | "completed" | "failed";
+          managedBy?: "cli";
           name: string;
           scheduleExpression: string;
           scheduledRunId?: Id<"_scheduled_functions">;
@@ -1105,8 +1119,9 @@ export declare const api: {
         projectId: Id<"projects">;
         target: {
           baseUrl: string;
-          developmentBranch?: string;
+          developmentBranch?: string | null;
           installationId: number;
+          productionBranch?: string | null;
           repoId: number;
           rootDirectory: string;
         };
@@ -1116,7 +1131,7 @@ export declare const api: {
         developmentBranch?: string;
         fullName: string;
         installationId: number;
-        productionBranch: string;
+        productionBranch?: string;
         protectedSecrets: boolean;
         repoId: number;
         rootDirectory: string;
@@ -1161,7 +1176,7 @@ export declare const api: {
           developmentBranch?: string;
           fullName: string;
           installationId: number;
-          productionBranch: string;
+          productionBranch?: string;
           protectedSecrets: boolean;
           repoId: number;
           rootDirectory: string;
@@ -1527,7 +1542,7 @@ export declare const api: {
           developmentBranch?: string;
           fullName: string;
           installationId: number;
-          productionBranch: string;
+          productionBranch?: string;
           protectedSecrets: boolean;
           repoId: number;
           rootDirectory: string;
@@ -1554,7 +1569,7 @@ export declare const api: {
           developmentBranch?: string;
           fullName: string;
           installationId: number;
-          productionBranch: string;
+          productionBranch?: string;
           protectedSecrets: boolean;
           repoId: number;
           rootDirectory: string;
@@ -3846,6 +3861,7 @@ export declare const internal: {
           accountId: Id<"accounts">;
           createdBy?: Id<"users">;
           input: Record<string, any>;
+          managedBy?: "cli";
         },
         any
       >;
@@ -3896,6 +3912,7 @@ export declare const internal: {
           lastInvokedAt?: number;
           lastRunId?: Id<"cronRuns">;
           lastStatus?: "started" | "completed" | "failed";
+          managedBy?: "cli";
           name: string;
           scheduleExpression: string;
           scheduledRunId?: Id<"_scheduled_functions">;
@@ -3928,6 +3945,7 @@ export declare const internal: {
           lastInvokedAt?: number;
           lastRunId?: Id<"cronRuns">;
           lastStatus?: "started" | "completed" | "failed";
+          managedBy?: "cli";
           name: string;
           scheduleExpression: string;
           scheduledRunId?: Id<"_scheduled_functions">;
@@ -3968,6 +3986,7 @@ export declare const internal: {
             lastInvokedAt?: number;
             lastRunId?: Id<"cronRuns">;
             lastStatus?: "started" | "completed" | "failed";
+            managedBy?: "cli";
             name: string;
             scheduleExpression: string;
             scheduledRunId?: Id<"_scheduled_functions">;
@@ -4062,6 +4081,7 @@ export declare const internal: {
         {
           accountId: Id<"accounts">;
           cronId: string;
+          managedBy?: "cli";
           patch: Record<string, any>;
           pin?: { projectId: string; stageId: string };
         },
@@ -5557,6 +5577,18 @@ export declare const internal: {
     };
   };
   github: {
+    beginFor: FunctionReference<
+      "mutation",
+      "internal",
+      { authId: string; orgId: Id<"orgs"> },
+      { url: string }
+    >;
+    cliProject: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"orgs">; slug: string },
+      Id<"projects"> | null
+    >;
     linkAccess: FunctionReference<
       "query",
       "internal",
@@ -5570,11 +5602,16 @@ export declare const internal: {
     mintLinkKeys: FunctionReference<
       "mutation",
       "internal",
-      { authId: string; projectId: Id<"projects">; repoId?: number },
       {
-        development: string;
+        authId: string;
+        projectId: Id<"projects">;
+        repoId?: number;
+        stages: Array<"production" | "development">;
+      },
+      {
+        development?: string;
         keyIds: Array<Id<"deployKeys">>;
-        production: string;
+        production?: string;
         projectId: Id<"projects">;
         projectSlug: string;
       }
@@ -5623,7 +5660,7 @@ export declare const internal: {
           developmentBranch?: string;
           fullName: string;
           installationId: number;
-          productionBranch: string;
+          productionBranch?: string;
           protectedSecrets: boolean;
           repoId: number;
           rootDirectory: string;
@@ -5631,6 +5668,41 @@ export declare const internal: {
         };
       },
       null
+    >;
+    statusFor: FunctionReference<
+      "query",
+      "internal",
+      { authId: string; orgId: Id<"orgs">; projectId?: Id<"projects"> },
+      {
+        canConnect: boolean;
+        canLink: boolean;
+        configured: boolean;
+        deploys: Array<{
+          branch: string;
+          conclusion?: string;
+          sha: string;
+          status: string;
+          updatedAt: number;
+          url: string;
+        }>;
+        installations: Array<{
+          accountType: "User" | "Organization";
+          installationId: number;
+          login: string;
+        }>;
+        repo?: {
+          deployKeyIds: Array<Id<"deployKeys">>;
+          developmentBranch?: string;
+          fullName: string;
+          installationId: number;
+          productionBranch?: string;
+          protectedSecrets: boolean;
+          repoId: number;
+          rootDirectory: string;
+          setupPullRequestUrl?: string;
+        };
+        webUrl?: string;
+      }
     >;
     storeInstallations: FunctionReference<
       "mutation",
@@ -5660,6 +5732,12 @@ export declare const internal: {
         orgId: Id<"orgs">;
         returnTo?: string;
       }
+    >;
+    unlinkFor: FunctionReference<
+      "mutation",
+      "internal",
+      { authId: string; projectId: Id<"projects"> },
+      null
     >;
     unlinkRepos: FunctionReference<
       "mutation",

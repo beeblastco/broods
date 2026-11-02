@@ -37,13 +37,7 @@ export function useConnectedAgentConfig(
   nodeId: string | undefined,
   via?: ReadonlyArray<string>,
 ): ConnectedAgentConfig {
-  const agentConfigId = useStore(
-    useCallback(
-      (state: unknown) =>
-        findReachableAgentConfigId(state as ReactFlowState, nodeId, via),
-      [nodeId, via],
-    ),
-  ) as Id<"agentConfigs"> | undefined;
+  const agentConfigId = useReachableAgentConfigId(nodeId, via);
 
   const agentConfig = useQuery(
     api.agent.config.getById,
@@ -127,6 +121,23 @@ export function useConnectedAgentConfig(
     agentConfig: agentConfig,
     updateBranch: updateBranch,
   };
+}
+
+/**
+ * The config id of the agent reachable from this node, with no config read: a
+ * canvas card draws from the canvas badges instead of subscribing to the row.
+ */
+export function useReachableAgentConfigId(
+  nodeId: string | undefined,
+  via?: ReadonlyArray<string>,
+): Id<"agentConfigs"> | undefined {
+  return useStore(
+    useCallback(
+      (state: unknown) =>
+        findReachableAgentConfigId(state as ReactFlowState, nodeId, via),
+      [nodeId, via],
+    ),
+  ) as Id<"agentConfigs"> | undefined;
 }
 
 /**

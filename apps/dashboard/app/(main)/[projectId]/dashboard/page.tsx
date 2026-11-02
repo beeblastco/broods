@@ -1,5 +1,6 @@
 "use client";
 
+import { useEverTrue } from "@/app/hooks/useEverTrue";
 import { useStage } from "@/app/hooks/useStage";
 import { useStageSession } from "@/app/hooks/useStageSession";
 import { DASHBOARD_TABS, pickTab } from "@/app/lib/navigation";
@@ -7,19 +8,53 @@ import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
+import dynamic from "next/dynamic";
 import { useParams, useSearchParams } from "next/navigation";
-import { useCallback, useState } from "react";
-import { BillingPanel } from "./components/BillingPanel";
+import { useCallback, useEffect, useState } from "react";
 import { MonitoringPanel } from "./components/MonitoringPanel";
 import { ObservabilityKeyPrompt } from "./components/ObservabilityKeyPrompt";
-import {
-  RuntimeKeyDialog,
-  RuntimeKeyView,
-} from "./components/RuntimeKeyDialog";
-import { TokensUsagePanel } from "./components/TokensUsagePanel";
-import { TracingPanel } from "./components/TracingPanel";
 import DashboardLoading from "./loading";
+import {
+  DASHBOARD_PANELS,
+  loadBillingPanel,
+  loadRuntimeKeyDialog,
+  loadRuntimeKeyView,
+  loadTokensUsagePanel,
+  loadTracingPanel,
+} from "./panels";
 import { toErrorMessage } from "@/app/lib/errors";
+
+/** The wait in an observability tab's full-height slot. */
+function ObservabilityLoading(): React.JSX.Element {
+  return (
+    <div className="flex h-full min-h-64 items-center justify-center">
+      <p className="text-sm text-muted-foreground">Loading…</p>
+    </div>
+  );
+}
+
+/** The wait in a padded tab column: the line a panel shows while it queries. */
+function ColumnLoading(): React.JSX.Element {
+  return <p className="text-sm text-muted-foreground">Loading…</p>;
+}
+
+// Monitoring is the default tab and ships with the page, so the first paint
+// never waits on a second download. The other tabs and the key dialog load
+// the first time they are wanted. Each passes `loading`, which is what gives
+// it a Suspense boundary of its own: without one its download suspends up to
+// the route's loading.tsx. The option object is spelled out at each call:
+// Turbopack reads it statically.
+const TracingPanel = dynamic(loadTracingPanel, {
+  loading: ObservabilityLoading,
+});
+const TokensUsagePanel = dynamic(loadTokensUsagePanel, {
+  loading: ColumnLoading,
+});
+const BillingPanel = dynamic(loadBillingPanel, { loading: ColumnLoading });
+const RuntimeKeyView = dynamic(loadRuntimeKeyView, { loading: ColumnLoading });
+const RuntimeKeyDialog = dynamic(loadRuntimeKeyDialog, {
+  loading: (): null => null,
+});
 
 export default function DashboardPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
@@ -35,6 +70,13 @@ export default function DashboardPage(): React.JSX.Element {
   const { stageId: activeStageId } = useStage();
   const tab = pickTab(DASHBOARD_TABS, searchParams.get("tab"));
   const activeTab = tab.id;
+
+  // No panel renders before the project query answers. A cold load onto a
+  // split-out tab fetches its chunk alongside that query, not after it. A
+  // failed fetch stays quiet here; the panel's own load surfaces it.
+  useEffect(() => {
+    void DASHBOARD_PANELS[activeTab]?.().catch((): void => {});
+  }, [activeTab]);
 
   // Source of projectSlug, stageSlug and endpointId: the observability WS and
   // the session-storage key lookup are both keyed on them.
@@ -59,6 +101,7 @@ export default function DashboardPage(): React.JSX.Element {
     msg: string;
   } | null>(null);
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
+  const keyDialogWanted = useEverTrue(keyDialogOpen);
   const [keyJustCreated, setKeyJustCreated] = useState(false);
 
   // Streaming runs on a short-lived stage session any member can mint; null
@@ -84,6 +127,8 @@ export default function DashboardPage(): React.JSX.Element {
   // creates one on first call and recovers it thereafter.
   const generateViewingKey = useCallback(async () => {
     if (!activeStageId) return;
+    // The key dialog opens once the mint answers; its chunk loads meanwhile.
+    void loadRuntimeKeyDialog().catch((): void => {});
     setGeneratingKey(true);
     setKeyError(null);
     try {
@@ -159,9 +204,7 @@ export default function DashboardPage(): React.JSX.Element {
     stageSession === undefined &&
     !observabilityApiKey;
   const observabilityFallback = keyResolving ? (
-    <div className="flex h-full min-h-64 items-center justify-center">
-      <p className="text-sm text-muted-foreground">Loading…</p>
-    </div>
+    <ObservabilityLoading />
   ) : (
     <ObservabilityKeyPrompt
       generating={generatingKey}
@@ -259,7 +302,7 @@ export default function DashboardPage(): React.JSX.Element {
         </div>
       </div>
 
-      {copyableKey && (
+      {copyableKey && keyDialogWanted && (
         <RuntimeKeyDialog
           open={keyDialogOpen}
           onOpenChange={setKeyDialogOpen}
