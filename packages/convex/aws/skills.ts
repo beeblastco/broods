@@ -1,10 +1,6 @@
 "use node";
 
-/**
- * Node-runtime internal actions for S3 skill storage. Callers in the default
- * runtime (cli/http, config/http) reach S3 through these; Node actions
- * (skillsPublic) import model/skills directly instead.
- */
+// Default-runtime callers reach S3 through these; Node actions use model/skills directly.
 
 import { v } from "convex/values";
 import { internalAction } from "../_generated/server";
@@ -35,14 +31,6 @@ const storedSkill = v.object({
   files: v.array(v.object({ path: v.string(), size: v.optional(v.number()) })),
 });
 
-/**
- * Validate and store a skill bundle from any supported source (files, json,
- * or github), replacing an existing skill of the same name.
- * @param accountId account id owning the skill
- * @param input the create-skill request body (source discriminated)
- * @param expectedName when set, the SKILL.md name must match before writing
- * @returns the stored skill's metadata and manifest
- */
 export const createSkill = internalAction({
   args: {
     accountId: v.id("accounts"),
@@ -57,10 +45,6 @@ export const createSkill = internalAction({
   },
 });
 
-/**
- * Checks CLI skill bundles the way `createSkill` does, without storing them,
- * so a manifest sync can refuse a bad one before it uploads anything.
- */
 export const validateSkills = internalAction({
   args: { skills: v.array(v.object({ name: v.string(), files: v.any() })) },
   returns: v.null(),
@@ -76,10 +60,6 @@ export const validateSkills = internalAction({
   },
 });
 
-/**
- * @param accountId account id owning the skills
- * @returns skill metadata entries
- */
 export const list = internalAction({
   args: { accountId: v.id("accounts") },
   returns: v.array(skillMetadata),
@@ -88,11 +68,6 @@ export const list = internalAction({
   },
 });
 
-/**
- * @param accountId account id owning the skill
- * @param skillName the skill name
- * @returns the stored skill, or null when it does not exist
- */
 export const get = internalAction({
   args: { accountId: v.id("accounts"), skillName: v.string() },
   returns: v.union(storedSkill, v.null()),
@@ -101,11 +76,6 @@ export const get = internalAction({
   },
 });
 
-/**
- * @param accountId account id owning the skill
- * @param skillName the skill name
- * @returns true when any objects were deleted
- */
 export const remove = internalAction({
   args: { accountId: v.id("accounts"), skillName: v.string() },
   returns: v.boolean(),
@@ -114,13 +84,6 @@ export const remove = internalAction({
   },
 });
 
-/**
- * Resolve a create-skill request body into bundle files, mirroring core's
- * former `resolveSkillBundleFiles` contract (sources: json, files, github).
- * @param input the request body
- * @returns the bundle files to validate and store
- * @throws when the body or source is invalid
- */
 async function resolveSkillBundleFiles(
   input: unknown,
 ): Promise<SkillBundleFile[]> {
@@ -180,7 +143,6 @@ async function resolveSkillBundleFiles(
   }
 }
 
-/** Resolves a bundle and applies `createSkill`'s rules, name match included. */
 async function validatedSkillFiles(
   input: unknown,
   expectedName: string | undefined,

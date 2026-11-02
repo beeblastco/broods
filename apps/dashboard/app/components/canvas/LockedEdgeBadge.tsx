@@ -4,7 +4,6 @@ import type { DrawnEdgeKind } from "@/app/lib/canvasFrameNodes";
 import { cn } from "@/app/lib/utils";
 import { Lock } from "lucide-react";
 
-/** Why an edge can't be changed here: code owns it, or the canvas draws it from other state. */
 export const EDGE_LOCK_REASON: Record<DrawnEdgeKind | "code", string> = {
   code: "Managed by broods/ code. The connection is defined in code.",
   collapsed: "Expand the group to change this connection.",
@@ -14,12 +13,6 @@ export const EDGE_LOCK_REASON: Record<DrawnEdgeKind | "code", string> = {
     "The MCP server runs on this computer. Change it in the server's config.",
 };
 
-/**
- * Hover-to-reveal lock indicator for an edge that can't be deleted, mirroring
- * EdgeDeleteButton's placement but signalling "you can't change this here", and
- * saying why on hover. `revealed` shows it while the edge's line is hovered.
- * Render inside EdgeLabelRenderer.
- */
 export function LockedEdgeBadge({
   edgeId,
   labelX,

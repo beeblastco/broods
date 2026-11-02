@@ -1,10 +1,6 @@
 /**
- * Scoped account keys (`bask_…`) made on Organization › API access. Each is
- * an allow list over the API actions, optionally pinned to one project and
- * stage, with an optional expiry; the bearer resolvers turn it into a role
- * principal (`account/apiKeys.ts`). The org's own account key is untouched
- * here: it stays in `accounts.secretHash` and rotates in `org/lifecycle`.
- * Every write needs `keys:write` for the organization.
+ * Scoped `bask_` keys: an allow list over API actions, optionally pinned to a project and
+ * stage. The org's own account key lives in `accounts.secretHash`, rotated in `org/lifecycle`.
  */
 
 import { v } from "convex/values";
@@ -32,7 +28,6 @@ import {
 } from "./model/policyRules";
 import { userByAuthId } from "./model/ownership/org";
 
-/** The API actions a key may be granted, as the dashboard's permission grid sends them. */
 export const keyActionsValidator = v.array(
   v.union(...API_POLICY_ACTIONS.map((action) => v.literal(action))),
 );
@@ -97,7 +92,6 @@ export const create = mutation({
   },
 });
 
-/** Revoking deletes the row, so the key stops authenticating at once. */
 export const remove = mutation({
   args: { orgId: v.id("orgs"), keyId: v.id("accountApiKeys") },
   returns: v.id("accountApiKeys"),
@@ -111,11 +105,7 @@ export const remove = mutation({
   },
 });
 
-/**
- * Change one or more of a key's fields in place, as the dashboard edits them
- * inline. An omitted field is kept; `scope: {}` unpins the key and
- * `expiresAt: null` makes it never expire. The secret never changes.
- */
+/** An omitted field is kept; `scope: {}` unpins the key, `expiresAt: null` clears the expiry. */
 export const update = mutation({
   args: {
     orgId: v.id("orgs"),
@@ -171,7 +161,6 @@ export const update = mutation({
   },
 });
 
-/** One allow rule over the picked actions, as `authorize()` reads a role. */
 function keyPolicy(actions: ApiPolicyAction[]): PolicyDocument {
   if (actions.length === 0) {
     throw new ClientError("Pick at least one permission");
@@ -189,7 +178,6 @@ function keyPolicy(actions: ApiPolicyAction[]): PolicyDocument {
   };
 }
 
-/** A key of this org's account; anything else reads as not found. */
 async function ownedKey(
   ctx: MutationCtx,
   writer: KeyWriter,
@@ -228,19 +216,16 @@ function requiredName(name: string): string {
   return trimmed;
 }
 
-/** Refuse an expiry already past; unset is "never". */
 function requireFutureExpiry(expiresAt: number | undefined, now: number): void {
   if (expiresAt !== undefined && expiresAt <= now) {
     throw new ClientError("Expiry must be in the future");
   }
 }
 
-/** The caller, holding `keys:write` on the org, and the org's provisioned account. */
 async function requireKeyWriter(
   ctx: MutationCtx,
   orgId: Id<"orgs">,
 ): Promise<KeyWriter> {
-  // Check authenticated user
   const user = await authKit.getAuthUser(ctx);
   if (!user) {
     throw new Error("User not found or not authenticated");

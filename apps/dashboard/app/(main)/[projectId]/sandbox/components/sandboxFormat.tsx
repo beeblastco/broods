@@ -14,9 +14,6 @@ import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { ExternalLink } from "lucide-react";
 import Link from "next/link";
 
-// Same four tones as the tracing panel: sky while the provider is still moving
-// (suspending, terminating, building), grey once nothing runs. Tables and
-// titles show the dot only; the detail view spells the word out.
 export const INSTANCE_TONE: Record<
   Doc<"sandboxInstances">["status"],
   StatusTone
@@ -28,22 +25,17 @@ export const INSTANCE_TONE: Record<
   error: "error",
 };
 
-// What users see for a stored provider when it differs from the stored name.
 const PROVIDER_LABEL: Record<string, string> = {
   machine: MACHINE_LABEL,
   sandbox: "workdir",
 };
 
-// Why a machine's disk is not shown, by provider; the "?" in its place says it.
 const UNKNOWN_DISK: Record<string, string> = {
   e2b: "E2B does not report a sandbox's disk size.",
   machine: "Your own computer: its OS did not report the size of its disk.",
   vercel: "Vercel does not report a sandbox's disk size.",
 };
 
-// Why a machine shows no size at all, by provider. Daytona reports on every
-// use, Vercel when its session carries one; e2b is read and workdir fixed only
-// when the sandbox is created.
 const UNKNOWN_SIZE: Record<string, string> = {
   daytona:
     "Daytona sizes this sandbox itself and has not reported its size yet. It shows the next time this sandbox is used.",
@@ -58,7 +50,6 @@ const UNKNOWN_SIZE: Record<string, string> = {
     "Vercel sizes this sandbox itself and has not reported its size. It shows once Vercel reports it.",
 };
 
-// Why a lambda or cloudflare size is unknown: the row predates verified sizes.
 const UNVERIFIED_SIZE =
   "Recorded before Broods checked sandbox sizes. The real size shows the next time this sandbox is used.";
 
@@ -75,11 +66,7 @@ export const SNAPSHOT_TONE: Record<
   build_failed: "error",
 };
 
-/**
- * Whether the dashboard can act on the instance: suspend, resume, shell in,
- * snapshot, terminate. An ephemeral instance lives only for the call that
- * created it, and one without a config link predates the actions.
- */
+// An ephemeral instance lives only for its call; one without a config link predates actions.
 export function controllable(
   instance: Doc<"sandboxInstances">,
 ): instance is Doc<"sandboxInstances"> & {
@@ -88,7 +75,6 @@ export function controllable(
   return Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
 }
 
-/** Deep link into the project dashboard, keeping the stage the page is on. */
 export function dashboardHref(
   projectId: Id<"projects">,
   stage: string | null,
@@ -99,7 +85,6 @@ export function dashboardHref(
   return tabHref(`/${projectId}/dashboard`, tab, search.toString(), params);
 }
 
-/** One label and value row of a detail panel. */
 export function DetailField({
   label,
   value,
@@ -115,10 +100,6 @@ export function DetailField({
   );
 }
 
-/**
- * Badge variant tracks how open the policy is, from deny-all locked down to
- * allow-all wide open.
- */
 export function egressBadge(
   egress: Doc<"sandboxInstances">["egress"],
 ): React.JSX.Element {
@@ -154,7 +135,6 @@ export function machineStatusDot(state: MachineState): React.JSX.Element {
   );
 }
 
-/** Em dash when the row predates the permission-mode mirror. */
 export function permissionModeBadge(
   mode: Doc<"sandboxInstances">["permissionMode"],
 ): React.JSX.Element {
@@ -180,12 +160,7 @@ export function permissionModeBadge(
   return <span className="text-xs text-muted-foreground">—</span>;
 }
 
-/**
- * Relative time that keeps minute resolution past the hour ("3h 07m ago"), because
- * a sandbox's age is what tells you whether it is idle or abandoned and "1h ago"
- * covers a whole hour of that. Em dash when unset. Pass `now` from `useNow()` so
- * the value keeps ticking between Convex updates.
- */
+// Minutes past the hour ("3h 07m ago"): a sandbox's age tells idle from abandoned.
 export function relativeTime(ts: number | undefined, now = Date.now()): string {
   if (!ts) return "—";
   const seconds = Math.max(0, Math.floor((now - ts) / 1000));
@@ -205,11 +180,6 @@ export function snapshotStatusDot(
   return <StatusDot tone={SNAPSHOT_TONE[status]} label={status} />;
 }
 
-/**
- * Footprint, e.g. "1 vCPU · 2 GB · 8 GB", shown only when `verified` says it is
- * the machine's real size. Anything unknown is a "?" whose tooltip says why.
- * Sizes the table rows and the instance and computer panels.
- */
 export function SpecsValue({
   specs,
   verified,
@@ -244,7 +214,6 @@ export function SpecsValue({
   );
 }
 
-/** Opens the Tracing tab focused on one trace. `children` is the link text. */
 export function TraceLink({
   href,
   children,

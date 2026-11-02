@@ -1,18 +1,10 @@
-/**
- * Example: a reserved (persistent) self-hosted coding sandbox via declarative broods resources.
- *
- * Demonstrates the `persistent: true` lifecycle on the `sandbox` (workdir)
- * provider: a long-lived sandbox per workspace (installed packages + code
- * survive idle), native
- * pause/standby idle scale-down, and a detached background job observed with the
- * auto-registered `async_status` tool.
- */
+// `persistent: true` keeps one sandbox per workspace: packages and code survive idle pauses,
+// and a detached background job is watched with the auto-registered `async_status` tool.
 
 import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-// The demo's agents require a signed user token beside the runtime key.
-// Your backend signs one per signed-in user; here one demo user stands in.
+// These agents need a signed user token; your backend signs one per signed-in user.
 const client = new BroodsClient({
   userToken: () => signUserToken({ userId: "demo-user" }),
 });

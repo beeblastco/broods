@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Read-only. A snapshot is captured from a running instance, or published by
- * the image pipeline.
- */
-
 import {
   Sheet,
   SheetContent,

@@ -1,8 +1,3 @@
-/**
- * Remote MCP requests name the calling agent and its delegation chain, on
- * headers kept apart from the row's own so the listing cache stays shared.
- */
-
 import { describe, expect, it } from "bun:test";
 import {
   mcpConnection,

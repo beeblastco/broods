@@ -8,7 +8,6 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-// The params a deep link may hand the canvas (`node`) or the project dashboard.
 const VIEW_PARAMS = [
   "tab",
   "trace",
@@ -30,17 +29,13 @@ export default function HomePage(): React.JSX.Element {
   const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState<Error | null>(null);
 
-  // One `openHome` call gets or creates the org and picks the project; only a
-  // brand-new org needs the provision step. Runs once per attempt; Retry bumps
-  // `attempt` to run it again.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- Convex openHome, once per attempt
   useEffect(() => {
     if (!currentUser || started.current === attempt) return;
 
     started.current = attempt;
     void (async () => {
       try {
-        // A `broods` deep link (?project=&stage=) opens that project's
-        // architecture view with the same stage selected.
         const params = new URLSearchParams(window.location.search);
         const deepLink = {
           project: params.get("project") ?? undefined,
@@ -48,9 +43,6 @@ export default function HomePage(): React.JSX.Element {
         };
         let home = await openHome(deepLink);
         if (home.needsProvision) {
-          // First login: hand the one-time secret to the onboarding dialog and
-          // land on the (empty) projects page. Onboarding ends with
-          // `broods dev`, which creates the first project.
           try {
             const result = await provision({ orgId: home.orgId });
             publishOnboardingSecret(result.secret);
@@ -58,8 +50,7 @@ export default function HomePage(): React.JSX.Element {
 
             return;
           } catch (provisionErr) {
-            // Another tab may have provisioned first; only a still-missing
-            // account is a failure.
+            // Another tab may have provisioned first.
             home = await openHome(deepLink);
             if (home.needsProvision) throw provisionErr;
           }
@@ -70,9 +61,6 @@ export default function HomePage(): React.JSX.Element {
           return;
         }
 
-        // Only the view params the canvas and project dashboard read carry
-        // over, so nothing else in the link lands in the project URL; the page
-        // parses each one and drops what it rejects.
         const next = new URLSearchParams();
         for (const key of VIEW_PARAMS) {
           const value = params.get(key);

@@ -5,8 +5,7 @@ const CLOCK: Intl.DateTimeFormatOptions = {
   hour12: false,
 };
 
-// Built once: creating the formatter is the expensive part of a call, and a
-// streaming table formats every visible row on each render.
+// Built once: a streaming table formats every visible row on each render.
 const DATE_TIME = new Intl.DateTimeFormat([], {
   month: "short",
   day: "numeric",
@@ -24,31 +23,22 @@ const TIME = new Intl.DateTimeFormat([], CLOCK);
 
 const DATE = new Intl.DateTimeFormat([], { month: "short", day: "numeric" });
 
-/** `Sep 2` in the viewer's zone, for when a record was created. */
 export function formatDate(ms: number): string {
   return DATE.format(ms);
 }
 
-/** `Sep 14, 16:44:07` in the viewer's zone, so a row is locatable across days. */
 export function formatDateTime(ms: number): string {
   return DATE_TIME.format(ms);
 }
 
-/** `Sep 14, 16:44:07.312`, for log lines that land in the same second. */
 export function formatDateTimeMillis(ms: number): string {
   return DATE_TIME_MILLIS.format(ms);
 }
 
-/** Wall-clock `HH:MM:SS` in the viewer's zone, for log and span rows. */
 export function formatTime(ms: number): string {
   return TIME.format(ms);
 }
 
-/**
- * A length of time as a span row or a run row prints it: `812ms`, `4.10s`,
- * `1m 33s`, `2h 5m`. A wait on a person runs minutes to days, where
- * seconds stop reading well.
- */
 export function formatDuration(ms: number): string {
   if (ms >= 3_600_000) {
     return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;

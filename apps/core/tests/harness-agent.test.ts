@@ -5,7 +5,6 @@ import {
   type AiSdkHarnessType,
 } from "../src/harness/ai-sdk-harness/adapters/index.ts";
 
-// The part of the harness stream options these tests read.
 interface HarnessStreamCall {
   abortSignal?: AbortSignal;
   messages?: ModelMessage[];
@@ -17,7 +16,6 @@ interface HarnessStreamCall {
   [hook: string]: unknown;
 }
 
-// What a test may change about the turn runHarnessTurn starts.
 interface HarnessTurnOptions {
   appended?: unknown[];
   appendIngressEvents?: (events: unknown) => Promise<[]>;

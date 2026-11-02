@@ -1,9 +1,5 @@
-/**
- * In-memory stand-in for the Convex sandbox reservation table, for the opt-in
- * live sandbox tests: they drive a real provider but never read or write a
- * shared Convex deployment. Answers the same calls `instance-store.ts` makes,
- * and hides the Convex env so the best-effort registry mirror cannot connect.
- */
+// Reservation table for the opt-in live sandbox tests, which drive a real provider but must
+// never touch a shared Convex deployment, so the Convex env is hidden too.
 
 import { afterEach, beforeEach } from "bun:test";
 import { resetConvexClientForTests } from "../../src/shared/convex/client.ts";
@@ -67,7 +63,6 @@ const mutations: {
 
     return true;
   },
-  // True hands the caller the teardown, as the real mutation does.
   deleteSandboxReservation: (table, args) => {
     const current = table.get(args.reservationKey);
     if (!current) return false;
@@ -84,7 +79,6 @@ const mutations: {
 
     return true;
   },
-  // Refreshes the deadline only; never creates or repoints a row.
   saveSandboxReservation: (table, args) => {
     const current = table.get(args.reservationKey);
     if (current && current.externalId === args.externalId) {
@@ -98,7 +92,6 @@ const mutations: {
   },
 };
 
-/** Swaps `runtime` onto a fresh table around each test; returns that table. */
 export function useLiveReservations(): ReservationTable {
   const table: ReservationTable = new Map();
   const originalMutation = runtime.mutate.bind(runtime);
@@ -109,8 +102,6 @@ export function useLiveReservations(): ReservationTable {
     table.clear();
     for (const name of CONVEX_ENV) delete process.env[name];
     resetConvexClientForTests();
-    // The one untyped seam: the generic runtime dispatches by name, and these
-    // maps answer only the reservation calls.
     runtime.query = ((name: ReservationQuery, args: never) =>
       Promise.resolve(callHandler(queries, name, table, args))) as never;
     runtime.mutate = ((name: ReservationMutation, args: never) =>

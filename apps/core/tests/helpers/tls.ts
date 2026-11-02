@@ -1,14 +1,9 @@
-/**
- * Ephemeral TLS credentials and the loopback server fixture shared by the
- * tests that drive a pinned fetch against a real socket.
- */
-
 import type { RequestListener } from "node:http";
 import { createServer, type Server } from "node:https";
 import { generate } from "selfsigned";
 import type { PinnedFetchTransport } from "../../src/shared/http.ts";
 
-// Keep validity independent of tests that replace the clock. Nothing is saved to disk.
+// Fixed dates keep validity independent of tests that replace the clock.
 const credentials = await generate(
   [{ name: "commonName", value: "public.test" }],
   {
@@ -32,11 +27,7 @@ const credentials = await generate(
 export const TLS_CERT = credentials.cert;
 export const TLS_KEY = credentials.private;
 
-/**
- * The pinned fetch's seams for a server on loopback: `public.test` resolves to
- * 127.0.0.1, which alone is exempt from the denylist. Every other address still
- * meets the real check, so a test exercises the same guard production runs.
- */
+// Only 127.0.0.1 is exempt, so every other address still meets the production denylist.
 export function loopbackTransport(): PinnedFetchTransport {
   return {
     allowAddresses: ["127.0.0.1"],
@@ -53,10 +44,6 @@ export function loopbackTransport(): PinnedFetchTransport {
   };
 }
 
-/**
- * A TLS server on a loopback port (a free one unless `port` is given) for the
- * duration of `run`, named by its origin. The port is released before it returns.
- */
 export async function withLoopbackTlsServer(
   listener: RequestListener,
   run: (origin: string) => Promise<void>,

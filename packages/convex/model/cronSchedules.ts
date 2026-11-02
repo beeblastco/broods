@@ -1,11 +1,3 @@
-/**
- * The one home for "what fires a cron job": a recurring schedule is a
- * crons-component registration named by the row id, a one-time at(...) job is
- * a Convex scheduler run recorded in the row's `scheduledRunId`. create,
- * update and the account/project cascades all register and deschedule
- * through here, so the convention cannot drift.
- */
-
 import { Crons } from "@convex-dev/crons";
 import { components, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -16,24 +8,16 @@ import { ClientError } from "./clientError";
 export const cronSchedules = new Crons(components.crons);
 
 export interface RegisterScheduleOptions {
-  /**
-   * What to do with an at(...) instant that already passed: "throw" rejects
-   * the write (create, or an update changing the expression), "run" fires it
-   * immediately (resuming a job whose time went by).
-   */
+  /** For an at(...) instant already past: "run" fires it now, as a resume does. */
   onPastAt: "throw" | "run";
 }
 
-/**
- * Deletes a cron job and what fires it, in the caller's transaction. Run
- * history can exceed one transaction, so a scheduled mutation drains it in
- * bounded batches after this commits.
- */
 export async function deleteCron(
   ctx: MutationCtx,
   cron: Doc<"crons">,
 ): Promise<void> {
   await unregisterSchedule(ctx, cron);
+  // Run history can outgrow one transaction, so a scheduled mutation drains it in batches.
   await ctx.scheduler.runAfter(0, internal.agent.crons.removeRunsCascade, {
     accountId: cron.accountId,
     cronId: cron._id,
@@ -41,11 +25,7 @@ export async function deleteCron(
   await ctx.db.delete(cron._id);
 }
 
-/**
- * Deletes the component registration under `name` when one exists; a missing
- * registration is done. The existence probe is load-bearing. The component's
- * delete throws on an unknown name.
- */
+// The probe is load-bearing: the component's delete throws on an unknown name.
 export async function deleteRegistrationIfExists(
   ctx: MutationCtx | ActionCtx,
   name: string,
@@ -55,11 +35,7 @@ export async function deleteRegistrationIfExists(
   }
 }
 
-/**
- * Registers the schedule that fires one cron job; a non-active job registers
- * nothing. A one-time at(...) job returns its `scheduledRunId`, which the
- * caller folds into its own row write, keeping one patch per mutation.
- */
+// Returns an at(...) job's `scheduledRunId` for the caller's own row write: one patch per mutation.
 export async function registerSchedule(
   ctx: MutationCtx,
   cron: Doc<"crons">,
@@ -93,13 +69,8 @@ export async function registerSchedule(
   return scheduledRunId;
 }
 
-/**
- * Deschedules whatever fires this cron job; a missing schedule is done.
- * A one-time job lives in `scheduledRunId` and is never in the component, and
- * a non-active job without one holds no registration at all, so the
- * cross-component lookup only runs for active recurring rows. Clearing the
- * `scheduledRunId` field is the caller's write.
- */
+// An at(...) job is never in the component and a non-active one holds no registration.
+// Clearing `scheduledRunId` is the caller's write.
 export async function unregisterSchedule(
   ctx: MutationCtx,
   cron: Doc<"crons">,

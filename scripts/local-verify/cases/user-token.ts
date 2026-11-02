@@ -11,16 +11,6 @@ import {
 } from "../../../packages/convex/model/userToken.ts";
 import { OK_AGENT, assertStep, type VerifyContext } from "../harness.ts";
 
-/**
- * The runtime key's user tokens, end to end through the edge, core and the
- * gateway: a new agent refuses the bare runtime key with
- * `user_token_required`, a token the stage did not sign fails the whole
- * credential with 401 on HTTP and on the agent socket's upgrade, and a
- * member's stage ticket still runs the agent without one. The account key
- * then rotates the stage's signing secret through the CLI route `broods dev`
- * and `broods deploy` call, and a token signed with it runs the agent under
- * that user's namespace.
- */
 export async function userToken(context: VerifyContext): Promise<void> {
   const project = `user-token-${context.runId}`;
   const sync = new BroodsSyncClient({
@@ -74,7 +64,6 @@ export async function userToken(context: VerifyContext): Promise<void> {
     `bsig_not-this-stage-${context.runId}`,
   );
 
-  /** The status, error code and conversation key core answers one runtime-key run with. */
   const run = async (
     headers: Record<string, string>,
   ): Promise<{ status: number; code?: string; conversationKey?: string }> =>
@@ -124,7 +113,6 @@ export async function userToken(context: VerifyContext): Promise<void> {
     JSON.stringify(forgedRun),
   );
 
-  /** The status the edge answers an agent socket upgrade with. */
   const upgrade = async (protocols: string): Promise<number> => {
     const response = await fetch(`${context.edgeUrl}${agentPath}/ws`, {
       headers: {
@@ -193,8 +181,7 @@ export async function userToken(context: VerifyContext): Promise<void> {
     JSON.stringify(signed),
   );
 
-  // The gateway checks the token only at the upgrade, so it closes the socket
-  // when the token dies instead of letting every later core call answer 401.
+  // The gateway checks the token only at upgrade, so it must close the socket once it expires.
   const shortLived = await sealUserToken(
     { userId: "alice", expiresAt: Date.now() + 1_500 },
     rotated.secret,

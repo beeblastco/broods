@@ -1,11 +1,3 @@
-/**
- * Durable media links. A channel tool seals one when it hands a workspace file
- * to a chat provider, and inbound media seals one for the copy kept in the
- * attachment store; the media route opens it to learn which file to stream.
- * Every ticket expires after `MEDIA_TICKET_TTL_SECONDS`; what an expired or
- * revoked link costs is in apps/docs/docs/internals/channels.md.
- */
-
 import {
   createCipheriv,
   createDecipheriv,
@@ -20,21 +12,12 @@ const TICKET_VERSION = "ml2";
 
 export const MEDIA_PATH_PREFIX = "/v1/media/";
 
-/**
- * Default ticket life, overridable with `MEDIA_TICKET_TTL_SECONDS`. The
- * provider fetch at send time and conversation replay reads happen within the
- * active conversation; the viewer-driven Zalo re-fetch window is unbounded, so
- * no finite TTL covers it and a month is the chosen cut.
- */
+// Zalo re-fetches whenever a viewer opens the message, so no TTL covers it; a month is the cut.
 export const DEFAULT_MEDIA_TICKET_TTL_SECONDS = 30 * 24 * 60 * 60;
 
-// Root of the attachment store in the managed filesystem bucket. Workspace
-// mounts are keyed by an `fs-` namespace, so nothing under here is ever mounted
-// and no sandbox tool can delete it.
+// Mounts are keyed by an `fs-` namespace, so no sandbox ever mounts or deletes this prefix.
 const ATTACHMENT_STORE_ROOT = "attachments/";
 
-// What a ticket seals: one of the two `MediaTicket` shapes plus its expiry in
-// epoch seconds.
 const ticketPayload = z.union([
   z.strictObject({
     accountId: z.string(),
@@ -50,42 +33,31 @@ const ticketPayload = z.union([
   }),
 ]);
 
-/** A file in the attachment store: inbound media, kept for the conversation. */
 export interface AttachmentMediaTicket {
   accountId: string;
-  /** Same path the agent's workspace copy was saved under. */
   path: string;
 }
 
-/** A file in a workspace, sent out by a channel tool. */
 export interface WorkspaceMediaTicket {
   accountId: string;
   workspaceId: string;
-  /** Filesystem namespace, which already carries any workspace isolation suffix. */
   namespace: string;
-  /** File path relative to the workspace root. */
   path: string;
 }
 
 export type MediaTicket = AttachmentMediaTicket | WorkspaceMediaTicket;
 
-/** A ticket the media route opened, with its expiry in epoch seconds. */
 export type OpenedMediaTicket = z.infer<typeof ticketPayload>;
 
 export function attachmentStoreKey(ticket: AttachmentMediaTicket): string {
   return `${ATTACHMENT_STORE_ROOT}${encodeURIComponent(ticket.accountId)}/${ticket.path}`;
 }
 
-/** Every key of one account's attachment store, for the account delete sweep. */
 export function attachmentStorePrefix(accountId: string): string {
   return `${ATTACHMENT_STORE_ROOT}${encodeURIComponent(accountId)}/`;
 }
 
-/**
- * Tries every live secret. Returns null (never throws) on any tamper,
- * wrong-secret or expiry failure, so the route answers 404 rather than leaking
- * the reason.
- */
+// Null, never a throw, on any failure, so the route answers a bare 404 that leaks no reason.
 export function openMediaTicket(
   token: string,
   secrets: string[],
@@ -159,7 +131,6 @@ function openWithSecret(
   }
 }
 
-// The purpose label keeps this key distinct from every other ticket kind's.
 function ticketKey(secret: string): Buffer {
   return createHash("sha256").update(`workspace-media-link:${secret}`).digest();
 }

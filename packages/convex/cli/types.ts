@@ -1,11 +1,5 @@
-/**
- * Canonical CLI manifest wire types, the single source of truth shared by the
- * backend (cliSync.ts, cliHttp.ts) and the SDK/CLI (packages/broods).
- *
- * This file intentionally has no runtime imports (its values are plain
- * lists) so the SDK can import it without pulling the Convex server module
- * graph into its typecheck.
- */
+// CLI manifest wire types shared with packages/broods. No runtime imports, so the SDK
+// typecheck never pulls in the Convex server module graph.
 
 export type CliManifestResource = {
   kind:
@@ -35,14 +29,13 @@ export type GeneratedIds = {
   channelRecords: Record<string, string>;
 };
 
-/** Where a Production stage runs. */
 export const DEPLOYMENT_REGIONS = [
   "ap-southeast-1",
   "eu-west-1",
   "us-east-1",
 ] as const;
 export type DeploymentRegion = (typeof DEPLOYMENT_REGIONS)[number];
-/** The regions Production can run in today; the first is the default. */
+/** The first is the default. */
 export const LIVE_DEPLOYMENT_REGIONS: readonly DeploymentRegion[] = [
   "eu-west-1",
 ];
@@ -51,10 +44,7 @@ export type CliManifest = {
   version: 1;
   project: string;
   stage: string;
-  /**
-   * Production only: the region its first deploy pins (eu-west-1 when unset).
-   * A later deploy naming another region is refused.
-   */
+  /** Production only: pinned by the first deploy; a later deploy naming another is refused. */
   region?: DeploymentRegion;
   resources: CliManifestResource[];
 };

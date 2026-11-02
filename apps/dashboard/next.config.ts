@@ -1,8 +1,7 @@
 import type { NextConfig } from "next";
 
 const isDev = process.env.NODE_ENV === "development";
-// `https:` and `wss:` cover hosted backends; a plain-http Convex, gateway or
-// PostHog (the local stack, a self-hosted LAN) is allowed by its exact origin.
+// `https:` and `wss:` cover hosted backends; a plain-http one is allowed by exact origin.
 const httpBackendSources = [
   process.env.NEXT_PUBLIC_CONVEX_URL,
   process.env.NEXT_PUBLIC_BROODS_BASE_URL,
@@ -19,9 +18,7 @@ const posthogScriptSource =
   posthogHost && URL.canParse(posthogHost)
     ? ` ${new URL(posthogHost).origin}`
     : "";
-// The stage's edge copy of /_next/static (CloudFront, pulling from this app),
-// so a first load fetches its chunks nearby instead of over one connection to
-// the cluster. Unset, the app serves them itself.
+// The stage's CloudFront copy of /_next/static; unset, the app serves its own chunks.
 const assetOrigin = process.env.DASHBOARD_ASSET_ORIGIN || undefined;
 const assetSource = assetOrigin ? ` ${new URL(assetOrigin).origin}` : "";
 const contentSecurityPolicy = [
@@ -43,12 +40,10 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   assetPrefix: assetOrigin,
-  // CORS mode, so an error thrown in a CDN chunk reaches error tracking with
-  // its type and stack instead of a bare "Script error.". The CDN must send
+  // CDN chunk errors keep their stack, not "Script error."; the CDN must then send
   // Access-Control-Allow-Origin on every chunk, or the page loads unstyled.
   crossOrigin: "anonymous",
-  // esbuild ships platform binaries; bundling it into the /api/mcp/bundle
-  // route crashes Turbopack. Load it from node_modules at runtime instead.
+  // esbuild ships platform binaries: bundling it into /api/mcp/bundle crashes Turbopack.
   serverExternalPackages: ["esbuild"],
   experimental: {
     optimizePackageImports: ["@base-ui/react", "@xyflow/react", "lucide-react"],
@@ -71,8 +66,7 @@ const nextConfig: NextConfig = {
             value: "DENY",
           },
           {
-            // View state rides in the URL (search text, ids): send other
-            // sites the origin only, and nothing on an https→http downgrade.
+            // View state (search text, ids) rides in the URL.
             key: "Referrer-Policy",
             value: "strict-origin-when-cross-origin",
           },

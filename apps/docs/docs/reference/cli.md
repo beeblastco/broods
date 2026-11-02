@@ -215,9 +215,9 @@ broods deploy [--prune] [--rotate-key] [--region <region>] [--stage <name>]
 
 The first deploy to `production` that syncs its manifest pins its region, so data stays where you chose for GDPR. It takes `--region`, else `eu-west-1`, the only region live today; `BROODS_REGION` in `.env.local` is not read. A region Initialize Production set in the dashboard counts the same. A later deploy that names another region is refused with 409 and Production stays put; one that names none keeps the pinned region. `--region` on any other stage is an error. SDK callers set `region` on the manifest they pass to `BroodsSyncClient.putManifest`. A Production stage made this way opens directly in the dashboard, with no Initialize Production step.
 
-Like `dev`, it writes the stage's user token signing secret as `BROODS_USER_TOKEN_SECRET` when the stage has none yet, and never rotates an existing one. See [Signing secret](#signing-secret).
+Like `dev`, it writes the stage's user token signing secret as `BROODS_USER_TOKEN_SECRET` when the stage has none yet, and never rotates an existing one. See [Signing secret](#signing-secret). With `CI` set, as in GitHub Actions, it writes neither the runtime key nor the signing secret, since the checkout is thrown away; the next local `dev` or `deploy` mints the secret where you can read it.
 
-`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a manifest rejected before synchronization removes nothing. A later failure can leave committed changes; the deploy is not rolled back. A removed agent takes its cron jobs with it. `deploy` sends no stage revision, so it can replace the last completed sync. An overlapping manifest PUT receives 409 `manifest_conflict`; retry after the active sync finishes.
+`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a manifest rejected before synchronization removes nothing. A later failure can leave committed changes; the deploy is not rolled back. A removed agent takes its cron jobs with it. A cron job is removed only when code declared it: one an agent scheduled at runtime, or you made on the dashboard, survives every prune. `deploy` sends no stage revision, so it can replace the last completed sync. An overlapping manifest PUT receives 409 `manifest_conflict`; retry after the active sync finishes.
 
 ### Signing secret
 
@@ -363,6 +363,28 @@ Projects:
 ```
 
 `delete` removes the project on every stage, including agent configs, canvas, environment variables, project keys, cron schedules, and workspace files with their stored blobs. It needs the org admin role. There is no undo. The prompt shows the counts first. `--yes` skips it. Without a TTY the prompt answers no, so a CI run without `--yes` deletes nothing.
+
+## github
+
+Links the project to a GitHub repo, so a push deploys its stage from your own GitHub Actions. See [GitHub](../guides/github.md).
+
+```bash
+broods github status                     # the link, latest deploy per branch, connected accounts
+broods github repos                      # repos the org's connected accounts let you link
+broods github link acme/web              # main deploys Development, or Production when the project has it
+broods github link acme/web --production-branch main --development-branch dev
+broods github unlink [--yes]
+broods github connect                    # install the Broods GitHub App on another account
+```
+
+| Flag                                | Description                                                                                                           |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `--folder <path>`                   | The folder holding `broods/`, when the repo has several                                                               |
+| `--production-branch <name\|none>`  | Branch Production deploys from. Default: the repo's default branch when the project has a Production stage, else none |
+| `--development-branch <name\|none>` | Branch Development deploys from, created when missing. Default: `dev` beside Production, else the default branch      |
+| `--json`                            | Print the result as JSON                                                                                              |
+
+`none` leaves that stage out: no key for it, and no push deploys it. Linking the project's repo again changes its branches in place: new keys, the old ones revoked. Naming a Production branch adds the Production stage when the project has none. The two branches must differ. Linking and unlinking need `keys:write` on the project, `connect` an org admin. The commands use your `broods login` and act in its organization.
 
 ## stage
 

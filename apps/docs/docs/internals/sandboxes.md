@@ -117,7 +117,7 @@ sequenceDiagram
 - Every write for one sandbox id goes through `queueMirrorWrite`, so a removal never lands before the upsert.
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
-- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.
+- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time. Commands of one account and source that end within a second go out as one `account/budget:record` write (`recordUsageSoon` in `src/harness/plan-limits.ts`), and a reserved `worker` sandbox's row is upserted once per task and minute, not after every command.
 - A sandbox on the account's own credentials gets no row. No lifecycle verb accepts an ephemeral row.
 
 ## Reservations
@@ -145,7 +145,7 @@ Harness adapters pick their own key, see [harness adapters](#harness-adapters).
 
 ### First call and resume
 
-The MicroVM executor (`#acquire` in `microvm-executor.ts`) as the example. Workdir, Daytona, E2B, Vercel and Cloudflare follow the same claim and race rules.
+The MicroVM executor (`#acquire` in `microvm-executor.ts`) as the example. Workdir, Daytona, E2B and Vercel follow the same claim and race rules; `cloudflare` and `worker` claim in one trip (below).
 
 ```mermaid
 sequenceDiagram
@@ -182,6 +182,7 @@ sequenceDiagram
   VM-->>T: stdout, stderr, exit code
 ```
 
+- `cloudflare` and `worker` reserve in one trip instead (`reservePlatformSandbox` in `platform-worker.ts`): `reserveSandboxReservation` returns the stored id, or claims the new one, and a racing create gets the winner's id. The process keeps the key-to-id map in memory, so a later command on the same key makes no Convex call for a minute; the first command after that books again, which refreshes `expiresAt`, follows a key repointed elsewhere and refuses an account no longer active. A key released in this process is let go at once.
 - A slow resume or a control-plane error propagates. Only a VM unknown to the provider or terminal is replaced, since replacing a suspended one leaks it against the account's memory quota.
 - A persistent MicroVM counts against that quota while running or suspended. Too many make every launch fail with `ServiceQuotaExceededException`, and a reserved sandbox has no fallback.
 - `lifecycle.maxLifetimeSeconds` is checked on acquire, never on a timer, so it cannot interrupt a running command.
@@ -286,7 +287,7 @@ sequenceDiagram
   S->>S: job writes .log and .exit
   S->>Core: POST /v1/sandbox-jobs/:resultId/complete, x-job-token
   Core->>CVX: verify token, settle completed or failed
-  alt row already stored: async_status read it or the turn wrote it
+  alt row already stored: a saved async_status read or the turn wrote it
     Note over Core: skip the continuation
   else
     Core->>CVX: admit continuation as a followup
@@ -295,7 +296,8 @@ sequenceDiagram
   opt model polls
     M->>Core: async_status status, logs or stop
     Core->>S: jobStatus, jobLogs or stopJob
-    Core->>CVX: settle if terminal, mark handback stored
+    Core->>CVX: settle if terminal
+    Note over Core,CVX: the step save that carries the read stores the row
   end
 ```
 
@@ -319,8 +321,8 @@ stateDiagram-v2
   [*] --> processing: created before launch
   processing --> completed: callback or poll reads exit 0
   processing --> failed: callback, poll, or launch error
-  completed --> stored: async_status read it, or the conversation holds it
-  failed --> stored: async_status read it, or the conversation holds it
+  completed --> stored: saved history holds it, or a run that saves none read it
+  failed --> stored: saved history holds it, or a run that saves none read it
 ```
 
 - `lambda`, workdir, Daytona and Vercel keep markers under `<workspace root>/.fp-jobs/<reservation key>`, at most 10 running (`MAX_CONCURRENT_BACKGROUND_JOBS`). E2B uses its native `background: true` command, so it has callback delivery but no logs or stop.

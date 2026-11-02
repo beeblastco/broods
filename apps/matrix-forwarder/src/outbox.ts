@@ -1,24 +1,9 @@
-/**
- * An account's durable outbox. Every timeline event of a forwarded sync lands
- * here before the stored sync token moves past it, and leaves once each target
- * took it, so neither a core outage nor a restart loses it. One SQLite file per
- * account, `outbox.sqlite` next to `sync-token` on the persistent volume;
- * `claimStore` and the single replica make the account its only writer.
- *
- * The event is kept as `/sync` served it, still encrypted in an encrypted room,
- * so no plaintext is written at rest. It is decrypted on each try, which also
- * covers one still waiting for its room key.
- */
-
 import { Database } from "bun:sqlite";
 import type { RoomEvent } from "./matrix.ts";
 
-/** Under core's 24 hour claim on an event id, so a retry that did land the first time is still dropped there. */
+// Under core's 24 h claim on an event id, so a retry of a POST that landed is still deduped.
 const TTL_MS = 12 * 60 * 60_000;
-/**
- * How long an event that never decrypted waits for its room key. Short, because
- * the events after it in its room wait too.
- */
+// Short: the later events of its room wait behind it.
 const KEY_WAIT_MS = 5 * 60_000;
 const MAX_ROWS = 5_000;
 const MAX_BYTES = 50 * 1024 * 1024;
@@ -29,15 +14,11 @@ export interface OutboxEntry {
   firstSeenMs: number;
   nextAttemptMs: number;
   roomId: string;
-  /**
-   * Agent ids still owed the event. Null until its first delivery: every
-   * target. Null with attempts made means it waits on its room key. Agent ids,
-   * not webhook URLs, so a webhook path that moves still reaches its agent.
-   */
+  // Null until the first delivery, meaning every target; null with attempts made, the room key
+  // is missing. Agent ids, not URLs, so an agent whose webhook path moved still gets it.
   targetsLeft: string[] | null;
 }
 
-/** A timeline event as `/sync` served it, and the room it came from. */
 export interface OutboxEvent {
   event: RoomEvent;
   roomId: string;
@@ -73,7 +54,6 @@ export class Outbox {
     );
   }
 
-  /** One transaction per sync. An event already held keeps its place and its attempts. */
   add(events: readonly OutboxEvent[]): void {
     const insert = this.db.query<null, [string, string, string, number]>(
       `INSERT OR IGNORE INTO outbox
@@ -91,7 +71,6 @@ export class Outbox {
     this.db.close();
   }
 
-  /** Every held event, oldest first, without its body: most of them wait. */
   entries(): OutboxEntry[] {
     return this.db
       .query<OutboxRow, []>(
@@ -102,7 +81,6 @@ export class Outbox {
       .map(entry);
   }
 
-  /** The body of a held event, read only when it is tried. */
   event(eventId: string): RoomEvent | null {
     const row = this.db
       .query<{ event_json: string }, [string]>(
@@ -115,11 +93,6 @@ export class Outbox {
     return event;
   }
 
-  /**
-   * Deletes and returns what waited too long, for its targets or for its room
-   * key, then the oldest events beyond the row or byte cap, so a target that
-   * never comes back cannot fill the volume.
-   */
   prune(): Array<OutboxEntry & { reason: DropReason }> {
     const expiredBeforeMs = Date.now() - TTL_MS;
     const keyGoneBeforeMs = Date.now() - KEY_WAIT_MS;
@@ -157,7 +130,6 @@ export class Outbox {
       });
   }
 
-  /** Records a try that left targets owed, and when to try them again. */
   retry(
     eventId: string,
     attempts: number,
@@ -177,7 +149,6 @@ export class Outbox {
       );
   }
 
-  /** Every target took the event, or none wants it. */
   settle(eventId: string): void {
     this.db
       .query<null, [string]>("DELETE FROM outbox WHERE event_id = ?1")

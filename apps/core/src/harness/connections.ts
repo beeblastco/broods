@@ -1,10 +1,3 @@
-/**
- * A connection's live access token: loaded from the config plane, refreshed
- * before it expires (or once the provider refused it), and the rotated pair
- * saved back. The `chatgpt` model provider dials through `connectionFetch`.
- * `broods connect` signs in; the config plane stores.
- */
-
 import {
   CONNECTION_TYPES,
   type ConnectionType,
@@ -17,16 +10,12 @@ import {
   type RefreshedToken,
 } from "./mcp/oauth.ts";
 
-/** Re-read the stored connection this often, so a new `broods connect` lands. */
 const CACHE_TTL_MS = 5 * 60_000;
-/** A stalled refresh fails rather than hold every run waiting on it. */
 const REFRESH_TIMEOUT_MS = 15_000;
 
-// Core runs one replica, so an in-flight promise per connection is all the
-// serialization a rotating refresh token needs: two runs never spend it twice.
+// Core runs one replica, so an in-flight promise per key stops a refresh token being spent twice.
 const cache = new Map<string, CachedConnection>();
 const inFlight = new Map<string, Promise<StoredConnection>>();
-/** The access token a provider refused, so the next load refreshes it. */
 const rejected = new Map<string, string>();
 
 interface CachedConnection {
@@ -34,17 +23,12 @@ interface CachedConnection {
   loadedAt: number;
 }
 
-/** The fetch shape the AI SDK dials through. */
 type Fetch = (
   input: string | URL | Request,
   init?: RequestInit,
 ) => Promise<Response>;
 
-/**
- * A fetch that sends the account's connection token and, when the provider
- * refuses it (401), refreshes once and resends: the AI SDK does not retry
- * a 401.
- */
+/** On a 401 it refreshes once and resends: the AI SDK does not retry a 401. */
 export function connectionFetch(
   accountId: string,
   type: ConnectionType,
@@ -68,14 +52,12 @@ export function connectionFetch(
   };
 }
 
-/** Forget cached connections; tests only. */
 export function resetConnectionsForTests(): void {
   cache.clear();
   inFlight.clear();
   rejected.clear();
 }
 
-/** The connection's access token, refreshed when it is close to expiry. */
 async function accessToken(
   accountId: string,
   type: ConnectionType,
@@ -99,13 +81,10 @@ async function accessToken(
   return (await pending).accessToken;
 }
 
-/** Whether a token is inside the refresh margin, so the next call refreshes it. */
 function expiresSoon(connection: StoredConnection): boolean {
   return connection.expiresAt - Date.now() < REFRESH_MARGIN_MS;
 }
 
-// Always re-read before refreshing: a new sign-in or another refresh may have
-// replaced the token pair since it was cached.
 async function loadFresh(
   accountId: string,
   type: ConnectionType,
@@ -128,7 +107,6 @@ async function loadFresh(
   return connection;
 }
 
-/** Refreshes the stored pair at the type's token endpoint and saves it back. */
 async function refreshAndSave(
   accountId: string,
   type: ConnectionType,
@@ -142,7 +120,6 @@ async function refreshAndSave(
       {
         client_id: stored.clientId,
         refresh_token: stored.refreshToken,
-        // No scope: the refreshed grant keeps what the user approved.
         ...(meta.resource ? { resource: meta.resource } : {}),
       },
       (url, init) =>
@@ -152,8 +129,7 @@ async function refreshAndSave(
         }),
     );
   } catch (error) {
-    // Another writer may have spent this refresh token and saved its pair:
-    // storage moved under us, so start over from it.
+    // Another writer may have spent this refresh token and saved its pair: start over from it.
     const latest = await getStorage().connections.load(accountId, type);
     if (latest && latest.updatedAt !== stored.updatedAt)
       return await loadFresh(accountId, type);
@@ -161,7 +137,6 @@ async function refreshAndSave(
       `${meta.label} connection could not refresh: ${toErrorMessage(error)}. Run \`broods connect ${type}\` to sign in again.`,
     );
   }
-  // The refresh token rotates; keep the old one only if none came back.
   const rotated = {
     accessToken: refreshed.accessToken,
     refreshToken: refreshed.refreshToken ?? stored.refreshToken,

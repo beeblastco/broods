@@ -1,5 +1,3 @@
-/** Async agent status persistence backed by Convex transactions. */
-
 import type {
   Handback,
   HandbackMove,
@@ -18,17 +16,12 @@ export type AsyncAgentStatus =
   | "awaiting_input"
   | "completed"
   | "failed";
-/** How an async run ended, or what it waits on, as its polling row records it. */
 export type AsyncAgentOutcome =
   | { status: "completed"; response: JSONValue }
   | { status: "failed"; error: string }
   | { status: "awaiting_approval"; approvals: ToolApprovalSummary[] }
   | { status: "awaiting_input"; questions: PendingQuestionSummary[] };
-/**
- * Where a subagent's parent conversation answers, so a late result reaches the
- * parent after a restart too. The task, the child agent and its key come from
- * the row's own `eventId` and `conversationKey`.
- */
+// Stored so a late result still reaches the parent after a restart.
 export interface SubagentTaskRecord {
   description?: string;
   parentConversationKey: string;
@@ -39,9 +32,6 @@ export interface AsyncAgentResultRecord {
   eventId: string;
   conversationKey: string;
   subagent?: SubagentTaskRecord;
-  // Where a finished subagent result stands with its parent: `pending` until
-  // the parent's run stores it, `detached` once that run gave up and the
-  // recovery sweep owns it, `stored` once the parent has it.
   handback?: Handback;
   status: AsyncAgentStatus;
   createdAt: string;
@@ -64,10 +54,6 @@ export function getAsyncAgentResult(
 ): Promise<AsyncAgentResultRecord | null> {
   return runtime.query("getAsyncAgentResult", { eventId: eventId });
 }
-/**
- * One page of subagent results in `status` whose hand-back is `handback`,
- * written in the window, from `cursor`. The recovery sweep walks every page.
- */
 export function listOwedAsyncAgentResults(options: {
   handback: SweptHandback;
   status: AsyncAgentStatus;
@@ -82,19 +68,15 @@ export function listOwedAsyncAgentResults(options: {
   return runtime.query("listOwedAsyncAgentResults", options);
 }
 /**
- * Moves a subagent result's hand-back: `detached` when this run gives up
- * delivering it, `stored` when the parent is never told. A
- * stored row stays stored. The row already holds the result, so a failed
- * write is only logged: a pending row reaches the recovery sweep later.
- * @returns true when a resume of the result waits in the parent's queue: the
- * row stays unstored and the caller must not hand the result over itself
+ * Moves a subagent result's hand-back: `detached` when this run gives up, `stored` when the
+ * parent is never told. A failed write is only logged: the recovery sweep delivers the row later.
  */
 export async function markAsyncAgentHandback(
   eventId: string,
   handback: HandbackMove,
-): Promise<boolean> {
+): Promise<void> {
   try {
-    return await runtime.mutate("markAsyncAgentHandback", {
+    await runtime.mutate("markAsyncAgentHandback", {
       eventId: eventId,
       handback: handback,
     });
@@ -104,14 +86,8 @@ export async function markAsyncAgentHandback(
       handback: handback,
       error: toErrorMessage(error),
     });
-
-    return false;
   }
 }
-/**
- * Records a run's outcome on its polling row, outside any envelope settle.
- * `onlyWhileProcessing` leaves a row that already has its outcome alone.
- */
 export async function recordAsyncAgentResult(
   eventId: string,
   outcome: AsyncAgentOutcome,

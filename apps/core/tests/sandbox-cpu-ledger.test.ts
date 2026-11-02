@@ -1,9 +1,3 @@
-/**
- * The run's sandbox CPU ledger: the per (type, role, tool) buckets that become
- * the usage row's sandboxUsage, the per-call compute a tool.call span reads
- * once, and the role and provider totals the root span carries.
- */
-
 import { describe, expect, it } from "bun:test";
 import type { SandboxCpuSample } from "../src/harness/sandbox/types.ts";
 import { createSandboxCpuLedger } from "../src/harness/usage-metering.ts";
@@ -35,7 +29,6 @@ describe("createSandboxCpuLedger", () => {
       cpuUsec: 20,
     });
 
-    // Rows stay aggregated: no toolCallId, and no toolName key when none ran.
     expect(ledger.usage()).toEqual([
       { type: "lambda", role: "agent", cpuUsec: 150 },
       { type: "mcp-sandbox", role: "tool", toolName: "search", cpuUsec: 50 },
@@ -83,7 +76,6 @@ describe("createSandboxCpuLedger", () => {
       cpuUsec: 100,
     });
     expect(ledger.takeToolCompute("call-1")).toBeUndefined();
-    // Taking a call's compute leaves the aggregated row the usage write reads.
     expect(ledger.usage()).toEqual([
       { type: "mcp-sandbox", role: "tool", toolName: "search", cpuUsec: 100 },
     ]);

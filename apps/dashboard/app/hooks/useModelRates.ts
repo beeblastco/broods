@@ -8,13 +8,6 @@ import { useState } from "react";
 
 type ModelRates = FunctionReturnType<typeof api.logs.fetchModelRates>;
 
-/**
- * Rates for models seen on the trace stream, which have no usage row yet:
- * live runs on the Usage tab and task prices on Tracing. The models are
- * deduped and sorted, so the query re-runs only when the set changes, and the
- * last rates stay while a new set loads, so prices never blink out.
- * `loading` is true until the current set's rates have arrived.
- */
 export function useModelRates(models: ModelRef[]): {
   rates: ModelRates | undefined;
   loading: boolean;
@@ -29,12 +22,12 @@ export function useModelRates(models: ModelRef[]): {
   ]
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([, model]) => model);
-  // Convex compares args by value, so a new array with the same models keeps
-  // the subscription.
+  // Deduped and sorted: Convex compares args by value, so the same set keeps the subscription.
   const rows = useQuery(
     api.logs.fetchModelRates,
     refs.length > 0 ? { models: refs } : "skip",
   );
+  // The last rates stay while a new set loads, so prices never blink out.
   const [held, setHeld] = useState<ModelRates | undefined>(undefined);
   if (rows !== undefined && rows !== held) setHeld(rows);
 

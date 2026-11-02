@@ -1,17 +1,9 @@
 import type { BroodsAccount } from "../../../packages/broods/src/account.ts";
 import { assertStep, type VerifyContext } from "../harness.ts";
 
-// Instagram, Messenger and WhatsApp share Meta's handshake. With no channel
-// configured, core answers all three the same way, so one stands for all;
-// each channel's own claim is covered by its core channel test.
+// Meta's channels share one handshake that core answers alike, so WhatsApp stands for all.
 const CHANNEL = "whatsapp";
 
-/**
- * A GET on a webhook URL is a liveness check, unless a channel claims it as a
- * subscription handshake (Meta's `hub.challenge`). A GET with a query must
- * reach core's channel scan through the gateway, query intact, and still get
- * the liveness answer when no channel claims it.
- */
 export async function webhookHandshake(context: VerifyContext): Promise<void> {
   const account = await context.measure(
     "load account",
@@ -29,8 +21,7 @@ export async function webhookHandshake(context: VerifyContext): Promise<void> {
     `${live.status} ${await live.text()}`,
   );
 
-  // Only the scan loads the account, so a 404 for an unknown one proves the
-  // handshake got past the liveness answer.
+  // Only the channel scan loads the account, so a 404 proves the query got past liveness.
   const unknown = await context.measure("handshake", (): Promise<Response> =>
     get(
       `${context.client.accountWebhookUrl(`missing${context.runId}`, CHANNEL)}${handshakeQuery}`,

@@ -1,7 +1,4 @@
-/**
- * Usage writes share rollups and an audit head. Exercise the real HTTP client's
- * queue so concurrent runs cannot race those writes within the core process.
- */
+// The real HTTP client's queue: concurrent usage writes share rollups and an audit head.
 
 import { afterEach, expect, it, spyOn } from "bun:test";
 import { auditLedger } from "../src/shared/convex/audit-ledger.ts";

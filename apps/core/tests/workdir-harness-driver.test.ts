@@ -1,8 +1,3 @@
-/**
- * The driver receives a fake existing executor reservation and never touches
- * Convex, a real Workdir host, or the run loop.
- */
-
 import { describe, expect, test } from "bun:test";
 import type { Sandbox } from "@mv37/workdir";
 import {

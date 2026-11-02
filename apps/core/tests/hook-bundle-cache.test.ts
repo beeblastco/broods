@@ -1,8 +1,4 @@
-/**
- * Hook bundle reuse across fire points: a shared/s3.ts stand-in counts reads,
- * and a stub pooled runner answers each call with the sha256 of the bundle it
- * was handed.
- */
+// The stub pooled runner answers each call with the sha256 of the bundle it was handed.
 
 import { afterAll, beforeEach, expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -62,7 +58,6 @@ afterAll(async (): Promise<void> => {
 
 let hooks = 0;
 
-/** Stores `answers` under a fresh key and returns a record whose sha256 is that of `bundle`. */
 function hook(
   bundle: string,
   answers: Array<string | Error> = [bundle],
@@ -89,7 +84,6 @@ function hook(
   };
 }
 
-/** One agent.started fire; returns the sha256 the runner saw, or undefined when the hook failed. */
 async function fire(record: AccountHookRecord): Promise<unknown> {
   const outcome = await runCodeHook({
     accountId: record.accountId,

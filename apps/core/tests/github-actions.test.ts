@@ -1,5 +1,3 @@
-/** GitHub action requests use a fresh signing key and mocked API responses. */
-
 import {
   afterEach,
   beforeEach,
@@ -14,7 +12,6 @@ import type { GitHubSource } from "../src/shared/github-channel.ts";
 import { createGitHubChannel } from "../src/shared/github-channel.ts";
 import { requestUrl } from "./helpers/http.ts";
 
-// Only the mocked GitHub API sees tokens signed by this per-process key.
 const TEST_PRIVATE_KEY = generateKeyPairSync("rsa", {
   modulusLength: 2048,
   privateKeyEncoding: { type: "pkcs8", format: "pem" },

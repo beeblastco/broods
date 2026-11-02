@@ -1,14 +1,3 @@
-/**
- * workdir-backed sandbox executor, the vanilla `sandbox` provider.
- * Thin adapter over the published `@mv37/workdir` SDK (a self-hosted
- * Rust/Firecracker control plane) reached at a configurable base URL, so the
- * same code targets a local node while testing and a dedicated host in
- * production. A real microVM: declare an S3 workspace mount + egress policy at
- * create, then run the bash `code` as-is. Persistent mode reserves one sandbox
- * per key and uses workdir's native pause/resume + standby; snapshots capture
- * reusable images. See #s3MountStrategy for the S3 workspace mount.
- */
-
 import {
   Client,
   type CreateOptions,
@@ -21,7 +10,7 @@ import { toErrorMessage } from "../../shared/errors.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
-import { isPlainObject } from "../../shared/object.ts";
+import { isPlainObject } from "@broods/convex/model/objects";
 import { stripTrailingSlashes } from "../../shared/paths.ts";
 import {
   type SandboxRunMetadata,
@@ -90,10 +79,7 @@ import {
 const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 const DEFAULT_S3_SECRET_NAMES = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"];
 
-// workdir rejects an out-of-range auto_stop with a 400, and the account-facing
-// `idleTimeoutSeconds` allows far more than it accepts (up to seven days).
-// Clamping keeps a legal config running with the closest idle window workdir supports,
-// where forwarding it verbatim would fail every create the sandbox ever attempts.
+// workdir answers an out-of-range auto_stop with a 400; clamp so a legal config still creates.
 const AUTO_STOP_MIN_SECONDS = 30;
 const AUTO_STOP_MAX_SECONDS = 60 * 60;
 
@@ -111,8 +97,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     this.#client = workdirClient(config);
   }
 
-  // A `shared` machine is kept when its first setup fails: another conversation
-  // may already hold it, and the unset onCreate marker makes the next acquire retry.
+  // A `shared` machine survives a failed first setup; the unset onCreate marker retries it.
   async acquireHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
@@ -171,10 +156,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
-    // Refresh the dashboard mirror so a resumed turn's trace/task lands on the
-    // row; recoverable on the next call, so it never holds up the session. No
-    // size: workdir fixed it at create, and the row keeps that one even if the
-    // config's size was edited since.
     void upsertSandboxInstance(
       this.#config.controlPlane,
       "sandbox",
@@ -191,15 +172,12 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     const startedAt = Date.now();
     const persistent = this.#persistent(request);
     const execMount = this.#s3MountStrategy(request) === "exec";
-    // A fresh ephemeral sandbox always needs the mount, so its credentials mint while
-    // it boots. The catch only keeps a failed create from orphaning the rejection.
     const ephemeralMount =
       execMount && !persistent
         ? resolveS3Mount(executorS3Context(this.#config, request))
         : undefined;
     void ephemeralMount?.catch((): void => {});
     const { sandbox, isFirstCreate } = await this.#acquireWithState(request);
-    // Own nodes are not billed and choose their own ids, so they get no row.
     const endMeter = persistent
       ? undefined
       : meterEphemeralSandbox(
@@ -255,14 +233,11 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         stderr: stderr.value,
         durationMs: Date.now() - startedAt,
         truncated: stdout.truncated || stderr.truncated,
-        // 124 is the TERM the wrapper sends, 137 the KILL `-k 5` follows with.
         timedOut: result.exit_code === 124 || result.exit_code === 137,
         provider: "sandbox",
       };
     } finally {
-      // The delete leaves the tool clock but not the process: shutdown drains it, so
-      // a rolling deploy cannot strand the VM at workdir, which has no TTL of its own.
-      // The next call's create can now overlap this delete at the admission ceiling.
+      // Off the tool clock, but shutdown drains it: workdir has no TTL to reap a stranded VM.
       if (!persistent) {
         waitUntil(
           sandbox.delete().then(
@@ -339,15 +314,12 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     const { sandbox, jobsDir } = await this.#jobContext(request);
     await this.#shell(sandbox, stopScript(jobsDir, request.jobId));
 
-    // Report the real terminal state: a job that already finished keeps its own
-    // exit code instead of being recorded as killed.
     return parseJobStatus(
       request.jobId,
       await this.#shell(sandbox, statusScript(jobsDir, request.jobId)),
     );
   }
 
-  // Fire-and-forget: callers feature-detect and ignore failures.
   async prewarm(request: {
     namespace?: string;
     reservationKey?: string;
@@ -421,12 +393,8 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       if (mapWorkdirState(sandbox.state) !== "terminating")
         await sandbox.delete();
     } catch (err) {
-      // Already gone => safe to forget. Wrong creds / transient => propagate so a
-      // caller iterating multiple configs can try the next one.
       if (!isSandboxGoneError(err)) throw err;
     }
-    // Conditional on the same id, so a reservation re-claimed while the provider
-    // delete was in flight keeps its row.
     await deleteSandboxInstance(
       "sandbox",
       key,
@@ -469,25 +437,12 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     return `${this.#workspaceRoot()}/${namespace}`;
   }
 
-  // Job-state markers live beside the workspace mount so the tiny files stay on
-  // the sandbox's native disk, not under the S3 mount.
   #jobsDir(reservationKey: string): string {
     return `${this.#workspaceRoot()}/.fp-jobs/${reservationKey}`;
   }
 
-  // S3 workspace mount strategy:
-  //  - `none`:        not a workspace run (no namespace) and mounting not forced.
-  //  - `exec`:        a role is configured (bring-your-own assumeRole, or the
-  //                   platform SANDBOX_MOUNT_ROLE_ARN) or the bucket is R2 ->
-  //                   mount via exec with the short-lived credentials
-  //                   (#ensureS3Mount). Preferred,
-  //                   since workdir's org-global secret store can't safely hold
-  //                   per-namespace scoped creds, but a per-call exec env can.
-  //  - `declarative`: no role -> declare a boot mount that reads static keys from
-  //                   named org secrets (#s3Mounts), for stores without a role.
-  // Both honor an S3-compatible endpoint (R2/MinIO) via `options.s3Endpoint`.
-  // Gated on the run's namespace, not `storage`: managed workspaces carry no
-  // storage block (their bucket is the managed fallback), same as microvm.
+  // `exec` passes scoped credentials per call, which workdir's org-global secrets cannot hold.
+  // Keyed on namespace, not `storage`: a managed workspace carries no storage block.
   #s3MountStrategy(request: {
     namespace?: string;
   }): "none" | "exec" | "declarative" {
@@ -500,7 +455,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       : "declarative";
   }
 
-  // Guest filesystem path the workspace mounts at.
   #mountPath(request: { namespace?: string; workspaceRoot?: string }): string {
     const root = (request.workspaceRoot ?? this.#workspaceRoot()).replace(
       /\/+$/,
@@ -510,10 +464,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     return `${root}/${request.namespace}`;
   }
 
-  // Declarative boot mount (top-level `mounts[]`), `declarative` strategy only.
-  // workdir runs mount-s3 at boot and reads creds from the guest secret env, which
-  // it injects from the named org secrets (s3SecretNames). The role path mounts via
-  // exec instead (#ensureS3Mount).
   #s3Mounts(request: {
     namespace?: string;
     workspaceRoot?: string;
@@ -528,7 +478,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         type: "s3",
         bucket: bucket,
         mount_path: this.#mountPath(request),
-        // The agent reads AND writes; workdir defaults S3 mounts to read_only:true.
         read_only: false,
         ...(prefix ? { prefix: prefix } : {}),
         ...(region ? { region: region } : {}),
@@ -547,7 +496,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     const startup: Record<string, unknown> = {};
     const network = workdirNetwork(this.#config.network);
     if (network) startup.network = network;
-    // Declarative mount creds come from the guest secret env (named org secrets).
     if (mounts) startup.secrets = s3SecretNames(options);
 
     const image = configString(this.#config.snapshot);
@@ -603,12 +551,8 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     return (await this.#acquireWithState(request)).sandbox;
   }
 
-  // workdir answers a create it has no room for with 429/503 (admission ceiling).
-  // Only the create is read that way: a later exec failing with the same status
-  // means the command may have run, which must never be retried elsewhere.
   async #create(options: CreateOptions): Promise<Sandbox> {
-    // One workdir host serves every account, so an image id alone would boot
-    // any account's snapshot on any stage.
+    // One workdir host serves every account, so an image id alone would boot anyone's snapshot.
     await assertSnapshotBootable(this.#config.controlPlane, options.image);
     try {
       return await this.#client.sandboxes.create(options);
@@ -636,10 +580,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     }
     const ns = sandboxReservationKey(request)!;
     const reserved = await getSandboxReservationRecord("sandbox", ns);
-    // workdir has no native hard expiry: `auto_stop_seconds` only stops the
-    // machine. The call past `maxLifetimeSeconds` retires it and boots a fresh
-    // one, a cold create instead of a resume. Local disk is lost; the S3
-    // workspace mount is not, so the agent's files come back with it.
     const expired =
       reserved !== null &&
       outlivedMaxLifetime(
@@ -647,23 +587,16 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         reserved.claimedAt,
       );
     if (expired) {
-      // Deliberately not caught: a failed delete here would leak the old sandbox
-      // at the provider the moment the new one claims the key. Named so a
-      // concurrent acquire that already replaced the expired sandbox is not the
-      // one deleted.
+      // Not caught: a failed delete would leak the old sandbox once the new one claims the key.
       await this.release({
         reservationKey: ns,
         expectedExternalId: reserved.externalId,
       });
     }
-    // An expired reservation was just released, so its sandbox is gone; fall
-    // through to a fresh create rather than reconnecting to a deleted machine.
     const externalId = expired ? null : (reserved?.externalId ?? null);
     if (externalId) {
       try {
         const sandbox = await this.#reconnect(externalId);
-        // Reservation refresh and dashboard mirror are both recoverable on the next
-        // call, so they never hold up an exec that already has its endpoint.
         void saveSandboxInstance(
           "sandbox",
           ns,
@@ -681,11 +614,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
 
         return { sandbox: sandbox, isFirstCreate: false };
       } catch (error) {
-        // Recreate only when the sandbox is really gone (provider 404, or a
-        // `failed` one #reconnect refused); a transient error must propagate or
-        // the still-live sandbox is orphaned at the provider. Retire it the way
-        // an expired one is: release deletes whatever is still at workdir, then
-        // the row, conditionally so a concurrent re-claim keeps its own.
+        // Only a gone sandbox is recreated; on a transient error the live one would be orphaned.
         if (!isSandboxGoneError(error)) throw error;
         await this.release({
           reservationKey: ns,
@@ -716,9 +645,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         return { sandbox: created, isFirstCreate: true };
       }
     } catch (error) {
-      // The claim may already have committed even when its caller rejects. Tear
-      // down both sides conditionally so a failed acquisition cannot leak the
-      // newly created sandbox or erase a concurrent winner's reservation.
+      // The claim may have committed even though it rejected.
       await Promise.allSettled([
         created.delete(),
         deleteSandboxInstance(
@@ -730,8 +657,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       ]);
       throw error;
     }
-    // Lost a concurrent create race: discard our duplicate and reconnect to the
-    // sandbox the winner recorded.
     const winner = await getSandboxExternalId("sandbox", ns);
     await created.delete().catch((error: unknown): void => {
       logWarn("workdir sandbox delete failed", {
@@ -748,11 +673,8 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     };
   }
 
-  // A reserved sandbox idles into `stopped`/`standby`; resume it before use.
-  // (`standby` auto-resumes on exec, but resuming an explicit `stopped` is not.)
-  // A `failed` one cannot be resumed at all (exec answers 409, only delete is
-  // allowed) and workdir keeps a `deleted` record that answers 409 to everything,
-  // so both are reported gone rather than handed back.
+  // `stopped` does not auto-resume on exec. `failed` answers 409 to all but delete, and a
+  // `deleted` record to everything, so both count as gone.
   async #reconnect(externalId: string): Promise<Sandbox> {
     const sandbox = await this.#client.sandboxes.get(externalId);
     const state = mapWorkdirState(sandbox.state);
@@ -806,14 +728,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  // `exec` strategy: mount the bucket with mount-s3 in the guest, on short-lived
-  // credentials scoped to the mount prefix and passed as per-call exec env. Never the
-  // harness's own broad creds, which any code the agent runs could read.
-  //
-  // A sandbox this call created has no mount yet, so it mounts straight away on
-  // `minted` when the caller started the STS call early. A reserved one usually still
-  // holds a live mount, so a credential-free check runs first and STS is only called
-  // when a remount is due.
+  // Never the harness's own broad credentials: any code the agent runs could read them.
   async #ensureS3Mount(
     sandbox: Sandbox,
     request: Pick<
@@ -823,7 +738,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     isFirstCreate: boolean,
     minted?: Promise<ResolvedS3Mount>,
   ): Promise<void> {
-    // Resolved first so a run with no namespace is refused before any exec.
     const context = executorS3Context(this.#config, request);
     if (!isFirstCreate) {
       const check = await sandbox.exec(
@@ -841,9 +755,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     );
   }
 
-  // One idempotent guard covers three states: not mounted, mounted over a wedged FUSE
-  // endpoint a bare mount-s3 cannot retake, and mounted on credentials near expiry.
-  // mount-s3 only reads them at startup, so rotating means replacing the daemon.
   async #mountS3(
     sandbox: Sandbox,
     request: { namespace?: string; workspaceRoot?: string },
@@ -857,7 +768,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       mount.bucket,
       mountPath,
       ...(mount.prefix ? ["--prefix", mount.prefix] : []),
-      // The agent reads AND writes workspace files, so allow overwrite + delete.
       "--allow-delete",
       "--allow-overwrite",
       ...(mount.region ? ["--region", mount.region] : []),
@@ -877,8 +787,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       {
         env: {
           ...mount.credentials,
-          // The guest has no EC2 IMDS; without this the AWS client probes
-          // 169.254.169.254 and stalls every mount ~4s on the connect timeout.
+          // No IMDS in the guest; the AWS client would stall ~4s probing it on every mount.
           AWS_EC2_METADATA_DISABLED: "true",
           ...(mount.region
             ? { AWS_REGION: mount.region, AWS_DEFAULT_REGION: mount.region }
@@ -894,9 +803,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   }
 }
 
-// Resolve the workdir control-plane target for a sandbox config: a tenant's own
-// node (options.workdirUrl + apiKey) or the platform default from the env. Also
-// used by the account-manage `terminal` op to dial the node's PTY WebSocket.
 export function workdirConnection(config: SandboxExecutorConfig): {
   baseUrl: string;
   apiKey: string;
@@ -925,7 +831,6 @@ export function workdirConnection(config: SandboxExecutorConfig): {
   };
 }
 
-// The in-guest TTY workdir exposes per sandbox (`GET /v1/sandboxes/:id/pty`).
 export function workdirPtyUrl(baseUrl: string, externalId: string): string {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -940,10 +845,6 @@ function workdirClient(config: SandboxExecutorConfig): Client {
   return new Client(baseUrl, apiKey);
 }
 
-// Map the harness network policy onto workdir's create-time egress modes
-// (default | none | allowlist). Domains become rule objects; CIDRs/IPs are
-// shorthand strings. Restricted-with-no-rules collapses to a full egress block,
-// since an allowlist requires at least one rule.
 function workdirNetwork(
   network: SandboxNetworkConfig | undefined,
 ): Record<string, unknown> | undefined {
@@ -982,9 +883,7 @@ function mapWorkdirState(state: unknown): SandboxInstanceInfo["state"] {
   }
 }
 
-// The SDK types `Sandbox.data` private, but it is the parsed `GET /v1/sandboxes/:id`
-// body, and the `error` workdir sets while a sandbox is `failed` has no getter.
-// Read past the typing rather than fetch the same record a second time.
+// The SDK types `data` private, and a failed sandbox's `error` in it has no getter.
 function workdirRecordError(sandbox: Sandbox): string | undefined {
   const record = sandbox as unknown as { data?: { error?: unknown } };
 

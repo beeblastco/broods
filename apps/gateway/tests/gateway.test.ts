@@ -82,7 +82,6 @@ afterEach((): void => {
   jest.useRealTimers();
 });
 
-// The scope every observability fixture lives in: stage shop/dev of acct-1.
 const TEST_SCOPE: ObservabilityScope = {
   accountId: "acct-1",
   projectSlug: "shop",
@@ -181,10 +180,7 @@ test("attaches virtual and private child streams through durable parent deployme
     const sent: Array<Record<string, unknown>> = [];
     const socket = gatewaySocket(sent);
     const connection = replayThenLiveConnection(fixture);
-    // Core authorizes the child status read (covered by core's status-access
-    // tests); the gateway only proceeds when the returned agentId,
-    // conversationKey and eventId match. A child's public event id is its
-    // task id.
+    // Core authorizes the child status read; the gateway only checks the returned ids match.
     globalThis.fetch = (async (_input, init) => {
       if (
         new Headers(init?.headers).get("authorization") !== "Bearer runtime-key"
@@ -647,8 +643,7 @@ test("replays a fresh buffered attach from its own subject, not the shared strea
     ),
     ack: () => {},
   });
-  // The oldest message retained on the shared stream is sequence 2 and belongs
-  // to another conversation; this subject's own frames start at 10.
+  // The shared stream's oldest retained frame (seq 2) is another conversation's; ours start at 10.
   const connection = zeroBufferConnection(
     async () => ({
       [Symbol.asyncIterator]: async function* () {
@@ -697,10 +692,7 @@ test("replays a fresh buffered attach from its own subject, not the shared strea
       1_600,
     );
     const attached = sent.find((message) => message.type === "attached");
-    // A cursor built from the shared stream head names another conversation's
-    // message, so resuming with it would be denied by the subject check.
     expect(attached?.replayFromCursor).toBeUndefined();
-    // The inclusive upper bound is this subject's own last sequence.
     expect(attached?.replayThroughCursor).toContain(":12:");
     expect(consumerOptions[0]?.opt_start_seq).toBeUndefined();
   } finally {
@@ -830,8 +822,7 @@ test("backs off status polls while an attached run stays quiet", async () => {
       async () => connection as never,
     );
 
-    // The attach reads status once up front; with no frames the loop then
-    // polls after 500ms and again 1000ms later, not every 500ms.
+    // One status read up front, then the polls back off: 500 ms, then 1000 ms.
     await waitForCondition(
       () => polledAt.length >= 3,
       600,
@@ -922,7 +913,6 @@ test("does not duplicate a streamed error when durable failure arrives without d
       async () => connection as never,
     );
 
-    // Status is only polled once the stream has been quiet for a while.
     await waitForCondition(
       () => consumerClosed,
       1600,
@@ -1417,7 +1407,6 @@ test("a runtime key runs a public agent of its stage on the agent socket", async
     },
     { type: "done" },
   ]);
-  // The gateway runs it with the client's own key, so core's run checks apply.
   expect(credentials).toEqual(["Bearer bsk_runtime"]);
   expect(consumers).toBe(0);
 });
@@ -1613,7 +1602,6 @@ test("each socket asks core for its own scope", async (): Promise<void> => {
     "https://core.example/v1/internal/agent-socket-scope",
     "https://core.example/v1/internal/observability-scope",
   ]);
-  // A runtime key's scope names no expiry; the agent socket needs none.
   expect(agent).toEqual({
     kind: "resolved",
     scope: {
@@ -1745,10 +1733,8 @@ test("asks Loki to drop the levels a subscription does not want", () => {
     expiresAt: Number.MAX_SAFE_INTEGER,
   };
   const tenant = 'account_id="acct-1",project="shop",stage="dev"';
-  // The deployment stream never carries guest output, matching the NATS relay.
   const selector = `{${tenant},service_name!="broods-sandbox"}`;
 
-  // A DEBUG subscriber wants everything, so nothing is filtered away.
   expect(lokiBackfillQuery(scope, "DEBUG")).toBe(selector);
   expect(lokiBackfillQuery(scope, "WARN")).toBe(
     `${selector} | level!~"(?i)(DEBUG|INFO)"`,
@@ -1756,7 +1742,6 @@ test("asks Loki to drop the levels a subscription does not want", () => {
   expect(lokiBackfillQuery(scope, "ERROR")).toBe(
     `${selector} | level!~"(?i)(DEBUG|INFO|WARN)"`,
   );
-  // A sandbox tail narrows on the bridge's sandbox_id metadata before the level.
   expect(
     lokiBackfillQuery(scope, "WARN", "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"),
   ).toBe(
@@ -1793,8 +1778,7 @@ test("a sandbox tail relays each guest line once and ignores a repeat subscribe"
     text,
   ];
   let queries = 0;
-  // Loki answers newest first. The backfill sees B and A; every poll sees C
-  // and B again, and a guest line that looks like a core record stays text.
+  // Loki answers newest first: the backfill sees B and A, every poll sees C and B again.
   globalThis.fetch = (async (input) => {
     const url = new URL(requestUrl(input));
     expect(url.searchParams.get("query")).toContain(
@@ -1825,7 +1809,6 @@ test("a sandbox tail relays each guest line once and ignores a repeat subscribe"
   openObservabilitySocket(socket);
   try {
     await handleObservabilityMessage(socket, subscribe, noNats);
-    // The first poll runs 2 s after the backfill settles.
     await waitForGatewayMessage(sent, (message) => message.type === "log", 500);
 
     expect(sent.map((message) => message.type)).toEqual([
@@ -1869,7 +1852,6 @@ test("accepts a sandbox tail only for logs and only with a UUID id", () => {
       sandboxId: sandboxId,
     }),
   ).toBe(false);
-  // Anything that could escape a LogQL string is refused at the wire.
   expect(
     isObservabilityClientMessage({
       type: "subscribe",
@@ -1908,7 +1890,6 @@ test("a failed trace backfill reports itself instead of leaving the client waiti
 
   openObservabilitySocket(socket);
   try {
-    // With no live transport the subscribe fails before any backfill runs.
     await handleObservabilityMessage(
       socket,
       JSON.stringify({ type: "subscribe", stream: "traces", backfill: 5 }),
@@ -1988,9 +1969,7 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
 
 test("fetchTempoBackfill shares trace lookups across backfills", async () => {
   const originalFetch = globalThis.fetch;
-  // Two tabs open Tracing at once, then one reconnects: each trace reaches
-  // Tempo once. The second backfill joins the lookup in flight, the reconnect
-  // reads the shared answer.
+  // Two tabs open Tracing at once, then one reconnects: each trace still reaches Tempo once.
   const lookups: string[] = [];
   const tempo = tempoFetch(tempoSearchHits(3));
   globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
@@ -2022,8 +2001,7 @@ test("fetchTempoBackfill shares trace lookups across backfills", async () => {
 
 test("fetchTempoBackfill asks Tempo again after a failed or expired lookup", async () => {
   const originalFetch = globalThis.fetch;
-  // "bbb" fails once, so the next backfill retries it at once. "aaa" is shared
-  // until its lifetime ends, then read from Tempo again.
+  // "bbb" fails once and is retried at once; "aaa" is shared until its lifetime ends.
   const lookups: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
     const url = requestUrl(input);
@@ -2058,8 +2036,7 @@ test("a traces backfill piece waits for the socket buffer to empty", async () =>
   const originalFetch = globalThis.fetch;
   const originalTempoUrl = process.env.TEMPO_URL;
   process.env.TEMPO_URL = "http://tempo.example";
-  // Live spans left 600 KB queued. A trace piece on top of that passes the
-  // socket's 1 MB backpressure limit, which closes the socket.
+  // 600 KB of live spans queued: a trace piece on top passes the 1 MB backpressure limit.
   const { socket, sent } = observabilitySocket();
   let queuedPolls = 3;
   let sentWhileQueued = false;
@@ -2097,9 +2074,6 @@ test("a traces backfill piece waits for the socket buffer to empty", async () =>
 
 test("fetchTempoBackfill keeps recovered rows and counts failed detail fetches", async () => {
   const originalFetch = globalThis.fetch;
-  // Search finds two traces; the first detail loads, the second 503s. The
-  // chunk keeps the good row and reports the one failure, so the caller sends
-  // the recovered trace with an error rather than an empty, error-free list.
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = requestUrl(input);
     if (url.includes("/api/search"))
@@ -2126,9 +2100,7 @@ test("fetchTempoBackfill keeps recovered rows and counts failed detail fetches",
 
 test("fetchTempoBackfill hands traces over newest first, a chunk at a time", async () => {
   const originalFetch = globalThis.fetch;
-  // 25 traces, listed oldest first as Tempo may return them. Each chunk paints
-  // on its own, so the first one must hold the newest traces, and a consumer
-  // that stops after two chunks must not cost a third round of lookups.
+  // Listed oldest first, as Tempo may; a consumer that stops after two chunks costs no third.
   const searchHits = tempoSearchHits(25);
   const fetched: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -2163,8 +2135,6 @@ test("fetchTempoBackfill hands traces over newest first, a chunk at a time", asy
 
 test("fetchTempoBackfill drops spans from other scopes in a matched trace", async () => {
   const originalFetch = globalThis.fetch;
-  // Tempo's search is tag-scoped, but a matched trace's detail can carry spans
-  // from another scope (here a "prod" batch). Only the in-scope span may leave.
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = requestUrl(input);
     if (url.includes("/api/search"))
@@ -2315,7 +2285,6 @@ test("an unsubscribe cancels the traces backfill still streaming for it", async 
       JSON.stringify({ type: "subscribe", stream: "traces", backfill: 100 }),
       idleNats,
     );
-    // The first chunk is in flight; the client walks away from the stream.
     await handleObservabilityMessage(
       socket,
       JSON.stringify({ type: "unsubscribe", stream: "traces" }),
@@ -2341,7 +2310,6 @@ test("a traces backfill that fails after an unsubscribe sends no error closer", 
     new Promise<Response>((_resolve, reject) => {
       failSearch = reject;
     })) as unknown as typeof fetch;
-  // The failure is logged before the superseded run decides to stay quiet.
   const logged = spyOn(console, "error").mockImplementation(() => {});
 
   openObservabilitySocket(socket);
@@ -2352,7 +2320,6 @@ test("a traces backfill that fails after an unsubscribe sends no error closer", 
       idleNats,
     );
     await waitForCondition(() => failSearch !== undefined);
-    // The search is still pending; the client walks away, then Tempo fails.
     await handleObservabilityMessage(
       socket,
       JSON.stringify({ type: "unsubscribe", stream: "traces" }),
@@ -2491,13 +2458,9 @@ test("a sandbox tail replaced while its backfill is pending sends nothing from i
     process.env.LOKI_URL = originalLokiUrl;
   }
 });
-// The windows of LOKI_BACKFILL_STEPS, in hours, newest first.
+// Mirrors LOKI_BACKFILL_STEPS.
 const BACKFILL_STEP_HOURS = [1, 24, 720];
 
-/**
- * Runs a deployment logs backfill against a Loki stub answering each step with
- * `rowsPerStep` lines, and reports the window each query asked for in hours.
- */
 async function backfillStepHours(
   rowsPerStep: number,
   limit: number,
@@ -2551,7 +2514,6 @@ test("a logs backfill stops at the first window that fills the page", async () =
   try {
     const { hours, sent } = await backfillStepHours(5, 5);
 
-    // A stage with recent logs never pays for the 30-day scan.
     expect(hours).toEqual([BACKFILL_STEP_HOURS[0]]);
     expect(
       (
@@ -2592,8 +2554,6 @@ test("a timed-out logs backfill names Loki and its budget, and does not widen", 
   process.env.LOKI_URL = "http://loki.example";
   const { socket, sent } = observabilitySocket();
   let queries = 0;
-  // The abort's own message ("The operation timed out.") named neither the
-  // query nor its budget, and reached the Logs tab verbatim.
   globalThis.fetch = (async () => {
     queries += 1;
     throw new DOMException("The operation timed out.", "TimeoutError");
@@ -2613,7 +2573,6 @@ test("a timed-out logs backfill names Loki and its budget, and does not widen", 
       entries: [],
       error: "Loki query timed out after 5000ms",
     });
-    // A wider window is strictly more expensive, so it is never a retry.
     expect(queries).toBe(1);
   } finally {
     cleanupObservabilitySocket(socket);
@@ -2660,7 +2619,6 @@ test("a traces backfill stops asking Tempo once the socket is gone", async () =>
     const url = requestUrl(input);
     if (url.includes("/api/search")) return json({ traces: searchHits });
     lookups += 1;
-    // The tab closes while the first chunk is in flight.
     (socket as { readyState: number }).readyState = WebSocket.CLOSED;
 
     return json({
@@ -2842,7 +2800,6 @@ test("keeps a root's waiting and needs_input state from task.state", () => {
 });
 
 test("normalizes base64 Tempo ids to hex so backfill keys match live spans", () => {
-  // 16-byte trace id and 8-byte span id, hex then base64-encoded.
   const traceHex = "2e4a86cf02516e0768dff2a96ae9eb12";
   const spanHex = "5bb16b70ae735d82";
   const traceB64 = Buffer.from(traceHex, "hex").toString("base64");
@@ -2850,7 +2807,6 @@ test("normalizes base64 Tempo ids to hex so backfill keys match live spans", () 
 
   expect(normalizeOtelId(traceB64, 16)).toBe(traceHex);
   expect(normalizeOtelId(spanB64, 8)).toBe(spanHex);
-  // Already-hex ids pass through unchanged; unknown fixtures are left alone.
   expect(normalizeOtelId(traceHex, 16)).toBe(traceHex);
   expect(normalizeOtelId("trace-1", 16)).toBe("trace-1");
   expect(normalizeOtelId("root-1", 8)).toBe("root-1");
@@ -3186,8 +3142,7 @@ test("client ip takes the rightmost forwarded hop, then the socket address", () 
   });
   expect(clientIp(withForwarded, "127.0.0.1")).toBe("10.0.0.1");
 
-  // Only the ingress appends the rightmost hop, so a caller cannot mint a fresh
-  // rate-limit bucket by prepending one or by sending its own x-real-ip.
+  // A caller cannot mint a fresh bucket by prepending a hop or sending its own x-real-ip.
   const spoofed = new Request("https://gateway.example.com/", {
     headers: {
       "x-real-ip": "203.0.113.7",
@@ -3234,8 +3189,6 @@ test("observability relay sheds droppable frames when the socket buffer is backe
 test("observability relay waits out span backpressure instead of shedding", async () => {
   const encoder = new TextEncoder();
   const sent: unknown[] = [];
-  // Backed up for the first few polls, drained afterwards. The relay must
-  // deliver the span once the buffer drops rather than shedding it.
   let drainChecks = 0;
   const socket = {
     readyState: WebSocket.OPEN,
@@ -3285,12 +3238,7 @@ function gatewaySocket(
   >;
 }
 
-/**
- * Core's run paths as they answer a runtime key of stage development: its
- * public agent runs, a private agent is refused (`admitStageCredential`,
- * `statusAccessDenial`), and another stage's agent is unknown. Records the
- * credential each call carried.
- */
+// A runtime key of stage development: agent_public runs, agent_private is refused.
 function runtimeKeyCore(credentials: string[]): typeof fetch {
   const refusal = (agentId: string): Response =>
     agentId === "agent_private"
@@ -3327,7 +3275,6 @@ function runtimeKeyCore(credentials: string[]): typeof fetch {
   );
 }
 
-/** One execute on a socket upgraded with a runtime key, against `runtimeKeyCore`. */
 async function runtimeKeyExecute(agentId: string): Promise<{
   consumers: number;
   credentials: string[];
@@ -3374,7 +3321,7 @@ async function runtimeKeyExecute(agentId: string): Promise<{
   return { consumers: consumers, credentials: credentials, frames: frames };
 }
 
-/** `count` search hits, oldest first as Tempo may list them: t0 is the oldest, t(count-1) the newest. */
+// Oldest first, as Tempo may list them: t0 is the oldest.
 function tempoSearchHits(
   count: number,
 ): Array<{ traceID: string; startTimeUnixNano: string }> {
@@ -3384,7 +3331,6 @@ function tempoSearchHits(
   }));
 }
 
-/** One resource batch of a Tempo trace response holding a single 1 s agent.task span. */
 function tempoBatch({
   traceId,
   spanId,
@@ -3421,7 +3367,6 @@ function tempoBatch({
   };
 }
 
-/** A live subscription that opens and then stays quiet, for tests about the backfill alone. */
 const idleNats = async (): Promise<NatsConnection> =>
   zeroBufferConnection(async () => ({
     [Symbol.asyncIterator]: async function* () {},
@@ -3429,10 +3374,6 @@ const idleNats = async (): Promise<NatsConnection> =>
     stop: () => {},
   })) as unknown as NatsConnection;
 
-/**
- * Like idleNats, but numbers each consumer it opens and records which ones were
- * stopped, for tests about one subscribe superseding another.
- */
 function countingNats(): {
   nats: () => Promise<NatsConnection>;
   opened: () => number;
@@ -3457,12 +3398,10 @@ function countingNats(): {
   return { nats: nats, opened: (): number => opened, stopped: stopped };
 }
 
-/** The URL a fetch mock was called with, whatever form the input took. */
 function requestUrl(input: RequestInfo | URL): string {
   return input instanceof Request ? input.url : input.toString();
 }
 
-/** Tempo answering a search with `hits`, then every by-id lookup with one root span. */
 function tempoFetch(hits: ReturnType<typeof tempoSearchHits>): typeof fetch {
   return (async (input: RequestInfo | URL) => {
     const url = requestUrl(input);
@@ -3479,7 +3418,6 @@ function tempoFetch(hits: ReturnType<typeof tempoSearchHits>): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
-/** An open observability socket for stage shop/dev of acct-1, capturing what the gateway sends. */
 function observabilitySocket(): {
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>;
   sent: Array<Record<string, unknown>>;
@@ -3606,14 +3544,8 @@ async function waitForGatewayMessage(
   );
 }
 
-/**
- * For conditions that do not depend on a sent frame. `sent.some(predicate)`
- * never calls the predicate while `sent` is empty, so those waits would time
- * out even once the condition held. Each attempt is 5 ms: real, or on a fake
- * clock the pending promise work runs and the clock moves 5 ms. It yields on
- * microtasks only, since in bun 1.4.2 a queued setImmediate can stall a fake
- * clock, and every stub here answers in process.
- */
+// `sent.some()` never calls its predicate while `sent` is empty, hence this. Microtasks only:
+// in bun 1.4.2 a queued setImmediate can stall a fake clock.
 async function waitForCondition(
   condition: () => boolean,
   attempts = 100,
@@ -3705,7 +3637,6 @@ test("websocket token reads the broods.token subprotocol", () => {
     headers: { "sec-websocket-protocol": "broods.v1, broods.token.from-proto" },
   });
   expect(websocketToken(request)).toBe("from-proto");
-  // The handshake completes only when the offered subprotocol is echoed.
   expect(websocketUpgradeHeaders(request)).toEqual({
     "Sec-WebSocket-Protocol": "broods.v1",
   });
@@ -3796,7 +3727,6 @@ test("the gateway spells the user token header and subprotocol as core does", ()
     },
   });
   expect(websocketUserToken(request)).toBe("buat_from-proto");
-  // The credential is still the token entry, never the user's.
   expect(websocketToken(request)).toBe("bsk_key");
   expect(
     websocketUserToken(

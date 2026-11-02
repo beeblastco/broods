@@ -1,18 +1,8 @@
 import { cn } from "@/app/lib/utils";
 
-// Convex puts the request id in the message of every error it relays; a
-// production client gets no other detail.
+// Convex relays errors to a production client with no detail but this id in the message.
 const CONVEX_REQUEST_ID = /\[Request ID: ([0-9a-f]+)\]/;
 
-/**
- * Status view shared by not-found, error, global-error and the in-app failure
- * states: a status line, a one-line title, one short description and the
- * actions as children. It fills its parent, so a page under the header keeps
- * the header. Given a caught `error`, the description is its ref, the only
- * part shown to users: the Next digest, or the Convex request id, each
- * matching a server log line, while the message may carry internals. An error
- * with neither has no description.
- */
 export function StatusPage({
   children,
   description,
@@ -25,6 +15,7 @@ export function StatusPage({
   title: string;
 }): React.JSX.Element {
   const isError = error !== undefined;
+  // Users see only the ref, which matches a server log line: the message may carry internals.
   const ref =
     error instanceof Error
       ? "digest" in error && typeof error.digest === "string"

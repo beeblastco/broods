@@ -1,8 +1,5 @@
-/**
- * Driven with a stub model rather than a configured provider, because `harness.test.ts`
- * replaces the provider factories process-wide, so a test that needs the real
- * ones passes or fails on file order.
- */
+// A stub model, not a configured provider: harness.test.ts replaces the provider factories
+// process-wide, so real ones would pass or fail on file order.
 
 import { APICallError } from "@ai-sdk/provider";
 import { describe, expect, it } from "bun:test";
@@ -25,8 +22,7 @@ describe("transcribeWithModel", () => {
     ).toEqual({ status: "transcribed", text: "check the deploy status" });
   });
 
-  // What the agent reads has to name the formats, so the provider's own message
-  // is carried through rather than replaced with our summary of it.
+  // The agent must learn the formats, so the provider's own message is carried through.
   it("hands a refused file back with the provider's own words", async () => {
     expect(
       await transcribeWithModel(
@@ -51,8 +47,6 @@ describe("transcribeWithModel", () => {
     ).toMatchObject({ status: "failed", recovery: "retry" });
   });
 
-  // A rejected key is about the account, and no amount of reading the file again
-  // fixes it. Spending a turn discovering that is the thing worth avoiding.
   it("treats a rejected key as nothing the agent can do", async () => {
     expect(
       await transcribeWithModel(

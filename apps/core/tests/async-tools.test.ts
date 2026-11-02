@@ -1,17 +1,10 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { asyncToolResultDedupeKey } from "@broods/convex/model/subagentResults";
-import { jsonSchema, tool, type UserModelMessage } from "ai";
+import { describe, expect, it, spyOn } from "bun:test";
 import * as asyncToolResults from "../src/harness/async-tool-result.ts";
 import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
 import type { ContinuationOutcome } from "../src/harness/responses.ts";
-import { runtime } from "../src/shared/convex/runtime.ts";
+import * as sandboxes from "../src/harness/sandbox/index.ts";
 import * as log from "../src/shared/log.ts";
 
-const originalMutation = runtime.mutate.bind(runtime);
-const mutationMock = mock(
-  async (name: string, _args: Record<string, unknown>) =>
-    name === "createAsyncToolResult" ? true : null,
-);
 type TestToolExecute = {
   execute(
     input: unknown,
@@ -19,12 +12,7 @@ type TestToolExecute = {
   ): Promise<unknown>;
 };
 
-afterEach(() => {
-  runtime.mutate = originalMutation;
-  mutationMock.mockClear();
-});
-
-describe("AsyncToolCoordinator", () => {
+describe("completionToParentMessage", () => {
   it("injects file and image outputs as native user file parts", async () => {
     const { completionToParentMessage } =
       await import("../src/harness/async-tools.ts");
@@ -50,6 +38,7 @@ describe("AsyncToolCoordinator", () => {
       },
     });
 
+    expect(message.dedupeKey).toBe("async-tool:async_tool_1:completed");
     expect(message.content).toEqual([
       {
         type: "text",
@@ -71,367 +60,10 @@ describe("AsyncToolCoordinator", () => {
       },
     ]);
   });
-
-  it("preserves binary and URL file parts across async persistence", async () => {
-    runtime.mutate = mutationMock as never;
-    const { AsyncToolCoordinator } =
-      await import("../src/harness/async-tools.ts");
-    const persistModelMessages = mock(
-      async (_messages: UserModelMessage[]) => [],
-    );
-    const coordinator = new AsyncToolCoordinator(
-      {
-        conversationKey: "conversation-1",
-        eventId: "event-1",
-        persistModelMessages: persistModelMessages,
-      } as never,
-      Date.now() + 1_000,
-    );
-    const arrayBuffer = new Uint8Array([3, 4]).buffer;
-    const tools = coordinator.dispatch(
-      {
-        attachments: tool({
-          description: "Return attachments.",
-          inputSchema: jsonSchema({ type: "object" }),
-          execute: async () => ({
-            type: "content" as const,
-            value: [
-              {
-                type: "file" as const,
-                data: {
-                  type: "data" as const,
-                  data: new Uint8Array([1, 2]),
-                },
-                mediaType: "application/octet-stream",
-                filename: "bytes.bin",
-              },
-              {
-                type: "file" as const,
-                data: { type: "data" as const, data: arrayBuffer },
-                mediaType: "application/octet-stream",
-                filename: "buffer.bin",
-              },
-              {
-                type: "file" as const,
-                data: {
-                  type: "url" as const,
-                  url: new URL("https://example.com/report.pdf"),
-                },
-                mediaType: "application/pdf",
-              },
-            ],
-          }),
-        }),
-      },
-      new Set(["attachments"]),
-    );
-
-    const pending = await (
-      tools.attachments as unknown as TestToolExecute
-    ).execute(
-      {},
-      { toolCallId: "tool-call-files", messages: [], context: undefined },
-    );
-    expect(coordinator.waitForIdle()).resolves.toBe("idle");
-    expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
-
-    const resultId = (pending as { resultId: string }).resultId;
-    const persisted = {
-      type: "content",
-      value: [
-        {
-          type: "file-data",
-          data: "AQI=",
-          mediaType: "application/octet-stream",
-          filename: "bytes.bin",
-        },
-        {
-          type: "file-data",
-          data: "AwQ=",
-          mediaType: "application/octet-stream",
-          filename: "buffer.bin",
-        },
-        {
-          type: "file-url",
-          url: "https://example.com/report.pdf",
-          mediaType: "application/pdf",
-        },
-      ],
-    };
-    expect(mutationMock).toHaveBeenCalledWith("updateAsyncToolResult", {
-      resultId: resultId,
-      status: "completed",
-      response: persisted,
-      onlyWhenProcessing: true,
-    });
-    const content = persistModelMessages.mock.calls[0]?.[0]?.[0]?.content;
-    expect(content).toEqual([
-      {
-        type: "text",
-        text: expect.stringContaining("Async tool result injected"),
-      },
-      {
-        type: "file",
-        data: { type: "data", data: "AQI=" },
-        mediaType: "application/octet-stream",
-        filename: "bytes.bin",
-      },
-      {
-        type: "file",
-        data: { type: "data", data: "AwQ=" },
-        mediaType: "application/octet-stream",
-        filename: "buffer.bin",
-      },
-      {
-        type: "file",
-        data: {
-          type: "url",
-          url: new URL("https://example.com/report.pdf"),
-        },
-        mediaType: "application/pdf",
-      },
-    ]);
-  });
-
-  it("returns a pending result immediately and injects the completed output later", async () => {
-    runtime.mutate = mutationMock as never;
-    const { AsyncToolCoordinator } =
-      await import("../src/harness/async-tools.ts");
-    const persistModelMessages = mock(
-      async (
-        _messages: UserModelMessage[],
-        _onSaved?: (saved: number) => void,
-        _dedupeKeys?: string[],
-      ): Promise<string[]> => [],
-    );
-    let finishTool!: (value: unknown) => void;
-    const coordinator = new AsyncToolCoordinator(
-      {
-        conversationKey: "conversation-1",
-        eventId: "event-1",
-        persistModelMessages: persistModelMessages,
-      } as never,
-      Date.now() + 1_000,
-    );
-
-    const tools = coordinator.dispatch(
-      {
-        slowLookup: tool({
-          description: "Slow lookup.",
-          inputSchema: jsonSchema({
-            type: "object",
-            properties: {
-              query: { type: "string" },
-            },
-            required: ["query"],
-            additionalProperties: false,
-          }),
-          execute: async ({ query }: { query: string }) => {
-            await new Promise((resolve) => {
-              finishTool = resolve;
-            });
-
-            return { answer: `result for ${query}` };
-          },
-        }),
-      },
-      new Set(["slowLookup"]),
-    );
-
-    const pending = await (
-      tools.slowLookup as unknown as TestToolExecute
-    ).execute(
-      { query: "alpha" },
-      { toolCallId: "tool-call-1", messages: [], context: undefined },
-    );
-
-    expect(pending).toEqual({
-      resultId: expect.stringMatching(/^async_tool_/),
-      status: "running",
-    });
-    const resultId = (pending as { resultId: string }).resultId;
-    expect(coordinator.pendingCount).toBe(1);
-    expect(mutationMock.mock.calls[0]).toEqual([
-      "createAsyncToolResult",
-      {
-        resultId: resultId,
-        parentEventId: "event-1",
-        conversationKey: "conversation-1",
-        toolName: "slowLookup",
-        toolCallId: "tool-call-1",
-        input: { query: "alpha" },
-      },
-    ]);
-
-    finishTool(undefined);
-    expect(coordinator.waitForIdle()).resolves.toBe("idle");
-    expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
-
-    expect(mutationMock).toHaveBeenCalledWith("updateAsyncToolResult", {
-      resultId: resultId,
-      status: "completed",
-      response: { answer: "result for alpha" },
-      onlyWhenProcessing: true,
-    });
-    // Written under its hand-back key, so the insert marks the row stored.
-    expect(persistModelMessages.mock.calls[0]?.[2]).toEqual([
-      asyncToolResultDedupeKey(resultId, "completed"),
-    ]);
-    const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
-    expect(messageText(messages[0])).toContain(
-      "Async tool result injected into parent conversation.",
-    );
-    expect(messageText(messages[0])).toContain("toolName: slowLookup");
-    expect(messageText(messages[0])).toContain("result for alpha");
-  });
-
-  it("keeps provider-defined tools without local execute unchanged", async () => {
-    runtime.mutate = mutationMock as never;
-    const { AsyncToolCoordinator } =
-      await import("../src/harness/async-tools.ts");
-    const coordinator = new AsyncToolCoordinator(
-      {
-        conversationKey: "conversation-1",
-        eventId: "event-1",
-        persistModelMessages: async () => [],
-      } as never,
-      Date.now() + 1_000,
-    );
-    const providerTool = {
-      type: "provider",
-      id: "google.google_search",
-      args: {},
-      inputSchema: jsonSchema({
-        type: "object",
-        properties: {},
-        additionalProperties: false,
-      }),
-    };
-
-    const tools = coordinator.dispatch(
-      {
-        googleSearch: providerTool as never,
-      },
-      new Set(["googleSearch"]),
-    );
-
-    expect(tools.googleSearch as unknown).toBe(providerTool);
-    expect(mutationMock).not.toHaveBeenCalled();
-  });
-
-  it("injects timeout failures for pending async tool calls", async () => {
-    runtime.mutate = mutationMock as never;
-    const { AsyncToolCoordinator } =
-      await import("../src/harness/async-tools.ts");
-    const persistModelMessages = mock(
-      async (_messages: UserModelMessage[]) => [],
-    );
-    const coordinator = new AsyncToolCoordinator(
-      {
-        conversationKey: "conversation-1",
-        eventId: "event-1",
-        persistModelMessages: persistModelMessages,
-      } as never,
-      Date.now(),
-    );
-
-    const tools = coordinator.dispatch(
-      {
-        neverFinishes: tool({
-          description: "Never finishes.",
-          inputSchema: jsonSchema({
-            type: "object",
-            properties: {},
-            additionalProperties: false,
-          }),
-          execute: async () => await new Promise(() => {}),
-        }),
-      },
-      new Set(["neverFinishes"]),
-    );
-
-    const pending = await (
-      tools.neverFinishes as unknown as TestToolExecute
-    ).execute(
-      {},
-      { toolCallId: "tool-call-2", messages: [], context: undefined },
-    );
-    const resultId = (pending as { resultId: string }).resultId;
-    expect(mutationMock.mock.calls[0]).toEqual([
-      "createAsyncToolResult",
-      {
-        resultId: resultId,
-        parentEventId: "event-1",
-        conversationKey: "conversation-1",
-        toolName: "neverFinishes",
-        toolCallId: "tool-call-2",
-        input: {},
-      },
-    ]);
-
-    expect(coordinator.waitForIdle()).resolves.toBe("timeout");
-    expect(coordinator.drainCompletionsAndTimeoutsToParent()).resolves.toBe(1);
-
-    expect(mutationMock).toHaveBeenCalledWith("updateAsyncToolResult", {
-      resultId: resultId,
-      status: "failed",
-      error:
-        "Async tool call is still pending near the parent request timeout.",
-      onlyWhenProcessing: true,
-    });
-    const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
-    expect(messageText(messages[0])).toContain(
-      "Async tool call is still pending near the parent request timeout.",
-    );
-  });
-
-  it("marks each result detached when the parent write fails, and still fails the drain", async () => {
-    runtime.mutate = mutationMock as never;
-    const { AsyncToolCoordinator } =
-      await import("../src/harness/async-tools.ts");
-    const coordinator = new AsyncToolCoordinator(
-      {
-        conversationKey: "conversation-1",
-        eventId: "event-1",
-        persistModelMessages: mock(
-          async (_messages: UserModelMessage[]): Promise<string[]> => {
-            throw new Error("convex down");
-          },
-        ),
-      } as never,
-      Date.now() + 1_000,
-    );
-    const tools = coordinator.dispatch(
-      {
-        lookup: tool({
-          description: "Lookup.",
-          inputSchema: jsonSchema({ type: "object" }),
-          execute: async () => ({ answer: 42 }),
-        }),
-      },
-      new Set(["lookup"]),
-    );
-    const pending = await (tools.lookup as unknown as TestToolExecute).execute(
-      {},
-      { toolCallId: "tool-call-3", messages: [], context: undefined },
-    );
-    const resultId = (pending as { resultId: string }).resultId;
-    expect(coordinator.waitForIdle()).resolves.toBe("idle");
-
-    expect(coordinator.drainCompletionsToParent()).rejects.toThrow(
-      "convex down",
-    );
-    // The row holds the result; detached hands it to the recovery sweep.
-    expect(mutationMock).toHaveBeenCalledWith("markAsyncToolHandback", {
-      resultId: resultId,
-      handback: "detached",
-    });
-  });
 });
 
 describe("resumeLostAsyncToolResults", () => {
   const longAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  // A finished row no run delivered, `name` apart.
   const lostRow = (
     name: string,
     row: Partial<AsyncToolResultRecord>,
@@ -497,7 +129,7 @@ describe("resumeLostAsyncToolResults", () => {
     const marked = spyOn(
       asyncToolResults,
       "markAsyncToolHandback",
-    ).mockResolvedValue(false);
+    ).mockResolvedValue(undefined);
     const info = spyOn(log, "logInfo");
     const outcomes: Record<string, ContinuationOutcome> = {
       async_tool_resumed: {
@@ -506,8 +138,6 @@ describe("resumeLostAsyncToolResults", () => {
         invoked: false,
         publicEventId: "async-tools-async_tool_resumed",
       },
-      // Its continuation still waits in the queue, which stores it when
-      // applied, or admits the next pass's retry once it expired.
       async_tool_queued: {
         kind: "ready",
         admission: "duplicate",
@@ -541,7 +171,6 @@ describe("resumeLostAsyncToolResults", () => {
         },
       );
 
-      // Detached rows first, then pending, completed before failed in each.
       expect(windows.map((window) => [window.handback, window.status])).toEqual(
         [
           ["detached", "completed"],
@@ -550,8 +179,7 @@ describe("resumeLostAsyncToolResults", () => {
           ["pending", "failed"],
         ],
       );
-      // A pending result waits out the run's whole hold, longer than the
-      // grace a detached one gets.
+      // A pending result waits out the run's whole hold, longer than a detached one's grace.
       expect(windows[2]!.updatedBefore < windows[0]!.updatedBefore).toBe(true);
       expect(resumed).toEqual([
         "async_tool_resumed",
@@ -560,9 +188,7 @@ describe("resumeLostAsyncToolResults", () => {
         "async_tool_pending",
         "async_tool_gone",
       ]);
-      // Only the row nothing can resume is given up; a full conversation and
-      // a queued continuation keep their rows for the next pass, and the
-      // others are stored by their admission.
+      // Only the unresumable row is given up; full and queued keep theirs for the next pass.
       expect(marked.mock.calls).toEqual([["async_tool_gone", "stored"]]);
       expect(
         info.mock.calls
@@ -581,72 +207,107 @@ describe("resumeLostAsyncToolResults", () => {
 });
 
 describe("async_status", () => {
-  it("hands a settled result over unless its continuation already waits in the queue", async (): Promise<void> => {
-    const conversationKey = "acct:account_1:agent:agent_1:api:chat";
-    const row: AsyncToolResultRecord = {
-      resultId: "async_tool_read",
-      parentEventId: "acct:account_1:agent:agent_1:api:event_parent",
-      conversationKey: conversationKey,
-      toolName: "lookup",
-      toolCallId: "call-read",
-      input: {},
-      status: "completed",
-      response: "the answer",
-      handback: "pending",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      expiresAt: Date.now() + 60_000,
-    };
+  const conversationKey = "acct:account_1:agent:agent_1:api:chat";
+  const settledRow = (): AsyncToolResultRecord => ({
+    resultId: "async_tool_read",
+    parentEventId: "acct:account_1:agent:agent_1:api:event_parent",
+    conversationKey: conversationKey,
+    toolName: "lookup",
+    toolCallId: "call-read",
+    input: {},
+    status: "completed",
+    response: "the answer",
+    handback: "detached",
+    createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    expiresAt: Date.now() + 60_000,
+  });
+
+  it("always hands a settled result over, stores nothing, and records the read for the step save", async (): Promise<void> => {
+    const row = settledRow();
     const read = spyOn(
       asyncToolResults,
       "getAsyncToolResult",
     ).mockResolvedValue(row);
-    // Queued first, so the read leaves it to the continuation; then not.
-    const marked = spyOn(asyncToolResults, "markAsyncToolHandback")
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false);
+    const marked = spyOn(
+      asyncToolResults,
+      "markAsyncToolHandback",
+    ).mockResolvedValue(undefined);
+    const reads: Array<[string, string]> = [];
     const { default: asyncStatusTool } =
       await import("../src/harness/tools/async-status.tool.ts");
     const tools = asyncStatusTool({
       conversationKey: conversationKey,
       supportsJobs: false,
+      onResultRead: async (
+        toolCallId: string,
+        resultId: string,
+      ): Promise<void> => {
+        reads.push([toolCallId, resultId]);
+      },
     });
-    const check = (): Promise<unknown> =>
-      (tools.async_status as unknown as TestToolExecute).execute(
-        { statusId: row.resultId },
-        { toolCallId: "tool-call-read", messages: [], context: undefined },
-      );
 
     try {
-      expect(await check()).toEqual({
-        status: "completed",
-        delivery: "automatic",
-      });
-      expect(await check()).toEqual({
-        status: "completed",
-        response: "the answer",
-      });
-      expect(marked.mock.calls).toEqual([
-        [row.resultId, "stored"],
-        [row.resultId, "stored"],
-      ]);
+      expect(
+        await (tools.async_status as unknown as TestToolExecute).execute(
+          { statusId: row.resultId },
+          { toolCallId: "tool-call-read", messages: [], context: undefined },
+        ),
+      ).toEqual({ status: "completed", response: "the answer" });
+      expect(marked).not.toHaveBeenCalled();
+      expect(reads).toEqual([["tool-call-read", row.resultId]]);
     } finally {
       read.mockRestore();
       marked.mockRestore();
     }
   });
+
+  it("records a polled job's read only once its row is settled with the answer", async (): Promise<void> => {
+    const row: AsyncToolResultRecord = {
+      ...settledRow(),
+      status: "processing",
+      input: { kind: "sandbox_job", namespace: "ns", jobId: "job-1" },
+    };
+    const read = spyOn(
+      asyncToolResults,
+      "getAsyncToolResult",
+    ).mockResolvedValue(row);
+    // The job is done, but fetching its logs fails, so the call answers an error.
+    const executor = spyOn(sandboxes, "createSandboxExecutor").mockReturnValue({
+      jobStatus: async () => ({ state: "completed", exitCode: 0 }),
+      jobLogs: async () => {
+        throw new Error("logs unavailable");
+      },
+    } as unknown as ReturnType<typeof sandboxes.createSandboxExecutor>);
+    const reads: string[] = [];
+    const { default: asyncStatusTool } =
+      await import("../src/harness/tools/async-status.tool.ts");
+    const tools = asyncStatusTool({
+      conversationKey: conversationKey,
+      supportsJobs: true,
+      workspaces: [{ namespace: "ns", sandbox: {} }] as unknown as Parameters<
+        typeof asyncStatusTool
+      >[0]["workspaces"],
+      onResultRead: async (_toolCallId: string, resultId: string) => {
+        reads.push(resultId);
+      },
+    });
+
+    try {
+      const failure = await (tools.async_status as unknown as TestToolExecute)
+        .execute(
+          { statusId: row.resultId },
+          { toolCallId: "tool-call-poll", messages: [], context: undefined },
+        )
+        .then(
+          (): undefined => undefined,
+          (cause: unknown): unknown => cause,
+        );
+      expect(String(failure)).toContain("logs unavailable");
+      expect(reads).toEqual([]);
+    } finally {
+      read.mockRestore();
+      executor.mockRestore();
+    }
+  });
 });
-
-function messageText(message: UserModelMessage | undefined): string {
-  if (!message) {
-    return "";
-  }
-  const content = message.content;
-  if (typeof content === "string") {
-    return content;
-  }
-
-  const part = content[0];
-
-  return part?.type === "text" ? part.text : "";
-}

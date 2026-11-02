@@ -29,11 +29,10 @@ import type { DockSessionKind } from "./dockSessions";
 import { controllable, dashboardHref, TraceLink } from "./sandboxFormat";
 import { sandboxLogId } from "./SandboxLogTail";
 
-// Activity rows shown before "Show all"; the query holds the rest.
 const ACTIVITY_PREVIEW = 5;
 const ACTIVITY_LIMIT = 50;
 
-/** Actor source as shown on an activity row; core calls itself "service". */
+// Core records itself as "service"; readers know it as the runtime.
 const ACTOR_LABEL: Record<SandboxAuditEvent["actorSource"], string> = {
   dashboard: "dashboard",
   agent: "agent",
@@ -45,20 +44,12 @@ type SandboxAuditEvent = Doc<"sandboxAuditEvents">;
 
 interface Props {
   instance: Doc<"sandboxInstances">;
-  /** The account's snapshots, so the one this instance booted from reads as a name. */
   snapshots: Doc<"sandboxSnapshots">[];
-  /** Builds the trace deep links. */
   projectId: Id<"projects">;
-  /** Opens the dock under the table on the given tab. */
   onOpenDock: (kind: DockSessionKind) => void;
   onClose: () => void;
 }
 
-/**
- * The selected instance. The title line carries the ways out of it: its
- * trace, its logs and its shell. The body holds what the row does not: ids,
- * the activity trail, snapshots, and the danger zone.
- */
 export function SandboxInstancePanel({
   instance,
   snapshots,
@@ -80,8 +71,7 @@ export function SandboxInstancePanel({
   const [snapMessage, setSnapMessage] = useState<string | null>(null);
 
   const actionable = controllable(instance);
-  // workdir, Daytona, E2B and Vercel capture a running sandbox; a lambda MicroVM
-  // is rebuilt as a new image from the files it changed.
+  // A lambda MicroVM is rebuilt as a new image from its changed files; the rest capture live.
   const supportsSnapshot = SNAPSHOT_SANDBOX_PROVIDERS.has(instance.provider);
   const buildsSnapshot = instance.provider === "lambda";
   const traceId = instance.lastUsedTraceId ?? instance.createdByTraceId;
@@ -235,11 +225,7 @@ export function SandboxInstancePanel({
   );
 }
 
-/**
- * Expects `events` newest first. One row per lifecycle event: when, what,
- * how it went or who did it, and its trace. The newest few show first;
- * "Show all" unfolds the rest of the query.
- */
+// Expects `events` newest first.
 function ActivityTable({
   events,
   projectId,
@@ -327,7 +313,6 @@ function ActivityTable({
   );
 }
 
-/** The rows the table does not show: ids, where it came from, and why it failed. */
 function instanceFacts(
   instance: Doc<"sandboxInstances">,
   snapshot: Doc<"sandboxSnapshots"> | undefined,
@@ -376,7 +361,6 @@ function instanceFacts(
   return rows;
 }
 
-/** The error for a failure, the exit code for a command, else who did it. */
 function auditDetail(event: SandboxAuditEvent): string {
   if (event.result === "error") return event.errorMessage ?? "failed";
   const who = event.actorEmail ?? event.actorName ?? event.actorId;
@@ -387,8 +371,7 @@ function auditDetail(event: SandboxAuditEvent): string {
     return `exit ${event.exitCode} · ${actor}`;
   }
 
-  // A refresh that finds the instance gone records "terminating"; to a reader
-  // it simply stopped, most often after its idle window.
+  // A refresh that finds the instance gone records "terminating": to a reader it stopped.
   const status =
     event.action === "refresh" && event.status === "terminating"
       ? "stopped"

@@ -9,20 +9,9 @@ import { sealStageSessionTicket } from "../../../packages/convex/model/stageSess
 import { assertStep, pollUntil, type VerifyContext } from "../harness.ts";
 
 const ATTACH_TIMEOUT_MS = 15_000;
-// The gateway replays a run from JetStream, so attach needs NATS. The local
-// stack, in CI too, runs none; a deployed gateway does.
+// Attach replays from JetStream; the local stack runs no NATS, in CI too.
 const NO_NATS = "Gateway requires NATS_URL";
 
-/**
- * BroodsWebSocketClient.attach through the gateway: a plain attach replays a
- * finished run, while an attach aborted on its first frame, or before it
- * opens, delivers nothing more and reports one abort. The agent is private,
- * which the runtime key cannot reach, so the case seals a member's stage
- * ticket with this stack's secret, as the dashboard's test chat holds. The
- * runtime key's own socket checks are in websocket-runtime-key.ts.
- * Runs without a model key: a run that fails at the provider still replays.
- * Without NATS the gateway cannot replay, so only the replay check skips.
- */
 export async function websocketAttachAbort(
   context: VerifyContext,
 ): Promise<void> {
@@ -67,6 +56,7 @@ export async function websocketAttachAbort(
     projectSlug: deployment.projectSlug,
     stageSlug: deployment.stageSlug,
   };
+  // The runtime key cannot reach a private agent; a member's stage ticket can.
   const ticket = await sealStageSessionTicket(
     {
       accountId: deployment.accountId,
@@ -90,11 +80,7 @@ export async function websocketAttachAbort(
     baseUrl: context.edgeUrl,
     apiKey: ticket,
   });
-  /**
-   * Attaches until the replay ends (`done` or an error frame) or, for an
-   * aborted view, until its abort is reported and then `quietMs` more pass
-   * with nothing delivered. A missing ending fails at the deadline instead.
-   */
+  // Ends at `done` or an error frame, or quietMs after an aborted view reports its abort.
   const attach = async (
     signal: AbortSignal | undefined,
     onFirst: () => void,
@@ -145,8 +131,6 @@ export async function websocketAttachAbort(
 
   const plain = await attach(undefined, (): void => undefined, 0);
   if (plain.errors.includes(NO_NATS)) {
-    // The gateway answers attach with one error frame; the aborts below
-    // still run against it.
     console.log(`  skip attach replay (gateway has no NATS_URL)`);
   } else {
     assertStep(
