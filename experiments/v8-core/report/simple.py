@@ -40,52 +40,68 @@ def rows_kept(source, label):
     return sum(r["runsCompleted"] for r in audits) / sum(3 * r["tasksStarted"] for r in audits)
 
 
+def db_cpu(source, label, level=20):
+    # Database container CPU per task, every task of the arm's runs at that level.
+    picked = [r for r in source if r.get("kind") == "convexCpu" and r["label"] == label and r["level"] == level]
+    return sum(r["ms"] for r in picked) / sum(r["tasks"] for r in picked)
+
+
+def calls(source, label, level=20):
+    return statistics.fmean(r["convexCallsPerTask"] for r in batches(source, label, level))
+
+
 old = rows("slim-d0.jsonl")
 levers = rows("fast-d0.jsonl")
 final = rows("fast-final.jsonl")
+db = rows("db-final.jsonl")
+db_old = rows("db-before.jsonl")
 
-tpm_today = per_minute(final, "bun+machine")
-tpm_today_10 = per_minute(final, "bun+machine", 10)
+# Page v4: "now" is the run after the database work; "before" is page v3's run.
+tpm_today = per_minute(db, "bun+machine")
+tpm_today_10 = per_minute(db, "bun+machine", 10)
+tpm_now = per_minute(db, "isolate+v8-fast")
+tpm_now_10 = per_minute(db, "isolate+v8-fast", 10)
+tpm_same = per_minute(db, "bun+native")
+tpm_engine = per_minute(db, "workerd+native")
 tpm_first = per_minute(old, "isolate+v8")
-tpm_last = per_minute(old, "isolate+v8-slim")
-tpm_now = per_minute(final, "isolate+v8-fast")
-tpm_now_10 = per_minute(final, "isolate+v8-fast", 10)
-tpm_engine = per_minute(final, "workerd+native")
-tpm_today_shell = per_minute(final, "bun+native")
-tpm_warm_only = per_minute(levers, "isolate+v8-warm")
-tpm_shell_only = per_minute(levers, "isolate+v8-slim-native")
-tpm_same_run_old = per_minute(levers, "isolate+v8-slim")
-tpm_both_no_queue = per_minute(levers, "isolate+v8-warm-native")
+tpm_before = per_minute(final, "isolate+v8-fast")
+share_before = tpm_before / per_minute(final, "bun+machine")
 
 cpu_last = cpu_per_task(old, "isolate+v8-slim")
-cpu_now = cpu_per_task(final, "isolate+v8-fast")
-cpu_today = cpu_per_task(final, "bun+machine")
-cpu_engine = cpu_per_task(final, "workerd+native")
-convex_today = statistics.fmean(r["convexCallsPerTask"] for r in batches(final, "bun+machine", 20))
-convex_shell = statistics.fmean(r["convexCallsPerTask"] for r in batches(final, "bun+native", 20))
+cpu_v3 = cpu_per_task(final, "isolate+v8-fast")
 sbx_js = cpu_per_task(levers, "isolate+v8-warm", "sandboxCpuMs")
 sbx_shell = cpu_per_task(levers, "isolate+v8-warm-native", "sandboxCpuMs")
-
 lost_before = 1 - rows_kept([r for r in levers if r.get("tasksStarted") == 41], "isolate+v8-warm-native")
-kept_now = rows_kept(final, "isolate+v8-fast")
+kept_now = rows_kept(db, "isolate+v8-fast")
+
+db_before = db_cpu(db_old, "isolate+v8-fast")
+db_today_then = db_cpu(db_old, "bun+machine")
+db_now = db_cpu(db, "isolate+v8-fast")
+db_today = db_cpu(db, "bun+machine")
+db_same = db_cpu(db, "bun+native")
+calls_before = calls(final, "isolate+v8-fast")
+calls_now = calls(db, "isolate+v8-fast")
+calls_today = calls(db, "bun+machine")
+calls_same = calls(db, "bun+native")
 
 cold = {r["label"]: r for r in rows("cold-start-slim.jsonl")}
 start_full = cold["fresh isolate per request"]["p50Ms"] / 1000
 start_slim = cold["slim core, fresh isolate per request"]["p50Ms"] / 1000
 
-real = [r for r in rows("real-fast.jsonl") if r.get("kind") == "batch"]
+REAL = "real-db" if (RESULTS / "real-db.jsonl").exists() else "real-fast"
+real = [r for r in rows(f"{REAL}.jsonl") if r.get("kind") == "batch"]
 real_today = statistics.median(t for r in real if r["label"].startswith("bun+machine") for t in r["taskMs"]) / 1000
 real_now = statistics.median(t for r in real if r["label"].startswith("isolate") for t in r["taskMs"]) / 1000
-earlier = [r for r in rows("real-slim.jsonl") if r.get("kind") == "batch" and r["label"].startswith("bun+machine")]
+earlier = [r for r in rows("real-fast.jsonl") if r.get("kind") == "batch" and r["label"].startswith("bun+machine")]
 real_today_earlier = statistics.median(t for r in earlier for t in r["taskMs"]) / 1000
 real_passed = sum(r["ok"] for r in real)
 real_total = sum(r["level"] for r in real)
-analysis = json.loads((RESULTS / "real-fast.analysis.json").read_text())
+analysis = json.loads((RESULTS / f"{REAL}.analysis.json").read_text())
 done = sum(r["ok"] for r in analysis)
 model_share = sum(r["modelMsPerTask"] * r["ok"] for r in analysis) / sum(r["p50"] * r["ok"] for r in analysis)
 usd_per_task = sum(r["usdPerTask"] * r["ok"] for r in analysis) / done
 
-quick = [r for r in levers + final if r.get("kind") == "batch"]
+quick = [r for r in levers + final + db if r.get("kind") == "batch"]
 quick_passed = sum(r["ok"] for r in quick)
 quick_total = sum(r["level"] for r in quick)
 
@@ -128,7 +144,7 @@ TODAY = (
 )
 
 IDEA = (
-    '<svg viewBox="0 0 480 300" role="img" class="pic" aria-label="Your idea now: each agent gets its own small worker that stays ready between its tasks; usage is written through one shared line; commands run in a real shell sandbox.">'
+    '<svg viewBox="0 0 480 300" role="img" class="pic" aria-label="Your idea now: each agent gets its own small worker that stays ready between its tasks; usage is written by one shared writer, in batches; commands run in a real shell sandbox.">'
     '<rect x="150" y="8" width="180" height="34" rx="17" class="pill"/>'
     + t(240, 31, "a user clicks")
     + "".join(
@@ -139,7 +155,7 @@ IDEA = (
         for i in range(3)
     )
     + '<rect x="15" y="136" width="450" height="40" rx="8" class="shared"/>'
-    + t(240, 162, "one shared line for usage writes", "t s")
+    + t(240, 162, "one writer for usage writes, in batches", "t s")
     + arrow(135, 176, 230)
     + arrow(345, 176, 230)
     + bottom(232, "Real shell sandbox")
@@ -151,7 +167,7 @@ def bar_chart():
     items = [
         ("Today", tpm_today, ""),
         ("Your idea, first try", tpm_first, "bad"),
-        ("Your idea, last time", tpm_last, "mid"),
+        ("Your idea, before the database work", tpm_before, "mid"),
         ("Your idea, now", tpm_now, "hl"),
     ]
     top = max(v for _, v, _ in items)
@@ -165,7 +181,7 @@ def bar_chart():
     return (
         '<svg viewBox="0 0 480 284" role="img" class="chart" aria-label="'
         f"Tasks finished per minute with 20 users at once: today {tpm_today:.0f}, first try {tpm_first:.0f}, "
-        f"last time {tpm_last:.0f}, now {tpm_now:.0f}."
+        f"before the database work {tpm_before:.0f}, now {tpm_now:.0f}."
         '">' + "".join(out) + "</svg>"
     )
 
@@ -236,10 +252,12 @@ code { font-family: var(--mono); font-size: 0.85em; }
 a { color: var(--accent); }
 """
 
-speedup = tpm_now / tpm_last
 share_10 = tpm_now_10 / tpm_today_10
 share_20 = tpm_now / tpm_today
-same_sandbox_gap = 1 - tpm_now / tpm_today_shell
+db_cut = 1 - db_now / db_before
+MODAL = "https://modal.com/blog/scaling-to-1-million-concurrent-sandboxes-in-seconds"
+HEADLINE = "TODO"
+REAL_LINE = "TODO"
 
 page = f"""<title>Broods task isolates</title>
 <meta name="claude:viewport-fit-sides" content="cover">
@@ -251,8 +269,8 @@ page = f"""<title>Broods task isolates</title>
 <section>
 <h1>Your idea: one small worker per task</h1>
 <div class="answer">
-<p>Yes, it got a lot faster: {speedup:.1f} times faster than last time.</p>
-<p>With 10 users at once it is close to today ({share_10 * 100:.0f}% of today's speed); with 20 users it does {share_20 * 100:.0f}%. On the same sandbox as today's server it is only {same_sandbox_gap * 100:.0f}% behind. With the real AI model the two are now level.</p>
+<p>{HEADLINE}</p>
+<p>With 20 users at once your idea now finishes {tpm_now:.0f} tasks a minute, {share_20 * 100:.0f}% of today (before this work: {share_before * 100:.0f}%). With 10 users it does {share_10 * 100:.0f}%. Its workers now give the database {db_now:.0f} ms of work per task, down from {db_before:.0f} ms; today's server gives it {db_same:.0f} ms with the same kind of sandbox.</p>
 </div>
 </section>
 
@@ -263,13 +281,27 @@ page = f"""<title>Broods task isolates</title>
 </section>
 
 <section>
-<h2>The three changes</h2>
+<h2>What Modal does, and what I copied</h2>
+<p>Modal runs up to a million sandboxes at once. <a href="{MODAL}">Their post</a> comes down to one rule: keep the database out of the way of making and using a sandbox, and write the bookkeeping later, in batches. Four of their ideas fit Broods:</p>
 <ol>
-<li><strong>Keep each agent's worker ready.</strong> Before, every task started a new worker from zero ({start_slim:.2f} s of work each time). Now each agent gets its own worker, which stays ready for that agent's next task. Computer time per task went from {cpu_last:.0f} ms to {cpu_now:.0f} ms.</li>
-<li><strong>Run commands in a real shell.</strong> The old sandbox imitated bash in JavaScript. A real shell does the same commands with {sbx_js / sbx_shell:.0f} times less computer time ({sbx_js:.0f} ms down to {sbx_shell:.0f} ms per task).</li>
-<li><strong>One shared line for usage writes.</strong> When many workers finished at once, they fought over the same usage record and about {lost_before * 100:.0f}% of the usage rows were lost at 20 users. Now they queue for it and every row arrives ({kept_now * 100:.0f}%), at the same speed.</li>
+<li><strong>Look it up once, then go straight there.</strong> Modal's app gets a sandbox's address once and sends every command straight to it. Broods now remembers each sandbox's booking: a command on a sandbox it already knows makes no database call, and it checks back once a minute in the background.</li>
+<li><strong>Bookkeeping later, not on the way.</strong> In Modal's words: "We have no data stores in the critical path." Broods now notes a sandbox in the database once per task instead of after every command, and adds up a second of command usage into one write.</li>
+<li><strong>One writer, in batches.</strong> Modal's machines bundle messages for many sandboxes into one call. Your idea's workers now hand their usage writes to one writer per account, which sends whatever has piled up as one batch. Before, 20 workers fought over the same usage record and the database kept redoing the losers' work.</li>
+<li><strong>Book in one step.</strong> Booking a new sandbox took two database trips (look, then claim). Now it takes one, and two tasks racing for the same sandbox both get the same one.</li>
 </ol>
-<p>In one test run with 20 users, the old setup did {tpm_same_run_old:.0f} tasks a minute. Keeping workers ready alone gave {tpm_warm_only:.0f}, the real shell alone {tpm_shell_only:.0f}, and both together {tpm_both_no_queue:.0f}.</p>
+</section>
+
+<section>
+<h2>The database, per task</h2>
+<div class="nums">
+<div class="num"><b>{db_before:.0f} → {db_now:.0f} ms</b><span>database work per task for your idea, {db_cut * 100:.0f}% less (today's server: {db_today:.0f} ms)</span></div>
+<div class="num"><b>{calls_before:.0f} → {calls_now:.0f}</b><span>database calls per task (today's server: {calls_today:.0f})</span></div>
+</div>
+</section>
+
+<section>
+<h2>What is left</h2>
+<p>Mostly the cost of reaching a sandbox at all, which today's server pays too. On the same real-shell sandbox, today's server does {tpm_same:.0f} tasks a minute; with the test machine it normally uses here, {tpm_today:.0f}. Every new sandbox is still booked in the database before its first command, and in this test every task makes two new ones (its own and its helper's). Modal hides that with warm pools: sandboxes made before anyone asks. Next steps: book the agent's sandbox while the AI is still thinking, and run one worker engine per CPU core.</p>
 </section>
 
 <section>
@@ -281,32 +313,21 @@ page = f"""<title>Broods task isolates</title>
 </section>
 
 <section>
-<h2>Why 20 users is still a bit slower</h2>
-<p>Mostly the sandbox route, not your idea. I ran two checks on the same real-shell sandbox, with 20 users:</p>
-<ul>
-<li>Today's server: {tpm_today_shell:.0f} tasks a minute, against {tpm_today:.0f} with the always-connected test machine it normally uses here. Reaching a sandbox this way costs {convex_shell - convex_today:.0f} more database calls per task to book it.</li>
-<li>One always-on copy of the worker engine, with no per-agent workers: {tpm_engine:.0f}.</li>
-<li>Your idea, one worker per agent: {tpm_now:.0f}.</li>
-</ul>
-<p>So giving every agent its own worker now costs very little. Two next steps: book the sandbox once per task (the sandbox route books it in the database for every command), and run one worker engine per CPU core. Each agent's worker stands alone, so agents can be spread over cores or machines; today's server can't split that way yet, because its tasks share its memory.</p>
-</section>
-
-<section>
-<h2>What the research says</h2>
-<ul>
-<li>Cloudflare, Vercel and Deno don't start a worker from zero for every click either. They keep workers ready and send the next request to the one already running. That is change 1.</li>
-<li>Cloudflare's own AI agents keep the agent's loop in a worker that stays ready, and only put code the AI writes into a brand-new worker. That is the part worth keeping fresh for safety.</li>
-<li>For commands they all use a real Linux sandbox (a tiny virtual machine), not a JavaScript copy of bash. Firecracker and E2B are open source and run on our own servers.</li>
-</ul>
-</section>
-
-<section>
 <h2>With the real AI model</h2>
 <div class="nums">
 <div class="num"><b>{real_today:.0f} s</b><span>per task today</span></div>
 <div class="num"><b>{real_now:.0f} s</b><span>per task with your idea, now</span></div>
 </div>
-<p>Call this a tie, not a win: the AI's own speed swings more than the gap from run to run (today took {real_today_earlier:.0f} s in my last test), and in these runs the AI happened to write a bit less. About {model_share * 100:.0f}% of every task is waiting for the AI to answer, and the AI is almost the whole bill (about ${usd_per_task:.3f} per task).</p>
+<p>{REAL_LINE} About {model_share * 100:.0f}% of every task is waiting for the AI to answer, and the AI is almost the whole bill (about ${usd_per_task:.3f} per task).</p>
+</section>
+
+<section>
+<h2>Earlier changes</h2>
+<ol>
+<li><strong>Keep each agent's worker ready</strong> instead of starting one from zero for every task: computer time per task went from {cpu_last:.0f} ms to {cpu_v3:.0f} ms.</li>
+<li><strong>Run commands in a real shell</strong> instead of a JavaScript copy of bash: {sbx_js / sbx_shell:.0f} times less computer time.</li>
+<li><strong>One shared line for usage writes</strong>: before it, about {lost_before * 100:.0f}% of the usage rows were lost at 20 users; now {kept_now * 100:.0f}% arrive.</li>
+</ol>
 </section>
 
 <section>
@@ -314,8 +335,9 @@ page = f"""<title>Broods task isolates</title>
 <ol>
 <li>Load only the parts of Broods a task uses ({full_mb:.1f} MB down to {slim_mb:.1f} MB). Tested.</li>
 <li>Give each agent its own worker, kept ready, and drop it when the agent goes quiet. Tested, apart from dropping idle ones.</li>
+<li>The database changes above. Built into Broods on this branch with tests; they help today's server too.</li>
 <li>Run commands in tiny virtual machines (Firecracker or E2B) behind the sandbox Broods already talks to. Tested with a plain shell standing in, which protects nothing yet.</li>
-<li>Move the rest of what tasks share today (the task queue and the sandbox lock) into shared services, like the usage line. Not built yet.</li>
+<li>Move the rest of what tasks share today (the task queue and the sandbox lock) into shared services, like the usage writer. Not built yet.</li>
 </ol>
 </section>
 

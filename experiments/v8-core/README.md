@@ -45,18 +45,38 @@ Two levers on top of the slim core, each switchable on its own:
   makes `run-isolate.sh` start it on 8791; in `run-real.sh` an
   `isolate:native` arm does the same.
 
-- **One shared queue for usage writes.** Every finished run writes its usage
+- **One shared writer for usage writes.** Every finished run writes its usage
   and its `run.completed` audit row in one Convex mutation that moves the
-  account's audit chain head. Today's core sends those from one queued
-  ConvexHttpClient; separate task workers race on the head and Convex drops
-  the losers (up to a quarter of the rows at 20 users with the fast sandbox).
-  `slimFastConfig` (4361) is `slimWarmConfig` plus `per-task/write-queue.js`
-  as every task worker's outbound fetch: one shared worker that passes
-  everything through except `usage:recordTaskUsage`, which it sends one at a
-  time through a Durable Object. A first version kept the queue as a promise
-  chain in a plain worker; workerd cancels a request left waiting on another
-  request's promise as hung, and most usage rows were lost
+  account's audit chain head, and worker commands add to the account's
+  monthly meter. Today's core sends those from one queued ConvexHttpClient;
+  separate task workers race on those rows and Convex retries or drops the
+  losers (up to a quarter of the audit rows at 20 users with the fast
+  sandbox). `slimFastConfig` (4361) is `slimWarmConfig` plus
+  `per-task/write-queue.js` as every task worker's outbound fetch: one shared
+  worker that passes everything through except `usage:recordTaskUsage` and
+  `account/budget:record`, which go to a Durable Object per account and kind.
+  It sends them as a group commit: whatever arrived while the last write was
+  in flight goes out as one batch mutation (`usage:recordTaskUsages`,
+  `account/budget:recordMany`), each write still deduplicated by its own id,
+  and each caller gets its own answer back. A first version kept the queue as
+  a promise chain in a plain worker; workerd cancels a request left waiting
+  on another request's promise as hung, and most usage rows were lost
   (`results/fast-final-hung-queue.jsonl`).
+
+## Database round trips
+
+Core's own changes on this branch, which today's Bun core gets too: a
+platform sandbox is booked in one Convex trip (`reserveSandboxReservation`)
+and held in memory, mirrored once per task instead of once per command, and
+its command usage is summed for a second into one budget write. With
+`BENCH_SCRIPTED_MODEL=1`, every Convex call core makes logs a
+`BENCH_CONVEX <function> <ms>` line. `bench/convex-cpu.sh <arm> <level> <out>`
+runs one arm at one level and prints the database container's CPU per task
+(from its cgroup) and each Convex function's calls per task and average time.
+`bench/run-db-final.sh` is the run behind the page's database section
+(`results/db-final.jsonl`, with a `convexCpu` row per arm and level);
+`results/db-before.jsonl` holds the same measurement from before these
+changes.
 
 `restart-cores.sh` with `SANDBOX_PORT=8791` points both long-lived cores at the
 real-shell sandbox, and `run-scripted.sh` then takes `bun:native` and
