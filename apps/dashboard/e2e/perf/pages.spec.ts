@@ -177,18 +177,11 @@ test("every page renders cold within budget, and every sidebar destination by na
           gate: "informational",
           maxRegressionPct: 50,
           slack: 100,
+          ceiling: RENDER_BUDGET_MS,
         },
       ]),
     ),
   );
-
-  const over = samples.filter((sample) => sample.ms > RENDER_BUDGET_MS);
-  expect(
-    over.map(
-      (sample) => `${sample.kind} ${sample.page}: ${Math.round(sample.ms)} ms`,
-    ),
-    `pages over the ${RENDER_BUDGET_MS} ms render budget`,
-  ).toEqual([]);
 });
 
 test("a live log burst on Monitoring reaches the screen without blocking the page", async ({

@@ -11,6 +11,9 @@ const FLUSH_DELAY_MS = 10_000;
 // round trip for auth and one for data), so a page needing another round trip fails.
 export const PAGE_RENDER_BUDGET_MS = 1000;
 
+// How long streamed chat chunks gather before one render commits them.
+export const STREAM_COMMIT_MS = 50;
+
 // Kept apart from the probe budget: loosening that must not loosen the Grafana alert.
 export const FIELD_RENDER_BUDGET_MS = 1000;
 

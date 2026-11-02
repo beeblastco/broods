@@ -1,5 +1,6 @@
 // The only copy: Convex cannot import the Next.js app, so the dashboard re-exports this one.
 
+import { v, type Infer } from "convex/values";
 import { isPlainObject } from "./objects";
 import {
   ACCOUNT_ENV_PLACEHOLDER_PATTERN,
@@ -92,11 +93,17 @@ export interface FlatPatch {
 
 export type NestedAgentConfig = Record<string, unknown>;
 
-export interface AgentCanvasBadge {
-  publicAccess: boolean;
-  skills: string[];
-  structuredOutput: boolean;
-}
+/** The bits of one agent config its canvas card and its skill cards draw. */
+export const agentCanvasBadgeValidator = v.object({
+  // Callers need no runtime key, so the card's globe shows green.
+  publicAccess: v.boolean(),
+  // Skill refs the agent loads: `skills.allowed` while skills are on, else none.
+  skills: v.array(v.string()),
+  // The model answers with data instead of text.
+  structuredOutput: v.boolean(),
+});
+
+export type AgentCanvasBadge = Infer<typeof agentCanvasBadgeValidator>;
 
 // Shared by the badges query and the optimistic update, so the server's answer matches it.
 export function agentCanvasBadge(config: {

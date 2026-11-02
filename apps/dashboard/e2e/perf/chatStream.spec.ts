@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { test } from "@playwright/test";
 import type { UIMessageChunk } from "ai";
 import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -8,11 +8,14 @@ import type {
 } from "../../../../packages/broods/src/websocket-contracts";
 import type { api } from "../../../../packages/convex/_generated/api";
 import type { Id } from "../../../../packages/convex/_generated/dataModel";
-import { PAGE_RENDER_BUDGET_MS, PERF_BUDGETS } from "../../app/lib/perfReport";
+import {
+  PAGE_RENDER_BUDGET_MS,
+  PERF_BUDGETS,
+  STREAM_COMMIT_MS,
+} from "../../app/lib/perfReport";
 import { run, STACK_ADMIN } from "../lib/localStack";
 import { checkPerfBaseline } from "../lib/perfBaseline";
 import {
-  BASE_URL,
   hasProbe,
   MISSING_PROBE,
   probeAccount,
@@ -30,7 +33,6 @@ const DELTA_CHARS = 18;
 const DELTA_INTERVAL_MS = 8;
 // 20 commits a second is as fast as anyone reads. The headroom is for commits not from the
 // stream: the user's message, the status, code highlighting, Convex updates.
-const COMMIT_WINDOW_MS = 50;
 const COMMIT_HEADROOM = 1.5;
 // A mid-range laptop: a fast runner at full speed hides the long tasks a slower machine has.
 const CPU_SLOWDOWN = 4;
@@ -200,7 +202,7 @@ test("a long streamed answer on the agent Test tab reaches the screen without a 
   await context.close();
 
   const streamMs = stream.endedAt - stream.startedAt;
-  const commitBudget = Math.ceil(streamMs / COMMIT_WINDOW_MS) * COMMIT_HEADROOM;
+  const commitBudget = Math.ceil(streamMs / STREAM_COMMIT_MS) * COMMIT_HEADROOM;
   const longestMs = Math.max(0, ...tasks);
   const result = {
     deltas: DELTAS.length,
@@ -216,18 +218,13 @@ test("a long streamed answer on the agent Test tab reaches the screen without a 
       tasks.reduce((sum, ms) => sum + Math.max(0, ms - BLOCKING_MS), 0),
     ),
   };
-  console.log(
-    `Chat stream ${new URL(BASE_URL).host} ${JSON.stringify(result)}`,
-  );
-  await test.info().attach("chat-stream", {
-    body: JSON.stringify(result, null, 2),
-    contentType: "application/json",
-  });
   checkPerfBaseline("chat stream", {
     "chat-stream.commits": {
       value: commits,
       gate: "blocking",
       maxRegressionPct: 20,
+      // A chat that renders every chunk commits far more than once a window.
+      ceiling: commitBudget,
     },
     "chat-stream.longTasks": {
       value: result.longTasks,
@@ -246,24 +243,15 @@ test("a long streamed answer on the agent Test tab reaches the screen without a 
       gate: "informational",
       maxRegressionPct: 50,
       slack: 25,
+      ceiling: PERF_BUDGETS["long-task"],
     },
     "chat-stream.visibleMs": {
       value: result.visibleMs,
       gate: "informational",
       maxRegressionPct: 100,
       slack: 100,
+      // Paced frames leave no backlog on the browser protocol: the page's own budget holds.
+      ceiling: PAGE_RENDER_BUDGET_MS,
     },
   });
-  // Paced frames leave no backlog on the browser protocol, so the page's own budget holds.
-  expect(
-    visibleMs,
-    "end of the answer on screen after its last frame",
-  ).toBeLessThanOrEqual(PAGE_RENDER_BUDGET_MS);
-  expect(longestMs, "longest main-thread task").toBeLessThanOrEqual(
-    PERF_BUDGETS["long-task"],
-  );
-  expect(
-    commits,
-    `React commits while ${DELTAS.length} deltas streamed over ${Math.round(streamMs)} ms`,
-  ).toBeLessThanOrEqual(commitBudget);
 });

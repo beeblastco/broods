@@ -1,6 +1,7 @@
 "use client";
 
 import { agentEndpointPath, resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { STREAM_COMMIT_MS } from "@/app/lib/perfReport";
 import type { UIMessage } from "ai";
 import {
   parseJsonEventStream,
@@ -22,7 +23,6 @@ import type {
 } from "../../../../packages/broods/src/websocket-contracts";
 
 const WEBSOCKET_CONNECT_TIMEOUT_MS = 2000;
-const STREAM_COMMIT_INTERVAL_MS = 50;
 
 type ChatStatus = "ready" | "streaming" | "error";
 
@@ -143,6 +143,31 @@ export function useAgentChat({
       continuationMessageIdRef.current = null;
       subagentMessageIdsRef.current = {};
 
+      // A model streams far more chunks than a reader can see: queue each chunk's update and
+      // commit the queue once per window, as a transition so React yields between markdown
+      // blocks. The main stream's end commits at once.
+      let queued: Array<(prev: UIMessage[]) => UIMessage[]> = [];
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const commitQueued = (): void => {
+        timer = undefined;
+        const updates = queued;
+        queued = [];
+        // An aborted turn's transcript now belongs to a reset or a newer turn.
+        if (updates.length === 0 || controller.signal.aborted) return;
+        setMessages((prev) =>
+          updates.reduce((messages, update) => update(messages), prev),
+        );
+      };
+      const queueUpdate = (
+        update: (prev: UIMessage[]) => UIMessage[],
+      ): void => {
+        queued.push(update);
+        timer ??= setTimeout(
+          () => startTransition(commitQueued),
+          STREAM_COMMIT_MS,
+        );
+      };
+
       try {
         if (!coreEndpointOk) {
           throw new Error(coreEndpointMessage);
@@ -171,7 +196,7 @@ export function useAgentChat({
               },
               onQuestions: setPendingQuestions,
               onContinuationDelta: (delta) => {
-                setMessages((prev) => {
+                queueUpdate((prev) => {
                   const next = appendAssistantTextDelta({
                     previousMessages: prev,
                     messageId: continuationMessageIdRef.current,
@@ -183,7 +208,7 @@ export function useAgentChat({
                 });
               },
               onSubagentDelta: ({ taskId, sessionId, delta, agentName }) => {
-                setMessages((prev) => {
+                queueUpdate((prev) => {
                   const currentMessageId =
                     subagentMessageIdsRef.current[taskId] ?? null;
                   const next = upsertSubagentPanel({
@@ -206,7 +231,7 @@ export function useAgentChat({
                 phase,
                 toolNames,
               }) => {
-                setMessages((prev) => {
+                queueUpdate((prev) => {
                   const currentMessageId =
                     subagentMessageIdsRef.current[taskId] ?? null;
                   const next = upsertSubagentPanel({
@@ -226,7 +251,7 @@ export function useAgentChat({
                 });
               },
               onSubagentResult: (output, resultTaskId) => {
-                setMessages((prev) => {
+                queueUpdate((prev) => {
                   const tracked = Object.keys(subagentMessageIdsRef.current);
                   // No taskId (older servers): complete every tracked panel, but attach the
                   // output only to a lone one, or it lands in another subagent's panel.
@@ -305,38 +330,22 @@ export function useAgentChat({
           terminateOnError: true,
         });
 
-        // Commit the newest snapshot once per window, not per chunk: a commit re-parses markdown.
-        // A transition, so React yields between markdown blocks; the last one commits at once.
-        let pending: UIMessage | null = null;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const commitPending = (): void => {
-          timer = undefined;
-          const assistantMessage = pending;
-          pending = null;
-          // An aborted turn's transcript now belongs to a reset or a newer turn.
-          if (!assistantMessage || controller.signal.aborted) return;
-          setMessages((prev) => {
-            const next = upsertMainAssistantMessage({
-              previousMessages: prev,
-              messageId: mainAssistantMessageIdRef.current,
-              assistantMessage: assistantMessage,
-            });
-            mainAssistantMessageIdRef.current = next.messageId;
-
-            return next.messages;
-          });
-        };
         try {
           for await (const assistantMessage of messageStream) {
-            pending = assistantMessage;
-            timer ??= setTimeout(
-              () => startTransition(commitPending),
-              STREAM_COMMIT_INTERVAL_MS,
-            );
+            queueUpdate((prev) => {
+              const next = upsertMainAssistantMessage({
+                previousMessages: prev,
+                messageId: mainAssistantMessageIdRef.current,
+                assistantMessage: assistantMessage,
+              });
+              mainAssistantMessageIdRef.current = next.messageId;
+
+              return next.messages;
+            });
           }
         } finally {
           clearTimeout(timer);
-          commitPending();
+          commitQueued();
         }
 
         setStatus("ready");

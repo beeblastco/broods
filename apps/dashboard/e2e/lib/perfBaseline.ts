@@ -30,6 +30,8 @@ export interface PerfReading {
   maxRegressionPct: number;
   /** Absolute room on top, for a number that sits near zero. */
   slack?: number;
+  /** A product budget that fails the run on any machine, whatever the gate. */
+  ceiling?: number;
 }
 
 type Status = "improved" | "new" | "ok" | "regressed" | "ungraded";
@@ -67,6 +69,11 @@ export function checkPerfBaseline(
   );
   report(title, graded);
   for (const row of graded) {
+    if (row.reading.ceiling !== undefined) {
+      expect
+        .soft(row.reading.value, `${row.name}: product budget`)
+        .toBeLessThanOrEqual(row.reading.ceiling);
+    }
     if (row.reading.gate !== "blocking") continue;
     expect
       .soft(
