@@ -11,6 +11,7 @@ import {
   collectEnvPlaceholderNames,
   toNestedAgentConfig,
   type AgentCanvasBadge,
+  agentCanvasBadgeValidator,
 } from "../model/agentConfigCodec";
 import {
   assertAgentRuntimeRefs,
@@ -59,12 +60,6 @@ const agentConfigDoc = v.object({
 const agentProviderValidator = v.union(
   ...ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => v.literal(name)),
 );
-
-const agentCanvasBadgeValidator = v.object({
-  publicAccess: v.boolean(),
-  skills: v.array(v.string()),
-  structuredOutput: v.boolean(),
-});
 
 const workspaceRefValidator = v.object({
   name: v.string(),
