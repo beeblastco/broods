@@ -84,7 +84,8 @@ ruleTester(RULE, { ruleOptions: [{ names: ["isBag"] }] }).invalid(
 );
 
 const allowed = ruleTester(RULE, {
-  filename: "/repo/packages/convex/model/objects.ts",
+  // A dotted folder, like a T3 worktree under ~/.t3, must still match.
+  filename: "/home/dev/.t3/worktrees/repo/packages/convex/model/objects.ts",
   ruleOptions: [
     {
       allow: [
