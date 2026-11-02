@@ -58,7 +58,10 @@ Two levers on top of the slim core, each switchable on its own:
   It sends them as a group commit: whatever arrived while the last write was
   in flight goes out as one batch mutation (`usage:recordTaskUsages`,
   `account/budget:recordMany`), each write still deduplicated by its own id,
-  and each caller gets its own answer back. A first version kept the queue as
+  and each caller gets its own answer back. Those two mutations were measured
+  (commit 4631eaa) but left out of Broods, which has no shared writer to call
+  them; without them the queue sends its writes one at a time, still from one
+  writer per account, so none race. A first version kept the queue as
   a promise chain in a plain worker; workerd cancels a request left waiting
   on another request's promise as hung, and most usage rows were lost
   (`results/fast-final-hung-queue.jsonl`).
@@ -108,10 +111,11 @@ real-shell sandbox, and `run-scripted.sh` then takes `bun:native` and
 timed rounds, so a warm worker is measured warm; without it the first task of
 each agent pays the load.
 
-Core needed two changes to load in a V8 isolate: `shared/cache-digest.ts`
-draws its key on first use, and `shared/http.ts` must fetch by hostname.
-The second weakens the SSRF guard, so `build.ts` patches it into the bundle
-at build time and core itself is unchanged.
+Core needs two changes to run in a V8 isolate, and `build.ts` patches both
+into the bundle at build time (`PATCHES`), so core itself is unchanged:
+`shared/cache-digest.ts` draws its key on first use, and `shared/http.ts`
+fetches by hostname. The second weakens core's SSRF guard, which is why it
+stays out of core.
 `entry.ts` waits for the response body and then core's in-flight writes, or
 workerd drops core's usage rows.
 

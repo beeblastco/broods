@@ -173,14 +173,7 @@ export function recordUsage(
 // commands cost one budget write, not one each. Budget reads are already up to
 // `BUDGET_TTL_MS` stale, so a second's delay changes no decision.
 const USAGE_LINGER_MS = 1_000;
-const lingering = new Map<
-  string,
-  {
-    accountId: string;
-    usage: Parameters<Storage["budgets"]["record"]>[1];
-    source?: UsageSource;
-  }
->();
+const lingering = new Map<string, Record<string, number | undefined>>();
 
 /** `recordUsage`, summed with the same account and source's usage of the next second. */
 export function recordUsageSoon(
@@ -196,25 +189,18 @@ export function recordUsageSoon(
   ]);
   const pending = lingering.get(key);
   if (pending) {
-    const sum = pending.usage as Record<string, number | undefined>;
     for (const [name, amount] of Object.entries(usage))
-      sum[name] = (sum[name] ?? 0) + (amount ?? 0);
+      pending[name] = (pending[name] ?? 0) + (amount ?? 0);
 
     return;
   }
-  const entry = { accountId: accountId, usage: { ...usage }, source: source };
-  lingering.set(key, entry);
+  const total: typeof usage = { ...usage };
+  lingering.set(key, total);
   waitUntil(
-    new Promise((resolve): void => {
-      setTimeout(resolve, USAGE_LINGER_MS);
-    }).then((): Promise<void> => {
+    Bun.sleep(USAGE_LINGER_MS).then((): Promise<void> => {
       lingering.delete(key);
 
-      return getStorage().budgets.record(
-        entry.accountId,
-        entry.usage,
-        entry.source,
-      );
+      return getStorage().budgets.record(accountId, total, source);
     }),
   );
 }

@@ -88,17 +88,6 @@ beforeEach((): void => {
     instanceStore,
     "getSandboxExternalId",
   ).mockImplementation(async (): Promise<string | null> => stored);
-  const claimSpy = spyOn(
-    instanceStore,
-    "claimSandboxInstance",
-  ).mockImplementation(
-    async (_provider, _key, externalId): Promise<boolean> => {
-      if (claimWins) stored = externalId;
-      else stored = "winner-id";
-
-      return claimWins;
-    },
-  );
   const reserveSpy = spyOn(
     instanceStore,
     "reserveSandboxInstance",
@@ -128,7 +117,6 @@ beforeEach((): void => {
   restores.push(
     (): void => fetchSpy.mockRestore(),
     (): void => getSpy.mockRestore(),
-    (): void => claimSpy.mockRestore(),
     (): void => reserveSpy.mockRestore(),
     (): void => saveSpy.mockRestore(),
     (): void => upsertSpy.mockRestore(),

@@ -15,6 +15,8 @@
  * write in order, each still deduplicated by its own task or write id. Every
  * caller gets the answer its own call would have got. A batch Convex refuses
  * is sent again one write at a time, so one bad write fails only its caller.
+ * Broods itself does not carry the two batch mutations (they are in commit
+ * 4631eaa), so against it every batch falls back to one write at a time.
  *
  * The batch is sent from a caller's own request, the first one waiting, which
  * waits for it; the next one waiting then leads. A plain worker cannot hold a
@@ -78,9 +80,14 @@ export class WriteQueue {
         settle(item, new Response(await response.arrayBuffer(), response));
       }
     } catch (error) {
+      // The caller gets a plain 502; the error itself stays in the log.
+      console.error("write queue: Convex unreachable", error);
       for (const item of batch)
         if (!item.response)
-          settle(item, new Response(String(error), { status: 502 }));
+          settle(
+            item,
+            new Response("write queue: Convex unreachable", { status: 502 }),
+          );
     }
   }
 

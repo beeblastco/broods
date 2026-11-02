@@ -108,16 +108,6 @@ beforeEach((): void => {
       return stored;
     },
   );
-  // A claim is a compare-and-swap: only the first one under a key wins.
-  spyOn(instanceStore, "claimSandboxInstance").mockImplementation(
-    async (_provider, _key, externalId): Promise<boolean> => {
-      convex.push("claim");
-      if (stored !== null) return false;
-      stored = claimWins ? externalId : "winner-id";
-
-      return claimWins;
-    },
-  );
   // Claim-or-reuse in one trip: the stored id, else this one (or a racing winner's).
   spyOn(instanceStore, "reserveSandboxInstance").mockImplementation(
     async (_provider, _key, externalId): Promise<string> => {

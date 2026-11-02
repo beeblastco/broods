@@ -233,7 +233,11 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     const task = metadata?.taskId;
     if (task !== undefined) {
       if (mirroredFor.get(id) === task) return;
-      if (mirroredFor.size >= MAX_MIRRORED) mirroredFor.clear();
+      mirroredFor.delete(id);
+      if (mirroredFor.size >= MAX_MIRRORED) {
+        const oldest = mirroredFor.keys().next().value;
+        if (oldest !== undefined) mirroredFor.delete(oldest);
+      }
       mirroredFor.set(id, task);
     }
     void queueMirrorWrite(id, (): Promise<void> =>

@@ -7,7 +7,7 @@
  * crawls hourly from models.dev.
  */
 
-import { type Infer, v } from "convex/values";
+import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { internalMutation, type MutationCtx } from "./_generated/server";
@@ -83,42 +83,6 @@ export const pruneExpiredTaskUsage = internalMutation({
   },
 });
 
-const taskUsageArgs = {
-  accountId: v.id("accounts"),
-  endpointId: v.string(),
-  agentId: v.string(),
-  /** Who asked and which agents delegated; lands on the `run.completed` row. */
-  principalChain: v.optional(v.array(principalLinkValidator)),
-  conversationKey: v.string(),
-  taskId: v.string(),
-  modelProvider: v.string(),
-  modelId: v.string(),
-  finishedAt: v.number(),
-  durationMs: v.number(),
-  status: v.union(v.literal("completed"), v.literal("failed")),
-  inputTokens: v.number(),
-  outputTokens: v.number(),
-  reasoningTokens: v.number(),
-  cachedInputTokens: v.number(),
-  cacheWriteTokens: v.number(),
-  totalTokens: v.number(),
-  runtimeKind: v.string(),
-  runtimeWallMs: v.number(),
-  runtimeMemoryMb: v.number(),
-  sandboxUsage: v.array(
-    v.object({
-      type: v.string(),
-      role: v.union(v.literal("agent"), v.literal("tool")),
-      toolName: v.optional(v.string()),
-      cpuUsec: v.number(),
-    }),
-  ),
-  stepCount: v.number(),
-  toolCallCount: v.number(),
-  inputPreview: v.optional(v.string()),
-};
-const taskUsageValidator = v.object(taskUsageArgs);
-
 /**
  * Record one finished agent task: insert a `taskUsage` row, fold its
  * token/compute counts into the 5-minute, hour, and day `usageRollups`
@@ -129,140 +93,151 @@ const taskUsageValidator = v.object(taskUsageArgs);
  * another tenant's usage.
  */
 export const recordTaskUsage = internalMutation({
-  args: taskUsageArgs,
-  returns: v.null(),
-  handler: (ctx, args): Promise<null> => recordOneTaskUsage(ctx, args),
-});
-
-/**
- * `recordTaskUsage` for several tasks in one transaction, in order. A shared
- * writer that drains a queue of finished runs sends them this way, so the
- * account's audit chain head moves once per batch instead of racing per run.
- */
-export const recordTaskUsages = internalMutation({
-  args: { items: v.array(taskUsageValidator) },
-  returns: v.array(v.null()),
-  handler: async (ctx, args): Promise<null[]> => {
-    const results: null[] = [];
-    for (const item of args.items)
-      results.push(await recordOneTaskUsage(ctx, item));
-
-    return results;
+  args: {
+    accountId: v.id("accounts"),
+    endpointId: v.string(),
+    agentId: v.string(),
+    /** Who asked and which agents delegated; lands on the `run.completed` row. */
+    principalChain: v.optional(v.array(principalLinkValidator)),
+    conversationKey: v.string(),
+    taskId: v.string(),
+    modelProvider: v.string(),
+    modelId: v.string(),
+    finishedAt: v.number(),
+    durationMs: v.number(),
+    status: v.union(v.literal("completed"), v.literal("failed")),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    reasoningTokens: v.number(),
+    cachedInputTokens: v.number(),
+    cacheWriteTokens: v.number(),
+    totalTokens: v.number(),
+    runtimeKind: v.string(),
+    runtimeWallMs: v.number(),
+    runtimeMemoryMb: v.number(),
+    sandboxUsage: v.array(
+      v.object({
+        type: v.string(),
+        role: v.union(v.literal("agent"), v.literal("tool")),
+        toolName: v.optional(v.string()),
+        cpuUsec: v.number(),
+      }),
+    ),
+    stepCount: v.number(),
+    toolCallCount: v.number(),
+    inputPreview: v.optional(v.string()),
   },
-});
-
-async function recordOneTaskUsage(
-  ctx: MutationCtx,
-  args: Infer<typeof taskUsageValidator>,
-): Promise<null> {
-  // The harness run finalizer settles one run once in memory; a mutation the
-  // client retried after a lost reply would otherwise double-fold the rollups.
-  const already = await ctx.db
-    .query("taskUsage")
-    .withIndex("by_accountId_and_taskId", (q) =>
-      q.eq("accountId", args.accountId).eq("taskId", args.taskId),
-    )
-    .unique();
-  if (already) {
-    return null;
-  }
-
-  // Split sandbox CPU by role so the flat rollup keeps the agent/tool breakdown.
-  let agentSandboxCpuUsec = 0;
-  let toolSandboxCpuUsec = 0;
-  for (const s of args.sandboxUsage) {
-    if (s.role === "tool") {
-      toolSandboxCpuUsec += s.cpuUsec;
-    } else {
-      agentSandboxCpuUsec += s.cpuUsec;
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    // The harness run finalizer settles one run once in memory; a mutation the
+    // client retried after a lost reply would otherwise double-fold the rollups.
+    const already = await ctx.db
+      .query("taskUsage")
+      .withIndex("by_accountId_and_taskId", (q) =>
+        q.eq("accountId", args.accountId).eq("taskId", args.taskId),
+      )
+      .unique();
+    if (already) {
+      return null;
     }
-  }
 
-  await ctx.db.insert("taskUsage", {
-    accountId: args.accountId,
-    endpointId: args.endpointId,
-    agentId: args.agentId,
-    conversationKey: args.conversationKey,
-    taskId: args.taskId,
-    modelProvider: args.modelProvider,
-    modelId: args.modelId,
-    finishedAt: args.finishedAt,
-    durationMs: args.durationMs,
-    status: args.status,
-    inputTokens: args.inputTokens,
-    outputTokens: args.outputTokens,
-    reasoningTokens: args.reasoningTokens,
-    cachedInputTokens: args.cachedInputTokens,
-    cacheWriteTokens: args.cacheWriteTokens,
-    totalTokens: args.totalTokens,
-    runtimeKind: args.runtimeKind,
-    runtimeWallMs: args.runtimeWallMs,
-    runtimeMemoryMb: args.runtimeMemoryMb,
-    sandboxUsage: args.sandboxUsage,
-    stepCount: args.stepCount,
-    toolCallCount: args.toolCallCount,
-    inputPreview: args.inputPreview,
-  });
+    // Split sandbox CPU by role so the flat rollup keeps the agent/tool breakdown.
+    let agentSandboxCpuUsec = 0;
+    let toolSandboxCpuUsec = 0;
+    for (const s of args.sandboxUsage) {
+      if (s.role === "tool") {
+        toolSandboxCpuUsec += s.cpuUsec;
+      } else {
+        agentSandboxCpuUsec += s.cpuUsec;
+      }
+    }
 
-  // Fold the same task's counts into one bucket per grain so long dashboard
-  // ranges read hour/day rows instead of every 5-minute bucket.
-  const counters: RollupCounters = {
-    inputTokens: args.inputTokens,
-    outputTokens: args.outputTokens,
-    reasoningTokens: args.reasoningTokens,
-    cachedInputTokens: args.cachedInputTokens,
-    cacheWriteTokens: args.cacheWriteTokens,
-    totalTokens: args.totalTokens,
-    runtimeWallMs: args.runtimeWallMs,
-    agentSandboxCpuUsec: agentSandboxCpuUsec,
-    toolSandboxCpuUsec: toolSandboxCpuUsec,
-    invocations: 1,
-    modelCalls: args.stepCount,
-  };
-  const grains: UsageGrain[] = ["5m", "hour", "day"];
-  for (const grain of grains) {
-    const grainMs = USAGE_GRAIN_MS[grain];
-    await foldRollupBucket(ctx, {
+    await ctx.db.insert("taskUsage", {
       accountId: args.accountId,
       endpointId: args.endpointId,
-      grain: grain,
-      bucketStart: Math.floor(args.finishedAt / grainMs) * grainMs,
-      modelProvider: args.modelProvider,
-      modelId: args.modelId,
-      counters: counters,
-    });
-  }
-
-  // The run is the resource, the trace the correlation key. Tool input and
-  // the prompt preview stay off the row.
-  const { eventId, traceId } = taskIdParts(args.taskId);
-  await appendAuditEvent(ctx.db, {
-    accountId: args.accountId,
-    traceId: traceId,
-    actor: {
-      kind: "agent",
       agentId: args.agentId,
-      chain: args.principalChain,
-    },
-    action: "run.completed",
-    resource: { kind: "run", id: eventId },
-    summary: `Run ${args.status} after ${args.durationMs}ms`,
-    detailsJson: auditDetailsJson({
-      status: args.status,
-      startedAt: args.finishedAt - args.durationMs,
-      durationMs: args.durationMs,
+      conversationKey: args.conversationKey,
+      taskId: args.taskId,
       modelProvider: args.modelProvider,
       modelId: args.modelId,
-      stepCount: args.stepCount,
-      toolCallCount: args.toolCallCount,
+      finishedAt: args.finishedAt,
+      durationMs: args.durationMs,
+      status: args.status,
       inputTokens: args.inputTokens,
       outputTokens: args.outputTokens,
+      reasoningTokens: args.reasoningTokens,
+      cachedInputTokens: args.cachedInputTokens,
+      cacheWriteTokens: args.cacheWriteTokens,
       totalTokens: args.totalTokens,
-    }),
-  });
+      runtimeKind: args.runtimeKind,
+      runtimeWallMs: args.runtimeWallMs,
+      runtimeMemoryMb: args.runtimeMemoryMb,
+      sandboxUsage: args.sandboxUsage,
+      stepCount: args.stepCount,
+      toolCallCount: args.toolCallCount,
+      inputPreview: args.inputPreview,
+    });
 
-  return null;
-}
+    // Fold the same task's counts into one bucket per grain so long dashboard
+    // ranges read hour/day rows instead of every 5-minute bucket.
+    const counters: RollupCounters = {
+      inputTokens: args.inputTokens,
+      outputTokens: args.outputTokens,
+      reasoningTokens: args.reasoningTokens,
+      cachedInputTokens: args.cachedInputTokens,
+      cacheWriteTokens: args.cacheWriteTokens,
+      totalTokens: args.totalTokens,
+      runtimeWallMs: args.runtimeWallMs,
+      agentSandboxCpuUsec: agentSandboxCpuUsec,
+      toolSandboxCpuUsec: toolSandboxCpuUsec,
+      invocations: 1,
+      modelCalls: args.stepCount,
+    };
+    const grains: UsageGrain[] = ["5m", "hour", "day"];
+    for (const grain of grains) {
+      const grainMs = USAGE_GRAIN_MS[grain];
+      await foldRollupBucket(ctx, {
+        accountId: args.accountId,
+        endpointId: args.endpointId,
+        grain: grain,
+        bucketStart: Math.floor(args.finishedAt / grainMs) * grainMs,
+        modelProvider: args.modelProvider,
+        modelId: args.modelId,
+        counters: counters,
+      });
+    }
+
+    // The run is the resource, the trace the correlation key. Tool input and
+    // the prompt preview stay off the row.
+    const { eventId, traceId } = taskIdParts(args.taskId);
+    await appendAuditEvent(ctx.db, {
+      accountId: args.accountId,
+      traceId: traceId,
+      actor: {
+        kind: "agent",
+        agentId: args.agentId,
+        chain: args.principalChain,
+      },
+      action: "run.completed",
+      resource: { kind: "run", id: eventId },
+      summary: `Run ${args.status} after ${args.durationMs}ms`,
+      detailsJson: auditDetailsJson({
+        status: args.status,
+        startedAt: args.finishedAt - args.durationMs,
+        durationMs: args.durationMs,
+        modelProvider: args.modelProvider,
+        modelId: args.modelId,
+        stepCount: args.stepCount,
+        toolCallCount: args.toolCallCount,
+        inputTokens: args.inputTokens,
+        outputTokens: args.outputTokens,
+        totalTokens: args.totalTokens,
+      }),
+    });
+
+    return null;
+  },
+});
 
 /**
  * Upsert one usage rollup bucket: add `counters` onto the row keyed by
