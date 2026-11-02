@@ -1,24 +1,28 @@
 "use client";
 
-/**
- * The live palette: `CommandPalette` with the project's own rows behind it.
- *
- * Rows come from `useDashboardIndex`, which reads Convex documents the app
- * already holds, so opening the palette costs no round trip.
- */
+// Rows are the copilot's index, so the palette and the dock share one set of subscriptions.
 import { CommandPalette } from "@/app/components/CommandPalette";
 import { useCopilot } from "@/app/components/copilot/CopilotProvider";
-import { useDashboardIndex } from "@/app/hooks/useDashboardIndex";
+import { useRouteIntent } from "@/app/hooks/useRouteIntent";
 import { itemAction } from "@/app/lib/copilotIntent";
-import type { Id } from "@broods/convex/_generated/dataModel";
-import { useParams } from "next/navigation";
+import type { SearchItem } from "@/app/lib/paletteSearch";
+import { useCallback } from "react";
 
 export function CommandMenu(): React.JSX.Element {
-  const params = useParams<{ projectId?: string }>();
-  const projectId = (params.projectId ?? null) as Id<"projects"> | null;
-  const { ask, runAction, setOpen: setCopilotOpen } = useCopilot();
-
-  const items = useDashboardIndex(projectId);
+  const {
+    ask,
+    items,
+    runAction,
+    setOpen: setCopilotOpen,
+    wakeIndex,
+  } = useCopilot();
+  const { warm } = useRouteIntent();
+  const warmRow = useCallback(
+    (item: SearchItem): void => {
+      if (item.target.type === "navigate") warm(item.target.href);
+    },
+    [warm],
+  );
 
   return (
     <CommandPalette
@@ -27,7 +31,9 @@ export function CommandMenu(): React.JSX.Element {
         setCopilotOpen(true);
         ask(query);
       }}
+      onHighlight={warmRow}
       onSelect={(item) => runAction(itemAction(item))}
+      onWake={wakeIndex}
     />
   );
 }

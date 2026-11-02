@@ -1,13 +1,5 @@
-/**
- * Project + stage scoped runtime keys (`bsk_…`).
- *
- * One key per stage invokes any deployed agent in it; the agent is chosen
- * per request by id. An empty stage gets its key when it is created; a cloned
- * or older stage gets it from the CLI's `deploy` or the dashboard's "Generate
- * key". The SHA-256 hash authenticates runtime calls (`getByApiKeyHash` in
- * `core`); the plaintext is also stored AES-GCM encrypted so the owner can
- * recover it for dashboard streaming and CLI reconnect without rotating.
- */
+// Stage runtime keys (`bsk_…`): one per stage invokes any of its agents, picked per request.
+// The SHA-256 hash authenticates; the plaintext is also sealed so the owner can recover it.
 
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -48,7 +40,6 @@ import {
 const PROVISION_ACCOUNT_FIRST =
   "Provision your organization's API account first (Settings → API Access).";
 
-/** A minted stage ticket plus the slugs the gateway's observability path uses. */
 export const stageSessionValidator = v.object({
   token: v.string(),
   expiresAt: v.number(),
@@ -58,7 +49,6 @@ export const stageSessionValidator = v.object({
 
 export type StageSession = Infer<typeof stageSessionValidator>;
 
-/** Safe runtime deployment scope returned to core without stored credentials. */
 const agentDeploymentScopeValidator = v.object({
   accountId: v.id("accounts"),
   projectId: v.id("projects"),
@@ -77,7 +67,6 @@ const ensureReturn = v.object({
   rawApiKey: v.string(),
 });
 
-/** The revealed runtime key plus who minted it and when it last authenticated a request. */
 const revealedKeyValidator = v.object({
   apiKey: v.string(),
   createdAt: v.optional(v.number()),
@@ -87,7 +76,6 @@ const revealedKeyValidator = v.object({
 
 export type RevealedKey = Infer<typeof revealedKeyValidator>;
 
-/** Public (hash-free) view of a stage deployment for the dashboard. */
 const stageDeploymentView = v.object({
   _id: v.id("agentDeployments"),
   endpointId: v.string(),
@@ -103,13 +91,10 @@ type EnsureResult = {
   projectSlug: string;
   stageSlug: string;
   keyHint: string;
-  /** Plaintext key: freshly minted, or recovered from the stored blob. */
   rawApiKey: string;
-  /** The stage's user-token signing secret hint, when it has one. */
   userTokenSecretHint?: string;
 };
 
-/** Returns the stage's recoverable runtime key, creating one on first call. */
 export const ensureForStage = mutation({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: ensureReturn,
@@ -137,7 +122,6 @@ export const ensureForStage = mutation({
   },
 });
 
-/** Resolve the active stage deployment linked to one runtime agent. */
 export const getByAgentId = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -178,12 +162,9 @@ export const getByAgentId = internalQuery({
   },
 });
 
-/** Resolve a runtime key hash to the account and scope it invokes. */
 export const getByApiKeyHash = internalQuery({
   args: { apiKeyHash: v.string() },
-  // The account rides along so core authenticates a runtime key in one call,
-  // and the signing secret too, still sealed: core opens it only when a
-  // request carries a user token.
+  // The signing secret stays sealed: core opens it only when a request carries a user token.
   returns: v.union(
     v.object({
       ...agentDeploymentScopeValidator.fields,
@@ -227,7 +208,6 @@ export const getByApiKeyHash = internalQuery({
   },
 });
 
-/** The stage's active deployment for display (no secret material). */
 export const getForStage = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.union(stageDeploymentView, v.null()),
@@ -235,8 +215,7 @@ export const getForStage = query({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    // Return null rather than throwing so a just-deleted stage doesn't
-    // crash the reactive side panel before it unmounts.
+    // Null, not a throw: a just-deleted stage must not crash the reactive side panel.
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) return null;
 
@@ -254,13 +233,7 @@ export const getForStage = query({
   },
 });
 
-/**
- * Any org member: mint a short-lived stage session ticket the dashboard uses
- * in place of the runtime key for logs, traces and the test chat. Core accepts
- * it as the stage's deployment credential until it expires, but never for a
- * machine sandbox claim: any member can mint this one. Null when the stage
- * has no deployment yet.
- */
+// Any member may mint this, so core never accepts it for a machine sandbox claim.
 export const mintStageSession = mutation({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.union(
@@ -284,13 +257,7 @@ export const mintStageSession = mutation({
   },
 });
 
-/**
- * Seal a stage session ticket for the stage's active deployment. The caller
- * has already checked the member may read that stage, and passes
- * `sandboxWrite` only once it has checked they may also write its sandboxes.
- * Null before the first deploy. The slugs are what the gateway's
- * observability path matches on; the ids scope a machine sandbox claim.
- */
+// Callers check read access, and pass `sandboxWrite` only once the member may write sandboxes.
 export async function mintStageSessionTicket(
   ctx: QueryCtx,
   projectId: Id<"projects">,
@@ -323,13 +290,6 @@ export async function mintStageSessionTicket(
   };
 }
 
-/**
- * Org admin only: decrypts the stage's stored runtime key so it can be copied
- * without re-minting, with its created and last-used metadata. Returns null
- * when the stage has no deployment yet, and for members, who stream
- * logs/traces through `mintStageSession` instead. Reactive by design, so a
- * freshly generated key appears without a reload.
- */
 export const revealKeyForStage = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.union(revealedKeyValidator, v.null()),
@@ -352,10 +312,7 @@ export const revealKeyForStage = query({
   },
 });
 
-/**
- * Core calls this in the background after a runtime key authenticates a
- * request, throttled per key in process, so it is not a write per request.
- */
+// Core throttles this per key in process, so it is not a write per request.
 export const touchLastUsed = internalMutation({
   args: { apiKeyHash: v.string(), usedAt: v.number() },
   returns: v.null(),
@@ -372,11 +329,6 @@ export const touchLastUsed = internalMutation({
   },
 });
 
-/**
- * Regenerate the stage's runtime key and return the new plaintext. If the
- * stage has no key yet this mints the first one (same as
- * `ensureForStage`), so a rotate is always safe to call.
- */
 export const rotate = mutation({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: ensureReturn,
@@ -418,19 +370,16 @@ export const rotate = mutation({
   },
 });
 
-/** The stage's user-token signing secret as the dashboard may show it: never the secret. */
 const userTokenSecretView = v.object({
   hint: v.string(),
   createdAt: v.optional(v.number()),
 });
 
-/** A freshly minted signing secret, returned this once, and its masked hint. */
 export const userTokenSecretReturn = v.object({
   secret: v.string(),
   hint: v.string(),
 });
 
-/** Whether the stage has a user-token signing secret, and its masked hint. */
 export const userTokenSecretForStage = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.union(userTokenSecretView, v.null()),
@@ -453,11 +402,6 @@ export const userTokenSecretForStage = query({
   },
 });
 
-/**
- * Mint the stage's user-token signing secret, replacing any earlier one, and
- * return it this once. Tokens the old secret signed stop opening at once, so
- * a leaked secret is out the moment it is rotated.
- */
 export const rotateUserTokenSecret = mutation({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: userTokenSecretReturn,
@@ -488,11 +432,7 @@ export const rotateUserTokenSecret = mutation({
   },
 });
 
-/**
- * Seal a fresh signing secret on the stage's active deployment and audit it,
- * for the dashboard and the CLI route alike. The caller has already checked
- * `keys:write`. Null when the stage has no deployment yet.
- */
+// The caller has already checked `keys:write`.
 export async function rotateStageUserTokenSecret(
   ctx: MutationCtx,
   projectId: Id<"projects">,
@@ -530,12 +470,6 @@ export async function rotateStageUserTokenSecret(
   return { secret: secret, hint: hint };
 }
 
-/**
- * Mints a stage's runtime key and audits it, so Monitoring and Tracing stream
- * from the first visit. Project and stage creation call it right after the
- * insert; `ensureForStage` calls it on demand. Returns null while the org has
- * no API account yet.
- */
 export async function readyStageDeployment(
   ctx: MutationCtx,
   user: AuthUser,
@@ -566,11 +500,6 @@ export async function readyStageDeployment(
   return result;
 }
 
-/**
- * Find the stage's active deployment, creating one (with a fresh key) when
- * absent. When `rotate` is true an existing key is regenerated. Returns the raw
- * key whenever it can, either minted now or decrypted from the at-rest blob.
- */
 export async function ensureStageDeployment(
   ctx: MutationCtx,
   args: {
@@ -580,9 +509,7 @@ export async function ensureStageDeployment(
     stageId: Id<"stages">;
     projectSlug: string;
     stageSlug: string;
-    /** Display name stamped on a newly minted or rotated key. */
     createdBy?: string;
-    /** The member behind it, when the dashboard minted or rotated. */
     createdByUserId?: Id<"users">;
     rotate?: boolean;
   },
@@ -591,8 +518,7 @@ export async function ensureStageDeployment(
   const existing = await activeDeployment(ctx, args.projectId, args.stageId);
 
   if (existing && args.rotate !== true) {
-    // Keep slugs fresh (project/stage can be renamed) but reuse the key,
-    // recovering its plaintext from the stored blob.
+    // A rename changes the slugs, never the key.
     if (
       existing.projectSlug !== args.projectSlug ||
       existing.stageSlug !== args.stageSlug
@@ -671,7 +597,6 @@ export async function ensureStageDeployment(
   };
 }
 
-/** Decrypt a deployment's stored runtime key. */
 async function decryptApiKey(
   ctx: QueryCtx | MutationCtx,
   deployment: {
@@ -695,10 +620,6 @@ async function decryptApiKey(
   return value;
 }
 
-/**
- * The stored columns for a runtime key: its hash, masked hint and blob sealed
- * under the account's key. Minting writes these.
- */
 async function runtimeKeyFields(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -723,7 +644,6 @@ async function runtimeKeyFields(
   };
 }
 
-/** The stage's active deployment row, if it has one. */
 async function activeDeployment(
   ctx: QueryCtx,
   projectId: Id<"projects">,
@@ -740,12 +660,10 @@ async function activeDeployment(
     .first();
 }
 
-/** Stable opaque endpoint handle for a stage's runtime API. */
 function endpointIdForStage(stageId: Id<"stages">): string {
   return `stage-${stageId.slice(-8)}`;
 }
 
-/** Record a dashboard deployment mutation without storing runtime keys. */
 async function recordDeploymentAudit(
   ctx: MutationCtx,
   actor: AuditActor,

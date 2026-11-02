@@ -1,9 +1,4 @@
-/**
- * Wire types for the public account-manage and harness APIs. These mirror
- * the deployed API contract (docs/api-reference/openapi.yaml is the source
- * of truth); they are intentionally independent of the runtime internals so
- * the SDK keeps working when the runtime is ported.
- */
+// Mirrors apps/docs/docs/api-reference/openapi.yaml; never import core's runtime types.
 
 import type { ModelMessage } from "ai";
 import type { CronLastStatus, CronStatus } from "./contracts.ts";
@@ -25,9 +20,7 @@ export interface Agent {
 
 export interface AsyncRequestAccepted {
   statusUrl: string;
-  /** Account-unique id for this run; what the status URL names. */
   runId: string;
-  /** The eventId sent with the request, echoed back. */
   eventId: string;
   agentId: string;
   status?: "accepted" | "queued" | "applied" | "processing";
@@ -46,10 +39,9 @@ export interface AsyncStatus {
     | "failed"
     | "expired"
     | "not_found";
-  /** Set on every core answer. Absent only on the `not_found` the SDK returns for a 404. */
+  /** Absent only on the `not_found` the SDK returns for a 404. */
   runId?: string;
   eventId?: string;
-  /** The agent that owns the run. A subagent run names the child agent. */
   agentId?: string;
   conversationKey?: string;
   requestedMode?: "reject" | "followup" | "collect" | "steer";
@@ -58,7 +50,6 @@ export interface AsyncStatus {
   result?: unknown;
   response?: unknown;
   error?: string;
-  /** True when `failed` was a deliberate /stop, not a fault. */
   stoppedByUser?: boolean;
   approvals?: ToolApprovalSummary[];
   questions?: PendingQuestion[];
@@ -110,7 +101,6 @@ export interface Skill {
   }>;
 }
 
-/** A tool call held for user approval by an `ask`-mode sandbox. */
 export interface ToolApprovalSummary {
   approvalId: string;
   toolCallId: string;

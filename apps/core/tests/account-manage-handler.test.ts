@@ -193,7 +193,6 @@ describe("account management HTTP handler", () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage({}));
 
-    // Admin cron routes were removed with the rest of the cron plane.
     const adminResponse = await handler(
       createEvent("GET", "/v1/accounts/acct_test/crons", {
         authorization: "Bearer admin-secret",
@@ -208,7 +207,6 @@ describe("account management HTTP handler", () => {
       },
     });
 
-    // Account-authenticated config-plane CRUD routes fall through to the admin gate.
     for (const path of [
       "/v1/crons",
       "/v1/policies",
@@ -367,7 +365,6 @@ describe("account management HTTP handler", () => {
       "x-account-id": "acct_test",
     };
 
-    // A JSON `null` body used to be cast to Record and crash on property access.
     for (const body of [null, ["reservationKey"], "reservationKey"]) {
       const response = await handler(
         createEvent("POST", "/v1/sandboxes/sbx_1/suspend", headers, body),
@@ -573,7 +570,6 @@ describe("account management HTTP handler", () => {
     );
     expect(missing.status).toBe(403);
 
-    // Past the role gate, the dev sandbox reaches the body checks.
     const dev = await handler(
       createEvent("POST", "/v1/sandboxes/sbx_dev/suspend", headers, {}),
     );
@@ -717,7 +713,6 @@ function createFakeStorage(overrides: Record<string, unknown>) {
       getById: async function () {
         return fakeAgent();
       },
-      // Account deletion lists agents to release the sandbox each one reserved.
       list: async function () {
         return [];
       },

@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Skill card Details tab. A source picker (Files / GitHub / JSON) on first open,
- * then source-specific configuration. Agent skills config (enabled + allowed) is
- * always shown at the bottom once a source is chosen.
- */
 import { ToggleRow } from "@/app/components/side-panel/ConfigControls";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Button } from "@/app/components/ui/button";
@@ -73,8 +68,7 @@ export function SkillDetailsTab({
   const skillSource = nodeConfig?.skillSource as SkillSource | undefined;
   const disabled = !agentConfig;
   const path = editName.trim();
-  // This skill is "active" only when the agent's skills master is on AND this path is allowed.
-  // That is the condition the canvas node badge renders, so the toggle and node stay in step.
+  // The canvas badge's condition too, so the toggle and the card never disagree.
   const isActive =
     skills.enabled === true &&
     path.length > 0 &&
@@ -88,11 +82,7 @@ export function SkillDetailsTab({
     onUpdateNodeConfig({ skillSource: undefined });
   }
 
-  /**
-   * Single per-skill activation toggle: enabling adds this path to `skills.allowed` and flips the
-   * `skills.enabled` master on in one write; disabling just removes the path. Writing the whole
-   * branch keeps the master and allow-list consistent so the node badge never lags the panel.
-   */
+  // One write for the master switch and the allow-list, so the card's badge never lags.
   function setActive(next: boolean): void {
     const allowedSet = new Set(
       next ? (skills.allowed ?? []) : withoutSkillRef(skills.allowed, path),
@@ -160,7 +150,6 @@ export function SkillDetailsTab({
 
   return (
     <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
-      {/* Source-specific configuration */}
       {skillSource === "files" && (
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
@@ -264,7 +253,6 @@ export function SkillDetailsTab({
 
       <Separator />
 
-      {/* Agent skills config, common to all sources */}
       {disabled && (
         <p className="text-xs text-muted-foreground">
           Wire this skill to an agent to configure it.

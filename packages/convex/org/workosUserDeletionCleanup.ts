@@ -1,9 +1,6 @@
 "use node";
 
-/**
- * Node-runtime WorkOS cleanup. Core removes runtime and AWS resources while
- * account configuration exists; transient failures are retried before finalizing.
- */
+// Core's runtime and AWS cleanup needs the account config, so `finalize` purges it only after.
 
 import { v } from "convex/values";
 import { internal } from "../_generated/api";

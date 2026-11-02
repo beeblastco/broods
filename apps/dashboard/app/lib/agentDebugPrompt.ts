@@ -1,10 +1,7 @@
 import type { ObservabilitySpanRow } from "@/app/hooks/useObservabilityStream";
 
-// Long enough for a provider's whole error line, short enough to paste.
 const ERROR_CHARS = 300;
 
-// What the prompt asks for, by the task's status. Tracing storage holds only
-// ended spans, so a running task is read once it ends.
 const ASK: Record<ObservabilitySpanRow["status"], string> = {
   error: "failed. Find out why it failed and fix it.",
   needs_input:
@@ -17,25 +14,16 @@ const ASK: Record<ObservabilitySpanRow["status"], string> = {
 };
 
 export interface AgentDebugTarget {
-  /** The dashboard's origin, which names the deployment the run is on. */
   dashboardUrl: string;
   projectSlug: string;
   stageSlug: string;
-  /** The run to read first: the one that failed, else the task's latest. */
   run: ObservabilitySpanRow;
-  /** The whole task's status, which can differ from its first run's. */
   status: ObservabilitySpanRow["status"];
-  /** The task's other runs (resumed passes, subagents), each its own trace. */
   otherTraceIds: string[];
 }
 
-/**
- * A prompt for the user's own coding agent: the run's ids, and how to read the
- * run through the public `broods` CLI. Only ids and the run's own error go in,
- * never prompts, tool data or keys; the agent reads those itself with its own
- * login. The error is quoted on one line as data, since a provider can echo
- * user text into it and the prompt is pasted as the user's own instruction.
- */
+// Only ids and the run's own error go in, never prompts, tool data or keys. The error is quoted
+// on one line as data: a provider can echo user text into it, and users paste this as their own.
 export function agentDebugPrompt({
   dashboardUrl,
   projectSlug,

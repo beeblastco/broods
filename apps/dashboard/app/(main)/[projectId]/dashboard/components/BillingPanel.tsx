@@ -57,15 +57,12 @@ import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { ResourceLabel } from "./AllowanceUsage";
 
-// Stripe states where a payment is owed and the portal can fix it.
 const PAYMENT_DUE_STATUSES: ReadonlySet<string | null> = new Set([
   "past_due",
   "unpaid",
   "incomplete",
 ]);
 
-// What each plan allows: the monthly caps the Usage tab measures, then the
-// plan's other limits.
 const LIMIT_ROWS: LimitRow[] = [
   ...ALLOWANCE_ROWS.flatMap(({ key, label, unit, share, color, help }) =>
     share === null
@@ -104,7 +101,6 @@ interface LimitRow extends Pick<AllowanceRow, "label" | "help"> {
   key: string;
   color?: string;
   limit: (plan: PlanTier) => number;
-  /** How a limit reads; a plain count without one. */
   format?: (limit: number) => string;
 }
 
@@ -125,12 +121,6 @@ const ACTIVATING_NOTICE: Notice = {
   text: "Payment received. Activating Pro…",
 };
 
-/**
- * Billing tab: the plan table with its actions, one notice when something
- * needs attention, then the owner's seats and bill. Pro covers every org the
- * owner owns. Only the owner pays, so only the owner gets Upgrade, Add seat,
- * the portal and the bill.
- */
 export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [portalLoading, setPortalLoading] = useState(false);
@@ -138,7 +128,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const searchParams = useSearchParams();
 
   const seats = useOrgSeats();
-  // Always this month: the Usage tab's month picker never moves the plan.
   const budget = useQuery(api.account.budget.getForActiveOrg, {});
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const createPortalSession = useAction(api.stripe.createPortalSession);
@@ -147,10 +136,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   // A subscription waiting on a payment is still Pro, held back until paid.
   const shown: PlanTier = seats?.status ? "pro" : plan;
   const isOwner = seats?.isOwner === true;
-  // A live subscription in any state (even past_due) goes through the portal;
-  // checkout refuses it. `undefined` is still loading, so no Upgrade yet.
-  // Self-hosted installs have no plans to buy. Every member sees Upgrade on
-  // a free org; only the owner can press it.
+  // Checkout refuses a live subscription, even past_due; undefined seats are still loading.
   const showUpgrade =
     seats?.status === null && !isMaxPlan(plan) && budget?.enforced === true;
   const canUpgrade = showUpgrade && isOwner;
@@ -200,7 +186,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   return (
     <div className="grid gap-8">
       <Section
-        // Someone else's org names the org: its plan is the owner's.
         title={
           seats?.isOwner === false ? `Plan for ${seats.org.name}` : "Your plan"
         }
@@ -234,7 +219,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
       {notice && (
         <NoticeBar
           notice={notice}
-          // A member reads the notice; the portal is the owner's.
           actionable={notice.action === "upgrade" ? canUpgrade : isOwner}
           disabled={checkoutLoading || portalLoading}
           onAction={notice.action === "upgrade" ? handleUpgrade : handlePortal}
@@ -246,12 +230,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   );
 }
 
-/**
- * The plan table with the closest cap and `actions` under it. A skeleton
- * the card's height while the budget or the seats load, so the current plan
- * is never marked on a guess; nothing on a self-hosted install, which has no
- * limits.
- */
 function PlanCard({
   budget,
   current,
@@ -261,11 +239,11 @@ function PlanCard({
 }: {
   budget: BudgetUsage | null | undefined;
   current: PlanTier;
-  /** The subscription's Stripe status; undefined while seats load. */
   status: string | null | undefined;
   usageHref: string;
   actions: React.ReactNode;
 }): React.JSX.Element | null {
+  // Wait for both, so the current plan is never marked on a guess.
   if (budget === undefined || status === undefined) {
     return <Skeleton className="h-164 rounded-lg sm:h-88" />;
   }
@@ -282,11 +260,6 @@ function PlanCard({
   );
 }
 
-/**
- * Every plan's limits side by side, `current` marked with its status. On a
- * phone the plans stack instead, each with its own limits, so no plan sits
- * off screen.
- */
 function PlanTable({
   current,
   status,
@@ -350,11 +323,6 @@ function PlanTable({
   );
 }
 
-/**
- * The owner's actions on the plan: the portal once the org has a
- * subscription, Upgrade before. A member sees Upgrade greyed out, since only
- * the owner pays.
- */
 function PlanActions({
   seats,
   showUpgrade,
@@ -401,11 +369,6 @@ function PlanActions({
   );
 }
 
-/**
- * The owner's Add seat, behind one confirm: Stripe charges the prorated seats
- * at once, and adds them only when that payment goes through. Shown only with
- * every seat taken: a free seat already takes the next developer.
- */
 function AddSeatButton({ seats }: { seats: OrgSeats }): React.JSX.Element {
   const { seatsToAdd } = seats;
   const [confirming, setConfirming] = useState(false);
@@ -442,14 +405,6 @@ function AddSeatButton({ seats }: { seats: OrgSeats }): React.JSX.Element {
   );
 }
 
-/**
- * The owner's developer seats, one pool across every org they own: how many
- * are used, each developer with the orgs they are in, and Add seat once every
- * one is taken, then on Pro what they pay each month. Hobby has none, which
- * the plan table already says, so it shows only developers kept from before
- * seats counted, with what Upgrade pays for them. Anyone else sees only their
- * own seat. Nothing on an install without seats.
- */
 function SeatsSection({
   seats,
 }: {
@@ -504,7 +459,6 @@ function SeatsSection({
   );
 }
 
-/** A member's own seat in someone else's org: who pays for it. The plan already says they never do. */
 function YourSeat({ seats }: { seats: OrgSeats }): React.JSX.Element {
   const own =
     seats.userPlan === "free"
@@ -528,7 +482,6 @@ function YourSeat({ seats }: { seats: OrgSeats }): React.JSX.Element {
   );
 }
 
-/** The owner's monthly bill, for every org they own: Pro, the extra seats, and the total. */
 function MonthlyBill({
   extraSeats,
 }: {
@@ -577,7 +530,6 @@ function MonthlyBill({
   );
 }
 
-// How close the pool is to its closest cap, and a link to the Usage tab.
 function ClosestCap({
   budget,
   usageHref,
@@ -613,7 +565,6 @@ function ClosestCap({
   );
 }
 
-// One plan's value for a limit, muted unless it is the current plan's.
 function LimitValue({
   row,
   plan,
@@ -673,7 +624,6 @@ function NoticeBar({
   );
 }
 
-// A plan's name and price, with its mark when it is the current one.
 function PlanName({
   plan,
   current,
@@ -694,8 +644,6 @@ function PlanName({
   );
 }
 
-// The current plan's mark: its subscription state when one needs a word,
-// Current otherwise.
 function PlanBadge({ status }: { status: string | null }): React.JSX.Element {
   if (status === "trialing") return <Badge variant="info">Trial</Badge>;
   if (PAYMENT_DUE_STATUSES.has(status)) {
@@ -705,11 +653,8 @@ function PlanBadge({ status }: { status: string | null }): React.JSX.Element {
   return <Badge variant="secondary">Current</Badge>;
 }
 
-// The one notice worth showing, most urgent first. `checkoutReturned` is the
-// success=true Stripe adds to the checkout return URL; a payment due outranks
-// it, since the URL keeps that flag after the subscription later fails.
-// `ownerOnly` tells a member of a free org who can upgrade it. The status is
-// for every member; `billing`, with a trial's end, is the owner's alone.
+// Most urgent first. A payment due outranks checkoutReturned: the URL keeps
+// success=true after the subscription later fails.
 function pickNotice(
   budget: BudgetUsage | null | undefined,
   seats: OrgSeats | undefined,
@@ -771,7 +716,6 @@ function pickNotice(
   return null;
 }
 
-/** @param monthlyReset when a monthly cap is used up too, when it resets */
 function storageNotice(
   budget: BudgetUsage,
   canUpgrade: boolean,
@@ -795,15 +739,12 @@ function storageNotice(
   };
 }
 
-// What a member of a free org hears instead of a checkout; null for the owner.
 function ownerOnlyNote(seats: OrgSeats | undefined): string | null {
   if (!seats || seats.isOwner) return null;
 
   return `Only ${seats.ownerName}, the owner, can upgrade ${seats.org.name}. You are not charged.`;
 }
 
-// The plan's price and when it renews, or when a free one resets, for the
-// owner; for anyone else, whose plan it is and that they are not charged.
 function planDetail(
   budget: BudgetUsage | null,
   seats: OrgSeats | undefined,
@@ -833,10 +774,7 @@ function planDetail(
   return `${reset} ${who} in this org.`;
 }
 
-// The line under the plan's heading: what it costs and when it renews or
-// resets, then whose limits these are, the same note as the Usage tab.
-// Nothing until the budget and seats are known, so the line never swaps
-// under the reader.
+// Nothing until budget and seats are known, so the line never swaps under the reader.
 function planSummary(
   budget: BudgetUsage | null | undefined,
   seats: OrgSeats | undefined,
@@ -857,9 +795,6 @@ function planSummary(
     .join(" ");
 }
 
-// The owner's seats in one line: how many are used and where they come from,
-// on hold while a payment is owed, or on Hobby the developers kept from
-// before seats counted and what Upgrade charges for them.
 function seatsDescription(seats: OrgSeats): string {
   const { billing, developers, extraSeats, paid } = seats;
   if (paid) {

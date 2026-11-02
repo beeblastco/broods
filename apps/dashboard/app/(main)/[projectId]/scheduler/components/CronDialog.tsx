@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * The schedule expression is validated client-side, then cronPublic.create or
- * .update writes the crons row and its registered schedule in one transaction.
- */
-
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -49,7 +44,6 @@ type Mode = "create" | "edit";
 
 interface Props {
   mode: Mode;
-  /** Required when mode is "edit". */
   cron?: Doc<"crons">;
   agents: Array<Pick<Doc<"agents">, "_id" | "name">>;
   onClose: () => void;
@@ -96,9 +90,7 @@ export function CronDialog({
 
   async function handleSubmit(): Promise<void> {
     if (!canSubmit) return;
-    // `pending` only blocks the next render, so two fast clicks can both
-    // pass canSubmit and double-create the job. This ref closes in the
-    // same tick.
+    // `pending` lands a render late; the ref stops a fast double click double-creating.
     if (submittingRef.current) return;
 
     submittingRef.current = true;
@@ -337,8 +329,6 @@ export function CronDialog({
   );
 }
 
-/** The first user text message, which is the part the dialog lets you edit. */
-/** The user text of the stored events: the prompt the job sends each fire. */
 export function eventsToText(
   events: Doc<"crons">["events"] | undefined,
 ): string {
@@ -359,11 +349,8 @@ export function eventsToText(
   return "";
 }
 
-/**
- * The zone to store. A job saved without one runs in UTC and shows "UTC";
- * leaving that untouched keeps the stored value, so an edit to another field
- * does not re-register the schedule.
- */
+// A job saved with no zone shows "UTC"; leaving it so keeps the stored value, so editing
+// another field does not re-register the schedule.
 function timezoneToSave(
   stored: string | undefined,
   typed: string,

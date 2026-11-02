@@ -1,5 +1,3 @@
-/** A child carries the policies and withheld tools of the parent it runs under. */
-
 import { describe, expect, it } from "bun:test";
 import {
   subagentConfig,

@@ -1,10 +1,6 @@
 /**
- * The shared continuation loop of a parent run: model passes until the
- * injected subagent work is drained, and the envelope
- * settlement of the finished turn. Every entrypoint (SSE, async worker,
- * WebSocket, channel, cron) funnels through here. Ownership writers stay in
- * handler.ts and come in as dependencies; a channel turn's own settlement
- * branch stays there too.
+ * A parent run's continuation loop and turn settlement; every entrypoint funnels through here.
+ * Ownership writers stay in handler.ts and come in as dependencies.
  */
 
 import type { JSONValue, SystemModelMessage } from "ai";
@@ -44,10 +40,7 @@ export const AGENT_PROCESSING_FAILED = "Agent processing failed";
 const WAIT_DEADLINE_MARGIN_MS = DEADLINE_WIND_DOWN_MS;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 
-/**
- * What the loop takes from the handler: the functions that move conversation
- * ownership live there, so this module never imports it.
- */
+/** Ownership writers live in handler.ts and come in here, so this module never imports it. */
 export interface ContinuationDependencies {
   dispatchAppliedIngress: NonNullable<
     AgentLoopOptions["dispatchAppliedIngress"]
@@ -68,8 +61,6 @@ export interface ParentContinuationResult {
   questions: PendingQuestionSummary[];
 }
 
-// A persisted tool result is history, not new model input. Only user turns and
-// AI SDK approval responses should start or resume a model run.
 export function isRunnableModelInput(
   message:
     | DirectInboundEvent["events"][number]
@@ -84,11 +75,6 @@ export function isRunnableModelInput(
   );
 }
 
-/**
- * The continuation loop for a run that answers through callbacks (async
- * worker, channel, cron): builds the coordinators, runs the passes, and hands
- * the one outcome to the matching `reply` callback.
- */
 export async function runAgentLoopUntilSubagentsIdle(
   session: Session,
   initialTurnContext: TurnContextSnapshot,
@@ -183,8 +169,6 @@ export async function runParentContinuationLoop(options: {
   agentConfig: DirectInboundEvent["agentConfig"];
   dependencies: ContinuationDependencies;
   hooks?: HookDispatcher;
-  // The worker's budget: its abort ends the pass and skips the wait on async
-  // work it left running, and a pass near its deadline yields the slot.
   context?: RequestContext;
   consumeStream(stream: AgentLoopStream): Promise<void>;
   onLoopErrorText?(error: string): Promise<void>;
@@ -196,7 +180,6 @@ export async function runParentContinuationLoop(options: {
   let finalResponse: JSONValue | undefined;
   let traceId: string | undefined;
 
-  // Builds one loop outcome; reads the latest pass's finalResponse and traceId.
   const passResult = (
     overrides: Partial<ParentContinuationResult> = {},
   ): ParentContinuationResult => ({
@@ -231,8 +214,7 @@ export async function runParentContinuationLoop(options: {
     );
   };
 
-  // One hook dispatcher for the whole parent request: every loop iteration and
-  // the subagent-finish fire-points share a single ctx.state and one storage load.
+  // One dispatcher per parent request, so every pass and subagent fire-point share ctx.state.
   const hooks =
     options.hooks ??
     (await createAgentHookDispatcher(
@@ -300,14 +282,10 @@ export async function runParentContinuationLoop(options: {
     if (approvals.length > 0) {
       return passResult({ approvals: approvals });
     }
-    // Like an approval: the answer resumes the conversation later, so nothing
-    // waits for injected work now.
     const questions = stream.questionSummaries();
     if (questions.length > 0) {
       return passResult({ questions: questions });
     }
-    // A stop means stop: the children it started stop too, and nothing waits
-    // on the work it left running.
     const stopped = stream.failureText() === USER_STOP_MESSAGE;
     if (stopped) {
       options.subagentCoordinator.stopChildren();
@@ -332,7 +310,6 @@ export async function runParentContinuationLoop(options: {
   }
 }
 
-/** The terminal envelope outcome of a finished parent turn, for settle or takeNext. */
 export function turnSettlement(
   result: ParentContinuationResult,
 ): IngressSettlement {
@@ -375,12 +352,7 @@ export function waitUntilMs(context: RequestContext | undefined): number {
   return Date.now() + DEFAULT_PARENT_WAIT_MS;
 }
 
-/**
- * Hands a yielded pass's worker slot to the next queued run, holding the
- * conversation lease meanwhile, then reloads the stored history, which ends in
- * the cut-off step's tool results, for the next pass on the fresh budget. The
- * turn's one-turn system messages are not stored, so they carry over.
- */
+/** One-turn system messages are not stored, so they carry over into the reloaded history. */
 async function resumeAfterYield(
   session: Session,
   context: RequestContext | undefined,
@@ -400,11 +372,8 @@ async function resumeAfterYield(
 }
 
 /**
- * Bridges one completed parent model pass to the next continuation pass: waits
- * for outstanding subagents, heartbeats while waiting, and injects
- * parent-visible completions, detaching the rest near the request or worker
- * deadline. Detached sandbox background jobs add no in-memory pending work, so
- * waiting here only holds the caller for subagents.
+ * Between two parent passes: waits for subagents with heartbeats, injects their completions,
+ * and detaches the rest near the deadline. Detached bash jobs hold nothing here.
  */
 async function waitAndDrainAsyncWork(
   subagentCoordinator: SubagentCoordinator,

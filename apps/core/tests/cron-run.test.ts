@@ -116,8 +116,7 @@ beforeEach(() => {
   runtime.query = async function (name: string) {
     return name === "getConversationTarget" ? channelTarget : null;
   } as never;
-  // Admitting as "queued" stops before the async worker: the envelope the cron
-  // hands to the coordinator is what these tests assert.
+  // Admitting as "queued" stops before the async worker, leaving the envelope to assert on.
   runtime.mutate = async function (name: string, args: unknown) {
     if (name === "acceptIngress") {
       admitted.push(args as Record<string, unknown>);
@@ -150,7 +149,6 @@ describe("handleScheduledCron", () => {
       channel: "slack",
       source: CHANNEL_TARGET.source,
     });
-    // The envelope carries the rows to rebuild from, never the config itself.
     expect(admitted[0]?.configRef).toEqual({
       channel: { channelName: "slack" },
     });
@@ -173,9 +171,6 @@ describe("handleScheduledCron", () => {
       statusUrl?: string;
     };
     expect(delivery.kind).toBe("async");
-    // The envelope was once stored under an id minted at admission while its
-    // own statusUrl still named the one built before it, so a client following
-    // that URL resolved nothing.
     expect(candidate?.runId).toMatch(/^run_[0-9a-f]{32}$/);
     expect(delivery.statusUrl).toBe(`/v1/runs/${String(candidate?.runId)}`);
   });

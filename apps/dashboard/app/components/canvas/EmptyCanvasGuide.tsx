@@ -3,11 +3,6 @@
 import { AgentSourceOptions } from "@/app/components/AgentSourceOptions";
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
 
-/**
- * Shown over an empty canvas so the first agent config can be created from it.
- * The footer teaches the shortcuts that open the same list later. While it is
- * up, Add agent focuses this card through `ref` instead of opening the picker.
- */
 export function EmptyCanvasGuide({
   onCreateConfig,
   ref,
@@ -19,7 +14,7 @@ export function EmptyCanvasGuide({
     <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
       <div
         ref={ref}
-        className="pointer-events-auto flex w-72 flex-col rounded-xl border border-border bg-card/80 p-1 backdrop-blur-md"
+        className="pointer-events-auto flex w-72 flex-col rounded-xl border border-border bg-card p-1"
       >
         <h3 className="mb-1 mt-3 px-3 text-sm font-medium text-foreground/80">
           Create your first agent service

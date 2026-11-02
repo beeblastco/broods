@@ -1,8 +1,3 @@
-/**
- * Model-facing steering and follow-up updates for persistent subagent runs.
- * Keep shared parent authorization and types in utils.ts.
- */
-
 import { jsonSchema, tool, type ModelMessage, type ToolSet } from "ai";
 import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import { logError } from "../../shared/log.ts";
@@ -55,7 +50,7 @@ export default function updateSubagentTool(
   return {
     update_subagent: tool({
       description:
-        'Update a running persistent subagent started earlier in this conversation. Use mode "steer" to change its direction at the next model boundary, or "continue" to queue a follow-up turn after its current work. A subagent that asked you a question has ended its turn, so answer it with run_subagent on its conversationKey instead. Completed results are injected automatically, so a late update returns not_running without restarting the child.',
+        'Update a running persistent subagent started earlier in this conversation. Use mode "steer" to change its direction at the next model boundary, or "continue" to queue a follow-up turn after its current work. Answer a question from a subagent with run_subagent on its conversationKey. Completed results are injected automatically, so a late update returns not_running without restarting the child.',
       inputSchema: jsonSchema<UpdateSubagentInput>({
         type: "object",
         properties: {
@@ -96,7 +91,6 @@ export default function updateSubagentTool(
           accountId: context.accountId,
           agentId: input.agentId,
           eventId: controlEventId,
-          // A steer control is never polled by run id of its own.
           runId: createRunId(),
           expectedOwnerTaskId: input.taskId,
           ownerTaskId: input.taskId,
@@ -134,11 +128,8 @@ export default function updateSubagentTool(
   };
 }
 
-/**
- * Best-effort dispatch of the queued work that admission recovered from an
- * expired child owner. Never throws: the control's own answer must win, and a
- * stranded envelope re-recovers on the next admission after its lease lapses.
- */
+// Never throws: the control's own answer must win, and a stranded envelope
+// re-recovers on the next admission after its lease lapses.
 async function dispatchRecoveredSubagentWork(
   context: UpdateSubagentContext,
   input: UpdateSubagentInput,
@@ -170,7 +161,6 @@ async function resolveSubagentAgentConfig(
   context: UpdateSubagentContext,
   input: UpdateSubagentInput,
 ): Promise<AgentConfig | null> {
-  // Real agent ids are Convex ids, so only a virtual child carries the prefix.
   if (input.agentId.startsWith(VIRTUAL_AGENT_PREFIX)) {
     return virtualSubagentConfig(context.agentConfig);
   }

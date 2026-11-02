@@ -1,9 +1,3 @@
-/**
- * Internal storage for write-only account environment variables used by the
- * public config plane. Values are encrypted with the same AES-GCM codec as
- * environmentVariables and source-backed agent configs are refreshed on change.
- */
-
 import { v } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { paginationCursorFields } from "../schema";
@@ -20,7 +14,6 @@ import { substituteAccountEnvPlaceholders } from "../model/agentConfigCodec";
 import { ClientError } from "../model/clientError";
 import { workspacesReferencingEnvVar } from "../model/environmentValues";
 
-/** List write-only account variable metadata; ciphertext never leaves storage. */
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(v.object({ name: v.string(), updatedAt: v.number() })),
@@ -69,7 +62,6 @@ export const listPage = internalQuery({
   },
 });
 
-/** Load decrypted account variable values for resolving a config write. */
 export const loadValues = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.record(v.string(), v.string()),
@@ -78,7 +70,6 @@ export const loadValues = internalQuery({
   },
 });
 
-/** Upsert an account variable and refresh every source-backed agent in the account. */
 export const set = internalMutation({
   args: { accountId: v.id("accounts"), name: v.string(), value: v.string() },
   returns: v.null(),
@@ -117,11 +108,6 @@ export const set = internalMutation({
   },
 });
 
-/**
- * Delete an account variable and re-resolve source-backed agents, preserving
- * missing placeholders literally. Refused while an API-made R2 workspace still
- * mints its credentials from it.
- */
 export const remove = internalMutation({
   args: { accountId: v.id("accounts"), name: v.string() },
   returns: v.boolean(),
@@ -155,7 +141,6 @@ export const remove = internalMutation({
   },
 });
 
-/** Decrypt the account variables, all of them or only `names`, into the map used for write-time substitution. */
 export async function loadValuesForAccount(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
@@ -182,8 +167,7 @@ export async function loadValuesForAccount(
   const values: Record<string, string> = {};
   for (const row of rows) {
     const decrypted = await cipher.decrypt("accountEnvVars:ciphertext", row);
-    // Fail loudly: silently resolving to "" would bake an empty secret
-    // into an agent's live config instead of surfacing the corruption.
+    // Throw, never "": an empty value would bake an empty secret into the agent's live config.
     if (typeof decrypted?.value !== "string") {
       throw new Error(`Failed to decrypt account env var "${row.name}"`);
     }
@@ -193,7 +177,6 @@ export async function loadValuesForAccount(
   return values;
 }
 
-/** Re-encrypt resolved agent configs from their retained source configs after an env change. */
 async function refreshSourceBackedAgents(
   ctx: MutationCtx,
   accountId: Id<"accounts">,

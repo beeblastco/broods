@@ -8,14 +8,8 @@ import { useQuery } from "convex/react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-// How long the pill stays up before it clears itself.
 const KEY_READY_MS = 8_000;
 
-/**
- * Says the new project's runtime key exists, once, on the canvas the create
- * dialog opens. `markProjectCreated` arms it for one project; it stays quiet
- * when the stage has no key (an org not provisioned yet).
- */
 export function CanvasKeyReady({
   projectId,
   stageId,
@@ -30,13 +24,13 @@ export function CanvasKeyReady({
   );
   const visible = armed && Boolean(deployment);
 
-  // No key on this stage (org not provisioned): drop the marker for good.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- module marker: no key, no pill
   useEffect(() => {
     if (armed && deployment === null) clearCreatedProject();
   }, [armed, deployment]);
 
-  // Consumed only once the pill is on screen: the canvas remounts when its
-  // stage loads, and a slow key lookup must not eat the display time.
+  // Cleared only once shown: the canvas remounts when its stage loads.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- module marker and hide timer
   useEffect(() => {
     if (!visible) return;
     clearCreatedProject();

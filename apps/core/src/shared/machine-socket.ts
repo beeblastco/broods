@@ -1,9 +1,4 @@
-/**
- * Frames between the `broods machine` daemon and core. The gateway relays
- * them unchanged and the CLI bundles this file. `computerInput` is also the
- * computer tool's input schema, so the model and the wire share one shape. MCP
- * replies carry the SDK's JSON as is; core parses them with the SDK's schemas.
- */
+// The CLI bundles this file, and the gateway relays these frames unchanged.
 
 import { z } from "zod";
 
@@ -27,19 +22,16 @@ const COMPUTER_ACTIONS = [
   "zoom",
 ] as const;
 
-/** Actions that only look, so they never need approval. The Set's element type
- * holds each entry to a real COMPUTER_ACTIONS member. */
+/** Actions that only look, so they never need approval. */
 export const COMPUTER_READ_ACTIONS: ReadonlySet<string> = new Set<
   (typeof COMPUTER_ACTIONS)[number]
 >(["cursor_position", "screenshot", "wait", "zoom"]);
 
-// The holder's host in an `occupied` reason, cut on a byte boundary: a close reason
-// is capped at 123 bytes, and one cut mid-character reaches the daemon as 1007.
+// A close reason is capped at 123 bytes, and one cut mid-character reaches the daemon as 1007.
 const HOLDER_MAX_BYTES = 40;
 
 export const MACHINE_CLOSE = {
   badFrame: { code: 4400, reason: "Malformed frame" },
-  // Not fatal: the daemon reconnects with a fresh credential.
   expired: { code: 4419, reason: "Credential expired" },
   occupied: { code: 4423, reason: "Already connected from another daemon" },
   replaced: { code: 4409, reason: "Replaced by a newer connection" },
@@ -50,13 +42,11 @@ export const MACHINE_CLOSE = {
   },
 } as const;
 
-// Largest frame either side sends; the gateway relays up to this too.
 export const MACHINE_MAX_FRAME_BYTES = 4 * 1024 * 1024;
 
 export const MACHINE_WEBSOCKET_PATH = "/v1/machines/ws";
 
-// Anthropic's computer-use field names. Arrays, not tuples: some providers
-// reject JSON Schema tuple items.
+// Anthropic's computer-use field names; arrays, not tuples: some providers reject tuple items.
 export const computerInput = z.object({
   action: z.enum(COMPUTER_ACTIONS),
   coordinate: z
@@ -112,14 +102,10 @@ const computerResultFrame = z.object({
   id: z.string(),
   text: z.string().optional(),
   image: z.object({ data: z.string(), mediaType: z.string() }).optional(),
-  // Bundle id of the frontmost app after the action.
   app: z.string().optional(),
   error: z.string().optional(),
 });
 
-// A fresh stage ticket for the socket's own account and stage, sent before the
-// one it holds expires, so core moves the deadline instead of closing a daemon
-// mid-command.
 const credentialFrame = z.object({
   type: z.literal("credential"),
   token: z.string().min(1),
@@ -141,15 +127,11 @@ const helloFrame = z.object({
   hostname: z.string().optional(),
   platform: z.string().optional(),
   computer: z.boolean().optional(),
-  // Names of the MCP servers in the daemon's --mcp file.
   mcp: z.array(z.string()).optional(),
-  // One id per daemon process, so the same process reconnecting after a network
-  // drop reclaims its record and any other daemon does not.
+  // Per process: a reconnect after a network drop reclaims its record, another daemon does not.
   instance: z.string().optional(),
-  // Take the record over from another daemon.
   force: z.boolean().optional(),
-  // The computer's own CPU count, memory and disk, shown as its size. Display
-  // only, so a malformed one reads as absent instead of refusing the daemon.
+  // Display only, so a malformed one reads as absent instead of refusing the daemon.
   specs: z
     .object({
       vcpu: z.number().positive(),
@@ -174,7 +156,6 @@ const mcpListFrame = z.object({
   server: z.string(),
 });
 
-// The SDK's CallToolResult, checked down to what core reads off it.
 const mcpResultFrame = z.object({
   type: z.literal("mcp-result"),
   id: z.string(),
@@ -182,7 +163,6 @@ const mcpResultFrame = z.object({
   error: z.string().optional(),
 });
 
-// The SDK's Tool[], likewise.
 const mcpToolsFrame = z.object({
   type: z.literal("mcp-tools"),
   id: z.string(),
@@ -197,12 +177,10 @@ const mcpToolsFrame = z.object({
   error: z.string().optional(),
 });
 
-// Sent again each time core takes a fresh credential frame.
 const readyFrame = z.object({
   type: z.literal("ready"),
   sandboxId: z.string(),
-  // Only for a stage ticket: how long until core closes the socket. Relative,
-  // so a daemon whose clock is off still refreshes in time.
+  // Relative, so a daemon whose clock is off still refreshes its stage ticket in time.
   expiresInMs: z.number().optional(),
 });
 
@@ -248,7 +226,6 @@ export type MachineMcpToolsFrame = z.infer<typeof mcpToolsFrame>;
 export type MachineReadyFrame = z.infer<typeof readyFrame>;
 export type MachineResultFrame = z.infer<typeof resultFrame>;
 
-/** The reason core closes a refused claim with, naming who holds the record. */
 export function occupiedReason(holder: string | undefined): string {
   const host = new TextDecoder().decode(
     new TextEncoder()

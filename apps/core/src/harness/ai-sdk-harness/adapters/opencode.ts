@@ -1,7 +1,3 @@
-/**
- * OpenCode adapter construction and Broods provider mapping.
- */
-
 import {
   VERSION,
   createOpenCode,
@@ -19,16 +15,13 @@ import {
 
 export const OPENCODE_HARNESS_VERSION = VERSION;
 
-/** Builds the OpenCode adapter from an agent config; the adapter registry calls it for `harness.type` opencode. */
 export function createConfiguredOpenCodeAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {
   const harness = agentConfig.harness!;
   const providerName = requireHarnessProviderName(agentConfig);
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
-  // `custom` is absent on purpose: OpenCode discovers credentials by its own
-  // provider name and resolves an unrecognized label to Anthropic, silently
-  // dropping an OpenAI-compatible key.
+  // No `custom`: OpenCode maps an unknown provider label to Anthropic, dropping an OpenAI key.
   const auth =
     providerName === "anthropic"
       ? resolveAnthropicAuthEnv(provider)
@@ -52,7 +45,6 @@ export function createConfiguredOpenCodeAdapter(
   });
 }
 
-/** Builds the OpenCode adapter from raw settings; `createAiSdkHarnessAdapter` calls it. */
 export function createOpenCodeAdapter(
   settings?: OpenCodeHarnessSettings,
 ): HarnessAgentAdapter {

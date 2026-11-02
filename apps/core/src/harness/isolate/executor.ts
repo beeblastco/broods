@@ -1,14 +1,5 @@
-/**
- * Node-hosted V8 isolate execution for account-uploaded user code (hooks).
- * Bun cannot load isolated-vm, so core spawns a Node runner
- * (./runner/runner.mjs) and speaks the NDJSON frame protocol from ../frames.ts.
- *
- * Two paths share this file. The default is a pool of long-lived workers each
- * keeping a tenant-keyed warm isolate: reused within a tenant, fresh context per
- * call. It grows on demand and reaps idle workers, because core's pod budgets
- * memory for one process, not a standing fleet. ISOLATE_POOL=0 falls back to the
- * one-shot spawner, a fresh runner per call.
- */
+// Bun cannot load isolated-vm, so account code (hooks) runs in a Node runner speaking ../frames.ts.
+// Default: a capped pool of warm tenant-keyed workers, reaped idle; ISOLATE_POOL=0 is one-shot.
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -17,32 +8,23 @@ import { logDebug, logError, logInfo, logWarn } from "../../shared/log.ts";
 import { FrameQueue } from "../frames.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
-// A pooled runner says ready right after Node loads the isolated-vm addon, about
-// 80 ms cold. Each hook fire spawns one up to 3 times, so waiting the full run
-// timeout on a hung one cost about 90 s of the run per fire and held a pool place.
-// ISOLATE_WORKER_READY_TIMEOUT_MS overrides it.
+// Ready lands ~80 ms after spawn; a hung start must not burn the run timeout on each retry.
 const WORKER_READY_TIMEOUT_MS = 5_000;
-const RUNNER_ENV_KEYS = [
+const RUNNER_ENV_KEYS = new Set([
   "PATH",
   "ISOLATE_MEMORY_LIMIT_MB",
   "ISOLATE_RUNNER_TIMEOUT_SECONDS",
   "ISOLATE_TENANT_CACHE_PER_WORKER",
-];
-// The runner hosts tenant code, so it gets only what it reads, never core's secrets.
+]);
+// The runner hosts tenant code: it gets only what it reads, never core's secrets.
 const RUNNER_ENV = Object.fromEntries(
   Object.entries(process.env).filter(([key]): boolean =>
-    RUNNER_ENV_KEYS.includes(key),
+    RUNNER_ENV_KEYS.has(key),
   ),
 );
-// On top of the request size: a hook may hand back its whole input plus the
-// result budget, so a flat cap would kill a legitimate rewrite.
+// Added to the request size: a hook may hand back its whole input plus a result.
 const RUNNER_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 
-/**
- * Run a pre-built runner payload in the isolate, tenant-scoped by accountId,
- * and stream its frames. Hook bundles (payload.hookEvent set) run the matching
- * event handler. Used by harness/hook-runner.ts.
- */
 export async function* streamIsolatePayload(
   accountId: string | undefined,
   runPayload: Record<string, unknown>,
@@ -56,8 +38,6 @@ export async function* streamIsolatePayload(
   yield* streamViaOneShot(accountId, runPayload, options.abortSignal);
 }
 
-// The one-shot path pays a Node spawn plus a cold isolate on every call, which
-// is most of what an isolate-tier tool costs.
 function isolatePoolEnabled(): boolean {
   return optionalEnv("ISOLATE_POOL") !== "0";
 }
@@ -71,9 +51,7 @@ function runnerTimeoutMs(): number {
   );
 }
 
-// Bridges the AI SDK abortSignal into the runner process: SIGUSR2 trips the
-// run's in-isolate AbortController without killing the (possibly shared) worker.
-// Returns a detach function, or undefined when there is nothing to forward.
+// SIGUSR2 aborts the run inside the isolate without killing the (possibly shared) worker.
 function forwardAbortSignal(
   child: ChildProcessWithoutNullStreams,
   abortSignal: AbortSignal | undefined,
@@ -93,8 +71,6 @@ function forwardAbortSignal(
 
   return () => abortSignal.removeEventListener("abort", onAbort);
 }
-
-// --- One-shot fallback path (ISOLATE_POOL=0) ----------------------------------
 
 let activeIsolateRuns = 0;
 const isolateWaiters: Array<() => void> = [];
@@ -183,9 +159,7 @@ async function* streamViaOneShot(
     child.stdin.end(request);
 
     for await (const frame of queue.frames()) {
-      // A log frame is not a result. Counting it as one turns a runner that
-      // logged and then died (OOM, SIGKILL) into a silent `undefined` instead of
-      // the "did not return a result" diagnostic carrying its stderr.
+      // Not a result: a runner that logged and then died still gets the no-result diagnostic.
       if (frame.t === "log") {
         emitIsolateLog(accountId, runPayload.toolName, frame);
         continue;
@@ -203,8 +177,6 @@ async function* streamViaOneShot(
       if (frame.t === "end") {
         return;
       }
-      // Only an error frame is fatal; a frame type a newer runner learns to
-      // send must not read as a failed call with no error to explain it.
       if (frame.t !== "error") continue;
 
       throw new Error(frame.error || "isolate execution failed");
@@ -226,8 +198,7 @@ async function* streamViaOneShot(
   }
 }
 
-// Called while iterating a run's frames, so the line inherits that run's
-// observability context, which is what routes it to NATS and `broods logs`.
+// Call inside the run's frame loop: its observability context routes the line to NATS.
 export function emitIsolateLog(
   accountId: string | undefined,
   toolName: unknown,
@@ -243,7 +214,6 @@ export function emitIsolateLog(
   emit(record.message, record.data);
 }
 
-/** `console.log` has no host equivalent, so it lands on info like Node's does. */
 export function isolateLogRecord(
   accountId: string | undefined,
   toolName: unknown,
@@ -276,8 +246,7 @@ async function acquireIsolateSlot(): Promise<() => void> {
 
     return releaseIsolateSlot;
   }
-  // The releasing run hands its slot to the woken waiter directly (no decrement),
-  // so a concurrent fast-path acquire cannot sneak in and exceed the cap.
+  // A release hands its slot straight to a waiter, so a fast-path acquire cannot overshoot.
   await new Promise<void>((resolve) => isolateWaiters.push(resolve));
 
   return releaseIsolateSlot;
@@ -293,8 +262,6 @@ function releaseIsolateSlot(): void {
   activeIsolateRuns = Math.max(0, activeIsolateRuns - 1);
 }
 
-// --- Pooled path (default): long-lived tenant-scoped warm workers -------------
-
 type IsolateFrame = {
   t: string;
   callId?: string;
@@ -307,19 +274,12 @@ type IsolateFrame = {
   message?: string;
 };
 
-/**
- * One long-lived runner process. Serves a single call at a time; between calls
- * it keeps its tenant-keyed isolate cache warm. Frames from stdout route to the
- * active call's sink; a `ready` frame resolves startup.
- */
 class IsolateWorker {
   readonly child: ChildProcessWithoutNullStreams;
   readonly tenants = new Set<string>();
   busy = false;
   alive = true;
   idleSince = Date.now();
-  // Rejects when the worker dies before its `ready` frame, so a runner that can
-  // never start is told apart from a ready worker that died later.
   readonly #ready = Promise.withResolvers<void>();
   readonly ready = this.#ready.promise;
 
@@ -330,14 +290,13 @@ class IsolateWorker {
     push: (frame: IsolateFrame) => void;
     fail: (error: Error) => void;
   } | null = null;
-  // A runner that neither says ready nor exits would hold its caller forever.
   readonly #startup = setTimeout(() => {
     this.#ready.reject(new Error("isolate worker did not become ready"));
     this.kill();
   }, workerReadyTimeoutMs());
 
   constructor() {
-    // prewarmIsolatePool may drop a failed start; acquireWorker reads the reason.
+    // A start prewarm drops must not be an unhandled rejection; acquireWorker reads it.
     this.ready.catch(() => {});
     this.child = spawn(isolateRunnerNode(), [isolateRunnerPath(), "--pool"], {
       stdio: ["pipe", "pipe", "pipe"],
@@ -445,15 +404,12 @@ class IsolateWorker {
 }
 
 const pool: IsolateWorker[] = [];
-// Spawns one call makes before giving up on a runner that never says ready,
-// with the backoff doubling from WORKER_START_BACKOFF_MS between them.
 const WORKER_START_ATTEMPTS = 3;
 const WORKER_START_BACKOFF_MS = 100;
 const poolWaiters: Array<() => void> = [];
 let reaper: ReturnType<typeof setInterval> | undefined;
 
-// The cap, not the resting size, and its own knob: a worker is ~54 MB resident
-// where a one-shot process is transient. Past the cap, calls queue.
+// A cap, not a resting size: each worker is ~54 MB resident. Past it, calls queue.
 function poolSize(): number {
   return positiveIntegerEnv("ISOLATE_WORKER_POOL_SIZE", 4);
 }
@@ -462,7 +418,6 @@ function workerIdleTtlMs(): number {
   return positiveIntegerEnv("ISOLATE_WORKER_IDLE_SECONDS", 120) * 1000;
 }
 
-// Never past the run timeout, which also keeps a huge override in setTimeout's range.
 function workerReadyTimeoutMs(): number {
   return Math.min(
     positiveIntegerEnv(
@@ -473,13 +428,11 @@ function workerReadyTimeoutMs(): number {
   );
 }
 
-/** Pre-spawn one worker so the first real call skips Node startup. */
 export async function prewarmIsolatePool(): Promise<void> {
   if (!isolatePoolEnabled() || pool.length > 0) return;
   await spawnWorker().ready.catch(() => {});
 }
 
-/** Kills every worker. Workers outlive a request, so shutdown has to reap them. */
 export function shutdownIsolatePool(): void {
   if (reaper) {
     clearInterval(reaper);
@@ -491,8 +444,6 @@ export function shutdownIsolatePool(): void {
 async function acquireWorker(tenantId: string): Promise<IsolateWorker> {
   for (let startFailures = 0; ;) {
     dropDeadWorkers();
-    // Tenant affinity first: that worker already holds a warm isolate for this
-    // account, which is the whole point of keeping the process around.
     const worker =
       pool.find(
         (candidate) =>
@@ -508,14 +459,11 @@ async function acquireWorker(tenantId: string): Promise<IsolateWorker> {
       );
       if (worker.alive) return worker;
       worker.busy = false;
-      // A worker that died after ready is replaced at once. One that never
-      // started (missing addon, broken runner) will likely fail again, so it is
-      // retried with backoff and then fails this call, which a hook logs and
-      // skips. The next call tries again, so a fixed runner recovers on its own.
+      // Died after ready: replace it now. Never started: likely broken, so back off, then fail.
       if (startFailure === undefined) continue;
       startFailures += 1;
       if (startFailures >= WORKER_START_ATTEMPTS) {
-        // A queued call waits for a release that this failed slot never sends.
+        // A queued call waits on a release this failed slot never sends.
         poolWaiters.shift()?.();
         throw new Error(
           `isolate worker failed to start: ${startFailure.message}`,
@@ -534,8 +482,6 @@ function dropDeadWorkers(): void {
   }
 }
 
-// A burst grows the pool to the cap; without this it would stay there for the
-// life of the process. One worker always survives so the next call stays warm.
 function reapIdleWorkers(): void {
   const cutoff = Date.now() - workerIdleTtlMs();
   for (let index = pool.length - 1; index >= 0 && pool.length > 1; index -= 1) {
@@ -583,20 +529,14 @@ async function* streamViaPool(
   };
   const detachAbort = forwardAbortSignal(worker.child, abortSignal);
 
-  // Guard against a wedged worker: if no terminal frame lands within the run
-  // deadline plus grace, kill it (its exit fails the call) and let the pool
-  // respawn a replacement.
   let terminalReceived = false;
   const guard = setTimeout(() => {
     if (!terminalReceived) worker.kill();
   }, runnerTimeoutMs() + 2_000);
   try {
     for await (const frame of worker.runCall(request)) {
-      // The worker serves one call at a time, but a frame written around the
-      // terminal frame can still reach the sink of the call that follows it on
-      // the same worker. Emitting that under the wrong run's observability
-      // context would publish one tenant's log line to another tenant's NATS
-      // subject, so a frame that names a different call is dropped.
+      // A frame written around the previous call's terminal frame can land here; emitting it
+      // would publish one tenant's log line to another tenant's NATS subject.
       if (frame.callId !== undefined && frame.callId !== callId) continue;
       if (frame.t === "log") {
         emitIsolateLog(tenantId, runPayload.toolName, frame);

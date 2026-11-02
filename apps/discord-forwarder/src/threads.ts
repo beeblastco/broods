@@ -1,18 +1,3 @@
-/**
- * Resolves the `thread` object Discord's `MESSAGE_CREATE` leaves out.
- *
- * Inside a thread, Discord sets `channel_id` to the thread and says nothing
- * about the channel it hangs under. Core needs both. `toDiscordGatewayThread`
- * keys a threaded conversation as `discord:{guild}:{parent}:{thread}` and gates
- * the allow list on the parent, which is also how the slash-command path
- * resolves, so a forwarded event without it disagrees with `/new` typed in the
- * same thread and trips channel allow lists that name the parent.
- *
- * This is restating a fact Discord omitted, not choosing where a reply lands.
- * Opening a *new* thread on a mention is a product decision and stays out of
- * here; see the `replyIn` follow-up on issue #320.
- */
-
 import {
   DISCORD_API_URL,
   FETCH_TIMEOUT_MS,
@@ -21,19 +6,16 @@ import {
   type ForwardedThread,
 } from "./discord.ts";
 
-// Oldest entries are evicted past this, so a bot in many busy guilds cannot grow
-// the cache without bound.
 const MAX_CACHED_CHANNELS = 10_000;
 
+/**
+ * In a thread MESSAGE_CREATE's `channel_id` is the thread and the parent goes unsaid, yet core
+ * keys the conversation and gates allow lists on the parent, as the slash-command path does.
+ */
 export class ThreadDirectory {
   private readonly botToken: string;
-  // Channel types never change, so one resolved answer holds for the life of
-  // the process. Failed lookups are not cached, so a rate limit self-heals.
+  // Channel types never change, so an answer holds for the life of the process.
   private readonly cache = new Map<string, ForwardedThread | null>();
-  // Lookups already in the air, so a burst of messages in one uncached thread
-  // shares a single request instead of racing to make the same one. The cache
-  // alone cannot do this: it is only written once the response has landed, which
-  // is the window a burst arrives in.
   private readonly inFlight = new Map<
     string,
     Promise<ForwardedThread | null>
@@ -43,11 +25,7 @@ export class ThreadDirectory {
     this.botToken = botToken;
   }
 
-  /**
-   * The thread `channelId` is, or null when it is an ordinary channel. Rejects
-   * when Discord will not say, so the caller drops the message rather than
-   * forward it keyed to the parent-less conversation.
-   */
+  /** Rejects when Discord will not say, so the message drops rather than lose its thread. */
   async resolve(channelId: string): Promise<ForwardedThread | null> {
     const cached = this.cache.get(channelId);
     if (cached !== undefined) return cached;
@@ -62,7 +40,6 @@ export class ThreadDirectory {
     return lookup;
   }
 
-  /** Retries once after the wait a 429 names, and throws on any other failure. */
   private async fetchChannel(
     channelId: string,
     retried = false,
@@ -73,8 +50,7 @@ export class ThreadDirectory {
     });
     if (response.ok) return (await response.json()) as DiscordChannel;
     if (response.status === 429 && !retried) {
-      // Seconds, possibly fractional. Capped so one lookup cannot hold a
-      // message for as long as a global rate limit lasts.
+      // Capped so one lookup cannot hold a message for a whole global rate limit.
       const retryAfterSeconds =
         Number(response.headers.get("retry-after")) || 1;
       await Bun.sleep(Math.min(FETCH_TIMEOUT_MS, retryAfterSeconds * 1_000));
@@ -87,7 +63,6 @@ export class ThreadDirectory {
     );
   }
 
-  /** Resolves and caches; a failed lookup rejects and caches nothing. */
   private async lookup(channelId: string): Promise<ForwardedThread | null> {
     const channel = await this.fetchChannel(channelId);
     const thread =

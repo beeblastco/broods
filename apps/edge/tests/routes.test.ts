@@ -1,9 +1,3 @@
-/**
- * Spot checks of the route table: where the SDK's runtime paths, the sockets
- * and the config plane's CRUD land. `traefik.test.ts` checks the rendered
- * rules agree with the table.
- */
-
 import { expect, test } from "bun:test";
 import { resolveRouter, type Upstream } from "../src/routes.ts";
 
@@ -14,7 +8,6 @@ const CASES: [string, string, Upstream | null][] = [
   ["HEAD", "/", null],
   ["GET", "/v2/agents", null],
 
-  // Runtime paths the SDK calls.
   ["POST", "/v1/runs", "core"],
   ["GET", "/v1/runs/run_1", "core"],
   ["POST", "/v1/accounts", "core"],
@@ -23,14 +16,11 @@ const CASES: [string, string, Upstream | null][] = [
   ["POST", "/v1/sandboxes/sbx_1/terminate", "core"],
   ["POST", "/v1/internal/observability-scope", "core"],
   ["POST", "/v1/internal/agent-socket-scope", "core"],
-  // Channel webhooks, including a retired agent-scoped URL core answers itself.
   ["POST", "/v1/webhooks/acct_1/slack", "core"],
   ["POST", "/v1/webhooks/acct_1/agent_1/slack", "core"],
-  // In-cluster only: core refuses them without the service token.
   ["POST", "/v1/cron-runs", "core"],
   ["POST", "/v1/mcp-service/rpc", "core"],
 
-  // Sockets go to the gateway by path, upgrade or not.
   ["GET", "/v1/agents/a/ws", "gateway"],
   ["GET", "/v1/projects/p/stages/s/agents/a/ws", "gateway"],
   ["GET", "/v1/projects/p/stages/s/observability/ws", "gateway"],
@@ -38,7 +28,6 @@ const CASES: [string, string, Upstream | null][] = [
   ["GET", "/v1/machines/ws", "gateway"],
   ["GET", "/v1/demo/agents/development/env_123/ws", "core"],
 
-  // The config plane, method by method; a method miss falls through to core.
   ["GET", "/v1/account", "config"],
   ["PATCH", "/v1/account", "config"],
   ["DELETE", "/v1/account", "core"],
@@ -87,8 +76,6 @@ const CASES: [string, string, Upstream | null][] = [
   ["POST", "/v1/audit/sink", "core"],
   ["GET", "/v1/audit/other", "core"],
 
-  // Trailing slashes never move a request; an inner empty segment stays in
-  // its subtree.
   ["GET", "/v1/agents/", "config"],
   ["DELETE", "/v1/account/", "core"],
   ["POST", "/v1/cron-runs/", "core"],

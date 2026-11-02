@@ -1,11 +1,3 @@
-/**
- * Outbound webhook views and editing for the dashboard. The harness delivers
- * events from each agent's `config.hooks.webhooks` array; this module lists
- * those per-agent hooks for a stage and lets the settings tab add, toggle,
- * and remove them. There is no separate webhook store. The agent config is the
- * source of truth.
- */
-
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
@@ -27,22 +19,18 @@ import { isPlainObject } from "./model/objects";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForWrite } from "./model/ownership/project";
 
-// Webhook URLs and signing secrets can point agent events at any host, so
-// editing them is an org admin operation. The secret itself is write-only.
+// A webhook can send agent events to any host, so editing one is admin-only.
 const WEBHOOK_ADMIN_REQUIRED =
   "Agent webhooks can only be changed by an org admin.";
 
-/** One outbound webhook configured on an agent (URL/secret usually resolve from env vars). */
 const webhookRow = v.object({
   index: v.number(),
   enabled: v.boolean(),
   url: v.optional(v.string()),
-  /** Whether a signing secret is set; the value never leaves the store. */
   hasSecret: v.boolean(),
   events: v.array(v.string()),
 });
 
-/** @returns null */
 export const addAgentWebhook = mutation({
   args: {
     agentConfigId: v.id("agentConfigs"),
@@ -62,9 +50,7 @@ export const addAgentWebhook = mutation({
       user.id,
       agentConfigId,
       (webhooks): Record<string, unknown>[] => {
-        // The config plane's rules are the only validation copy: without this,
-        // the dashboard could store an http:// or unknown-event webhook the API
-        // refuses (public-https URL, lifecycle-event whitelist).
+        // The config plane's rules, so the dashboard cannot store a webhook the API refuses.
         const webhook = {
           enabled: enabled !== false,
           url: url.trim(),
@@ -92,12 +78,6 @@ export const addAgentWebhook = mutation({
   },
 });
 
-/**
- * List every agent in a stage with its configured outbound webhooks. Agents
- * with no webhooks are still returned so the settings tab can offer an empty agent
- * to add one to.
- * @returns one entry per agent, each carrying its indexed webhook rows
- */
 export const listAgentWebhooks = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.array(
@@ -108,7 +88,6 @@ export const listAgentWebhooks = query({
     }),
   ),
   handler: async (ctx, { projectId, stageId }) => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -145,7 +124,6 @@ export const listAgentWebhooks = query({
   },
 });
 
-/** @returns null */
 export const removeAgentWebhook = mutation({
   args: {
     agentConfigId: v.id("agentConfigs"),
@@ -172,7 +150,6 @@ export const removeAgentWebhook = mutation({
   },
 });
 
-/** @returns null */
 export const setAgentWebhookEnabled = mutation({
   args: {
     agentConfigId: v.id("agentConfigs"),
@@ -188,8 +165,7 @@ export const setAgentWebhookEnabled = mutation({
           return webhook;
         }
         const next = { ...webhook, enabled: enabled };
-        // A stored row that predates a tightened rule can still be disabled
-        // or removed, but not re-enabled until it is fixed.
+        // A row that predates a tightened rule can be disabled, but not re-enabled until fixed.
         if (enabled) {
           normalizeWebhookHookConfig(next, "webhook");
         }
@@ -213,12 +189,6 @@ export const setAgentWebhookEnabled = mutation({
   },
 });
 
-/**
- * Load an owned agent config, apply a transform to its `hooks.webhooks` array, and
- * persist the result back into `extraConfig` plus the encrypted runtime agents row.
- * @param mutate receives the current webhooks and returns the next array
- * @throws when the config is missing or the caller does not own its project
- */
 async function mutateAgentWebhooks(
   ctx: MutationCtx,
   authId: string,
@@ -251,7 +221,6 @@ async function mutateAgentWebhooks(
   }
 }
 
-/** Reads the `hooks.webhooks` array out of an agent config's `extraConfig` blob. */
 function readWebhooks(extraConfig: unknown): Record<string, unknown>[] {
   const hooks =
     isPlainObject(extraConfig) && isPlainObject(extraConfig.hooks)
@@ -298,7 +267,6 @@ async function recordWebhookAudit(
 async function requireUser(
   ctx: MutationCtx,
 ): Promise<{ id: string; email?: string | null; name?: string | null }> {
-  // Check authenticated user
   const user = await authKit.getAuthUser(ctx);
   if (!user) {
     throw new Error("User not found or not authenticated");

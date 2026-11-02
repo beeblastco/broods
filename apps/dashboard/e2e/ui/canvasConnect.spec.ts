@@ -1,16 +1,9 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-// How many steps a drag takes. React Flow reads the connection off mousemove,
-// so one jump from start to finish never picks a drop target.
+// React Flow reads the connection off mousemove: one jump never picks a drop target.
 const DRAG_STEPS = 12;
 
-/**
- * Dropping an agent's edge on a node used to need the pointer within React
- * Flow's 20px default of the target's top handle, a dot smaller than the nodes
- * around it. A drop on the body of a card, or anywhere on a 44px chip inside a
- * frame, found no handle and silently did nothing.
- */
 test("an agent's edge lands on a card or a chip dropped anywhere on it", async ({
   page,
 }) => {
@@ -22,20 +15,13 @@ test("an agent's edge lands on a card or a chip dropped anywhere on it", async (
     "xy-edge__alpha-box-one | xy-edge__alpha-box-two",
   );
 
-  // A sandbox nobody wired yet, drawn as a loose card.
   await dragFromAgent(page, fixture, "beta", "fresh-box");
   await expect(log).toContainText("xy-edge__beta-fresh-boxtop");
 
-  // A chip inside the frame another agent owns; the second agent joins it.
   await dragFromAgent(page, fixture, "beta", "box-one");
   await expect(log).toContainText("xy-edge__beta-box-onetop");
 });
 
-/**
- * A refused drop used to vanish with nothing on screen to say why. The reason
- * shows at the top while the line is aimed at the card, and stays after the
- * drop until it is dismissed.
- */
 test("a refused connection says why, while aimed and after the drop", async ({
   page,
 }) => {
@@ -48,7 +34,6 @@ test("a refused connection says why, while aimed and after the drop", async ({
   await aimFromAgent(page, fixture, "alpha", "box-one");
   await expect(notice).toContainText("alpha is already connected to box-one.");
   await expect(notice).toContainText("Release to cancel");
-  // The outline sits on the refused chip, within a pixel of its box.
   const chip = await fixture
     .locator('.react-flow__node[data-id="box-one"]')
     .boundingBox();
@@ -62,10 +47,6 @@ test("a refused connection says why, while aimed and after the drop", async ({
   await expect(notice).toHaveCount(0);
 });
 
-/**
- * The notice sized to its sentence alone, so on a canvas narrower than the
- * sentence it ran past both edges and React Flow clipped it.
- */
 test("the refusal notice stays inside a narrow canvas", async ({ page }) => {
   await page.setViewportSize({ height: 800, width: 340 });
   await openGallery(page);
@@ -85,7 +66,6 @@ test("the refusal notice stays inside a narrow canvas", async ({ page }) => {
   );
 });
 
-/** Press the agent's bottom handle and release over the target's middle. */
 async function dragFromAgent(
   page: Page,
   fixture: Locator,
@@ -96,7 +76,6 @@ async function dragFromAgent(
   await page.mouse.up();
 }
 
-/** Press the agent's bottom handle and hold the line over the target's middle. */
 async function aimFromAgent(
   page: Page,
   fixture: Locator,

@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import type { Connection, Edge, Node } from "@xyflow/react";
 import { connectionRefusal } from "../app/lib/canvasConnections";
 
-/** Two agents, one with a default and a second sandbox, and a workspace mounted on the second. */
 const NODES: Node[] = [
   node("coder", "agent", { agentConfigId: "cfg-coder" }),
   node("research", "agent", { agentConfigId: "cfg-research" }),
@@ -42,7 +41,6 @@ describe("connectionRefusal", () => {
     expect(refusal(connect("alpha", "notes"))).toBe(
       "Mount alpha on notes from side handle to side handle.",
     );
-    // bravo is research's second sandbox, so research cannot take its workspace.
     expect(refusal(connect("research", "notes"))).toBe(
       "notes is mounted on bravo, and only an agent's default sandbox can back a workspace.",
     );

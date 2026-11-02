@@ -1,8 +1,3 @@
-/**
- * Core's end of the machine socket. Sends `next(frame)` for each frame, and
- * closes with 4409 when it returns null, which stops the daemon under test.
- */
-
 import {
   MACHINE_CLOSE,
   parseDaemonFrame,
@@ -11,7 +6,6 @@ import {
 } from "../../../../apps/core/src/shared/machine-socket.ts";
 
 export interface FakeCore {
-  /** Every frame the daemon sent, in order. */
   received: MachineDaemonFrame[];
   server: Bun.Server<undefined>;
   url: string;
@@ -46,6 +40,7 @@ export function startFakeCore(
         if (reply) {
           socket.send(JSON.stringify(reply));
         } else {
+          // A replaced close stops the daemon under test instead of reconnecting.
           socket.close(
             MACHINE_CLOSE.replaced.code,
             MACHINE_CLOSE.replaced.reason,

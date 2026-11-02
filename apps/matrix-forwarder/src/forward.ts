@@ -1,15 +1,3 @@
-/**
- * POSTs a decrypted room message to every channel webhook its access token
- * serves, in the shape `apps/core/src/shared/matrix-wire.ts` accepts. The
- * delivery itself is `fanOut`, shared with the Discord forwarder.
- *
- * The only event dropped here is one this channel sent: it carries the marker,
- * it comes back through `/sync` like any other message, and core would only
- * discard it again. Everything else goes, rooms, senders and edits included,
- * because the account is usually a person's and which message is a trigger is
- * core's decision.
- */
-
 import {
   MATRIX_ACCESS_TOKEN_HEADER,
   MATRIX_BOT_MARKER,
@@ -21,9 +9,7 @@ import {
 } from "../../discord-forwarder/src/forward.ts";
 import type { RoomEvent } from "./matrix.ts";
 
-// Bun puts no deadline on `fetch`. A webhook that accepts and never answers
-// would otherwise stall the account's sync loop, which awaits each delivery to
-// keep timeline order.
+// Bun's fetch has no deadline; a silent webhook would stall the account's delivery loop.
 const FETCH_TIMEOUT_MS = 10_000;
 
 interface ForwardedEventInput {
@@ -34,7 +20,6 @@ interface ForwardedEventInput {
   userId: string;
 }
 
-/** Keeps only the event fields the wire contract names. */
 export function forwardedEvent(
   input: ForwardedEventInput,
 ): MatrixForwardedEvent {
@@ -73,7 +58,6 @@ export async function forwardRoomEvent(
   );
 }
 
-/** True for a message this channel sent, which nothing downstream wants. */
 export function isOwnMessage(content: Record<string, unknown>): boolean {
   return content[MATRIX_BOT_MARKER] === true;
 }

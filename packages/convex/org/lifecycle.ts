@@ -1,10 +1,4 @@
 "use node";
-/**
- * Provision and rotate the per-org account key. The plaintext
- * is returned to the caller exactly once at provisioning or rotation time;
- * only the SHA-256 hash is stored in the `accounts` row.
- */
-
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -102,7 +96,6 @@ export const rotateSecret = action({
   },
 });
 
-/** The member row behind the caller's auth id, so the key list can name them. */
 async function userIdOf(
   ctx: ActionCtx,
   authId: string | undefined,
