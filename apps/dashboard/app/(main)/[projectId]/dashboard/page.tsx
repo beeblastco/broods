@@ -3,6 +3,7 @@
 import { useEverTrue } from "@/app/hooks/useEverTrue";
 import { useStage } from "@/app/hooks/useStage";
 import { useStageSession } from "@/app/hooks/useStageSession";
+import { useWarmPanel } from "@/app/hooks/useWarmPanel";
 import { DASHBOARD_TABS, pickTab } from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
@@ -10,7 +11,7 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import dynamic from "next/dynamic";
 import { useParams, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { MonitoringPanel } from "./components/MonitoringPanel";
 import { ObservabilityKeyPrompt } from "./components/ObservabilityKeyPrompt";
 import DashboardLoading from "./loading";
@@ -63,11 +64,7 @@ export default function DashboardPage(): React.JSX.Element {
   const { stageId: activeStageId } = useStage();
   const tab = pickTab(DASHBOARD_TABS, searchParams.get("tab"));
   const activeTab = tab.id;
-
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- warms the tab chunk with the query
-  useEffect(() => {
-    void DASHBOARD_PANELS[activeTab]?.().catch((): void => {});
-  }, [activeTab]);
+  useWarmPanel(DASHBOARD_PANELS[activeTab]);
 
   const activeDeployment = useQuery(
     api.agent.deployments.getForStage,
