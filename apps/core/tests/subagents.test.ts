@@ -1005,6 +1005,10 @@ describe("SubagentCoordinator", () => {
       expect(resultEventId).toBe(late.eventId);
       expect(messageText(message)).toContain("status: completed");
       expect(messageText(message)).toContain("the late answer");
+      // Saving it under the result's key stores the result.
+      expect(message).toMatchObject({
+        dedupeKey: `subagent:${late.eventId}:completed`,
+      });
       // Nothing queues for a parent pass that will never drain it.
       expect(await coordinator.drainCompletionsToParent()).toBe(0);
     } finally {

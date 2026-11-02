@@ -6631,7 +6631,6 @@ export declare const internal: {
         }>;
         ownerEventId: string;
         ownerGeneration: number;
-        savesAll?: boolean;
       },
       null
     >;

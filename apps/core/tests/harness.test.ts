@@ -925,6 +925,37 @@ describe("runAgentLoop", () => {
     );
   });
 
+  it("saves a step under the same keys after a boundary whose reply was lost", async (): Promise<void> => {
+    const persistModelMessages = mock(
+      async (..._args: unknown[]): Promise<string[]> => [],
+    );
+    // The second boundary commits in Convex, but core never gets the reply.
+    const stepBoundary = mock(
+      async (
+        ...args: unknown[]
+      ): Promise<{ renewal: string; steering: null }> => {
+        if ((args[0] as ModelMessage[]).length > 0) {
+          throw new Error("reply lost");
+        }
+
+        return { renewal: "renewed", steering: null };
+      },
+    );
+    const stream = await startTwoStepTurn(
+      persistModelMessages,
+      {},
+      stepBoundary,
+    );
+    await stream.consumeStream();
+
+    const boundary = stepBoundary.mock.calls.at(-1);
+    const last = persistModelMessages.mock.calls.at(-1);
+    expect((boundary?.[0] as ModelMessage[]).length).toBe(2);
+    expect((last?.[2] as string[]).slice(0, 2)).toEqual(
+      (boundary?.[1] as { dedupeKeys: string[] }).dedupeKeys,
+    );
+  });
+
   it("winds down with a tool-free last step near the deadline", async (): Promise<void> => {
     const stepBoundary = mock(
       async (
@@ -950,7 +981,7 @@ describe("runAgentLoop", () => {
     const call = twoStepModelInUse?.doStreamCalls[1];
     expect(call?.toolChoice).toEqual({ type: "none" });
     expect(JSON.stringify(call?.prompt)).toContain("This turn is out of time");
-    expect(stepBoundary.mock.calls.at(-1)?.[1]).toEqual({
+    expect(stepBoundary.mock.calls.at(-1)?.[1]).toMatchObject({
       claimSteering: false,
     });
     expect(stream.didFail()).toBe(false);
@@ -1660,24 +1691,28 @@ describe("runAgentLoop", () => {
     ]);
     expect(onErrorText).not.toHaveBeenCalled();
     expect(onApprovalRequired).toHaveBeenCalledWith(stream.approvalSummaries());
-    expect(persistModelMessages).toHaveBeenCalledWith([
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "tool-call",
-            toolCallId: "tool-call-1",
-            toolName: "bash",
-            input: { shell: "rm file.txt" },
-          },
-          {
-            type: "tool-approval-request",
-            approvalId: "approval-1",
-            toolCallId: "tool-call-1",
-          },
-        ],
-      },
-    ]);
+    expect(persistModelMessages).toHaveBeenCalledWith(
+      [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "tool-call-1",
+              toolName: "bash",
+              input: { shell: "rm file.txt" },
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "approval-1",
+              toolCallId: "tool-call-1",
+            },
+          ],
+        },
+      ],
+      undefined,
+      expect.any(Array),
+    );
     const toolApproval = streamTextMock.mock.calls[0]?.[0].toolApproval as (
       event: unknown,
     ) => Promise<unknown>;
@@ -1758,24 +1793,28 @@ describe("runAgentLoop", () => {
     expect(stream.didFail()).toBe(false);
     expect(onFinalText).toHaveBeenCalled();
     // The request part still belongs in history so the SDK can pair it later.
-    expect(persistModelMessages).toHaveBeenCalledWith([
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "tool-call",
-            toolCallId: "tool-call-1",
-            toolName: "bash",
-            input: { shell: "ls" },
-          },
-          {
-            type: "tool-approval-request",
-            approvalId: "approval-auto-1",
-            toolCallId: "tool-call-1",
-          },
-        ],
-      },
-    ]);
+    expect(persistModelMessages).toHaveBeenCalledWith(
+      [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "tool-call-1",
+              toolName: "bash",
+              input: { shell: "ls" },
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "approval-auto-1",
+              toolCallId: "tool-call-1",
+            },
+          ],
+        },
+      ],
+      undefined,
+      expect.any(Array),
+    );
   });
 
   it("passes agent model config into streamText", async () => {

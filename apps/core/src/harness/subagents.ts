@@ -76,7 +76,11 @@ import {
   type AgentLifecycleEmitter,
   type AgentLifecycleEventPayload,
 } from "./lifecycle.ts";
-import { Session, type TurnContextSnapshot } from "./session.ts";
+import {
+  Session,
+  type IngressUserMessage,
+  type TurnContextSnapshot,
+} from "./session.ts";
 import type {
   RunSubagentDispatch,
   RunSubagentDispatchResult,
@@ -1708,9 +1712,10 @@ function questionToParentMessage(
   };
 }
 
+/** The parent's message for a child's result, keyed so saving it stores the result once. */
 function completionToParentMessage(
   completion: SubagentCompletion,
-): UserModelMessage {
+): IngressUserMessage {
   const metadata = [
     `taskId: ${completion.taskId}`,
     `agentId: ${completion.agentId}`,
@@ -1733,6 +1738,7 @@ function completionToParentMessage(
 
   return {
     role: "user",
+    dedupeKey: subagentResultDedupeKey(completion.eventId, completion.status),
     content:
       resultParts.length > 0
         ? prependTextToUserParts(prefix, resultParts)

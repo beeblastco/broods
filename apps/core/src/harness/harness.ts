@@ -745,6 +745,14 @@ export async function runAgentLoop(
 
   let finishObserved = false;
   let persistedResponseCount = 0;
+  // Each response message is saved under one key for the whole run, so the
+  // last write after a boundary whose reply was lost saves none of it twice.
+  const responseRunKey = crypto.randomUUID();
+  const responseDedupeKeys = (messages: ModelMessage[]): string[] =>
+    messages.map(
+      (_message, index): string =>
+        `${responseRunKey}:${persistedResponseCount + index}`,
+    );
   const runAbort = new AbortController();
   let terminalError: Error | undefined;
   const abortRun = (): void => {
@@ -924,10 +932,11 @@ export async function runAgentLoop(
     prepareStep: async ({ messages, responseMessages }) => {
       // One mutation stores the step, renews the lease and claims steers, so a
       // steer is never claimed by a turn whose step failed to store or stopped.
-      const { renewal, steering } = await session.stepBoundary(
-        responseMessages.slice(persistedResponseCount),
-        { claimSteering: !deadline.isWindingDown() },
-      );
+      const step = responseMessages.slice(persistedResponseCount);
+      const { renewal, steering } = await session.stepBoundary(step, {
+        claimSteering: !deadline.isWindingDown(),
+        dedupeKeys: responseDedupeKeys(step),
+      });
       if (renewal === "stopped") {
         throw new Error(stopMessage);
       }
@@ -1383,6 +1392,8 @@ export async function runAgentLoop(
           approvalRequests.length > 0
             ? withApprovalToolCalls(unpersisted, approvalRequests)
             : unpersisted,
+          undefined,
+          responseDedupeKeys(unpersisted),
         );
         persistedResponseCount = responseMessages.length;
 
