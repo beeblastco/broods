@@ -923,19 +923,23 @@ async function syncCrons(
         accountId: accountId,
         cronId: existingJob._id,
         patch: job,
+        managedBy: "cli",
       });
       cronIds[job.name] = existingJob._id;
     } else {
       const created = (await ctx.runMutation(internal.agent.crons.create, {
         accountId: accountId,
         input: job,
+        managedBy: "cli",
       })) as { cronId: string };
       cronIds[job.name] = created.cronId;
     }
   }
 
+  // Only jobs code declared: an agent's own schedules survive the prune.
   if (prune === true) {
     for (const job of existing) {
+      if (job.managedBy !== "cli") continue;
       if (!stageAgentIds.has(job.agentId) || kept.has(job._id)) continue;
       await ctx.runMutation(internal.agent.crons.remove, {
         accountId: accountId,

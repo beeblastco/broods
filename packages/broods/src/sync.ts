@@ -143,6 +143,68 @@ export interface CliProject {
   updatedAt: number;
 }
 
+/** A project's link to a GitHub repo; each stage with a branch deploys on push to it. */
+export interface CliGitHubLink {
+  fullName: string;
+  /** The folder holding `broods/`; "" is the repo root. */
+  rootDirectory: string;
+  productionBranch?: string;
+  developmentBranch?: string;
+  /** False on a plan without environments: the keys are repo secrets any branch can read. */
+  protectedSecrets: boolean;
+  /** The PR carrying the workflow, when a protected branch refused a direct commit. */
+  setupPullRequestUrl?: string;
+}
+
+/** What `broods github` shows: the org's GitHub accounts, and the project's link and latest runs. */
+export interface CliGitHubStatus {
+  /** False when the server has no GitHub App. */
+  configured: boolean;
+  /** Whether the caller may connect accounts (an org admin). */
+  canConnect: boolean;
+  /** Whether the caller may link or unlink this project (`keys:write`). */
+  canLink: boolean;
+  webUrl?: string;
+  installations: Array<{
+    installationId: number;
+    login: string;
+    accountType: "User" | "Organization";
+  }>;
+  repo?: CliGitHubLink;
+  deploys: Array<{
+    branch: string;
+    sha: string;
+    status: string;
+    conclusion?: string;
+    url: string;
+    updatedAt: number;
+  }>;
+}
+
+/** A repo a connected GitHub account lets this org link. */
+export interface CliGitHubRepo {
+  installationId: number;
+  repoId: number;
+  fullName: string;
+  private: boolean;
+  defaultBranch: string;
+}
+
+/**
+ * A link request. A branch left out takes its default (the repo's default
+ * branch for Production, `dev` for Development); `null` deploys no such stage.
+ */
+export interface CliGitHubLinkInput {
+  /** `owner/name`. */
+  repo: string;
+  /** The folder holding `broods/`, needed when the repo has several. */
+  folder?: string;
+  /** The Broods API the workflow deploys to. */
+  baseUrl: string;
+  productionBranch?: string | null;
+  developmentBranch?: string | null;
+}
+
 /** A stored environment variable as listed by the CLI (name only; value is write-only). */
 export interface CliEnvVar {
   name: string;
@@ -573,6 +635,47 @@ export class BroodsSyncClient {
     return payload.deleted ?? null;
   }
 
+  /** The project's GitHub link and the org's connected accounts. */
+  async githubStatus(project: string): Promise<CliGitHubStatus> {
+    return await this.github<CliGitHubStatus>("GET", "", project);
+  }
+
+  /** The repos the project may link, across the org's connected accounts. */
+  async githubRepos(project: string): Promise<CliGitHubRepo[]> {
+    const payload = await this.github<{ repos: CliGitHubRepo[] }>(
+      "GET",
+      "/repos",
+      project,
+    );
+
+    return payload.repos;
+  }
+
+  /** Links a repo: seals a key per mapped stage into it and commits the deploy workflow. */
+  async githubLink(
+    project: string,
+    input: CliGitHubLinkInput,
+  ): Promise<CliGitHubLink> {
+    const payload = await this.github<{ repo: CliGitHubLink }>(
+      "POST",
+      "/link",
+      project,
+      input,
+    );
+
+    return payload.repo;
+  }
+
+  /** Unlinks the project's repo and revokes its keys; the repo keeps its workflow. */
+  async githubUnlink(project: string): Promise<void> {
+    await this.github("DELETE", "/link", project);
+  }
+
+  /** The page that installs the Broods GitHub App on another account; it returns to the dashboard. */
+  async githubConnect(): Promise<{ url: string }> {
+    return await this.github<{ url: string }>("POST", "/connect");
+  }
+
   async createOnboardingOrg(name: string): Promise<CliOnboardingContext> {
     const response = await this.send(`${this.baseUrl}/v1/account/onboarding`, {
       method: "POST",
@@ -585,6 +688,33 @@ export class BroodsSyncClient {
     await assertOk(response, "Create CLI org failed");
 
     return (await response.json()) as CliOnboardingContext;
+  }
+
+  // A `broods github` call: `/v1/account/github{suffix}?project=`, with a `broods login` token.
+  private async github<T = unknown>(
+    method: string,
+    suffix: string,
+    project?: string,
+    body?: unknown,
+  ): Promise<T> {
+    const query = project ? `?project=${encodeURIComponent(project)}` : "";
+    const response = await this.send(
+      `${this.baseUrl}/v1/account/github${suffix}${query}`,
+      {
+        method: method,
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      },
+      // Linking writes the repo's secrets, branch and workflow on GitHub.
+      method === "POST" ? 120_000 : undefined,
+    );
+    assertRouteMounted(response, "/v1/account/github", "broods github");
+    await assertOk(response, `GitHub ${method} ${suffix || "status"} failed`);
+
+    return (await response.json()) as T;
   }
 
   private async request(

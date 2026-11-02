@@ -20,7 +20,7 @@ import {
   sessionHttpHandle as cliStageSessionHttp,
 } from "./cli/stages";
 import { handle as configHttp } from "./config/http";
-import { webhook as githubWebhook } from "./github";
+import { cli as githubCli, webhook as githubWebhook } from "./github";
 import { authProvider } from "./model/selfHostAuth";
 import { reconcileSubscription } from "./stripe";
 
@@ -41,6 +41,18 @@ http.route({
   method: "POST",
   handler: githubWebhook,
 });
+
+// `broods github`: GET status and repos, POST link and connect, DELETE link.
+for (const [path, methods] of [
+  ["/v1/account/github", ["GET"]],
+  ["/v1/account/github/repos", ["GET"]],
+  ["/v1/account/github/link", ["POST", "DELETE"]],
+  ["/v1/account/github/connect", ["POST"]],
+] as const) {
+  for (const method of methods) {
+    http.route({ path: path, method: method, handler: githubCli });
+  }
+}
 
 http.route({
   pathPrefix: "/v1/account/projects/",
