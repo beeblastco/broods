@@ -277,7 +277,7 @@ it("message-agents waits on the parent once a turn, notes without a wait, and re
 
         return true;
       },
-      note: (message: AgentMessage): AgentMessageResult => ({
+      note: async (message: AgentMessage): Promise<AgentMessageResult> => ({
         status: "delivered",
         exchangeId: message.exchangeId,
         note: "noted",

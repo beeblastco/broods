@@ -780,7 +780,7 @@ describe("createTools", () => {
       ...createToolContext(undefined, "google"),
       parentLink: {
         ask: (): boolean => true,
-        note: (message: AgentMessage): AgentMessageResult => ({
+        note: async (message: AgentMessage): Promise<AgentMessageResult> => ({
           status: "delivered",
           exchangeId: message.exchangeId,
           note: "",

@@ -95,7 +95,7 @@ export interface ParentLink {
   /** Ends the turn on a question; false when one is already asked this turn. */
   ask(message: AgentMessage): boolean;
   /** Hands the parent a note while the child keeps working. */
-  note(message: AgentMessage): AgentMessageResult;
+  note(message: AgentMessage): Promise<AgentMessageResult>;
 }
 
 /** A parent's message to one of its persistent children, named by its address. */
