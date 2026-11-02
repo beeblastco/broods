@@ -4,7 +4,13 @@ import { Button } from "@/app/components/ui/button";
 import { useTimeoutFlag } from "@/app/hooks/useTimeoutFlag";
 import { cn } from "@/app/lib/utils";
 import { Check, Copy, X } from "lucide-react";
-import { useRef, useState, type MouseEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 
 const COPIED_MS = 1500;
 
@@ -114,6 +120,14 @@ export function useCopied(value: string): {
   const copied = useTimeoutFlag(copiedWrite, COPIED_MS);
   const [failedValue, setFailedValue] = useState<string | null>(null);
   const attempt = useRef(0);
+  // A write still in flight for the old value must not mark the new one copied or failed.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- clipboard write in flight
+  useEffect(
+    () => () => {
+      attempt.current += 1;
+    },
+    [value],
+  );
 
   function copy(event: MouseEvent<HTMLElement>): void {
     const currentAttempt = ++attempt.current;
