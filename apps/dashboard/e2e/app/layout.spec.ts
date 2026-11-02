@@ -1,10 +1,3 @@
-/**
- * The signed-in shell at laptop, tablet and phone viewports: header and
- * sidebar fit with no sideways scroll on every project page, with the sidebar
- * pinned and collapsed.
- * The header once ran 127px past 1280, cutting off the last nav links and the
- * avatar and scrolling the page on every hover.
- */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { NAV_ITEMS } from "../../app/lib/navigation";
 import {
@@ -17,10 +10,7 @@ import {
 test.skip(!hasProbe(), MISSING_PROBE);
 const RAIL_WIDTH = 48;
 const SIDEBAR_WIDTH = 256;
-// The sidebar React owns. The server's copy streams in as a hidden segment,
-// and when a session update reaches the shell before that segment is shown,
-// React renders the shell anew: for a moment both copies are in the DOM.
-// Only React's carries data-hydrated.
+// The server's sidebar copy can sit beside React's for a moment; only React's is hydrated.
 const SIDEBAR_CONTAINER =
   '[data-slot="sidebar-container"][data-hydrated="true"]';
 
@@ -47,8 +37,6 @@ test("every project page fits 1280 wide, sidebar pinned and collapsed", async ({
   expect(await horizontalOverflow(page), "collapsed").toBe(0);
 });
 
-// A phone gets the sidebar as a sheet and a tablet the icon rail; the header's
-// switchers once ran 500px past a phone and 107px past a tablet.
 for (const viewport of [
   { width: 375, height: 812 },
   { width: 768, height: 1024 },
@@ -77,8 +65,6 @@ async function horizontalOverflow(page: Page): Promise<number> {
   );
 }
 
-// @post-rollout: the hover opens over a CSS transition, which flaked on the
-// shared pull request runner. e2e-dashboard.yaml runs it after the rollout.
 test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and stays collapsed across a reload @post-rollout", async ({
   page,
 }) => {
@@ -95,7 +81,6 @@ test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and
   await expect
     .poll(() => container.boundingBox())
     .toMatchObject({ width: RAIL_WIDTH });
-  // The rail stays in the tab order, so the focused link keeps its focus.
   await expect(container).not.toHaveAttribute("inert");
   await expect(link).toBeFocused();
 
@@ -103,7 +88,6 @@ test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and
   await expect
     .poll(() => container.boundingBox())
     .toMatchObject({ width: SIDEBAR_WIDTH });
-  // The log table's sticky header and the search icon once painted over it.
   await expect.poll(() => pointsCoveringSidebar(page)).toEqual([]);
   await page.mouse.move(800, 400);
   await expect
@@ -126,9 +110,6 @@ test("on a phone the sidebar sheet closes once a link moves the page", async ({
   await expect(sheet).toBeHidden();
 });
 
-// Points on a 16px grid over the sidebar where something other than the
-// sidebar is the topmost element, as "x,y". The `next dev` badge in the
-// corner does not count: builds do not render it.
 async function pointsCoveringSidebar(page: Page): Promise<string[]> {
   return page.evaluate((selector) => {
     const container = document.querySelector(selector);
@@ -138,6 +119,7 @@ async function pointsCoveringSidebar(page: Page): Promise<string[]> {
     for (let y = rect.top + 4; y < rect.bottom; y += 16) {
       for (let x = rect.left + 4; x < rect.right; x += 16) {
         const hit = document.elementFromPoint(x, y);
+        // The `next dev` badge does not count: builds do not render it.
         if (hit?.tagName === "NEXTJS-PORTAL") continue;
         if (!hit || !container.contains(hit)) {
           covered.push(`${Math.round(x)},${Math.round(y)}`);

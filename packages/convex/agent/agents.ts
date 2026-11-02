@@ -1,8 +1,3 @@
-/**
- * Agent CRUD scoped to an account. Every mutation revalidates the agent's
- * accountId against the caller-supplied accountId for defence in depth.
- */
-
 import { v, type Infer } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery, query } from "../_generated/server";
@@ -63,8 +58,7 @@ export const create = internalMutation({
       args.encryptedSourceConfig,
     ]);
 
-    // Serializable duplicate guard: racing creates conflict on this index
-    // read, so the retried transaction sees the winner's row and rejects.
+    // Racing creates conflict on this index read, so the retry sees the winner's row.
     const existing = await ctx.db
       .query("agents")
       .withIndex("by_accountId_and_name", (q) =>
@@ -89,15 +83,11 @@ export const create = internalMutation({
       encryptedSourceConfig: args.encryptedSourceConfig,
       sourceEncryptionIv: args.sourceEncryptionIv,
       sourceEncryptionTag: args.sourceEncryptionTag,
-      // New agents take a runtime key only with a signed user token.
       requireUserToken: true,
       createdAt: now,
       updatedAt: now,
     });
 
-    // Back-sync to the dashboard's canvas so API-created agents appear on
-    // the org owner's default project/stage. Safe no-op when the
-    // canvas surface isn't provisioned (no org owner / no projects).
     await backSyncCanvasFromAgentRow(ctx, agentRowId);
     await refreshAccountChannelEndpoints(ctx, args.accountId);
 
@@ -105,12 +95,7 @@ export const create = internalMutation({
   },
 });
 
-/**
- * Look up an agent by the public string `agentId` used in the broods
- * HTTP contract. The validator accepts `v.string()` (not `v.id("agents")`)
- * so unknown / non-Convex-id values resolve to `null` (= "agent not found")
- * instead of throwing an ArgumentValidationError at the adapter boundary.
- */
+// `v.string()`, not `v.id`: an unknown id resolves to null instead of failing validation.
 export const getById = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -129,14 +114,6 @@ export const getById = internalQuery({
   },
 });
 
-/**
- * Look up an account's agent by name. Names are unique per account (enforced
- * on create/rename), so config-plane clients can adopt an existing agent
- * instead of duplicating it.
- * @param accountId owning account
- * @param name agent name to look up
- * @returns agent document or null
- */
 export const getByName = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -182,10 +159,6 @@ export const listPage = internalQuery({
   },
 });
 
-/**
- * Incident check: configs whose linked `agents` row belongs to another account
- * than their project's. Pages the whole table; healthy pages are empty.
- */
 export const listForeignAgentLinks = internalQuery({
   args: { paginationOpts: paginationOptsValidator },
   returns: v.object({
@@ -223,12 +196,7 @@ export const listForeignAgentLinks = internalQuery({
   },
 });
 
-/**
- * The agents of the account's production stages, which is who the bare webhook
- * URL routes to. Same rule `webhookPath` issues it by: an active deployment on a
- * `production` stage. An agent in any other stage is reached only through its
- * own stage URL.
- */
+// Who the bare webhook URL routes to, by the same rule `webhookPath` issues it.
 export const listForProduction = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(agentDoc),
@@ -264,8 +232,6 @@ export const listForProduction = internalQuery({
   },
 });
 
-// An endpointId belonging to another account resolves empty, so a guessed
-// stage URL cannot reach across accounts.
 export const listForEndpoint = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -292,10 +258,6 @@ export const listForEndpoint = internalQuery({
   },
 });
 
-/**
- * The agents of one stage the account owns, deployed or not. Core's MCP
- * explorer reads it to run a sandbox-hosted server on an agent's VM.
- */
 export const listForStage = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -312,14 +274,6 @@ export const listForStage = internalQuery({
   },
 });
 
-/**
- * Lists the agents this project owns, for the project's scheduler.
- *
- * `agents` rows are account-scoped and carry no projectId; the link is
- * `agentConfigs.projectId`, so this resolves project → configs → agents.
- * Agents whose config row is missing belong to no project and are absent.
- * @param projectId the project to list agents for
- */
 export const listForProject = query({
   args: { projectId: v.id("projects") },
   // Names only: the full row carries the encrypted config blobs.
@@ -328,14 +282,11 @@ export const listForProject = query({
     ctx,
     args,
   ): Promise<Pick<Doc<"agents">, "_id" | "name">[]> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
 
-    // Gate on project membership: projectId arrives from the URL, so an
-    // unauthorized id must return nothing rather than another org's agents.
     const project = await getProjectForRole(ctx, user.id, args.projectId);
     if (!project) return [];
 
@@ -364,8 +315,6 @@ export const remove = internalMutation({
       throw new ClientError("Agent does not belong to the supplied accountId");
     }
 
-    // Mirror cleanup onto the dashboard's canvas: drop any agentConfigs row
-    // and matching canvas node that referenced this agent.
     const linkedConfig = await ctx.db
       .query("agentConfigs")
       .withIndex("by_agentId", (q) =>
@@ -389,8 +338,7 @@ export const remove = internalMutation({
             .map((n) => n.id),
         );
         if (removedIds.size > 0) {
-          // A deleted node takes its incident edges with it. A dangling edge
-          // would survive every later reconciliation pass.
+          // A dangling edge would survive every later reconciliation pass.
           await ctx.db.patch(layout._id, {
             nodes: nodes.filter((n) => !removedIds.has(n.id)),
             edges: layout.edges.filter(
@@ -402,8 +350,6 @@ export const remove = internalMutation({
       }
       await deleteAgentConfig(ctx, linkedConfig._id);
 
-      // Recompute the API-managed wiring so workspace/sandbox/skill nodes
-      // with no remaining API agent references disappear with their agent.
       if (linkedConfig.projectId && linkedConfig.stageId) {
         await syncApiAgentCanvasWiring(ctx, {
           projectId: linkedConfig.projectId,
@@ -495,8 +441,6 @@ export const update = internalMutation({
       updatedAt: Date.now(),
     });
 
-    // Mirror API-side changes onto the canvas-side agentConfigs row so
-    // the Details/Config/Variables tabs reflect what the API caller wrote.
     await mirrorAgentRowOntoConfig(ctx, normalized);
     await refreshAccountChannelEndpoints(ctx, args.accountId);
 

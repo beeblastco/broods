@@ -20,12 +20,6 @@ const NODE_TYPE_LABELS: Record<NodeType, string> = {
   workspace: "workspace",
 };
 
-/**
- * Confirm and delete one canvas card, wherever the delete was asked for: the
- * card's right-click menu or the side panel's Danger Zone. It owns the delete,
- * so the menu no longer has to open the panel to reach it. Stays shut while code
- * owns the card, and refuses the delete itself while ownership is still loading.
- */
 export function NodeDeleteDialog({
   node,
   open,
@@ -53,7 +47,6 @@ export function NodeDeleteDialog({
     | Id<"agentConfigs">
     | undefined;
 
-  /** Deletes the card and the row behind it; no-op while code owns it. */
   async function handleDelete(): Promise<void> {
     if (isCodeManaged || isOwnershipLoading) return;
     setIsDeleting(true);

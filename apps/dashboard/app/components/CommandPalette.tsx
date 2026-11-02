@@ -1,12 +1,6 @@
 "use client";
 
-/**
- * Search everything, run anything, or hand the query to Broods.
- *
- * Takes its rows rather than fetching them, so the `/ui-gallery` fixture can
- * drive the real dialog, the real ranking and the real bindings with no Convex
- * behind it. `CommandMenu` is the wrapper that supplies the live index.
- */
+// Takes its rows as props, so the `/ui-gallery` fixture drives it with no Convex behind it.
 import {
   useShortcut,
   useShortcutRegistry,
@@ -21,32 +15,37 @@ import {
 } from "@/app/components/ui/command";
 import {
   rankItems,
+  type RankedGroup,
   type SearchGroup,
   type SearchItem,
 } from "@/app/lib/paletteSearch";
 import { formatCombo, SHORTCUTS } from "@/app/lib/shortcuts";
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
+import { useCommandState } from "cmdk";
 import { Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export function CommandPalette({
   items,
   onAsk,
+  onHighlight,
   onSelect,
+  onWake,
 }: {
   items: readonly SearchItem[];
   onAsk: (query: string) => void;
+  onHighlight?: (item: SearchItem) => void;
   onSelect: (item: SearchItem) => void;
+  onWake?: () => void;
 }): React.JSX.Element {
   const { activeIds, isMac } = useShortcutRegistry();
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  // Switching project or stage is the same list with one heading left standing,
-  // which is cheaper than three dropdowns that each need controlled open state.
   const [only, setOnly] = useState<SearchGroup | null>(null);
 
   const openScoped = (group: SearchGroup | null): void => {
+    onWake?.();
     setQuery("");
     setOnly(group);
     setOpen(true);
@@ -56,8 +55,6 @@ export function CommandPalette({
   useShortcut("project.switch", () => openScoped("Projects"));
   useShortcut("stage.switch", () => openScoped("Stages"));
 
-  // Every claimed binding is a row, labelled and shortcut-hinted from the one
-  // registry, so the palette teaches the keyboard map by being used.
   const actions = useMemo(
     () =>
       SHORTCUTS.filter((shortcut) => activeIds.has(shortcut.id)).map(
@@ -99,10 +96,11 @@ export function CommandPalette({
         data-palette-trigger
         aria-label="Search or ask Broods"
         onClick={() => openScoped(null)}
+        onFocus={onWake}
+        onPointerEnter={onWake}
         className="flex h-6.5 shrink-0 cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-2 text-muted-foreground transition-colors hover:text-foreground lg:w-56"
       >
         <Search className="size-3.5" />
-        {/* Icon only below lg, where the header has no room for the label. */}
         <span className="hidden text-xs lg:inline">Search or ask Broods</span>
         <ShortcutKeys id="search.open" className="ml-auto hidden lg:flex" />
       </button>
@@ -123,6 +121,9 @@ export function CommandPalette({
               : "Search nodes, crons, variables, pages, actions..."
           }
         />
+        {onHighlight && (
+          <HighlightWatch groups={groups} onHighlight={onHighlight} />
+        )}
         <CommandList>
           {groups.length === 0 && (
             <CommandEmpty>Nothing here matches.</CommandEmpty>
@@ -156,4 +157,31 @@ export function CommandPalette({
       </CommandDialog>
     </>
   );
+}
+
+const HIGHLIGHT_SETTLE_MS = 120;
+
+function HighlightWatch({
+  groups,
+  onHighlight,
+}: {
+  groups: readonly RankedGroup[];
+  onHighlight: (item: SearchItem) => void;
+}): null {
+  const value = useCommandState((state) => state.value);
+  const item = useMemo(
+    () =>
+      groups.flatMap((group) => group.items).find((row) => row.id === value),
+    [groups, value],
+  );
+
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- settle timer on cmdk's highlight
+  useEffect(() => {
+    if (!item) return;
+    const id = window.setTimeout(() => onHighlight(item), HIGHLIGHT_SETTLE_MS);
+
+    return () => window.clearTimeout(id);
+  }, [item, onHighlight]);
+
+  return null;
 }

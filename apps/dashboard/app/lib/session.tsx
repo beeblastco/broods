@@ -16,12 +16,8 @@ export interface SessionUser {
   profilePictureUrl: string | null;
 }
 
-/**
- * The signed-in user, from WorkOS or a self-hosted stack's admin key. Shaped
- * so `ConvexProviderWithAuth` takes `useSession` as its `useAuth` directly.
- */
+// Shaped so `ConvexProviderWithAuth` takes `useSession` as its `useAuth` directly.
 interface Session {
-  /** A token Convex accepts, or null when signed out. */
   fetchAccessToken: (options: {
     forceRefreshToken: boolean;
   }) => Promise<string | null>;
@@ -31,7 +27,6 @@ interface Session {
   user: SessionUser | null;
 }
 
-/** Which sign-in the root layout resolved: WorkOS AuthKit, or the self-hosted admin. */
 export type InitialSession =
   | {
       initialAuth: ComponentProps<typeof AuthKitProvider>["initialAuth"];
@@ -44,7 +39,6 @@ export type InitialSession =
 
 const SessionContext = createContext<Session | null>(null);
 
-/** Provides the session for `initial`'s kind to `useSession`. */
 export function SessionProvider({
   children,
   initial,
@@ -65,7 +59,6 @@ export function SessionProvider({
   );
 }
 
-/** The session `SessionProvider` holds; the app reads the user, Convex the token. */
 export function useSession(): Session {
   const session = useContext(SessionContext);
   if (!session) throw new Error("useSession needs a SessionProvider");
@@ -73,9 +66,7 @@ export function useSession(): Session {
   return session;
 }
 
-// The layout hands over a short-lived Convex token, so Convex authenticates
-// with no round trip; a forced refresh, before it expires, asks
-// /auth/session for the next one, and null once signed out signs the app out.
+// The layout's short-lived token lets Convex authenticate with no round trip.
 function SelfHostSession({
   children,
   session,
@@ -115,7 +106,6 @@ async function signOutSelfHost(): Promise<void> {
   window.location.assign("/auth/key");
 }
 
-// AuthKit's user and access token, under AuthKitProvider, as a Session.
 function WorkOSSession({
   children,
 }: {

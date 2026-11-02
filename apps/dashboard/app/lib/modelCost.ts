@@ -1,21 +1,13 @@
-/**
- * Token cost on the dashboard: the Usage tab and the tracing task list read
- * model steps off the trace stream the same way and price them with the
- * crawled rates.
- */
 import type { ObservabilitySpanRow } from "@/app/hooks/useObservabilityStream";
 import type { ModelTokenUsage } from "@broods/convex/model/modelPricing";
 
-/** A model as usage rows and rate lookups name it. */
 export interface ModelRef {
   modelProvider: string;
   modelId: string;
 }
 
-/** One model's tokens, keyed the way usage rows name the model. */
 export interface ModelUsage extends ModelRef, ModelTokenUsage {}
 
-/** USD estimate with useful precision for small token batches. */
 export function formatUsd(value: number): string {
   if (value > 0 && value < 0.0001) return "<$0.0001";
 
@@ -27,12 +19,10 @@ export function formatUsd(value: number): string {
   });
 }
 
-/** `provider::model`, the key the model filter, its colors and the rate lookups share. */
 export function modelKey(model: ModelRef): string {
   return `${model.modelProvider}::${model.modelId}`;
 }
 
-/** A span's numeric attribute, 0 when absent. */
 export function numberAttribute(
   span: ObservabilitySpanRow,
   key: string,
@@ -42,7 +32,7 @@ export function numberAttribute(
   return typeof value === "number" ? value : 0;
 }
 
-/** A span that called the model: a step, or a phase that reports tokens, like a compaction. */
+// A phase that reports tokens, like a compaction, called the model too.
 export function isModelCallSpan(span: ObservabilitySpanRow): boolean {
   return (
     span.kind === "model.step" ||
@@ -51,7 +41,6 @@ export function isModelCallSpan(span: ObservabilitySpanRow): boolean {
   );
 }
 
-/** The model a run's root span names, or null before it names one. */
 export function runModel(root: ObservabilitySpanRow): ModelRef | null {
   const { "model.provider": provider, "model.id": modelId } =
     root.attributes ?? {};
@@ -61,7 +50,6 @@ export function runModel(root: ObservabilitySpanRow): ModelRef | null {
     : null;
 }
 
-/** A model call span's token counts, 0 for any it does not report. */
 export function stepTokens(step: ObservabilitySpanRow): ModelTokenUsage {
   return {
     inputTokens: numberAttribute(step, "model.input_tokens"),

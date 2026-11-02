@@ -1,8 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * Org members read agent configs and MCP servers but never a secret value in
- * them. Admins read and save the real values.
- */
 
 import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test, vi } from "vitest";

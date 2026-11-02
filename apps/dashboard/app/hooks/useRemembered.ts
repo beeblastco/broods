@@ -1,10 +1,5 @@
 import { useCallback, useState } from "react";
 
-/**
- * State that survives a reload, for a page's sort and filter. Lives in
- * localStorage under `key`; a null key, a blocked store or a missing one
- * keeps it in memory so the page still works.
- */
 export function useRemembered<T>(
   key: string | null,
   initial: T,
@@ -17,7 +12,7 @@ export function useRemembered<T>(
       try {
         window.localStorage.setItem(key, JSON.stringify(next));
       } catch {
-        // Private mode or a full store: the page keeps the value in memory.
+        // Private mode or a full store: the value stays in memory.
       }
     },
     [key],

@@ -1,5 +1,3 @@
-/** Twilio adapter: the signature over the public webhook URL, parsing an SMS, and the Messages API send. */
-
 import { afterEach, describe, expect, it } from "bun:test";
 import { createHmac } from "node:crypto";
 import { TwilioFormatConverter } from "@chat-adapter/twilio";
@@ -215,7 +213,6 @@ function delivery(body: string, signature: string): ChannelRequest {
   };
 }
 
-// An MMS with one picture and no text, as Twilio posts it.
 function pictureForm(mediaUrl: string): URLSearchParams {
   const form = smsForm("");
   form.set("NumMedia", "1");
@@ -236,8 +233,6 @@ function options(): Parameters<typeof createTwilioChannel>[0] {
   };
 }
 
-// Twilio's documented scheme: the URL, then every field name and value in
-// name order, HMAC-SHA1 with the auth token, base64.
 function sign(url: string, body: string, token: string = AUTH_TOKEN): string {
   const params = [...new URLSearchParams(body)].sort(
     ([left], [right]): number => (left < right ? -1 : left > right ? 1 : 0),
@@ -250,7 +245,6 @@ function sign(url: string, body: string, token: string = AUTH_TOKEN): string {
   return createHmac("sha1", token).update(base).digest("base64");
 }
 
-// The form Twilio posts for an inbound SMS.
 function smsForm(text: string): URLSearchParams {
   return new URLSearchParams({
     ToCountry: "US",
@@ -275,8 +269,6 @@ function smsForm(text: string): URLSearchParams {
   });
 }
 
-// Runs `use` against a stand-in Twilio API on loopback, reached by name through
-// the pinned-fetch seam, and returns every Messages API call it saw.
 async function withTwilioApi(
   use: (adapter: ReturnType<typeof createTwilioChannel>) => Promise<void>,
 ): Promise<

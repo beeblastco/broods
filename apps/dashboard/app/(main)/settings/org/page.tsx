@@ -1,22 +1,46 @@
 "use client";
 
-import { AllowanceUsage } from "@/app/(main)/[projectId]/dashboard/components/AllowanceUsage";
 import { ORG_TABS, pickTab } from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useQuery } from "convex/react";
+import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
-import { ApiAccessPanel } from "./components/ApiAccessPanel";
-import { MembersPanel } from "./components/MembersPanel";
-import { OrgDangerPanel } from "./components/OrgDangerPanel";
+import { useEffect } from "react";
 import { OrgGeneralPanel } from "./components/OrgGeneralPanel";
-import { OrgPoliciesPanel } from "./components/OrgPoliciesPanel";
-import { PermissionsPanel } from "./components/PermissionsPanel";
-import { RolesPanel } from "./components/RolesPanel";
+import {
+  loadAllowanceUsage,
+  loadApiAccessPanel,
+  loadMembersPanel,
+  loadOrgDangerPanel,
+  loadOrgPoliciesPanel,
+  loadPermissionsPanel,
+  loadRolesPanel,
+  ORG_PANELS,
+} from "./panels";
 
-// The key, member and access lists are laid out like Monitoring: the toolbar, the
-// table and the detail panel fill the page edge to edge, nothing scrolls but
-// the table.
+function ColumnLoading(): React.JSX.Element {
+  return <p className="text-sm text-muted-foreground">Loading…</p>;
+}
+
+function FlushLoading(): React.JSX.Element {
+  return <p className="px-6 pt-6 text-sm text-muted-foreground">Loading…</p>;
+}
+
+// `loading` gives each its own Suspense boundary, else it suspends to the route's loading.tsx.
+// The options stay inline at each call: Turbopack reads them statically.
+const AllowanceUsage = dynamic(loadAllowanceUsage, { loading: ColumnLoading });
+const MembersPanel = dynamic(loadMembersPanel, { loading: FlushLoading });
+const RolesPanel = dynamic(loadRolesPanel, { loading: FlushLoading });
+const OrgPoliciesPanel = dynamic(loadOrgPoliciesPanel, {
+  loading: FlushLoading,
+});
+const PermissionsPanel = dynamic(loadPermissionsPanel, {
+  loading: FlushLoading,
+});
+const ApiAccessPanel = dynamic(loadApiAccessPanel, { loading: FlushLoading });
+const OrgDangerPanel = dynamic(loadOrgDangerPanel, { loading: ColumnLoading });
+
 const FLUSH_TABS = new Set<string>([
   "api-access",
   "members",
@@ -30,13 +54,18 @@ export default function OrgSettingsPage(): React.JSX.Element {
   const searchParams = useSearchParams();
   const tab = pickTab(ORG_TABS, searchParams.get("tab"));
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- warms the tab chunk with the query
+  useEffect(() => {
+    void ORG_PANELS[tab.id]?.().catch((): void => {});
+  }, [tab]);
+
   const renderPanel = (): React.JSX.Element | null => {
     if (!org) return null;
     switch (tab.id) {
       case "general":
         return <OrgGeneralPanel org={org} />;
       case "usage":
-        // Keyed by org, so a switch never shows the last org's held month.
+        // Keyed so an org switch resets the held month.
         return <AllowanceUsage key={org._id} view={{ scope: "all" }} />;
       case "api-access":
         return <ApiAccessPanel org={org} />;
@@ -57,8 +86,6 @@ export default function OrgSettingsPage(): React.JSX.Element {
 
   const flush = FLUSH_TABS.has(tab.id);
 
-  // The states before a panel have one line or card to show and sit in the
-  // narrow column whatever the tab; only the panel slot follows the tab.
   const body = (): React.JSX.Element | null => {
     if (org === undefined) {
       return (

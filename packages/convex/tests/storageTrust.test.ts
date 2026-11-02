@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * The Broods-assigned storage external id: minted once per account, distinct
- * across accounts, sent on every AssumeRole of a customer role from the config
- * plane, and shown with a trust policy through `/v1/account/storage-trust`.
- */
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

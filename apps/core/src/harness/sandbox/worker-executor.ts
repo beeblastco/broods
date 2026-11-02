@@ -1,12 +1,3 @@
-/**
- * Worker sandbox executor: bash in a V8 isolate on Cloudflare Workers, no
- * container. Commands go over authenticated HTTP to the Worker in
- * `apps/cloudflare-worker`, which runs each in a Dynamic Worker per sandbox
- * id and keeps a reserved sandbox's files in R2 between calls. Nothing runs
- * between commands, so a persistent sandbox is its stored files, not a warm
- * machine. Reservation bookkeeping stays here.
- */
-
 import { z } from "zod";
 import {
   MAX_OUTPUT_BYTES,
@@ -15,7 +6,7 @@ import {
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
-import { recordUsage } from "../plan-limits.ts";
+import { recordUsageSoon } from "../plan-limits.ts";
 import { getSandboxExternalId } from "./instance-store.ts";
 import {
   callPlatformWorker,
@@ -44,16 +35,22 @@ import {
 } from "./utils.ts";
 
 const LABEL = "cloudflare v8 worker";
-// Headroom over the command timeout for the Worker to load the isolate and
-// move the stored files.
 const WORKER_OVERHEAD_MS = 15_000;
-// Commands in flight per reserved sandbox, so two never start from the same
-// stored files; the Worker's conditional write stays as the guard behind it.
+// So two commands never start from the same stored files; the Worker's conditional write backs it.
 const runsByReservation = new Map<string, Promise<unknown>>();
+// When and for which task each reserved sandbox was last mirrored. A worker's
+// row bills nothing, so its "last used" fields only need to name the task and
+// stay within a minute: a task's other commands in that minute skip the write.
+const mirroredFor = new Map<string, { task: string; at: number }>();
+const MIRROR_EVERY_MS = 60_000;
+const MAX_MIRRORED = 10_000;
+
+export function resetMirroredForTests(): void {
+  mirroredFor.clear();
+}
 
 const statusResult = z.object({ exists: z.boolean() });
 
-/** The platform Worker from core's env; every executor call uses it. */
 export function workerConnection(): PlatformWorkerConnection {
   return platformWorkerConnection(
     "CLOUDFLARE_WORKER_URL",
@@ -62,7 +59,6 @@ export function workerConnection(): PlatformWorkerConnection {
   );
 }
 
-/** Runs bash in a Cloudflare V8 Worker; picked by `providerExecutor` for `provider: "worker"`. */
 export class WorkerSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
 
@@ -72,12 +68,6 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     this.#config = config;
   }
 
-  /**
-   * Runs one command. A persistent config reuses its reservation's stored
-   * files, one command at a time; anything else runs on an empty disk that
-   * is gone afterwards, so there is nothing to destroy and no instance row
-   * to keep for it.
-   */
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
     const startedAt = Date.now();
     const key = sandboxReservationKey(request);
@@ -107,7 +97,7 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     return execRunResult(request, result, "worker", startedAt);
   }
 
-  /** A reservation whose files are stored: kept, not running, since nothing runs between calls. */
+  // Nothing runs between calls, so a reservation with stored files is suspended, not running.
   async getInstanceInfo(
     request: SandboxReservationRef,
   ): Promise<SandboxInstanceInfo | null> {
@@ -125,13 +115,13 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     return exists ? { externalId: id, state: "suspended" } : null;
   }
 
-  /** Drops a reservation's stored files and the reservation; cleanup and terminate call it. */
   async release(request: SandboxReleaseRequest): Promise<void> {
     await releasePlatformSandbox(
       "worker",
       this.#config.controlPlane?.accountId,
       request,
       async (id): Promise<void> => {
+        mirroredFor.delete(id);
         await callPlatformWorker(
           workerConnection(),
           LABEL,
@@ -142,7 +132,6 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     );
   }
 
-  // One command on the Worker, clamped to its limits.
   async #exec(
     id: string,
     request: SandboxRunRequest,
@@ -180,22 +169,18 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
 
       return result;
     } catch (error) {
-      // An answer means the command ran, a refusal after the fact (a 409)
-      // included; a call that never reached the Worker ran nothing.
+      // Any answer, a 409 included, means the command ran; an unreached Worker ran nothing.
       if (error instanceof PlatformWorkerError)
         this.#meter(Date.now() - startedAt, request.metadata);
       throw error;
     }
   }
 
-  // Nothing runs between commands, so each one is metered as it ends: its
-  // time on the Worker, plus the request. The platform always pays for an
-  // isolate, so only a config with no account goes unmetered. The project is
-  // the config's, else the one the run's agent or workspace belongs to.
+  // The platform pays for every isolate, so only a config with no account goes unmetered.
   #meter(durationMs: number, metadata: SandboxRunMetadata | undefined): void {
     const plane = this.#config.controlPlane;
     if (!plane) return;
-    recordUsage(
+    recordUsageSoon(
       plane.accountId,
       { workerMs: durationMs, workerRequests: 1 },
       {
@@ -212,13 +197,22 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     );
   }
 
-  // Mirrors a reservation into Convex once a command answered, so a Worker
-  // that refused is never billed. Recoverable, so it never holds up the command.
   #mirror(
     key: string,
     id: string,
     metadata: SandboxRunRequest["metadata"],
   ): void {
+    const task = metadata?.taskId;
+    if (task !== undefined) {
+      const last = mirroredFor.get(id);
+      if (last?.task === task && Date.now() - last.at < MIRROR_EVERY_MS) return;
+      mirroredFor.delete(id);
+      if (mirroredFor.size >= MAX_MIRRORED) {
+        const oldest = mirroredFor.keys().next().value;
+        if (oldest !== undefined) mirroredFor.delete(oldest);
+      }
+      mirroredFor.set(id, { task: task, at: Date.now() });
+    }
     void queueMirrorWrite(id, (): Promise<void> =>
       upsertSandboxInstance(
         this.#config.controlPlane,
@@ -231,8 +225,6 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
   }
 }
 
-// Runs `command` after every earlier command on the same reservation, whether
-// that one succeeded or failed, so each starts from the files the last left.
 function serializedByReservation<T>(
   id: string,
   command: () => Promise<T>,

@@ -1,5 +1,3 @@
-/** Shared sandbox configuration limits and their environment overrides. */
-
 import { workspaceSandboxLimits as configPlaneLimits } from "@broods/convex/model/sandboxRules";
 import type { SandboxProvider } from "./domain/sandbox-config.ts";
 import { optionalEnv } from "./env.ts";
@@ -7,17 +5,9 @@ import { optionalEnv } from "./env.ts";
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
 
-// Reserved (long-lived) sandbox lifecycle defaults. A reserved sandbox stays
-// running while in use and scales to 0 / stops after an idle cooldown, resuming
-// on the next call (Fargate-style). These bound the account-configurable
-// `lifecycle` block.
 export const DEFAULT_IDLE_TIMEOUT_SECONDS = 15 * 60;
-// Idle backstop for the providers that take a native expiry (daytona, lambda) when the
-// config sets no maxLifetimeSeconds. Keep equal to SANDBOX_RESERVATION_TTL_SECONDS in
-// `packages/convex/runtime.ts`, which the sandbox sweeper enforces for every provider.
+// Keep equal to SANDBOX_RESERVATION_TTL_SECONDS in `packages/convex/runtime.ts`.
 export const DEFAULT_RELEASE_GRACE_SECONDS = 7 * 24 * 60 * 60;
-// Cap concurrent detached background jobs per reserved sandbox so a runaway agent
-// cannot pin a sandbox busy (and defeat scale-to-0) with unbounded jobs.
 export const MAX_CONCURRENT_BACKGROUND_JOBS = 10;
 
 export interface ResolvedSandboxLifecycle {
@@ -32,11 +22,6 @@ export interface WorkspaceSandboxLimits {
   maxOutputLimitBytes: number;
 }
 
-/**
- * True once a reserved machine started at `startedAtMs` has passed
- * `maxLifetimeSeconds`. Executors without a native hard expiry check it when a
- * call acquires the machine, so it never interrupts the acquiring call's command.
- */
 export function outlivedMaxLifetime(
   lifecycle: ResolvedSandboxLifecycle,
   startedAtMs: number,
@@ -47,11 +32,6 @@ export function outlivedMaxLifetime(
   );
 }
 
-/**
- * Resolve a persistent sandbox's effective idle/expiry policy from its
- * account-configured `lifecycle` block, applying defaults. Used by the executors
- * (workdir standby, daytona autoStopInterval, e2b timeout).
- */
 export function resolveSandboxLifecycle(lifecycle?: {
   idleTimeoutSeconds?: number;
   maxLifetimeSeconds?: number;
@@ -65,24 +45,11 @@ export function resolveSandboxLifecycle(lifecycle?: {
   };
 }
 
-/**
- * The managed workspace bucket key prefix for a namespace. One source of truth for
- * the on-bucket layout, shared by the harness-side S3 reads/writes and the sandbox's
- * own mount so they always see the same files. A namespace's files live directly
- * under `<namespace>/`, the namespace being the tenant-isolation boundary the mount
- * session policy scopes to. Callers append their own trailing `/` and sub-path.
- */
+// Shared by harness S3 calls and the sandbox mount; callers append their own `/` and sub-path.
 export function workspaceNamespacePrefix(namespace: string): string {
   return namespace;
 }
 
-/**
- * Per-call sandbox limits for a provider: the defaults a call starts from,
- * and the ceilings the config plane validates against, read from the same
- * table (`packages/convex/model/sandboxRules.ts`) so core never clamps to a
- * number the config plane did not. A blocking exec is also bounded by the
- * harness request budget (~10 min); detached background jobs are not.
- */
 export function workspaceSandboxLimits(
   provider: SandboxProvider = "lambda",
 ): WorkspaceSandboxLimits {

@@ -3,12 +3,6 @@ import { join } from "node:path";
 
 const FIXTURE = join(import.meta.dir, "fixtures", "prompt-secret.ts");
 
-/**
- * `broods env set` reads its value through promptSecret. Piped input that ends
- * without a newline (`printf '%s'`) once left the readline question unanswered,
- * so the CLI exited 0 having stored nothing.
- */
-
 test.each([
   ["with a trailing newline", "abc\n", "abc"],
   ["with a trailing CRLF", "abc\r\n", "abc"],

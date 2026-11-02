@@ -35,7 +35,6 @@ async function seedAccount(t: T): Promise<void> {
   });
 }
 
-/** One manifest PUT: claim the scope, sync the manifest, release the claim. */
 async function deploy(
   t: T,
   stage: string,
@@ -163,8 +162,6 @@ describe("production region on an automated deploy", () => {
   });
 });
 
-// Initialize Production in the dashboard and an automated deploy pin the same
-// field, so either one's region holds against the other.
 describe("production region across the dashboard and a deploy", () => {
   const AUTH_ID = "user_region_owner";
 
@@ -175,7 +172,6 @@ describe("production region across the dashboard and a deploy", () => {
     vi.unstubAllEnvs();
   });
 
-  /** An owner signed in to the dashboard, with an org account for the CLI. */
   async function setup(): Promise<{
     t: T;
     caller: ReturnType<T["withIdentity"]>;

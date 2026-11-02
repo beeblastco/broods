@@ -1,15 +1,5 @@
 "use client";
 
-/**
- * Organization › Roles: a role is a name for a set of policies, and members
- * get one role each. Built-in roles are the three tiers; custom roles sit on
- * the member tier and add what their policies allow.
- *
- * Laid out like Monitoring: a toolbar, a flush table whose headers sort on
- * click, and a detail panel with Edit on its title line, the role's policies
- * and pages in the body, and the danger zone at the end.
- */
-
 import {
   DataTable,
   DataTableBody,
@@ -73,10 +63,8 @@ type Policy = FunctionReturnType<typeof api.access.listPolicies>[number];
 type Column = "name" | "description" | "policies" | "members" | "createdAt";
 type Field = (typeof QUERY_FIELDS)[number];
 
-// The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["kind"] as const;
 
-// Six columns of short text; below this the detail panel would wrap them.
 const TABLE_MIN_WIDTH = 640;
 
 const NO_ROWS: Role[] = [];
@@ -220,10 +208,6 @@ export function RolesPanel(): React.JSX.Element {
   );
 }
 
-/**
- * The selected role. Edit sits on the title line; the body holds its facts,
- * its policies with attach and detach, the pages it opens, and the danger zone.
- */
 function RolePanel({
   role,
   policies,
@@ -404,11 +388,6 @@ function RolePanel({
   );
 }
 
-/**
- * The Policies section's one control. With no policy in the org it links to
- * the Policies tab, since there is nothing to attach yet; otherwise it lists
- * the policies the role does not hold, or says every one is attached.
- */
 function AttachPolicy({
   policies,
   attachable,
@@ -457,7 +436,7 @@ function AttachPolicy({
     </DropdownMenu>
   );
 }
-/** New or edit: name, description and the policies the role holds. */
+
 function RoleDialog({
   role,
   policies,

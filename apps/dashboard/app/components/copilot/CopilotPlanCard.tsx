@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * A plan, one row per step, with the before and after of anything that writes.
- * The preview is the approval: nothing in the `approval` tier runs until the
- * row's own button is pressed.
- */
 import { Button } from "@/app/components/ui/button";
 import {
   actionChange,
@@ -14,6 +9,7 @@ import {
 } from "@/app/lib/copilotActions";
 import { ArrowRight, Ban, Check } from "lucide-react";
 
+// The preview is the approval: an `approval`-tier step runs only from its own button.
 export function CopilotPlanCard({
   completed,
   messageId,
@@ -36,6 +32,7 @@ export function CopilotPlanCard({
 
         return (
           <div
+            // oxlint-disable-next-line react/no-array-index-key -- plan steps never reorder
             key={`${action.type}-${index}`}
             className="flex flex-col gap-1.5"
           >

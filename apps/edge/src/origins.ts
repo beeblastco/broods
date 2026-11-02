@@ -1,8 +1,4 @@
-/**
- * Browser origins allowed to call the API, as hostnames; `*.` matches
- * subdomains. The edge's CORS and the gateway's WebSocket origin check both
- * default to this list, so HTTP and sockets agree.
- */
+/** Hostnames, `*.` for subdomains: edge CORS and the gateway's socket origin check share it. */
 export const DEFAULT_ORIGINS: readonly string[] = [
   "broods.app",
   "*.broods.app",

@@ -1,8 +1,3 @@
-/**
- * Fails CI when a new `error.code` ships without a row in the API reference,
- * or a row stays for a code nothing answers with any more.
- */
-
 import { describe, expect, it } from "bun:test";
 import { CLIENT_ERROR_STATUS } from "@broods/convex/model/clientError";
 import {
@@ -12,7 +7,6 @@ import {
 
 const REPO_ROOT = new URL("../../../", import.meta.url).pathname;
 const OPENAPI_PATH = `${REPO_ROOT}apps/docs/docs/api-reference/openapi.yaml`;
-// Everything that answers a public request: core, the gateway, the config plane.
 const SOURCE_ROOTS = ["apps/core/src", "apps/gateway/src", "packages/convex"];
 const SKIPPED_DIRS = ["_generated/", "node_modules/", "tests/"];
 const CODE_LITERAL = /\bcode: "([a-z_]+)"/g;

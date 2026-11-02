@@ -1,11 +1,4 @@
-/**
- * The key lists the dashboard draws: the org's own keys on Organization ›
- * API access, and a project's runtime keys (one per stage, minted with it)
- * and API keys (made by people, for deploys and integrations) on Project ›
- * Settings › Keys. One read model over the stores so every list reads the
- * same: who made the key, when, and when it last authenticated. Needs
- * `keys:read` where the key lives; otherwise null and the page shows a lock.
- */
+/** One read model for the dashboard's key lists: org keys, a project's runtime and API keys. */
 
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -43,7 +36,6 @@ const orgKeyValidator = v.object({
 
 const orgKeysValidator = v.object({
   keys: v.array(orgKeyValidator),
-  /** Every stage of the org's projects, for pinning a scoped key. */
   stages: v.array(
     v.object({
       projectId: v.id("projects"),
@@ -60,7 +52,6 @@ const runtimeKeyValidator = v.object({
   keyHint: v.string(),
   lastUsedAt: v.optional(v.number()),
   rotatedAt: v.optional(v.number()),
-  /** The member who minted or rotated it, or the CLI's name for them. */
   rotatedBy: v.optional(actorValidator),
 });
 
@@ -79,17 +70,12 @@ const apiKeyValidator = v.object({
 const projectKeysValidator = v.object({
   runtime: v.array(runtimeKeyValidator),
   api: v.array(apiKeyValidator),
-  /** The stages the viewer may rotate, revoke and make keys on: `keys:write` on each. */
   writable: v.array(v.object({ _id: v.id("stages"), name: v.string() })),
 });
 
 type OrgKeys = Infer<typeof orgKeysValidator>;
 type ProjectKeys = Infer<typeof projectKeysValidator>;
 
-/**
- * The org's own keys: the account key then its scoped keys, or no keys before
- * the org has an account. Null without `keys:read`.
- */
 export const listForOrg = query({
   args: {},
   returns: v.union(orgKeysValidator, v.null()),
@@ -148,7 +134,6 @@ export const listForOrg = query({
   },
 });
 
-/** A project's runtime keys per stage and its API keys, each stage the viewer may read; null without `keys:read` anywhere in it. */
 export const listForProject = query({
   args: { projectId: v.id("projects") },
   returns: v.union(projectKeysValidator, v.null()),
@@ -229,7 +214,6 @@ export const listForProject = query({
   },
 });
 
-/** The API actions a scoped key's allow rules grant, for its permission grid. */
 function grantedActions(policy: PolicyDocument): ApiPolicyAction[] {
   const granted = new Set(
     policy.rules
@@ -240,7 +224,6 @@ function grantedActions(policy: PolicyDocument): ApiPolicyAction[] {
   return API_POLICY_ACTIONS.filter((action) => granted.has(action));
 }
 
-/** Every stage of the org's projects, by project then stage name. */
 async function orgStages(
   ctx: QueryCtx,
   orgId: Id<"orgs">,
@@ -274,7 +257,6 @@ async function orgStages(
     );
 }
 
-/** One stage's active runtime deployment and active API keys. */
 async function stageKeys(
   ctx: QueryCtx,
   stage: Doc<"stages">,

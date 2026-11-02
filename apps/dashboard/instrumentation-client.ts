@@ -1,15 +1,13 @@
 import { analytics } from "@/app/lib/analytics";
 import type { CaptureResult, Properties } from "posthog-js";
 
-// Browser analytics and error tracking: anonymous behaviour only, never what
-// users type or see. A no-op when the key or host is unset.
+// Anonymous behaviour only, never what users type or see.
 const posthogKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 const posthogHost = process.env.NEXT_PUBLIC_POSTHOG_HOST;
 // Behind a reverse proxy posthog-js cannot derive the app's URL from the host.
 const posthogUiHost = process.env.NEXT_PUBLIC_POSTHOG_UI_HOST;
 
-// URL properties keep only these opaque params; search boxes write what users
-// type into the URL (`?q=`), so every other param is dropped.
+// Search boxes write what users type into the URL (`?q=`): keep only these opaque params.
 const URL_PARAMS_KEPT = new Set(["node", "stage", "tab"]);
 const URL_PROPERTIES = [
   "$current_url",
@@ -18,8 +16,7 @@ const URL_PROPERTIES = [
   "$referrer",
 ];
 
-// The part of a captured exception that can quote user input; posthog-js does
-// not export a type for its `$exception_list` entries.
+// posthog-js exports no type for its `$exception_list` entries.
 interface CapturedException {
   type?: string;
   value?: string;
@@ -43,15 +40,12 @@ void analytics.then((posthog): void => {
       capture_console_errors: false,
     },
   });
-  // Browsers identified before analytics went anonymous still hold the email
-  // and name the flags request would send.
+  // Browsers identified before analytics went anonymous still hold email and name.
   posthog.resetPersonPropertiesForFlags();
 });
 
-// Runs on every event, so it holds after posthog.reset() clears registered
-// properties: no GeoIP lookup, URLs without typed params, and each exception
-// message replaced with its type so error tracking still groups by type and
-// stack frames.
+// Per event, so it holds after posthog.reset(); a message becomes its type, which still
+// groups errors by type and stack.
 function anonymized(capture: CaptureResult | null): CaptureResult | null {
   if (!capture) return capture;
   capture.properties.$geoip_disable = true;

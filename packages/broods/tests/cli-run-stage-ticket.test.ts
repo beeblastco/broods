@@ -3,13 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-/**
- * `broods run` reaches the agent with the developer's stage ticket, the
- * credential `logs` uses, not the runtime key: it runs private agents and
- * agents that require a user token. A ticket lasts 15 minutes, so one with
- * under a minute left is re-minted before the request. Without a login (a
- * project or account key) it keeps the runtime key.
- */
+// `broods run` sends the stage ticket, not the runtime key, re-minted with under a minute left.
+// Without a login it keeps the runtime key.
 
 const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
 const RESOURCES_MODULE = join(import.meta.dir, "..", "src", "resources.ts");

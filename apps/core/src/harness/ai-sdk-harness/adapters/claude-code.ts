@@ -1,7 +1,3 @@
-/**
- * Claude Code adapter construction and Broods provider mapping.
- */
-
 import {
   VERSION,
   createClaudeCode,
@@ -20,14 +16,12 @@ import {
 
 export const CLAUDE_CODE_HARNESS_VERSION = VERSION;
 
-/** Builds the Claude Code adapter from raw settings; `createAiSdkHarnessAdapter` calls it. */
 export function createClaudeCodeAdapter(
   settings?: ClaudeCodeHarnessSettings,
 ): HarnessAgentAdapter {
   return createClaudeCode(settings);
 }
 
-/** Builds the Claude Code adapter from an agent config; the adapter registry calls it for `harness.type` claude-code. */
 export function createConfiguredClaudeCodeAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {

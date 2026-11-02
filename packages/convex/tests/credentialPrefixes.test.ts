@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * Every config-plane and CLI route routes a bearer by its `b` prefix. A key
- * minted under an old prefix gets 401 even when its hash is still stored,
- * and the same key reissued under the new prefix authenticates.
- */
 
 import { convexTest, type TestConvex } from "convex-test";
 import { beforeEach, describe, expect, test, vi } from "vitest";

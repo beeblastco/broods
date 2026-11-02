@@ -6,7 +6,6 @@ import {
   SHORTCUTS,
 } from "../app/lib/shortcuts";
 
-/** Enough of a KeyboardEvent for the matcher, which only reads these five. */
 function key(init: {
   alt?: boolean;
   ctrl?: boolean;
@@ -27,7 +26,6 @@ describe("shortcut matching", () => {
   test("mod is Command on a Mac and Control everywhere else", () => {
     expect(eventCombo(key({ key: "k", meta: true }), true)).toBe("mod+k");
     expect(eventCombo(key({ ctrl: true, key: "k" }), false)).toBe("mod+k");
-    // The wrong modifier for the platform is not the shortcut.
     expect(eventCombo(key({ ctrl: true, key: "k" }), true)).toBe("k");
   });
 

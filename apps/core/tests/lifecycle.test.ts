@@ -1,9 +1,5 @@
-/**
- * Delivery runs against a real TLS server on loopback rather than a stubbed
- * `fetch`, because `fireWebhook` connects through the pinned guard: it resolves
- * the name itself and opens the socket to the address it validated, so there is
- * no global for a stub to replace.
- */
+// fireWebhook resolves the name and dials the validated address itself: no fetch to stub, so
+// delivery goes to a real TLS server on loopback.
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { loopbackTransport, withLoopbackTlsServer } from "./helpers/tls.ts";
@@ -140,8 +136,7 @@ describe("createAgentLifecycleEmitter", () => {
 
       await emitter.emit("agent.started", {});
 
-      // a (subscribed) and b (no allow-list) fire; c is disabled; d only wants
-      // agent.finished.
+      // a (subscribed) and b (no allow-list) fire; c is disabled; d only wants agent.finished.
       expect(deliveries.map((d) => d.path).sort()).toEqual(["/a", "/b"]);
     });
   });
@@ -161,7 +156,6 @@ describe("createAgentLifecycleEmitter", () => {
           loopbackTransport(),
         );
 
-        // A rejected delivery must not propagate out of emit.
         await emitter.emit("agent.failed", { error: "something broke" });
 
         expect(deliveries).toHaveLength(1);
@@ -193,9 +187,8 @@ describe("createAgentLifecycleEmitter", () => {
   });
 
   it("refuses to follow a redirect away from the host the account named", async () => {
-    // Every hop would be revalidated against the denylist, but http is a valid
-    // hop, so following one could carry the signed payload off TLS to a host
-    // the operator never configured.
+    // Each hop is revalidated, but http is a valid hop: following one could carry the signed
+    // payload off TLS to a host the operator never configured.
     await withWebhookServer(
       async (url) => {
         expect(
@@ -211,9 +204,7 @@ describe("createAgentLifecycleEmitter", () => {
   });
 
   it("refuses a webhook whose name resolves to a private address", async () => {
-    // The name is public and passes the protocol check; only resolution reveals
-    // the metadata address. A hostname string check cannot see this, which is
-    // the whole reason delivery goes through the pinned guard.
+    // Only resolution reveals the metadata address behind this public name; a string check cannot.
     expect(
       fireWebhook(
         { url: "https://public.test/hook", secret: "secret" },

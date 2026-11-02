@@ -1,12 +1,3 @@
-/**
- * HTTP router for the `broods` CLI.
- *
- * Routes authenticate with the account key (or a scoped project key /
- * CLI token) and dispatch to the handlers in `cli/httpRoutes.ts`, which
- * delegate writes to `cliSync` so the CLI can sync desired-state manifests
- * without browser auth.
- */
-
 import { httpAction, type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { bearerToken, runTokenRefusal } from "../config/routes/shared";
@@ -66,8 +57,7 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
         return await handleResourceDeleteRoute(ctx, req, route, authResult);
     }
   } catch (error) {
-    // Most failures here are the caller's own manifest failing validation.
-    // Hand the reason back or `broods dev` reports an unactionable error.
+    // Mostly the caller's manifest failing validation: hand the reason back to `broods dev`.
     const clientError = clientErrorResponse(error);
     if (clientError) return clientError;
     if (error instanceof SyntaxError || error instanceof URIError) {
@@ -130,13 +120,6 @@ function parseRoute(pathname: string): RouteParts | null {
   return null;
 }
 
-/**
- * Resolve the bearer to an account key hash by its prefix, enforcing
- * project-key scope against the route's project/stage. Any other prefix is
- * refused without a lookup. Cron sync runs natively against the crons table
- * and its registered schedules (agent/crons), so it works for account keys
- * and project keys alike.
- */
 async function resolveCliRequestAuth(
   ctx: ActionCtx,
   token: string,
@@ -176,7 +159,6 @@ async function resolveCliRequestAuth(
   });
 }
 
-/** Match the shared `/v1/account/projects/{project}/stages/{stage}` prefix. */
 function stageRouteParts(
   parts: string[],
 ): { project: string; stage: string; rest: string[] } | null {

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
-  createPendingAsyncToolResult,
+  createDetachedAsyncToolResult,
   settleAsyncToolResultFromCallback,
   verifyAsyncToolCompletionToken,
 } from "../src/harness/async-tool-result.ts";
@@ -27,9 +27,10 @@ afterEach(() => {
 describe("async tool result persistence", () => {
   it("forwards delivery and callback authorization to the transactional create", async () => {
     runtime.mutate = mutationMock as never;
-    await createPendingAsyncToolResult({
+    await createDetachedAsyncToolResult({
+      eventId: "event-1",
+      tag: "bash",
       resultId: "result-1",
-      parentEventId: "event-1",
       conversationKey: "conversation-1",
       toolName: "slowLookup",
       toolCallId: "call-1",
@@ -40,6 +41,7 @@ describe("async tool result persistence", () => {
     expect(mutationMock).toHaveBeenCalledWith(
       "createAsyncToolResult",
       expect.objectContaining({
+        parentEventId: "event-1:bash:result-1",
         delivery: { kind: "async" },
         completionToken: "token-1",
       }),

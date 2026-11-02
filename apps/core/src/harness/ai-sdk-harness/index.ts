@@ -1,7 +1,3 @@
-/**
- * Internal entrypoint for Broods' AI SDK Harness integration.
- */
-
 export {
   createConfiguredHarnessAgent,
   createMicrovmHarnessAgent,
