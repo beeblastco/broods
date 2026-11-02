@@ -31,6 +31,7 @@ import {
 import { slugifyName } from "./lib/slug";
 import { randomToken } from "./model/accountSecrets";
 import { ensureStage } from "./model/cliSync";
+import { deleteStageContents } from "./stage";
 import { ClientError, clientErrorResponse } from "./model/clientError";
 import { json, jsonError } from "./model/httpJson";
 import {
@@ -153,6 +154,8 @@ interface LinkKeys {
   projectId: Id<"projects">;
   projectSlug: string;
   keyIds: Id<"deployKeys">[];
+  /** Stages the minting added, removed again if the link fails. */
+  stageIds: Id<"stages">[];
   production?: string;
   development?: string;
 }
@@ -608,8 +611,14 @@ async function linkFor(
   ctx: ActionCtx,
   authId: string,
   projectId: Id<"projects">,
-  target: LinkTarget,
+  asked: LinkTarget,
 ): Promise<ProjectRepo> {
+  // A blank branch is no answer, so it takes the default rather than "".
+  const target = {
+    ...asked,
+    productionBranch: blankToUnset(asked.productionBranch),
+    developmentBranch: blankToUnset(asked.developmentBranch),
+  };
   const app = requireGitHubApp();
   await requireInstallation(ctx, authId, projectId, target.installationId);
   const keys = await ctx.runMutation(internal.github.mintLinkKeys, {
@@ -903,6 +912,7 @@ export const mintLinkKeys = internalMutation({
     projectId: v.id("projects"),
     projectSlug: v.string(),
     keyIds: v.array(v.id("deployKeys")),
+    stageIds: v.array(v.id("stages")),
     production: v.optional(v.string()),
     development: v.optional(v.string()),
   }),
@@ -911,14 +921,19 @@ export const mintLinkKeys = internalMutation({
     { authId, projectId, repoId, productionBranch, developmentBranch },
   ): Promise<LinkKeys> => {
     const project = await requireLinkAccess(ctx, authId, projectId);
+    // Caught before a stage is made; one that only defaults can clash shows up on GitHub.
+    if (productionBranch && productionBranch === developmentBranch) {
+      throw new ClientError(
+        `Production and Development need different branches; both are ${productionBranch}.`,
+      );
+    }
+    const existing = await ctx.db
+      .query("stages")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+      .collect();
     const production =
       productionBranch === undefined
-        ? (
-            await ctx.db
-              .query("stages")
-              .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
-              .collect()
-          ).some((stage) => stage.kind === "production")
+        ? existing.some((stage) => stage.kind === "production")
         : productionBranch !== null;
     const stages = STAGES.filter((stage) =>
       stage === "production" ? production : developmentBranch !== null,
@@ -952,6 +967,9 @@ export const mintLinkKeys = internalMutation({
       token: string;
     }> => {
       const stage = await ensureStage(ctx, project, stageName);
+      if (!existing.some((entry) => entry._id === stage._id)) {
+        keys.stageIds.push(stage._id);
+      }
       // A role may write keys on the project but not on Production.
       await requireDashboardPermission(
         ctx,
@@ -977,6 +995,7 @@ export const mintLinkKeys = internalMutation({
       projectId: projectId,
       projectSlug: project.slug,
       keyIds: [],
+      stageIds: [],
     };
     for (const stage of stages) {
       const key = await mint(stage);
@@ -988,13 +1007,25 @@ export const mintLinkKeys = internalMutation({
   },
 });
 
-/** Deletes keys a link minted but never used, and its repo claim, after a GitHub call failed. */
+/** Deletes the keys and stages a link made but never used, and its repo claim, after a GitHub call failed. */
 export const revokeKeys = internalMutation({
-  args: { projectId: v.id("projects"), keyIds: v.array(v.id("deployKeys")) },
+  args: {
+    projectId: v.id("projects"),
+    keyIds: v.array(v.id("deployKeys")),
+    /** Stages the minting added; nothing but its keys is in them yet. */
+    stageIds: v.array(v.id("stages")),
+  },
   returns: v.null(),
-  handler: async (ctx, { projectId, keyIds }): Promise<null> => {
+  handler: async (ctx, { projectId, keyIds, stageIds }): Promise<null> => {
     for (const keyId of keyIds) {
       if (await ctx.db.get(keyId)) await ctx.db.delete(keyId);
+    }
+    for (const stageId of stageIds) {
+      const stage = await ctx.db.get(stageId);
+      if (stage) {
+        await deleteStageContents(ctx, stage);
+        await ctx.db.delete(stageId);
+      }
     }
     if (await ctx.db.get(projectId)) {
       await ctx.db.patch(projectId, { linkClaim: undefined });
@@ -1157,6 +1188,15 @@ function isStaleRun(
   if (stored !== incoming) return stored > incoming;
 
   return row.status === "completed" && run.status !== "completed";
+}
+
+// A branch with surrounding space trimmed; a blank one is unset.
+function blankToUnset(
+  branch: string | null | undefined,
+): string | null | undefined {
+  if (typeof branch !== "string") return branch;
+
+  return branch.trim() || undefined;
 }
 
 // The org's owner, or any member.
@@ -1423,6 +1463,7 @@ async function withKeys<T>(
     await ctx.runMutation(internal.github.revokeKeys, {
       projectId: keys.projectId,
       keyIds: keys.keyIds,
+      stageIds: keys.stageIds,
     });
     throw error;
   }

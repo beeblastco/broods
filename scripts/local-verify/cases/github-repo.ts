@@ -271,6 +271,25 @@ async function link(
       },
     });
   }
+  // A link that fails on GitHub after minting takes back the Production stage it added.
+  await run.refused("github:linkRepo", {
+    projectId: projectId,
+    target: {
+      installationId: ORG_INSTALLATION,
+      repoId: ORG_REPO,
+      baseUrl: context.edgeUrl,
+      rootDirectory: "apps/agents",
+      productionBranch: "no-such-branch",
+    },
+  });
+  const stages = (await asAdmin("stage:list", {
+    projectId: projectId,
+  })) as Array<{ kind: string }>;
+  assertStep(
+    "a failed link leaves no Production stage behind",
+    !stages.some((stage) => stage.kind === "production"),
+    JSON.stringify(stages.map((stage) => stage.kind)),
+  );
   // Those refusals released their claim on the repo, so the real link goes
   // through. Naming main for Production adds that stage to the project.
   const linked = (await context.measure("link the repo", async () =>
