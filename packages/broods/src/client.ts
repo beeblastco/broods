@@ -75,7 +75,6 @@ export interface ChannelReference {
     | "linear"
     | "slack"
     | "discord"
-    | "matrix"
     | "pancake"
     | "teams"
     | "twilio"

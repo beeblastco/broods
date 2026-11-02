@@ -34,7 +34,6 @@ const INLINE_COMMAND_CHANNELS = new Set([
   "discord",
   "gchat",
   "instagram",
-  "matrix",
   "messenger",
   "slack",
   "teams",

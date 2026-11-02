@@ -57,7 +57,7 @@ import {
   resolveChannelAgentId,
   type ChannelRecord,
 } from "../shared/domain/channel-record.ts";
-import { getHarnessPublicUrl, optionalEnv } from "../shared/env.ts";
+import { getHarnessPublicUrl } from "../shared/env.ts";
 import {
   createGoogleChatChannel,
   parseServiceAccountKey,
@@ -79,10 +79,6 @@ import {
   logInfo,
   logWarn,
 } from "../shared/log.ts";
-import {
-  createMatrixChannel,
-  MATRIX_FORWARDER_URL_ENV,
-} from "../shared/matrix-channel.ts";
 import { isPlainObject } from "@broods/convex/model/objects";
 import {
   getObservabilityContext,
@@ -726,7 +722,7 @@ async function handleHttpRequest(
 
       return unauthorizedResponse();
     }
-    // Not 404: that tells the provider, and the Matrix forwarder, to give up on the event.
+    // Not 404: that tells the provider to give up on the event.
     if (holder.kind === "unavailable") {
       return errorResponse(503, "Channel lookup failed, retry the delivery");
     }
@@ -1948,7 +1944,6 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const teamsChannel = createTeamsChannelFromConfig(config);
   const twilioChannel = createTwilioChannelFromConfig(config);
   const zaloChannel = createZaloChannelFromConfig(config);
-  const matrixChannel = createMatrixChannelFromConfig(config);
   const instagramChannel = createInstagramChannelFromConfig(config);
   const messengerChannel = createMessengerChannelFromConfig(config);
   const whatsAppChannel = createWhatsAppChannelFromConfig(config);
@@ -1965,7 +1960,6 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       teamsChannel,
       twilioChannel,
       zaloChannel,
-      matrixChannel,
       instagramChannel,
       messengerChannel,
       whatsAppChannel,
@@ -2867,26 +2861,6 @@ function createTeamsChannelFromConfig(
     appTenantId: channel.appTenantId,
     appType: channel.appType,
     userName: channel.userName,
-  });
-}
-
-function createMatrixChannelFromConfig(
-  config: AgentConfig,
-): ChannelAdapter | null {
-  const channel = config.channels?.matrix;
-  if (!channel?.botToken || !channel.apiUrl) {
-    return null;
-  }
-
-  return createMatrixChannel({
-    accessToken: channel.botToken,
-    allowedChannelIds: reachSet(channel.allowedChannelIds),
-    allowedUserIds: reachSet(channel.allowedUserIds),
-    apiUrl: channel.apiUrl,
-    // Empty without a forwarder: inbound still parses; a reply fails naming the variable.
-    forwarderUrl: optionalEnv(MATRIX_FORWARDER_URL_ENV) ?? "",
-    ...(channel.botName ? { botName: channel.botName } : {}),
-    ...(channel.mentionText ? { mentionText: channel.mentionText } : {}),
   });
 }
 

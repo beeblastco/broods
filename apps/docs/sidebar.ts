@@ -79,7 +79,6 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "channels/discord", label: "Discord" },
         { type: "doc", id: "channels/github", label: "GitHub" },
         { type: "doc", id: "channels/linear", label: "Linear" },
-        { type: "doc", id: "channels/matrix", label: "Matrix" },
         { type: "doc", id: "channels/zalo", label: "Zalo" },
         { type: "doc", id: "channels/pancake", label: "Pancake" },
         { type: "doc", id: "channels/instagram", label: "Instagram" },

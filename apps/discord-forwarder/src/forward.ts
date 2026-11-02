@@ -21,7 +21,7 @@ export interface ForwardTarget {
 }
 
 export interface ForwardAuth {
-  /** Default 1: Matrix's sync loop awaits each delivery and retries from its outbox. */
+  /** Default 1: no retry. */
   attempts?: number;
   header: string;
   timeoutMs: number;
