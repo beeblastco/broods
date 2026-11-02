@@ -7,6 +7,7 @@
 import type { SETTINGS_TABS } from "@/app/lib/navigation";
 import type { DangerPanel } from "./components/DangerPanel";
 import type { EnvironmentVariablesPanel } from "./components/EnvironmentVariablesPanel";
+import type { GitPanel } from "./components/GitPanel";
 import type { KeysPanel } from "./components/KeysPanel";
 import type { PoliciesPanel } from "./components/PoliciesPanel";
 import type { WebhooksPanel } from "./components/WebhooksPanel";
@@ -17,6 +18,9 @@ export const loadEnvironmentVariablesPanel = (): Promise<
   import("./components/EnvironmentVariablesPanel").then(
     (mod) => mod.EnvironmentVariablesPanel,
   );
+
+export const loadGitPanel = (): Promise<typeof GitPanel> =>
+  import("./components/GitPanel").then((mod) => mod.GitPanel);
 
 export const loadKeysPanel = (): Promise<typeof KeysPanel> =>
   import("./components/KeysPanel").then((mod) => mod.KeysPanel);
@@ -34,6 +38,7 @@ export const loadDangerPanel = (): Promise<typeof DangerPanel> =>
 export const SETTINGS_PANELS: Partial<
   Record<(typeof SETTINGS_TABS)[number]["id"], () => Promise<unknown>>
 > = {
+  git: loadGitPanel,
   variables: loadEnvironmentVariablesPanel,
   keys: loadKeysPanel,
   webhooks: loadWebhooksPanel,

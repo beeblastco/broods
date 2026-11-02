@@ -112,6 +112,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         { type: "doc", id: "guides/deploying", label: "Deploying" },
+        { type: "doc", id: "guides/github", label: "GitHub" },
         { type: "doc", id: "guides/security", label: "Security and access" },
       ],
     },
