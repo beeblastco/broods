@@ -54,7 +54,26 @@ export function claimSandboxInstance(
     ttlSeconds: ttlSeconds,
   });
 }
-// True when the caller now owns the machine's teardown, false when a run refreshed it first.
+// Claim-or-reuse in one round trip: the id already reserved under the key
+// (its idle deadline refreshed), else `externalId` as a new reservation.
+export function reserveSandboxInstance(
+  provider: SandboxProvider,
+  reservationKey: string,
+  externalId: string,
+  accountId: string,
+  ttlSeconds?: number,
+): Promise<string> {
+  return runtime.mutate("reserveSandboxReservation", {
+    provider: provider,
+    reservationKey: reservationKey,
+    externalId: externalId,
+    accountId: accountId,
+    ttlSeconds: ttlSeconds,
+  });
+}
+// Drops the reservation row while it still names `expectedExternalId`; with
+// `onlyExpired`, only once its deadline lapsed. True when the caller now owns the
+// teardown of that machine, false when a run refreshed or replaced it first.
 export async function deleteSandboxInstance(
   provider: SandboxProvider,
   reservationKey: string,

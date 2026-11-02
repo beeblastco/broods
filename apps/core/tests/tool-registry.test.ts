@@ -1,5 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
 import type { ToolApprovalStatus, ToolExecuteFunction, ToolSet } from "ai";
+import * as asyncToolResults from "../src/harness/async-tool-result.ts";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type { SessionMessageResult } from "../src/harness/ingress.ts";
 import type { Session } from "../src/harness/session.ts";
@@ -49,6 +58,60 @@ describe("createTools", () => {
 
     expect(await createTools(createToolContext(), {})).toEqual({});
     expect(urlContextMock).not.toHaveBeenCalled();
+  });
+
+  it("records an async_status read on the session that saves the step", async (): Promise<void> => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const read = spyOn(
+      asyncToolResults,
+      "getAsyncToolResult",
+    ).mockResolvedValue({
+      resultId: "async_tool_read",
+      parentEventId: "event_parent",
+      conversationKey: "conversation",
+      toolName: "lookup",
+      toolCallId: "call-read",
+      input: {},
+      status: "completed",
+      response: "the answer",
+      handback: "detached",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      expiresAt: Date.now() + 60_000,
+    });
+    const recordToolResultRead = mock(
+      async (_toolCallId: string, _resultId: string): Promise<void> => {},
+    );
+    const context = sandboxContext([
+      { name: "jobs", workspaceId: "ws_jobs", namespace: "ns" },
+    ]);
+    const tools = await createTools(
+      {
+        ...context,
+        workspaces: context.workspaces?.map((workspace): ResolvedWorkspace => ({
+          ...workspace,
+          sandbox: { provider: "lambda", persistent: true },
+        })),
+        session: {
+          agentId: "agent_test",
+          recordToolResultRead: recordToolResultRead,
+        } as unknown as Session,
+      },
+      {},
+    );
+
+    try {
+      await (tools.async_status as unknown as ChannelTestTool).execute(
+        { statusId: "async_tool_read" },
+        { toolCallId: "tool-call-read", messages: [], context: {} },
+      );
+      expect(recordToolResultRead).toHaveBeenCalledWith(
+        "tool-call-read",
+        "async_tool_read",
+      );
+    } finally {
+      read.mockRestore();
+    }
   });
 
   it("registers computer for any machine it reaches, not only its own sandbox", async () => {

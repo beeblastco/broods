@@ -42,6 +42,8 @@ import {
   type CliOnboardingContext,
   type CliOnboardingOrg,
   type CliOnboardingProject,
+  type CliGitHubLink,
+  type CliGitHubStatus,
   type CliProject,
   type CliStage,
   type CliStageSession,
@@ -92,6 +94,7 @@ import {
   promptSelect,
   promptSelectOrText,
   promptText,
+  openBrowser,
   requireAuth,
 } from "./utils.ts";
 import {
@@ -144,7 +147,7 @@ const GLOBAL_OPTIONS = `Global options:
 
 const COMMAND_GROUPS = `Commands
   Develop   dev  diff  run  logs  stream
-  Ship      deploy  env  stage
+  Ship      deploy  env  stage  github
   Inspect   agent  trace  whoami
   Account   login  connect  disconnect  org  project
   Tools     init  machine  mcp  update`;
@@ -189,8 +192,9 @@ ${GLOBAL_OPTIONS}`,
   deploy: `Usage: broods deploy [options]
 
 Syncs Production once and writes BROODS_API_KEY to .env.local, plus
-BROODS_USER_TOKEN_SECRET when the stage has no signing secret yet. Ignores
-BROODS_STAGE by design. Pass --stage to deploy anywhere else.
+BROODS_USER_TOKEN_SECRET when the stage has no signing secret yet. With CI
+set it writes neither. Ignores BROODS_STAGE by design. Pass --stage to deploy
+anywhere else.
 
 Options:
   --prune               Allow deploy to delete undeclared remote resources
@@ -312,6 +316,32 @@ ${GLOBAL_OPTIONS}`,
 Chats with an agent in a terminal UI (reasoning, tool cards, y/n approvals).
 A prompt is sent as the first turn; redirected output streams plain text and
 therefore requires a prompt.
+
+${GLOBAL_OPTIONS}`,
+  github: `Usage: broods github <status|repos|link|unlink|connect> [owner/repo]
+
+Links the project to a GitHub repo, so a push deploys its stage from your own
+GitHub Actions: Broods seals a project key per stage into the repo and commits
+.github/workflows/broods.yml.
+
+Subcommands:
+  status               The project's link, latest deploy per branch, and accounts
+  repos                Repos the org's connected GitHub accounts let you link
+  link <owner/repo>    Link a repo; by default the default branch deploys
+                       Development, or Production when the project has that
+                       stage, with dev (created when missing) for Development
+  unlink               Unlink and revoke the keys; the repo keeps its workflow
+  connect              Open the page that installs the Broods GitHub App on an
+                       account (org admins)
+
+Options:
+  --folder <path>                The folder holding broods/, when there are several
+  --production-branch <name|none>   Branch Production deploys from; none for no
+                                 Production deploys
+  --development-branch <name|none>  Branch Development deploys from; none for
+                                 no Development deploys
+  --json                         Print the result as JSON
+  --yes                          Skip the unlink confirmation
 
 ${GLOBAL_OPTIONS}`,
   project: `Usage: broods project <list|delete> [name]
@@ -449,6 +479,10 @@ async function main(): Promise<void> {
       return;
     case "project":
       await projectCommand(args);
+
+      return;
+    case "github":
+      await githubCommand(args);
 
       return;
     case "stage":
@@ -1019,6 +1053,115 @@ async function projectCommand(args: string[]): Promise<void> {
   }
 }
 
+/** `broods github`: link the project to a repo and read how its pushes deploy. */
+async function githubCommand(args: string[]): Promise<void> {
+  const [subcommand, repo] = positionalArgs(args);
+  const known = ["status", "repos", "link", "unlink", "connect"];
+  if (!subcommand) {
+    console.log(renderCommandHelp("github", args));
+
+    return;
+  }
+  // Reject a typo before the login round trip, like `broods project`.
+  if (!known.includes(subcommand)) {
+    throw new Error(
+      `Unknown github subcommand: ${subcommand}\n\n${commandHelp("github")}`,
+    );
+  }
+  const runtime = loadBroodsRuntimeConfig();
+  const auth = await requireAuthOrLogin(
+    optionValue(args, "--dashboard-url") ??
+      runtime.dashboardUrl ??
+      DEFAULT_DASHBOARD_URL,
+    optionValue(args, "--base-url"),
+  );
+  const client = new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  });
+  const { project } = targetScope(args);
+  const json = hasFlag(args, "--json");
+  const print = (value: unknown, text: () => void): void => {
+    if (json) console.log(JSON.stringify(value, null, 2));
+    else text();
+  };
+
+  if (subcommand === "connect") {
+    const { url } = await client.githubConnect();
+    print({ url: url }, () => {
+      console.log(`Install the Broods GitHub App: ${url}`);
+      openBrowser(url);
+    });
+
+    return;
+  }
+  if (subcommand === "repos") {
+    const repos = await client.githubRepos(project);
+    print(repos, () => {
+      if (repos.length === 0) {
+        console.log("No repos yet. `broods github connect` adds an account.");
+      }
+      for (const entry of repos) {
+        console.log(
+          `${entry.fullName}  ${entry.defaultBranch}${entry.private ? "  private" : ""}`,
+        );
+      }
+    });
+
+    return;
+  }
+  if (subcommand === "link") {
+    if (!repo) throw new Error("Usage: broods github link <owner/repo>");
+    const linked = await client.githubLink(project, {
+      repo: repo,
+      folder: optionValue(args, "--folder"),
+      baseUrl: auth.baseUrl,
+      productionBranch: branchOption(args, "--production-branch"),
+      developmentBranch: branchOption(args, "--development-branch"),
+    });
+    print(linked, () => {
+      printSuccess(`Linked ${linked.fullName} to ${project}`);
+      printGitHubLink(linked);
+    });
+
+    return;
+  }
+  if (subcommand === "unlink") {
+    if (
+      !hasFlag(args, "--yes") &&
+      !(await promptConfirm(`Unlink ${project}'s repo and revoke its keys?`))
+    ) {
+      return;
+    }
+    await client.githubUnlink(project);
+    print({ unlinked: true }, () =>
+      printSuccess(`Unlinked ${project}; the repo keeps its workflow file.`),
+    );
+
+    return;
+  }
+  const status = await client.githubStatus(project);
+  print(status, () => {
+    if (!status.configured) {
+      console.log(`GitHub is not set up on ${auth.baseUrl}.`);
+
+      return;
+    }
+    if (!status.repo) {
+      console.log(
+        `${project} is not linked. \`broods github link <owner/repo>\` links one.`,
+      );
+    } else {
+      console.log(`${project} deploys from ${status.repo.fullName}`);
+      printGitHubLink(status.repo, status.deploys);
+    }
+    const accounts = status.installations.map((entry) => entry.login);
+    console.log(
+      `Connected accounts: ${accounts.length > 0 ? accounts.join(", ") : "none (`broods github connect`)"}`,
+    );
+  });
+}
+
 async function stageCommand(args: string[]): Promise<void> {
   const [subcommand, needle] = positionalArgs(args);
   if (!subcommand) {
@@ -1192,7 +1335,7 @@ async function applyDeploymentKey(
   manifest: CliManifest,
   deployment: RemoteManifestResponse["deployment"],
 ): Promise<void> {
-  if (!deployment) return;
+  if (!deployment || process.env.CI) return;
   if (deployment.apiKey) {
     await writeEnvValue("BROODS_API_KEY", deployment.apiKey);
     printSuccess(`Wrote BROODS_API_KEY (${deployment.keyHint}) to .env.local`);
@@ -1729,6 +1872,16 @@ function formatProjectChoice(project: CliOnboardingProject): string {
     : `${project.name} (${project.slug})`;
 }
 
+// A branch flag: its name, null for `none`, unset when the flag is absent.
+function branchOption(args: string[], name: string): string | null | undefined {
+  const value = optionValue(args, name);
+  if (value === undefined && args.some((arg) => arg.startsWith(name))) {
+    throw new Error(`${name} needs a branch name, or none.`);
+  }
+
+  return value === "none" ? null : value;
+}
+
 function describeContents(project: CliProject): string {
   return project.empty
     ? "nothing (it is already empty)"
@@ -1742,6 +1895,42 @@ function formatProject(project: CliProject, current: string): string {
     `${project.name}: ${contents}`,
     project.name === current || project.slug === current,
   );
+}
+
+// Each mapped stage's branch with its latest run, then what needs attention.
+function printGitHubLink(
+  link: CliGitHubLink,
+  deploys: CliGitHubStatus["deploys"] = [],
+): void {
+  console.log(`  folder       ${link.rootDirectory || "/"}`);
+  const stages = [
+    ["Production", link.productionBranch],
+    ["Development", link.developmentBranch],
+  ] as const;
+  for (const [stage, branch] of stages) {
+    if (!branch) continue;
+    const run = deploys.find((entry) => entry.branch === branch);
+    const state = !run
+      ? "no deploy yet"
+      : run.status !== "completed"
+        ? "deploying"
+        : run.conclusion === "success"
+          ? "deployed"
+          : "failed";
+    console.log(
+      `  ${stage.padEnd(12)} ${branch}  ${state}${run ? `  ${run.sha.slice(0, 7)}  ${run.url}` : ""}`,
+    );
+  }
+  if (!link.protectedSecrets) {
+    printWarning(
+      "This plan has no environments on private repos, so the deploy keys are repo secrets any branch's workflow can read.",
+    );
+  }
+  if (link.setupPullRequestUrl) {
+    printWarning(
+      `A protected branch got the workflow as a pull request; merge it to deploy on push: ${link.setupPullRequestUrl}`,
+    );
+  }
 }
 
 function formatStage(stage: CliStage, current: string): string {

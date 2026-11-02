@@ -36,7 +36,10 @@ import {
   type ResolvedAgentSandbox,
   type ResolvedWorkspace,
 } from "../shared/workspaces.ts";
-import type { AsyncToolDelivery } from "./async-tool-result.ts";
+import {
+  markAsyncToolHandback,
+  type AsyncToolDelivery,
+} from "./async-tool-result.ts";
 import {
   ingestInboundAttachments,
   MEDIA_REFERENCE_SCHEME,
@@ -88,7 +91,16 @@ import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 const APPEND_EVENT_BYTES = 8 * 1_024 * 1_024;
 const APPEND_EVENT_COUNT = 8_000;
 const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
-// Only our own hand-off or lease expiry moves ownership, and a fenced write proves it too.
+// Tool outputs that hand the model no result: a hook or the run turned the
+// call into an error or a denial, so a status read in it stores nothing.
+const UNDELIVERED_OUTPUTS: ReadonlySet<string> = new Set([
+  "error-text",
+  "error-json",
+  "execution-denied",
+]);
+// How old the last ownership proof may be before a periodic check reads Convex
+// again. Ownership moves only through this run's own hand-off or lease expiry,
+// and a successful fenced write proves it as well as a read does.
 export const OWNER_CHECK_INTERVAL_MS = 2_000;
 // Under Convex's 1 MiB document cap, leaving room for the rest of the row.
 const STORED_TOOL_MESSAGE_BYTES = 768 * 1024;
@@ -203,6 +215,7 @@ interface AppendedConversationEvent {
   cursor: string;
   dedupeKey?: string;
   event: StoredConversationEvent;
+  toolResultIds?: string[];
 }
 
 export interface StoredConversationEventPage {
@@ -261,6 +274,9 @@ export class Session {
   private ownerConfirmedAt = Number.NEGATIVE_INFINITY;
   // They ride the next fenced mutation (step boundary, settle, takeNext), not an append.
   private pendingStoredEvents: AppendedConversationEvent[] = [];
+  // This turn's `async_status` reads: tool call id to the async tool result it
+  // returned. A read stores nothing; the saved row of its tool result does.
+  private readonly toolResultReads = new Map<string, string>();
   private hasLoggedMissingMemoryFile = false;
   private loadedSkillPrompts: SystemModelMessage[] = [];
   private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
@@ -760,6 +776,24 @@ export class Session {
     return this.resolvedRuntime?.workspaces ?? [];
   }
 
+  /**
+   * Records that tool call `toolCallId` handed the model the async tool result
+   * `resultId`, for the step save to store. A session that saves no step
+   * stores it now.
+   */
+  async recordToolResultRead(
+    toolCallId: string,
+    resultId: string,
+  ): Promise<void> {
+    if (this.persist) {
+      this.toolResultReads.set(toolCallId, resultId);
+
+      return;
+    }
+    await markAsyncToolHandback(resultId, "stored");
+  }
+
+  /** The agent's own secret values, which every log line and span of its runs drops. */
   secretValues(): string[] {
     return collectSecretValues([
       this.agentConfig,
@@ -770,6 +804,7 @@ export class Session {
 
   private async appendConversationEvents(
     events: AppendedConversationEvent[],
+    savesAll = false,
   ): Promise<void> {
     if (this.ownerGeneration !== undefined) {
       const startedAt = performance.now();
@@ -778,6 +813,7 @@ export class Session {
         ownerEventId: this.eventId,
         ownerGeneration: this.ownerGeneration,
         events: events,
+        ...(savesAll ? { savesAll: true } : {}),
       });
       this.confirmOwner(startedAt);
 
@@ -796,7 +832,11 @@ export class Session {
     if (events.length === 0) return;
     let saved = 0;
     for (const batch of storedEventBatches(events)) {
-      await this.appendConversationEvents(batch);
+      await this.appendConversationEvents(
+        batch,
+        saved + batch.length === events.length &&
+          this.pendingStoredEvents.length === 0,
+      );
       saved += batch.length;
       onSaved?.(saved);
     }
@@ -1199,6 +1239,25 @@ export class Session {
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
   }
 
+  /** The async tool results the `async_status` reads in a tool message handed over. */
+  private toolResultIdsOf(message: ModelMessage): string[] {
+    if (message.role !== "tool" || this.toolResultReads.size === 0) return [];
+
+    return message.content.flatMap((part): string[] => {
+      const resultId =
+        part.type === "tool-result" &&
+        !UNDELIVERED_OUTPUTS.has(part.output.type)
+          ? this.toolResultReads.get(part.toolCallId)
+          : undefined;
+
+      return resultId === undefined ? [] : [resultId];
+    });
+  }
+
+  /**
+   * The rows a persisting session writes for these messages, cursors minted
+   * here. Media carried as bytes is stored first, so the row keeps its link.
+   */
   private async storedEvents(
     messages: ModelMessage[],
     dedupeKeys?: string[],
@@ -1220,6 +1279,7 @@ export class Session {
         producer,
       );
       const dedupeKey = dedupeKeys?.[index];
+      const toolResultIds = this.toolResultIdsOf(message);
 
       return event
         ? [
@@ -1227,6 +1287,9 @@ export class Session {
               cursor: this.nextCreatedAt(),
               ...(dedupeKey !== undefined ? { dedupeKey: dedupeKey } : {}),
               event: event,
+              ...(toolResultIds.length > 0
+                ? { toolResultIds: toolResultIds }
+                : {}),
             },
           ]
         : [];

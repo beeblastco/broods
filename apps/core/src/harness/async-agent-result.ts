@@ -68,15 +68,15 @@ export function listOwedAsyncAgentResults(options: {
   return runtime.query("listOwedAsyncAgentResults", options);
 }
 /**
- * True when a queued resume will deliver the result: the caller must not hand it over itself.
- * A failed write is only logged: the row holds the result, and the recovery sweep delivers it.
+ * Moves a subagent result's hand-back: `detached` when this run gives up, `stored` when the
+ * parent is never told. A failed write is only logged: the recovery sweep delivers the row later.
  */
 export async function markAsyncAgentHandback(
   eventId: string,
   handback: HandbackMove,
-): Promise<boolean> {
+): Promise<void> {
   try {
-    return await runtime.mutate("markAsyncAgentHandback", {
+    await runtime.mutate("markAsyncAgentHandback", {
       eventId: eventId,
       handback: handback,
     });
@@ -86,8 +86,6 @@ export async function markAsyncAgentHandback(
       handback: handback,
       error: toErrorMessage(error),
     });
-
-    return false;
   }
 }
 export async function recordAsyncAgentResult(

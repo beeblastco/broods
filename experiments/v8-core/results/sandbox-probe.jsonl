@@ -1,0 +1,7 @@
+{"label":"v8 sandbox: primes, fresh isolate","count":20,"p50Ms":577.825370999999,"p95Ms":706.8902609999986,"cpuMsPerCall":726.5,"rssGrowthMb":572.05078125}
+{"label":"v8 sandbox: notes + sha256, fresh isolate","count":20,"p50Ms":147.31219300000157,"p95Ms":194.05222700000013,"cpuMsPerCall":153,"rssGrowthMb":214.23828125}
+{"label":"v8 sandbox: echo, fresh isolate","count":20,"p50Ms":126.3941810000033,"p95Ms":182.22741000000315,"cpuMsPerCall":130.5,"rssGrowthMb":204.0390625}
+{"label":"v8 sandbox: echo, same isolate","count":20,"p50Ms":8.053431000000273,"p95Ms":110.65793699999995,"cpuMsPerCall":15,"rssGrowthMb":17.703125}
+{"label":"v8 sandbox: primes, same isolate","count":20,"p50Ms":365.241611999998,"p95Ms":535.0553110000001,"cpuMsPerCall":397.5,"rssGrowthMb":91.12109375}
+{"label":"native bash: primes","count":20,"p50Ms":31.57844300000002,"p95Ms":40.192645999999996,"cpuMsPerCall":32,"rssGrowthMb":0}
+{"label":"native bash: notes + sha256","count":20,"p50Ms":8.925680000000057,"p95Ms":12.373844999999847,"cpuMsPerCall":9,"rssGrowthMb":0}

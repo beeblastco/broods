@@ -2,12 +2,13 @@
 
 import { Button } from "@/app/components/ui/button";
 import { FileDown, FilePlus, GitBranch, LayoutTemplate } from "lucide-react";
+import { useParams, useRouter } from "next/navigation";
 
 const SOURCE_OPTIONS = [
   {
     key: "github",
     label: "From GitHub",
-    hint: "Coming soon",
+    hint: "Link a repo, push to deploy",
     icon: GitBranch,
   },
   {
@@ -30,11 +31,24 @@ const SOURCE_OPTIONS = [
   },
 ] as const;
 
+type SourceKey = (typeof SOURCE_OPTIONS)[number]["key"];
+
 export function AgentSourceOptions({
   onCreateNew,
 }: {
   onCreateNew?: () => void;
 }): React.JSX.Element {
+  const router = useRouter();
+  const { projectId } = useParams<{ projectId?: string }>();
+  const actions: Record<SourceKey, (() => void) | undefined> = {
+    github: projectId
+      ? () => router.push(`/${projectId}/settings?tab=git`)
+      : undefined,
+    template: undefined,
+    import: undefined,
+    create: onCreateNew,
+  };
+
   return (
     <div className="flex flex-col">
       {SOURCE_OPTIONS.map(({ key, label, hint, icon: Icon }) => (
@@ -42,8 +56,8 @@ export function AgentSourceOptions({
           key={key}
           variant="ghost"
           tone="muted"
-          disabled={key !== "create"}
-          onClick={key === "create" ? onCreateNew : undefined}
+          disabled={!actions[key]}
+          onClick={actions[key]}
           className="h-auto justify-start"
         >
           <Icon className="size-4 shrink-0 self-start text-muted-foreground" />

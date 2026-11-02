@@ -121,7 +121,10 @@ export function agentCanvasBadge(config: {
       ? allowed.filter((ref): ref is string => typeof ref === "string")
       : [],
     structuredOutput:
-      outputFormat != null && STRUCTURED_OUTPUT_TYPES.has(outputFormat.type),
+      typeof outputFormat === "object" &&
+      outputFormat !== null &&
+      !Array.isArray(outputFormat) &&
+      STRUCTURED_OUTPUT_TYPES.has(outputFormat.type),
   };
 }
 

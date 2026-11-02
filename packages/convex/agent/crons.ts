@@ -79,6 +79,7 @@ export const create = internalMutation({
     accountId: v.id("accounts"),
     input: v.record(v.string(), v.any()),
     createdBy: v.optional(v.id("users")),
+    managedBy: cronsFields.managedBy,
   },
   returns: v.any(),
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
@@ -97,6 +98,7 @@ export const create = internalMutation({
       timezone: normalized.timezone,
       status: normalized.status ?? "active",
       createdBy: args.createdBy,
+      managedBy: args.managedBy,
       createdAt: now,
       updatedAt: now,
     });
@@ -465,6 +467,8 @@ export const update = internalMutation({
     cronId: v.string(),
     patch: v.record(v.string(), v.any()),
     pin: v.optional(v.object({ projectId: v.string(), stageId: v.string() })),
+    /** Set when code declares the job, which adopts one an agent made under that name. */
+    managedBy: cronsFields.managedBy,
   },
   returns: v.any(),
   handler: async (ctx, args): Promise<Record<string, unknown> | null> => {
@@ -492,11 +496,14 @@ export const update = internalMutation({
       }
     }
 
-    const defined = Object.fromEntries(
-      Object.entries(patch)
-        .filter(([, value]) => value !== undefined)
-        .map(([key, value]) => [key, value === null ? undefined : value]),
-    );
+    const defined = {
+      ...Object.fromEntries(
+        Object.entries(patch)
+          .filter(([, value]) => value !== undefined)
+          .map(([key, value]) => [key, value === null ? undefined : value]),
+      ),
+      ...(args.managedBy ? { managedBy: args.managedBy } : {}),
+    };
     const updated: Doc<"crons"> = {
       ...existing,
       ...defined,

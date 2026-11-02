@@ -6,7 +6,7 @@ import {
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
-import { recordUsage } from "../plan-limits.ts";
+import { recordUsageSoon } from "../plan-limits.ts";
 import { getSandboxExternalId } from "./instance-store.ts";
 import {
   callPlatformWorker,
@@ -38,6 +38,16 @@ const LABEL = "cloudflare v8 worker";
 const WORKER_OVERHEAD_MS = 15_000;
 // So two commands never start from the same stored files; the Worker's conditional write backs it.
 const runsByReservation = new Map<string, Promise<unknown>>();
+// When and for which task each reserved sandbox was last mirrored. A worker's
+// row bills nothing, so its "last used" fields only need to name the task and
+// stay within a minute: a task's other commands in that minute skip the write.
+const mirroredFor = new Map<string, { task: string; at: number }>();
+const MIRROR_EVERY_MS = 60_000;
+const MAX_MIRRORED = 10_000;
+
+export function resetMirroredForTests(): void {
+  mirroredFor.clear();
+}
 
 const statusResult = z.object({ exists: z.boolean() });
 
@@ -111,6 +121,7 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       request,
       async (id): Promise<void> => {
+        mirroredFor.delete(id);
         await callPlatformWorker(
           workerConnection(),
           LABEL,
@@ -169,7 +180,7 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
   #meter(durationMs: number, metadata: SandboxRunMetadata | undefined): void {
     const plane = this.#config.controlPlane;
     if (!plane) return;
-    recordUsage(
+    recordUsageSoon(
       plane.accountId,
       { workerMs: durationMs, workerRequests: 1 },
       {
@@ -191,6 +202,17 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     id: string,
     metadata: SandboxRunRequest["metadata"],
   ): void {
+    const task = metadata?.taskId;
+    if (task !== undefined) {
+      const last = mirroredFor.get(id);
+      if (last?.task === task && Date.now() - last.at < MIRROR_EVERY_MS) return;
+      mirroredFor.delete(id);
+      if (mirroredFor.size >= MAX_MIRRORED) {
+        const oldest = mirroredFor.keys().next().value;
+        if (oldest !== undefined) mirroredFor.delete(oldest);
+      }
+      mirroredFor.set(id, { task: task, at: Date.now() });
+    }
     void queueMirrorWrite(id, (): Promise<void> =>
       upsertSandboxInstance(
         this.#config.controlPlane,

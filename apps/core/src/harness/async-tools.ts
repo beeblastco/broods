@@ -109,8 +109,9 @@ export function completionToParentMessage(
 }
 
 /**
- * One row of the sweep. A full conversation, a throwing resume or a duplicate keeps the row for
- * the next pass; a row no resume can deliver is marked stored and logged once.
+ * One row of the sweep. Its continuation is stored by its owner's save, or refused as a duplicate.
+ * A full conversation, a throwing resume or a duplicate keeps the row for the next pass; a row no
+ * resume can deliver is marked stored and logged once.
  * @returns whether the row is handled, rather than kept for the next pass
  */
 async function resumeLostAsyncToolResult(

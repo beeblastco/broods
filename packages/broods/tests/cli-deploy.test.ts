@@ -152,6 +152,17 @@ test("deploy mints the first signing secret into .env.local without printing it"
   expect(result.output).not.toContain(SECRET);
 });
 
+test("deploy in CI writes neither the runtime key nor a signing secret", async () => {
+  const cwd = await projectDir();
+  const backend = serveBackend({ stageKind: "production" });
+
+  const result = await runDeploy(cwd, backend.baseUrl, { CI: "true" });
+
+  expect(result.exitCode).toBe(0);
+  expect(backend.rotations).toEqual([]);
+  expect(result.envLocal).toBe('BROODS_PROJECT="demo-app"\n');
+});
+
 test("deploy keeps a production stage's existing secret when this checkout lacks it", async () => {
   const cwd = await projectDir();
   const backend = serveBackend({

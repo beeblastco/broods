@@ -43,12 +43,14 @@
     "docs:build": "bun run --filter @broods/docs build"
   },
   "devDependencies": {
+    "@noble/hashes": "1.8.0",
     "@oxlint/plugins": "1.90.0",
     "@shadcn/lint": "^0.2.3",
     "@types/bun": "^1.4.4",
-    "oxfmt": "^0.74.0",
+    "oxfmt": "^0.75.0",
     "oxlint": "1.90.0",
     "oxlint-tsgolint": "7.0.2005",
+    "tweetnacl": "1.0.3",
     "typescript": "^7.0.2"
   },
   "overrides": {
@@ -58,8 +60,6 @@
     "@microsoft/teams.apps": {
       "@azure/msal-node": "7.1.1"
     },
-    "@modelcontextprotocol/sdk": "^1.32.1",
-    "@types/node": "26.2.0",
     "@types/react": "19.2.18",
     "@vercel/cli-config": {
       "zod": "4.6.7"
@@ -70,19 +70,15 @@
       "undici": "7.30.1"
     },
     "joi": "^17.13.9",
-    "katex": "^0.18.2",
     "launch-editor": "^2.14.2",
     "miniflare": {
       "undici": "7.30.1"
-    },
-    "pi-mcp-adapter": {
-      "@modelcontextprotocol/client": "2.2.0"
     },
     "postcss": "^8.5.26",
     "serialize-javascript": "7.1.2",
     "stripe": "22.6.2",
     "tar": "7.5.22",
-    "tinypool": "2.1.2",
+    "tinypool": "2.2.0",
     "webpack": "5.112.2"
   },
   "engines": {

@@ -11,6 +11,7 @@ import { sha256Hex } from "./model/accountSecrets";
 import {
   asyncToolDeliveryValidator,
   reservedSandboxValidator,
+  resultFenceValidator,
   runtimeAsyncAgentResultsFields,
   runtimeAsyncToolResultsFields,
   runtimeConversationEventsFields,
@@ -34,8 +35,7 @@ const CONVERSATION_CLEAR_BATCH_SIZE = 100;
 const CONVERSATION_EVENT_PAGE_BYTES = 4 * 1_024 * 1_024;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
-// Core's `DEFAULT_INGRESS_MAX_COUNT`: every queued envelope is read to find a resume.
-const QUEUED_RESUME_SCAN = 100;
+// One recovery sweep's page of late subagent or async tool results.
 const OWED_RESULT_PAGE_SIZE = 100;
 
 const REPLACED_SANDBOX_ERROR =
@@ -52,9 +52,14 @@ export const conversationEventsValidator = v.array(
     cursor: v.string(),
     dedupeKey: runtimeConversationEventsFields.dedupeKey,
     event: v.any(),
+    toolResultIds: v.optional(v.array(v.string())),
   }),
 );
 
+/** The late result a resume envelope carries, as its fence fields name it. */
+export type ResultFence = Infer<typeof resultFenceValidator>;
+
+/** How an async run ended, or what it waits on, as its polling row records it. */
 export const asyncAgentOutcomeValidator = v.object({
   status: runtimeAsyncAgentResultsFields.status,
   response: runtimeAsyncAgentResultsFields.response,
@@ -176,9 +181,9 @@ export async function insertConversationEvents(
   accountId: Id<"accounts">,
   conversationKey: string,
   events: Infer<typeof conversationEventsValidator>,
-): Promise<void> {
-  for (const entry of events) {
-    // A stored dedupe key means the first append committed and only its reply was lost.
+): Promise<ResultFence[]> {
+  const stored: ResultFence[] = [];
+  for (const { toolResultIds, ...entry } of events) {
     if (
       entry.dedupeKey !== undefined &&
       (await ctx.db
@@ -201,20 +206,35 @@ export async function insertConversationEvents(
       entry.dedupeKey === undefined
         ? undefined
         : parseHandbackDedupeKey(entry.dedupeKey);
-    if (handback?.kind === "subagent") {
-      await markResultStored(
+    const rows = [
+      handback?.kind === "subagent"
+        ? await asyncAgentResultRow(ctx, handback.eventId)
+        : null,
+      await asyncToolResultRow(
         ctx,
-        accountId,
-        await asyncAgentResultRow(ctx, handback.eventId),
-      );
-    } else if (handback?.kind === "async-tool") {
-      await markResultStored(
-        ctx,
-        accountId,
-        await asyncToolResultRow(ctx, handback.resultId),
-      );
+        handback?.kind === "async-tool" ? handback.resultId : undefined,
+      ),
+      ...(await Promise.all(
+        (toolResultIds ?? []).map((resultId) =>
+          asyncToolResultRow(ctx, resultId),
+        ),
+      )),
+    ];
+    for (const row of rows) {
+      if (
+        row &&
+        (await markResultStored(ctx, accountId, conversationKey, row))
+      ) {
+        stored.push(
+          "resultId" in row
+            ? { toolResultId: row.resultId }
+            : { resultEventId: row.eventId },
+        );
+      }
     }
   }
+
+  return stored;
 }
 
 export const listConversationEvents = internalQuery({
@@ -477,29 +497,20 @@ export const markAsyncAgentHandback = internalMutation({
     eventId: v.string(),
     handback: handbackMoveValidator,
   },
-  returns: v.boolean(),
-  handler: async (ctx, args): Promise<boolean> => {
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
     const row = await asyncAgentResultRow(ctx, args.eventId);
     if (
       !row ||
       row.handback === "stored" ||
       (args.handback === "stored" && row.status === "processing")
     ) {
-      return false;
+      return null;
     }
     await requireActiveAccount(ctx, row.accountId);
-    if (
-      args.handback === "stored" &&
-      row.subagent !== undefined &&
-      (await isResumeQueued(ctx, row.subagent.parentConversationKey, {
-        resultEventId: row.eventId,
-      }))
-    ) {
-      return true;
-    }
     await ctx.db.patch(row._id, { handback: args.handback });
 
-    return false;
+    return null;
   },
 });
 
@@ -545,33 +556,19 @@ export async function asyncAgentResultRow(
 export async function markResultStored(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
+  conversationKey: string,
   row: Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults"> | null,
-): Promise<void> {
-  if (row?.accountId === accountId && row.handback !== "stored") {
+): Promise<boolean> {
+  const told =
+    row !== null && "resultId" in row
+      ? row.conversationKey
+      : row?.subagent?.parentConversationKey;
+  if (row?.accountId !== accountId || told !== conversationKey) return false;
+  if (row.handback !== "stored") {
     await ctx.db.patch(row._id, { handback: "stored" });
   }
-}
 
-async function isResumeQueued(
-  ctx: QueryCtx,
-  conversationKey: string,
-  fence: { resultEventId: string } | { toolResultId: string },
-): Promise<boolean> {
-  const now = Date.now();
-  const queued = await ctx.db
-    .query("runtimeIngressEnvelopes")
-    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
-      q.eq("conversationKey", conversationKey).eq("status", "queued"),
-    )
-    .take(QUEUED_RESUME_SCAN);
-
-  return queued.some(
-    (row): boolean =>
-      row.expiresAt > now &&
-      ("resultEventId" in fence
-        ? row.resultEventId === fence.resultEventId
-        : row.toolResultId === fence.toolResultId),
-  );
+  return true;
 }
 
 export async function asyncToolResultRow(
@@ -805,28 +802,20 @@ export const markAsyncToolHandback = internalMutation({
     resultId: v.string(),
     handback: handbackMoveValidator,
   },
-  returns: v.boolean(),
-  handler: async (ctx, args): Promise<boolean> => {
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
     const row = await asyncToolResultRow(ctx, args.resultId);
     if (!row || row.status === "processing" || row.handback === "stored") {
-      return false;
+      return null;
     }
     await requireActiveAccount(ctx, row.accountId);
-    if (
-      args.handback === "stored" &&
-      (await isResumeQueued(ctx, row.conversationKey, {
-        toolResultId: row.resultId,
-      }))
-    ) {
-      return true;
-    }
     await ctx.db.patch(row._id, {
       handback: args.handback,
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     });
 
-    return false;
+    return null;
   },
 });
 
@@ -1090,6 +1079,56 @@ export const listOrphanedSandboxInstances = internalQuery({
   },
 });
 
+/**
+ * Reserves a persistent sandbox in one round trip, behind the active-account guard: the id already
+ * under the key (idle deadline refreshed if the row is this account's), else `externalId` claimed.
+ * Two callers racing on one key both get the winner's id: the loser's transaction retries.
+ * @returns the id now reserved under the key
+ */
+export const reserveSandboxReservation = internalMutation({
+  args: {
+    provider: sandboxProviderValidator,
+    reservationKey: v.string(),
+    externalId: v.string(),
+    accountId: v.id("accounts"),
+    ttlSeconds: v.optional(v.number()),
+  },
+  returns: v.string(),
+  handler: async (ctx, args): Promise<string> => {
+    await requireActiveAccount(ctx, args.accountId);
+    const row = await ctx.db
+      .query("sandboxReservations")
+      .withIndex("by_provider_and_reservationKey", (q) =>
+        q
+          .eq("provider", args.provider)
+          .eq("reservationKey", args.reservationKey),
+      )
+      .unique();
+    if (row) {
+      if (row.accountId === args.accountId)
+        await ctx.db.patch(row._id, {
+          expiresAt: reservationExpiresAt(args.ttlSeconds ?? row.ttlSeconds),
+        });
+
+      return row.externalId;
+    }
+    await ctx.db.insert("sandboxReservations", {
+      accountId: args.accountId,
+      provider: args.provider,
+      reservationKey: args.reservationKey,
+      externalId: args.externalId,
+      expiresAt: reservationExpiresAt(args.ttlSeconds),
+      ttlSeconds: args.ttlSeconds,
+    });
+
+    return args.externalId;
+  },
+});
+
+/**
+ * Claims a new persistent sandbox reservation if it is still unmapped.
+ * @returns whether the reservation was created
+ */
 export const claimSandboxReservation = internalMutation({
   args: {
     provider: sandboxProviderValidator,

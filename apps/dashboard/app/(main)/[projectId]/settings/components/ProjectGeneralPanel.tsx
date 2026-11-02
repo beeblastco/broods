@@ -44,9 +44,10 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
 
   const trimmedName = name.trim();
   const trimmedDesc = description.trim();
+  const descriptionChanged = trimmedDesc !== (project.description ?? "");
   const dirty =
     (trimmedName.length > 0 && trimmedName !== project.name) ||
-    trimmedDesc !== (project.description ?? "");
+    descriptionChanged;
 
   async function handleSave(): Promise<void> {
     if (!dirty || !trimmedName) return;
@@ -56,7 +57,8 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
       await update({
         projectId: projectId,
         name: trimmedName,
-        description: trimmedDesc,
+        // Omitted, the server keeps a description someone else saved meanwhile.
+        ...(descriptionChanged ? { description: trimmedDesc } : {}),
       });
     } catch (err) {
       setSaveError(toErrorMessage(err));

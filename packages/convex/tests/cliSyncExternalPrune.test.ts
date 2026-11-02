@@ -229,6 +229,51 @@ describe("cli prune of external resources", () => {
       await tt.run(async (ctx) => await ctx.db.query("crons").collect()),
     ).toEqual([]);
   });
+  test("a prune drops a cron code stopped declaring, never one an agent made", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    const reporter = {
+      kind: "agent",
+      name: "reporter",
+      config: {
+        model: { provider: "custom", modelId: "Qwen3.6-27B" },
+        agent: { system: "Write the report." },
+      },
+    };
+    const declared = await pruneAll(tt, [
+      reporter,
+      {
+        kind: "cron",
+        name: "nightly",
+        config: {
+          agentId: "reporter",
+          events: [{ role: "user", content: "Write the report." }],
+          scheduleExpression: "rate(1 day)",
+        },
+      },
+    ]);
+    expect(declared.status).toBe(200);
+    const [nightly] = await tt.run(
+      async (ctx) => await ctx.db.query("crons").collect(),
+    );
+    if (!nightly) throw new Error("cron not synced");
+    await tt.mutation(internal.agent.crons.create, {
+      accountId: accountId,
+      input: {
+        name: "agent-made",
+        agentId: nightly.agentId,
+        input: "check in",
+        scheduleExpression: "rate(1 hour)",
+      },
+    });
+
+    expect((await pruneAll(tt, [reporter])).status).toBe(200);
+    expect(
+      (await tt.run(async (ctx) => await ctx.db.query("crons").collect())).map(
+        (job) => job.name,
+      ),
+    ).toEqual(["agent-made"]);
+  });
 });
 
 async function activeNames(

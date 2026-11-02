@@ -30,12 +30,37 @@ export const usersFields = {
   activeOrgId: v.optional(v.id("orgs")),
 };
 
+/** A project's linked GitHub repo; see `github.ts`. */
+export const projectRepoValidator = v.object({
+  installationId: v.number(),
+  repoId: v.number(),
+  /** `owner/name`, kept current by the `repository` webhook. */
+  fullName: v.string(),
+  /** The folder holding `broods/`, relative to the repo root; "" is the root. */
+  rootDirectory: v.string(),
+  /** The branch each stage deploys from; an absent one is a stage this repo does not deploy. */
+  productionBranch: v.optional(v.string()),
+  developmentBranch: v.optional(v.string()),
+  /** The project keys the workflow deploys with, revoked on unlink. */
+  deployKeyIds: v.array(v.id("deployKeys")),
+  /** False when the plan had no environments, so the keys are repo secrets any branch can read. */
+  protectedSecrets: v.boolean(),
+  /** Set when the workflow went in through a PR because the branch is protected. */
+  setupPullRequestUrl: v.optional(v.string()),
+});
+
 export const projectsFields = {
   authId: v.string(),
   orgId: v.id("orgs"),
   name: v.string(),
   description: v.optional(v.string()),
   slug: v.string(),
+  /** The GitHub repo whose pushes deploy this project, when one is linked. */
+  repo: v.optional(projectRepoValidator),
+  /** A link in flight holding its repo, so two projects never set up one repo at once. */
+  linkClaim: v.optional(
+    v.object({ repoId: v.number(), expiresAt: v.number() }),
+  ),
   updatedAt: v.number(),
 };
 
@@ -630,6 +655,64 @@ export const accountEnvVarsFields = {
   updatedAt: v.number(),
 };
 
+/**
+ * A GitHub App installation an org connected: the GitHub user or org whose
+ * repos the org's projects may link. One row per (org, installation).
+ */
+export const githubInstallationsFields = {
+  orgId: v.id("orgs"),
+  installationId: v.number(),
+  /** The GitHub login the App is installed on. */
+  login: v.string(),
+  accountType: v.union(v.literal("User"), v.literal("Organization")),
+  updatedAt: v.number(),
+};
+
+/**
+ * A dashboard round trip through GitHub in flight. `state` comes back on the
+ * callback; `createRepo` is the repo to make with the user's token, absent
+ * for a plain connect. Deleted when the callback lands or it expires.
+ */
+export const githubSignInsFields = {
+  state: v.string(),
+  authId: v.string(),
+  orgId: v.id("orgs"),
+  /** The dashboard path the callback returns to. */
+  returnTo: v.optional(v.string()),
+  createRepo: v.optional(
+    v.object({
+      projectId: v.id("projects"),
+      owner: v.string(),
+      name: v.string(),
+      private: v.boolean(),
+      /** The Broods API the workflow deploys to. */
+      baseUrl: v.string(),
+    }),
+  ),
+  expiresAt: v.number(),
+};
+
+/** A linked repo's latest deploy workflow run per branch, from GitHub's `workflow_run` webhook. */
+export const githubDeploysFields = {
+  projectId: v.id("projects"),
+  branch: v.string(),
+  runId: v.number(),
+  /** A rerun keeps `runId` and raises this. */
+  runAttempt: v.optional(v.number()),
+  sha: v.string(),
+  status: v.string(),
+  /** Set once `status` is `completed`: `success`, `failure`, `cancelled`, ... */
+  conclusion: v.optional(v.string()),
+  url: v.string(),
+  updatedAt: v.number(),
+};
+
+/**
+ * A connection: an external account (today the ChatGPT plan) signed in once
+ * per account by `broods connect`, one of each type.
+ * Core refreshes it in process and writes the rotated tokens back. Tokens are
+ * sealed under the account's envelope key and never leave through the API.
+ */
 export const connectionsFields = {
   accountId: v.id("accounts"),
   type: v.union(...CONNECTION_TYPE_NAMES.map((name) => v.literal(name))),
@@ -849,6 +932,13 @@ export const channelTargetRefsFields = {
   credentialAgentId: v.optional(v.string()),
   channelRecordId: v.optional(v.string()),
 };
+/** Fenced ownership and FIFO counters for one runtime conversation. */
+/** The late result a resume envelope carries, as its fence fields name it. */
+export const resultFenceValidator = v.union(
+  v.object({ resultEventId: v.string() }),
+  v.object({ toolResultId: v.string() }),
+);
+
 export const runtimeConversationCoordinatorsFields = {
   accountId: v.id("accounts"),
   agentId: v.string(),
@@ -869,6 +959,9 @@ export const runtimeConversationCoordinatorsFields = {
   leaseExpiresAt: v.optional(v.number()),
   queuedCount: v.number(),
   queuedBytes: v.number(),
+  // The late results of the resumes handed to the current owner, stored by
+  // its next history write that leaves it no unsaved row.
+  unsavedResults: v.optional(v.array(resultFenceValidator)),
   updatedAt: v.number(),
 };
 export const ingressConfigRefValidator = v.object({
@@ -1096,6 +1189,12 @@ export const cronsFields = {
   // Only this run's settle may change `lastStatus`.
   lastRunId: v.optional(v.id("cronRuns")),
   createdBy: v.optional(v.id("users")),
+  /**
+   * `"cli"` when a `broods/` project declares it, so `deploy --prune` may drop
+   * it once the code no longer does. A job an agent or the dashboard scheduled
+   * has none and survives every prune.
+   */
+  managedBy: v.optional(v.literal("cli")),
   createdAt: v.number(),
   updatedAt: v.number(),
 };
@@ -1269,10 +1368,12 @@ export default defineSchema({
     .index("by_authId", ["authId"])
     .index("by_accountHandle", ["accountHandle"])
     .index("by_email", ["email"]),
-  projects: defineTable(projectsFields).index("by_orgId_and_slug", [
-    "orgId",
-    "slug",
-  ]),
+  // Also serves the org's project list, in slug order; the one caller that
+  // needs newest-first sorts by `updatedAt`.
+  projects: defineTable(projectsFields)
+    .index("by_orgId_and_slug", ["orgId", "slug"])
+    .index("by_repoId", ["repo.repoId"])
+    .index("by_linkClaimRepoId", ["linkClaim.repoId"]),
   stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
   stageSyncs: defineTable(stageSyncsFields).index("by_stageId", ["stageId"]),
   agentConfigs: defineTable(agentConfigsFields)
@@ -1419,6 +1520,16 @@ export default defineSchema({
     "by_accountId_and_name",
     ["accountId", "name"],
   ),
+  githubInstallations: defineTable(githubInstallationsFields)
+    .index("by_orgId", ["orgId"])
+    .index("by_installationId", ["installationId"]),
+  githubSignIns: defineTable(githubSignInsFields)
+    .index("by_state", ["state"])
+    .index("by_expiresAt", ["expiresAt"]),
+  githubDeploys: defineTable(githubDeploysFields).index(
+    "by_projectId_and_branch",
+    ["projectId", "branch"],
+  ),
   connections: defineTable(connectionsFields).index("by_accountId_and_type", [
     "accountId",
     "type",
@@ -1480,7 +1591,12 @@ export default defineSchema({
       "sequence",
     ])
     .index("by_accountId_and_runId", ["accountId", "runId"])
-    // Status leads: terminal rows keep a stale expiresAt a bare index would reread every sweep.
+    // A resume of one late result still queued or applied, under any identity.
+    .index("by_resultEventId_and_status", ["resultEventId", "status"])
+    .index("by_toolResultId_and_status", ["toolResultId", "status"])
+    // Status leads so maintenance scans only nonterminal rows: terminal rows
+    // keep their stale expiresAt for the whole status retention window, and a
+    // bare expiresAt index would re-read every one of them each sweep.
     .index("by_status_and_expiresAt", ["status", "expiresAt"])
     .index("by_status_and_statusExpiresAt", ["status", "statusExpiresAt"])
     .index("by_status_and_conversationKey", ["status", "conversationKey"]),

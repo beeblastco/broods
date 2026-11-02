@@ -100,6 +100,8 @@ test("a cold load stays within its Convex wire budget", async ({ browser }) => {
     };
     const queries: Record<string, QueryWire> = {};
     const paths = new Map<number, string>();
+    // Subscribed queries with no result yet: a slow one must not pass as a lighter page.
+    const unanswered = new Set<number>();
     const query = (path: string): QueryWire =>
       (queries[path] ??= { subscriptions: 0, resultBytes: 0 });
     let lastFrameAt = Date.now();
@@ -113,7 +115,11 @@ test("a cold load stays within its Convex wire budget", async ({ browser }) => {
         const message: SentMessage = JSON.parse(payload.toString());
         if (message.type !== "ModifyQuerySet") return;
         for (const change of message.modifications) {
-          if (change.type !== "Add") continue;
+          if (change.type !== "Add") {
+            unanswered.delete(change.queryId);
+            continue;
+          }
+          unanswered.add(change.queryId);
           load.subscriptions++;
           paths.set(change.queryId, change.udfPath);
           query(change.udfPath).subscriptions++;
@@ -130,6 +136,7 @@ test("a cold load stays within its Convex wire budget", async ({ browser }) => {
           return;
         }
         for (const change of message.modifications) {
+          unanswered.delete(change.queryId);
           query(paths.get(change.queryId) ?? "(unknown query)").resultBytes +=
             Buffer.byteLength(JSON.stringify(change));
         }
@@ -146,7 +153,7 @@ test("a cold load stays within its Convex wire budget", async ({ browser }) => {
     await waitForReady(probe.ready(page));
     await waitForReady(page.locator('[data-hydrated="true"]'));
     await expect
-      .poll(() => Date.now() - lastFrameAt, {
+      .poll(() => (unanswered.size > 0 ? 0 : Date.now() - lastFrameAt), {
         message: `${probe.name}: the Convex socket goes quiet for ${QUIET_MS} ms`,
         intervals: [100],
         timeout: SETTLE_TIMEOUT_MS,

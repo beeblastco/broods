@@ -122,9 +122,9 @@ export function listOwedAsyncToolResults(options: {
 export async function markAsyncToolHandback(
   resultId: string,
   handback: HandbackMove,
-): Promise<boolean> {
+): Promise<void> {
   try {
-    return await runtime.mutate("markAsyncToolHandback", {
+    await runtime.mutate("markAsyncToolHandback", {
       resultId: resultId,
       handback: handback,
     });
@@ -134,8 +134,6 @@ export async function markAsyncToolHandback(
       handback: handback,
       error: toErrorMessage(error),
     });
-
-    return false;
   }
 }
 // Only these tags end the root: a person's own event id may start with `async-` too.

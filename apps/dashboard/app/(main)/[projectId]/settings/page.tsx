@@ -10,6 +10,7 @@ import { ProjectGeneralPanel } from "./components/ProjectGeneralPanel";
 import {
   loadDangerPanel,
   loadEnvironmentVariablesPanel,
+  loadGitPanel,
   loadKeysPanel,
   loadPoliciesPanel,
   loadWebhooksPanel,
@@ -24,6 +25,7 @@ function PanelLoading(): React.JSX.Element {
 const EnvironmentVariablesPanel = dynamic(loadEnvironmentVariablesPanel, {
   loading: PanelLoading,
 });
+const GitPanel = dynamic(loadGitPanel, { loading: PanelLoading });
 const KeysPanel = dynamic(loadKeysPanel, { loading: PanelLoading });
 const WebhooksPanel = dynamic(loadWebhooksPanel, { loading: PanelLoading });
 const PoliciesPanel = dynamic(loadPoliciesPanel, { loading: PanelLoading });
@@ -41,6 +43,8 @@ export default function SettingsPage(): React.JSX.Element {
     switch (tab.id) {
       case "general":
         return <ProjectGeneralPanel projectId={projectId} />;
+      case "git":
+        return <GitPanel projectId={projectId} />;
       case "variables":
         return (
           <EnvironmentVariablesPanel

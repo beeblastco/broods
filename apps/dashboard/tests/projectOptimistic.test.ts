@@ -21,26 +21,32 @@ function project(id: Id<"projects">, name: string): Doc<"projects"> {
 function localStore(
   list: Doc<"projects">[] | undefined,
   byId: Doc<"projects"> | null | undefined,
-): { store: OptimisticLocalStore; written: Map<string, unknown> } {
+): {
+  store: OptimisticLocalStore;
+  written: Map<string, unknown>;
+  writtenArgs: Map<string, unknown>;
+} {
   const written = new Map<string, unknown>();
+  const writtenArgs = new Map<string, unknown>();
   const store = {
     getQuery: (fn: Parameters<typeof getFunctionName>[0]) =>
       getFunctionName(fn) === getFunctionName(api.project.list) ? list : byId,
     setQuery: (
       fn: Parameters<typeof getFunctionName>[0],
-      _args: unknown,
+      args: unknown,
       value: unknown,
     ) => {
       written.set(getFunctionName(fn), value);
+      writtenArgs.set(getFunctionName(fn), args);
     },
   } as unknown as OptimisticLocalStore;
 
-  return { store: store, written: written };
+  return { store: store, written: written, writtenArgs: writtenArgs };
 }
 
 describe("applyProjectRename", () => {
   test("renames the project in the list and on its own, nothing else", () => {
-    const { store, written } = localStore(
+    const { store, written, writtenArgs } = localStore(
       [project(ALPHA, "alpha"), project(BETA, "beta")],
       project(ALPHA, "alpha"),
     );
@@ -54,6 +60,9 @@ describe("applyProjectRename", () => {
     expect(written.get(getFunctionName(api.project.getById))).toEqual({
       ...project(ALPHA, "alpha"),
       name: "Alpha prime",
+    });
+    expect(writtenArgs.get(getFunctionName(api.project.getById))).toEqual({
+      projectId: ALPHA,
     });
   });
 

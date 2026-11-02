@@ -99,6 +99,9 @@ await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
     async (): Promise<{ externalId: string; claimedAt: number } | null> => null,
   ),
   claimSandboxInstance: mock(async (): Promise<boolean> => true),
+  reserveSandboxInstance: mock(
+    async (_p: string, _k: string, id: string) => id,
+  ),
   saveSandboxInstance: mock(async (): Promise<void> => {}),
   deleteSandboxInstance: mock(async (): Promise<void> => {}),
 }));
