@@ -252,9 +252,13 @@ async function link(
   slug: string,
 ): Promise<Imported> {
   const { context, github, asAdmin } = run;
-  // A development branch equal to the default, or a folder with no broods/, is refused.
+  // One branch for both stages, or a folder with no broods/, is refused.
   for (const target of [
-    { rootDirectory: "apps/agents", developmentBranch: "main" },
+    {
+      rootDirectory: "apps/agents",
+      productionBranch: "main",
+      developmentBranch: "main",
+    },
     { rootDirectory: "apps/missing" },
   ]) {
     await run.refused("github:linkRepo", {
@@ -267,7 +271,27 @@ async function link(
       },
     });
   }
-  // Those refusals released their claim on the repo, so the real link goes through.
+  // A link that fails on GitHub after minting takes back the Production stage it added.
+  await run.refused("github:linkRepo", {
+    projectId: projectId,
+    target: {
+      installationId: ORG_INSTALLATION,
+      repoId: ORG_REPO,
+      baseUrl: context.edgeUrl,
+      rootDirectory: "apps/agents",
+      productionBranch: "no-such-branch",
+    },
+  });
+  const stages = (await asAdmin("stage:list", {
+    projectId: projectId,
+  })) as Array<{ kind: string }>;
+  assertStep(
+    "a failed link leaves no Production stage behind",
+    !stages.some((stage) => stage.kind === "production"),
+    JSON.stringify(stages.map((stage) => stage.kind)),
+  );
+  // Those refusals released their claim on the repo, so the real link goes
+  // through. Naming main for Production adds that stage to the project.
   const linked = (await context.measure("link the repo", async () =>
     asAdmin("github:linkRepo", {
       projectId: projectId,
@@ -276,6 +300,7 @@ async function link(
         repoId: ORG_REPO,
         rootDirectory: "apps/agents",
         baseUrl: context.edgeUrl,
+        productionBranch: "main",
       },
     }),
   )) as NonNullable<Status["repo"]>;
@@ -406,12 +431,13 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
     revoked.output,
   );
 
-  await linkFromCli(run, imported.slug);
+  await linkFromCli(run);
 }
 
-// `broods github` relinks the repo so main deploys Development and nothing deploys Production.
-async function linkFromCli(run: Run, slug: string): Promise<void> {
+// `broods github link` with no branches, for a project with no Production stage: main deploys Development.
+async function linkFromCli(run: Run): Promise<void> {
   const { context, github } = run;
+  const { slug } = await newProject(run, "gh-cli");
   const cli = new BroodsSyncClient({
     baseUrl: context.edgeUrl,
     token: await cliLogin(run),
@@ -423,12 +449,7 @@ async function linkFromCli(run: Run, slug: string): Promise<void> {
     JSON.stringify(repos),
   );
   const linked = await context.measure("broods github link", async () =>
-    cli.githubLink(slug, {
-      repo: "acme/web",
-      baseUrl: context.edgeUrl,
-      productionBranch: null,
-      developmentBranch: "main",
-    }),
+    cli.githubLink(slug, { repo: "acme/web", baseUrl: context.edgeUrl }),
   );
   const repo = github.repos.get(ORG_REPO);
   const workflow =
@@ -436,7 +457,7 @@ async function linkFromCli(run: Run, slug: string): Promise<void> {
       .filesAt(ORG_REPO, "broods/deploy-workflow-main")
       ?.get(WORKFLOW_PATH) ?? "";
   assertStep(
-    "a CLI link with main for Development finds the one broods/ and deploys no Production",
+    "a CLI link to a project with no Production finds the one broods/ and deploys main to Development",
     linked.productionBranch === undefined &&
       linked.developmentBranch === "main" &&
       linked.rootDirectory === "apps/agents" &&
@@ -501,18 +522,18 @@ async function createRepo(run: Run): Promise<string> {
   const main = github.filesAt(created.id, "main");
   const files = [...(main?.keys() ?? [])].sort();
   assertStep(
-    "main holds the starter broods/ and the workflow, and dev carries the workflow too",
+    "main holds the starter broods/ and the workflow, with no dev branch since there is no Production",
     ["README.md", "broods/index.ts", WORKFLOW_PATH].every((file) =>
       files.includes(file),
-    ) && github.filesAt(created.id, "dev")?.has(WORKFLOW_PATH) === true,
+    ) && github.filesAt(created.id, "dev") === null,
     JSON.stringify(files),
   );
   const status = await run.status(projectId);
   assertStep(
     "without environments the keys fall back to repo secrets, set before the workflow lands",
-    created.secrets.size === 2 &&
+    created.secrets.size === 1 &&
       // The starter commit carries no workflow, so only the pushes after it run one.
-      created.secretsAtPush.slice(1).every((count) => count === 2) &&
+      created.secretsAtPush.slice(1).every((count) => count === 1) &&
       status.repo?.protectedSecrets === false &&
       !(main?.get(WORKFLOW_PATH) ?? "").includes("environment:"),
     JSON.stringify({ pushes: created.secretsAtPush, status: status }),
@@ -520,7 +541,8 @@ async function createRepo(run: Run): Promise<string> {
   assertStep(
     "the project is linked to the new repo",
     status.repo?.fullName === `${USER.login}/${name}` &&
-      status.repo.developmentBranch === "dev",
+      status.repo.developmentBranch === "main" &&
+      status.repo.productionBranch === undefined,
     JSON.stringify(status),
   );
   const checkout = join(run.workspace, name);

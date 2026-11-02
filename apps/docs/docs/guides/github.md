@@ -2,14 +2,14 @@
 
 Link a project to a GitHub repo and every push to a stage's branch deploys that stage. Broods commits a workflow to the repo, so the deploy runs in your own GitHub Actions with the same `broods deploy` you run locally.
 
-Each stage follows one branch, or none. By default:
+Each stage follows one branch, or none. Production gets one only when the project already has a Production stage, or you name a branch for it; Broods never adds Production on its own. By default:
 
-| Branch                             | Deploys to  |
-| ---------------------------------- | ----------- |
-| The default branch, such as `main` | Production  |
-| The development branch, `dev`      | Development |
+| The project has  | The default branch, such as `main`, deploys | `dev` deploys |
+| ---------------- | ------------------------------------------- | ------------- |
+| Development only | Development                                 | nothing       |
+| Production too   | Production                                  | Development   |
 
-A repo can deploy one stage only: an agent whose live stage is Development links with `--production-branch none --development-branch main`, so `main` deploys Development and nothing deploys Production.
+Name other branches with `--production-branch` and `--development-branch`, or `none` to leave a stage out.
 
 ## Start a project from GitHub
 

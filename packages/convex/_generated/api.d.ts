@@ -5604,9 +5604,10 @@ export declare const internal: {
       "internal",
       {
         authId: string;
+        developmentBranch?: string | null;
+        productionBranch?: string | null;
         projectId: Id<"projects">;
         repoId?: number;
-        stages: Array<"production" | "development">;
       },
       {
         development?: string;
@@ -5614,6 +5615,7 @@ export declare const internal: {
         production?: string;
         projectId: Id<"projects">;
         projectSlug: string;
+        stageIds: Array<Id<"stages">>;
       }
     >;
     recordDeploy: FunctionReference<
@@ -5646,7 +5648,11 @@ export declare const internal: {
     revokeKeys: FunctionReference<
       "mutation",
       "internal",
-      { keyIds: Array<Id<"deployKeys">>; projectId: Id<"projects"> },
+      {
+        keyIds: Array<Id<"deployKeys">>;
+        projectId: Id<"projects">;
+        stageIds: Array<Id<"stages">>;
+      },
       null
     >;
     saveLink: FunctionReference<

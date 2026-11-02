@@ -236,7 +236,7 @@ function LinkRepo({
             <Input
               id="git-dev-branch"
               value={developmentBranch}
-              placeholder="dev"
+              placeholder="Default"
               onChange={(event) => setDevelopmentBranch(event.target.value)}
             />
           </div>
