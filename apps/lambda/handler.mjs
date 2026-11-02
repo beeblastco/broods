@@ -354,7 +354,9 @@ function positiveEnvInt(name, fallback) {
 
 // A bundle can setsid() out of killGroup's reach and live on beside the next account's child, so
 // every same-UID process but our ancestors dies before a spawn (a Lambda extension would too).
+// Only inside Lambda: anywhere else that UID owns the host's shell and everything else.
 function reapStrays() {
+  if (!process.env.LAMBDA_TASK_ROOT) return;
   let pids;
   try {
     pids = readdirSync("/proc").filter((name) => /^\d+$/.test(name));
