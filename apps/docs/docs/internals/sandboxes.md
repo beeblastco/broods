@@ -286,7 +286,7 @@ sequenceDiagram
   S->>S: job writes .log and .exit
   S->>Core: POST /v1/sandbox-jobs/:resultId/complete, x-job-token
   Core->>CVX: verify token, settle completed or failed
-  alt row already stored: async_status read it or the turn wrote it
+  alt row already stored: a saved async_status read or the turn wrote it
     Note over Core: skip the continuation
   else
     Core->>CVX: admit continuation as a followup
@@ -295,7 +295,8 @@ sequenceDiagram
   opt model polls
     M->>Core: async_status status, logs or stop
     Core->>S: jobStatus, jobLogs or stopJob
-    Core->>CVX: settle if terminal, mark handback stored
+    Core->>CVX: settle if terminal
+    Note over Core,CVX: the step save that carries the read stores the row
   end
 ```
 
@@ -319,8 +320,8 @@ stateDiagram-v2
   [*] --> processing: created before launch
   processing --> completed: callback or poll reads exit 0
   processing --> failed: callback, poll, or launch error
-  completed --> stored: async_status read it, or the conversation holds it
-  failed --> stored: async_status read it, or the conversation holds it
+  completed --> stored: saved history holds it, or a run that saves none read it
+  failed --> stored: saved history holds it, or a run that saves none read it
 ```
 
 - `lambda`, workdir, Daytona and Vercel keep markers under `<workspace root>/.fp-jobs/<reservation key>`, at most 10 running (`MAX_CONCURRENT_BACKGROUND_JOBS`). E2B uses its native `background: true` command, so it has callback delivery but no logs or stop.
