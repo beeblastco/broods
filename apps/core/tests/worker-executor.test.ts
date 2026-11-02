@@ -24,7 +24,6 @@ import {
 } from "../src/harness/sandbox/worker-executor.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
-import { drainInFlight } from "../src/shared/in-flight.ts";
 import { requestUrl } from "./helpers/http.ts";
 import { WORKER_MAX_TIMEOUT_SECONDS } from "@broods/convex/model/sandboxRules";
 
@@ -115,11 +114,6 @@ beforeEach((): void => {
       stored ??= claimWins ? externalId : "winner-id";
 
       return stored;
-    },
-  );
-  spyOn(instanceStore, "saveSandboxInstance").mockImplementation(
-    async (): Promise<void> => {
-      convex.push("save");
     },
   );
   spyOn(instanceStore, "deleteSandboxInstance").mockImplementation(
@@ -273,33 +267,57 @@ it("holds a reservation in memory, so later commands on it make no Convex call",
   expect(new Set(calls.map((call): string => call.url)).size).toBe(1);
 });
 
-it("re-reads a held reservation and pushes its deadline out in the background once a minute", async (): Promise<void> => {
+it("books a held reservation again once a minute, which refreshes its deadline", async (): Promise<void> => {
   const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
   await executor.run(request);
   setSystemTime(new Date(Date.now() + 61_000));
   await executor.run(request);
   await executor.run(request);
-  await drainInFlight();
 
-  expect(convex).toEqual(["reserve", "get", "save"]);
+  expect(convex).toEqual(["reserve", "reserve"]);
 });
 
-it("lets go of a held reservation repointed elsewhere at its next check", async (): Promise<void> => {
+it("follows a held reservation repointed elsewhere from its next booking", async (): Promise<void> => {
   const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
   await executor.run(request);
   const first = stored;
   stored = "fp-p-other";
   setSystemTime(new Date(Date.now() + 61_000));
   await executor.run(request);
-  await drainInFlight();
   await executor.run(request);
 
   expect(calls.map((call): string => call.url)).toEqual([
     `https://worker.example.com/v1/sandboxes/${first}/exec`,
-    `https://worker.example.com/v1/sandboxes/${first}/exec`,
+    "https://worker.example.com/v1/sandboxes/fp-p-other/exec",
     "https://worker.example.com/v1/sandboxes/fp-p-other/exec",
   ]);
-  expect(convex).toEqual(["reserve", "get", "reserve"]);
+});
+
+it("refuses a held reservation's next booking once the account is no longer active", async (): Promise<void> => {
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run(request);
+  spyOn(instanceStore, "reserveSandboxInstance").mockRejectedValue(
+    new Error("Account is not active"),
+  );
+  setSystemTime(new Date(Date.now() + 61_000));
+
+  expect(executor.run(request)).rejects.toThrow("Account is not active");
+  expect(calls).toHaveLength(1);
+});
+
+it("drops a hold a command took while the release ran", async (): Promise<void> => {
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run(request);
+  const first = stored;
+  const releasing = executor.release({
+    reservationKey: request.reservationKey,
+  });
+  await executor.run(request);
+  await releasing;
+  stored = null;
+  await executor.run(request);
+
+  expect(calls.at(-1)?.url).not.toContain(`/${first}/`);
 });
 
 it("lets go of a held reservation when it releases it", async (): Promise<void> => {
@@ -312,14 +330,17 @@ it("lets go of a held reservation when it releases it", async (): Promise<void> 
   expect(convex.filter((call): boolean => call === "reserve")).toHaveLength(2);
 });
 
-it("mirrors a reserved sandbox once per task", async (): Promise<void> => {
+it("mirrors a reserved sandbox once per task and minute", async (): Promise<void> => {
   const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
   await executor.run({ ...request, metadata: { taskId: "task-1" } });
+  await executor.run({ ...request, metadata: { taskId: "task-1" } });
+  setSystemTime(new Date(Date.now() + 61_000));
   await executor.run({ ...request, metadata: { taskId: "task-1" } });
   await executor.run({ ...request, metadata: { taskId: "task-2" } });
   await settled();
 
   expect(mirrored).toEqual([
+    "upsert acct:workspace false",
     "upsert acct:workspace false",
     "upsert acct:workspace false",
   ]);

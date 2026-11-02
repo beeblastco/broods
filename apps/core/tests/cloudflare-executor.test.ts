@@ -96,10 +96,6 @@ beforeEach((): void => {
 
     return stored;
   });
-  const saveSpy = spyOn(
-    instanceStore,
-    "saveSandboxInstance",
-  ).mockImplementation(async (): Promise<void> => {});
   const upsertSpy = spyOn(
     sandboxInstances,
     "upsertSandboxInstance",
@@ -118,7 +114,6 @@ beforeEach((): void => {
     (): void => fetchSpy.mockRestore(),
     (): void => getSpy.mockRestore(),
     (): void => reserveSpy.mockRestore(),
-    (): void => saveSpy.mockRestore(),
     (): void => upsertSpy.mockRestore(),
     (): void => removeSpy.mockRestore(),
   );

@@ -50,9 +50,11 @@ const WORKER_OVERHEAD_MS = 15_000;
 // Commands in flight per reserved sandbox, so two never start from the same
 // stored files; the Worker's conditional write stays as the guard behind it.
 const runsByReservation = new Map<string, Promise<unknown>>();
-// The task each reserved sandbox was last mirrored for. The instance row's
-// "last used" fields move per task, so a task's later commands skip the write.
-const mirroredFor = new Map<string, string>();
+// When and for which task each reserved sandbox was last mirrored. A worker's
+// row bills nothing, so its "last used" fields only need to name the task and
+// stay within a minute: a task's other commands in that minute skip the write.
+const mirroredFor = new Map<string, { task: string; at: number }>();
+const MIRROR_EVERY_MS = 60_000;
 const MAX_MIRRORED = 10_000;
 
 export function resetMirroredForTests(): void {
@@ -223,8 +225,8 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
   }
 
   // Mirrors a reservation into Convex once a command answered, so a Worker
-  // that refused is never billed: once per task, since the row's "last used"
-  // fields only move per task. Recoverable, so it never holds up the command.
+  // that refused is never recorded: once per task and minute (`mirroredFor`).
+  // Recoverable, so it never holds up the command.
   #mirror(
     key: string,
     id: string,
@@ -232,13 +234,14 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
   ): void {
     const task = metadata?.taskId;
     if (task !== undefined) {
-      if (mirroredFor.get(id) === task) return;
+      const last = mirroredFor.get(id);
+      if (last?.task === task && Date.now() - last.at < MIRROR_EVERY_MS) return;
       mirroredFor.delete(id);
       if (mirroredFor.size >= MAX_MIRRORED) {
         const oldest = mirroredFor.keys().next().value;
         if (oldest !== undefined) mirroredFor.delete(oldest);
       }
-      mirroredFor.set(id, task);
+      mirroredFor.set(id, { task: task, at: Date.now() });
     }
     void queueMirrorWrite(id, (): Promise<void> =>
       upsertSandboxInstance(

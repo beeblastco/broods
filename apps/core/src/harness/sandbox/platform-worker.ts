@@ -7,12 +7,10 @@
  */
 
 import { optionalEnv } from "../../shared/env.ts";
-import { waitUntil } from "../../shared/in-flight.ts";
 import {
   deleteSandboxInstance,
   getSandboxExternalId,
   reserveSandboxInstance,
-  saveSandboxInstance,
 } from "./instance-store.ts";
 import type { SandboxProvider, SandboxReleaseRequest } from "./types.ts";
 import {
@@ -27,18 +25,19 @@ const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
   "localhost",
 ]);
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
-// How long a held reservation is trusted before it is re-read and its idle
-// deadline pushed out again, in the background. Far inside the 7-day TTL.
+// How long a held reservation is trusted before the next command books it
+// again, which re-reads the row, checks the account and pushes the idle
+// deadline out. Far inside the 7-day TTL.
 const REVALIDATE_MS = 60_000;
 const MAX_HELD = 10_000;
 
 /**
  * Reservations this process already resolved, by provider and key. The process
  * that runs a sandbox's commands keeps the key-to-id mapping in memory, so a
- * command on a held reservation makes no Convex call; bookkeeping (re-reading
- * the row, refreshing the idle deadline) runs in the background at most once
- * per `REVALIDATE_MS`. A key released or repointed elsewhere drops out at its
- * next check; one released here drops out at once.
+ * command on a held reservation makes no Convex call; once a hold is
+ * `REVALIDATE_MS` old, the next command takes the booking trip again. A key
+ * released or repointed elsewhere, or an account no longer active, is noticed
+ * then; one released here drops out at once.
  */
 const held = new Map<string, { id: string; checkedAt: number }>();
 
@@ -46,34 +45,15 @@ function heldKey(provider: SandboxProvider, key: string): string {
   return `${provider}\u0000${key}`;
 }
 
+// Re-holding moves the key to the end, so the cap drops the longest unused.
 function hold(provider: SandboxProvider, key: string, id: string): void {
+  const entry = heldKey(provider, key);
+  held.delete(entry);
   if (held.size >= MAX_HELD) {
     const oldest = held.keys().next().value;
     if (oldest !== undefined) held.delete(oldest);
   }
-  held.set(heldKey(provider, key), { id: id, checkedAt: Date.now() });
-}
-
-// Re-reads a held reservation and refreshes its idle deadline; a key that no
-// longer names this id, or a failed check (an account no longer active), is
-// let go so the next command takes the blocking path and its errors.
-async function revalidate(
-  provider: SandboxProvider,
-  accountId: string | undefined,
-  key: string,
-  id: string,
-): Promise<void> {
-  try {
-    if ((await getSandboxExternalId(provider, key)) !== id) {
-      held.delete(heldKey(provider, key));
-
-      return;
-    }
-    await saveSandboxInstance(provider, key, id, accountId);
-  } catch (error) {
-    held.delete(heldKey(provider, key));
-    throw error;
-  }
+  held.set(entry, { id: id, checkedAt: Date.now() });
 }
 
 export function resetHeldReservationsForTests(): void {
@@ -162,13 +142,16 @@ export async function releasePlatformSandbox(
 ): Promise<void> {
   const key = sandboxReservationKey(request);
   if (!key) return;
-  held.delete(heldKey(provider, key));
+  const entry = heldKey(provider, key);
+  held.delete(entry);
   const id =
     request.expectedExternalId ?? (await getSandboxExternalId(provider, key));
   if (!id) return;
   await drop(id);
   await queueMirrorWrite(id, async (): Promise<void> => {});
   await deleteSandboxInstance(provider, key, accountId, id);
+  // A command that came in while this ran may have held the id again.
+  if (held.get(entry)?.id === id) held.delete(entry);
 }
 
 /**
@@ -179,8 +162,8 @@ export async function releasePlatformSandbox(
  * before the command so the sweeper cannot take the row from under it.
  * Without the account (the dashboard console carries none) an existing
  * reservation is reused by key alone and nothing new is claimed, so the run
- * is ephemeral. Once resolved, the reservation is held in memory and later
- * commands skip Convex (`held`).
+ * is ephemeral. Once resolved, the reservation is held in memory and the
+ * commands of the next `REVALIDATE_MS` skip Convex (`held`).
  */
 export async function reservePlatformSandbox(
   provider: SandboxProvider,
@@ -188,14 +171,7 @@ export async function reservePlatformSandbox(
   key: string,
 ): Promise<string | undefined> {
   const hit = held.get(heldKey(provider, key));
-  if (hit) {
-    if (Date.now() - hit.checkedAt >= REVALIDATE_MS) {
-      hit.checkedAt = Date.now();
-      waitUntil(revalidate(provider, accountId, key, hit.id));
-    }
-
-    return hit.id;
-  }
+  if (hit && Date.now() - hit.checkedAt < REVALIDATE_MS) return hit.id;
   if (!accountId) {
     const existing = await getSandboxExternalId(provider, key);
     if (existing) hold(provider, key, existing);

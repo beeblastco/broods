@@ -71,7 +71,11 @@ Two levers on top of the slim core, each switchable on its own:
 Core's own changes on this branch, which today's Bun core gets too: a
 platform sandbox is booked in one Convex trip (`reserveSandboxReservation`)
 and held in memory, mirrored once per task instead of once per command, and
-its command usage is summed for a second into one budget write. With
+its command usage is summed for a second into one budget write. The
+benchmarks ran with the hold re-checked in the background once a minute and
+the mirror once per task; after review, a held booking is instead booked
+again by the first command after a minute (one blocking Convex call a
+minute, which checks the account), and the mirror also runs once a minute. With
 `BENCH_SCRIPTED_MODEL=1`, every Convex call core makes logs a
 `BENCH_CONVEX <function> <ms>` line. `bench/convex-cpu.sh <arm> <level> <out>`
 runs one arm at one level and prints the database container's CPU per task
