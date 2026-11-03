@@ -53,7 +53,7 @@ flowchart TD
 
 - The idempotency identity is `(accountId, agentId, scopedConversationKey, idempotencyKey)`, with `idempotencyKey` defaulting to `eventId`. The binding lasts as long as the status row, seven days, so an expired envelope cannot run twice.
 - A recovered group comes back with the outcome, and core dispatches it (`dispatchRecoveredIngress`) before handling the newcomer.
-- `activeOwnerOnly` refuses a control that would land on a finished or different task. [Subagent](subagents.md) messages no longer use it: one `steer` admission either starts the idle child's turn or reaches the running one.
+- `activeOwnerOnly` refuses a control that would land on a finished or different task. [Subagent](subagents.md) messages never queue on a child's conversation: a live child gets them in memory, an idle one is admitted with `reject`.
 - Each envelope stores its own execution context (resolved config ref, per-run `model` overrides, one-turn `system` messages), and the digest covers it, so a queued request never inherits the previous owner's overrides.
 - `delivery` holds routing ids only: `http`, `async` and `websocket` carry the public event and conversation ids and, for runtime-key ingress, the `publicDeploymentIngress` marker. `channel` carries the channel name, sender `identity` and reply `source`. Never credentials, headers or message copies.
 
@@ -270,7 +270,7 @@ Authorization finishes before any envelope exists. An account key keeps its acco
 
 ## Subagents and status
 
-Steer and stop reach one conversation owner and never spread into children the parent already started. A persistent child is steered only through ingress addressed to that child. With `subagent.stream: true`, a child publishes on `WS_RESPONSES` under its own account, agent and conversation, and its `taskId` is the attach `eventId`, so attach, control and cursors work unchanged. Who may attach to a child is in [subagents](subagents.md#attach-authorization).
+Steer and stop reach one conversation owner and never spread into children the parent already started. A persistent child's parent reaches it through the coordinator in memory, never through an envelope queued on its conversation. With `subagent.stream: true`, a child publishes on `WS_RESPONSES` under its own account, agent and conversation, and its `taskId` is the attach `eventId`, so attach, control and cursors work unchanged. Who may attach to a child is in [subagents](subagents.md#attach-authorization).
 
 ## Limits
 
