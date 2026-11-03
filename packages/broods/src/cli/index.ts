@@ -634,13 +634,15 @@ async function init(args: string[]): Promise<void> {
   await ensureAgentSkill(force);
   // Like login and dev: BROODS_DASHBOARD_URL / BROODS_BASE_URL pick the server.
   const runtime = loadBroodsRuntimeConfig();
+  const dashboardFlag = optionValue(args, "--dashboard-url");
   const dashboardUrl =
-    optionValue(args, "--dashboard-url") ??
-    runtime.dashboardUrl ??
-    DEFAULT_DASHBOARD_URL;
+    dashboardFlag ?? runtime.dashboardUrl ?? DEFAULT_DASHBOARD_URL;
   await writeLocalEnvDefaults({
     dashboardUrl: dashboardUrl,
-    baseUrl: runtime.baseUrl ?? gatewayUrlForDashboard(dashboardUrl),
+    // The flag names one server, so its gateway wins over a stored login's.
+    baseUrl:
+      (dashboardFlag ? undefined : runtime.baseUrl) ??
+      gatewayUrlForDashboard(dashboardUrl),
     project: optionValue(args, "--project") ?? inferProjectName(process.cwd()),
     stage: optionValue(args, "--stage") ?? "development",
     region: optionValue(args, "--region") ?? DEFAULT_SERVICE_REGION,
@@ -1522,7 +1524,10 @@ async function dev(args: string[]): Promise<void> {
     });
   };
   let lastSyncFailed = false;
+  // A save after the signature may be in what the child read, so that sync records no signature.
+  let savedSinceSignature = false;
   const syncChanged = async (): Promise<void> => {
+    savedSinceSignature = false;
     const signature = await sourceSignature();
     // A failed sync may have written part of the stage, so even an undo syncs again.
     if (signature === lastSourceSignature && !lastSyncFailed) return;
@@ -1530,15 +1535,13 @@ async function dev(args: string[]): Promise<void> {
     try {
       await runSyncChild(args, childEnv);
       lastSyncFailed = false;
-      lastSourceSignature = signature;
+      lastSourceSignature = savedSinceSignature ? undefined : signature;
     } finally {
       startLogs();
     }
   };
   const printSyncError = (error: unknown): void =>
     console.error(error instanceof Error ? error.message : String(error));
-
-  await syncChanged().catch(printSyncError);
 
   const runSync = (): void => {
     if (syncing) {
@@ -1563,10 +1566,13 @@ async function dev(args: string[]): Promise<void> {
     { recursive: true },
     (_event, filename) => {
       if (!filename || isGeneratedPath(filename)) return;
+      if (/\.(ts|md)$/.test(filename)) savedSinceSignature = true;
       clearTimeout(timer);
       timer = setTimeout(runSync, 150);
     },
   );
+  // Watching before the first sync, so a save made during it is not missed.
+  runSync();
 
   process.on("SIGINT", () => {
     logController.abort();
