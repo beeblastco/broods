@@ -159,6 +159,7 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
 
     const turn = { controller: new AbortController(), commit: pending.commit };
     const stream = queuedAnswer(
+      pending.commit,
       this.client,
       this.client.stream(this.agent, {
         conversationKey: this.conversationKey,
@@ -238,6 +239,7 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
 
 // A turn sent while core still runs a stopped one is queued (202): wait and stream its answer.
 async function* queuedAnswer(
+  onAccepted: () => void,
   client: BroodsClient,
   stream: AsyncGenerator<TextStreamPart<ToolSet>>,
   signal: AbortSignal,
@@ -246,6 +248,8 @@ async function* queuedAnswer(
     yield* stream;
   } catch (error) {
     if (!(error instanceof IngressAcceptedError)) throw error;
+    // Core holds the turn now, however it ends, so it is never sent again.
+    onAccepted();
     const status = await client.waitForAsyncStatus(error.accepted, {
       signal: signal,
     });
