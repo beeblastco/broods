@@ -6,7 +6,6 @@ import {
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type { AgentConfig } from "../../../shared/domain/agent-config.ts";
 import {
-  CLAUDE_WITHOUT_EFFORT,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
   resolveAnthropicAuthEnv,
@@ -92,36 +91,75 @@ function openCodeVariant(
   );
 }
 
-// OpenCode 1.18 variant names per model (provider/transform.ts), less `max`: it is above `xhigh`.
+// OpenCode 1.18.34 provider/transform.ts, excluding `max`, which is above `xhigh`.
 function openCodeVariants(
-  provider: string | undefined,
+  provider: NonNullable<AgentConfig["model"]>["provider"],
   modelId: string,
 ): readonly OpenCodeLevel[] {
   const id = modelId.toLowerCase();
-  if (provider === "anthropic" || id.startsWith("anthropic/")) {
-    if (CLAUDE_WITHOUT_EFFORT.test(id)) return ["high"];
-    return /opus-4[.-]5|(?:opus|sonnet)-4[.-]6/.test(id)
-      ? ["low", "medium", "high"]
-      : ["low", "medium", "high", "xhigh"];
+  if (
+    /deepseek-(?:chat|reasoner|r1|v3)|minimax|kimi|k2p|qwen|big-pickle/.test(
+      id,
+    ) ||
+    (id.includes("glm") && !/glm-5[.p-]2/.test(id))
+  ) {
+    return [];
   }
-  if (id.startsWith("google/")) {
-    return id.includes("gemini-2.5") ? ["high"] : ["low", "high"];
+  if (id.includes("grok-3-mini")) return ["low", "high"];
+  const gateway = provider === "vercel";
+  if (provider === "anthropic" || (gateway && id.includes("anthropic"))) {
+    return openCodeAnthropicVariants(id, gateway);
   }
-  if (provider === "vercel" && !id.startsWith("openai/")) {
-    return OPENCODE_LEVELS;
+  if (gateway && id.includes("google")) {
+    return /gemini-2[.-]5(?:[.-]|$)/.test(id) ? ["high"] : ["low", "high"];
   }
-  // Matches OpenCode's own parse, which also reads a dated `gpt-5-2025-08-07` as version 2025.
-  const version = Number(/gpt-5[.-](\d+)(?:[.-]|$)/.exec(id)?.[1] ?? 0);
-  if (/gpt-5[.-].*chat/.test(id)) return version ? ["medium"] : [];
-  if (/gpt-5[.-]?pro(?:[.-]|$)/.test(id)) return ["high"];
-  if (/gpt-5[.-]\d+[.-]pro(?:[.-]|$)/.test(id)) {
+  return openCodeOpenAiVariants(id, gateway);
+}
+
+function openCodeAnthropicVariants(
+  id: string,
+  gateway: boolean,
+): readonly OpenCodeLevel[] {
+  const version = /claude-(?:[a-z]+-)?(\d+)(?:[.-](\d{1,2}))?(?:[.@-]|$)/i.exec(
+    id,
+  );
+  const major = Number(version?.[1]);
+  const minor = Number(version?.[2] ?? 0);
+  if (
+    id.includes("claude-") &&
+    (!version || major > 4 || (major === 4 && minor >= 7))
+  ) {
+    return ["low", "medium", "high", "xhigh"];
+  }
+  if (
+    /(?:opus|sonnet)-4[.-]6|4[.-]6-(?:opus|sonnet)/.test(id) ||
+    (!gateway && /opus-4[.-]5/.test(id))
+  ) {
+    return ["low", "medium", "high"];
+  }
+
+  return ["high"];
+}
+
+function openCodeOpenAiVariants(
+  id: string,
+  gateway: boolean,
+): readonly OpenCodeLevel[] {
+  if (!gateway && id.includes("deep-research")) return ["medium"];
+  const gpt5 = /(?:^|\/)gpt-5(?:[.-]|$)/.test(id);
+  // OpenCode also reads a dated `gpt-5-2025-08-07` as version 2025.
+  const version = Number(/(?:^|\/)gpt-5[.-](\d+)(?:[.-]|$)/.exec(id)?.[1] ?? 0);
+  if (gpt5 && id.includes("-chat")) return version ? ["medium"] : [];
+  if (/(?:^|\/)gpt-5[.-]?pro(?:[.-]|$)/.test(id)) return ["high"];
+  const codex = gpt5 && id.includes("codex");
+  if (!codex && /(?:^|\/)gpt-5[.-]\d+[.-]pro(?:[.-]|$)/.test(id)) {
     return ["medium", "high", "xhigh"];
   }
-  const codex = id.includes("codex");
+  if (gateway && !codex && !version) return OPENCODE_LEVELS;
   const gated: Partial<Record<OpenCodeLevel, boolean>> = {
     none: codex ? version >= 3 : version >= 1,
-    minimal: version === 0 && !codex && id.includes("gpt-5"),
-    xhigh: version >= 2 || id.includes("codex-max"),
+    minimal: version === 0 && !codex && gpt5,
+    xhigh: version >= 2 || (codex && id.includes("codex-max")),
   };
 
   return OPENCODE_LEVELS.filter((level): boolean => gated[level] ?? true);
