@@ -2,12 +2,12 @@
 
 An agent gets tools from four places:
 
-| Source                | How you enable it                | Examples                                                    |
-| --------------------- | -------------------------------- | ----------------------------------------------------------- |
-| Your model provider   | `tools` on the agent             | `googleSearch`, OpenAI `webSearch`, Anthropic `computerUse` |
-| MCP servers           | `defineMcp` + `mcp` on the agent | Any MCP server, yours or a vendor's                         |
-| Sandboxes, workspaces | `sandboxes`, `workspaces`        | `bash`, `read`, `write`, `edit`, `glob`, `grep`             |
-| Broods features       | the matching agent setting       | `browse`, `load_skill`, `run_subagent`, `schedule`          |
+| Source                | How you enable it                | Examples                                                           |
+| --------------------- | -------------------------------- | ------------------------------------------------------------------ |
+| Your model provider   | `tools` on the agent             | `googleSearch`, OpenAI `webSearch`, Anthropic `webSearch_20260318` |
+| MCP servers           | `defineMcp` + `mcp` on the agent | Any MCP server, yours or a vendor's                                |
+| Sandboxes, workspaces | `sandboxes`, `workspaces`        | `bash`, `read`, `write`, `edit`, `glob`, `grep`                    |
+| Broods features       | the matching agent setting       | `browse`, `load_skill`, `run_subagent`, `schedule`                 |
 
 This page covers the first two, approvals, and the built-in tools. Sandbox tools are in [Sandboxes](sandboxes/index.md).
 
@@ -30,7 +30,7 @@ export const researcher = defineAgent({
 });
 ```
 
-The provider runs these tools itself during the model call. Available names depend on `model.provider`. Google has `googleSearch`, `urlContext`, `googleMaps`, `codeExecution`, `fileSearch` and `enterpriseWebSearch`. OpenAI has `webSearch`, `codeInterpreter` and `fileSearch`. Anthropic has `computerUse`, `bash`, `textEditor` and `webSearch`. A name the provider does not have fails the run and lists the names it does have.
+The provider runs these tools itself during the model call. Available names depend on `model.provider`. Google has `googleSearch`, `urlContext`, `googleMaps`, `codeExecution`, `fileSearch` and `enterpriseWebSearch`. OpenAI has `webSearch`, `codeInterpreter` and `fileSearch`. Anthropic's names carry a version date, such as `webSearch_20260318`, `webFetch_20260318`, `codeExecution_20260120`, `bash_20250124`, `textEditor_20250728` and `computer_20251124`; key the tool by that exact name. A name the provider does not have fails the run and lists the names it does have.
 
 A tool that your code would execute, such as the Tavily AI SDK package, cannot go in `tools`, because a function does not survive sync. Put it behind an MCP server.
 
