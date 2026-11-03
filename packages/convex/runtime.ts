@@ -665,20 +665,31 @@ export const updateAsyncAgentResult = internalMutation({
     ...asyncAgentOutcomeValidator.fields,
     onlyWhileProcessing: v.optional(v.boolean()),
     handback: v.optional(v.literal("detached")),
+    // The async tool results a run that saves no history read: its answer holds them.
+    toolResultIds: v.optional(v.array(v.string())),
   },
   returns: v.null(),
   handler: async (
     ctx,
-    { onlyWhileProcessing, handback, ...args },
+    { onlyWhileProcessing, handback, toolResultIds, ...args },
   ): Promise<null> => {
-    if (
-      onlyWhileProcessing &&
-      (await asyncAgentResultRow(ctx, args.eventId))?.status !== "processing"
-    ) {
+    const row = await asyncAgentResultRow(ctx, args.eventId);
+    if (onlyWhileProcessing && row?.status !== "processing") {
       return null;
     }
-    if (!(await writeAsyncAgentResult(ctx, args.eventId, args, handback))) {
+    if (
+      !row ||
+      !(await writeAsyncAgentResult(ctx, args.eventId, args, handback))
+    ) {
       throw new Error("Async agent result not found");
+    }
+    for (const resultId of toolResultIds ?? []) {
+      await markResultStored(
+        ctx,
+        row.accountId,
+        row.conversationKey,
+        await asyncToolResultRow(ctx, resultId),
+      );
     }
 
     return null;

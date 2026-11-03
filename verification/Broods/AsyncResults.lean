@@ -22,8 +22,10 @@ it store it: the parent's own append of the result (`insertConversationEvents`),
 of a step whose `async_status` read handed the result over (the row's `toolResultIds`),
 and the owner's first write after a late result's resume reached it (`insertOwnedEvents`,
 for `runtimeIngress.accept` with `resultEventId` as owner, or the apply of the envelope it
-queued). A status read and a resume's hand-over write nothing; the save that carries a read
-also completes a resume of the result still queued in that conversation. A resume is
+queued). A session that saves no history (a non-persistent subagent) has one such write, its
+answer (`updateAsyncAgentResult` with `toolResultIds`); a failed child's has none, so the
+sweep tells its reads. A status read and a resume's hand-over write nothing; the save that
+carries a read also completes a resume of the result still queued in that conversation. A resume is
 admitted only while the row is not stored and no resume of it is queued or applied, so the
 parent is told a result once, and a turn that dies before its save leaves the result to the
 next resume. A `stored` mark (`markAsyncAgentHandback`) is for a result the parent is never
@@ -261,7 +263,9 @@ inductive HandbackCall where
   it carries the read (`toolResultIds`) or the row of an applied resume's message,
   keyed by the result, it stores the row and completes a resume of it still
   queued, in one transaction. A write that commits but loses its reply saves the
-  row once: its retry is keyed the same. -/
+  row once: its retry is keyed the same. Also the answer of a session that saves no
+  history (`updateAsyncAgentResult`), which only stores the row: such a session holds
+  no coordinator, so nothing is ever queued behind it. -/
   | save
   /-- The owning turn ends without that save: it dies, so its read ledger is gone,
   or a boundary claimed the resume but lost its reply, so the owner never saw it.
@@ -476,6 +480,15 @@ theorem read_crash_resume_tells_once (o : HandbackState) (room : Bool) (ho : o �
         [.read true, .crash, .resume true false true, .apply, .save] = 1 := by
   cases o <;> cases room <;> simp_all [Handback.told, Handback.step]
 
+/-- A session that saves no history reads a finished result: its answer stores the read, so
+no resume tells it again; a run that dies or fails first leaves it to the sweep's resume. -/
+theorem unsaved_session_read_tells_once (o : HandbackState) (room : Bool) (ho : o ≠ .stored) :
+    (Handback.mk o false false false).told
+        [.read true, .save, .resume room false false, .save] = 1 ∧
+      (Handback.mk o false false false).told
+        [.read true, .crash, .resume room false false, .save] = 1 := by
+  cases o <;> cases room <;> simp_all [Handback.told, Handback.step]
+
 /-- A read whose step is saved while a resume of the result waits in the queue tells the
 parent once: the save completes the queued resume, so its apply tells nothing, and a
 later resume is refused as the row is stored. -/
@@ -531,6 +544,13 @@ resume tells the parent. -/
 example :
     (Handback.mk .detached false false false).told
         [.read true, .crash, .resume true false false, .save] = 1 := by
+  decide
+
+/-- Why a read stores nothing: marking the row stored at the read, then dying before the
+answer's write, would shut out every resume, so the result is never told. -/
+example :
+    (Handback.mk .pending false false false).told
+        [.read true, .store true, .crash, .resume true false false, .save] = 0 := by
   decide
 
 /-- The sweep's resume runs as owner and its turn dies before saving: the row is not

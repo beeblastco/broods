@@ -1,6 +1,7 @@
 # Nightly `bun run local:crash` on dev (#1183): every late result must be told exactly once after
-# core is killed mid-resume. ~25 min, so not on PRs. A failure keeps one `crash-recovery` issue
-# open and hands it to Claude Code, which opens a fix PR (never merges) or comments why not.
+# core is killed mid-resume, or after a status read before its save. ~45 min, so not on PRs. A
+# failure keeps one `crash-recovery` issue open and hands it to Claude Code, which opens a fix PR
+# (never merges) or comments why not.
 
 name: Crash Recovery
 
@@ -37,7 +38,7 @@ jobs:
       - name: Start the local stack with the in-process model
         run: bun run local:up -- --perf
 
-      - name: Crash core between a resume's handover and its save
+      - name: Crash core between a result's handover and its save
         id: crash
         run: |
           set -o pipefail
@@ -97,9 +98,10 @@ jobs:
 
             Follow the root AGENTS.md. `bun run local:crash` (scripts/local-verify/crash-recovery.ts,
             hold in scripts/local-verify/fake-model.ts) kills core after the sweep hands late results
-            to resumes and before their messages are saved; each must then be told once and read
-            `stored`. The perf stack is still up; crash.json, crash.log and ~/.broods-local/*/logs/
-            are on this runner.
+            to resumes, or after an `async_status` read (of a persisted turn, or of a subagent that
+            saves no history), and before the write that stores them; each must then be told once
+            and read `stored`. The perf stack is still up; crash.json, crash.log and
+            ~/.broods-local/*/logs/ are on this runner.
 
             Find the root cause ("flake" is not one) and confirm it with `bun run local:crash`. If you
             can fix it, in the product or the harness, do it on branch
