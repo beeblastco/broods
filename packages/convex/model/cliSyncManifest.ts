@@ -242,41 +242,15 @@ export async function resourcesForStage(
         kind: "agent",
         name: agent.name,
         description: agent.description,
-        config: rewriteIdsToNames(
-          toNestedAgentConfig({
-            name: agent.name,
-            description: agent.description,
-            provider: agent.provider,
-            modelId: agent.modelId,
-            systemPrompt: agent.systemPrompt,
-            maxTurns: agent.maxTurns,
-            outputFormat: agent.outputFormat as
-              | Record<string, unknown>
-              | undefined,
-            providerOptions: agent.providerOptions as
-              | Record<string, unknown>
-              | undefined,
-            temperature: agent.temperature,
-            maxTokens: agent.maxTokens,
-            memoryToolEnabled: agent.memoryToolEnabled,
-            searchToolEnabled: agent.searchToolEnabled,
-            searchToolConfig: agent.searchToolConfig as
-              | Record<string, unknown>
-              | undefined,
-            extraConfig: agent.extraConfig as
-              | Record<string, unknown>
-              | undefined,
-          }),
-          {
-            workspaces: workspaceNames,
-            sandboxes: sandboxNames,
-            agents: agentNames,
-            skills: skillNames,
-            hooks: hookNames,
-            mcp: mcpNames,
-            policies: policyNames,
-          },
-        ),
+        config: rewriteIdsToNames(toNestedAgentConfig(agent), {
+          workspaces: workspaceNames,
+          sandboxes: sandboxNames,
+          agents: agentNames,
+          skills: skillNames,
+          hooks: hookNames,
+          mcp: mcpNames,
+          policies: policyNames,
+        }),
       })),
     ...policies
       .filter(

@@ -1,25 +1,17 @@
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
+  API_SCOPE_MARKER,
   MODEL_KEY_HINT,
+  assertHandedBackOnce,
   assertStep,
-  convexResult,
   lastJsonLine,
   runToTerminal,
+  startedChildLog,
+  type SubagentStartedLog,
   type VerifyContext,
 } from "../harness.ts";
 
 const CODE = "ALPHA-47";
-// Ends the `acct:<account>:agent:<agent>` scope every runtime key carries.
-const API_SCOPE_MARKER = ":api:";
-
-interface SubagentStartedLog {
-  agentId: string;
-  conversationKey: string;
-  message: string;
-  parentEventId: string;
-  resuming: boolean;
-  taskId: string;
-}
 
 interface ContextPreparedLog {
   eventId: string;
@@ -52,7 +44,7 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
     console.log("  skip subagent resume (the parent answered without one)");
     return;
   }
-  assertHandedBackOnce(context, first, key);
+  assertHandedBackOnce(context, first, key, "completed");
   // The prompt carries the exact key, so the check never hinges on the model's recall.
   const childKey = publicKey(first.conversationKey);
   const resumed = await startedChild(context, agentId, key, {
@@ -84,45 +76,6 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
   );
 }
 
-function assertHandedBackOnce(
-  context: VerifyContext,
-  child: SubagentStartedLog,
-  parentKey: string,
-): void {
-  const scopeOf = (scopedKey: string): string =>
-    scopedKey.slice(0, scopedKey.indexOf(API_SCOPE_MARKER));
-  const row = convexResult(
-    context,
-    "runtime:getAsyncAgentResult",
-    { eventId: `${scopeOf(child.conversationKey)}:api:${child.taskId}` },
-    "read the child's result row",
-  ) as { status: string; handback?: string } | null;
-  assertStep(
-    "the child's result row is stored with its parent",
-    row?.status === "completed" && row.handback === "stored",
-    JSON.stringify(row),
-  );
-  const history = convexResult(
-    context,
-    "runtime:listConversationEvents",
-    { conversationKey: `${scopeOf(child.parentEventId)}:api:${parentKey}` },
-    "read the parent's conversation",
-  ) as { page: Array<{ event: unknown }> };
-  const results = history.page.filter((entry): boolean => {
-    const text = JSON.stringify(entry.event);
-
-    return (
-      text.includes(`taskId: ${child.taskId}`) &&
-      text.includes("status: completed")
-    );
-  });
-  assertStep(
-    "the parent's conversation holds the child's result once",
-    results.length === 1,
-    JSON.stringify(results),
-  );
-}
-
 async function startedChild(
   context: VerifyContext,
   agentId: string,
@@ -145,19 +98,17 @@ async function startedChild(
     JSON.stringify(answer),
   );
 
-  return lastJsonLine<SubagentStartedLog>(
-    context.coreLogPath,
+  return startedChildLog(
+    context,
+    turn.eventId,
     (record: SubagentStartedLog): boolean =>
-      record.message === "Subagent task started" &&
-      record.parentEventId.endsWith(`:${turn.eventId}`) &&
-      (turn.resumes === undefined ||
-        (record.resuming &&
-          publicKey(record.conversationKey) === turn.resumes)),
+      turn.resumes === undefined ||
+      (record.resuming && publicKey(record.conversationKey) === turn.resumes),
   );
 }
 
 function publicKey(conversationKey: string): string {
   return conversationKey.slice(
-    conversationKey.indexOf(":api:") + ":api:".length,
+    conversationKey.indexOf(API_SCOPE_MARKER) + API_SCOPE_MARKER.length,
   );
 }

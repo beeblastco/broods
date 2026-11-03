@@ -1,2 +1,0 @@
-{"kind":"convexCpu","label":"bun+machine","level":20,"ms":24878,"tasks":41,"note":"2026-11-02, before the database cuts, bench/convex-cpu.sh, run back to back with the next row"}
-{"kind":"convexCpu","label":"isolate+v8-fast","level":20,"ms":34087,"tasks":41,"note":"2026-11-02, before the database cuts, bench/convex-cpu.sh"}

@@ -1,3 +1,5 @@
+import { z } from "zod/mini";
+
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc } from "../../_generated/dataModel";
@@ -9,7 +11,7 @@ import {
 } from "../../model/accountSecrets";
 import { roleDenial, rolePrincipal } from "../../model/apiAuthorization";
 import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
-import { isPlainObject } from "../../model/objects";
+import { nonEmptyString, parseInput } from "../../model/inputSchema";
 import {
   auditActorForAuth,
   getAccountById,
@@ -35,6 +37,30 @@ type AccountHttpRoute =
   | { kind: "adminUnknown" };
 
 const MAX_AUDIT_RETENTION_DAYS = 3650;
+
+const RETENTION_DAYS_ERROR = `must be an integer between 1 and ${MAX_AUDIT_RETENTION_DAYS}, or null`;
+const ACCOUNT_UPDATE_INPUT = z.looseObject(
+  {
+    username: z.optional(nonEmptyString),
+    description: z.optional(z.nullable(z.string())),
+    auditRetentionDays: z.optional(
+      z.nullable(
+        z
+          .number({ error: RETENTION_DAYS_ERROR })
+          .check(
+            z.refine(
+              (days): boolean =>
+                Number.isInteger(days) &&
+                days >= 1 &&
+                days <= MAX_AUDIT_RETENTION_DAYS,
+              { error: RETENTION_DAYS_ERROR },
+            ),
+          ),
+      ),
+    ),
+  },
+  { error: "Request body must be an object" },
+);
 
 type AccountUpdateInput = {
   username?: string;
@@ -174,26 +200,25 @@ export function parseAccountRoute(pathname: string): AccountHttpRoute | null {
 }
 
 function normalizeAccountUpdateInput(value: unknown): AccountUpdateInput {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-  if ("config" in value)
+  const input = parseInput(ACCOUNT_UPDATE_INPUT, value, "");
+  if ("config" in input)
     throw new ClientError(
       "Agent config must be updated through /v1/agents/{agentId}",
     );
   const normalized: AccountUpdateInput = {
-    ...(value.username !== undefined
-      ? { username: requireString(value.username, "username") }
+    ...(input.username !== undefined
+      ? { username: input.username.trim() }
       : {}),
-    ...(value.description !== undefined
+    ...(input.description !== undefined
       ? {
           description:
-            value.description === null
+            input.description === null
               ? null
-              : optionalString(value.description, "description"),
+              : input.description.trim() || undefined,
         }
       : {}),
-    ...(value.auditRetentionDays !== undefined
-      ? { auditRetentionDays: retentionDays(value.auditRetentionDays) }
+    ...(input.auditRetentionDays !== undefined
+      ? { auditRetentionDays: input.auditRetentionDays }
       : {}),
   };
   if (Object.keys(normalized).length === 0) {
@@ -224,39 +249,6 @@ async function patchSelfResponse(
   }
 
   return await updateAccountResponse(ctx, auth.account._id, actor, input);
-}
-
-function retentionDays(value: unknown): number | null {
-  if (value === null) return null;
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value < 1 ||
-    value > MAX_AUDIT_RETENTION_DAYS
-  ) {
-    throw new ClientError(
-      `auditRetentionDays must be an integer between 1 and ${MAX_AUDIT_RETENTION_DAYS}, or null`,
-    );
-  }
-
-  return value;
-}
-
-function optionalString(value: unknown, name: string): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string")
-    throw new ClientError(`${name} must be a string`);
-  const trimmed = value.trim();
-
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new ClientError(`${name} must be a non-empty string`);
-  }
-
-  return value.trim();
 }
 
 async function rotateAccountSecretResponse(

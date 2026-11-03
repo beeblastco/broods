@@ -6,7 +6,6 @@ import type {
   AgentGoogleChatChannelConfig,
   AgentInstagramChannelConfig,
   AgentLinearChannelConfig,
-  AgentMatrixChannelConfig,
   AgentMessengerChannelConfig,
   AgentSlackChannelConfig,
   AgentTeamsChannelConfig,
@@ -27,7 +26,6 @@ import type {
   LinearSource,
   SlackSource,
   DiscordSource,
-  MatrixSource,
   PancakeSource,
   TeamsSource,
   TwilioSource,
@@ -172,7 +170,6 @@ export type ChannelType =
   | "linear"
   | "slack"
   | "discord"
-  | "matrix"
   | "pancake"
   | "teams"
   | "twilio"
@@ -281,17 +278,6 @@ export type DiscordConnectionInput = EnvRefString<
       "apiUrl" | "botToken" | "publicKey" | "botUserId" | "mentionRoleIds"
     >,
     "botToken" | "publicKey"
-  >
-> &
-  ConnectionIdentityInput;
-
-export type MatrixConnectionInput = EnvRefString<
-  RequiredChannelKeys<
-    Pick<
-      AgentMatrixChannelConfig,
-      "apiUrl" | "botToken" | "botName" | "mentionText"
-    >,
-    "apiUrl" | "botToken"
   >
 > &
   ConnectionIdentityInput;
@@ -414,10 +400,6 @@ export type DiscordConnectionDefinition = ConnectionDefinition<
   "discord",
   DiscordConnectionInput
 >;
-export type MatrixConnectionDefinition = ConnectionDefinition<
-  "matrix",
-  MatrixConnectionInput
->;
 export type PancakeConnectionDefinition = ConnectionDefinition<
   "pancake",
   PancakeConnectionInput
@@ -453,7 +435,6 @@ export type AnyConnectionDefinition =
   | LinearConnectionDefinition
   | SlackConnectionDefinition
   | DiscordConnectionDefinition
-  | MatrixConnectionDefinition
   | PancakeConnectionDefinition
   | TeamsConnectionDefinition
   | TwilioConnectionDefinition
@@ -496,12 +477,6 @@ export type DiscordChannelInput = ChannelRulesInput & {
   connection: DiscordConnectionDefinition;
   channelId: string;
   guildId?: string;
-};
-
-export type MatrixChannelInput = ChannelRulesInput & {
-  connection: MatrixConnectionDefinition;
-  /** Room id, e.g. "!abc123:matrix.org". */
-  channelId: string;
 };
 
 export type GoogleChatChannelInput = ChannelRulesInput & {
@@ -610,7 +585,6 @@ export type GitHubMessageSource = GitHubSource;
 export type LinearMessageSource = LinearSource;
 export type SlackMessageSource = SlackSource;
 export type DiscordMessageSource = DiscordSource;
-export type MatrixMessageSource = MatrixSource;
 export type PancakeMessageSource = PancakeSource;
 export type TeamsMessageSource = TeamsSource;
 export type TwilioMessageSource = TwilioSource;
@@ -626,7 +600,6 @@ export type ChannelMessageReceived =
   | { channel: "linear"; text: string; source: LinearMessageSource }
   | { channel: "slack"; text: string; source: SlackMessageSource }
   | { channel: "discord"; text: string; source: DiscordMessageSource }
-  | { channel: "matrix"; text: string; source: MatrixMessageSource }
   | { channel: "pancake"; text: string; source: PancakeMessageSource }
   | { channel: "teams"; text: string; source: TeamsMessageSource }
   | { channel: "twilio"; text: string; source: TwilioMessageSource }
@@ -960,12 +933,6 @@ export function defineLinearConnection(
   return defineConnection("linear", config);
 }
 
-export function defineMatrixConnection(
-  config: MatrixConnectionInput,
-): MatrixConnectionDefinition {
-  return defineConnection("matrix", config);
-}
-
 export function defineMessengerConnection(
   config: MessengerConnectionInput,
 ): MessengerConnectionDefinition {
@@ -1058,14 +1025,6 @@ export function defineLinearChannel<const Name extends string>(
   const { name, description, team, ...rules } = input;
 
   return defineChannelResource(name, description, team, undefined, rules);
-}
-
-export function defineMatrixChannel<const Name extends string>(
-  input: ResourceInput<Name, MatrixChannelInput>,
-): ChannelResource<Name> {
-  const { name, description, channelId, ...rules } = input;
-
-  return defineChannelResource(name, description, channelId, undefined, rules);
 }
 
 export function defineMessengerChannel<const Name extends string>(

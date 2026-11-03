@@ -91,6 +91,7 @@ interface AccountStore {
 
 interface AgentStore {
   getById(accountId: string, agentId: string): Promise<AgentRecord | null>;
+  listForAccount(accountId: string): Promise<AgentRecord[]>;
   listForProduction(accountId: string): Promise<AgentRecord[]>;
   listForEndpoint(
     accountId: string,

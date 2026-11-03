@@ -4,7 +4,7 @@
 [![Bun](https://img.shields.io/badge/runtime-Bun-000000?logo=bun)](https://bun.sh/)
 [![SST](https://img.shields.io/badge/infra-SST%20v4-e27152)](https://sst.dev/)
 
-Broods runs agents in a Bun container behind a gateway, with Convex for configuration and persistence. Connect agents to Telegram, Discord, Slack, Matrix, GitHub, and other channels, and run them with your own model keys.
+Broods runs agents in a Bun container behind a gateway, with Convex for configuration and persistence. Connect agents to Telegram, Discord, Slack, GitHub, and other channels, and run them with your own model keys.
 
 This is the source-available engine behind [Broods](https://github.com/beeblastco). The whole stack is self-hostable, so the data, the AWS account, and the API keys stay yours.
 
@@ -20,7 +20,7 @@ This is the source-available engine behind [Broods](https://github.com/beeblastc
 - **Container agent runtime.** One Bun container handles account management, streaming agent execution, webhooks, async work, and cron runs behind the gateway.
 - **Multi-tenant.** Each account has its own encrypted config, hashed API secret, and isolated data.
 - **Bring your own model.** Google, OpenAI, AWS Bedrock, Vercel AI Gateway, or custom providers via the Vercel AI SDK.
-- **Multi-channel.** Telegram, Discord, Slack, Matrix, GitHub, Linear, Pancake, Zalo, WhatsApp, Microsoft Teams, Google Chat, Twilio SMS, Facebook Messenger and Instagram DMs are built in.
+- **Multi-channel.** Telegram, Discord, Slack, GitHub, Linear, Pancake, Zalo, WhatsApp, Microsoft Teams, Google Chat, Twilio SMS, Facebook Messenger and Instagram DMs are built in.
 - **Extensible.** Skills, subagents, workspaces, sandboxes, cron jobs, async tools, and custom uploaded tools.
 
 ---

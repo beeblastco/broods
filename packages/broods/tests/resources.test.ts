@@ -725,7 +725,6 @@ import {
   defineDiscordConnection,
   defineGoogleChatConnection,
   defineLinearConnection,
-  defineMatrixConnection,
   definePancakeConnection,
   defineTeamsConnection,
   defineTwilioConnection,
@@ -762,13 +761,6 @@ export const discord = defineDiscordConnection({
   publicKey: env("DISCORD_PUBLIC_KEY"),
   allowedChannelIds: ["D123"],
   apiUrl: "https://discord.example/api/v10",
-});
-export const matrix = defineMatrixConnection({
-  apiUrl: "https://matrix.example",
-  botToken: env("MATRIX_ACCESS_TOKEN"),
-  allowedChannelIds: ["!room:matrix.example"],
-  botName: "Support AI",
-  mentionText: "@support-ai",
 });
 export const pancake = definePancakeConnection({
   allowedChannelIds: ["*"],
@@ -840,7 +832,6 @@ export const support = defineAgent({
     linear,
     slack,
     discord,
-    matrix,
     pancake,
     teams,
     twilio,
@@ -880,12 +871,6 @@ export const support = defineAgent({
       discord: {
         allowedChannelIds: ["D123"],
         apiUrl: "https://discord.example/api/v10",
-      },
-      matrix: {
-        allowedChannelIds: ["!room:matrix.example"],
-        apiUrl: "https://matrix.example",
-        botName: "Support AI",
-        mentionText: "@support-ai",
       },
       linear: { userName: "support-ai", allowedChannelIds: ["ENG"] },
       pancake: { senderId: "staff-1", allowedChannelIds: ["*"] },
@@ -927,7 +912,6 @@ export const support = defineAgent({
     { alias: "github", type: "github", agentName: "support" },
     { alias: "instagram", type: "instagram", agentName: "support" },
     { alias: "linear", type: "linear", agentName: "support" },
-    { alias: "matrix", type: "matrix", agentName: "support" },
     { alias: "messenger", type: "messenger", agentName: "support" },
     { alias: "pancake", type: "pancake", agentName: "support" },
     { alias: "slack", type: "slack", agentName: "support" },

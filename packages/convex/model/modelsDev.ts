@@ -4,7 +4,6 @@ import {
   isAccountModelProviderName,
   type AccountModelProviderName,
 } from "./modelProviders";
-import { isPlainObject } from "./objects";
 
 const INLINE_RATE_KEYS: ReadonlySet<string> = new Set([
   "input",
@@ -148,6 +147,11 @@ export function parseModelsDevRates(body: ModelsDevApi): ProviderRates[] {
 
 function inlineError(problem: string): Error {
   return new Error(`BROODS_MODEL_PRICES: ${problem}`);
+}
+
+// Private to parseInlinePrices, the approved exception: an operator's env JSON has no type.
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isRate(value: unknown): value is number {

@@ -12,6 +12,7 @@ import {
 } from "@opentelemetry/api";
 import {
   isStepCount,
+  modelMessageSchema,
   streamText,
   wrapLanguageModel,
   type AssistantModelMessage,
@@ -30,6 +31,7 @@ import {
   type TypedToolCall,
   type UserModelMessage,
 } from "ai";
+import { z } from "zod";
 import { HarnessCapabilityUnsupportedError } from "@ai-sdk/harness";
 import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
 import { extractHarnessPromptContent } from "@ai-sdk/harness/utils";
@@ -61,7 +63,6 @@ import {
   tracesSubject,
 } from "../shared/nats.ts";
 import type { ProviderOptions, ToolResultOutput } from "@ai-sdk/provider-utils";
-import { isPlainObject } from "@broods/convex/model/objects";
 import {
   getObservabilityContext,
   getTracer,
@@ -73,7 +74,6 @@ import {
 } from "../shared/otel.ts";
 import { recordTaskUsage } from "../shared/telemetry.ts";
 import type { RunSessionMessageDispatch } from "./ingress.ts";
-import type { DispatchAppliedIngress } from "./integrations.ts";
 import {
   applyMessageSendingHook,
   createAgentHookDispatcher,
@@ -151,7 +151,9 @@ import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 import {
   parseToolResultOutput,
-  type AskParent,
+  type AgentMessage,
+  type MessageChild,
+  type ParentLink,
   type SubagentWatch,
 } from "./tools/utils.ts";
 import {
@@ -165,6 +167,7 @@ import {
 } from "./usage-metering.ts";
 
 const MAX_AGENT_ITERATIONS = 30;
+const MODEL_MESSAGES = z.array(modelMessageSchema);
 // A slow step on a long context can take two minutes, so wind down with room for one more.
 export const DEADLINE_WIND_DOWN_MS = 3 * 60 * 1000;
 const WIND_DOWN_INSTRUCTION =
@@ -237,10 +240,11 @@ export interface SubagentParentContext {
 }
 
 export interface AgentLoopOptions {
-  dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchSubagents?: RunSubagentDispatch;
+  // A persistent-mode parent's message-agents reaches its children through it.
+  messageChild?: MessageChild;
   subagentWatch?: SubagentWatch;
-  askParent?: AskParent;
+  parentLink?: Pick<ParentLink, "note">;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   subagentParent?: SubagentParentContext;
   // Read on the conversation's first turn only; later turns resume on the machine it stored.
@@ -265,6 +269,8 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
   failureText(): string | null;
   approvalSummaries(): ToolApprovalSummary[];
   questionSummaries(): PendingQuestionSummary[];
+  // The message to the parent this turn ended waiting on, if one did.
+  parentQuestion(): AgentMessage | undefined;
   hasStructuredOutput(): boolean;
   finalResponse(): JSONValue | undefined;
   traceId(): string;
@@ -468,6 +474,7 @@ export async function runAgentLoop(
     });
   }
 
+  let parentQuestion: AgentMessage | undefined;
   const configuredApprovals = new Map<string, true>();
   const policyMcpIdsByName = new Map<string, string>();
   const channelDelivery =
@@ -482,7 +489,6 @@ export async function runAgentLoop(
         modelProviderName: configuredModel.providerName,
         modelProvider: configuredModel.provider,
         session: session,
-        dispatchAppliedIngress: options.dispatchAppliedIngress,
         dispatchSessionMessage: options.dispatchSessionMessage,
         onSandboxCpu: sandboxCpu.record,
         onToolRetry: spans.retry,
@@ -512,7 +518,20 @@ export async function runAgentLoop(
         ...(options.subagentWatch
           ? { subagentWatch: options.subagentWatch }
           : {}),
-        ...(options.askParent ? { askParent: options.askParent } : {}),
+        ...(options.parentLink
+          ? {
+              parentLink: {
+                ask: (message: AgentMessage): boolean => {
+                  if (parentQuestion !== undefined) return false;
+                  parentQuestion = message;
+
+                  return true;
+                },
+                note: options.parentLink.note,
+              },
+            }
+          : {}),
+        ...(options.messageChild ? { messageChild: options.messageChild } : {}),
         // Ephemeral system messages are request-local, so children get this turn's copy.
         ...(options.dispatchSubagents
           ? {
@@ -816,9 +835,13 @@ export async function runAgentLoop(
     },
     stopWhen: [
       ...(maxTurn === AGENT_MAX_TURN_UNLIMITED ? [] : [isStepCount(maxTurn)]),
-      (): boolean => questionSummaries.length > 0,
+      (): boolean =>
+        questionSummaries.length > 0 || parentQuestion !== undefined,
       ({ steps }): boolean =>
-        deadline.shouldStop(steps.length, questionSummaries.length),
+        deadline.shouldStop(
+          steps.length,
+          questionSummaries.length + (parentQuestion === undefined ? 0 : 1),
+        ),
     ],
     abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
@@ -1288,6 +1311,7 @@ export async function runAgentLoop(
         if (
           approvals.length === 0 &&
           questionSummaries.length === 0 &&
+          parentQuestion === undefined &&
           !modelOutput &&
           !finalText &&
           !deliveredByTool
@@ -1357,6 +1381,9 @@ export async function runAgentLoop(
 
           return;
         }
+        // A subagent that asked its parent ends the turn on that question;
+        // its caller reads it off `parentQuestion()` and records it.
+        if (parentQuestion !== undefined) return;
 
         if (modelOutput) {
           finalResponse = (await modelOutput.parseCompleteOutput(
@@ -1533,6 +1560,16 @@ export async function runAgentLoop(
     } catch (error) {
       const message = errorMessage(error);
       finalizationError ??= error instanceof Error ? error : new Error(message);
+      if (finishObserved) {
+        logError(
+          "Harness checkpoint not saved; the next turn resumes from the last saved one",
+          {
+            eventId: session.eventId,
+            conversationKey: session.conversationKey,
+            error: message,
+          },
+        );
+      }
     } finally {
       activeHarnessSession = undefined;
     }
@@ -1611,6 +1648,7 @@ export async function runAgentLoop(
     failureText: (): string | null => failureText,
     approvalSummaries: (): ToolApprovalSummary[] => approvalSummaries,
     questionSummaries: (): PendingQuestionSummary[] => questionSummaries,
+    parentQuestion: (): AgentMessage | undefined => parentQuestion,
     hasStructuredOutput: (): boolean => Boolean(modelOutput),
     finalResponse: (): JSONValue | undefined => finalResponse,
     traceId: (): string => traceId,
@@ -2092,25 +2130,14 @@ function applyAgentStartedMutation(
     // Ephemeral too, so it survives each prepareStep system refresh.
     turnContext.ephemeralSystem = [...turnContext.ephemeralSystem, message];
   }
-  if (
-    Array.isArray(mutation.messages) &&
-    mutation.messages.every(isModelMessageShape)
-  ) {
-    turnContext.messages = mutation.messages as ModelMessage[];
+  const messages = MODEL_MESSAGES.safeParse(mutation.messages);
+  if (messages.success) {
+    turnContext.messages = messages.data;
   } else if (mutation.messages !== undefined) {
     logWarn(
       "Ignoring agent.started hook messages override: entries are not model messages",
     );
   }
-}
-
-function isModelMessageShape(entry: unknown): boolean {
-  return (
-    isPlainObject(entry) &&
-    typeof entry.role === "string" &&
-    ["system", "user", "assistant", "tool"].includes(entry.role) &&
-    entry.content !== undefined
-  );
 }
 
 // On SSE the tokens are already sent: this changes the stored and delivered result only.

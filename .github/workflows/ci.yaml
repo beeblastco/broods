@@ -154,9 +154,10 @@ jobs:
         with:
           bun-version-file: .bun-version
 
-      # Every test under scripts/: the gate and the dependency watch.
-      - name: Test the scripts
-        run: bun test ./scripts/
+      # The gate and the dependency watch. No install here, so only the tests that
+      # need no package; the rest of scripts/ runs in `validate`.
+      - name: Test the audit gate
+        run: bun test ./scripts/audit-gate.test.ts ./scripts/dependency-watch.test.ts
 
       - name: Check dependency advisories
         run: bun run deps:audit
@@ -273,6 +274,14 @@ jobs:
         run: |
           bun run local:up -- --perf
           bun run local:perf
+
+      - name: Harness turn perf
+        # No harness runs on the local stack, so this drives real Pi turns in
+        # process on convex-test. Fails when history stops surviving a resume
+        # or the checkpoint grows; the table goes to the job summary.
+        run: |
+          set -o pipefail
+          bun run harness:perf | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Cache Chromium
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6

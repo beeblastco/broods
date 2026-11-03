@@ -6,17 +6,13 @@ import {
   lastJsonLine,
   pollUntil,
   runToTerminal,
+  startedChildLog,
+  type SubagentStartedLog,
   type VerifyContext,
 } from "../harness.ts";
 
 // Differs from the parent's model; the stack's Anthropic key serves both.
 const SUBAGENT_MODEL_ID = "claude-sonnet-5-5";
-
-interface SubagentStartedLog {
-  agentId: string;
-  message: string;
-  parentEventId: string;
-}
 
 interface ModelStepLog {
   agentId?: string;
@@ -82,12 +78,7 @@ export async function subagentModel(context: VerifyContext): Promise<void> {
     const started = await pollUntil(
       { initialIntervalMs: 200, maxIntervalMs: 1_000, timeoutMs: 10_000 },
       async (): Promise<SubagentStartedLog | null> =>
-        lastJsonLine<SubagentStartedLog>(
-          context.coreLogPath,
-          (record: SubagentStartedLog): boolean =>
-            record.message === "Subagent task started" &&
-            record.parentEventId.endsWith(`:${key}`),
-        ),
+        startedChildLog(context, key),
     );
     assertStep(
       "the parent started a virtual subagent",

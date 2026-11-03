@@ -775,7 +775,6 @@ describe("runAgentLoop", () => {
       },
       {
         subagentWatch: {
-          answerQuestion: () => false,
           takeParentMessages: async () => [question],
         },
       },

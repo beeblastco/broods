@@ -86,7 +86,6 @@ import {
 import { connectInBrowser } from "./connect.ts";
 import {
   hasFlag,
-  isPlainObject,
   loginWithBrowser,
   optionValue,
   positionalArgs,
@@ -122,11 +121,16 @@ import {
   majorVersion,
   updateTarget,
 } from "./update.ts";
+import { z } from "zod/mini";
 import packageJson from "../../package.json" with { type: "json" };
 import agentSkillText from "../../skills/broods/SKILL.md" with { type: "text" };
 import agentSkillOnboardText from "../../skills/broods/scripts/onboard.sh" with { type: "text" };
 
 const VERSION = packageJson.version;
+// Manifest branches `agent get` prints, read leniently: one that does not fit prints as none.
+const CONFIG_BRANCH = z.record(z.string(), z.unknown());
+const SUBAGENT_REFS = z.looseObject({ allowed: z.array(z.unknown()) });
+const WEBHOOK_LIST = z.looseObject({ webhooks: z.array(z.unknown()) });
 const AGENT_SKILL_DIR = join(".agents", "skills", "broods");
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const DEV_SYNC_ATTEMPTS = 3;
@@ -1104,7 +1108,10 @@ async function githubCommand(args: string[]): Promise<void> {
     return;
   }
   if (subcommand === "repos") {
-    const repos = await client.githubRepos(project);
+    const [repos, status] = await Promise.all([
+      client.githubRepos(project),
+      client.githubStatus(project),
+    ]);
     print(repos, () => {
       if (repos.length === 0) {
         console.log("No repos yet. `broods github connect` adds an account.");
@@ -1112,6 +1119,17 @@ async function githubCommand(args: string[]): Promise<void> {
       for (const entry of repos) {
         console.log(
           `${entry.fullName}  ${entry.defaultBranch}${entry.private ? "  private" : ""}`,
+        );
+      }
+      // A repo the App was not given is fixed in the account's App settings.
+      const web = status.webUrl ?? "https://github.com";
+      for (const installation of status.installations) {
+        console.log(
+          `Repo missing? Choose ${installation.login}'s repos: ${
+            installation.accountType === "Organization"
+              ? `${web}/organizations/${installation.login}/settings/installations/${installation.installationId}`
+              : `${web}/settings/installations/${installation.installationId}`
+          }`,
         );
       }
     });
@@ -2923,26 +2941,24 @@ async function agentGet(
         )
         .filter(Boolean)
     : [];
-  const tools = isPlainObject(config.tools) ? Object.keys(config.tools) : [];
-  const channels = isPlainObject(config.channels)
-    ? Object.keys(config.channels)
-    : [];
-  const subagents =
-    isPlainObject(config.subagent) &&
-    Array.isArray((config.subagent as { allowed?: unknown }).allowed)
-      ? (config.subagent as { allowed: unknown[] }).allowed
-          .map((entry) =>
-            typeof entry === "string"
-              ? entry
-              : (entry as { name?: string }).name,
-          )
-          .filter(Boolean)
-      : [];
-  const webhooks =
-    isPlainObject(config.hooks) &&
-    Array.isArray((config.hooks as { webhooks?: unknown }).webhooks)
-      ? (config.hooks as { webhooks: unknown[] }).webhooks.filter(isPlainObject)
-      : [];
+  const tools = Object.keys(CONFIG_BRANCH.safeParse(config.tools).data ?? {});
+  const channels = Object.keys(
+    CONFIG_BRANCH.safeParse(config.channels).data ?? {},
+  );
+  const subagents = (
+    SUBAGENT_REFS.safeParse(config.subagent).data?.allowed ?? []
+  )
+    .map((entry) =>
+      typeof entry === "string" ? entry : (entry as { name?: string }).name,
+    )
+    .filter(Boolean);
+  const webhooks = (
+    WEBHOOK_LIST.safeParse(config.hooks).data?.webhooks ?? []
+  ).flatMap((webhook): Record<string, unknown>[] => {
+    const parsed = CONFIG_BRANCH.safeParse(webhook);
+
+    return parsed.success ? [parsed.data] : [];
+  });
 
   console.log(`Agent: ${agent.name}`);
   console.log(`  Project/Stage: ${manifest.project}/${manifest.stage}`);
@@ -2981,7 +2997,7 @@ async function agentGet(
 }
 
 function agentModelLabel(config: Record<string, unknown>): string {
-  const model = isPlainObject(config.model) ? config.model : {};
+  const model = CONFIG_BRANCH.safeParse(config.model).data ?? {};
   const provider =
     typeof model.provider === "string" ? model.provider : undefined;
   const modelId = typeof model.modelId === "string" ? model.modelId : undefined;
