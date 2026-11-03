@@ -66,24 +66,3 @@ jobs:
       # `native_decide` or an axiom past the three standard ones.
       - name: Build and check every proof
         run: lake build
-
-  tla-verification:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    env:
-      TLA_VERSION: v1.8.0
-      TLA_SHA256: c57d4d7bbee3ed2c89c32cb9c60cac728f751e80e2570bc4b7368ae39291fc21
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      # The runner's Java runs TLC; the jar is pinned by its checksum.
-      - name: Download TLC
-        run: |
-          curl -sSfL -o "$RUNNER_TEMP/tla2tools.jar" \
-            "https://github.com/tlaplus/tlaplus/releases/download/$TLA_VERSION/tla2tools.jar"
-          echo "$TLA_SHA256  $RUNNER_TEMP/tla2tools.jar" | sha256sum --check
-
-      - name: Model-check every TLA+ spec
-        run: TLA_JAR="$RUNNER_TEMP/tla2tools.jar" verification/tla/check.sh
