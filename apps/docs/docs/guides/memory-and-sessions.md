@@ -82,6 +82,6 @@ export const myAgent = defineAgent({
 - If a model rejects a turn because its context is too long, the turn fails with that error and Broods compacts the history, so the next message fits.
 - A compaction's model calls count toward usage and cost. In the Tracing tab it shows as a Compaction line with the messages it folded and its tokens, under the turn that triggered it, or as a run of its own for `/compact`.
 - Compaction stores a summary and folds earlier summaries into the next one. The summary reads every earlier summary and message. When the model refuses that much input, the older and newer halves are summarized apart and merged. Only a single message too long for the model on its own is cut, keeping as much of its beginning as the model accepts.
-- On Slack, Discord, Matrix, Telegram, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram, `/compact [instructions]` compacts on demand, whatever the config says. Sent mid-turn, it waits until the model finishes the turn and stops calling tools. The instructions steer what the summary keeps. `/new` and `/clear` start over.
+- On Slack, Discord, Telegram, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram, `/compact [instructions]` compacts on demand, whatever the config says. Sent mid-turn, it waits until the model finishes the turn and stops calling tools. The instructions steer what the summary keeps. `/new` and `/clear` start over.
 
 A [harness adapter](agents.md) manages its own model context, so these settings apply to the default Broods loop.

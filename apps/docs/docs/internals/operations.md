@@ -10,7 +10,6 @@ The managed service runs on one k3s cluster, deployed from the infra repo (`kube
 flowchart TB
   Users(("Clients, CLI,<br/>chat providers"))
   DiscordGW((Discord Gateway))
-  Homeserver((Matrix homeserver))
 
   subgraph k3s["k3s cluster"]
     Traefik["Traefik<br/>hostPort 80/443, 1 replica"]
@@ -19,7 +18,6 @@ flowchart TB
       Core["core / core-dev<br/>1 replica"]
       Dashboard["dashboard / dashboard-dev"]
       DFwd["discord-forwarder<br/>1 replica, Recreate"]
-      MFwd["matrix-forwarder<br/>1 replica, Recreate, PVC"]
       OPA["opa"]
     end
     subgraph convexns["namespace convex"]
@@ -67,19 +65,16 @@ flowchart TB
   MicroVM -->|CloudWatch| LogFwd
   LogFwd -->|OTLP| Obs
   DiscordGW <-->|socket| DFwd
-  Homeserver <-->|"/sync"| MFwd
   DFwd -->|webhook| Traefik
-  MFwd -->|webhook| Traefik
-  Core -->|Matrix sends| MFwd
 ```
 
-| Piece          | Replicas                | Why                                                                                   |
-| -------------- | ----------------------- | ------------------------------------------------------------------------------------- |
-| core           | 1                       | The machine sandbox registry and the in-process worker queue live in memory           |
-| gateway        | any                     | Stateless. On `SIGTERM` it closes sockets with `1012` so clients reconnect elsewhere  |
-| forwarders     | 1, `strategy: Recreate` | A second pod means a second socket per token and every message answered twice         |
-| Traefik        | 1                       | Rate-limit buckets count in memory per pod                                            |
-| cloudflare-mcp | one Worker per stage    | Core uses it only once infra sets `CLOUDFLARE_MCP_URL` and its key; until then Lambda |
+| Piece             | Replicas                | Why                                                                                   |
+| ----------------- | ----------------------- | ------------------------------------------------------------------------------------- |
+| core              | 1                       | The machine sandbox registry and the in-process worker queue live in memory           |
+| gateway           | any                     | Stateless. On `SIGTERM` it closes sockets with `1012` so clients reconnect elsewhere  |
+| discord-forwarder | 1, `strategy: Recreate` | A second pod means a second socket per token and every message answered twice         |
+| Traefik           | 1                       | Rate-limit buckets count in memory per pod                                            |
+| cloudflare-mcp    | one Worker per stage    | Core uses it only once infra sets `CLOUDFLARE_MCP_URL` and its key; until then Lambda |
 
 - Core authenticates to AWS with an access key for the per-stage `core-runtime` IAM user. Convex uses the `convex-bootstrap` user, which can only assume `ConvexAwsRole`.
 - Core schedules nothing. The Convex crons component owns every schedule and POSTs each firing to core's `/v1/cron-runs` in-cluster.
@@ -198,7 +193,6 @@ flowchart LR
   Convex[Convex actions] -->|"SERVICE_AUTH_SECRET<br/>+ X-Account-Id, in-cluster"| Core
   Convex -->|"ADMIN_ACCOUNT_SECRET<br/>account delete"| Core
   Core -->|CONVEX_DEPLOY_KEY| Convex
-  Core -->|Matrix access token| MFwd[matrix-forwarder]
   Core -->|CLOUDFLARE_MCP_API_KEY| MCP[cloudflare-mcp]
   Core -->|CLOUDFLARE_SANDBOX_API_KEY| SBX[cloudflare-sandbox]
   Core -->|CLOUDFLARE_WORKER_API_KEY| ISO[cloudflare-worker]
@@ -211,7 +205,7 @@ flowchart LR
 
 ## Forwarders
 
-Discord sends regular messages only over a Gateway socket, and Matrix only over `/sync` long-polls. Every other channel posts to a webhook and needs no forwarder. The Matrix forwarder imports the Discord forwarder's config, connection, backoff, forward, log and supervisor modules, so both work the same way:
+Discord sends regular messages only over a Gateway socket. Every other channel posts to a webhook and needs no forwarder:
 
 ```mermaid
 flowchart LR
@@ -221,15 +215,15 @@ flowchart LR
   end
   P1 -->|"listConnections<br/>subscription"| Sup[supervisor]
   P2 -->|subscription| Sup
-  Sup -->|one per token| Conn["socket or /sync loop"]
+  Sup -->|one per token| Conn["socket"]
   Conn -->|fan out| W1["webhook, prod"]
   Conn -->|fan out| W2["webhook, dev"]
 ```
 
 - One release serves every config plane. Plane `dev` reads its admin key from `CONVEX_DEPLOY_KEY_DEV`. Add a plane to the array, never a release per stage.
-- Convex decrypts and returns only the token and webhook path. Neither forwarder holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET`.
+- Convex decrypts and returns only the token and webhook path. The forwarder never holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET`.
 - A plane that errors keeps its last answer, so a Convex blip closes no socket. `/healthz` never waits on Convex; `/readyz` is `503` until the first plane answers.
-- Discord: a webhook that still rejects an event after three tries loses it. Matrix keeps it in a per-account outbox, below.
+- A webhook that still rejects an event after three tries loses it.
 
 A Discord socket, from `apps/discord-forwarder/src/socket.ts`:
 
@@ -250,15 +244,6 @@ stateDiagram-v2
 - A RESUME spends no IDENTIFY and only dials a host under `.discord.gg`, so the bot token cannot be sent elsewhere.
 - Events go out as `GATEWAY_MESSAGE_CREATE` with a credential derived from the bot token (`discordForwarderToken` in `apps/core/src/shared/discord-wire.ts`) in `x-discord-gateway-token`, plus `thread` for a message in a thread. The bot token itself never crosses the edge, and core refuses it there.
 
-Matrix:
-
-- `MATRIX_STORE_DIR` holds each account's crypto store, sync token and outbox and must be a persistent volume. Losing it loses the device keys and any event still waiting.
-- Core sends replies, reactions and typing through the forwarder's `POST /v1/send` and `POST /v1/typing`, authenticated with the access token, because only the forwarder can encrypt for the room.
-- Every synced event lands in the account's outbox, `outbox.sqlite` next to the sync token, before the token moves past it. It stays there, still encrypted for an encrypted room, until each channel webhook took it, so a restart or a core outage loses nothing.
-- A webhook that answered a 5xx, a 408 or a 429, or not at all, is retried with backoff up to 60 seconds, in order: later events for it wait behind the oldest. Agents that took the event are not posted again. Any other 4xx is final.
-- An undecryptable event is retried the same way for up to 5 minutes while its room key arrives, and the later events of its room wait behind it.
-- An event leaves the outbox after 12 hours, or oldest first past 5,000 events or 50 MB per account, with one `Matrix event dropped from the outbox` error line naming the event, room, agents and attempts. Size the volume for that cap.
-
 ## Runbooks
 
 | Symptom                                                        | Fix                                                                                             |
@@ -269,11 +254,10 @@ Matrix:
 | Every agent config fails to decrypt                            | Put the value that wrapped the keys back in `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                  |
 | `deny-all` or `restricted` `lambda` sandboxes fail to launch   | Set `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN` from the `microvmEgressNetworkConnectorArn` output   |
 | Discord agent answers `/new` but ignores mentions              | discord-forwarder down or missing that plane. Check `/readyz`                                   |
-| Matrix agent cannot read encrypted rooms after a redeploy      | Put `MATRIX_STORE_DIR` on a persistent volume, log in again as a new device                     |
 | Image built but pods run the old version                       | Check the build workflow's `rollout` job and `INFRA_DISPATCH_TOKEN`                             |
 | `broods logs` or dashboard stream stops after about 15 minutes | Stage ticket could not be renewed. Re-run `broods login`                                        |
 
-A Discord or Matrix agent that stays silent:
+A Discord agent that stays silent:
 
 ```mermaid
 flowchart TD
@@ -282,9 +266,7 @@ flowchart TD
   B -->|"200"| C{"Discord socket state"}
   C -->|fatal| C1["Read the close code.<br/>4014: turn on Message Content Intent"]
   C -->|exhausted| C2["IDENTIFY budget spent:<br/>find the reconnect loop"]
-  C -->|"ready, or Matrix"| D{"Matrix account failed?"}
-  D -->|yes| D1["M_UNKNOWN_TOKEN:<br/>log in, set new access token"]
-  D -->|no| E["Forwarder logs a non-OK<br/>webhook response?<br/>Check core and the agent's channel config"]
+  C -->|ready| E["Forwarder logs a non-OK<br/>webhook response?<br/>Check core and the agent's channel config"]
 ```
 
 ## Drift cleanup
