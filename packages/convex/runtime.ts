@@ -24,7 +24,10 @@ import {
   requireActiveAccount,
   requireActiveKeyAccount,
 } from "./model/activeAccount";
-import { takeHarnessEntryBatch } from "./model/harnessSessionEntries";
+import {
+  findHarnessEntry,
+  takeHarnessEntryBatch,
+} from "./model/harnessSessionEntries";
 import {
   handbackMoveValidator,
   parseHandbackDedupeKey,
@@ -393,11 +396,12 @@ export const getHarnessSession = internalQuery({
   },
 });
 
-// Pages through every entry of a session in append order, within the event page limits.
+// Pages through a session in append order, from where the leaf's model context starts.
 export const readHarnessSessionEntries = internalQuery({
   args: {
     conversationKey: v.string(),
     sessionId: v.string(),
+    leafEntryId: v.optional(v.string()),
     afterSequence: v.optional(v.number()),
   },
   returns: v.object({
@@ -405,6 +409,10 @@ export const readHarnessSessionEntries = internalQuery({
     nextSequence: v.union(v.number(), v.null()),
   }),
   handler: async (ctx, args) => {
+    const leaf =
+      args.afterSequence === undefined && args.leafEntryId !== undefined
+        ? await findHarnessEntry(ctx.db, args, args.leafEntryId)
+        : null;
     const { batch, full } = await takeHarnessEntryBatch(
       ctx.db
         .query("runtimeHarnessSessionEntries")
@@ -413,9 +421,9 @@ export const readHarnessSessionEntries = internalQuery({
             .eq("conversationKey", args.conversationKey)
             .eq("sessionId", args.sessionId);
 
-          return args.afterSequence === undefined
-            ? session
-            : session.gt("sequence", args.afterSequence);
+          return args.afterSequence !== undefined
+            ? session.gt("sequence", args.afterSequence)
+            : session.gte("sequence", leaf?.contextStart ?? 0);
         }),
       {
         bytes: CONVERSATION_EVENT_PAGE_BYTES,

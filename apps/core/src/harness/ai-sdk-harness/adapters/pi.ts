@@ -93,6 +93,9 @@ export function createPiSessionStorage(
         parentEntryId: entry.parentEntryId,
         version: entry.version,
         entry: fitPiEntry(entry.data),
+        ...(entry.data.type === "compaction"
+          ? { firstKeptEntryId: entry.data.firstKeptEntryId }
+          : {}),
       })),
     );
   };
@@ -100,8 +103,8 @@ export function createPiSessionStorage(
   return {
     append: async ({ entry }): Promise<void> => append([entry]),
     appendMany: async ({ entries }): Promise<void> => append(entries),
-    read: async ({ sessionId }): Promise<PiSessionEntry[]> =>
-      (await session.readHarnessSessionEntries(sessionId)).map(
+    read: async ({ sessionId, leafId }): Promise<PiSessionEntry[]> =>
+      (await session.readHarnessSessionEntries(sessionId, leafId)).map(
         (row): PiSessionEntry => ({
           entryId: row.entryId,
           parentEntryId: row.parentEntryId,

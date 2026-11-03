@@ -13,6 +13,12 @@ const modules = import.meta.glob("../**/*.ts");
 const BIG_ENTRY = "x".repeat(500 * 1_024);
 const OWNER = { ownerEventId: "owner", ownerGeneration: 1 };
 
+interface EntryLink {
+  entryId: string;
+  parentEntryId?: string;
+  firstKeptEntryId?: string;
+}
+
 interface Conversation {
   t: TestConvex<typeof schema>;
   accountId: Id<"accounts">;
@@ -207,6 +213,37 @@ describe("harness session entries inside Convex transaction limits", () => {
   });
 });
 
+describe("harness session context window", () => {
+  test("a read starts at the leaf's latest compaction and each branch keeps its own", async (): Promise<void> => {
+    const { t, conversationKey } = await conversation();
+    await save(t, conversationKey, [
+      ...chain(["e1", "e2", "e3", "e4", "e5", "e6"]),
+      { entryId: "e7", parentEntryId: "e6", firstKeptEntryId: "e4" },
+      { entryId: "e8", parentEntryId: "e7" },
+    ]);
+    await save(t, conversationKey, [
+      { entryId: "e9", parentEntryId: "e8" },
+      { entryId: "f4", parentEntryId: "e3" },
+    ]);
+
+    expect((await readAllPages(t, conversationKey, "s1", "e9")).flat()).toEqual(
+      ["e4", "e5", "e6", "e7", "e8", "e9", "f4"],
+    );
+    expect((await readAllPages(t, conversationKey, "s1", "f4")).flat()).toEqual(
+      ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "f4"],
+    );
+  });
+
+  test("a leaf saved before context starts existed reads from the first row", async (): Promise<void> => {
+    const { t, conversationKey } = await conversation();
+    await seed(t, conversationKey, "s1", 3, "{}");
+
+    expect(
+      (await readAllPages(t, conversationKey, "s1", "seed-2")).flat(),
+    ).toEqual(["seed-0", "seed-1", "seed-2"]);
+  });
+});
+
 async function conversation(): Promise<Conversation> {
   const t = convexTest({
     schema: schema,
@@ -260,10 +297,18 @@ async function entryCount(
   return (await readAllPages(t, conversationKey, "s1")).flat().length;
 }
 
+function chain(ids: string[]): EntryLink[] {
+  return ids.map((entryId, index): EntryLink => ({
+    entryId: entryId,
+    ...(index > 0 ? { parentEntryId: ids[index - 1] } : {}),
+  }));
+}
+
 async function readAllPages(
   t: TestConvex<typeof schema>,
   conversationKey: string,
   sessionId: string,
+  leafEntryId?: string,
 ): Promise<string[][]> {
   const pages: string[][] = [];
   let afterSequence: number | undefined;
@@ -271,7 +316,11 @@ async function readAllPages(
     const page = await t.query(internal.runtime.readHarnessSessionEntries, {
       conversationKey: conversationKey,
       sessionId: sessionId,
-      ...(afterSequence === undefined ? {} : { afterSequence: afterSequence }),
+      ...(afterSequence === undefined
+        ? leafEntryId === undefined
+          ? {}
+          : { leafEntryId: leafEntryId }
+        : { afterSequence: afterSequence }),
     });
     pages.push(page.entries.map((row) => row.entryId));
     if (page.nextSequence === null) {
@@ -279,6 +328,22 @@ async function readAllPages(
     }
     afterSequence = page.nextSequence;
   }
+}
+
+// One checkpoint of session s1 carrying these entries, leaf last.
+async function save(
+  t: TestConvex<typeof schema>,
+  conversationKey: string,
+  links: EntryLink[],
+): Promise<void> {
+  await t.mutation(internal.runtimeIngress.saveHarnessSession, {
+    conversationKey: conversationKey,
+    ...OWNER,
+    harnessType: "pi",
+    sessionId: "s1",
+    resumeState: { data: { leafId: links.at(-1)!.entryId } },
+    entries: links.map((link) => ({ ...link, version: 3, entry: "{}" })),
+  });
 }
 
 // Written straight to the table, a few rows per transaction, as many turns would.
