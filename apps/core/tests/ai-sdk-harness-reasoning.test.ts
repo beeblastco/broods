@@ -112,22 +112,44 @@ describe("harness reasoning settings", (): void => {
     }
   });
 
-  it("never sends OpenCode provider-default as a variant", (): void => {
-    const variant = (reasoning: Reasoning): unknown =>
-      (
-        createConfiguredOpenCodeAdapter(
-          agent("opencode", "anthropic", reasoning),
-        ) as { reasoningVariant?: string }
-      ).reasoningVariant;
+  it("gives OpenCode the nearest variant the model has", (): void => {
+    const variant = (
+      provider: "anthropic" | "openai" | "vercel",
+      modelId: string,
+      reasoning: Reasoning,
+    ): unknown => {
+      const config = agent("opencode", provider, reasoning);
+      config.model = { ...config.model, modelId: modelId };
 
-    expect(variant("high")).toBe("high");
-    expect(variant("provider-default")).toBeUndefined();
+      return (
+        createConfiguredOpenCodeAdapter(config) as {
+          reasoningVariant?: string;
+        }
+      ).reasoningVariant;
+    };
+
+    expect(variant("anthropic", "claude-opus-5-5", "xhigh")).toBe("xhigh");
+    expect(variant("anthropic", "claude-opus-5-5", "minimal")).toBe("low");
+    expect(variant("anthropic", "claude-opus-5-5", "none")).toBeUndefined();
+    expect(variant("anthropic", "claude-sonnet-4-6", "xhigh")).toBe("high");
+    expect(variant("anthropic", "claude-sonnet-4-5", "low")).toBe("high");
+    expect(variant("openai", "gpt-5", "minimal")).toBe("minimal");
+    expect(variant("openai", "gpt-5", "xhigh")).toBe("high");
+    expect(variant("openai", "gpt-5.1", "minimal")).toBe("low");
+    expect(variant("openai", "gpt-5.1", "none")).toBe("none");
+    expect(variant("openai", "gpt-5.2", "xhigh")).toBe("xhigh");
+    expect(variant("openai", "gpt-5-codex", "none")).toBeUndefined();
+    expect(variant("vercel", "google/gemini-3-pro", "medium")).toBe("high");
+    expect(variant("vercel", "xai/grok-4", "minimal")).toBe("minimal");
+    expect(
+      variant("anthropic", "claude-opus-5-5", "provider-default"),
+    ).toBeUndefined();
   });
 });
 
 function agent(
   harness: NonNullable<AgentConfig["harness"]>["type"],
-  provider: "anthropic" | "openai",
+  provider: "anthropic" | "openai" | "vercel",
   reasoning: Reasoning,
 ): AgentConfig {
   return {
