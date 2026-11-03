@@ -84,7 +84,7 @@ describe("openAiSdkHarnessSession", () => {
   it("stops the machine it opened when the native session fails to start", async () => {
     const machine = { stop: mock(async (): Promise<void> => {}) };
 
-    expect(
+    await expect(
       openAiSdkHarnessSession({
         abortSignal: new AbortController().signal,
         agent: {
@@ -97,7 +97,6 @@ describe("openAiSdkHarnessSession", () => {
         type: "codex",
       }),
     ).rejects.toThrow("bootstrap failed");
-    await Promise.resolve();
     expect(machine.stop).toHaveBeenCalledTimes(1);
   });
 
@@ -463,8 +462,7 @@ describe("parkAiSdkHarnessSession", () => {
       },
     });
 
-    expect(park(true, "codex")).rejects.toThrow("stop failed");
-    await Bun.sleep(0);
+    await expect(park(true, "codex")).rejects.toThrow("stop failed");
     expect(machine.stop).toHaveBeenCalledTimes(1);
     expect(machine.destroy).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
@@ -477,8 +475,7 @@ describe("parkAiSdkHarnessSession", () => {
       },
     });
 
-    expect(park(true, "deepagents")).rejects.toThrow("detach failed");
-    await Bun.sleep(0);
+    await expect(park(true, "deepagents")).rejects.toThrow("detach failed");
     expect(native.destroy).toHaveBeenCalledTimes(1);
     expect(machine.destroy).toHaveBeenCalledTimes(1);
   });
@@ -490,8 +487,7 @@ describe("parkAiSdkHarnessSession", () => {
       },
     });
 
-    expect(park(true, "deepagents")).rejects.toThrow("stale owner");
-    await Bun.sleep(0);
+    await expect(park(true, "deepagents")).rejects.toThrow("stale owner");
     expect(native.destroy).not.toHaveBeenCalled();
     expect(machine.destroy).not.toHaveBeenCalled();
   });
