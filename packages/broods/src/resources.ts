@@ -34,6 +34,7 @@ import type {
   MessengerSource,
   WhatsAppSource,
 } from "./contracts.ts";
+import type { Tool } from "ai";
 import type { McpRuntime } from "./account.ts";
 
 export type { ChannelPartition };
@@ -670,12 +671,22 @@ export type ProviderConfigInput = Partial<
 >;
 
 // `Pick`, not `Omit`: AgentConfig's index signature would turn off excess-property checks.
+/**
+ * An AI SDK provider tool as its factory returns it, under any key; found by its `id`.
+ * A tool the caller would run (bash, text editor, shell, apply patch) runs on the agent's sandbox.
+ * `command` is the sandbox command an OpenAI custom tool's text is piped to on stdin.
+ */
+export type AgentToolInput =
+  | NonNullable<AgentConfig["tools"]>[string]
+  | (Tool & { enabled?: boolean; command?: string });
+
 export type AgentDefinitionConfig = EnvRefString<
   Pick<
     AgentConfig,
-    "agent" | "model" | "scheduler" | "browser" | "session" | "tools" | "mcp"
+    "agent" | "model" | "scheduler" | "browser" | "session" | "mcp"
   >
 > & { provider?: ProviderConfigInput } & {
+  tools?: Record<string, AgentToolInput>;
   harness?: HarnessDefinition;
   hooks?: AgentHooks & {
     webhooks?: readonly EnvRefString<AgentWebhookHookConfig>[];

@@ -10,6 +10,7 @@ import {
   AGENT_LIFECYCLE_EVENT_NAMES,
   MODEL_CONFIG_SETTING_KEYS,
   assertAgentRuntimeRefs,
+  isHarnessToolName,
   isPrivateHostname,
   isProviderToolName,
   normalizeAgentConfig,
@@ -648,16 +649,31 @@ const CHANNELS = z.looseObject({
   whatsapp: z.nullish(WHATSAPP),
 });
 
-const TOOLS = z.record(
-  z
-    .string()
-    .check(z.refine(isProviderToolName, { error: "is not a supported tool" })),
-  z.looseObject({
-    enabled: optionalBoolean,
-    needsApproval: optionalBoolean,
-    config: z.optional(z.record(z.string(), z.unknown())),
-  }),
-);
+const TOOLS = z
+  .record(
+    z
+      .string()
+      .check(
+        z.refine(isProviderToolName, { error: "is not a supported tool" }),
+      ),
+    z.looseObject({
+      enabled: optionalBoolean,
+      needsApproval: optionalBoolean,
+      config: z.optional(z.record(z.string(), z.unknown())),
+    }),
+  )
+  .check(
+    z.superRefine((tools, ctx): void => {
+      for (const [name, entry] of Object.entries(tools)) {
+        if (isHarnessToolName(name) && entry.type !== "provider")
+          ctx.addIssue({
+            code: "custom",
+            path: [name],
+            message: `is a Broods tool name; it only keys a provider tool such as ${name}: anthropic.tools.bash_20250124({})`,
+          });
+      }
+    }),
+  );
 
 const MCP = refusingProtoKey(
   z.record(

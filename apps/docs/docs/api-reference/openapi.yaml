@@ -5955,12 +5955,16 @@ components:
     ToolsConfig:
       type: object
       description: >-
-        Enables provider-defined tools by the name the configured AI SDK
-        provider exposes on its `tools` namespace (for example `googleSearch`,
-        `urlContext`, or `codeExecution` on `google`). Core ships no built-in
-        external tools; remote tools come from `mcp`. A name the
-        configured provider does not expose is rejected when the agent runs.
-        Omitting a key or setting `enabled: false` disables the tool.
+        Enables AI SDK provider tools on the configured provider. A
+        descriptor (`type`/`id`/`args`) is found by its `id` under any key; a
+        flat entry is found by its key on the provider's `tools` namespace
+        (for example `googleSearch`). A client-executed tool (Anthropic bash
+        and text editor, OpenAI shell, local shell, apply patch and custom
+        tools) runs on the agent's sandbox as the Broods tool it stands for.
+        A Broods tool name such as `bash` may key only a descriptor that runs
+        as that tool. Remote tools come from `mcp`. A tool the configured
+        provider does not have is rejected when the agent runs. Omitting a key
+        or setting `enabled: false` disables the tool.
       additionalProperties:
         $ref: "#/components/schemas/ProviderToolConfig"
 
@@ -6183,11 +6187,11 @@ components:
     ProviderToolConfig:
       type: object
       description: >-
-        A tool the configured AI SDK provider executes itself, keyed by the name
-        it exposes on its `tools` namespace. Accepts either the descriptor a
-        provider tool serializes to (`type`/`id`/`args`, as produced by
-        `google.tools.googleSearch({...})`) or a flat object whose keys other
-        than `enabled` and `needsApproval` are the tool's arguments.
+        An AI SDK provider tool. Accepts either the descriptor a provider tool
+        serializes to (`type`/`id`/`args`, as produced by
+        `anthropic.tools.webSearch_20260318({...})`) or a flat object whose
+        keys other than `enabled`, `needsApproval` and `command` are the
+        tool's arguments.
       properties:
         enabled:
           type: boolean
@@ -6203,6 +6207,9 @@ components:
         args:
           type: object
           description: Arguments the provider tool was built with.
+        command:
+          type: string
+          description: Sandbox command an OpenAI custom tool's text is piped to on stdin. Required for `openai.custom`.
       additionalProperties: true
 
     ChannelsConfig:

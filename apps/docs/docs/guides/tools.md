@@ -2,37 +2,76 @@
 
 An agent gets tools from four places:
 
-| Source                | How you enable it                | Examples                                                    |
-| --------------------- | -------------------------------- | ----------------------------------------------------------- |
-| Your model provider   | `tools` on the agent             | `googleSearch`, OpenAI `webSearch`, Anthropic `computerUse` |
-| MCP servers           | `defineMcp` + `mcp` on the agent | Any MCP server, yours or a vendor's                         |
-| Sandboxes, workspaces | `sandboxes`, `workspaces`        | `bash`, `read`, `write`, `edit`, `glob`, `grep`             |
-| Broods features       | the matching agent setting       | `browse`, `load_skill`, `run_subagent`, `schedule`          |
+| Source                | How you enable it                | Examples                                                  |
+| --------------------- | -------------------------------- | --------------------------------------------------------- |
+| Your model provider   | `tools` on the agent             | `googleSearch`, OpenAI `webSearch`, Anthropic `webSearch` |
+| MCP servers           | `defineMcp` + `mcp` on the agent | Any MCP server, yours or a vendor's                       |
+| Sandboxes, workspaces | `sandboxes`, `workspaces`        | `bash`, `read`, `write`, `edit`, `glob`, `grep`           |
+| Broods features       | the matching agent setting       | `browse`, `load_skill`, `run_subagent`, `schedule`        |
 
 This page covers the first two, approvals, and the built-in tools. Sandbox tools are in [Sandboxes](sandboxes/index.md).
 
 ## Provider tools
 
-Import the tool from the provider's AI SDK package and pass it in, keyed by the name the provider uses:
+Import the tool from the provider's AI SDK package and pass it in under any key, as in the AI SDK:
 
 ```ts title="broods/index.ts"
-import { google } from "@ai-sdk/google";
+import { anthropic } from "@ai-sdk/anthropic";
 import { defineAgent, env } from "broods";
 
 export const researcher = defineAgent({
   name: "researcher",
-  provider: { google: { apiKey: env("GOOGLE_API_KEY") } },
-  model: { provider: "google", modelId: "gemini-3-flash" },
+  provider: { anthropic: { apiKey: env("ANTHROPIC_API_KEY") } },
+  model: { provider: "anthropic", modelId: "claude-haiku-5-5" },
   tools: {
-    googleSearch: google.tools.googleSearch({ searchTypes: { webSearch: {} } }),
-    urlContext: { ...google.tools.urlContext({}), needsApproval: true },
+    webSearch: anthropic.tools.webSearch_20260318({ maxUses: 3 }),
+    webFetch: { ...anthropic.tools.webFetch_20260318({}), needsApproval: true },
   },
 });
 ```
 
-The provider runs these tools itself during the model call. Available names depend on `model.provider`. Google has `googleSearch`, `urlContext`, `googleMaps`, `codeExecution`, `fileSearch` and `enterpriseWebSearch`. OpenAI has `webSearch`, `codeInterpreter` and `fileSearch`. Anthropic has `computerUse`, `bash`, `textEditor` and `webSearch`. A name the provider does not have fails the run and lists the names it does have.
+Broods finds the tool by its `id` (`anthropic.web_search_20260318`) on the agent's `model.provider`, so a tool from another provider's package fails the run and lists the ids that provider has. Which tools a provider has, and which models take them, is in its AI SDK docs.
 
-A tool that your code would execute, such as the Tavily AI SDK package, cannot go in `tools`, because a function does not survive sync. Put it behind an MCP server.
+### Tools the provider runs
+
+Hosted tools run at the provider during the model call: Anthropic web search, web fetch, code execution, tool search and advisor; OpenAI web search, code interpreter, file search, image generation, MCP and `shell` with a `containerAuto` or `containerReference` environment; Google search, URL context, maps, code execution, file search and enterprise search; xAI web and X search, code execution and the rest of `xai.tools`; Groq browser search, Mistral web search, the Vercel AI Gateway search tools and OpenRouter web search.
+
+### Tools that run on your sandbox
+
+Some provider tools define only the schema; the caller runs them. Broods runs these on the agent's sandbox, as the Broods tool each one stands for, so they follow the same sandbox approvals, policies and `denyTools`:
+
+| Provider tool                                    | Runs as                 | Needs                |
+| ------------------------------------------------ | ----------------------- | -------------------- |
+| `anthropic.tools.bash_20250124`, `bash_20241022` | `bash`                  | a sandbox            |
+| `openai.tools.shell` (no container environment)  | `bash`                  | a sandbox            |
+| `openai.tools.localShell`                        | `bash`                  | a sandbox            |
+| `anthropic.tools.textEditor_*`                   | `read`, `write`, `edit` | a writable workspace |
+| `openai.tools.applyPatch`                        | `write`, `edit`         | a writable workspace |
+| `openai.tools.customTool`                        | `bash`, with `command`  | a sandbox            |
+
+```ts
+tools: {
+  bash: anthropic.tools.bash_20250124({}),
+  str_replace_based_edit_tool: anthropic.tools.textEditor_20250728({}),
+},
+```
+
+- The provider tool replaces the Broods tool it stands for, so the model sees one tool per job. A key may be a Broods tool name, such as `bash`, only for the provider tool that runs as it.
+- `denyTools: ["bash"]` withholds every tool that runs as `bash`.
+- Each call starts a fresh shell, as Broods `bash` does, so the bash tool's `restart` does nothing. The text editor's `insert` and `undo_edit` commands are refused; the model falls back to `str_replace`.
+- An OpenAI custom tool needs `command`, the sandbox command that reads the model's text on stdin:
+
+```ts
+write_sql: {
+  ...openai.tools.customTool({
+    description: "Run one SQLite SELECT against data.db.",
+    format: { type: "grammar", syntax: "regex", definition: "SELECT .+" },
+  }),
+  command: "sqlite3 data.db",
+},
+```
+
+Anthropic computer use and memory, and OpenAI computer use and client-side tool search, are refused: they need code Broods does not have. A machine sandbox gives the agent Broods' own `computer` tool. An `execute` you pass to a factory, or any other tool your code runs, does not survive sync. Put it behind an MCP server.
 
 ## MCP servers
 

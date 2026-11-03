@@ -1,5 +1,8 @@
 import type { ToolSet } from "ai";
-import { isProviderToolName } from "@broods/convex/model/agentRules";
+import {
+  isHarnessToolName,
+  isProviderToolName,
+} from "@broods/convex/model/agentRules";
 import { browserSandboxRefusal } from "@broods/convex/model/sandboxRules";
 import {
   resolveSubagentMode,
@@ -60,8 +63,13 @@ import globTool from "./glob.tool.ts";
 import grepTool from "./grep.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
 import memoryTool from "./memory.tool.ts";
-import { providerDefinedTool } from "./provider-tool.ts";
+import { providerToolBuild } from "./provider-tool.ts";
 import readTool from "./read.tool.ts";
+import {
+  runsOnProvider,
+  sandboxStandIn,
+  type SandboxStandIn,
+} from "./sandbox-stand-in.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
@@ -105,6 +113,7 @@ export interface ToolContext {
   onDetachedResult?: (resultId: string) => void;
   sandboxMetadata?: SandboxRunMetadata;
   approvalRequirements?: Map<string, true>;
+  sandboxStandIns?: Map<string, SandboxStandIn>;
   policyMcpIdsByName?: Map<string, string>;
   channel?: ChannelToolContext;
 }
@@ -322,26 +331,12 @@ export async function createTools(
     );
   }
 
-  for (const [toolName, toolConfig] of Object.entries(
-    agentConfig.tools ?? {},
-  )) {
-    if (!isProviderToolName(toolName)) {
-      throw new Error(`config.tools.${toolName} is not a supported tool`);
-    }
-    if (!isToolEnabled(toolConfig)) {
-      continue;
-    }
-
-    if (toolConfig.needsApproval === true)
-      context.approvalRequirements?.set(toolName, true);
-    Object.assign(
-      tools,
-      providerDefinedTool(toolName, {
-        ...context,
-        config: externalToolRuntimeConfig(toolConfig),
-      }),
-    );
-  }
+  const standIns = context.sandboxStandIns ?? new Map<string, SandboxStandIn>();
+  registerProviderTools(tools, agentConfig, context, {
+    sandboxTools: sandboxTools,
+    fileContext: sandboxContext,
+    standIns: standIns,
+  });
 
   // Needs a delivery to resume on; a subagent has none and a cron-fired run has nobody to answer.
   const session = context.session;
@@ -388,19 +383,24 @@ export async function createTools(
   }
 
   // Withhold last, so a channel's deny list also covers sandbox and MCP tools.
-  withholdTools(tools, agentConfig.denyTools);
+  withholdTools(tools, agentConfig.denyTools, standIns);
 
   return tools;
 }
 
 function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
   const {
+    command: _command,
     enabled: _enabled,
     needsApproval: _needsApproval,
     ...runtimeConfig
   } = config;
 
   return runtimeConfig;
+}
+
+function harnessNameError(toolName: string): string {
+  return `config.tools.${toolName} is a Broods tool name; only a provider tool that runs as ${toolName} may use it`;
 }
 
 export function isToolEnabled<Entry extends { enabled?: boolean }>(
@@ -509,9 +509,73 @@ async function registerMcpTools(
   }
 }
 
-function withholdTools(tools: ToolSet, denyTools: string[] | undefined): void {
-  for (const toolName of denyTools ?? []) {
-    if (toolName in tools) {
+// A client-executed provider tool runs as the sandbox tool it stands for, in that tool's place.
+function registerProviderTools(
+  tools: ToolSet,
+  agentConfig: AgentConfig,
+  context: Omit<ToolContext, "config">,
+  sandbox: {
+    sandboxTools: ToolSet;
+    fileContext: SandboxToolContext;
+    standIns: Map<string, SandboxStandIn>;
+  },
+): void {
+  for (const [toolName, toolConfig] of Object.entries(
+    agentConfig.tools ?? {},
+  )) {
+    if (!isProviderToolName(toolName)) {
+      throw new Error(`config.tools.${toolName} is not a supported tool`);
+    }
+    const harnessName = isHarnessToolName(toolName);
+    if (harnessName && toolConfig.type !== "provider") {
+      throw new Error(harnessNameError(toolName));
+    }
+    if (!isToolEnabled(toolConfig)) {
+      continue;
+    }
+
+    if (toolConfig.needsApproval === true)
+      context.approvalRequirements?.set(toolName, true);
+    const { args, factory } = providerToolBuild(toolName, {
+      ...context,
+      config: externalToolRuntimeConfig(toolConfig),
+    });
+    const built = factory(args);
+    // Also replaces a default execute: Anthropic bash runs on the AI SDK's experimental_sandbox.
+    const standIn =
+      built.type === "provider" &&
+      built.isProviderExecuted !== true &&
+      !runsOnProvider(built.id, args)
+        ? sandboxStandIn(built.id, {
+            toolName: toolName,
+            args: args,
+            command: toolConfig.command,
+            sandboxTools: sandbox.sandboxTools,
+            fileContext: sandbox.fileContext,
+          })
+        : undefined;
+    if (harnessName && !standIn?.replaces.some((name) => name === toolName)) {
+      throw new Error(harnessNameError(toolName));
+    }
+    if (!standIn) {
+      tools[toolName] = built;
+      continue;
+    }
+    for (const replaced of standIn.replaces) delete tools[replaced];
+    tools[toolName] = factory({ ...args, execute: standIn.execute });
+    sandbox.standIns.set(toolName, standIn);
+  }
+}
+
+function withholdTools(
+  tools: ToolSet,
+  denyTools: string[] | undefined,
+  standIns: ReadonlyMap<string, SandboxStandIn>,
+): void {
+  const denied = new Set(denyTools ?? []);
+  for (const toolName of Object.keys(tools)) {
+    const runsAs = standIns.get(toolName)?.runsAs ?? [];
+    if (denied.has(toolName) || runsAs.some((name) => denied.has(name))) {
       delete tools[toolName];
     }
   }

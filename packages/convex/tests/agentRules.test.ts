@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertAgentRuntimeRefs,
-  isProviderToolName,
+  isHarnessToolName,
   mergeAgentConfig,
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
@@ -630,10 +630,17 @@ describe("agent rules", () => {
     expect(() => normalizeAgentConfig({ policies: [1] })).toThrow(
       "config.policies must be an array of non-empty strings",
     );
-    // Harness-owned names stay rejected; core resolves provider tool names at run time.
+    // A harness-owned name only keys a provider tool; core decides at run time if it fits.
     expect(() =>
       normalizeAgentConfig({ tools: { bash: { enabled: true } } }),
-    ).toThrow("config.tools.bash is not a supported tool");
+    ).toThrow("config.tools.bash is a Broods tool name");
+    expect(
+      normalizeAgentConfig({
+        tools: {
+          bash: { type: "provider", id: "anthropic.bash_20250124", args: {} },
+        },
+      }).tools,
+    ).toMatchObject({ bash: { id: "anthropic.bash_20250124" } });
     expect(() =>
       normalizeAgentConfig({ tools: { tool_legacy: { enabled: true } } }),
     ).toThrow("config.tools.tool_legacy is not a supported tool");
@@ -1193,12 +1200,12 @@ describe("config patch pre-validation", () => {
   });
 });
 
-describe("isProviderToolName", () => {
+describe("isHarnessToolName", () => {
   it("keeps the subagent tool names for the harness", () => {
     for (const name of ["message-agents", "run_subagent", "stop_subagent"]) {
-      expect(isProviderToolName(name)).toBe(false);
+      expect(isHarnessToolName(name)).toBe(true);
     }
-    expect(isProviderToolName("web_search")).toBe(true);
+    expect(isHarnessToolName("web_search")).toBe(false);
   });
 });
 
