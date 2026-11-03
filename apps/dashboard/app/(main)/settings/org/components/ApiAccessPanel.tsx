@@ -53,6 +53,7 @@ import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
 import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
+import { useTimeoutFlag } from "@/app/hooks/useTimeoutFlag";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { formatDate } from "@/app/lib/formatTime";
 import type { SortKey } from "@/app/lib/tableState";
@@ -69,7 +70,7 @@ import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { Check, ChevronDown, Plus } from "lucide-react";
 import { useQueryState } from "nuqs";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { relativeTime } from "../../../[projectId]/sandbox/components/sandboxFormat";
 import { createdRows } from "./createdRows";
 
@@ -1168,14 +1169,7 @@ function useKeySave(
   const update = useMutation(api.accountApiKeys.update);
   const { pending, error, run } = useSubmit();
   const [saved, setSaved] = useState<string | null>(null);
-
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- timer that clears the Saved note
-  useEffect(() => {
-    if (saved === null) return;
-    const timer = setTimeout(() => setSaved(null), SAVED_NOTE_MS);
-
-    return () => clearTimeout(timer);
-  }, [saved]);
+  const savedNote = useTimeoutFlag(saved, SAVED_NOTE_MS);
 
   return {
     save: (field, patch) => {
@@ -1186,7 +1180,7 @@ function useKeySave(
         setSaved(field);
       });
     },
-    saved: saved,
+    saved: savedNote,
     pending: pending,
     error: error,
   };

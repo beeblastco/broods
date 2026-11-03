@@ -32,6 +32,7 @@ import {
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import { SidePanelSlot } from "@/app/components/canvas/SidePanelSlot";
 import { useEverTrue } from "@/app/hooks/useEverTrue";
+import { useLatestRef } from "@/app/hooks/useLatestRef";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
@@ -64,7 +65,6 @@ import {
   acceptsNewMember,
   autoWiredAgentIds,
   boardRects,
-  cardLabel,
   frameGroupActions,
   introducedRuntimeRefsProblem,
   makeDefaultSandbox,
@@ -183,13 +183,6 @@ const NodeDeleteDialog = dynamic(
   () =>
     import("@/app/components/canvas/NodeDeleteDialog").then(
       (mod) => mod.NodeDeleteDialog,
-    ),
-  { loading: (): null => null },
-);
-const RenameNodeDialog = dynamic(
-  () =>
-    import("@/app/components/canvas/RenameNodeDialog").then(
-      (mod) => mod.RenameNodeDialog,
     ),
   { loading: (): null => null },
 );
@@ -467,10 +460,7 @@ function CanvasInner({
   // Outlives the dialog's close, so its name does not blank mid fade-out.
   const [deleteNode, setDeleteNode] = useState<Node | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [renameNode, setRenameNode] = useState<{
-    id: string;
-    label: string;
-  } | null>(null);
+  const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
   const emptyGuideRef = useRef<HTMLDivElement>(null);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
@@ -508,12 +498,9 @@ function CanvasInner({
     [nodes, edges, mcpServers, collapsedFrames, expandedMemberId, drop],
   );
 
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- refs the flow callbacks read
-  useEffect(() => {
-    nodesRef.current = nodes;
-    edgesRef.current = edges;
-    framedGraphRef.current = framedGraph;
-  }, [nodes, edges, framedGraph]);
+  useLatestRef(nodesRef, nodes);
+  useLatestRef(edgesRef, edges);
+  useLatestRef(framedGraphRef, framedGraph);
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {
@@ -934,7 +921,6 @@ function CanvasInner({
           },
           menuNode.id,
         ),
-        label: cardLabel(menuNode),
         links: nodeLinkActions(nodesRef.current, edgesRef.current, menuNode.id),
         mounts: workspaceMountTargets(
           nodesRef.current,
@@ -1214,12 +1200,7 @@ function CanvasInner({
   );
   useShortcut("canvas.addMcp", () => canWrite && addNode("mcp", "MCP"));
   useShortcut("canvas.rename", () => {
-    if (!canWrite || !selectedNode) return;
-    const label = selectedNode.data.label;
-    setRenameNode({
-      id: selectedNode.id,
-      label: typeof label === "string" ? label : "",
-    });
+    if (canWrite && selectedNode) setRenamingNodeId(selectedNode.id);
   });
   useShortcut("canvas.delete", () => {
     if (canWrite && selectedNode) requestNodeDelete(selectedNode.id);
@@ -1375,8 +1356,10 @@ function CanvasInner({
       mcpServers: mcpServersByNode,
       mountTargetsOf: mountTargetsOf,
       onRenameNode: updateNodeLabel,
+      onRenaming: setRenamingNodeId,
       onSetWorkspaceMount: setWorkspaceMountTarget,
       onToggleFrame: toggleFrame,
+      renamingNodeId: renamingNodeId,
       sandboxOrderNumbers: orderNumbers,
       workspaceOnlySandboxIds: workspaceOnly,
     }),
@@ -1390,6 +1373,7 @@ function CanvasInner({
       updateNodeLabel,
       setWorkspaceMountTarget,
       toggleFrame,
+      renamingNodeId,
       orderNumbers,
       workspaceOnly,
     ],
@@ -1562,9 +1546,7 @@ function CanvasInner({
                   onDelete={requestNodeDelete}
                   onMakeDefault={makeDefault}
                   onRemoveEdge={removeEdge}
-                  onRename={(id, label) =>
-                    setRenameNode({ id: id, label: label })
-                  }
+                  onRename={setRenamingNodeId}
                   onSetMount={setWorkspaceMountTarget}
                   onSetUngrouped={setNodesUngrouped}
                 />
@@ -1662,17 +1644,6 @@ function CanvasInner({
             open={deleteOpen}
             onOpenChange={setDeleteOpen}
             onRemoved={removeNode}
-          />
-        )}
-
-        {renameNode && (
-          <RenameNodeDialog
-            key={renameNode.id}
-            label={renameNode.label}
-            nodeId={renameNode.id}
-            open={true}
-            onOpenChange={() => setRenameNode(null)}
-            onRename={updateNodeLabel}
           />
         )}
 

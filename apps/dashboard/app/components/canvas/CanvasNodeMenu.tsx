@@ -33,7 +33,6 @@ const SCROLLING_GROUP = "max-h-48 overflow-y-auto";
 
 export type CanvasNodeMenuEntries = {
   nodeId: string;
-  label: string;
   links: readonly NodeLinkAction[];
   groups: readonly FrameGroupAction[];
   mounts: readonly WorkspaceMountTarget[];
@@ -42,7 +41,6 @@ export type CanvasNodeMenuEntries = {
 
 export function CanvasNodeMenu({
   nodeId,
-  label,
   links,
   groups,
   mounts,
@@ -59,7 +57,7 @@ export function CanvasNodeMenu({
   onDelete: (nodeId: string) => void;
   onMakeDefault: (agentId: string, sandboxId: string) => void;
   onRemoveEdge: (edgeId: string) => void;
-  onRename: (nodeId: string, label: string) => void;
+  onRename: (nodeId: string) => void;
   onSetMount: (workspaceId: string, target: WorkspaceMountTarget) => void;
   onSetUngrouped: (nodeIds: readonly string[], ungrouped: boolean) => void;
 }): React.JSX.Element {
@@ -76,7 +74,7 @@ export function CanvasNodeMenu({
         </ContextMenuItem>
         <ContextMenuItem
           className="cursor-pointer"
-          onClick={() => onRename(nodeId, label)}
+          onClick={() => onRename(nodeId)}
         >
           <Pencil />
           Rename
