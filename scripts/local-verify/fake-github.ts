@@ -6,7 +6,7 @@ import {
   type KeyObject,
 } from "node:crypto";
 
-import { blake2b } from "@noble/hashes/blake2b";
+import { blake2b } from "@noble/hashes/blake2.js";
 import nacl from "tweetnacl";
 
 const SECRET_KEY_ID = "fake-key";
