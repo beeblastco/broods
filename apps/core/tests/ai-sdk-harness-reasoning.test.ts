@@ -66,7 +66,7 @@ describe("harness reasoning settings", () => {
     expect(effort("provider-default")).toBeUndefined();
   });
 
-  it("maps reasoning to effort for Claude Code and Deep Agents, and none to no thinking", () => {
+  it("gives Claude Code and Deep Agents an effort every Claude model accepts", () => {
     for (const create of [
       (config: AgentConfig): unknown =>
         createConfiguredClaudeCodeAdapter(config),
@@ -77,12 +77,11 @@ describe("harness reasoning settings", () => {
         create(agent("claude-code", "anthropic", reasoning));
 
       expect(settings("high")).toMatchObject({ effort: "high" });
+      expect(settings("xhigh")).toMatchObject({ effort: "high" });
       expect(settings("minimal")).toMatchObject({ effort: "low" });
-      expect(settings("none")).toMatchObject({
-        thinking: { type: "disabled" },
-      });
+      expect(settings("none")).toMatchObject({ effort: "low" });
+      expect(settings("none")).not.toHaveProperty("thinking");
       expect(settings("provider-default")).not.toHaveProperty("effort");
-      expect(settings("provider-default")).not.toHaveProperty("thinking");
     }
   });
 
