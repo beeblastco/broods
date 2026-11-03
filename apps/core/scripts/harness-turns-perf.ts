@@ -49,6 +49,8 @@ const MODEL_ID = "claude-haiku-4-5";
 // This turn resumes on a released machine: the next sandbox is new and empty.
 const RELEASE_AT = 8;
 const TURNS = Number(process.env.HARNESS_PERF_TURNS ?? 40);
+// Each run's Pi working directory differs, and Pi names it in the system prompt.
+const WORKDIR = /sandbox-\w+-\w+\/pi-[\w-]+/g;
 const USER_TEXT =
   "Summarize what changed in the payments service since the last turn. ".repeat(
     24,
@@ -72,7 +74,7 @@ interface Reads {
 
 interface TurnMetrics {
   calls: Record<string, number>;
-  // Hash of every request this turn sent the model.
+  // Hash of every request body this turn sent the model.
   modelHash: string;
   openMs: number;
   promptMessages: number;
@@ -93,7 +95,7 @@ const model = Bun.serve({
     const body = (await request.json()) as MessagesRequest;
     modelRequests.push({
       messages: body.messages.length,
-      body: JSON.stringify(body.messages),
+      body: JSON.stringify(body),
     });
     const fullContext = fullContextNext && body.stream === true;
     if (fullContext) fullContextNext = false;
@@ -238,7 +240,7 @@ async function runConversation(
       modelHash: Bun.hash(
         modelRequests
           .slice(firstRequest)
-          .map((request) => request.body)
+          .map((request) => request.body.replace(WORKDIR, "<workdir>"))
           .join("\n"),
       ).toString(),
       openMs: openMs,
@@ -472,13 +474,15 @@ function windowFailures(
       `long run stopped at turn ${Math.min(windowed.length, fullRead.length)}`,
     );
   }
-  for (const [index, result] of windowed.entries()) {
+  for (const result of [...windowed, ...fullRead]) {
     if (result.saveError) {
       failures.push(`long run turn ${result.turn}: ${result.saveError}`);
     }
+  }
+  for (const [index, result] of windowed.entries()) {
     if (fullRead[index] && result.modelHash !== fullRead[index].modelHash) {
       failures.push(
-        `long run turn ${result.turn}: the model got different messages than from a full read`,
+        `long run turn ${result.turn}: the model got a different request than from a full read`,
       );
     }
   }
