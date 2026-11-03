@@ -113,6 +113,7 @@ import {
   type IngressDelivery,
   type IngressMode,
   type IngressSettlement,
+  type PublicDeploymentIngress,
   type SessionMessageInput,
   type SessionMessageResult,
 } from "./ingress.ts";
@@ -562,9 +563,20 @@ export async function continueAfterAsyncToolSettlement(
   }
   const publicEventId = `async-tools-${settled.resultId}`;
   const question = settled.toolName === ASK_QUESTIONS_TOOL_NAME;
+  // The continuation keeps the run's stage, so a runtime key can still read it.
+  const root =
+    settled.delivery?.kind === "channel"
+      ? null
+      : await getIngressStatusByEventId({
+          ...scope,
+          eventId: rootEventId(settled.parentEventId),
+        });
 
   return resumeConversation({
     ...scope,
+    ...(root?.publicDeploymentIngress
+      ? { publicDeploymentIngress: root.publicDeploymentIngress }
+      : {}),
     eventId: asyncToolContinuationEventId(settled),
     publicEventId: publicEventId,
     toolResultId: settled.resultId,
@@ -648,6 +660,7 @@ async function resumeConversation(options: {
   conversationKey: string;
   delivery: AsyncToolDelivery | undefined;
   asyncResultEventId?: string;
+  publicDeploymentIngress?: PublicDeploymentIngress;
   message: IngressUserMessage;
   requestedMode: IngressMode;
   resultEventId?: string;
@@ -683,6 +696,9 @@ async function resumeConversation(options: {
     eventId: options.eventId,
     ...(options.asyncResultEventId
       ? { asyncResultEventId: options.asyncResultEventId }
+      : {}),
+    ...(options.publicDeploymentIngress
+      ? { publicDeploymentIngress: options.publicDeploymentIngress }
       : {}),
     ...(options.delivery?.kind === "channel"
       ? {
@@ -2502,6 +2518,9 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
       publicConversationKey: event.publicConversationKey,
       connectionId: event.connectionId,
       ...(directStatusUrl(event) ? { statusUrl: directStatusUrl(event)! } : {}),
+      ...(event.publicDeploymentIngress
+        ? { publicDeploymentIngress: event.publicDeploymentIngress }
+        : {}),
     };
   }
   if (event.replyTarget) {
@@ -2522,6 +2541,9 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
     publicEventId: event.publicEventId,
     publicConversationKey: event.publicConversationKey,
     statusUrl: statusUrl,
+    ...(event.publicDeploymentIngress
+      ? { publicDeploymentIngress: event.publicDeploymentIngress }
+      : {}),
   };
 }
 

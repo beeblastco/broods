@@ -242,13 +242,24 @@ function createTaskServer(caller: McpCaller): Server {
       };
     },
   );
-  // The SDK lifts `inputResponses` off the params into the request context.
+  // The SDK lifts `inputResponses` off the params, and turns a non-map into `{}`.
   server.setRequestHandler(
     "tasks/update",
     { params: TASK_PARAMS },
     async (params, ctx): Promise<{ resultType: "complete" }> => {
       requireTaskCapability(ctx);
-      await updateTask(caller, params.taskId, ctx.mcpReq.inputResponses ?? {});
+      const responses = ctx.mcpReq.inputResponses;
+      if (
+        !responses ||
+        Object.keys(responses).length === 0 ||
+        ctx.mcpReq.droppedInputResponseKeys !== undefined
+      ) {
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidParams,
+          "tasks/update needs an inputResponses map of bare responses",
+        );
+      }
+      await updateTask(caller, params.taskId, responses);
 
       return { resultType: "complete" };
     },

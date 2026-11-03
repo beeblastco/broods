@@ -240,6 +240,23 @@ describe("handleMcpRequest", () => {
     expect(started.conversationKey).toBe(started.eventId);
   });
 
+  it("refuses a tasks/update without a map of responses", async () => {
+    const replay = replayOf({
+      run_1: run({ status: "awaiting_input", questions: [] }),
+    });
+    const codes = [];
+    for (const extra of [{}, { inputResponses: 42 }, { inputResponses: {} }]) {
+      const { error } = await rpc(
+        mcpRequest("tasks/update", { taskId: "run_1", ...extra }),
+        replay,
+      );
+      codes.push(error?.code);
+    }
+
+    expect(codes).toEqual([-32602, -32602, -32602]);
+    expect(replay.posts).toEqual([]);
+  });
+
   it("follows an approval reply sent through tasks/update", async () => {
     const waiting = run({
       runId: "run_1",

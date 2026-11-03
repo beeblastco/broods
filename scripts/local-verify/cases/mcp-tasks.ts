@@ -1,3 +1,5 @@
+import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
+import { sealStageSessionTicket } from "../../../packages/convex/model/stageSessionTicket.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
   MODEL_KEY_HINT,
@@ -141,11 +143,14 @@ async function callTool(
   context: VerifyContext,
   agentId: string,
   prompt: string,
+  token?: string,
 ): Promise<Task> {
-  const called = await mcp(context, "tools/call", {
-    name: agentId,
-    arguments: { prompt: prompt },
-  });
+  const called = await mcp(
+    context,
+    "tools/call",
+    { name: agentId, arguments: { prompt: prompt } },
+    { token: token },
+  );
   assertStep(
     "tools/call returned a task",
     called.result?.resultType === "task",
@@ -196,13 +201,13 @@ async function mcp(
   context: VerifyContext,
   method: string,
   params: Record<string, unknown>,
-  options: { capabilities?: object; path?: string } = {},
+  options: { capabilities?: object; path?: string; token?: string } = {},
 ): Promise<McpResponse> {
   const name = params.taskId ?? params.name;
   const response = await fetch(`${context.edgeUrl}${options.path ?? "/mcp"}`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${context.accountSecret}`,
+      Authorization: `Bearer ${options.token ?? context.accountSecret}`,
       Accept: "application/json, text/event-stream",
       "Content-Type": "application/json",
       "MCP-Protocol-Version": PROTOCOL_VERSION,
@@ -236,56 +241,100 @@ async function pollTask(
   context: VerifyContext,
   taskId: string,
   until: ReadonlySet<string>,
+  token?: string,
 ): Promise<Task | null> {
   return pollUntil(POLL, async (): Promise<Task | null> => {
-    const got = await mcp(context, "tasks/get", { taskId: taskId });
+    const got = await mcp(
+      context,
+      "tasks/get",
+      { taskId: taskId },
+      { token: token },
+    );
     const task = got.result as unknown as Task | undefined;
 
     return task && until.has(task.status) ? task : null;
   });
 }
 
-/** An ask_questions prompt surfaces as a form; its answer resumes the same task. */
+/**
+ * An ask_questions prompt surfaces as a form; its answer resumes the same task.
+ * Called with a member's stage ticket, so the continuation must keep the stage.
+ */
 async function questionRoundTrip(
   context: VerifyContext,
   key: string,
 ): Promise<void> {
-  const { agentId } = await context.account.createAgent({
-    name: `${key}-ask`,
-    config: {
-      ...context.model,
-      agent: {
-        system: `On the first user message call ask_questions exactly once, with blocking true and one question: id "${QUESTION_ID}", header "Color", question "Which color?", options "Red" and "Blue". Then end your turn with no other tool call. When the answer arrives, reply with exactly the chosen color and nothing else.`,
-      },
-    },
+  const sync = new BroodsSyncClient({
+    baseUrl: context.edgeUrl,
+    token: context.accountSecret,
   });
-  const task = await callTool(context, agentId, "Pick a color for me.");
+  const deployed = await sync.putManifest(
+    {
+      version: 1,
+      project: `${key}-ask`,
+      stage: "development",
+      resources: [
+        {
+          kind: "agent",
+          name: "ask",
+          config: {
+            ...context.model,
+            agent: {
+              system: `On the first user message call ask_questions exactly once, with blocking true and one question: id "${QUESTION_ID}", header "Color", question "Which color?", options "Red" and "Blue". Then end your turn with no other tool call. When the answer arrives, reply with exactly the chosen color and nothing else.`,
+            },
+          },
+        },
+      ],
+    },
+    true,
+  );
+  const { deployment } = deployed;
+  const agentId = deployed.ids.agents.ask;
+  assertStep(
+    "the asking agent deployed to a stage",
+    deployment !== undefined && deployment !== null && agentId !== undefined,
+    JSON.stringify(deployed.ids),
+  );
+  const ticket = await sealStageSessionTicket(
+    {
+      accountId: deployment.accountId,
+      endpointId: deployment.endpointId,
+      projectId: `${key}-ask`,
+      projectSlug: deployment.projectSlug,
+      stageId: deployment.stageSlug,
+      stageSlug: deployment.stageSlug,
+      expiresAt: Date.now() + 15 * 60_000,
+    },
+    context.stageTicketSecret,
+  );
+  const task = await callTool(context, agentId, "Pick a color for me.", ticket);
   const asked = await pollTask(
     context,
     task.taskId,
     new Set([...TERMINAL, "input_required"]),
+    ticket,
   );
-  const requestKey = Object.keys(asked?.inputRequests ?? {})[0];
-  if (asked?.status !== "input_required" || requestKey === undefined) {
-    console.log(
-      `  skip MCP question round trip (the agent asked nothing: ${JSON.stringify(asked)})`,
-    );
-    return;
-  }
+  const requestKey = Object.keys(asked?.inputRequests ?? {})[0] ?? "";
   assertStep(
     "the open question is one elicitation form",
-    requestKey.startsWith("question-") &&
+    asked?.status === "input_required" &&
+      requestKey.startsWith("question-") &&
       JSON.stringify(asked.inputRequests).includes(`"enum":["Red","Blue"]`),
-    JSON.stringify(asked.inputRequests),
+    JSON.stringify(asked),
   );
 
-  await mcp(context, "tasks/update", {
-    taskId: task.taskId,
-    inputResponses: {
-      [requestKey]: { action: "accept", content: { [QUESTION_ID]: ANSWER } },
+  await mcp(
+    context,
+    "tasks/update",
+    {
+      taskId: task.taskId,
+      inputResponses: {
+        [requestKey]: { action: "accept", content: { [QUESTION_ID]: ANSWER } },
+      },
     },
-  });
-  const answered = await pollTask(context, task.taskId, TERMINAL);
+    { token: ticket },
+  );
+  const answered = await pollTask(context, task.taskId, TERMINAL, ticket);
   assertStep(
     "the answered task completes with the chosen option",
     answered?.status === "completed" &&
