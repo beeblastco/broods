@@ -2,8 +2,8 @@
 # Model-checks every spec here with TLC (exits non-zero on any violation).
 # TLA_JAR points at tla2tools.jar.
 set -euo pipefail
+jar="$(realpath "${TLA_JAR:?set TLA_JAR to tla2tools.jar}")"
 cd "$(dirname "$0")"
-jar="${TLA_JAR:?set TLA_JAR to tla2tools.jar}"
 for spec in *.tla; do
   name="${spec%.tla}"
   echo "== $name"

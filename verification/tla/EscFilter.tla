@@ -5,6 +5,8 @@
    "[" or "O" chunk joins it into the key; anything else, or the timer,
    settles it: stopTurn() if it was pressed mid-turn, else ESC to the TUI
    (which quits). Turns start and end on their own (a reply streams).
+   A read holding ESC and more (Alt+key, a whole arrow) is one key the TUI
+   reads as such, so it passes through; only a lone ESC is held.
 
    `expected` is what each key should do, judged when its first chunk is
    read (the filter cannot see a key before then); `out` is what the TUI

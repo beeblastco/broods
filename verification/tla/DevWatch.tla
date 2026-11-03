@@ -6,6 +6,8 @@
    syncChanged reads the source signature, skips when it equals the last
    synced one (unless the last sync failed), else runs a `dev --once`
    child that reads the source and writes the stage, and may fail midway.
+   The source is the .ts and .md files under broods/, the files the
+   signature hashes and the watcher counts as saves.
 
    The watcher starts before the first sync, and a sync that saw a source
    save after taking its signature records none (`savedSinceSignature`).
@@ -78,8 +80,9 @@ SignatureFails ==
   /\ src' \in Contents
   /\ timer' = TRUE
   /\ dirty' = TRUE
+  /\ printed' = TRUE
   /\ pc' = "done"
-  /\ UNCHANGED <<stage, last, failed, syncing, pending, sig, read, watching, printed>>
+  /\ UNCHANGED <<stage, last, failed, syncing, pending, sig, read, watching>>
 
 \* sourceSignature() rejects with no save behind it (say, a permission error):
 \* printSyncError logs it and nothing retries until the next save.
