@@ -461,32 +461,35 @@ export async function commitFiles(
   viaPullRequest: boolean,
   baseSha: string,
 ): Promise<{ url: string; viaPullRequest: boolean }> {
-  if ((await branchHead(app, token, fullName, branch)) !== baseSha) {
-    throw new ClientError(
-      `${branch} changed since the agent read it. Ask again so it edits the latest files.`,
-    );
-  }
+  // Built on the commit the agent read, so a fast-forward update refuses once the branch moved.
+  const commit = await commitOn(app, token, fullName, baseSha, files, message);
   if (!viaPullRequest) {
     try {
-      const commit = await commitTo(
+      await githubRequest(
         app,
         token,
-        fullName,
-        branch,
-        files,
-        message,
+        "PATCH",
+        `/repos/${fullName}/git/refs/heads/${encodeURIComponent(branch)}`,
+        { sha: commit.sha, force: false },
       );
 
-      return { url: commit, viaPullRequest: false };
+      return { url: commit.url, viaPullRequest: false };
     } catch (error) {
       if (!(error instanceof GitHubApiError) || !isRefusedWrite(error.status)) {
         throw error;
       }
+      if ((await branchHead(app, token, fullName, branch)) !== baseSha) {
+        throw new ClientError(
+          `${branch} changed since the agent read it. Ask again so it edits the latest files.`,
+        );
+      }
     }
   }
   const head = `broods/agent-${crypto.randomUUID().slice(0, 8)}`;
-  await createBranch(app, token, fullName, branch, head);
-  await commitTo(app, token, fullName, head, files, message);
+  await githubRequest(app, token, "POST", `/repos/${fullName}/git/refs`, {
+    ref: `refs/heads/${head}`,
+    sha: commit.sha,
+  });
   const pull = await githubRequest<{ html_url: string }>(
     app,
     token,
@@ -1048,22 +1051,20 @@ function fromBase64(value: string): Uint8Array {
   return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
 }
 
-// One commit on top of `branch`'s head, so a change across files deploys once.
-async function commitTo(
+// One commit on `parentSha` for every file, so a change across files deploys once.
+async function commitOn(
   app: GitHubApp,
   token: string,
   fullName: string,
-  branch: string,
+  parentSha: string,
   files: readonly RepoFile[],
   message: string,
-): Promise<string> {
-  const ref = `/repos/${fullName}/git/refs/heads/${encodeURIComponent(branch)}`;
-  const head = await branchHead(app, token, fullName, branch);
+): Promise<{ sha: string; url: string }> {
   const parent = await githubRequest<{ tree: { sha: string } }>(
     app,
     token,
     "GET",
-    `/repos/${fullName}/git/commits/${head}`,
+    `/repos/${fullName}/git/commits/${parentSha}`,
   );
   const tree = await githubRequest<{ sha: string }>(
     app,
@@ -1085,11 +1086,10 @@ async function commitTo(
     token,
     "POST",
     `/repos/${fullName}/git/commits`,
-    { message: message, tree: tree.sha, parents: [head] },
+    { message: message, tree: tree.sha, parents: [parentSha] },
   );
-  await githubRequest(app, token, "PATCH", ref, { sha: commit.sha });
 
-  return commit.html_url;
+  return { sha: commit.sha, url: commit.html_url };
 }
 
 async function branchHead(

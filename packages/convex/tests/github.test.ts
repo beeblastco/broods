@@ -199,12 +199,12 @@ describe("agent edits", () => {
   }
 
   test("a branch that moved since the agent read it refuses the commit", async () => {
-    const calls = stubGitHub(false);
+    const calls = stubGitHub(true);
 
     await expect(
       commitFiles(app, "t", "o/r", "dev", files, "m", false, "older"),
     ).rejects.toThrow("dev changed since the agent read it");
-    expect(calls.some((call) => call.startsWith("POST"))).toBe(false);
+    expect(calls.some((call) => call.endsWith("/pulls"))).toBe(false);
   });
 
   test("only text files inside broods/ are editable", () => {
@@ -245,6 +245,7 @@ describe("agent edits", () => {
       "POST /repos/o/r/git/trees",
       "POST /repos/o/r/git/commits",
     ]);
+    expect(calls).toContain("PATCH /repos/o/r/git/refs/heads/dev");
   });
 
   test("a branch that refuses the write gets a pull request instead", async () => {
