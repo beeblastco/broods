@@ -6,6 +6,7 @@ import {
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type { AgentConfig } from "../../../shared/domain/agent-config.ts";
 import {
+  harnessEffort,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
   resolveGatewayAuthEnv,
@@ -40,15 +41,10 @@ export function createConfiguredCodexAdapter(
     providerName === "vercel"
       ? resolveGatewayAuthEnv(provider)
       : resolveOpenAiAuthEnv(provider);
-  const reasoning = agentConfig.model?.reasoning;
-  const reasoningEffort =
-    reasoning === "low" || reasoning === "medium" || reasoning === "high"
-      ? reasoning
-      : undefined;
 
   return createCodex({
     auth: auth,
-    reasoningEffort: reasoningEffort,
+    reasoningEffort: harnessEffort(agentConfig.model?.reasoning),
     startupTimeoutMs: harness.startupTimeoutMs,
     webSearch: harness.webSearch,
   });

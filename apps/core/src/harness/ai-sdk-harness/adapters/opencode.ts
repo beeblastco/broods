@@ -40,7 +40,10 @@ export function createConfiguredOpenCodeAdapter(
   return createOpenCode({
     auth: auth,
     provider: providerName,
-    reasoningVariant: reasoning && reasoning !== "none" ? reasoning : undefined,
+    reasoningVariant:
+      reasoning && reasoning !== "none" && reasoning !== "provider-default"
+        ? reasoning
+        : undefined,
     startupTimeoutMs: harness.startupTimeoutMs,
   });
 }

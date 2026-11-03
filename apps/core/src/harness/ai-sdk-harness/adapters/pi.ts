@@ -29,6 +29,8 @@ import {
 
 export const PI_HARNESS_VERSION = VERSION;
 
+// Pi's own default, passed explicitly so a resume never takes the level from saved history.
+const DEFAULT_THINKING_LEVEL = "medium";
 // Per string, when an entry is over the cap; the Convex save refuses what still is.
 const TRIMMED_TEXT_BYTES = 32 * 1_024;
 
@@ -64,7 +66,7 @@ export function createConfiguredPiAdapter(
           reasoning === "high" ||
           reasoning === "xhigh"
         ? reasoning
-        : undefined;
+        : DEFAULT_THINKING_LEVEL;
 
   return createPi({
     auth:

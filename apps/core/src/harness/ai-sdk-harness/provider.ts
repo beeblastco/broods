@@ -7,6 +7,38 @@ import type {
 type HarnessProviderName = NonNullable<
   NonNullable<AgentConfig["model"]>["provider"]
 >;
+type HarnessReasoning = NonNullable<AgentConfig["model"]>["reasoning"];
+type HarnessEffort = "low" | "medium" | "high" | "xhigh";
+
+interface AnthropicHarnessReasoning {
+  effort?: HarnessEffort;
+  thinking?: { type: "disabled" };
+}
+
+// Claude Code and Deep Agents take Anthropic's effort; `none` turns thinking off instead.
+export function anthropicHarnessReasoning(
+  agentConfig: AgentConfig,
+): AnthropicHarnessReasoning {
+  const reasoning = agentConfig.model?.reasoning;
+  if (reasoning === "none") return { thinking: { type: "disabled" } };
+  const effort = harnessEffort(reasoning);
+
+  return effort ? { effort: effort } : {};
+}
+
+// The effort levels Claude Code, Deep Agents and Codex share; `minimal` is below their lowest.
+export function harnessEffort(
+  reasoning: HarnessReasoning,
+): HarnessEffort | undefined {
+  if (reasoning === "minimal") return "low";
+
+  return reasoning === "low" ||
+    reasoning === "medium" ||
+    reasoning === "high" ||
+    reasoning === "xhigh"
+    ? reasoning
+    : undefined;
+}
 
 export function requireHarnessModelId(agentConfig: AgentConfig): string {
   const modelId = agentConfig.model?.modelId;
