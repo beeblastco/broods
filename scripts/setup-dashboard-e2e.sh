@@ -292,17 +292,18 @@ pause
 
 stage "GitHub 'production' environment: optional"
 say "After a main rollout the suites run against dashboard.broods.app, which"
-say "signs in through the WorkOS Production environment: the same probe, made again there."
+say "signs in through the WorkOS Production environment: the same probe email, its own password."
 if confirm "Create the probe in production now?"; then
   open_url "https://dashboard.workos.com/"
   step "Switch the environment to Production, then User Management → Users → Create user"
-  step "  with the same email and password as staging."
+  step "  with the same email and a different password: cloud sessions hold the staging one."
   step "Radar → Restrictions: allow that email. Production shows CI a bot check otherwise."
   step "Sign in once at https://dashboard.broods.app as the probe, then pin the project it opens:"
   step "  gh variable set DASHBOARD_E2E_PROJECT_ID --env production --body <id from the URL>"
   if confirm "Done in WorkOS? Write the two login secrets to 'production'?"; then
+    ask_secret PROD_PASSWORD "Production probe password (not kept in $ENV_FILE):"
     set_env_secret production DASHBOARD_E2E_EMAIL "$E2E_EMAIL"
-    set_env_secret production DASHBOARD_E2E_PASSWORD "$E2E_PASSWORD"
+    set_env_secret production DASHBOARD_E2E_PASSWORD "$PROD_PASSWORD"
   else
     SKIPPED+=("production environment secrets")
   fi
