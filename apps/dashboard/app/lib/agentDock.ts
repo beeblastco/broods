@@ -4,6 +4,7 @@ import type { api } from "@broods/convex/_generated/api";
 import { USER_TOKEN_HEADER } from "@broods/convex/model/userToken";
 import type { TextStreamPart, ToolSet } from "ai";
 import type { FunctionReturnType } from "convex/server";
+import { structuredPatch } from "diff";
 import { z } from "zod";
 import { readSseStream } from "../../../../packages/broods/src/stream";
 
@@ -185,20 +186,33 @@ function commitAction(
   repo: DockRepo,
 ): CopilotAction {
   const before = new Map(repo.files.map((file) => [file.path, file.content]));
-  const lines = (text: string | undefined): number =>
-    text === undefined ? 0 : text.split("\n").length;
 
   return {
     baseSha: repo.baseSha,
     branch: repo.branch,
-    change: {
-      after: `${files.reduce((sum, file) => sum + lines(file.content), 0)} lines`,
-      before: `${files.reduce((sum, file) => sum + lines(before.get(file.path)), 0)} lines`,
-      field: files.map((file) => file.path).join(", "),
-    },
-    files: files,
+    files: files.map((file) => ({
+      content: file.content,
+      patch: structuredPatch(
+        file.path,
+        file.path,
+        withNewline(before.get(file.path) ?? ""),
+        withNewline(file.content),
+        undefined,
+        undefined,
+        { context: 2 },
+      ).hunks.flatMap((hunk) => [
+        `@@ ${hunk.oldStart},${hunk.oldLines} → ${hunk.newStart},${hunk.newLines}`,
+        ...hunk.lines,
+      ]),
+      path: file.path,
+    })),
     label: `Commit to ${repo.branch}: ${message || "update broods/"}`,
     message: message,
     type: "commitFiles",
   };
+}
+
+// A missing final newline would mark the last line changed on both sides.
+function withNewline(text: string): string {
+  return text === "" || text.endsWith("\n") ? text : `${text}\n`;
 }

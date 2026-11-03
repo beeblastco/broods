@@ -48,12 +48,29 @@ export type CopilotAction =
       /** The branch head the agent read; Apply refuses once the branch has moved. */
       baseSha: string;
       branch: string;
-      change: CopilotChange;
-      files: readonly { content: string; path: string }[];
+      files: readonly CommitFile[];
       label: string;
       message: string;
       type: "commitFiles";
     };
+
+export interface CommitFile {
+  content: string;
+  /** Changed lines against the branch, unified-diff style, hunks led by `@@`. */
+  patch: readonly string[];
+  path: string;
+}
+
+/** A commit the user applied, followed until its GitHub deploy finishes. */
+export interface TrackedDeploy {
+  branch: string;
+  committedAt: number;
+  label: string;
+  runUrl?: string;
+  sha: string;
+  state: "deployed" | "deploying" | "failed" | "waiting";
+  url: string;
+}
 
 export interface CopilotPlan {
   actions: readonly CopilotAction[];

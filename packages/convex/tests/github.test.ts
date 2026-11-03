@@ -238,6 +238,7 @@ describe("agent edits", () => {
     );
 
     expect(result).toEqual({
+      sha: "c1",
       url: "https://github.test/commit/c1",
       viaPullRequest: false,
     });
@@ -263,6 +264,7 @@ describe("agent edits", () => {
     );
 
     expect(result).toEqual({
+      sha: "c1",
       url: "https://github.test/pull/7",
       viaPullRequest: true,
     });

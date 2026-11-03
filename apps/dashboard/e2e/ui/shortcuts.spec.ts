@@ -281,6 +281,27 @@ test("a discarded write leaves the tray and never runs", async ({ page }) => {
   await expect(ran(page)).toHaveCount(0);
 });
 
+test("an applied commit stays in the tray until it deploys, then can be dismissed", async ({
+  page,
+}) => {
+  await openSurfaces(page);
+  await page.locator("[data-seed-deploys]").click();
+
+  const tray = page.locator("[data-change-tray]");
+  await expect(tray.locator('[data-tray-deploy="deployed"]')).toContainText(
+    "Deployed",
+  );
+  await expect(tray.locator('[data-tray-deploy="deploying"]')).toHaveCount(1);
+  await expect(
+    tray
+      .locator('[data-tray-deploy="deploying"]')
+      .getByRole("button", { name: "Dismiss" }),
+  ).toHaveCount(0);
+
+  await tray.getByRole("button", { name: "Dismiss" }).click();
+  await expect(tray.locator("[data-tray-deploy]")).toHaveCount(1);
+});
+
 test("a deploy is refused with a reason and no button to do it anyway", async ({
   page,
 }) => {

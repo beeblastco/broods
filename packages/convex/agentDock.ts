@@ -122,11 +122,15 @@ export const commitChange = action({
     projectId: v.id("projects"),
     stageId: v.id("stages"),
   },
-  returns: v.object({ url: v.string(), viaPullRequest: v.boolean() }),
+  returns: v.object({
+    sha: v.string(),
+    url: v.string(),
+    viaPullRequest: v.boolean(),
+  }),
   handler: async (
     ctx,
     { baseSha, branch, files, message, ...args },
-  ): Promise<{ url: string; viaPullRequest: boolean }> => {
+  ): Promise<{ sha: string; url: string; viaPullRequest: boolean }> => {
     const target = await repoTarget(ctx, args, true);
     if (!target) {
       throw new ClientError("This stage does not deploy from a repo.");

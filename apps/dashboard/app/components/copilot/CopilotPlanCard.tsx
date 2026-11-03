@@ -78,7 +78,7 @@ export function CopilotPlanCard({
   );
 }
 
-/** What a step will change: the field's before and after, the reason it is refused, its files. */
+/** What a step will change: the field's before and after, the reason it is refused, its diff. */
 export function StepDetail({
   action,
 }: {
@@ -102,12 +102,26 @@ export function StepDetail({
 
       {action.type === "commitFiles" &&
         action.files.map((file) => (
-          <details key={file.path} className="ml-5 text-2xs">
+          <details key={file.path} open className="ml-5 text-2xs">
             <summary className="cursor-pointer font-mono text-muted-foreground">
-              {file.path}
+              {file.path}{" "}
+              <span className="text-success">
+                +{file.patch.filter((line) => line.startsWith("+")).length}
+              </span>{" "}
+              <span className="text-destructive">
+                -{file.patch.filter((line) => line.startsWith("-")).length}
+              </span>
             </summary>
-            <pre className="mt-1 max-h-48 overflow-auto rounded-sm border border-border p-2 font-mono text-2xs">
-              {file.content}
+            <pre
+              data-plan-diff
+              className="mt-1 max-h-60 overflow-auto rounded-sm border border-border p-2 font-mono text-2xs"
+            >
+              {file.patch.map((line, index) => (
+                // oxlint-disable-next-line react/no-array-index-key -- a patch never reorders
+                <div key={index} className={diffLineClass(line)}>
+                  {line}
+                </div>
+              ))}
             </pre>
           </details>
         ))}
@@ -117,6 +131,13 @@ export function StepDetail({
       )}
     </>
   );
+}
+
+function diffLineClass(line: string): string {
+  if (line.startsWith("+")) return "text-success";
+  if (line.startsWith("-")) return "text-destructive";
+
+  return "text-muted-foreground";
 }
 
 function StepIcon({

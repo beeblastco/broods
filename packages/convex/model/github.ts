@@ -449,7 +449,7 @@ export async function readBroodsFolder(
 
 /**
  * Commits `files` to `branch` as one commit, or through a pull request from a fresh branch when
- * `viaPullRequest` or the branch refuses a direct write. Answers the commit or pull request URL.
+ * `viaPullRequest` or the branch refuses a direct write. Answers the commit and the URL to see it.
  */
 export async function commitFiles(
   app: GitHubApp,
@@ -460,7 +460,7 @@ export async function commitFiles(
   message: string,
   viaPullRequest: boolean,
   baseSha: string,
-): Promise<{ url: string; viaPullRequest: boolean }> {
+): Promise<{ sha: string; url: string; viaPullRequest: boolean }> {
   // Built on the commit the agent read, so a fast-forward update refuses once the branch moved.
   const commit = await commitOn(app, token, fullName, baseSha, files, message);
   if (!viaPullRequest) {
@@ -473,7 +473,7 @@ export async function commitFiles(
         { sha: commit.sha, force: false },
       );
 
-      return { url: commit.url, viaPullRequest: false };
+      return { sha: commit.sha, url: commit.url, viaPullRequest: false };
     } catch (error) {
       if (!(error instanceof GitHubApiError) || !isRefusedWrite(error.status)) {
         throw error;
@@ -503,7 +503,7 @@ export async function commitFiles(
     },
   );
 
-  return { url: pull.html_url, viaPullRequest: true };
+  return { sha: commit.sha, url: pull.html_url, viaPullRequest: true };
 }
 
 /** True for a text file inside the `broods/` folder `prefix`, outside build output. */

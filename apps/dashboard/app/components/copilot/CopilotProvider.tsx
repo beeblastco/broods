@@ -11,6 +11,7 @@ import {
   type CopilotAction,
   type CopilotPlan,
   type PendingChange,
+  type TrackedDeploy,
 } from "@/app/lib/copilotActions";
 import { planFromQuery, type CopilotContext } from "@/app/lib/copilotIntent";
 import { navHref } from "@/app/lib/navigation";
@@ -57,6 +58,9 @@ export interface CopilotState {
   /** Keys of plan steps the user discarded, in the same form. */
   dismissed: ReadonlySet<string>;
   dismissStep: (messageId: string, index: number) => void;
+  /** Commits applied from the dock, until the user clears them. */
+  deploys: readonly TrackedDeploy[];
+  dismissDeploy: (sha: string) => void;
   isOpen: boolean;
   /** Empty until `wakeIndex`. */
   items: readonly SearchItem[];
@@ -155,6 +159,38 @@ export function CopilotProvider({
   const [messages, setMessages] = useState<readonly CopilotMessage[]>([]);
   const [completed, setCompleted] = useState<ReadonlySet<string>>(new Set());
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
+  const [commits, setCommits] = useState<
+    readonly Omit<TrackedDeploy, "runUrl" | "state">[]
+  >([]);
+  // Subscribed only while a commit is followed; the GitHub webhook moves its deploy along.
+  const github = useQuery(
+    api.github.status,
+    projectId && commits.length > 0 ? { projectId: projectId } : "skip",
+  );
+  const deploys = useMemo(
+    () =>
+      commits.map((commit): TrackedDeploy => {
+        const run = github?.deploys.find(
+          (deploy) => deploy.branch === commit.branch,
+        );
+        // A newer run on the branch carries this commit too.
+        if (
+          !run ||
+          (run.sha !== commit.sha && run.updatedAt < commit.committedAt)
+        ) {
+          return { ...commit, state: "waiting" };
+        }
+        const state =
+          run.status !== "completed"
+            ? "deploying"
+            : run.conclusion === "success"
+              ? "deployed"
+              : "failed";
+
+        return { ...commit, runUrl: run.url, state: state };
+      }),
+    [commits, github],
+  );
 
   const note = useCallback((text: string): void => {
     setMessages((prev) => [
@@ -234,16 +270,28 @@ export function CopilotProvider({
             const result = await commitChange({
               baseSha: action.baseSha,
               branch: action.branch,
-              files: [...action.files],
+              files: action.files.map((file) => ({
+                content: file.content,
+                path: file.path,
+              })),
               message: action.message,
               projectId: projectId,
               stageId: currentStageId,
             });
-            note(
-              result.viaPullRequest
-                ? `Opened a pull request: ${result.url}`
-                : `Committed: ${result.url}. The stage deploys in about a minute.`,
-            );
+            if (result.viaPullRequest) {
+              note(`Opened a pull request: ${result.url}`);
+            } else {
+              setCommits((prev) => [
+                ...prev,
+                {
+                  branch: action.branch,
+                  committedAt: Date.now(),
+                  label: action.message || action.label,
+                  sha: result.sha,
+                  url: result.url,
+                },
+              ]);
+            }
 
             return true;
           }
@@ -475,6 +523,10 @@ export function CopilotProvider({
     setDismissed((prev) => new Set(prev).add(`${messageId}:${index}`));
   }, []);
 
+  const dismissDeploy = useCallback((sha: string): void => {
+    setCommits((prev) => prev.filter((commit) => commit.sha !== sha));
+  }, []);
+
   const pending = useMemo(
     () =>
       pendingChanges(
@@ -500,6 +552,8 @@ export function CopilotProvider({
     () => ({
       ask: ask,
       completed: completed,
+      deploys: deploys,
+      dismissDeploy: dismissDeploy,
       dismissed: dismissed,
       dismissStep: dismissStep,
       isOpen: isOpen,
@@ -514,6 +568,8 @@ export function CopilotProvider({
     [
       ask,
       completed,
+      deploys,
+      dismissDeploy,
       dismissed,
       dismissStep,
       isOpen,

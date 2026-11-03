@@ -969,7 +969,7 @@ export declare const api: {
         projectId: Id<"projects">;
         stageId: Id<"stages">;
       },
-      { url: string; viaPullRequest: boolean }
+      { sha: string; url: string; viaPullRequest: boolean }
     >;
     repoFiles: FunctionReference<
       "action",

@@ -157,17 +157,16 @@ describe("agent dock", () => {
 
     expect(plan?.actions).toMatchObject([
       {
-        change: {
-          after: "3 lines",
-          before: "1 lines",
-          field: "broods/index.ts",
-        },
         baseSha: "abc",
         branch: "dev",
         label: "Commit to dev: Add firecrawl",
         type: "commitFiles",
       },
     ]);
+    const [action] = plan?.actions ?? [];
+    expect(action?.type === "commitFiles" ? action.files[0].patch : []).toEqual(
+      ["@@ 1,1 → 1,3", " a", "+b", "+c"],
+    );
   });
 
   test("a code-defined node says so on its own line of the prompt", () => {
