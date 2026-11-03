@@ -164,7 +164,7 @@ describe("SubagentCoordinator", () => {
         "lifecycle:subagent.task.started",
         "run:child",
       ]);
-      expect(coordinator.waitForIdle()).resolves.toBe("idle");
+      await expect(coordinator.waitForIdle()).resolves.toBe("idle");
     } finally {
       runtime.mutate = originalMutation;
     }
@@ -216,7 +216,7 @@ describe("SubagentCoordinator", () => {
 
     internals.startTask(resolvedTask());
 
-    expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
     expect(publisherFactory).not.toHaveBeenCalled();
     expect(publisher.timeline).toEqual([]);
   });
@@ -292,7 +292,7 @@ describe("SubagentCoordinator", () => {
 
     internals.startTask(resolvedTask());
 
-    expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
     expect(publisher.events.map((event) => event.type)).toEqual([
       "reasoning-delta",
       "text-delta",
@@ -328,7 +328,7 @@ describe("SubagentCoordinator", () => {
 
     internals.startTask(resolvedTask());
 
-    expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
     expect(publisher.events).toEqual([
       { type: "error", error: "child failed" },
       { type: "done" },
@@ -362,7 +362,7 @@ describe("SubagentCoordinator", () => {
 
     internals.startTask(resolvedTask());
 
-    expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
     expect(publisher.events).toEqual([
       { type: "error", error: "provider failed" },
       { type: "done" },
@@ -395,7 +395,7 @@ describe("SubagentCoordinator", () => {
 
     internals.startTask(resolvedTask());
 
-    expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
     expect(internals.completeTask).toHaveBeenCalledWith(
       completedTurn(),
       coordinator,
@@ -435,10 +435,10 @@ describe("SubagentCoordinator", () => {
       internals.notifyCompletion();
     }, 15);
 
-    expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
     expect(coordinator.pendingCount).toBe(0);
 
-    expect(coordinator.drainCompletionsToParent()).resolves.toBe(2);
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(2);
     expect(persistModelMessages).toHaveBeenCalledTimes(1);
     const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
     expect(messages).toHaveLength(2);
@@ -519,8 +519,10 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
     internals.enqueue(completion("subagent_1", "finished"));
 
-    expect(coordinator.takeParentMessages()).rejects.toThrow("convex down");
-    expect(coordinator.takeParentMessages()).resolves.toHaveLength(1);
+    await expect(coordinator.takeParentMessages()).rejects.toThrow(
+      "convex down",
+    );
+    await expect(coordinator.takeParentMessages()).resolves.toHaveLength(1);
     expect(messageText(persistModelMessages.mock.calls[1]?.[0]?.[0])).toContain(
       "finished",
     );
@@ -556,9 +558,11 @@ describe("SubagentCoordinator", () => {
     internals.enqueue(completion("subagent_1", "first"));
     internals.enqueue(completion("subagent_2", "second"));
 
-    expect(coordinator.takeParentMessages()).rejects.toThrow("convex down");
+    await expect(coordinator.takeParentMessages()).rejects.toThrow(
+      "convex down",
+    );
     expect(persistModelMessages.mock.calls[0]?.[0]).toHaveLength(2);
-    expect(coordinator.takeParentMessages()).resolves.toHaveLength(1);
+    await expect(coordinator.takeParentMessages()).resolves.toHaveLength(1);
     const retried = persistModelMessages.mock.calls[1]?.[0] ?? [];
     expect(retried).toHaveLength(1);
     expect(messageText(retried[0])).toContain("second");
@@ -624,7 +628,9 @@ describe("SubagentCoordinator", () => {
       });
       expect(await coordinator.waitForIdle()).toBe("message");
 
-      expect(coordinator.takeParentMessages()).rejects.toThrow("reply lost");
+      await expect(coordinator.takeParentMessages()).rejects.toThrow(
+        "reply lost",
+      );
       expect(await coordinator.drainCompletionsToParent()).toBe(2);
       const texts = stored.map(({ event }) => messageText(event.message));
       expect(texts.filter((text) => text.includes("finished"))).toHaveLength(1);
@@ -900,7 +906,7 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
     internals.pending.set("subagent_1", new Promise<void>(() => {}));
 
-    expect(
+    await expect(
       coordinator.waitForIdle({
         onHeartbeat: async (): Promise<void> => {
           throw new Error("ownership lost");
@@ -937,12 +943,14 @@ describe("SubagentCoordinator", () => {
       conversationKey: "subagent-subagent_2",
     });
 
-    expect(coordinator.waitForIdle({ onHeartbeat: onHeartbeat })).resolves.toBe(
-      "timeout",
-    );
+    await expect(
+      coordinator.waitForIdle({ onHeartbeat: onHeartbeat }),
+    ).resolves.toBe("timeout");
     expect(onHeartbeat).toHaveBeenCalledWith(1);
 
-    expect(coordinator.drainCompletionsAndDetachToParent()).resolves.toBe(2);
+    await expect(coordinator.drainCompletionsAndDetachToParent()).resolves.toBe(
+      2,
+    );
     expect(persistModelMessages).toHaveBeenCalledTimes(1);
     const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
     expect(messages).toHaveLength(2);
@@ -1583,7 +1591,7 @@ describe("SubagentCoordinator", () => {
 
     internals.enqueue(completion("subagent_1", { answer: "done" }));
 
-    expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
     const messages = persistModelMessages.mock.calls[0]?.[0] ?? [];
     expect(messageText(messages[0])).toContain('{"answer":"done"}');
   });
@@ -1639,7 +1647,7 @@ describe("SubagentCoordinator", () => {
     expect(resumed.resuming).toBe(true);
 
     // An unminted key could name another caller's direct-API conversation with the child.
-    expect(
+    await expect(
       internals.resolveTask(
         { prompt: "recount", conversationKey: "user-123" },
         [],
@@ -1652,7 +1660,7 @@ describe("SubagentCoordinator", () => {
       `-${"0".repeat(32)}`,
     );
     for (const conversationKey of ["subagent-persistent-alice", forged]) {
-      expect(
+      await expect(
         internals.resolveTask(
           { prompt: "recount", conversationKey: conversationKey },
           [],
@@ -1776,7 +1784,7 @@ describe("SubagentCoordinator", () => {
     });
 
     try {
-      expect(internals.runTask(persistentChildTask())).rejects.toThrow(
+      await expect(internals.runTask(persistentChildTask())).rejects.toThrow(
         "turn context failed",
       );
       expect(mutations).toContain("settleIngress");
@@ -1869,7 +1877,7 @@ describe("SubagentCoordinator", () => {
 
     try {
       // Rejecting would let runTask mark the durable completed result failed, erasing it.
-      expect(
+      await expect(
         internals.completeTask({
           taskId: "subagent~task_1",
           eventId: "acct:account_1:agent:agent_child:api:subagent~task_1",
@@ -1943,7 +1951,7 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
 
     try {
-      expect(
+      await expect(
         internals.admitChildConversation(persistentChildTask(), {
           role: "user",
           content: [{ type: "text", text: "research" }],
@@ -2144,7 +2152,7 @@ describe("SubagentCoordinator", () => {
     );
     const internals = coordinator as unknown as CoordinatorInternals;
 
-    expect(
+    await expect(
       internals.resolveTask(
         {
           prompt: "continue",
@@ -2542,15 +2550,15 @@ describe("message-agents in the coordinator", () => {
   it("refuses an address this parent did not mint", async (): Promise<void> => {
     const { coordinator } = await parentRun({});
 
-    expect(
+    await expect(
       coordinator.messageChild(
         `${CHILD_AGENT}/subagent-persistent-${UUID}-${"0".repeat(32)}`,
         message(),
       ),
     ).rejects.toThrow("not the address of one of your persistent subagents");
-    expect(coordinator.messageChild("no-slash", message())).rejects.toThrow(
-      "not the address",
-    );
+    await expect(
+      coordinator.messageChild("no-slash", message()),
+    ).rejects.toThrow("not the address");
   });
 
   it("refuses a child that another conversation of the same agent started", async (): Promise<void> => {
@@ -2559,7 +2567,7 @@ describe("message-agents in the coordinator", () => {
       conversationKey: "acct:account_1:agent:agent_parent:api:conv_2",
     });
 
-    expect(
+    await expect(
       other.coordinator.messageChild(address, message({ waitSeconds: 60 })),
     ).rejects.toThrow("not the address of one of your persistent subagents");
   });
@@ -2569,7 +2577,7 @@ describe("message-agents in the coordinator", () => {
     resume.mockRestore();
     spyOn(ingress, "acceptIngress").mockRejectedValue(new Error("convex down"));
 
-    expect(coordinator.messageChild(address, message())).rejects.toThrow(
+    await expect(coordinator.messageChild(address, message())).rejects.toThrow(
       "convex down",
     );
     await Bun.sleep(0);
@@ -2747,7 +2755,7 @@ describe("message-agents in the coordinator", () => {
       },
     );
 
-    expect(coordinator.takeParentMessages()).rejects.toThrow(
+    await expect(coordinator.takeParentMessages()).rejects.toThrow(
       "second append failed",
     );
     await Bun.sleep(0);
@@ -2970,9 +2978,9 @@ describe("message-agents in the coordinator", () => {
     ).mockResolvedValue(undefined);
     const child = await coordinator.resolveAddress(`${CHILD_AGENT}/${key}`);
 
-    expect(coordinator.resumeChild(child, "eu-west", false)).rejects.toThrow(
-      "row write failed",
-    );
+    await expect(
+      coordinator.resumeChild(child, "eu-west", false),
+    ).rejects.toThrow("row write failed");
     await Bun.sleep(0);
 
     expect(settle).toHaveBeenCalledWith("failed", {

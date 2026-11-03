@@ -133,7 +133,7 @@ test("a run round-trips through the daemon socket that claimed the record", asyn
 test("a run with no daemon connected names the command to fix it", async () => {
   core();
 
-  expect(
+  await expect(
     new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "true",
       timeoutSeconds: 5,
@@ -369,7 +369,7 @@ test("a result with missing fields is a bad frame, and so is a second hello", as
   });
   const firstClosed = closeOf(first.socket);
 
-  expect(
+  await expect(
     new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "true",
       timeoutSeconds: 5,
@@ -388,7 +388,7 @@ test("a result with missing fields is a bad frame, and so is a second hello", as
 test("the computer tool reaches a daemon started with --computer, and names the flag otherwise", async () => {
   const server = core();
   await connectDaemon(server, "my-mac", () => {});
-  expect(
+  await expect(
     runMachineComputerAction(machineExecutorConfig(), { action: "screenshot" }),
   ).rejects.toThrow("broods machine my-mac --computer");
 
@@ -454,7 +454,7 @@ test("with two computers attached, a call reaches the one it names", async () =>
     await execute({ action: "cursor_position", sandbox: "my-mac" }, options),
   ).toEqual({ type: "text", value: "mine on my-mac" });
   // Two screens and no name is ambiguous, so it is refused rather than guessed.
-  expect(execute({ action: "cursor_position" }, options)).rejects.toThrow(
+  await expect(execute({ action: "cursor_position" }, options)).rejects.toThrow(
     "pass sandbox with the computer to act on: my-mac, other-mac",
   );
 });
@@ -473,7 +473,7 @@ test("a name from a longer list is refused once one computer is left", async () 
   const options = { toolCallId: "call-1", messages: [], context: {} };
 
   // A replayed approval names the machine it was granted for, never the one that is left.
-  expect(
+  await expect(
     execute({ action: "cursor_position", sandbox: "other-mac" }, options),
   ).rejects.toThrow("pass sandbox with the computer to act on: my-mac");
   expect(await execute({ action: "cursor_position" }, options)).toEqual({
@@ -653,9 +653,9 @@ test("an MCP row lists and calls through the daemon that serves that server", as
   const server = core();
   const connection = mcpConnection(machineMcpRecord(), undefined);
 
-  expect(listMcpTools(connection)).rejects.toThrow("is not connected");
+  await expect(listMcpTools(connection)).rejects.toThrow("is not connected");
   await connectDaemon(server, "my-mac", () => {}, { mcp: ["other"] });
-  expect(listMcpTools(connection)).rejects.toThrow(
+  await expect(listMcpTools(connection)).rejects.toThrow(
     'does not serve MCP server "echo"',
   );
 

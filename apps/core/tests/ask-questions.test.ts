@@ -172,7 +172,7 @@ describe("ask_questions tool", () => {
       }),
     );
 
-    expect(execute({ questions: [QUESTION, QUESTION] })).rejects.toThrow(
+    await expect(execute({ questions: [QUESTION, QUESTION] })).rejects.toThrow(
       "is used twice",
     );
     expect(mutations).toHaveLength(0);
@@ -219,7 +219,7 @@ describe("ask_questions tool", () => {
       }),
     );
 
-    expect(execute({ questions: [QUESTION] })).rejects.toThrow(
+    await expect(execute({ questions: [QUESTION] })).rejects.toThrow(
       "blocked by the outbound message hook",
     );
     expect(mutations.at(-1)?.args).toMatchObject({ status: "failed" });

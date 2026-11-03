@@ -103,7 +103,7 @@ describe("openAiSdkHarnessSession", () => {
 
   it("refuses to bind a conversation to another adapter", async () => {
     const createSession = mock(async () => ({ sessionId: "unused" }));
-    expect(
+    await expect(
       openAiSdkHarnessSession({
         abortSignal: new AbortController().signal,
         agent: { createSession: createSession } as never,
@@ -303,7 +303,7 @@ describe("prepareHarnessTurn", () => {
         }),
       );
 
-      expect(failed).rejects.toThrow("machine down");
+      await expect(failed).rejects.toThrow("machine down");
       await failed.catch((): void => {});
       const monitor = setTimer.mock.results.at(-1)?.value;
       expect(monitor).toBeDefined();

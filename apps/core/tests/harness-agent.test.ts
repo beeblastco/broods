@@ -208,7 +208,7 @@ async function runHarnessTurn(
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   const { runAgentLoop } = await import("../src/harness/harness.ts");
 
-  expect(
+  await expect(
     runAgentLoop(
       {
         accountId: "acct_test",
