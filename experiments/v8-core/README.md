@@ -160,7 +160,7 @@ next to rounds that swing from 1.9 to 4.1 s; with a new Container per task 5.1
 against 6.1 s, though today's slowest task took 12.1 s against 6.9. CPU per
 task was 44 against 58 ms and memory about 250 MB against 900 MB. The bench
 leaves its cores running when it ends, so stop them before a second run.
-The page's version 7 reports these rows.
+The page's version 7 reports these rows; version 8 the `cf2fix-*` rows below.
 
 ## One writer per account (2026-11-03)
 
@@ -195,7 +195,18 @@ process) for that run only. Against that (`ctl-*`) the isolates took 96% and
 95% (running sandbox) and 100% and 98% (new sandbox), so they are now level or
 slightly ahead, with about 100 to 110 ms of CPU per task against 60 to 80 and
 still about three times the memory. Today's core's queue holds only inside one
-process; the isolates' writer is one per account across every engine.
+process; the isolates' writer is one per account across every engine. Across
+the `acct-*` and `ctl-*` runs the isolate arm held within 5%, while today's
+core took 14 to 23% less time with the patch.
+
+On the real dev bridge from Phicks' Mac (2 rounds each, 20 users): with today's
+core as it is (`cf2-*`) the isolates took 102% of its time with a running
+sandbox and 47% with a new one per task (today's core: 6.1 and 8.2 s in its two
+rounds, one task lost to a dropped bridge socket). With `CORE_FIX=1`
+(`cf2fix-*`) they took 136% (2.5 against 1.85 s, today's core ahead in both
+rounds) and 79% (2.7 against 3.4 s, today's core at 4.4 then 2.4 s). Rounds on
+the bridge swing by a third or more, so the new-sandbox lead is likely, not
+settled. Memory was 500 to 850 MB against about 210.
 
 ## Two ideas that did not help
 
