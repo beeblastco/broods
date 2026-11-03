@@ -21,8 +21,8 @@ export interface AsyncStatusContext {
   workspaces?: ResolvedWorkspace[];
   supportsJobs: boolean;
   // Records that tool call `toolCallId` handed the model the finished result
-  // `resultId`; the session stores it with the call's saved step.
-  onResultRead?: (toolCallId: string, resultId: string) => Promise<void>;
+  // `resultId`; the session stores it with the write that holds the call's answer.
+  onResultRead?: (toolCallId: string, resultId: string) => void;
 }
 
 interface AsyncStatusInput {
@@ -77,18 +77,18 @@ The result is delivered back into the conversation automatically when it finishe
       }),
       execute: async function (input, { toolCallId }): Promise<JSONValue> {
         const { statusId, action = "status" } = input;
-        const handedOver = async (): Promise<void> => {
-          await context.onResultRead?.(toolCallId, statusId);
+        const handedOver = (): void => {
+          context.onResultRead?.(toolCallId, statusId);
         };
         const record = await getAsyncToolResult(statusId);
         // Missing and foreign rows answer alike, so a statusId is no cross-tenant oracle.
         if (!record || record.conversationKey !== context.conversationKey) {
           return toolError(`Error: no async result found for ${statusId}`);
         }
-        // The step save that holds this tool result stores the row. A session that saves no
-        // history stores it now, so this is awaited before the turn can end.
+        // The step save that holds this tool result stores the row; a session that saves no
+        // history stores it with its answer.
         if (record.status !== "processing") {
-          await handedOver();
+          handedOver();
 
           return settledResult(record, action);
         }
@@ -138,7 +138,7 @@ The result is delivered back into the conversation automatically when it finishe
               job,
               stopped,
             );
-            await handedOver();
+            handedOver();
 
             return settled;
           }
@@ -168,7 +168,7 @@ The result is delivered back into the conversation automatically when it finishe
             job,
             status,
           );
-          await handedOver();
+          handedOver();
 
           return settled;
         } catch (cause) {

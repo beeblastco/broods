@@ -738,6 +738,54 @@ describe("runtime persistence", () => {
     });
   });
 
+  test("the answer of a child that saves no history stores the results it read, of its own conversation only", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const childKey = `acct:${accountId}:agent:child:api:subagent-1`;
+    for (const [resultId, conversationKey] of [
+      ["result-read", childKey],
+      ["result-unread", childKey],
+      ["result-foreign", conversationKeyFor(accountId)],
+    ] as const) {
+      await t.mutation(internal.runtime.createAsyncToolResult, {
+        resultId: resultId,
+        parentEventId: `acct:${accountId}:parent`,
+        conversationKey: conversationKey,
+        toolName: "bash",
+        toolCallId: `call-${resultId}`,
+        input: {},
+      });
+      await t.mutation(internal.runtime.updateAsyncToolResult, {
+        resultId: resultId,
+        status: "completed",
+        response: { ok: true },
+        onlyWhenProcessing: true,
+      });
+    }
+    await t.mutation(internal.runtime.createAsyncAgentResult, {
+      eventId: "child",
+      conversationKey: childKey,
+      subagent: { parentConversationKey: conversationKeyFor(accountId) },
+    });
+
+    await t.mutation(internal.runtime.updateAsyncAgentResult, {
+      eventId: "child",
+      status: "completed",
+      response: "answer",
+      toolResultIds: ["result-read", "result-foreign", "result-missing"],
+    });
+
+    const handback = async (resultId: string): Promise<string | undefined> =>
+      (
+        await t.query(internal.runtime.getAsyncToolResult, {
+          resultId: resultId,
+        })
+      )?.handback;
+    expect(await handback("result-read")).toBe("stored");
+    expect(await handback("result-unread")).toBe("pending");
+    expect(await handback("result-foreign")).toBe("pending");
+  });
+
   test("a subagent's message to its parent keeps its text and the parent's append stores it", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
