@@ -9,9 +9,15 @@ import {
   CanvasFramesProvider,
   type CanvasFramesValue,
 } from "@/app/components/canvas/CanvasFramesContext";
+import { CanvasNodeMenu } from "@/app/components/canvas/CanvasNodeMenu";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { ProjectCard } from "@/app/components/ProjectCard";
 import { Button } from "@/app/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuTrigger,
+} from "@/app/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -158,6 +164,7 @@ function CardCanvas({
   onRename: (name: string) => void;
 }): React.JSX.Element {
   const [nodes, setNodes] = useState<Node[]>(CARD_NODES);
+  const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
   const frames = useMemo(
     (): CanvasFramesValue => ({
       agentBadges: {},
@@ -176,35 +183,55 @@ function CardCanvas({
         );
         onRename(label);
       },
+      onRenaming: setRenamingNodeId,
       onSetWorkspaceMount: () => undefined,
       onToggleFrame: () => undefined,
+      renamingNodeId: renamingNodeId,
       sandboxOrderNumbers: new Map(),
       workspaceOnlySandboxIds: new Set(),
     }),
-    [onRename],
+    [onRename, renamingNodeId],
   );
 
   return (
     <InfraAnalysisProvider value={CARD_ANALYSIS}>
       <CanvasFramesProvider value={frames}>
-        <div className="h-60 w-xl rounded-lg border border-border">
-          <ReactFlow
-            nodes={nodes}
-            edges={[]}
-            nodeTypes={CANVAS_NODE_TYPES}
-            edgeTypes={CANVAS_EDGE_TYPES}
-            colorMode="dark"
-            fitView
-            fitViewOptions={FIT_VIEW_OPTIONS}
-            maxZoom={1}
-            onNodesChange={(changes) =>
-              setNodes((current) => applyNodeChanges(changes, current))
-            }
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background bgColor="#000" />
-          </ReactFlow>
-        </div>
+        <ContextMenu>
+          <ContextMenuTrigger className="block h-60 w-xl rounded-lg border border-border">
+            <ReactFlow
+              nodes={nodes}
+              edges={[]}
+              nodeTypes={CANVAS_NODE_TYPES}
+              edgeTypes={CANVAS_EDGE_TYPES}
+              colorMode="dark"
+              fitView
+              fitViewOptions={FIT_VIEW_OPTIONS}
+              maxZoom={1}
+              onNodesChange={(changes) =>
+                setNodes((current) => applyNodeChanges(changes, current))
+              }
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background bgColor="#000" />
+            </ReactFlow>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-60">
+            <CanvasNodeMenu
+              nodeId="triage"
+              links={[]}
+              groups={[]}
+              mounts={[]}
+              deleteLocked={false}
+              onOpen={() => undefined}
+              onDelete={() => undefined}
+              onMakeDefault={() => undefined}
+              onRemoveEdge={() => undefined}
+              onRename={setRenamingNodeId}
+              onSetMount={() => undefined}
+              onSetUngrouped={() => undefined}
+            />
+          </ContextMenuContent>
+        </ContextMenu>
       </CanvasFramesProvider>
     </InfraAnalysisProvider>
   );

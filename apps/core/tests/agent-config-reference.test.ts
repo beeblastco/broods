@@ -554,12 +554,6 @@ const DISCORD = channelSchema({
   botUserId: optionalString,
   mentionRoleIds: z.optional(nonEmptyStrings),
 });
-const MATRIX = channelSchema({
-  apiUrl: z.optional(publicHttpsUrl),
-  botToken: optionalString,
-  botName: optionalString,
-  mentionText: optionalString,
-});
 const PANCAKE = channelSchema({
   pageId: optionalString,
   pageAccessToken: optionalString,
@@ -645,7 +639,6 @@ const CHANNELS = z.looseObject({
   linear: z.nullish(LINEAR),
   slack: z.nullish(SLACK),
   discord: z.nullish(DISCORD),
-  matrix: z.nullish(MATRIX),
   pancake: z.nullish(PANCAKE),
   teams: z.nullish(TEAMS),
   twilio: z.nullish(TWILIO),
@@ -936,13 +929,6 @@ const FULL_CONFIGS: readonly ConfigValue[] = [
         publicKey: "pk",
         botUserId: "1",
         mentionRoleIds: ["r1"],
-      },
-      matrix: {
-        id: "mx",
-        apiUrl: "https://matrix.example.org",
-        botToken: "mx-token",
-        botName: "bot",
-        mentionText: "@bot",
       },
       pancake: {
         id: "pc",
@@ -1300,7 +1286,7 @@ function assertMetaCredentials(
 }
 
 function assertCompleteChannels(channels: AgentChannelsConfig): void {
-  const { gchat, linear, matrix, teams, instagram, messenger } = channels;
+  const { gchat, linear, teams, instagram, messenger } = channels;
   if (
     gchat?.credentials !== undefined &&
     gchat.endpointUrl === undefined &&
@@ -1321,11 +1307,6 @@ function assertCompleteChannels(channels: AgentChannelsConfig): void {
         "config.channels.linear.webhookSecret is required when config.channels.linear.apiKey is set",
       );
     }
-  }
-  if (matrix?.botToken !== undefined && matrix.apiUrl === undefined) {
-    throw new ClientError(
-      "config.channels.matrix.apiUrl is required when config.channels.matrix.botToken is set",
-    );
   }
   if (
     teams?.appId !== undefined &&

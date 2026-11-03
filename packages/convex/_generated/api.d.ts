@@ -4871,7 +4871,6 @@ export declare const internal: {
         Array<{
           agentId: string;
           agentName: string;
-          apiUrl?: string;
           botToken: string;
           webhookPath: string;
         }>
@@ -6669,27 +6668,6 @@ export declare const internal: {
       "internal",
       { accountId: Id<"accounts">; key: string },
       null
-    >;
-    reserveSandboxReservation: FunctionReference<
-      "mutation",
-      "internal",
-      {
-        accountId: Id<"accounts">;
-        externalId: string;
-        provider:
-          | "sandbox"
-          | "lambda"
-          | "e2b"
-          | "daytona"
-          | "vercel"
-          | "cloudflare"
-          | "worker"
-          | "machine"
-          | "custom";
-        reservationKey: string;
-        ttlSeconds?: number;
-      },
-      string
     >;
     saveSandboxReservation: FunctionReference<
       "mutation",

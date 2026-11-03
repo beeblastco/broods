@@ -5,8 +5,16 @@ import {
   type Variable,
 } from "@oxlint/plugins";
 
-import { FUNCTION_TYPES, propertyName } from "../ast.ts";
+import {
+  functionName,
+  isIterationCallback,
+  LOOPS,
+  propertyName,
+} from "../ast.ts";
 
+// Components, hooks and request or event handlers.
+const REPEATED_NAME_PATTERN =
+  /^(?:use[A-Z]|handle(?:[A-Z]|$)|on[A-Z])|^[A-Z](?=\w*[a-z])/u;
 const ZOD_MODULE_PATTERN = /^zod(?:\/(?:mini|v3|v4|v4-mini))?$/u;
 const NOT_SCHEMA = new Set([
   "config",
@@ -50,7 +58,7 @@ export default defineRule({
     type: "suggestion",
     docs: {
       description:
-        "Disallow building a static zod schema inside a function; hoist it to module scope.",
+        "Disallow building a static zod schema in code that runs repeatedly (a component, hook, loop, iteration callback or handler); hoist it to module scope.",
     },
   },
   create: (context) => {
@@ -100,17 +108,40 @@ export default defineRule({
       );
     };
 
-    const runsOnce = (fn: ESTree.Node): boolean => {
-      const { parent } = fn;
-      if (parent?.type === "Property") return parent.kind === "get";
-      if (parent?.type !== "CallExpression") return false;
-      return parent.callee === fn || zodFunction(parent) === "lazy";
+    const repeats = (node: ESTree.Node): boolean => {
+      if (
+        node.type !== "ArrowFunctionExpression" &&
+        node.type !== "FunctionDeclaration" &&
+        node.type !== "FunctionExpression"
+      ) {
+        return LOOPS.has(node.type);
+      }
+      const { parent } = node;
+      const schemaCallback =
+        parent.type === "CallExpression" &&
+        parent.callee !== node &&
+        isSchema(parent) &&
+        zodFunction(parent) !== "lazy";
+
+      return (
+        schemaCallback ||
+        isIterationCallback(node) ||
+        REPEATED_NAME_PATTERN.test(functionName(node) ?? "") ||
+        node.params.some(
+          (param) =>
+            param.type === "Identifier" &&
+            param.typeAnnotation?.typeAnnotation.type === "TSTypeReference" &&
+            param.typeAnnotation.typeAnnotation.typeName.type ===
+              "Identifier" &&
+            param.typeAnnotation.typeAnnotation.typeName.name === "Request",
+        )
+      );
     };
 
-    const perCallFunction = (node: ESTree.Node): boolean => {
+    const runsRepeatedly = (node: ESTree.Node): boolean => {
       for (let current = node.parent; current; current = current.parent) {
         if (isSchema(current)) return false;
-        if (FUNCTION_TYPES.has(current.type) && !runsOnce(current)) return true;
+        if (repeats(current)) return true;
       }
       return false;
     };
@@ -140,12 +171,12 @@ export default defineRule({
 
     return {
       CallExpression: (node): void => {
-        if (!isSchema(node) || !perCallFunction(node)) return;
+        if (!isSchema(node) || !runsRepeatedly(node)) return;
         if (buildsFromLocals(node)) return;
         context.report({
           node: node,
           message:
-            "Hoist this zod schema to a module-level const: built inside a function, it is rebuilt on every call.",
+            "Hoist this zod schema to a module-level const: built here, it is rebuilt on every render, iteration, parse or request.",
         });
       },
     };

@@ -341,7 +341,7 @@ export async function createTools(
     );
   }
 
-  // Needs a delivery to resume on; a cron-fired run has nobody to answer.
+  // Needs a delivery to resume on; a subagent has none and a cron-fired run has nobody to answer.
   const session = context.session;
   if (session?.delivery !== undefined && session.trigger !== "cron") {
     Object.assign(

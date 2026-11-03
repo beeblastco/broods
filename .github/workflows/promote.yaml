@@ -157,7 +157,6 @@ jobs:
             build-gateway.yaml
             build-dashboard.yaml
             build-discord-forwarder.yaml
-            build-matrix-forwarder.yaml
             deploy-docs.yaml
           )
 

@@ -11,6 +11,7 @@ function InlineEdit({
   label,
   onCommit,
   onCancel,
+  returnFocusTo,
   className,
 }: {
   value: string;
@@ -18,6 +19,8 @@ function InlineEdit({
   onCommit: (value: string) => void;
   /** Also called for a commit that changed nothing. */
   onCancel: () => void;
+  /** An ancestor selector to hand focus back to, for a field opened from a closing menu. */
+  returnFocusTo?: string;
   className?: string;
 }): React.JSX.Element {
   const [draft, setDraft] = React.useState(value);
@@ -31,13 +34,15 @@ function InlineEdit({
 
   // oxlint-disable-next-line broods/no-unreasoned-state-sync -- focuses the DOM input before paint
   React.useLayoutEffect(() => {
-    const active = document.activeElement;
+    const active = returnFocusTo
+      ? inputRef.current?.closest(returnFocusTo)
+      : document.activeElement;
     // Strict Mode runs this twice; the second pass finds the field focused.
     if (active instanceof HTMLElement && active !== inputRef.current) {
       returnFocusRef.current = active;
     }
     inputRef.current?.focus({ preventScroll: true });
-  }, []);
+  }, [returnFocusTo]);
 
   const close = (commit: string | null, returnFocus: boolean): void => {
     settledRef.current = true;

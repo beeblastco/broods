@@ -16,7 +16,7 @@ flowchart TB
     NATS[("NATS JetStream")]
     OPA["OPA"]
     Obs["OTel, Loki, Tempo<br/>optional"]
-    Fwd["discord-forwarder,<br/>matrix-forwarder<br/>optional"]
+    Fwd["discord-forwarder<br/>optional"]
   end
 
   Convex[("Convex<br/>Cloud or self-hosted")]
@@ -54,24 +54,23 @@ flowchart TB
   Core --> SbxW
 ```
 
-| Piece                       | Source                                           | Runs as                                                      |
-| --------------------------- | ------------------------------------------------ | ------------------------------------------------------------ |
-| AWS data plane              | `apps/core/sst.config.ts`                        | SST deploy into your AWS account                             |
-| Convex backend              | `packages/convex`                                | Convex Cloud, or the self-hosted `convex-backend` image      |
-| core                        | `apps/core/Dockerfile`                           | Container, port 3000, cluster-internal                       |
-| Traefik                     | upstream, config from `apps/edge`                | The only public door                                         |
-| gateway                     | `apps/gateway/Dockerfile`                        | Container, port 3000, behind Traefik                         |
-| dashboard                   | `apps/dashboard/Dockerfile`                      | Container, port 3000                                         |
-| NATS with JetStream         | upstream                                         | For WebSocket runs and live logs                             |
-| OPA                         | upstream, with `apps/core/opa/broods_authz.rego` | For agent policies                                           |
-| OTel collector, Loki, Tempo | upstream                                         | Optional. Log and trace history                              |
-| discord-forwarder           | `apps/discord-forwarder/Dockerfile`              | Optional, one replica. Discord agents only                   |
-| matrix-forwarder            | `apps/matrix-forwarder/Dockerfile`               | Optional, one replica, persistent volume. Matrix agents only |
-| cloudflare-mcp              | `apps/cloudflare-mcp`                            | Optional Worker. Hosted MCP off Lambda                       |
-| cloudflare-sandbox          | `apps/cloudflare-sandbox`                        | Optional Worker. The `cloudflare` sandbox provider           |
-| cloudflare-worker           | `apps/cloudflare-worker`                         | Optional Worker. The `worker` sandbox provider               |
+| Piece                       | Source                                           | Runs as                                                 |
+| --------------------------- | ------------------------------------------------ | ------------------------------------------------------- |
+| AWS data plane              | `apps/core/sst.config.ts`                        | SST deploy into your AWS account                        |
+| Convex backend              | `packages/convex`                                | Convex Cloud, or the self-hosted `convex-backend` image |
+| core                        | `apps/core/Dockerfile`                           | Container, port 3000, cluster-internal                  |
+| Traefik                     | upstream, config from `apps/edge`                | The only public door                                    |
+| gateway                     | `apps/gateway/Dockerfile`                        | Container, port 3000, behind Traefik                    |
+| dashboard                   | `apps/dashboard/Dockerfile`                      | Container, port 3000                                    |
+| NATS with JetStream         | upstream                                         | For WebSocket runs and live logs                        |
+| OPA                         | upstream, with `apps/core/opa/broods_authz.rego` | For agent policies                                      |
+| OTel collector, Loki, Tempo | upstream                                         | Optional. Log and trace history                         |
+| discord-forwarder           | `apps/discord-forwarder/Dockerfile`              | Optional, one replica. Discord agents only              |
+| cloudflare-mcp              | `apps/cloudflare-mcp`                            | Optional Worker. Hosted MCP off Lambda                  |
+| cloudflare-sandbox          | `apps/cloudflare-sandbox`                        | Optional Worker. The `cloudflare` sandbox provider      |
+| cloudflare-worker           | `apps/cloudflare-worker`                         | Optional Worker. The `worker` sandbox provider          |
 
-Images are published to `ghcr.io/beeblastco/broods-{core,gateway,dashboard,discord-forwarder,matrix-forwarder}`, or build them from the repo root with `docker build -f apps/core/Dockerfile .`.
+Images are published to `ghcr.io/beeblastco/broods-{core,gateway,dashboard,discord-forwarder}`, or build them from the repo root with `docker build -f apps/core/Dockerfile .`.
 
 ## Setup order
 
@@ -244,7 +243,6 @@ Refuses to start without `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`, `TERMINAL
 | `DAYTONA_API_KEY`, `DAYTONA_API_URL`, `DAYTONA_ORGANIZATION_ID`, `DAYTONA_TARGET`; `E2B_API_KEY`; `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | no                     | Fallbacks for sandbox configs that omit their own                                  |
 | `ENABLE_WEBSOCKET`, `NATS_URL`, `NATS_TOKEN`                                                                                                            | for WebSocket          | `ENABLE_WEBSOCKET=true` needs `NATS_URL`                                           |
 | `OPA_BASE_URL`, `OPA_API_TOKEN`                                                                                                                         | for policies           | Default `http://127.0.0.1:8181`                                                    |
-| `MATRIX_FORWARDER_URL`                                                                                                                                  | for Matrix             | In-cluster URL of the matrix-forwarder                                             |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `SERVICE_NAME`, `DEPLOYMENT_ENVIRONMENT`                                                   | no                     | No endpoint means no export                                                        |
 | `POSTHOG_API_KEY`, `POSTHOG_HOST`                                                                                                                       | no                     | Anonymous PostHog AI traces + Logs. Unset either means no export                   |
 | `ANALYTICS_ID_SECRET`                                                                                                                                   | no                     | Same as Convex. Keys AI session ids; unset means none                              |
@@ -308,15 +306,14 @@ A session lasts 12 hours in an httpOnly cookie; the browser's Convex tokens last
 
 ### Forwarders
 
-Only for Discord or Matrix agents. One release each for every Convex deployment you run, one replica, `strategy: Recreate`. See [operations](operations.md#forwarders) for why.
+Only for Discord agents. One release for every Convex deployment you run, one replica, `strategy: Recreate`. See [operations](operations.md#forwarders) for why.
 
-| Variable                     | Forwarder | Notes                                                                                                   |
-| ---------------------------- | --------- | ------------------------------------------------------------------------------------------------------- |
-| `BROODS_CONFIG_PLANES`       | both      | JSON array of `{ "name", "convexUrl", "webhookBaseUrl" }`. `webhookBaseUrl` is that plane's public host |
-| `CONVEX_DEPLOY_KEY_<NAME>`   | both      | One key per plane, upper-cased: plane `dev` reads `CONVEX_DEPLOY_KEY_DEV`                               |
-| `DISCORD_BACKOFF_CEILING_MS` | discord   | Default 300000                                                                                          |
-| `DISCORD_IDENTIFY_LIMIT`     | discord   | Default 500, half of Discord's 1000 per 24 hours                                                        |
-| `MATRIX_STORE_DIR`           | matrix    | Required. Must be a persistent volume                                                                   |
+| Variable                     | Notes                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `BROODS_CONFIG_PLANES`       | JSON array of `{ "name", "convexUrl", "webhookBaseUrl" }`. `webhookBaseUrl` is that plane's public host |
+| `CONVEX_DEPLOY_KEY_<NAME>`   | One key per plane, upper-cased: plane `dev` reads `CONVEX_DEPLOY_KEY_DEV`                               |
+| `DISCORD_BACKOFF_CEILING_MS` | Default 300000                                                                                          |
+| `DISCORD_IDENTIFY_LIMIT`     | Default 500, half of Discord's 1000 per 24 hours                                                        |
 
 ### Cloudflare MCP runtime (optional)
 

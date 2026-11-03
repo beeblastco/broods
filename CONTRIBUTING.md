@@ -39,7 +39,6 @@ cd packages/demos/basic-stream && bun run start
   - `apps/core/AGENTS.md`: Bun container runtime, request flow, tools, channels, sandboxes, SST
   - `apps/gateway/AGENTS.md`: front-door routing, config/core split, WebSocket surfaces
   - `apps/discord-forwarder/AGENTS.md`: Discord Gateway sockets
-  - `apps/matrix-forwarder/AGENTS.md`: Matrix long-polls and E2EE keys
   - `apps/dashboard/AGENTS.md`: Next.js dashboard, routes and components, WorkOS auth
   - `packages/convex/AGENTS.md`: Convex schema, config plane, secrets, auth
   - `packages/broods/AGENTS.md`: published CLI + SDK, release versioning

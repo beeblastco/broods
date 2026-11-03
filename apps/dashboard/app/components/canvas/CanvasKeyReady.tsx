@@ -22,22 +22,19 @@ export function CanvasKeyReady({
     api.agent.deployments.getForStage,
     armed && stageId ? { projectId: projectId, stageId: stageId } : "skip",
   );
-  const visible = armed && Boolean(deployment);
+  const hasKey = deployment === undefined ? undefined : deployment !== null;
+  const visible = armed && hasKey === true;
 
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- module marker: no key, no pill
-  useEffect(() => {
-    if (armed && deployment === null) clearCreatedProject();
-  }, [armed, deployment]);
-
-  // Cleared only once shown: the canvas remounts when its stage loads.
+  // Cleared once the query answers, not on mount: the canvas remounts when its stage loads.
   // oxlint-disable-next-line broods/no-unreasoned-state-sync -- module marker and hide timer
   useEffect(() => {
-    if (!visible) return;
+    if (!armed || hasKey === undefined) return;
     clearCreatedProject();
+    if (!hasKey) return;
     const timer = setTimeout(() => setArmed(false), KEY_READY_MS);
 
     return () => clearTimeout(timer);
-  }, [visible]);
+  }, [armed, hasKey]);
 
   if (!visible) return null;
 
