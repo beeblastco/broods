@@ -306,7 +306,7 @@ describe("mcp-runner containment", () => {
             ...pidNamespace,
             "sh",
             "-c",
-            'node "$0"; sleep 2',
+            'node "$0"; sleep 3',
             driver,
           ],
         });
@@ -343,7 +343,7 @@ describe("mcp-runner outside Lambda", () => {
             ...pidNamespace,
             "sh",
             "-c",
-            'sleep 30 & b=$!; node "$0"; s=$(ps -o stat= -p "$b"); kill "$b"; case "$s" in ""|Z*) exit 1;; esac',
+            'sleep 30 & b=$!; node "$0"; s=$(cut -d" " -f3 /proc/$b/stat); kill $b; [ "$s" = S ]',
             driver,
           ],
         }),
