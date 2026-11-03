@@ -259,12 +259,13 @@ inductive HandbackCall where
   result when the row is `finished` and writes nothing, only the turn's read ledger
   (`Session.recordToolResultRead`). -/
   | read (finished : Bool)
-  /-- The owner's history write that saves the result (`insertOwnedEvents`), or the answer
-  of a session that saves no history (`updateAsyncAgentResult`): when
+  /-- The owner's history write that saves the result (`insertOwnedEvents`): when
   it carries the read (`toolResultIds`) or the row of an applied resume's message,
   keyed by the result, it stores the row and completes a resume of it still
   queued, in one transaction. A write that commits but loses its reply saves the
-  row once: its retry is keyed the same. -/
+  row once: its retry is keyed the same. Also the answer of a session that saves no
+  history (`updateAsyncAgentResult`), which only stores the row: such a session holds
+  no coordinator, so nothing is ever queued behind it. -/
   | save
   /-- The owning turn ends without that save: it dies, so its read ledger is gone,
   or a boundary claimed the resume but lost its reply, so the owner never saw it.
