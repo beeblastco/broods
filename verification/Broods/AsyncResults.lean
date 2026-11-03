@@ -199,8 +199,8 @@ def start : State := ⟨.processing, .processing, false, none⟩
 def worker (catchSettles catchRecords : Bool) (e : Ending) (throwAt : Option Nat) : State :=
   exec (recover catchSettles catchRecords) (program e) throwAt start
 
-/-- The outcomes a child's turn records: an answer, or an `ask_parent` question
-(`completeSuccessfulRun` and `completeAskedRun`). -/
+/-- The outcomes a child's turn records: an answer, or a message to its parent it waits on
+(`completeRun`). -/
 def ChildFinish : Finish → Bool
   | .completed | .awaitingInput => true
   | _ => false

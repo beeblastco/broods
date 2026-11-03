@@ -1,5 +1,6 @@
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
+  API_SCOPE_MARKER,
   MODEL_KEY_HINT,
   assertStep,
   convexResult,
@@ -8,7 +9,6 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-const API_SCOPE_MARKER = ":api:";
 const CONTINUATION_TIMEOUT_MS = 120_000;
 const QUESTION_ID = "color";
 const ANSWER = "Blue";
@@ -30,7 +30,7 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
     config: {
       ...context.model,
       agent: {
-        system: `On the first user message call ask_questions exactly once, with blocking true and one question: id "${QUESTION_ID}", header "Color", question "Which color?", options "Red" and "Blue". Then end your turn with no other tool call. When the answer arrives, reply with exactly the chosen color and nothing else.`,
+        system: `On the first user message call ask_questions exactly once, with blocking true and one question: id "${QUESTION_ID}", header "Color", question "Which color?", options "Red" and "Blue". Then end your turn with no other tool call. Never call ask_questions again in this conversation: once the answer arrives, call no tool and reply with exactly the chosen color and nothing else.`,
       },
     },
   });

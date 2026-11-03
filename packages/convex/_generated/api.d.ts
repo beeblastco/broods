@@ -6090,7 +6090,12 @@ export declare const internal: {
     claimEvent: FunctionReference<
       "mutation",
       "internal",
-      { accountId: Id<"accounts">; key: string; ttlSeconds: number },
+      {
+        accountId: Id<"accounts">;
+        key: string;
+        limit?: number;
+        ttlSeconds: number;
+      },
       boolean
     >;
     claimSandboxReservation: FunctionReference<

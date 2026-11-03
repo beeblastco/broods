@@ -39,6 +39,7 @@ import {
 } from "../shared/workspaces.ts";
 import {
   markAsyncToolHandback,
+  rootEventId,
   type AsyncToolDelivery,
 } from "./async-tool-result.ts";
 import {
@@ -366,6 +367,33 @@ export class Session {
       accountId: this.accountId,
       key: this.eventId,
       ttlSeconds: 86400,
+    });
+  }
+
+  // One of the `limit` turns a lineage (a person's run and every run continuing it) may start
+  // by messaging, so two agents cannot keep waking each other.
+  async claimMessageTurn(limit: number): Promise<boolean> {
+    if (!this.accountId) {
+      throw new Error("Account ID is required for runtime claims");
+    }
+
+    return runtime.mutate("claimEvent", {
+      accountId: this.accountId,
+      key: messageTurnsKey(this.eventId),
+      ttlSeconds: 86400,
+      limit: limit,
+    });
+  }
+
+  /** Gives back a message turn that started no turn. */
+  async releaseMessageTurn(): Promise<void> {
+    if (!this.accountId) {
+      throw new Error("Account ID is required for runtime claims");
+    }
+
+    await runtime.mutate("releaseClaim", {
+      accountId: this.accountId,
+      key: messageTurnsKey(this.eventId),
     });
   }
 
@@ -1761,6 +1789,11 @@ function isToolApprovalResponseMessage(
     message.content.length > 0 &&
     message.content.every((part) => part.type === "tool-approval-response")
   );
+}
+
+// One claim per run lineage: the run a person started and every run continuing it.
+function messageTurnsKey(eventId: string): string {
+  return `message-turns:${rootEventId(eventId)}`;
 }
 
 function projectActiveConversationEntries(

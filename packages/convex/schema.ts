@@ -915,6 +915,8 @@ export const runtimeClaimsFields = {
   accountId: v.id("accounts"),
   key: v.string(),
   kind: v.literal("event"),
+  // How often a claim with a limit was taken until it expires.
+  count: v.optional(v.number()),
   expiresAt: v.number(),
 };
 export const ingressModeValidator = v.union(
@@ -1138,7 +1140,7 @@ export const runtimeAsyncAgentResultsFields = {
   error: v.optional(v.string()),
   approvals: v.optional(v.array(toolApprovalSummaryValidator)),
   questions: v.optional(v.array(pendingQuestionSummaryValidator)),
-  // A persistent subagent's ask_parent question while status is awaiting_input.
+  // A persistent subagent's message-agents to its parent while status is awaiting_input.
   question: v.optional(v.string()),
   createdAt: v.string(),
   updatedAt: v.string(),

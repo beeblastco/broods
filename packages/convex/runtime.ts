@@ -117,6 +117,7 @@ export const claimEvent = internalMutation({
     accountId: v.id("accounts"),
     key: v.string(),
     ttlSeconds: v.number(),
+    limit: v.optional(v.number()),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -131,7 +132,11 @@ export const claimEvent = internalMutation({
     }
     const now = Math.floor(Date.now() / 1000);
     if (existing && existing.expiresAt >= now) {
-      return false;
+      const count = existing.count ?? 1;
+      if (count >= (args.limit ?? 1)) return false;
+      await ctx.db.patch(existing._id, { count: count + 1 });
+
+      return true;
     }
     if (existing) await ctx.db.delete(existing._id);
     await ctx.db.insert("runtimeClaims", {
@@ -158,7 +163,14 @@ export const releaseClaim = internalMutation({
     if (row && row.accountId !== args.accountId) {
       throw new Error("Runtime claim does not belong to accountId");
     }
-    if (row?.kind === "event") await ctx.db.delete(row._id);
+    if (!row) return null;
+    // A claim taken up to a limit gives back one use.
+    const count = row.count ?? 1;
+    if (count > 1) {
+      await ctx.db.patch(row._id, { count: count - 1 });
+    } else {
+      await ctx.db.delete(row._id);
+    }
 
     return null;
   },

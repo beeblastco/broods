@@ -63,7 +63,6 @@ const AI_GATEWAY_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const DEPRECATED_TOOL_ID_PREFIX = "tool_";
 
 const RESERVED_HARNESS_TOOL_NAMES = new Set([
-  "ask_parent",
   "async_status",
   "bash",
   "browse",
@@ -74,12 +73,12 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "list_schedules",
   "load_skill",
   "memory_save",
+  "message-agents",
   "read",
   "run_subagent",
   "schedule",
   "stop_subagent",
   "update_schedule",
-  "update_subagent",
   "write",
 ]);
 const CHANNEL_PARTITION_MODES = ["shared", "conversation"] as const;

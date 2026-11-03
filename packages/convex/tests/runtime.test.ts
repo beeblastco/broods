@@ -57,6 +57,30 @@ describe("runtime persistence", () => {
     ).toBe(false);
   });
 
+  test("a limited claim is taken up to its limit", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const claim = async (): Promise<boolean> =>
+      await t.mutation(internal.runtime.claimEvent, {
+        accountId: accountId,
+        key: "message-turns:root",
+        ttlSeconds: 60,
+        limit: 2,
+      });
+
+    expect([await claim(), await claim(), await claim()]).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    // A use that started nothing is given back.
+    await t.mutation(internal.runtime.releaseClaim, {
+      accountId: accountId,
+      key: "message-turns:root",
+    });
+    expect([await claim(), await claim()]).toEqual([true, false]);
+  });
+
   test("orders conversation events", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -666,7 +690,7 @@ describe("runtime persistence", () => {
     });
   });
 
-  test("a subagent's ask_parent question keeps its text and the parent's append stores it", async (): Promise<void> => {
+  test("a subagent's message to its parent keeps its text and the parent's append stores it", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);

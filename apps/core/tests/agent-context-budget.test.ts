@@ -135,7 +135,12 @@ it("agent context matches the committed budget", async () => {
     {
       dispatchSessionMessage: unused,
       dispatchSubagents: unused,
-      askParent: (): boolean => false,
+      parentLink: {
+        ask: (): boolean => false,
+        note: (): never => {
+          throw new Error("the budget only registers tools");
+        },
+      },
     },
   );
 
@@ -157,7 +162,7 @@ async function modelContext(
   options: SessionOptions & { agentConfig: AgentConfig },
   dispatchers: Pick<
     ToolContext,
-    "askParent" | "dispatchSessionMessage" | "dispatchSubagents"
+    "dispatchSessionMessage" | "dispatchSubagents" | "parentLink"
   > = {},
 ): Promise<{
   systemPromptBytes: number;

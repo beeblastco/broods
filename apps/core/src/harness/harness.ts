@@ -74,7 +74,6 @@ import {
 } from "../shared/otel.ts";
 import { recordTaskUsage } from "../shared/telemetry.ts";
 import type { RunSessionMessageDispatch } from "./ingress.ts";
-import type { DispatchAppliedIngress } from "./integrations.ts";
 import {
   applyMessageSendingHook,
   createAgentHookDispatcher,
@@ -150,7 +149,13 @@ import { COMPUTER_TOOL_NAME } from "./tools/computer.tool.ts";
 import { createTools } from "./tools/index.ts";
 import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
-import { parseToolResultOutput, type SubagentWatch } from "./tools/utils.ts";
+import {
+  parseToolResultOutput,
+  type AgentMessage,
+  type MessageChild,
+  type ParentLink,
+  type SubagentWatch,
+} from "./tools/utils.ts";
 import {
   createSandboxCpuLedger,
   createStepTimingTracker,
@@ -235,10 +240,11 @@ export interface SubagentParentContext {
 }
 
 export interface AgentLoopOptions {
-  dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchSubagents?: RunSubagentDispatch;
+  // A persistent-mode parent's message-agents reaches its children through it.
+  messageChild?: MessageChild;
   subagentWatch?: SubagentWatch;
-  canAskParent?: boolean;
+  parentLink?: Pick<ParentLink, "note">;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   subagentParent?: SubagentParentContext;
   // Read on the conversation's first turn only; later turns resume on the machine it stored.
@@ -263,8 +269,8 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
   failureText(): string | null;
   approvalSummaries(): ToolApprovalSummary[];
   questionSummaries(): PendingQuestionSummary[];
-  // The ask_parent question that ended this turn, if one did.
-  parentQuestion(): string | undefined;
+  // The message to the parent this turn ended waiting on, if one did.
+  parentQuestion(): AgentMessage | undefined;
   hasStructuredOutput(): boolean;
   finalResponse(): JSONValue | undefined;
   traceId(): string;
@@ -468,7 +474,7 @@ export async function runAgentLoop(
     });
   }
 
-  let parentQuestion: string | undefined;
+  let parentQuestion: AgentMessage | undefined;
   const configuredApprovals = new Map<string, true>();
   const policyMcpIdsByName = new Map<string, string>();
   const channelDelivery =
@@ -483,7 +489,6 @@ export async function runAgentLoop(
         modelProviderName: configuredModel.providerName,
         modelProvider: configuredModel.provider,
         session: session,
-        dispatchAppliedIngress: options.dispatchAppliedIngress,
         dispatchSessionMessage: options.dispatchSessionMessage,
         onSandboxCpu: sandboxCpu.record,
         onToolRetry: spans.retry,
@@ -513,16 +518,20 @@ export async function runAgentLoop(
         ...(options.subagentWatch
           ? { subagentWatch: options.subagentWatch }
           : {}),
-        ...(options.canAskParent
+        ...(options.parentLink
           ? {
-              askParent: (question: string): boolean => {
-                if (parentQuestion !== undefined) return false;
-                parentQuestion = question;
+              parentLink: {
+                ask: (message: AgentMessage): boolean => {
+                  if (parentQuestion !== undefined) return false;
+                  parentQuestion = message;
 
-                return true;
+                  return true;
+                },
+                note: options.parentLink.note,
               },
             }
           : {}),
+        ...(options.messageChild ? { messageChild: options.messageChild } : {}),
         // Ephemeral system messages are request-local, so children get this turn's copy.
         ...(options.dispatchSubagents
           ? {
@@ -1639,7 +1648,7 @@ export async function runAgentLoop(
     failureText: (): string | null => failureText,
     approvalSummaries: (): ToolApprovalSummary[] => approvalSummaries,
     questionSummaries: (): PendingQuestionSummary[] => questionSummaries,
-    parentQuestion: (): string | undefined => parentQuestion,
+    parentQuestion: (): AgentMessage | undefined => parentQuestion,
     hasStructuredOutput: (): boolean => Boolean(modelOutput),
     finalResponse: (): JSONValue | undefined => finalResponse,
     traceId: (): string => traceId,
