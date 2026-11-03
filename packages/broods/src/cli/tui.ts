@@ -6,6 +6,7 @@ import {
   toTextStream,
   toUIMessageStream,
   type ChatTransport,
+  type DynamicToolCall,
   type ModelMessage,
   type TextStreamPart,
   type ToolApprovalResponse,
@@ -253,6 +254,26 @@ async function* queuedAnswer(
     const status = await client.waitForAsyncStatus(error.accepted, {
       signal: signal,
     });
+    // The approval cards the TUI answers through its usual path, which resumes the run.
+    if (status.status === "awaiting_approval") {
+      for (const approval of status.approvals ?? []) {
+        const toolCall: DynamicToolCall = {
+          type: "tool-call",
+          toolCallId: approval.toolCallId,
+          toolName: approval.toolName,
+          input: approval.input,
+          dynamic: true,
+        };
+        yield toolCall;
+        yield {
+          type: "tool-approval-request",
+          approvalId: approval.approvalId,
+          toolCall: toolCall,
+        };
+      }
+
+      return;
+    }
     const answer = [status.response, status.result].find(
       (value): value is string => typeof value === "string",
     );

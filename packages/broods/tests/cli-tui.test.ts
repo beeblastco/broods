@@ -521,3 +521,47 @@ test("a queued turn that fails still counts as sent", async () => {
     { role: "user", content: [{ type: "text", text: "second" }] },
   ]);
 });
+
+test("a queued turn waiting on approval shows its approval card", async () => {
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    baseUrl: "http://core.test",
+    fetch: Object.assign(
+      async (...[input]: Parameters<typeof fetch>): Promise<Response> =>
+        (input instanceof Request ? input.url : input.toString()).endsWith(
+          "/status/run_2",
+        )
+          ? Response.json({
+              status: "awaiting_approval",
+              approvals: [
+                {
+                  approvalId: "ap_1",
+                  toolCallId: "call_1",
+                  toolName: "deploy",
+                  input: { env: "dev" },
+                },
+              ],
+            })
+          : Response.json(
+              {
+                statusUrl: "http://core.test/status/run_2",
+                runId: "run_2",
+                status: "queued",
+              },
+              { status: 202 },
+            ),
+      { preconnect: fetch.preconnect },
+    ),
+  });
+  const transport = new RemoteAgentTransport(client, AGENT);
+
+  const message = await readTurn(transport, [userMessage("m1", "ship it")]);
+
+  expect(message?.parts).toContainEqual(
+    expect.objectContaining({
+      toolCallId: "call_1",
+      state: "approval-requested",
+      approval: expect.objectContaining({ id: "ap_1" }),
+    }),
+  );
+});
