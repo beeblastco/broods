@@ -1342,19 +1342,26 @@ export class SubagentCoordinator {
     finish: ChildFinish,
   ): Promise<SubagentCompletion> {
     if (finish.status === "awaiting_input") {
-      // History pruning drops older tool calls, so without this line the
-      // resumed child no longer sees that it asked, and asks again.
-      await childSession.persistModelMessages([
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "text",
-              text: `I messaged my parent and am waiting for the reply (exchange ${finish.message.exchangeId}): ${finish.message.text}`,
-            },
-          ],
-        },
-      ]);
+      // History pruning drops older tool calls, so without this line the resumed child no longer
+      // sees that it asked. Losing it risks a repeated question, never the question itself.
+      await childSession
+        .persistModelMessages([
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "text",
+                text: `I messaged my parent and am waiting for the reply (exchange ${finish.message.exchangeId}): ${finish.message.text}`,
+              },
+            ],
+          },
+        ])
+        .catch((error: unknown): void => {
+          logError("Failed to save a subagent's waiting line", {
+            taskId: task.taskId,
+            error: toErrorMessage(error),
+          });
+        });
     }
     await this.recordOutcome(
       childSession,

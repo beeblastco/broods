@@ -2430,6 +2430,31 @@ describe("message-agents in the coordinator", () => {
     );
   });
 
+  it("still hands on a child's question when its waiting line fails to save", async (): Promise<void> => {
+    const { coordinator, key } = await parentRun({});
+    const task = childTask(key);
+    const session = childSession(task);
+    const settle = spyOn(session, "settleIngress").mockResolvedValue(true);
+    spyOn(session, "persistModelMessages").mockRejectedValue(
+      new Error("append failed"),
+    );
+
+    expect(
+      await coordinator["completeRun"](session, task, {
+        status: "awaiting_input",
+        message: message(),
+      }),
+    ).toMatchObject({ status: "awaiting_input", question: "Which region?" });
+    expect(settle).toHaveBeenCalledWith(
+      "completed",
+      expect.objectContaining({
+        asyncResult: expect.objectContaining({
+          outcome: { status: "awaiting_input", question: "Which region?" },
+        }),
+      }),
+    );
+  });
+
   it("resumes an idle child on its own conversation with the parent's message", async (): Promise<void> => {
     const { coordinator, key, address, resume } = await parentRun({});
 
