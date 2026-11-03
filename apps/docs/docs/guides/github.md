@@ -31,6 +31,8 @@ See the [CLI reference](../reference/cli.md#github).
 
 The first time, an org admin connects GitHub: the Broods GitHub App installs on your user or organization, on all repos or the ones you pick. Add more accounts the same way. Broods connects only the accounts you administer on GitHub, your own or an organization you are an admin of, because the App reaches every repo of an installation, not just the ones you can see.
 
+A repo missing from the list is one the App was not given. **Repo missing?** under the picker, and `broods github repos`, link each account's App settings on GitHub, where an admin of that account adds the repo.
+
 ## What linking writes
 
 | In the repo                                              | What it is                                                  |
