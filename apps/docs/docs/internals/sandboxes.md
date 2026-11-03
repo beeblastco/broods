@@ -115,6 +115,7 @@ sequenceDiagram
 ```
 
 - Every write for one sandbox id goes through `queueMirrorWrite`, so a removal never lands before the upsert.
+- Every mirror write also meters into the account's usage rows. Run together, one account's writes collide on its `usagePools` row and Convex retries or fails them, so they take turns (`inAccountTurn` in `src/shared/convex/sandbox-instances.ts`). A run's row refresh still waiting last in its sandbox's line takes the newer run's place (`queueMirrorRefresh`), so a busy sandbox queues at most one.
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
 - An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.

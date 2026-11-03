@@ -79,6 +79,10 @@ export class SandboxCapacityError extends Error {}
 export class SandboxGoneError extends Error {}
 
 const mirrorWrites = new Map<string, Promise<void>>();
+const waitingRefreshes = new Map<
+  string,
+  { write: () => Promise<unknown>; queued: Promise<void> }
+>();
 
 // The server answers `timed_out` itself; this only catches a server that never answers.
 export const EXEC_GRACE_MS = 15_000;
@@ -252,6 +256,31 @@ export function queueMirrorWrite(
   });
 
   return queued;
+}
+
+// A run's row refresh. One still last in its sandbox's line takes the newer run's write instead
+// of queueing another, so a busy sandbox waits on at most one and its row ends on the latest run.
+export function queueMirrorRefresh(
+  sandboxId: string,
+  write: () => Promise<unknown>,
+): Promise<void> {
+  const waiting = waitingRefreshes.get(sandboxId);
+  if (waiting && mirrorWrites.get(sandboxId) === waiting.queued) {
+    waiting.write = write;
+
+    return waiting.queued;
+  }
+  const refresh = { write: write, queued: Promise.resolve() };
+  waitingRefreshes.set(sandboxId, refresh);
+  refresh.queued = queueMirrorWrite(sandboxId, (): Promise<unknown> => {
+    if (waitingRefreshes.get(sandboxId) === refresh) {
+      waitingRefreshes.delete(sandboxId);
+    }
+
+    return refresh.write();
+  });
+
+  return refresh.queued;
 }
 
 export function requiredWorkspacePath(
