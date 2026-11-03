@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { dockPrompt, proposalPlan } from "../app/lib/agentDock";
-import { actionTier } from "../app/lib/copilotActions";
+import { actionTier, pendingChanges } from "../app/lib/copilotActions";
 import { planFromQuery } from "../app/lib/copilotIntent";
 import type { CopilotContext } from "../app/lib/copilotIntent";
 
@@ -185,5 +185,19 @@ describe("agent dock", () => {
     expect(plan?.actions).toMatchObject([
       { reason: "search is not an agent on this canvas.", type: "blocked" },
     ]);
+  });
+
+  test("only writes still waiting reach the tray", () => {
+    const plan = planFromQuery("pause nightly-digest", CONTEXT) ?? undefined;
+    const navigate = planFromQuery("go to scheduler", CONTEXT) ?? undefined;
+    const plans = [
+      { id: "a", plan: plan },
+      { id: "b", plan: navigate },
+      { id: "c", plan: plan },
+    ];
+
+    expect(
+      pendingChanges(plans, new Set(["c:0"])).map((change) => change.messageId),
+    ).toEqual(["a"]);
   });
 });

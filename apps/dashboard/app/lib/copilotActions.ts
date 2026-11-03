@@ -51,6 +51,12 @@ export interface CopilotPlan {
   summary: string;
 }
 
+export interface PendingChange {
+  action: CopilotAction;
+  index: number;
+  messageId: string;
+}
+
 const TIERS: Record<CopilotAction["type"], CopilotTier> = {
   addMcp: "approval",
   blocked: "blocked",
@@ -78,6 +84,20 @@ export function actionTier(action: CopilotAction): CopilotTier {
   }
 
   return TIERS[action.type];
+}
+
+/** The writes still waiting for Apply, oldest first; steps run or discarded drop out. */
+export function pendingChanges(
+  plans: readonly { id: string; plan?: CopilotPlan }[],
+  settled: ReadonlySet<string>,
+): PendingChange[] {
+  return plans.flatMap(({ id, plan }) =>
+    (plan?.actions ?? []).flatMap((action, index): PendingChange[] =>
+      actionTier(action) === "approval" && !settled.has(`${id}:${index}`)
+        ? [{ action: action, index: index, messageId: id }]
+        : [],
+    ),
+  );
 }
 
 export function planRunsUnattended(plan: CopilotPlan): boolean {

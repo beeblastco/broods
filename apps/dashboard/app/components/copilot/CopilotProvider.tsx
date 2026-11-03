@@ -7,8 +7,10 @@ import { useStage } from "@/app/hooks/useStage";
 import type { DockFacts, DockSession } from "@/app/lib/agentDock";
 import {
   actionTier,
+  pendingChanges,
   type CopilotAction,
   type CopilotPlan,
+  type PendingChange,
 } from "@/app/lib/copilotActions";
 import { planFromQuery, type CopilotContext } from "@/app/lib/copilotIntent";
 import { navHref } from "@/app/lib/navigation";
@@ -52,10 +54,15 @@ export interface CopilotState {
   ask: (query: string) => void;
   /** Keys of plan steps already run, as `${messageId}:${index}`. */
   completed: ReadonlySet<string>;
+  /** Keys of plan steps the user discarded, in the same form. */
+  dismissed: ReadonlySet<string>;
+  dismissStep: (messageId: string, index: number) => void;
   isOpen: boolean;
   /** Empty until `wakeIndex`. */
   items: readonly SearchItem[];
   messages: readonly CopilotMessage[];
+  /** Writes still waiting for Apply, from answers asked on this project and stage. */
+  pending: readonly PendingChange[];
   runAction: (action: CopilotAction) => void;
   runStep: (messageId: string, index: number, action: CopilotAction) => void;
   setOpen: (open: boolean) => void;
@@ -147,6 +154,7 @@ export function CopilotProvider({
   }, []);
   const [messages, setMessages] = useState<readonly CopilotMessage[]>([]);
   const [completed, setCompleted] = useState<ReadonlySet<string>>(new Set());
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
 
   const note = useCallback((text: string): void => {
     setMessages((prev) => [
@@ -422,6 +430,21 @@ export function CopilotProvider({
     [messages, run, scope],
   );
 
+  const dismissStep = useCallback((messageId: string, index: number): void => {
+    setDismissed((prev) => new Set(prev).add(`${messageId}:${index}`));
+  }, []);
+
+  const pending = useMemo(
+    () =>
+      pendingChanges(
+        messages.filter(
+          (message) => message.scope === undefined || message.scope === scope,
+        ),
+        new Set([...completed, ...dismissed]),
+      ),
+    [completed, dismissed, messages, scope],
+  );
+
   const shownMessages = useMemo(
     () =>
       messages.map((message) =>
@@ -436,15 +459,30 @@ export function CopilotProvider({
     () => ({
       ask: ask,
       completed: completed,
+      dismissed: dismissed,
+      dismissStep: dismissStep,
       isOpen: isOpen,
       items: items,
       messages: shownMessages,
+      pending: pending,
       runAction: run,
       runStep: runStep,
       setOpen: setOpen,
       wakeIndex: wakeIndex,
     }),
-    [ask, completed, isOpen, items, run, runStep, setOpen, shownMessages],
+    [
+      ask,
+      completed,
+      dismissed,
+      dismissStep,
+      isOpen,
+      items,
+      pending,
+      run,
+      runStep,
+      setOpen,
+      shownMessages,
+    ],
   );
 
   return <CopilotStateProvider value={value}>{children}</CopilotStateProvider>;

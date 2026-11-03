@@ -14,8 +14,10 @@ import {
 } from "@/app/components/ShortcutProvider";
 import { Input } from "@/app/components/ui/input";
 import { useHydrated } from "@/app/hooks/useHydrated";
+import { ChangeTray } from "@/app/components/copilot/ChangeTray";
 import {
   actionTier,
+  pendingChanges,
   planRunsUnattended,
   type CopilotAction,
 } from "@/app/lib/copilotActions";
@@ -130,6 +132,7 @@ function Surfaces(): React.JSX.Element {
   );
   const [messages, setMessages] = useState<readonly CopilotMessage[]>([]);
   const [completed, setCompleted] = useState<ReadonlySet<string>>(new Set());
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
   const [isOpen, setOpen] = useState(false);
   const [liveCanvas, setLiveCanvas] = useState(true);
   const [warmed, setWarmed] = useState("");
@@ -183,9 +186,13 @@ function Surfaces(): React.JSX.Element {
   const copilot: CopilotState = {
     ask: ask,
     completed: completed,
+    dismissed: dismissed,
+    dismissStep: (messageId, index) =>
+      setDismissed((prev) => new Set(prev).add(`${messageId}:${index}`)),
     isOpen: isOpen,
     items: ITEMS,
     messages: messages,
+    pending: pendingChanges(messages, new Set([...completed, ...dismissed])),
     runAction: run,
     runStep: (messageId, index, action) => {
       if (actionTier(action) === "blocked") return;
@@ -200,6 +207,7 @@ function Surfaces(): React.JSX.Element {
     <CopilotStateProvider value={copilot}>
       {liveCanvas && <CanvasBindings onRun={record} />}
       <div className="relative flex min-h-0 flex-1">
+        <ChangeTray />
         <div className="flex min-w-0 flex-1 flex-col gap-4 p-8">
           <section data-fixture="palette" className="flex items-center gap-3">
             <CommandPalette

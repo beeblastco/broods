@@ -242,6 +242,45 @@ test("a write shows its before and after and waits for the press", async ({
   await expect(dock.getByRole("button", { name: "Apply" })).toHaveCount(0);
 });
 
+test("a waiting write stays in the page's tray with the dock closed, and applies from there", async ({
+  page,
+}) => {
+  await openSurfaces(page);
+  await page.keyboard.press("ControlOrMeta+j");
+  const dock = page.getByRole("complementary");
+  await dock
+    .getByPlaceholder("Ask, or describe a change...")
+    .fill("pause nightly-digest");
+  await page.keyboard.press("Enter");
+  await expect(dock.locator("[data-plan-step]")).toHaveCount(1);
+
+  await page.keyboard.press("ControlOrMeta+j");
+  await expect(dock).toHaveCount(0);
+  const tray = page.locator("[data-change-tray]");
+  await expect(tray).toContainText("1 change waiting");
+  await expect(tray.locator("[data-plan-change]")).toContainText("paused");
+  await expect(ran(page)).toHaveCount(0);
+
+  await tray.getByRole("button", { name: "Apply" }).click();
+  await expect(ran(page)).toHaveText(["setCronStatus c1 paused"]);
+  await expect(tray).toHaveCount(0);
+});
+
+test("a discarded write leaves the tray and never runs", async ({ page }) => {
+  await openSurfaces(page);
+  await page.keyboard.press("ControlOrMeta+j");
+  await page
+    .getByRole("complementary")
+    .getByPlaceholder("Ask, or describe a change...")
+    .fill("pause nightly-digest");
+  await page.keyboard.press("Enter");
+
+  const tray = page.locator("[data-change-tray]");
+  await tray.getByRole("button", { name: "Discard" }).click();
+  await expect(tray).toHaveCount(0);
+  await expect(ran(page)).toHaveCount(0);
+});
+
 test("a deploy is refused with a reason and no button to do it anyway", async ({
   page,
 }) => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { CopilotDock } from "@/app/components/copilot/CopilotDock";
+import { ChangeTray } from "@/app/components/copilot/ChangeTray";
 import { CopilotProvider } from "@/app/components/copilot/CopilotProvider";
 import { AppSidebar } from "@/app/components/AppSidebar";
 import { Header } from "@/app/components/Header";
@@ -167,8 +168,9 @@ export function MainShell({
                 )}
                 <div className="flex min-h-0 flex-1">
                   <AppSidebar />
-                  <SidebarInset className="min-w-0 overflow-hidden">
+                  <SidebarInset className="relative min-w-0 overflow-hidden">
                     {children}
+                    <ChangeTray />
                   </SidebarInset>
                   <CopilotDock />
                 </div>
