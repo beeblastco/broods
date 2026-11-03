@@ -1241,6 +1241,11 @@ function referenceNormalizeAgentConfig(
         `${label}.output structured output is not supported with config.harness`,
       );
     }
+    if (config.harness && model?.providerOptions !== undefined) {
+      throw new ClientError(
+        `${label}.providerOptions is not supported with config.harness; set ${label}.reasoning`,
+      );
+    }
   }
 
   return {

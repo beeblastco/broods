@@ -4049,6 +4049,7 @@ components:
         provider-agnostic `reasoning` level (`provider-default | none | minimal
         | low | medium | high | xhigh`) over per-provider reasoning settings in
         `providerOptions`; when both are set the provider-specific setting wins.
+        An agent with `config.harness` refuses `providerOptions` here (400).
         The reserved keys `provider`, `modelId`, `output`, and `apiKey` are
         rejected so a request cannot swap the model, provider, structured output
         contract, or credentials.
