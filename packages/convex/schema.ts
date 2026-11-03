@@ -903,12 +903,16 @@ export const harnessSessionEntryFields = {
   parentEntryId: v.optional(v.string()),
   version: v.number(),
   entry: v.string(),
+  // On a Pi compaction entry: the first entry its summary keeps.
+  firstKeptEntryId: v.optional(v.string()),
 };
 export const runtimeHarnessSessionEntriesFields = {
   accountId: v.id("accounts"),
   conversationKey: v.string(),
   sessionId: v.string(),
   sequence: v.number(),
+  // Sequence where the model context of this entry's branch starts; reads begin there.
+  contextStart: v.optional(v.number()),
   ...harnessSessionEntryFields,
 };
 export const runtimeClaimsFields = {
@@ -1578,6 +1582,11 @@ export default defineSchema({
   runtimeConversationEvents: defineTable(runtimeConversationEventsFields)
     .index("by_conversationKey_and_cursor", ["conversationKey", "cursor"])
     .index("by_conversationKey_and_dedupeKey", ["conversationKey", "dedupeKey"])
+    .index("by_conversationKey_and_role_and_cursor", [
+      "conversationKey",
+      "event.message.role",
+      "cursor",
+    ])
     .index("by_accountId", ["accountId"]),
   runtimeHarnessSessions: defineTable(runtimeHarnessSessionsFields)
     .index("by_conversationKey", ["conversationKey"])

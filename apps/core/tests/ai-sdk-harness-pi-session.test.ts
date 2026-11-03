@@ -41,6 +41,35 @@ describe("createPiSessionStorage", () => {
     ]);
   });
 
+  it("tags a compaction with the first entry its summary keeps", async () => {
+    const appended: HarnessSessionEntry[] = [];
+    const storage = createPiSessionStorage({
+      appendHarnessSessionEntries: (entries): void => {
+        appended.push(...entries);
+      },
+      readHarnessSessionEntries: async () => [],
+    });
+    const compaction = userEntry("c1", "e2", "");
+    compaction.data = {
+      type: "compaction",
+      id: "c1",
+      parentId: "e2",
+      timestamp: "2026-11-03T00:00:00.000Z",
+      summary: "earlier work",
+      firstKeptEntryId: "e1",
+      tokensBefore: 1_000,
+    } as PiEntry["data"];
+    await storage.appendMany!({
+      sessionId: "s1",
+      entries: [userEntry("e2", "e1", "yo"), compaction],
+    });
+
+    expect(appended.map((entry) => entry.firstKeptEntryId)).toEqual([
+      undefined,
+      "e1",
+    ]);
+  });
+
   it("trims every part kind of an oversized entry in one pass instead of failing", async () => {
     const appended: HarnessSessionEntry[] = [];
     const storage = createPiSessionStorage({
@@ -214,7 +243,7 @@ describe("Session harness entries", () => {
     }
   });
 
-  it("pages through every stored entry", async () => {
+  it("pages through the leaf's context window", async () => {
     const { Session } = await import("../src/harness/session.ts");
     const { runtime } = await import("../src/shared/convex/runtime.ts");
     const row = (entryId: string): HarnessSessionEntry => ({
@@ -236,10 +265,19 @@ describe("Session harness entries", () => {
       });
 
       expect(
-        (await session.readHarnessSessionEntries("s1")).map(
+        (await session.readHarnessSessionEntries("s1", "e2")).map(
           (entry) => entry.entryId,
         ),
       ).toEqual(["e1", "e2"]);
+      expect(query.mock.calls.map(([, args]) => args)).toEqual([
+        { conversationKey: "conversation", sessionId: "s1", leafEntryId: "e2" },
+        {
+          conversationKey: "conversation",
+          sessionId: "s1",
+          leafEntryId: "e2",
+          afterSequence: 1,
+        },
+      ]);
     } finally {
       query.mockRestore();
     }

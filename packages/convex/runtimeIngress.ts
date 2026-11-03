@@ -30,6 +30,7 @@ import {
 } from "./schema";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
 import {
+  findHarnessEntry,
   HARNESS_ENTRY_BATCH_BYTES,
   HARNESS_ENTRY_BATCH_ROWS,
   harnessEntryBytes,
@@ -139,6 +140,11 @@ const stepBoundaryResultValidator = v.object({
 });
 
 type PublicDeploymentIngress = Infer<typeof publicDeploymentIngressValidator>;
+
+interface EntryPosition {
+  contextStart: number;
+  sequence: number;
+}
 
 /** Rejected busy candidates create neither an envelope nor an identity tombstone. */
 export const accept = internalMutation({
@@ -994,11 +1000,22 @@ async function appendHarnessEntries(
     entries: Infer<typeof harnessSessionEntryValidator>[];
   },
 ): Promise<number> {
+  // Rows staged before a first checkpoint, or by a retried batch, are counted only here.
+  const last = await ctx.db
+    .query("runtimeHarnessSessionEntries")
+    .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
+      q
+        .eq("conversationKey", options.conversationKey)
+        .eq("sessionId", options.sessionId),
+    )
+    .order("desc")
+    .first();
   let sequence = Math.max(
     options.afterSequence ?? 0,
     options.existing?.sessionId === options.sessionId
       ? (options.existing.lastSequence ?? 0)
       : 0,
+    last?.sequence ?? 0,
   );
   const bytes = options.entries.map((entry): number =>
     harnessEntryBytes(entry.entry),
@@ -1012,29 +1029,45 @@ async function appendHarnessEntries(
       `A harness entry batch holds at most ${HARNESS_ENTRY_BATCH_ROWS} entries and ${HARNESS_ENTRY_BATCH_BYTES} bytes`,
     );
   }
+  const positions = new Map<string, EntryPosition | null>();
+  const positionOf = async (
+    entryId: string | undefined,
+  ): Promise<EntryPosition | null> => {
+    if (entryId === undefined) return null;
+    if (!positions.has(entryId)) {
+      const row = await findHarnessEntry(ctx.db, options, entryId);
+      positions.set(
+        entryId,
+        row && { sequence: row.sequence, contextStart: row.contextStart ?? 0 },
+      );
+    }
+
+    return positions.get(entryId)!;
+  };
   for (const [index, entry] of options.entries.entries()) {
     if (bytes[index]! > MAX_HARNESS_SESSION_ENTRY_BYTES) {
       throw new Error(
         `Harness session entry ${entry.entryId} is ${bytes[index]} bytes; the maximum is ${MAX_HARNESS_SESSION_ENTRY_BYTES}`,
       );
     }
-    const saved = await ctx.db
-      .query("runtimeHarnessSessionEntries")
-      .withIndex("by_conversationKey_and_sessionId_and_entryId", (q) =>
-        q
-          .eq("conversationKey", options.conversationKey)
-          .eq("sessionId", options.sessionId)
-          .eq("entryId", entry.entryId),
-      )
-      .first();
-    if (saved) continue;
+    if (await positionOf(entry.entryId)) continue;
     sequence += 1;
+    // A compaction starts a new window; any other entry stays in its parent's.
+    const contextStart =
+      (await positionOf(entry.firstKeptEntryId))?.sequence ??
+      (await positionOf(entry.parentEntryId))?.contextStart ??
+      0;
     await ctx.db.insert("runtimeHarnessSessionEntries", {
       accountId: options.accountId,
       conversationKey: options.conversationKey,
       sessionId: options.sessionId,
       sequence: sequence,
+      contextStart: contextStart,
       ...entry,
+    });
+    positions.set(entry.entryId, {
+      sequence: sequence,
+      contextStart: contextStart,
     });
   }
 

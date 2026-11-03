@@ -842,6 +842,19 @@ const AGENT_RUNTIME_REFS = z.looseObject({
   sandboxes: z.optional(nonEmptyStrings),
 });
 const HARNESS_TYPE = z.looseObject({ type: z.optional(z.unknown()) });
+const HARNESS_CHECKED_MODEL = z.nullish(
+  z.looseObject({
+    output: z.nullish(z.looseObject({ type: z.optional(z.unknown()) })),
+    providerOptions: z.optional(z.unknown()),
+  }),
+);
+// Only what the harness check reads, for saves that skip the full config check.
+const HARNESS_CHECKED = z.looseObject({
+  harness: z.optional(z.unknown()),
+  policies: z.nullish(z.array(z.unknown())),
+  model: HARNESS_CHECKED_MODEL,
+  subagent: z.nullish(z.looseObject({ model: HARNESS_CHECKED_MODEL })),
+});
 
 const UPDATE_AGENT_INPUT = z.extend(resourceUpdateInput, {
   status: z.optional(z.enum(["active", "disabled"])),
@@ -856,6 +869,7 @@ export type AgentWorkspaceRef = z.output<typeof WORKSPACE_REF>;
 export type AgentModelConfig = z.output<typeof MODEL>;
 export type AgentWebhookHookConfig = z.output<typeof WEBHOOK_HOOK>;
 type AgentChannelsConfig = z.output<typeof CHANNELS>;
+type HarnessChecked = z.output<typeof HARNESS_CHECKED>;
 type AgentRuntimeRefs = Pick<
   z.output<typeof AGENT_RUNTIME_REFS>,
   "sandboxes" | "workspaces"
@@ -880,21 +894,7 @@ export function normalizeAgentConfig(
   if (config.policy !== undefined) {
     throw new ClientError(POLICY_REMOVED_MESSAGE);
   }
-  if (config.harness && policyIds.length > 0) {
-    throw new ClientError(
-      "config.policies is not supported with config.harness",
-    );
-  }
-  for (const [model, label] of [
-    [config.model, "config.model"],
-    [config.subagent?.model, "config.subagent.model"],
-  ] as const) {
-    if (config.harness && model?.output && model.output.type !== "text") {
-      throw new ClientError(
-        `${label}.output structured output is not supported with config.harness`,
-      );
-    }
-  }
+  if (config.harness) assertHarnessSupports(config, policyIds);
   if (config.skills?.allowed)
     config.skills = {
       ...config.skills,
@@ -977,6 +977,15 @@ export function assertAgentRuntimeRefs(
   assertRuntimeRefs(parseInput(AGENT_RUNTIME_REFS, config, "config"), options);
 }
 
+// For saves that write a config without `normalizeAgentConfig`: CLI sync and the dashboard.
+export function assertAgentHarnessSupport(
+  config: Record<string, unknown>,
+): void {
+  const checked = parseInput(HARNESS_CHECKED, config, "config");
+  if (checked.harness != null)
+    assertHarnessSupports(checked, checked.policies ?? []);
+}
+
 // A config-time string check: it resolves no DNS.
 export function assertPublicHttpsUrl(value: string, label: string): URL {
   const problem = publicHttpsUrlProblem(value);
@@ -1045,6 +1054,33 @@ export function isPrivateHostname(hostname: string): boolean {
   if (host.includes(":")) return isPrivateIpv6(host);
 
   return false;
+}
+
+// A harness runs its own loop: policies, structured output and providerOptions never reach it.
+function assertHarnessSupports(
+  config: HarnessChecked,
+  policyIds: readonly unknown[],
+): void {
+  if (policyIds.length > 0) {
+    throw new ClientError(
+      "config.policies is not supported with config.harness",
+    );
+  }
+  for (const [model, label] of [
+    [config.model, "config.model"],
+    [config.subagent?.model, "config.subagent.model"],
+  ] as const) {
+    if (model?.output && model.output.type !== "text") {
+      throw new ClientError(
+        `${label}.output structured output is not supported with config.harness`,
+      );
+    }
+    if (model?.providerOptions !== undefined) {
+      throw new ClientError(
+        `${label}.providerOptions is not supported with config.harness; set ${label}.reasoning`,
+      );
+    }
+  }
 }
 
 // Core builds the adapter only with all of these set, so a partial set would never answer.

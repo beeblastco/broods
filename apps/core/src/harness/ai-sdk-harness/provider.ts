@@ -4,9 +4,46 @@ import type {
   AgentProviderSettings,
 } from "../../shared/domain/agent-config.ts";
 
+// Claude models without effort, per the AI SDK Anthropic model table; every later model has it.
+const CLAUDE_WITHOUT_EFFORT =
+  /claude-(?:3|(?:haiku|sonnet)-4[.-]5|opus-4[.-]1|(?:opus|sonnet)-4(?:[.-]0|-20\d{6}|$))/;
+
 type HarnessProviderName = NonNullable<
   NonNullable<AgentConfig["model"]>["provider"]
 >;
+type HarnessReasoning = NonNullable<AgentConfig["model"]>["reasoning"];
+type HarnessEffort = "low" | "medium" | "high" | "xhigh";
+
+interface AnthropicHarnessReasoning {
+  effort?: Exclude<HarnessEffort, "xhigh">;
+}
+
+// Claude Code and Deep Agents take Anthropic effort. Current Claude models refuse thinking off
+// and older ones refuse xhigh, so those run as low and high, which every effort model takes.
+export function anthropicHarnessReasoning(
+  agentConfig: AgentConfig,
+): AnthropicHarnessReasoning {
+  if (CLAUDE_WITHOUT_EFFORT.test(agentConfig.model?.modelId ?? "")) return {};
+  const reasoning = agentConfig.model?.reasoning;
+  const effort = reasoning === "none" ? "low" : harnessEffort(reasoning);
+  if (!effort) return {};
+
+  return { effort: effort === "xhigh" ? "high" : effort };
+}
+
+// The effort levels Claude Code, Deep Agents and Codex share; `minimal` is below their lowest.
+export function harnessEffort(
+  reasoning: HarnessReasoning,
+): HarnessEffort | undefined {
+  if (reasoning === "minimal") return "low";
+
+  return reasoning === "low" ||
+    reasoning === "medium" ||
+    reasoning === "high" ||
+    reasoning === "xhigh"
+    ? reasoning
+    : undefined;
+}
 
 export function requireHarnessModelId(agentConfig: AgentConfig): string {
   const modelId = agentConfig.model?.modelId;
