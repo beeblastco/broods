@@ -2,7 +2,7 @@
 import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import schema from "../schema";
 
 const OWNER_AUTH_ID = "auth_owner";
@@ -59,34 +59,19 @@ describe("agent.config.canvasBadges", () => {
     });
   });
 
-  test("a row its writers left malformed still answers", async () => {
+  test("a skill list with a non-string entry still answers", async () => {
     const t = badgesTest();
     const { projectId, stageId } = await seed(t);
     caller.authId = OWNER_AUTH_ID;
-    const malformed = await t.run(
+    // The column checks shape only, so the Skills JSON editor can still save a number.
+    const mixed = await t.run(
       async (ctx) =>
         await ctx.db.insert("agentConfigs", {
           authId: OWNER_AUTH_ID,
-          name: "malformed",
+          name: "mixed",
           projectId: projectId,
           stageId: stageId,
-          // `output: null` from a CLI manifest, a list with a non-string entry
-          // from the Skills JSON editor.
-          outputFormat: null,
           extraConfig: { skills: { enabled: true, allowed: ["triage", 1] } },
-          updatedAt: Date.now(),
-        }),
-    );
-
-    // A string or list carries no output spec, so the runtime answers in text.
-    const notAnObject = await t.run(
-      async (ctx) =>
-        await ctx.db.insert("agentConfigs", {
-          authId: OWNER_AUTH_ID,
-          name: "string-format",
-          projectId: projectId,
-          stageId: stageId,
-          outputFormat: "json",
           updatedAt: Date.now(),
         }),
     );
@@ -96,12 +81,11 @@ describe("agent.config.canvasBadges", () => {
       stageId: stageId,
     });
 
-    expect(badges[malformed]).toEqual({
+    expect(badges[mixed]).toEqual({
       publicAccess: false,
       skills: ["triage"],
       structuredOutput: false,
     });
-    expect(badges[notAnObject]?.structuredOutput).toBe(false);
   });
 
   test("with no stage reads the project's default stage", async () => {
@@ -201,7 +185,9 @@ async function seed(t: T): Promise<Seeded> {
     const config = async (
       name: string,
       stage: Id<"stages">,
-      fields: { extraConfig?: unknown; outputFormat?: unknown } = {},
+      fields: Partial<
+        Pick<Doc<"agentConfigs">, "extraConfig" | "outputFormat">
+      > = {},
     ): Promise<Id<"agentConfigs">> =>
       await ctx.db.insert("agentConfigs", {
         authId: OWNER_AUTH_ID,

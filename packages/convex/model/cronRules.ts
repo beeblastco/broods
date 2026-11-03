@@ -1,6 +1,8 @@
 import type { CronInfo } from "@convex-dev/crons";
-import { isPlainObject } from "./objects";
+import { z } from "zod/mini";
+
 import { ClientError } from "./clientError";
+import { parseInput } from "./inputSchema";
 
 const TIMEZONE_PATTERN = /^[A-Za-z0-9_./+-]{1,64}$/;
 const timezoneFormatters = new Map<string, Intl.DateTimeFormat>();
@@ -23,6 +25,64 @@ const DAY_OF_WEEK_NAMES = new Set([
   "FRI",
   "SAT",
 ]);
+
+const NAME = cronText(120, true);
+const DESCRIPTION = cronText(500, false);
+const CONVERSATION_KEY = cronText(256, false);
+const SCHEDULE_EXPRESSION = cronText(256, true).check(
+  z.refine((value): boolean => /^(cron|rate|at)\(.+\)$/.test(value.trim()), {
+    error: "must use cron(...), rate(...), or at(...)",
+  }),
+);
+const TIMEZONE = cronText(64, true).check(
+  z.refine((value): boolean => TIMEZONE_PATTERN.test(value.trim()), {
+    error: "contains unsupported characters",
+  }),
+  z.refine(isTimezone, { error: "must be a valid IANA timezone" }),
+);
+const CRON_STATUS = z.enum(["active", "paused"], {
+  error: "must be active or paused",
+});
+const CRON_RUN = {
+  input: z.optional(z.unknown()),
+  events: z.optional(
+    z
+      .array(z.unknown(), {
+        error: "must be a non-empty array of model messages",
+      })
+      .check(
+        z.minLength(1, {
+          error: "must be a non-empty array of model messages",
+        }),
+      ),
+  ),
+};
+const CREATE_CRON_INPUT = z.looseObject(
+  {
+    name: NAME,
+    agentId: NAME,
+    ...CRON_RUN,
+    scheduleExpression: SCHEDULE_EXPRESSION,
+    description: z.optional(DESCRIPTION),
+    conversationKey: z.optional(CONVERSATION_KEY),
+    timezone: z.optional(TIMEZONE),
+    status: z.optional(CRON_STATUS),
+  },
+  { error: "Request body must be an object" },
+);
+const UPDATE_CRON_INPUT = z.looseObject(
+  {
+    name: z.optional(NAME),
+    description: z.optional(z.nullable(DESCRIPTION)),
+    agentId: z.optional(NAME),
+    ...CRON_RUN,
+    conversationKey: z.optional(z.nullable(CONVERSATION_KEY)),
+    scheduleExpression: z.optional(SCHEDULE_EXPRESSION),
+    timezone: z.optional(z.nullable(TIMEZONE)),
+    status: z.optional(CRON_STATUS),
+  },
+  { error: "Request body must be an object" },
+);
 
 export type CronStatus = "active" | "paused";
 
@@ -55,79 +115,57 @@ export interface NormalizedCronUpdate {
 }
 
 export function normalizeCreateCronInput(input: unknown): NormalizedCronCreate {
-  if (!isPlainObject(input))
-    throw new ClientError("Request body must be an object");
+  const cron = parseInput(CREATE_CRON_INPUT, input, "");
 
   return {
-    name: requireString(input.name, "name", 120),
-    agentId: requireString(input.agentId, "agentId", 120),
-    events: runPayloadToEvents(input),
-    scheduleExpression: normalizeScheduleExpression(input.scheduleExpression),
-    ...(input.description !== undefined
-      ? {
-          description:
-            optionalString(input.description, "description", 500) ?? "",
-        }
+    name: cron.name.trim(),
+    agentId: cron.agentId.trim(),
+    events: runPayloadToEvents(cron),
+    scheduleExpression: cron.scheduleExpression.trim(),
+    ...(cron.description !== undefined
+      ? { description: cron.description.trim() }
       : {}),
-    ...(input.conversationKey !== undefined
-      ? {
-          conversationKey:
-            optionalString(input.conversationKey, "conversationKey", 256) ?? "",
-        }
+    ...(cron.conversationKey !== undefined
+      ? { conversationKey: cron.conversationKey.trim() }
       : {}),
-    ...(input.timezone !== undefined
-      ? { timezone: normalizeTimezone(input.timezone) }
-      : {}),
-    ...(input.status !== undefined
-      ? { status: normalizeCronStatus(input.status) }
-      : {}),
+    ...(cron.timezone !== undefined ? { timezone: cron.timezone.trim() } : {}),
+    ...(cron.status !== undefined ? { status: cron.status } : {}),
   };
 }
 
 export function normalizeUpdateCronInput(input: unknown): NormalizedCronUpdate {
-  if (!isPlainObject(input))
-    throw new ClientError("Request body must be an object");
-  const events = optionalRunPayloadToEvents(input);
+  const cron = parseInput(UPDATE_CRON_INPUT, input, "");
+  const events =
+    cron.input === undefined && cron.events === undefined
+      ? undefined
+      : runPayloadToEvents(cron);
   const normalized: NormalizedCronUpdate = {
-    ...(input.name !== undefined
-      ? { name: requireString(input.name, "name", 120) }
-      : {}),
-    ...(input.description !== undefined
+    ...(cron.name !== undefined ? { name: cron.name.trim() } : {}),
+    ...(cron.description !== undefined
       ? {
           description:
-            input.description === null
+            cron.description === null
               ? null
-              : optionalString(input.description, "description", 500),
+              : cron.description.trim() || undefined,
         }
       : {}),
-    ...(input.agentId !== undefined
-      ? { agentId: requireString(input.agentId, "agentId", 120) }
-      : {}),
+    ...(cron.agentId !== undefined ? { agentId: cron.agentId.trim() } : {}),
     ...(events !== undefined ? { events: events } : {}),
-    ...(input.conversationKey !== undefined
+    ...(cron.conversationKey !== undefined
       ? {
           conversationKey:
-            input.conversationKey === null
+            cron.conversationKey === null
               ? null
-              : optionalString(input.conversationKey, "conversationKey", 256),
+              : cron.conversationKey.trim() || undefined,
         }
       : {}),
-    ...(input.scheduleExpression !== undefined
-      ? {
-          scheduleExpression: normalizeScheduleExpression(
-            input.scheduleExpression,
-          ),
-        }
+    ...(cron.scheduleExpression !== undefined
+      ? { scheduleExpression: cron.scheduleExpression.trim() }
       : {}),
-    ...(input.timezone !== undefined
-      ? {
-          timezone:
-            input.timezone === null ? null : normalizeTimezone(input.timezone),
-        }
+    ...(cron.timezone !== undefined
+      ? { timezone: cron.timezone === null ? null : cron.timezone.trim() }
       : {}),
-    ...(input.status !== undefined
-      ? { status: normalizeCronStatus(input.status) }
-      : {}),
+    ...(cron.status !== undefined ? { status: cron.status } : {}),
   };
   if (Object.keys(normalized).length === 0) {
     throw new ClientError(
@@ -275,69 +313,6 @@ function cronExpressionToCronspec(fields: string): string {
   ].join(" ");
 }
 
-function normalizeCronStatus(value: unknown): CronStatus {
-  if (value === "active" || value === "paused") return value;
-  throw new ClientError("status must be active or paused");
-}
-
-function normalizeEvents(value: unknown): unknown[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new ClientError("events must be a non-empty array of model messages");
-  }
-
-  return value;
-}
-
-function normalizeScheduleExpression(value: unknown): string {
-  const expression = requireString(value, "scheduleExpression", 256);
-  if (!/^(cron|rate|at)\(.+\)$/.test(expression)) {
-    throw new ClientError(
-      "scheduleExpression must use cron(...), rate(...), or at(...)",
-    );
-  }
-
-  return expression;
-}
-
-function normalizeTimezone(value: unknown): string {
-  const timezone = requireString(value, "timezone", 64);
-  if (!TIMEZONE_PATTERN.test(timezone)) {
-    throw new ClientError("timezone contains unsupported characters");
-  }
-  try {
-    timezoneFormatter(timezone);
-  } catch {
-    throw new ClientError("timezone must be a valid IANA timezone");
-  }
-
-  return timezone;
-}
-
-function optionalRunPayloadToEvents(payload: {
-  input?: unknown;
-  events?: unknown;
-}): unknown[] | undefined {
-  if (payload.input === undefined && payload.events === undefined)
-    return undefined;
-
-  return runPayloadToEvents(payload);
-}
-
-function optionalString(
-  value: unknown,
-  name: string,
-  maxLength: number,
-): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string")
-    throw new ClientError(`${name} must be a string`);
-  const trimmed = value.trim();
-  if (trimmed.length > maxLength)
-    throw new ClientError(`${name} must be at most ${maxLength} characters`);
-
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
 function requireDayOfWeekNumber(token: string): number {
   const value = Number(token);
   if (!Number.isInteger(value) || value < 1 || value > 7) {
@@ -349,25 +324,9 @@ function requireDayOfWeekNumber(token: string): number {
   return value;
 }
 
-function requireString(
-  value: unknown,
-  name: string,
-  maxLength: number,
-): string {
-  if (typeof value !== "string")
-    throw new ClientError(`${name} must be a string`);
-  const trimmed = value.trim();
-  if (trimmed.length === 0)
-    throw new ClientError(`${name} must be a non-empty string`);
-  if (trimmed.length > maxLength)
-    throw new ClientError(`${name} must be at most ${maxLength} characters`);
-
-  return trimmed;
-}
-
 function runPayloadToEvents(payload: {
   input?: unknown;
-  events?: unknown;
+  events?: unknown[];
 }): unknown[] {
   const hasInput = payload.input !== undefined;
   const hasEvents = payload.events !== undefined;
@@ -383,7 +342,7 @@ function runPayloadToEvents(payload: {
     ];
   }
 
-  return normalizeEvents(payload.events);
+  return payload.events ?? [];
 }
 
 function timezoneFormatter(timezone: string): Intl.DateTimeFormat {
@@ -421,4 +380,25 @@ function timezoneOffsetMs(timestamp: number, timezone: string): number {
   );
 
   return asUtc - timestamp;
+}
+
+function cronText(maxLength: number, required: boolean): z.ZodMiniString {
+  return z.string().check(
+    z.refine((value): boolean => !required || value.trim().length > 0, {
+      error: "must be a non-empty string",
+    }),
+    z.refine((value): boolean => value.trim().length <= maxLength, {
+      error: `must be at most ${maxLength} characters`,
+    }),
+  );
+}
+
+function isTimezone(value: string): boolean {
+  try {
+    timezoneFormatter(value.trim());
+
+    return true;
+  } catch {
+    return false;
+  }
 }

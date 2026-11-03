@@ -77,12 +77,6 @@ export function hasFlag(args: string[], name: string): boolean {
   );
 }
 
-export function isPlainObject(
-  value: unknown,
-): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 export function optionValue(args: string[], name: string): string | undefined {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
