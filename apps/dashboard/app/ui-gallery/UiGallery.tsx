@@ -779,7 +779,6 @@ function CanvasNodeMenuFixture({
       <ContextMenuContent className="w-60">
         <CanvasNodeMenu
           nodeId={nodeId}
-          label={nodeId}
           links={nodeLinkActions(FRAME_NODES, FRAME_EDGES, nodeId)}
           groups={frameGroupActions(
             {
@@ -795,7 +794,7 @@ function CanvasNodeMenuFixture({
           onDelete={() => setLast("delete")}
           onMakeDefault={() => setLast("make-default")}
           onRemoveEdge={(edgeId) => setLast(`unlink ${edgeId}`)}
-          onRename={(_id, label) => setLast(`rename ${label}`)}
+          onRename={(id) => setLast(`rename ${id}`)}
           onSetMount={(_id, target) => setLast(`mount ${target.kind}`)}
           onSetUngrouped={(nodeIds) => setLast(`group ${nodeIds.join(",")}`)}
         />

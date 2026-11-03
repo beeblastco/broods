@@ -116,11 +116,12 @@ export const ROUTERS: readonly EdgeRouter[] = [
     secretPath: true,
     rules: [{ path: "/v1/media/.*[^/]", methods: ["GET", "HEAD"] }],
   },
+  // `/mcp` sits off `/v1` because `/v1/mcp` is the config plane's server CRUD.
   {
     name: "core",
     upstream: "core",
     limit: "http",
-    rules: [{ path: "/v1(?:/.*)?" }],
+    rules: [{ path: "/v1(?:/.*)?" }, { path: "/mcp" }],
   },
 ];
 

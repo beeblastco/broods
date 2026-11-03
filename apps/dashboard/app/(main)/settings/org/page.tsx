@@ -1,12 +1,12 @@
 "use client";
 
+import { useWarmPanel } from "@/app/hooks/useWarmPanel";
 import { ORG_TABS, pickTab } from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useQuery } from "convex/react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
-import { useEffect } from "react";
 import { OrgGeneralPanel } from "./components/OrgGeneralPanel";
 import {
   loadAllowanceUsage,
@@ -53,11 +53,7 @@ export default function OrgSettingsPage(): React.JSX.Element {
   const org = useQuery(api.org.orgs.getActive, {});
   const searchParams = useSearchParams();
   const tab = pickTab(ORG_TABS, searchParams.get("tab"));
-
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- warms the tab chunk with the query
-  useEffect(() => {
-    void ORG_PANELS[tab.id]?.().catch((): void => {});
-  }, [tab]);
+  useWarmPanel(ORG_PANELS[tab.id]);
 
   const renderPanel = (): React.JSX.Element | null => {
     if (!org) return null;

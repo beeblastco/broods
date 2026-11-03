@@ -1,7 +1,11 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { CanvasEdge, CanvasNode } from "./canvasShapes";
-import { defaultSandboxOf } from "./agentRules";
+import {
+  defaultSandboxOf,
+  storedRefList,
+  storedWorkspaceRef,
+} from "./agentRules";
 import { isCliEdgeId } from "./canvasFrames";
 import { applyTidyLayout } from "./canvasLayout";
 import {
@@ -11,7 +15,8 @@ import {
   type CliResource,
 } from "./cliSync";
 import { loadMcpServersByNode } from "./mcp";
-import { isPlainObject, stableJson } from "./objects";
+import { configObject, parseOr } from "./storedJson";
+import { stableJson } from "./objects";
 import { sandboxDisplayConfig } from "./sandboxDisplayConfig";
 
 type CanvasCliResource = CliResource & {
@@ -158,12 +163,12 @@ function addAgentMcpEdges(
   mcpNameById: Map<string, string>,
   desiredEdges: Map<string, CanvasEdge>,
 ): void {
-  const mcp = agentConfig.mcp;
-  if (!isPlainObject(mcp)) return;
+  const mcp = parseOr(configObject, agentConfig.mcp);
+  if (!mcp) return;
   for (const [serverId, serverConfig] of Object.entries(mcp)) {
     const name = mcpNameById.get(serverId);
     if (!name) continue;
-    if (isPlainObject(serverConfig) && serverConfig.enabled === false) continue;
+    if (parseOr(configObject, serverConfig)?.enabled === false) continue;
     const mcpNodeId = nodeIdByKindName.get(`mcp:${name}`);
     if (mcpNodeId) addDesiredDefaultEdge(desiredEdges, agentNodeId, mcpNodeId);
   }
@@ -175,8 +180,8 @@ function addAgentSkillEdges(
   nodeIdByKindName: Map<string, string>,
   desiredEdges: Map<string, CanvasEdge>,
 ): void {
-  const skills = agentConfig.skills;
-  if (!isPlainObject(skills) || !Array.isArray(skills.allowed)) return;
+  const skills = parseOr(storedRefList, agentConfig.skills);
+  if (!skills) return;
   for (const entry of skills.allowed) {
     if (typeof entry !== "string" || !entry.trim()) continue;
     const skillNodeId = skillNodeIdForReference(nodeIdByKindName, entry);
@@ -191,8 +196,8 @@ function addAgentSubagentEdges(
   nodeIdByKindName: Map<string, string>,
   desiredEdges: Map<string, CanvasEdge>,
 ): void {
-  const subagent = agentConfig.subagent;
-  if (!isPlainObject(subagent) || !Array.isArray(subagent.allowed)) return;
+  const subagent = parseOr(storedRefList, agentConfig.subagent);
+  if (!subagent) return;
   for (const entry of subagent.allowed) {
     if (typeof entry !== "string" || !entry.trim()) continue;
     const calleeNodeId = nodeIdByKindName.get(`agent:${resourceName(entry)}`);
@@ -219,12 +224,9 @@ function addAgentWorkspaceEdges(options: {
     workspaceWriters,
   } = options;
   if (!Array.isArray(agentConfig.workspaces)) return;
-  for (const workspaceRef of agentConfig.workspaces) {
-    if (
-      !isPlainObject(workspaceRef) ||
-      typeof workspaceRef.workspaceId !== "string"
-    )
-      continue;
+  for (const entry of agentConfig.workspaces) {
+    const workspaceRef = parseOr(storedWorkspaceRef, entry);
+    if (!workspaceRef) continue;
     const workspaceName = resourceName(workspaceRef.workspaceId);
     const workspaceNodeId = nodeIdByKindName.get(`workspace:${workspaceName}`);
     if (!workspaceNodeId) continue;
@@ -313,10 +315,11 @@ function collectDesiredAgentEdges(options: {
     (entry) => entry.kind === "agent",
   )) {
     const agentId = nodeIdByKindName.get(`agent:${agent.name}`);
-    if (!agentId || !isPlainObject(agent.config)) continue;
+    const config = parseOr(configObject, agent.config);
+    if (!agentId || !config) continue;
     const sandboxOrder: string[] = [];
-    const sandboxes: unknown[] = Array.isArray(agent.config.sandboxes)
-      ? agent.config.sandboxes
+    const sandboxes: unknown[] = Array.isArray(config.sandboxes)
+      ? config.sandboxes
       : [];
     for (const sandbox of sandboxes) {
       if (typeof sandbox !== "string") continue;
@@ -332,24 +335,19 @@ function collectDesiredAgentEdges(options: {
       // The canvas numbers an agent's sandbox edges in this order.
       agentNode.data = { ...agentNode.data, sandboxOrder: sandboxOrder };
     }
-    const defaultSandbox = defaultSandboxOf(agent.config);
+    const defaultSandbox = defaultSandboxOf(config);
     addAgentWorkspaceEdges({
-      agentConfig: agent.config,
+      agentConfig: config,
       agentNodeId: agentId,
       defaultSandboxName: defaultSandbox ? resourceName(defaultSandbox) : null,
       nodeIdByKindName: nodeIdByKindName,
       desiredEdges: desiredEdges,
       workspaceWriters: workspaceWriters,
     });
-    addAgentSubagentEdges(
-      agent.config,
-      agentId,
-      nodeIdByKindName,
-      desiredEdges,
-    );
-    addAgentSkillEdges(agent.config, agentId, nodeIdByKindName, desiredEdges);
+    addAgentSubagentEdges(config, agentId, nodeIdByKindName, desiredEdges);
+    addAgentSkillEdges(config, agentId, nodeIdByKindName, desiredEdges);
     addAgentMcpEdges(
-      agent.config,
+      config,
       agentId,
       nodeIdByKindName,
       mcpNameById,
@@ -402,7 +400,7 @@ function indexExistingCanvas(
   const byId = new Map<string, CanvasNode>();
   for (const node of nodes) {
     byId.set(node.id, node);
-    const data = isPlainObject(node.data) ? node.data : {};
+    const data = parseOr(configObject, node.data, {});
     if (typeof data.agentConfigId === "string")
       byAgentConfigId.set(data.agentConfigId, node);
     if (typeof data.resourceId === "string")
@@ -487,7 +485,7 @@ function materializeCanvasNodes(options: {
           description: resource.description,
           config: {
             skillSource: "files",
-            ...(isPlainObject(configSnapshot) ? configSnapshot : {}),
+            ...parseOr(configObject, configSnapshot, {}),
           },
           managedBy: "cli",
           cliResourceKey: `skill:${resource.name}`,
@@ -592,7 +590,7 @@ function normalizeCanvasNode(node: CanvasNode): CanvasNode {
     id: String(node.id),
     type: node.type,
     position: node.position ?? { x: 0, y: 0 },
-    data: isPlainObject(node.data) ? node.data : {},
+    data: parseOr(configObject, node.data, {}),
   };
 }
 
@@ -691,7 +689,7 @@ function upsertCanvasNode(options: {
     // `persistCanvasLayout`'s tidy pass assigns every position.
     position: { x: 0, y: 0 },
     data: {
-      ...(isPlainObject(existing?.data) ? existing.data : {}),
+      ...parseOr(configObject, existing?.data, {}),
       ...data,
     },
   };

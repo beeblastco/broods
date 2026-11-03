@@ -8,7 +8,6 @@ import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts"
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   MAX_CONCURRENT_BACKGROUND_JOBS,
@@ -353,9 +352,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   }
 
   #workspaceRoot(): string {
-    const options = isPlainObject(this.#config.options)
-      ? this.#config.options
-      : {};
+    const options = this.#config.options ?? {};
 
     return (configString(options.workspaceRoot) ?? "/mnt/workspaces").replace(
       /\/+$/,
@@ -694,7 +691,7 @@ function vercelAuthOptions(config: SandboxExecutorConfig): {
   teamId: string;
   projectId: string;
 } {
-  const options = isPlainObject(config.options) ? config.options : {};
+  const options = config.options ?? {};
   const token = configString(options.token) ?? optionalEnv("VERCEL_TOKEN");
   const teamId = configString(options.teamId) ?? optionalEnv("VERCEL_TEAM_ID");
   const projectId =

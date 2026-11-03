@@ -87,8 +87,9 @@ export function BaseNode({
   showSideHandles?: boolean;
 }): React.JSX.Element {
   const scale = useStore(scaleSelector);
-  const { canWrite, onRenameNode } = useCanvasFrames();
-  const [renaming, setRenaming] = useState(false);
+  const { canWrite, onRenameNode, onRenaming, renamingNodeId } =
+    useCanvasFrames();
+  const renaming = renamingNodeId === id;
 
   const sideHandlesConnectable = useSideHandlesConnectable(nodeType);
 
@@ -250,22 +251,25 @@ export function BaseNode({
             ) : (
               <span className="text-muted-foreground shrink-0">{icon}</span>
             )}
-            {renaming && onRenameNode ? (
+            {renaming && onRenameNode && onRenaming ? (
               <InlineEdit
                 value={data.label}
                 label={`Rename ${data.label}`}
+                returnFocusTo=".react-flow__node"
                 onCommit={(label) => {
-                  setRenaming(false);
+                  onRenaming(null);
                   onRenameNode(id, label);
                 }}
-                onCancel={() => setRenaming(false)}
+                onCancel={() => onRenaming(null)}
               />
             ) : (
               <span
                 className="text-xs font-medium text-foreground truncate min-w-0"
                 title={data.label}
                 onDoubleClick={
-                  canWrite && onRenameNode ? () => setRenaming(true) : undefined
+                  canWrite && onRenameNode && onRenaming
+                    ? () => onRenaming(id)
+                    : undefined
                 }
               >
                 {data.label}

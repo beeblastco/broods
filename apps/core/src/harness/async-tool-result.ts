@@ -76,6 +76,14 @@ export function createDetachedAsyncToolResult(options: {
     parentEventId: `${eventId}:${tag}:${options.resultId}`,
   });
 }
+// The exact event that made the row: undoes `createDetachedAsyncToolResult`'s `:<tag>:<resultId>`.
+export function askingEventId(
+  row: Pick<AsyncToolResultRecord, "parentEventId" | "resultId">,
+): string {
+  const tagged = row.parentEventId.slice(0, -`:${row.resultId}`.length);
+
+  return tagged.slice(0, tagged.lastIndexOf(":"));
+}
 /** Reads one async tool row; the handler uses it for callbacks, answers and continuation runs. */
 export function getAsyncToolResult(
   resultId: string,
@@ -144,6 +152,13 @@ export function rootEventId(eventId: string): string {
 
   return index === -1 ? eventId : eventId.slice(0, index);
 }
+// Root event, not parent: a detached row's parent event id already names the row.
+export function asyncToolContinuationEventId(
+  row: Pick<AsyncToolResultRecord, "parentEventId" | "resultId">,
+): string {
+  return `${rootEventId(row.parentEventId)}:async-tools:${row.resultId}`;
+}
+
 // A callback runs outside any run's context, so it passes the run's `secretValues` itself.
 export function settleAsyncToolResultFromCallback(options: {
   resultId: string;

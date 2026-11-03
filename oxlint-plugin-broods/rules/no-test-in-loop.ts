@@ -1,31 +1,19 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
 
-import { FUNCTION_TYPES, propertyName, testFunction } from "../ast.ts";
+import {
+  FUNCTION_TYPES,
+  isIterationCallback,
+  LOOPS,
+  propertyName,
+  testFunction,
+} from "../ast.ts";
 
 const EACH_FRAMEWORKS = new Set(["", "bun:test", "vitest"]);
-const LOOPS = new Set([
-  "DoWhileStatement",
-  "ForInStatement",
-  "ForOfStatement",
-  "ForStatement",
-  "WhileStatement",
-]);
-const ITERATING_METHODS = new Set(["flatMap", "forEach", "map"]);
 
 const usesEach = (node: ESTree.Node): boolean => {
   if (node.type === "CallExpression") return usesEach(node.callee);
   if (node.type !== "MemberExpression") return false;
   return propertyName(node) === "each" || usesEach(node.object);
-};
-
-const isIterationCallback = (node: ESTree.Node): boolean => {
-  const call = node.parent;
-  return (
-    call?.type === "CallExpression" &&
-    call.callee !== node &&
-    call.callee.type === "MemberExpression" &&
-    ITERATING_METHODS.has(propertyName(call.callee) ?? "")
-  );
 };
 
 const isInsideLoop = (node: ESTree.Node): boolean => {

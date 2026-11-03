@@ -23,8 +23,10 @@
     "@convex-dev/workos-authkit": "^0.3.0",
     "@noble/hashes": "1.8.0",
     "convex": "^1.47.0",
+    "convex-helpers": "^0.1.133",
     "stripe": "^22.6.2",
-    "tweetnacl": "1.0.3"
+    "tweetnacl": "1.0.3",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",

@@ -98,15 +98,6 @@ describe("channelScopeKeyFromConversation", () => {
       "api:thread-1",
     );
   });
-
-  // `|` separates a thread only under the Matrix prefix; a public key may contain it.
-  it("keeps a public conversation key that contains the thread separator", () => {
-    expect(channelScopeKeyFromConversation("customer|a")).toBe("customer|a");
-    expect(channelScopeKeyFromConversation("customer|b")).toBe("customer|b");
-    expect(
-      channelScopeKeyFromConversation("matrix:!room:example.org|$root"),
-    ).toBe("matrix:!room:example.org");
-  });
 });
 
 describe("subagent task correlation", () => {

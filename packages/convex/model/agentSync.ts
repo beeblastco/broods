@@ -256,26 +256,7 @@ export async function pushEncryptedConfigToAgentRow(
   const cipher = await accountCipherForWrite(ctx, accountId);
   const variables = await loadAgentRuntimeSecrets(ctx, configId);
 
-  const nested = toNestedAgentConfig({
-    name: config.name,
-    description: config.description,
-    provider: config.provider,
-    modelId: config.modelId,
-    systemPrompt: config.systemPrompt,
-    maxTurns: config.maxTurns,
-    outputFormat: config.outputFormat as Record<string, unknown> | undefined,
-    providerOptions: config.providerOptions as
-      | Record<string, unknown>
-      | undefined,
-    temperature: config.temperature,
-    maxTokens: config.maxTokens,
-    memoryToolEnabled: config.memoryToolEnabled,
-    searchToolEnabled: config.searchToolEnabled,
-    searchToolConfig: config.searchToolConfig as
-      | Record<string, unknown>
-      | undefined,
-    extraConfig: config.extraConfig as Record<string, unknown> | undefined,
-  });
+  const nested = toNestedAgentConfig(config);
   const resolved = substituteEnvPlaceholders(nested, variables);
   // `broods dev` re-pushes every agent; a fresh IV on an unchanged one would rewrite the row
   // and rebuild the account's whole channel projection.

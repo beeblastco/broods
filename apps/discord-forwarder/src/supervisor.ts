@@ -73,14 +73,14 @@ export class Forwarder {
           JSON.stringify(existing.targets) !== JSON.stringify(targets);
         if (!moved || existing.socket.state !== "fatal") {
           if (webhookUrls(existing.targets).join(" ") !== urls.join(" ")) {
-            warnOnSharedToken("Discord", botToken, urls);
+            warnOnSharedToken(botToken, urls);
           }
           existing.targets = targets;
           continue;
         }
         existing.socket.stop();
       }
-      warnOnSharedToken("Discord", botToken, urls);
+      warnOnSharedToken(botToken, urls);
       this.open(botToken, targets);
     }
   }
@@ -173,20 +173,19 @@ export function groupConnectionsByToken(
   return grouped;
 }
 
-export function warnOnSharedToken(
-  channel: string,
+function warnOnSharedToken(
   botToken: string,
   webhooks: readonly string[],
 ): void {
   if (webhooks.length < 2) return;
 
-  logWarn(`One ${channel} token serves several webhooks, every one will run`, {
+  logWarn("One Discord token serves several webhooks, every one will run", {
     targets: webhooks.length,
     tokenHint: tokenHint(botToken),
   });
 }
 
-export function webhookUrls(targets: readonly ForwardTarget[]): string[] {
+function webhookUrls(targets: readonly ForwardTarget[]): string[] {
   return [
     ...new Set(targets.map((target): string => target.webhookUrl)),
   ].sort();

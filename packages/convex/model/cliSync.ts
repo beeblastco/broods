@@ -14,7 +14,9 @@ import {
 } from "./agentConfigCodec";
 import type { AccountCipher } from "./envelope";
 import { defaultSandboxOf } from "./agentRules";
-import { isPlainObject, remapKeys } from "./objects";
+import { parseInput } from "./inputSchema";
+import { configObject, parseOr } from "./storedJson";
+import { remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
 import {
   S3_MOUNT_PROVIDER_HINT,
@@ -50,10 +52,7 @@ export async function accountFromSecretHash(
 }
 
 export function asObject(value: unknown): Record<string, unknown> {
-  if (!isPlainObject(value))
-    throw new ClientError("Resource config must be an object");
-
-  return value;
+  return parseInput(configObject, value, "Resource config");
 }
 
 export function assertBrowserSandboxes(resources: CliResource[]): void {
@@ -464,26 +463,7 @@ export function plainRecord(value: unknown): Record<string, unknown> {
 export function renameComparableAgent(agent: Doc<"agentConfigs">): unknown {
   return renameComparableResource(
     agent.description,
-    toNestedAgentConfig({
-      name: agent.name,
-      description: agent.description,
-      provider: agent.provider,
-      modelId: agent.modelId,
-      systemPrompt: agent.systemPrompt,
-      maxTurns: agent.maxTurns,
-      outputFormat: agent.outputFormat as Record<string, unknown> | undefined,
-      providerOptions: agent.providerOptions as
-        | Record<string, unknown>
-        | undefined,
-      temperature: agent.temperature,
-      maxTokens: agent.maxTokens,
-      memoryToolEnabled: agent.memoryToolEnabled,
-      searchToolEnabled: agent.searchToolEnabled,
-      searchToolConfig: agent.searchToolConfig as
-        | Record<string, unknown>
-        | undefined,
-      extraConfig: agent.extraConfig as Record<string, unknown> | undefined,
-    }),
+    toNestedAgentConfig(agent),
   );
 }
 
@@ -558,61 +538,63 @@ export function rewriteIdsToNames(
   }
   if (Array.isArray(result.workspaces)) {
     result.workspaces = result.workspaces.map((entry) => {
-      if (!isPlainObject(entry)) return entry;
+      const ref = parseOr(configObject, entry);
+      if (!ref) return entry;
       const workspaceId =
-        typeof entry.workspaceId === "string" &&
-        workspaceNames[entry.workspaceId]
-          ? workspaceNames[entry.workspaceId]
-          : entry.workspaceId;
+        typeof ref.workspaceId === "string" && workspaceNames[ref.workspaceId]
+          ? workspaceNames[ref.workspaceId]
+          : ref.workspaceId;
       const sandbox =
-        typeof entry.sandbox === "string" && sandboxNames[entry.sandbox]
-          ? sandboxNames[entry.sandbox]
-          : entry.sandbox;
+        typeof ref.sandbox === "string" && sandboxNames[ref.sandbox]
+          ? sandboxNames[ref.sandbox]
+          : ref.sandbox;
 
       return {
-        ...entry,
+        ...ref,
         workspaceId: workspaceId,
-        ...(entry.sandbox !== undefined ? { sandbox: sandbox } : {}),
+        ...(ref.sandbox !== undefined ? { sandbox: sandbox } : {}),
       };
     });
   }
-  if (
-    isPlainObject(result.subagent) &&
-    Array.isArray(result.subagent.allowed)
-  ) {
+  const subagent = parseOr(configObject, result.subagent);
+  if (subagent && Array.isArray(subagent.allowed)) {
     result.subagent = {
-      ...result.subagent,
-      allowed: result.subagent.allowed.map((entry) =>
+      ...subagent,
+      allowed: subagent.allowed.map((entry) =>
         typeof entry === "string" && agentNames[entry]
           ? agentNames[entry]
           : entry,
       ),
     };
   }
-  if (isPlainObject(result.skills) && Array.isArray(result.skills.allowed)) {
+  const skills = parseOr(configObject, result.skills);
+  if (skills && Array.isArray(skills.allowed)) {
     result.skills = {
-      ...result.skills,
-      allowed: result.skills.allowed.map((entry) =>
+      ...skills,
+      allowed: skills.allowed.map((entry) =>
         typeof entry === "string" && skillNames[entry]
           ? skillNames[entry]
           : entry,
       ),
     };
   }
-  if (isPlainObject(result.mcp)) {
-    result.mcp = remapKeys(result.mcp, mcpNames);
+  const mcp = parseOr(configObject, result.mcp);
+  if (mcp) {
+    result.mcp = remapKeys(mcp, mcpNames);
   }
-  if (isPlainObject(result.hooks) && Array.isArray(result.hooks.code)) {
+  const hooks = parseOr(configObject, result.hooks);
+  if (hooks && Array.isArray(hooks.code)) {
     result.hooks = {
-      ...result.hooks,
-      code: result.hooks.code.map((entry) => {
-        if (!isPlainObject(entry)) return entry;
+      ...hooks,
+      code: hooks.code.map((entry) => {
+        const hook = parseOr(configObject, entry);
+        if (!hook) return entry;
         const hookId =
-          typeof entry.hookId === "string" && hookNames[entry.hookId]
-            ? hookNames[entry.hookId]
-            : entry.hookId;
+          typeof hook.hookId === "string" && hookNames[hook.hookId]
+            ? hookNames[hook.hookId]
+            : hook.hookId;
 
-        return { ...entry, hookId: hookId };
+        return { ...hook, hookId: hookId };
       }),
     };
   }
@@ -644,7 +626,8 @@ export function rewriteResourceRefs(
   }
   if (Array.isArray(result.workspaces)) {
     result.workspaces = result.workspaces.map((entry) => {
-      if (!isPlainObject(entry)) return entry;
+      const ref = parseOr(configObject, entry);
+      if (!ref) return entry;
       const workspaceId =
         typeof entry.workspaceId === "string" && workspaceIds[entry.workspaceId]
           ? workspaceIds[entry.workspaceId]
@@ -665,8 +648,9 @@ export function rewriteResourceRefs(
     result.policies = rewriteRefList(result.policies, policyIds);
   }
   // A key that fails to map to an mcp row id fails normalizeMcpConfig loudly.
-  if (isPlainObject(result.mcp)) {
-    result.mcp = remapKeys(result.mcp, mcpIds);
+  const mcp = parseOr(configObject, result.mcp);
+  if (mcp) {
+    result.mcp = remapKeys(mcp, mcpIds);
   }
 
   return result;
@@ -674,17 +658,19 @@ export function rewriteResourceRefs(
 
 export function snapshotExternalConfig(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(snapshotExternalConfig);
-  if (isPlainObject(value)) {
+  const object = parseOr(configObject, value);
+  if (object) {
     return Object.fromEntries(
-      Object.entries(value).flatMap(([key, entry]) => {
+      Object.entries(object).flatMap(([key, entry]) => {
         if (key === "contentBase64" || key === "bundle") return [];
         if (key === "files" && Array.isArray(entry)) {
           return [
             [
               key,
               entry.map((file) => {
-                if (!isPlainObject(file)) return snapshotExternalConfig(file);
-                const { contentBase64: _contentBase64, ...rest } = file;
+                const fileObject = parseOr(configObject, file);
+                if (!fileObject) return snapshotExternalConfig(file);
+                const { contentBase64: _contentBase64, ...rest } = fileObject;
 
                 return snapshotExternalConfig(rest);
               }),
@@ -704,16 +690,17 @@ function rewriteEnvRefsValue(value: unknown, envNames: Set<string>): unknown {
   if (Array.isArray(value)) {
     return value.map((entry) => rewriteEnvRefsValue(entry, envNames));
   }
-  if (isPlainObject(value)) {
-    if (value.__beeblastEnv === true && typeof value.name === "string") {
-      const name = envName(value.name);
+  const object = parseOr(configObject, value);
+  if (object) {
+    if (object.__beeblastEnv === true && typeof object.name === "string") {
+      const name = envName(object.name);
       envNames.add(name);
 
       return `\${${name}}`;
     }
 
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
+      Object.entries(object).map(([key, entry]) => [
         key,
         rewriteEnvRefsValue(entry, envNames),
       ]),

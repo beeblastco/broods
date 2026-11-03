@@ -27,6 +27,7 @@ export type RunSubagentTaskDispatch = {
   agentId: string;
   description?: string;
   conversationKey: string;
+  address?: string;
   runId: string;
   statusPath: string;
   status: "running";

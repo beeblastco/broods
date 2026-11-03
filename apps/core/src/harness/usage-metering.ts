@@ -2,8 +2,13 @@ import {
   canonicalModelProvider,
   PROVIDER_CACHE_WRITE_FIELDS,
 } from "@broods/convex/model/modelPricing";
-import type { LanguageModelUsage, TextStreamPart, ToolSet } from "ai";
-import { isPlainObject } from "@broods/convex/model/objects";
+import type {
+  LanguageModelUsage,
+  ProviderMetadata,
+  TextStreamPart,
+  ToolSet,
+} from "ai";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import type { ModelAttempt } from "./provider.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
 
@@ -72,7 +77,7 @@ export function modelTokenAttributes(
 
 export function extractCacheWriteTokens(
   providerName: string | undefined,
-  providerMetadata: Record<string, unknown> | undefined,
+  providerMetadata: ProviderMetadata | undefined,
 ): number {
   if (!providerMetadata || !providerName) return 0;
 
@@ -80,24 +85,16 @@ export function extractCacheWriteTokens(
   const field = PROVIDER_CACHE_WRITE_FIELDS[provider];
   if (!field) return 0;
 
-  const providerBlock = providerMetadata[provider];
-  if (isPlainObject(providerBlock)) {
-    const val = providerBlock[field];
-    if (typeof val === "number" && val > 0) return val;
-  }
+  const val = providerMetadata[provider]?.[field];
+  if (typeof val === "number" && val > 0) return val;
 
   // Bedrock nests the Anthropic block under bedrock.anthropic, or sets the field on bedrock.
-  if (provider === "bedrock") {
-    const bedrockBlock = providerMetadata["bedrock"];
-    if (isPlainObject(bedrockBlock)) {
-      const anthropicBlock = bedrockBlock["anthropic"];
-      if (isPlainObject(anthropicBlock)) {
-        const val = anthropicBlock[field];
-        if (typeof val === "number" && val > 0) return val;
-      }
-      const direct = bedrockBlock[field];
-      if (typeof direct === "number" && direct > 0) return direct;
-    }
+  const bedrock = provider === "bedrock" ? providerMetadata.bedrock : undefined;
+  if (bedrock) {
+    const nested = parseOr(configObject, bedrock.anthropic)?.[field];
+    if (typeof nested === "number" && nested > 0) return nested;
+    const direct = bedrock[field];
+    if (typeof direct === "number" && direct > 0) return direct;
   }
 
   return 0;
