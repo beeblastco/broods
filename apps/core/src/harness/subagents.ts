@@ -399,21 +399,26 @@ export class SubagentCoordinator {
     // A large write takes several appends: a failure puts back only what none saved. An
     // append that committed but lost its reply is put back too; its dedupe key stores it once.
     let saved = 0;
+    // A saved question is the parent's to answer, so it is woken if no pass does.
+    const asked = (upTo: number): void => {
+      for (const { completion } of queued.slice(0, upTo)) {
+        if (completion.status === "awaiting_input") {
+          this.asked.set(completion.conversationKey, completion);
+        }
+      }
+    };
     await this.parentSession
       .persistModelMessages(messages, {
         onSaved: (count): void => {
           saved = count;
+          asked(count);
         },
       })
       .catch((error: unknown): never => {
         this.outbox.unshift(...queued.slice(saved));
         throw error;
       });
-    for (const { completion } of queued) {
-      if (completion.status === "awaiting_input") {
-        this.asked.set(completion.conversationKey, completion);
-      }
-    }
+    asked(queued.length);
 
     return messages;
   }

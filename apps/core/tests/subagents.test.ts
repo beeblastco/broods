@@ -2642,6 +2642,35 @@ describe("message-agents in the coordinator", () => {
     expect(turns.get("lineage")).toBe(1);
   });
 
+  it("wakes a child whose question was saved by a write that failed on a later append", async (): Promise<void> => {
+    const { coordinator, key, resume } = await parentRun({});
+    const other = coordinator["mintChildKey"]("account_1", crypto.randomUUID());
+    await askedParent(coordinator, waitingChild(key));
+    await askedParent(coordinator, waitingChild(other, "subagent_2"));
+    spyOn(
+      coordinator["parentSession"],
+      "persistModelMessages",
+    ).mockImplementationOnce(
+      async (
+        _messages: unknown,
+        options?: { onSaved?: (count: number) => void },
+      ): Promise<never> => {
+        options?.onSaved?.(1);
+        throw new Error("second append failed");
+      },
+    );
+
+    expect(coordinator.takeParentMessages()).rejects.toThrow(
+      "second append failed",
+    );
+    await Bun.sleep(0);
+    await coordinator.closePasses();
+
+    expect(
+      resume.mock.calls.map(([child]): string => child.publicConversationKey),
+    ).toContain(key);
+  });
+
   it("wakes no child the parent replied to, by message or by run_subagent", async (): Promise<void> => {
     const { coordinator, key, address, resume, turns } = await parentRun({});
     resume.mockRestore();
