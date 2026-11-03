@@ -1,5 +1,6 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
+import * as log from "../src/shared/log.ts";
 
 type Reasoning = NonNullable<AgentConfig["model"]>["reasoning"];
 
@@ -139,11 +140,32 @@ describe("harness reasoning settings", (): void => {
     expect(variant("openai", "gpt-5.1", "none")).toBe("none");
     expect(variant("openai", "gpt-5.2", "xhigh")).toBe("xhigh");
     expect(variant("openai", "gpt-5-codex", "none")).toBeUndefined();
+    expect(variant("openai", "gpt-5-2025-08-07", "minimal")).toBe("minimal");
+    expect(variant("openai", "gpt-5.1-codex-max", "xhigh")).toBe("xhigh");
+    expect(variant("vercel", "anthropic/claude-opus-4.6", "xhigh")).toBe(
+      "high",
+    );
     expect(variant("vercel", "google/gemini-3-pro", "medium")).toBe("high");
     expect(variant("vercel", "xai/grok-4", "minimal")).toBe("minimal");
     expect(
       variant("anthropic", "claude-opus-5-5", "provider-default"),
     ).toBeUndefined();
+  });
+
+  it("warns in the logs only when a harness runs another level", (): void => {
+    const warn = spyOn(log, "logWarn").mockImplementation((): void => {});
+    const config = agent("opencode", "anthropic", "xhigh");
+    config.model = { ...config.model, modelId: "claude-sonnet-4-6" };
+    createConfiguredOpenCodeAdapter(config);
+    createConfiguredCodexAdapter(agent("codex", "openai", "high"));
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[1]).toMatchObject({
+      eventType: "harness.reasoning_changed",
+      configured: "xhigh",
+      sent: "high",
+    });
+    warn.mockRestore();
   });
 });
 
