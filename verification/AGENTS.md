@@ -25,4 +25,4 @@ Lean 4 models of broods contracts, with machine-checked proofs. Not a Bun worksp
 
 - install: `curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none`
 - check: `lake build` in this folder. CI: `.github/workflows/lean-verification.yaml`.
-- TLA+: `TLA_JAR=<tla2tools.jar> tla/check.sh` (Java 11+). CI runs it in the same workflow, TLC pinned by checksum.
+- TLA+: `TLA_JAR=<tla2tools.jar> tla/check.sh` (Java 11+). CI runs it in the same workflow, TLC pinned to stable release v1.7.4 by checksum (not the rolling `v1.8.0` pre-release, rebuilt in place).
