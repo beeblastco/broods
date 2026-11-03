@@ -145,4 +145,48 @@ export async function manifestSync(context: VerifyContext): Promise<void> {
     malformed.includes("config.sandboxes must be array"),
     malformed,
   );
+  // No harness reads providerOptions, so the sync refuses them instead of storing them unused.
+  const harnessOptions = await client
+    .putManifest(
+      {
+        version: 1,
+        project: `${project}-harness`,
+        stage: "development",
+        resources: [
+          {
+            kind: "sandbox",
+            name: "box",
+            config: { provider: "lambda", persistent: true },
+          },
+          {
+            kind: "agent",
+            name: "coder",
+            config: {
+              model: {
+                ...context.model.model,
+                providerOptions: {
+                  anthropic: {
+                    thinking: { type: "enabled", budgetTokens: 1024 },
+                  },
+                },
+              },
+              harness: { type: "pi" },
+              sandboxes: ["box"],
+            },
+          },
+        ],
+      },
+      true,
+    )
+    .then(
+      (): string => "accepted",
+      (error: unknown): string => String(error),
+    );
+  assertStep(
+    "a harness agent with providerOptions is refused by name",
+    harnessOptions.includes(
+      "config.model.providerOptions is not supported with config.harness",
+    ),
+    harnessOptions,
+  );
 }
