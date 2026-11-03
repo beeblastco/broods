@@ -213,11 +213,7 @@ const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
 const textEncoder = new TextEncoder();
 const CONTINUATION_DEPENDENCIES: ContinuationDependencies = {
   dispatchSessionMessage: dispatchSessionMessage,
-  subagents: {
-    dispatchAppliedIngress: dispatchAppliedIngress,
-    dispatchNextIngress: dispatchNextIngress,
-    resumeParent: resumeAfterSubagentResult,
-  },
+  subagents: { resumeParent: resumeAfterSubagentResult },
 };
 
 interface AsyncWorkerInvocation {
@@ -582,6 +578,7 @@ export async function continueAfterAsyncToolSettlement(
 }
 
 // Resumes the parent once per task id, and never once it read `resultEventId` itself.
+// A note has no row: it steers a live parent at its next step.
 export async function resumeAfterSubagentResult(
   parent: SubagentParent,
   taskId: string,
@@ -602,7 +599,7 @@ export async function resumeAfterSubagentResult(
     conversationKey: parent.conversationKey,
     delivery: parent.delivery,
     message: message,
-    requestedMode: "followup",
+    requestedMode: resultEventId === undefined ? "steer" : "followup",
     resultEventId: resultEventId,
     target: target,
   });
@@ -2271,7 +2268,6 @@ export async function dispatchAppliedIngress(
     runId: createRunId(),
     agentConfig: {},
     configRef: next.configRef,
-    ...(base.subagentConfig ? { subagentConfig: base.subagentConfig } : {}),
     conversationKey: base.conversationKey,
     endpointId: base.endpointId,
     projectSlug: base.projectSlug,
@@ -2302,7 +2298,6 @@ export async function dispatchAppliedIngress(
       accountId: base.accountId,
       agentId: base.agentId,
       configRef: next.configRef,
-      subagentConfig: base.subagentConfig,
     });
     if (delivery.kind === "websocket") {
       await invokeNatsWorker(event);

@@ -6,6 +6,7 @@ import {
   it,
   mock,
   spyOn,
+  type Mock,
 } from "bun:test";
 import * as ai from "ai";
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
@@ -17,6 +18,7 @@ import * as ingress from "../src/harness/ingress.ts";
 import type { ReentryTarget } from "../src/harness/integrations.ts";
 import { Session } from "../src/harness/session.ts";
 import type {
+  SubagentCoordinator,
   SubagentCoordinatorDependencies,
   SubagentResumeOutcome,
 } from "../src/harness/subagents.ts";
@@ -766,12 +768,6 @@ describe("SubagentCoordinator", () => {
     };
     coordinator["pending"].set(asking.taskId, new Promise((): void => {}));
     coordinator["pendingMetadata"].set(asking.taskId, asking);
-    // Its note was acked as delivered, so it must reach the parent too.
-    await coordinator.noteFromChild(asking.taskId, {
-      text: "halfway there",
-      exchangeId: "ex_1",
-      followUp: false,
-    });
 
     try {
       expect(
@@ -784,12 +780,10 @@ describe("SubagentCoordinator", () => {
         status: "completed",
         response: "after the failure",
       });
-      const [result, note, late] = resumeParent.mock.calls;
-      expect([result?.[1], late?.[1]]).toEqual(["subagent_1", "subagent_2"]);
-      // The note resumes under a task id of its own, with no result row.
-      expect(note?.[1]).not.toBe("subagent_2");
-      expect(messageText(note?.[2])).toContain("halfway there");
-      expect(note?.[3]).toBeUndefined();
+      expect(resumeParent.mock.calls.map(([, taskId]) => taskId)).toEqual([
+        "subagent_1",
+        "subagent_2",
+      ]);
       for (const eventId of ["event_subagent_1", "event_subagent_2"]) {
         expect(mutate).toHaveBeenCalledWith("markAsyncAgentHandback", {
           eventId: eventId,
@@ -1913,13 +1907,13 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("runs a queued envelope in-process so its result reaches the parent", async () => {
+  it("runs a queued envelope in-process past the parent's wait budget, so its result reaches the parent", async () => {
     const releaseConversationLease = mock(async () => {});
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
       parentSession(),
       { subagent: { enabled: true, mode: "persistent" } },
-      Date.now() + 60_000,
+      Date.now() - 1,
       { lifecycle: { emit: mock(async () => {}) } as never },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
@@ -1958,8 +1952,53 @@ describe("SubagentCoordinator", () => {
     // Its own row: starting it closes the question the child waited on, and
     // a question it asks now gets its deadline there.
     expect(createRow).toHaveBeenCalledWith(
-      expect.objectContaining({ eventId: "queued-event" }),
+      expect.objectContaining({
+        eventId: "queued-event",
+        subagent: {
+          parentConversationKey: "acct:account_1:agent:agent_parent:api:conv_1",
+        },
+      }),
     );
+  });
+
+  it("charges a queued envelope that starts its own turn, and runs it with no parent line once turns are spent", async (): Promise<void> => {
+    let spent = 39;
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession({
+        claimMessageTurn: async (limit: number): Promise<boolean> => {
+          if (spent >= limit) return false;
+          spent += 1;
+
+          return true;
+        },
+      }),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 60_000,
+      { lifecycle: { emit: mock(async () => {}) } as never },
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    const runTask = mock(async (_task: { lastTurn?: boolean }) => {});
+    internals.runTask = runTask;
+    spyOn(asyncAgentResults, "createPendingAsyncAgentResult").mockResolvedValue(
+      true,
+    );
+    const child = {
+      takeNextIngress: async () => ({
+        eventId: "queued-event",
+        events: [{ role: "user", content: "follow up" }],
+        ownerGeneration: 9,
+      }),
+    } as never;
+
+    await internals.drainChildConversation(child, persistentChildTask());
+    await internals.drainChildConversation(child, persistentChildTask());
+
+    expect(spent).toBe(40);
+    expect(runTask.mock.calls.map(([task]) => task.lastTurn)).toEqual([
+      false,
+      true,
+    ]);
   });
 
   it("records a queued child failure against its own event", async () => {
@@ -2068,94 +2107,6 @@ describe("SubagentCoordinator", () => {
         releaseConversationLease: releaseConversationLease,
         takeNextIngress: async () => null,
       } as never,
-      persistentChildTask(),
-    );
-
-    expect(releaseConversationLease).toHaveBeenCalledTimes(1);
-  });
-
-  it("transfers the queue to a worker once the parent wait budget has passed", async () => {
-    const scopes: Record<string, unknown>[] = [];
-    const releaseConversationLease = mock(async () => {});
-    const takeNextIngress = mock(async () => null);
-    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
-    const coordinator = new SubagentCoordinator(
-      parentSession(),
-      { subagent: { enabled: true, mode: "persistent" } },
-      Date.now() - 1,
-      {
-        lifecycle: { emit: mock(async () => {}) } as never,
-        dispatchNextIngress: async (_session, scope) => {
-          scopes.push(scope as unknown as Record<string, unknown>);
-
-          return true;
-        },
-      },
-    );
-    const internals = coordinator as unknown as CoordinatorInternals;
-
-    await internals.drainChildConversation(
-      {
-        releaseConversationLease: releaseConversationLease,
-        takeNextIngress: takeNextIngress,
-      } as never,
-      persistentChildTask(),
-    );
-
-    expect(scopes[0]).toMatchObject({
-      accountId: "account_1",
-      agentId: "agent_child",
-      conversationKey:
-        "acct:account_1:agent:agent_child:api:subagent-persistent-1",
-      publicConversationKey: "subagent-persistent-1",
-      subagentConfig: persistentChildTask().agentConfig,
-    });
-    // No live parent turn to inject into, so it must not run in-process.
-    expect(takeNextIngress).not.toHaveBeenCalled();
-    // Ownership moved to the queued envelope, so releasing would strand it.
-    expect(releaseConversationLease).not.toHaveBeenCalled();
-  });
-
-  it("releases the child lease when the expired-budget transfer fails", async () => {
-    const releaseConversationLease = mock(async () => {});
-    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
-    const coordinator = new SubagentCoordinator(
-      parentSession(),
-      { subagent: { enabled: true, mode: "persistent" } },
-      Date.now() - 1,
-      {
-        lifecycle: { emit: mock(async () => {}) } as never,
-        dispatchNextIngress: async () => {
-          throw new Error("worker unavailable");
-        },
-      },
-    );
-    const internals = coordinator as unknown as CoordinatorInternals;
-
-    await internals.drainChildConversation(
-      { releaseConversationLease: releaseConversationLease } as never,
-      persistentChildTask(),
-    );
-
-    expect(releaseConversationLease).toHaveBeenCalledTimes(1);
-  });
-
-  it("releases the child lease when an expired-budget transfer finds no work", async () => {
-    const releaseConversationLease = mock(async () => {});
-    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
-    const coordinator = new SubagentCoordinator(
-      parentSession(),
-      { subagent: { enabled: true, mode: "persistent" } },
-      Date.now() - 1,
-      {
-        lifecycle: { emit: mock(async () => {}) } as never,
-        dispatchNextIngress: async () => false,
-      },
-    );
-    const internals = coordinator as unknown as CoordinatorInternals;
-
-    await internals.drainChildConversation(
-      { releaseConversationLease: releaseConversationLease } as never,
       persistentChildTask(),
     );
 
@@ -2426,6 +2377,14 @@ describe("message-agents in the coordinator", () => {
   const PARENT_EVENT = "acct:account_1:agent:agent_parent:api:event_parent";
   const CHILD_AGENT = `virtual_subagent_${UUID}`;
 
+  interface ParentRun {
+    coordinator: SubagentCoordinator;
+    resume: Mock<SubagentCoordinator["resumeChild"]>;
+    key: string;
+    address: string;
+    turns: Map<string, number>;
+  }
+
   // A parent run's coordinator: `eventId` names the run, the conversation is
   // shared, and `turns` is its lineage's durable message-turn count. Its
   // `resume` starts a turn unless a test says the child is busy.
@@ -2434,7 +2393,7 @@ describe("message-agents in the coordinator", () => {
     conversationKey?: string;
     turns?: Map<string, number>;
     resumeParent?: SubagentCoordinatorDependencies["resumeParent"];
-  }) {
+  }): Promise<ParentRun> {
     const turns = options.turns ?? new Map<string, number>();
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
@@ -2474,7 +2433,10 @@ describe("message-agents in the coordinator", () => {
   }
 
   // What resumeChild returns for an admission that made turn `taskId`.
-  function resumed(outcome: "owner" | "queued" | "capacity", taskId: string) {
+  function resumed(
+    outcome: "owner" | "queued" | "capacity",
+    taskId: string,
+  ): Awaited<ReturnType<SubagentCoordinator["resumeChild"]>> {
     return {
       outcome: outcome,
       task: {
@@ -2488,7 +2450,12 @@ describe("message-agents in the coordinator", () => {
     };
   }
 
-  function childTask(publicKey: string) {
+  function childTask(publicKey: string): ReturnType<
+    typeof persistentChildTask
+  > & {
+    isolatedSandbox: boolean;
+    lastTurn: boolean;
+  } {
     return {
       taskId: "subagent~task_1",
       runId: CHILD_RUN_ID,
@@ -2556,7 +2523,7 @@ describe("message-agents in the coordinator", () => {
 
   // Queues `child`'s question for the parent's next write, as its turn ends.
   function askedParent(
-    coordinator: Awaited<ReturnType<typeof parentRun>>["coordinator"],
+    coordinator: SubagentCoordinator,
     child: ReturnType<typeof waitingChild>,
   ): void {
     coordinator["pendingMetadata"].set(child.taskId, child);
@@ -2565,6 +2532,18 @@ describe("message-agents in the coordinator", () => {
       status: "awaiting_input",
       question: "Which region?",
     });
+  }
+
+  // Child turns that start for real: each is admitted, then runs until the test ends.
+  function runChildren(coordinator: SubagentCoordinator): void {
+    spyOn(asyncAgentResults, "createPendingAsyncAgentResult").mockResolvedValue(
+      true,
+    );
+    spyOn(asyncAgentResults, "recordAsyncAgentResult").mockResolvedValue(
+      undefined,
+    );
+    coordinator["createChildTurnContext"] = (): Promise<never> =>
+      new Promise((): void => {});
   }
 
   beforeEach((): void => {
@@ -2779,6 +2758,36 @@ describe("message-agents in the coordinator", () => {
     ]);
   });
 
+  it("runs an envelope a dead owner stranded as this message's turn, queueing the message behind it", async (): Promise<void> => {
+    const { coordinator, key, resume, turns } = await parentRun({});
+    resume.mockRestore();
+    const stranded = [{ role: "user", content: "an earlier reply" }];
+    spyOn(ingress, "acceptIngress").mockResolvedValue({
+      outcome: "queued",
+      recovered: {
+        eventId: "stranded-event",
+        ownerGeneration: 4,
+        events: stranded,
+      } as never,
+    });
+    const launch = mock(async (_tasks: unknown, _preOwned: unknown) => ({
+      tasks: [],
+    }));
+    coordinator["launch"] = launch;
+    const child = await coordinator.resolveAddress(`${CHILD_AGENT}/${key}`);
+    turns.set("lineage", 1);
+
+    expect(
+      (await coordinator.resumeChild(child, "eu-west", true)).outcome,
+    ).toBe("queued");
+    expect(launch.mock.calls[0]).toEqual([
+      [expect.objectContaining({ eventId: "stranded-event" })],
+      { ownerGeneration: 4, events: stranded },
+    ]);
+    // The stranded turn spends the message's turn; the message charges its own when it runs.
+    expect(turns.get("lineage")).toBe(1);
+  });
+
   it("gives each message its own envelope ids, even a follow-up of one exchange", async (): Promise<void> => {
     const { coordinator, address, resume } = await parentRun({});
     resume.mockRestore();
@@ -2845,78 +2854,94 @@ describe("message-agents in the coordinator", () => {
     expect(later.resume).not.toHaveBeenCalled();
   });
 
-  it("hands a child's note to the parent's next step, and refuses it once passes ended", async (): Promise<void> => {
-    const { coordinator, key } = await parentRun({});
-    coordinator["pendingMetadata"].set("subagent_1", {
-      taskId: "subagent_1",
-      eventId: "event_1",
-      agentId: CHILD_AGENT,
-      conversationKey: key,
+  it("admits a child's note to the parent's conversation before it says delivered, and refuses it once passes ended", async (): Promise<void> => {
+    const resumeParent = mock(
+      async (
+        _parent: unknown,
+        _taskId: string,
+        _message: UserModelMessage,
+        _resultEventId: string | undefined,
+      ): Promise<SubagentResumeOutcome> => "queued",
+    );
+    const { coordinator, key } = await parentRun({
+      resumeParent: resumeParent,
     });
+    const child = waitingChild(key);
+    coordinator["detached"].set(child.taskId, child);
 
     expect(
       await coordinator.noteFromChild(
-        "subagent_1",
+        child.taskId,
         message({ text: "halfway" }),
       ),
     ).toMatchObject({ status: "delivered" });
-    const [note] = await coordinator.takeParentMessages();
+    const [, taskId, note, resultEventId] = resumeParent.mock.calls[0] ?? [];
+    expect(taskId).toMatch(/^subagent~/);
     expect(messageText(note)).toContain("halfway");
     expect(messageText(note)).toContain(`${CHILD_AGENT}/${key}`);
+    // No result row: the admission alone keeps it.
+    expect(resultEventId).toBeUndefined();
 
     await coordinator.closePasses();
     expect(
-      await coordinator.noteFromChild("subagent_1", message()),
-    ).toMatchObject({
-      status: "not_delivered",
-    });
+      await coordinator.noteFromChild(child.taskId, message()),
+    ).toMatchObject({ status: "not_delivered" });
+    expect(resumeParent).toHaveBeenCalledTimes(1);
   });
 
-  it("takes a note from a child it messaged without waiting while the parent's pass runs", async (): Promise<void> => {
-    const { coordinator, key, address, resume } = await parentRun({});
-    resume.mockImplementation(async () => {
-      coordinator["pending"].set("subagent_1", new Promise<void>(() => {}));
-      coordinator["pendingMetadata"].set("subagent_1", {
-        taskId: "subagent_1",
-        eventId: "event_1",
-        agentId: CHILD_AGENT,
-        conversationKey: key,
-      });
-
-      return resumed("owner", "subagent_1");
+  it("gives back the message turn of a note the parent's conversation does not take", async (): Promise<void> => {
+    const resumeParent = mock(
+      async (): Promise<SubagentResumeOutcome> => "capacity",
+    );
+    const { coordinator, key, turns } = await parentRun({
+      resumeParent: resumeParent,
     });
+    coordinator["pendingMetadata"].set("subagent_1", waitingChild(key));
 
-    await coordinator.messageChild(address, message({ text: "go on" }));
-
-    expect(coordinator.pendingCount).toBe(0);
     expect(
-      await coordinator.noteFromChild(
-        "subagent_1",
-        message({ text: "halfway" }),
-      ),
-    ).toMatchObject({ status: "delivered" });
+      await coordinator.noteFromChild("subagent_1", message()),
+    ).toMatchObject({ status: "not_delivered" });
+    resumeParent.mockRejectedValue(new Error("convex down"));
+    expect(
+      await coordinator.noteFromChild("subagent_1", message()),
+    ).toMatchObject({ status: "not_delivered" });
+
+    expect(turns.get("lineage")).toBe(0);
   });
 
-  it("hands the parent its children's messages in the order they came", async (): Promise<void> => {
-    const { coordinator, key } = await parentRun({});
-    const child = {
-      taskId: "subagent_1",
-      eventId: "event_1",
-      agentId: CHILD_AGENT,
-      conversationKey: key,
-    };
-    coordinator["pendingMetadata"].set(child.taskId, child);
-
-    await coordinator.noteFromChild(child.taskId, message({ text: "halfway" }));
-    coordinator["enqueue"]({
-      ...child,
-      status: "completed",
-      response: "done",
+  it("spends no message turn on a note refused because the passes ended, even as they end", async (): Promise<void> => {
+    const resumeParent = mock(
+      async (): Promise<SubagentResumeOutcome> => "owner",
+    );
+    const { coordinator, key, turns } = await parentRun({
+      resumeParent: resumeParent,
     });
+    const child = waitingChild(key);
+    coordinator["detached"].set(child.taskId, child);
+    await coordinator.closePasses();
 
-    const [first, second] = await coordinator.takeParentMessages();
-    expect(messageText(first)).toContain("halfway");
-    expect(messageText(second)).toContain("done");
+    expect(
+      await coordinator.noteFromChild(child.taskId, message()),
+    ).toMatchObject({ status: "not_delivered" });
+    expect(turns.get("lineage")).toBeUndefined();
+
+    const reopened = await parentRun({ resumeParent: resumeParent });
+    reopened.coordinator["detached"].set(child.taskId, child);
+    // The passes end while the claim is in flight.
+    spyOn(
+      reopened.coordinator["parentSession"],
+      "claimMessageTurn",
+    ).mockImplementationOnce(async (): Promise<boolean> => {
+      reopened.coordinator["closed"] = true;
+      reopened.turns.set("lineage", 1);
+
+      return true;
+    });
+    expect(
+      await reopened.coordinator.noteFromChild(child.taskId, message()),
+    ).toMatchObject({ status: "not_delivered" });
+    expect(reopened.turns.get("lineage")).toBe(0);
+    expect(resumeParent).not.toHaveBeenCalled();
   });
 
   it("wakes a child whose question the parent's passes left unanswered, once", async (): Promise<void> => {
@@ -2939,7 +2964,11 @@ describe("message-agents in the coordinator", () => {
 
   it("wakes no child the parent replied to, by message or by run_subagent", async (): Promise<void> => {
     const { coordinator, key, address, resume, turns } = await parentRun({});
-    coordinator["launch"] = mock(async () => ({ tasks: [] }));
+    runChildren(coordinator);
+    spyOn(ingress, "acceptIngress").mockResolvedValue({
+      outcome: "owner",
+      ownerGeneration: 1,
+    });
     const other = coordinator["mintChildKey"]("account_1", crypto.randomUUID());
     askedParent(coordinator, waitingChild(key));
     askedParent(coordinator, waitingChild(other, "subagent_2"));
@@ -2950,6 +2979,7 @@ describe("message-agents in the coordinator", () => {
       [{ prompt: "eu-west", conversationKey: other }],
       [],
     );
+    await Bun.sleep(0);
     await coordinator.closePasses();
 
     expect(resume).toHaveBeenCalledTimes(1);
@@ -2958,15 +2988,38 @@ describe("message-agents in the coordinator", () => {
     expect(turns.get("lineage")).toBe(2);
   });
 
-  it("refuses a run_subagent resume once the run spent its message turns", async (): Promise<void> => {
-    const { coordinator, key } = await parentRun({
+  it("fails a run_subagent resume once the run spent its message turns, and keeps its question", async (): Promise<void> => {
+    const { coordinator, key, resume } = await parentRun({
       turns: new Map([["lineage", 40]]),
     });
-    coordinator["launch"] = mock(async () => ({ tasks: [] }));
+    runChildren(coordinator);
+    const accept = spyOn(ingress, "acceptIngress");
+    askedParent(coordinator, waitingChild(key));
+    await coordinator.takeParentMessages();
 
-    expect(
-      coordinator.dispatch([{ prompt: "go on", conversationKey: key }], []),
-    ).rejects.toThrow("already started 40 turns");
+    await coordinator.dispatch([{ prompt: "go on", conversationKey: key }], []);
+    expect(await coordinator.waitForIdle()).toBe("idle");
+
+    expect(accept).not.toHaveBeenCalled();
+    const [failure] = await coordinator.takeParentMessages();
+    expect(messageText(failure)).toContain("already started 40 turns");
+    await coordinator.closePasses();
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives back the message turn and keeps the question of a run_subagent resume whose admission fails", async (): Promise<void> => {
+    const { coordinator, key, resume, turns } = await parentRun({});
+    runChildren(coordinator);
+    spyOn(ingress, "acceptIngress").mockRejectedValue(new Error("convex down"));
+    askedParent(coordinator, waitingChild(key));
+    await coordinator.takeParentMessages();
+
+    await coordinator.dispatch([{ prompt: "go on", conversationKey: key }], []);
+    await coordinator.waitForIdle();
+
+    expect(turns.get("lineage")).toBe(0);
+    await coordinator.closePasses();
+    expect(resume.mock.calls[0]?.[1]).toContain("No reply from your parent");
   });
 
   it("still wakes a child once its run spent its message turns, with no line to its parent", async (): Promise<void> => {
@@ -3042,39 +3095,6 @@ describe("message-agents in the coordinator", () => {
     expect(turns.get("lineage")).toBe(2);
   });
 
-  it("resumes the parent with a note no pass read before its passes ended", async (): Promise<void> => {
-    const resumeParent = mock(
-      async (
-        _parent: unknown,
-        _taskId: string,
-        _message: UserModelMessage,
-      ): Promise<SubagentResumeOutcome> => "owner",
-    );
-    const { coordinator, key } = await parentRun({
-      resumeParent: resumeParent,
-    });
-    const child = waitingChild(key);
-    coordinator["pendingMetadata"].set(child.taskId, child);
-    await coordinator.noteFromChild(child.taskId, message({ text: "halfway" }));
-
-    await coordinator.closePasses();
-
-    expect(resumeParent).toHaveBeenCalledTimes(1);
-    expect(messageText(resumeParent.mock.calls[0]?.[2])).toContain("halfway");
-  });
-
-  it("wakes a parent waiting on its children with a child's note", async (): Promise<void> => {
-    const { coordinator, key } = await parentRun({});
-    const child = waitingChild(key);
-    coordinator["pending"].set(child.taskId, new Promise<void>(() => {}));
-    coordinator["pendingMetadata"].set(child.taskId, child);
-
-    const waited = coordinator.waitForIdle();
-    await coordinator.noteFromChild(child.taskId, message({ text: "halfway" }));
-
-    expect(await waited).toBe("message");
-  });
-
   it("resumes the parent with a queued turn's result under that turn's own task id", async (): Promise<void> => {
     const resumeParent = mock(
       async (
@@ -3114,6 +3134,7 @@ describe("message-agents in the coordinator", () => {
   it("charges a child's note to the message turns, and refuses it once they are spent", async (): Promise<void> => {
     const { coordinator, key, turns } = await parentRun({
       turns: new Map([["lineage", 39]]),
+      resumeParent: async (): Promise<SubagentResumeOutcome> => "queued",
     });
     coordinator["pendingMetadata"].set("subagent_1", waitingChild(key));
 

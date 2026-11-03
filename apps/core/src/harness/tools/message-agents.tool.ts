@@ -1,10 +1,3 @@
-/**
- * Model-facing messages between agents of one subagent family, both ways: a
- * parent to its persistent children by address, a persistent child to its
- * parent. Delivery and waiting live in the subagent coordinator; this file only
- * validates input and shapes the result.
- */
-
 import { jsonSchema, tool, type ToolSet } from "ai";
 import {
   MAX_AGENT_WAIT_SECONDS,

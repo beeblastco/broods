@@ -135,7 +135,6 @@ import {
   getIngressStatus,
   getIngressStatusByEventId,
   INGRESS_RETRY_HEADERS,
-  type AppliedIngress,
   type ChannelTargetRefs,
   type IngressConfigRef,
   type IngressMode,
@@ -211,8 +210,6 @@ export interface DirectInboundEvent {
   agentId: string;
   agentConfig: AgentConfig;
   configRef?: IngressConfigRef;
-  // A subagent's config derives from its parent, so no ref can rebuild it.
-  subagentConfig?: AgentConfig;
   endpointId?: string;
   projectSlug?: string;
   stageSlug?: string;
@@ -254,13 +251,7 @@ export type IngressDispatchScope = Pick<
   | "endpointId"
   | "projectSlug"
   | "stageSlug"
-  | "subagentConfig"
 >;
-
-export type DispatchAppliedIngress = (
-  scope: IngressDispatchScope,
-  ingress: AppliedIngress,
-) => Promise<void>;
 
 export interface AsyncDirectInboundEvent extends DirectInboundEvent {
   statusUrl: string;
