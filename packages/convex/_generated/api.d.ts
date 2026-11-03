@@ -982,6 +982,7 @@ export declare const api: {
         files: Array<{ content: string; path: string }>;
         fullName: string;
         omitted: number;
+        viaPullRequest: boolean;
       } | null
     >;
     session: FunctionReference<
