@@ -4,7 +4,7 @@
  * Actions (`broods deploy`), so Broods builds nothing. Plain fetch and Web Crypto, for Convex.
  */
 
-import { blake2b } from "@noble/hashes/blake2b";
+import { blake2b } from "@noble/hashes/blake2.js";
 import nacl from "tweetnacl";
 
 import { ClientError } from "./clientError";
