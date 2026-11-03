@@ -1139,6 +1139,9 @@ export class Session {
   private async loadConversationEntries(
     options: {
       afterCreatedAt?: string | null;
+      beforeCreatedAt?: string;
+      role?: "system";
+      stopAtRole?: "assistant" | "user";
     } = {},
   ): Promise<StoredConversationEntry[]> {
     if (!this.persist) return [];
@@ -1146,7 +1149,7 @@ export class Session {
     // A full read pages back and stops at the latest compaction summary: none reads past it.
     const backward = afterCursor === undefined;
     const pages: StoredConversationEntry[][] = [];
-    let cursor = afterCursor;
+    let cursor = afterCursor ?? options.beforeCreatedAt;
     for (;;) {
       const result = await runtime.query(
         "listConversationEvents",
@@ -1155,6 +1158,8 @@ export class Session {
               conversationKey: this.conversationKey,
               beforeCursor: cursor,
               fromSystemPrefix: COMPACTION_MARKER,
+              role: options.role,
+              stopAtRole: options.stopAtRole,
             }
           : { conversationKey: this.conversationKey, afterCursor: cursor },
       );
@@ -1172,6 +1177,43 @@ export class Session {
       }
       cursor = result.continueCursor;
     }
+  }
+
+  // A harness keeps its own context, so its prompt needs only the rows since its newest reply.
+  private async loadHarnessTurnEntries(
+    unwritten: AppendedConversationEvent[],
+  ): Promise<StoredConversationEntry[]> {
+    const [systemRows, newest] = await Promise.all([
+      this.loadConversationEntries({ role: "system" }),
+      this.loadConversationEntries({ stopAtRole: "assistant" }),
+    ]);
+    let tail = newest;
+    // A read that ended on a compaction summary or the first row has nothing older to give.
+    while (
+      tail[0]?.event.message.role === "assistant" ||
+      tail[0]?.event.message.role === "user"
+    ) {
+      const stopAtRole = missingHarnessRole(
+        withUnwrittenRows(tail, unwritten),
+        this.agentConfig,
+      );
+      if (!stopAtRole) break;
+      const older = await this.loadConversationEntries({
+        beforeCreatedAt: tail[0].createdAt,
+        stopAtRole: stopAtRole,
+      });
+      if (older.length === 0) break;
+      tail = older.concat(tail);
+    }
+
+    // Each read has its own snapshot, so a system row the tail missed is merged in by cursor.
+    return withUnwrittenRows(
+      tail,
+      systemRows.map((row): AppendedConversationEvent => ({
+        cursor: row.createdAt,
+        event: row.event,
+      })),
+    );
   }
 
   private async loadMemoryFile(
@@ -1275,26 +1317,17 @@ export class Session {
   // `turnContent` puts this turn's own input, media included, back over its stored rows.
   private async loadTurnHistory(
     phases: ContextPreparePhases,
-    appended: { cursor: string; event: StoredConversationEvent }[],
+    appended: AppendedConversationEvent[],
     turnContent: ReadonlyMap<string, UserContent>,
   ): Promise<TurnHistory> {
-    const entries = await timePhase(phases, "historyMs", () =>
-      this.loadConversationEntries(),
+    const entries = withUnwrittenRows(
+      await timePhase(phases, "historyMs", () =>
+        this.agentConfig.harness === undefined
+          ? this.loadConversationEntries()
+          : this.loadHarnessTurnEntries(appended),
+      ),
+      appended,
     );
-    // A lease-free context write can land before this run's rows: merge by cursor.
-    const read = new Set(entries.map((entry): string => entry.createdAt));
-    const missing = appended.filter((row): boolean => !read.has(row.cursor));
-    if (missing.length > 0) {
-      entries.push(
-        ...missing.map((row): StoredConversationEntry => ({
-          createdAt: row.cursor,
-          event: row.event,
-        })),
-      );
-      entries.sort((left, right): number =>
-        left.createdAt < right.createdAt ? -1 : 1,
-      );
-    }
     phases.historyRows = entries.length;
     const turnEntries = entries.map((entry): StoredConversationEntry => {
       const content = turnContent.get(entry.createdAt);
@@ -1799,6 +1832,27 @@ function messageTurnsKey(eventId: string): string {
   return `message-turns:${rootEventId(eventId)}`;
 }
 
+function missingHarnessRole(
+  entries: StoredConversationEntry[],
+  agentConfig: AgentConfig,
+): "assistant" | "user" | undefined {
+  const messages = pruneSessionMessages(
+    projectEntriesToMessages(
+      projectActiveConversationEntries(entries),
+      modelIdentityFromModelConfig(agentConfig),
+    ),
+    agentConfig,
+  );
+  // The reply the prompt starts after, and the ask the run's trace shows as its input.
+  if (!messages.slice(0, -1).some((message) => message.role === "assistant")) {
+    return "assistant";
+  }
+
+  return messages.some((message) => message.role === "user")
+    ? undefined
+    : "user";
+}
+
 function projectActiveConversationEntries(
   entries: StoredConversationEntry[],
 ): StoredConversationEntry[] {
@@ -2121,4 +2175,22 @@ function withoutUnresolvedToolCalls(messages: ModelMessage[]): ModelMessage[] {
 
     return repaired.content.length > 0 ? [repaired] : [];
   });
+}
+
+// A lease-free context write can land before this run's rows: merge by cursor.
+function withUnwrittenRows(
+  entries: StoredConversationEntry[],
+  unwritten: AppendedConversationEvent[],
+): StoredConversationEntry[] {
+  const read = new Set(entries.map((entry): string => entry.createdAt));
+  const missing = unwritten.filter((row): boolean => !read.has(row.cursor));
+  if (missing.length === 0) return entries;
+
+  return [
+    ...entries,
+    ...missing.map((row): StoredConversationEntry => ({
+      createdAt: row.cursor,
+      event: row.event,
+    })),
+  ].sort((left, right): number => (left.createdAt < right.createdAt ? -1 : 1));
 }

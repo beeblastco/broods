@@ -9,15 +9,25 @@ import {
   setSystemTime,
 } from "bun:test";
 import * as actualAi from "ai";
-import type { UserContent } from "ai";
+import type { ModelMessage, ToolCallPart, UserContent } from "ai";
 import type {
   Session,
   StoredConversationEventPage,
+  TurnContextSnapshot,
 } from "../src/harness/session.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import * as actualS3 from "../src/shared/s3.ts";
 
 const ORIGINAL_ENV = { ...process.env };
+
+type StoredRow = StoredConversationEventPage["page"][number];
+
+interface ConversationReadArgs {
+  beforeCursor?: string;
+  fromSystemPrefix?: string;
+  role?: string;
+  stopAtRole?: string;
+}
 const googleModelMock = mock((modelId: string) => ({
   provider: "google",
   modelId: modelId,
@@ -1279,6 +1289,96 @@ describe("context prepare", () => {
   });
 });
 
+describe("harness turn history", () => {
+  const cases: Array<[string, StoredConversationEventPage["page"]]> = [
+    [
+      "a new message after a reply cut off at its tool call",
+      [
+        ...longHarnessConversation(),
+        row({ role: "user", content: "the ask the cut reply never answered" }),
+        row({ role: "assistant", content: [toolCall("cut")] }),
+        row({ role: "user", content: "new question" }),
+      ],
+    ],
+    [
+      "an approval answer",
+      [
+        ...longHarnessConversation(),
+        row({ role: "user", content: "delete the branch" }),
+        row({
+          role: "assistant",
+          content: [
+            toolCall("pending"),
+            {
+              type: "tool-approval-request",
+              approvalId: "approval",
+              toolCallId: "pending",
+            },
+          ],
+        }),
+        row({
+          role: "tool",
+          content: [
+            {
+              type: "tool-approval-response",
+              approvalId: "approval",
+              approved: true,
+            },
+          ],
+        }),
+      ],
+    ],
+  ];
+
+  it.each(cases)(
+    "reads a bounded tail of a long conversation for %s",
+    async (_name, rows): Promise<void> => {
+      const { latestUserText } = await import("../src/harness/harness.ts");
+      const config: AgentConfig = {
+        harness: { type: "pi" },
+        skills: { enabled: false },
+      };
+      const full = await turnFromStore(rows, config, true);
+      const bounded = await turnFromStore(rows, config, false);
+
+      expect(full.served).toBe(rows.length);
+      expect(bounded.served).toBeLessThan(40);
+      expect(bounded.turn.system).toEqual(full.turn.system);
+      expect(bounded.turn.systemContextSnapshot).toEqual(
+        full.turn.systemContextSnapshot,
+      );
+      expect(harnessInput(bounded.turn.messages)).toEqual(
+        harnessInput(full.turn.messages),
+      );
+      expect(latestUserText(bounded.turn.messages)).toBe(
+        latestUserText(full.turn.messages),
+      );
+    },
+  );
+
+  it("keeps a context note that only the system read saw", async (): Promise<void> => {
+    const config: AgentConfig = {
+      harness: { type: "pi" },
+      skills: { enabled: false },
+    };
+    const rows = [
+      ...longHarnessConversation(),
+      row({ role: "user", content: "new question" }),
+    ];
+    const late = row({
+      role: "system",
+      content: "context note written mid-read",
+    });
+    const full = await turnFromStore([...rows, late], config, true);
+    const bounded = await turnFromStore(rows, config, false, [late]);
+
+    expect(bounded.turn.system).toEqual(full.turn.system);
+    expect(bounded.turn.systemContextSnapshot).toEqual(
+      full.turn.systemContextSnapshot,
+    );
+  });
+});
+
 describe("auto-compaction threshold", () => {
   it("is on by default at 500k input tokens", async (): Promise<void> => {
     const { shouldAutoCompact } = await import("../src/harness/compaction.ts");
@@ -1780,6 +1880,143 @@ async function stubHistory(
     restore: (): void => {
       runtime.query = originalQuery;
     },
+  };
+}
+
+// What a harness turn sends: the users since the last reply, or the reply a tool message answers.
+function harnessInput(messages: ModelMessage[]): ModelMessage[] {
+  const last = messages.at(-1);
+  if (last?.role === "tool") {
+    return [
+      messages.findLast(
+        (message, index): boolean =>
+          index < messages.length - 1 && message.role === "assistant",
+      ),
+      last,
+    ].filter((message): message is ModelMessage => message !== undefined);
+  }
+  const lastReply = messages.findLastIndex(
+    (message): boolean => message.role === "assistant",
+  );
+
+  return messages.slice(lastReply + 1);
+}
+
+// About 2,000 rows of tool-using turns with a context note now and then, never compacted.
+function longHarnessConversation(): StoredConversationEventPage["page"] {
+  return Array.from({ length: 495 }, (_, turn) => [
+    ...(turn % 50 === 0
+      ? [row({ role: "system", content: `context note ${turn}` })]
+      : []),
+    row({ role: "user", content: `ask ${turn}` }),
+    row({ role: "assistant", content: [toolCall(`call-${turn}`)] }),
+    row({
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: `call-${turn}`,
+          toolName: "bash",
+          output: { type: "text", value: `output ${turn}` },
+        },
+      ],
+    }),
+    row({ role: "assistant", content: `answer ${turn}` }),
+  ]).flat();
+}
+
+let rowSequence = 0;
+function row(message: ModelMessage): StoredRow {
+  rowSequence += 1;
+
+  return {
+    cursor: String(rowSequence).padStart(6, "0"),
+    event: {
+      version: 1,
+      sourceEventId: "event",
+      message: message,
+    } as StoredRow["event"],
+  };
+}
+
+// `listConversationEvents` over rows in memory; `ignoreBounds` serves the one full read of before.
+// `systemReadOnly` rows land between the two bounded reads, so only the system read sees them.
+async function turnFromStore(
+  rows: StoredConversationEventPage["page"],
+  config: AgentConfig,
+  ignoreBounds: boolean,
+  systemReadOnly: StoredConversationEventPage["page"] = [],
+): Promise<{ served: number; turn: TurnContextSnapshot }> {
+  const { runtime } = await import("../src/shared/convex/runtime.ts");
+  const originalQuery = runtime.query.bind(runtime);
+  let served = 0;
+  runtime.query = (async (
+    name: string,
+    args: ConversationReadArgs,
+  ): Promise<StoredConversationEventPage | null> => {
+    if (name !== "listConversationEvents") return null;
+    const page = !ignoreBounds
+      ? backwardPage(
+          args.role === "system" ? [...rows, ...systemReadOnly] : rows,
+          args,
+        )
+      : args.role === undefined
+        ? backwardPage(rows, { ...args, stopAtRole: undefined })
+        : { page: [], isDone: true, continueCursor: null };
+    served += page.page.length;
+
+    return page;
+  }) as typeof runtime.query;
+  try {
+    const session = await newSession(config);
+    const turn = await session.createTurnContext();
+
+    return { served: served, turn: turn };
+  } finally {
+    runtime.query = originalQuery;
+  }
+}
+
+function backwardPage(
+  rows: StoredConversationEventPage["page"],
+  args: ConversationReadArgs,
+): StoredConversationEventPage {
+  const page: StoredConversationEventPage["page"] = [];
+  const newestFirst = rows
+    .filter(
+      ({ cursor, event }): boolean =>
+        (args.beforeCursor === undefined || cursor < args.beforeCursor) &&
+        (args.role === undefined || event.message.role === args.role),
+    )
+    .reverse();
+  for (const candidate of newestFirst) {
+    if (page.length === 512) {
+      return {
+        page: page.reverse(),
+        isDone: false,
+        continueCursor: page[0]?.cursor ?? null,
+      };
+    }
+    page.push(candidate);
+    const { message } = candidate.event;
+    if (
+      message.role === args.stopAtRole ||
+      (message.role === "system" &&
+        message.content.startsWith(args.fromSystemPrefix ?? "\u0000"))
+    ) {
+      break;
+    }
+  }
+
+  return { page: page.reverse(), isDone: true, continueCursor: null };
+}
+
+function toolCall(toolCallId: string): ToolCallPart {
+  return {
+    type: "tool-call",
+    toolCallId: toolCallId,
+    toolName: "bash",
+    input: { command: "ls" },
   };
 }
 

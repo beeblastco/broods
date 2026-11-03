@@ -262,6 +262,9 @@ export const listConversationEvents = internalQuery({
     afterCursor: v.optional(v.string()),
     beforeCursor: v.optional(v.string()),
     fromSystemPrefix: v.optional(v.string()),
+    // Backward reads only: also stop at the newest row of this role, or read only that role.
+    stopAtRole: v.optional(v.union(v.literal("assistant"), v.literal("user"))),
+    role: v.optional(v.literal("system")),
   },
   returns: v.object({
     page: v.array(v.object({ cursor: v.string(), event: v.any() })),
@@ -272,20 +275,31 @@ export const listConversationEvents = internalQuery({
     if (args.fromSystemPrefix !== undefined) {
       // Backward to the newest system row with the prefix (core's compaction summary);
       // `continueCursor` is then the next `beforeCursor`.
+      const { beforeCursor, conversationKey, role } = args;
       const prefix = args.fromSystemPrefix;
       const newest: { cursor: string; event: Value }[] = [];
       let newestBytes = 0;
       let isDone = true;
-      for await (const row of ctx.db
-        .query("runtimeConversationEvents")
-        .withIndex("by_conversationKey_and_cursor", (q) =>
-          args.beforeCursor
-            ? q
-                .eq("conversationKey", args.conversationKey)
-                .lt("cursor", args.beforeCursor)
-            : q.eq("conversationKey", args.conversationKey),
-        )
-        .order("desc")) {
+      const rows = role
+        ? ctx.db
+            .query("runtimeConversationEvents")
+            .withIndex("by_conversationKey_and_role_and_cursor", (q) => {
+              const ofRole = q
+                .eq("conversationKey", conversationKey)
+                .eq("event.message.role", role);
+
+              return beforeCursor ? ofRole.lt("cursor", beforeCursor) : ofRole;
+            })
+        : ctx.db
+            .query("runtimeConversationEvents")
+            .withIndex("by_conversationKey_and_cursor", (q) =>
+              beforeCursor
+                ? q
+                    .eq("conversationKey", conversationKey)
+                    .lt("cursor", beforeCursor)
+                : q.eq("conversationKey", conversationKey),
+            );
+      for await (const row of rows.order("desc")) {
         if (
           newest.length >= CONVERSATION_EVENT_PAGE_SIZE ||
           newestBytes >= CONVERSATION_EVENT_PAGE_BYTES
@@ -295,7 +309,7 @@ export const listConversationEvents = internalQuery({
         }
         newest.push({ cursor: row.cursor, event: row.event });
         newestBytes += getConvexSize(row.event);
-        if (isSystemTextWithPrefix(row.event, prefix)) break;
+        if (endsBackwardRead(row.event, prefix, args.stopAtRole)) break;
       }
 
       return {
@@ -337,20 +351,25 @@ export const listConversationEvents = internalQuery({
   },
 });
 
-function isSystemTextWithPrefix(event: unknown, prefix: string): boolean {
+function endsBackwardRead(
+  event: unknown,
+  prefix: string,
+  stopAtRole: string | undefined,
+): boolean {
   if (typeof event !== "object" || event === null || !("message" in event)) {
     return false;
   }
   const message = event.message;
+  if (typeof message !== "object" || message === null || !("role" in message)) {
+    return false;
+  }
 
   return (
-    typeof message === "object" &&
-    message !== null &&
-    "role" in message &&
-    message.role === "system" &&
-    "content" in message &&
-    typeof message.content === "string" &&
-    message.content.startsWith(prefix)
+    message.role === stopAtRole ||
+    (message.role === "system" &&
+      "content" in message &&
+      typeof message.content === "string" &&
+      message.content.startsWith(prefix))
   );
 }
 

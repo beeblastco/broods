@@ -1,11 +1,20 @@
 // Core preload for `local-stack up --perf`: answers api.anthropic.com in process so perf
 // times Broods, not the model, and traces core's Convex calls to BROODS_LOCAL_CONVEX_TRACE.
 
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 
 const CONVEX_URL = process.env.CONVEX_URL ?? "";
 const TRACE_PATH = process.env.BROODS_LOCAL_CONVEX_TRACE ?? "";
 const USAGE = { input_tokens: 100, output_tokens: 10 };
+// `local-stack crash`: the owner's history write that saves this result's resume is held.
+const HELD_RESUME = /async_tool_resumehold_[0-9a-f-]{36}/;
+const HISTORY_WRITES = new Set([
+  "runtime:appendConversationEvent",
+  "runtimeIngress:appendConversationEvent",
+  "runtimeIngress:settle",
+  "runtimeIngress:stepBoundary",
+  "runtimeIngress:takeNext",
+]);
 
 export interface MessagesRequest {
   messages: { content: unknown }[];
@@ -27,16 +36,31 @@ globalThis.fetch = Object.assign(
       return fakeModel(JSON.parse(body));
     }
     if (TRACE_PATH && CONVEX_URL && url.startsWith(CONVEX_URL)) {
+      const fn = /"path":"([^"]+)"/.exec(body)?.[1] ?? new URL(url).pathname;
       appendFileSync(
         TRACE_PATH,
-        `${JSON.stringify({ at: Date.now(), fn: /"path":"([^"]+)"/.exec(body)?.[1] ?? new URL(url).pathname })}\n`,
+        `${JSON.stringify({ at: Date.now(), fn: fn })}\n`,
       );
+      if (holds(fn, body)) return new Promise<Response>((): void => {});
     }
 
     return realFetch(input, init);
   },
   { preconnect: realFetch.preconnect },
 );
+
+// Each result once, across restarts, and none once `<trace>.hold-off` exists.
+function holds(fn: string, body: string): boolean {
+  const id = HELD_RESUME.exec(body)?.[0];
+  const ledger = `${TRACE_PATH}.held`;
+  if (!id || !HISTORY_WRITES.has(fn) || existsSync(`${TRACE_PATH}.hold-off`))
+    return false;
+  if (existsSync(ledger) && readFileSync(ledger, "utf8").includes(id))
+    return false;
+  appendFileSync(ledger, `${id}\n`);
+
+  return true;
+}
 
 function event(type: string, fields: Record<string, unknown>): string {
   return `event: ${type}\ndata: ${JSON.stringify({ type: type, ...fields })}\n\n`;

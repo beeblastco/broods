@@ -1582,6 +1582,11 @@ export default defineSchema({
   runtimeConversationEvents: defineTable(runtimeConversationEventsFields)
     .index("by_conversationKey_and_cursor", ["conversationKey", "cursor"])
     .index("by_conversationKey_and_dedupeKey", ["conversationKey", "dedupeKey"])
+    .index("by_conversationKey_and_role_and_cursor", [
+      "conversationKey",
+      "event.message.role",
+      "cursor",
+    ])
     .index("by_accountId", ["accountId"]),
   runtimeHarnessSessions: defineTable(runtimeHarnessSessionsFields)
     .index("by_conversationKey", ["conversationKey"])
