@@ -2,13 +2,31 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { hexFromBytes } from "./accountSecrets";
 import { assertPublicHttpsUrl } from "./agentRules";
-import { ClientError } from "./clientError";
-import { isPlainObject } from "./objects";
+import { z } from "zod/mini";
+
+import { parseInput } from "./inputSchema";
 
 export const AUDIT_SIGNATURE_HEADER = "X-Broods-Signature";
 const ENCODER = new TextEncoder();
 const HMAC_ALGORITHM = { name: "HMAC", hash: "SHA-256" };
 const SECRET_MAX_LENGTH = 256;
+
+const REQUIRED = z
+  .string({ error: "is required" })
+  .check(
+    z.refine((value): boolean => value.trim() !== "", { error: "is required" }),
+  );
+const AUDIT_SINK_INPUT = z.looseObject(
+  {
+    url: REQUIRED,
+    secret: REQUIRED.check(
+      z.maxLength(SECRET_MAX_LENGTH, {
+        error: `must be at most ${SECRET_MAX_LENGTH} characters`,
+      }),
+    ),
+  },
+  { error: "Body must be an object" },
+);
 
 export type AuditSinkInput = {
   url: string;
@@ -26,17 +44,8 @@ export async function auditSinkRow(
 }
 
 export function normalizeAuditSinkInput(value: unknown): AuditSinkInput {
-  if (!isPlainObject(value)) throw new ClientError("Body must be an object");
-  const { url, secret } = value;
-  if (typeof url !== "string" || url.trim() === "")
-    throw new ClientError("url is required");
+  const { url, secret } = parseInput(AUDIT_SINK_INPUT, value, "");
   assertPublicHttpsUrl(url.trim(), "url");
-  if (typeof secret !== "string" || secret.trim() === "")
-    throw new ClientError("secret is required");
-  if (secret.length > SECRET_MAX_LENGTH)
-    throw new ClientError(
-      `secret must be at most ${SECRET_MAX_LENGTH} characters`,
-    );
 
   return { url: url.trim(), secret: secret };
 }

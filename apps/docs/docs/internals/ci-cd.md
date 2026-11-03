@@ -29,7 +29,7 @@ flowchart TD
   D -->|a check failed| X2[Stop]
   D -->|all green| E[Fast-forward main, push]
   E --> F["deploy-convex.yaml<br/>dispatch and wait"]
-  F --> G["In parallel: deploy, build-core,<br/>build-gateway, build-dashboard,<br/>build-discord-forwarder,<br/>build-matrix-forwarder, deploy-docs"]
+  F --> G["In parallel: deploy, build-core,<br/>build-gateway, build-dashboard,<br/>build-discord-forwarder, deploy-docs"]
   G -->|all succeeded| H[publish-npm.yaml]
   G -->|any failed| X3["Stop, npm not published"]
 ```
@@ -51,7 +51,6 @@ Convex goes first so no service runs ahead of the schema it calls. npm goes last
 | `build-gateway.yaml`           | `dev` or `main` pushes touching the gateway or files it imports; manual           | Check, test, build `broods-gateway`, roll it after core's rollout                                                                                                                                                                                                        |
 | `build-dashboard.yaml`         | `dev` or `main` pushes touching dashboard, SDK or Convex; manual                  | Build `broods-dashboard` with `NEXT_PUBLIC_*` args, roll it after `deploy-convex`                                                                                                                                                                                        |
 | `build-discord-forwarder.yaml` | `dev` or `main` pushes touching the forwarder or files it imports; manual         | Build `broods-discord-forwarder`. Rolls from `main`, or a manual run with `rollout` ticked                                                                                                                                                                               |
-| `build-matrix-forwarder.yaml`  | same, for the Matrix forwarder and the Discord modules it imports                 | Build `broods-matrix-forwarder`. Same rollout rule                                                                                                                                                                                                                       |
 | `rollout.yaml`                 | called by the build workflows                                                     | See [rollouts](#rollouts)                                                                                                                                                                                                                                                |
 | `e2e-dashboard.yaml`           | after "Build Dashboard Image" succeeds on `dev` or `main`; manual                 | Signed-in Playwright suites against the deployed dashboard                                                                                                                                                                                                               |
 | `opa-policy-check.yaml`        | `dev` or `main` pushes touching the rego or its cases; daily 06:17 UTC            | Checks `broods_authz.rego` parses, the deployed OPA serves the same rego, and decides `scripts/opa-decision-cases.ts` as expected                                                                                                                                        |
@@ -100,7 +99,6 @@ sequenceDiagram
 | gateway           | `deploy-gateway-dev.yaml` / `deploy-gateway.yaml`      | `build-core.yaml`, core's rollout   |
 | dashboard         | `deploy-dashboard-dev.yaml` / `deploy-dashboard.yaml`  | `deploy-convex.yaml`                |
 | discord-forwarder | `deploy-discord-forwarder.yaml`, `main` or ticked only | nothing                             |
-| matrix-forwarder  | `deploy-matrix-forwarder.yaml`, `main` or ticked only  | nothing                             |
 
 - A commit that did not trigger an awaited workflow is judged by the branch's newest push run of it, so a failing backend deploy blocks every image behind it.
 - The gateway waits for core because it trusts core's answer about each observability and agent socket's credential, and refuses one missing a field it needs (an observability scope with no ticket expiry is a 502). The agent socket asks `/v1/internal/agent-socket-scope`, which an older core does not serve. A gateway that rolled first would refuse every such socket until core caught up.

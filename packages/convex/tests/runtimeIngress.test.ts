@@ -2670,6 +2670,150 @@ describe("harness checkpoints", () => {
   });
 });
 
+describe("harness session entries", () => {
+  const leaf = (leafId: string) => ({
+    type: "resume-session",
+    harnessId: "pi",
+    specificationVersion: "harness-v1",
+    data: { leafId: leafId },
+  });
+  const entry = (entryId: string, parentEntryId?: string, body = "{}") => ({
+    entryId: entryId,
+    ...(parentEntryId ? { parentEntryId: parentEntryId } : {}),
+    version: 3,
+    entry: body,
+  });
+
+  async function ownedConversation(): Promise<{
+    t: TestConvex<typeof schema>;
+    accountId: Id<"accounts">;
+    conversationKey: string;
+    save: (
+      sessionId: string,
+      entries: ReturnType<typeof entry>[],
+    ) => Promise<null>;
+    read: (sessionId: string) => Promise<string[]>;
+  }> {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+
+    return {
+      t: t,
+      accountId: accountId,
+      conversationKey: conversationKey,
+      save: (sessionId, entries) =>
+        t.mutation(internal.runtimeIngress.saveHarnessSession, {
+          conversationKey: conversationKey,
+          ownerEventId: "owner",
+          ownerGeneration: 1,
+          harnessType: "pi",
+          sessionId: sessionId,
+          resumeState: leaf(entries.at(-1)?.entryId ?? "none"),
+          entries: entries,
+        }),
+      read: async (sessionId) => {
+        const page = await t.query(internal.runtime.readHarnessSessionEntries, {
+          conversationKey: conversationKey,
+          sessionId: sessionId,
+        });
+
+        return page.entries.map((row) => row.entryId);
+      },
+    };
+  }
+
+  test("appends each entry once, in order, with the checkpoint that names its leaf", async (): Promise<void> => {
+    const { t, conversationKey, save, read } = await ownedConversation();
+    await save("s1", [entry("e1"), entry("e2", "e1")]);
+    await save("s1", [entry("e2", "e1"), entry("e3", "e2")]);
+
+    expect(await read("s1")).toEqual(["e1", "e2", "e3"]);
+    expect(
+      await t.query(internal.runtime.getHarnessSession, {
+        conversationKey: conversationKey,
+      }),
+    ).toMatchObject({ sessionId: "s1", resumeState: leaf("e3") });
+  });
+
+  test("refuses an entry over the cap and keeps the previous checkpoint", async (): Promise<void> => {
+    const { save, read } = await ownedConversation();
+    await save("s1", [entry("e1")]);
+
+    await expect(
+      save("s1", [entry("e2", "e1", "x".repeat(513 * 1_024))]),
+    ).rejects.toThrow("Harness session entry e2 is");
+    expect(await read("s1")).toEqual(["e1"]);
+  });
+
+  test("drops a replaced session's entries and clears with the conversation", async (): Promise<void> => {
+    vi.useFakeTimers();
+    try {
+      const { t, conversationKey, save, read } = await ownedConversation();
+      await save("s1", [entry("e1"), entry("e2", "e1")]);
+      await save("s2", [entry("f1")]);
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      expect(await read("s1")).toEqual([]);
+      expect(await read("s2")).toEqual(["f1"]);
+      await t.mutation(internal.runtimeIngress.clearConversation, {
+        conversationKey: conversationKey,
+        ownerEventId: "owner",
+        ownerGeneration: 1,
+      });
+      expect(await read("s2")).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("pages a session past the read budget", async (): Promise<void> => {
+    const { t, conversationKey, save } = await ownedConversation();
+    const body = JSON.stringify({ text: "x".repeat(500 * 1_024) });
+    const entries = Array.from({ length: 10 }, (_, index) =>
+      entry(`e${index}`, index ? `e${index - 1}` : undefined, body),
+    );
+    for (const batch of [entries.slice(0, 5), entries.slice(5)]) {
+      await save("s1", batch);
+    }
+
+    const first = await t.query(internal.runtime.readHarnessSessionEntries, {
+      conversationKey: conversationKey,
+      sessionId: "s1",
+    });
+    expect(first.nextSequence).not.toBeNull();
+    const rest = await t.query(internal.runtime.readHarnessSessionEntries, {
+      conversationKey: conversationKey,
+      sessionId: "s1",
+      afterSequence: first.nextSequence!,
+    });
+    expect(
+      [...first.entries, ...rest.entries].map((row) => row.entryId),
+    ).toEqual(entries.map((row) => row.entryId));
+    expect(rest.nextSequence).toBeNull();
+  });
+
+  test("agent deletion removes the agent's entries", async (): Promise<void> => {
+    const { t, accountId, save, read } = await ownedConversation();
+    await save("s1", [entry("e1")]);
+
+    await t.mutation(internal.runtime.deleteAgentRuntimeData, {
+      accountId: accountId,
+      agentId: "test-agent",
+    });
+    expect(await read("s1")).toEqual([]);
+  });
+});
+
 interface LateResultKind {
   name: string;
   mode: "followup" | "steer";

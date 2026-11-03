@@ -8,6 +8,22 @@ export const FUNCTION_TYPES = new Set([
   "FunctionExpression",
 ]);
 
+export const LOOPS = new Set([
+  "DoWhileStatement",
+  "ForInStatement",
+  "ForOfStatement",
+  "ForStatement",
+  "WhileStatement",
+]);
+
+const ITERATING_METHODS = new Set([
+  "filter",
+  "flatMap",
+  "forEach",
+  "map",
+  "reduce",
+]);
+
 export type FunctionNode = ESTree.Function | ESTree.ArrowFunctionExpression;
 
 const chainRoot = (node: ESTree.Node): ESTree.Node => {
@@ -26,6 +42,44 @@ export const propertyName = (
     typeof node.property.value === "string"
     ? node.property.value
     : undefined;
+};
+
+const keyName = (
+  key: ESTree.PropertyKey,
+  computed: boolean,
+): string | undefined =>
+  !computed && key.type === "Identifier" ? key.name : undefined;
+
+// The name a function is declared or assigned under.
+export const functionName = (node: FunctionNode): string | undefined => {
+  if (node.id) return node.id.name;
+  const { parent } = node;
+  if (parent.type === "VariableDeclarator") {
+    return parent.init === node && parent.id.type === "Identifier"
+      ? parent.id.name
+      : undefined;
+  }
+  if (
+    parent.type === "Property" ||
+    parent.type === "MethodDefinition" ||
+    parent.type === "PropertyDefinition"
+  ) {
+    return parent.value === node
+      ? keyName(parent.key, parent.computed)
+      : undefined;
+  }
+  return undefined;
+};
+
+// A callback an array method runs once per element.
+export const isIterationCallback = (node: ESTree.Node): boolean => {
+  const call = node.parent;
+  return (
+    call?.type === "CallExpression" &&
+    call.callee !== node &&
+    call.callee.type === "MemberExpression" &&
+    ITERATING_METHODS.has(propertyName(call.callee) ?? "")
+  );
 };
 
 // The name a call goes by: `name(...)` or `object.name(...)`.

@@ -1,11 +1,7 @@
 import { afterEach, describe, expect, it, jest, spyOn } from "bun:test";
 import { discordForwarderToken } from "../../core/src/shared/discord-wire.ts";
 import type { MessageCreate } from "../src/discord.ts";
-import {
-  fanOut,
-  forwardMessageCreate,
-  type ForwardTarget,
-} from "../src/forward.ts";
+import { forwardMessageCreate, type ForwardTarget } from "../src/forward.ts";
 
 const MESSAGE: MessageCreate = {
   id: "message-1",
@@ -172,50 +168,6 @@ describe("forwarding a gateway message", () => {
     await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
 
     expect(seen.calls).toBe(1);
-  });
-
-  it("tries once for a caller that does not ask for more", async (): Promise<void> => {
-    const seen = scriptFetch([503]);
-    const pending = await fanOut([TARGETS[0]!], "{}", {
-      header: "x-token",
-      timeoutMs: 1_000,
-      token: "token-a",
-    });
-
-    expect(seen.calls).toBe(1);
-    expect(pending).toEqual([TARGETS[0]!.webhookUrl]);
-  });
-
-  it("resolves only the targets that could still take it", async (): Promise<void> => {
-    const auth = { header: "x-token", timeoutMs: 1_000, token: "token-a" };
-    const first = [TARGETS[0]!.webhookUrl];
-
-    scriptFetch([200, 404]);
-    expect(await fanOut(TARGETS, "{}", auth)).toEqual([]);
-    scriptFetch([200, 503]);
-    expect(await fanOut(TARGETS, "{}", auth)).toEqual([TARGETS[1]!.webhookUrl]);
-    scriptFetch(["reset"]);
-    expect(await fanOut([TARGETS[0]!], "{}", auth)).toEqual(first);
-    scriptFetch([408]);
-    expect(await fanOut([TARGETS[0]!], "{}", auth)).toEqual(first);
-    scriptFetch([429]);
-    expect(await fanOut([TARGETS[0]!], "{}", auth)).toEqual(first);
-  });
-
-  it("resolves a webhook that never answers", async (): Promise<void> => {
-    using server = Bun.serve({
-      port: 0,
-      fetch: (): Promise<Response> => new Promise((): void => {}),
-    });
-    globalThis.fetch = realFetch;
-
-    expect(
-      await fanOut(
-        [{ ...TARGETS[0]!, webhookUrl: `http://localhost:${server.port}/` }],
-        "{}",
-        { header: "x-token", timeoutMs: 50, token: "token-a" },
-      ),
-    ).toEqual([`http://localhost:${server.port}/`]);
   });
 });
 

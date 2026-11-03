@@ -16,6 +16,7 @@ import { workerSandbox } from "./worker-sandbox.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
+import { mcpTasks } from "./mcp-tasks.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
 import { modelPrices } from "./model-prices.ts";
 import { modelTimeout } from "./model-timeout.ts";
@@ -31,6 +32,10 @@ import { snapshotStage } from "./snapshot-stage.ts";
 import { statusReadHandback } from "./status-read-handback.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { streamedBurst } from "./streamed-burst.ts";
+import {
+  subagentMessageAgents,
+  subagentNoReplyWake,
+} from "./subagent-message-agents.ts";
 import { subagentModel } from "./subagent-model.ts";
 import { subagentResume } from "./subagent-resume.ts";
 import { subagentStop } from "./subagent-stop.ts";
@@ -57,7 +62,10 @@ export const verifyCases: readonly VerifyCase[] = [
   subagentStop,
   subagentModel,
   subagentResume,
+  subagentMessageAgents,
+  subagentNoReplyWake,
   asyncToolHandback,
+  mcpTasks,
   statusReadHandback,
   autoCompaction,
   machineSandbox,

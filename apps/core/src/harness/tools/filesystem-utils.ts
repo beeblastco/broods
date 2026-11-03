@@ -1,7 +1,6 @@
 import type { JSONSchema7 } from "ai";
 import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
 import {
   isMissingS3Error,
   listS3Prefix,
@@ -85,7 +84,7 @@ export interface SandboxToolContext {
 }
 
 export function workspaceRootFor(config: SandboxExecutorConfig): string {
-  const options = isPlainObject(config.options) ? config.options : {};
+  const options = config.options ?? {};
 
   return typeof options.workspaceRoot === "string" &&
     options.workspaceRoot.trim()

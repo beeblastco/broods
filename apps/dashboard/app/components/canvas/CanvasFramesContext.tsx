@@ -22,7 +22,10 @@ export type CanvasFramesValue = {
     target: WorkspaceMountTarget,
   ) => void;
   onRenameNode?: (nodeId: string, label: string) => void;
+  /** Opens (an id) or closes (null) the inline name field on one card. */
+  onRenaming?: (nodeId: string | null) => void;
   onToggleFrame: (frameId: string) => void;
+  renamingNodeId?: string | null;
   /** 1-based place in `sandboxes`, only where all of a sandbox's agents agree. */
   sandboxOrderNumbers: ReadonlyMap<string, number>;
   workspaceOnlySandboxIds: ReadonlySet<string>;

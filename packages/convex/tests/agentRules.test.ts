@@ -249,47 +249,8 @@ describe("agent rules", () => {
     );
   });
 
-  it("requires an http(s) homeserver URL for a Matrix token", () => {
-    const matrix = {
-      id: "mx",
-      apiUrl: "https://matrix.org",
-      botToken: "syt_token",
-      botName: "Georgi AI",
-      mentionText: "@georgi-ai",
-    };
-    expect(normalizeAgentConfig({ channels: { matrix: matrix } })).toEqual({
-      channels: { matrix: matrix },
-    });
-    expect(() =>
-      normalizeAgentConfig({
-        channels: { matrix: { id: "mx", botToken: "syt_token" } },
-      }),
-    ).toThrow(
-      "config.channels.matrix.apiUrl is required when config.channels.matrix.botToken is set",
-    );
-    expect(() =>
-      normalizeAgentConfig({
-        channels: {
-          matrix: {
-            id: "mx",
-            apiUrl: "http://10.0.0.5:8008",
-            botToken: "syt_token",
-          },
-        },
-      }),
-    ).toThrow("config.channels.matrix.apiUrl must use https");
-    expect(() =>
-      normalizeAgentConfig({
-        channels: {
-          matrix: {
-            id: "mx",
-            apiUrl: "https://core.internal",
-            botToken: "syt_token",
-          },
-        },
-      }),
-    ).toThrow("must not point to a private or internal address");
-    // Core posts to every channel apiUrl from inside the cluster.
+  // Core posts to every channel apiUrl from inside the cluster.
+  it("requires a public https channel apiUrl", () => {
     for (const channel of ["discord", "github", "slack", "telegram"]) {
       expect(() =>
         normalizeAgentConfig({
@@ -297,12 +258,6 @@ describe("agent rules", () => {
         }),
       ).toThrow(`config.channels.${channel}.apiUrl must use https`);
     }
-    // A patch may rotate the token alone; the merged config still has the URL.
-    expect(
-      normalizeAgentConfigPatch({
-        channels: { matrix: { id: "mx", botToken: "syt_rotated" } },
-      }),
-    ).toEqual({ channels: { matrix: { id: "mx", botToken: "syt_rotated" } } });
   });
 
   it("accepts a system prompt as a string or AI SDK system messages", () => {
@@ -548,6 +503,14 @@ describe("agent rules", () => {
     expect(() => normalizeAgentConfig({ provider: { custom: {} } })).toThrow(
       "config.provider.custom.base_url is required",
     );
+    // Core reads base_url first, so an empty one hides a valid baseURL.
+    expect(() =>
+      normalizeAgentConfig({
+        provider: {
+          custom: { base_url: "", baseURL: "https://api.example.com" },
+        },
+      }),
+    ).toThrow("config.provider.custom.base_url is required");
     expect(() =>
       normalizeAgentConfig({
         provider: { custom: { baseUrl: "https://api.example.com" } },
@@ -1214,12 +1177,7 @@ describe("config patch pre-validation", () => {
 
 describe("isProviderToolName", () => {
   it("keeps the subagent tool names for the harness", () => {
-    for (const name of [
-      "ask_parent",
-      "run_subagent",
-      "stop_subagent",
-      "update_subagent",
-    ]) {
+    for (const name of ["message-agents", "run_subagent", "stop_subagent"]) {
       expect(isProviderToolName(name)).toBe(false);
     }
     expect(isProviderToolName("web_search")).toBe(true);

@@ -117,7 +117,7 @@ sequenceDiagram
 - Every write for one sandbox id goes through `queueMirrorWrite`, so a removal never lands before the upsert.
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
-- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time. Commands of one account and source that end within a second go out as one `account/budget:record` write (`recordUsageSoon` in `src/harness/plan-limits.ts`), and a reserved `worker` sandbox's row is upserted once per task and minute, not after every command.
+- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.
 - A sandbox on the account's own credentials gets no row. No lifecycle verb accepts an ephemeral row.
 
 ## Reservations
@@ -145,7 +145,7 @@ Harness adapters pick their own key, see [harness adapters](#harness-adapters).
 
 ### First call and resume
 
-The MicroVM executor (`#acquire` in `microvm-executor.ts`) as the example. Workdir, Daytona, E2B and Vercel follow the same claim and race rules; `cloudflare` and `worker` claim in one trip (below).
+The MicroVM executor (`#acquire` in `microvm-executor.ts`) as the example. Workdir, Daytona, E2B, Vercel and Cloudflare follow the same claim and race rules.
 
 ```mermaid
 sequenceDiagram
@@ -182,7 +182,6 @@ sequenceDiagram
   VM-->>T: stdout, stderr, exit code
 ```
 
-- `cloudflare` and `worker` reserve in one trip instead (`reservePlatformSandbox` in `platform-worker.ts`): `reserveSandboxReservation` returns the stored id, or claims the new one, and a racing create gets the winner's id. The process keeps the key-to-id map in memory, so a later command on the same key makes no Convex call for a minute; the first command after that books again, which refreshes `expiresAt`, follows a key repointed elsewhere and refuses an account no longer active. A key released in this process is let go at once.
 - A slow resume or a control-plane error propagates. Only a VM unknown to the provider or terminal is replaced, since replacing a suspended one leaks it against the account's memory quota.
 - A persistent MicroVM counts against that quota while running or suspended. Too many make every launch fail with `ServiceQuotaExceededException`, and a reserved sandbox has no fallback.
 - `lifecycle.maxLifetimeSeconds` is checked on acquire, never on a timer, so it cannot interrupt a running command.
@@ -631,6 +630,8 @@ flowchart TD
 ```
 
 - The key is stored on `runtimeHarnessSessions`, so a conversation resumes on the machine it started on. A session ending on a shared machine neither suspends nor deletes it.
+- Claude Code, Codex, Deep Agents and OpenCode keep the conversation on the machine (each CLI's own session store), and the checkpoint holds only its id. When the machine is released, or an adapter version bump moves the conversation to a new one, the next turn starts a fresh session.
+- Pi keeps its conversation in Convex: Pi appends each session entry through `sessionStorage` (`adapters/pi.ts`), the Broods `Session` holds the entries until `saveHarnessSession`, and the checkpoint holds only the leaf entry id and the last entry sequence. A turn usually costs one save and one paged read whatever the history length; a turn over one transaction's budget (4 MiB or 100 entries) stages the rest in `appendHarnessSessionEntries` first. When Pi's machine is released, `openAiSdkHarnessSession` resumes the same session on a fresh machine and logs it; the other adapters start a fresh session. An entry over 512 KiB is stored with every image swapped for `[attachment not retained]` and every long string truncated, in one pass.
 - Neither provider streams processes, so `harness-shell-process.ts` runs the adapter detached and file-spooled; short shell calls poll its output in 180 KiB chunks every 25 ms.
 - On `lambda`, WebSocket ingress needs the AWS token and port as subprotocols, so `microvm-websocket-proxy.ts` hands the adapter a loopback URL and adds them upstream. The token stays in core and the upstream header, never a URL or log.
 

@@ -1,4 +1,4 @@
-// Bot tokens for forwarders that hold a socket open (Discord Gateway, Matrix /sync). Resolved
+// Bot tokens for forwarders that hold a socket open (Discord Gateway). Resolved
 // here so ACCOUNT_CONFIG_ENCRYPTION_SECRET stays in convex and core, not a third process.
 
 import { v, type Infer } from "convex/values";
@@ -9,7 +9,6 @@ import { channelEndpointBotToken } from "../model/channelEndpoints";
 const channelConnectionValidator = v.object({
   agentId: v.string(),
   agentName: v.string(),
-  apiUrl: v.optional(v.string()),
   botToken: v.string(),
   // Path only: the caller joins it onto its own base URL.
   webhookPath: v.string(),
@@ -39,7 +38,6 @@ export const listConnections = internalQuery({
       connections.push({
         agentId: row.agentId,
         agentName: row.agentName,
-        apiUrl: row.apiUrl,
         botToken: botToken,
         webhookPath: row.webhookPath,
       });

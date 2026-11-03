@@ -1,11 +1,36 @@
 // Apart from the model/*Rules validators, which stay free of `_generated` imports for core.
 
+import { v, type Infer } from "convex/values";
+
 import type { Doc } from "../_generated/dataModel";
 import type { AgentConfig } from "./agentRules";
 import { redactConfigSecrets, REDACTED_SECRET_VALUE } from "./configValues";
 import type { SandboxConfig } from "./sandboxRules";
 
-export function toCronResponse(doc: Doc<"crons">): Record<string, unknown> {
+// The crons table fields as the API returns them: timestamps as ISO strings, no internals.
+export const cronResponseValidator = v.object({
+  accountId: v.id("accounts"),
+  cronId: v.id("crons"),
+  name: v.string(),
+  description: v.optional(v.string()),
+  agentId: v.id("agents"),
+  events: v.array(v.any()),
+  conversationKey: v.optional(v.string()),
+  scheduleExpression: v.string(),
+  timezone: v.optional(v.string()),
+  status: v.union(v.literal("active"), v.literal("paused")),
+  createdAt: v.string(),
+  updatedAt: v.string(),
+  lastInvokedAt: v.optional(v.string()),
+  lastStatus: v.optional(
+    v.union(v.literal("started"), v.literal("completed"), v.literal("failed")),
+  ),
+  lastError: v.optional(v.string()),
+});
+
+export type CronResponse = Infer<typeof cronResponseValidator>;
+
+export function toCronResponse(doc: Doc<"crons">): CronResponse {
   return {
     accountId: doc.accountId,
     cronId: doc._id,

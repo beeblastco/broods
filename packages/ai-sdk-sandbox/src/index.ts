@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { isAbsolute, join } from "node:path/posix";
 import {
   HarnessCapabilityUnsupportedError,
   type HarnessV1PortEndpoint,
@@ -8,9 +9,37 @@ import {
 } from "@ai-sdk/harness";
 import {
   extractLines,
+  type Experimental_SandboxDirectoryEntry,
+  type Experimental_SandboxFileStat,
   type Experimental_SandboxProcess,
   type Experimental_SandboxSession,
+  type Experimental_SandboxSpawnOptions,
+  type Experimental_SandboxSpawnOptionsWithStdin,
+  type Experimental_SandboxSpawnOptionsWithoutStdin,
+  type Experimental_WritableSandboxProcess,
 } from "@ai-sdk/provider-utils";
+
+// The path rides an env var so no method shell-quotes it; POSIX sh, test, ls and rm only.
+const STAT_SCRIPT = `p=$BROODS_SANDBOX_PATH
+if [ ! -e "$p" ]; then echo missing
+elif [ -d "$p" ]; then echo directory 0
+elif [ -f "$p" ]; then line=$(ls -lnL -- "$p") || exit 1; set -- $line; echo file "$5"
+else echo other 0; fi`;
+// Names cannot hold "/", so "/" plus a newline ends each record even when a name has a newline.
+const LIST_DIRECTORY_SCRIPT = `p=$BROODS_SANDBOX_PATH
+if [ ! -e "$p" ]; then echo missing; exit 0; fi
+if [ ! -d "$p" ]; then echo "not a directory: $p" >&2; exit 20; fi
+echo ok
+for e in "$p"/* "$p"/.[!.]* "$p"/..?*; do
+  if [ ! -e "$e" ] && [ ! -L "$e" ]; then continue; fi
+  if [ -L "$e" ]; then t=symlink; elif [ -d "$e" ]; then t=directory
+  elif [ -f "$e" ]; then t=file; else t=other; fi
+  printf '%s %s/\n' "$t" "\${e##*/}"
+done`;
+const DELETE_FILE_SCRIPT = `p=$BROODS_SANDBOX_PATH
+if [ -d "$p" ] && [ ! -L "$p" ]; then echo "is a directory: $p" >&2; exit 21; fi
+if [ ! -e "$p" ] && [ ! -L "$p" ]; then echo missing; exit 0; fi
+rm -f -- "$p" && echo deleted`;
 
 export interface BroodsSandboxCommandOptions {
   command: string;
@@ -193,20 +222,81 @@ class BroodsSandboxSession implements Experimental_SandboxSession {
     return this.session.description;
   }
 
+  async deleteFile(options: BroodsSandboxFileOptions): Promise<boolean> {
+    const stdout = await this.script(DELETE_FILE_SCRIPT, options);
+
+    return stdout.trim() === "deleted";
+  }
+
+  async listDirectory(
+    options: BroodsSandboxFileOptions,
+  ): Promise<Experimental_SandboxDirectoryEntry[] | null> {
+    const stdout = await this.script(LIST_DIRECTORY_SCRIPT, options);
+    if (stdout.trim() === "missing") return null;
+
+    return stdout
+      .slice(stdout.indexOf("\n") + 1)
+      .split("/\n")
+      .filter(Boolean)
+      .map((record): Experimental_SandboxDirectoryEntry => {
+        const space = record.indexOf(" ");
+
+        return {
+          name: record.slice(space + 1),
+          type: record.slice(
+            0,
+            space,
+          ) as Experimental_SandboxDirectoryEntry["type"],
+        };
+      });
+  }
+
   async run(
     options: BroodsSandboxCommandOptions,
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     options.abortSignal?.throwIfAborted();
 
-    return await this.session.runCommand(options);
+    return await this.session.runCommand(this.command(options));
   }
 
+  spawn(
+    options: Experimental_SandboxSpawnOptionsWithStdin,
+  ): Promise<Experimental_WritableSandboxProcess>;
+  spawn(
+    options: Experimental_SandboxSpawnOptionsWithoutStdin,
+  ): Promise<Experimental_SandboxProcess>;
+  spawn(
+    options: Experimental_SandboxSpawnOptions,
+  ): Promise<Experimental_SandboxProcess | Experimental_WritableSandboxProcess>;
   async spawn(
-    options: BroodsSandboxCommandOptions,
+    options: Experimental_SandboxSpawnOptions,
   ): Promise<Experimental_SandboxProcess> {
     options.abortSignal?.throwIfAborted();
+    if (options.stdin) {
+      throw new HarnessCapabilityUnsupportedError({
+        harnessId: "broods-sandbox",
+        message: "Broods sandboxes cannot keep a process's stdin open.",
+      });
+    }
+    const { stdin: _stdin, ...command } = options;
 
-    return await this.session.spawnCommand(options);
+    return await this.session.spawnCommand(this.command(command));
+  }
+
+  async stat(
+    options: BroodsSandboxFileOptions,
+  ): Promise<Experimental_SandboxFileStat | null> {
+    const stdout = (await this.script(STAT_SCRIPT, options)).trim();
+    const [type, size] = stdout.split(" ");
+    if (type === "missing") return null;
+    if (!size || !Number.isSafeInteger(Number(size))) {
+      throw new Error(`sandbox stat of ${options.path} printed "${stdout}"`);
+    }
+
+    return {
+      type: type as Experimental_SandboxFileStat["type"],
+      size: Number(size),
+    };
   }
 
   async readFile(
@@ -223,7 +313,7 @@ class BroodsSandboxSession implements Experimental_SandboxSession {
     options.abortSignal?.throwIfAborted();
 
     return await this.session.readFile({
-      path: options.path,
+      path: this.path(options.path),
       ...(options.abortSignal !== undefined
         ? { abortSignal: options.abortSignal }
         : {}),
@@ -263,7 +353,10 @@ class BroodsSandboxSession implements Experimental_SandboxSession {
 
   async writeBinaryFile(options: BroodsSandboxWriteFileOptions): Promise<void> {
     options.abortSignal?.throwIfAborted();
-    await this.session.writeFile(options);
+    await this.session.writeFile({
+      ...options,
+      path: this.path(options.path),
+    });
   }
 
   async writeTextFile(
@@ -283,6 +376,41 @@ class BroodsSandboxSession implements Experimental_SandboxSession {
       ),
       abortSignal: options.abortSignal,
     });
+  }
+
+  private command(
+    options: BroodsSandboxCommandOptions,
+  ): BroodsSandboxCommandOptions {
+    return options.workingDirectory === undefined
+      ? options
+      : { ...options, workingDirectory: this.path(options.workingDirectory) };
+  }
+
+  private path(path: string): string {
+    return isAbsolute(path)
+      ? path
+      : join(this.session.defaultWorkingDirectory, path);
+  }
+
+  private async script(
+    command: string,
+    options: BroodsSandboxFileOptions,
+  ): Promise<string> {
+    options.abortSignal?.throwIfAborted();
+    const result = await this.session.runCommand({
+      command: command,
+      env: { BROODS_SANDBOX_PATH: this.path(options.path) },
+      ...(options.abortSignal !== undefined
+        ? { abortSignal: options.abortSignal }
+        : {}),
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(
+        result.stderr.trim() || `sandbox command exited ${result.exitCode}`,
+      );
+    }
+
+    return result.stdout;
   }
 }
 
