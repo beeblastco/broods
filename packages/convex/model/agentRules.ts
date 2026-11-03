@@ -880,26 +880,7 @@ export function normalizeAgentConfig(
   if (config.policy !== undefined) {
     throw new ClientError(POLICY_REMOVED_MESSAGE);
   }
-  if (config.harness && policyIds.length > 0) {
-    throw new ClientError(
-      "config.policies is not supported with config.harness",
-    );
-  }
-  for (const [model, label] of [
-    [config.model, "config.model"],
-    [config.subagent?.model, "config.subagent.model"],
-  ] as const) {
-    if (config.harness && model?.output && model.output.type !== "text") {
-      throw new ClientError(
-        `${label}.output structured output is not supported with config.harness`,
-      );
-    }
-    if (config.harness && model?.providerOptions !== undefined) {
-      throw new ClientError(
-        `${label}.providerOptions is not supported with config.harness; set ${label}.reasoning`,
-      );
-    }
-  }
+  if (config.harness) assertHarnessSupports(config, policyIds);
   if (config.skills?.allowed)
     config.skills = {
       ...config.skills,
@@ -1053,6 +1034,30 @@ export function isPrivateHostname(hostname: string): boolean {
 }
 
 // Core builds the adapter only with all of these set, so a partial set would never answer.
+// A harness runs its own loop: policies, structured output and providerOptions never reach it.
+function assertHarnessSupports(config: AgentConfig, policyIds: string[]): void {
+  if (policyIds.length > 0) {
+    throw new ClientError(
+      "config.policies is not supported with config.harness",
+    );
+  }
+  for (const [model, label] of [
+    [config.model, "config.model"],
+    [config.subagent?.model, "config.subagent.model"],
+  ] as const) {
+    if (model?.output && model.output.type !== "text") {
+      throw new ClientError(
+        `${label}.output structured output is not supported with config.harness`,
+      );
+    }
+    if (model?.providerOptions !== undefined) {
+      throw new ClientError(
+        `${label}.providerOptions is not supported with config.harness; set ${label}.reasoning`,
+      );
+    }
+  }
+}
+
 function assertMetaCredentials(
   config: Record<string, unknown>,
   path: string,

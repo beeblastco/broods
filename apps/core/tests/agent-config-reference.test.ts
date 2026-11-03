@@ -1232,16 +1232,18 @@ function referenceNormalizeAgentConfig(
       "config.policies is not supported with config.harness",
     );
   }
-  for (const [model, label] of [
-    [config.model, "config.model"],
-    [config.subagent?.model, "config.subagent.model"],
-  ] as const) {
-    if (config.harness && model?.output && model.output.type !== "text") {
+  for (const [model, label] of config.harness
+    ? ([
+        [config.model, "config.model"],
+        [config.subagent?.model, "config.subagent.model"],
+      ] as const)
+    : []) {
+    if (model?.output && model.output.type !== "text") {
       throw new ClientError(
         `${label}.output structured output is not supported with config.harness`,
       );
     }
-    if (config.harness && model?.providerOptions !== undefined) {
+    if (model?.providerOptions !== undefined) {
       throw new ClientError(
         `${label}.providerOptions is not supported with config.harness; set ${label}.reasoning`,
       );
