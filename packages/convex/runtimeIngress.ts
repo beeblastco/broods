@@ -1000,11 +1000,22 @@ async function appendHarnessEntries(
     entries: Infer<typeof harnessSessionEntryValidator>[];
   },
 ): Promise<number> {
+  // Rows staged before a first checkpoint, or by a retried batch, are counted only here.
+  const last = await ctx.db
+    .query("runtimeHarnessSessionEntries")
+    .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
+      q
+        .eq("conversationKey", options.conversationKey)
+        .eq("sessionId", options.sessionId),
+    )
+    .order("desc")
+    .first();
   let sequence = Math.max(
     options.afterSequence ?? 0,
     options.existing?.sessionId === options.sessionId
       ? (options.existing.lastSequence ?? 0)
       : 0,
+    last?.sequence ?? 0,
   );
   const bytes = options.entries.map((entry): number =>
     harnessEntryBytes(entry.entry),

@@ -234,6 +234,28 @@ describe("harness session context window", () => {
     );
   });
 
+  test("a retried staging before the first checkpoint never reuses a sequence", async (): Promise<void> => {
+    const { t, conversationKey } = await conversation();
+    const staged = chain(["e1", "e2", "e3"]).map((link) => ({
+      ...link,
+      version: 3,
+      entry: "{}",
+    }));
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await t.mutation(internal.runtimeIngress.appendHarnessSessionEntries, {
+        conversationKey: conversationKey,
+        ...OWNER,
+        sessionId: "s1",
+        entries: staged,
+      });
+    }
+    await save(t, conversationKey, [{ entryId: "e4", parentEntryId: "e3" }]);
+
+    expect((await readAllPages(t, conversationKey, "s1", "e4")).flat()).toEqual(
+      ["e1", "e2", "e3", "e4"],
+    );
+  });
+
   test("a leaf saved before context starts existed reads from the first row", async (): Promise<void> => {
     const { t, conversationKey } = await conversation();
     await seed(t, conversationKey, "s1", 3, "{}");
