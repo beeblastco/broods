@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -466,6 +473,38 @@ describe("BroodsSandboxProvider", () => {
       expect(await sandbox.stat({ path: "dir/a.txt" })).not.toBeNull();
       expect(await sandbox.deleteFile({ path: "dir/link" })).toBe(false);
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("stat reports a file it cannot read, and fails loudly when stat itself fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "broods-sandbox-"));
+    try {
+      await writeFile(join(root, "locked.txt"), "hello");
+      await chmod(join(root, "locked.txt"), 0o000);
+      const sandbox = await shellSandbox(root);
+
+      expect(await sandbox.stat({ path: "locked.txt" })).toEqual({
+        type: "file",
+        size: 5,
+      });
+      const failing = await createBroodsSandbox({
+        driver: {
+          createSession: async () => ({
+            session: fakeSession({
+              runCommand: async () => ({
+                exitCode: 0,
+                stdout: "file \n",
+                stderr: "",
+              }),
+            }),
+            isFirstCreate: true,
+          }),
+        },
+      }).createSession();
+      expect(failing.stat({ path: "x" })).rejects.toThrow("stat");
+    } finally {
+      await chmod(join(root, "locked.txt"), 0o600).catch(() => {});
       await rm(root, { recursive: true, force: true });
     }
   });

@@ -3,6 +3,7 @@
 import { appendFileSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { percentile } from "./percentile.ts";
 import {
   assertStep,
   connectMachine,
@@ -179,14 +180,6 @@ async function counted(
     p50: percentile(timings, 0.5),
     p95: percentile(timings, 0.95),
   };
-}
-
-function percentile(values: number[], fraction: number): number {
-  const sorted = [...values].sort((left, right): number => left - right);
-
-  return sorted[
-    Math.min(sorted.length - 1, Math.floor(fraction * sorted.length))
-  ]!;
 }
 
 function platformKey(): string {

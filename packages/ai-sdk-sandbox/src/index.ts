@@ -19,11 +19,11 @@ import {
   type Experimental_WritableSandboxProcess,
 } from "@ai-sdk/provider-utils";
 
-// The path rides an env var so no method shell-quotes it; POSIX sh, test, wc and rm only.
+// The path rides an env var so no method shell-quotes it; POSIX sh, test, ls and rm only.
 const STAT_SCRIPT = `p=$BROODS_SANDBOX_PATH
 if [ ! -e "$p" ]; then echo missing
 elif [ -d "$p" ]; then echo directory 0
-elif [ -f "$p" ]; then echo file $(wc -c < "$p")
+elif [ -f "$p" ]; then line=$(ls -lnL -- "$p") || exit 1; set -- $line; echo file "$5"
 else echo other 0; fi`;
 // Names cannot hold "/", so "/" plus a newline ends each record even when a name has a newline.
 const LIST_DIRECTORY_SCRIPT = `p=$BROODS_SANDBOX_PATH
@@ -286,10 +286,12 @@ class BroodsSandboxSession implements Experimental_SandboxSession {
   async stat(
     options: BroodsSandboxFileOptions,
   ): Promise<Experimental_SandboxFileStat | null> {
-    const [type, size] = (await this.script(STAT_SCRIPT, options))
-      .trim()
-      .split(" ");
+    const stdout = (await this.script(STAT_SCRIPT, options)).trim();
+    const [type, size] = stdout.split(" ");
     if (type === "missing") return null;
+    if (!size || !Number.isSafeInteger(Number(size))) {
+      throw new Error(`sandbox stat of ${options.path} printed "${stdout}"`);
+    }
 
     return {
       type: type as Experimental_SandboxFileStat["type"],

@@ -31,8 +31,11 @@ checkpoint is made of identifiers, bridge coordinates, and unfinished-tool
 metadata; it does not store the native harness conversation as one JSON
 document or limit the model's context window. Pi's conversation lives in
 `runtimeHarnessSessionEntries` instead: one append-only row per Pi session
-entry (512 KiB each), written by the same `saveHarnessSession` transaction as
-the checkpoint that names its leaf entry, and read back in pages on resume.
+entry (512 KiB each). `saveHarnessSession` writes the turn's entries with the
+checkpoint that names its leaf entry; a turn over one batch (4 MiB or 100
+entries) stages the rest in `appendHarnessSessionEntries` first. Every entry
+read and delete runs in batches of that size, and a save that switches session
+schedules a prune of every other session's entries.
 
 Sensitive config (agent configs, sandbox credentials) is stored as encrypted
 blobs. Core encrypts before writing; the dashboard never reads the plaintext.

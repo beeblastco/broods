@@ -2,8 +2,9 @@ import type { ClaudeCodeHarnessSettings } from "@ai-sdk/harness-claude-code";
 import type { CodexHarnessSettings } from "@ai-sdk/harness-codex";
 import type { DeepAgentsHarnessSettings } from "@ai-sdk/harness-deepagents";
 import type { OpenCodeHarnessSettings } from "@ai-sdk/harness-opencode";
-import type { PiHarnessSettings, PiSessionStorage } from "@ai-sdk/harness-pi";
+import type { PiHarnessSettings } from "@ai-sdk/harness-pi";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
+import type { HarnessEntryLog } from "../../session.ts";
 import type {
   AgentConfig,
   AgentHarnessConfig,
@@ -78,15 +79,6 @@ const HARNESS_MID_TURN_STEERING: Record<AiSdkHarnessType, boolean> = {
   pi: true,
 };
 
-// Pi's session lives in Convex: its resume state is a leaf id, and its machine holds no history.
-const HARNESS_HISTORY_IN_CONVEX: Record<AiSdkHarnessType, boolean> = {
-  "claude-code": false,
-  codex: false,
-  deepagents: false,
-  opencode: false,
-  pi: true,
-};
-
 // Pi hands text and images over apart, so its prompt must carry every text part first.
 const HARNESS_TEXT_BEFORE_IMAGES: Record<AiSdkHarnessType, boolean> = {
   "claude-code": false,
@@ -124,7 +116,7 @@ export function createAiSdkHarnessAdapter(
 
 export function createConfiguredAiSdkHarnessAdapter(
   agentConfig: AgentConfig,
-  sessionStorage?: PiSessionStorage,
+  session?: HarnessEntryLog,
 ): HarnessAgentAdapter {
   const type = agentConfig.harness?.type;
   if (!type) {
@@ -143,15 +135,11 @@ export function createConfiguredAiSdkHarnessAdapter(
     return createConfiguredOpenCodeAdapter(agentConfig);
   }
 
-  return createConfiguredPiAdapter(agentConfig, sessionStorage);
+  return createConfiguredPiAdapter(agentConfig, session);
 }
 
 export function harnessAdapterVersion(type: AiSdkHarnessType): string {
   return HARNESS_VERSIONS[type];
-}
-
-export function harnessHistoryInConvex(type: AiSdkHarnessType): boolean {
-  return HARNESS_HISTORY_IN_CONVEX[type];
 }
 
 export function harnessSteersMidTurn(type: AiSdkHarnessType): boolean {

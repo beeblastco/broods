@@ -1527,7 +1527,6 @@ export async function runAgentLoop(
         broodsSession: session,
         nativeSession: activeHarnessSession,
         reservationKey: harnessTurn?.reservationKey ?? session.conversationKey,
-        sessionLog: harnessTurn?.sessionLog,
         successful: finalizationError === undefined,
         type: agentConfig.harness!.type,
       });

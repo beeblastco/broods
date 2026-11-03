@@ -5,6 +5,7 @@ import type { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { deleteStageContents } from "../stage";
 import { unregisterSchedule } from "./cronSchedules";
+import { takeHarnessEntryBatch } from "./harnessSessionEntries";
 import { releaseSeat } from "./orgBilling";
 import { isManagedService } from "./planLimits";
 import { lockImage } from "./snapshotLocks";
@@ -155,11 +156,14 @@ const accountScopedReads: ReadonlyArray<
       .query("runtimeHarnessSessions")
       .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
-  (ctx, accountId) =>
-    ctx.db
-      .query("runtimeHarnessSessionEntries")
-      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  async (ctx, accountId) =>
+    (
+      await takeHarnessEntryBatch(
+        ctx.db
+          .query("runtimeHarnessSessionEntries")
+          .withIndex("by_accountId", (q) => q.eq("accountId", accountId)),
+      )
+    ).batch,
   (ctx, accountId) =>
     ctx.db
       .query("runtimeClaims")

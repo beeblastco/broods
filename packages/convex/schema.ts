@@ -889,18 +889,23 @@ export const runtimeHarnessSessionsFields = {
   sessionId: v.string(),
   resumeState: v.any(),
   reservationKey: v.optional(v.string()),
+  // Highest entry sequence written for `sessionId`; the next append continues after it.
+  lastSequence: v.optional(v.number()),
   updatedAt: v.number(),
 };
-// One Pi session entry per row, as JSON text: tool arguments may hold keys Convex refuses.
+// One Pi session entry, as JSON text: tool arguments may hold keys Convex refuses.
+export const harnessSessionEntryFields = {
+  entryId: v.string(),
+  parentEntryId: v.optional(v.string()),
+  version: v.number(),
+  entry: v.string(),
+};
 export const runtimeHarnessSessionEntriesFields = {
   accountId: v.id("accounts"),
   conversationKey: v.string(),
   sessionId: v.string(),
   sequence: v.number(),
-  entryId: v.string(),
-  parentEntryId: v.optional(v.string()),
-  version: v.number(),
-  entry: v.string(),
+  ...harnessSessionEntryFields,
 };
 export const runtimeClaimsFields = {
   accountId: v.id("accounts"),

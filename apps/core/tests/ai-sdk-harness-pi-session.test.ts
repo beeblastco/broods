@@ -1,10 +1,10 @@
 import type { PiSessionStorage } from "@ai-sdk/harness-pi";
-import type { BroodsSandboxDriver } from "@broods/ai-sdk-sandbox";
+import { MAX_HARNESS_SESSION_ENTRY_BYTES } from "@broods/convex/model/harnessSessionEntries";
 import { describe, expect, it, mock, spyOn } from "bun:test";
-import { createPiSessionLog } from "../src/harness/ai-sdk-harness/adapters/pi.ts";
-import { replaceReleasedMachine } from "../src/harness/ai-sdk-harness/sandbox.ts";
-import { parkAiSdkHarnessSession } from "../src/harness/ai-sdk-harness/session.ts";
+import { createPiSessionStorage } from "../src/harness/ai-sdk-harness/adapters/pi.ts";
+import { openAiSdkHarnessSession } from "../src/harness/ai-sdk-harness/session.ts";
 import { SandboxGoneError } from "../src/harness/sandbox/utils.ts";
+import type { HarnessSessionEntry } from "../src/shared/convex/runtime.ts";
 
 type PiEntry = Parameters<PiSessionStorage["append"]>[0]["entry"];
 
@@ -15,151 +15,209 @@ const LEAF_STATE = {
   data: { leafId: "e2" },
 } as const;
 
-describe("createPiSessionLog", () => {
-  it("holds appended entries for the checkpoint save and reads them back", async () => {
-    const log = createPiSessionLog(async () => []);
-    await log.storage.appendMany!({
+describe("createPiSessionStorage", () => {
+  it("hands appended entries to the Broods session and reads them back", async () => {
+    const appended: HarnessSessionEntry[] = [];
+    const storage = createPiSessionStorage({
+      appendHarnessSessionEntries: (entries): void => {
+        appended.push(...entries);
+      },
+      readHarnessSessionEntries: async () => appended,
+    });
+    await storage.appendMany!({
       sessionId: "s1",
-      entries: [textEntry("e1", undefined, "hi"), textEntry("e2", "e1", "yo")],
+      entries: [userEntry("e1", undefined, "hi"), userEntry("e2", "e1", "yo")],
     });
 
-    const taken = log.take();
-    expect(taken.map((entry) => [entry.entryId, entry.parentEntryId])).toEqual([
+    expect(
+      appended.map((entry) => [entry.entryId, entry.parentEntryId]),
+    ).toEqual([
       ["e1", undefined],
       ["e2", "e1"],
     ]);
-    expect(log.take()).toEqual([]);
-
-    const reread = createPiSessionLog(async () => taken);
-    expect(
-      await reread.storage.read({ sessionId: "s1", leafId: "e2" }),
-    ).toEqual([textEntry("e1", undefined, "hi"), textEntry("e2", "e1", "yo")]);
+    expect(await storage.read({ sessionId: "s1", leafId: "e2" })).toEqual([
+      userEntry("e1", undefined, "hi"),
+      userEntry("e2", "e1", "yo"),
+    ]);
   });
 
-  it("swaps an image over the size cap for a note instead of failing the save", async () => {
-    const log = createPiSessionLog(async () => []);
-    const entry = textEntry("e1", undefined, "see attached");
-    entry.data = {
-      ...entry.data,
+  it("trims every part kind of an oversized entry in one pass instead of failing", async () => {
+    const appended: HarnessSessionEntry[] = [];
+    const storage = createPiSessionStorage({
+      appendHarnessSessionEntries: (entries): void => {
+        appended.push(...entries);
+      },
+      readHarnessSessionEntries: async () => [],
+    });
+    const huge = "x".repeat(300 * 1_024);
+    const assistant = userEntry("a1", undefined, "");
+    assistant.data = {
+      ...assistant.data,
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: huge },
+          { type: "text", text: huge },
+          {
+            type: "toolCall",
+            id: "call-1",
+            name: "write",
+            arguments: { path: "big.txt", content: huge },
+          },
+        ],
+        api: "anthropic-messages",
+        provider: "anthropic",
+        model: "claude",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "toolUse",
+        timestamp: 1,
+      },
+    } as PiEntry["data"];
+    const image = userEntry("t1", "a1", "");
+    image.data = {
+      ...image.data,
       message: {
         role: "toolResult",
         toolCallId: "call-1",
         toolName: "read",
         content: [
-          { type: "text", text: "image.png" },
-          {
-            type: "image",
-            data: "A".repeat(900 * 1_024),
-            mimeType: "image/png",
-          },
+          { type: "image", data: huge.repeat(2), mimeType: "image/png" },
         ],
         isError: false,
         timestamp: 1,
       },
     } as PiEntry["data"];
-    await log.storage.append({ sessionId: "s1", entry: entry });
 
-    const [stored] = log.take();
-    expect(stored!.entry.length).toBeLessThan(1_024);
-    expect(JSON.parse(stored!.entry).message.content).toEqual([
-      { type: "text", text: "image.png" },
-      {
-        type: "text",
-        text: "[900 KiB image cut: over the session history limit]",
-      },
+    await storage.appendMany!({
+      sessionId: "s1",
+      entries: [assistant, image, userEntry("u1", "t1", huge.repeat(2))],
+    });
+
+    expect(appended).toHaveLength(3);
+    for (const entry of appended) {
+      expect(Buffer.byteLength(entry.entry)).toBeLessThan(
+        MAX_HARNESS_SESSION_ENTRY_BYTES,
+      );
+    }
+    expect(appended[0]!.entry).toContain('"path":"big.txt"');
+    expect(appended[0]!.entry).toContain("[output truncated]");
+    expect(JSON.parse(appended[1]!.entry).message.content).toEqual([
+      { type: "text", text: "[attachment not retained]" },
     ]);
-  });
-
-  it("refuses an entry it cannot trim under the cap", async () => {
-    const log = createPiSessionLog(async () => []);
-
-    expect(
-      log.storage.append({
-        sessionId: "s1",
-        entry: textEntry("e1", undefined, "x".repeat(600 * 1_024)),
-      }),
-    ).rejects.toThrow("Pi session entry e1 is");
+    expect(appended[2]!.entry).toContain("[output truncated]");
   });
 });
 
-describe("parkAiSdkHarnessSession with a Pi session log", () => {
-  it("saves the entries Pi appended with the leaf id they lead to", async () => {
-    const log = createPiSessionLog(async () => []);
-    const saveHarnessSession = mock(async () => {});
+describe("openAiSdkHarnessSession for Pi", () => {
+  it("resumes the stored Pi session on a fresh machine when its own was released", async () => {
+    const fresh = { id: "fresh-machine" };
+    const createSandbox = mock(async () => fresh);
+    const createSession = mock(
+      async (options: { sandboxSession?: unknown }) => {
+        if (!options.sandboxSession) {
+          throw new SandboxGoneError("no reserved MicroVM");
+        }
 
-    await parkAiSdkHarnessSession({
-      broodsSession: { saveHarnessSession: saveHarnessSession } as never,
-      nativeSession: {
-        sessionId: "s1",
-        stop: async () => {
-          await log.storage.appendMany!({
-            sessionId: "s1",
-            entries: [
-              textEntry("e1", undefined, "hi"),
-              textEntry("e2", "e1", "yo"),
-            ],
-          });
-
-          return LEAF_STATE;
-        },
-      } as never,
-      reservationKey: "acct:a:agent:b:pi",
-      sessionLog: log,
-      successful: true,
-      type: "pi",
-    });
-
-    const [state, entries] = saveHarnessSession.mock.calls[0] as unknown as [
-      { resumeState: unknown },
-      { entryId: string }[],
-    ];
-    expect(state.resumeState).toEqual(LEAF_STATE);
-    expect(entries.map((entry) => entry.entryId)).toEqual(["e1", "e2"]);
-  });
-});
-
-describe("replaceReleasedMachine", () => {
-  it("resumes a Pi session on a fresh machine when its own was released", async () => {
-    const fresh = { id: "fresh" };
-    const driver = replaceReleasedMachine("pi", {
-      createSession: async () => ({
-        session: fresh as never,
-        isFirstCreate: true,
-      }),
-      resumeSession: async () => {
-        throw new SandboxGoneError("no reserved MicroVM");
+        return { sessionId: "pi-session" };
       },
-    });
-
-    expect(await driver.resumeSession!({ sessionId: "s1" })).toBe(
-      fresh as never,
     );
-  });
+    const warn = spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      await openAiSdkHarnessSession({
+        abortSignal: new AbortController().signal,
+        agent: { createSession: createSession } as never,
+        sandbox: { createSession: createSandbox } as never,
+        stored: {
+          harnessType: "pi",
+          sessionId: "pi-session",
+          resumeState: LEAF_STATE,
+        },
+        type: "pi",
+      });
 
-  it("leaves other failures and machine-bound harnesses alone", async () => {
-    const broken: BroodsSandboxDriver = {
-      createSession: async () => {
-        throw new Error("never");
-      },
-      resumeSession: async () => {
-        throw new Error("network down");
-      },
-    };
-
-    expect(replaceReleasedMachine("codex", broken)).toBe(broken);
-    expect(
-      replaceReleasedMachine("pi", broken).resumeSession!({ sessionId: "s1" }),
-    ).rejects.toThrow("network down");
+      expect(createSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: "pi-session" }),
+      );
+      expect(createSession).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          sessionId: "pi-session",
+          resumeFrom: LEAF_STATE,
+          sandboxSession: fresh,
+        }),
+      );
+      expect(JSON.stringify(warn.mock.calls)).toContain("fresh machine");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
 describe("Session harness entries", () => {
-  it("pages through every entry and saves new ones with the checkpoint", async () => {
+  it("stages a turn's entries in bounded batches before the checkpoint save", async () => {
     const { Session } = await import("../src/harness/session.ts");
     const { runtime } = await import("../src/shared/convex/runtime.ts");
-    const row = (
-      entryId: string,
-    ): { entryId: string; version: number; entry: string } => ({
+    const mutate = spyOn(runtime, "mutate").mockImplementation((async (
+      name: string,
+    ) => (name === "appendHarnessSessionEntries" ? 7 : null)) as never);
+    try {
+      const session = new Session({
+        eventId: "event",
+        conversationKey: "conversation",
+        ownerGeneration: 2,
+      });
+      session.appendHarnessSessionEntries(
+        Array.from({ length: 12 }, (_, index) => ({
+          entryId: `e${index}`,
+          version: 3,
+          entry: "x".repeat(500 * 1_024),
+        })),
+      );
+      await session.saveHarnessSession({
+        harnessType: "pi",
+        sessionId: "s1",
+        resumeState: LEAF_STATE,
+      });
+
+      const calls = mutate.mock.calls.map(([name]) => name);
+      expect(calls.at(-1)).toBe("saveHarnessSession");
+      expect(
+        calls.filter((name) => name === "appendHarnessSessionEntries").length,
+      ).toBeGreaterThan(0);
+      expect(mutate.mock.calls.at(-1)![1]).toMatchObject({ afterSequence: 7 });
+      const sent = mutate.mock.calls.flatMap(
+        ([, args]) =>
+          (args as { entries?: { entryId: string }[] }).entries ?? [],
+      );
+      expect(sent.map((entry) => entry.entryId)).toEqual(
+        Array.from({ length: 12 }, (_, index) => `e${index}`),
+      );
+
+      mutate.mockClear();
+      await session.saveHarnessSession({
+        harnessType: "pi",
+        sessionId: "s1",
+        resumeState: LEAF_STATE,
+      });
+      expect(mutate.mock.calls.map(([name]) => name)).toEqual([
+        "saveHarnessSession",
+      ]);
+      expect(mutate.mock.calls[0]![1]).toMatchObject({ entries: [] });
+    } finally {
+      mutate.mockRestore();
+    }
+  });
+
+  it("pages through every stored entry", async () => {
+    const { Session } = await import("../src/harness/session.ts");
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const row = (entryId: string): HarnessSessionEntry => ({
       entryId: entryId,
       version: 3,
       entry: "{}",
@@ -171,12 +229,10 @@ describe("Session harness entries", () => {
       args.afterSequence === undefined
         ? { entries: [row("e1")], nextSequence: 1 }
         : { entries: [row("e2")], nextSequence: null }) as never);
-    const mutate = spyOn(runtime, "mutate").mockResolvedValue(null);
     try {
       const session = new Session({
         eventId: "event",
         conversationKey: "conversation",
-        ownerGeneration: 2,
       });
 
       expect(
@@ -184,22 +240,13 @@ describe("Session harness entries", () => {
           (entry) => entry.entryId,
         ),
       ).toEqual(["e1", "e2"]);
-      await session.saveHarnessSession(
-        { harnessType: "pi", sessionId: "s1", resumeState: LEAF_STATE },
-        [row("e3")],
-      );
-      expect(mutate.mock.calls[0]![1]).toMatchObject({
-        sessionId: "s1",
-        entries: [row("e3")],
-      });
     } finally {
       query.mockRestore();
-      mutate.mockRestore();
     }
   });
 });
 
-function textEntry(
+function userEntry(
   entryId: string,
   parentEntryId: string | undefined,
   text: string,
