@@ -6,13 +6,13 @@ import {
   type HarnessAgentToolApprovalConfiguration,
   type HarnessDiagnostic,
 } from "@ai-sdk/harness/agent";
-import type { PiSessionStorage } from "@ai-sdk/harness-pi";
 import type { ToolSet } from "ai";
 import type {
   AgentConfig,
   AgentHarnessDebugConfig,
 } from "../../shared/domain/agent-config.ts";
 import { logDebug, logError, logInfo, logWarn } from "../../shared/log.ts";
+import type { HarnessEntryLog } from "../session.ts";
 import type { SandboxUsage } from "../sandbox/live-status.ts";
 import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
@@ -96,7 +96,7 @@ export interface ConfiguredHarnessAgentOptions {
   metadata?: SandboxRunMetadata;
   onUsage?: (usage: SandboxUsage) => void;
   reservationKey: string;
-  sessionStorage?: PiSessionStorage;
+  session?: HarnessEntryLog;
   /** Other conversations reserve the same machine, so a session ending leaves it running. */
   shared?: boolean;
   skills?: ReadonlyArray<HarnessAgentSkill>;
@@ -117,7 +117,7 @@ export function createConfiguredHarnessAgent(
     ...resolveHarnessToolFiltering(options.agentConfig),
     adapter: createConfiguredAiSdkHarnessAdapter(
       options.agentConfig,
-      options.sessionStorage,
+      options.session,
     ),
     debug: harness.debug,
     id: options.id,

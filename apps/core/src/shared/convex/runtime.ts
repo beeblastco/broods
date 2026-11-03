@@ -47,6 +47,8 @@ export const runtimeMutations = {
   acquireIngressClear: internal.runtimeIngress.acquireClear,
   appendFencedConversationEvent:
     internal.runtimeIngress.appendConversationEvent,
+  appendHarnessSessionEntries:
+    internal.runtimeIngress.appendHarnessSessionEntries,
   applyIngressSteering: internal.runtimeIngress.applySteering,
   clearFencedConversation: internal.runtimeIngress.clearConversation,
   recoverQueuedIngress: internal.runtimeIngress.recoverQueued,

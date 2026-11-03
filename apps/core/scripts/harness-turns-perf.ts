@@ -1,28 +1,30 @@
 // Real Pi harness turns in process: Pi through core's adapter and session code, a host-process
-// sandbox, a loopback fake Anthropic model, and the real Convex functions on convex-test.
+// sandbox, the local stack's fake Anthropic model, and the real Convex functions on convex-test.
 // The bridge adapters (claude-code, codex, opencode, deepagents) need their CLI in a sandbox.
 
 import { HarnessAgent, type HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type { Experimental_SandboxProcess } from "@ai-sdk/provider-utils";
-import type { FunctionReference } from "convex/server";
 import {
   createBroodsSandbox,
+  type BroodsSandboxCommandOptions,
   type BroodsSandboxDriverSession,
 } from "@broods/ai-sdk-sandbox";
+import type { FunctionReference } from "convex/server";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { muteCoreLogs } from "../../../bench/fixtures/mute-core-logs.ts";
 import {
   createRuntimeTest,
   seedAccount,
   type RuntimeTest,
 } from "../../../packages/convex/bench/harness.bench.ts";
 import {
-  createConfiguredPiAdapter,
-  createPiSessionLog,
-  type PiSessionLog,
-} from "../src/harness/ai-sdk-harness/adapters/pi.ts";
-import { replaceReleasedMachine } from "../src/harness/ai-sdk-harness/sandbox.ts";
+  fakeModel,
+  type MessagesRequest,
+} from "../../../scripts/local-verify/fake-model.ts";
+import { percentile } from "../../../scripts/local-verify/percentile.ts";
+import { createConfiguredPiAdapter } from "../src/harness/ai-sdk-harness/adapters/pi.ts";
 import {
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
@@ -37,17 +39,15 @@ import {
 } from "../src/shared/convex/runtime.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 
+const LEASE_TTL_MS = 24 * 60 * 60 * 1_000;
 const MODEL_ID = "claude-haiku-4-5";
-const REPLY =
-  "The deployment rolled back after its health check failed. ".repeat(24);
+// This turn resumes on a released machine: the next sandbox is new and empty.
+const RELEASE_AT = 8;
 const TURNS = Number(process.env.HARNESS_PERF_TURNS ?? 40);
 const USER_TEXT =
   "Summarize what changed in the payments service since the last turn. ".repeat(
-    4,
+    24,
   );
-const LEASE_TTL_MS = 24 * 60 * 60 * 1_000;
-// This turn resumes on a released machine: the next sandbox is new and empty.
-const RELEASE_AT = 8;
 
 interface TurnMetrics {
   calls: Record<string, number>;
@@ -57,11 +57,19 @@ interface TurnMetrics {
   saveError?: string;
   storedEntryBytes: number;
   turn: number;
-  turnMs: number;
 }
 
+muteCoreLogs();
 const modelRequests: number[] = [];
-const model = Bun.serve({ port: 0, fetch: answerModel });
+const model = Bun.serve({
+  port: 0,
+  fetch: async (request: Request): Promise<Response> => {
+    const body = (await request.json()) as MessagesRequest;
+    modelRequests.push(body.messages.length);
+
+    return fakeModel(body);
+  },
+});
 const root = await mkdtemp(join(tmpdir(), "harness-turns-"));
 try {
   const withStorage = await runConversation(true);
@@ -120,15 +128,13 @@ async function runConversation(useStorage: boolean): Promise<TurnMetrics[]> {
     await mkdir(sandboxRoot, { recursive: true });
     for (const name of Object.keys(calls)) delete calls[name];
     const stored = await broodsSession.loadHarnessSession();
-    const sessionLog = useStorage
-      ? createPiSessionLog(
-          (sessionId): ReturnType<Session["readHarnessSessionEntries"]> =>
-            broodsSession.readHarnessSessionEntries(sessionId),
-        )
-      : undefined;
+    const sandbox = hostSandbox(sandboxRoot, turn === RELEASE_AT);
     const agent = new HarnessAgent<HarnessAgentAdapter>({
-      harness: createConfiguredPiAdapter(agentConfig(), sessionLog?.storage),
-      sandbox: hostSandbox(sandboxRoot, turn === RELEASE_AT),
+      harness: createConfiguredPiAdapter(
+        agentConfig(),
+        useStorage ? broodsSession : undefined,
+      ),
+      sandbox: sandbox,
       model: MODEL_ID,
       tools: {},
     });
@@ -136,18 +142,27 @@ async function runConversation(useStorage: boolean): Promise<TurnMetrics[]> {
     const nativeSession = await openAiSdkHarnessSession({
       abortSignal: new AbortController().signal,
       agent: agent,
+      sandbox: sandbox,
       stored: stored,
       type: "pi",
     });
     const openMs = performance.now() - openedAt;
-    const startedAt = performance.now();
     const stream = await agent.stream({
       messages: [{ role: "user", content: `Turn ${turn}. ${USER_TEXT}` }],
       session: nativeSession,
     });
     await stream.consumeStream();
-    const turnMs = performance.now() - startedAt;
-    const saveError = await park(broodsSession, nativeSession, sessionLog);
+    const saveError = await parkAiSdkHarnessSession({
+      broodsSession: broodsSession,
+      nativeSession: nativeSession,
+      reservationKey: "perf",
+      successful: true,
+      type: "pi",
+    }).then(
+      (): undefined => undefined,
+      (error: unknown): string =>
+        error instanceof Error ? error.message : String(error),
+    );
     const turnCalls = { ...calls };
     const saved = await broodsSession.loadHarnessSession();
     results.push({
@@ -160,7 +175,6 @@ async function runConversation(useStorage: boolean): Promise<TurnMetrics[]> {
       saveError: saveError,
       storedEntryBytes: await storedEntryBytes(test, conversationKey),
       turn: turn,
-      turnMs: turnMs,
     });
     if (saveError) break;
   }
@@ -181,69 +195,41 @@ function agentConfig(): AgentConfig {
   };
 }
 
-// The fake answers every turn the same, and records how many messages Pi sent it.
-async function answerModel(request: Request): Promise<Response> {
-  const body = (await request.json()) as { messages: unknown[] };
-  modelRequests.push(body.messages.length);
-  const events = [
-    {
-      type: "message_start",
-      message: {
-        id: `msg_${modelRequests.length}`,
-        type: "message",
-        role: "assistant",
-        model: MODEL_ID,
-        content: [],
-        stop_reason: null,
-        usage: { input_tokens: 100, output_tokens: 0 },
-      },
-    },
-    {
-      type: "content_block_start",
-      index: 0,
-      content_block: { type: "text", text: "" },
-    },
-    {
-      type: "content_block_delta",
-      index: 0,
-      delta: { type: "text_delta", text: REPLY },
-    },
-    { type: "content_block_stop", index: 0 },
-    {
-      type: "message_delta",
-      delta: { stop_reason: "end_turn" },
-      usage: { output_tokens: 200 },
-    },
-    { type: "message_stop" },
-  ];
-
-  return new Response(
-    events
-      .map(
-        (event): string =>
-          `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
-      )
-      .join(""),
-    { headers: { "content-type": "text/event-stream" } },
-  );
-}
-
+// A released machine fails its resume once; core's fallback then creates a fresh one.
 function hostSandbox(
   sandboxRoot: string,
   released: boolean,
 ): ReturnType<typeof createBroodsSandbox> {
+  const spawn = (
+    options: BroodsSandboxCommandOptions,
+  ): Experimental_SandboxProcess & { exited: Promise<number> } => {
+    const child = Bun.spawn(["/bin/sh", "-c", options.command], {
+      cwd: options.workingDirectory ?? sandboxRoot,
+      env: { ...process.env, ...options.env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    return {
+      pid: child.pid,
+      stdout: child.stdout,
+      stderr: child.stderr,
+      exited: child.exited,
+      wait: async (): Promise<{ exitCode: number }> => ({
+        exitCode: await child.exited,
+      }),
+      kill: async (): Promise<void> => child.kill(),
+    };
+  };
   const session: BroodsSandboxDriverSession = {
     id: "host",
     description: "Host process sandbox for harness perf",
     defaultWorkingDirectory: sandboxRoot,
     ports: [],
-    runCommand: async (options) => {
-      const child = Bun.spawn(["/bin/sh", "-c", options.command], {
-        cwd: options.workingDirectory ?? sandboxRoot,
-        env: { ...process.env, ...options.env },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    runCommand: async (
+      options,
+    ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+      const child = spawn(options);
       const [stdout, stderr, exitCode] = await Promise.all([
         new Response(child.stdout).text(),
         new Response(child.stderr).text(),
@@ -252,95 +238,29 @@ function hostSandbox(
 
       return { exitCode: exitCode, stdout: stdout, stderr: stderr };
     },
-    spawnCommand: async (options): Promise<Experimental_SandboxProcess> => {
-      const child = Bun.spawn(["/bin/sh", "-c", options.command], {
-        cwd: options.workingDirectory ?? sandboxRoot,
-        env: { ...process.env, ...options.env },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      return {
-        pid: child.pid,
-        stdout: child.stdout,
-        stderr: child.stderr,
-        wait: async () => ({ exitCode: await child.exited }),
-        kill: async () => child.kill(),
-      };
-    },
-    readFile: async (options) =>
+    spawnCommand: async (options): Promise<Experimental_SandboxProcess> =>
+      spawn(options),
+    readFile: async (options): Promise<Uint8Array> =>
       new Uint8Array(
         await readFile(options.path).catch(() => new Uint8Array()),
       ),
-    writeFile: async (options) => {
+    writeFile: async (options): Promise<void> => {
       await mkdir(dirname(options.path), { recursive: true });
       await writeFile(options.path, options.content);
     },
-    stop: async () => {},
+    stop: async (): Promise<void> => {},
   };
 
   return createBroodsSandbox({
-    driver: replaceReleasedMachine("pi", {
+    driver: {
       createSession: async () => ({ session: session, isFirstCreate: true }),
-      resumeSession: async () => {
+      resumeSession: async (): Promise<BroodsSandboxDriverSession> => {
         if (released) throw new SandboxGoneError("machine released");
 
         return session;
       },
-    }),
+    },
   });
-}
-
-async function park(
-  broodsSession: Session,
-  nativeSession: Awaited<ReturnType<typeof openAiSdkHarnessSession>>,
-  sessionLog: PiSessionLog | undefined,
-): Promise<string | undefined> {
-  try {
-    await parkAiSdkHarnessSession({
-      broodsSession: broodsSession,
-      nativeSession: nativeSession,
-      reservationKey: "perf",
-      sessionLog: sessionLog,
-      successful: true,
-      type: "pi",
-    });
-
-    return undefined;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
-}
-
-function storageFailures(results: TurnMetrics[]): string[] {
-  const failures: string[] = [];
-  if (results.length !== TURNS)
-    failures.push(`stopped at turn ${results.length}`);
-  for (const result of results) {
-    if (result.saveError)
-      failures.push(`turn ${result.turn}: ${result.saveError}`);
-    if (result.promptMessages !== 2 * result.turn - 1) {
-      failures.push(
-        `turn ${result.turn}: Pi sent ${result.promptMessages} messages, history holds ${2 * result.turn - 1}`,
-      );
-    }
-    if (result.resumeStateBytes > 1_024) {
-      failures.push(
-        `turn ${result.turn}: resume state is ${result.resumeStateBytes} bytes`,
-      );
-    }
-  }
-
-  return failures;
-}
-
-function percentile(values: number[], fraction: number): number {
-  const sorted = [...values].sort((left, right): number => left - right);
-
-  return (
-    sorted[Math.min(sorted.length - 1, Math.floor(fraction * sorted.length))] ??
-    0
-  );
 }
 
 function report(
@@ -358,10 +278,14 @@ function report(
       return `| ${label} | ${turn} | not reached: save refused at turn ${failed?.turn} (${failed?.saveError}) | | | | | |`;
     }
     const calls = Object.entries(result.calls)
-      .map(([name, count]): string => `${name.split(":").at(-1)} ${count}`)
+      .map(([name, count]): string => `${name} ${count}`)
       .join(", ");
+    const total = Object.values(result.calls).reduce(
+      (sum, count) => sum + count,
+      0,
+    );
 
-    return `| ${label} | ${turn} | ${result.resumeStateBytes} | ${result.storedEntryBytes} | ${Object.values(result.calls).reduce((sum, count) => sum + count, 0)} (${calls}) | ${result.openMs.toFixed(1)} | ${result.promptMessages} | ${result.saveError ?? "saved"} |`;
+    return `| ${label} | ${turn} | ${result.resumeStateBytes} | ${result.storedEntryBytes} | ${total} (${calls}) | ${result.openMs.toFixed(1)} | ${result.promptMessages} | ${result.saveError ?? "saved"} |`;
   };
   const opens = (results: TurnMetrics[]): string => {
     const values = results.slice(1).map((result) => result.openMs);
@@ -414,11 +338,35 @@ function routeRuntimeTo(
   runtime.mutate = mutate;
 }
 
+function storageFailures(results: TurnMetrics[]): string[] {
+  const failures: string[] = [];
+  if (results.length !== TURNS) {
+    failures.push(`stopped at turn ${results.length}`);
+  }
+  for (const result of results) {
+    if (result.saveError) {
+      failures.push(`turn ${result.turn}: ${result.saveError}`);
+    }
+    if (result.promptMessages !== 2 * result.turn - 1) {
+      failures.push(
+        `turn ${result.turn}: Pi sent ${result.promptMessages} messages, history holds ${2 * result.turn - 1}`,
+      );
+    }
+    if (result.resumeStateBytes > 1_024) {
+      failures.push(
+        `turn ${result.turn}: resume state is ${result.resumeStateBytes} bytes`,
+      );
+    }
+  }
+
+  return failures;
+}
+
 async function storedEntryBytes(
   test: RuntimeTest,
   conversationKey: string,
 ): Promise<number> {
-  return test.run(async (ctx) => {
+  return test.run(async (ctx): Promise<number> => {
     let bytes = 0;
     for await (const row of ctx.db
       .query("runtimeHarnessSessionEntries")

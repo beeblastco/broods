@@ -29,7 +29,12 @@ import {
   systemModelMessageValidator,
 } from "./schema";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
-import { MAX_HARNESS_SESSION_ENTRY_BYTES } from "./model/harnessSessionEntries";
+import {
+  HARNESS_ENTRY_BATCH_BYTES,
+  HARNESS_ENTRY_BATCH_ROWS,
+  harnessEntryBytes,
+  MAX_HARNESS_SESSION_ENTRY_BYTES,
+} from "./model/harnessSessionEntries";
 import {
   asyncToolResultDedupeKey,
   subagentResultDedupeKey,
@@ -400,6 +405,35 @@ export const clearConversation = internalMutation({
   },
 });
 
+// Stages one batch of a turn's entries before its checkpoint; returns the last sequence.
+export const appendHarnessSessionEntries = internalMutation({
+  args: {
+    conversationKey: v.string(),
+    ownerEventId: v.string(),
+    ownerGeneration: v.number(),
+    sessionId: v.string(),
+    afterSequence: v.optional(v.number()),
+    entries: v.array(harnessSessionEntryValidator),
+  },
+  returns: v.number(),
+  handler: async (ctx, args): Promise<number> => {
+    const coordinator = await requireOwner(ctx, args);
+    await requireActiveAccount(ctx, coordinator.accountId);
+    const existing = await harnessSessionRow(ctx, args.conversationKey);
+    const lastSequence = await appendHarnessEntries(ctx, {
+      accountId: coordinator.accountId,
+      existing: existing,
+      ...args,
+    });
+    // The counter moves now, so a later save never reuses a staged sequence.
+    if (existing?.sessionId === args.sessionId) {
+      await ctx.db.patch(existing._id, { lastSequence: lastSequence });
+    }
+
+    return lastSequence;
+  },
+});
+
 export const saveHarnessSession = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -409,7 +443,8 @@ export const saveHarnessSession = internalMutation({
     sessionId: v.string(),
     resumeState: v.any(),
     reservationKey: v.optional(v.string()),
-    // Pi's session entries for this checkpoint: saved in the same transaction as its leaf id.
+    // Pi's entries for this checkpoint, after any staged with `appendHarnessSessionEntries`.
+    afterSequence: v.optional(v.number()),
     entries: v.optional(v.array(harnessSessionEntryValidator)),
   },
   returns: v.null(),
@@ -428,12 +463,7 @@ export const saveHarnessSession = internalMutation({
         `Harness resume state is ${resumeStateBytes} bytes; the maximum is ${MAX_HARNESS_RESUME_STATE_BYTES}`,
       );
     }
-    const existing = await ctx.db
-      .query("runtimeHarnessSessions")
-      .withIndex("by_conversationKey", (q) =>
-        q.eq("conversationKey", args.conversationKey),
-      )
-      .unique();
+    const existing = await harnessSessionRow(ctx, args.conversationKey);
     const value = {
       accountId: coordinator.accountId,
       conversationKey: args.conversationKey,
@@ -441,6 +471,14 @@ export const saveHarnessSession = internalMutation({
       sessionId: args.sessionId,
       resumeState: args.resumeState,
       reservationKey: args.reservationKey,
+      lastSequence: await appendHarnessEntries(ctx, {
+        accountId: coordinator.accountId,
+        existing: existing,
+        conversationKey: args.conversationKey,
+        sessionId: args.sessionId,
+        afterSequence: args.afterSequence,
+        entries: args.entries ?? [],
+      }),
       updatedAt: Date.now(),
     };
     if (existing) {
@@ -448,22 +486,14 @@ export const saveHarnessSession = internalMutation({
     } else {
       await ctx.db.insert("runtimeHarnessSessions", value);
     }
-    if (existing && existing.sessionId !== args.sessionId) {
+    // A replaced session, or one a partial clear left behind, has nothing pointing at it.
+    if (existing?.sessionId !== args.sessionId) {
       await ctx.scheduler.runAfter(
         0,
         internal.runtime.pruneHarnessSessionEntries,
-        {
-          conversationKey: args.conversationKey,
-          sessionId: existing.sessionId,
-        },
+        { conversationKey: args.conversationKey },
       );
     }
-    await appendHarnessSessionEntries(ctx, {
-      accountId: coordinator.accountId,
-      conversationKey: args.conversationKey,
-      sessionId: args.sessionId,
-      entries: args.entries ?? [],
-    });
 
     return null;
   },
@@ -953,31 +983,39 @@ export const takeNext = internalMutation({
 });
 
 // A retried entry id is skipped, as Pi's session storage contract allows.
-async function appendHarnessSessionEntries(
+async function appendHarnessEntries(
   ctx: MutationCtx,
   options: {
     accountId: Id<"accounts">;
+    existing: Doc<"runtimeHarnessSessions"> | null;
     conversationKey: string;
     sessionId: string;
+    afterSequence?: number;
     entries: Infer<typeof harnessSessionEntryValidator>[];
   },
-): Promise<void> {
-  if (options.entries.length === 0) return;
-  const last = await ctx.db
-    .query("runtimeHarnessSessionEntries")
-    .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
-      q
-        .eq("conversationKey", options.conversationKey)
-        .eq("sessionId", options.sessionId),
-    )
-    .order("desc")
-    .first();
-  let sequence = last?.sequence ?? 0;
-  for (const entry of options.entries) {
-    const bytes = new TextEncoder().encode(entry.entry).byteLength;
-    if (bytes > MAX_HARNESS_SESSION_ENTRY_BYTES) {
+): Promise<number> {
+  let sequence = Math.max(
+    options.afterSequence ?? 0,
+    options.existing?.sessionId === options.sessionId
+      ? (options.existing.lastSequence ?? 0)
+      : 0,
+  );
+  const bytes = options.entries.map((entry): number =>
+    harnessEntryBytes(entry.entry),
+  );
+  if (
+    options.entries.length > HARNESS_ENTRY_BATCH_ROWS ||
+    bytes.reduce((total, size): number => total + size, 0) >
+      HARNESS_ENTRY_BATCH_BYTES
+  ) {
+    throw new Error(
+      `A harness entry batch holds at most ${HARNESS_ENTRY_BATCH_ROWS} entries and ${HARNESS_ENTRY_BATCH_BYTES} bytes`,
+    );
+  }
+  for (const [index, entry] of options.entries.entries()) {
+    if (bytes[index]! > MAX_HARNESS_SESSION_ENTRY_BYTES) {
       throw new Error(
-        `Harness session entry ${entry.entryId} is ${bytes} bytes; the maximum is ${MAX_HARNESS_SESSION_ENTRY_BYTES}`,
+        `Harness session entry ${entry.entryId} is ${bytes[index]} bytes; the maximum is ${MAX_HARNESS_SESSION_ENTRY_BYTES}`,
       );
     }
     const saved = await ctx.db
@@ -996,12 +1034,11 @@ async function appendHarnessSessionEntries(
       conversationKey: options.conversationKey,
       sessionId: options.sessionId,
       sequence: sequence,
-      entryId: entry.entryId,
-      parentEntryId: entry.parentEntryId,
-      version: entry.version,
-      entry: entry.entry,
+      ...entry,
     });
   }
+
+  return sequence;
 }
 
 function assertConversationScope(
@@ -1554,6 +1591,18 @@ async function getCoordinator(
 }
 
 // A lease ending this millisecond is still live; the fence and every expiry agree on it.
+async function harnessSessionRow(
+  ctx: MutationCtx,
+  conversationKey: string,
+): Promise<Doc<"runtimeHarnessSessions"> | null> {
+  return await ctx.db
+    .query("runtimeHarnessSessions")
+    .withIndex("by_conversationKey", (q) =>
+      q.eq("conversationKey", conversationKey),
+    )
+    .unique();
+}
+
 function hasActiveOwner(
   coordinator: Doc<"runtimeConversationCoordinators">,
   now: number,

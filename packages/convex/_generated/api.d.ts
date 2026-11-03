@@ -6634,7 +6634,7 @@ export declare const internal: {
     pruneHarnessSessionEntries: FunctionReference<
       "mutation",
       "internal",
-      { conversationKey: string; sessionId: string },
+      { conversationKey: string },
       null
     >;
     readHarnessSessionEntries: FunctionReference<
@@ -6997,6 +6997,24 @@ export declare const internal: {
       },
       null
     >;
+    appendHarnessSessionEntries: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        afterSequence?: number;
+        conversationKey: string;
+        entries: Array<{
+          entry: string;
+          entryId: string;
+          parentEntryId?: string;
+          version: number;
+        }>;
+        ownerEventId: string;
+        ownerGeneration: number;
+        sessionId: string;
+      },
+      number
+    >;
     applySteering: FunctionReference<
       "mutation",
       "internal",
@@ -7297,6 +7315,7 @@ export declare const internal: {
       "mutation",
       "internal",
       {
+        afterSequence?: number;
         conversationKey: string;
         entries?: Array<{
           entry: string;

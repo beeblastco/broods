@@ -1,16 +1,11 @@
-import {
-  createBroodsSandbox,
-  type BroodsSandboxDriver,
-} from "@broods/ai-sdk-sandbox";
+import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
 import type { SandboxUsage } from "../sandbox/live-status.ts";
 import { createMicrovmHarnessDriver } from "../sandbox/microvm-harness-driver.ts";
 import type { SandboxExecutorConfig } from "../sandbox/types.ts";
-import { isSandboxGoneError } from "../sandbox/utils.ts";
 import { createWorkdirHarnessDriver } from "../sandbox/workdir-harness-driver.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import {
   harnessAdapterVersion,
-  harnessHistoryInConvex,
   type AiSdkHarnessType,
 } from "./adapters/index.ts";
 
@@ -53,31 +48,6 @@ export function createAiSdkHarnessSandbox(
       });
 }
 
-// A harness whose history lives in Convex resumes on a fresh machine when its own was released.
-export function replaceReleasedMachine(
-  type: AiSdkHarnessType,
-  driver: BroodsSandboxDriver,
-): BroodsSandboxDriver {
-  const resume = driver.resumeSession?.bind(driver);
-  if (!resume || !harnessHistoryInConvex(type)) {
-    return driver;
-  }
-
-  return {
-    createSession: (options) => driver.createSession(options),
-    resumeSession: async (options) => {
-      try {
-        return await resume(options);
-      } catch (error) {
-        if (!isSandboxGoneError(error)) throw error;
-        const created = await driver.createSession(options);
-
-        return created.session;
-      }
-    },
-  };
-}
-
 export function requireAiSdkHarnessCompute(
   compute: SandboxExecutorConfig,
 ): AiSdkHarnessCompute {
@@ -112,17 +82,14 @@ function createMicrovmHarnessSandbox(
     ],
   };
   const sandbox = createBroodsSandbox({
-    driver: replaceReleasedMachine(
-      options.type,
-      createMicrovmHarnessDriver({
-        reservationKey: reservationKey,
-        config: compute,
-        metadata: options.metadata,
-        onUsage: options.onUsage,
-        ports: [bridgePort],
-        shared: options.shared,
-      }),
-    ),
+    driver: createMicrovmHarnessDriver({
+      reservationKey: reservationKey,
+      config: compute,
+      metadata: options.metadata,
+      onUsage: options.onUsage,
+      ports: [bridgePort],
+      shared: options.shared,
+    }),
     providerId: `broods-microvm-${options.type}`,
     bridgePorts: [bridgePort],
   });
@@ -149,17 +116,14 @@ function createWorkdirHarnessSandbox(
     onCreate: [ENSURE_PNPM_COMMAND, ...(options.compute.onCreate ?? [])],
   };
   const sandbox = createBroodsSandbox({
-    driver: replaceReleasedMachine(
-      options.type,
-      createWorkdirHarnessDriver({
-        reservationKey: reservationKey,
-        config: compute,
-        metadata: options.metadata,
-        onUsage: options.onUsage,
-        ports: [bridgePort],
-        shared: options.shared,
-      }),
-    ),
+    driver: createWorkdirHarnessDriver({
+      reservationKey: reservationKey,
+      config: compute,
+      metadata: options.metadata,
+      onUsage: options.onUsage,
+      ports: [bridgePort],
+      shared: options.shared,
+    }),
     providerId: `broods-workdir-${options.type}`,
     bridgePorts: [bridgePort],
   });

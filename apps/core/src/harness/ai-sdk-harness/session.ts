@@ -22,18 +22,15 @@ import type {
   TurnContextSnapshot,
 } from "../session.ts";
 import { extractText } from "../../shared/channels.ts";
-import type { HarnessSessionEntry } from "../../shared/convex/runtime.ts";
 import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import { logInfo, logWarn } from "../../shared/log.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import type { ResolvedAgentSandbox } from "../../shared/workspaces.ts";
 import {
-  harnessHistoryInConvex,
   harnessSessionParking,
   harnessSharesSandbox,
   type AiSdkHarnessType,
 } from "./adapters/index.ts";
-import { createPiSessionLog, type PiSessionLog } from "./adapters/pi.ts";
 import type {
   AiSdkHarnessRuntime,
   createConfiguredHarnessAgent,
@@ -55,6 +52,7 @@ export interface HarnessReservationOptions {
 export interface OpenAiSdkHarnessSessionOptions {
   abortSignal: AbortSignal;
   agent: HarnessAgent;
+  sandbox: AiSdkHarnessRuntime["sandbox"];
   stored: StoredHarnessSession | null;
   type: AiSdkHarnessType;
 }
@@ -65,7 +63,6 @@ export interface HarnessTurn {
   nativeSession: HarnessAgentSession;
   reservationKey: string;
   runtime: AiSdkHarnessRuntime;
-  sessionLog: PiSessionLog | undefined;
   stopLeaseMonitor: () => void;
 }
 
@@ -92,7 +89,6 @@ export interface ParkAiSdkHarnessSessionOptions {
   broodsSession: Session;
   nativeSession: HarnessAgentSession;
   reservationKey: string;
-  sessionLog?: PiSessionLog;
   successful: boolean;
   type: AiSdkHarnessType;
 }
@@ -134,13 +130,28 @@ export async function openAiSdkHarnessSession(
     });
   } catch (error) {
     if (!isSandboxGoneError(error)) throw error;
-    logWarn("Harness machine was released; starting a fresh session", {
-      sessionId: stored.sessionId,
-      reservationKey: stored.reservationKey,
-    });
+    // Pi's history is in Convex, so only its machine is new; other harnesses kept it there.
+    const keepsHistory = options.type === "pi";
+    logWarn(
+      keepsHistory
+        ? "Harness machine was released; resuming the session on a fresh machine"
+        : "Harness machine was released; starting a fresh session",
+      { sessionId: stored.sessionId, reservationKey: stored.reservationKey },
+    );
+    if (!keepsHistory) {
+      return options.agent.createSession({
+        sessionId: crypto.randomUUID(),
+        abortSignal: options.abortSignal,
+      });
+    }
 
     return options.agent.createSession({
-      sessionId: crypto.randomUUID(),
+      sessionId: stored.sessionId,
+      resumeFrom: stored.resumeState as HarnessAgentResumeSessionState,
+      sandboxSession: await options.sandbox.createSession({
+        sessionId: stored.sessionId,
+        abortSignal: options.abortSignal,
+      }),
       abortSignal: options.abortSignal,
     });
   }
@@ -155,15 +166,12 @@ export async function parkAiSdkHarnessSession(
         ? await options.nativeSession.detach()
         : await options.nativeSession.stop();
     // The save is owner-fenced: a stale run's write is refused there.
-    await options.broodsSession.saveHarnessSession(
-      {
-        harnessType: options.type,
-        sessionId: options.nativeSession.sessionId,
-        resumeState: resumeState,
-        reservationKey: options.reservationKey,
-      },
-      options.sessionLog?.take(),
-    );
+    await options.broodsSession.saveHarnessSession({
+      harnessType: options.type,
+      sessionId: options.nativeSession.sessionId,
+      resumeState: resumeState,
+      reservationKey: options.reservationKey,
+    });
   } catch (error) {
     await options.nativeSession.destroy().catch(() => {});
     throw error;
@@ -190,11 +198,6 @@ export async function prepareHarnessTurn(
     type: harnessType,
   });
   const shared = reservationKey !== session.conversationKey;
-  const sessionLog = harnessHistoryInConvex(harnessType)
-    ? createPiSessionLog((sessionId): Promise<HarnessSessionEntry[]> =>
-        session.readHarnessSessionEntries(sessionId),
-      )
-    : undefined;
   const sandbox = requireHarnessSandbox(options.sandbox);
   const compute = sandbox.sandbox;
   let usage: SandboxUsage | undefined;
@@ -219,7 +222,7 @@ export async function prepareHarnessTurn(
       usage = reported;
     },
     reservationKey: reservationKey,
-    sessionStorage: sessionLog?.storage,
+    session: session,
     shared: shared,
     skills: await session.loadHarnessSkills(),
     toolApproval:
@@ -259,6 +262,7 @@ export async function prepareHarnessTurn(
     .openSession({
       abortSignal: options.abortController.signal,
       agent: runtime.agent,
+      sandbox: runtime.sandbox,
       stored: stored,
       type: harnessType,
     })
@@ -298,7 +302,6 @@ export async function prepareHarnessTurn(
     nativeSession: nativeSession,
     reservationKey: reservationKey,
     runtime: runtime,
-    sessionLog: sessionLog,
     stopLeaseMonitor: stopLeaseMonitor,
   };
 }
