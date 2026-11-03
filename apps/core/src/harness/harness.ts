@@ -1553,7 +1553,8 @@ export async function runAgentLoop(
       await parkAiSdkHarnessSession({
         broodsSession: session,
         nativeSession: activeHarnessSession,
-        reservationKey: harnessTurn?.reservationKey ?? session.conversationKey,
+        sandboxSession: harnessTurn!.sandboxSession,
+        reservationKey: harnessTurn!.reservationKey,
         successful: finalizationError === undefined,
         type: agentConfig.harness!.type,
       });

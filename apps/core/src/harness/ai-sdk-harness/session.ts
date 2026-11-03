@@ -4,6 +4,7 @@ import {
   type HarnessAgentResumeSessionState,
   type HarnessAgentSession,
 } from "@ai-sdk/harness/agent";
+import type { HarnessV1NetworkSandboxSession } from "@ai-sdk/harness";
 import type { ToolSet } from "ai";
 import {
   formatSandboxStatus,
@@ -57,10 +58,14 @@ export interface OpenAiSdkHarnessSessionOptions {
   type: AiSdkHarnessType;
 }
 
-export interface HarnessTurn {
+export interface OpenedHarnessSession {
+  nativeSession: HarnessAgentSession;
+  sandboxSession: HarnessV1NetworkSandboxSession;
+}
+
+export interface HarnessTurn extends OpenedHarnessSession {
   dispose: () => Promise<void>;
   environment: string;
-  nativeSession: HarnessAgentSession;
   reservationKey: string;
   runtime: AiSdkHarnessRuntime;
   stopLeaseMonitor: () => void;
@@ -85,9 +90,8 @@ export interface PrepareHarnessTurnOptions {
   turnContext: TurnContextSnapshot;
 }
 
-export interface ParkAiSdkHarnessSessionOptions {
+export interface ParkAiSdkHarnessSessionOptions extends OpenedHarnessSession {
   broodsSession: Session;
-  nativeSession: HarnessAgentSession;
   reservationKey: string;
   successful: boolean;
   type: AiSdkHarnessType;
@@ -108,7 +112,7 @@ export function harnessReservationKey(
 
 export async function openAiSdkHarnessSession(
   options: OpenAiSdkHarnessSessionOptions,
-): Promise<HarnessAgentSession> {
+): Promise<OpenedHarnessSession> {
   const stored = options.stored;
   if (stored && stored.harnessType !== options.type) {
     throw new Error(
@@ -117,17 +121,14 @@ export async function openAiSdkHarnessSession(
   }
 
   if (!stored) {
-    return options.agent.createSession({
-      sessionId: crypto.randomUUID(),
-      abortSignal: options.abortSignal,
-    });
+    return startHarnessSession(options, { sessionId: crypto.randomUUID() });
   }
+  const resumed = {
+    sessionId: stored.sessionId,
+    resumeFrom: stored.resumeState as HarnessAgentResumeSessionState,
+  };
   try {
-    return await options.agent.createSession({
-      sessionId: stored.sessionId,
-      resumeFrom: stored.resumeState as HarnessAgentResumeSessionState,
-      abortSignal: options.abortSignal,
-    });
+    return await startHarnessSession(options, resumed, true);
   } catch (error) {
     if (!isSandboxGoneError(error)) throw error;
     // Pi's history is in Convex, so only its machine is new; other harnesses kept it there.
@@ -138,44 +139,39 @@ export async function openAiSdkHarnessSession(
         : "Harness machine was released; starting a fresh session",
       { sessionId: stored.sessionId, reservationKey: stored.reservationKey },
     );
-    if (!keepsHistory) {
-      return options.agent.createSession({
-        sessionId: crypto.randomUUID(),
-        abortSignal: options.abortSignal,
-      });
-    }
 
-    return options.agent.createSession({
-      sessionId: stored.sessionId,
-      resumeFrom: stored.resumeState as HarnessAgentResumeSessionState,
-      sandboxSession: await options.sandbox.createSession({
-        sessionId: stored.sessionId,
-        abortSignal: options.abortSignal,
-      }),
-      abortSignal: options.abortSignal,
-    });
+    return startHarnessSession(
+      options,
+      keepsHistory ? resumed : { sessionId: crypto.randomUUID() },
+    );
   }
 }
 
 export async function parkAiSdkHarnessSession(
   options: ParkAiSdkHarnessSessionOptions,
 ): Promise<void> {
-  try {
-    const resumeState =
-      options.successful && harnessSessionParking(options.type) === "detach"
-        ? await options.nativeSession.detach()
-        : await options.nativeSession.stop();
-    // The save is owner-fenced: a stale run's write is refused there.
-    await options.broodsSession.saveHarnessSession({
-      harnessType: options.type,
-      sessionId: options.nativeSession.sessionId,
-      resumeState: resumeState,
-      reservationKey: options.reservationKey,
-    });
-  } catch (error) {
-    await options.nativeSession.destroy().catch(() => {});
-    throw error;
-  }
+  const { nativeSession, sandboxSession } = options;
+  // A detached or stopped session ignores destroy(), so only a failed detach tears down.
+  const resumeState =
+    options.successful && harnessSessionParking(options.type) === "detach"
+      ? await nativeSession
+          .detach()
+          .catch(async (error: unknown): Promise<never> => {
+            await destroyHarnessSession(options);
+            throw error;
+          })
+      : await nativeSession
+          .stop()
+          .finally(() =>
+            Promise.resolve(sandboxSession.stop()).catch(() => {}),
+          );
+  // The save is owner-fenced: a stale run's write is refused there.
+  await options.broodsSession.saveHarnessSession({
+    harnessType: options.type,
+    sessionId: nativeSession.sessionId,
+    resumeState: resumeState,
+    reservationKey: options.reservationKey,
+  });
 }
 
 export async function prepareHarnessTurn(
@@ -258,7 +254,7 @@ export async function prepareHarnessTurn(
       }
     },
   );
-  const nativeSession = await options
+  const harnessSession = await options
     .openSession({
       abortSignal: options.abortController.signal,
       agent: runtime.agent,
@@ -276,7 +272,7 @@ export async function prepareHarnessTurn(
   }
   const dispose = async (): Promise<void> => {
     stopLeaseMonitor();
-    await nativeSession.destroy().catch(() => {});
+    await destroyHarnessSession(harnessSession);
   };
   let environment: string;
   try {
@@ -297,9 +293,9 @@ export async function prepareHarnessTurn(
   }
 
   return {
+    ...harnessSession,
     dispose: dispose,
     environment: environment,
-    nativeSession: nativeSession,
     reservationKey: reservationKey,
     runtime: runtime,
     stopLeaseMonitor: stopLeaseMonitor,
@@ -339,6 +335,47 @@ export async function steerHarnessTurn(
     conversationKey: session.conversationKey,
     steeringEventCount: steering.contributingEventIds.length,
   });
+}
+
+// A sandbox session handed to createSession() stays ours to stop and destroy.
+async function startHarnessSession(
+  options: OpenAiSdkHarnessSessionOptions,
+  start: { sessionId: string; resumeFrom?: HarnessAgentResumeSessionState },
+  resumeSandbox = false,
+): Promise<OpenedHarnessSession> {
+  const sandbox = options.sandbox;
+  const sandboxOptions = {
+    sessionId: start.sessionId,
+    abortSignal: options.abortSignal,
+  };
+  let sandboxSession: HarnessV1NetworkSandboxSession;
+  if (!resumeSandbox) {
+    sandboxSession = await sandbox.createSession(sandboxOptions);
+  } else if (sandbox.resumeSession) {
+    sandboxSession = await sandbox.resumeSession(sandboxOptions);
+  } else {
+    throw new Error(`${sandbox.providerId} cannot resume a sandbox session`);
+  }
+  try {
+    return {
+      nativeSession: await options.agent.createSession({
+        ...start,
+        sandboxSession: sandboxSession,
+        abortSignal: options.abortSignal,
+      }),
+      sandboxSession: sandboxSession,
+    };
+  } catch (error) {
+    await Promise.resolve(sandboxSession.stop()).catch(() => {});
+    throw error;
+  }
+}
+
+async function destroyHarnessSession(
+  session: OpenedHarnessSession,
+): Promise<void> {
+  await session.nativeSession.destroy().catch(() => {});
+  await Promise.resolve(session.sandboxSession.destroy()).catch(() => {});
 }
 
 function requireHarnessSandbox(

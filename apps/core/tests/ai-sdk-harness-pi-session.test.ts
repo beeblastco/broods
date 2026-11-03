@@ -148,21 +148,18 @@ describe("openAiSdkHarnessSession for Pi", () => {
   it("resumes the stored Pi session on a fresh machine when its own was released", async () => {
     const fresh = { id: "fresh-machine" };
     const createSandbox = mock(async () => fresh);
-    const createSession = mock(
-      async (options: { sandboxSession?: unknown }) => {
-        if (!options.sandboxSession) {
-          throw new SandboxGoneError("no reserved MicroVM");
-        }
-
-        return { sessionId: "pi-session" };
-      },
-    );
+    const createSession = mock(async () => ({ sessionId: "pi-session" }));
     const warn = spyOn(process.stdout, "write").mockImplementation(() => true);
     try {
       await openAiSdkHarnessSession({
         abortSignal: new AbortController().signal,
         agent: { createSession: createSession } as never,
-        sandbox: { createSession: createSandbox } as never,
+        sandbox: {
+          createSession: createSandbox,
+          resumeSession: async (): Promise<never> => {
+            throw new SandboxGoneError("no reserved MicroVM");
+          },
+        } as never,
         stored: {
           harnessType: "pi",
           sessionId: "pi-session",

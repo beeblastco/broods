@@ -37,11 +37,14 @@ await mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
   }),
   harnessSteersMidTurn: harnessSteersMidTurn,
   openAiSdkHarnessSession: async () => ({
-    destroy: async (): Promise<void> => {},
-    experimental_steerTurn: async (text: string): Promise<void> => {
-      if (steerFailure) throw steerFailure;
-      steeredTexts.push(text);
+    nativeSession: {
+      destroy: async (): Promise<void> => {},
+      experimental_steerTurn: async (text: string): Promise<void> => {
+        if (steerFailure) throw steerFailure;
+        steeredTexts.push(text);
+      },
     },
+    sandboxSession: { destroy: async (): Promise<void> => {} },
   }),
   parkAiSdkHarnessSession: async () => {},
 }));
