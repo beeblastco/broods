@@ -99,7 +99,9 @@ bookkeeping, and both runtimes pay the same Convex calls.
   writer, which today's core could have too. Each test task is a new
   conversation and books a fresh sandbox, so holding a booking in memory (the
   Lambda executor's 3-minute `reservedEndpoints`, tried on the Worker
-  executor) changed nothing (`gap-hold`).
+  executor) changed nothing (`gap-hold`). This holds for core's `worker`
+  provider, which writes the account's budget row on every command; the
+  `cloudflare` provider does not, and on it today's core is ahead (below).
 - **No sandbox.** `fast` cost about 65 ms of CPU per task against about 40
   for today's core and was 0 to 8% slower (`gap-nosb`). Three changes bring
   it to about 55 ms: `slimDirectConfig` hands the write queue to task
@@ -139,6 +141,17 @@ box CPU columns at 0 where it cannot read them. `bench/native-sandbox.ts` also
 takes the bridge's request shape, so pointing `CLOUDFLARE_SANDBOX_URL` at it
 tries the whole path locally (`cf-local-*`). `bench/gap-summary.py` prints the
 table for any `run-gap.sh` rows.
+
+Locally at 20 users (`cf-local-warm`, `cf-local-cold`) today's core is 9%
+faster warm and 13% cold, with the same database work per task (about 770 and
+665 ms). On the same checkout and machine the `worker` provider still gives the
+isolates the lead (`gap-worker-recheck`: 3.7 against 4.5 s, database 683
+against 900 ms per task), so the win came from that provider's per-command budget write,
+which today's core sends from one queued client and the isolates through the
+shared writer; the `cloudflare` provider has no such write, so what is left is
+the isolates' own CPU (110 to 125 ms per task against about 65 here, on one
+workerd thread). Profiles put about a fifth of it in workerd's native `fetch`;
+connections to the database are reused, so it is not connection setup.
 
 ## Two ideas that did not help
 
