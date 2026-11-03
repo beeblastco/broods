@@ -177,8 +177,9 @@ both runtimes) showed why: on the `cloudflare` provider every command mirrors
 its sandbox row (`sandbox/instances:upsert`), which adds the sandbox's time to
 the account's `usageDays` row. Twenty tasks at once on one account made about
 170 executions for 40 mirror writes, a third of the database's execution time,
-and 20 of the 40 failed after four retries, so that sandbox time was never
-metered. This is today's core as much as the isolates.
+and 20 of the 40 failed after four retries. The next write that lands meters
+the time since the row's `meteredUntil`, so little is lost, but every retry is
+database work. This is today's core as much as the isolates.
 
 `per-task/write-queue.js` now keeps one Durable Object per account for usage,
 budget and mirror writes (`outbound.ts` sends all three through `WRITES`),
