@@ -30,8 +30,10 @@ export const probeAccount = {
 };
 
 const AUTH_TIMEOUT_MS = 60_000;
+const BOT_CHECK =
+  "AuthKit showed the probe its bot check: allow the probe email under Radar > Restrictions in this WorkOS environment";
 // Convex ids are 20+ characters; `/projects` and the other static segments are shorter.
-const PROJECT_PATH = /^\/([a-z0-9]{20,})$/;
+export const PROJECT_PATH = /^\/([a-z0-9]{20,})$/;
 
 export function hasProbe(): boolean {
   return Boolean(
@@ -100,15 +102,33 @@ export async function signIn(page: Page): Promise<void> {
     .fill(probeAccount.password!);
   // Exact name: production AuthKit also offers "Sign in with passkey".
   await page.getByRole("button", { name: /^(continue|sign in)$/i }).click();
+  // Production AuthKit may stop a fresh user at "Create a passkey"; one budget covers both stops.
+  const deadline = Date.now() + AUTH_TIMEOUT_MS;
+  const skipPasskey = page.getByRole("button", { name: /^skip for now$/i });
+  const botCheck = page.getByText(/sure you are human/i).first();
+  const landed = (): boolean => new URL(page.url()).origin === origin;
+  await expect
+    .poll(
+      async () =>
+        landed() ||
+        (await skipPasskey.first().isVisible()) ||
+        (await botCheck.isVisible()),
+      { timeout: AUTH_TIMEOUT_MS },
+    )
+    .toBe(true)
+    .catch(() => {});
+  if (await botCheck.isVisible()) throw new Error(BOT_CHECK);
+  if (!landed() && (await skipPasskey.first().isVisible())) {
+    await skipPasskey.first().click({ timeout: 10_000 });
+  }
   await page
-    .waitForURL((url) => url.origin === origin, { timeout: AUTH_TIMEOUT_MS })
+    .waitForURL((url) => url.origin === origin, {
+      timeout: Math.max(deadline - Date.now(), 5_000),
+    })
     .catch(async (error: unknown) => {
       // CI keeps no page snapshot (it would record the password), so name the bot check.
-      if (await page.getByText(/sure you are human/i).isVisible()) {
-        throw new Error(
-          "AuthKit showed the probe its bot check: allow the probe email under Radar > Restrictions in this WorkOS environment",
-          { cause: error },
-        );
+      if (await botCheck.isVisible()) {
+        throw new Error(BOT_CHECK, { cause: error });
       }
       throw error;
     });
