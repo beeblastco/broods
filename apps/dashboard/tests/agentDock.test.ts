@@ -152,6 +152,7 @@ describe("agent dock", () => {
         files: [{ content: "a", path: "broods/index.ts" }],
         fullName: "acme/agents",
         omitted: 0,
+        viaPullRequest: false,
       },
     );
 
@@ -169,6 +170,29 @@ describe("agent dock", () => {
     );
   });
 
+  test("a change to a stage that deploys through pull requests says so", () => {
+    const plan = proposalPlan(
+      {
+        files: [{ content: "a", path: "broods/index.ts" }],
+        message: "Add firecrawl",
+        summary: "",
+      },
+      CONTEXT,
+      {
+        baseSha: "abc",
+        branch: "main",
+        files: [],
+        fullName: "acme/agents",
+        omitted: 0,
+        viaPullRequest: true,
+      },
+    );
+
+    expect(plan?.actions[0]?.label).toBe(
+      "Pull request into main: Add firecrawl",
+    );
+  });
+
   test("an edit to a file the agent was not shown is blocked when the read was partial", () => {
     const plan = proposalPlan(
       {
@@ -183,6 +207,7 @@ describe("agent dock", () => {
         files: [{ content: "a", path: "broods/index.ts" }],
         fullName: "acme/agents",
         omitted: 3,
+        viaPullRequest: false,
       },
     );
 
