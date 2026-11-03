@@ -35,7 +35,7 @@ import {
   mergeSandboxEnv,
   meterEphemeralSandbox,
   parseExecResponse,
-  queueMirrorRefresh,
+  queueMirrorWrite,
   requiredWorkspacePath,
   sandboxReservationKey,
 } from "./utils.ts";
@@ -219,7 +219,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     id: string,
     metadata: SandboxRunRequest["metadata"],
   ): void {
-    void queueMirrorRefresh(id, (): Promise<void> =>
+    void queueMirrorWrite(id, (): Promise<void> =>
       upsertSandboxInstance(
         this.#config.controlPlane,
         "cloudflare",

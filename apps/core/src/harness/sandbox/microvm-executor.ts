@@ -90,7 +90,6 @@ import {
   execRunResult,
   mergeSandboxEnv,
   parseExecResponse,
-  queueMirrorRefresh,
   queueMirrorWrite,
   SandboxCapacityError,
   SandboxGoneError,
@@ -999,7 +998,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     request: SandboxRunRequest,
     payload: SandboxExecRequest,
   ): Promise<SandboxExecResponse | null> {
-    void queueMirrorRefresh(target.microvmId, () =>
+    void queueMirrorWrite(target.microvmId, () =>
       upsertSandboxInstance(
         this.#config.controlPlane,
         PROVIDER,

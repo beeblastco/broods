@@ -29,7 +29,7 @@ import {
   execRunResult,
   mergeSandboxEnv,
   parseExecResponse,
-  queueMirrorRefresh,
+  queueMirrorWrite,
   requiredWorkspacePath,
   sandboxReservationKey,
 } from "./utils.ts";
@@ -191,7 +191,7 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     id: string,
     metadata: SandboxRunRequest["metadata"],
   ): void {
-    void queueMirrorRefresh(id, (): Promise<void> =>
+    void queueMirrorWrite(id, (): Promise<void> =>
       upsertSandboxInstance(
         this.#config.controlPlane,
         "worker",
