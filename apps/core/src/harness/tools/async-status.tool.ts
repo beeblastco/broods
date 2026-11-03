@@ -85,8 +85,8 @@ The result is delivered back into the conversation automatically when it finishe
         if (!record || record.conversationKey !== context.conversationKey) {
           return toolError(`Error: no async result found for ${statusId}`);
         }
-        // Awaited: the resume gate reads this row the moment the turn ends. True means a queued
-        // continuation tells the conversation next, so this read hands nothing over.
+        // The step save that holds this tool result stores the row. A session that saves no
+        // history stores it now, so this is awaited before the turn can end.
         if (record.status !== "processing") {
           await handedOver();
 

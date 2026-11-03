@@ -37,6 +37,7 @@
     "local:status": "bun scripts/local-stack.ts status",
     "local:verify": "bun scripts/local-stack.ts verify",
     "local:perf": "bun scripts/local-stack.ts perf",
+    "local:crash": "bun scripts/local-stack.ts crash",
     "harness:perf": "bun run --cwd apps/core perf:harness",
     "dashboard": "bun run --filter @broods/dashboard dev",
     "dashboard:build": "bun run --filter @broods/dashboard build",
