@@ -58,10 +58,20 @@ restart_router() {
   export CLOUDFLARE_WORKER_API_KEY
   # start-per-task.sh execs workerd, so $! is the router itself. ENGINES=n starts n routers on
   # BENCH_PORT_BASE+21.., each its own workerd process (one thread), and the bench spreads agents over them.
-  local pids=() urls=() port
+  local pids=() urls=() port writer_args=""
+  # A *SpokeConfig engine sends usage writes to one shared writerConfig process on BENCH_PORT_BASE+29.
+  if [[ $config == *SpokeConfig ]]; then
+    port=$((BENCH_PORT_BASE + 29))
+    WORKERD_ARGS= nohup "$here/../start-per-task.sh" $port bench-writer writerConfig >> "$logs/isolate-core$log_suffix.log" 2>&1 &
+    pids+=($!) writer_args="--external-addr writes=127.0.0.1:$port"
+    for _ in $(seq 1 100); do
+      (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && break
+      sleep 0.2
+    done
+  fi
   for e in $(seq 0 $(( ${ENGINES:-1} - 1 ))); do
     port=$((BENCH_PORT_BASE + 21 + e))
-    nohup "$here/../start-per-task.sh" $port bench-isolate-e$e "$config" >> "$logs/isolate-core$log_suffix.log" 2>&1 &
+    WORKERD_ARGS="$writer_args" nohup "$here/../start-per-task.sh" $port bench-isolate-e$e "$config" >> "$logs/isolate-core$log_suffix.log" 2>&1 &
     pids+=($!) urls+=(http://127.0.0.1:$port)
   done
   router_pid=$(IFS=,; echo "${pids[*]}") router_urls=$(IFS=,; echo "${urls[*]}")

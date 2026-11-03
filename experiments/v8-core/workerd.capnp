@@ -254,6 +254,28 @@ const directEagerIdConfig :Workerd.Config = (
   v8Flags = ["--no-lazy-feedback-allocation", "--always-sparkplug"],
 );
 
+# Several engines with one write queue between them, so usage rows from tasks on different engines
+# still go through one queue per account. writerConfig runs only the queue, on its own socket
+# (start-per-task.sh <port> sets it); each spoke engine reaches it as an external service
+# (`--external-addr writes=...`). Proxy style keeps the Convex URL's scheme and host on the hop.
+const writerConfig :Workerd.Config = (
+  services = [
+    (name = "writes", worker = .writeQueue),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4399", http = (style = proxy), service = "writes") ],
+);
+
+const directEagerSpokeConfig :Workerd.Config = (
+  services = [
+    (name = "router", worker = .slimDirectIdRouter),
+    (name = "writes", external = (address = "127.0.0.1:4399", http = (style = proxy))),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4367", http = (), service = "router") ],
+  v8Flags = ["--no-lazy-feedback-allocation", "--always-sparkplug"],
+);
+
 const slimDirectIdRouter :Workerd.Worker = (
   modules = [
     (name = "router.js", esModule = embed "per-task/router.js"),

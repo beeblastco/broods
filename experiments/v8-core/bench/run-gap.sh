@@ -29,7 +29,8 @@ arm() { # <label> <command...>
 # GAP_ARMS: any of bun:machine, bun:native (today's core on the isolate's sandbox), fast, and direct
 # (fast with only the usage and budget writes through the write queue). NO_MCP=1 drops the docs search,
 # NO_SANDBOX=1 the sandbox too, and AGENT_PER_TASK=0 runs every task on one agent (one isolate).
-# cfg:<Name> runs the isolate router with workerd.capnp's config <Name>; engines:<n>:<Name> runs n of them.
+# cfg:<Name> runs the isolate router with workerd.capnp's config <Name>; engines:<n>:<Name> runs n of them
+# (cfengines:<n>:<Name> on the bridge).
 # bun:cf and cf:<Name> start no sandbox: with SANDBOX_PROVIDER=cloudflare both reach the bridge Worker
 # at CLOUDFLARE_SANDBOX_URL (bench/run-cf.sh). SHARED_FILES=1 keeps one sandbox per agent.
 for round in $(seq 1 $rounds); do
@@ -42,6 +43,10 @@ for round in $(seq 1 $rounds); do
       # engines:<n>:<Config>, n workerd processes with that config.
       local_n=${a#engines:}; local_n=${local_n%%:*}
       arm isolate+v8-${local_n}x${a##*:} env SANDBOX=native ENGINES=$local_n PER_TASK_CONFIG=${a##*:} bench/run-isolate.sh $OUT $L 1 $level "-${local_n}x${a##*:}"
+    elif [ "${a%%:*}" = cfengines ]; then
+      # cfengines:<n>:<Config> on the bridge; a *SpokeConfig adds one shared writer process.
+      local_n=${a#cfengines:}; local_n=${local_n%%:*}
+      arm isolate+cf-${local_n}x${a##*:} env SANDBOX=none ENGINES=$local_n PER_TASK_CONFIG=${a##*:} bench/run-isolate.sh $OUT $L 1 $level "-${local_n}x${a##*:}"
     elif [ "${a%%:*}" = cf ]; then
       arm isolate+cf-${a#cf:} env SANDBOX=none PER_TASK_CONFIG=${a#cf:} bench/run-isolate.sh $OUT $L 1 $level "-${a#cf:}"
     elif [ "${a%%:*}" = cfg ]; then

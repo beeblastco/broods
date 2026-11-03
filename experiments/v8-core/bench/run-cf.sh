@@ -6,7 +6,8 @@
 # Needs the local stack up in this checkout, and CLOUDFLARE_SANDBOX_URL (https) and
 # CLOUDFLARE_SANDBOX_API_KEY in the environment; the key is never printed or written to a file.
 # Usage: [OUT_PREFIX=cf] run-cf.sh [rounds] [level] [arms]   (defaults: 3, 20, warm cold)
-# Rows go to results/$OUT_PREFIX-<arm>.jsonl; the summary is printed at the end.
+# Rows go to results/$OUT_PREFIX-<arm>.jsonl; the summary is printed at the end. CF_ARMS swaps the
+# run-gap.sh arms, e.g. "bun:cf cfengines:2:directEagerSpokeConfig" for two engines and one writer.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 rounds=${1:-3} level=${2:-20} which=${3:-warm cold} prefix=${OUT_PREFIX:-cf}
@@ -27,7 +28,7 @@ status=$(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_SANDBOX_API
 [ -f logs/worker-sandbox.key ] || openssl rand -hex 32 > logs/worker-sandbox.key
 
 # The bench's Bun core takes the stack core's port; any other listener on the bench ports is in the way.
-for port in $((BENCH_PORT_BASE + 1)) $((BENCH_PORT_BASE + 11)) $((BENCH_PORT_BASE + 21)); do
+for port in $((BENCH_PORT_BASE + 1)) $((BENCH_PORT_BASE + 11)) $(seq $((BENCH_PORT_BASE + 21)) $((BENCH_PORT_BASE + 29))); do
   for pid in $(lsof -ti "tcp:$port" -sTCP:LISTEN 2>/dev/null); do
     cmd=$(ps -o command= -p "$pid")
     case "$cmd" in
@@ -44,7 +45,7 @@ for arm in $which; do
     *) echo "arm $arm: warm or cold"; exit 1 ;;
   esac
   echo "== $arm: $rounds rounds at $level tasks at once"
-  SHARED_FILES=$shared GAP_ARMS="bun:cf cf:directEagerIdConfig" LOG_SUFFIX=-cf-$arm \
+  SHARED_FILES=$shared GAP_ARMS=${CF_ARMS:-"bun:cf cf:directEagerIdConfig"} LOG_SUFFIX=-cf-$arm \
     bench/run-gap.sh "results/$prefix-$arm.jsonl" "$rounds" "$level"
 done
 python3 bench/gap-summary.py $(for arm in $which; do echo "results/$prefix-$arm.jsonl"; done)
