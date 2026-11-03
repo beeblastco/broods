@@ -219,6 +219,54 @@ describe("runtime persistence", () => {
     expect(oldest).toMatchObject({ isDone: true, continueCursor: null });
   });
 
+  test("reads back to the newest row of a role, or only one role's rows", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const roles = ["system", "user", "system", "assistant", "user", "system"];
+    await t.run(async (ctx) => {
+      for (const [index, role] of [
+        "user",
+        ...roles,
+        "assistant",
+        "system",
+        "user",
+      ].entries()) {
+        await ctx.db.insert("runtimeConversationEvents", {
+          accountId: accountId,
+          conversationKey: conversationKey,
+          cursor: String(index).padStart(2, "0"),
+          event: {
+            message: {
+              role: role,
+              content: index === 1 ? "<summary>" : `row ${index}`,
+            },
+          },
+        });
+      }
+    });
+    const read = async (args: {
+      beforeCursor?: string;
+      role?: "system";
+      stopAtRole?: "assistant" | "user";
+    }): Promise<string[]> =>
+      (
+        await t.query(internal.runtime.listConversationEvents, {
+          conversationKey: conversationKey,
+          fromSystemPrefix: "<summary>",
+          ...args,
+        })
+      ).page.map((row): string => row.cursor);
+
+    expect(await read({ stopAtRole: "assistant" })).toEqual(["07", "08", "09"]);
+    expect(await read({ beforeCursor: "07", stopAtRole: "user" })).toEqual([
+      "05",
+      "06",
+    ]);
+    // Only system rows, still none past the latest summary.
+    expect(await read({ role: "system" })).toEqual(["01", "03", "06", "08"]);
+  });
+
   test("splits fat rows by bytes without skipping or repeating one", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

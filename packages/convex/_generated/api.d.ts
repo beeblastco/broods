@@ -6539,6 +6539,8 @@ export declare const internal: {
         beforeCursor?: string;
         conversationKey: string;
         fromSystemPrefix?: string;
+        role?: "system";
+        stopAtRole?: "assistant" | "user";
       },
       {
         continueCursor: string | null;
