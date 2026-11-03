@@ -1202,14 +1202,15 @@ export class Session {
       if (older.length === 0) break;
       tail = older.concat(tail);
     }
-    const start = tail[0]?.createdAt;
 
-    return [
-      ...systemRows.filter(
-        (row): boolean => start === undefined || row.createdAt < start,
-      ),
-      ...tail,
-    ];
+    // Each read has its own snapshot, so a system row the tail missed is merged in by cursor.
+    return withUnwrittenRows(
+      tail,
+      systemRows.map((row): AppendedConversationEvent => ({
+        cursor: row.createdAt,
+        event: row.event,
+      })),
+    );
   }
 
   private async loadMemoryFile(

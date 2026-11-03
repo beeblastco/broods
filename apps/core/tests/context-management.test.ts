@@ -1355,6 +1355,28 @@ describe("harness turn history", () => {
       );
     },
   );
+
+  it("keeps a context note that only the system read saw", async (): Promise<void> => {
+    const config: AgentConfig = {
+      harness: { type: "pi" },
+      skills: { enabled: false },
+    };
+    const rows = [
+      ...longHarnessConversation(),
+      row({ role: "user", content: "new question" }),
+    ];
+    const late = row({
+      role: "system",
+      content: "context note written mid-read",
+    });
+    const full = await turnFromStore([...rows, late], config, true);
+    const bounded = await turnFromStore(rows, config, false, [late]);
+
+    expect(bounded.turn.system).toEqual(full.turn.system);
+    expect(bounded.turn.systemContextSnapshot).toEqual(
+      full.turn.systemContextSnapshot,
+    );
+  });
 });
 
 describe("auto-compaction threshold", () => {
@@ -1918,10 +1940,12 @@ function row(message: ModelMessage): StoredRow {
 }
 
 // `listConversationEvents` over rows in memory; `ignoreBounds` serves the one full read of before.
+// `systemReadOnly` rows land between the two bounded reads, so only the system read sees them.
 async function turnFromStore(
   rows: StoredConversationEventPage["page"],
   config: AgentConfig,
   ignoreBounds: boolean,
+  systemReadOnly: StoredConversationEventPage["page"] = [],
 ): Promise<{ served: number; turn: TurnContextSnapshot }> {
   const { runtime } = await import("../src/shared/convex/runtime.ts");
   const originalQuery = runtime.query.bind(runtime);
@@ -1932,7 +1956,10 @@ async function turnFromStore(
   ): Promise<StoredConversationEventPage | null> => {
     if (name !== "listConversationEvents") return null;
     const page = !ignoreBounds
-      ? backwardPage(rows, args)
+      ? backwardPage(
+          args.role === "system" ? [...rows, ...systemReadOnly] : rows,
+          args,
+        )
       : args.role === undefined
         ? backwardPage(rows, { ...args, stopAtRole: undefined })
         : { page: [], isDone: true, continueCursor: null };
