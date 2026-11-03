@@ -69,14 +69,14 @@ describe.skipIf(!URL)("Broods Workdir Harness integration (live)", () => {
 
       const path = `${session.defaultWorkingDirectory}/broods-harness-live.txt`;
       await session.writeTextFile({ path: path, content: "live-file-content" });
-      expect(session.readTextFile({ path: path })).resolves.toBe(
+      await expect(session.readTextFile({ path: path })).resolves.toBe(
         "live-file-content",
       );
 
       await session.stop();
       const resumed = await sandbox.resumeSession!({ sessionId: session.id });
       cleanup = resumed;
-      expect(
+      await expect(
         resumed.run({ command: "printf 'resumed' && exit 7" }),
       ).resolves.toEqual({ exitCode: 7, stdout: "resumed", stderr: "" });
     } finally {

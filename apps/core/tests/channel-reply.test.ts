@@ -65,7 +65,7 @@ describe("sendChannelReply", () => {
 
   it("throws when the channel is not configured for the agent", async () => {
     installFetchMock();
-    expect(
+    await expect(
       sendChannelReply({
         config: {},
         accountId: "acct-1",

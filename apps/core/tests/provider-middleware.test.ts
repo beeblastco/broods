@@ -292,7 +292,7 @@ describe("retryWithoutStoredItemsMiddleware", () => {
   });
 
   it("rethrows an unrelated failure instead of paying for a second call", async () => {
-    expect(
+    await expect(
       retryCall(apiCallError("Rate limit reached for gpt-5.6")),
     ).rejects.toThrow("Rate limit reached");
   });
@@ -314,7 +314,7 @@ describe("attemptRecordingMiddleware", () => {
       model: {} as never,
     });
 
-    expect(failing).rejects.toThrow("resource exhausted");
+    await expect(failing).rejects.toThrow("resource exhausted");
     await middleware.wrapStream!({
       doGenerate: async () => ({}) as never,
       doStream: async () => ({ stream: {} as never }),
@@ -395,14 +395,14 @@ describe("dropUnsupportedMediaMiddleware", () => {
   });
 
   it("rethrows an error that is not a refused capability", async () => {
-    expect(dropCall(apiCallError("Rate limit reached"))).rejects.toThrow(
+    await expect(dropCall(apiCallError("Rate limit reached"))).rejects.toThrow(
       "Rate limit reached",
     );
   });
 
   // Retrying with nothing dropped would pay for an identical second call.
   it("rethrows when the prompt carries nothing to drop", async () => {
-    expect(
+    await expect(
       dropCall(refused, [
         { role: "user", content: [{ type: "text", text: "hi" }] },
       ]),
@@ -430,7 +430,7 @@ describe("dropUnsupportedMediaMiddleware", () => {
   });
 
   it("rethrows a 400 when the prompt carries no picture", async () => {
-    expect(
+    await expect(
       dropCall(
         apiCallError("bad tool schema"),
         [{ role: "user", content: [{ type: "text", text: "hi" }] }],

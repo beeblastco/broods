@@ -810,7 +810,7 @@ describe("stored item persistence", () => {
       const answer = "x".repeat(2 * 1_024 * 1_024);
       const saved: number[] = [];
 
-      expect(
+      await expect(
         session.persistModelMessages(
           Array.from({ length: 6 }, () => ({
             role: "user" as const,
@@ -1782,7 +1782,7 @@ describe("conversation summary", () => {
     });
 
     try {
-      expect(
+      await expect(
         summarizeConversation({
           conversationKey: "conversation",
           priorSummaries: [],
