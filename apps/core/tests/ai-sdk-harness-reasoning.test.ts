@@ -5,20 +5,23 @@ type Reasoning = NonNullable<AgentConfig["model"]>["reasoning"];
 
 // Each factory hands back its settings, so the adapter's return value is what the harness got.
 const echo = (settings: unknown): unknown => settings;
-mock.module("@ai-sdk/harness-pi", () => ({ VERSION: "test", createPi: echo }));
-mock.module("@ai-sdk/harness-codex", () => ({
+await mock.module("@ai-sdk/harness-pi", () => ({
+  VERSION: "test",
+  createPi: echo,
+}));
+await mock.module("@ai-sdk/harness-codex", () => ({
   VERSION: "test",
   createCodex: echo,
 }));
-mock.module("@ai-sdk/harness-claude-code", () => ({
+await mock.module("@ai-sdk/harness-claude-code", () => ({
   VERSION: "test",
   createClaudeCode: echo,
 }));
-mock.module("@ai-sdk/harness-deepagents", () => ({
+await mock.module("@ai-sdk/harness-deepagents", () => ({
   VERSION: "test",
   createDeepAgents: echo,
 }));
-mock.module("@ai-sdk/harness-opencode", () => ({
+await mock.module("@ai-sdk/harness-opencode", () => ({
   VERSION: "test",
   createOpenCode: echo,
 }));
