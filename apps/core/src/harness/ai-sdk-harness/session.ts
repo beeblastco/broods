@@ -52,6 +52,7 @@ export interface HarnessReservationOptions {
 export interface OpenAiSdkHarnessSessionOptions {
   abortSignal: AbortSignal;
   agent: HarnessAgent;
+  sandbox: AiSdkHarnessRuntime["sandbox"];
   stored: StoredHarnessSession | null;
   type: AiSdkHarnessType;
 }
@@ -129,13 +130,28 @@ export async function openAiSdkHarnessSession(
     });
   } catch (error) {
     if (!isSandboxGoneError(error)) throw error;
-    logWarn("Harness machine was released; starting a fresh session", {
-      sessionId: stored.sessionId,
-      reservationKey: stored.reservationKey,
-    });
+    // Pi's history is in Convex, so only its machine is new; other harnesses kept it there.
+    const keepsHistory = options.type === "pi";
+    logWarn(
+      keepsHistory
+        ? "Harness machine was released; resuming the session on a fresh machine"
+        : "Harness machine was released; starting a fresh session",
+      { sessionId: stored.sessionId, reservationKey: stored.reservationKey },
+    );
+    if (!keepsHistory) {
+      return options.agent.createSession({
+        sessionId: crypto.randomUUID(),
+        abortSignal: options.abortSignal,
+      });
+    }
 
     return options.agent.createSession({
-      sessionId: crypto.randomUUID(),
+      sessionId: stored.sessionId,
+      resumeFrom: stored.resumeState as HarnessAgentResumeSessionState,
+      sandboxSession: await options.sandbox.createSession({
+        sessionId: stored.sessionId,
+        abortSignal: options.abortSignal,
+      }),
       abortSignal: options.abortSignal,
     });
   }
@@ -206,6 +222,7 @@ export async function prepareHarnessTurn(
       usage = reported;
     },
     reservationKey: reservationKey,
+    session: session,
     shared: shared,
     skills: await session.loadHarnessSkills(),
     toolApproval:
@@ -245,6 +262,7 @@ export async function prepareHarnessTurn(
     .openSession({
       abortSignal: options.abortController.signal,
       agent: runtime.agent,
+      sandbox: runtime.sandbox,
       stored: stored,
       type: harnessType,
     })

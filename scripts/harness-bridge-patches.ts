@@ -1,6 +1,6 @@
 // Re-cuts patches/ for the harness adapters: `bun build --compile` does not embed their
-// `new URL("./bridge/...")` assets, and the bridge bootstrap needs a pnpm-lock.yaml.
-// Run after an adapter bump, then `bun install` and `bun run format`.
+// `new URL("./bridge/...")` assets. Run after an adapter bump, then `bun install` and
+// `bun run format`.
 
 import { $ } from "bun";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
@@ -61,12 +61,6 @@ async function adapterPatch(name: string, version: string): Promise<string> {
     await $`git init -q && git add -A && git -c user.name=patch -c user.email=patch@localhost commit -qm pristine`
       .cwd(pkg)
       .quiet();
-    const bridge = join(pkg, "dist/bridge");
-    if (!(await Bun.file(join(bridge, "pnpm-lock.yaml")).exists())) {
-      await $`bunx pnpm@10 install --lockfile-only --ignore-scripts`
-        .cwd(bridge)
-        .quiet();
-    }
     const index = join(pkg, "dist/index.js");
     await Bun.write(index, embedBridgeAssets(await Bun.file(index).text()));
     const diff = await $`git add -A && git diff --cached --full-index`

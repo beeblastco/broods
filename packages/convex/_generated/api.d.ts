@@ -6663,6 +6663,26 @@ export declare const internal: {
       null
     >;
     pruneExpired: FunctionReference<"mutation", "internal", {}, number>;
+    pruneHarnessSessionEntries: FunctionReference<
+      "mutation",
+      "internal",
+      { conversationKey: string },
+      null
+    >;
+    readHarnessSessionEntries: FunctionReference<
+      "query",
+      "internal",
+      { afterSequence?: number; conversationKey: string; sessionId: string },
+      {
+        entries: Array<{
+          entry: string;
+          entryId: string;
+          parentEntryId?: string;
+          version: number;
+        }>;
+        nextSequence: number | null;
+      }
+    >;
     releaseClaim: FunctionReference<
       "mutation",
       "internal",
@@ -7009,6 +7029,24 @@ export declare const internal: {
       },
       null
     >;
+    appendHarnessSessionEntries: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        afterSequence?: number;
+        conversationKey: string;
+        entries: Array<{
+          entry: string;
+          entryId: string;
+          parentEntryId?: string;
+          version: number;
+        }>;
+        ownerEventId: string;
+        ownerGeneration: number;
+        sessionId: string;
+      },
+      number
+    >;
     applySteering: FunctionReference<
       "mutation",
       "internal",
@@ -7309,7 +7347,14 @@ export declare const internal: {
       "mutation",
       "internal",
       {
+        afterSequence?: number;
         conversationKey: string;
+        entries?: Array<{
+          entry: string;
+          entryId: string;
+          parentEntryId?: string;
+          version: number;
+        }>;
         harnessType: "claude-code" | "codex" | "deepagents" | "opencode" | "pi";
         ownerEventId: string;
         ownerGeneration: number;

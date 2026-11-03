@@ -889,7 +889,23 @@ export const runtimeHarnessSessionsFields = {
   sessionId: v.string(),
   resumeState: v.any(),
   reservationKey: v.optional(v.string()),
+  // Highest entry sequence written for `sessionId`; the next append continues after it.
+  lastSequence: v.optional(v.number()),
   updatedAt: v.number(),
+};
+// One Pi session entry, as JSON text: tool arguments may hold keys Convex refuses.
+export const harnessSessionEntryFields = {
+  entryId: v.string(),
+  parentEntryId: v.optional(v.string()),
+  version: v.number(),
+  entry: v.string(),
+};
+export const runtimeHarnessSessionEntriesFields = {
+  accountId: v.id("accounts"),
+  conversationKey: v.string(),
+  sessionId: v.string(),
+  sequence: v.number(),
+  ...harnessSessionEntryFields,
 };
 export const runtimeClaimsFields = {
   accountId: v.id("accounts"),
@@ -1557,6 +1573,18 @@ export default defineSchema({
     .index("by_accountId", ["accountId"]),
   runtimeHarnessSessions: defineTable(runtimeHarnessSessionsFields)
     .index("by_conversationKey", ["conversationKey"])
+    .index("by_accountId", ["accountId"]),
+  runtimeHarnessSessionEntries: defineTable(runtimeHarnessSessionEntriesFields)
+    .index("by_conversationKey_and_sessionId_and_sequence", [
+      "conversationKey",
+      "sessionId",
+      "sequence",
+    ])
+    .index("by_conversationKey_and_sessionId_and_entryId", [
+      "conversationKey",
+      "sessionId",
+      "entryId",
+    ])
     .index("by_accountId", ["accountId"]),
   runtimeClaims: defineTable(runtimeClaimsFields)
     .index("by_key", ["key"])
