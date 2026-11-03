@@ -135,7 +135,7 @@ it("agent context matches the committed budget", async () => {
     {
       dispatchSessionMessage: unused,
       dispatchSubagents: unused,
-      askParent: unused,
+      askParent: (): boolean => false,
     },
   );
 

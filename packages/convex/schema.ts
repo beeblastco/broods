@@ -1138,6 +1138,8 @@ export const runtimeAsyncAgentResultsFields = {
   error: v.optional(v.string()),
   approvals: v.optional(v.array(toolApprovalSummaryValidator)),
   questions: v.optional(v.array(pendingQuestionSummaryValidator)),
+  // A persistent subagent's ask_parent question while status is awaiting_input.
+  question: v.optional(v.string()),
   createdAt: v.string(),
   updatedAt: v.string(),
   expiresAt: v.number(),

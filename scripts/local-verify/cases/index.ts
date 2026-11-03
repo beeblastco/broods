@@ -31,6 +31,7 @@ import { snapshotStage } from "./snapshot-stage.ts";
 import { statusReadHandback } from "./status-read-handback.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { streamedBurst } from "./streamed-burst.ts";
+import { subagentAskParent } from "./subagent-ask-parent.ts";
 import { subagentModel } from "./subagent-model.ts";
 import { subagentResume } from "./subagent-resume.ts";
 import { subagentStop } from "./subagent-stop.ts";
@@ -57,6 +58,7 @@ export const verifyCases: readonly VerifyCase[] = [
   subagentStop,
   subagentModel,
   subagentResume,
+  subagentAskParent,
   asyncToolHandback,
   mcpTasks,
   statusReadHandback,

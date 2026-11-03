@@ -150,11 +150,7 @@ import { COMPUTER_TOOL_NAME } from "./tools/computer.tool.ts";
 import { createTools } from "./tools/index.ts";
 import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
-import {
-  parseToolResultOutput,
-  type AskParent,
-  type SubagentWatch,
-} from "./tools/utils.ts";
+import { parseToolResultOutput, type SubagentWatch } from "./tools/utils.ts";
 import {
   createSandboxCpuLedger,
   createStepTimingTracker,
@@ -242,7 +238,7 @@ export interface AgentLoopOptions {
   dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchSubagents?: RunSubagentDispatch;
   subagentWatch?: SubagentWatch;
-  askParent?: AskParent;
+  canAskParent?: boolean;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   subagentParent?: SubagentParentContext;
   // Read on the conversation's first turn only; later turns resume on the machine it stored.
@@ -267,6 +263,8 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
   failureText(): string | null;
   approvalSummaries(): ToolApprovalSummary[];
   questionSummaries(): PendingQuestionSummary[];
+  // The ask_parent question that ended this turn, if one did.
+  parentQuestion(): string | undefined;
   hasStructuredOutput(): boolean;
   finalResponse(): JSONValue | undefined;
   traceId(): string;
@@ -470,6 +468,7 @@ export async function runAgentLoop(
     });
   }
 
+  let parentQuestion: string | undefined;
   const configuredApprovals = new Map<string, true>();
   const policyMcpIdsByName = new Map<string, string>();
   const channelDelivery =
@@ -514,7 +513,16 @@ export async function runAgentLoop(
         ...(options.subagentWatch
           ? { subagentWatch: options.subagentWatch }
           : {}),
-        ...(options.askParent ? { askParent: options.askParent } : {}),
+        ...(options.canAskParent
+          ? {
+              askParent: (question: string): boolean => {
+                if (parentQuestion !== undefined) return false;
+                parentQuestion = question;
+
+                return true;
+              },
+            }
+          : {}),
         // Ephemeral system messages are request-local, so children get this turn's copy.
         ...(options.dispatchSubagents
           ? {
@@ -818,9 +826,13 @@ export async function runAgentLoop(
     },
     stopWhen: [
       ...(maxTurn === AGENT_MAX_TURN_UNLIMITED ? [] : [isStepCount(maxTurn)]),
-      (): boolean => questionSummaries.length > 0,
+      (): boolean =>
+        questionSummaries.length > 0 || parentQuestion !== undefined,
       ({ steps }): boolean =>
-        deadline.shouldStop(steps.length, questionSummaries.length),
+        deadline.shouldStop(
+          steps.length,
+          questionSummaries.length + (parentQuestion === undefined ? 0 : 1),
+        ),
     ],
     abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
@@ -1290,6 +1302,7 @@ export async function runAgentLoop(
         if (
           approvals.length === 0 &&
           questionSummaries.length === 0 &&
+          parentQuestion === undefined &&
           !modelOutput &&
           !finalText &&
           !deliveredByTool
@@ -1359,6 +1372,9 @@ export async function runAgentLoop(
 
           return;
         }
+        // A subagent that asked its parent ends the turn on that question;
+        // its caller reads it off `parentQuestion()` and records it.
+        if (parentQuestion !== undefined) return;
 
         if (modelOutput) {
           finalResponse = (await modelOutput.parseCompleteOutput(
@@ -1623,6 +1639,7 @@ export async function runAgentLoop(
     failureText: (): string | null => failureText,
     approvalSummaries: (): ToolApprovalSummary[] => approvalSummaries,
     questionSummaries: (): PendingQuestionSummary[] => questionSummaries,
+    parentQuestion: (): string | undefined => parentQuestion,
     hasStructuredOutput: (): boolean => Boolean(modelOutput),
     finalResponse: (): JSONValue | undefined => finalResponse,
     traceId: (): string => traceId,

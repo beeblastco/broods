@@ -260,7 +260,6 @@ export async function createTools(
           eventId: context.session.eventId,
           conversationKey: context.session.conversationKey,
           session: context.session,
-          ...(context.subagentWatch ? { watch: context.subagentWatch } : {}),
         }),
         stopSubagentTool({
           accountId: context.accountId,

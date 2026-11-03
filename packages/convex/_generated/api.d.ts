@@ -6280,6 +6280,7 @@ export declare const internal: {
         eventId: string;
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
+        question?: string;
         questions?: Array<{
           answerBy: string;
           questions: Array<{
@@ -6604,6 +6605,7 @@ export declare const internal: {
           eventId: string;
           expiresAt: number;
           handback?: "pending" | "detached" | "stored";
+          question?: string;
           questions?: Array<{
             answerBy: string;
             questions: Array<{
@@ -6850,6 +6852,7 @@ export declare const internal: {
         eventId: string;
         handback?: "detached";
         onlyWhileProcessing?: boolean;
+        question?: string;
         questions?: Array<{
           answerBy: string;
           questions: Array<{
@@ -7504,6 +7507,7 @@ export declare const internal: {
               toolName: string;
             }>;
             error?: string;
+            question?: string;
             questions?: Array<{
               answerBy: string;
               questions: Array<{

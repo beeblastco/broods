@@ -15,12 +15,12 @@ How subagent runs execute inside core: dispatch, the parent continuation loop, c
 
 `run_subagent` creates a pending result row per task, returns the task ids at once, and starts the children as promises inside the same request or worker, not as separate processes. The parent's model stream keeps going.
 
-A child result or `ask_parent` question that arrives while the parent streams waits in the coordinator's in-memory queue. At the parent's next step boundary `prepareStep` takes it (`takeParentMessages`) and adds it as `user` messages, the same way a [steer](queue-and-steer.md#the-step-boundary) joins a run. What arrives after the pass goes through the continuation loop:
+A child result that arrives while the parent streams waits in the coordinator's in-memory queue. An `ask_parent` question is a result too: it ends the child's turn as `awaiting_input` with the `question` on its result row, so it rides the same queue, hand-back and recovery sweep. At the parent's next step boundary `prepareStep` takes it (`takeParentMessages`) and adds it as `user` messages, the same way a [steer](queue-and-steer.md#the-step-boundary) joins a run. What arrives after the pass goes through the continuation loop:
 
 ```mermaid
 flowchart TD
   Pass["parent model pass"] --> Out{"pass outcome"}
-  Out -->|"approval or question"| Park["closeQuestions,<br/>return, resumes on the answer"]
+  Out -->|"approval or question"| Park["return, resumes on the answer"]
   Out -->|"failed, not a stop"| Keep["wait and drain children,<br/>so a retry sees their results"]
   Keep --> Failed["return failed"]
   Out -->|"stopped"| Failed
@@ -144,7 +144,7 @@ stateDiagram-v2
 
 - A busy child conversation makes `accept` answer `rejected`, and the task fails with `Subagent conversation is not available: rejected`, injected like any failure.
 - A follow-up drained after the child settles runs as another turn of the same task and is injected like the first answer. Past the parent's wait budget there is no live parent turn, so `transferChildConversation` hands the envelope to its own worker and the result is not injected.
-- `ask_parent` blocks the child on `askParent` for up to 5 minutes, never past the wait budget. A child has one open question at a time. A second question, a question after the parent closed questions, or an aborted one returns `null` at once. `update_subagent` in `steer` mode on a child with an open question answers it (`answered`) instead of queuing a steer. Open questions resolve empty when the budget runs out, the child stops, or the parent pass ends in a failure, approval or question of its own.
+- `ask_parent` holds nothing in memory. The loop stops after the step that asked (`parentQuestion()`), and `completeAskedRun` records `awaiting_input` with the `question` on the child's result row in its settle. The question then reaches the parent like a result: at its next step, by waking `waitForIdle` before the other children finish, through `resumeParent` once the parent stopped waiting, or from the recovery sweep after a restart. The parent answers with `run_subagent` on the child's `conversationKey`, which resumes the child with its stored history. One question per turn: a second call in the same turn is refused.
 
 Controls decide admission and ownership in one transaction, so a control never lands on a finished child or a later task on the same conversation:
 

@@ -68,13 +68,10 @@ export interface SubagentToolContext {
   conversationKey: string;
 }
 
-export type AskParent = (
-  question: string,
-  abortSignal?: AbortSignal,
-) => Promise<string | null>;
+// Ends a subagent turn on a question for its parent; false when one is already asked.
+export type AskParent = (question: string) => boolean;
 
 export interface SubagentWatch {
-  answerQuestion(taskId: string, answer: string): boolean;
   takeParentMessages(): Promise<IngressUserMessage[]>;
 }
 

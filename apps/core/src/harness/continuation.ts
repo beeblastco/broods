@@ -279,14 +279,6 @@ export async function runParentContinuationLoop(options: {
       );
       continue;
     }
-    // Only a clean pass leads to another pass that can answer a subagent.
-    if (
-      approvals.length > 0 ||
-      stream.questionSummaries().length > 0 ||
-      stream.didFail()
-    ) {
-      options.subagentCoordinator.closeQuestions();
-    }
     if (approvals.length > 0) {
       return passResult({ approvals: approvals });
     }
@@ -394,7 +386,7 @@ async function waitAndDrainAsyncWork(
   }
 
   // A subagent's question wakes the parent before the rest finish, so its
-  // answer can unblock the child.
+  // answer does not wait on the other children.
   const status = await subagentCoordinator.waitForIdle(options);
 
   return status === "timeout"
