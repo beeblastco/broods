@@ -62,6 +62,7 @@ function AgentButton(): React.JSX.Element {
       size="sm"
       data-active={isOpen}
       aria-pressed={isOpen}
+      aria-label="Broods agent"
       onClick={() => setOpen(!isOpen)}
       className="h-6.5 shrink-0 select-none cursor-pointer"
     >
