@@ -39,6 +39,9 @@ export type CopilotAction =
       url: string;
     }
   | {
+      /** The branch head the agent read; Apply refuses once the branch has moved. */
+      baseSha: string;
+      branch: string;
       change: CopilotChange;
       files: readonly { content: string; path: string }[];
       label: string;

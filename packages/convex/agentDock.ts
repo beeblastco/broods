@@ -75,6 +75,7 @@ export const repoFiles = action({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.union(
     v.object({
+      baseSha: v.string(),
       branch: v.string(),
       files: v.array(repoFileValidator),
       fullName: v.string(),
@@ -86,6 +87,7 @@ export const repoFiles = action({
     ctx,
     args,
   ): Promise<{
+    baseSha: string;
     branch: string;
     files: Infer<typeof repoFileValidator>[];
     fullName: string;
@@ -113,6 +115,8 @@ export const repoFiles = action({
 // Applies the agent's edit as one commit; Production's branch gets a pull request instead.
 export const commitChange = action({
   args: {
+    baseSha: v.string(),
+    branch: v.string(),
     files: v.array(repoFileValidator),
     message: v.string(),
     projectId: v.id("projects"),
@@ -121,11 +125,17 @@ export const commitChange = action({
   returns: v.object({ url: v.string(), viaPullRequest: v.boolean() }),
   handler: async (
     ctx,
-    { files, message, ...args },
+    { baseSha, branch, files, message, ...args },
   ): Promise<{ url: string; viaPullRequest: boolean }> => {
     const target = await repoTarget(ctx, args, true);
-    if (!target)
+    if (!target) {
       throw new ClientError("This stage does not deploy from a repo.");
+    }
+    if (target.branch !== branch) {
+      throw new ClientError(
+        `This stage now deploys from ${target.branch}, not ${branch}. Ask again.`,
+      );
+    }
     const folder = broodsFolder(target.rootDirectory);
     const outside = files.find((file) => !isAgentEditable(folder, file.path));
     if (outside || files.length === 0) {
@@ -143,6 +153,7 @@ export const commitChange = action({
       files,
       message.trim() || "Update broods/ from the dashboard",
       target.viaPullRequest,
+      baseSha,
     );
   },
 });

@@ -99,7 +99,18 @@ export function proposalPlan(
   if (!parsed.success) return null;
   const { files, message } = parsed.data;
   const commit: CopilotAction[] =
-    files.length > 0 && repo ? [commitAction(files, message, repo)] : [];
+    files.length === 0
+      ? []
+      : repo
+        ? [commitAction(files, message, repo)]
+        : [
+            {
+              label: `Commit ${files.map((file) => file.path).join(", ")}`,
+              reason:
+                "The repo could not be read, so this edit cannot be applied. Ask again.",
+              type: "blocked",
+            },
+          ];
 
   return {
     actions: [
@@ -176,6 +187,8 @@ function commitAction(
     text === undefined ? 0 : text.split("\n").length;
 
   return {
+    baseSha: repo.baseSha,
+    branch: repo.branch,
     change: {
       after: `${files.reduce((sum, file) => sum + lines(file.content), 0)} lines`,
       before: `${files.reduce((sum, file) => sum + lines(before.get(file.path)), 0)} lines`,

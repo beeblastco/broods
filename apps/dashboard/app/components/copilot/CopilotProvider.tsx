@@ -163,75 +163,87 @@ export function CopilotProvider({
     ]);
   }, []);
 
-  const run = useCallback(
-    (action: CopilotAction): void => {
-      switch (action.type) {
-        case "navigate":
-          router.push(action.href);
+  // Answers whether the step took effect; a refusal is noted in the thread and the step stays open.
+  const perform = useCallback(
+    async (action: CopilotAction): Promise<boolean> => {
+      try {
+        switch (action.type) {
+          case "navigate":
+            router.push(action.href);
 
-          return;
-        case "openNode":
-          if (!projectId) return;
-          router.push(
-            `${navHref(projectId, "", stageId)}${stageId ? "&" : "?"}node=${action.nodeId}`,
-          );
+            return true;
+          case "openNode":
+            if (!projectId) return false;
+            router.push(
+              `${navHref(projectId, "", stageId)}${stageId ? "&" : "?"}node=${action.nodeId}`,
+            );
 
-          return;
-        case "command":
-          registry.trigger(action.commandId);
+            return true;
+          case "command":
+            if (!registry.activeIds.has(action.commandId)) {
+              note("Open the Architecture canvas first.");
 
-          return;
-        case "setCronStatus":
-          void updateCron({ cronId: action.cronId, status: action.status });
+              return false;
+            }
+            registry.trigger(action.commandId);
 
-          return;
-        case "setEnvVar":
-          if (!projectId || !stageId) return;
-          void setEnvVar({
-            name: action.name,
-            projectId: projectId,
-            stageId: stageId,
-            value: action.value,
-          });
+            return true;
+          case "setCronStatus":
+            await updateCron({ cronId: action.cronId, status: action.status });
 
-          return;
-        case "blocked":
-          return;
-        case "connectNodes":
-          requestCanvasAction({
-            kind: "connect",
-            source: action.source,
-            target: action.target,
-          }).catch((error: unknown) => note(toErrorMessage(error)));
+            return true;
+          case "setEnvVar":
+            if (!projectId || !stageId) return false;
+            await setEnvVar({
+              name: action.name,
+              projectId: projectId,
+              stageId: stageId,
+              value: action.value,
+            });
 
-          return;
-        case "addMcp":
-          requestCanvasAction({
-            ...(action.agent ? { agent: action.agent } : {}),
-            kind: "addMcp",
-            name: action.name,
-            url: action.url,
-          }).catch((error: unknown) => note(toErrorMessage(error)));
+            return true;
+          case "blocked":
+            return false;
+          case "connectNodes":
+            await requestCanvasAction({
+              kind: "connect",
+              source: action.source,
+              target: action.target,
+            });
 
-          return;
-        case "commitFiles":
-          if (!projectId || !currentStageId) return;
-          commitChange({
-            files: [...action.files],
-            message: action.message,
-            projectId: projectId,
-            stageId: currentStageId,
-          }).then(
-            (result) =>
-              note(
-                result.viaPullRequest
-                  ? `Opened a pull request: ${result.url}`
-                  : `Committed: ${result.url}. The stage deploys in about a minute.`,
-              ),
-            (error: unknown) => note(toErrorMessage(error)),
-          );
+            return true;
+          case "addMcp":
+            await requestCanvasAction({
+              ...(action.agent ? { agent: action.agent } : {}),
+              kind: "addMcp",
+              name: action.name,
+              url: action.url,
+            });
 
-          return;
+            return true;
+          case "commitFiles": {
+            if (!projectId || !currentStageId) return false;
+            const result = await commitChange({
+              baseSha: action.baseSha,
+              branch: action.branch,
+              files: [...action.files],
+              message: action.message,
+              projectId: projectId,
+              stageId: currentStageId,
+            });
+            note(
+              result.viaPullRequest
+                ? `Opened a pull request: ${result.url}`
+                : `Committed: ${result.url}. The stage deploys in about a minute.`,
+            );
+
+            return true;
+          }
+        }
+      } catch (error) {
+        note(toErrorMessage(error));
+
+        return false;
       }
     },
     [
@@ -247,20 +259,23 @@ export function CopilotProvider({
     ],
   );
 
+  const settle = useCallback(
+    async (messageId: string, index: number, action: CopilotAction) => {
+      if (await perform(action)) {
+        setCompleted((prev) => new Set(prev).add(`${messageId}:${index}`));
+      }
+    },
+    [perform],
+  );
+
   const runSafeSteps = useCallback(
     (messageId: string, plan: CopilotPlan): void => {
-      const safe = plan.actions.flatMap((action, index) =>
-        actionTier(action) === "safe" ? [index] : [],
-      );
-      for (const index of safe) run(plan.actions[index]);
-      setCompleted((prev) => {
-        const next = new Set(prev);
-        for (const index of safe) next.add(`${messageId}:${index}`);
-
-        return next;
+      plan.actions.forEach((action, index) => {
+        if (actionTier(action) === "safe")
+          void settle(messageId, index, action);
       });
     },
-    [run],
+    [settle],
   );
 
   const dockSession = useCallback(async (): Promise<DockSession | null> => {
@@ -312,7 +327,11 @@ export function CopilotProvider({
             ? await readRepo({
                 projectId: projectId,
                 stageId: currentStageId,
-              }).catch(() => null)
+              }).catch((error: unknown) => {
+                note(`Could not read ${facts.repo}: ${toErrorMessage(error)}`);
+
+                return null;
+              })
             : null;
         const stream = streamDockAnswer(
           session,
@@ -354,7 +373,15 @@ export function CopilotProvider({
         });
       }
     },
-    [conversationKey, currentStageId, facts, projectId, readRepo, runSafeSteps],
+    [
+      conversationKey,
+      currentStageId,
+      facts,
+      note,
+      projectId,
+      readRepo,
+      runSafeSteps,
+    ],
   );
 
   const ask = useCallback(
@@ -424,10 +451,16 @@ export function CopilotProvider({
       if (actionTier(action) === "blocked") return;
       const asked = messages.find((message) => message.id === messageId);
       if (asked?.scope !== undefined && asked.scope !== scope) return;
-      run(action);
-      setCompleted((prev) => new Set(prev).add(`${messageId}:${index}`));
+      void settle(messageId, index, action);
     },
-    [messages, run, scope],
+    [messages, scope, settle],
+  );
+
+  const runAction = useCallback(
+    (action: CopilotAction): void => {
+      void perform(action);
+    },
+    [perform],
   );
 
   const dismissStep = useCallback((messageId: string, index: number): void => {
@@ -465,7 +498,7 @@ export function CopilotProvider({
       items: items,
       messages: shownMessages,
       pending: pending,
-      runAction: run,
+      runAction: runAction,
       runStep: runStep,
       setOpen: setOpen,
       wakeIndex: wakeIndex,
@@ -478,7 +511,7 @@ export function CopilotProvider({
       isOpen,
       items,
       pending,
-      run,
+      runAction,
       runStep,
       setOpen,
       shownMessages,

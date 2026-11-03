@@ -1238,8 +1238,12 @@ function CanvasInner({
           return undefined;
         }
         const agent = action.agent ? byLabel(action.agent) : undefined;
-        if (action.agent && !agent)
+        if (action.agent && !agent) {
           return `${action.agent} is not on this canvas.`;
+        }
+        if (agent && agent.type !== "agent") {
+          return `${action.agent} is not an agent on this canvas.`;
+        }
         if (!stageId) return "Pick a stage first.";
         const nodeId = String(nextId.current);
         addNode(

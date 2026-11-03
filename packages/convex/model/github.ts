@@ -54,6 +54,13 @@ const RUN: Record<PackageManager, string> = {
 
 /** Lockfiles in the order a monorepo's own beats a stray one. */
 const AGENT_FILE_LIMIT = 40;
+const AGENT_BYTES_LIMIT = 300_000;
+const BUILD_FOLDERS: ReadonlySet<string> = new Set([
+  "_generated",
+  "build",
+  "dist",
+  "node_modules",
+]);
 const AGENT_FILE_PATTERN = /\.(ts|tsx|js|mjs|json|md|txt|ya?ml)$/;
 
 export interface RepoFile {
@@ -410,23 +417,33 @@ export async function readBroodsFolder(
   fullName: string,
   branch: string,
   rootDirectory: string,
-): Promise<{ files: RepoFile[]; omitted: number }> {
+): Promise<{ baseSha: string; files: RepoFile[]; omitted: number }> {
+  // One snapshot: every read pins the head commit, which Apply later checks has not moved.
+  const baseSha = await branchHead(app, token, fullName, branch);
   const prefix = broodsFolder(rootDirectory);
-  const paths = (await listFiles(app, token, fullName, branch)).filter((path) =>
-    isAgentEditable(prefix, path),
+  const paths = (await listFiles(app, token, fullName, baseSha)).filter(
+    (path) => isAgentEditable(prefix, path),
   );
-  const files = await Promise.all(
+  const read = await Promise.all(
     paths
       .slice(0, AGENT_FILE_LIMIT)
-      .map(async (path): Promise<RepoFile | null> => {
-        const file = await getFile(app, token, fullName, branch, path);
-        return file ? { content: file.content, path: path } : null;
-      }),
+      .map((path) => getFile(app, token, fullName, baseSha, path)),
   );
+  const files: RepoFile[] = [];
+  let bytes = 0;
+  read.forEach((file, index) => {
+    const path = paths[index];
+    if (!file || !path || bytes + file.content.length > AGENT_BYTES_LIMIT) {
+      return;
+    }
+    bytes += file.content.length;
+    files.push({ content: file.content, path: path });
+  });
 
   return {
-    files: files.filter((file): file is RepoFile => file !== null),
-    omitted: Math.max(0, paths.length - AGENT_FILE_LIMIT),
+    baseSha: baseSha,
+    files: files,
+    omitted: paths.length - files.length,
   };
 }
 
@@ -442,7 +459,13 @@ export async function commitFiles(
   files: readonly RepoFile[],
   message: string,
   viaPullRequest: boolean,
+  baseSha: string,
 ): Promise<{ url: string; viaPullRequest: boolean }> {
+  if ((await branchHead(app, token, fullName, branch)) !== baseSha) {
+    throw new ClientError(
+      `${branch} changed since the agent read it. Ask again so it edits the latest files.`,
+    );
+  }
   if (!viaPullRequest) {
     try {
       const commit = await commitTo(
@@ -488,7 +511,7 @@ export function isAgentEditable(prefix: string, path: string): boolean {
       .split("/")
       .some(
         (part) =>
-          part === ".." || part.startsWith(".") || part === "_generated",
+          part === ".." || part.startsWith(".") || BUILD_FOLDERS.has(part),
       ) &&
     AGENT_FILE_PATTERN.test(path)
   );
@@ -1035,17 +1058,12 @@ async function commitTo(
   message: string,
 ): Promise<string> {
   const ref = `/repos/${fullName}/git/refs/heads/${encodeURIComponent(branch)}`;
-  const head = await githubRequest<{ object: { sha: string } }>(
-    app,
-    token,
-    "GET",
-    `/repos/${fullName}/git/ref/heads/${encodeURIComponent(branch)}`,
-  );
+  const head = await branchHead(app, token, fullName, branch);
   const parent = await githubRequest<{ tree: { sha: string } }>(
     app,
     token,
     "GET",
-    `/repos/${fullName}/git/commits/${head.object.sha}`,
+    `/repos/${fullName}/git/commits/${head}`,
   );
   const tree = await githubRequest<{ sha: string }>(
     app,
@@ -1067,11 +1085,27 @@ async function commitTo(
     token,
     "POST",
     `/repos/${fullName}/git/commits`,
-    { message: message, tree: tree.sha, parents: [head.object.sha] },
+    { message: message, tree: tree.sha, parents: [head] },
   );
   await githubRequest(app, token, "PATCH", ref, { sha: commit.sha });
 
   return commit.html_url;
+}
+
+async function branchHead(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+  branch: string,
+): Promise<string> {
+  const head = await githubRequest<{ object: { sha: string } }>(
+    app,
+    token,
+    "GET",
+    `/repos/${fullName}/git/ref/heads/${encodeURIComponent(branch)}`,
+  );
+
+  return head.object.sha;
 }
 
 async function listFiles(
@@ -1112,7 +1146,7 @@ async function getFile(
       app,
       token,
       "GET",
-      `/repos/${fullName}/contents/${path}?ref=${encodeURIComponent(branch)}`,
+      `/repos/${fullName}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(branch)}`,
     );
 
     return {

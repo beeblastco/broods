@@ -198,6 +198,15 @@ describe("agent edits", () => {
     return calls;
   }
 
+  test("a branch that moved since the agent read it refuses the commit", async () => {
+    const calls = stubGitHub(false);
+
+    await expect(
+      commitFiles(app, "t", "o/r", "dev", files, "m", false, "older"),
+    ).rejects.toThrow("dev changed since the agent read it");
+    expect(calls.some((call) => call.startsWith("POST"))).toBe(false);
+  });
+
   test("only text files inside broods/ are editable", () => {
     expect(isAgentEditable("broods/", "broods/index.ts")).toBe(true);
     expect(isAgentEditable("apps/web/broods/", "apps/web/broods/a/b.md")).toBe(
@@ -208,12 +217,25 @@ describe("agent edits", () => {
     expect(isAgentEditable("broods/", "broods/_generated/api.ts")).toBe(false);
     expect(isAgentEditable("broods/", "broods/.env.local")).toBe(false);
     expect(isAgentEditable("broods/", "broods/logo.png")).toBe(false);
+    expect(isAgentEditable("broods/", "broods/dist/index.js")).toBe(false);
+    expect(isAgentEditable("broods/", "broods/node_modules/x/a.ts")).toBe(
+      false,
+    );
   });
 
   test("a change lands as one commit on the branch", async () => {
     const calls = stubGitHub(false);
 
-    const result = await commitFiles(app, "t", "o/r", "dev", files, "m", false);
+    const result = await commitFiles(
+      app,
+      "t",
+      "o/r",
+      "dev",
+      files,
+      "m",
+      false,
+      "head",
+    );
 
     expect(result).toEqual({
       url: "https://github.test/commit/c1",
@@ -228,7 +250,16 @@ describe("agent edits", () => {
   test("a branch that refuses the write gets a pull request instead", async () => {
     const calls = stubGitHub(true);
 
-    const result = await commitFiles(app, "t", "o/r", "dev", files, "m", false);
+    const result = await commitFiles(
+      app,
+      "t",
+      "o/r",
+      "dev",
+      files,
+      "m",
+      false,
+      "head",
+    );
 
     expect(result).toEqual({
       url: "https://github.test/pull/7",

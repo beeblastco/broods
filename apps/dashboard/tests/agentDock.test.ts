@@ -133,6 +133,7 @@ describe("agent dock", () => {
       },
       CONTEXT,
       {
+        baseSha: "abc",
         branch: "dev",
         files: [{ content: "a", path: "broods/index.ts" }],
         fullName: "acme/agents",
@@ -147,6 +148,8 @@ describe("agent dock", () => {
           before: "1 lines",
           field: "broods/index.ts",
         },
+        baseSha: "abc",
+        branch: "dev",
         label: "Commit to dev: Add firecrawl",
         type: "commitFiles",
       },
@@ -199,5 +202,16 @@ describe("agent dock", () => {
     expect(
       pendingChanges(plans, new Set(["c:0"])).map((change) => change.messageId),
     ).toEqual(["a"]);
+  });
+
+  test("proposed files with no readable repo stay visible as blocked", () => {
+    const plan = proposalPlan(
+      { files: [{ content: "x", path: "broods/index.ts" }], summary: "" },
+      CONTEXT,
+    );
+
+    expect(plan?.actions).toMatchObject([
+      { reason: expect.stringContaining("could not be read"), type: "blocked" },
+    ]);
   });
 });

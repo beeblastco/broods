@@ -962,6 +962,8 @@ export declare const api: {
       "action",
       "public",
       {
+        baseSha: string;
+        branch: string;
         files: Array<{ content: string; path: string }>;
         message: string;
         projectId: Id<"projects">;
@@ -974,6 +976,7 @@ export declare const api: {
       "public",
       { projectId: Id<"projects">; stageId: Id<"stages"> },
       {
+        baseSha: string;
         branch: string;
         files: Array<{ content: string; path: string }>;
         fullName: string;
