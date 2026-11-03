@@ -1079,52 +1079,6 @@ export const listOrphanedSandboxInstances = internalQuery({
 });
 
 /**
- * Reserves a persistent sandbox in one round trip, behind the active-account guard: the id already
- * under the key (idle deadline refreshed if the row is this account's), else `externalId` claimed.
- * Two callers racing on one key both get the winner's id: the loser's transaction retries.
- * @returns the id now reserved under the key
- */
-export const reserveSandboxReservation = internalMutation({
-  args: {
-    provider: sandboxProviderValidator,
-    reservationKey: v.string(),
-    externalId: v.string(),
-    accountId: v.id("accounts"),
-    ttlSeconds: v.optional(v.number()),
-  },
-  returns: v.string(),
-  handler: async (ctx, args): Promise<string> => {
-    await requireActiveAccount(ctx, args.accountId);
-    const row = await ctx.db
-      .query("sandboxReservations")
-      .withIndex("by_provider_and_reservationKey", (q) =>
-        q
-          .eq("provider", args.provider)
-          .eq("reservationKey", args.reservationKey),
-      )
-      .unique();
-    if (row) {
-      if (row.accountId === args.accountId)
-        await ctx.db.patch(row._id, {
-          expiresAt: reservationExpiresAt(args.ttlSeconds ?? row.ttlSeconds),
-        });
-
-      return row.externalId;
-    }
-    await ctx.db.insert("sandboxReservations", {
-      accountId: args.accountId,
-      provider: args.provider,
-      reservationKey: args.reservationKey,
-      externalId: args.externalId,
-      expiresAt: reservationExpiresAt(args.ttlSeconds),
-      ttlSeconds: args.ttlSeconds,
-    });
-
-    return args.externalId;
-  },
-});
-
-/**
  * Claims a new persistent sandbox reservation if it is still unmapped.
  * @returns whether the reservation was created
  */
