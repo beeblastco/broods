@@ -93,7 +93,13 @@ export function CopilotDock(): React.JSX.Element | null {
                     Broods agent
                   </span>
                 )}
-                <p className="text-xs text-foreground">{message.text}</p>
+                {message.pending && !message.text ? (
+                  <p className="text-xs text-muted-foreground">Thinking...</p>
+                ) : (
+                  <p className="whitespace-pre-wrap text-xs text-foreground">
+                    {message.text}
+                  </p>
+                )}
                 {message.plan && (
                   <CopilotPlanCard
                     completed={completed}
@@ -102,6 +108,7 @@ export function CopilotDock(): React.JSX.Element | null {
                       runStep(message.id, index, action)
                     }
                     plan={message.plan}
+                    stale={message.stale}
                   />
                 )}
               </div>

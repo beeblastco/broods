@@ -142,32 +142,34 @@ Fixed names, not outputs: `SANDBOX_MOUNT_ROLE_ARN` is the role `<stage>-<project
 
 From `packages/convex`, set each with `bunx convex env set NAME value`:
 
-| Variable                                                                        | Required  | Notes                                                                                      |
-| ------------------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------ |
-| `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                                              | yes       | Same as core. Comma-separated list                                                         |
-| `ADMIN_ACCOUNT_SECRET`                                                          | yes       | Same as core                                                                               |
-| `SERVICE_AUTH_SECRET`                                                           | yes       | Same as core                                                                               |
-| `STAGE_TICKET_SECRET`                                                           | yes       | Same as core                                                                               |
-| `ANALYTICS_ID_SECRET`                                                           | no        | Same as core. Keys the dashboard's PostHog user id; unset leaves it anonymous per browser  |
-| `BROODS_ACCOUNT_MANAGE_URL`                                                     | yes       | Core's in-cluster URL, such as `http://core.<ns>.svc.cluster.local`. Never the public host |
-| `AWS_REGION`                                                                    | yes       | The data plane region                                                                      |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`                                    | yes       | The bootstrap user's key. It can only assume `ConvexAwsRole`                               |
-| `CONVEX_AWS_ROLE_ARN`                                                           | yes       | `convexAwsRoleArn` output                                                                  |
-| `CONVEX_AWS_EXTERNAL_ID`                                                        | no        | Default `broods-convex`                                                                    |
-| `FILESYSTEM_BUCKET_NAME`, `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME`      | yes       | Stack outputs                                                                              |
-| `MICROVM_ARTIFACTS_BUCKET_NAME`, `MICROVM_BUILD_ROLE_ARN`                       | no        | Refused as a workspace's own bucket or role                                                |
-| `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                               | no        | `true` accepts a private workspace `storage.endpoint`, such as MinIO. Set the same on core |
-| `BROODS_AUTH_PROVIDER`                                                          | yes       | `self-host` for the dashboard's admin session, `workos` for the managed login              |
-| `BROODS_SESSION_JWKS`                                                           | dashboard | Public half of `BROODS_SESSION_SIGNING_KEY`, see [dashboard](#dashboard)                   |
-| `BROODS_MODEL_PRICES`                                                           | no        | Your token rates for the Usage tab, see [model prices](#model-prices)                      |
-| `BROODS_MODEL_PRICES_URL`                                                       | no        | A models.dev-format catalogue to crawl hourly. Unset fetches nothing                       |
-| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_WEBHOOK_SECRET`                   | no        | The managed service's login. Leave unset                                                   |
-| `DASHBOARD_ORIGIN`                                                              | billing   | Allowed origin for Stripe return URLs                                                      |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                                    | no        | Billing                                                                                    |
-| `STRIPE_PRO_PRICE_ID`                                                           | no        | Monthly Pro price, with 2 developer seats; Upgrade bills it                                |
-| `STRIPE_SEAT_PRICE_ID`                                                          | no        | Monthly price of one seat past Pro's 2; Upgrade and Add seat bill it                       |
-| `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`                    | GitHub    | Your GitHub App, see [GitHub App](#github-app). All six or none                            |
-| `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_WEBHOOK_SECRET` | GitHub    | Same App                                                                                   |
+| Variable                                                                        | Required  | Notes                                                                                                                     |
+| ------------------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                                              | yes       | Same as core. Comma-separated list                                                                                        |
+| `ADMIN_ACCOUNT_SECRET`                                                          | yes       | Same as core                                                                                                              |
+| `SERVICE_AUTH_SECRET`                                                           | yes       | Same as core                                                                                                              |
+| `STAGE_TICKET_SECRET`                                                           | yes       | Same as core                                                                                                              |
+| `ANALYTICS_ID_SECRET`                                                           | no        | Same as core. Keys the dashboard's PostHog user id; unset leaves it anonymous per browser                                 |
+| `BROODS_ACCOUNT_MANAGE_URL`                                                     | yes       | Core's in-cluster URL, such as `http://core.<ns>.svc.cluster.local`. Never the public host                                |
+| `AWS_REGION`                                                                    | yes       | The data plane region                                                                                                     |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`                                    | yes       | The bootstrap user's key. It can only assume `ConvexAwsRole`                                                              |
+| `CONVEX_AWS_ROLE_ARN`                                                           | yes       | `convexAwsRoleArn` output                                                                                                 |
+| `CONVEX_AWS_EXTERNAL_ID`                                                        | no        | Default `broods-convex`                                                                                                   |
+| `FILESYSTEM_BUCKET_NAME`, `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME`      | yes       | Stack outputs                                                                                                             |
+| `MICROVM_ARTIFACTS_BUCKET_NAME`, `MICROVM_BUILD_ROLE_ARN`                       | no        | Refused as a workspace's own bucket or role                                                                               |
+| `ALLOW_PRIVATE_STORAGE_ENDPOINTS`                                               | no        | `true` accepts a private workspace `storage.endpoint`, such as MinIO. Set the same on core                                |
+| `BROODS_AUTH_PROVIDER`                                                          | yes       | `self-host` for the dashboard's admin session, `workos` for the managed login                                             |
+| `BROODS_SESSION_JWKS`                                                           | dashboard | Public half of `BROODS_SESSION_SIGNING_KEY`, see [dashboard](#dashboard)                                                  |
+| `BROODS_MODEL_PRICES`                                                           | no        | Your token rates for the Usage tab, see [model prices](#model-prices)                                                     |
+| `BROODS_MODEL_PRICES_URL`                                                       | no        | A models.dev-format catalogue to crawl hourly. Unset fetches nothing                                                      |
+| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_WEBHOOK_SECRET`                   | no        | The managed service's login. Leave unset                                                                                  |
+| `DASHBOARD_ORIGIN`                                                              | billing   | Allowed origin for Stripe return URLs                                                                                     |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                                    | no        | Billing                                                                                                                   |
+| `STRIPE_PRO_PRICE_ID`                                                           | no        | Monthly Pro price, with 2 developer seats; Upgrade bills it                                                               |
+| `STRIPE_SEAT_PRICE_ID`                                                          | no        | Monthly price of one seat past Pro's 2; Upgrade and Add seat bill it                                                      |
+| `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`                    | GitHub    | Your GitHub App, see [GitHub App](#github-app). All six or none                                                           |
+| `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_WEBHOOK_SECRET` | GitHub    | Same App                                                                                                                  |
+| `BROODS_AGENT_URL`, `BROODS_AGENT_ID`                                           | no        | The agent behind the dashboard's Broods agent dock: its endpoint URL and id. Unset keeps the dock on its built-in planner |
+| `BROODS_AGENT_RUNTIME_KEY`, `BROODS_AGENT_USER_TOKEN_SECRET`                    | no        | That stage's `bsk_` key and `bsig_` signing secret. The dock asks as the signed-in user, in that user's own conversations |
 
 Then deploy the functions, before core:
 
