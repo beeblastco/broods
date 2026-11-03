@@ -53,7 +53,7 @@ beforeAll(async (): Promise<void> => {
       bindings: { MCP_API_KEY: API_KEY, BUNDLE_ORIGIN: BUNDLE_ORIGIN },
       outboundService: async (request: Request): Promise<Response> => {
         if (new URL(request.url).host === "slow.example.com") {
-          await Bun.sleep(1_500);
+          await Bun.sleep(300);
         }
         if (new URL(request.url).origin !== BUNDLE_ORIGIN) {
           return new Response("public-ok");

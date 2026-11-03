@@ -11,6 +11,7 @@ interface OxlintReport {
   readonly diagnostics: ReadonlyArray<{
     readonly code: string;
     readonly message: string;
+    readonly filename: string;
     readonly labels: ReadonlyArray<{
       readonly span: { readonly line: number };
     }>;
@@ -49,28 +50,43 @@ const dedent = (source: string): string => {
   return `${lines.map((line) => line.slice(indent)).join("\n")}\n`;
 };
 
-export const lintFixture = (
-  rule: string,
-  source: string,
-  settings: FixtureSettings = {},
-): Array<Finding> => {
+interface Fixture {
+  readonly filename: string;
+  readonly source: string;
+  findings?: Array<Finding>;
+}
+
+interface FixtureGroup {
+  readonly rule: string;
+  readonly ruleOptions: ReadonlyArray<unknown>;
+  readonly fixtures: Array<Fixture>;
+}
+
+const groups = new Map<string, FixtureGroup>();
+
+// One oxlint spawn costs ~0.35s, so every fixture registered under a config so far shares one.
+const lintPending = (group: FixtureGroup): void => {
+  const pending = group.fixtures.filter((fixture) => !fixture.findings);
   const dir = mkdtempSync(join(tmpdir(), "broods-oxlint-"));
   try {
     const configPath = join(dir, ".oxlintrc.json");
-    const sourcePath = join(dir, settings.filename ?? "fixture.ts");
     writeFileSync(
       configPath,
       JSON.stringify({
         plugins: [],
         categories: { correctness: "off" },
         jsPlugins: [pluginPath],
-        rules: { [rule]: ["error", ...(settings.ruleOptions ?? [])] },
+        rules: { [group.rule]: ["error", ...group.ruleOptions] },
       }),
     );
-    mkdirSync(dirname(sourcePath), { recursive: true });
-    writeFileSync(sourcePath, dedent(source));
+    const paths = pending.map((fixture, index) => {
+      const path = join(String(index), fixture.filename);
+      mkdirSync(dirname(join(dir, path)), { recursive: true });
+      writeFileSync(join(dir, path), dedent(fixture.source));
+      return path;
+    });
     const result = Bun.spawnSync(
-      [oxlintBin, "--format=json", "-c", configPath, sourcePath],
+      [oxlintBin, "--format=json", "-c", configPath, ...paths],
       { cwd: dir },
     );
     const stdout = result.stdout.toString();
@@ -78,16 +94,46 @@ export const lintFixture = (
       throw new Error(`oxlint failed: ${stdout}${result.stderr.toString()}`);
     }
     const report = JSON.parse(stdout) as OxlintReport;
-    const [plugin, name] = rule.split("/");
-    return report.diagnostics
-      .filter((diagnostic) => diagnostic.code === `${plugin}(${name})`)
-      .map((diagnostic) => ({
-        line: diagnostic.labels[0]?.span.line ?? 0,
-        message: diagnostic.message,
-      }));
+    const [plugin, name] = group.rule.split("/");
+    pending.forEach((fixture, index) => {
+      fixture.findings = report.diagnostics
+        .filter(
+          (diagnostic) =>
+            diagnostic.code === `${plugin}(${name})` &&
+            diagnostic.filename === paths[index],
+        )
+        .map((diagnostic) => ({
+          line: diagnostic.labels[0]?.span.line ?? 0,
+          message: diagnostic.message,
+        }));
+    });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+};
+
+const register = (
+  rule: string,
+  source: string,
+  settings: FixtureSettings,
+): (() => Array<Finding>) => {
+  const ruleOptions = settings.ruleOptions ?? [];
+  const key = JSON.stringify([rule, ruleOptions]);
+  const group = groups.get(key) ?? {
+    rule: rule,
+    ruleOptions: ruleOptions,
+    fixtures: [],
+  };
+  groups.set(key, group);
+  const fixture: Fixture = {
+    filename: settings.filename ?? "fixture.ts",
+    source: source,
+  };
+  group.fixtures.push(fixture);
+  return () => {
+    if (!fixture.findings) lintPending(group);
+    return fixture.findings ?? [];
+  };
 };
 
 export const ruleTester = (
@@ -95,13 +141,15 @@ export const ruleTester = (
   settings: FixtureSettings = {},
 ): RuleTester => ({
   valid: (name, source) => {
+    const findings = register(rule, source, settings);
     test(name, () => {
-      expect(lintFixture(rule, source, settings)).toEqual([]);
+      expect(findings()).toEqual([]);
     });
   },
   invalid: (name, source, expected) => {
+    const findings = register(rule, source, settings);
     test(name, () => {
-      expect(lintFixture(rule, source, settings)).toEqual(
+      expect(findings()).toEqual(
         expected.map(({ line, message }) => ({
           line: line,
           message: expect.stringContaining(message),
