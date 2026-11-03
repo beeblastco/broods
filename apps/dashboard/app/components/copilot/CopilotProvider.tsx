@@ -6,7 +6,6 @@ import { useStage } from "@/app/hooks/useStage";
 import type { DockSession } from "@/app/lib/agentDock";
 import {
   actionTier,
-  planRunsUnattended,
   type CopilotAction,
   type CopilotPlan,
 } from "@/app/lib/copilotActions";
@@ -41,6 +40,9 @@ export interface CopilotMessage {
   pending?: boolean;
   plan?: CopilotPlan;
   role: "user" | "broods";
+  /** The project and stage it was asked on; its writes refuse to run anywhere else. */
+  scope?: string;
+  stale?: boolean;
   text: string;
 }
 
@@ -93,6 +95,7 @@ export function CopilotProvider({
   const sessionRef = useRef<DockSession | null | undefined>(undefined);
   const [conversationKey] = useState(() => `dock-${crypto.randomUUID()}`);
 
+  const scope = `${projectId ?? ""}:${stageId ?? ""}`;
   const [isOpen, setIsOpen] = useState(false);
   const setOpen = useCallback((open: boolean): void => {
     if (open) wakeIndex();
@@ -140,13 +143,15 @@ export function CopilotProvider({
     [projectId, registry, router, setEnvVar, stageId, updateCron],
   );
 
-  const markCompleted = useCallback(
+  const runSafeSteps = useCallback(
     (messageId: string, plan: CopilotPlan): void => {
-      if (!planRunsUnattended(plan)) return;
-      for (const action of plan.actions) run(action);
+      const safe = plan.actions.flatMap((action, index) =>
+        actionTier(action) === "safe" ? [index] : [],
+      );
+      for (const index of safe) run(plan.actions[index]);
       setCompleted((prev) => {
         const next = new Set(prev);
-        plan.actions.forEach((_, index) => next.add(`${messageId}:${index}`));
+        for (const index of safe) next.add(`${messageId}:${index}`);
 
         return next;
       });
@@ -162,7 +167,11 @@ export function CopilotProvider({
     ) {
       return cached;
     }
-    sessionRef.current = await mintSession({}).catch(() => null);
+    try {
+      sessionRef.current = await mintSession({});
+    } catch {
+      return null;
+    }
 
     return sessionRef.current;
   }, [mintSession]);
@@ -214,7 +223,7 @@ export function CopilotProvider({
           plan: plan,
           text: text || plan?.summary || "",
         });
-        if (plan) markCompleted(replyId, plan);
+        if (plan) runSafeSteps(replyId, plan);
       } catch (error) {
         clearTimeout(timer);
         update({
@@ -223,7 +232,7 @@ export function CopilotProvider({
         });
       }
     },
-    [conversationKey, markCompleted],
+    [conversationKey, runSafeSteps],
   );
 
   const ask = useCallback(
@@ -246,7 +255,13 @@ export function CopilotProvider({
       setMessages((prev) => [
         ...prev,
         { id: `${askedAt}:you`, role: "user", text: trimmed },
-        { id: replyId, pending: true, role: "broods", text: "" },
+        {
+          id: replyId,
+          pending: true,
+          role: "broods",
+          scope: scope,
+          text: "",
+        },
       ]);
 
       void dockSession().then(async (session) => {
@@ -257,15 +272,15 @@ export function CopilotProvider({
           prev.map((message) =>
             message.id === replyId
               ? {
-                  id: replyId,
+                  ...message,
+                  pending: false,
                   plan: plan ?? undefined,
-                  role: "broods",
                   text: plan?.summary ?? NO_MODEL_REPLY,
                 }
               : message,
           ),
         );
-        if (plan) markCompleted(replyId, plan);
+        if (plan) runSafeSteps(replyId, plan);
       });
     },
     [
@@ -274,18 +289,31 @@ export function CopilotProvider({
       dockSession,
       envVars,
       items,
-      markCompleted,
+      runSafeSteps,
       registry.activeIds,
+      scope,
     ],
   );
 
   const runStep = useCallback(
     (messageId: string, index: number, action: CopilotAction): void => {
       if (actionTier(action) === "blocked") return;
+      const asked = messages.find((message) => message.id === messageId);
+      if (asked?.scope !== undefined && asked.scope !== scope) return;
       run(action);
       setCompleted((prev) => new Set(prev).add(`${messageId}:${index}`));
     },
-    [run],
+    [messages, run, scope],
+  );
+
+  const shownMessages = useMemo(
+    () =>
+      messages.map((message) =>
+        message.scope !== undefined && message.scope !== scope
+          ? { ...message, stale: true }
+          : message,
+      ),
+    [messages, scope],
   );
 
   const value = useMemo(
@@ -294,13 +322,13 @@ export function CopilotProvider({
       completed: completed,
       isOpen: isOpen,
       items: items,
-      messages: messages,
+      messages: shownMessages,
       runAction: run,
       runStep: runStep,
       setOpen: setOpen,
       wakeIndex: wakeIndex,
     }),
-    [ask, completed, isOpen, items, messages, run, runStep, setOpen],
+    [ask, completed, isOpen, items, run, runStep, setOpen, shownMessages],
   );
 
   return <CopilotStateProvider value={value}>{children}</CopilotStateProvider>;

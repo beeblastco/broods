@@ -108,6 +108,7 @@ export function CopilotDock(): React.JSX.Element | null {
                       runStep(message.id, index, action)
                     }
                     plan={message.plan}
+                    stale={message.stale}
                   />
                 )}
               </div>
