@@ -977,6 +977,7 @@ export declare const api: {
         branch: string;
         files: Array<{ content: string; path: string }>;
         fullName: string;
+        omitted: number;
       } | null
     >;
     session: FunctionReference<

@@ -1220,11 +1220,16 @@ function CanvasInner({
           if (!source || !target) {
             return `${source ? action.target : action.source} is not on this canvas.`;
           }
+          // Agent pairs and workspace mounts join side to side; a service hangs below its agent.
+          const mounts = new Set(["sandbox", "workspace"]);
+          const sideways =
+            (source.type === "agent" && target.type === "agent") ||
+            (mounts.has(source.type ?? "") && mounts.has(target.type ?? ""));
           const connection = {
             source: source.id,
-            sourceHandle: null,
+            sourceHandle: sideways ? "right" : null,
             target: target.id,
-            targetHandle: null,
+            targetHandle: sideways ? "left" : null,
           };
           const refusal = connectionRefusal(getConnectionGraph(), connection);
           if (refusal) return refusal;

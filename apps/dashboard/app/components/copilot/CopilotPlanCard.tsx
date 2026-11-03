@@ -62,6 +62,18 @@ export function CopilotPlanCard({
               </div>
             )}
 
+            {action.type === "commitFiles" &&
+              action.files.map((file) => (
+                <details key={file.path} className="ml-5 text-2xs">
+                  <summary className="cursor-pointer font-mono text-muted-foreground">
+                    {file.path}
+                  </summary>
+                  <pre className="mt-1 max-h-48 overflow-auto rounded-sm border border-border p-2 font-mono text-2xs">
+                    {file.content}
+                  </pre>
+                </details>
+              ))}
+
             {tier === "blocked" && (
               <p className="ml-5 text-2xs text-warning">
                 {"reason" in action ? action.reason : null}

@@ -136,6 +136,7 @@ describe("agent dock", () => {
         branch: "dev",
         files: [{ content: "a", path: "broods/index.ts" }],
         fullName: "acme/agents",
+        omitted: 0,
       },
     );
 
@@ -172,6 +173,17 @@ describe("agent dock", () => {
 
     expect(plan?.actions).toMatchObject([
       { reason: expect.stringContaining("broods/ files"), type: "blocked" },
+    ]);
+  });
+
+  test("an MCP aimed at a node that is not an agent is refused, never added blank", () => {
+    const plan = planFromQuery(
+      "add mcp docs at https://mcp.example.com/mcp to search",
+      WIRED,
+    );
+
+    expect(plan?.actions).toMatchObject([
+      { reason: "search is not an agent on this canvas.", type: "blocked" },
     ]);
   });
 });

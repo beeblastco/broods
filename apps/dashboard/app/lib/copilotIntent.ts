@@ -99,7 +99,18 @@ function planAddMcp(
     );
   if (!match) return null;
   const agent = match[3] ? findNode(context, match[3]) : undefined;
-  if (match[3] && agent?.detail !== "agent") return null;
+  if (match[3] && agent?.detail !== "agent") {
+    return {
+      actions: [
+        {
+          label: `Add MCP ${match[1]} to ${match[3]}`,
+          reason: `${match[3]} is not an agent on this canvas.`,
+          type: "blocked",
+        },
+      ],
+      summary: `${match[3]} is not an agent.`,
+    };
+  }
   if (agent && context.lockedNodes?.has(agent.title)) {
     return lockedPlan(agent.title, `Add MCP ${match[1]} to ${agent.title}`);
   }

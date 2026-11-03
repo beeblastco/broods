@@ -81,7 +81,9 @@ export function dockPrompt(
   const files = repo
     ? `\n<repo-files repo="${repo.fullName}" branch="${repo.branch}">\n${repo.files
         .map((file) => `--- ${file.path}\n${file.content}`)
-        .join("\n")}\n</repo-files>`
+        .join(
+          "\n",
+        )}${repo.omitted > 0 ? `\n(${repo.omitted} more files not shown: ask before editing them.)` : ""}\n</repo-files>`
     : "";
 
   return `${query}\n\n<dashboard-context>\n${lines.join("\n")}\n</dashboard-context>${files}`;

@@ -410,19 +410,24 @@ export async function readBroodsFolder(
   fullName: string,
   branch: string,
   rootDirectory: string,
-): Promise<RepoFile[]> {
+): Promise<{ files: RepoFile[]; omitted: number }> {
   const prefix = broodsFolder(rootDirectory);
-  const paths = (await listFiles(app, token, fullName, branch))
-    .filter((path) => isAgentEditable(prefix, path))
-    .slice(0, AGENT_FILE_LIMIT);
+  const paths = (await listFiles(app, token, fullName, branch)).filter((path) =>
+    isAgentEditable(prefix, path),
+  );
   const files = await Promise.all(
-    paths.map(async (path): Promise<RepoFile | null> => {
-      const file = await getFile(app, token, fullName, branch, path);
-      return file ? { content: file.content, path: path } : null;
-    }),
+    paths
+      .slice(0, AGENT_FILE_LIMIT)
+      .map(async (path): Promise<RepoFile | null> => {
+        const file = await getFile(app, token, fullName, branch, path);
+        return file ? { content: file.content, path: path } : null;
+      }),
   );
 
-  return files.filter((file): file is RepoFile => file !== null);
+  return {
+    files: files.filter((file): file is RepoFile => file !== null),
+    omitted: Math.max(0, paths.length - AGENT_FILE_LIMIT),
+  };
 }
 
 /**
@@ -456,7 +461,7 @@ export async function commitFiles(
       }
     }
   }
-  const head = `broods/agent-${Date.now().toString(36)}`;
+  const head = `broods/agent-${crypto.randomUUID().slice(0, 8)}`;
   await createBranch(app, token, fullName, branch, head);
   await commitTo(app, token, fullName, head, files, message);
   const pull = await githubRequest<{ html_url: string }>(

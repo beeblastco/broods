@@ -78,6 +78,7 @@ export const repoFiles = action({
       branch: v.string(),
       files: v.array(repoFileValidator),
       fullName: v.string(),
+      omitted: v.number(),
     }),
     v.null(),
   ),
@@ -88,6 +89,7 @@ export const repoFiles = action({
     branch: string;
     files: Infer<typeof repoFileValidator>[];
     fullName: string;
+    omitted: number;
   } | null> => {
     const target = await repoTarget(ctx, args, false);
     if (!target) return null;
@@ -96,14 +98,14 @@ export const repoFiles = action({
 
     return {
       branch: target.branch,
-      files: await readBroodsFolder(
+      fullName: target.fullName,
+      ...(await readBroodsFolder(
         app,
         token,
         target.fullName,
         target.branch,
         target.rootDirectory,
-      ),
-      fullName: target.fullName,
+      )),
     };
   },
 });
