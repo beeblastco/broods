@@ -3,13 +3,7 @@
 import { useShortcutRegistry } from "@/app/components/ShortcutProvider";
 import { useDashboardIndex } from "@/app/hooks/useDashboardIndex";
 import { useStage } from "@/app/hooks/useStage";
-import {
-  dockPrompt,
-  PROPOSE_TOOL,
-  proposalPlan,
-  streamDockAnswer,
-  type DockSession,
-} from "@/app/lib/agentDock";
+import type { DockSession } from "@/app/lib/agentDock";
 import {
   actionTier,
   planRunsUnattended,
@@ -192,6 +186,9 @@ export function CopilotProvider({
       try {
         const endpoint = resolveCoreEndpoint();
         if (!endpoint.ok) throw new Error(endpoint.message);
+        // Lazy: zod and the stream reader load on the first ask, not with every page.
+        const { dockPrompt, PROPOSE_TOOL, proposalPlan, streamDockAnswer } =
+          await import("@/app/lib/agentDock");
         const stream = streamDockAnswer(
           session,
           endpoint.httpBaseUrl,
