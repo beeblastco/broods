@@ -1,18 +1,7 @@
 ---------------------------- MODULE DevWatch ----------------------------
-(* `broods dev` watch loop (packages/broods/src/cli/index.ts, dev()).
-   An editor saves files; each save is a watcher event that (re)arms a
-   150 ms debounce timer. The timer calls runSync, which runs syncChanged
-   unless one is running, in which case it sets `pending` for one rerun.
-   syncChanged reads the source signature, skips when it equals the last
-   synced one (unless the last sync failed), else runs a `dev --once`
-   child that reads the source and writes the stage, and may fail midway.
-   The source is the .ts and .md files under broods/, the files the
-   signature hashes and the watcher counts as saves.
-
-   The watcher starts before the first sync, and a sync that saw a source
-   save after taking its signature records none (`savedSinceSignature`).
-   Without either, a save is lost: one made during the first sync, or one
-   undone while a sync ran, which leaves the stage on the saved content.  *)
+(* `broods dev` watch loop, dev() in packages/broods/src/cli/index.ts. A save arms a debounce
+   timer; one sync runs at a time with one queued rerun, and a child may fail midway.
+   The source is the .ts and .md files under broods/, the ones the signature hashes. *)
 EXTENDS Naturals
 
 CONSTANTS Contents, MaxEdits, NONE
@@ -90,14 +79,16 @@ SignatureErrors ==
   /\ pc = "sig"
   /\ printed' = TRUE
   /\ pc' = "done"
-  /\ UNCHANGED <<src, stage, last, failed, syncing, pending, timer, sig, read, edits, watching, dirty>>
+  /\ UNCHANGED <<src, stage, last, failed, syncing, pending,
+                 timer, sig, read, edits, watching, dirty>>
 
 \* The child reads the project from disk, after the signature was taken.
 ChildRead ==
   /\ pc = "read"
   /\ read' = src
   /\ pc' = "write"
-  /\ UNCHANGED <<src, stage, last, failed, syncing, pending, timer, sig, edits, watching, dirty, printed>>
+  /\ UNCHANGED <<src, stage, last, failed, syncing, pending,
+                 timer, sig, edits, watching, dirty, printed>>
 
 ChildSucceeds ==
   /\ pc = "write"
@@ -112,7 +103,8 @@ ChildFails ==
   /\ pc = "write"
   /\ stage' \in {stage, read}
   /\ pc' = "done"
-  /\ UNCHANGED <<src, last, failed, syncing, pending, timer, sig, read, edits, watching, dirty, printed>>
+  /\ UNCHANGED <<src, last, failed, syncing, pending, timer,
+                 sig, read, edits, watching, dirty, printed>>
 
 \* The .finally of runSync.
 Done ==
@@ -123,8 +115,8 @@ Done ==
        ELSE pending' = FALSE /\ pc' = "idle" /\ syncing' = FALSE
   /\ UNCHANGED <<src, stage, last, failed, timer, sig, read, edits, dirty, printed>>
 
-Next == Edit \/ TimerFires \/ Signature \/ SignatureFails \/ SignatureErrors \/ ChildRead \/ ChildSucceeds
-        \/ ChildFails \/ Done
+Next == Edit \/ TimerFires \/ Signature \/ SignatureFails \/ SignatureErrors
+        \/ ChildRead \/ ChildSucceeds \/ ChildFails \/ Done
 
 Spec == Init /\ [][Next]_vars
 

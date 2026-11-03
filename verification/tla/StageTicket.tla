@@ -1,13 +1,7 @@
 --------------------------- MODULE StageTicket ---------------------------
-(* `broods run` request auth (packages/broods/src/cli/index.ts, run()).
-   One shared `session` ticket. Every request runs credential(): when the
-   ticket has under MARGIN left by the local clock it awaits a re-mint and
-   stores the result, then reads `session.token` and sends it. Requests
-   interleave freely, so several can re-mint at once and finish in any
-   order. Time is in ticks; a request reaches the server at most MAXDELAY
-   ticks after its credential() check (network latency). SKEW is how far the
-   local clock runs behind the server's; past MARGIN - MAXDELAY a request can
-   send an expired ticket.                                                  *)
+(* run()'s stage ticket in packages/broods/src/cli/index.ts. Each request re-mints with under
+   MARGIN left by a local clock SKEW behind the server's, then arrives within MAXDELAY ticks.
+   Requests interleave freely, so re-mints can overlap and finish in any order. *)
 EXTENDS Naturals
 
 CONSTANTS Req, TTL, MARGIN, MAXDELAY, HORIZON, SKEW

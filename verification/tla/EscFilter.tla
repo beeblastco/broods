@@ -1,18 +1,7 @@
 ---------------------------- MODULE EscFilter ----------------------------
-(* stopTurnOnEscape (packages/broods/src/cli/tui.ts). Keys reach stdin as
-   chunks; an arrow key is ESC + "[A", and a slow link can split it into two
-   chunks. The filter holds a lone ESC for ESC_SEQUENCE_WAIT_MS: a following
-   "[" or "O" chunk joins it into the key; anything else, or the timer,
-   settles it: stopTurn() if it was pressed mid-turn, else ESC to the TUI
-   (which quits). Turns start and end on their own (a reply streams).
-   A read holding ESC and more (Alt+key, a whole arrow) is one key the TUI
-   reads as such, so it passes through; only a lone ESC is held.
-
-   `expected` is what each key should do, judged when its first chunk is
-   read (the filter cannot see a key before then); `out` is what the TUI
-   saw, with "STOP" standing for a stopTurn() call. A wire chunk carries the
-   key it belongs to (ESC_k a lone Esc, ESC_a an arrow's head); the filter
-   sees both as the same ESC byte.                                          *)
+(* stopTurnOnEscape in packages/broods/src/cli/tui.ts. A lone ESC is held 30 ms: "[" joins it
+   into a key, else it stops a streaming turn or reaches the TUI. ESC plus more in one read
+   (Alt+key) is a key and passes. `out` is what the TUI saw, "STOP" a stopTurn() call. *)
 EXTENDS Naturals, Sequences
 
 CONSTANTS MaxKeys
