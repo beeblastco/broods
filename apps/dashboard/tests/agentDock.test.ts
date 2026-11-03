@@ -169,6 +169,26 @@ describe("agent dock", () => {
     );
   });
 
+  test("an edit to a file the agent was not shown is blocked when the read was partial", () => {
+    const plan = proposalPlan(
+      {
+        files: [{ content: "x", path: "broods/other.ts" }],
+        message: "",
+        summary: "",
+      },
+      CONTEXT,
+      {
+        baseSha: "abc",
+        branch: "dev",
+        files: [{ content: "a", path: "broods/index.ts" }],
+        fullName: "acme/agents",
+        omitted: 3,
+      },
+    );
+
+    expect(plan?.actions.map((action) => action.type)).toEqual(["blocked"]);
+  });
+
   test("a code-defined node says so on its own line of the prompt", () => {
     const prompt = dockPrompt("hi", WIRED, {
       codeNodes: ["broods"],

@@ -399,7 +399,7 @@ function dockConnection(
   const source = nodeByLabel(nodes, names.source);
   const target = nodeByLabel(nodes, names.target);
   if (!source || !target) {
-    return `${source ? names.target : names.source} is not on this canvas.`;
+    return `${source ? names.target : names.source} is not on this canvas, or more than one node has that name.`;
   }
   const mounts = new Set(["sandbox", "workspace"]);
   const sideways =
@@ -421,7 +421,9 @@ function dockAgent(
 ): Node | undefined | string {
   if (!name) return undefined;
   const agent = nodeByLabel(nodes, name);
-  if (!agent) return `${name} is not on this canvas.`;
+  if (!agent) {
+    return `${name} is not on this canvas, or more than one node has that name.`;
+  }
   if (agent.type !== "agent") return `${name} is not an agent on this canvas.`;
   if (isCodeManagedOwner(agent.data.managedBy)) {
     return `${name} is defined in code, so the canvas cannot change it.`;
@@ -430,12 +432,15 @@ function dockAgent(
   return agent;
 }
 
+// Two nodes sharing a label are ambiguous, so neither is picked.
 function nodeByLabel(nodes: readonly Node[], label: string): Node | undefined {
-  return nodes.find(
+  const matches = nodes.filter(
     (node) =>
       typeof node.data.label === "string" &&
       node.data.label.toLowerCase() === label.toLowerCase(),
   );
+
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function findNearestAgentNode(
@@ -1283,19 +1288,31 @@ function CanvasInner({
           { label: action.name },
           agent ? [agent.id] : undefined,
         );
-        await saveMcp({
-          nodeId: nodeId,
-          nodeLabel: action.name,
-          projectId: projectId,
-          stageId: stageId,
-          url: action.url,
-        });
+        try {
+          await saveMcp({
+            nodeId: nodeId,
+            nodeLabel: action.name,
+            projectId: projectId,
+            stageId: stageId,
+            url: action.url,
+          });
+        } catch (error) {
+          // No server row means no node, so a retried Apply does not add a second one.
+          editGraph((nodes, edges) => ({
+            edges: edges.filter(
+              (edge) => edge.source !== nodeId && edge.target !== nodeId,
+            ),
+            nodes: nodes.filter((node) => node.id !== nodeId),
+          }));
+          throw error;
+        }
 
         return undefined;
       }),
     [
       addNode,
       canWrite,
+      editGraph,
       getConnectionGraph,
       onConnect,
       projectId,

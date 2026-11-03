@@ -462,6 +462,11 @@ export async function commitFiles(
   baseSha: string,
 ): Promise<{ sha: string; url: string; viaPullRequest: boolean }> {
   // Built on the commit the agent read, so a fast-forward update refuses once the branch moved.
+  if ((await branchHead(app, token, fullName, branch)) !== baseSha) {
+    throw new ClientError(
+      `${branch} changed since the agent read it. Ask again so it edits the latest files.`,
+    );
+  }
   const commit = await commitOn(app, token, fullName, baseSha, files, message);
   if (!viaPullRequest) {
     try {

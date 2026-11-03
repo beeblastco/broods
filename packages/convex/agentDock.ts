@@ -118,6 +118,7 @@ export const commitChange = action({
     baseSha: v.string(),
     branch: v.string(),
     files: v.array(repoFileValidator),
+    fullName: v.string(),
     message: v.string(),
     projectId: v.id("projects"),
     stageId: v.id("stages"),
@@ -129,15 +130,15 @@ export const commitChange = action({
   }),
   handler: async (
     ctx,
-    { baseSha, branch, files, message, ...args },
+    { baseSha, branch, files, fullName, message, ...args },
   ): Promise<{ sha: string; url: string; viaPullRequest: boolean }> => {
     const target = await repoTarget(ctx, args, true);
     if (!target) {
       throw new ClientError("This stage does not deploy from a repo.");
     }
-    if (target.branch !== branch) {
+    if (target.fullName !== fullName || target.branch !== branch) {
       throw new ClientError(
-        `This stage now deploys from ${target.branch}, not ${branch}. Ask again.`,
+        `This stage now deploys from ${target.fullName} ${target.branch}. Ask again.`,
       );
     }
     const folder = broodsFolder(target.rootDirectory);

@@ -101,19 +101,34 @@ export function proposalPlan(
   const parsed = proposalSchema.safeParse(input);
   if (!parsed.success) return null;
   const { files, message } = parsed.data;
+  const label = `Commit ${files.map((file) => file.path).join(", ")}`;
+  const read = new Set(repo?.files.map((file) => file.path));
+  // With files left out of the read, an unread path may exist and would be overwritten blind.
+  const unread =
+    repo && repo.omitted > 0
+      ? files.find((file) => !read.has(file.path))
+      : undefined;
   const commit: CopilotAction[] =
     files.length === 0
       ? []
-      : repo
-        ? [commitAction(files, message, repo)]
-        : [
+      : !repo
+        ? [
             {
-              label: `Commit ${files.map((file) => file.path).join(", ")}`,
+              label: label,
               reason:
                 "The repo could not be read, so this edit cannot be applied. Ask again.",
               type: "blocked",
             },
-          ];
+          ]
+        : unread
+          ? [
+              {
+                label: label,
+                reason: `${unread.path} was not among the files the agent read. Ask it to edit only files it was shown.`,
+                type: "blocked",
+              },
+            ]
+          : [commitAction(files, message, repo)];
 
   return {
     actions: [
@@ -190,6 +205,7 @@ function commitAction(
   return {
     baseSha: repo.baseSha,
     branch: repo.branch,
+    fullName: repo.fullName,
     files: files.map((file) => ({
       content: file.content,
       patch: structuredPatch(

@@ -6,7 +6,7 @@ export type CanvasAction =
   | {
       agent: string;
       kind: "addNode";
-      nodeType: "sandbox" | "skill" | "workspace";
+      nodeType: "sandbox" | "workspace";
     };
 
 interface CanvasActionDetail {

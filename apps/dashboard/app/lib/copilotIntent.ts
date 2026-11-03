@@ -13,7 +13,8 @@ const NAVIGATION_VERBS =
 const BLOCKED_VERBS =
   /\b(deploy|promote|delete|destroy|drop|rotate|revoke|uninstall)\b/i;
 
-const ATTACHED_TYPES = ["sandbox", "skill", "workspace"] as const;
+// A skill needs a source picked on the canvas, so the dock does not add one.
+const ATTACHED_TYPES = ["sandbox", "workspace"] as const;
 
 const CANVAS_VERB_COMMANDS: Record<string, ShortcutId> = {
   fit: "canvas.fitView",
@@ -137,13 +138,13 @@ function planAddMcp(
   };
 }
 
-// `add <sandbox|workspace|skill> to <agent>`: a new node that lands wired to that agent.
+// `add <sandbox|workspace> to <agent>`: a new node that lands wired to that agent.
 function planAddNode(
   query: string,
   context: CopilotContext,
 ): CopilotPlan | null {
   const match =
-    /^add\s+(?:an?\s+|another\s+|a\s+new\s+)?(sandbox|workspace|skill)(?:\s+node)?\s+(?:to|for|on)\s+(.+)$/i.exec(
+    /^add\s+(?:an?\s+|another\s+|a\s+new\s+)?(sandbox|workspace)(?:\s+node)?\s+(?:to|for|on)\s+(.+)$/i.exec(
       query,
     );
   const nodeType = ATTACHED_TYPES.find(

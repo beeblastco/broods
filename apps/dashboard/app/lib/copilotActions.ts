@@ -33,7 +33,7 @@ export type CopilotAction =
   | {
       agent: string;
       label: string;
-      nodeType: "sandbox" | "skill" | "workspace";
+      nodeType: "sandbox" | "workspace";
       type: "addNode";
     }
   | {
@@ -49,6 +49,7 @@ export type CopilotAction =
       baseSha: string;
       branch: string;
       files: readonly CommitFile[];
+      fullName: string;
       label: string;
       message: string;
       type: "commitFiles";

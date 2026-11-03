@@ -195,7 +195,7 @@ export function CopilotProvider({
   const note = useCallback((text: string): void => {
     setMessages((prev) => [
       ...prev,
-      { id: `${Date.now()}:note`, role: "broods", text: text },
+      { id: `${crypto.randomUUID()}:note`, role: "broods", text: text },
     ]);
   }, []);
 
@@ -274,6 +274,7 @@ export function CopilotProvider({
                 content: file.content,
                 path: file.path,
               })),
+              fullName: action.fullName,
               message: action.message,
               projectId: projectId,
               stageId: currentStageId,
@@ -315,10 +316,19 @@ export function CopilotProvider({
     ],
   );
 
+  // A step being applied ignores a second Apply and a Discard until it settles.
+  const applying = useRef(new Set<string>());
   const settle = useCallback(
     async (messageId: string, index: number, action: CopilotAction) => {
-      if (await perform(action)) {
-        setCompleted((prev) => new Set(prev).add(`${messageId}:${index}`));
+      const key = `${messageId}:${index}`;
+      if (applying.current.has(key)) return;
+      applying.current.add(key);
+      try {
+        if (await perform(action)) {
+          setCompleted((prev) => new Set(prev).add(key));
+        }
+      } finally {
+        applying.current.delete(key);
       }
     },
     [perform],
@@ -520,7 +530,9 @@ export function CopilotProvider({
   );
 
   const dismissStep = useCallback((messageId: string, index: number): void => {
-    setDismissed((prev) => new Set(prev).add(`${messageId}:${index}`));
+    const key = `${messageId}:${index}`;
+    if (applying.current.has(key)) return;
+    setDismissed((prev) => new Set(prev).add(key));
   }, []);
 
   const dismissDeploy = useCallback((sha: string): void => {
