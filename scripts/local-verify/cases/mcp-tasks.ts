@@ -280,7 +280,7 @@ async function questionRoundTrip(
           config: {
             ...context.model,
             agent: {
-              system: `On the first user message call ask_questions exactly once, with blocking true and one question: id "${QUESTION_ID}", header "Color", question "Which color?", options "Red" and "Blue". Then end your turn with no other tool call. When the answer arrives, reply with exactly the chosen color and nothing else.`,
+              system: `On the first user message call ask_questions exactly once, with blocking true and one question: id "${QUESTION_ID}", header "Color", question "Which color?", options "Red" and "Blue". Then end your turn with no other tool call. Never call ask_questions again in this conversation: once the answer arrives, call no tool and reply with exactly the chosen color and nothing else.`,
             },
           },
         },
