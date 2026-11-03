@@ -261,8 +261,7 @@ test("websocket client unwraps output envelopes for handlers and stream consumer
     data: { type: "done" },
   });
 
-  // Handlers see the inner stream parts (message.type === "text-delta"), and
-  // onOutput receives the raw envelope so clients can persist resume cursors.
+  // Handlers get the inner stream part; onOutput the raw envelope, for resume cursors.
   expect(messages).toEqual([
     { type: "text-delta", id: "text-1", text: "hello" },
     { type: "done" },

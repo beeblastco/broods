@@ -1,28 +1,6 @@
-/**
- * Local Broods stack: self-hosted Convex and Traefik in docker, core and the
- * gateway as watched bun processes. Traefik is the front door, as in the
- * cluster: it routes the public port to core, the Convex config plane or the
- * gateway's sockets from the apps/edge route table. Instances are keyed by
- * worktree, so parallel checkouts get isolated stacks on disjoint port blocks.
- * State (secrets, ports, pids, logs, perf) lives under ~/.broods-local/<instance>/.
- *
- * A warm `up` is idempotent: the containers restart in place and the script
- * skips `convex deploy` while packages/convex is unchanged.
- *
- * The stack is self-hosted: no WorkOS and nothing on the internet. `up
- * --dashboard` also serves the dashboard on a port in the instance's block,
- * a production build with `--perf`; the admin signs in with the admin secret,
- * which `status --key` prints.
- *
- * `verify` drives the cases in scripts/local-verify/cases through the edge.
- * `up --perf` answers the model in process and traces core's Convex calls, and
- * `perf` then grades scripts/local-verify/perf.ts against its baseline.
- * `convex <args>` runs the Convex CLI against the stack as its admin, for a
- * dashboard e2e spec that sets up state no dashboard user can.
- * Under GitHub Actions each command also writes its timings to the job summary.
- *
- * Usage: bun scripts/local-stack.ts <up|down|status|verify|perf|convex> [--fresh|--purge|--perf|--dashboard|--key|--record]
- */
+// Local Broods stack: Convex and Traefik in docker, core and gateway as watched bun processes.
+// One stack per worktree, on its own port block, with state under ~/.broods-local/<instance>/.
+// `up --dashboard` serves next dev, or with `--perf` the production build perf numbers need.
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
@@ -63,27 +41,22 @@ import {
   type VerifyContext,
 } from "./local-verify/harness.ts";
 
-// Pinned so CI and every laptop run the same backend. To bump, pull
-// ghcr.io/convex/convex-backend:latest and copy its RepoDigests entry here.
+// To bump: pull ghcr.io/convex/convex-backend:latest and copy its RepoDigests entry.
 const CONVEX_IMAGE =
   process.env.BROODS_LOCAL_CONVEX_IMAGE ??
   "ghcr.io/convex/convex-backend@sha256:b756b06641d15a55b5ec0692897ce5ad3715ddccfd02e1e213621e9e764255c8";
-// The version the cluster runs.
+// Keep equal to the cluster's Traefik.
 const TRAEFIK_IMAGE = "traefik:v3.7.12";
 const HEALTH_TIMEOUT_MS = 60_000;
 const PORT_BLOCK_BASE = 4300;
 const PORT_BLOCK_SIZE = 10;
 const STATE_ROOT = join(homedir(), ".broods-local");
-/** Every port of an instance, at a fixed offset from its block base. */
 interface InstancePorts {
   convexApi: number;
   convexSite: number;
   core: number;
-  /** `next dev`, when `up --dashboard` serves it. */
   dashboard: number;
-  /** The public port: Traefik, in front of everything else. */
   edge: number;
-  /** The WebSocket gateway process, behind Traefik. */
   gateway: number;
   /** The fake GitHub the `github-repo` verify case serves while it runs. */
   github: number;
@@ -97,7 +70,6 @@ interface InstanceSecrets {
   githubWebhook?: string;
   mediaTicket: string;
   serviceAuth: string;
-  /** Private ES256 JWK the dashboard signs the admin's session with. */
   sessionSigningKey: string;
   stageTicket: string;
   terminalTicket: string;
@@ -106,7 +78,6 @@ interface InstanceSecrets {
 interface InstanceState {
   adminKey?: string;
   convexSourceHash?: string;
-  /** Hash of the env last set on the Convex deployment. */
   deploymentEnvHash?: string;
   instanceId: string;
   instanceSecret: string;
@@ -114,7 +85,6 @@ interface InstanceState {
   /** The dashboard serves the production build, not next dev. */
   dashboardProduction?: boolean;
   pids: { core?: number; dashboard?: number; gateway?: number };
-  /** First port of the instance's block; `ports()` derives the rest. */
   portBase: number;
   secrets: InstanceSecrets;
 }
@@ -205,7 +175,6 @@ async function down(purge: boolean): Promise<void> {
   console.log(`stopped ${instanceId} (state kept for fast restart)`);
 }
 
-// The Convex CLI's output and exit status, never the admin key it runs with.
 function convex(args: readonly string[]): void {
   const state = loadState(currentInstanceId());
   if (!state) {
@@ -218,8 +187,7 @@ function convex(args: readonly string[]): void {
   process.exitCode = result.ok ? 0 : 1;
 }
 
-// `--key` prints only the admin secret, the dashboard's sign-in key, for a
-// script such as `E2E_ADMIN_KEY=$(... status --key)`.
+// `--key` output feeds `E2E_ADMIN_KEY=$(...)`: print the key alone.
 async function status(printKey: boolean): Promise<void> {
   const instanceId = currentInstanceId();
   const state = loadState(instanceId);
@@ -284,8 +252,6 @@ async function up(
   }
   const state = loadOrCreateState();
   const dashboard = withDashboard ? dashboardUrl(state) : undefined;
-  // Traefik needs nothing from the other steps, so a first pull of its image
-  // runs alongside them.
   const traefikImage = pullImage(TRAEFIK_IMAGE);
   console.log(
     `[${state.instanceId}] edge :${ports(state).edge} gateway :${ports(state).gateway} core :${ports(state).core} convex :${ports(state).convexApi}/${ports(state).convexSite}`,
@@ -314,7 +280,7 @@ async function up(
     await measureStep(perf, "deployment env", () => {
       configureDeploymentEnv(state, deploymentEnv);
       state.deploymentEnvHash = deploymentEnvHash;
-      // auth.config.ts reads BROODS_AUTH_PROVIDER and BROODS_SESSION_JWKS at deploy time.
+      // auth.config.ts reads this env at deploy time.
       state.convexSourceHash = undefined;
       saveState(state);
     });
@@ -351,8 +317,7 @@ async function up(
 
   const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
   await measureStep(perf, "health checks", async () => {
-    // A 401 can only come from the config plane: Traefik answers 404 until it
-    // loads the routes and 502 while an upstream is down.
+    // Only the config plane answers 401; Traefik gives 404/502 until routes and upstreams are up.
     await Promise.all([
       waitForHttp(`${edgeUrl}/healthz`, "gateway via edge"),
       waitForHttp(`http://127.0.0.1:${ports(state).core}/healthz`, "core"),
@@ -387,11 +352,6 @@ async function up(
   );
 }
 
-/**
- * Perf report: needs core started by `up --perf`. Exits 1 when a scenario
- * loses a usage record or makes more Convex calls than perf-baseline.json
- * allows; `--record` rewrites that file from this run instead.
- */
 async function perf(record: boolean): Promise<void> {
   const state = loadState(currentInstanceId());
   if (!state?.perf || !isProcessAlive(state.pids.core)) {
@@ -418,12 +378,6 @@ async function perf(record: boolean): Promise<void> {
   if (!passed) process.exit(1);
 }
 
-/**
- * End-to-end check: verify admin account creation, then run every case
- * through the gateway using an org-backed local fixture. Without
- * ANTHROPIC_API_KEY runs fail at the provider call; reaching that failure still
- * proves routing, auth, config encrypt/decrypt, and Convex round-trips.
- */
 async function verify(): Promise<void> {
   const state = loadState(currentInstanceId());
   if (!state) {
@@ -479,9 +433,6 @@ async function verify(): Promise<void> {
   console.log(`\nverify passed in ${(totalMs / 1000).toFixed(1)}s`);
 }
 
-// --- convex backend -----------------------------------------------------
-
-// One batched `env set` beats a CLI boot per var.
 function configureDeploymentEnv(
   state: InstanceState,
   entries: Record<string, string>,
@@ -519,7 +470,7 @@ function convexSourceHash(): string {
   return hash.digest("hex");
 }
 
-/** Creates a local org-backed fixture; admin API accounts have synthetic org bindings. */
+// Admin API accounts have synthetic org bindings; the verify cases need a real org row.
 function createManifestAccount(state: InstanceState, runId: string): string {
   const slug = `smoke-${runId}`;
   const path = join(instanceDir(state.instanceId), `verify-org-${runId}.jsonl`);
@@ -558,11 +509,7 @@ function createManifestAccount(state: InstanceState, runId: string): string {
   return secret;
 }
 
-// A self-hosted deployment: BROODS_AUTH_PROVIDER makes Convex trust the
-// dashboard's admin session (BROODS_SESSION_JWKS) instead of WorkOS, so no
-// WORKOS_* is set.
-// BROODS_ACCOUNT_MANAGE_URL points at core on the host (the backend runs
-// inside docker).
+// self-host auth trusts the dashboard's session JWKS instead of WorkOS, so no WORKOS_*.
 function deploymentEnvEntries(state: InstanceState): Record<string, string> {
   const signingKey: { d?: string } = JSON.parse(
     state.secrets.sessionSigningKey,
@@ -579,16 +526,13 @@ function deploymentEnvEntries(state: InstanceState): Record<string, string> {
   };
 }
 
-// Maps host.docker.internal so Convex reaches core on Linux; Docker Desktop
-// resolves it on its own. The backend binds the host's port numbers, not the
-// image's fixed 3210/3211: Node actions call it back at CONVEX_CLOUD_ORIGIN
-// from inside the container.
+// The backend binds the host's port numbers, not the image's 3210/3211: Node actions call
+// back at CONVEX_CLOUD_ORIGIN from inside the container.
 function ensureConvexContainer(state: InstanceState): void {
   const name = containerName(state.instanceId);
   const { convexApi, convexSite } = ports(state);
   const containerState = dockerContainerState(name);
-  // The configured bindings, which a stopped container keeps; `docker port`
-  // lists only a running one's.
+  // HostConfig, not `docker port`, which lists only a running container's bindings.
   if (
     containerState &&
     !docker(
@@ -637,17 +581,11 @@ function ensureConvexContainer(state: InstanceState): void {
     "bash",
     CONVEX_IMAGE,
     "-c",
-    // A new image whose script no longer says `--port 3210` fails here, not
-    // as a backend quietly bound to the wrong port.
     `sed -e 's/--port 3210/--port ${convexApi}/' -e 's/--site-proxy-port 3211/--site-proxy-port ${convexSite}/' run_backend.sh > /tmp/run_backend.sh && grep -q -- '--port ${convexApi} ' /tmp/run_backend.sh && grep -q -- '--site-proxy-port ${convexSite} ' /tmp/run_backend.sh && exec bash /tmp/run_backend.sh || { echo 'run_backend.sh no longer binds --port 3210; update the rewrite in scripts/local-stack.ts' >&2; exit 1; }`,
   ]);
 }
 
-/**
- * Traefik on the public port, routing from the apps/edge table as the cluster
- * does. The routes file is rewritten on every `up` and watched, so a route
- * table change reaches a running container. Logs land next to core's.
- */
+// routes.yaml is rewritten on every `up` and watched, so a running Traefik picks up changes.
 function ensureTraefikContainer(state: InstanceState): void {
   const dir = instanceDir(state.instanceId);
   const edgeDir = join(dir, "edge");
@@ -718,8 +656,6 @@ function generateConvexAdminKey(state: InstanceState): string {
   return key;
 }
 
-// CONVEX_DEPLOYMENT is empty, not unset, so a cloud deployment a `convex dev`
-// login left in packages/convex/.env.local cannot win over the self-hosted one.
 function runConvexCli(
   state: InstanceState,
   args: string[],
@@ -735,7 +671,6 @@ function runConvexCli(
   return output ?? "";
 }
 
-/** Runs the Convex CLI and hands back its outcome, so a case can expect a refusal. */
 function tryConvexCli(
   state: InstanceState,
   args: readonly string[],
@@ -778,13 +713,12 @@ function convexCliEnv(state: InstanceState): NodeJS.ProcessEnv {
   return {
     ...process.env,
     CONVEX_DEPLOY_KEY: undefined,
+    // Empty, not unset: a cloud deployment in packages/convex/.env.local must not win.
     CONVEX_DEPLOYMENT: "",
     CONVEX_SELF_HOSTED_ADMIN_KEY: state.adminKey,
     CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${ports(state).convexApi}`,
   };
 }
-
-// --- host processes -----------------------------------------------------
 
 function isProcessAlive(pid: number | undefined): pid is number {
   if (!pid) return false;
@@ -803,7 +737,6 @@ function processState(pid: number | undefined): string {
 
 function spawnDetached(options: {
   args: string[];
-  /** Defaults to bun. */
   command?: string;
   cwd: string;
   env: Record<string, string>;
@@ -826,9 +759,7 @@ function spawnDetached(options: {
   return child.pid;
 }
 
-// Mirrors apps/core "serve" with --watch added; keep in sync with that package
-// script. The compaction prompt runs once here because watch mode restarts
-// only server.ts.
+// Mirrors apps/core `serve` plus --watch (keep in sync), which restarts only server.ts.
 function startCore(state: InstanceState): void {
   if (isProcessAlive(state.pids.core)) {
     console.log("core already running");
@@ -859,8 +790,7 @@ function startCore(state: InstanceState): void {
         : {}),
       ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
       ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
-      // Pinned over a shell's own: the perf fake answers only this host, and
-      // a gateway here would take the verify key and bill perf runs.
+      // Pinned over the shell's: the perf fake answers only this host; a gateway would bill.
       ANTHROPIC_BASE_URL: "https://api.anthropic.com/v1",
       CONVEX_DEPLOY_KEY: state.adminKey ?? "",
       CONVEX_URL: `http://127.0.0.1:${ports(state).convexApi}`,
@@ -877,9 +807,8 @@ function startCore(state: InstanceState): void {
   });
 }
 
-// Mirrors apps/dashboard "dev", run by node as that script is; `production` serves the
-// standalone build the image ships instead, since perf numbers from next dev do not count.
-// The stack's URLs override .env.local; next loads the rest of that file.
+// Mirrors apps/dashboard `dev` (run by node), or serves the standalone build the image ships;
+// this env wins over .env.local.
 async function startDashboard(
   state: InstanceState,
   production: boolean,
@@ -906,8 +835,7 @@ async function startDashboard(
   }
 
   const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
-  // Empty WORKOS_* win over any in .env.local, so the stack proves it signs
-  // in without WorkOS.
+  // Empty WORKOS_* so the stack proves sign-in works without WorkOS.
   const env = {
     ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
     BROODS_BASE_URL: edgeUrl,
@@ -968,8 +896,7 @@ async function startDashboard(
   });
 }
 
-// Mirrors apps/gateway "dev"; keep in sync with that package script. Spawned
-// directly (not via `bun run`) so the recorded pid is the server itself.
+// Mirrors apps/gateway `dev` (keep in sync); no `bun run`, so the pid is the server's.
 function startGateway(state: InstanceState): void {
   if (isProcessAlive(state.pids.gateway)) {
     console.log("gateway already running");
@@ -990,8 +917,7 @@ function startGateway(state: InstanceState): void {
   });
 }
 
-// SIGTERM then wait for the exit so a follow-up `up` never races a dying
-// process for its port; SIGKILL after the grace period.
+// Waits for the exit so the next `up` never races a dying process for its port.
 async function stopProcess(
   pid: number | undefined,
   name: string,
@@ -1000,7 +926,7 @@ async function stopProcess(
   try {
     process.kill(pid, "SIGTERM");
   } catch {
-    return; // already gone
+    return;
   }
   const exited = await pollUntil(
     { initialIntervalMs: 50, maxIntervalMs: 100, timeoutMs: 5_000 },
@@ -1013,9 +939,7 @@ async function stopProcess(
   }
   try {
     process.kill(pid, "SIGKILL");
-  } catch {
-    // already exited
-  }
+  } catch {}
   const reaped = await pollUntil(
     { initialIntervalMs: 20, maxIntervalMs: 50, timeoutMs: 300 },
     async () => (isProcessAlive(pid) ? null : true),
@@ -1025,8 +949,6 @@ async function stopProcess(
   }
   console.log(`stopped ${name} (pid ${pid}, forced)`);
 }
-
-// --- docker -------------------------------------------------------------
 
 function containerMemory(name: string): string | null {
   const output = docker(
@@ -1054,7 +976,6 @@ function docker(
   options: { allowFailure?: boolean } = {},
 ): string {
   try {
-    // An allowed failure, like inspecting a container not yet created, stays quiet.
     return execFileSync("docker", args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", options.allowFailure ? "ignore" : "inherit"],
@@ -1073,7 +994,6 @@ function dockerContainerState(name: string): string | null {
   return output || null;
 }
 
-/** Pulls an image in the background unless it is already local; resolves once present. */
 function pullImage(image: string): Promise<void> {
   if (docker(["image", "inspect", image], { allowFailure: true })) {
     return Promise.resolve();
@@ -1091,9 +1011,6 @@ function pullImage(image: string): Promise<void> {
   });
 }
 
-// --- http ---------------------------------------------------------------
-
-// Mints a verify account with the admin secret and returns its secret.
 async function createAccount(
   edgeUrl: string,
   adminSecret: string,
@@ -1118,7 +1035,6 @@ async function createAccount(
   return body.secret;
 }
 
-// The clients and paths a verify case or perf run gets for one account.
 function verifyContext(
   state: InstanceState,
   accountSecret: string,
@@ -1153,7 +1069,6 @@ function verifyContext(
   };
 }
 
-// Ready on any status below 400, or on exactly `expectedStatus` when given.
 async function waitForHttp(
   url: string,
   what: string,
@@ -1183,8 +1098,6 @@ async function waitForHttp(
   console.log(`${what} ready`);
 }
 
-// --- perf recording -----------------------------------------------------
-
 function lastPerfSummaries(instanceId: string): string[] {
   const path = perfLogPath(instanceId);
 
@@ -1202,7 +1115,6 @@ function lastPerfSummaries(instanceId: string): string[] {
   });
 }
 
-// Times fn into perf, failed steps included.
 async function measureStep<T>(
   perf: PerfStep[],
   step: string,
@@ -1248,15 +1160,11 @@ function processRssMb(pids: (number | undefined)[]): Map<number, number> {
       const [pid, kb] = line.trim().split(/\s+/);
       if (pid && kb) rss.set(Number(pid), Math.round(Number(kb) / 1024));
     }
-  } catch {
-    // a pid that died mid-call just drops out of the map
-  }
+  } catch {}
 
   return rss;
 }
 
-// Appends to perf.jsonl, and under GitHub Actions adds a timing table to the
-// job summary so a pull request shows what each step cost.
 function recordPerf(
   instanceId: string,
   command: string,
@@ -1296,8 +1204,6 @@ function recordPerf(
   );
 }
 
-// --- instance state -----------------------------------------------------
-
 function allocatePortBase(): number {
   const used = new Set<number>();
   if (existsSync(STATE_ROOT)) {
@@ -1315,7 +1221,7 @@ function allocatePortBase(): number {
 
 function currentInstanceId(): string {
   const digest = createHash("sha1").update(repoRoot).digest("hex").slice(0, 8);
-  const basename = repoRoot.split("/").filter(Boolean).pop() ?? "broods";
+  const basename = repoRoot.split("/").findLast(Boolean) ?? "broods";
 
   return `${basename}-${digest}`;
 }
@@ -1415,8 +1321,7 @@ function ports(state: InstanceState): InstancePorts {
   };
 }
 
-// state.json carries the admin and encryption secrets, so the instance dir is
-// owner-only. chmod repairs paths created before the modes were enforced.
+// Owner-only: state.json holds the admin and encryption secrets.
 function saveState(state: InstanceState): void {
   const dir = instanceDir(state.instanceId);
   const path = join(dir, "state.json");

@@ -1,15 +1,8 @@
-/**
- * Storage mirror writes for sandbox lifecycle audit events. These are
- * best-effort: lifecycle calls should not fail if the audit mirror is
- * temporarily unavailable.
- */
-
 import type { SandboxProvider } from "../domain/sandbox-config.ts";
 import { logError } from "../log.ts";
 import { adminMutation, internal } from "./client.ts";
 import type { SandboxInstanceStatus } from "./sandbox-instances.ts";
 
-/** Sandbox lifecycle actions represented in the audit stream. */
 export type SandboxAuditAction =
   | "reserve"
   | "suspend"
@@ -20,7 +13,6 @@ export type SandboxAuditAction =
   | "exec"
   | "terminal";
 
-/** Actor metadata propagated from dashboard/agent/service callers. */
 export interface SandboxAuditActor {
   source: "dashboard" | "agent" | "service" | "unknown";
   id?: string;

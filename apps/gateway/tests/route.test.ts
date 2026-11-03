@@ -1,8 +1,4 @@
-/**
- * The gateway's request wiring: which check runs first, and what status each
- * one answers with. The helpers these reach are covered in `gateway.test.ts`;
- * what is covered here is the order they run in, which is a security contract.
- */
+// The order the upgrade checks run in is a security contract; the helpers are in gateway.test.ts.
 
 import { afterEach, expect, test } from "bun:test";
 import {
@@ -20,7 +16,6 @@ import { RateLimiter } from "../src/rate-limiter.ts";
 import type { SpentTickets } from "../src/terminal.ts";
 import type { GatewayLimits } from "../src/utils.ts";
 
-// A runtime key's scope names no expiry; a stage ticket's does.
 const RUNTIME_KEY_SCOPE = {
   accountId: "account-1",
   projectSlug: "project",
@@ -233,7 +228,6 @@ test("a runtime key opens an agent socket of its own stage", async (): Promise<v
   );
 
   expect(response).toBeUndefined();
-  // Each run on it goes to core with this key, so core's run checks hold.
   expect(upgrades).toEqual([
     {
       kind: "agent-test",
@@ -278,7 +272,6 @@ test("a runtime key never opens the logs socket, and spends auth-failure budget"
   expect(refused!.status).toBe(401);
   expect(authFailureLimiter.blocked("10.0.0.1")).toBe(true);
   expect(upgrades).toEqual([]);
-  // A member's ticket for the same stage opens it.
   const opened = await createGateway(gatewayConfig()).fetch(
     logs("bdts_ticket"),
     server,
@@ -478,7 +471,7 @@ test("a terminal upgrade answers 502 when spent tickets cannot be checked", asyn
   expect(upgrades).toEqual([]);
 });
 
-/** Upgrades like Bun: a plain empty `headers` object throws. */
+// Upgrades like Bun: a plain empty `headers` object throws.
 function fakeServer(): {
   server: Bun.Server<GatewayData>;
   upgrades: GatewayData[];
@@ -532,7 +525,6 @@ function limits(overrides: Partial<GatewayLimits> = {}): GatewayLimits {
   };
 }
 
-/** Spent tickets in memory, shared by every gateway given the same one. */
 function memorySpentTickets(): SpentTickets {
   const spent = new Set<string>();
 
@@ -549,16 +541,11 @@ function memorySpentTickets(): SpentTickets {
   };
 }
 
-/** Core answering the scope lookup with a key bound to SCOPE. */
 function scopeFetch(): typeof fetch {
   return (async () => Response.json(SCOPE)) as unknown as typeof fetch;
 }
 
-/**
- * Core's two scope lookups as they treat SCOPE's stage credentials: the ticket
- * `bdts_ticket` gets either, the runtime key `bsk_runtime` only the agent
- * socket's, which names no expiry.
- */
+// The ticket `bdts_ticket` opens either socket; the runtime key `bsk_runtime` only the agent one.
 function coreScopes(): typeof fetch {
   return Object.assign(
     async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {

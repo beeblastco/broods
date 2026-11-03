@@ -313,7 +313,6 @@ describe("discord channel adapter", () => {
       throw new Error("Expected one run and one stored context event");
     }
 
-    // The bot's own mention is stripped; the sender is prefixed either way.
     expect(mentioned.message.content).toEqual([
       { type: "text", text: "ada: ship the fix" },
     ]);
@@ -454,9 +453,7 @@ describe("discord channel adapter", () => {
     ).toBe(false);
   });
 
-  // The forwarder credential skips Discord's signature check, so it must only
-  // carry forwarded gateway events: an interaction body riding it would run
-  // slash commands unsigned.
+  // The forwarder credential skips Discord's signature check: an interaction on it runs unsigned.
   it("refuses an interaction payload on the forwarder credential", async () => {
     const adapter = createDiscordChannel(
       "bot-token",
@@ -500,7 +497,6 @@ describe("discord channel adapter", () => {
   });
 
   it("accepts an upload with no message text and carries it as an attachment", async () => {
-    // An image-only message used to be dropped as `empty_message`.
     const message = await parseGatewayMedia("message-media-1", "", [
       {
         id: "a1",
@@ -538,8 +534,7 @@ describe("discord channel adapter", () => {
     ]);
 
     expect(message.attachments?.[0]).toMatchObject({ type: "audio" });
-    // The claimed type is dropped on purpose: keeping `application/ogg` would
-    // let it override the sniff that identifies the real codec.
+    // A kept `application/ogg` would override the sniff that identifies the real codec.
     expect(message.attachments?.[0]?.mimeType).toBeUndefined();
   });
 
@@ -550,8 +545,7 @@ describe("discord channel adapter", () => {
       [],
       [
         { id: "555", name: "party-blob", format_type: 1 },
-        // Lottie is a JSON animation with no raster form, so there is nothing
-        // worth fetching.
+        // Lottie is a JSON animation with no raster form: nothing worth fetching.
         { id: "666", name: "spinny", format_type: 3 },
       ],
     );

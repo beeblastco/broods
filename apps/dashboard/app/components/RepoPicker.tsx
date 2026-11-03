@@ -27,6 +27,8 @@ export interface RepoChoice {
   repoId: number;
   fullName: string;
   rootDirectory: string;
+  /** The repo's branches, its default first. */
+  branches: string[];
 }
 
 /**
@@ -58,6 +60,7 @@ export function RepoPicker({
   const installationCount = status?.installations.length ?? 0;
   const canLink = status?.canLink ?? false;
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- fetches the repos GitHub lets the app see
   useEffect(() => {
     if (installationCount === 0 || !canLink) return;
     let cancelled = false;
@@ -98,6 +101,7 @@ export function RepoPicker({
         repoId: repo.repoId,
         fullName: repo.fullName,
         rootDirectory: inspected.roots[0]?.rootDirectory ?? "",
+        branches: inspected.branches,
       });
     } catch (err) {
       if (pick === latestPick.current) setError(toErrorMessage(err));

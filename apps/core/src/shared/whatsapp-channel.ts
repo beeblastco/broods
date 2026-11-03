@@ -1,10 +1,3 @@
-/**
- * WhatsApp channel adapter, on the WhatsApp Business Cloud API. The Chat SDK
- * adapter is the transport: it checks Meta's signature, reads the message and
- * posts the reply. Meta's GET subscription handshake is answered here too,
- * because it arrives on the same webhook URL.
- */
-
 import {
   WhatsAppAdapter,
   type WhatsAppRawMessage,
@@ -34,19 +27,15 @@ import { WHATSAPP_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const WHATSAPP_SIGNATURE_HEADER = "x-hub-signature-256";
 const WHATSAPP_DEFAULT_USER_NAME = "whatsapp-bot";
-// The part of Graph's media lookup the download needs.
 const MEDIA_LOOKUP = z.looseObject({ url: z.string() });
 
 type WhatsAppInboundMessage = WhatsAppRawMessage["message"];
 
-// One message from a delivery, with the contact Meta sent for its sender.
 interface WhatsAppInbound {
   contact: WhatsAppRawMessage["contact"];
   message: WhatsAppInboundMessage;
 }
 
-// The change notification Meta posts. Only a `messages` change for this
-// number carries something to answer; statuses ride the same field.
 interface WhatsAppWebhookPayload {
   entry?: {
     changes?: {
@@ -80,17 +69,13 @@ export interface WhatsAppSource {
   userWaId: string;
 }
 
-// The SDK keeps the signature check and its Graph API call protected, so this
-// subclass is an access shim, plus the guarded media download and the tenant
-// `apiUrl` guard on the Graph API calls.
+// Exposes the SDK's protected signature check and guards every fetch a tenant can steer.
 class BroodsWhatsAppAdapter extends WhatsAppAdapter {
   private get tenantApiUrl(): boolean {
     return new URL(this.graphApiUrl).host !== "graph.facebook.com";
   }
 
-  // The download URL is whatever the media lookup answers, and a custom
-  // `apiUrl` is the tenant's own server, so both hops take the private-address
-  // guard and size cap every channel's media gets.
+  // A tenant apiUrl answers the download URL, so both hops get the address guard and size cap.
   override async downloadMedia(mediaId: string): Promise<Buffer> {
     const auth = { headers: { authorization: `Bearer ${this.accessToken}` } };
     const lookup = await guardedFetch(`${this.graphApiUrl}/${mediaId}`, auth);
@@ -134,8 +119,7 @@ class BroodsWhatsAppAdapter extends WhatsAppAdapter {
     return this.verifySignature(body, signature ?? null);
   }
 
-  // The SDK finds the message to type against in Chat state, which core does
-  // not keep, so the inbound message id is passed in.
+  // Core keeps no Chat state for the SDK to find the message in, so its id is passed in.
   async sendTypingIndicator(messageId: string): Promise<void> {
     await this.graphApiRequest(`/${this.phoneNumberId}/messages`, {
       messaging_product: "whatsapp",
@@ -145,8 +129,6 @@ class BroodsWhatsAppAdapter extends WhatsAppAdapter {
     });
   }
 
-  // A tenant `apiUrl` is their host, so the access token only goes there
-  // pinned to a checked public address with redirects refused.
   private async tenantGraphApi<T>(
     path: string,
     init: { body: string | FormData; headers?: Record<string, string> },
@@ -167,10 +149,6 @@ class BroodsWhatsAppAdapter extends WhatsAppAdapter {
   }
 }
 
-/**
- * Builds the WhatsApp adapter from one agent's `config.channels.whatsapp`.
- * `integrations.ts` calls it per request, so it holds no state of its own.
- */
 export function createWhatsAppChannel(
   options: WhatsAppChannelOptions,
 ): ChannelAdapter {
@@ -246,7 +224,6 @@ export function createWhatsAppChannel(
       if (body.kind === "ignore") {
         return body;
       }
-      // Meta can batch several messages into one POST; each is its own turn.
       const results = findInboundMessages(
         body.payload,
         options.phoneNumberId,
@@ -276,8 +253,6 @@ export function createWhatsAppChannel(
       };
 
       return {
-        // One body for both: the SDK picks image or document from each
-        // attachment's type, uploading bytes it can read and linking the rest.
         sendFiles: sendAttachments,
         sendImages: sendAttachments,
         sendText: async function (text): Promise<void> {
@@ -287,8 +262,7 @@ export function createWhatsAppChannel(
           return transport.sendTypingIndicator(source.messageId);
         },
         supportsReactions: true,
-        // No automatic acknowledgement: the typing indicator already marks the
-        // message read, so only an explicit emoji from the agent is sent.
+        // No automatic ack: the typing indicator already marks the message read.
         reactToMessage: async function (emoji): Promise<void> {
           if (!emoji) return;
           await transport.addReaction(source.threadId, source.messageId, emoji);
@@ -298,9 +272,6 @@ export function createWhatsAppChannel(
   };
 }
 
-// Every message Meta sent for this number, each with its sender's contact. A
-// Meta app can hold several numbers, so a change for another one is not ours,
-// and a status-only change (a read receipt) carries no message to find.
 function findInboundMessages(
   payload: WhatsAppWebhookPayload,
   phoneNumberId: string,
@@ -322,12 +293,10 @@ function findInboundMessages(
     );
 }
 
-// Meta sends the handshake as `hub.*` query parameters on a GET.
 function handshakeParams(req: ChannelRequest): URLSearchParams {
   return new URLSearchParams(req.rawQueryString);
 }
 
-// The turn one inbound message becomes, or why it is not one.
 function parseInbound(
   inbound: WhatsAppInbound,
   transport: BroodsWhatsAppAdapter,
@@ -369,8 +338,7 @@ function parseInbound(
   };
 }
 
-// A tapped button or list row carries its label, which the SDK does not read
-// as text. Undefined for every other message type.
+// The SDK does not read a tapped button's or list row's label as text.
 function replyText(message: WhatsAppInboundMessage): string | undefined {
   if (message.type === "button") {
     return message.button?.text;
@@ -385,8 +353,7 @@ function replyText(message: WhatsAppInboundMessage): string | undefined {
   return undefined;
 }
 
-// The turn one verified message becomes. A WhatsApp chat is always one person,
-// so the sender is also the place the reply goes.
+// A WhatsApp chat is always one person, so the sender is also where the reply goes.
 function toInboundMessage(
   message: WhatsAppInboundMessage,
   from: string,

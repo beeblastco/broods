@@ -1,8 +1,3 @@
-/**
- * Plan enforcement in core: budget and burst admission, the 80% notice, the
- * refusal's HTTP shape, the cron refusal path and the sandbox launch check.
- */
-
 import {
   afterEach,
   beforeEach,

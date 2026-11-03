@@ -1,32 +1,19 @@
-/**
- * The sandbox dock's sessions: which shells and log tails are open, grouped by
- * sandbox in list order, and which one is shown. Pure, so the table owns the
- * state and the dock only renders it.
- */
-
 import type { Id } from "@broods/convex/_generated/dataModel";
 
 export type DockSessionKind = "shell" | "logs";
 
-/** One session in the dock: a numbered shell on a sandbox, or its log tail. */
 export interface DockSession {
   key: string;
   instanceId: Id<"sandboxInstances">;
   kind: DockSessionKind;
-  /** The shell's number within its sandbox; 0 for the log tail. */
   shell: number;
 }
 
-/** The dock's sessions in list order, grouped by sandbox, and the one shown. */
 export interface DockState {
   sessions: DockSession[];
   active: string;
 }
 
-/**
- * Closes a session. The shown one passes to its neighbour; the dock closes
- * (null) with its last session.
- */
 export function closeDockSession(
   state: DockState,
   key: string,
@@ -42,12 +29,10 @@ export function closeDockSession(
   return { sessions: sessions, active: active };
 }
 
-/** A session's name in the dock: "Logs" or "Shell N". */
 export function dockSessionName(session: DockSession): string {
   return session.kind === "logs" ? "Logs" : `Shell ${session.shell}`;
 }
 
-/** Shows a sandbox's session of this kind, opening one when it has none. */
 export function openDockSession(
   state: DockState | null,
   instanceId: Id<"sandboxInstances">,
@@ -69,7 +54,6 @@ export function openDockSession(
       });
 }
 
-/** Opens a new shell on a sandbox, numbered after its others. */
 export function openDockShell(
   state: DockState | null,
   instanceId: Id<"sandboxInstances">,
@@ -90,10 +74,6 @@ export function openDockShell(
   });
 }
 
-/**
- * Drops the sessions whose sandbox row is gone, so a terminated instance
- * leaves the dock; null once none is left.
- */
 export function pruneDock(
   state: DockState | null,
   instances: { _id: Id<"sandboxInstances"> }[],
@@ -111,7 +91,7 @@ export function pruneDock(
   return { sessions: sessions, active: active };
 }
 
-// Adds a session next to its sandbox's others, so groups stay contiguous, and shows it.
+// Next to its sandbox's others: the dock renders each sandbox's sessions as one run.
 function insertSession(
   state: DockState | null,
   session: DockSession,

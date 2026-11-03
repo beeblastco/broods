@@ -81,9 +81,6 @@ test("formatDeploymentTarget includes project, stage, and dashboard URL", () => 
   );
 });
 
-// `broods stage use staging` + `broods dev` syncs staging, so the banner has to
-// name staging. It used to hardcode "Development" and mislabel every other
-// stage, including Production.
 test("formatDeploymentTarget names the stage it is actually syncing", () => {
   const output = formatDeploymentTarget(
     {
@@ -100,7 +97,6 @@ test("formatDeploymentTarget names the stage it is actually syncing", () => {
   expect(output).toContain("?project=sandbox-stateless&stage=staging");
 });
 
-// Green reads as "routine dev sync", so only Development may claim it.
 test("formatDeploymentTarget drops the green badge outside Development", () => {
   const development = formatDeploymentTarget(
     {

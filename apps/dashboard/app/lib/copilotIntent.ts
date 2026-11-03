@@ -1,11 +1,4 @@
-/**
- * The copilot's fast path: asks it can answer from what is already on screen,
- * turned into a plan without a model round trip. "go to scheduler", "open
- * triage", "pause nightly-digest", "add an agent", "set MAX_RETRIES to 8".
- *
- * Anything it cannot place returns null and goes to the transport. Pure, so the
- * rules are tested rather than guessed at.
- */
+// The copilot's fast path: asks answerable from what is on screen, planned without a model.
 import {
   NODE_TEMPLATES,
   NODE_TYPE_SHORTCUTS,
@@ -14,11 +7,9 @@ import type { CopilotAction, CopilotPlan } from "@/app/lib/copilotActions";
 import { rankItems, type SearchItem } from "@/app/lib/paletteSearch";
 import { SHORTCUTS, type ShortcutId } from "@/app/lib/shortcuts";
 
-/** Verbs that only ever mean "take me there", stripped before the name lookup. */
 const NAVIGATION_VERBS =
   /^(go to|goto|open|show me|show|jump to|take me to)\s+/i;
 
-/** Asks the copilot refuses to plan at all, with the word that triggered the refusal. */
 const BLOCKED_VERBS =
   /\b(deploy|promote|delete|destroy|drop|rotate|revoke|uninstall)\b/i;
 
@@ -37,11 +28,9 @@ export interface CopilotContext {
   crons: readonly CopilotCron[];
   envNames: readonly string[];
   items: readonly SearchItem[];
-  /** Bindings the current page has claimed. A command it cannot run is never offered. */
   liveCommands: ReadonlySet<string>;
 }
 
-/** A plan for the ask, or null when it needs a model to answer. */
 export function planFromQuery(
   query: string,
   context: CopilotContext,
@@ -72,10 +61,6 @@ export function planFromQuery(
   );
 }
 
-/**
- * The one action a matched row stands for. The palette runs its rows through
- * this too, so a row means the same thing wherever you press it.
- */
 export function itemAction(item: SearchItem): CopilotAction {
   switch (item.target.type) {
     case "navigate":
@@ -105,8 +90,6 @@ function planCommand(
 ): CopilotPlan | null {
   const added =
     /\badd\s+(?:an?\s+)?(agent|sandbox|workspace|skill|mcp)\b/i.exec(query);
-  // Looked up rather than cast: `find` is what narrows the matched word to a
-  // card type the canvas actually has.
   const addedType = NODE_TEMPLATES.find(
     (template) => template.type === added?.[1].toLowerCase(),
   )?.type;
@@ -118,8 +101,6 @@ function planCommand(
 
   if (!commandId || !context.liveCommands.has(commandId)) return null;
 
-  // The name the overlay and the palette already print for this binding, so a
-  // plan step reads the same as the row that runs it.
   const command = SHORTCUTS.find((shortcut) => shortcut.id === commandId);
   if (!command) return null;
 
@@ -196,7 +177,6 @@ function planEnvVar(
   };
 }
 
-/** Falls back to the palette's own ranking, so a name means the same thing in both. */
 function planLookup(
   query: string,
   context: CopilotContext,
@@ -207,8 +187,7 @@ function planLookup(
     .flatMap((group) => group.items)
     .at(0);
 
-  // A bare word that matches nothing, or a sentence with no verb we know, is a
-  // question rather than a command.
+  // A sentence with no verb we know is a question for the model, not a command.
   if (!best || (!wasNavigation && stripped.includes(" "))) return null;
 
   const action = itemAction(best);

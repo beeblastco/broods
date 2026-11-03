@@ -1,14 +1,6 @@
 /**
- * What SLIM=1 builds put in place of a package the task should never touch:
- * any property read gives back another stub, and calling or constructing one
- * throws, naming the package, so a task that needed it fails loudly. The
- * bundler copies a CommonJS module's own keys into the namespace it hands to
- * `import { x }` and keeps its prototype, so names are answered there too.
- *
- * Core builds some channel helpers when its modules load (twilio-channel.ts:
- * `new TwilioFormatConverter()`), so while the isolate is loading a call
- * gives back another stub; once entry.ts serves its first request
- * (`__slimServing`), any call throws.
+ * SLIM=1 stand-in for a package: every property read gives another stub. Calls give stubs while
+ * modules load (core constructs some helpers then); once entry.ts sets `__slimServing`, they throw.
  */
 module.exports = function stubFor(name) {
   const fail = () => {

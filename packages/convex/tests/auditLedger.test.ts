@@ -1,10 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * The audit ledger: appends chain, verification catches a tampered row,
- * pruning stops at the export watermark and the head, the config routes
- * serve and gate it, and the sink export signs what it posts.
- */
-
 import { createHmac } from "node:crypto";
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -120,8 +114,7 @@ describe("chain", () => {
     expect(rows[0]?.detailsJson).not.toContain("rm -rf");
   });
 
-  // A receiver recomputing the hash in another language sorts keys by code
-  // point; locale collation would put "a" before "B".
+  // A receiver in another language sorts keys by code point; locale order puts "a" before "B".
   test("the hash input sorts keys by code point", () => {
     expect(stableJson({ b: 1, B: 2, a: { d: 1, C: 2 } })).toBe(
       '{"B":2,"a":{"C":2,"d":1},"b":1}',
@@ -601,7 +594,6 @@ describe("export", () => {
     );
     expect(await sink(t, accountId)).toMatchObject({ exportedSeq: 3 });
 
-    // Nothing new: no delivery.
     await t.action(internal.audit.sinks.exportDue, {});
     expect(posted).toHaveLength(1);
 

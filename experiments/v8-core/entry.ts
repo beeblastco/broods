@@ -1,7 +1,5 @@
 /**
- * Core's real request router and handlers, run as a Worker on self-hosted
- * workerd instead of a long-lived Bun process. Core needed two small patches
- * (cache-digest.ts, http.ts); the Bun APIs it touches are shimmed (bun-shim.ts).
+ * Core's real router and handlers as a Worker on self-hosted workerd; Bun APIs from bun-shim.ts.
  */
 
 import "./install-bun-global.ts";
@@ -33,16 +31,13 @@ export default {
     _env: unknown,
     ctx: { waitUntil(promise: Promise<unknown>): void },
   ): Promise<Response> {
-    // Only SLIM=1 builds read this: from here on a stubbed package throws.
     (globalThis as { __slimServing?: boolean }).__slimServing = true;
     const response = await route(
       request,
       request.headers.get("cf-connecting-ip") ?? undefined,
     );
-    // Core's post-response work (usage rows, async runs, subagent hand-backs)
-    // lives in its own in-flight set, and much of it starts only as a streamed
-    // body ends; workerd cancels a request's I/O once the response is done
-    // unless told to wait. So the request waits for its body, then for the set.
+    // workerd cancels I/O once the response is done, so wait for the body, then core's in-flight
+    // work (much of it starts only as a streamed body ends).
     if (!response.body) {
       ctx.waitUntil(drainInFlight());
 

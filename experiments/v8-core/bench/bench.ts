@@ -1,22 +1,9 @@
 /**
- * Times the complex agent task on one runtime + sandbox. Each batch starts
- * `level` tasks at once; a task is one SSE run that ends after the subagent's
- * result came back and the parent answered again. Every task is checked from
- * what actually ran: a bash result with a sha256 and the child's real prime
- * count in the parent's final text. Rows go to --out as JSON lines.
- *
- * bun bench.ts --runtime bun|workerd --sandbox machine|v8 --mode scripted|real
- *   --levels 1,5,10 --reps 3 --runtime-pid N [--sandbox-pid N,N] --runtime-log F
- *   --other-log F --out F [--agent-per-task]
- * --other-log is the idle runtime's log: a model call there fails the arm.
- * By default every task runs on one agent, so tasks at once share its sandbox
- * files (one busy agent). --agent-per-task gives each task slot its own agent,
- * and so its own sandbox files, the way many users' tasks arrive.
- * --shared-files (V8 sandbox only) pins each agent's V8 sandbox to one
- * reservation key, so a parent and its subagent see the same files, as they
- * do on a machine's disk; otherwise each agent identity gets its own files.
+ * Times `level` complex agent tasks at once on one runtime + sandbox; each task must show a sha256
+ * and the child's prime count. Flags: see parseArgs. --other-log is the idle runtime's log: a model
+ * call there fails the arm. --agent-per-task gives each task slot its own agent and sandbox files;
+ * --shared-files (V8 only) pins each agent to one reservation key so a subagent sees its files.
  */
-
 import { appendFileSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
@@ -49,8 +36,7 @@ const { values: args } = parseArgs({
     label: { type: "string" },
     "agent-per-task": { type: "boolean", default: false },
     "shared-files": { type: "boolean", default: false },
-    // One warmup task per agent, all at once, so a router that keeps a
-    // worker per agent is measured warm.
+    // One warmup task per agent, so a router keeping a worker per agent is measured warm.
     "warmup-each": { type: "boolean", default: false },
   },
 });
@@ -144,8 +130,6 @@ if (sandboxKind === "v8") {
     throw new Error(`machine daemon did not connect: ${log}`);
   sandboxPids.push(daemon.pid);
 }
-// A sandbox's stored files are keyed by agent and sandbox, so one agent per
-// task slot means one set of files per task.
 const agentCount = args["agent-per-task"]
   ? Math.max(...args.levels!.split(",").map(Number))
   : 1;
@@ -198,7 +182,6 @@ async function task(key: string, slot = 0): Promise<TaskResult> {
   let mcpMs = 0;
   const mcpStarted = new Map<string, number>();
   const problems: string[] = [];
-  // A run that never finishes is a failure, not a hang of the whole batch.
   let deadline: ReturnType<typeof setTimeout> | undefined;
   const consume = (async (): Promise<void> => {
     for await (const part of client.agent("bench", agent.agentId).stream({
@@ -260,9 +243,7 @@ async function task(key: string, slot = 0): Promise<TaskResult> {
   };
 }
 
-// Core on Bun polls Convex in the background (crash recovery, owed async
-// results, sandbox cleanup); these never belong to a task, so they are
-// counted apart. Core on workerd has no background loop at all.
+// Bun core's background Convex polls, counted apart from task calls.
 const BACKGROUND = new Set([
   "runtime:listOwedAsyncAgentResults",
   "runtime:listOwedAsyncToolResults",
@@ -399,7 +380,7 @@ for (const level of args.levels!.split(",").map(Number)) {
       convexCallsPerTask: (after.log.convex - before.log.convex) / level,
       backgroundConvexCalls: after.log.background - before.log.background,
       modelCallsPerTask: (after.log.model - before.log.model) / level,
-      // Must be 0: a model call in the other runtime means it ran part of this arm's work.
+      // Must be 0, or the other runtime ran part of this arm's work.
       otherRuntimeModelCalls: after.other.model - before.other.model,
       otherRuntimeTaskConvexCalls: after.other.convex - before.other.convex,
       taskMs: results.map((r) => Math.round(r.ms)),
@@ -411,9 +392,7 @@ for (const level of args.levels!.split(",").map(Number)) {
     );
   }
 }
-// Every run must also have persisted: run.completed is written in the same
-// Convex transaction as the run's usage, so a runtime that dropped its tail
-// work (say, an isolate torn down before its waitUntil finished) shows here.
+// Every run must have written run.completed (same transaction as its usage), or tail work was lost.
 const tasksStarted =
   Number(args.warmup) +
   (args["warmup-each"] ? agents.length : 0) +

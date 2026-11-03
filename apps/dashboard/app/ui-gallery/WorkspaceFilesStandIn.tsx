@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * The workspace file explorer over an in-memory file list, once as a writer
- * and once as a member. The view is the real one; uploads, renames, deletes
- * and downloads change the list here and are written to `[data-files-log]`
- * for a spec.
- */
 import {
   isImageFile,
   type FileContent,
@@ -59,12 +53,12 @@ export function WorkspaceFilesStandIn({
   canWrite: boolean;
 }): React.JSX.Element {
   const [files, setFiles] = useState(FILES);
-  const [log, setLog] = useState<string[]>([]);
+  const [log, setLog] = useState<Array<{ seq: number; entry: string }>>([]);
   const record = useCallback(
-    (entry: string): void => setLog((prev) => [...prev, entry]),
+    (entry: string): void =>
+      setLog((prev) => [...prev, { seq: prev.length, entry: entry }]),
     [],
   );
-  // Keyed by path, so a rename moves the text with its file.
   const contents = useRef(new Map(Object.entries(CONTENTS)));
   const loadFile = useCallback(
     async (file: FileRecord): Promise<FileContent> =>
@@ -113,7 +107,6 @@ export function WorkspaceFilesStandIn({
             await new Promise((resolve) =>
               setTimeout(resolve, RENAME_LATENCY_MS),
             );
-            // A name already taken is refused, the way the backend refuses it.
             if (files.some((f) => f.path === newPath)) {
               record(`refused ${node.path} ${newPath}`);
 
@@ -136,8 +129,8 @@ export function WorkspaceFilesStandIn({
         />
       </div>
       <ol data-files-log className="text-2xs">
-        {log.map((entry, index) => (
-          <li key={index}>{entry}</li>
+        {log.map(({ seq, entry }) => (
+          <li key={seq}>{entry}</li>
         ))}
       </ol>
     </div>

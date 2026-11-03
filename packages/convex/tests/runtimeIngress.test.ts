@@ -1379,7 +1379,9 @@ describe("runtime ingress", () => {
       ),
     ).toMatchObject({ outcome: "duplicate" });
     // Its owner's save stored it; a detach landing after never reopens it.
-    await saveOwnerStep(t, conversationKey);
+    await saveOwnerStep(t, conversationKey, {
+      dedupeKey: subagentResultDedupeKey("resumed-first", "completed"),
+    });
     await t.mutation(internal.runtime.markAsyncAgentHandback, {
       eventId: "resumed-first",
       handback: "detached",
@@ -1409,9 +1411,8 @@ describe("runtime ingress", () => {
         });
       }
     }
-    // The parent's write stored two results and lost its reply before the
-    // rows were marked: core detached one, and the other's row still reads
-    // processing because its settle has not landed.
+    // The parent's write stored two results and lost its reply before marking them: core
+    // detached one, and the other still reads processing as its settle has not landed.
     await t.mutation(internal.runtime.markAsyncAgentHandback, {
       eventId: "stored",
       handback: "detached",
@@ -1462,9 +1463,11 @@ describe("runtime ingress", () => {
     expect(await resume("resume-unsaved", "unsaved")).toMatchObject({
       outcome: "owner",
     });
-    // The admitted envelope carries it, so its owner's save stores it.
+    // Its owner's save of the row keyed by it stores it.
     expect(await row("unsaved")).toMatchObject({ handback: "pending" });
-    await saveOwnerStep(t, conversationKey);
+    await saveOwnerStep(t, conversationKey, {
+      dedupeKey: subagentResultDedupeKey("unsaved", "completed"),
+    });
     expect(await row("unsaved")).toMatchObject({ handback: "stored" });
   });
 
@@ -1513,7 +1516,9 @@ describe("runtime ingress", () => {
     expect(await resume("resume-again", "resumed")).toMatchObject({
       outcome: "duplicate",
     });
-    await saveOwnerStep(t, conversationKey);
+    await saveOwnerStep(t, conversationKey, {
+      dedupeKey: asyncToolResultDedupeKey("resumed", "completed"),
+    });
     expect(await row("resumed")).toMatchObject({
       handback: "stored",
     });
@@ -2305,8 +2310,7 @@ describe("runtime ingress", () => {
     const accountId = await createActiveAccount(t);
     const keyFor = (name: string): string =>
       `acct:${accountId}:agent:test-agent:api:${name}`;
-    // 120 queued envelopes ahead of the released one, in both expiry and key
-    // order: more than one recovery page used to read.
+    // 120 envelopes ahead of the released one in both expiry and key order: past one page.
     for (const name of ["busy-a", "busy-b"]) {
       for (let index = 0; index <= 60; index += 1) {
         await t.mutation(internal.runtimeIngress.accept, {
@@ -2666,7 +2670,6 @@ describe("harness checkpoints", () => {
   });
 });
 
-// One kind of result a late resume delivers, and how a test drives its row.
 interface LateResultKind {
   name: string;
   mode: "followup" | "steer";
@@ -2792,6 +2795,12 @@ const LATE_RESULT_KINDS: LateResultKind[] = [
 ];
 
 describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
+  // The key core saves the result's row under, the resume's message or the
+  // parent's own append.
+  const resultKey = (id: string): string =>
+    "resultEventId" in kind.fence(id)
+      ? subagentResultDedupeKey(id, "completed")
+      : asyncToolResultDedupeKey(id, "completed");
   // A conversation whose owner `busy` is running, its result row, and the
   // resume admission that carries it.
   async function busyConversation(): Promise<{
@@ -2844,8 +2853,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     };
   }
 
-  // The owner `busy` finishing with nothing queued, which releases the
-  // conversation.
+  // With nothing queued, this releases the conversation.
   async function finishBusy(
     t: TestConvex<typeof schema>,
     conversationKey: string,
@@ -2875,7 +2883,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
       expect(await kind.handback(t, "late")).toBe(before);
 
       expect(await resume()).toMatchObject({ outcome: "owner" });
-      await saveOwnerStep(t, conversationKey);
+      await saveOwnerStep(t, conversationKey, { dedupeKey: resultKey("late") });
       expect(await kind.handback(t, "late")).toBe("stored");
     } finally {
       vi.useRealTimers();
@@ -2921,16 +2929,46 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
 
     expect(await resume()).toMatchObject({ outcome: "owner" });
     expect(await kind.handback(t, "late")).toBe(before);
-    await saveOwnerStep(t, conversationKey);
+    await saveOwnerStep(t, conversationKey, { dedupeKey: resultKey("late") });
     expect(await kind.handback(t, "late")).toBe("stored");
   });
 
-  test("keeps the result unstored while its owner still holds the resume's row", async (): Promise<void> => {
+  test("stores the result only with the row that holds it, and saves that row once", async (): Promise<void> => {
     const { t, conversationKey, ownerGeneration, resume } =
       await busyConversation();
     const before = await kind.handback(t, "late");
     await finishBusy(t, conversationKey, ownerGeneration);
     expect(await resume()).toMatchObject({ outcome: "owner" });
+
+    // A steer saved ahead of the resume's own row.
+    await saveOwnerStep(t, conversationKey);
+    expect(await kind.handback(t, "late")).toBe(before);
+    // The row, then a retry of it after a reply was lost.
+    await saveOwnerStep(t, conversationKey, { dedupeKey: resultKey("late") });
+    await saveOwnerStep(t, conversationKey, { dedupeKey: resultKey("late") });
+    expect(await kind.handback(t, "late")).toBe("stored");
+    const rows = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("runtimeConversationEvents")
+          .withIndex("by_conversationKey_and_dedupeKey", (q) =>
+            q
+              .eq("conversationKey", conversationKey)
+              .eq("dedupeKey", resultKey("late")),
+          )
+          .collect(),
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  test("tells a result again when the boundary that claimed its resume lost its reply", async (): Promise<void> => {
+    const { t, conversationKey, ownerGeneration, resume } =
+      await busyConversation();
+    const before = await kind.handback(t, "late");
+    expect(await resume()).toMatchObject({ outcome: "queued" });
+    expect(await kind.apply(t, conversationKey, ownerGeneration)).toMatchObject(
+      { contributingEventIds: ["resume"] },
+    );
     const owner = await t.run(
       async (ctx) =>
         await ctx.db
@@ -2940,26 +2978,19 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
           )
           .unique(),
     );
-    const append = async (savesAll: boolean): Promise<void> => {
-      await t.mutation(internal.runtimeIngress.appendConversationEvent, {
-        conversationKey: conversationKey,
-        ownerEventId: "resume",
-        ownerGeneration: owner!.ownerGeneration,
-        events: [
-          {
-            cursor: `steer-${crypto.randomUUID()}`,
-            event: { role: "user", content: "steer" },
-          },
-        ],
-        ...(savesAll ? { savesAll: true } : {}),
-      });
-    };
 
-    // A steer saved ahead of the resume's own row.
-    await append(false);
+    // Core never saw the claim, so it saves its own rows and settles.
+    await saveOwnerStep(t, conversationKey);
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey: conversationKey,
+      ownerEventId: owner!.ownerEventId!,
+      ownerGeneration: owner!.ownerGeneration,
+      status: "completed",
+    });
     expect(await kind.handback(t, "late")).toBe(before);
-    await append(true);
-    expect(await kind.handback(t, "late")).toBe("stored");
+    // The sweep's retry is admitted behind the settled run's lease, not
+    // refused as a duplicate of the envelope that never told it.
+    expect(await resume()).toMatchObject({ outcome: "queued" });
   });
 
   test("stores a queued result only when the owner it is applied to saves it", async (): Promise<void> => {
@@ -2973,7 +3004,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     expect(await kind.apply(t, conversationKey, ownerGeneration)).toMatchObject(
       { contributingEventIds: ["resume"] },
     );
-    await saveOwnerStep(t, conversationKey);
+    await saveOwnerStep(t, conversationKey, { dedupeKey: resultKey("late") });
     expect(await kind.handback(t, "late")).toBe("stored");
   });
 
@@ -3045,7 +3076,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
       expect(
         await kind.apply(t, conversationKey, ownerGeneration),
       ).toMatchObject({ contributingEventIds: ["resume"] });
-      await saveOwnerStep(t, conversationKey);
+      await saveOwnerStep(t, conversationKey, { dedupeKey: resultKey("late") });
       expect(await kind.handback(t, "late")).toBe("stored");
     },
   );
@@ -3078,18 +3109,12 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     },
   );
 
-  // The key the parent's own append of the finished result carries.
-  const appendKey = (id: string): string =>
-    "resultEventId" in kind.fence(id)
-      ? subagentResultDedupeKey(id, "completed")
-      : asyncToolResultDedupeKey(id, "completed");
-
   test("the parent's own append completes a queued resume of the result", async (): Promise<void> => {
     const { t, conversationKey, ownerGeneration, resume } =
       await busyConversation();
     expect(await resume()).toMatchObject({ outcome: "queued" });
 
-    await saveOwnerStep(t, conversationKey, { dedupeKey: appendKey("late") });
+    await saveOwnerStep(t, conversationKey, { dedupeKey: resultKey("late") });
 
     expect(await kind.handback(t, "late")).toBe("stored");
     expect(await resumeEnvelope(t, conversationKey)).toMatchObject({
@@ -3113,7 +3138,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
       }),
     );
 
-    await saveOwnerStep(t, otherKey, { dedupeKey: appendKey("late") });
+    await saveOwnerStep(t, otherKey, { dedupeKey: resultKey("late") });
 
     expect(await kind.handback(t, "late")).toBe(before);
   });
@@ -3130,7 +3155,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
     expect(await kind.apply(t, conversationKey, ownerGeneration)).toMatchObject(
       { contributingEventIds: ["resume"] },
     );
-    await saveOwnerStep(t, conversationKey);
+    await saveOwnerStep(t, conversationKey, { dedupeKey: resultKey("late") });
     expect(await kind.handback(t, "late")).toBe("stored");
   });
 
@@ -3156,7 +3181,7 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
       // result once the conversation is free.
       await finishBusy(t, conversationKey, ownerGeneration);
       expect(await resume()).toMatchObject({ outcome: "owner" });
-      await saveOwnerStep(t, conversationKey);
+      await saveOwnerStep(t, conversationKey, { dedupeKey: resultKey("late") });
       expect(await kind.handback(t, "late")).toBe("stored");
     } finally {
       vi.useRealTimers();

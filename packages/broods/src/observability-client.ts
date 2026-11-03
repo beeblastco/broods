@@ -1,9 +1,3 @@
-/**
- * Lightweight WebSocket client for the observability gateway: the logs stream
- * (backfill then live, until the AbortSignal fires or the socket closes) and a
- * one-shot read of a trace by id. Imports only the shared contracts.
- */
-
 import { toWebSocketBaseUrl, webSocketSubprotocols } from "./websocket.ts";
 import type {
   LogLevel,
@@ -22,31 +16,20 @@ export interface ObservabilityClientOptions {
 }
 
 export interface ObservabilitySubscribeOptions {
-  // Recent lines to backfill from Loki before going live; 0/absent = live-only.
   backfill?: number;
-  // Explicitly skip the gateway's recent JetStream replay. Defaults to true when
-  // no backfill is requested, matching CLI/client live-tail expectations.
   liveOnly?: boolean;
   minLevel?: LogLevel;
-  // Tail one sandbox instance's guest output instead of the deployment's logs.
-  // The id is the last segment of the instance's log stream (dashboard Instances
-  // sheet, or `logStream` on the instance row).
   sandboxId?: string;
   signal?: AbortSignal;
-  /** Called before each reconnect, so a terminal can say the tail is down. */
   onReconnect?: (attempt: number, reason: string) => void;
-  /** Never give up after a minute down, for a tail that lives as long as its session. */
   keepReconnecting?: boolean;
 }
 
 const WS_OPEN = 1;
 const WS_CONNECTING = 0;
-/** How long the stream may stay down before reconnecting gives up. */
 const RECONNECT_GIVE_UP_MS = 60_000;
-/** How long a new socket may wait for the gateway's first answer. */
 const READY_TIMEOUT_MS = 15_000;
 
-/** Resolves after `ms`, or at once when `signal` aborts; never rejects. */
 export function reconnectDelay(
   ms: number,
   signal: AbortSignal | undefined,
@@ -79,13 +62,8 @@ export function resolveWebSocket(): new (
   return impl;
 }
 
-/** The server refused to mint a stage credential. Reconnecting cannot fix it. */
 export class StageSessionRefusedError extends Error {}
 
-/**
- * Continuously stream logs, reconnecting transient socket failures until
- * aborted. Throws once the stream has been down for a minute.
- */
 export async function* subscribeObservabilityLogs(
   options: ObservabilityClientOptions,
   subscribeOptions: ObservabilitySubscribeOptions = {},
@@ -123,7 +101,6 @@ export async function* subscribeObservabilityLogs(
         throw error;
     }
     if (subscribeOptions.signal?.aborted) return;
-    // A stream that went live was up until now, so the outage starts here.
     if (live) {
       retryMs = 500;
       attempt = 0;
@@ -144,8 +121,6 @@ export async function* subscribeObservabilityLogs(
   }
 }
 
-// One socket lifecycle. The exported wrapper above owns reconnect and dedupe.
-// `onLive` fires once the gateway accepts the subscription.
 async function* subscribeObservabilityLogsOnce(
   options: ObservabilityClientOptions,
   subscribeOptions: ObservabilitySubscribeOptions,
@@ -156,7 +131,6 @@ async function* subscribeObservabilityLogsOnce(
 
   if (signal?.aborted) return;
 
-  // Queues and flow-control for the generator ↔ WS event loop bridge.
   const entries: ObservabilityLogEntry[] = [];
   let socketError: Error | null = null;
   let done = false;
@@ -172,8 +146,7 @@ async function* subscribeObservabilityLogsOnce(
     await options.credential(),
   );
 
-  // A socket that opens but never answers would wait forever, out of reach of
-  // the reconnect loop above.
+  // An open socket that never answers would hang beyond the reconnect loop's reach.
   const readyTimer = setTimeout((): void => {
     socketError = new Error(
       `The observability gateway did not answer within ${READY_TIMEOUT_MS / 1000} s.`,
@@ -240,7 +213,6 @@ async function* subscribeObservabilityLogsOnce(
         notify();
         break;
       case "ready":
-        // The gateway is now live; `onLive` above already recorded it.
         break;
       default:
         break;
@@ -280,10 +252,6 @@ async function* subscribeObservabilityLogsOnce(
   }
 }
 
-/**
- * Read one trace's spans by id, from long-term storage, on a socket of its own.
- * Rejects with the gateway's reason when the trace is not in this stage.
- */
 export async function fetchObservabilityTrace(
   options: ObservabilityClientOptions,
   traceId: string,
@@ -294,7 +262,6 @@ export async function fetchObservabilityTrace(
   );
 
   return new Promise<ObservabilitySpanRow[]>((resolve, reject): void => {
-    // The first outcome wins; the socket closes and later events are ignored.
     let settled = false;
     const settle = (outcome: () => void): void => {
       if (settled) return;
@@ -337,10 +304,7 @@ export async function fetchObservabilityTrace(
   });
 }
 
-/**
- * A socket to the stage's observability gateway. Synchronous, so the caller
- * attaches its handlers before any event can fire.
- */
+// Synchronous, so the caller attaches its handlers before any event can fire.
 function openObservabilitySocket(
   options: ObservabilityClientOptions,
   credential: string,

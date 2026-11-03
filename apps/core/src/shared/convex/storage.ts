@@ -1,11 +1,3 @@
-/**
- * Core storage backed by Convex. All calls go through ConvexHttpClient with a
- * deploy-key admin auth header.
- *
- * Hosted account lifecycle normally runs through orgLifecycle. The admin-only
- * core POST /v1/accounts path remains supported for standalone accounts.
- */
-
 import type { ModelMessage } from "ai";
 import type { AccountHookRecord } from "../domain/account-hooks.ts";
 import type {
@@ -285,8 +277,6 @@ const agentDeployments: Storage["agentDeployments"] = {
 };
 
 const crons: Storage["crons"] = {
-  // agent/crons.create inserts the row and registers its schedule in one
-  // transaction, so neither can orphan the other.
   create: async function (accountId, input) {
     return await adminMutation(internal.agent.crons.create, {
       accountId: accountId,
@@ -309,17 +299,12 @@ const crons: Storage["crons"] = {
 
     return docs.map((d) => cronFromConvex(d)!).filter(Boolean);
   },
-  // agent/crons.remove drops the registered schedule and the row together, so
-  // a schedule can never outlive the cron row that names it.
   remove: async function (accountId, cronId) {
     return await adminMutation(internal.agent.crons.remove, {
       accountId: accountId,
       cronId: cronId,
     });
   },
-  // agent/crons.update patches the row and replaces the registered schedule
-  // in one transaction, so a schedule the scheduler rejects never reaches the
-  // stored job.
   update: async function (accountId, cronId, patch) {
     return await adminMutation(internal.agent.crons.update, {
       accountId: accountId,
@@ -438,9 +423,7 @@ function workspaceConfigFromConvex(
     workspaceId: doc._id,
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
-    // A bucket of the workspace's own is reached per account (an assumeRole
-    // mount sends the account's external id) or per workspace (R2 mints its
-    // credentials), so it carries the row's identity.
+    // assumeRole sends the account's external id and R2 mints per workspace: both need the owner.
     config:
       config.storage?.auth?.type === "r2" ||
       config.storage?.auth?.type === "assumeRole"
@@ -517,8 +500,7 @@ const channelRecords: Storage["channelRecords"] = {
     return docs.map((doc) => channelRecordFromConvex(doc)!).filter(Boolean);
   },
   removeAllForAccount: async function (accountId) {
-    // The full list on purpose: soft-deleted tombstones must go with the
-    // account, and listActive never returns them.
+    // Not listActive: soft-deleted tombstones go with the account too.
     const docs = await adminQuery(internal.channel.records.list, {
       accountId: accountId,
     });
@@ -566,8 +548,7 @@ const sandboxConfigs: Storage["sandboxConfigs"] = {
   },
 };
 
-// An account's storage external id never changes once minted, so a
-// bring-your-own-bucket mount asks Convex for it once per process.
+// Never changes once minted, so it is fetched once per process.
 const storageExternalIds = new Map<string, string>();
 
 const workspaceConfigs: Storage["workspaceConfigs"] = {
@@ -589,8 +570,7 @@ const workspaceConfigs: Storage["workspaceConfigs"] = {
   storageExternalId: async function (accountId) {
     const known = storageExternalIds.get(accountId);
     if (known) return known;
-    // Off the client's mutation FIFO: the id is minted once by the backend
-    // itself, so a mount never waits behind other runs' writes for it.
+    // Off the mutation FIFO so a mount never waits behind other runs' writes.
     const externalId = await adminMutation(
       internal.account.storageTrust.externalId,
       { accountId: accountId },
@@ -601,7 +581,7 @@ const workspaceConfigs: Storage["workspaceConfigs"] = {
     return externalId;
   },
   mintR2Credentials: async function (accountId, workspaceId, prefix) {
-    // Off the FIFO too: a mint reads the workspace and writes nothing shared.
+    // Off the FIFO too: a mint writes nothing shared.
     return await adminMutation(
       internal.workspace.configs.r2Credentials,
       { accountId: accountId, workspaceId: workspaceId, prefix: prefix },

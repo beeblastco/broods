@@ -23,7 +23,10 @@ export interface FakeRepo {
   branches: Map<string, string>;
   /** Branches that refuse a direct commit, like a protected `main`. */
   protectedBranches: Set<string>;
-  /** Decrypted Actions secrets, so a case can deploy with what Broods sealed; `env/NAME` for an environment's. */
+  /**
+   * Decrypted Actions secrets, so a case can deploy with what Broods sealed; `env/NAME` for an
+   * environment's.
+   */
   secrets: Map<string, string>;
   /** Environment → its deployment policies (id → branch); null on a plan without environments. */
   environments: Map<string, Map<number, string>> | null;
@@ -391,6 +394,15 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
 
         return json(200, { object: { sha: body.sha } });
       },
+    ],
+    [
+      "GET",
+      /^\/branches$/,
+      ({ repo }): Response =>
+        json(
+          200,
+          [...repo.branches.keys()].map((name) => ({ name: name })),
+        ),
     ],
     [
       "GET",

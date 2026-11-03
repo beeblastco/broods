@@ -33,7 +33,6 @@ COPY packages/convex/model/apiError.ts ./packages/convex/model/apiError.ts
 COPY packages/convex/model/httpJson.ts ./packages/convex/model/httpJson.ts
 COPY packages/convex/model/serviceBridge.ts ./packages/convex/model/serviceBridge.ts
 COPY apps/edge/src/origins.ts ./apps/edge/src/origins.ts
-COPY apps/core/src/shared/object.ts ./apps/core/src/shared/object.ts
 COPY apps/core/src/shared/terminal-ticket.ts ./apps/core/src/shared/terminal-ticket.ts
 COPY apps/gateway ./apps/gateway
 RUN bun build apps/gateway/src/main.ts --compile --minify --outfile /out/gateway

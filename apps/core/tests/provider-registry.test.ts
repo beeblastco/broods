@@ -1,10 +1,3 @@
-/**
- * The provider registry is the one place a model provider is declared. These
- * tests pin it to the shared name list and check that every entry really
- * resolves to a Vercel AI SDK factory, which the registry's declared return
- * type alone cannot prove.
- */
-
 import { describe, expect, it } from "bun:test";
 import { generateText } from "ai";
 import {
@@ -19,7 +12,6 @@ import {
 } from "@broods/convex/model/modelProviders";
 import { normalizeAgentConfig } from "@broods/convex/model/agentRules";
 
-// What a provider refuses to be built without, besides the API key.
 const PROVIDER_REQUIRED_SETTINGS: Partial<
   Record<AccountModelProviderName, Record<string, string>>
 > = {
@@ -90,8 +82,7 @@ describe("model provider registry", () => {
     },
   );
 
-  // The OpenAI-compatible gateway route is pinned in harness.test.ts, which
-  // mocks that factory for every file after it.
+  // The gateway route is pinned in harness.test.ts, whose factory mock leaks into later files.
   it("sends Cloudflare to Workers AI when no gateway is named", async () => {
     const calls: string[] = [];
     const realFetch = globalThis.fetch;
@@ -123,8 +114,7 @@ describe("model provider registry", () => {
     }
   });
 
-  // The gateway's OpenAI-compatible route refuses Workers AI messages whose
-  // content is an array of parts, which every Broods turn sends.
+  // The gateway's OpenAI-compatible route refuses the array-of-parts content every turn sends.
   it("sends a Workers AI model through the gateway's Workers AI route", async () => {
     const requests: Request[] = [];
     const realFetch = globalThis.fetch;
@@ -207,7 +197,6 @@ describe("model provider registry", () => {
   it("passes provider-owned settings through validation untouched", () => {
     const config = normalizeAgentConfig({
       model: { provider: "vertex", modelId: "gemini-2.5-flash" },
-      // `project` and `location` are Vertex's own; broods declares neither.
       provider: {
         vertex: { apiKey: "sk-test", project: "p", location: "us-central1" },
       },
@@ -222,11 +211,7 @@ describe("model provider registry", () => {
   });
 });
 
-// That the three transcribing providers still expose `transcription` is pinned
-// by the type of `PROVIDER_TRANSCRIPTION`, not by a test: a rename fails
-// `bun run check`, which no module mock can hide. What is left to check is that
-// a provider outside that map, or one that cannot be built, loses its
-// transcript instead of throwing into the message it arrived on.
+// Which providers transcribe is pinned by the type of `PROVIDER_TRANSCRIPTION`, not here.
 describe("transcription model resolution", () => {
   it("has none for a provider that ships no speech-to-text", () => {
     expect(
@@ -246,9 +231,7 @@ describe("transcription model resolution", () => {
   });
 });
 
-// The transcription id rides in config.model but is not a language-model
-// setting, so it must not reach the call options the agent's own model is run
-// with. An unknown key there is the provider's error, not ours.
+// A provider errors on an unknown call option, so the transcription id must stay out.
 describe("modelSettingsFromModelConfig", () => {
   it("leaves the transcription model out of the language model's settings", () => {
     expect(

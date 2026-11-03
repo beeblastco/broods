@@ -1,12 +1,7 @@
 /**
- * A scripted stand-in for api.anthropic.com, loaded the same way into both
- * runtimes (Bun: --preload; workerd: imported by entry.ts when
- * BENCH_SCRIPTED_MODEL=1). It plays the complex task step by step, so both
- * runtimes make the exact same tool calls and timing differences belong to the
- * platform, not to the model. BENCH_MODEL_DELAY_MS adds a fixed wait per model
- * call to stand in for real model latency. Every call core makes to Convex is
- * printed as one BENCH_CONVEX line so calls per task can be counted, and every
- * model call as one BENCH_MODEL line naming the runtime that made it.
+ * Scripted api.anthropic.com for both runtimes (Bun --preload, workerd via BENCH_SCRIPTED_MODEL=1),
+ * so both make the same tool calls. BENCH_MODEL_DELAY_MS adds a wait per call. Prints a
+ * BENCH_CONVEX line per Convex call and a BENCH_MODEL line per model call.
  */
 
 const USAGE = { input_tokens: 100, output_tokens: 10 };
@@ -67,9 +62,7 @@ function lastText(request: MessagesRequest): string {
     .slice(0, 400);
 }
 
-// Core hands a subagent's result back to the parent as a new user message
-// that starts like this; the parent's earlier tool calls are compacted out of
-// that follow-up turn.
+// Starts the user message that hands a subagent's result back to its parent.
 const INJECTED_MARK = "Subagent and async agent result injected";
 
 function nextStep(request: MessagesRequest): Step {
@@ -154,7 +147,6 @@ async function scriptedModel(request: MessagesRequest): Promise<Response> {
     );
   }
   const step = nextStep(request);
-  // One line per model call, so a bench can prove which runtime ran the work.
   console.log(
     `BENCH_MODEL ${process.env.SERVICE_NAME ?? "?"} ${step.kind === "tool" ? step.name : step.text.split(" ")[0]}`,
   );

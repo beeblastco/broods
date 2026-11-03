@@ -1,7 +1,3 @@
-/**
- * Shared direct-run stream contracts and SSE parsing helpers.
- */
-
 import type { TextStreamPart, ToolSet } from "ai";
 
 export type AgentStreamPart =
@@ -11,7 +7,6 @@ export type AgentStreamPart =
       output: unknown;
     };
 
-/** Yield the payload of each `data:` line from an SSE response body. */
 export async function* readSseStream(
   body: ReadableStream<Uint8Array>,
 ): AsyncGenerator<string> {
@@ -31,8 +26,7 @@ export async function* readSseStream(
       }
     }
   } finally {
-    // A consumer that stops early leaves the response open; cancel it. After
-    // EOF this is a no-op, and a stream that already errored rejects here.
+    // An early-exiting consumer leaves the response open; this rejects if it already errored.
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }

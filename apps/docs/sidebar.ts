@@ -1,10 +1,6 @@
 import type { SidebarsConfig } from "@docusaurus/plugin-content-docs";
 
-/**
- * Two sidebars, two audiences. `docs` is for people building agents on Broods.
- * `internals` is for people working on Broods itself: contributors, self-hosters
- * and operators. Keep source paths, tables and infra out of `docs`.
- */
+// `docs` is for agent builders, `internals` for contributors: no source or infra in `docs`.
 const sidebars: SidebarsConfig = {
   docs: [
     {

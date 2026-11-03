@@ -1,9 +1,6 @@
 /**
- * Folds bench rows (JSON lines from bench.ts) into one row per arm and level:
- * medians across rounds for times, per-task means for CPU, the worst case for
- * memory and failures. Prints a markdown table and writes the JSON next to it.
- *
- * bun summarize.ts <rows.jsonl>... [--json out.json]
+ * Folds bench.ts rows into one row per arm and level (median times, mean CPU per task, worst memory
+ * and failures); prints markdown, writes JSON. bun summarize.ts <rows.jsonl>... [--json out.json]
  */
 
 import { readFileSync, writeFileSync } from "node:fs";

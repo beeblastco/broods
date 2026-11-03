@@ -4,14 +4,6 @@ import { assertStep, convexResult, type VerifyContext } from "../harness.ts";
 
 type StageScope = { projectId: string; stageId: string };
 
-/**
- * A snapshot is locked to the stage it was taken on. Two stages of one project
- * each hold a sandbox; a production snapshot is registered the way core's
- * snapshot verb records one. A dev-pinned role session, the account key and a
- * CLI deploy are all refused when they point the dev sandbox at it, and the
- * dev sandbox still pins a dev snapshot. Config only, so it needs no model key
- * and no provider account.
- */
 export async function snapshotStage(context: VerifyContext): Promise<void> {
   const sync = new BroodsSyncClient({
     baseUrl: context.edgeUrl,

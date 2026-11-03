@@ -1,11 +1,6 @@
 /**
- * Start-up cost of one request on each runtime: sequential GET /healthz,
- * timed from the client, with the server process's CPU and memory read from
- * /proc around the whole series. On the per-task router every request loads
- * core into a brand-new isolate, so its numbers are the cold start of the
- * "one isolate per task" model; on Bun and on long-lived workerd they are a
- * warm request.
- *
+ * Sequential GET /healthz timings with the server's /proc CPU and memory; on the per-task router
+ * every request is a cold isolate, on Bun and long-lived workerd a warm one.
  * bun cold-start.ts --url http://127.0.0.1:4321 --pid N --count 30 --label isolate
  */
 
@@ -38,7 +33,6 @@ for (let i = 0; i < count; i++) {
   const isolate = response.headers.get("x-isolate");
   if (isolate) isolates.add(isolate);
 }
-// Let the runtime finish any work the last request left behind before reading CPU.
 await Bun.sleep(1000);
 const after = sample(pid);
 const sorted = [...times].sort((a, b) => a - b);

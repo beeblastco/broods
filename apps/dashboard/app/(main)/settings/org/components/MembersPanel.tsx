@@ -1,16 +1,5 @@
 "use client";
 
-/**
- * Organization › Members: one row per member with their role, and a panel
- * for the selected one. The role is a menu of every role with what it grants
- * for anyone holding `members:write`; for everyone else it reads plain with a
- * lock. The owner's row never changes here.
- *
- * Laid out like Monitoring: a toolbar, a flush table whose headers sort on
- * click, and a detail panel with the facts, the role picker, and the danger
- * zone at the end.
- */
-
 import {
   DataTable,
   DataTableBody,
@@ -88,35 +77,23 @@ type Tier = Member["role"];
 type Column = "name" | "email" | "role" | "joined" | "invitedBy";
 type Field = (typeof QUERY_FIELDS)[number];
 
-/**
- * What the invite dialog asks for: the invite itself, or with every seat
- * taken, the owner's payment for one more seat (`seat`), the owner's upgrade
- * of a free org (`upgrade`), the owner's fix of a failed payment in the
- * portal (`billing`), or anyone else's word to the owner (`ask`).
- */
 type InviteStep = "invite" | "seat" | "upgrade" | "billing" | "ask";
 
-/** What picking a role sets: a tier, or a custom role on the member tier. */
 type RolePick =
   | { tier: "admin" | "member"; roleId?: undefined }
   | { tier: "member"; roleId: Id<"orgRoles"> };
 
-/** One role a member may be given, as the picker and the invite form list it. */
 interface RoleOption {
-  /** The tier, or the custom role's id. */
   value: string;
   label: string;
   description: string;
   pick: RolePick;
 }
 
-// The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["role"] as const;
 
-// Six columns of short text; below this the panel would wrap them.
 const TABLE_MIN_WIDTH = 640;
 
-// The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
 const MEMBER_ID = parseAsId<"orgMembers">();
 
 const NO_ROWS: Member[] = [];
@@ -282,11 +259,6 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
   );
 }
 
-/**
- * The selected member: their facts, the role picker, and the danger zone.
- * The role is a menu for anyone holding `members:write`; the owner's role
- * never changes here.
- */
 function MemberPanel({
   member,
   options,
@@ -370,10 +342,6 @@ function MemberPanel({
   );
 }
 
-/**
- * The member's role as a button; its menu lists every role with what it
- * grants, marks the current one, and links to the Roles tab.
- */
 function RolePicker({
   member,
   options,
@@ -448,7 +416,6 @@ function RolePicker({
   );
 }
 
-/** One role in the picker: its name over what it grants; the current one reads active. */
 function RoleItem({
   option,
   active,
@@ -475,16 +442,6 @@ function RoleItem({
   );
 }
 
-/**
- * Adds an existing user by email with a role. On the managed service an
- * invite needs a developer seat from the owner's pool, shared by every org
- * they own: someone already seated in another of them joins free. With none
- * free, the owner pays for one more seat and the invite follows, or upgrades
- * to Pro first; anyone else asks the owner. For the owner the seat count
- * picks the step up front, and the invite's 402 picks it when the count was
- * stale; anyone else learns it from the 402 alone, since the owner's seats
- * are theirs to see. Nobody but the owner is ever charged.
- */
 function InviteDialog({
   org,
   seats,
@@ -517,8 +474,7 @@ function InviteDialog({
         roleId: pick.roleId,
       });
     let seatTaken = false;
-    // The invite goes first, so a wrong email or a seat freed meanwhile
-    // costs nothing; only its 402 leads to the payment.
+    // Invite first, so a wrong email or a seat freed meanwhile costs nothing.
     const done = await run(async () => {
       try {
         await invite();
@@ -537,7 +493,6 @@ function InviteDialog({
     else if (done) onClose();
   }
 
-  // Checkout for a free org, the portal for a failed payment; both come back here.
   async function openStripe(): Promise<void> {
     await run(async () => {
       const back = window.location.href;
@@ -652,7 +607,6 @@ function InviteDialog({
   );
 }
 
-/** Why the invite needs more than an email, in the words of its step. */
 function SeatNotice({
   seats,
   step,
@@ -716,11 +670,7 @@ function SeatNotice({
   );
 }
 
-/**
- * The invite dialog's step: the owner's seat count, or a 402 the invite got,
- * says whether a seat is free. Anyone else does not see the owner's seats,
- * so only the 402 tells them.
- */
+// Only the owner sees the seats; anyone else learns from the invite's 402.
 function inviteStep(seats: OrgSeats | undefined, refused: boolean): InviteStep {
   if (!seats) return "invite";
   if (!seats.isOwner) return refused ? "ask" : "invite";
@@ -739,11 +689,6 @@ function roleName(member: Member): string {
   return member.roleName ?? TIER_LABEL[member.role];
 }
 
-/**
- * The roles a member may be given, with what each grants, in the Roles tab's
- * order: the admin and member tiers, then every custom role. The owner's
- * tier is the organization's to set.
- */
 function roleOptions(roles: Role[]): RoleOption[] {
   return roles.flatMap((role): RoleOption[] => {
     if (role.kind === "custom") {

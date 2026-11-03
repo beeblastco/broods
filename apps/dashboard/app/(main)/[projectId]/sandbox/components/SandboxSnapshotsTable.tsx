@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Read-only. A snapshot is captured from an instance, or registered by the
- * image pipeline.
- */
-
 import {
   DataTable,
   DataTableBody,
@@ -28,10 +23,8 @@ import { useQueryState } from "nuqs";
 import { SandboxSnapshotSheet } from "./SandboxSnapshotSheet";
 import { formatProvider, relativeTime, SNAPSHOT_TONE } from "./sandboxFormat";
 
-// The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["provider", "status", "stage"] as const;
 
-// The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
 const SNAPSHOT_ID = parseAsId<"sandboxSnapshots">();
 
 type Snapshot = Doc<"sandboxSnapshots"> & { stageName?: string };
@@ -46,7 +39,6 @@ type Column =
   | "created"
   | "lastUsed";
 
-// What a column sorts a snapshot by.
 const SORT_KEY: Record<Column, (snapshot: Snapshot) => SortKey> = {
   name: (snapshot) => snapshot.name,
   status: (snapshot) => snapshot.status,

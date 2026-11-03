@@ -1,10 +1,13 @@
 "use client";
 
+import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
+import { InlineEdit } from "@/app/components/ui/inline-edit";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
 import type { WorkspaceSandboxState } from "@/app/lib/canvasRuntimeRefs";
 import type { MemberStatus } from "@/app/lib/memberStatus";
+import { observeResize } from "@/app/lib/observeResize";
 import { cn } from "@/app/lib/utils";
 import type { FrameSlot } from "@broods/convex/model/canvasFrames";
 import {
@@ -14,26 +17,21 @@ import {
 } from "@broods/convex/model/canvasLayout";
 import { Handle, Position, useConnection, useStore } from "@xyflow/react";
 import { Globe, Slash } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 
 export type BaseNodeData = {
   label: string;
   status?: "running" | "idle" | "error";
   agentConfigId?: string;
   resourceId?: string;
-  /** Owner cached by the last canvas save; `useNodeOwnership` prefers the live row. */
   managedBy?: string;
   mountName?: string;
   description?: string;
   config?: Record<string, unknown>;
   properties?: { color: string };
-  /** Pulled out of its group by hand: it draws as a card, never as a chip. */
   ungrouped?: boolean;
-  /** Where a drop put it, and in which group; unset means the sort decides. */
   frameSlot?: FrameSlot;
-  // CLI-resolved forced read-only state for a workspace node (e.g. a `sandbox: null`
-  // ref with no other writer). The pure-canvas graph can't express it, so analysis
-  // honors this flag over the topology-inferred "inherited" state.
+  /** Set by the CLI (a `sandbox: null` ref); analysis prefers it over the inferred state. */
   readOnly?: boolean;
 };
 
@@ -53,16 +51,13 @@ export const agentStatusConfig: Record<
   unhealthy: { color: "bg-destructive", text: "Unhealthy" },
 };
 
-/** Text color of a workspace card's state line, per state. */
 const STATE_TEXT_TONE: Record<WorkspaceSandboxState["kind"], string> = {
   inherited: "text-muted-foreground",
   override: "text-canvas-mount/90",
   readonly: "text-warning/90",
 };
 
-// The header's counter-scale from the viewport zoom, clamped and rounded to
-// two decimals in the selector so a node renders only when its visible size
-// changes, not on every zoom frame.
+// Rounded here, so a node renders on a visible size change, not on every zoom frame.
 const scaleSelector = (state: {
   transform: [number, number, number];
 }): number =>
@@ -86,20 +81,18 @@ export function BaseNode({
   data: BaseNodeData;
   icon: React.ReactNode;
   agentStatus?: AgentHealthStatus;
-  /** State shown once the node is wired: a machine's connection, an MCP server or skill's enabled flag, a workspace's mount. */
   liveStatus?: Pick<MemberStatus, "color" | "label">;
-  /** Optional secondary row rendered under the label (e.g. sandbox provider badge). */
   subtitle?: React.ReactNode;
-  /** Optional list of `+ feature` rows rendered between label and status pill. */
   featureRows?: { key: string; icon?: React.ReactNode; label: string }[];
-  /** Render left/right handles for mount connections (workspace ↔ sandbox). */
   showSideHandles?: boolean;
 }): React.JSX.Element {
   const scale = useStore(scaleSelector);
+  const { canWrite, onRenameNode, onRenaming, renamingNodeId } =
+    useCanvasFrames();
+  const renaming = renamingNodeId === id;
 
   const sideHandlesConnectable = useSideHandlesConnectable(nodeType);
 
-  // Infra badges: workspace effective-sandbox state (B) and shared-agent count (F).
   const infraAnalysis = useInfraAnalysis();
   const workspaceState =
     nodeType === "workspace" ? infraAnalysis.workspaceStates[id] : undefined;
@@ -108,25 +101,17 @@ export function BaseNode({
       ? (infraAnalysis.agentRefCounts[id] ?? 0)
       : 0;
 
-  // The header content is counter-scaled to stay legible when zoomed out, but CSS
-  // transforms don't reserve layout space, so we measure its unscaled height and
-  // reserve `height * scale` on a wrapper, keeping it clear of the status pill.
-  const contentRef = useRef<HTMLDivElement>(null);
+  // A transform reserves no space: measure the unscaled header, reserve height * scale.
   const [contentHeight, setContentHeight] = useState<number | null>(null);
-  useEffect(() => {
-    const el = contentRef.current;
-    if (!el) return;
+  const measureContent = useCallback(
+    (el: HTMLDivElement | null) =>
+      el
+        ? observeResize(el, () => setContentHeight(el.offsetHeight))
+        : undefined,
+    [],
+  );
 
-    const observer = new ResizeObserver(() =>
-      setContentHeight(el.offsetHeight),
-    );
-    observer.observe(el);
-
-    return () => observer.disconnect();
-  }, []);
-
-  // Read from the one shared traversal. Walking the graph here instead ran a
-  // per-node store selector on every ReactFlow update, drag frames included.
+  // From the shared traversal: a per-node graph walk ran on every ReactFlow update.
   const isConnectedToAgent =
     nodeType === "agent" || (infraAnalysis.connectedToAgent[id] ?? false);
 
@@ -154,17 +139,30 @@ export function BaseNode({
     ? "border-destructive/40 hover:border-destructive/60"
     : "border-border hover:border-foreground/25";
   const stateText = stateLine(workspaceState);
-  // Everything under the name on one line: the subtitle, each feature, a
-  // workspace's mount state, then how many agents share it.
-  const details: React.ReactNode[] = [
-    subtitle,
-    ...(featureRows ?? []).map((row) => row.label),
-    workspaceState && stateText !== null ? (
-      <span className={STATE_TEXT_TONE[workspaceState.kind]}>{stateText}</span>
-    ) : null,
-    sharedAgentCount >= 2 ? `shared ×${sharedAgentCount}` : null,
-    data.ungrouped === true ? "out of group" : null,
-  ].filter((part) => part !== undefined && part !== null);
+  const details: Array<{ key: string; part: React.ReactNode }> = [
+    { key: "subtitle", part: subtitle },
+    ...(featureRows ?? []).map((row) => ({
+      key: `feature:${row.key}`,
+      part: row.label,
+    })),
+    {
+      key: "state",
+      part:
+        workspaceState && stateText !== null ? (
+          <span className={STATE_TEXT_TONE[workspaceState.kind]}>
+            {stateText}
+          </span>
+        ) : null,
+    },
+    {
+      key: "shared",
+      part: sharedAgentCount >= 2 ? `shared ×${sharedAgentCount}` : null,
+    },
+    {
+      key: "ungrouped",
+      part: data.ungrouped === true ? "out of group" : null,
+    },
+  ].filter(({ part }) => part !== undefined && part !== null);
   const headerScale = fittedScale(scale, contentHeight);
 
   return (
@@ -174,10 +172,7 @@ export function BaseNode({
       className={`relative w-44 h-(--card-height) flex flex-col rounded-md border bg-card transition duration-200 hover:shadow-md ${borderClass}`}
       style={{ "--card-height": `${NODE_HEIGHT}px` }}
     >
-      {/* The explicit id matters: while connecting, xyflow resolves an id-less hovered
-                handle to the node's FIRST handle (sources before targets) for the snap preview,
-                which is the left side handle. The line would visually snap to the side even
-                though the connection itself lands here on top. */}
+      {/* Keeps its id: xyflow previews an id-less handle's snap at the first one, a side. */}
       <Handle
         id="top"
         type="target"
@@ -186,9 +181,7 @@ export function BaseNode({
         className="bg-transparent! w-2.5! h-2.5! border-transparent!"
       />
 
-      {/* Agents source downward edges to services. Declared before the side handles so this
-                no-id handle is the first source bound. xyflow resolves a handle-less edge to the
-                first source handle, so plain agent→service edges land here, not on a side. */}
+      {/* Before the side handles: xyflow lands a handle-less edge on the first source. */}
       {nodeType === "agent" && (
         <Handle
           type="source"
@@ -200,9 +193,7 @@ export function BaseNode({
 
       {showSideHandles && (
         <>
-          {/* Held 48px down (SIDE_HANDLE_TOP in canvasEdgeRoutes.ts), so side edges between
-              cards of different heights in one row run straight. An MCP card's sides only
-              anchor its drawn runs-on edge; nothing mounts there. */}
+          {/* top-12 is SIDE_HANDLE_TOP (canvasEdgeRoutes.ts); MCP sides only anchor runs-on. */}
           <Handle
             id="left"
             type="source"
@@ -231,9 +222,8 @@ export function BaseNode({
               : undefined,
         }}
       >
-        {/* Narrowed by the same scale, so the scaled header still ends at the card's edge. */}
         <div
-          ref={contentRef}
+          ref={measureContent}
           data-slot="card-header"
           className="px-3 pt-2.5 origin-top-left scale-(--node-scale) w-(--content-width)"
           style={{
@@ -241,7 +231,12 @@ export function BaseNode({
             "--node-scale": headerScale,
           }}
         >
-          <div className="flex items-center gap-1.5 min-w-0">
+          <div
+            className={cn(
+              "flex items-center gap-1.5 min-w-0 text-xs font-medium",
+              renaming && "nodrag nopan",
+            )}
+          >
             {nodeType === "agent" ? (
               <DitherAvatarSVG
                 seed={data.label}
@@ -256,18 +251,35 @@ export function BaseNode({
             ) : (
               <span className="text-muted-foreground shrink-0">{icon}</span>
             )}
-            <span
-              // One line, so every card is the same height; hover reads the whole name.
-              className="text-xs font-medium text-foreground truncate min-w-0"
-              title={data.label}
-            >
-              {data.label}
-            </span>
+            {renaming && onRenameNode && onRenaming ? (
+              <InlineEdit
+                value={data.label}
+                label={`Rename ${data.label}`}
+                returnFocusTo=".react-flow__node"
+                onCommit={(label) => {
+                  onRenaming(null);
+                  onRenameNode(id, label);
+                }}
+                onCancel={() => onRenaming(null)}
+              />
+            ) : (
+              <span
+                className="text-xs font-medium text-foreground truncate min-w-0"
+                title={data.label}
+                onDoubleClick={
+                  canWrite && onRenameNode && onRenaming
+                    ? () => onRenaming(id)
+                    : undefined
+                }
+              >
+                {data.label}
+              </span>
+            )}
           </div>
           {details.length > 0 && (
             <div className="mt-1 truncate text-2xs text-muted-foreground">
-              {details.map((part, index) => (
-                <span key={index}>
+              {details.map(({ key, part }, index) => (
+                <span key={key}>
                   {index > 0 && " · "}
                   {part}
                 </span>
@@ -284,7 +296,6 @@ export function BaseNode({
         >
           <div className={`size-1.5 rounded-full ${statusColor}`} />
           <span className="text-2xs text-muted-foreground">{statusText}</span>
-          {/* Down here, not in the title's corner, so a long name keeps the full width. */}
           {(nodeType === "agent" || nodeType === "sandbox") && (
             <NetworkBadge on={isNetworkOn(nodeType, data)} />
           )}
@@ -294,11 +305,6 @@ export function BaseNode({
   );
 }
 
-/**
- * Whether a node's network switch is on. A sandbox reads egress off
- * `network.mode` (allow-all or restricted is on, deny-all and unset are off),
- * which is how core models it; an agent reads public access, off by default.
- */
 export function isNetworkOn(nodeType: string, data: BaseNodeData): boolean {
   if (nodeType !== "sandbox") return data.config?.publicAccess === true;
   const mode = (data.config?.network as { mode?: string } | undefined)?.mode;
@@ -306,7 +312,6 @@ export function isNetworkOn(nodeType: string, data: BaseNodeData): boolean {
   return mode === "allow-all" || mode === "restricted";
 }
 
-/** The globe on a sandbox or agent's status row, slashed while it is off. */
 export function NetworkBadge({ on }: { on: boolean }): React.JSX.Element {
   return (
     <span className="relative ml-auto inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-border/70 bg-background/90">
@@ -323,15 +328,8 @@ export function NetworkBadge({ on }: { on: boolean }): React.JSX.Element {
   );
 }
 
-/**
- * Whether a node's side handles accept the connection being drawn. Side
- * handles must stay mounted at all times: existing mount/subagent edges attach
- * to them, and ReactFlow drops any edge whose handle disappears (edges used to
- * vanish mid-drag). So instead of unmounting them, mid-drag only the sides
- * matching the drag's intent accept the drop: workspace/sandbox sides serve
- * mounts; agent sides serve subagent (agent↔agent) links. Plain agent→service
- * edges still land on the top handle.
- */
+// Side handles never unmount, since ReactFlow drops an edge whose handle goes:
+// mid-drag, agent sides take only subagent links and the others only mounts.
 export function useSideHandlesConnectable(nodeType: string): boolean {
   return useConnection((connection) => {
     if (!connection.inProgress) return true;
@@ -340,21 +338,13 @@ export function useSideHandlesConnectable(nodeType: string): boolean {
       connection.fromHandle?.id === "left" ||
       connection.fromHandle?.id === "right";
 
-    // Gate by THIS node's type so the two side-handle relationships stay isolated: an agent's
-    // sides serve only subagent links (another agent dragging from a side), and a
-    // workspace/sandbox's sides serve only mounts. This way an agent never accepts an edge
-    // during a mount drag, and a service never does during a subagent drag.
     if (nodeType === "agent") return fromType === "agent" && fromSide;
 
     return fromType === "workspace" || fromType === "sandbox";
   });
 }
 
-/**
- * The header's counter-scale, grown only as far as the measured header still
- * fits above the status row. The rows never wrap, so the measurement does not
- * change with the scale and cannot feed back into it.
- */
+// Rows never wrap, so the measured height cannot feed back into the scale.
 function fittedScale(scale: number, contentHeight: number | null): number {
   if (scale <= 1 || contentHeight === null || contentHeight <= 0) return scale;
 
@@ -364,7 +354,6 @@ function fittedScale(scale: number, contentHeight: number | null): number {
   );
 }
 
-/** The text of a workspace card's state line, or null for any other card. */
 function stateLine(state: WorkspaceSandboxState | undefined): string | null {
   if (!state) return null;
 

@@ -1,11 +1,3 @@
-/**
- * What the executors behind a platform Cloudflare Worker share: the bridge
- * for `cloudflare` and the V8 Worker for `worker`. Both reach their
- * Worker over bearer-authenticated HTTPS from core's env, and both reserve a
- * persistent sandbox as a claim on an id, since the Worker-side resource
- * exists as soon as it is named. Provider-specific calls stay in each executor.
- */
-
 import { optionalEnv } from "../../shared/env.ts";
 import {
   deleteSandboxInstance,
@@ -32,12 +24,9 @@ const REVALIDATE_MS = 60_000;
 const MAX_HELD = 10_000;
 
 /**
- * Reservations this process already resolved, by provider and key. The process
- * that runs a sandbox's commands keeps the key-to-id mapping in memory, so a
- * command on a held reservation makes no Convex call; once a hold is
- * `REVALIDATE_MS` old, the next command takes the booking trip again. A key
- * released or repointed elsewhere, or an account no longer active, is noticed
- * then; one released here drops out at once.
+ * Reservations this process resolved, by provider and key, so a held one makes no Convex call.
+ * After `REVALIDATE_MS` the next command books again, noticing a key released or repointed
+ * elsewhere or an inactive account; one released here drops out at once.
  */
 const held = new Map<string, { id: string; checkedAt: number }>();
 
@@ -60,13 +49,11 @@ export function resetHeldReservationsForTests(): void {
   held.clear();
 }
 
-/** A platform Worker's URL and the bearer every call carries. */
 export interface PlatformWorkerConnection {
   baseURL: string;
   apiKey: string;
 }
 
-/** A non-2xx answer from a platform Worker, with its status for the caller to branch on. */
 export class PlatformWorkerError extends Error {
   readonly status: number;
 
@@ -76,7 +63,6 @@ export class PlatformWorkerError extends Error {
   }
 }
 
-/** One authenticated call to a platform Worker; a non-2xx answer throws `PlatformWorkerError`. */
 export async function callPlatformWorker(
   connection: PlatformWorkerConnection,
   label: string,
@@ -106,10 +92,7 @@ export async function callPlatformWorker(
   return response;
 }
 
-/**
- * The platform Worker from core's env. Every call carries the key, so plain
- * HTTP is only for a local `wrangler dev` on loopback.
- */
+// Every call carries the key, so plain HTTP is only for a local `wrangler dev` on loopback.
 export function platformWorkerConnection(
   urlEnv: string,
   keyEnv: string,
@@ -128,12 +111,6 @@ export function platformWorkerConnection(
   return { baseURL: baseURL.replace(/\/+$/, ""), apiKey: apiKey };
 }
 
-/**
- * Drops a reservation's Worker-side resource with `drop`, then the
- * reservation. A run's mirror upsert may still be queued, so it is waited
- * for first: the row the caller removes next must not be written back after
- * the resource is gone.
- */
 export async function releasePlatformSandbox(
   provider: SandboxProvider,
   accountId: string | undefined,
@@ -148,23 +125,15 @@ export async function releasePlatformSandbox(
     request.expectedExternalId ?? (await getSandboxExternalId(provider, key));
   if (!id) return;
   await drop(id);
+  // Drain queued mirror upserts so none writes the row back after the delete.
   await queueMirrorWrite(id, async (): Promise<void> => {});
   await deleteSandboxInstance(provider, key, accountId, id);
   // A command that came in while this ran may have held the id again.
   if (held.get(entry)?.id === id) held.delete(entry);
 }
 
-/**
- * The reservation under `key`: the existing id, else a fresh claim, in one
- * Convex round trip. The Worker-side resource exists as soon as it is named,
- * so reserving is only the claim, and the loser of a race takes the winner's
- * id and creates nothing. An existing reservation's deadline is refreshed
- * before the command so the sweeper cannot take the row from under it.
- * Without the account (the dashboard console carries none) an existing
- * reservation is reused by key alone and nothing new is claimed, so the run
- * is ephemeral. Once resolved, the reservation is held in memory and the
- * commands of the next `REVALIDATE_MS` skip Convex (`held`).
- */
+// A Worker-side resource exists once named, so reserving is just the claim. Reuse goes by key
+// alone (the console has no account) and refreshes the deadline so the sweeper keeps off it.
 export async function reservePlatformSandbox(
   provider: SandboxProvider,
   accountId: string | undefined,

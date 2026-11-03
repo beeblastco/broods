@@ -1,9 +1,5 @@
-/**
- * Authenticated browser bridge for `broods login`. Sets up the caller's org on
- * a first login, mints a one-time code and redirects to the CLI's localhost
- * callback. A failure once the callback is known goes back to it as `error`
- * (with `state`), so the CLI stops waiting at once; a bad link renders here.
- */
+// `broods login`'s browser step. Once the callback is known, a failure goes back to it as
+// `error`, so the CLI stops waiting at once.
 
 import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
@@ -49,9 +45,6 @@ export default async function CliAuthStartPage({
   try {
     const code = await mintLoginCode(accessToken, codeChallenge);
     target.searchParams.set("code", code);
-    // BROODS_BASE_URL advertises the unified public domain (the gateway,
-    // which proxies /v1/account/* to Convex); without it we point the CLI at
-    // the Convex deployment directly.
     target.searchParams.set("base_url", advertisedBaseUrl());
   } catch (error) {
     console.error("[cli-auth] broods login failed", error);
@@ -62,7 +55,6 @@ export default async function CliAuthStartPage({
   redirect(target.toString());
 }
 
-/** Public base URL the CLI should call for the /v1/account/* control-plane routes. */
 function advertisedBaseUrl(): string {
   const explicit = process.env.BROODS_BASE_URL;
   if (explicit) {
@@ -93,12 +85,6 @@ function isLocalCallback(value: string): boolean {
   }
 }
 
-/**
- * Bootstraps the caller's org the way the dashboard home does, provisions its
- * API account on a first login, then mints the one-time code. A CLI signup
- * never sees the provisioned account key; it can be rotated under
- * Organization > API Access.
- */
 async function mintLoginCode(
   accessToken: string,
   codeChallenge: string,
@@ -108,16 +94,14 @@ async function mintLoginCode(
 
   const client = new ConvexHttpClient(convexUrl);
   client.setAuth(accessToken);
-  // A login right after signup can beat the WorkOS webhook that creates the
-  // user row; sync it before bootstrapping.
+  // A login right after signup can beat the WorkOS webhook that creates the user row.
   await client.action(api.user.ensureSynced, {});
   const org = await client.mutation(api.org.orgs.getOrCreate, {});
   if (org.needsProvision) {
     try {
       await client.action(api.org.lifecycle.provision, { orgId: org.orgId });
     } catch (error) {
-      // Another tab may have provisioned first; only a still-missing account
-      // is a failure.
+      // Another tab may have provisioned first; only a still-missing account is a failure.
       if ((await client.mutation(api.org.orgs.getOrCreate, {})).needsProvision)
         throw error;
     }

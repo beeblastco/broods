@@ -1,18 +1,8 @@
-/**
- * The slice of the Matrix client-server API this process touches, over plain
- * fetch. Deliberately narrow, like `discord.ts` in the Discord forwarder: core
- * parses message content, so events here carry only what routing and crypto
- * read and pass the rest through untouched.
- */
-
 const API_PREFIX = "/_matrix/client/v3";
-/** Deadline for a call whose caller passes no signal, and the least a `/sync` waits. */
 const REQUEST_TIMEOUT_MS = 30_000;
-/** How long past the long-poll timeout a sync may hang before it is aborted. */
 const SYNC_GRACE_MS = 15_000;
 const TYPING_TIMEOUT_MS = 30_000;
 
-/** A timeline event as `/sync` serves it, encrypted or not. */
 export interface RoomEvent {
   content: Record<string, unknown>;
   event_id: string;
@@ -54,12 +44,10 @@ export interface SyncResponse {
 }
 
 interface WhoAmI {
-  /** Absent for application-service tokens. */
   device_id?: string;
   user_id: string;
 }
 
-/** One account's view of its homeserver. Holds no sync state. */
 export class MatrixClient {
   private readonly accessToken: string;
   private readonly apiUrl: string;
@@ -69,7 +57,6 @@ export class MatrixClient {
     this.apiUrl = normalizeApiUrl(apiUrl);
   }
 
-  /** User id to display name for everyone joined; no display name maps to undefined. */
   async joinedMembers(
     roomId: string,
     signal?: AbortSignal,
@@ -90,7 +77,6 @@ export class MatrixClient {
     return members;
   }
 
-  /** JSON string in, JSON string out: the crypto machine hands over raw bodies. */
   async rawRequest(
     method: string,
     path: string,
@@ -104,8 +90,7 @@ export class MatrixClient {
         "Content-Type": "application/json",
       },
       method: method,
-      // The account's token rides every call, and the client-server API never
-      // redirects, so a redirect here would hand it to another host.
+      // Matrix never redirects; following one would hand the access token to another host.
       redirect: "error",
       signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -131,7 +116,6 @@ export class MatrixClient {
     return true;
   }
 
-  /** Returns the new event id. */
   async sendEvent(
     roomId: string,
     type: string,
@@ -166,8 +150,7 @@ export class MatrixClient {
       timeout: String(options.timeoutMs),
     });
     if (options.since !== undefined) query.set("since", options.since);
-    // Floored: the first sync asks for timeout 0 yet still has to build a
-    // response for every joined room.
+    // Floored: a timeout-0 first sync still builds a response for every joined room.
     const signal = AbortSignal.any([
       options.signal,
       AbortSignal.timeout(
@@ -222,11 +205,6 @@ export class MatrixError extends Error {
   }
 }
 
-/**
- * Trailing slashes are not part of a homeserver's identity. The supervisor
- * compares two planes' URLs with this, so an account is not started twice for
- * one homeserver written two ways.
- */
 export function normalizeApiUrl(apiUrl: string): string {
   return apiUrl.replace(/\/+$/, "");
 }
@@ -236,8 +214,6 @@ function toMatrixError(status: number, text: string): MatrixError {
     {};
   try {
     const parsed: unknown = JSON.parse(text);
-    // A body of `null` parses, and reading `errcode` off it would throw where
-    // this function exists to turn a bad response into an error.
     if (typeof parsed === "object" && parsed !== null) {
       fields = parsed;
     }

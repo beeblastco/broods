@@ -36,9 +36,7 @@ import { useRouter } from "next/navigation";
 import { analytics } from "@/app/lib/analytics";
 import { useEffect, useRef, useState } from "react";
 
-/** Generate a random project name like "bold-panda-427". */
 export async function randomProjectName(): Promise<string> {
-  // Load the name dictionaries only when the dialog is opened.
   const { uniqueNamesGenerator, adjectives, animals, NumberDictionary } =
     await import("unique-names-generator");
   const numberDict = NumberDictionary.generate({ min: 100, max: 999 });
@@ -56,11 +54,9 @@ const SOURCES = ["empty", "import", "new"] as const;
 type Source = (typeof SOURCES)[number];
 
 /**
- * Dialog that creates a new project, Railway-style: empty, imported from a
- * GitHub repo (linked so a push deploys), or with a new repo Broods creates
- * through GitHub. Empty lands on the Development canvas; a repo lands on the
- * project's Git settings. The GitHub starts show only when the deployment has
- * the GitHub App.
+ * Creates a project: empty (lands on the Development canvas), imported from a GitHub repo linked
+ * so a push deploys, or with a new repo (both land on Git settings). The GitHub starts show only
+ * when the deployment has the GitHub App.
  */
 export function CreateProjectDialog({
   open,
@@ -87,7 +83,9 @@ export function CreateProjectDialog({
   const [name, setName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const nameInput = useRef<HTMLInputElement>(null);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- async name dictionary import
   useEffect(() => {
     if (!open) return;
 
@@ -189,7 +187,7 @@ export function CreateProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" initialFocus={nameInput}>
         <DialogHeader>
           <DialogTitle>Create project</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -242,12 +240,12 @@ export function CreateProjectDialog({
               {source === "new" ? "Project and repo name" : "Project name"}
             </Label>
             <Input
+              ref={nameInput}
               id="create-project-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               // A retry reuses the project already made under this name.
               disabled={createdId !== null}
-              autoFocus
             />
             {source === "new" && github && (
               <NewRepoFields

@@ -1,36 +1,16 @@
-/**
- * Prefixes of the three user-held keys, the random token generator every
- * Convex credential is minted with, plus the SHA-256 hashing every
- * default-runtime Convex path uses to store a bearer token as a digest
- * instead of plaintext. Every Broods credential starts with `b`, so people
- * and secret scanners can tell it from another vendor's key.
- */
-
-/** An account key: the whole account. Minted at provisioning and rotation. */
+// Every Broods credential starts with `b`, so people and secret scanners can tell it apart.
 export const ACCOUNT_KEY_PREFIX = "bask_";
-/** A project key: one project and stage, CLI sync. Minted by `deployKeys`. */
 export const PROJECT_KEY_PREFIX = "bpdk_";
-/** A runtime key: one project and stage, runs agents. Minted by `agent/deployments`. */
 export const RUNTIME_KEY_PREFIX = "bsk_";
 
-/**
- * @returns plaintext account key to show once to the caller
- */
 export function createAccountSecret(): string {
   return randomToken(ACCOUNT_KEY_PREFIX);
 }
 
-/** The masked label a key list shows: the prefix and the last four characters. */
 export function keyHint(prefix: string, token: string): string {
   return `${prefix}…${token.slice(-4)}`;
 }
 
-/**
- * Generate a prefixed random bearer credential (base64url payload).
- * @param prefix public token prefix, e.g. "bsts_"
- * @param bytes entropy size
- * @returns plaintext token to show once to the caller
- */
 export function randomToken(prefix: string, bytes = 32): string {
   const random = crypto.getRandomValues(new Uint8Array(bytes));
   let binary = "";
@@ -43,11 +23,6 @@ export function randomToken(prefix: string, bytes = 32): string {
   return `${prefix}${base64url}`;
 }
 
-/**
- * SHA-256 hex digest of a UTF-8 string.
- * @param value string to digest
- * @returns lowercase SHA-256 hex digest
- */
 export async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -57,10 +32,6 @@ export async function sha256Hex(value: string): Promise<string> {
   return hexFromBytes(new Uint8Array(digest));
 }
 
-/**
- * @param bytes bytes to encode
- * @returns lowercase hex string
- */
 export function hexFromBytes(bytes: Uint8Array): string {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

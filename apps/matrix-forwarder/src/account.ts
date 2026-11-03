@@ -1,13 +1,3 @@
-/**
- * One Matrix account: its `/sync` long-poll, its device's crypto store, and the
- * sends core routes back through it.
- *
- * The store lives under `${MATRIX_STORE_DIR}/<sha256 of user|device>/`, next to
- * the sync token and the outbox. Keying it on the device, not the token, means
- * a token that rotates but keeps its device reuses its keys, and a new device
- * starts clean.
- */
-
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -35,11 +25,8 @@ import { Outbox, type OutboxEntry, type OutboxEvent } from "./outbox.ts";
 import { sendRoomEvent } from "./send.ts";
 
 const BACKOFF_CEILING_MS = 60_000;
-/** How long a room's display names are used before they are fetched again. */
 const MEMBER_NAMES_TTL_MS = 5 * 60_000;
 const POLL_TIMEOUT_MS = 30_000;
-// Every joined room, messages only. State, receipts and presence would wake the
-// long-poll for nothing core reads.
 const SYNC_FILTER: SyncFilter = {
   account_data: { types: [] },
   presence: { types: [] },
@@ -51,11 +38,7 @@ const SYNC_FILTER: SyncFilter = {
   },
 };
 
-/**
- * Store path to a promise that settles once its current holder has closed it.
- * Process-wide because two accounts can name one device: a re-pointed account
- * starts before the old one has finished stopping.
- */
+// Process-wide: a re-pointed account can open a device's store before the old one closed it.
 const storeHolders = new Map<string, Promise<void>>();
 
 export type AccountState =
@@ -69,16 +52,10 @@ export interface MatrixAccountOptions {
   accessToken: string;
   apiUrl: string;
   storeDir: string;
-  /**
-   * The webhooks to deliver to, read at each delivery: reconcile replaces them
-   * while the account runs.
-   */
   targets: () => readonly ForwardTarget[];
-  /** How long one webhook POST may take; `forwardRoomEvent`'s default when unset. */
   webhookTimeoutMs?: number;
 }
 
-/** What exists once whoami answered and the store is open. */
 interface Session {
   crypto: RoomCrypto;
   outbox: Outbox;
@@ -92,10 +69,6 @@ export class MatrixAccount {
   userId: string | null = null;
   private readonly client: MatrixClient;
   private readonly controller = new AbortController();
-  /**
-   * Room id to its members' display names, and until when they hold. Reloaded
-   * early when a sender is missing; the expiry lets a rename show up.
-   */
   private readonly memberNames = new Map<
     string,
     { expiresMs: number; names: Map<string, string | undefined> }
@@ -132,31 +105,19 @@ export class MatrixAccount {
     });
   }
 
-  /** Resolves once the sync loop has exited and the store is closed. */
   async stop(): Promise<void> {
     this.controller.abort();
     await this.running;
   }
 
-  /**
-   * Tries every outbox event that is due, oldest first, on the targets it is
-   * still owed, and resolves when the next waiting one is due.
-   *
-   * An event that waits holds back the events behind it: on its targets when a
-   * webhook failed, in its room when its room key has not arrived. So no target
-   * gets a newer message before an older one, and an outage costs one webhook
-   * timeout per pass, not one per event. Stops between events once the account
-   * is stopping: each delivery can take the webhook timeout, and shutdown has a
-   * grace period to fit in. What it did not reach stays in the outbox.
-   */
+  // A waiting event holds back the later ones on its targets, or in its room while its key is
+  // missing, so no target sees a newer message before an older one.
   private async drain(session: Session): Promise<number> {
     const signal = this.controller.signal;
     for (const dropped of session.outbox.prune()) {
       this.logDropped(session, dropped, dropped.reason);
     }
-    /** Webhook URL to when it is tried again, for each target held back this pass. */
     const failing = new Map<string, number>();
-    /** Room id to when its oldest undecrypted event is tried again. */
     const keyWait = new Map<string, number>();
     let wakeAtMs = Infinity;
     for (const entry of session.outbox.entries()) {
@@ -164,7 +125,6 @@ export class MatrixAccount {
       const { eventId, roomId } = entry;
       const owed = owedTargets(this.options.targets(), entry.targetsLeft);
       if (owed.length === 0) {
-        // Every agent it was still owed is gone from the config plane.
         if (entry.targetsLeft !== null) {
           this.logDropped(session, entry, "removed");
         }
@@ -188,7 +148,6 @@ export class MatrixAccount {
         try {
           plaintext = await session.crypto.decrypt(roomId, event);
         } catch (error) {
-          // Logged once, not on every retry: keys often land a sync later.
           if (entry.attempts === 0) {
             logWarn("Matrix event not decryptable yet, retrying", {
               error: error instanceof Error ? error.message : String(error),
@@ -210,8 +169,6 @@ export class MatrixAccount {
           continue;
         }
       }
-      // The agent's own replies arrive on the next sync like any other
-      // message, and core would only discard them again.
       if (
         plaintext.type !== "m.room.message" ||
         isOwnMessage(plaintext.content)
@@ -234,8 +191,6 @@ export class MatrixAccount {
       const retryAtMs =
         Date.now() + backoffDelayMs(entry.attempts, BACKOFF_CEILING_MS);
       for (const webhookUrl of left) failing.set(webhookUrl, retryAtMs);
-      // Still owed: the targets that failed, now or earlier in this pass. The
-      // event is tried again when the first of them is.
       const pending = owed.filter((target): boolean =>
         failing.has(target.webhookUrl),
       );
@@ -257,7 +212,6 @@ export class MatrixAccount {
     return wakeAtMs;
   }
 
-  /** Puts every timeline event of a sync in the outbox, in timeline order. */
   private keep(session: Session, response: SyncResponse): void {
     const rooms = Object.entries(response.rooms?.join ?? {});
     for (const [roomId, room] of rooms) {
@@ -278,7 +232,6 @@ export class MatrixAccount {
     );
   }
 
-  /** The dead-letter record: one error line per event the outbox gives up on. */
   private logDropped(
     session: Session,
     entry: OutboxEntry,
@@ -298,11 +251,9 @@ export class MatrixAccount {
     });
   }
 
-  /** whoami, then the device's store. Null when the account cannot or should no longer run. */
   private async open(signal: AbortSignal): Promise<Session | null> {
     const whoami = await this.client.whoami();
-    // Application-service tokens have no device, and without one there are no
-    // device keys to decrypt with. Retrying cannot fix that.
+    // Application-service tokens have no device, so no keys to decrypt with: retrying cannot help.
     if (whoami.device_id === undefined) {
       this.state = "failed";
       logError("Matrix access token has no device, account stopped", {
@@ -312,6 +263,7 @@ export class MatrixAccount {
 
       return null;
     }
+    // Per device, not per token: a rotated token keeps its keys, a new device starts clean.
     const storePath = join(
       this.options.storeDir,
       createHash("sha256")
@@ -365,17 +317,13 @@ export class MatrixAccount {
             this.session = session;
             since = await readSyncToken(session.syncTokenPath);
           }
-          // Before the sync, so a held event goes out even while the
-          // homeserver is down, and is retried when it is due rather than when
-          // the next message happens to end the long-poll.
+          // Drained before the sync, so held events go out even while the homeserver is down.
           const wakeAtMs = await this.drain(session);
           this.state = "syncing";
           const response = await this.client.sync({
             filter: SYNC_FILTER,
             signal: signal,
             since: since,
-            // The first sync returns at once and is not forwarded: starting from
-            // now, not replaying room history into the agent.
             timeoutMs:
               since === undefined
                 ? 0
@@ -389,8 +337,7 @@ export class MatrixAccount {
           } else {
             this.keep(session, response);
           }
-          // Stored before anything is delivered: what this sync served is in
-          // the outbox now, and the next pass, or a restart, takes it from there.
+          // Safe before delivery: this sync's events are already in the outbox.
           since = response.next_batch;
           await writeSyncToken(session.syncTokenPath, since);
           attempt = 0;
@@ -425,8 +372,7 @@ export class MatrixAccount {
       this.session = null;
       if (this.state !== "failed") this.state = "stopped";
       if (session !== null) {
-        // Released even when the close fails, or the next account for this
-        // device waits in claimStore for a holder that is already gone.
+        // Released even if close throws, or the device's next account waits in claimStore forever.
         try {
           await session.crypto.close();
         } finally {
@@ -455,7 +401,6 @@ export class MatrixAccount {
 
       return names.get(userId);
     } catch (error) {
-      // Costs only the name, so the message still goes.
       logWarn("Matrix member lookup failed", {
         error: error instanceof Error ? error.message : String(error),
         roomId: roomId,
@@ -466,10 +411,6 @@ export class MatrixAccount {
   }
 }
 
-/**
- * Waits for an earlier holder of `storePath` to close it, then takes it.
- * Returns the release function, or null when `signal` aborted first.
- */
 async function claimStore(
   storePath: string,
   signal: AbortSignal,
@@ -506,11 +447,6 @@ async function claimStore(
   return null;
 }
 
-/**
- * Holds what comes after a waiting event behind it until it is due: its room
- * while it waits on its room key (`targetsLeft` still null), else each target
- * it is owed. The oldest waiting event sets the time.
- */
 function holdBehind(
   entry: OutboxEntry,
   owed: readonly ForwardTarget[],
@@ -526,7 +462,6 @@ function holdBehind(
   }
 }
 
-/** The current targets an event is still owed: all of them before its first delivery. */
 function owedTargets(
   targets: readonly ForwardTarget[],
   agentIds: readonly string[] | null,
@@ -549,11 +484,7 @@ async function readSyncToken(path: string): Promise<string | undefined> {
   }
 }
 
-/**
- * Resolves after `ms`, or as soon as `signal` aborts. The listener is removed
- * either way: `once` alone would leave one behind on the account's signal for
- * every retry the timer won, which is every retry that is not a shutdown.
- */
+// `once` alone would leave a listener on the account's signal for every retry the timer wins.
 async function sleep(ms: number, signal: AbortSignal): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   const timer = setTimeout(resolve, ms);
@@ -569,11 +500,6 @@ async function sleep(ms: number, signal: AbortSignal): Promise<void> {
   }
 }
 
-/**
- * Renamed over the old token rather than written in place. A process that dies
- * mid-write would otherwise leave a truncated token, and the next sync with it
- * fails until someone deletes the file by hand.
- */
 async function writeSyncToken(path: string, token: string): Promise<void> {
   const pending = `${path}.pending`;
   await writeFile(pending, token, { mode: 0o600 });

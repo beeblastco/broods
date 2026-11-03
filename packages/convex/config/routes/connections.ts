@@ -1,14 +1,3 @@
-/**
- * Connections (`/v1/account/connections[/{type}[/start]]`): external accounts
- * agents act through, one of each type. `broods connect` POSTs `start` for the
- * provider's consent screen, opens it, and PUTs the code the browser brought
- * back; this route trades it on the client OpenAI issued, checks the ID
- * token and stores the tokens. GET answers what is connected, never the
- * tokens; DELETE forgets, then revokes. Refresh is core's. The account key
- * or a `broods login` token may call it; role sessions and runtime keys may
- * not.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
@@ -46,19 +35,16 @@ const MAX_FIELD_LENGTH = 16_384;
 // The CLI listens on loopback; the provider redirects nowhere else.
 const LOOPBACK_REDIRECT_PATTERN = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//;
 
-/** The account and type a connection is stored under. */
 interface ConnectionRef {
   accountId: Id<"accounts">;
   type: ConnectionType;
 }
 
-/** `/v1/account/connections`, one type under it, or that type's `start`. */
 export interface ConnectionsPath {
   type: string | undefined;
   start: boolean;
 }
 
-/** Serves the connections routes after resolving the caller. */
 export async function handleConnectionsRoute(
   ctx: ActionCtx,
   req: Request,
@@ -112,7 +98,6 @@ export async function handleConnectionsRoute(
   return methodNotAllowed(["GET", "PUT", "DELETE"]);
 }
 
-/** The connections path under `/v1/account`, or null for any other path. */
 export function parseConnectionsPath(pathname: string): ConnectionsPath | null {
   if (pathname === "/v1/account/connections")
     return { type: undefined, start: false };
@@ -125,7 +110,6 @@ export function parseConnectionsPath(pathname: string): ConnectionsPath | null {
     : null;
 }
 
-/** Forgets the type's connection, then revokes it at the provider. */
 async function disconnectResponse(
   ctx: ActionCtx,
   ref: ConnectionRef,
@@ -152,7 +136,6 @@ async function disconnectResponse(
   return json({ deleted: deleted });
 }
 
-/** The API shape of a stored connection, with ISO dates. */
 function publicConnection(row: ConnectionStatus): Connection {
   return {
     type: row.type,
@@ -165,7 +148,6 @@ function publicConnection(row: ConnectionStatus): Connection {
   };
 }
 
-/** Validates a PUT body: the code and PKCE verifier the redirect brought back. */
 function readCode(body: unknown): ConnectionCode {
   return {
     code: requireField(body, "code"),
@@ -177,7 +159,6 @@ function readCode(body: unknown): ConnectionCode {
   };
 }
 
-/** The loopback redirect the CLI listens on; no other host may get a code. */
 function readRedirectUri(body: unknown): string {
   const redirectUri = requireField(body, "redirectUri");
   if (!LOOPBACK_REDIRECT_PATTERN.test(redirectUri))
@@ -186,7 +167,6 @@ function readRedirectUri(body: unknown): string {
   return redirectUri;
 }
 
-/** Validates a start body: where to redirect and the PKCE and nonce values. */
 function readStart(body: unknown): ConnectionStart {
   return {
     redirectUri: readRedirectUri(body),
@@ -196,7 +176,6 @@ function readStart(body: unknown): ConnectionStart {
   };
 }
 
-/** A non-empty string field of the JSON body, or a 400; a non-object body has none. */
 function requireField(body: unknown, field: string): string {
   // Only typeof checks follow, so any JSON value may be read this way.
   const value = (body as Partial<Record<string, unknown>> | null)?.[field];
@@ -210,7 +189,6 @@ function requireField(body: unknown, field: string): string {
   return value;
 }
 
-/** The client a sign-in starts on: the one the type was issued, or a new registration. */
 function signInClient(existing: ConnectionStatus | null): SignInClient {
   return {
     clientId: existing?.clientId ?? CHATGPT_DYNAMIC_CLIENT_ID,
@@ -219,10 +197,6 @@ function signInClient(existing: ConnectionStatus | null): SignInClient {
   };
 }
 
-/**
- * Trades the code the browser brought back on the type's client, checks the
- * ID token and the grant, then stores the connection.
- */
 async function signInResponse(
   ctx: ActionCtx,
   req: Request,
@@ -234,8 +208,6 @@ async function signInResponse(
   const code = readCode(await parseJsonRequest(req));
   // OpenAI issued the client on this sign-in's redirect.
   const client = { clientId: code.clientId, hostId: code.hostId };
-  // A failed sign-in throws a ClientError the config plane answers with its
-  // reason; anything unexpected is a logged 500 that names nothing internal.
   const tokens = await exchangeCode(ref.type, client, code);
   const claims = await verifyIdToken(
     ref.type,
@@ -243,8 +215,6 @@ async function signInResponse(
     client.clientId,
     code.nonce,
   );
-  // A grant without the scope the type is for is no use: refuse it here
-  // rather than at the first run.
   if (meta.requiredScope && !tokens.scopes.includes(meta.requiredScope))
     throw new ClientError(
       `The sign-in was not granted ${meta.requiredScope}; allow it when signing in`,
@@ -278,7 +248,6 @@ async function signInResponse(
   });
 }
 
-/** Answers the provider's consent screen for a sign-in the CLI is starting. */
 async function startResponse(
   req: Request,
   type: ConnectionType,

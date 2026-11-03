@@ -6,11 +6,9 @@ interface AsyncToolRow {
 }
 
 /**
- * A status read hands the model a result and stores nothing; the history
- * write that saves the read's tool message carries the result's id, and only
- * that write stores the row (#1183). An id that names another conversation's
- * result moves nothing. Drives the deployed backend directly, so it needs no
- * model key.
+ * A status read stores nothing; only the history write carrying the result's id stores the row
+ * (#1183), and an id from another conversation moves nothing. Drives the deployed backend
+ * directly, so it needs no model key.
  */
 export async function statusReadHandback(
   context: VerifyContext,

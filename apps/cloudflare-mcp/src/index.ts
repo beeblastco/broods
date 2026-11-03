@@ -3,34 +3,22 @@ import { z } from "zod";
 import { bearerMatches } from "../../cloudflare-sandbox/src/bearer.ts";
 
 const COMPATIBILITY_DATE = "2026-09-29";
-/** Lambda's own synchronous invoke payload cap, so both runtimes take the same batch. */
+// MAX_REQUEST_BYTES, MAX_OUTPUT_BYTES and REQUEST_TIMEOUT_MS match the Lambda runner's.
 const MAX_REQUEST_BYTES = 6 * 1024 * 1024;
-/** The config plane's inline bundle cap, under Workers' script size cap. */
 const MAX_BUNDLE_BYTES = 10_000_000;
-/** The Lambda handler's OUTPUT_LIMIT_BYTES: every encoded frame of a batch, newlines included. */
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
-/**
- * Reserved per request for its error frame. 256 message chars at JSON's worst
- * 6 bytes each, plus a 32-char id and the frame keys, stay under it.
- */
+// Fits MAX_ERROR_MESSAGE_CHARS at JSON's worst 6 bytes each, a 32-char id and the frame keys.
 const MAX_ERROR_FRAME_BYTES = 2048;
 const MAX_ERROR_MESSAGE_CHARS = 256;
-/** The Lambda runner's RUN_TIMEOUT_MS, per request here. */
 const REQUEST_TIMEOUT_MS = 30_000;
 const BUNDLE_FETCH_TIMEOUT_MS = 10_000;
-/** Bundle download plus module evaluation, before the batch is answered. */
 const LOAD_TIMEOUT_MS = BUNDLE_FETCH_TIMEOUT_MS + 2_000;
-/** Set only on this Worker's own refusals before any request ran; core reruns those on Lambda. */
 const NOTHING_RAN_HEADER = "x-broods-nothing-ran";
 const END_FRAME = new TextEncoder().encode(`${JSON.stringify({ t: "end" })}\n`);
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
-/** Per request into the tenant isolate. */
 const TENANT_LIMITS = { cpuMs: 5_000, subRequests: 50 };
-/**
- * Same default-export contract as apps/lambda/child-runner.mjs, checked while
- * the modules evaluate. ensureLoaded calls `Loaded`, which evaluates the
- * modules but serves no request; Workers allow no I/O at module scope.
- */
+// Same default-export contract as apps/lambda/child-runner.mjs. Workers allow no I/O at module
+// scope, so ensureLoaded pings `Loaded` to evaluate the bundle without serving a request.
 const ENTRY_MODULE = `import { WorkerEntrypoint } from "cloudflare:workers";
 import handler from "./tenant.js";
 const serve = handler && typeof handler.fetch === "function" ? handler.fetch.bind(handler) : handler;
@@ -44,7 +32,6 @@ export default {
   },
 };`;
 const BATCH_SCHEMA = z.object({
-  /** `accountId:agentId`, or the account alone; keys the isolate like Lambda's warm child. */
   tenantId: z.string().min(1).max(256),
   expectedSha256: z.string().regex(/^[0-9a-f]{64}$/),
   bundleUrl: z.url({ protocol: /^https$/ }),
@@ -65,23 +52,17 @@ const BATCH_SCHEMA = z.object({
 
 interface Env {
   LOADER: WorkerLoader;
-  /** This runtime's own copy of each bundle it loaded, so a cold load stays in Cloudflare. */
   BUNDLES: R2Bucket;
-  /** Bearer core sends as CLOUDFLARE_MCP_API_KEY. */
   MCP_API_KEY: string;
-  /** Exact origin of the presigned tool-bundles S3 URLs core sends. */
   BUNDLE_ORIGIN: string;
 }
 
-/** A withDeadline that ran out: transient, unlike a bundle that cannot load. */
 class DeadlineError extends Error {}
 
-/** The entry module's `Loaded` entrypoint; ensureLoaded calls it. */
 interface LoadedEntrypoint extends Rpc.WorkerEntrypointBranded {
   ping(): void;
 }
 
-/** Hosts tenant code may not reach: this runtime and the bundle store. */
 interface OutboundProps {
   blockedHosts: string[];
 }
@@ -90,7 +71,7 @@ type Batch = z.infer<typeof BATCH_SCHEMA>;
 
 type BatchRequest = Batch["requests"][number];
 
-/** One NDJSON frame, `t` then `id` first as core's frame reader expects. */
+/** Key order is wire format: core's frame reader expects `t`, then `id`. */
 type Frame =
   | {
       t: "final";
@@ -99,7 +80,6 @@ type Frame =
     }
   | { t: "error"; id: string; error: string };
 
-/** A shared byte allowance; every read of a batch draws from one. */
 interface ByteBudget {
   remaining: number;
 }
@@ -112,12 +92,7 @@ declare global {
   }
 }
 
-/**
- * Every fetch the tenant isolate makes arrives here (its `globalOutbound`).
- * Public http(s) passes; this runtime and the bundle store do not. Redirects
- * come back to the tenant's own fetch, which re-enters here for each hop.
- * No `connect()`, so raw TCP sockets are unavailable to tenant code.
- */
+// redirect: "manual" makes every hop re-enter here; with no connect(), tenants get no raw TCP.
 export class TenantOutbound extends WorkerEntrypoint<Env, OutboundProps> {
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -134,18 +109,6 @@ export class TenantOutbound extends WorkerEntrypoint<Env, OutboundProps> {
   }
 }
 
-/**
- * Core's hosted MCP transport POSTs one batch to `/mcp` with the shared
- * bearer (apps/core/src/harness/mcp/hosted.ts). Each tenant's bundle runs in
- * its own Dynamic Worker, cached by tenant and content hash and read from
- * this runtime's R2 copy before S3, with no
- * bindings, no Node compatibility and egress through TenantOutbound. The
- * bundle loads before the batch is answered: a bundle that cannot load is a
- * 422 (504 when loading only timed out) tagged NOTHING_RAN_HEADER, which
- * core reruns on Lambda. The response streams
- * the NDJSON frames the Lambda runner speaks, each as soon as its request
- * settles, then `end`.
- */
 export default {
   fetch: async function (
     request: Request,
@@ -214,7 +177,6 @@ export default {
   },
 };
 
-/** A thrown value as one line, capped like every message a batch carries. */
 function boundedMessage(prefix: string, error: unknown): string {
   return `${prefix}: ${error instanceof Error ? error.message : String(error)}`.slice(
     0,
@@ -222,7 +184,6 @@ function boundedMessage(prefix: string, error: unknown): string {
   );
 }
 
-/** Download a bundle from the presigned S3 URL, capped at the Worker bundle size. */
 async function downloadBundle(url: string): Promise<Uint8Array> {
   const response = await fetch(url, {
     redirect: "manual",
@@ -237,16 +198,10 @@ async function downloadBundle(url: string): Promise<Uint8Array> {
   });
 }
 
-/** Encode a frame as one NDJSON line. */
 function encodeFrame(frame: Frame): Uint8Array {
   return new TextEncoder().encode(`${JSON.stringify(frame)}\n`);
 }
 
-/**
- * Load the bundle and evaluate its modules without running a request. Throws
- * on a failed download, a hash mismatch, code workerd refuses, or a bad
- * default export.
- */
 async function ensureLoaded(worker: WorkerStub): Promise<void> {
   await withDeadline(
     worker.getEntrypoint<LoadedEntrypoint>("Loaded").ping(),
@@ -255,7 +210,6 @@ async function ensureLoaded(worker: WorkerStub): Promise<void> {
   );
 }
 
-/** A bounded error frame; it always fits the reserve streamFrames keeps for it. */
 function errorFrame(id: string, error: unknown): Frame {
   return {
     t: "error",
@@ -270,18 +224,12 @@ function hex(buffer: ArrayBuffer): string {
     .join("");
 }
 
-/**
- * The bundle's bytes, once per isolate: from this runtime's R2 copy, or on a
- * miss (or an R2 error) from S3, keeping a copy for the next cold load.
- * Refuses any byte the row did not hash, whichever store served it.
- */
 async function loadBundle(
   batch: Batch,
   bundles: R2Bucket,
   ctx: ExecutionContext,
 ): Promise<string> {
-  // Content-addressed: the bytes are re-hashed on every load, so one copy
-  // serves every tenant whose row carries this sha256.
+  // Re-hashed on every load, so one content-addressed copy is safe to share across tenants.
   const key = `${batch.expectedSha256}.mjs`;
   const copy = await bundles
     .get(key)
@@ -299,7 +247,6 @@ async function loadBundle(
   return UTF8.decode(bytes);
 }
 
-/** Read a body as UTF-8 text, drawing its bytes from the budget. */
 async function readBounded(
   stream: ReadableStream<Uint8Array> | null,
   budget: ByteBudget,
@@ -307,10 +254,6 @@ async function readBounded(
   return UTF8.decode(await readBoundedBytes(stream, budget));
 }
 
-/**
- * Read a body, throwing as soon as it overdraws the budget. A failed read
- * gives back what it took, so concurrent readers of one budget keep it.
- */
 async function readBoundedBytes(
   stream: ReadableStream<Uint8Array> | null,
   budget: ByteBudget,
@@ -346,11 +289,6 @@ async function readBoundedBytes(
   return bytes;
 }
 
-/**
- * One request into the tenant isolate, bounded by REQUEST_TIMEOUT_MS. Its
- * body draws from the batch's shared budget as it arrives; `drawn` is what a
- * final frame took, which streamFrames settles against the encoded line.
- */
 async function serveRequest(
   worker: WorkerStub,
   { id, mcpRequest }: BatchRequest,
@@ -396,13 +334,7 @@ async function serveRequest(
   }
 }
 
-/**
- * Serve every request concurrently and write each frame the moment it
- * settles, then `end`. Bodies as they are read, and then their encoded
- * frames, share one MAX_OUTPUT_BYTES budget, so the batch never buffers more
- * than that; the end frame and one error frame per request are reserved up
- * front, so a final frame that would overrun the batch becomes an error.
- */
+// Reserves END_FRAME and one error frame per request, so an overrunning final becomes an error.
 async function streamFrames(
   worker: WorkerStub,
   requests: BatchRequest[],
@@ -420,7 +352,6 @@ async function streamFrames(
       requests.map(async (request): Promise<void> => {
         const { frame, drawn } = await serveRequest(worker, request, budget);
         let line = encodeFrame(frame);
-        // The body already drew its raw bytes; the line also costs its escaping.
         const overhead = line.byteLength - drawn;
         if (frame.t === "final" && overhead > budget.remaining) {
           budget.remaining += drawn;
@@ -440,7 +371,6 @@ async function streamFrames(
   }
 }
 
-/** Settle with `work`, or reject with `message` once `ms` pass. */
 async function withDeadline<T>(
   work: Promise<T>,
   ms: number,

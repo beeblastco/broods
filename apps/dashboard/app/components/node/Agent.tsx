@@ -7,7 +7,6 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import type { NodeProps } from "@xyflow/react";
 import { useMemo } from "react";
 
-/** Default color for agent nodes that were created before the color property existed. */
 const DEFAULT_AGENT_COLOR = "rgb(168, 85, 247)";
 
 export function AgentNode({ id, data }: NodeProps): React.JSX.Element {
@@ -16,8 +15,7 @@ export function AgentNode({ id, data }: NodeProps): React.JSX.Element {
     | Id<"agentConfigs">
     | undefined;
   const healthStatus = useAgentHealth(agentConfigId);
-  // The canvas reads every card's badges in one query; the full config is
-  // only read by the side panel.
+  // Badges come from the canvas's one query; only the side panel reads the full config.
   const { agentBadges } = useCanvasFrames();
   const badge = agentConfigId ? agentBadges?.[agentConfigId] : undefined;
   const structuredOutput = badge?.structuredOutput === true;
@@ -28,8 +26,6 @@ export function AgentNode({ id, data }: NodeProps): React.JSX.Element {
         : undefined,
     [structuredOutput],
   );
-  // Surface the secure-by-default public-access opt-in so the node's globe can
-  // reflect it (green only when the agent is actually reachable publicly).
   const withColor: BaseNodeData = {
     ...nodeData,
     config: { ...nodeData.config, publicAccess: badge?.publicAccess === true },

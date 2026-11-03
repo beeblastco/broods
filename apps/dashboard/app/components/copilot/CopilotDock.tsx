@@ -1,9 +1,5 @@
 "use client";
 
-/**
- * The copilot dock. Takes its width from the page rather than floating over it,
- * so what it is about to change stays on screen while you read the plan.
- */
 import { CopilotPlanCard } from "@/app/components/copilot/CopilotPlanCard";
 import { useCopilot } from "@/app/components/copilot/CopilotProvider";
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
@@ -15,8 +11,9 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/app/components/ui/input-group";
+import { useStickToBottom } from "@/app/hooks/useStickToBottom";
 import { ArrowUp, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 const EXAMPLES = [
   "go to scheduler",
@@ -24,22 +21,14 @@ const EXAMPLES = [
   "pause nightly-digest",
 ] as const;
 
+// Takes its width from the page, not floating, so what the plan changes stays on screen.
 export function CopilotDock(): React.JSX.Element | null {
   const { ask, completed, isOpen, messages, runStep, setOpen } = useCopilot();
 
   const [input, setInput] = useState("");
-  const composer = useRef<HTMLTextAreaElement>(null);
-  const thread = useRef<HTMLDivElement>(null);
+  const thread = useStickToBottom<HTMLDivElement>([messages]);
 
   useShortcut("copilot.open", () => setOpen(!isOpen));
-
-  useEffect(() => {
-    if (isOpen) composer.current?.focus();
-  }, [isOpen]);
-
-  useEffect(() => {
-    thread.current?.scrollTo({ top: thread.current.scrollHeight });
-  }, [messages]);
 
   if (!isOpen) return null;
 
@@ -115,7 +104,8 @@ export function CopilotDock(): React.JSX.Element | null {
       <div className="px-3 pb-3">
         <InputGroup className="rounded-lg">
           <InputGroupTextarea
-            ref={composer}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- the user just opened the dock
+            autoFocus
             aria-label="Message"
             value={input}
             onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) =>

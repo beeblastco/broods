@@ -1,13 +1,3 @@
-/**
- * Payload budgets for the two things that ship to other machines: the
- * dashboard's client JavaScript and the published CLI. Both need a build first,
- * so this runs inside the CI job that already builds each one rather than in
- * the timing suite.
- *
- *   bun bench/bundles.ts --check dashboard|cli    grade against bundle-budgets.json
- *   bun bench/bundles.ts --record dashboard|cli   adopt the current size as the baseline
- */
-
 import {
   existsSync,
   readdirSync,
@@ -27,9 +17,7 @@ type Target = "cli" | "dashboard";
 
 interface BundleMetric {
   bytes: number;
-  /** Absolute product ceiling in bytes. Growth past it fails regardless of drift. */
   ceilingBytes: number;
-  /** Growth over the recorded size that fails, as a percentage. */
   maxGrowthPct: number;
 }
 
@@ -107,7 +95,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024).toFixed(0)} KB`;
 }
 
-/** The published package as a user receives it: the CLI entry and everything under dist. */
 function measureCli(): Record<string, number> {
   if (!existsSync(CLI_DIST)) {
     console.error(
@@ -126,7 +113,6 @@ function measureCli(): Record<string, number> {
   };
 }
 
-/** Everything a browser can be asked to download for the dashboard. */
 function measureDashboard(): Record<string, number> {
   if (!existsSync(DASHBOARD_STATIC)) {
     console.error(

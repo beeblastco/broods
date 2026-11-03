@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Single JSON editor for the nested AgentConfig, with the branches in
- * `CONFIG_TAB_BRANCHES` merged into one object. `session` holds context
- * pruning and compaction.
- */
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import {
   toNestedAgentConfig,

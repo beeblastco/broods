@@ -1,6 +1,5 @@
 "use client";
 
-/** Skill node. Enabled when its label is in the connected agent's `skills.allowed[]`. */
 import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
 import { useReachableAgentConfigId } from "@/app/hooks/useConnectedAgentConfig";
@@ -24,7 +23,6 @@ export function SkillNode({ id, data }: NodeProps): React.JSX.Element {
       nodeType="skill"
       data={baseData}
       icon={<Sparkles className="size-3.5" />}
-      // Grey when disabled, like a disabled MCP server.
       liveStatus={badge ? enabledMemberStatus(enabled) : undefined}
     />
   );

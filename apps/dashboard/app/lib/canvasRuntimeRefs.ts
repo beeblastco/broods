@@ -1,7 +1,3 @@
-/**
- * Derives broods AgentConfig sandbox/workspace references from canvas
- * runtime-resource nodes and edges.
- */
 import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -13,63 +9,46 @@ import {
 } from "@broods/convex/model/canvasFrames";
 import type { Edge, Node } from "@xyflow/react";
 
-/** A single broods AgentWorkspaceRef emitted from the canvas graph. */
 export type WorkspaceRef = {
   name: string;
   workspaceId: string;
   sandbox?: string | null;
 };
 
-/** Runtime reference patch for one agent config. */
 export type AgentRuntimeRefs = {
   configId: Id<"agentConfigs">;
-  /** Sandbox resource ids in `sandboxes` order; the first is the default. */
   sandboxes: string[];
   workspaces: WorkspaceRef[];
 };
 
-/**
- * Effective-sandbox state for a workspace, resolved from the broods cascade
- * `ws.sandbox (override) ?? config.sandboxes[0] (inherited) ?? none (read-only)`.
- * Inherited names every distinct default of the agents wired to it.
- */
+// The cascade `ws.sandbox` (override) ?? `config.sandboxes[0]` (inherited) ?? none.
 export type WorkspaceSandboxState =
   | { kind: "override"; sandboxLabels: string[] }
   | { kind: "inherited"; sandboxLabels: string[] }
   | { kind: "readonly" };
 
-/** Per-node infra annotations derived from the canvas graph for badge rendering. */
 export type CanvasInfraAnalysis = {
-  /** Workspace node id → its resolved effective-sandbox state. */
   workspaceStates: Record<string, WorkspaceSandboxState>;
-  /** Workspace/sandbox node id → number of distinct agents that reference it. */
   agentRefCounts: Record<string, number>;
-  /** Node id → whether an agent is reachable from it (drives the unwired badge). */
   connectedToAgent: Record<string, boolean>;
 };
 
-/** A dashboard agent whose drawn refs the config API would refuse. */
 export type RuntimeRefsProblem = {
   agentId: string;
-  /** Resource id of the sandbox the workspace is mounted on, not the agent's first. */
   sandboxId: string;
   sandboxLabel: string;
   workspaceId: string;
   workspaceName: string;
 };
 
-/** A caller agent's subagent (agent→agent) call targets derived from the canvas graph. */
 export type AgentSubagentRefs = {
-  /** Caller agent's config id. */
   configId: Id<"agentConfigs">;
-  /** Config ids of the agents this one may call (one per outgoing `subagent` edge). */
   calleeConfigIds: Id<"agentConfigs">[];
 };
 
 type RuntimeNode = Node<BaseNodeData> & { type?: string };
 
-// A config id is cached only once its write lands: caching before the await
-// marked a failed write as persisted, so the next save skipped it.
+// Cache only after the write lands, so a failed write is retried on the next save.
 export async function writeChangedRefs<
   Ref extends { configId: Id<"agentConfigs"> },
 >(
@@ -86,8 +65,7 @@ export async function writeChangedRefs<
     cache.set(ref.configId, serialized);
   });
 
-  // allSettled, not all: `all` reports the first failure while the rest are
-  // still in flight, so the caller sees an error over a half-updated cache.
+  // Not `all`: it throws while the other writes are still updating the cache.
   const results = await Promise.allSettled(writes);
   const failure = results.find((result) => result.status === "rejected");
   if (failure?.status === "rejected") throw failure.reason;
@@ -120,11 +98,6 @@ export function defaultRuntimeNodeData(
   return { label: label, status: "idle" };
 }
 
-/**
- * Analyze the canvas graph once to drive per-node infra badges: each workspace's
- * effective-sandbox state (override/inherited/read-only) and how many agents share
- * each workspace/sandbox.
- */
 export function analyzeCanvasInfra(
   nodes: Node[],
   edges: Edge[],
@@ -170,9 +143,7 @@ export function deriveAgentRuntimeRefs(
       return [];
     }
 
-    // An agent's resources come from its DIRECT edges (explicit model): the sandboxes it
-    // points at, in its stored order, are its sandboxes; the workspaces it points at are
-    // its workspaces. Workspaces are not inferred transitively through a shared sandbox.
+    // Direct edges only: a workspace is never inferred through a shared sandbox.
     const directNodes = neighbors(agent.id, adjacency)
       .map((nodeId) => byId.get(nodeId))
       .filter((node): node is RuntimeNode => !!node);
@@ -199,9 +170,7 @@ export function deriveAgentRuntimeRefs(
         .map((nodeId) => byId.get(nodeId))
         .filter((node): node is RuntimeNode => node?.type === "sandbox");
 
-      // No mount edge means inherit the agent's default sandbox. `readOnly` is
-      // the only way the graph can ask for `sandbox: null` instead, which reads
-      // the workspace straight from S3 and mounts it nowhere.
+      // No mount edge inherits the default; only `readOnly` asks for `sandbox: null`.
       if (linkedSandboxes.length === 0) {
         const name = uniqueWorkspaceName(baseName, usedNames);
         workspaces.push(
@@ -240,12 +209,7 @@ export function deriveAgentRuntimeRefs(
   });
 }
 
-/**
- * Dashboard agents whose derived refs `updateRuntimeRefs` would refuse, by the
- * same rule it applies: only the first sandbox backs a workspace. The canvas
- * checks an edit with this before it saves. Code-managed agents are skipped,
- * as the mutation leaves their refs alone.
- */
+// Mirrors `updateRuntimeRefs`, which leaves code-managed agents' refs alone.
 export function runtimeRefsProblems(
   nodes: Node[],
   edges: Edge[],
@@ -282,12 +246,10 @@ export function runtimeRefsProblems(
   );
 }
 
-/** Why the config API refuses a problem, without the full stop. */
 export function runtimeRefsProblemText(problem: RuntimeRefsProblem): string {
   return `${problem.workspaceName} is mounted on ${problem.sandboxLabel}, and only an agent's default sandbox can back a workspace`;
 }
 
-/** Stable serialization for change detection before writing Convex mutations. */
 export function serializeRuntimeRefs(refs: AgentRuntimeRefs): string {
   return JSON.stringify({
     sandboxes: refs.sandboxes,
@@ -295,12 +257,7 @@ export function serializeRuntimeRefs(refs: AgentRuntimeRefs): string {
   });
 }
 
-/**
- * Derive each agent's subagent call targets from directional `subagent` edges.
- * An edge source→target means the source agent may call the target agent, so the
- * target's config id is added to the source's callee list. Emits an entry for every
- * agent (even with no callees) so clearing the last edge still produces a write.
- */
+// One entry per agent, even with no callees, so clearing the last edge still writes.
 export function deriveSubagentRefs(
   nodes: Node[],
   edges: Edge[],
@@ -309,7 +266,6 @@ export function deriveSubagentRefs(
   const byId = new Map(runtimeNodes.map((node) => [node.id, node]));
   const agents = runtimeNodes.filter((node) => node.type === "agent");
 
-  // Caller node id → set of callee config ids, walking directional subagent edges only.
   const calleesByCaller = new Map<string, Set<Id<"agentConfigs">>>();
   for (const edge of edges) {
     if (edge.type !== "subagent") continue;
@@ -334,7 +290,6 @@ export function deriveSubagentRefs(
   });
 }
 
-/** Stable serialization for change detection before writing subagent mutations. */
 export function serializeSubagentRefs(refs: AgentSubagentRefs): string {
   return JSON.stringify({ callees: [...refs.calleeConfigIds].sort() });
 }
@@ -360,7 +315,6 @@ function neighbors(
   return [...(adjacency.get(nodeId) ?? [])];
 }
 
-/** Short display label for a runtime node, preferring the mount name. */
 function nodeLabel(node: RuntimeNode): string {
   return (node.data.mountName ?? node.data.label ?? "").trim() || node.id;
 }
@@ -375,8 +329,7 @@ function normalizeWorkspaceName(value: string | undefined): string {
   return normalized || "default";
 }
 
-// Infra nodes chain through other infra nodes; every other type counts only a
-// direct agent edge.
+// One agent edge anywhere in a connected infra component wires all of it.
 function resolveAgentReachability(
   nodes: RuntimeNode[],
   adjacency: Map<string, Set<string>>,
@@ -397,8 +350,6 @@ function resolveAgentReachability(
     }
   }
 
-  // Infra nodes share one verdict per connected infra component: a single agent
-  // edge anywhere in the component wires all of it.
   while (infraPending.size > 0) {
     const seed: string = infraPending.values().next().value!;
     infraPending.delete(seed);

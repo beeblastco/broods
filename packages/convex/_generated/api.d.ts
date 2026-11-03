@@ -1098,6 +1098,7 @@ export declare const api: {
       "public",
       { installationId: number; projectId?: Id<"projects">; repoId: number },
       {
+        branches: Array<string>;
         repo: {
           defaultBranch: string;
           fullName: string;
@@ -1166,6 +1167,7 @@ export declare const api: {
           updatedAt: number;
           url: string;
         }>;
+        hasProduction: boolean;
         installations: Array<{
           accountType: "User" | "Organization";
           installationId: number;
@@ -5604,16 +5606,19 @@ export declare const internal: {
       "internal",
       {
         authId: string;
+        developmentBranch?: string | null;
+        productionBranch?: string | null;
         projectId: Id<"projects">;
         repoId?: number;
-        stages: Array<"production" | "development">;
       },
       {
         development?: string;
         keyIds: Array<Id<"deployKeys">>;
+        previousBranches: Array<string>;
         production?: string;
         projectId: Id<"projects">;
         projectSlug: string;
+        stageIds: Array<Id<"stages">>;
       }
     >;
     recordDeploy: FunctionReference<
@@ -5646,7 +5651,11 @@ export declare const internal: {
     revokeKeys: FunctionReference<
       "mutation",
       "internal",
-      { keyIds: Array<Id<"deployKeys">>; projectId: Id<"projects"> },
+      {
+        keyIds: Array<Id<"deployKeys">>;
+        projectId: Id<"projects">;
+        stageIds: Array<Id<"stages">>;
+      },
       null
     >;
     saveLink: FunctionReference<
@@ -5685,6 +5694,7 @@ export declare const internal: {
           updatedAt: number;
           url: string;
         }>;
+        hasProduction: boolean;
         installations: Array<{
           accountType: "User" | "Organization";
           installationId: number;
@@ -6986,7 +6996,6 @@ export declare const internal: {
         }>;
         ownerEventId: string;
         ownerGeneration: number;
-        savesAll?: boolean;
       },
       null
     >;

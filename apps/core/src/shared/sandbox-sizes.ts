@@ -1,17 +1,3 @@
-/**
- * Predefined sandbox sizes, the canonical (vcpu, memoryMb, storageGb) catalog
- * shared by sandbox config validation, the workdir resource mapping, and the
- * Convex `sandboxInstances` mirror. `config.size` is the user-facing knob that
- * reconciles issue #78's tiers with each backend's real limits.
- *
- * The specs are advisory: workdir applies them as create-time resources (clamping
- * vcpu to its allowed set), cloudflare starts the nearest instance type, a lambda
- * MicroVM always reports the one size AWS gives it, and daytona/e2b/vercel size
- * natively, so their executors mirror the size the provider reports instead.
- * The control-plane mirror type lives here too so the Convex writer and the
- * executors share one shape without importing across the shared/harness boundary.
- */
-
 import type {
   SandboxNetworkMode,
   SandboxPermissionMode,
@@ -20,17 +6,13 @@ import type {
 
 export type SandboxSize = "tiny" | "xsmall" | "small" | "medium" | "large";
 
-/**
- * Compute footprint of a sandbox instance, mirrored into Convex for the dashboard.
- * `storageGb` is absent when the provider does not report its disk (e2b, vercel).
- */
 export interface SandboxSpecs {
   vcpu: number;
   memoryMb: number;
   storageGb?: number;
 }
 
-/** Non-secret execution ownership metadata mirrored for dashboard diagnostics. */
+// Mirrored to the dashboard: never a secret.
 export interface SandboxRunMetadata {
   traceId?: string;
   taskId?: string;
@@ -40,39 +22,22 @@ export interface SandboxRunMetadata {
   workspaceId?: string;
 }
 
-/**
- * Control-plane metadata threaded from the runtime resolver to an executor so a
- * freshly reserved sandbox can mirror itself into the Convex `sandboxInstances`
- * registry. Absent for synthetic/stateless configs (the mirror then no-ops).
- */
 export interface SandboxControlPlane {
   accountId: string;
-  /** Optional SaaS route scope for dashboard live views. */
   projectId?: string;
   stageId?: string;
-  /** The owning sandbox config row, so the dashboard can drive its write-path. */
   sandboxConfigId?: string;
   name: string;
   specs: SandboxSpecs;
-  /** Snapshot/image the instance launched from, when pinned. */
   snapshotId?: string;
-  /** Non-secret egress policy (config `network.mode`), mirrored for the dashboard Networking view. */
   egress?: SandboxNetworkMode;
-  /** Tool approval policy (`edit`/`ask`/`bypass`), mirrored for the dashboard Security view. */
   permissionMode?: SandboxPermissionMode;
-  /** The account's own provider credentials pay for it, so the platform does not meter it. */
   ownCredentials?: true;
-  /** Idle seconds before the sweeper releases the reservation; unset keeps the 7-day default. */
   releaseAfterIdleSeconds?: number;
-  /** Idle seconds before the provider suspends it, which is how long it is billed idle. */
   idleTimeoutSeconds?: number;
 }
 
-/**
- * Canonical size catalog. Free tier = `tiny` + `xsmall` (quota enforcement is a
- * later usage workstream); `small`+ are paid. Disk is fixed per size to stay valid
- * on both self-hosted backends (workdir disk ∈ {8,16,32,64}; MicroVM disk is fixed).
- */
+// Every disk must stay in workdir's allowed set {8, 16, 32, 64}.
 export const SANDBOX_SIZES: Record<SandboxSize, Required<SandboxSpecs>> = {
   tiny: { vcpu: 0.25, memoryMb: 512, storageGb: 8 },
   xsmall: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
@@ -81,11 +46,7 @@ export const SANDBOX_SIZES: Record<SandboxSize, Required<SandboxSpecs>> = {
   large: { vcpu: 4, memoryMb: 8192, storageGb: 32 },
 };
 
-/**
- * Cloudflare's named instance type nearest each size, with its documented specs
- * (developers.cloudflare.com/containers/platform/limits). A custom type needs a
- * whole vCPU, so the small sizes take `standard-1`.
- */
+// A custom Cloudflare type needs a whole vCPU, so the small sizes take `standard-1`.
 export const CLOUDFLARE_INSTANCE_TYPES: Record<
   SandboxSize,
   { name: string; specs: Required<SandboxSpecs> }
@@ -112,46 +73,23 @@ export const CLOUDFLARE_INSTANCE_TYPES: Record<
   },
 };
 
-// What every lambda MicroVM runs as: the images ask AWS for no size, so each gets
-// the platform default, a 2 GB baseline that bursts to 4 vCPU and 8 GB, on an 8 GB disk.
+// The images ask AWS for no size: the default is a 2 GB baseline bursting to 4 vCPU / 8 GB.
 const MICROVM_SPECS: SandboxSpecs = { vcpu: 4, memoryMb: 8192, storageGb: 8 };
 
-// What every V8 Worker command runs in: Cloudflare's per-isolate memory, no
-// machine and no disk of its own. The config's `size` does not change it.
 const WORKER_SPECS: SandboxSpecs = { vcpu: 1, memoryMb: 128, storageGb: 0 };
 
-/**
- * The providers resolveSandboxSpecs sizes from the config, which are therefore
- * the machine's real size: workdir creates the VM with them, every MicroVM is
- * MICROVM_SPECS, every V8 Worker command is WORKER_SPECS, and cloudflare starts
- * the CLOUDFLARE_INSTANCE_TYPES entry.
- * Keep it in step with the provider branches there.
- */
+// Keep in step with resolveSandboxSpecs: for these, its specs are the machine's real size.
 export const CONFIGURED_SIZE_PROVIDERS: ReadonlySet<SandboxProvider> = new Set([
   "cloudflare",
   "lambda",
   "sandbox",
 ]);
 
-/** The size used for the mirror specs when a config pins no explicit size or resources. */
 const DEFAULT_SIZE: SandboxSize = "xsmall";
 
-/** vcpu values workdir accepts; the catalog's `tiny` (0.25) clamps up to 0.5. */
 const WORKDIR_CPU_CHOICES: readonly number[] = [0.5, 1, 2, 4];
 
-/**
- * Resolve the specs to mirror (and bill) for a sandbox config. A workdir (`sandbox`)
- * config bills exactly the resources its VM is created with (see workdirResources),
- * a cloudflare config the instance type it starts, a worker config the one isolate
- * size, and a lambda config reports the
- * MicroVM's real size whatever it asks for. Daytona, e2b and vercel executors
- * replace these with what the provider reports once the machine exists.
- * Elsewhere a pinned `size` wins; otherwise the explicit resource options
- * (`cpu`/`memoryMb`/`diskGb`) fill in. Each missing dimension defaults from the
- * `xsmall` row.
- * @param input the provider, size and raw provider options from the config.
- * @returns the canonical specs.
- */
+// For daytona, e2b and vercel this is a guess: their executors mirror what the provider reports.
 export function resolveSandboxSpecs(input: {
   provider?: SandboxProvider;
   size?: SandboxSize;
@@ -188,13 +126,6 @@ export function resolveSandboxSpecs(input: {
   };
 }
 
-/**
- * Workdir create-time resources for a config, used by the workdir executor to size
- * the VM and by resolveSandboxSpecs to bill it. A pinned size seeds the dimensions
- * (vcpu clamped to workdir's allowed set); explicit cpu/memoryMb/diskGb options
- * still win over the size defaults.
- * @returns the cpu/memoryMb/diskGb to request, or undefined when none is set.
- */
 export function workdirResources(input: {
   size?: SandboxSize;
   options?: Record<string, unknown>;
@@ -214,12 +145,6 @@ export function workdirResources(input: {
   };
 }
 
-/**
- * Workdir create-time resources for a pinned size, clamping vcpu up to the nearest
- * value workdir accepts.
- * @param size the pinned sandbox size.
- * @returns the cpu/memoryMb/diskGb to request from workdir.
- */
 export function workdirSizeResources(size: SandboxSize): {
   cpu: number;
   memoryMb: number;
@@ -233,8 +158,6 @@ export function workdirSizeResources(size: SandboxSize): {
   return { cpu: cpu, memoryMb: specs.memoryMb, diskGb: specs.storageGb };
 }
 
-// Zero or negative reads as unset, so a bad option can neither bill nothing nor
-// ask a provider for no resources.
 function positiveNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? value

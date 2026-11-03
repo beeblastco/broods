@@ -1,11 +1,6 @@
 /**
- * The sandbox on its own, without core or a model: the same two commands the
- * complex task runs, on the V8 sandbox Worker (just-bash in a Dynamic Worker)
- * and on this machine's real bash. Each V8 call uses a new sandbox id, the way
- * core calls it when no workspace is attached, so every call loads a fresh
- * isolate; the "reused" series sends a trivial command to one id over and over.
- * CPU is read from /proc for the sandbox's processes around each series.
- *
+ * The complex task's two commands on the V8 sandbox (a new sandbox id per call, so a fresh isolate)
+ * and on real bash, with /proc CPU per series; "reused" repeats a trivial command on one id.
  * bun sandbox-probe.ts --url http://127.0.0.1:8790 --key-file F --pids a,b --count 20
  */
 
@@ -92,7 +87,7 @@ async function series(
   const times: number[] = [];
   const cpuBefore = cpuPids.length ? cpu(cpuPids) : 0;
   const rssBefore = cpuPids.length ? rss(cpuPids) : 0;
-  // Native bash runs as a child of this process: /proc counts reaped children in cutime/cstime.
+  // Native bash is our child: /proc counts reaped children in cutime/cstime.
   const selfBefore = sample(process.pid).cpuMs;
   for (let i = 0; i < count; i++) {
     const started = performance.now();
