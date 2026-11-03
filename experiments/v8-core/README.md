@@ -153,6 +153,15 @@ the isolates' own CPU (110 to 125 ms per task against about 65 here, on one
 workerd thread). Profiles put about a fifth of it in workerd's native `fetch`;
 connections to the database are reused, so it is not connection setup.
 
+On the real dev bridge, from Phicks' Mac (`cf-warm`: 3 rounds, `cf-cold`: 2,
+20 tasks at once; every audit row saved) the typical task took 3.0 s on
+today's core and 3.1 s on the isolates with the sandbox already running, a tie
+next to rounds that swing from 1.9 to 4.1 s; with a new Container per task 5.1
+against 6.1 s, though today's slowest task took 12.1 s against 6.9. CPU per
+task was 44 against 58 ms and memory about 250 MB against 900 MB. The bench
+leaves its cores running when it ends, so stop them before a second run.
+The page's version 7 reports these rows.
+
 ## Two ideas that did not help
 
 Commit `8f59ca0` built the two fixes the page proposed for the time still
