@@ -20,6 +20,7 @@ import {
   type SearchItem,
 } from "@/app/lib/paletteSearch";
 import { formatCombo, SHORTCUTS } from "@/app/lib/shortcuts";
+import { BroodsMark } from "@/app/components/BroodsMark";
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
 import { useCommandState } from "cmdk";
 import { Search } from "lucide-react";
@@ -94,14 +95,14 @@ export function CommandPalette({
       <button
         type="button"
         data-palette-trigger
-        aria-label="Search or ask Broods"
+        aria-label="Search everything"
         onClick={() => openScoped(null)}
         onFocus={onWake}
         onPointerEnter={onWake}
         className="flex h-6.5 shrink-0 cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-2 text-muted-foreground transition-colors hover:text-foreground lg:w-56"
       >
         <Search className="size-3.5" />
-        <span className="hidden text-xs lg:inline">Search or ask Broods</span>
+        <span className="hidden text-xs lg:inline">Search</span>
         <ShortcutKeys id="search.open" className="ml-auto hidden lg:flex" />
       </button>
 
@@ -149,7 +150,10 @@ export function CommandPalette({
           {query.trim() && !only && (
             <CommandGroup heading="Ask">
               <CommandItem value="ask-broods" onSelect={handOff}>
-                <span className="truncate">Ask Broods: {query.trim()}</span>
+                <BroodsMark className="size-3.5" />
+                <span className="truncate">
+                  Ask Broods agent: {query.trim()}
+                </span>
               </CommandItem>
             </CommandGroup>
           )}

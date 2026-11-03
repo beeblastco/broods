@@ -2,8 +2,11 @@
 
 import { BroodsMark } from "@/app/components/BroodsMark";
 import { CommandMenu } from "@/app/components/CommandMenu";
+import { useCopilot } from "@/app/components/copilot/CopilotProvider";
 import { OrgSwitcher } from "@/app/components/header/OrgSwitcher";
 import { ProjectHeaderLeft } from "@/app/components/header/ProjectHeaderLeft";
+import { ShortcutKeys } from "@/app/components/ShortcutKeys";
+import { Button } from "@/app/components/ui/button";
 import { useSidebar } from "@/app/components/ui/sidebar";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Lock } from "lucide-react";
@@ -45,6 +48,26 @@ export function Header(): React.JSX.Element {
       </div>
 
       <CommandMenu />
+      <AgentButton />
     </header>
+  );
+}
+
+function AgentButton(): React.JSX.Element {
+  const { isOpen, setOpen } = useCopilot();
+
+  return (
+    <Button
+      variant="nav"
+      size="sm"
+      data-active={isOpen}
+      aria-pressed={isOpen}
+      onClick={() => setOpen(!isOpen)}
+      className="h-6.5 shrink-0 select-none cursor-pointer"
+    >
+      <BroodsMark className="size-3.5" />
+      <span className="hidden lg:inline">Agent</span>
+      <ShortcutKeys id="copilot.open" className="hidden lg:flex" />
+    </Button>
   );
 }

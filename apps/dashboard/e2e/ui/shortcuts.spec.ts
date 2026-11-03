@@ -268,7 +268,7 @@ test("the palette hands an unmatched query to the dock instead of guessing", asy
   await page.keyboard.press("ControlOrMeta+k");
   await page.keyboard.type("why does triage keep failing");
 
-  const ask = rows(page).filter({ hasText: "Ask Broods:" });
+  const ask = rows(page).filter({ hasText: "Ask Broods agent:" });
   await expect(ask).toHaveCount(1);
   await ask.click();
 
