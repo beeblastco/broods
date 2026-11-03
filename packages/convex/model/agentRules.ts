@@ -67,6 +67,7 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "bash",
   "browse",
   "cancel_schedule",
+  "computer",
   "edit",
   "glob",
   "grep",

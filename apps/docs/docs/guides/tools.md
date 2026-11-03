@@ -65,9 +65,9 @@ tools: {
 write_sql: {
   ...openai.tools.customTool({
     description: "Run one SQLite SELECT against data.db.",
-    format: { type: "grammar", syntax: "regex", definition: "SELECT .+" },
+    format: { type: "grammar", syntax: "regex", definition: "SELECT [^;]+" },
   }),
-  command: "sqlite3 data.db",
+  command: "sqlite3 -readonly data.db",
 },
 ```
 
