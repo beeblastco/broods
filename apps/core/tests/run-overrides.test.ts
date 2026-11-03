@@ -102,4 +102,21 @@ describe("applyRunOverrides", () => {
     });
     expect(base.model?.temperature).toBe(1);
   });
+
+  it("refuses providerOptions once the agent runs on a harness, as a queued run may find it", () => {
+    const harnessAgent: AgentConfig = {
+      ...base,
+      harness: { type: "pi" },
+      sandboxes: ["sandbox_1"],
+    };
+
+    expect(() =>
+      applyRunOverrides(harnessAgent, {
+        model: { providerOptions: { openai: { reasoningEffort: "high" } } },
+      }),
+    ).toThrow("model.providerOptions is not supported with config.harness");
+    expect(
+      applyRunOverrides(harnessAgent, { model: { reasoning: "high" } }).model,
+    ).toMatchObject({ reasoning: "high" });
+  });
 });

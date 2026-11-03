@@ -13,6 +13,7 @@ import {
   hasEncryptionSecret,
 } from "./accountKeys";
 import { uniqueProjectSlug } from "../lib/slug";
+import { assertAgentHarnessSupport } from "./agentRules";
 import {
   loadAgentRuntimeSecrets,
   saveAgentRuntimeSecrets,
@@ -258,6 +259,7 @@ export async function pushEncryptedConfigToAgentRow(
 
   const nested = toNestedAgentConfig(config);
   const resolved = substituteEnvPlaceholders(nested, variables);
+  assertAgentHarnessSupport(resolved);
   // `broods dev` re-pushes every agent; a fresh IV on an unchanged one would rewrite the row
   // and rebuild the account's whole channel projection.
   const current =

@@ -4,8 +4,14 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { accountCipherForWrite } from "../model/accountKeys";
-import type { NestedAgentConfig } from "../model/agentConfigCodec";
-import { ensureAgentsRowForConfig } from "../model/agentSync";
+import {
+  fromNestedAgentConfig,
+  type NestedAgentConfig,
+} from "../model/agentConfigCodec";
+import {
+  ensureAgentsRowForConfig,
+  pushEncryptedConfigToAgentRow,
+} from "../model/agentSync";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -490,6 +496,46 @@ describe("syncApiAgentCanvasWiring", () => {
     await seedConfig(tt, { agentId: agentId, config: config });
 
     expect(await layoutFor(tt, agentConfig!)).toEqual(before);
+  });
+});
+
+describe("pushEncryptedConfigToAgentRow", () => {
+  test("refuses what a harness agent cannot use, for CLI sync and dashboard saves", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const tt = t();
+    const { accountId } = await seedOrg(tt, {
+      orgName: "beeblast",
+      slug: "beeblast",
+      username: "beeblast",
+      email: "owner@example.com",
+    });
+    const agentId = await createAgent(tt, accountId, "coder");
+    const model = { provider: "openai", modelId: "gpt-5" };
+    await seedConfig(tt, { agentId: agentId, config: { model: model } });
+    const configId = (await configFor(tt, agentId))!._id;
+    const save = (nested: NestedAgentConfig): Promise<void> =>
+      tt.run(async (ctx): Promise<void> => {
+        await ctx.db.patch(configId, fromNestedAgentConfig(nested));
+        await pushEncryptedConfigToAgentRow(ctx, configId, accountId);
+      });
+    const harnessAgent = {
+      harness: { type: "codex", permissionMode: "allow-all" },
+      sandboxes: ["sandbox_1"],
+      model: model,
+    };
+
+    await expect(
+      save({
+        ...harnessAgent,
+        model: {
+          ...model,
+          providerOptions: { openai: { reasoningEffort: "high" } },
+        },
+      }),
+    ).rejects.toThrow(
+      "config.model.providerOptions is not supported with config.harness",
+    );
+    await expect(save(harnessAgent)).resolves.toBeNull();
   });
 });
 

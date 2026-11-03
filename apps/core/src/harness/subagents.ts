@@ -12,6 +12,7 @@ import type {
 } from "ai";
 import {
   resolveSubagentMode,
+  toRuntimeAgentConfig,
   type AgentConfig,
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
@@ -856,7 +857,10 @@ export class SubagentCoordinator {
 
       return {
         agentId: agent.agentId,
-        agentConfig: subagentConfig(agent.config, this.parentAgentConfig),
+        agentConfig: subagentConfig(
+          toRuntimeAgentConfig(agent.config),
+          this.parentAgentConfig,
+        ),
         ...(agent.description ? { description: agent.description } : {}),
         publicConversationKey: publicKey,
         conversationKey: scopedDirectConversationKey(

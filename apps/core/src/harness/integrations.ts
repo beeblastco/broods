@@ -2366,11 +2366,6 @@ function assertRunOverridesAllowed(
       { code: "run_overrides_disabled", param: "allowRunOverrides" },
     );
   }
-  if (agent.config.harness && overrides?.model?.providerOptions !== undefined) {
-    throw new Error(
-      "model.providerOptions is not supported with config.harness; set model.reasoning",
-    );
-  }
 }
 
 function parseDirectQuestionAnswers(value: unknown): QuestionAnswer[] {

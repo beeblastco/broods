@@ -602,6 +602,7 @@ export interface AgentWhatsAppChannelConfig {
   [key: string]: unknown;
 }
 
+// Also where a queued run meets its agent's current config, which may have gained a harness.
 export function applyRunOverrides(
   config: AgentConfig,
   overrides?: RunOverrides,
@@ -611,6 +612,11 @@ export function applyRunOverrides(
     !(overrides.model && Object.keys(overrides.model).length > 0)
   ) {
     return config;
+  }
+  if (config.harness && overrides.model.providerOptions !== undefined) {
+    throw new Error(
+      "model.providerOptions is not supported with config.harness; set model.reasoning",
+    );
   }
 
   return { ...config, model: { ...config.model, ...overrides.model } };
