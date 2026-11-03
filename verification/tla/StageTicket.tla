@@ -5,21 +5,23 @@
    stores the result, then reads `session.token` and sends it. Requests
    interleave freely, so several can re-mint at once and finish in any
    order. Time is in ticks; a request reaches the server at most MAXDELAY
-   ticks after its credential() check (network latency). The local clock is
-   the server's: one running behind by more than MARGIN - MAXDELAY sends an
-   expired ticket.                                                          *)
+   ticks after its credential() check (network latency). SKEW is how far the
+   local clock runs behind the server's; past MARGIN - MAXDELAY a request can
+   send an expired ticket.                                                  *)
 EXTENDS Naturals
 
-CONSTANTS Req, TTL, MARGIN, MAXDELAY, HORIZON
+CONSTANTS Req, TTL, MARGIN, MAXDELAY, HORIZON, SKEW
 
-ASSUME MAXDELAY < MARGIN
+ASSUME SKEW + MAXDELAY < MARGIN
 
 VARIABLES now, session, pc, token, age
 
 vars == <<now, session, pc, token, age>>
 
+Local == now - SKEW          \* Date.now() on the developer's machine
+
 Init ==
-  /\ now = 0
+  /\ now = SKEW
   /\ session = now + TTL     \* minted at startup; holds the server expiry
   /\ pc = [r \in Req |-> "idle"]
   /\ token = [r \in Req |-> 0]
@@ -28,7 +30,7 @@ Init ==
 \* credential(): the expiry check.
 Check(r) ==
   /\ pc[r] = "idle"
-  /\ pc' = [pc EXCEPT ![r] = IF session - now < MARGIN THEN "minting" ELSE "read"]
+  /\ pc' = [pc EXCEPT ![r] = IF session - Local < MARGIN THEN "minting" ELSE "read"]
   /\ age' = [age EXCEPT ![r] = 0]
   /\ UNCHANGED <<now, session, token>>
 
