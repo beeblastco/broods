@@ -2767,6 +2767,42 @@ describe("run token (auth kind agent)", () => {
     ]);
   });
 
+  it("puts a user token's user ahead of the key, so MCP servers learn who asked", async () => {
+    const handled: DirectInboundEvent[] = [];
+    await routeIncomingEvent(
+      createEvent(USER_TURN, { authorization: "Bearer token" }),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handled.push(event);
+
+          return { statusCode: 200, body: "ok" };
+        },
+      }),
+      {
+        authResolver: async (): Promise<AuthContext> => ({
+          kind: "deployment",
+          account: TEST_ACCOUNT,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+          user: { userId: "user_42", expiresAt: Date.now() + 60_000 },
+        }),
+        deploymentLoader: async () => ({
+          accountId: TEST_ACCOUNT.accountId,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+        }),
+      },
+    );
+    expect(handled.map((event) => event.principalChain)).toEqual([
+      [
+        { kind: "user", id: "user_42" },
+        { kind: "api", keyKind: "deployment" },
+      ],
+    ]);
+  });
+
   it("reads its own agent's runs and nothing else", async () => {
     const own = await routeIncomingEvent(
       createEvent(

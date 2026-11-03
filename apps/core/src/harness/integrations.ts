@@ -794,7 +794,12 @@ async function handleHttpRequest(
         context,
         deployment,
       )),
-      principalChain: [{ kind: "api", keyKind: auth.kind } as const],
+      principalChain: [
+        ...(deployment?.user
+          ? [{ kind: "user", id: deployment.user.userId } as const]
+          : []),
+        { kind: "api", keyKind: auth.kind } as const,
+      ],
       ...(deployment
         ? {
             endpointId: deployment.endpointId,
