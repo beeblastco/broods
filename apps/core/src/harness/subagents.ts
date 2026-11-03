@@ -739,7 +739,13 @@ export class SubagentCoordinator {
   // Once per question no live pass will answer. With the run's message turns spent the child
   // gets no line to its parent, so it answers. It runs detached: no pass waits on it.
   private async wakeChild(question: SubagentTaskMetadata): Promise<void> {
-    if (this.childStop.signal.aborted) return;
+    if (this.childStop.signal.aborted) {
+      if (unanswered.get(question.conversationKey) === question.eventId) {
+        unanswered.delete(question.conversationKey);
+      }
+
+      return;
+    }
     try {
       const child = await this.resolveAddress(childAddress(question));
       const charged =
@@ -1096,7 +1102,7 @@ export class SubagentCoordinator {
       this.childStop.signal.aborted ||
       payer.childStop.signal.aborted
     ) {
-      liveChildren.delete(turn.conversationKey);
+      settleLive(turn.conversationKey, live, false);
 
       return undefined;
     }
@@ -1533,14 +1539,17 @@ export class SubagentCoordinator {
       this.parentAgentConfig,
       this.getHooks(),
     );
-    // Read after the hook: the parent may have stopped waiting meanwhile.
-    // A detached child's question still goes to a live pass: only its result resumes the parent.
-    const live =
-      !this.detached.has(completion.taskId) ||
-      (visible?.status === "awaiting_input" && !this.closed);
+    // Read after the hook: the parent may have stopped waiting meanwhile. A detached child's
+    // question still goes to a live pass, this run's or else its payer's.
+    const live = !this.detached.has(completion.taskId)
+      ? this
+      : visible?.status === "awaiting_input"
+        ? [this, payer].find((run): boolean => !run.closed)
+        : undefined;
     if (visible) {
       if (live) {
-        this.enqueue(visible);
+        live.enqueue(visible);
+        live.notifyCompletion();
       } else {
         await payer.resumeParentWith(
           completionToParentMessage(visible),
@@ -2066,7 +2075,6 @@ function requireParentAccountId(session: Session): string {
   return session.accountId;
 }
 
-/** What a lost result's row recorded, as the parent is told it. */
 // Live from before its admission, so a message sent meanwhile waits to join this turn.
 function reserveLive(key: string, task: ResolvedSubagentTask): LiveChild {
   const live: LiveChild = {
@@ -2079,6 +2087,7 @@ function reserveLive(key: string, task: ResolvedSubagentTask): LiveChild {
   return live;
 }
 
+/** What a lost result's row recorded, as the parent is told it. */
 function rowOutcome(
   row: AsyncAgentResultRecord,
 ): Pick<SubagentCompletion, "status" | "response" | "error" | "question"> {

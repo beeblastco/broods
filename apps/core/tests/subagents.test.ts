@@ -3393,6 +3393,67 @@ describe("message-agents in the coordinator", () => {
       expect(older.turns.get("lineage")).toBe(0);
     });
 
+    it("answers a message that waited on a later turn whose result row failed to write", async (): Promise<void> => {
+      const run = await parentRun({});
+      const runtimeState = childRuntime([run.coordinator]);
+      const child = await liveChild(run, runtimeState);
+      let fail = (_error: Error): void => {};
+      spyOn(
+        asyncAgentResults,
+        "createPendingAsyncAgentResult",
+      ).mockImplementationOnce(
+        (): Promise<boolean> =>
+          new Promise((_resolve, reject): void => {
+            fail = reject;
+          }),
+      );
+
+      await run.coordinator.messageChild(child.address, message({ text: "a" }));
+      runtimeState.turns[0]?.answer("first");
+      await Bun.sleep(5);
+      const late = run.coordinator.messageChild(
+        child.address,
+        message({ text: "b" }),
+      );
+      await Bun.sleep(1);
+      fail(new Error("row write failed"));
+
+      expect(
+        await Promise.race([
+          late.then((result): string => result.status),
+          Bun.sleep(500).then((): string => "still waiting"),
+        ]),
+      ).not.toBe("still waiting");
+    });
+
+    it("hands a later turn's question to the open run that paid for it, and wakes the child only once that run closes", async (): Promise<void> => {
+      const older = await parentRun({});
+      const newer = await parentRun({
+        eventId: "acct:account_1:agent:agent_parent:api:event_newer",
+      });
+      const runtimeState = childRuntime([older.coordinator, newer.coordinator]);
+      const child = await liveChild(older, runtimeState);
+      newer.resume.mockRestore();
+      await older.coordinator.closePasses();
+
+      await newer.coordinator.messageChild(child.address, message());
+      runtimeState.turns[0]?.answer("first");
+      await until((): boolean => runtimeState.turns.length === 2);
+      runtimeState.turns[1]?.ask("Which region?");
+      await until((): boolean => older.coordinator.runningCount === 0);
+      await Bun.sleep(5);
+
+      expect(runtimeState.turns).toHaveLength(2);
+      expect(
+        (await newer.coordinator.takeParentMessages()).map(messageText),
+      ).toEqual([expect.stringContaining("Which region?")]);
+      await newer.coordinator.closePasses();
+      await until((): boolean => runtimeState.turns.length === 3);
+      expect(runtimeState.turns[2]?.prompt).toContain(
+        "No reply from your parent",
+      );
+    });
+
     it("keeps one note's ids across its tries, so a note admitted before a failure is delivered once", async (): Promise<void> => {
       const resumeParent = mock(
         async (
