@@ -32,20 +32,23 @@ export interface MessagesRequest {
 const realFetch = globalThis.fetch;
 
 // A workspace on a reserved sandbox (`crash`'s readers) reads its memory file at turn start:
-// this S3 has none, so such a turn runs with no AWS.
-const emptyS3 = Bun.serve({
-  port: 0,
-  fetch: (): Response =>
-    new Response("<Error><Code>NoSuchKey</Code></Error>", { status: 404 }),
-});
-Object.assign(process.env, {
-  AWS_ACCESS_KEY_ID: "local",
-  AWS_ENDPOINT_URL_S3: emptyS3.url.href,
-  AWS_REGION: "us-east-1",
-  AWS_SECRET_ACCESS_KEY: "local",
-  // Not DNS-safe, so the SDK addresses it by path on the local endpoint.
-  FILESYSTEM_BUCKET_NAME: "broods_local",
-});
+// this S3 has none, so such a turn runs with no AWS. Only as the stack's preload: an importer
+// would keep the listener open.
+if (TRACE_PATH) {
+  const emptyS3 = Bun.serve({
+    port: 0,
+    fetch: (): Response =>
+      new Response("<Error><Code>NoSuchKey</Code></Error>", { status: 404 }),
+  });
+  Object.assign(process.env, {
+    AWS_ACCESS_KEY_ID: "local",
+    AWS_ENDPOINT_URL_S3: emptyS3.url.href,
+    AWS_REGION: "us-east-1",
+    AWS_SECRET_ACCESS_KEY: "local",
+    // Not DNS-safe, so the SDK addresses it by path on the local endpoint.
+    FILESYSTEM_BUCKET_NAME: "broods_local",
+  });
+}
 
 globalThis.fetch = Object.assign(
   async (

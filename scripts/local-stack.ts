@@ -375,8 +375,13 @@ async function crash(args: string[]): Promise<void> {
     args.includes(name) ? args[args.indexOf(name) + 1] : undefined;
   const { context, state } = await perfStack("crash");
   const waitMin = value("--wait-min");
-  const cases = (value("--cases")?.split(",") ?? CRASH_CASES).filter(
-    (kind): kind is CrashCase => CRASH_CASES.some((known) => known === kind),
+  const cases = (value("--cases")?.split(",") ?? CRASH_CASES).map(
+    (kind): CrashCase => {
+      const known = CRASH_CASES.find((name) => name === kind);
+      if (!known) throw new Error(`unknown crash case ${kind}`);
+
+      return known;
+    },
   );
   const trials = await runCrashRecovery(context, {
     cases: cases,
