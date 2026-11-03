@@ -6,7 +6,10 @@ const ROOT = join(import.meta.dir, "..");
 
 const MIRRORS = join(import.meta.dir, "mirrors.json");
 
-// Lean model -> TypeScript file -> symbol -> hash of its comment-free source.
+// Source positions and literal spelling; dropping them leaves what the code does.
+const POSITION_KEYS = new Set(["start", "end", "range", "raw"]);
+
+// Lean model -> TypeScript file -> symbol -> hash of its syntax tree.
 type Mirrors = Record<string, Record<string, Record<string, string>>>;
 
 interface Span {
@@ -47,13 +50,15 @@ if (import.meta.main) {
   }
 }
 
-/** Hash of `symbol` (`name` or `Class.method`) in `file`, comments and whitespace ignored. */
+/** Hash of `symbol` (`name` or `Class.method`): its syntax tree, without comments or layout. */
 export function symbolHash(
   file: string,
   source: string,
   symbol: string,
 ): string {
-  const { program, comments, errors } = parseSync(file, source);
+  const { program, errors } = parseSync(file, source, {
+    preserveParens: false,
+  });
   const [error] = errors;
   if (error !== undefined) throw new Error(`${file}: ${error.message}`);
   const spans = symbolSpans(program, symbol);
@@ -63,20 +68,11 @@ export function symbolHash(
       `${file}: ${spans.length} definitions of ${symbol}, want exactly 1`,
     );
   }
-  let text = "";
-  let at = span.start;
-  for (const comment of comments) {
-    if (comment.start < at || comment.end > span.end) continue;
-    text += source.slice(at, comment.start);
-    at = comment.end;
-  }
-  text += source.slice(at, span.end);
-  const normalized = text.replace(/\s+/g, " ").trim();
+  const tree = JSON.stringify(span, (key: string, value: unknown): unknown =>
+    POSITION_KEYS.has(key) ? undefined : value,
+  );
 
-  return new Bun.CryptoHasher("sha256")
-    .update(normalized)
-    .digest("hex")
-    .slice(0, 16);
+  return new Bun.CryptoHasher("sha256").update(tree).digest("hex").slice(0, 16);
 }
 
 // Top-level declarations and class methods only: a nested helper never shadows a mirrored name.
