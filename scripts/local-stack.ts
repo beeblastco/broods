@@ -29,6 +29,7 @@ import {
 import { BroodsAccountClient } from "../packages/broods/src/account.ts";
 import { BroodsClient } from "../packages/broods/src/client.ts";
 import { verifyCases } from "./local-verify/cases/index.ts";
+import { runCrashRecovery } from "./local-verify/crash-recovery.ts";
 import { runPerf } from "./local-verify/perf.ts";
 import {
   LOCAL_GITHUB_APP,
@@ -127,12 +128,15 @@ switch (command) {
   case "perf":
     await perf(flags.has("--record"));
     break;
+  case "crash":
+    await crash(process.argv.slice(3));
+    break;
   case "convex":
     convex(process.argv.slice(3));
     break;
   default:
     console.error(
-      "Usage: bun scripts/local-stack.ts <up|down|status|verify|perf|convex> [--fresh|--purge|--perf|--dashboard|--key|--record]",
+      "Usage: bun scripts/local-stack.ts <up|down|status|verify|perf|crash|convex> [--fresh|--purge|--perf|--dashboard|--key|--record]",
     );
     process.exit(2);
 }
@@ -353,29 +357,74 @@ async function up(
 }
 
 async function perf(record: boolean): Promise<void> {
+  const { context, state } = await perfStack("perf");
+  const passed = await runPerf(context, {
+    record: record,
+    tracePath: convexTracePath(state.instanceId),
+  });
+  if (!passed) process.exit(1);
+}
+
+// `crash [--trials 20] [--wait-min 25] [--out file.json]`
+async function crash(args: string[]): Promise<void> {
+  const value = (name: string): string | undefined =>
+    args.includes(name) ? args[args.indexOf(name) + 1] : undefined;
+  const { context, state } = await perfStack("crash");
+  const waitMin = value("--wait-min");
+  const trials = await runCrashRecovery(context, {
+    adminKey: state.adminKey ?? "",
+    convexUrl: `http://127.0.0.1:${ports(state).convexApi}`,
+    restartCore: async (): Promise<void> => {
+      if (state.pids.core) process.kill(state.pids.core, "SIGKILL");
+      await pollUntil(
+        { initialIntervalMs: 20, maxIntervalMs: 100, timeoutMs: 5_000 },
+        async () => (isProcessAlive(state.pids.core) ? null : true),
+      );
+      startCore(state);
+      saveState(state);
+      await waitForHttp(
+        `http://127.0.0.1:${ports(state).core}/healthz`,
+        "core",
+      );
+    },
+    tracePath: convexTracePath(state.instanceId),
+    trials: Number(value("--trials") ?? 20),
+    ...(waitMin ? { waitMs: Number(waitMin) * 60_000 } : {}),
+  });
+  const out = value("--out");
+  if (out) writeFileSync(out, JSON.stringify(trials, null, 2));
+  const told = Object.entries(
+    Object.groupBy(trials, (trial) => String(trial.told)),
+  );
+  console.log(
+    `told: ${told.map(([times, of]) => `${of?.length}×${times}`).join(", ")}`,
+  );
+  if (!trials.every((trial) => trial.told === 1)) process.exit(1);
+}
+
+async function perfStack(
+  name: string,
+): Promise<{ context: VerifyContext; state: InstanceState }> {
   const state = loadState(currentInstanceId());
   if (!state?.perf || !isProcessAlive(state.pids.core)) {
     console.error("core is not running in perf mode. Run `up --perf` first");
     process.exit(1);
   }
-
   const edgeUrl = `http://127.0.0.1:${ports(state).edge}`;
   const runId = Date.now().toString(36);
   const accountSecret = await createAccount(
     edgeUrl,
     state.secrets.adminAccount,
-    `perf-${runId}`,
+    `${name}-${runId}`,
   );
-  const passed = await runPerf(
-    verifyContext(
-      state,
-      accountSecret,
-      runId,
-      <T>(_step: string, fn: () => Promise<T>): Promise<T> => fn(),
-    ),
-    { record: record, tracePath: convexTracePath(state.instanceId) },
+  const context = verifyContext(
+    state,
+    accountSecret,
+    runId,
+    <T>(_step: string, fn: () => Promise<T>): Promise<T> => fn(),
   );
-  if (!passed) process.exit(1);
+
+  return { context: context, state: state };
 }
 
 async function verify(): Promise<void> {
