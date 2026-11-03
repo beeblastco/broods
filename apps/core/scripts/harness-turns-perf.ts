@@ -39,7 +39,12 @@ import {
 } from "../src/shared/convex/runtime.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 
+// The long run reports a near-full context every this many turns, so Pi auto-compacts.
+const COMPACT_EVERY = 20;
+// Pi compacts above its context window less 16k; claude-haiku-4-5 has 200k.
+const FULL_CONTEXT_TOKENS = 190_000;
 const LEASE_TTL_MS = 24 * 60 * 60 * 1_000;
+const LONG_TURNS = Number(process.env.HARNESS_PERF_LONG_TURNS ?? 120);
 const MODEL_ID = "claude-haiku-4-5";
 // This turn resumes on a released machine: the next sandbox is new and empty.
 const RELEASE_AT = 8;
@@ -48,34 +53,86 @@ const USER_TEXT =
   "Summarize what changed in the payments service since the last turn. ".repeat(
     24,
   );
+// Pi keeps the last ~20k tokens on compaction: longer turns make each compaction cut deep.
+const LONG_USER_TEXT = USER_TEXT.repeat(4);
+
+interface Conversation {
+  label: string;
+  turns: number;
+  useStorage: boolean;
+  userText: string;
+  // Pi compacts every this many turns; the full variant reads every row, as before windows.
+  compactEvery?: number;
+  fullRead?: boolean;
+}
+
+interface Reads {
+  rows: number;
+}
 
 interface TurnMetrics {
   calls: Record<string, number>;
+  // Hash of every request this turn sent the model.
+  modelHash: string;
   openMs: number;
   promptMessages: number;
+  readRows: number;
   resumeStateBytes: number;
   saveError?: string;
   storedEntryBytes: number;
+  storedRows: number;
   turn: number;
 }
 
 muteCoreLogs();
-const modelRequests: number[] = [];
+const modelRequests: { messages: number; body: string }[] = [];
+let fullContextNext = false;
 const model = Bun.serve({
   port: 0,
   fetch: async (request: Request): Promise<Response> => {
     const body = (await request.json()) as MessagesRequest;
-    modelRequests.push(body.messages.length);
+    modelRequests.push({
+      messages: body.messages.length,
+      body: JSON.stringify(body.messages),
+    });
+    const fullContext = fullContextNext && body.stream === true;
+    if (fullContext) fullContextNext = false;
 
-    return fakeModel(body);
+    return fakeModel(body, fullContext ? FULL_CONTEXT_TOKENS : undefined);
   },
 });
 const root = await mkdtemp(join(tmpdir(), "harness-turns-"));
 try {
-  const withStorage = await runConversation(true);
-  const withoutStorage = await runConversation(false);
+  const withStorage = await runConversation({
+    label: "storage",
+    turns: TURNS,
+    useStorage: true,
+    userText: USER_TEXT,
+  });
+  const withoutStorage = await runConversation({
+    label: "lifecycle",
+    turns: TURNS,
+    useStorage: false,
+    userText: USER_TEXT,
+  });
+  const long = {
+    turns: LONG_TURNS,
+    useStorage: true,
+    userText: LONG_USER_TEXT,
+    compactEvery: COMPACT_EVERY,
+  };
+  const windowed = await runConversation({ ...long, label: "windowed" });
+  const fullRead = await runConversation({
+    ...long,
+    label: "full",
+    fullRead: true,
+  });
   console.log(report(withStorage, withoutStorage));
-  const failures = storageFailures(withStorage);
+  console.log(longReport(windowed, fullRead));
+  const failures = [
+    ...storageFailures(withStorage),
+    ...windowFailures(windowed, fullRead),
+  ];
   for (const failure of failures) console.error(`fail: ${failure}`);
   process.exitCode = failures.length > 0 ? 1 : 0;
 } finally {
@@ -83,11 +140,14 @@ try {
   await rm(root, { recursive: true, force: true });
 }
 
-async function runConversation(useStorage: boolean): Promise<TurnMetrics[]> {
+async function runConversation(
+  conversation: Conversation,
+): Promise<TurnMetrics[]> {
+  const { compactEvery, label, turns, useStorage } = conversation;
   const test = createRuntimeTest();
   const accountId = await seedAccount(test);
-  const conversationKey = `acct:${accountId}:agent:perf:api:pi-${useStorage}`;
-  const eventId = `evt_pi_${useStorage}`;
+  const conversationKey = `acct:${accountId}:agent:perf:api:pi-${label}`;
+  const eventId = `evt_pi_${label}`;
   const admitted = (await test.mutation(internal.runtimeIngress.accept, {
     accountId: accountId as never,
     agentId: "perf",
@@ -111,7 +171,8 @@ async function runConversation(useStorage: boolean): Promise<TurnMetrics[]> {
     maxQueuedBytes: 1_000_000,
   })) as { ownerGeneration?: number };
   const calls: Record<string, number> = {};
-  routeRuntimeTo(test, calls);
+  const reads: Reads = { rows: 0 };
+  routeRuntimeTo(test, calls, reads, conversation.fullRead === true);
   const broodsSession = new Session({
     eventId: eventId,
     conversationKey: conversationKey,
@@ -120,13 +181,16 @@ async function runConversation(useStorage: boolean): Promise<TurnMetrics[]> {
     ownerGeneration: admitted.ownerGeneration,
   });
   const results: TurnMetrics[] = [];
-  for (let turn = 1; turn <= TURNS; turn += 1) {
+  for (let turn = 1; turn <= turns; turn += 1) {
     const sandboxRoot = join(
       root,
-      `sandbox-${useStorage}-${turn < RELEASE_AT ? "first" : "second"}`,
+      `sandbox-${label}-${turn < RELEASE_AT ? "first" : "second"}`,
     );
     await mkdir(sandboxRoot, { recursive: true });
     for (const name of Object.keys(calls)) delete calls[name];
+    reads.rows = 0;
+    fullContextNext = compactEvery !== undefined && turn % compactEvery === 0;
+    const firstRequest = modelRequests.length;
     const stored = await broodsSession.loadHarnessSession();
     const sandbox = hostSandbox(sandboxRoot, turn === RELEASE_AT);
     const agent = new HarnessAgent<HarnessAgentAdapter>({
@@ -148,7 +212,9 @@ async function runConversation(useStorage: boolean): Promise<TurnMetrics[]> {
     });
     const openMs = performance.now() - openedAt;
     const stream = await agent.stream({
-      messages: [{ role: "user", content: `Turn ${turn}. ${USER_TEXT}` }],
+      messages: [
+        { role: "user", content: `Turn ${turn}. ${conversation.userText}` },
+      ],
       session: nativeSession,
     });
     await stream.consumeStream();
@@ -164,16 +230,26 @@ async function runConversation(useStorage: boolean): Promise<TurnMetrics[]> {
         error instanceof Error ? error.message : String(error),
     );
     const turnCalls = { ...calls };
+    const readRows = reads.rows;
     const saved = await broodsSession.loadHarnessSession();
+    const entries = await storedEntries(test, conversationKey);
     results.push({
       calls: turnCalls,
+      modelHash: Bun.hash(
+        modelRequests
+          .slice(firstRequest)
+          .map((request) => request.body)
+          .join("\n"),
+      ).toString(),
       openMs: openMs,
-      promptMessages: modelRequests.at(-1) ?? 0,
+      promptMessages: modelRequests.at(-1)?.messages ?? 0,
+      readRows: readRows,
       resumeStateBytes: Buffer.byteLength(
         JSON.stringify(saved?.resumeState ?? null),
       ),
       saveError: saveError,
-      storedEntryBytes: await storedEntryBytes(test, conversationKey),
+      storedEntryBytes: entries.bytes,
+      storedRows: entries.rows,
       turn: turn,
     });
     if (saveError) break;
@@ -310,21 +386,68 @@ function report(
   ].join("\n");
 }
 
+function longReport(windowed: TurnMetrics[], fullRead: TurnMetrics[]): string {
+  const checkpoints = [
+    ...new Set([
+      1,
+      COMPACT_EVERY,
+      COMPACT_EVERY + 1,
+      40,
+      60,
+      80,
+      100,
+      LONG_TURNS,
+    ]),
+  ].filter((turn) => turn <= LONG_TURNS);
+  const row = (label: string, results: TurnMetrics[], turn: number): string => {
+    const result = results.find((entry) => entry.turn === turn);
+    if (!result) return `| ${label} | ${turn} | not reached | | | | |`;
+
+    return `| ${label} | ${turn} | ${result.storedRows} | ${result.readRows} | ${result.calls.readHarnessSessionEntries ?? 0} | ${result.openMs.toFixed(1)} | ${result.promptMessages} |`;
+  };
+  const opens = (results: TurnMetrics[]): string => {
+    const values = results.slice(1).map((result) => result.openMs);
+
+    return `p50 ${percentile(values, 0.5).toFixed(1)} ms, p95 ${percentile(values, 0.95).toFixed(1)} ms`;
+  };
+
+  return [
+    "",
+    `### Pi long conversation (${LONG_TURNS} turns, Pi compacts every ${COMPACT_EVERY})`,
+    "",
+    "| read | turn | rows stored | rows read to resume | read calls | resume ms | messages sent to model |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    ...checkpoints.map((turn) => row("windowed", windowed, turn)),
+    ...checkpoints.map((turn) => row("full (before)", fullRead, turn)),
+    "",
+    `resume: windowed ${opens(windowed)}; full ${opens(fullRead)}. Every turn's model requests match between the two.`,
+  ].join("\n");
+}
+
 // Core's Session calls Convex through `runtime`; here every call lands on convex-test and counts.
 function routeRuntimeTo(
   test: RuntimeTest,
   calls: Record<string, number>,
+  reads: Reads,
+  fullRead: boolean,
 ): void {
   const count = (name: string): void => {
     calls[name] = (calls[name] ?? 0) + 1;
   };
   const query: typeof runtime.query = async (name, args) => {
     count(name);
-
-    return test.query(
+    const { leafEntryId: _leaf, ...withoutLeaf } = args as {
+      leafEntryId?: string;
+    };
+    const result = await test.query(
       runtimeQueries[name] as FunctionReference<"query", "internal">,
-      args,
+      fullRead && name === "readHarnessSessionEntries" ? withoutLeaf : args,
     );
+    if (name === "readHarnessSessionEntries") {
+      reads.rows += (result as { entries: unknown[] }).entries.length;
+    }
+
+    return result;
   };
   const mutate: typeof runtime.mutate = async (name, args) => {
     count(name);
@@ -336,6 +459,41 @@ function routeRuntimeTo(
   };
   runtime.query = query;
   runtime.mutate = mutate;
+}
+
+// The windowed read must feed Pi exactly what a full read does, and stop growing with turns.
+function windowFailures(
+  windowed: TurnMetrics[],
+  fullRead: TurnMetrics[],
+): string[] {
+  const failures: string[] = [];
+  if (windowed.length !== LONG_TURNS || fullRead.length !== LONG_TURNS) {
+    failures.push(
+      `long run stopped at turn ${Math.min(windowed.length, fullRead.length)}`,
+    );
+  }
+  for (const [index, result] of windowed.entries()) {
+    if (result.saveError) {
+      failures.push(`long run turn ${result.turn}: ${result.saveError}`);
+    }
+    if (fullRead[index] && result.modelHash !== fullRead[index].modelHash) {
+      failures.push(
+        `long run turn ${result.turn}: the model got different messages than from a full read`,
+      );
+    }
+  }
+  const half = Math.floor(windowed.length / 2);
+  const busiest = (results: TurnMetrics[]): number =>
+    Math.max(0, ...results.map((result) => result.readRows));
+  const early = busiest(windowed.slice(0, half));
+  const late = busiest(windowed.slice(half));
+  if (late > early * 1.25) {
+    failures.push(
+      `long run: the busiest resume read ${late} rows in the second half, ${early} in the first; reads grow with turns`,
+    );
+  }
+
+  return failures;
 }
 
 function storageFailures(results: TurnMetrics[]): string[] {
@@ -362,20 +520,22 @@ function storageFailures(results: TurnMetrics[]): string[] {
   return failures;
 }
 
-async function storedEntryBytes(
+async function storedEntries(
   test: RuntimeTest,
   conversationKey: string,
-): Promise<number> {
-  return test.run(async (ctx): Promise<number> => {
+): Promise<{ bytes: number; rows: number }> {
+  return test.run(async (ctx) => {
     let bytes = 0;
+    let rows = 0;
     for await (const row of ctx.db
       .query("runtimeHarnessSessionEntries")
       .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
         q.eq("conversationKey", conversationKey),
       )) {
       bytes += row.entry.length;
+      rows += 1;
     }
 
-    return bytes;
+    return { bytes: bytes, rows: rows };
   });
 }

@@ -1,4 +1,6 @@
 import { getConvexSize } from "convex/values";
+import type { Doc } from "../_generated/dataModel";
+import type { DatabaseReader } from "../_generated/server";
 
 // Core trims a bigger Pi entry before saving; the save refuses one that still exceeds it.
 export const MAX_HARNESS_SESSION_ENTRY_BYTES = 512 * 1_024;
@@ -15,6 +17,23 @@ const ENTRY_BATCH: BatchLimits = {
   bytes: HARNESS_ENTRY_BATCH_BYTES,
   rows: HARNESS_ENTRY_BATCH_ROWS,
 };
+
+// One entry of a session, by the id its harness gave it.
+export async function findHarnessEntry(
+  db: DatabaseReader,
+  session: { conversationKey: string; sessionId: string },
+  entryId: string,
+): Promise<Doc<"runtimeHarnessSessionEntries"> | null> {
+  return await db
+    .query("runtimeHarnessSessionEntries")
+    .withIndex("by_conversationKey_and_sessionId_and_entryId", (q) =>
+      q
+        .eq("conversationKey", session.conversationKey)
+        .eq("sessionId", session.sessionId)
+        .eq("entryId", entryId),
+    )
+    .first();
+}
 
 export function harnessEntryBytes(entry: string): number {
   return getConvexSize(entry);

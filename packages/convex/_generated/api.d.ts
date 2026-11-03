@@ -6823,11 +6823,17 @@ export declare const internal: {
     readHarnessSessionEntries: FunctionReference<
       "query",
       "internal",
-      { afterSequence?: number; conversationKey: string; sessionId: string },
+      {
+        afterSequence?: number;
+        conversationKey: string;
+        leafEntryId?: string;
+        sessionId: string;
+      },
       {
         entries: Array<{
           entry: string;
           entryId: string;
+          firstKeptEntryId?: string;
           parentEntryId?: string;
           version: number;
         }>;
@@ -7190,6 +7196,7 @@ export declare const internal: {
         entries: Array<{
           entry: string;
           entryId: string;
+          firstKeptEntryId?: string;
           parentEntryId?: string;
           version: number;
         }>;
@@ -7504,6 +7511,7 @@ export declare const internal: {
         entries?: Array<{
           entry: string;
           entryId: string;
+          firstKeptEntryId?: string;
           parentEntryId?: string;
           version: number;
         }>;

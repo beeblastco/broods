@@ -605,8 +605,10 @@ export class Session {
     this.pendingHarnessEntries.push(...entries);
   }
 
+  // From where the leaf's model context starts: entries before a compaction are not read.
   async readHarnessSessionEntries(
     sessionId: string,
+    leafEntryId: string,
   ): Promise<HarnessSessionEntry[]> {
     const entries: HarnessSessionEntry[] = [];
     let afterSequence: number | undefined;
@@ -615,7 +617,7 @@ export class Session {
         conversationKey: this.conversationKey,
         sessionId: sessionId,
         ...(afterSequence === undefined
-          ? {}
+          ? { leafEntryId: leafEntryId }
           : { afterSequence: afterSequence }),
       });
       entries.push(...page.entries);

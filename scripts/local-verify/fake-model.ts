@@ -66,7 +66,12 @@ function event(type: string, fields: Record<string, unknown>): string {
   return `event: ${type}\ndata: ${JSON.stringify({ type: type, ...fields })}\n\n`;
 }
 
-export function fakeModel(request: MessagesRequest): Response {
+// `inputTokens` lets a caller report a near-full context, which makes a harness compact.
+export function fakeModel(
+  request: MessagesRequest,
+  inputTokens: number = USAGE.input_tokens,
+): Response {
+  const usage = { ...USAGE, input_tokens: inputTokens };
   const message = {
     id: `msg_${Date.now()}`,
     type: "message",
@@ -79,7 +84,7 @@ export function fakeModel(request: MessagesRequest): Response {
       ...message,
       content: [{ type: "text", text: "Summary." }],
       stop_reason: "end_turn",
-      usage: USAGE,
+      usage: usage,
     });
   }
   const last = request.tools?.some((tool) => tool.name === "bash")
@@ -107,7 +112,7 @@ export function fakeModel(request: MessagesRequest): Response {
         };
   const frames = [
     event("message_start", {
-      message: { ...message, content: [], stop_reason: null, usage: USAGE },
+      message: { ...message, content: [], stop_reason: null, usage: usage },
     }),
     event("content_block_start", { index: 0, content_block: block }),
     event("content_block_delta", { index: 0, delta: delta }),
