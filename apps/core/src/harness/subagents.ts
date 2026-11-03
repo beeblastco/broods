@@ -496,7 +496,7 @@ export class SubagentCoordinator {
 
   // One admission: an idle child starts a turn, a running one reads it next step, so two
   // prompts never both start a turn. `charged` is a message turn, given back unless one starts.
-  // An envelope stranded by a dead owner runs first, as this task's turn; the prompt queues.
+  // A turn a dead owner stranded runs first, detached, as this task's turn; the prompt queues.
   async resumeChild(
     child: SubagentChild,
     prompt: string,
@@ -554,6 +554,7 @@ export class SubagentCoordinator {
           throw error;
         });
         started = true;
+        if (admission.recovered) await this.detachTask(turn.taskId, false);
       }
 
       return { outcome: admission.outcome, task: toDispatch(task) };
@@ -1354,9 +1355,11 @@ export class SubagentCoordinator {
     subagentParent?: SubagentParentContext,
     publisher?: NatsPublisher,
   ): Promise<void> {
-    const charged = await this.parentSession
-      .claimMessageTurn(MESSAGE_TURN_BUDGET)
-      .catch((): boolean => false);
+    const charged =
+      !this.childStop.signal.aborted &&
+      (await this.parentSession
+        .claimMessageTurn(MESSAGE_TURN_BUDGET)
+        .catch((): boolean => false));
     const turn: ResolvedSubagentTask = {
       ...task,
       eventId: next.eventId,

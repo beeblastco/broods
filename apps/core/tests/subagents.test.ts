@@ -2774,6 +2774,9 @@ describe("message-agents in the coordinator", () => {
       tasks: [],
     }));
     coordinator["launch"] = launch;
+    const detach = spyOn(coordinator, "detachTask" as never).mockResolvedValue(
+      undefined as never,
+    );
     const child = await coordinator.resolveAddress(`${CHILD_AGENT}/${key}`);
     turns.set("lineage", 1);
 
@@ -2784,6 +2787,8 @@ describe("message-agents in the coordinator", () => {
       [expect.objectContaining({ eventId: "stranded-event" })],
       { ownerGeneration: 4, events: stranded },
     ]);
+    // Nobody in this pass asked for it, so the pass does not wait on it.
+    expect(detach).toHaveBeenCalledTimes(1);
     // The stranded turn spends the message's turn; the message charges its own when it runs.
     expect(turns.get("lineage")).toBe(1);
   });
