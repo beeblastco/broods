@@ -4,6 +4,10 @@ import type {
   AgentProviderSettings,
 } from "../../shared/domain/agent-config.ts";
 
+// Claude models without effort, per the AI SDK Anthropic model table; every later model has it.
+const CLAUDE_WITHOUT_EFFORT =
+  /claude-(?:3|(?:haiku|sonnet)-4[.-]5|opus-4[.-]1|(?:opus|sonnet)-4(?:[.-]0|-20\d{6}|$))/;
+
 type HarnessProviderName = NonNullable<
   NonNullable<AgentConfig["model"]>["provider"]
 >;
@@ -19,6 +23,7 @@ interface AnthropicHarnessReasoning {
 export function anthropicHarnessReasoning(
   agentConfig: AgentConfig,
 ): AnthropicHarnessReasoning {
+  if (CLAUDE_WITHOUT_EFFORT.test(agentConfig.model?.modelId ?? "")) return {};
   const reasoning = agentConfig.model?.reasoning;
   const effort = reasoning === "none" ? "low" : harnessEffort(reasoning);
   if (!effort) return {};
