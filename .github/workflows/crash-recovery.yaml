@@ -1,0 +1,105 @@
+# Crash recovery.
+# Runs `local-stack crash` on dev: core is SIGKILLed after the recovery sweep
+# hands 20 late results to resumes and before any resume's message is saved;
+# each conversation must then be told its result exactly once (#1183).
+#
+# Not on pull requests: recovery waits out the real timers (a dead run's
+# 15-minute lease, the 5-minute maintain cron), so one run takes ~25 minutes.
+#
+# Output: one open issue labelled `crash-recovery` while the last run failed,
+# rewritten in place each failing run, and closed by the next passing one.
+
+name: Crash Recovery
+
+on:
+  schedule:
+    - cron: "37 1 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: crash-recovery
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  crash:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Start the local stack with the in-process model
+        run: bun run local:up -- --perf
+
+      - name: Crash core between a resume's handover and its save
+        id: crash
+        shell: bash
+        run: |
+          set -uo pipefail
+          exit_code=0
+          bun run local:crash -- --trials 20 --out crash.json 2>&1 | tee crash.log || exit_code=$?
+          {
+            echo '### Crash recovery'
+            echo '```'
+            tail -n 20 crash.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "failed=$([ "$exit_code" -ne 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          exit "$exit_code"
+
+      - name: Upload results and stack logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: crash-recovery-${{ github.run_id }}
+          path: |
+            crash.json
+            crash.log
+            ~/.broods-local/*/logs/
+            ~/.broods-local/*/convex-calls.jsonl
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Open, update or close the crash-recovery issue
+        if: always() && github.ref == 'refs/heads/dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED: ${{ steps.crash.outputs.failed != 'false' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh label create crash-recovery --repo "$GITHUB_REPOSITORY" \
+            --color B60205 --description "Nightly crash-recovery test failed" \
+            --force >/dev/null
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+            --label crash-recovery --state open --limit 1 --json number \
+            --jq '.[0].number // empty')
+          if [[ "$FAILED" != "true" ]]; then
+            if [[ -n "$existing" ]]; then
+              gh issue close "$existing" --repo "$GITHUB_REPOSITORY" \
+                --comment "Passed on \`$SHA\`: $RUN_URL"
+            fi
+            exit 0
+          fi
+          log=$(tail -n 40 crash.log 2>/dev/null || echo "no log: the run failed before the crash step")
+          body=$(printf 'The nightly crash-recovery run failed on `%s`.\n\nRun: %s\n\n```\n%s\n```\n\nReproduce: `bun run local:up -- --perf` then `bun run local:crash`. Each conversation must be told its result once and its row must read `stored`; `crash.json` in the run artifact lists every trial.\n' "$SHA" "$RUN_URL" "$log")
+          if [[ -n "$existing" ]]; then
+            gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "Crash recovery: a late result was lost or told twice" \
+              --label crash-recovery --body "$body"
+          fi
