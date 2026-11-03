@@ -76,6 +76,14 @@ export function createDetachedAsyncToolResult(options: {
     parentEventId: `${eventId}:${tag}:${options.resultId}`,
   });
 }
+// The exact event that made the row: undoes `createDetachedAsyncToolResult`'s `:<tag>:<resultId>`.
+export function askingEventId(
+  row: Pick<AsyncToolResultRecord, "parentEventId" | "resultId">,
+): string {
+  const tagged = row.parentEventId.slice(0, -`:${row.resultId}`.length);
+
+  return tagged.slice(0, tagged.lastIndexOf(":"));
+}
 /** Reads one async tool row; the handler uses it for callbacks, answers and continuation runs. */
 export function getAsyncToolResult(
   resultId: string,

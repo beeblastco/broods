@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { asSchema, type ToolExecuteFunction, type ToolSet } from "ai";
 import {
+  askingEventId,
   rootEventId,
   type AsyncToolResultRecord,
 } from "../src/harness/async-tool-result.ts";
@@ -71,6 +72,19 @@ describe("rootEventId", () => {
 
     expect(rootEventId(asked)).toBe(asked);
     expect(rootEventId(`${asked}:async-tools:async_tool_1`)).toBe(asked);
+  });
+});
+
+describe("askingEventId", () => {
+  it("names the exact event that asked, even one whose id looks like a continuation", () => {
+    const asked = "acct:a:agent:b:api:visible:async-bg:private";
+
+    expect(
+      askingEventId({
+        parentEventId: `${asked}:async-question:async_tool_1`,
+        resultId: "async_tool_1",
+      }),
+    ).toBe(asked);
   });
 });
 

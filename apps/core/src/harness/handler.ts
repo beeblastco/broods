@@ -78,6 +78,7 @@ import {
 } from "./async-agent-result.ts";
 import {
   getAsyncToolResult,
+  askingEventId,
   asyncToolContinuationEventId,
   rootEventId,
   settleAsyncToolResultFromCallback,
@@ -563,19 +564,19 @@ export async function continueAfterAsyncToolSettlement(
   }
   const publicEventId = `async-tools-${settled.resultId}`;
   const question = settled.toolName === ASK_QUESTIONS_TOOL_NAME;
-  // The continuation keeps the run's stage, so a runtime key can still read it.
-  const root =
+  // The continuation keeps the asking turn's stage, so a runtime key can still read it.
+  const asking =
     settled.delivery?.kind === "channel"
       ? null
       : await getIngressStatusByEventId({
           ...scope,
-          eventId: rootEventId(settled.parentEventId),
+          eventId: askingEventId(settled),
         });
 
   return resumeConversation({
     ...scope,
-    ...(root?.publicDeploymentIngress
-      ? { publicDeploymentIngress: root.publicDeploymentIngress }
+    ...(asking?.publicDeploymentIngress
+      ? { publicDeploymentIngress: asking.publicDeploymentIngress }
       : {}),
     eventId: asyncToolContinuationEventId(settled),
     publicEventId: publicEventId,
