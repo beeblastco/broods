@@ -883,6 +883,24 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "codex" },
+        model: { providerOptions: { openai: { reasoningEffort: "high" } } },
+        sandboxes: ["sandbox_1"],
+      }),
+    ).toThrow(
+      "config.model.providerOptions is not supported with config.harness; set config.model.reasoning",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { type: "claude-code" },
+        subagent: { model: { providerOptions: { anthropic: {} } } },
+        sandboxes: ["sandbox_1"],
+      }),
+    ).toThrow(
+      "config.subagent.model.providerOptions is not supported with config.harness",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { type: "codex" },
         policies: ["policy_1"],
         sandboxes: ["sandbox_1"],
       }),

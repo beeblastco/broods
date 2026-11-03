@@ -674,6 +674,31 @@ describe("direct API ingress", () => {
     }
   });
 
+  it("refuses per-run providerOptions for a harness agent", async () => {
+    const response = await runtimeKeyRequest(
+      {
+        ...USER_TURN,
+        model: { providerOptions: { openai: { reasoningEffort: "high" } } },
+      },
+      {
+        agentLoader: async () => ({
+          ...TEST_AGENT,
+          config: {
+            ...TEST_AGENT.config,
+            allowRunOverrides: true,
+            harness: { type: "codex", permissionMode: "allow-all" },
+            sandboxes: ["sandbox_1"],
+          },
+        }),
+      },
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.stringify(responseJson(response))).toContain(
+      "model.providerOptions is not supported with config.harness",
+    );
+  });
+
   it("lets a runtime key continue an API conversation but not a channel session", async () => {
     const channel = await runtimeKeyRequest({
       eventId: "continue-1",
