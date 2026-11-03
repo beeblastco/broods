@@ -14,10 +14,13 @@ import {
 } from "@/app/components/ShortcutProvider";
 import { Input } from "@/app/components/ui/input";
 import { useHydrated } from "@/app/hooks/useHydrated";
+import { ChangeTray } from "@/app/components/copilot/ChangeTray";
 import {
   actionTier,
+  pendingChanges,
   planRunsUnattended,
   type CopilotAction,
+  type TrackedDeploy,
 } from "@/app/lib/copilotActions";
 import { itemAction, planFromQuery } from "@/app/lib/copilotIntent";
 import type { SearchItem } from "@/app/lib/paletteSearch";
@@ -75,6 +78,26 @@ const ITEMS: readonly SearchItem[] = [
   },
 ];
 
+const SEEDED_DEPLOYS: readonly TrackedDeploy[] = [
+  {
+    branch: "dev",
+    committedAt: 0,
+    label: "Add firecrawl",
+    runUrl: "https://github.test/run/1",
+    sha: "c1",
+    state: "deployed",
+    url: "https://github.test/commit/c1",
+  },
+  {
+    branch: "dev",
+    committedAt: 0,
+    label: "Add a workspace",
+    sha: "c2",
+    state: "deploying",
+    url: "https://github.test/commit/c2",
+  },
+];
+
 const CRONS = [{ id: "c1", name: "nightly-digest", status: "active" as const }];
 
 function describe(action: CopilotAction): string {
@@ -91,6 +114,14 @@ function describe(action: CopilotAction): string {
       return `setEnvVar ${action.name}=${action.value}`;
     case "blocked":
       return "blocked";
+    case "connectNodes":
+      return `connect ${action.source} ${action.target}`;
+    case "addMcp":
+      return `addMcp ${action.name} ${action.url}`;
+    case "addNode":
+      return `addNode ${action.nodeType} ${action.agent}`;
+    case "commitFiles":
+      return `commit ${action.files.map((file) => file.path).join(",")}`;
   }
 }
 
@@ -124,6 +155,8 @@ function Surfaces(): React.JSX.Element {
   );
   const [messages, setMessages] = useState<readonly CopilotMessage[]>([]);
   const [completed, setCompleted] = useState<ReadonlySet<string>>(new Set());
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
+  const [deploys, setDeploys] = useState<readonly TrackedDeploy[]>([]);
   const [isOpen, setOpen] = useState(false);
   const [liveCanvas, setLiveCanvas] = useState(true);
   const [warmed, setWarmed] = useState("");
@@ -177,9 +210,16 @@ function Surfaces(): React.JSX.Element {
   const copilot: CopilotState = {
     ask: ask,
     completed: completed,
+    deploys: deploys,
+    dismissDeploy: (sha) =>
+      setDeploys((prev) => prev.filter((deploy) => deploy.sha !== sha)),
+    dismissed: dismissed,
+    dismissStep: (messageId, index) =>
+      setDismissed((prev) => new Set(prev).add(`${messageId}:${index}`)),
     isOpen: isOpen,
     items: ITEMS,
     messages: messages,
+    pending: pendingChanges(messages, new Set([...completed, ...dismissed])),
     runAction: run,
     runStep: (messageId, index, action) => {
       if (actionTier(action) === "blocked") return;
@@ -194,6 +234,7 @@ function Surfaces(): React.JSX.Element {
     <CopilotStateProvider value={copilot}>
       {liveCanvas && <CanvasBindings onRun={record} />}
       <div className="relative flex min-h-0 flex-1">
+        <ChangeTray />
         <div className="flex min-w-0 flex-1 flex-col gap-4 p-8">
           <section data-fixture="palette" className="flex items-center gap-3">
             <CommandPalette
@@ -215,6 +256,14 @@ function Surfaces(): React.JSX.Element {
               onClick={() => setLiveCanvas(false)}
             >
               Unmount canvas bindings
+            </button>
+            <button
+              type="button"
+              data-seed-deploys
+              className="cursor-pointer rounded-md border border-border px-2 py-1 text-xs"
+              onClick={() => setDeploys(SEEDED_DEPLOYS)}
+            >
+              Seed applied commits
             </button>
           </section>
 

@@ -1,10 +1,13 @@
 import { blake2b } from "@noble/hashes/blake2.js";
 import nacl from "tweetnacl";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   broodsRootsFromPaths,
+  commitFiles,
   deployWorkflow,
+  isAgentEditable,
+  type GitHubApp,
   sealSecret,
   verifyWebhookSignature,
 } from "../model/github";
@@ -149,4 +152,122 @@ test("verifyWebhookSignature accepts only the secret's HMAC", async () => {
   expect(await verifyWebhookSignature("secret", body, signature)).toBe(true);
   expect(await verifyWebhookSignature("other", body, signature)).toBe(false);
   expect(await verifyWebhookSignature("secret", body, null)).toBe(false);
+});
+
+describe("agent edits", () => {
+  const app: GitHubApp = {
+    apiUrl: "https://api.github.test",
+    appId: "1",
+    clientId: "c",
+    clientSecret: "s",
+    privateKey: "k",
+    slug: "broods",
+    webUrl: "https://github.test",
+    webhookSecret: "w",
+  };
+  const files = [{ content: "export {};\n", path: "broods/index.ts" }];
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // Answers each GitHub call by method and path; `refuse` fails the direct ref update.
+  function stubGitHub(refuse: boolean): string[] {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      const path = url.replace(app.apiUrl, "");
+      calls.push(`${init.method} ${path}`);
+      const json = (body: unknown, status = 200): Response =>
+        new Response(JSON.stringify(body), { status: status });
+      if (init.method === "PATCH" && refuse && path.endsWith("/heads/dev")) {
+        return json({ message: "protected" }, 409);
+      }
+      if (path.includes("/git/ref/")) return json({ object: { sha: "head" } });
+      if (path.includes("/git/commits/")) return json({ tree: { sha: "t0" } });
+      if (path.endsWith("/git/trees")) return json({ sha: "t1" });
+      if (path.endsWith("/git/commits")) {
+        return json({ sha: "c1", html_url: "https://github.test/commit/c1" });
+      }
+      if (path.endsWith("/pulls")) {
+        return json({ html_url: "https://github.test/pull/7" });
+      }
+
+      return json({});
+    });
+
+    return calls;
+  }
+
+  test("a branch that moved since the agent read it refuses before writing anything", async () => {
+    const calls = stubGitHub(true);
+
+    await expect(
+      commitFiles(app, "t", "o/r", "dev", files, "m", false, "older"),
+    ).rejects.toThrow("dev changed since the agent read it");
+    expect(calls.filter((call) => !call.startsWith("GET"))).toEqual([]);
+  });
+
+  test("only text files inside broods/ are editable", () => {
+    expect(isAgentEditable("broods/", "broods/index.ts")).toBe(true);
+    expect(isAgentEditable("apps/web/broods/", "apps/web/broods/a/b.md")).toBe(
+      true,
+    );
+    expect(isAgentEditable("broods/", "package.json")).toBe(false);
+    expect(isAgentEditable("broods/", "broods/../package.json")).toBe(false);
+    expect(isAgentEditable("broods/", "broods/_generated/api.ts")).toBe(false);
+    expect(isAgentEditable("broods/", "broods/.env.local")).toBe(false);
+    expect(isAgentEditable("broods/", "broods/logo.png")).toBe(false);
+    expect(isAgentEditable("broods/", "broods/dist/index.js")).toBe(false);
+    expect(isAgentEditable("broods/", "broods/node_modules/x/a.ts")).toBe(
+      false,
+    );
+  });
+
+  test("a change lands as one commit on the branch", async () => {
+    const calls = stubGitHub(false);
+
+    const result = await commitFiles(
+      app,
+      "t",
+      "o/r",
+      "dev",
+      files,
+      "m",
+      false,
+      "head",
+    );
+
+    expect(result).toEqual({
+      sha: "c1",
+      url: "https://github.test/commit/c1",
+      viaPullRequest: false,
+    });
+    expect(calls.filter((call) => call.startsWith("POST"))).toEqual([
+      "POST /repos/o/r/git/trees",
+      "POST /repos/o/r/git/commits",
+    ]);
+    expect(calls).toContain("PATCH /repos/o/r/git/refs/heads/dev");
+  });
+
+  test("a branch that refuses the write gets a pull request instead", async () => {
+    const calls = stubGitHub(true);
+
+    const result = await commitFiles(
+      app,
+      "t",
+      "o/r",
+      "dev",
+      files,
+      "m",
+      false,
+      "head",
+    );
+
+    expect(result).toEqual({
+      sha: "c1",
+      url: "https://github.test/pull/7",
+      viaPullRequest: true,
+    });
+    expect(calls.at(-1)).toBe("POST /repos/o/r/pulls");
+  });
 });

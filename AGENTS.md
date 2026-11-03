@@ -18,7 +18,7 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 - `packages/broods` (`broods`) is the published CLI + TS SDK. `broods dev` / `deploy` sync a local `broods/` project to a stage, like `convex dev`. also login, env, logs, stream, agent, run.
 - `packages/ai-sdk-sandbox` (`@broods/ai-sdk-sandbox`) is the AI SDK Harness sandbox adapter over Broods sandbox drivers: it is how an external harness (claude-code, codex, ...) runs its shell on a Broods sandbox.
 - `packages/demos` is runnable demos on SDK against deployed core. not a workspace package.
-- `verification` is Lean 4 models of gateway routing, the run lifecycle and SDK sync, with proofs, plus TLA+ specs (`verification/tla`) of the CLI's concurrent loops checked with TLC. not a workspace package. `lake build` and `tla/check.sh` there; touch the mirrored code = update the model.
+- `verification` is Lean 4 models of gateway routing, the run lifecycle, SDK sync and the CLI's concurrent loops, with proofs. not a workspace package. `lake build` there; touch the mirrored code = update the model.
 
 they are one product, not thirteen islands. Traefik (`apps/edge`) is the door, the gateway own the sockets, core own runtime truth, convex own config + persistence, dashboard and CLI are two faces on the same config plane, docs and demos describe it. touch a public contract in one, walk the others.
 

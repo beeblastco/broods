@@ -93,6 +93,7 @@ import {
   connectionRefusal,
   type ConnectionGraph,
 } from "@/app/lib/canvasConnections";
+import { onCanvasAction } from "@/app/lib/canvasActions";
 import { toErrorMessage } from "@/app/lib/errors";
 import { MOTION_MS, prefersReducedMotion } from "@/app/lib/motion";
 import { reportPerf } from "@/app/lib/perfReport";
@@ -143,7 +144,7 @@ import {
   type OnNodeDrag,
   type OnNodesChange,
 } from "@xyflow/react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { Group } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -388,6 +389,58 @@ function writeCollapsedFrames(key: string, ids: ReadonlySet<string>): void {
   } catch {
     // Storage blocked or full: the toggle holds for this visit.
   }
+}
+
+// The dock names nodes by label; an agent pair or a workspace mount joins side to side.
+function dockConnection(
+  nodes: readonly Node[],
+  names: { source: string; target: string },
+): Connection | string {
+  const source = nodeByLabel(nodes, names.source);
+  const target = nodeByLabel(nodes, names.target);
+  if (!source || !target) {
+    return `${source ? names.target : names.source} is not on this canvas, or more than one node has that name.`;
+  }
+  const mounts = new Set(["sandbox", "workspace"]);
+  const sideways =
+    (source.type === "agent" && target.type === "agent") ||
+    (mounts.has(source.type ?? "") && mounts.has(target.type ?? ""));
+
+  return {
+    source: source.id,
+    sourceHandle: sideways ? "right" : null,
+    target: target.id,
+    targetHandle: sideways ? "left" : null,
+  };
+}
+
+// The agent a dock step wires a new node to, or why the canvas cannot.
+function dockAgent(
+  nodes: readonly Node[],
+  name: string | undefined,
+): Node | undefined | string {
+  if (!name) return undefined;
+  const agent = nodeByLabel(nodes, name);
+  if (!agent) {
+    return `${name} is not on this canvas, or more than one node has that name.`;
+  }
+  if (agent.type !== "agent") return `${name} is not an agent on this canvas.`;
+  if (isCodeManagedOwner(agent.data.managedBy)) {
+    return `${name} is defined in code, so the canvas cannot change it.`;
+  }
+
+  return agent;
+}
+
+// Two nodes sharing a label are ambiguous, so neither is picked.
+function nodeByLabel(nodes: readonly Node[], label: string): Node | undefined {
+  const matches = nodes.filter(
+    (node) =>
+      typeof node.data.label === "string" &&
+      node.data.label.toLowerCase() === label.toLowerCase(),
+  );
+
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function findNearestAgentNode(
@@ -1199,6 +1252,74 @@ function CanvasInner({
     () => canWrite && addNode("workspace", "Workspace"),
   );
   useShortcut("canvas.addMcp", () => canWrite && addNode("mcp", "MCP"));
+
+  // The Broods agent dock's canvas steps land here, checked like a drag would be.
+  const saveMcp = useAction(api.mcp.saveForNode);
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- a window event listener
+  useEffect(
+    () =>
+      onCanvasAction(async (action): Promise<string | undefined> => {
+        if (!canWrite) return "Members read the canvas but cannot change it.";
+        if (action.kind === "connect") {
+          const connection = dockConnection(nodesRef.current, action);
+          if (typeof connection === "string") return connection;
+          const refusal = connectionRefusal(getConnectionGraph(), connection);
+          if (refusal) return refusal;
+          onConnect(connection);
+
+          return undefined;
+        }
+        const agent = dockAgent(nodesRef.current, action.agent);
+        if (typeof agent === "string") return agent;
+        if (action.kind === "addNode") {
+          const template = NODE_TEMPLATES.find(
+            (item) => item.type === action.nodeType,
+          );
+          if (!template || !agent) return "Nothing to add.";
+          addNode(template.type, template.label, undefined, [agent.id]);
+
+          return undefined;
+        }
+        if (!stageId) return "Pick a stage first.";
+        const nodeId = String(nextId.current);
+        addNode(
+          "mcp",
+          action.name,
+          { label: action.name },
+          agent ? [agent.id] : undefined,
+        );
+        try {
+          await saveMcp({
+            nodeId: nodeId,
+            nodeLabel: action.name,
+            projectId: projectId,
+            stageId: stageId,
+            url: action.url,
+          });
+        } catch (error) {
+          // No server row means no node, so a retried Apply does not add a second one.
+          editGraph((nodes, edges) => ({
+            edges: edges.filter(
+              (edge) => edge.source !== nodeId && edge.target !== nodeId,
+            ),
+            nodes: nodes.filter((node) => node.id !== nodeId),
+          }));
+          throw error;
+        }
+
+        return undefined;
+      }),
+    [
+      addNode,
+      canWrite,
+      editGraph,
+      getConnectionGraph,
+      onConnect,
+      projectId,
+      saveMcp,
+      stageId,
+    ],
+  );
   useShortcut("canvas.rename", () => {
     if (canWrite && selectedNode) setRenamingNodeId(selectedNode.id);
   });

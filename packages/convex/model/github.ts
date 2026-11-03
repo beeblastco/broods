@@ -53,6 +53,21 @@ const RUN: Record<PackageManager, string> = {
 };
 
 /** Lockfiles in the order a monorepo's own beats a stray one. */
+const AGENT_FILE_LIMIT = 40;
+const AGENT_BYTES_LIMIT = 300_000;
+const BUILD_FOLDERS: ReadonlySet<string> = new Set([
+  "_generated",
+  "build",
+  "dist",
+  "node_modules",
+]);
+const AGENT_FILE_PATTERN = /\.(ts|tsx|js|mjs|json|md|txt|ya?ml)$/;
+
+export interface RepoFile {
+  content: string;
+  path: string;
+}
+
 const LOCKFILES: ReadonlyArray<{ file: string; manager: PackageManager }> = [
   { file: "bun.lock", manager: "bun" },
   { file: "bun.lockb", manager: "bun" },
@@ -392,25 +407,126 @@ export async function findBroodsRoots(
   fullName: string,
   branch: string,
 ): Promise<BroodsRoot[]> {
-  const body = await githubRequest<{
-    tree: Array<{ path: string; type: string }>;
-    truncated: boolean;
-  }>(
-    app,
-    token,
-    "GET",
-    `/repos/${fullName}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
+  return broodsRootsFromPaths(await listFiles(app, token, fullName, branch));
+}
+
+/** The text files of the `broods/` folder under `rootDirectory`, for the dashboard agent. */
+export async function readBroodsFolder(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+  branch: string,
+  rootDirectory: string,
+): Promise<{ baseSha: string; files: RepoFile[]; omitted: number }> {
+  // One snapshot: every read pins the head commit, which Apply later checks has not moved.
+  const baseSha = await branchHead(app, token, fullName, branch);
+  const prefix = broodsFolder(rootDirectory);
+  const paths = (await listFiles(app, token, fullName, baseSha)).filter(
+    (path) => isAgentEditable(prefix, path),
   );
-  // A partial tree could miss a root or the lockfile, so it is never answered as complete.
-  if (body.truncated) {
+  const read = await Promise.all(
+    paths
+      .slice(0, AGENT_FILE_LIMIT)
+      .map((path) => getFile(app, token, fullName, baseSha, path)),
+  );
+  const files: RepoFile[] = [];
+  let bytes = 0;
+  read.forEach((file, index) => {
+    const path = paths[index];
+    if (!file || !path || bytes + file.content.length > AGENT_BYTES_LIMIT) {
+      return;
+    }
+    bytes += file.content.length;
+    files.push({ content: file.content, path: path });
+  });
+
+  return {
+    baseSha: baseSha,
+    files: files,
+    omitted: paths.length - files.length,
+  };
+}
+
+/**
+ * Commits `files` to `branch` as one commit, or through a pull request from a fresh branch when
+ * `viaPullRequest` or the branch refuses a direct write. Answers the commit and the URL to see it.
+ */
+export async function commitFiles(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+  branch: string,
+  files: readonly RepoFile[],
+  message: string,
+  viaPullRequest: boolean,
+  baseSha: string,
+): Promise<{ sha: string; url: string; viaPullRequest: boolean }> {
+  // Built on the commit the agent read, so a fast-forward update refuses once the branch moved.
+  if ((await branchHead(app, token, fullName, branch)) !== baseSha) {
     throw new ClientError(
-      `${fullName} is too large for GitHub to list in one scan, so Broods cannot find its broods/ folder.`,
+      `${branch} changed since the agent read it. Ask again so it edits the latest files.`,
     );
   }
+  const commit = await commitOn(app, token, fullName, baseSha, files, message);
+  if (!viaPullRequest) {
+    try {
+      await githubRequest(
+        app,
+        token,
+        "PATCH",
+        `/repos/${fullName}/git/refs/heads/${encodeURIComponent(branch)}`,
+        { sha: commit.sha, force: false },
+      );
 
-  return broodsRootsFromPaths(
-    body.tree.filter((entry) => entry.type === "blob").map((e) => e.path),
+      return { sha: commit.sha, url: commit.url, viaPullRequest: false };
+    } catch (error) {
+      if (!(error instanceof GitHubApiError) || !isRefusedWrite(error.status)) {
+        throw error;
+      }
+      if ((await branchHead(app, token, fullName, branch)) !== baseSha) {
+        throw new ClientError(
+          `${branch} changed since the agent read it. Ask again so it edits the latest files.`,
+        );
+      }
+    }
+  }
+  const head = `broods/agent-${crypto.randomUUID().slice(0, 8)}`;
+  await githubRequest(app, token, "POST", `/repos/${fullName}/git/refs`, {
+    ref: `refs/heads/${head}`,
+    sha: commit.sha,
+  });
+  const pull = await githubRequest<{ html_url: string }>(
+    app,
+    token,
+    "POST",
+    `/repos/${fullName}/pulls`,
+    {
+      title: message,
+      head: head,
+      base: branch,
+      body: "Proposed by the Broods agent and applied from the dashboard.",
+    },
   );
+
+  return { sha: commit.sha, url: pull.html_url, viaPullRequest: true };
+}
+
+/** True for a text file inside the `broods/` folder `prefix`, outside build output. */
+export function isAgentEditable(prefix: string, path: string): boolean {
+  return (
+    path.startsWith(prefix) &&
+    !path
+      .split("/")
+      .some(
+        (part) =>
+          part === ".." || part.startsWith(".") || BUILD_FOLDERS.has(part),
+      ) &&
+    AGENT_FILE_PATTERN.test(path)
+  );
+}
+
+export function broodsFolder(rootDirectory: string): string {
+  return rootDirectory ? `${rootDirectory}/broods/` : "broods/";
 }
 
 /**
@@ -940,6 +1056,88 @@ function fromBase64(value: string): Uint8Array {
   return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
 }
 
+// One commit on `parentSha` for every file, so a change across files deploys once.
+async function commitOn(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+  parentSha: string,
+  files: readonly RepoFile[],
+  message: string,
+): Promise<{ sha: string; url: string }> {
+  const parent = await githubRequest<{ tree: { sha: string } }>(
+    app,
+    token,
+    "GET",
+    `/repos/${fullName}/git/commits/${parentSha}`,
+  );
+  const tree = await githubRequest<{ sha: string }>(
+    app,
+    token,
+    "POST",
+    `/repos/${fullName}/git/trees`,
+    {
+      base_tree: parent.tree.sha,
+      tree: files.map((file) => ({
+        path: file.path,
+        mode: "100644",
+        type: "blob",
+        content: file.content,
+      })),
+    },
+  );
+  const commit = await githubRequest<{ sha: string; html_url: string }>(
+    app,
+    token,
+    "POST",
+    `/repos/${fullName}/git/commits`,
+    { message: message, tree: tree.sha, parents: [parentSha] },
+  );
+
+  return { sha: commit.sha, url: commit.html_url };
+}
+
+async function branchHead(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+  branch: string,
+): Promise<string> {
+  const head = await githubRequest<{ object: { sha: string } }>(
+    app,
+    token,
+    "GET",
+    `/repos/${fullName}/git/ref/heads/${encodeURIComponent(branch)}`,
+  );
+
+  return head.object.sha;
+}
+
+async function listFiles(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+  branch: string,
+): Promise<string[]> {
+  const body = await githubRequest<{
+    tree: Array<{ path: string; type: string }>;
+    truncated: boolean;
+  }>(
+    app,
+    token,
+    "GET",
+    `/repos/${fullName}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
+  );
+  // A partial tree could miss a root or the lockfile, so it is never answered as complete.
+  if (body.truncated) {
+    throw new ClientError(
+      `${fullName} is too large for GitHub to list in one scan, so Broods cannot find its broods/ folder.`,
+    );
+  }
+
+  return body.tree.filter((entry) => entry.type === "blob").map((e) => e.path);
+}
+
 /** Its body when the file at `path` on `branch` exists, with the blob sha an update needs. */
 async function getFile(
   app: GitHubApp,
@@ -953,7 +1151,7 @@ async function getFile(
       app,
       token,
       "GET",
-      `/repos/${fullName}/contents/${path}?ref=${encodeURIComponent(branch)}`,
+      `/repos/${fullName}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(branch)}`,
     );
 
     return {
