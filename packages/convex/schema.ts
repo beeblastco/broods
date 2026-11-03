@@ -891,6 +891,17 @@ export const runtimeHarnessSessionsFields = {
   reservationKey: v.optional(v.string()),
   updatedAt: v.number(),
 };
+// One Pi session entry per row, as JSON text: tool arguments may hold keys Convex refuses.
+export const runtimeHarnessSessionEntriesFields = {
+  accountId: v.id("accounts"),
+  conversationKey: v.string(),
+  sessionId: v.string(),
+  sequence: v.number(),
+  entryId: v.string(),
+  parentEntryId: v.optional(v.string()),
+  version: v.number(),
+  entry: v.string(),
+};
 export const runtimeClaimsFields = {
   accountId: v.id("accounts"),
   key: v.string(),
@@ -1557,6 +1568,18 @@ export default defineSchema({
     .index("by_accountId", ["accountId"]),
   runtimeHarnessSessions: defineTable(runtimeHarnessSessionsFields)
     .index("by_conversationKey", ["conversationKey"])
+    .index("by_accountId", ["accountId"]),
+  runtimeHarnessSessionEntries: defineTable(runtimeHarnessSessionEntriesFields)
+    .index("by_conversationKey_and_sessionId_and_sequence", [
+      "conversationKey",
+      "sessionId",
+      "sequence",
+    ])
+    .index("by_conversationKey_and_sessionId_and_entryId", [
+      "conversationKey",
+      "sessionId",
+      "entryId",
+    ])
     .index("by_accountId", ["accountId"]),
   runtimeClaims: defineTable(runtimeClaimsFields)
     .index("by_key", ["key"])

@@ -13,7 +13,7 @@ import {
 } from "ai";
 import type { Attachment } from "chat";
 import type { ChannelActions } from "../shared/channels.ts";
-import { runtime } from "../shared/convex/runtime.ts";
+import { runtime, type HarnessSessionEntry } from "../shared/convex/runtime.ts";
 import type {
   ChannelPartition,
   AgentConfig,
@@ -564,7 +564,31 @@ export class Session {
     });
   }
 
-  async saveHarnessSession(state: StoredHarnessSession): Promise<void> {
+  async readHarnessSessionEntries(
+    sessionId: string,
+  ): Promise<HarnessSessionEntry[]> {
+    const entries: HarnessSessionEntry[] = [];
+    let afterSequence: number | undefined;
+    for (;;) {
+      const page = await runtime.query("readHarnessSessionEntries", {
+        conversationKey: this.conversationKey,
+        sessionId: sessionId,
+        ...(afterSequence === undefined
+          ? {}
+          : { afterSequence: afterSequence }),
+      });
+      entries.push(...page.entries);
+      if (page.nextSequence === null) {
+        return entries;
+      }
+      afterSequence = page.nextSequence;
+    }
+  }
+
+  async saveHarnessSession(
+    state: StoredHarnessSession,
+    entries: HarnessSessionEntry[] = [],
+  ): Promise<void> {
     if (!this.persist) return;
     if (this.ownerGeneration === undefined) {
       throw new Error("Harness checkpoint needs a conversation owner");
@@ -579,6 +603,7 @@ export class Session {
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
       ...state,
+      ...(entries.length > 0 ? { entries: entries } : {}),
     });
     this.confirmOwner(startedAt);
   }

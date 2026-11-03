@@ -22,15 +22,18 @@ import type {
   TurnContextSnapshot,
 } from "../session.ts";
 import { extractText } from "../../shared/channels.ts";
+import type { HarnessSessionEntry } from "../../shared/convex/runtime.ts";
 import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import { logInfo, logWarn } from "../../shared/log.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import type { ResolvedAgentSandbox } from "../../shared/workspaces.ts";
 import {
+  harnessHistoryInConvex,
   harnessSessionParking,
   harnessSharesSandbox,
   type AiSdkHarnessType,
 } from "./adapters/index.ts";
+import { createPiSessionLog, type PiSessionLog } from "./adapters/pi.ts";
 import type {
   AiSdkHarnessRuntime,
   createConfiguredHarnessAgent,
@@ -62,6 +65,7 @@ export interface HarnessTurn {
   nativeSession: HarnessAgentSession;
   reservationKey: string;
   runtime: AiSdkHarnessRuntime;
+  sessionLog: PiSessionLog | undefined;
   stopLeaseMonitor: () => void;
 }
 
@@ -88,6 +92,7 @@ export interface ParkAiSdkHarnessSessionOptions {
   broodsSession: Session;
   nativeSession: HarnessAgentSession;
   reservationKey: string;
+  sessionLog?: PiSessionLog;
   successful: boolean;
   type: AiSdkHarnessType;
 }
@@ -150,12 +155,15 @@ export async function parkAiSdkHarnessSession(
         ? await options.nativeSession.detach()
         : await options.nativeSession.stop();
     // The save is owner-fenced: a stale run's write is refused there.
-    await options.broodsSession.saveHarnessSession({
-      harnessType: options.type,
-      sessionId: options.nativeSession.sessionId,
-      resumeState: resumeState,
-      reservationKey: options.reservationKey,
-    });
+    await options.broodsSession.saveHarnessSession(
+      {
+        harnessType: options.type,
+        sessionId: options.nativeSession.sessionId,
+        resumeState: resumeState,
+        reservationKey: options.reservationKey,
+      },
+      options.sessionLog?.take(),
+    );
   } catch (error) {
     await options.nativeSession.destroy().catch(() => {});
     throw error;
@@ -182,6 +190,11 @@ export async function prepareHarnessTurn(
     type: harnessType,
   });
   const shared = reservationKey !== session.conversationKey;
+  const sessionLog = harnessHistoryInConvex(harnessType)
+    ? createPiSessionLog((sessionId): Promise<HarnessSessionEntry[]> =>
+        session.readHarnessSessionEntries(sessionId),
+      )
+    : undefined;
   const sandbox = requireHarnessSandbox(options.sandbox);
   const compute = sandbox.sandbox;
   let usage: SandboxUsage | undefined;
@@ -206,6 +219,7 @@ export async function prepareHarnessTurn(
       usage = reported;
     },
     reservationKey: reservationKey,
+    sessionStorage: sessionLog?.storage,
     shared: shared,
     skills: await session.loadHarnessSkills(),
     toolApproval:
@@ -284,6 +298,7 @@ export async function prepareHarnessTurn(
     nativeSession: nativeSession,
     reservationKey: reservationKey,
     runtime: runtime,
+    sessionLog: sessionLog,
     stopLeaseMonitor: stopLeaseMonitor,
   };
 }

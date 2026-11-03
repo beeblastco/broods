@@ -12,6 +12,8 @@ import {
   asyncAgentResultRow,
   asyncToolResultRow,
   conversationEventsValidator,
+  deleteHarnessSessionEntries,
+  harnessSessionEntryValidator,
   insertConversationEvents,
   markResultStored,
   writeAsyncAgentResult,
@@ -27,6 +29,7 @@ import {
   systemModelMessageValidator,
 } from "./schema";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
+import { MAX_HARNESS_SESSION_ENTRY_BYTES } from "./model/harnessSessionEntries";
 import {
   asyncToolResultDedupeKey,
   subagentResultDedupeKey,
@@ -385,10 +388,14 @@ export const clearConversation = internalMutation({
       )
       .unique();
     if (harnessSession) await ctx.db.delete(harnessSession._id);
+    const entriesLeft = await deleteHarnessSessionEntries(
+      ctx,
+      args.conversationKey,
+    );
 
     return {
       deleted: batch.length,
-      hasMore: rows.length > CLEAR_BATCH_SIZE,
+      hasMore: rows.length > CLEAR_BATCH_SIZE || entriesLeft,
     };
   },
 });
@@ -402,6 +409,8 @@ export const saveHarnessSession = internalMutation({
     sessionId: v.string(),
     resumeState: v.any(),
     reservationKey: v.optional(v.string()),
+    // Pi's session entries for this checkpoint: saved in the same transaction as its leaf id.
+    entries: v.optional(v.array(harnessSessionEntryValidator)),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -439,6 +448,22 @@ export const saveHarnessSession = internalMutation({
     } else {
       await ctx.db.insert("runtimeHarnessSessions", value);
     }
+    if (existing && existing.sessionId !== args.sessionId) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.runtime.pruneHarnessSessionEntries,
+        {
+          conversationKey: args.conversationKey,
+          sessionId: existing.sessionId,
+        },
+      );
+    }
+    await appendHarnessSessionEntries(ctx, {
+      accountId: coordinator.accountId,
+      conversationKey: args.conversationKey,
+      sessionId: args.sessionId,
+      entries: args.entries ?? [],
+    });
 
     return null;
   },
@@ -926,6 +951,58 @@ export const takeNext = internalMutation({
     return promoted;
   },
 });
+
+// A retried entry id is skipped, as Pi's session storage contract allows.
+async function appendHarnessSessionEntries(
+  ctx: MutationCtx,
+  options: {
+    accountId: Id<"accounts">;
+    conversationKey: string;
+    sessionId: string;
+    entries: Infer<typeof harnessSessionEntryValidator>[];
+  },
+): Promise<void> {
+  if (options.entries.length === 0) return;
+  const last = await ctx.db
+    .query("runtimeHarnessSessionEntries")
+    .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
+      q
+        .eq("conversationKey", options.conversationKey)
+        .eq("sessionId", options.sessionId),
+    )
+    .order("desc")
+    .first();
+  let sequence = last?.sequence ?? 0;
+  for (const entry of options.entries) {
+    const bytes = new TextEncoder().encode(entry.entry).byteLength;
+    if (bytes > MAX_HARNESS_SESSION_ENTRY_BYTES) {
+      throw new Error(
+        `Harness session entry ${entry.entryId} is ${bytes} bytes; the maximum is ${MAX_HARNESS_SESSION_ENTRY_BYTES}`,
+      );
+    }
+    const saved = await ctx.db
+      .query("runtimeHarnessSessionEntries")
+      .withIndex("by_conversationKey_and_sessionId_and_entryId", (q) =>
+        q
+          .eq("conversationKey", options.conversationKey)
+          .eq("sessionId", options.sessionId)
+          .eq("entryId", entry.entryId),
+      )
+      .first();
+    if (saved) continue;
+    sequence += 1;
+    await ctx.db.insert("runtimeHarnessSessionEntries", {
+      accountId: options.accountId,
+      conversationKey: options.conversationKey,
+      sessionId: options.sessionId,
+      sequence: sequence,
+      entryId: entry.entryId,
+      parentEntryId: entry.parentEntryId,
+      version: entry.version,
+      entry: entry.entry,
+    });
+  }
+}
 
 function assertConversationScope(
   accountId: string,

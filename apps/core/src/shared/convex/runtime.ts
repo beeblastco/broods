@@ -18,6 +18,7 @@ export const runtimeQueries = {
     internal.runtime.listExpiredSandboxReservations,
   listOrphanedSandboxInstances: internal.runtime.listOrphanedSandboxInstances,
   listPendingAsyncToolResults: internal.runtime.listPendingAsyncToolResults,
+  readHarnessSessionEntries: internal.runtime.readHarnessSessionEntries,
   listOwedAsyncAgentResults: internal.runtime.listOwedAsyncAgentResults,
   listOwedAsyncToolResults: internal.runtime.listOwedAsyncToolResults,
   getIngressStatus: internal.runtimeIngress.getStatus,
@@ -60,6 +61,10 @@ export const runtimeMutations = {
 
 type RuntimeQueries = typeof runtimeQueries;
 type RuntimeMutations = typeof runtimeMutations;
+
+export type HarnessSessionEntry = FunctionReturnType<
+  RuntimeQueries["readHarnessSessionEntries"]
+>["entries"][number];
 
 // Mutations skip the client's FIFO so runs never wait on each other; await to keep an order.
 export const runtime = {
