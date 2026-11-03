@@ -85,7 +85,7 @@ describe("createTools", () => {
       expiresAt: Date.now() + 60_000,
     });
     const recordToolResultRead = mock(
-      async (_toolCallId: string, _resultId: string): Promise<void> => {},
+      (_toolCallId: string, _resultId: string): void => {},
     );
     const context = sandboxContext([
       { name: "jobs", workspaceId: "ws_jobs", namespace: "ns" },
