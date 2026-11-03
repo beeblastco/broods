@@ -44,11 +44,11 @@
     "docs:build": "bun run --filter @broods/docs build"
   },
   "devDependencies": {
-    "@noble/hashes": "1.8.0",
+    "@noble/hashes": "2.4.0",
     "@oxlint/plugins": "1.90.0",
     "@shadcn/lint": "^0.2.3",
     "@types/bun": "^1.4.4",
-    "oxc-parser": "0.148.0",
+    "oxc-parser": "0.156.0",
     "oxfmt": "^0.75.0",
     "oxlint": "1.90.0",
     "oxlint-tsgolint": "7.0.2005",
@@ -86,10 +86,10 @@
     "bun": ">=1.4.2"
   },
   "patchedDependencies": {
-    "@ai-sdk/harness-claude-code@1.0.176": "patches/@ai-sdk%2Fharness-claude-code@1.0.176.patch",
-    "@ai-sdk/harness-codex@1.0.174": "patches/@ai-sdk%2Fharness-codex@1.0.174.patch",
-    "@ai-sdk/harness-deepagents@1.0.172": "patches/@ai-sdk%2Fharness-deepagents@1.0.172.patch",
-    "@ai-sdk/harness-opencode@1.0.175": "patches/@ai-sdk%2Fharness-opencode@1.0.175.patch"
+    "@ai-sdk/harness-claude-code@1.0.177": "patches/@ai-sdk%2Fharness-claude-code@1.0.177.patch",
+    "@ai-sdk/harness-codex@1.0.175": "patches/@ai-sdk%2Fharness-codex@1.0.175.patch",
+    "@ai-sdk/harness-deepagents@1.0.173": "patches/@ai-sdk%2Fharness-deepagents@1.0.173.patch",
+    "@ai-sdk/harness-opencode@1.0.176": "patches/@ai-sdk%2Fharness-opencode@1.0.176.patch"
   },
   "trustedDependencies": [
     "sharp"
