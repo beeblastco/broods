@@ -3,12 +3,32 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const handlerPath = fileURLToPath(
   new URL("../../lambda/handler.mjs", import.meta.url),
 );
+
+// The handler reaps every same-UID process when LAMBDA_TASK_ROOT is set. Only a driver in its
+// own PID namespace gets it; an exported one must not arm the reaper against the host.
+const { LAMBDA_TASK_ROOT: _taskRoot, ...hostEnv } = process.env;
+const LAMBDA_ENV = { LAMBDA_TASK_ROOT: dirname(handlerPath) };
+
+const pidNamespace = ((): string[] | null => {
+  for (const prefix of [
+    ["unshare", "--user", "--map-root-user", "--pid", "--fork", "--mount-proc"],
+    ["unshare", "--pid", "--fork", "--mount-proc"],
+  ]) {
+    try {
+      if (Bun.spawnSync([...prefix, "true"]).exitCode === 0) return prefix;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+})();
 
 interface HostedResponse {
   status: number;
@@ -65,7 +85,17 @@ async function invokeHandler(
   throttleMs = 0,
   // As core does in production: a presigned GET the handler resolves, not inline bytes.
   bundleAddress?: "served" | { url: string },
-): Promise<{ stdout?: string; arrivalsMs?: number[] }> {
+  options: {
+    // A second invoke in the same warm process; its frames come back as followUpStdout.
+    followUp?: string;
+    command?: (driver: string) => string[];
+  } = {},
+): Promise<{
+  stdout?: string;
+  followUpStdout?: string;
+  arrivalsMs?: number[];
+  exitCode: number | null;
+}> {
   const dir = await mkdtemp(join(tmpdir(), "broods-handler-drv-"));
   const server =
     bundleAddress === "served"
@@ -114,23 +144,40 @@ async function invokeHandler(
         `  expectedSha256: createHash("sha256").update(bundle).digest("hex"),`,
         `}, responseStream);`,
         `await consumed;`,
-        `process.stdout.write(JSON.stringify({ stdout, arrivalsMs }));`,
+        `let followUpStdout;`,
+        `const followUp = ${JSON.stringify(options.followUp ?? null)};`,
+        `if (followUp !== null) {`,
+        `  const next = Buffer.from(followUp, "utf8");`,
+        `  const stream = new PassThrough();`,
+        `  followUpStdout = "";`,
+        `  const read = (async () => {`,
+        `    for await (const chunk of stream) followUpStdout += chunk;`,
+        `  })();`,
+        `  await handler({`,
+        `    ...${JSON.stringify(event)},`,
+        `    bundleSourceB64: next.toString("base64"),`,
+        `    expectedSha256: createHash("sha256").update(next).digest("hex"),`,
+        `  }, stream);`,
+        `  await read;`,
+        `}`,
+        `process.stdout.write(JSON.stringify({ stdout, followUpStdout, arrivalsMs }));`,
       ].join("\n"),
     );
 
     return await new Promise((resolve, reject) => {
-      const child = spawn("node", [driver], {
+      const [file, ...args] = options.command?.(driver) ?? ["node", driver];
+      const child = spawn(file!, args, {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, ...parentEnv },
+        env: { ...hostEnv, ...parentEnv },
       });
       let out = "";
       let err = "";
       child.stdout.on("data", (chunk) => (out += chunk));
       child.stderr.on("data", (chunk) => (err += chunk));
       child.once("error", reject);
-      child.once("exit", () => {
+      child.once("exit", (exitCode) => {
         try {
-          resolve(JSON.parse(out));
+          resolve({ ...JSON.parse(out), exitCode: exitCode });
         } catch {
           reject(new Error(`driver produced no JSON: ${out}${err}`));
         }
@@ -228,6 +275,50 @@ describe("mcp-runner containment", () => {
       await rm(dir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  // skip: needs `unshare` for a PID namespace; CI lifts the userns restriction, so it runs there.
+  it.skipIf(pidNamespace === null && !process.env.CI)(
+    "reaps a survivor that left the child's process group before the next spawn",
+    async () => {
+      if (pidNamespace === null) {
+        throw new Error(
+          "CI needs a PID namespace (unshare) to test reapStrays",
+        );
+      }
+      // setsid() escapes killGroup; only the reap before the second spawn can stop the write.
+      const dir = await mkdtemp(join(tmpdir(), "broods-escapee-"));
+      try {
+        const marker = join(dir, "survived.txt");
+        const bundle = [
+          `import { spawn } from "node:child_process";`,
+          `export default () => {`,
+          `  const code = "setTimeout(() => require('fs').writeFileSync(" +`,
+          `    ${JSON.stringify(JSON.stringify(marker))} + ", 'survived'), 1500)";`,
+          `  spawn(process.execPath, ["-e", code], { stdio: "ignore", detached: true }).unref();`,
+          `  return new Response(JSON.stringify({ spawned: true }));`,
+          `};`,
+        ].join("\n");
+
+        // The namespace dies with its pid 1, so the shell outlives the survivor's timer.
+        const result = await invokeHandler(bundle, LAMBDA_ENV, 0, undefined, {
+          followUp: `export default () => new Response(JSON.stringify({ next: true }));`,
+          command: (driver) => [
+            ...pidNamespace,
+            "sh",
+            "-c",
+            'node "$0"; sleep 2',
+            driver,
+          ],
+        });
+        expect(finalBody(result.stdout)).toEqual({ spawned: true });
+        expect(finalBody(result.followUpStdout)).toEqual({ next: true });
+        expect(existsSync(marker)).toBe(false);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
 });
 
 describe("mcp-runner outside Lambda", () => {
@@ -243,7 +334,21 @@ describe("mcp-runner outside Lambda", () => {
       },
     );
     try {
-      await invokeHandler(`export default () => new Response("ok");`);
+      const bundle = `export default () => new Response("ok");`;
+      // In a namespace with its own bystander, a broken gate fails here, not the host.
+      const result = await invokeHandler(bundle, {}, 0, undefined, {
+        followUp: bundle,
+        ...(pidNamespace && {
+          command: (driver: string) => [
+            ...pidNamespace,
+            "sh",
+            "-c",
+            'sleep 30 & b=$!; node "$0"; s=$(ps -o stat= -p "$b"); kill "$b"; case "$s" in ""|Z*) exit 1;; esac',
+            driver,
+          ],
+        }),
+      });
+      expect(result.exitCode).toBe(0);
       expect(isAlive(bystander.pid!)).toBe(true);
     } finally {
       bystander.kill("SIGKILL");

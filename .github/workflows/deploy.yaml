@@ -61,6 +61,12 @@ jobs:
       - name: Typecheck
         run: bun run check
 
+      - name: Allow unprivileged user namespaces
+        # Ubuntu 24.04 blocks them; the hosted-MCP reaper test needs one (`unshare --user`).
+        run: |
+          key=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [[ -e "$key" ]]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+
       - name: Run unit tests
         run: bun run test
 
