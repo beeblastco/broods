@@ -167,7 +167,7 @@ The runtime key is embeddable, so it carries no end-user identity. A `buat_` use
 
 - **Format.** The same signed ticket as `bdts_` (`sealSignedTicket` in `packages/convex/model/stageSessionTicket.ts`): base64url JSON `{userId, conversations?, expiresAt}` and an HMAC-SHA256 over it, keyed by SHA-256 of `broods-user-token:` plus the stage's `bsig_` secret. The context string keeps it apart from every other ticket key. `openUserToken` (`packages/convex/model/userToken.ts`) verifies with WebCrypto, which compares in constant time, and refuses an `expiresAt` in the past or more than 60 minutes out.
 - **Secret.** One per stage on its `agentDeployments` row, sealed under the account DEK in `userTokenSecretCiphertext` (an `ENVELOPE_COLUMNS` entry, so key rotation rewrites it). `getByApiKeyHash` hands core the sealed blob with the deployment; core opens it with `decryptAccountBlob` only when a request carries a token. `rotateStageUserTokenSecret` (`agent/deployments.ts`) mints and audits it for both callers: the dashboard's `rotateUserTokenSecret` (`keys:write`), and the CLI route `POST /v1/account/projects/{project}/stages/{stage}/user-token-secret` through `cli/sync.rotateUserTokenSecretBySecretHash`, where an account or project key holds `keys:write` on its stage by issue and a `bcli_` login token is checked against its member's policies. Either shows it once; afterwards only its hint, which the manifest sync's `deployment.userTokenSecretHint` carries so the CLI can tell whether its `.env.local` copy is current. The CLI mints one only when the stage has none, and only warns when its copy is missing or stale, so a CI deploy or a second checkout never voids the secret a running backend signs with.
-- **Check.** `resolveRuntimeKeyAuth` (`apps/core/src/shared/auth.ts`) refuses the whole credential when a token does not open, so a forged token is a 401 and the gateway's auth-failure limiter counts it. A valid one lands on the `deployment` auth as `user`.
+- **Check.** `resolveRuntimeKeyAuth` (`apps/core/src/shared/auth.ts`) refuses the whole credential when a token does not open, so a forged token is a 401 and the gateway's auth-failure limiter counts it. A valid one lands on the `deployment` auth as `user`, and its `userId` heads the run's principal chain, so MCP servers see it in `X-Broods-Principal`.
 - **Namespace.** `parseDirectPayload` puts the conversation key and event id under `bsu:<userId>:` (`USER_CONVERSATION_PREFIX`, reserved for every other caller in `runtime-keys.ts`). A user id cannot contain `:`, so the split is unique. `embeddableKeyReaches` (`apps/core/src/harness/status-access.ts`) is the one rule for the runtime key: with a user only that user's keys, without one no key in any user namespace. `continue`, run reads and subagent reads through a parent all go through it; steering and answers go through `parseDirectPayload` with the namespaced key.
 - **Requirement.** `agents.requireUserToken`, a row field rather than config so no sync rewrites it. Both inserts (`agent/agents.create`, `ensureAgentsRowForConfig`) set it; older rows have none and answer without a token until the owner flips `agent/config.setRequireUserToken`. A token is honored either way.
 - **Socket.** The scope lookup returns `conversationPrefix` when a token rode the upgrade, and the gateway subscribes NATS on the namespaced key core publishes to.
@@ -244,13 +244,14 @@ flowchart LR
 
 Every run acts as one agent of one account. Core builds a `Principal` (`apps/core/src/shared/domain/principal.ts`), `{ kind: "agent", accountId, agentId, chain }`, where the chain records who asked, oldest first:
 
-| Run                                  | Chain                                                         |
-| ------------------------------------ | ------------------------------------------------------------- |
-| Channel turn                         | `[{ kind: "user", id, name?, channel }]`                      |
-| Direct API                           | `[{ kind: "api", keyKind: "account" \| "deployment" }]`       |
-| Cron firing                          | `[{ kind: "api", keyKind: "cron" }]`                          |
-| Subagent, or a session-messaging run | the parent's chain, then `{ kind: "agent", agentId: parent }` |
-| Requester not known                  | no chain                                                      |
+| Run                                  | Chain                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------ |
+| Channel turn                         | `[{ kind: "user", id, name?, channel }]`                                 |
+| Direct API                           | `[{ kind: "api", keyKind: "account" \| "deployment" }]`                  |
+| Direct API with a user token         | `[{ kind: "user", id: userId }, { kind: "api", keyKind: "deployment" }]` |
+| Cron firing                          | `[{ kind: "api", keyKind: "cron" }]`                                     |
+| Subagent, or a session-messaging run | the parent's chain, then `{ kind: "agent", agentId: parent }`            |
+| Requester not known                  | no chain                                                                 |
 
 Core never guesses a link: a rebuilt queued envelope, an async-tool continuation or a channel re-entry without a stored sender runs with no chain, since the hash-chained ledger could never correct a guess. The link shape is `principalLinkValidator` in `packages/convex/model/principal.ts`. The principal reaches:
 

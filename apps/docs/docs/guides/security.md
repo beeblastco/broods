@@ -106,6 +106,7 @@ With a valid token, every conversation key and event id of that request lives un
 - On the WebSocket, `BroodsWebSocketClient` takes `userToken` too. It rides the upgrade as a `broods.user.<token>` subprotocol entry. The gateway closes the socket with `4419` when the token expires; open a new one with a fresh token.
 - The account key and the dashboard's stage session ticket speak for the whole stage and take no user token.
 - Keys starting with `bsu:` are reserved for user namespaces.
+- The token's `userId` reaches your agent's MCP servers as the first link of `X-Broods-Principal`, so a tool can act for that user. Broods verified the token, so the id is yours to trust, but check the server's own credential header too: anyone can send a header to a public URL.
 
 The account key is shown once when your organization's API account is provisioned. Rotate it under Organization settings, API access; that takes `keys:write` for the organization, which admins hold and a role can be granted. The account key is the whole account API, so give organization-wide `keys:write` as you would admin. Rotation breaks everything holding the old one.
 
