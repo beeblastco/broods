@@ -2,7 +2,7 @@
 
 import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
-import { useReachableAgentConfigId } from "@/app/hooks/useConnectedAgentConfig";
+import { useReachableAgentConfigId } from "@/app/hooks/useReachableAgentConfigId";
 import { enabledMemberStatus } from "@/app/lib/memberStatus";
 import { includesSkillRef } from "@/app/lib/skillRefs";
 import type { NodeProps } from "@xyflow/react";

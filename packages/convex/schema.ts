@@ -1,6 +1,10 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { DEPLOYMENT_REGIONS } from "./cli/types";
+import {
+  agentExtraConfigColumn,
+  agentOutputFormatColumn,
+} from "./model/agentConfigColumns";
 import { canvasEdgeValidator, canvasNodeValidator } from "./model/canvasShapes";
 import { CONNECTION_TYPE_NAMES } from "./model/connections";
 import { policyDocumentValidator } from "./model/policyDocument";
@@ -102,7 +106,7 @@ export const agentConfigsFields = {
   maxTurns: v.optional(v.number()),
   allowedTools: v.optional(v.array(v.string())),
   permissionMode: v.optional(v.string()),
-  outputFormat: v.optional(v.any()),
+  outputFormat: v.optional(agentOutputFormatColumn),
   providerOptions: v.optional(v.any()),
   temperature: v.optional(v.number()),
   maxTokens: v.optional(v.number()),
@@ -113,7 +117,7 @@ export const agentConfigsFields = {
     v.array(v.object({ key: v.string(), value: v.string() })),
   ),
   // Plaintext: secrets only as `${ENV_NAME}` placeholders resolved from runtime secrets.
-  extraConfig: v.optional(v.any()),
+  extraConfig: v.optional(agentExtraConfigColumn),
   managedBy: managedByValidator,
   updatedAt: v.number(),
 };

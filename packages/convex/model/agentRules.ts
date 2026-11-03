@@ -2,7 +2,10 @@
 
 import { z } from "zod/mini";
 
-import { SANDBOX_REMOVED_MESSAGE } from "./agentConfigCodec";
+import {
+  POLICY_REMOVED_MESSAGE,
+  SANDBOX_REMOVED_MESSAGE,
+} from "./agentConfigCodec";
 import { mergeConfigObjects } from "./configValues";
 import { workspaceOnLaterSandbox } from "./sandboxMounts";
 import {
@@ -297,7 +300,7 @@ const MODEL_TIMEOUT = z.union(
   },
 );
 
-const MODEL_OUTPUT = z.discriminatedUnion(
+export const MODEL_OUTPUT = z.discriminatedUnion(
   "type",
   [
     z.looseObject({
@@ -876,9 +879,7 @@ export function normalizeAgentConfig(
   if (!options.patch && config.channels)
     assertCompleteChannels(config.channels);
   if (config.policy !== undefined) {
-    throw new ClientError(
-      "config.policy is no longer supported; use config.policies, and set mode on the policy itself",
-    );
+    throw new ClientError(POLICY_REMOVED_MESSAGE);
   }
   if (config.harness && policyIds.length > 0) {
     throw new ClientError(
