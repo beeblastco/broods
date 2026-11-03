@@ -10,6 +10,9 @@ const handlerPath = fileURLToPath(
   new URL("../../lambda/handler.mjs", import.meta.url),
 );
 
+// An exported LAMBDA_TASK_ROOT would arm the handler's same-UID reap against the host.
+const { LAMBDA_TASK_ROOT: _taskRoot, ...hostEnv } = process.env;
+
 interface HostedResponse {
   status: number;
   headers: Record<string, string>;
@@ -93,7 +96,7 @@ async function invokeSequence(
     const result = await new Promise<{ runs: string[] }>((resolve, reject) => {
       const child = spawn("node", [driver], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, ...parentEnv },
+        env: { ...hostEnv, ...parentEnv },
       });
       let out = "";
       let err = "";
