@@ -16,10 +16,10 @@ EXTENDS Naturals
 CONSTANTS Contents, MaxEdits, NONE
 
 VARIABLES src, stage, last, failed, syncing, pending, timer,
-          pc, sig, read, edits, watching, dirty
+          pc, sig, read, edits, watching, dirty, printed
 
 vars == <<src, stage, last, failed, syncing, pending, timer,
-          pc, sig, read, edits, watching, dirty>>
+          pc, sig, read, edits, watching, dirty, printed>>
 
 Init ==
   /\ src \in Contents
@@ -32,6 +32,7 @@ Init ==
   /\ read = NONE
   /\ edits = 0
   /\ dirty = FALSE
+  /\ printed = FALSE
   \* watch() first, then runSync() for the first sync.
   /\ watching = TRUE
   /\ syncing = TRUE
@@ -45,7 +46,7 @@ Edit ==
   /\ IF watching
        THEN timer' = TRUE /\ dirty' = TRUE
        ELSE UNCHANGED <<timer, dirty>>
-  /\ UNCHANGED <<stage, last, failed, syncing, pending, pc, sig, read, watching>>
+  /\ UNCHANGED <<stage, last, failed, syncing, pending, pc, sig, read, watching, printed>>
 
 \* runSync, from the debounce timer.
 TimerFires ==
@@ -54,12 +55,13 @@ TimerFires ==
   /\ IF syncing
        THEN pending' = TRUE /\ UNCHANGED <<syncing, pc>>
        ELSE syncing' = TRUE /\ pc' = "sig" /\ UNCHANGED pending
-  /\ UNCHANGED <<src, stage, last, failed, sig, read, edits, watching, dirty>>
+  /\ UNCHANGED <<src, stage, last, failed, sig, read, edits, watching, dirty, printed>>
 
 \* const signature = await sourceSignature(); skip or mark failed.
 Signature ==
   /\ pc = "sig"
   /\ sig' = src
+  /\ printed' = FALSE
   /\ dirty' = FALSE
   /\ IF src = last /\ ~failed
        THEN pc' = "done" /\ UNCHANGED failed
@@ -77,14 +79,22 @@ SignatureFails ==
   /\ timer' = TRUE
   /\ dirty' = TRUE
   /\ pc' = "done"
-  /\ UNCHANGED <<stage, last, failed, syncing, pending, sig, read, watching>>
+  /\ UNCHANGED <<stage, last, failed, syncing, pending, sig, read, watching, printed>>
+
+\* sourceSignature() rejects with no save behind it (say, a permission error):
+\* printSyncError logs it and nothing retries until the next save.
+SignatureErrors ==
+  /\ pc = "sig"
+  /\ printed' = TRUE
+  /\ pc' = "done"
+  /\ UNCHANGED <<src, stage, last, failed, syncing, pending, timer, sig, read, edits, watching, dirty>>
 
 \* The child reads the project from disk, after the signature was taken.
 ChildRead ==
   /\ pc = "read"
   /\ read' = src
   /\ pc' = "write"
-  /\ UNCHANGED <<src, stage, last, failed, syncing, pending, timer, sig, edits, watching, dirty>>
+  /\ UNCHANGED <<src, stage, last, failed, syncing, pending, timer, sig, edits, watching, dirty, printed>>
 
 ChildSucceeds ==
   /\ pc = "write"
@@ -92,14 +102,14 @@ ChildSucceeds ==
   /\ failed' = FALSE
   /\ last' = IF dirty THEN NONE ELSE sig
   /\ pc' = "done"
-  /\ UNCHANGED <<src, syncing, pending, timer, sig, read, edits, watching, dirty>>
+  /\ UNCHANGED <<src, syncing, pending, timer, sig, read, edits, watching, dirty, printed>>
 
 \* A failed child may have written part of the stage.
 ChildFails ==
   /\ pc = "write"
   /\ stage' \in {stage, read}
   /\ pc' = "done"
-  /\ UNCHANGED <<src, last, failed, syncing, pending, timer, sig, read, edits, watching, dirty>>
+  /\ UNCHANGED <<src, last, failed, syncing, pending, timer, sig, read, edits, watching, dirty, printed>>
 
 \* The .finally of runSync.
 Done ==
@@ -108,9 +118,9 @@ Done ==
   /\ IF pending
        THEN pending' = FALSE /\ pc' = "sig" /\ UNCHANGED syncing
        ELSE pending' = FALSE /\ pc' = "idle" /\ syncing' = FALSE
-  /\ UNCHANGED <<src, stage, last, failed, timer, sig, read, edits, dirty>>
+  /\ UNCHANGED <<src, stage, last, failed, timer, sig, read, edits, dirty, printed>>
 
-Next == Edit \/ TimerFires \/ Signature \/ SignatureFails \/ ChildRead \/ ChildSucceeds
+Next == Edit \/ TimerFires \/ Signature \/ SignatureFails \/ SignatureErrors \/ ChildRead \/ ChildSucceeds
         \/ ChildFails \/ Done
 
 Spec == Init /\ [][Next]_vars
@@ -120,8 +130,8 @@ TypeOK ==
   /\ syncing = (pc # "idle")
 
 \* Nothing left to do: no timer armed and no sync running. The stage must
-\* then hold the source, unless the last sync failed (its error printed,
-\* the next save retries).
+\* then hold the source, unless the last sync failed or the last signature
+\* read errored: either way an error is printed and the next save retries.
 Quiescent == ~timer /\ pc = "idle"
-StageMatchesSource == Quiescent => (stage = src \/ failed)
+StageMatchesSource == Quiescent => (stage = src \/ failed \/ printed)
 =============================================================================
