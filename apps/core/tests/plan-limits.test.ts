@@ -324,7 +324,7 @@ describe("sandbox start", () => {
       },
     });
 
-    expect(
+    await expect(
       executor.run({
         code: "echo hi",
         timeoutSeconds: 5,

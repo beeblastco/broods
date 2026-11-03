@@ -102,7 +102,7 @@ describe("code hooks end-to-end (real isolate)", () => {
     };
     const wrapped = wrapToolsWithHooks(tools, dispatcher);
 
-    expect(
+    await expect(
       (wrapped.bash!.execute as (i: unknown, o: unknown) => Promise<unknown>)(
         { command: "ls" },
         {},

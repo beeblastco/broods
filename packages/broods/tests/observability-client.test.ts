@@ -122,7 +122,7 @@ test("reports each reconnect and gives up after a minute down", async () => {
     await Bun.sleep(550);
     FakeObservabilitySocket.instances[1]!.close(1006, "gateway down");
 
-    expect(result).rejects.toThrow(
+    await expect(result).rejects.toThrow(
       "Gave up reconnecting to the live logs after 60 s. Last error: Observability WebSocket closed: gateway down",
     );
     expect(attempts).toHaveLength(1);
@@ -239,8 +239,8 @@ test("does not include the credential in connection errors", async () => {
     error: "Unauthorized",
   });
 
-  expect(result).rejects.toThrow("Unauthorized");
-  expect(result).rejects.not.toThrow("do-not-leak");
+  await expect(result).rejects.toThrow("Unauthorized");
+  await expect(result).rejects.not.toThrow("do-not-leak");
 });
 
 async function flushMicrotasks(): Promise<void> {
@@ -295,5 +295,5 @@ test("rejects with the gateway's reason when the trace is not in the stage", asy
     error: "Trace not found in this stage",
   });
 
-  expect(pending).rejects.toThrow("Trace not found in this stage");
+  await expect(pending).rejects.toThrow("Trace not found in this stage");
 });

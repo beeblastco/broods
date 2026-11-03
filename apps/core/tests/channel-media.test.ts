@@ -1162,7 +1162,7 @@ describe("sealConversationMedia", () => {
 describe("readAttachmentBytes URL guard", () => {
   it("refuses a host that resolves to a private address", async (): Promise<void> => {
     // The URL comes from the webhook body, so the sender picks the host.
-    expect(
+    await expect(
       readAttachmentBytes({ type: "file", url: "http://127.0.0.1/secret" }),
     ).rejects.toThrow(/private or metadata address/);
   });
@@ -1254,7 +1254,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      expect(
+      await expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/a.png` },
           loopbackTransport({
@@ -1273,7 +1273,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      expect(
+      await expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/a.png` },
           loopbackTransport({ "public.test": "127.0.0.1" }),
@@ -1293,7 +1293,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      expect(
+      await expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/big.bin` },
           loopbackTransport({ "public.test": "127.0.0.1" }),
@@ -1327,7 +1327,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      expect(
+      await expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/endless.bin` },
           loopbackTransport({ "public.test": "127.0.0.1" }),

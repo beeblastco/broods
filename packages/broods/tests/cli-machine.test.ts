@@ -88,7 +88,7 @@ test("the daemon says hello, answers an exec, and stops on a refusal", async () 
   servers.push(core.server);
   const lines: string[] = [];
 
-  expect(
+  await expect(
     runMachineDaemon({
       credential: async (): Promise<string> => "key",
       baseUrl: core.url,
@@ -117,7 +117,7 @@ test("the daemon says hello, answers an exec, and stops on a refusal", async () 
 });
 
 test("the daemon stops when the stage session is refused", async () => {
-  expect(
+  await expect(
     runMachineDaemon({
       baseUrl: "http://127.0.0.1:9",
       credential: async (): Promise<string> => {
@@ -139,7 +139,7 @@ test("the daemon retries when minting a stage session fails in transit", async (
   const lines: string[] = [];
   let calls = 0;
 
-  expect(
+  await expect(
     runMachineDaemon({
       baseUrl: core.url,
       credential: async (): Promise<string> => {
@@ -171,7 +171,7 @@ test("the daemon hands core a fresh ticket before the one it holds expires", asy
   let calls = 0;
   const startedAt = Date.now();
 
-  expect(
+  await expect(
     runMachineDaemon({
       baseUrl: core.url,
       credential: async (): Promise<string> => {

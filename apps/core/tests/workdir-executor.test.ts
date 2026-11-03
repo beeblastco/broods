@@ -777,7 +777,7 @@ describe("WorkdirSandboxExecutor.run", () => {
       options: { workdirUrl: BASE, mountAwsS3Buckets: true },
     });
 
-    expect(
+    await expect(
       executor.run({ code: "ls", timeoutSeconds: 30, outputLimitBytes: 4096 }),
     ).rejects.toThrow(
       "an AWS S3 workspace mount requires a workspace namespace",
@@ -970,7 +970,7 @@ describe("WorkdirSandboxExecutor.run", () => {
       options: { workdirUrl: BASE, workspaceRoot: "/mnt/workspaces" },
     });
 
-    expect(
+    await expect(
       executor.run({
         code: "ls",
         namespace: NS,
@@ -1006,7 +1006,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
 
     try {
-      expect(
+      await expect(
         executor.run({
           code: "ls",
           namespace: NS,
@@ -1368,7 +1368,7 @@ describe("WorkdirSandboxExecutor background jobs", () => {
       provider: "sandbox",
       options: { workdirUrl: BASE },
     });
-    expect(
+    await expect(
       executor.runBackground({
         code: "x",
         timeoutSeconds: 30,
@@ -1446,7 +1446,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       options: { workdirUrl: BASE },
     });
 
-    expect(
+    await expect(
       executor.acquireHarnessReservation({
         reservationKey: "harness:session-1",
       }),
@@ -1480,7 +1480,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       options: { workdirUrl: BASE },
     });
 
-    expect(
+    await expect(
       executor.acquireHarnessReservation({
         reservationKey: "harness:session-1",
       }),
@@ -1501,7 +1501,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       persistent: true,
       options: { workdirUrl: BASE },
     });
-    expect(
+    await expect(
       executor.resumeHarnessReservation({ reservationKey: "harness:missing" }),
     ).rejects.toThrow("no reserved workdir sandbox");
 
@@ -1576,7 +1576,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       options: { workdirUrl: BASE },
     });
     createRefusal = 503;
-    expect(
+    await expect(
       executor.run({
         code: "echo hi",
         timeoutSeconds: 10,
@@ -1586,7 +1586,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
 
     createRefusal = null;
     execRefusal = 503;
-    expect(
+    await expect(
       executor.run({
         code: "echo hi",
         timeoutSeconds: 10,
