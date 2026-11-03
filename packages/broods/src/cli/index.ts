@@ -3047,21 +3047,55 @@ async function run(args: string[]): Promise<void> {
     await writeEnvValue("BROODS_API_KEY", runtimeKey.apiKey);
   }
 
-  if ((agent.config as Record<string, unknown>).publicAccess !== true) {
+  // A `broods login` mints the stage ticket `logs` uses: it runs private agents with no user
+  // token. It lasts 15 minutes, so a request re-mints it near expiry. Keys keep the runtime key.
+  let session = await syncClient
+    .mintStageSession(manifest.project, manifest.stage)
+    .catch((error: unknown) => {
+      if (error instanceof StageSessionRefusedError) return null;
+      throw error;
+    });
+  if (!session) {
     printWarning(
-      `Agent "${agentName}" does not set publicAccess: true. The public endpoint is secured by default; ` +
-        "if the deployed agent has not enabled it, this run will be refused.",
+      "No broods login, so run uses the runtime key: it reaches only agents with publicAccess that need no user token. Run `broods login` to reach every agent.",
     );
   }
+  const credential = async (): Promise<string> => {
+    if (session && session.expiresAt - Date.now() < 60_000) {
+      session = await syncClient.mintStageSession(
+        manifest.project,
+        manifest.stage,
+      );
+    }
 
-  // Without a base URL the SDK falls back to prod, which rejects a dev runtime key.
+    return session?.token ?? "";
+  };
+  const clientAuth = session
+    ? {
+        apiKey: session.token,
+        fetch: Object.assign(
+          async (
+            ...[input, init]: Parameters<typeof fetch>
+          ): Promise<Response> => {
+            const headers = new Headers(init?.headers);
+            headers.set("Authorization", `Bearer ${await credential()}`);
+
+            return await fetch(input, { ...init, headers: headers });
+          },
+          { preconnect: fetch.preconnect },
+        ),
+      }
+    : runtimeKey?.apiKey
+      ? { apiKey: runtimeKey.apiKey }
+      : {};
+  // Without a base URL the SDK falls back to prod, which rejects a dev credential.
   const client = new BroodsClient({
     baseUrl:
       optionValue(args, "--base-url") ??
       process.env.BROODS_BASE_URL ??
       process.env.BROODS_HOST ??
       auth.baseUrl,
-    ...(runtimeKey?.apiKey ? { apiKey: runtimeKey.apiKey } : {}),
+    ...clientAuth,
   });
   const ref: AgentReference = {
     kind: "agent",
@@ -3074,27 +3108,16 @@ async function run(args: string[]): Promise<void> {
     ...(runtimeKey?.stageSlug ? { stageSlug: runtimeKey.stageSlug } : {}),
   };
   const { runAgentTui, streamAgentText } = await import("./tui.ts");
-  try {
-    if (interactive) {
-      await runAgentTui({
-        client: client,
-        agent: ref,
-        ...(prompt ? { prompt: prompt } : {}),
-      });
+  if (interactive) {
+    await runAgentTui({
+      client: client,
+      agent: ref,
+      ...(prompt ? { prompt: prompt } : {}),
+    });
 
-      return;
-    }
-    await streamAgentText({ client: client, agent: ref, prompt: prompt });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("public_access_disabled")) {
-      throw new Error(
-        `Agent "${agentName}" is not publicly accessible (secured by default). ` +
-          "Set publicAccess: true in its config and redeploy, or enable Public access in the dashboard.",
-      );
-    }
-    throw error;
+    return;
   }
+  await streamAgentText({ client: client, agent: ref, prompt: prompt });
 }
 
 async function writeStarter(
