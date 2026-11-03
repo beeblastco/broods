@@ -1096,7 +1096,10 @@ async function githubCommand(args: string[]): Promise<void> {
     return;
   }
   if (subcommand === "repos") {
-    const repos = await client.githubRepos(project);
+    const [repos, status] = await Promise.all([
+      client.githubRepos(project),
+      client.githubStatus(project),
+    ]);
     print(repos, () => {
       if (repos.length === 0) {
         console.log("No repos yet. `broods github connect` adds an account.");
@@ -1104,6 +1107,17 @@ async function githubCommand(args: string[]): Promise<void> {
       for (const entry of repos) {
         console.log(
           `${entry.fullName}  ${entry.defaultBranch}${entry.private ? "  private" : ""}`,
+        );
+      }
+      // A repo the App was not given is fixed in the account's App settings.
+      const web = status.webUrl ?? "https://github.com";
+      for (const installation of status.installations) {
+        console.log(
+          `Repo missing? Choose ${installation.login}'s repos: ${
+            installation.accountType === "Organization"
+              ? `${web}/organizations/${installation.login}/settings/installations/${installation.installationId}`
+              : `${web}/settings/installations/${installation.installationId}`
+          }`,
         );
       }
     });

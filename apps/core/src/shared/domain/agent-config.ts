@@ -281,7 +281,6 @@ export interface AgentChannelsConfig {
   teams?: AgentTeamsChannelConfig;
   twilio?: AgentTwilioChannelConfig;
   zalo?: AgentZaloChannelConfig;
-  matrix?: AgentMatrixChannelConfig;
   instagram?: AgentInstagramChannelConfig;
   messenger?: AgentMessengerChannelConfig;
   whatsapp?: AgentWhatsAppChannelConfig;
@@ -464,23 +463,6 @@ export interface AgentDiscordChannelConfig {
   allowedUserIds?: string[];
   botUserId?: string;
   mentionRoleIds?: string[];
-  trace?: "enabled" | "disabled";
-  partition?: ChannelPartition;
-  [key: string]: unknown;
-}
-
-/**
- * Matrix has no bots, so this is often a person's own account: `botName` labels replies and
- * `mentionText` addresses the agent, as a mention of the account also names its owner.
- */
-export interface AgentMatrixChannelConfig {
-  id?: string;
-  apiUrl?: string;
-  botToken?: string;
-  allowedChannelIds?: string[];
-  allowedUserIds?: string[];
-  botName?: string;
-  mentionText?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;

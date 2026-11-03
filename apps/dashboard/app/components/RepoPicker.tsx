@@ -21,6 +21,10 @@ type Repo = FunctionReturnType<typeof api.github.listRepos>[number];
 
 type Root = FunctionReturnType<typeof api.github.inspectRepo>["roots"][number];
 
+type Installation = FunctionReturnType<
+  typeof api.github.status
+>["installations"][number];
+
 /** The repo and `broods/` folder a link deploys from. */
 export interface RepoChoice {
   installationId: number;
@@ -173,6 +177,10 @@ export function RepoPicker({
       {roots !== null && (
         <RootField value={value} roots={roots} onChange={onChange} />
       )}
+      <RepoAccess
+        installations={status.installations}
+        webUrl={status.webUrl ?? "https://github.com"}
+      />
       {status.canConnect && <ConnectGitHubButton label="Add GitHub account" />}
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
@@ -222,6 +230,38 @@ export function ConnectGitHubButton({
       )}
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
+  );
+}
+
+// Where a missing repo is fixed: each connected account's Broods App settings on GitHub.
+function RepoAccess({
+  installations,
+  webUrl,
+}: {
+  installations: Installation[];
+  webUrl: string;
+}): React.JSX.Element {
+  return (
+    <p className="text-xs text-muted-foreground">
+      Repo missing? Choose which repos Broods can reach on GitHub:{" "}
+      {installations.map((installation, index) => (
+        <span key={installation.installationId}>
+          {index > 0 && ", "}
+          <a
+            href={
+              installation.accountType === "Organization"
+                ? `${webUrl}/organizations/${installation.login}/settings/installations/${installation.installationId}`
+                : `${webUrl}/settings/installations/${installation.installationId}`
+            }
+            target="_blank"
+            rel="noreferrer"
+            className="cursor-pointer underline-offset-2 hover:underline"
+          >
+            {installation.login}
+          </a>
+        </span>
+      ))}
+    </p>
   );
 }
 

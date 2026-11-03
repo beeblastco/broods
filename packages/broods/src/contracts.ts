@@ -14,7 +14,6 @@ import type {
   AgentGoogleChatChannelConfig,
   AgentInstagramChannelConfig,
   AgentLinearChannelConfig,
-  AgentMatrixChannelConfig,
   AgentMessengerChannelConfig,
   AgentPancakeChannelConfig,
   AgentSlackChannelConfig,
@@ -51,7 +50,6 @@ export type { GitHubSource } from "../../../apps/core/src/shared/github-channel.
 export type { LinearSource } from "../../../apps/core/src/shared/linear-channel.ts";
 export type { SlackSource } from "../../../apps/core/src/shared/slack-channel.ts";
 export type { DiscordSource } from "../../../apps/core/src/shared/discord-channel.ts";
-export type { MatrixSource } from "../../../apps/core/src/shared/matrix-channel.ts";
 export type { PancakeSource } from "../../../apps/core/src/shared/pancake-channel.ts";
 export type { TeamsSource } from "../../../apps/core/src/shared/teams-channel.ts";
 export type { TwilioSource } from "../../../apps/core/src/shared/twilio-channel.ts";
@@ -81,7 +79,6 @@ export type {
   AgentGoogleChatChannelConfig,
   AgentInstagramChannelConfig,
   AgentLinearChannelConfig,
-  AgentMatrixChannelConfig,
   AgentMessengerChannelConfig,
   AgentPancakeChannelConfig,
   AgentSlackChannelConfig,
