@@ -399,7 +399,8 @@ async function crash(args: string[]): Promise<void> {
   console.log(
     `told: ${told.map(([times, of]) => `${of?.length}×${times}`).join(", ")}`,
   );
-  if (!trials.every((trial) => trial.told === 1)) process.exit(1);
+  if (!trials.every((trial) => trial.told === 1 && trial.handback === "stored"))
+    process.exit(1);
 }
 
 async function perfStack(
