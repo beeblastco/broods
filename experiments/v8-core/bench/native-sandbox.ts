@@ -1,7 +1,7 @@
 /**
- * Real-bash sandbox behind apps/cloudflare-worker's HTTP API, for core's `worker` provider via
- * CLOUDFLARE_WORKER_URL. Each sandbox is a folder; it isolates nothing else: loopback bench only.
- * bun native-sandbox.ts <port> <key-file> <root-dir>
+ * Real-bash sandbox behind apps/cloudflare-worker's HTTP API (core's `worker` provider) and
+ * apps/cloudflare-sandbox's (`cloudflare`, the folder standing in for /workspace). Each sandbox is
+ * a folder; it isolates nothing else: loopback only. bun native-sandbox.ts <port> <key> <root>
  */
 
 import { mkdirSync, readFileSync, rmSync, existsSync } from "node:fs";
@@ -18,6 +18,32 @@ interface ExecRequest {
   timeoutMs: number;
   outputLimitBytes: number;
   persist: boolean;
+}
+
+/** apps/cloudflare-sandbox's body: one persistent container per id. */
+interface BridgeExecRequest {
+  argv: string[];
+  env: Record<string, string>;
+  timeoutMs: number;
+  outputLimitBytes: number;
+}
+
+function fromBridge(id: string, body: BridgeExecRequest): ExecRequest {
+  const dir = join(root!, id);
+  const argv = body.argv.map((arg) =>
+    arg === "/workspace" || arg.startsWith("/workspace/")
+      ? dir + arg.slice("/workspace".length)
+      : arg,
+  );
+
+  return {
+    script: 'exec "$@"',
+    args: argv,
+    env: body.env,
+    timeoutMs: body.timeoutMs,
+    outputLimitBytes: body.outputLimitBytes,
+    persist: true,
+  };
 }
 
 // One command per sandbox at a time; a second caller waits instead of getting a 409.
@@ -85,7 +111,8 @@ Bun.serve({
     if (!match) return new Response("not found", { status: 404 });
     const id = match[1]!;
     if (match[2] && request.method === "POST") {
-      const body = (await request.json()) as ExecRequest;
+      const raw = (await request.json()) as ExecRequest | BridgeExecRequest;
+      const body = "argv" in raw ? fromBridge(id, raw) : raw;
       const previous = queues.get(id) ?? Promise.resolve();
       const run = previous.then(
         () => exec(id, body),
@@ -98,8 +125,11 @@ Bun.serve({
 
       return run;
     }
-    if (request.method === "GET")
-      return Response.json({ exists: existsSync(join(root!, id)) });
+    if (request.method === "GET") {
+      const exists = existsSync(join(root!, id));
+
+      return Response.json({ exists: exists, running: exists });
+    }
     if (request.method === "DELETE") {
       rmSync(join(root!, id), { recursive: true, force: true });
 

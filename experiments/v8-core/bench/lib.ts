@@ -4,9 +4,15 @@
  */
 
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import { BroodsAccountClient } from "../../../packages/broods/src/account.ts";
 import { BroodsClient } from "../../../packages/broods/src/client.ts";
@@ -18,20 +24,50 @@ export interface StackState {
   secrets: { adminAccount: string };
 }
 
-export const RUNTIMES = {
-  bun: "http://127.0.0.1:4301",
-  workerd: "http://127.0.0.1:4311",
-  // A fresh isolate per request (per-task/router.js).
-  isolate: "http://127.0.0.1:4321",
-} as const;
-export type Runtime = keyof typeof RUNTIMES;
+/** The checkout that started the local stack: STACK_ROOT, or this one. */
+const STACK_ROOT = resolve(
+  process.env.STACK_ROOT ?? new URL("../../..", import.meta.url).pathname,
+);
+
+/**
+ * BROODS_LOCAL_INSTANCE, else STACK_ROOT's stack as local-stack.ts names it, else the most
+ * recently used one (env.sh picks the same).
+ */
+function stackInstance(dir: string): string {
+  if (process.env.BROODS_LOCAL_INSTANCE)
+    return process.env.BROODS_LOCAL_INSTANCE;
+  const own = `${basename(STACK_ROOT)}-${createHash("sha1").update(STACK_ROOT).digest("hex").slice(0, 8)}`;
+  if (existsSync(join(dir, own, "state.json"))) return own;
+  const states = readdirSync(dir)
+    .filter((name) => existsSync(join(dir, name, "state.json")))
+    .sort(
+      (a, b) =>
+        statSync(join(dir, a, "state.json")).mtimeMs -
+        statSync(join(dir, b, "state.json")).mtimeMs,
+    );
+
+  return states.at(-1) ?? own;
+}
 
 export function stackState(): StackState {
   const dir = join(homedir(), ".broods-local");
-  const instance = process.env.BROODS_LOCAL_INSTANCE ?? "broods-84a0a314";
 
-  return JSON.parse(readFileSync(join(dir, instance, "state.json"), "utf8"));
+  return JSON.parse(
+    readFileSync(join(dir, stackInstance(dir), "state.json"), "utf8"),
+  );
 }
+
+// BENCH_PORT_BASE, as env.sh sets it: the stack's own port block unless overridden.
+const BENCH_PORT_BASE = Number(
+  process.env.BENCH_PORT_BASE ?? stackState().portBase,
+);
+export const RUNTIMES = {
+  bun: `http://127.0.0.1:${BENCH_PORT_BASE + 1}`,
+  workerd: `http://127.0.0.1:${BENCH_PORT_BASE + 11}`,
+  // A fresh isolate per request (per-task/router.js); more engines take the next ports.
+  isolate: `http://127.0.0.1:${BENCH_PORT_BASE + 21}`,
+} as const;
+export type Runtime = keyof typeof RUNTIMES;
 
 export function edgeUrl(state: StackState): string {
   return `http://127.0.0.1:${state.portBase}`;
@@ -115,8 +151,7 @@ function stackConvex(args: string[]): string {
   const result = Bun.spawnSync({
     cmd: ["bun", "scripts/local-stack.ts", "convex", ...args],
     // STACK_ROOT: the checkout that started the local stack, when the bench runs from another.
-    cwd:
-      process.env.STACK_ROOT ?? new URL("../../..", import.meta.url).pathname,
+    cwd: STACK_ROOT,
     env: { ...process.env, BUN_OPTIONS: "" },
   });
   if (result.exitCode !== 0) {

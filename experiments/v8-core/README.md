@@ -119,6 +119,27 @@ bookkeeping, and both runtimes pay the same Convex calls.
 - **Memory.** A warm worker per agent holds its own copy of core: about
   1 GB for 20 agents against 340 MB for today's core.
 
+## Real Cloudflare sandbox
+
+`bench/run-cf.sh [rounds] [level] [warm|cold]` runs today's core (`bun:cf`) and
+`directEagerIdConfig` (`cf:directEagerIdConfig`) in turns, both on core's
+`cloudflare` sandbox provider (`bench.ts --sandbox-provider cloudflare`, a
+two-minute idle window), so every command goes to the bridge Worker at
+`CLOUDFLARE_SANDBOX_URL` with `CLOUDFLARE_SANDBOX_API_KEY` (environment only).
+`warm` keeps one sandbox per agent (`SHARED_FILES=1`), booted by the warm-up
+task, like a conversation that is already going; `cold` books a new Container
+for every task and subagent. It needs the local stack up in the same checkout;
+the bench's cores take the stack's own port block (`BENCH_PORT_BASE`, from the
+stack state), and it stops the stack's own core for the run.
+
+The scripts also run on macOS: `env.sh` and `bench/lib.ts` find the stack this
+checkout started, `workerd_bin` picks this machine's workerd, `bench/proc.ts`
+reads `ps` where there is no `/proc`, and `run-gap.sh` leaves the database and
+box CPU columns at 0 where it cannot read them. `bench/native-sandbox.ts` also
+takes the bridge's request shape, so pointing `CLOUDFLARE_SANDBOX_URL` at it
+tries the whole path locally (`cf-local-*`). `bench/gap-summary.py` prints the
+table for any `run-gap.sh` rows.
+
 ## Two ideas that did not help
 
 Commit `8f59ca0` built the two fixes the page proposed for the time still

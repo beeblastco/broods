@@ -1,8 +1,7 @@
 /**
  * Times `level` complex agent tasks at once on one runtime + sandbox; each task must show a sha256
  * and the child's prime count. Flags: see parseArgs. --other-log is the idle runtime's log: a model
- * call there fails the arm. --agent-per-task gives each task slot its own agent and sandbox files;
- * --shared-files (V8 only) pins each agent to one reservation key so a subagent sees its files.
+ * call there fails the arm. --shared-files (V8 only) pins each agent to one reservation key.
  */
 import { appendFileSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
@@ -47,6 +46,8 @@ const { values: args } = parseArgs({
     // Leaves the sandbox out too, so a task is only model turns, a subagent and Broods' own
     // bookkeeping: both runtimes then pay the same Convex work and differ only in themselves.
     "no-sandbox": { type: "boolean", default: false },
+    // cloudflare: core's bridge provider (CLOUDFLARE_SANDBOX_URL) for the V8 arm, not `worker`.
+    "sandbox-provider": { type: "string", default: "worker" },
   },
 });
 const runtime = args.runtime as Runtime;
@@ -54,6 +55,12 @@ const sandboxKind = args.sandbox as "machine" | "v8";
 const real = args.mode === "real";
 const apiKey = real ? process.env.ANTHROPIC_API_KEY : "scripted-model";
 if (!apiKey) throw new Error("set ANTHROPIC_API_KEY for --mode real");
+const provider = args["sandbox-provider"] as "worker" | "cloudflare";
+if (provider !== "worker" && provider !== "cloudflare")
+  throw new Error(`--sandbox-provider ${provider}: worker or cloudflare`);
+// The bridge's containers outlive a task by their idle window; core's default is 15 minutes.
+const lifecycle =
+  provider === "cloudflare" ? { lifecycle: { idleTimeoutSeconds: 120 } } : {};
 const runtimePids = String(args["runtime-pid"]).split(",").map(Number);
 const TASK_TIMEOUT_MS = 240_000;
 const sandboxPids = args["sandbox-pid"]
@@ -93,7 +100,8 @@ if (sandboxKind === "v8") {
     await account.createSandbox({
       name: `v8-${runId}`,
       config: {
-        provider: "worker",
+        provider: provider,
+        ...lifecycle,
         persistent: true,
         permissionMode: "bypass",
         network: { mode: "deny-all" },
@@ -149,7 +157,8 @@ const sandboxIds = await Promise.all(
           await account.createSandbox({
             name: `v8-${runId}-${i}`,
             config: {
-              provider: "worker",
+              provider: provider,
+              ...lifecycle,
               persistent: true,
               permissionMode: "bypass",
               network: { mode: "deny-all" },

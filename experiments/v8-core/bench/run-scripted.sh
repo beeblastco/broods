@@ -5,11 +5,14 @@
 # from the same empty sandbox memory (local wrangler dev keeps every loaded
 # isolate and was seen to crash near 4.6 GB).
 # Usage: [ARMS="workerd:v8"] [LOG_SUFFIX=-iso] run-scripted.sh <out.jsonl> <log-dir> <rounds> <levels> [label-suffix]
-# Expects core on Bun (4301) and core on workerd (4311) already up with
+# Expects core on Bun (BENCH_PORT_BASE+1) and core on workerd (+11) already up with
 # BENCH_SCRIPTED_MODEL=1, logging to <log-dir>/{bun,workerd}-core$LOG_SUFFIX.log, and the
 # sandbox key in <log-dir>/worker-sandbox.key. A "native" arm restarts
 # bench/native-sandbox.ts on 8791 first; start the cores with SANDBOX_PORT=8791
-# (restart-cores.sh) so core's worker provider reaches it.
+# (restart-cores.sh) so core's worker provider reaches it. A "cf" arm starts no
+# sandbox: core's cloudflare provider uses the bridge Worker at CLOUDFLARE_SANDBOX_URL
+# (SANDBOX_PROVIDER=cloudflare, which a native arm can also use to try it locally).
+# SHARED_FILES=1 keeps one sandbox per agent.
 set -euo pipefail
 out=$1 logs=$2 rounds=$3 levels=$4 suffix=${5:-} log_suffix=${LOG_SUFFIX:-}
 bun_pid=$(pgrep -f "[s]cripted-model-preload.ts src/server.ts")
@@ -44,6 +47,8 @@ if [ "${AGENT_PER_TASK:-0}" = 1 ]; then per_task=(--agent-per-task); fi
 if [ "${WARMUP_EACH:-0}" = 1 ]; then per_task+=(--warmup-each); fi
 if [ "${NO_MCP:-0}" = 1 ]; then per_task+=(--no-mcp); fi
 if [ "${NO_SANDBOX:-0}" = 1 ]; then per_task+=(--no-sandbox); fi
+if [ "${SHARED_FILES:-0}" = 1 ]; then per_task+=(--shared-files); fi
+per_task+=(--sandbox-provider "${SANDBOX_PROVIDER:-worker}")
 cd "$here"
 for round in $(seq 1 "$rounds"); do
   for arm in ${ARMS:-bun:machine workerd:v8 bun:v8}; do
@@ -54,9 +59,10 @@ for round in $(seq 1 "$rounds"); do
     extra=() kind=$sandbox
     if [ "$sandbox" = v8 ]; then restart_sandbox; extra=(--sandbox-pid "$sandbox_pids"); fi
     if [ "$sandbox" = native ]; then restart_native; extra=(--sandbox-pid "$sandbox_pids") kind=v8; fi
+    if [ "$sandbox" = cf ]; then kind=v8; fi
     echo "== round $round: $runtime + $sandbox"
     env -u BUN_OPTIONS bun bench.ts --runtime "$runtime" --sandbox "$kind" --mode scripted \
-      --levels "$levels" --reps 1 --warmup 1 --runtime-pid "$pid" "${extra[@]}" \
+      --levels "$levels" --reps 1 --warmup 1 --runtime-pid "$pid" ${extra[@]+"${extra[@]}"} \
       --runtime-log "$logs/$runtime-core$log_suffix.log" --other-log "$logs/$other-core$log_suffix.log" \
       --label "$runtime+$sandbox$suffix" --out "$out" "${per_task[@]}"
   done

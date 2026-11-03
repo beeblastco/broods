@@ -7,5 +7,5 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 source "$here/env.sh"
 export SERVICE_NAME=$2
-workerd=$(find "$here/../../node_modules/.bun" -path "*workerd-linux-64@*" -name workerd -type f | head -1)
+workerd=$(workerd_bin)
 exec "$workerd" serve "$here/workerd.capnp" "${3:-perTaskConfig}" --experimental --socket-addr "http=127.0.0.1:$1" ${WORKERD_ARGS:-}
