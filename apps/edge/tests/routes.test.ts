@@ -20,6 +20,11 @@ const CASES: [string, string, Upstream | null][] = [
   ["POST", "/v1/webhooks/acct_1/agent_1/slack", "core"],
   ["POST", "/v1/cron-runs", "core"],
   ["POST", "/v1/mcp-service/rpc", "core"],
+  // Core's MCP Tasks server sits off /v1; /v1/mcp is the config plane's CRUD.
+  ["POST", "/mcp", "core"],
+  ["GET", "/mcp/", "core"],
+  ["POST", "/mcp/x", null],
+  ["GET", "/v1/mcp", "config"],
 
   ["GET", "/v1/agents/a/ws", "gateway"],
   ["GET", "/v1/projects/p/stages/s/agents/a/ws", "gateway"],

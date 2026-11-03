@@ -77,6 +77,8 @@
     "@llmgateway/ai-sdk-provider": "^4.1.0",
     "@microsoft/teams.apps": "^2.1.1",
     "@modelcontextprotocol/client": "^2.3.1",
+    "@modelcontextprotocol/ext-tasks": "0.2.2",
+    "@modelcontextprotocol/server": "2.4.0",
     "@mv37/workdir": "^0.3.2",
     "@open-policy-agent/opa": "^2.0.0",
     "@openrouter/ai-sdk-provider": "^3.1.0",

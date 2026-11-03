@@ -2300,6 +2300,31 @@ function assertOneDirectPayloadShape(
   }
 }
 
+// A run token, or a user token that lists its conversations, runs no agent:
+// a task always opens a fresh conversation.
+export async function listRunnableAgents(
+  auth: AuthContext,
+): Promise<AgentRecord[]> {
+  const agents = getStorage().agents;
+  if (auth.kind === "account") {
+    return agents.listForAccount(auth.account.accountId);
+  }
+  if (auth.kind !== "deployment") return [];
+  if (!auth.stageTicket && auth.user?.conversations !== undefined) return [];
+  const stage = await agents.listForEndpoint(
+    auth.account.accountId,
+    auth.endpointId,
+  );
+
+  return auth.stageTicket
+    ? stage
+    : stage.filter(
+        (agent) =>
+          agent.config.publicAccess === true &&
+          (agent.requireUserToken !== true || auth.user !== undefined),
+      );
+}
+
 /** Throws unless the credential reaches the agent; true only for the embeddable key. */
 function admitStageCredential(
   auth: Extract<AuthContext, { kind: "deployment" }> | undefined,
