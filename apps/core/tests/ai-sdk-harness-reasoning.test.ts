@@ -140,7 +140,11 @@ describe("harness reasoning settings", (): void => {
     expect(variant("openai", "gpt-5.1", "none")).toBe("none");
     expect(variant("openai", "gpt-5.2", "xhigh")).toBe("xhigh");
     expect(variant("openai", "gpt-5-codex", "none")).toBeUndefined();
-    expect(variant("openai", "gpt-5-2025-08-07", "minimal")).toBe("minimal");
+    expect(variant("openai", "gpt-5-mini", "minimal")).toBe("minimal");
+    expect(variant("openai", "gpt-5-2025-08-07", "minimal")).toBe("low");
+    expect(variant("openai", "gpt-5-pro", "low")).toBe("high");
+    expect(variant("openai", "gpt-5.2-pro", "low")).toBe("medium");
+    expect(variant("openai", "gpt-5-chat-latest", "high")).toBeUndefined();
     expect(variant("openai", "gpt-5.1-codex-max", "xhigh")).toBe("xhigh");
     expect(variant("vercel", "anthropic/claude-opus-4.6", "xhigh")).toBe(
       "high",

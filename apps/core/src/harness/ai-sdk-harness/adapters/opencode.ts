@@ -110,8 +110,13 @@ function openCodeVariants(
   if (provider === "vercel" && !id.startsWith("openai/")) {
     return OPENCODE_LEVELS;
   }
-  // One or two digits: `gpt-5-2025-08-07` is a dated GPT-5, not GPT-5.2025.
-  const version = Number(/gpt-5[.-](\d{1,2})(?:[.-]|$)/.exec(id)?.[1] ?? 0);
+  // Matches OpenCode's own parse, which also reads a dated `gpt-5-2025-08-07` as version 2025.
+  const version = Number(/gpt-5[.-](\d+)(?:[.-]|$)/.exec(id)?.[1] ?? 0);
+  if (/gpt-5[.-].*chat/.test(id)) return version ? ["medium"] : [];
+  if (/gpt-5[.-]?pro(?:[.-]|$)/.test(id)) return ["high"];
+  if (/gpt-5[.-]\d+[.-]pro(?:[.-]|$)/.test(id)) {
+    return ["medium", "high", "xhigh"];
+  }
   const codex = id.includes("codex");
   const gated: Partial<Record<OpenCodeLevel, boolean>> = {
     none: codex ? version >= 3 : version >= 1,
