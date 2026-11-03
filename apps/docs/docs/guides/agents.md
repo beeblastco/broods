@@ -184,6 +184,7 @@ export const codingAgent = defineAgent({
 - The harness's own "ask the user" tool is off. The agent asks through [`ask_questions`](tools.md#asking-the-user).
 - Steering sent before a turn starts is folded into its prompt. Claude Code, Codex, OpenCode and Pi take steering sent during a turn at its next step. Deep Agents reads it when the next turn starts.
 - Images reach the harness as images, so send them only to a model that reads images. Any other attachment arrives as a note pointing at its copy in the workspace.
+- `model.reasoning` reaches every harness, and a change applies from the next turn. Pi takes it as its thinking level; `provider-default` is Pi's `medium`. Claude Code, Deep Agents and Codex take it as effort, with `minimal` as `low`. `none` turns thinking off in Claude Code and Deep Agents and leaves Codex at its default. OpenCode takes it as its variant.
 - Policies and structured output are not supported yet.
 
 Each harness supports different model providers, tool approval and tool filtering. The table is in [Configuration](../reference/configuration.md).

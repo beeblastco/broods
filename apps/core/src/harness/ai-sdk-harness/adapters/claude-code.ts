@@ -9,6 +9,7 @@ import {
   type AgentConfig,
 } from "../../../shared/domain/agent-config.ts";
 import {
+  anthropicHarnessReasoning,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
   resolveAnthropicOrVercelAuthEnv,
@@ -35,6 +36,7 @@ export function createConfiguredClaudeCodeAdapter(
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
 
   return createClaudeCode({
+    ...anthropicHarnessReasoning(agentConfig),
     auth: resolveAnthropicOrVercelAuthEnv(providerName, provider),
     maxTurns: configuredMaxTurn(agentConfig),
     startupTimeoutMs: harness.startupTimeoutMs,

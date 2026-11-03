@@ -9,6 +9,7 @@ import {
   type AgentConfig,
 } from "../../../shared/domain/agent-config.ts";
 import {
+  anthropicHarnessReasoning,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
   resolveAnthropicOrVercelAuthEnv,
@@ -29,6 +30,7 @@ export function createConfiguredDeepAgentsAdapter(
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
 
   return createDeepAgents({
+    ...anthropicHarnessReasoning(agentConfig),
     auth: resolveAnthropicOrVercelAuthEnv(providerName, provider),
     recursionLimit: configuredMaxTurn(agentConfig),
     startupTimeoutMs: harness.startupTimeoutMs,
