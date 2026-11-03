@@ -39,7 +39,7 @@
       "gate": "blocking"
     },
     "core/config-normalize": {
-      "nsPerOp": 1542.8,
+      "nsPerOp": 3135.5,
       "ceilingNs": 4500,
       "gate": "blocking"
     },

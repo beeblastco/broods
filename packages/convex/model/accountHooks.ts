@@ -1,7 +1,9 @@
 import { sha256Hex } from "./accountSecrets";
 import { isIsolateSafeBundle } from "./isolateSafety";
-import { isPlainObject } from "./objects";
+import { z } from "zod/mini";
+
 import { ClientError } from "./clientError";
+import { parseInput } from "./inputSchema";
 
 export const AGENT_HOOK_EVENT_NAMES = [
   "agent.started",
@@ -22,12 +24,18 @@ const HOOK_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 // Hooks run in an isolate inside core's own process, so the bound stays tight.
 const MAX_BUNDLE_BYTES = 1_000_000;
 
-export interface AccountHookUploadInput {
-  name?: unknown;
-  description?: unknown;
-  events?: unknown;
-  bundle?: unknown;
-}
+// Each field is checked by its own normalizer below, which names the hook field it refuses.
+const ACCOUNT_HOOK_UPLOAD = z.looseObject(
+  {
+    name: z.optional(z.unknown()),
+    description: z.optional(z.unknown()),
+    events: z.optional(z.unknown()),
+    bundle: z.optional(z.unknown()),
+  },
+  { error: "hook upload body must be an object" },
+);
+
+export type AccountHookUploadInput = z.output<typeof ACCOUNT_HOOK_UPLOAD>;
 
 export type AgentHookEventName = (typeof AGENT_HOOK_EVENT_NAMES)[number];
 
@@ -66,11 +74,7 @@ export async function normalizeAccountHookUpload(
   input: unknown,
   options: { requireBundle: boolean },
 ): Promise<NormalizedAccountHookUpload> {
-  if (!isPlainObject(input)) {
-    throw new ClientError("hook upload body must be an object");
-  }
-
-  const value = input as AccountHookUploadInput;
+  const value = parseInput(ACCOUNT_HOOK_UPLOAD, input, "");
   const result: Partial<NormalizedAccountHookUpload> = {};
 
   if (value.name !== undefined) {

@@ -119,8 +119,8 @@ describe("queued ingress recovery", () => {
         return { page: [], cursor: "end", isDone: true };
       },
     );
-    // One list per window: 2 handbacks x 3 subagent statuses, then x 2 tool statuses.
-    const windows = 6;
+    // One list per window: 2 handbacks x 4 subagent statuses, then x 2 tool statuses.
+    const windows = 8;
     const toolWindows = 4;
     try {
       startIngressRecovery();

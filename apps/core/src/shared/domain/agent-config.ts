@@ -16,8 +16,12 @@ import type {
   SystemModelMessage,
   streamText,
 } from "ai";
+import { z } from "zod/mini";
 import type { AgentHookEventName } from "@broods/convex/model/accountHooks";
+import { partitionAlias } from "@broods/convex/model/channelRules";
+import { parseOr } from "@broods/convex/model/storedJson";
 import {
+  AGENT_CONFIG,
   normalizeAgentConfig,
   type AGENT_HARNESS_DEBUG_LEVELS,
   type AGENT_HARNESS_PERMISSION_MODES,
@@ -58,6 +62,19 @@ const RUNTIME_CONFIG_KEYS = [
   "publicAccess",
   "allowRunOverrides",
 ] as const;
+// Core checks every run, so only core pays the ~30 ms compile; Convex and the dashboard interpret.
+export const COMPILED_AGENT_CONFIG = z.compile(AGENT_CONFIG);
+
+// A channel config's `partition`, read leniently: a malformed one partitions nothing.
+const CHANNEL_PARTITION = z.looseObject({
+  partition: z.union([
+    z.looseObject({
+      by: z.literal("shared"),
+      alias: z.optional(z.undefined()),
+    }),
+    z.looseObject({ by: z.literal("conversation"), alias: partitionAlias }),
+  ]),
+});
 
 export interface AgentConfig {
   agent?: AgentBehaviorConfig;
@@ -281,7 +298,6 @@ export interface AgentChannelsConfig {
   teams?: AgentTeamsChannelConfig;
   twilio?: AgentTwilioChannelConfig;
   zalo?: AgentZaloChannelConfig;
-  matrix?: AgentMatrixChannelConfig;
   instagram?: AgentInstagramChannelConfig;
   messenger?: AgentMessengerChannelConfig;
   whatsapp?: AgentWhatsAppChannelConfig;
@@ -469,23 +485,6 @@ export interface AgentDiscordChannelConfig {
   [key: string]: unknown;
 }
 
-/**
- * Matrix has no bots, so this is often a person's own account: `botName` labels replies and
- * `mentionText` addresses the agent, as a mention of the account also names its owner.
- */
-export interface AgentMatrixChannelConfig {
-  id?: string;
-  apiUrl?: string;
-  botToken?: string;
-  allowedChannelIds?: string[];
-  allowedUserIds?: string[];
-  botName?: string;
-  mentionText?: string;
-  trace?: "enabled" | "disabled";
-  partition?: ChannelPartition;
-  [key: string]: unknown;
-}
-
 export interface AgentPancakeChannelConfig {
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
@@ -637,6 +636,13 @@ export function isChannelTraceEnabled(
   return channelConfig?.trace === "enabled";
 }
 
+export function channelPartitionOf(
+  config: AgentConfig,
+  channelName: string,
+): ChannelPartition | undefined {
+  return parseOr(CHANNEL_PARTITION, config.channels?.[channelName])?.partition;
+}
+
 export function resolveSubagentMode(
   config: AgentConfig,
 ): "ephemeral" | "persistent" {
@@ -668,5 +674,9 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ),
   );
 
-  return normalizeAgentConfig(runtimeBranches) as AgentConfig;
+  return normalizeAgentConfig(
+    runtimeBranches,
+    {},
+    COMPILED_AGENT_CONFIG,
+  ) as AgentConfig;
 }

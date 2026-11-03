@@ -53,6 +53,27 @@ describe(RULE, () => {
   );
 
   rule.valid(
+    "allows schemas built in code that runs once at startup",
+    `
+      import { z } from "zod";
+
+      export function createServer(server: { tool: (name: string, input: object) => void }) {
+        server.tool("list-runs", { limit: z.number().int().positive().max(100).optional() });
+        register(server);
+      }
+      function register(server: { tool: (name: string, input: object) => void }) {
+        const body = z.record(z.string(), z.unknown());
+        server.tool("create", { body: body, confirm: z.boolean() });
+      }
+      export class Registry {
+        register() {
+          return { inputSchema: z.strictObject({}) };
+        }
+      }
+    `,
+  );
+
+  rule.valid(
     "ignores zod helpers that do not build a schema",
     `
       import { z } from "zod";
@@ -87,7 +108,7 @@ describe(RULE, () => {
   );
 
   rule.invalid(
-    "reports static schemas in components, hooks and methods",
+    "reports static schemas in components, hooks and event handlers",
     `
       import * as z from "zod/mini";
 
@@ -95,15 +116,36 @@ describe(RULE, () => {
         const output = z.looseObject({ type: z.literal("content") });
         return output.def.type;
       }
-      export class Registry {
-        register() {
-          return { inputSchema: z.strictObject({}) };
+      export const useFrame = () => z.strictObject({});
+      export class Socket {
+        onMessage(data: string) {
+          return z.string().parse(data);
         }
       }
     `,
     [
       { line: 4, message: HOIST },
-      { line: 9, message: HOIST },
+      { line: 7, message: HOIST },
+      { line: 10, message: HOIST },
+    ],
+  );
+
+  rule.invalid(
+    "reports static schemas in loops and iteration callbacks",
+    `
+      import { z } from "zod";
+
+      export function parseAll(rows: unknown[], fields: string[]) {
+        for (const row of rows) z.object({ id: z.string() }).parse(row);
+        const names = fields.map((field) => z.string().describe(field));
+        return rows.filter((row) => z.number().safeParse(row).success).concat(names);
+      }
+      export const fetchRow = (request: Request) => z.object({}).parse(request);
+    `,
+    [
+      { line: 4, message: HOIST },
+      { line: 6, message: HOIST },
+      { line: 8, message: HOIST },
     ],
   );
 

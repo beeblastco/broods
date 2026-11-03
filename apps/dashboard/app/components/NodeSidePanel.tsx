@@ -52,14 +52,13 @@ import {
   applyModelReasoning,
   fromNestedAgentConfig,
   readAgentBranch,
-  readAgentPolicies,
   toNestedAgentConfig,
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
 import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
 import { includesSkillRef } from "@/app/lib/skillRefs";
 import { reportPerf } from "@/app/lib/perfReport";
-import { isPlainObject } from "@/app/lib/utils";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { providerApiKeyEnvName } from "@broods/convex/model/modelProviders";
@@ -427,7 +426,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const patch = fromNestedAgentConfig({
       ...base,
       model: {
-        ...(isPlainObject(base.model) ? base.model : {}),
+        ...parseOr(configObject, base.model, {}),
         provider: next.provider,
         modelId: next.modelId,
       },
@@ -515,11 +514,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     async (toolName: string, config: Record<string, unknown> | null) => {
       if (!agentConfigId || !agentConfig) return;
 
-      const currentExtra =
-        (agentConfig.extraConfig as Record<string, unknown>) ?? {};
-      const currentTools =
-        (currentExtra.tools as Record<string, unknown>) ?? {};
-      const nextTools = { ...currentTools };
+      const currentExtra = agentConfig.extraConfig ?? {};
+      const nextTools = { ...currentExtra.tools };
       if (config === null) {
         delete nextTools[toolName];
       } else {
@@ -543,8 +539,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     ): Promise<void> => {
       if (!agentConfigId || !agentConfig) return;
 
-      const currentExtra =
-        (agentConfig.extraConfig as Record<string, unknown>) ?? {};
+      const currentExtra = agentConfig.extraConfig ?? {};
       await updateConfig({
         configId: agentConfigId,
         extraConfig: { ...currentExtra, [key]: value },
@@ -557,8 +552,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     async (policies: string[] | null) => {
       if (!agentConfigId || !agentConfig) return;
 
-      const currentExtra =
-        (agentConfig.extraConfig as Record<string, unknown>) ?? {};
+      const currentExtra = agentConfig.extraConfig ?? {};
       await updateConfig({
         configId: agentConfigId,
         extraConfig: {
@@ -574,10 +568,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     async (next: { budgetTokens?: number; effort?: string }) => {
       if (!agentConfigId || !agentConfig) return;
 
-      const currentExtra =
-        (agentConfig.extraConfig as Record<string, unknown>) ?? {};
+      const currentExtra = agentConfig.extraConfig ?? {};
       const nextModel = applyModelReasoning(
-        (currentExtra.model as Record<string, unknown>) ?? {},
+        currentExtra.model ?? {},
         selectedProvider,
         next,
       );
@@ -596,11 +589,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     async (kind: string, config: Record<string, unknown> | null) => {
       if (!agentConfigId || !agentConfig) return;
 
-      const currentExtra =
-        (agentConfig.extraConfig as Record<string, unknown>) ?? {};
-      const currentChannels =
-        (currentExtra.channels as Record<string, unknown>) ?? {};
-      const nextChannels = { ...currentChannels };
+      const currentExtra = agentConfig.extraConfig ?? {};
+      const nextChannels = { ...currentExtra.channels };
       if (config === null) {
         delete nextChannels[kind];
       } else {
@@ -904,7 +894,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               className="flex flex-col overflow-y-auto"
             >
               <PoliciesTab
-                assignedPolicyIds={readAgentPolicies(agentConfig?.extraConfig)}
+                assignedPolicyIds={agentConfig?.extraConfig?.policies ?? []}
                 onUpdatePolicyConfig={
                   canWrite ? handleUpdatePolicyConfig : undefined
                 }

@@ -230,49 +230,6 @@ const CHANNELS: ChannelKind[] = [
     ],
   },
   {
-    kind: "matrix",
-    label: "Matrix",
-    fields: [
-      {
-        key: "apiUrl",
-        label: "Homeserver URL",
-        type: "text",
-        required: true,
-        placeholder: "https://matrix.org",
-      },
-      {
-        key: "botToken",
-        label: "Access token",
-        type: "secret",
-        required: true,
-      },
-      {
-        key: "botName",
-        label: "Reply name",
-        type: "text",
-        placeholder: "Shown on the agent's replies",
-      },
-      {
-        key: "mentionText",
-        label: "Mention text (answer only when addressed)",
-        type: "text",
-        placeholder: "@my-agent",
-      },
-      {
-        key: "allowedChannelIds",
-        label: "Allowed room IDs",
-        type: "stringList",
-        placeholder: "!abc:matrix.org, *",
-      },
-      {
-        key: "allowedUserIds",
-        label: "Allowed user IDs",
-        type: "stringList",
-        placeholder: "@alice:matrix.org, …",
-      },
-    ],
-  },
-  {
     kind: "pancake",
     label: "Pancake",
     fields: [

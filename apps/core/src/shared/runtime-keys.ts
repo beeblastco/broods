@@ -18,8 +18,6 @@ export const INTERNAL_EVENT_ID_PREFIX = "conversation-lease:";
 export const DIRECT_API_EVENT_ID_PREFIX = "api:";
 export const DIRECT_API_CONVERSATION_PREFIX = "api:";
 export const ACCOUNT_NAMESPACE_PREFIX = "acct:";
-// Splits a thread from a channel id that carries colons; only read under a channel prefix.
-export const CHANNEL_THREAD_SEPARATOR = "|";
 export const GCHAT_INTEGRATION_PREFIX = "gchat:";
 export const GITHUB_INTEGRATION_PREFIX = "gh:";
 export const LINEAR_INTEGRATION_PREFIX = "linear:";
@@ -31,7 +29,6 @@ export const TWILIO_INTEGRATION_PREFIX = "twilio:";
 export const DISCORD_INTEGRATION_PREFIX = "discord:";
 export const PANCAKE_INTEGRATION_PREFIX = "pancake:";
 export const ZALO_INTEGRATION_PREFIX = "zalo:";
-export const MATRIX_INTEGRATION_PREFIX = "matrix:";
 export const INSTAGRAM_INTEGRATION_PREFIX = "instagram:";
 export const MESSENGER_INTEGRATION_PREFIX = "messenger:";
 export const WHATSAPP_INTEGRATION_PREFIX = "whatsapp:";
@@ -53,7 +50,6 @@ const RESERVED_EVENT_ID_PREFIXES = [
   PANCAKE_INTEGRATION_PREFIX,
   SUBAGENT_TASK_ID_PREFIX,
   ZALO_INTEGRATION_PREFIX,
-  MATRIX_INTEGRATION_PREFIX,
   INSTAGRAM_INTEGRATION_PREFIX,
   MESSENGER_INTEGRATION_PREFIX,
   WHATSAPP_INTEGRATION_PREFIX,
@@ -74,7 +70,6 @@ const RESERVED_CONVERSATION_PREFIXES = [
   DISCORD_INTEGRATION_PREFIX,
   PANCAKE_INTEGRATION_PREFIX,
   ZALO_INTEGRATION_PREFIX,
-  MATRIX_INTEGRATION_PREFIX,
   INSTAGRAM_INTEGRATION_PREFIX,
   MESSENGER_INTEGRATION_PREFIX,
   WHATSAPP_INTEGRATION_PREFIX,
@@ -91,7 +86,6 @@ const CHANNEL_CONVERSATION_PREFIXES = [
   DISCORD_INTEGRATION_PREFIX,
   PANCAKE_INTEGRATION_PREFIX,
   ZALO_INTEGRATION_PREFIX,
-  MATRIX_INTEGRATION_PREFIX,
   INSTAGRAM_INTEGRATION_PREFIX,
   MESSENGER_INTEGRATION_PREFIX,
   WHATSAPP_INTEGRATION_PREFIX,
@@ -121,12 +115,6 @@ export function channelScopeKeyFromConversation(
     return unscopedKey;
   }
 
-  // Only under the Matrix prefix: a public key may contain the separator (`customer|a`).
-  if (unscopedKey.startsWith(MATRIX_INTEGRATION_PREFIX)) {
-    const boundary = unscopedKey.indexOf(CHANNEL_THREAD_SEPARATOR);
-
-    return boundary === -1 ? unscopedKey : unscopedKey.slice(0, boundary);
-  }
   if (unscopedKey.startsWith(SLACK_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");
 

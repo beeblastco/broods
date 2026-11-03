@@ -163,6 +163,33 @@ test.describe("a canvas card", () => {
     expect((await header.boundingBox())?.height).toBe(closed?.height);
   });
 
+  test("the context menu's Rename opens the same field; Escape hands focus back to the card", async ({
+    page,
+  }) => {
+    const section = fixture(page, "inline-edit-card");
+    const card = section.locator(".react-flow__node");
+    await card.click({ button: "right" });
+    await page.getByRole("menuitem", { name: /^Rename/ }).click();
+
+    const field = section.getByRole("textbox", { name: "Rename triage" });
+    await expect(field).toBeFocused();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.keyboard.type("-v3");
+    await page.keyboard.press("Escape");
+    await expect(field).toHaveCount(0);
+    await expect(card).toBeFocused();
+
+    await card.click({ button: "right" });
+    await page.getByRole("menuitem", { name: /^Rename/ }).click();
+    await expect(field).toBeFocused();
+    await page.keyboard.type("-v3");
+    await page.keyboard.press("Enter");
+
+    await expect(card).toContainText("triage-v3");
+    await expect(card).toBeFocused();
+    await expect(renamed(page)).toHaveText(["card triage-v3"]);
+  });
+
   test("Escape keeps the old name", async ({ page }) => {
     const section = fixture(page, "inline-edit-card");
     await section.getByText("triage", { exact: true }).dblclick();

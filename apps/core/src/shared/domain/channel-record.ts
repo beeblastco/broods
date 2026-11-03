@@ -4,7 +4,7 @@
 import type { ChannelReplyIn } from "@broods/convex/model/channelRules";
 import type { SystemModelMessage } from "ai";
 import { logWarn } from "../log.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import {
   toChannelRuntimeAgentConfig,
   type AgentBehaviorConfig,
@@ -95,7 +95,7 @@ export function applyChannelRecord(
           channels: {
             ...config.channels,
             [channelName]: {
-              ...(isPlainObject(channelSettings) ? channelSettings : {}),
+              ...parseOr(configObject, channelSettings, {}),
               partition: channelConfig.partition,
             },
           },

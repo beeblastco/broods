@@ -71,6 +71,18 @@ describe("compare passes a comment-only edit", () => {
       "export const View = () => (\n  <div>\n    <span />\n  </div>\n);",
     ],
     [
+      "a JSX comment after the last text",
+      "a.tsx",
+      "export const V = () => (\n  <p>\n    a\n    {/* why */}\n  </p>\n);",
+      "export const V = () => (\n  <p>\n    a\n  </p>\n);",
+    ],
+    [
+      "a .tsx type parameter",
+      "a.tsx",
+      "// why\nexport const first = <T,>(items: T[]) => items[0];",
+      "export const first = <T,>(items: T[]) => items[0];",
+    ],
+    [
       "a shorter suppression reason",
       "a.ts",
       "// oxlint-disable-next-line no-console -- prints the long reason here\nconsole.log(1);",
@@ -161,6 +173,27 @@ describe("compare reports a code change", () => {
       "types",
     ],
     [
+      "JSX text joined where a comment child sat",
+      "a.tsx",
+      "export const V = () => (\n  <p>\n    a\n    {/* why */}\n    b\n  </p>\n);",
+      "export const V = () => (\n  <p>\n    a\n    b\n  </p>\n);",
+      "runtime",
+    ],
+    [
+      "type parens that change the type",
+      "a.ts",
+      "export let a: (string | number)[];",
+      "export let a: string | number[];",
+      "types",
+    ],
+    [
+      "a moved @ts-expect-error",
+      "a.ts",
+      "// @ts-expect-error untyped\nrun();\nwalk();",
+      "run();\n// @ts-expect-error untyped\nwalk();",
+      "types",
+    ],
+    [
       "a removed lint rule",
       "a.ts",
       "// oxlint-disable-next-line a, b -- why\nrun();",
@@ -169,6 +202,15 @@ describe("compare reports a code change", () => {
     ],
   ])("%s", (_, path, before, after, kind) => {
     expect(compare(path, before, after).kind).toBe(kind);
+  });
+
+  test("points at an added directive", () => {
+    expect(
+      compare("a.ts", "run();", "// @ts-expect-error untyped\nrun();"),
+    ).toEqual({
+      kind: "types",
+      where: 'line 1 "run();" -> line 1 "// @ts-expect-error untyped"',
+    });
   });
 
   test("points at the first changed token", () => {

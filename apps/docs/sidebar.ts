@@ -79,7 +79,6 @@ const sidebars: SidebarsConfig = {
         { type: "doc", id: "channels/discord", label: "Discord" },
         { type: "doc", id: "channels/github", label: "GitHub" },
         { type: "doc", id: "channels/linear", label: "Linear" },
-        { type: "doc", id: "channels/matrix", label: "Matrix" },
         { type: "doc", id: "channels/zalo", label: "Zalo" },
         { type: "doc", id: "channels/pancake", label: "Pancake" },
         { type: "doc", id: "channels/instagram", label: "Instagram" },
@@ -96,6 +95,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         { type: "doc", id: "guides/conversations", label: "Conversations" },
+        { type: "doc", id: "guides/mcp-server", label: "Agents as MCP tools" },
         { type: "doc", id: "guides/policies", label: "Policies" },
         { type: "doc", id: "guides/hooks", label: "Hooks" },
         { type: "doc", id: "guides/webhooks", label: "Webhooks" },

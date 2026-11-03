@@ -12,7 +12,6 @@ import {
   type AgentConfig,
 } from "../../model/agentRules";
 import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
-import { isPlainObject } from "../../model/objects";
 import { toPublicAgentResponse } from "../../model/responses";
 import { fetchSlackChannelDirectory } from "../../model/slackDirectory";
 import type { RolePrincipal } from "../../model/apiAuthorization";
@@ -75,9 +74,7 @@ export async function handleAgentChannelDirectoryRoute(
     await accountCipherForAction(ctx, accountId, "read"),
     record,
   );
-  const channels = isPlainObject(config.channels) ? config.channels : undefined;
-  const slack =
-    channels && isPlainObject(channels.slack) ? channels.slack : undefined;
+  const slack = config.channels?.slack;
   const botToken =
     typeof slack?.botToken === "string" ? slack.botToken.trim() : "";
   if (!botToken) {

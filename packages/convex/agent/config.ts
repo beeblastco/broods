@@ -43,6 +43,7 @@ import {
   providerApiKeyEnvName,
   type AccountModelProviderName,
 } from "../model/modelProviders";
+import { agentOutputFormatColumn } from "../model/agentConfigColumns";
 import { agentConfigsFields } from "../schema";
 
 const MASKED_RUNTIME_VARIABLE_VALUE = "";
@@ -309,7 +310,7 @@ export const update = mutation({
     maxTurns: v.optional(v.number()),
     allowedTools: v.optional(v.array(v.string())),
     permissionMode: v.optional(v.string()),
-    outputFormat: v.optional(v.any()),
+    outputFormat: v.optional(v.union(agentOutputFormatColumn, v.null())),
     providerOptions: v.optional(v.any()),
     temperature: v.optional(v.number()),
     maxTokens: v.optional(v.number()),
@@ -319,7 +320,7 @@ export const update = mutation({
     runtimeVariables: v.optional(
       v.array(v.object({ key: v.string(), value: v.string() })),
     ),
-    extraConfig: v.optional(v.any()),
+    extraConfig: agentConfigsFields.extraConfig,
   },
   returns: v.id("agentConfigs"),
   handler: async (ctx, args): Promise<Id<"agentConfigs">> => {
@@ -428,7 +429,7 @@ export const updateRuntimeRefs = mutation({
           : [],
       ),
     );
-    const extraConfig = { ...asRecord(existing.extraConfig) };
+    const extraConfig = { ...existing.extraConfig };
     const sandboxes = mergeCanvasSandboxes(
       canvasSandboxes,
       await liveStoredSandboxes(ctx, extraConfig.sandboxes, canvasSandboxIds),
@@ -444,9 +445,6 @@ export const updateRuntimeRefs = mutation({
     } else {
       delete extraConfig.workspaces;
     }
-    // Retired keys, no longer in the runtime contract.
-    delete extraConfig.sandbox;
-    delete extraConfig.workspace;
 
     // Unconditional: a canvas save is where an agent whose org gained an account gets its row.
     const accountId = await accountIdForProject(ctx, existing.projectId);
@@ -459,8 +457,7 @@ export const updateRuntimeRefs = mutation({
     // Most saves change nothing, but a row provisioned just above still needs the push.
     if (
       !provisionedNow &&
-      JSON.stringify(extraConfig) ===
-        JSON.stringify(asRecord(existing.extraConfig))
+      JSON.stringify(extraConfig) === JSON.stringify(existing.extraConfig ?? {})
     ) {
       return configId;
     }
@@ -522,11 +519,10 @@ export const updateSubagentRefs = mutation({
     }
     allowed.sort();
 
-    const extraConfig = { ...asRecord(existing.extraConfig) };
-    const prevSubagent = asRecord(extraConfig.subagent);
+    const extraConfig = { ...existing.extraConfig };
     const nextSubagent =
       allowed.length > 0
-        ? { ...prevSubagent, enabled: true, allowed: allowed }
+        ? { ...extraConfig.subagent, enabled: true, allowed: allowed }
         : undefined;
 
     if (
@@ -629,12 +625,6 @@ async function linkedAgentRow(
     : null;
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
 async function assertAgentConfigAdmin(
   ctx: Parameters<typeof getProjectForRole>[0],
   authId: string,
@@ -684,12 +674,11 @@ async function canAccessAgentConfig(
 // A sandbox deleted on the canvas already lost its row, so it must not linger here.
 async function liveStoredSandboxes(
   ctx: MutationCtx,
-  stored: unknown,
+  stored: readonly string[] | undefined,
   canvasSandboxIds: ReadonlySet<string>,
 ): Promise<string[]> {
   const live: string[] = [];
-  for (const id of Array.isArray(stored) ? stored : []) {
-    if (typeof id !== "string") continue;
+  for (const id of stored ?? []) {
     const rowId = ctx.db.normalizeId("sandboxConfigs", id);
     if (canvasSandboxIds.has(id) || (rowId && (await ctx.db.get(rowId)))) {
       live.push(id);

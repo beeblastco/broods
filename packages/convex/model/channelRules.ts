@@ -1,7 +1,26 @@
 // No Convex imports: core re-exports these from `shared/domain/channel-record.ts`.
 
-import { isPlainObject } from "./objects";
-import { ClientError } from "./clientError";
+import { z } from "zod/mini";
+
+import {
+  nonEmptyString,
+  nonEmptyStrings,
+  parseInput,
+  unsupportedKeys,
+} from "./inputSchema";
+
+// A folder in the workspace path: one segment, never `.` or `..`, or it reaches another
+// workspace's files.
+export const partitionAlias = nonEmptyString.check(
+  z.refine(
+    (alias): boolean => {
+      const segment = alias.trim();
+
+      return !/[/\\]/.test(segment) && segment !== "." && segment !== "..";
+    },
+    { error: "must be one path segment: no /, \\, . or .." },
+  ),
+);
 
 const CHANNEL_CONFIG_KEYS = [
   "instructions",
@@ -24,6 +43,99 @@ const CHANNEL_RECORD_UPDATE_KEYS = [
 ] as const;
 
 export const CHANNEL_REPLY_TARGETS = ["thread", "source"] as const;
+
+const optionalString = z.nullish(z.string());
+const NAMED_WORKSPACE = z.looseObject({
+  name: nonEmptyString,
+  workspaceId: nonEmptyString,
+});
+const CHANNEL_RECORD_CONFIG = z
+  .looseObject({
+    instructions: optionalString,
+    agentBindings: z
+      .array(
+        z.looseObject({
+          agentId: nonEmptyString,
+          isDefault: z.optional(z.boolean()),
+        }),
+        { error: "must be a non-empty array" },
+      )
+      .check(
+        z.minLength(1, { error: "must be a non-empty array" }),
+        z.superRefine((bindings, ctx): void => {
+          if (bindings.filter((binding) => binding.isDefault).length > 1)
+            ctx.addIssue({
+              code: "custom",
+              message: "may mark only one binding as default",
+            });
+        }),
+      ),
+    workspaces: z.optional(z.array(NAMED_WORKSPACE)),
+    policies: z.optional(nonEmptyStrings),
+    denyTools: z.optional(nonEmptyStrings),
+    replyIn: z.optional(z.enum(CHANNEL_REPLY_TARGETS)),
+    partition: z.optional(
+      z.discriminatedUnion(
+        "by",
+        [
+          z.looseObject({ by: z.literal("shared") }).check(
+            z.superRefine((partition, ctx): void => {
+              if (partition.alias !== undefined)
+                ctx.addIssue({
+                  code: "custom",
+                  path: ["alias"],
+                  message: "is only supported when by is conversation",
+                });
+            }),
+          ),
+          z.looseObject({
+            by: z.literal("conversation"),
+            alias: partitionAlias,
+          }),
+        ],
+        {
+          error: (issue): string | undefined =>
+            issue.code === "invalid_union"
+              ? "must be one of: shared, conversation"
+              : undefined,
+        },
+      ),
+    ),
+    sandboxImages: z.optional(nonEmptyStrings),
+    tagRoles: z.optional(
+      z.array(
+        z.looseObject({
+          roleId: nonEmptyString,
+          userIds: z.optional(nonEmptyStrings),
+        }),
+      ),
+    ),
+  })
+  .check(unsupportedKeys(CHANNEL_CONFIG_KEYS));
+const CREATE_CHANNEL_RECORD_INPUT = z.looseObject(
+  {
+    platform: nonEmptyString,
+    externalId: nonEmptyString,
+    name: nonEmptyString,
+    workspaceRef: optionalString,
+    description: optionalString,
+    config: z.optional(z.unknown()),
+  },
+  { error: "Request body must be an object" },
+);
+// Else a typo like `descripton` normalizes to {} and PATCH answers 200 having changed nothing.
+const UPDATE_CHANNEL_RECORD_INPUT = z
+  .looseObject(
+    {
+      name: z.optional(nonEmptyString),
+      description: optionalString,
+      workspaceRef: optionalString,
+      config: z.optional(z.unknown()),
+      status: z.optional(z.enum(["active", "deleted"])),
+    },
+    { error: "Request body must be an object" },
+  )
+  .check(unsupportedKeys(CHANNEL_RECORD_UPDATE_KEYS));
 
 export type ChannelRecordConfig = {
   instructions?: string;
@@ -59,58 +171,58 @@ export type UpdateChannelRecordInput = {
 export function normalizeChannelRecordConfig(
   value: unknown,
 ): ChannelRecordConfig {
-  if (!isPlainObject(value)) {
-    throw new ClientError("config must be an object");
-  }
-  const config = value as Record<string, unknown>;
-  for (const key of Object.keys(config)) {
-    if (
-      !CHANNEL_CONFIG_KEYS.includes(key as (typeof CHANNEL_CONFIG_KEYS)[number])
-    ) {
-      throw new ClientError(`config.${key} is not supported`);
-    }
-  }
-  const instructions = optionalString(
-    config.instructions,
-    "config.instructions",
-  );
-  const workspaces = normalizeWorkspaces(config.workspaces);
-  const policies = optionalStringArray(config.policies, "config.policies");
-  const denyTools = optionalStringArray(config.denyTools, "config.denyTools");
-  const sandboxImages = optionalStringArray(
-    config.sandboxImages,
-    "config.sandboxImages",
-  );
-  const replyIn = normalizeReplyIn(config.replyIn);
-  const partition = normalizePartition(config.partition);
-  const tagRoles = normalizeTagRoles(config.tagRoles);
+  const config = parseInput(CHANNEL_RECORD_CONFIG, value, "config");
+  const instructions = config.instructions?.trim();
+  const { policies, denyTools, replyIn, sandboxImages, partition } = config;
 
   return {
     ...(instructions ? { instructions: instructions } : {}),
-    agentBindings: normalizeAgentBindings(config.agentBindings),
-    ...(workspaces ? { workspaces: workspaces } : {}),
+    agentBindings: config.agentBindings.map((binding) => ({
+      agentId: binding.agentId.trim(),
+      ...(binding.isDefault === true ? { isDefault: true } : {}),
+    })),
+    ...(config.workspaces
+      ? {
+          workspaces: config.workspaces.map((ref) => ({
+            name: ref.name.trim(),
+            workspaceId: ref.workspaceId.trim(),
+          })),
+        }
+      : {}),
     ...(policies ? { policies: policies } : {}),
     ...(denyTools ? { denyTools: denyTools } : {}),
     ...(replyIn ? { replyIn: replyIn } : {}),
-    ...(partition ? { partition: partition } : {}),
+    ...(partition
+      ? {
+          partition:
+            partition.by === "shared"
+              ? { by: "shared" }
+              : { by: "conversation", alias: partition.alias.trim() },
+        }
+      : {}),
     ...(sandboxImages ? { sandboxImages: sandboxImages } : {}),
-    ...(tagRoles ? { tagRoles: tagRoles } : {}),
+    ...(config.tagRoles
+      ? {
+          tagRoles: config.tagRoles.map((role) => ({
+            roleId: role.roleId.trim(),
+            userIds: role.userIds ?? [],
+          })),
+        }
+      : {}),
   };
 }
 
 export function normalizeCreateChannelRecordInput(
   value: unknown,
 ): CreateChannelRecordInput {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-  const input = value as Record<string, unknown>;
-  const workspaceRef = optionalString(input.workspaceRef, "workspaceRef");
-  const description = optionalString(input.description, "description");
+  const input = parseInput(CREATE_CHANNEL_RECORD_INPUT, value, "");
+  const workspaceRef = input.workspaceRef?.trim();
+  const description = input.description?.trim();
 
   return {
-    platform: requireString(input.platform, "platform"),
-    externalId: requireString(input.externalId, "externalId"),
-    name: requireString(input.name, "name"),
+    platform: input.platform.trim(),
+    externalId: input.externalId.trim(),
+    name: input.name.trim(),
     ...(workspaceRef ? { workspaceRef: workspaceRef } : {}),
     ...(description ? { description: description } : {}),
     config: normalizeChannelRecordConfig(input.config),
@@ -120,196 +232,16 @@ export function normalizeCreateChannelRecordInput(
 export function normalizeUpdateChannelRecordInput(
   value: unknown,
 ): UpdateChannelRecordInput {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-  const input = value as Record<string, unknown>;
-  // Else a typo like `descripton` normalizes to {} and PATCH answers 200 having changed nothing.
-  for (const key of Object.keys(input)) {
-    if (
-      !CHANNEL_RECORD_UPDATE_KEYS.includes(
-        key as (typeof CHANNEL_RECORD_UPDATE_KEYS)[number],
-      )
-    ) {
-      throw new ClientError(`${key} is not supported`);
-    }
-  }
+  const input = parseInput(UPDATE_CHANNEL_RECORD_INPUT, value, "");
   const patch: UpdateChannelRecordInput = {};
-  if (input.name !== undefined) patch.name = requireString(input.name, "name");
-  if (input.description !== undefined) {
-    patch.description =
-      input.description === null
-        ? null
-        : (optionalString(input.description, "description") ?? null);
-  }
-  if (input.workspaceRef !== undefined) {
-    patch.workspaceRef =
-      input.workspaceRef === null
-        ? null
-        : (optionalString(input.workspaceRef, "workspaceRef") ?? null);
-  }
-  if (input.config !== undefined) {
+  if (input.name !== undefined) patch.name = input.name.trim();
+  if (input.description !== undefined)
+    patch.description = input.description?.trim() || null;
+  if (input.workspaceRef !== undefined)
+    patch.workspaceRef = input.workspaceRef?.trim() || null;
+  if (input.config !== undefined)
     patch.config = normalizeChannelRecordConfig(input.config);
-  }
-  if (input.status !== undefined) {
-    if (input.status !== "active" && input.status !== "deleted") {
-      throw new ClientError("status must be one of: active, deleted");
-    }
-    patch.status = input.status;
-  }
+  if (input.status !== undefined) patch.status = input.status;
 
   return patch;
-}
-
-function normalizeAgentBindings(
-  value: unknown,
-): ChannelRecordConfig["agentBindings"] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new ClientError("config.agentBindings must be a non-empty array");
-  }
-  const bindings = value.map((entry, index) => {
-    if (!isPlainObject(entry)) {
-      throw new ClientError(`config.agentBindings[${index}] must be an object`);
-    }
-    const binding = entry as Record<string, unknown>;
-    if (
-      binding.isDefault !== undefined &&
-      typeof binding.isDefault !== "boolean"
-    ) {
-      throw new ClientError(
-        `config.agentBindings[${index}].isDefault must be a boolean`,
-      );
-    }
-
-    return {
-      agentId: requireString(
-        binding.agentId,
-        `config.agentBindings[${index}].agentId`,
-      ),
-      ...(binding.isDefault === true ? { isDefault: true } : {}),
-    };
-  });
-  if (bindings.filter((binding) => binding.isDefault).length > 1) {
-    throw new ClientError(
-      "config.agentBindings may mark only one binding as default",
-    );
-  }
-
-  return bindings;
-}
-
-function normalizePartition(value: unknown): ChannelRecordConfig["partition"] {
-  if (value === undefined) return undefined;
-  if (!isPlainObject(value)) {
-    throw new ClientError("config.partition must be an object");
-  }
-  const scope = value as Record<string, unknown>;
-  if (scope.by === "shared") {
-    if (scope.alias !== undefined) {
-      throw new ClientError(
-        "config.partition.alias is only supported when by is conversation",
-      );
-    }
-
-    return { by: "shared" };
-  }
-  if (scope.by !== "conversation") {
-    throw new ClientError(
-      "config.partition.by must be one of: shared, conversation",
-    );
-  }
-
-  return {
-    by: "conversation",
-    alias: requireString(scope.alias, "config.partition.alias"),
-  };
-}
-
-function normalizeReplyIn(value: unknown): ChannelReplyIn | undefined {
-  if (value === undefined) return undefined;
-  if (!CHANNEL_REPLY_TARGETS.includes(value as ChannelReplyIn)) {
-    throw new ClientError(
-      `config.replyIn must be one of: ${CHANNEL_REPLY_TARGETS.join(", ")}`,
-    );
-  }
-
-  return value as ChannelReplyIn;
-}
-
-function normalizeTagRoles(value: unknown): ChannelRecordConfig["tagRoles"] {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value))
-    throw new ClientError("config.tagRoles must be an array");
-
-  return value.map((entry, index) => {
-    if (!isPlainObject(entry)) {
-      throw new ClientError(`config.tagRoles[${index}] must be an object`);
-    }
-    const role = entry as Record<string, unknown>;
-
-    return {
-      roleId: requireString(role.roleId, `config.tagRoles[${index}].roleId`),
-      userIds:
-        optionalStringArray(
-          role.userIds,
-          `config.tagRoles[${index}].userIds`,
-        ) ?? [],
-    };
-  });
-}
-
-function normalizeWorkspaces(
-  value: unknown,
-): ChannelRecordConfig["workspaces"] {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value))
-    throw new ClientError("config.workspaces must be an array");
-
-  return value.map((entry, index) => {
-    if (!isPlainObject(entry)) {
-      throw new ClientError(`config.workspaces[${index}] must be an object`);
-    }
-    const ref = entry as Record<string, unknown>;
-
-    return {
-      name: requireString(ref.name, `config.workspaces[${index}].name`),
-      workspaceId: requireString(
-        ref.workspaceId,
-        `config.workspaces[${index}].workspaceId`,
-      ),
-    };
-  });
-}
-
-function optionalString(value: unknown, name: string): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "string")
-    throw new ClientError(`${name} must be a string`);
-  const trimmed = value.trim();
-
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function optionalStringArray(
-  value: unknown,
-  name: string,
-): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (
-    !Array.isArray(value) ||
-    value.some(
-      (entry) => typeof entry !== "string" || entry.trim().length === 0,
-    )
-  ) {
-    throw new ClientError(`${name} must be an array of non-empty strings`);
-  }
-
-  return value as string[];
-}
-
-function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new ClientError(`${name} must be a non-empty string`);
-  }
-
-  return value.trim();
 }

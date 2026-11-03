@@ -1,3 +1,4 @@
+import { COMPILED_AGENT_CONFIG } from "../../apps/core/src/shared/domain/agent-config.ts";
 import { NODE_CRYPTO } from "../../apps/core/src/shared/node-aead.ts";
 import { normalizeAgentConfig } from "../../packages/convex/model/agentRules.ts";
 import {
@@ -80,7 +81,8 @@ export const coreConfigCases: readonly BenchCase[] = [
   {
     name: "core/config-normalize",
     iterations: 5_000,
-    run: (): unknown => normalizeAgentConfig(RAW_CONFIG),
+    run: (): unknown =>
+      normalizeAgentConfig(RAW_CONFIG, {}, COMPILED_AGENT_CONFIG),
   },
   {
     name: "core/config-encrypt-decrypt",

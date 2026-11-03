@@ -190,6 +190,7 @@ function SandboxChip({
       label={data.label}
       mountable={true}
       networkOn={isNetworkOn("sandbox", data)}
+      nodeId={id}
       nodeType="sandbox"
       status={{ color: status.color, text: `${status.text}${note}` }}
     />

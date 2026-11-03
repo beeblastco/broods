@@ -1,7 +1,9 @@
+import type { Tool } from "ai";
 import { afterEach, expect, it, mock, spyOn } from "bun:test";
-import type { UserModelMessage } from "ai";
-import type { Session } from "../src/harness/session.ts";
-import type { SubagentWatch } from "../src/harness/tools/utils.ts";
+import type {
+  AgentMessage,
+  AgentMessageResult,
+} from "../src/harness/tools/utils.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   createSubagentTaskId,
@@ -30,7 +32,7 @@ afterEach(() => {
   runtime.mutate = originalMutate;
 });
 
-it("steers, continues, and stops its own persistent child", async () => {
+it("stops its own persistent child", async () => {
   const taskId = createSubagentTaskId(PARENT_EVENT_ID);
   const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);
   const conversationKey = scopedDirectConversationKey(
@@ -62,22 +64,6 @@ it("steers, continues, and stops its own persistent child", async () => {
   const tools = await subagentTools(PARENT_EVENT_ID);
 
   expect(
-    execute(tools.update_subagent, {
-      taskId: taskId,
-      agentId: AGENT_ID,
-      mode: "steer",
-      message: "change direction",
-    }),
-  ).resolves.toEqual({ mode: "steer", status: "queued" });
-  expect(
-    execute(tools.update_subagent, {
-      taskId: taskId,
-      agentId: AGENT_ID,
-      mode: "continue",
-      message: "then summarize",
-    }),
-  ).resolves.toEqual({ mode: "continue", status: "queued" });
-  expect(
     execute(tools.stop_subagent, {
       taskId: taskId,
       agentId: AGENT_ID,
@@ -87,103 +73,9 @@ it("steers, continues, and stops its own persistent child", async () => {
     note: expect.stringContaining("sends no report"),
   });
 
-  expect(mutations.map(({ name }) => name)).toEqual([
-    "acceptIngress",
-    "acceptIngress",
-    "stopIngressOwner",
-  ]);
-  expect(mutations[0]?.args.requestedMode).toBe("steer");
-  expect(mutations[0]?.args.activeOwnerOnly).toBe(true);
+  expect(mutations.map(({ name }) => name)).toEqual(["stopIngressOwner"]);
+  expect(mutations[0]?.args.conversationKey).toBe(conversationKey);
   expect(mutations[0]?.args.expectedOwnerTaskId).toBe(taskId);
-  expect(mutations[1]?.args.requestedMode).toBe("followup");
-  expect(mutations[1]?.args.activeOwnerOnly).toBe(true);
-  expect(mutations[1]?.args.expectedOwnerTaskId).toBe(taskId);
-  expect(mutations[2]?.args.conversationKey).toBe(conversationKey);
-  expect(mutations[2]?.args.expectedOwnerTaskId).toBe(taskId);
-});
-
-it("does not take ownership when a child finishes during an update", async () => {
-  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
-  const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);
-  const conversationKey = scopedDirectConversationKey(
-    ACCOUNT_ID,
-    AGENT_ID,
-    "subagent-persistent-test",
-  );
-  runtime.query = mock(async () => ({
-    accountId: ACCOUNT_ID,
-    eventId: childEventId,
-    conversationKey: conversationKey,
-    status: "processing",
-    createdAt: "2026-08-13T00:00:00.000Z",
-    updatedAt: "2026-08-13T00:00:00.000Z",
-    expiresAt: Date.now() + 1_000,
-  })) as never;
-  runtime.mutate = mock(async () => ({ outcome: "not_running" })) as never;
-  const tools = await subagentTools(PARENT_EVENT_ID);
-
-  expect(
-    execute(tools.update_subagent, {
-      taskId: taskId,
-      agentId: AGENT_ID,
-      mode: "steer",
-      message: "change direction",
-    }),
-  ).resolves.toEqual({ status: "not_running" });
-});
-
-it("dispatches recovered queued work while rejecting a late update", async () => {
-  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
-  const agentId = `virtual_subagent_${taskId}`;
-  const childEventId = scopedDirectEventId(ACCOUNT_ID, agentId, taskId);
-  const conversationKey = scopedDirectConversationKey(
-    ACCOUNT_ID,
-    agentId,
-    "subagent-persistent-test",
-  );
-  const recovered = {
-    eventId: scopedDirectEventId(ACCOUNT_ID, agentId, "queued"),
-    events: [{ role: "user", content: "queued" }],
-    delivery: {
-      kind: "async",
-      publicEventId: "queued",
-      publicConversationKey: "subagent-persistent-test",
-      statusUrl: "",
-    },
-    requestedMode: "followup",
-    appliedMode: "followup",
-    appliedToEventId: scopedDirectEventId(ACCOUNT_ID, agentId, "queued"),
-    contributingEventIds: [scopedDirectEventId(ACCOUNT_ID, agentId, "queued")],
-    ownerGeneration: 2,
-  } as const;
-  runtime.query = mock(async () => ({
-    accountId: ACCOUNT_ID,
-    eventId: childEventId,
-    conversationKey: conversationKey,
-    status: "processing",
-    createdAt: "2026-08-13T00:00:00.000Z",
-    updatedAt: "2026-08-13T00:00:00.000Z",
-    expiresAt: Date.now() + 1_000,
-  })) as never;
-  runtime.mutate = mock(async () => ({
-    outcome: "not_running",
-    recovered: recovered,
-  })) as never;
-  const dispatchAppliedIngress = mock(
-    async (_scope: unknown, _ingress: unknown): Promise<void> => {},
-  );
-  const tools = await subagentTools(PARENT_EVENT_ID, dispatchAppliedIngress);
-
-  expect(
-    execute(tools.update_subagent, {
-      taskId: taskId,
-      agentId: agentId,
-      mode: "continue",
-      message: "continue",
-    }),
-  ).resolves.toEqual({ status: "not_running" });
-  expect(dispatchAppliedIngress).toHaveBeenCalledTimes(1);
-  expect(dispatchAppliedIngress.mock.calls[0]?.[1]).toEqual(recovered);
 });
 
 it("reports a late stop as not running without trusting stale task status", async () => {
@@ -216,28 +108,6 @@ it("reports a late stop as not running without trusting stale task status", asyn
       agentId: AGENT_ID,
     }),
   ).resolves.toEqual({ status: "not_running" });
-});
-
-it("tells the parent a follow-up queued on a stopped child still reports", async () => {
-  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
-  spyOn(runtime, "query").mockResolvedValue({
-    accountId: ACCOUNT_ID,
-    eventId: scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId),
-    conversationKey: scopedDirectConversationKey(ACCOUNT_ID, AGENT_ID, "q"),
-    status: "processing",
-    createdAt: "2026-08-13T00:00:00.000Z",
-    updatedAt: "2026-08-13T00:00:00.000Z",
-    expiresAt: Date.now() + 1_000,
-  } as never);
-  spyOn(runtime, "mutate").mockResolvedValue({ queuedCount: 1, stopped: true });
-  const tools = await subagentTools(PARENT_EVENT_ID);
-
-  expect(
-    execute(tools.stop_subagent, { taskId: taskId, agentId: AGENT_ID }),
-  ).resolves.toEqual({
-    status: "stopping",
-    note: expect.stringContaining("1 follow-up turn(s) queued on it still run"),
-  });
 });
 
 it("rejects another account's task before reading durable state", async () => {
@@ -373,102 +243,87 @@ it("rejects a durable record with a mismatched account", async () => {
   ).rejects.toThrow(`Error: no subagent task found for ${taskId}`);
 });
 
-it("answers a child's open question with a steer instead of queuing it", async () => {
-  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
-  spyOn(runtime, "query").mockResolvedValue({
-    accountId: ACCOUNT_ID,
-    eventId: scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId),
-    conversationKey: scopedDirectConversationKey(ACCOUNT_ID, AGENT_ID, "ask"),
-    status: "processing",
-    createdAt: "2026-08-13T00:00:00.000Z",
-    updatedAt: "2026-08-13T00:00:00.000Z",
-    expiresAt: Date.now() + 1_000,
-  } as never);
-  const mutate = spyOn(runtime, "mutate");
-  const answers: Array<{ taskId: string; answer: string }> = [];
-  const { default: update } =
-    await import("../src/harness/tools/update-subagent.tool.ts");
-  const tools = update({
-    accountId: ACCOUNT_ID,
-    agentConfig: {},
-    eventId: PARENT_EVENT_ID,
-    conversationKey: PARENT_CONVERSATION_KEY,
-    session: {} as Session,
-    watch: watchWith({
-      answerQuestion: (id: string, answer: string): boolean => {
-        answers.push({ taskId: id, answer: answer });
+it("message-agents waits on the parent once a turn, notes without a wait, and reaches children by address", async () => {
+  const { default: messageAgents } =
+    await import("../src/harness/tools/message-agents.tool.ts");
+  const asked: AgentMessage[] = [];
+  const sent: Array<{ to: string; message: AgentMessage }> = [];
+  const tools = messageAgents({
+    parent: {
+      ask: (message: AgentMessage): boolean => {
+        if (asked.length > 0) return false;
+        asked.push(message);
 
         return true;
       },
-    }),
+      note: async (message: AgentMessage): Promise<AgentMessageResult> => ({
+        status: "delivered",
+        exchangeId: message.exchangeId,
+        note: "noted",
+      }),
+    },
+    messageChild: async (
+      to: string,
+      message: AgentMessage,
+    ): Promise<AgentMessageResult> => {
+      sent.push({ to: to, message: message });
+
+      return { status: "resumed", exchangeId: message.exchangeId, note: "" };
+    },
   });
+  const tool = tools["message-agents"];
 
   expect(
-    execute(tools.update_subagent, {
-      taskId: taskId,
-      agentId: AGENT_ID,
-      mode: "steer",
-      message: " use the staging key ",
-    }),
-  ).resolves.toEqual({ status: "answered" });
-  expect(answers).toEqual([{ taskId: taskId, answer: "use the staging key" }]);
-  expect(mutate).not.toHaveBeenCalled();
-});
-
-it("returns the parent's answer to ask_parent, or a note when none comes", async () => {
-  const { default: askParent } =
-    await import("../src/harness/tools/ask-parent.tool.ts");
-  const answered = askParent(async (question) => `yes to: ${question}`);
-  const unanswered = askParent(async () => null);
-
+    execute(tool, { to: "parent", text: " Use staging? ", waitSeconds: 600 }),
+  ).resolves.toMatchObject({ status: "delivered" });
+  expect(asked[0]).toMatchObject({
+    text: "Use staging?",
+    followUp: false,
+    waitSeconds: 600,
+  });
   expect(
-    execute(answered.ask_parent, { question: "Use staging?" }),
-  ).resolves.toEqual({ answer: "yes to: Use staging?" });
+    execute(tool, { to: "parent", text: "And prod?", waitSeconds: 60 }),
+  ).rejects.toThrow("already wait");
   expect(
-    execute(unanswered.ask_parent, { question: "Use staging?" }),
-  ).resolves.toMatchObject({ answer: null });
+    execute(tool, { to: "parent", text: "halfway there" }),
+  ).resolves.toMatchObject({ status: "delivered", note: "noted" });
+  expect(execute(tool, { to: "parent", text: "  " })).rejects.toThrow(
+    "non-empty text",
+  );
+
+  await execute(tool, {
+    to: "agent_child/subagent-persistent-x",
+    text: "status?",
+    waitSeconds: 99_999,
+    followUp: "ex_1234",
+  });
+  expect(sent[0]).toEqual({
+    to: "agent_child/subagent-persistent-x",
+    message: {
+      text: "status?",
+      exchangeId: "ex_1234",
+      followUp: true,
+      waitSeconds: 3600,
+    },
+  });
 });
 
 async function subagentTools(
   parentEventId: string,
-  dispatchAppliedIngress = mock(
-    async (_scope: unknown, _ingress: unknown): Promise<void> => {},
-  ),
-) {
-  const [{ default: update }, { default: stop }] = await Promise.all([
-    import("../src/harness/tools/update-subagent.tool.ts"),
-    import("../src/harness/tools/stop-subagent.tool.ts"),
-  ]);
+): Promise<{ stop_subagent: Tool }> {
+  const { default: stop } =
+    await import("../src/harness/tools/stop-subagent.tool.ts");
   const context = {
     accountId: ACCOUNT_ID,
-    agentConfig: {},
-    dispatchAppliedIngress: dispatchAppliedIngress,
     eventId: parentEventId,
     conversationKey: PARENT_CONVERSATION_KEY,
-    // The update tool reads only the session's dispatch scope fields.
-    session: {
-      endpointId: undefined,
-      projectSlug: undefined,
-      stageSlug: undefined,
-    } as unknown as Session,
   };
 
-  return {
-    update_subagent: update(context).update_subagent!,
-    stop_subagent: stop(context).stop_subagent!,
-  };
+  return { stop_subagent: stop(context).stop_subagent! };
 }
 
 function execute(tool: unknown, input: unknown): Promise<unknown> {
   return (
     tool as { execute: (input: unknown, options: unknown) => Promise<unknown> }
   ).execute(input, { messages: [] });
-}
-
-function watchWith(overrides: Partial<SubagentWatch>): SubagentWatch {
-  return {
-    answerQuestion: (): boolean => false,
-    takeParentMessages: async (): Promise<UserModelMessage[]> => [],
-    ...overrides,
-  };
 }

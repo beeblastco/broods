@@ -13,19 +13,7 @@
       {
         "allow": [
           {
-            "file": "packages/convex/model/objects.ts",
-            "name": "isPlainObject"
-          },
-          {
-            "file": "packages/convex/model/objects.ts",
-            "name": "isStringRecord"
-          },
-          {
-            "file": "packages/broods/src/cli/utils.ts",
-            "name": "isPlainObject"
-          },
-          {
-            "file": "apps/dashboard/app/lib/utils.ts",
+            "file": "packages/convex/model/modelsDev.ts",
             "name": "isPlainObject"
           }
         ]

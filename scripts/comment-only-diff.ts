@@ -1,11 +1,24 @@
 import { readFileSync } from "node:fs";
 import {
-  git,
-  JSX_FILE,
-  scan,
-  SOURCE_FILE,
-  type Token,
-} from "./comment-density.ts";
+  parseSync,
+  Visitor,
+  type JSXChild,
+  type JSXElement,
+  type JSXFragment,
+} from "oxc-parser";
+import { git, SOURCE_FILE } from "./comment-density.ts";
+
+// Comments that steer a tool are code for this check; a reason after `--` is not.
+const DIRECTIVE = new RegExp(
+  [
+    String.raw`@ts-(?:ignore|expect-error|nocheck|check)\b`,
+    String.raw`\b(?:ox|es)lint-(?:disable|enable)(?:-next-line|-line)?\b(?:[ \t]+(?!--)[\w@/-]+(?:[ \t]*,[ \t]*[\w@/-]+)*)?`,
+    String.raw`\b(?:oxfmt|prettier|biome)-ignore\b`,
+    String.raw`[@#]__(?:PURE|NO_SIDE_EFFECTS)__`,
+    String.raw`@jsx\w*|@vite-ignore|webpack\w+:`,
+  ].join("|"),
+  "g",
+);
 
 export interface CodeChange {
   kind: "runtime" | "types";
@@ -22,120 +35,28 @@ export interface Result {
   changed: (CodeChange & { path: string })[];
 }
 
-// Comments that steer a tool are code for this check; a reason after `--` is not.
-const DIRECTIVE = new RegExp(
-  [
-    String.raw`@ts-(?:ignore|expect-error|nocheck|check)\b`,
-    String.raw`\b(?:ox|es)lint-(?:disable|enable)(?:-next-line|-line)?\b(?:[ \t]+(?!--)[\w@/-]+(?:[ \t]*,[ \t]*[\w@/-]+)*)?`,
-    String.raw`\b(?:oxfmt|prettier|biome)-ignore\b`,
-    String.raw`[@#]__(?:PURE|NO_SIDE_EFFECTS)__`,
-    String.raw`@jsx\w*|@vite-ignore|webpack\w+:`,
-  ].join("|"),
-  "g",
-);
-const CLOSERS = new Set([")", "]", "}", ">"]);
-// A leading `|` or `&` after these can only open a type, never an operator.
-const TYPE_OPENERS = new Set(["=", ":", "<", ",", "[", "?", "=>"]);
+type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
-function loaderOf(path: string): Bun.JavaScriptLoader {
-  if (path.endsWith(".tsx")) return "tsx";
-  if (path.endsWith(".jsx")) return "jsx";
-
-  return /\.[cm]?ts$/.test(path) ? "ts" : "js";
+interface Span {
+  start: number;
+  end: number;
 }
 
-function transpile(path: string, source: string): string {
-  const transpiler = new Bun.Transpiler({
-    loader: loaderOf(path),
-    deadCodeElimination: false,
-  });
-  try {
-    return transpiler.transformSync(source);
-  } catch (error) {
-    return `does not parse: ${String(error)}`;
-  }
-}
-
-// Formatter reflow after a comment goes (parens, trailing commas and semicolons,
-// a leading union bar) must not read as a change; Bun output covers runtime parens.
-export function codeTokens(source: string, jsx: boolean): Token[] {
-  const scanned = scan(source, jsx);
-  const directives = scanned.comments.flatMap(({ start, end }) => {
-    const text = source.slice(start, end);
-    const found = /^\/\/\/\s*<(?:reference|amd)/.test(text)
-      ? [text.trim()]
-      : [...text.matchAll(DIRECTIVE)].map((match) => match[0]);
-
-    return found.length === 0 ? [] : [{ text: found.join(" "), start: start }];
-  });
-  const tokens = [...scanned.tokens, ...directives].sort(
-    (a, b) => a.start - b.start,
-  );
-  const kept: Token[] = [];
-  tokens.forEach((token, index) => {
-    const next = tokens[index + 1]?.text ?? "";
-    const previous = kept.at(-1)?.text ?? "";
-    const reflow =
-      token.text === "(" ||
-      token.text === ")" ||
-      (token.text === "," && CLOSERS.has(next)) ||
-      (token.text === ";" && next === "}") ||
-      ((token.text === "|" || token.text === "&") &&
-        TYPE_OPENERS.has(previous));
-    if (!reflow) kept.push(token);
-  });
-
-  return kept;
-}
-
-const lineOf = (source: string, offset: number): number =>
-  source.slice(0, offset).split("\n").length;
-
-const clip = (text: string): string =>
-  JSON.stringify(text.length > 60 ? `${text.slice(0, 57)}...` : text);
-
-function firstDifference(
-  before: string[],
-  after: string[],
-): number | undefined {
-  const length = Math.max(before.length, after.length);
-  for (let index = 0; index < length; index++) {
-    if (before[index] !== after[index]) return index;
-  }
-
-  return undefined;
-}
-
+// ASTs without positions or parens decide; Bun's output only labels a change runtime or types.
 export function compare(path: string, before: string, after: string): Verdict {
-  const outBefore = transpile(path, before).split("\n");
-  const outAfter = transpile(path, after).split("\n");
-  const runtime = firstDifference(outBefore, outAfter);
-  if (runtime !== undefined) {
-    const was = clip(outBefore[runtime]?.trim() ?? "");
-    const now = clip(outAfter[runtime]?.trim() ?? "");
-
-    return {
-      kind: "runtime",
-      where: `transpiled line ${runtime + 1}: ${was} -> ${now}`,
-    };
+  const old = parse(path, before);
+  const now = parse(path, after);
+  const errors = [...old.errors, ...now.errors];
+  if (errors.length > 0) {
+    return { kind: "runtime", where: `does not parse: ${errors.join("; ")}` };
   }
-  const jsx = JSX_FILE.test(path);
-  const tokensBefore = codeTokens(before, jsx);
-  const tokensAfter = codeTokens(after, jsx);
-  const index = firstDifference(
-    tokensBefore.map((token) => token.text),
-    tokensAfter.map((token) => token.text),
-  );
-  if (index === undefined) return { kind: "comment-only" };
-  const side = (source: string, token: Token | undefined): string =>
-    token === undefined
-      ? "end of file"
-      : `line ${lineOf(source, token.start)} ${clip(token.text)}`;
+  const file = (source: string): Span => ({ start: 0, end: source.length });
+  const spans = locate(old.tree, now.tree, [file(before), file(after)]);
+  if (spans === undefined) return { kind: "comment-only" };
+  const where = `${side(before, spans[0])} -> ${side(after, spans[1])}`;
+  const runtime = transpile(path, before) !== transpile(path, after);
 
-  return {
-    kind: "types",
-    where: `${side(before, tokensBefore[index])} -> ${side(after, tokensAfter[index])}`,
-  };
+  return { kind: runtime ? "runtime" : "types", where: where };
 }
 
 export function verify(root: string, base: string, allow: Set<string>): Result {
@@ -223,6 +144,109 @@ function render(result: Result): string {
     ...section("allowed code change", result.allowed.map(describe)),
     ...section("code changed", result.changed.map(describe)),
   ].join("\n");
+}
+
+const clip = (text: string): string =>
+  JSON.stringify(text.length > 60 ? `${text.slice(0, 57)}...` : text);
+
+// React's JSX whitespace rule: edge line breaks drop, inner ones become a space.
+function cleanChildren(node: JSXElement | JSXFragment): void {
+  node.children = node.children.flatMap((child): JSXChild[] => {
+    if (child.type === "JSXExpressionContainer") {
+      return child.expression.type === "JSXEmptyExpression" ? [] : [child];
+    }
+    if (child.type !== "JSXText") return [child];
+    const value = child.value
+      .replace(/^[ \t]*(?:\r?\n[ \t]*)+|(?:[ \t]*\r?\n)+[ \t]*$/g, "")
+      .replace(/[ \t]*(?:\r?\n[ \t]*)+/g, " ");
+
+    return value === "" ? [] : [{ ...child, value: value, raw: null }];
+  });
+}
+
+function loaderOf(path: string): Bun.JavaScriptLoader {
+  if (path.endsWith(".tsx")) return "tsx";
+  if (path.endsWith(".jsx")) return "jsx";
+
+  return /\.[cm]?ts$/.test(path) ? "ts" : "js";
+}
+
+// The innermost node on each side that holds the first difference, start and end ignored.
+function locate(
+  before: Json,
+  after: Json,
+  at: [Span, Span],
+): [Span, Span] | undefined {
+  const here: [Span, Span] = [spanOf(before) ?? at[0], spanOf(after) ?? at[1]];
+  if (
+    before === null ||
+    after === null ||
+    typeof before !== "object" ||
+    typeof after !== "object"
+  ) {
+    return before === after ? undefined : here;
+  }
+  const left = new Map(Object.entries(before));
+  const right = new Map(Object.entries(after));
+  for (const key of new Set([...left.keys(), ...right.keys()])) {
+    if (key === "start" || key === "end") continue;
+    const found = locate(left.get(key) ?? null, right.get(key) ?? null, here);
+    if (found !== undefined) return found;
+  }
+
+  return left.size === right.size ? undefined : here;
+}
+
+// Directives join the tree keyed by how many nodes start before them, so a move is a change.
+function parse(path: string, source: string): { tree: Json; errors: string[] } {
+  const parsed = parseSync(path, source, { preserveParens: false });
+  new Visitor({
+    JSXElement: cleanChildren,
+    JSXFragment: cleanChildren,
+  }).visit(parsed.program);
+  const starts: number[] = [];
+  const json = JSON.stringify(parsed.program, (key, value: unknown) => {
+    if (key === "start" && typeof value === "number") starts.push(value);
+
+    return typeof value === "bigint" ? String(value) : value;
+  });
+  const directives = parsed.comments.flatMap(({ start, end }) => {
+    const text = source.slice(start, end);
+    const found = /^\/\/\/\s*<(?:reference|amd)/.test(text)
+      ? [text.trim()]
+      : [...text.matchAll(DIRECTIVE)].map((match) => match[0]);
+    const after = starts.filter((at) => at < start).length;
+
+    return found.length === 0
+      ? []
+      : [{ text: found.join(" "), after: after, start: start, end: end }];
+  });
+
+  return {
+    tree: [JSON.parse(json), ...directives],
+    errors: parsed.errors.map((error) => error.message),
+  };
+}
+
+const side = (source: string, span: Span): string =>
+  `line ${source.slice(0, span.start).split("\n").length} ${clip(source.slice(span.start, span.end))}`;
+
+const spanOf = (node: Json): Span | undefined =>
+  typeof node === "object" &&
+  node !== null &&
+  !Array.isArray(node) &&
+  typeof node.start === "number" &&
+  typeof node.end === "number"
+    ? { start: node.start, end: node.end }
+    : undefined;
+
+function transpile(path: string, source: string): string {
+  const loader = loaderOf(path);
+
+  return new Bun.Transpiler({
+    loader: loader,
+    deadCodeElimination: false,
+  }).transformSync(source);
 }
 
 if (import.meta.main) {

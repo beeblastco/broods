@@ -119,4 +119,30 @@ export async function manifestSync(context: VerifyContext): Promise<void> {
       !stored.some((variable): boolean => variable.name === "api_key"),
     lowercase,
   );
+  // The sync checks each agent against the stored column shape before it writes any.
+  const malformed = await client
+    .putManifest(
+      {
+        version: 1,
+        project: `${project}-shape`,
+        stage: "development",
+        resources: [
+          {
+            kind: "agent",
+            name: "malformed",
+            config: { model: context.model.model, sandboxes: "sb_offline" },
+          },
+        ],
+      },
+      true,
+    )
+    .then(
+      (): string => "accepted",
+      (error: unknown): string => String(error),
+    );
+  assertStep(
+    "an agent config of the wrong shape is refused with its path",
+    malformed.includes("config.sandboxes must be array"),
+    malformed,
+  );
 }
