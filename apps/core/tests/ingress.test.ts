@@ -395,9 +395,9 @@ describe("step boundary", (): void => {
       agentConfig: {},
       ownerGeneration: 1,
     });
-    await session.recordToolResultRead("call-read", "async_tool_1");
+    session.recordToolResultRead("call-read", "async_tool_1");
     // A tool.result hook threw after this read, so the model got an error.
-    await session.recordToolResultRead("call-failed", "async_tool_2");
+    session.recordToolResultRead("call-failed", "async_tool_2");
 
     await session.stepBoundary([
       {
@@ -454,7 +454,7 @@ describe("step boundary", (): void => {
     ]);
   });
 
-  it("stores a status read at once on a session that saves no step", async (): Promise<void> => {
+  it("stores nothing at a status read on a session that saves no step, and keeps only delivered reads for its answer", async (): Promise<void> => {
     const calls: [string, Record<string, unknown>][] = [];
     runtime.mutate = (async (
       name: string,
@@ -471,14 +471,32 @@ describe("step boundary", (): void => {
       persist: false,
     });
 
-    await session.recordToolResultRead("call-read", "async_tool_1");
-
-    expect(calls).toEqual([
-      [
-        "markAsyncToolHandback",
-        { resultId: "async_tool_1", handback: "stored" },
-      ],
+    session.recordToolResultRead("call-read", "async_tool_1");
+    expect(calls).toEqual([]);
+    // A tool.result hook threw after this read, so the model got an error.
+    session.recordToolResultRead("call-failed", "async_tool_2");
+    await session.stepBoundary([
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-read",
+            toolName: "async_status",
+            output: { type: "json", value: { status: "completed" } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-failed",
+            toolName: "async_status",
+            output: { type: "error-text", value: "hook unavailable" },
+          },
+        ],
+      },
     ]);
+
+    expect(calls).toEqual([]);
+    expect([...session.unsavedToolResults]).toEqual(["async_tool_1"]);
   });
 
   it("keeps the rows of a boundary that threw for the next one, keyed by cursor", async (): Promise<void> => {

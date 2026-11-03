@@ -376,11 +376,9 @@ export async function createTools(
         ),
         ...(session
           ? {
-              onResultRead: (
-                toolCallId: string,
-                resultId: string,
-              ): Promise<void> =>
-                session.recordToolResultRead(toolCallId, resultId),
+              onResultRead: (toolCallId: string, resultId: string): void => {
+                session.recordToolResultRead(toolCallId, resultId);
+              },
             }
           : {}),
       }),

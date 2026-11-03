@@ -6943,6 +6943,7 @@ export declare const internal: {
           | "awaiting_input"
           | "completed"
           | "failed";
+        toolResultIds?: Array<string>;
       },
       null
     >;
