@@ -1,13 +1,14 @@
 /**
- * Outbound proxy for task workers. Usage and budget writes from separate workers race on one
- * account row, so each account and kind goes to one Durable Object (a plain worker cannot hold a
- * queue across requests) that sends what queued as one batch mutation, or one at a time if refused.
- * Broods lacks the batch mutations (commit 4631eaa), so against it every write goes alone.
+ * Outbound proxy for task workers. Usage, budget and sandbox-mirror writes race on one account's
+ * usage rows, so each account gets one Durable Object (a plain worker cannot queue across
+ * requests) that sends them in order, a batchable run as one batch mutation where Convex has one.
  */
 const BATCHED = {
   "usage:recordTaskUsage": "usage:recordTaskUsages",
   "account/budget:record": "account/budget:recordMany",
 };
+// Queued but never batched: every sandbox command's mirror write adds its time to usageDays.
+const QUEUED = new Set([...Object.keys(BATCHED), "sandbox/instances:upsert"]);
 // Well inside Convex's per-transaction write limits for these mutations.
 const MAX_BATCH = 32;
 
@@ -21,6 +22,10 @@ function batchedPath(call) {
     : undefined;
 }
 
+function queued(call) {
+  return call !== undefined && QUEUED.has(call.path);
+}
+
 export class WriteQueue {
   constructor() {
     this.waiting = [];
@@ -31,7 +36,12 @@ export class WriteQueue {
     const url = request.headers.get("x-queued-url");
     const headers = new Headers(request.headers);
     headers.delete("x-queued-url");
-    const item = { body: await request.text(), response: undefined };
+    const body = await request.text();
+    const item = {
+      body: body,
+      path: JSON.parse(body).path,
+      response: undefined,
+    };
     const turn = new Promise(function (resolve) {
       item.wake = resolve;
     });
@@ -52,16 +62,33 @@ export class WriteQueue {
   }
 
   async flush(url, headers, batch) {
+    // Runs of one kind keep the callers' order; only a batchable run of two or more goes as one.
+    for (let start = 0; start < batch.length;) {
+      let end = start + 1;
+      while (end < batch.length && batch[end].path === batch[start].path) end++;
+      await this.flushRun(url, headers, batch.slice(start, end));
+      start = end;
+    }
+  }
+
+  async flushRun(url, headers, run) {
     try {
-      if (batch.length > 1 && (await this.sendBatch(url, headers, batch)))
+      if (
+        run.length > 1 &&
+        BATCHED[run[0].path] &&
+        (await this.sendBatch(url, headers, run))
+      )
         return;
-      for (const item of batch) {
-        const response = await send(url, headers, item.body);
-        settle(item, new Response(await response.arrayBuffer(), response));
+      for (const group of sameRow(run)) {
+        // Only the last of a row's queued mirror writes goes: it meters the whole time since the
+        // row's last write and carries the latest task, so every caller gets its answer.
+        const response = await send(url, headers, group[group.length - 1].body);
+        const bytes = await response.arrayBuffer();
+        for (const item of group) settle(item, new Response(bytes, response));
       }
     } catch (error) {
       console.error("write queue: Convex unreachable", error);
-      for (const item of batch)
+      for (const item of run)
         if (!item.response)
           settle(
             item,
@@ -113,6 +140,26 @@ export class WriteQueue {
   }
 }
 
+// Groups of one, except a run of mirror writes, grouped by sandbox row and machine in the order
+// each group's last write arrived.
+function sameRow(run) {
+  if (run[0].path !== "sandbox/instances:upsert")
+    return run.map(function (item) {
+      return [item];
+    });
+  const groups = new Map();
+  for (const item of run) {
+    const args = JSON.parse(item.body).args[0];
+    const key = `${args.reservationKey}\u0000${args.externalId}`;
+    const group = groups.get(key) ?? [];
+    groups.delete(key);
+    group.push(item);
+    groups.set(key, group);
+  }
+
+  return [...groups.values()];
+}
+
 function settle(item, response) {
   item.response = response;
   item.wake();
@@ -132,17 +179,18 @@ export default {
     } catch {
       call = undefined;
     }
-    if (!batchedPath(call)) return send(request.url, request.headers, body);
+    if (!queued(call)) return send(request.url, request.headers, body);
     const headers = new Headers(request.headers);
     headers.set("x-queued-url", request.url);
     const account = call.args?.[0]?.accountId ?? "";
 
-    return env.QUEUE.get(
-      env.QUEUE.idFromName(`${call.path}\u0000${account}`),
-    ).fetch("http://write-queue/", {
-      method: "POST",
-      headers: headers,
-      body: body,
-    });
+    return env.QUEUE.get(env.QUEUE.idFromName(account)).fetch(
+      "http://write-queue/",
+      {
+        method: "POST",
+        headers: headers,
+        body: body,
+      },
+    );
   },
 };

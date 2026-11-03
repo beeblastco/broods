@@ -1,14 +1,14 @@
 /**
- * Runs before any other module. Under slimDirectConfig a task worker leaves the network directly
- * and gets the shared write queue (per-task/write-queue.js) as a WRITES binding instead of as its
- * globalOutbound, so only the usage and budget writes, which race on one account row, take the
- * extra hop through it. Without the binding (slimFastConfig) every fetch goes out as before.
+ * Runs before any other module. With a WRITES binding (slimDirectConfig) a task worker sends only
+ * the usage, budget and sandbox-mirror writes, which race on one account's usage rows, through the
+ * shared write queue (per-task/write-queue.js); everything else goes out directly.
  */
 
 // ConvexHttpClient sends JSON.stringify({ path, format, args }), so the path leads the body.
 const QUEUED = [
   '{"path":"usage:recordTaskUsage"',
   '{"path":"account/budget:record"',
+  '{"path":"sandbox/instances:upsert"',
 ];
 
 let writes: { fetch: typeof fetch } | undefined;
