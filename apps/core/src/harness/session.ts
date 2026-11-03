@@ -37,11 +37,7 @@ import {
   type ResolvedAgentSandbox,
   type ResolvedWorkspace,
 } from "../shared/workspaces.ts";
-import {
-  markAsyncToolHandback,
-  rootEventId,
-  type AsyncToolDelivery,
-} from "./async-tool-result.ts";
+import { rootEventId, type AsyncToolDelivery } from "./async-tool-result.ts";
 import {
   ingestInboundAttachments,
   MEDIA_REFERENCE_SCHEME,
@@ -293,9 +289,9 @@ export class Session {
   private pendingStoredEvents: AppendedConversationEvent[] = [];
   // Pi's entries for the next checkpoint save, which carries them.
   private pendingHarnessEntries: HarnessSessionEntry[] = [];
-  // This turn's `async_status` reads: tool call id to the async tool result it
-  // returned. A read stores nothing; the saved row of its tool result does.
-  private readonly toolResultReads = new Map<string, string>();
+  // This turn's `async_status` reads: tool call id to the async tool result it returned. A read
+  // stores nothing; the saved row of its tool result does, or else the write of the run's answer.
+  readonly toolResultReads = new Map<string, string>();
   private hasLoggedMissingMemoryFile = false;
   private loadedSkillPrompts: SystemModelMessage[] = [];
   private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
@@ -873,21 +869,9 @@ export class Session {
     return this.resolvedRuntime?.workspaces ?? [];
   }
 
-  /**
-   * Records that tool call `toolCallId` handed the model the async tool result
-   * `resultId`, for the step save to store. A session that saves no step
-   * stores it now.
-   */
-  async recordToolResultRead(
-    toolCallId: string,
-    resultId: string,
-  ): Promise<void> {
-    if (this.persist) {
-      this.toolResultReads.set(toolCallId, resultId);
-
-      return;
-    }
-    await markAsyncToolHandback(resultId, "stored");
+  /** Records that tool call `toolCallId` handed the model the async tool result `resultId`. */
+  recordToolResultRead(toolCallId: string, resultId: string): void {
+    this.toolResultReads.set(toolCallId, resultId);
   }
 
   /** The agent's own secret values, which every log line and span of its runs drops. */

@@ -1409,7 +1409,18 @@ export class SubagentCoordinator {
 
         return false;
       });
-    if (!settled) await recordAsyncAgentResult(task.eventId, outcome);
+    // A child that saves no history: the answer's write stores the results the model read.
+    const toolResultIds =
+      !task.persistent && outcome.status === "completed"
+        ? [...childSession.toolResultReads.values()]
+        : [];
+    if (!settled) {
+      await recordAsyncAgentResult(
+        task.eventId,
+        outcome,
+        toolResultIds.length > 0 ? { toolResultIds: toolResultIds } : {},
+      );
+    }
     this.recorded.add(task.eventId);
     this.notifyCompletion();
   }

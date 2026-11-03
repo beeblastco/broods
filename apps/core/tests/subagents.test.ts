@@ -2455,6 +2455,51 @@ describe("message-agents in the coordinator", () => {
     );
   });
 
+  it("stores what a child that saves no history read with the write of its answer, not its failure", async (): Promise<void> => {
+    const { coordinator, key } = await parentRun({});
+    const record = spyOn(
+      asyncAgentResults,
+      "recordAsyncAgentResult",
+    ).mockResolvedValue(undefined);
+    const run = (
+      eventId: string,
+    ): { task: ReturnType<typeof childTask>; session: Session } => {
+      const task = { ...childTask(key), eventId: eventId, persistent: false };
+      const session = new Session({
+        eventId: eventId,
+        conversationKey: task.conversationKey,
+        accountId: "account_1",
+        agentId: task.agentId,
+        persist: false,
+      });
+      spyOn(session, "releaseConversationLease").mockResolvedValue(undefined);
+      session.recordToolResultRead("call-read", "async_tool_1");
+
+      return { task: task, session: session };
+    };
+    const answered = run("event_answered");
+    const failed = run("event_failed");
+
+    await coordinator["completeRun"](answered.session, answered.task, {
+      status: "completed",
+      response: "answer",
+    });
+    await coordinator["recordOutcome"](failed.session, failed.task, {
+      status: "failed",
+      error: "provider down",
+    });
+
+    expect(record.mock.calls).toEqual([
+      [
+        "event_answered",
+        { status: "completed", response: "answer" },
+        { toolResultIds: ["async_tool_1"] },
+      ],
+      // Its read is left to the recovery sweep: the failure holds nothing the model was told.
+      ["event_failed", { status: "failed", error: "provider down" }, {}],
+    ]);
+  });
+
   it("resumes an idle child on its own conversation with the parent's message", async (): Promise<void> => {
     const { coordinator, key, address, resume } = await parentRun({});
 

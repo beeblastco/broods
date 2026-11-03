@@ -29,7 +29,11 @@ import {
 import { BroodsAccountClient } from "../packages/broods/src/account.ts";
 import { BroodsClient } from "../packages/broods/src/client.ts";
 import { verifyCases } from "./local-verify/cases/index.ts";
-import { runCrashRecovery } from "./local-verify/crash-recovery.ts";
+import {
+  CRASH_CASES,
+  runCrashRecovery,
+  type CrashCase,
+} from "./local-verify/crash-recovery.ts";
 import { runPerf } from "./local-verify/perf.ts";
 import {
   LOCAL_GITHUB_APP,
@@ -365,13 +369,17 @@ async function perf(record: boolean): Promise<void> {
   if (!passed) process.exit(1);
 }
 
-// `crash [--trials 20] [--wait-min 25] [--out file.json]`
+// `crash [--cases resume,read,child] [--trials 20] [--wait-min 25] [--out file.json]`
 async function crash(args: string[]): Promise<void> {
   const value = (name: string): string | undefined =>
     args.includes(name) ? args[args.indexOf(name) + 1] : undefined;
   const { context, state } = await perfStack("crash");
   const waitMin = value("--wait-min");
+  const cases = (value("--cases")?.split(",") ?? CRASH_CASES).filter(
+    (kind): kind is CrashCase => CRASH_CASES.some((known) => known === kind),
+  );
   const trials = await runCrashRecovery(context, {
+    cases: cases,
     restartCore: async (): Promise<void> => {
       if (state.pids.core) process.kill(state.pids.core, "SIGKILL");
       await pollUntil(
@@ -391,12 +399,19 @@ async function crash(args: string[]): Promise<void> {
   });
   const out = value("--out");
   if (out) writeFileSync(out, JSON.stringify(trials, null, 2));
-  const told = Object.entries(
-    Object.groupBy(trials, (trial) => String(trial.told)),
-  );
-  console.log(
-    `told: ${told.map(([times, of]) => `${of?.length}×${times}`).join(", ")}`,
-  );
+  for (const [kind, ofCase] of Object.entries(
+    Object.groupBy(trials, (trial) => trial.case),
+  )) {
+    const told = Object.entries(
+      Object.groupBy(
+        ofCase ?? [],
+        (trial) => `${trial.told} ${trial.handback}`,
+      ),
+    );
+    console.log(
+      `${kind} told: ${told.map(([times, of]) => `${of?.length}×${times}`).join(", ")}`,
+    );
+  }
   if (!trials.every((trial) => trial.told === 1 && trial.handback === "stored"))
     process.exit(1);
 }
