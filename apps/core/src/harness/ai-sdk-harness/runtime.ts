@@ -12,6 +12,7 @@ import type {
   AgentHarnessDebugConfig,
 } from "../../shared/domain/agent-config.ts";
 import { logDebug, logError, logInfo, logWarn } from "../../shared/log.ts";
+import type { HarnessEntryLog } from "../session.ts";
 import type { SandboxUsage } from "../sandbox/live-status.ts";
 import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
@@ -95,6 +96,7 @@ export interface ConfiguredHarnessAgentOptions {
   metadata?: SandboxRunMetadata;
   onUsage?: (usage: SandboxUsage) => void;
   reservationKey: string;
+  session?: HarnessEntryLog;
   /** Other conversations reserve the same machine, so a session ending leaves it running. */
   shared?: boolean;
   skills?: ReadonlyArray<HarnessAgentSkill>;
@@ -113,7 +115,10 @@ export function createConfiguredHarnessAgent(
   const model = requireHarnessModelId(options.agentConfig);
   const common = {
     ...resolveHarnessToolFiltering(options.agentConfig),
-    adapter: createConfiguredAiSdkHarnessAdapter(options.agentConfig),
+    adapter: createConfiguredAiSdkHarnessAdapter(
+      options.agentConfig,
+      options.session,
+    ),
     debug: harness.debug,
     id: options.id,
     instructions: options.instructions,

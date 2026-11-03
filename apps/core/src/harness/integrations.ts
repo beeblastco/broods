@@ -1,3 +1,4 @@
+import { z } from "zod/mini";
 import type { ApiErrorInit } from "@broods/convex/model/apiError";
 import {
   userConversationKey,
@@ -42,9 +43,9 @@ import type { AccountRecord } from "../shared/domain/accounts.ts";
 import { normalizeModelConfig } from "@broods/convex/model/agentRules";
 import {
   applyRunOverrides,
+  channelPartitionOf,
   RUN_OVERRIDE_RESERVED_MODEL_KEYS,
   toRuntimeAgentConfig,
-  type ChannelPartition,
   type AgentConfig,
   type RunOverrides,
 } from "../shared/domain/agent-config.ts";
@@ -57,7 +58,7 @@ import {
   resolveChannelAgentId,
   type ChannelRecord,
 } from "../shared/domain/channel-record.ts";
-import { getHarnessPublicUrl, optionalEnv } from "../shared/env.ts";
+import { getHarnessPublicUrl } from "../shared/env.ts";
 import {
   createGoogleChatChannel,
   parseServiceAccountKey,
@@ -79,11 +80,7 @@ import {
   logInfo,
   logWarn,
 } from "../shared/log.ts";
-import {
-  createMatrixChannel,
-  MATRIX_FORWARDER_URL_ENV,
-} from "../shared/matrix-channel.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import {
   getObservabilityContext,
   mintTraceId,
@@ -139,7 +136,6 @@ import {
   getIngressStatus,
   getIngressStatusByEventId,
   INGRESS_RETRY_HEADERS,
-  type AppliedIngress,
   type ChannelTargetRefs,
   type IngressConfigRef,
   type IngressMode,
@@ -156,6 +152,10 @@ import type { ConversationIngressEvent } from "./session.ts";
 import { WORKER_QUEUE_FULL } from "./worker-queue.ts";
 
 // Under Slack's and Discord's 3s, so a slow hook or a large file never earns a retry.
+const QUESTION_ANSWER = z.looseObject({
+  statusId: z.string(),
+  answers: configObject,
+});
 const CHANNEL_ACK_BUDGET_MS = 2_000;
 const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
 // Listing (and decrypting) runs before any signature check, so caching it holds an unsigned
@@ -215,8 +215,6 @@ export interface DirectInboundEvent {
   agentId: string;
   agentConfig: AgentConfig;
   configRef?: IngressConfigRef;
-  // A subagent's config derives from its parent, so no ref can rebuild it.
-  subagentConfig?: AgentConfig;
   endpointId?: string;
   projectSlug?: string;
   stageSlug?: string;
@@ -258,13 +256,7 @@ export type IngressDispatchScope = Pick<
   | "endpointId"
   | "projectSlug"
   | "stageSlug"
-  | "subagentConfig"
 >;
-
-export type DispatchAppliedIngress = (
-  scope: IngressDispatchScope,
-  ingress: AppliedIngress,
-) => Promise<void>;
 
 export interface AsyncDirectInboundEvent extends DirectInboundEvent {
   statusUrl: string;
@@ -726,7 +718,7 @@ async function handleHttpRequest(
 
       return unauthorizedResponse();
     }
-    // Not 404: that tells the provider, and the Matrix forwarder, to give up on the event.
+    // Not 404: that tells the provider to give up on the event.
     if (holder.kind === "unavailable") {
       return errorResponse(503, "Channel lookup failed, retry the delivery");
     }
@@ -1651,11 +1643,10 @@ async function cleanupChannelPartitions(options: {
   channelName: string;
   conversationKey: string;
 }): Promise<void> {
-  const channelConfig = options.agentConfig.channels?.[options.channelName];
-  const rawPartition = isPlainObject(channelConfig)
-    ? channelConfig.partition
-    : undefined;
-  const partition = isChannelPartition(rawPartition) ? rawPartition : undefined;
+  const partition = channelPartitionOf(
+    options.agentConfig,
+    options.channelName,
+  );
   if (partition?.by !== "conversation") {
     return;
   }
@@ -1706,13 +1697,6 @@ async function cleanupChannelPartitions(options: {
     deleted: deleted,
     reservedSandboxesReleased: reservedSandboxesReleased,
   });
-}
-
-function isChannelPartition(value: unknown): value is ChannelPartition {
-  if (!isPlainObject(value)) return false;
-  if (value.by === "shared") return value.alias === undefined;
-
-  return value.by === "conversation" && typeof value.alias === "string";
 }
 
 export function attachMetadataToLatestUserIngress(
@@ -1948,7 +1932,6 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const teamsChannel = createTeamsChannelFromConfig(config);
   const twilioChannel = createTwilioChannelFromConfig(config);
   const zaloChannel = createZaloChannelFromConfig(config);
-  const matrixChannel = createMatrixChannelFromConfig(config);
   const instagramChannel = createInstagramChannelFromConfig(config);
   const messengerChannel = createMessengerChannelFromConfig(config);
   const whatsAppChannel = createWhatsAppChannelFromConfig(config);
@@ -1965,7 +1948,6 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       teamsChannel,
       twilioChannel,
       zaloChannel,
-      matrixChannel,
       instagramChannel,
       messengerChannel,
       whatsAppChannel,
@@ -2116,11 +2098,11 @@ async function parseDirectPayload(
     );
   }
 
-  if (!isPlainObject(parsed)) {
+  const record = parseOr(configObject, parsed);
+  if (!record) {
     throw new Error("Request body must be a JSON object");
   }
 
-  const record = parsed;
   if (
     typeof record.eventId !== "string" ||
     typeof record.conversationKey !== "string"
@@ -2315,6 +2297,31 @@ function assertOneDirectPayloadShape(
   }
 }
 
+// A run token, or a user token that lists its conversations, runs no agent:
+// a task always opens a fresh conversation.
+export async function listRunnableAgents(
+  auth: AuthContext,
+): Promise<AgentRecord[]> {
+  const agents = getStorage().agents;
+  if (auth.kind === "account") {
+    return agents.listForAccount(auth.account.accountId);
+  }
+  if (auth.kind !== "deployment") return [];
+  if (!auth.stageTicket && auth.user?.conversations !== undefined) return [];
+  const stage = await agents.listForEndpoint(
+    auth.account.accountId,
+    auth.endpointId,
+  );
+
+  return auth.stageTicket
+    ? stage
+    : stage.filter(
+        (agent) =>
+          agent.config.publicAccess === true &&
+          (agent.requireUserToken !== true || auth.user !== undefined),
+      );
+}
+
 /** Throws unless the credential reaches the agent; true only for the embeddable key. */
 function admitStageCredential(
   auth: Extract<AuthContext, { kind: "deployment" }> | undefined,
@@ -2362,12 +2369,9 @@ function parseDirectQuestionAnswers(value: unknown): QuestionAnswer[] {
     throw new Error("Request body field 'answers' must be an array");
   }
 
-  return value.map((entry): QuestionAnswer => {
-    if (
-      !isPlainObject(entry) ||
-      typeof entry.statusId !== "string" ||
-      !isPlainObject(entry.answers)
-    ) {
+  return value.map((value): QuestionAnswer => {
+    const entry = parseOr(QUESTION_ANSWER, value);
+    if (!entry) {
       throw new Error(
         "Each answer must be an object with statusId and answers",
       );
@@ -2498,11 +2502,11 @@ function parseSandboxJobCompletionPayload(
     );
   }
 
-  if (!isPlainObject(parsed)) {
+  const record = parseOr(configObject, parsed);
+  if (!record) {
     throw new Error("Background job completion body must be an object");
   }
 
-  const record = parsed;
   if (record.status !== "completed" && record.status !== "failed") {
     throw new Error(
       "Background job completion status must be completed or failed",
@@ -2867,26 +2871,6 @@ function createTeamsChannelFromConfig(
     appTenantId: channel.appTenantId,
     appType: channel.appType,
     userName: channel.userName,
-  });
-}
-
-function createMatrixChannelFromConfig(
-  config: AgentConfig,
-): ChannelAdapter | null {
-  const channel = config.channels?.matrix;
-  if (!channel?.botToken || !channel.apiUrl) {
-    return null;
-  }
-
-  return createMatrixChannel({
-    accessToken: channel.botToken,
-    allowedChannelIds: reachSet(channel.allowedChannelIds),
-    allowedUserIds: reachSet(channel.allowedUserIds),
-    apiUrl: channel.apiUrl,
-    // Empty without a forwarder: inbound still parses; a reply fails naming the variable.
-    forwarderUrl: optionalEnv(MATRIX_FORWARDER_URL_ENV) ?? "",
-    ...(channel.botName ? { botName: channel.botName } : {}),
-    ...(channel.mentionText ? { mentionText: channel.mentionText } : {}),
   });
 }
 

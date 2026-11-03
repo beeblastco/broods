@@ -141,11 +141,7 @@ export const agentEntries = internalQuery({
       .collect();
 
     return agents
-      .map(
-        (agent) =>
-          (agent.extraConfig as { mcp?: Record<string, unknown> } | undefined)
-            ?.mcp?.[server._id],
-      )
+      .map((agent) => agent.extraConfig?.mcp?.[server._id])
       .filter((entry) => entry !== undefined);
   },
 });

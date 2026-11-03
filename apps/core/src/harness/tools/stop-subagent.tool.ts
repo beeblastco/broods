@@ -46,13 +46,7 @@ export default function stopSubagentTool(
           return { status: "not_running" };
         }
 
-        return {
-          status: "stopping",
-          note:
-            stopped.queuedCount > 0
-              ? `${STOPPING_NOTE} The ${stopped.queuedCount} follow-up turn(s) queued on it still run and report.`
-              : STOPPING_NOTE,
-        };
+        return { status: "stopping", note: STOPPING_NOTE };
       },
     }),
   };

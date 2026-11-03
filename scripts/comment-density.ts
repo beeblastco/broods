@@ -1,18 +1,8 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { parseSync } from "oxc-parser";
 import budgetJson from "./comment-density.json" with { type: "json" };
 
 export const SOURCE_FILE = /\.(?:ts|tsx|mts|cts|js|mjs|jsx)$/;
-export const JSX_FILE = /\.[jt]sx$/;
-
-export interface Token {
-  text: string;
-  start: number;
-}
-
-export interface Comment {
-  start: number;
-  end: number;
-}
 
 export interface Budget {
   maxPct: number;
@@ -42,231 +32,12 @@ export interface Report {
   failures: string[];
 }
 
-const OPERATOR_KEYWORDS = new Set([
-  "return",
-  "typeof",
-  "instanceof",
-  "in",
-  "of",
-  "new",
-  "delete",
-  "void",
-  "throw",
-  "case",
-  "do",
-  "else",
-  "yield",
-  "await",
-]);
-const WHITESPACE = /\s+/y;
-const WORD = /[A-Za-z_$\u0080-￿][\w$\u0080-￿]*|\.?\d[\w.]*/y;
-const JSX_START = /<[A-Za-z_$>]/y;
-// In a .tsx file `<T,>` and `<T extends U>` open type parameters, not an element.
-const TSX_GENERIC = /<[A-Za-z_$][\w$]*\s*(?:,|extends\b)/y;
-const JSX_NAME = /[A-Za-z_$][\w$.:-]*/y;
-const JSX_TEXT = /[^<{]+/y;
-const REGEX_FLAGS = /[a-z]*/y;
-const BLANK_STRING = /^(["'])\s*\1$/;
-
-function sticky(
-  pattern: RegExp,
-  source: string,
-  at: number,
-): string | undefined {
-  pattern.lastIndex = at;
-
-  return pattern.exec(source)?.[0];
-}
-
-// Strings, templates, regex literals and JSX text are skipped whole, so `//` in
-// them is no comment. JSX text and empty JSX children yield no token.
-export function scan(
-  source: string,
-  jsx: boolean,
-): { tokens: Token[]; comments: Comment[] } {
-  const tokens: Token[] = [];
-  const comments: Comment[] = [];
-  let i = 0;
-  let afterOperand = false;
-
-  const emit = (start: number, operand: boolean): void => {
-    tokens.push({ text: source.slice(start, i), start: start });
-    afterOperand = operand;
-  };
-  const lineEnd = (from: number): number => {
-    const end = source.indexOf("\n", from);
-
-    return end === -1 ? source.length : end;
-  };
-
-  function trivia(): void {
-    for (;;) {
-      i += sticky(WHITESPACE, source, i)?.length ?? 0;
-      const start = i;
-      if (source.startsWith("//", i)) {
-        i = lineEnd(i);
-      } else if (source.startsWith("/*", i)) {
-        const close = source.indexOf("*/", i + 2);
-        i = close === -1 ? source.length : close + 2;
-      } else {
-        return;
-      }
-      comments.push({ start: start, end: i });
-    }
-  }
-
-  function code(nested: boolean): void {
-    let depth = 0;
-    for (trivia(); i < source.length; trivia()) {
-      const char = source.charAt(i);
-      if (char === "{") depth++;
-      if (char === "}" && depth-- === 0 && nested) {
-        i++;
-        emit(i - 1, true);
-
-        return;
-      }
-      token(char);
-    }
-  }
-
-  function token(char: string): void {
-    const start = i;
-    if (char === '"' || char === "'") {
-      quoted(char);
-    } else if (char === "`") {
-      template();
-    } else if (char === "/" && !afterOperand && regex()) {
-      emit(start, true);
-    } else if (char === "<" && jsx && !afterOperand && jsxStart()) {
-      element();
-    } else {
-      const word = sticky(WORD, source, i);
-      i += word?.length ?? (source.startsWith("=>", i) ? 2 : 1);
-      const closes = char === ")" || char === "]" || char === "}";
-      emit(start, word === undefined ? closes : !OPERATOR_KEYWORDS.has(word));
-    }
-  }
-
-  function quoted(quote: string): void {
-    const start = i++;
-    while (i < source.length) {
-      const char = source.charAt(i);
-      i += char === "\\" ? 2 : 1;
-      if (char === quote || char === "\n") break;
-    }
-    emit(start, true);
-  }
-
-  function template(): void {
-    let start = i++;
-    while (i < source.length && source.charAt(i) !== "`") {
-      if (source.startsWith("${", i)) {
-        i += 2;
-        emit(start, false);
-        code(true);
-        start = i;
-      } else {
-        i += source.charAt(i) === "\\" ? 2 : 1;
-      }
-    }
-    i++;
-    emit(start, true);
-  }
-
-  function regex(): boolean {
-    let inClass = false;
-    for (let j = i + 1; j < source.length; j++) {
-      const char = source.charAt(j);
-      if (char === "\n") return false;
-      if (char === "\\") j++;
-      else if (char === "[") inClass = true;
-      else if (char === "]") inClass = false;
-      else if (char === "/" && !inClass) {
-        i = j + 1;
-        i += sticky(REGEX_FLAGS, source, i)?.length ?? 0;
-
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  const jsxStart = (): boolean =>
-    sticky(JSX_START, source, i) !== undefined &&
-    sticky(TSX_GENERIC, source, i) === undefined;
-
-  function element(): void {
-    i++;
-    emit(i - 1, false);
-    for (trivia(); i < source.length; trivia()) {
-      const start = i;
-      const char = source.charAt(i);
-      if (char === ">" || source.startsWith("/>", i)) {
-        i += char === ">" ? 1 : 2;
-        emit(start, true);
-        if (char === ">") children();
-
-        return;
-      }
-      if (char === "<") {
-        element();
-        continue;
-      }
-      if (char === '"' || char === "'") {
-        const close = source.indexOf(char, i + 1);
-        i = close === -1 ? source.length : close + 1;
-      } else {
-        i += sticky(JSX_NAME, source, i)?.length ?? 1;
-      }
-      emit(start, false);
-      if (char === "{") code(true);
-    }
-  }
-
-  function children(): void {
-    while (i < source.length) {
-      const start = i;
-      if (source.startsWith("</", i)) {
-        const close = source.indexOf(">", i);
-        i = close === -1 ? source.length : close + 1;
-        emit(start, true);
-
-        return;
-      }
-      if (source.charAt(i) === "<") element();
-      else if (source.charAt(i) === "{") container();
-      else i += sticky(JSX_TEXT, source, i)?.length ?? 1;
-    }
-  }
-
-  function container(): void {
-    const mark = tokens.length;
-    i++;
-    emit(i - 1, false);
-    code(true);
-    const inner = tokens.slice(mark + 1, -1);
-    if (inner.every((entry) => BLANK_STRING.test(entry.text))) {
-      tokens.length = mark;
-    }
-  }
-
-  if (source.startsWith("#!")) {
-    i = lineEnd(0);
-    emit(0, false);
-  }
-  code(false);
-
-  return { tokens: tokens, comments: comments };
-}
-
 const blockText = (line: string): string =>
   line.replace(/^\s*\*?\s?/, "").trim();
 
 // Counted like the density baseline: a `//` comment alone on its line, and each
 // non-blank line of a block comment that opens its line or follows `{`.
-export function commentLines(source: string, jsx: boolean): number {
+export function commentLines(path: string, source: string): number {
   const lineStarts = [0];
   for (
     let at = source.indexOf("\n");
@@ -277,19 +48,15 @@ export function commentLines(source: string, jsx: boolean): number {
   }
   const counted = new Set<number>();
   let line = 0;
-  for (const { start, end } of scan(source, jsx).comments) {
+  for (const { type, value, start } of parseSync(path, source).comments) {
     while ((lineStarts[line + 1] ?? Infinity) <= start) line++;
     const prefix = source.slice(lineStarts[line], start).trim();
-    if (source.startsWith("//", start)) {
-      if (prefix === "" && source.slice(start + 2, end).trim() !== "") {
-        counted.add(line);
-      }
+    if (type === "Line") {
+      if (prefix === "" && value.trim() !== "") counted.add(line);
       continue;
     }
     if (prefix !== "" && prefix !== "{") continue;
-    const closed = end - start >= 4 && source.endsWith("*/", end);
-    const body = source.slice(start + 2, closed ? end - 2 : end).split("\n");
-    body.forEach((text, offset) => {
+    value.split("\n").forEach((text, offset) => {
       if (blockText(text) !== "") counted.add(line + offset);
     });
   }
@@ -324,7 +91,7 @@ export function measure(root: string): FileDensity[] {
       return {
         path: path,
         lines: source.split("\n").length,
-        comments: commentLines(source, JSX_FILE.test(path)),
+        comments: commentLines(path, source),
       };
     });
 }

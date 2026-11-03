@@ -29,7 +29,6 @@ import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { optionalEnv, requireEnv } from "../../shared/env.ts";
 import { isTimeoutError, toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
 import { getObservabilityContext } from "../../shared/otel.ts";
 import { stripTrailingSlashes } from "../../shared/paths.ts";
 import {
@@ -763,9 +762,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   }
 
   #workspaceRoot(): string {
-    const options = isPlainObject(this.#config.options)
-      ? this.#config.options
-      : {};
+    const options = this.#config.options ?? {};
 
     return stripTrailingSlashes(
       configString(options.workspaceRoot) ?? DEFAULT_WORKSPACE_ROOT,

@@ -1,7 +1,7 @@
 import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { findLaterSandboxMount } from "@broods/convex/model/agentRules";
+import { findLaterSandboxMount } from "@broods/convex/model/sandboxMounts";
 import {
   agentRefCounts,
   agentSandboxOrder,

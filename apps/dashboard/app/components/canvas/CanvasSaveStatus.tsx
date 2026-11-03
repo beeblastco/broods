@@ -1,7 +1,7 @@
 "use client";
 
 import { CanvasNotice, CanvasPill } from "@/app/components/canvas/CanvasNotice";
-import { useEffect, useState } from "react";
+import { useTimeoutFlag } from "@/app/hooks/useTimeoutFlag";
 
 const SAVED_PILL_MS = 2_000;
 
@@ -16,22 +16,9 @@ export function CanvasSaveStatus({
   message?: string | null;
   onRetry: () => void;
 }): React.JSX.Element | null {
-  const [savedShown, setSavedShown] = useState(false);
-  const [prevState, setPrevState] = useState(state);
-  if (state !== prevState) {
-    setPrevState(state);
-    setSavedShown(state === "saved");
-  }
+  const saved = useTimeoutFlag(state === "saved" ? state : null, SAVED_PILL_MS);
 
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- timer that hides the Saved pill
-  useEffect(() => {
-    if (state !== "saved") return;
-    const timer = setTimeout(() => setSavedShown(false), SAVED_PILL_MS);
-
-    return () => clearTimeout(timer);
-  }, [state]);
-
-  if (state === "idle" || (state === "saved" && !savedShown)) return null;
+  if (state === "idle" || (state === "saved" && saved === null)) return null;
 
   if (state === "error") {
     return (

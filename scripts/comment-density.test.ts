@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   commentLines,
   judge,
-  scan,
   workspaceOf,
   type Budget,
 } from "./comment-density.ts";
@@ -21,9 +20,8 @@ describe("commentLines", () => {
     ["text on the opening line", lines("/** one", " * two */"), 2],
     ["a JSX comment child", lines("<div>", "  {/* why */}", "</div>"), 1],
     ["a JSX comment after a tag", "<div>{/* why */}</div>", 0],
-    ["an unclosed block", lines("/* one", "two"), 2],
   ])("%s", (_, source, expected) => {
-    expect(commentLines(source, true)).toBe(expected);
+    expect(commentLines("a.tsx", source)).toBe(expected);
   });
 
   test("ignores comment markers inside strings and templates", () => {
@@ -36,7 +34,7 @@ describe("commentLines", () => {
       "`;",
       "const s = '/* still a string';",
     );
-    expect(commentLines(source, false)).toBe(0);
+    expect(commentLines("a.ts", source)).toBe(0);
   });
 
   test("ignores comment markers inside regex literals", () => {
@@ -45,7 +43,7 @@ describe("commentLines", () => {
       "// counted",
       "const close = /\\*\\//;",
     );
-    expect(commentLines(source, false)).toBe(1);
+    expect(commentLines("a.ts", source)).toBe(1);
   });
 
   test("reads JSX text as text, apostrophes and slashes included", () => {
@@ -58,7 +56,7 @@ describe("commentLines", () => {
       ");",
       "// counted",
     );
-    expect(commentLines(source, true)).toBe(1);
+    expect(commentLines("a.tsx", source)).toBe(1);
   });
 
   test("keeps .tsx type parameters out of JSX", () => {
@@ -67,37 +65,7 @@ describe("commentLines", () => {
       "const pick = <K extends string>(key: K) => key;",
       "// counted",
     );
-    expect(commentLines(source, true)).toBe(1);
-  });
-});
-
-describe("scan", () => {
-  test("drops whitespace and comments but keeps literals whole", () => {
-    const { tokens } = scan('a  =  "x  y" /* c */ + `t ${b} u`;', false);
-    expect(tokens.map((token) => token.text)).toEqual([
-      "a",
-      "=",
-      '"x  y"',
-      "+",
-      "`t ${",
-      "b",
-      "}",
-      " u`",
-      ";",
-    ]);
-  });
-
-  test("drops empty and blank JSX children", () => {
-    const { tokens } = scan('<p>{/* c */}{" "}hi {name}</p>', true);
-    expect(tokens.map((token) => token.text)).toEqual([
-      "<",
-      "p",
-      ">",
-      "{",
-      "name",
-      "}",
-      "</p>",
-    ]);
+    expect(commentLines("a.tsx", source)).toBe(1);
   });
 });
 

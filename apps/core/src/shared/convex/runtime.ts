@@ -18,6 +18,7 @@ export const runtimeQueries = {
     internal.runtime.listExpiredSandboxReservations,
   listOrphanedSandboxInstances: internal.runtime.listOrphanedSandboxInstances,
   listPendingAsyncToolResults: internal.runtime.listPendingAsyncToolResults,
+  readHarnessSessionEntries: internal.runtime.readHarnessSessionEntries,
   listOwedAsyncAgentResults: internal.runtime.listOwedAsyncAgentResults,
   listOwedAsyncToolResults: internal.runtime.listOwedAsyncToolResults,
   getIngressStatus: internal.runtimeIngress.getStatus,
@@ -39,7 +40,6 @@ export const runtimeMutations = {
   markAsyncAgentHandback: internal.runtime.markAsyncAgentHandback,
   markAsyncToolHandback: internal.runtime.markAsyncToolHandback,
   releaseClaim: internal.runtime.releaseClaim,
-  reserveSandboxReservation: internal.runtime.reserveSandboxReservation,
   saveSandboxReservation: internal.runtime.saveSandboxReservation,
   updateAsyncAgentResult: internal.runtime.updateAsyncAgentResult,
   updateAsyncToolResult: internal.runtime.updateAsyncToolResult,
@@ -47,6 +47,8 @@ export const runtimeMutations = {
   acquireIngressClear: internal.runtimeIngress.acquireClear,
   appendFencedConversationEvent:
     internal.runtimeIngress.appendConversationEvent,
+  appendHarnessSessionEntries:
+    internal.runtimeIngress.appendHarnessSessionEntries,
   applyIngressSteering: internal.runtimeIngress.applySteering,
   clearFencedConversation: internal.runtimeIngress.clearConversation,
   recoverQueuedIngress: internal.runtimeIngress.recoverQueued,
@@ -61,6 +63,10 @@ export const runtimeMutations = {
 
 type RuntimeQueries = typeof runtimeQueries;
 type RuntimeMutations = typeof runtimeMutations;
+
+export type HarnessSessionEntry = FunctionReturnType<
+  RuntimeQueries["readHarnessSessionEntries"]
+>["entries"][number];
 
 // Mutations skip the client's FIFO so runs never wait on each other; await to keep an order.
 export const runtime = {

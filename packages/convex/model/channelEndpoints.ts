@@ -7,19 +7,13 @@ import { accountCipherForWrite, hasEncryptionSecret } from "./accountKeys";
 import type { AccountCipher } from "./envelope";
 import { agentsInStage } from "./projectScope";
 
-type ChannelCredentials = Pick<DesiredEndpoint, "apiUrl" | "botToken">;
-
 interface ChannelsConfigView {
-  channels?: Record<
-    string,
-    { apiUrl?: unknown; botToken?: unknown } | undefined
-  >;
+  channels?: Record<string, { botToken?: unknown } | undefined>;
 }
 
 interface DesiredEndpoint {
   agentId: string;
   agentName: string;
-  apiUrl?: string;
   botToken: string;
   endpointId: string;
   platform: string;
@@ -69,7 +63,6 @@ export async function refreshAccountChannelEndpoints(
       accountId: accountId,
       agentId: entry.agentId,
       agentName: entry.agentName,
-      apiUrl: entry.apiUrl,
       digest: digest,
       endpointId: entry.endpointId,
       platform: entry.platform,
@@ -107,13 +100,13 @@ export function webhookPath(
   return `/v1/webhooks/${account}/dev/${encodeURIComponent(endpointId)}/${name}`;
 }
 
-async function agentChannelCredentials(
+async function agentChannelBotTokens(
   agent: Doc<"agents">,
   cipher: AccountCipher,
-): Promise<Map<string, ChannelCredentials>> {
-  const credentials = new Map<string, ChannelCredentials>();
+): Promise<Map<string, string>> {
+  const botTokens = new Map<string, string>();
   if (!agent.encryptedConfig || !agent.encryptionIv || !agent.encryptionTag) {
-    return credentials;
+    return botTokens;
   }
 
   const config = (await cipher.decrypt("agents:encryptedConfig", {
@@ -124,14 +117,10 @@ async function agentChannelCredentials(
   for (const [platform, channel] of Object.entries(config?.channels ?? {})) {
     const botToken = channel?.botToken;
     if (typeof botToken !== "string" || !botToken) continue;
-    const apiUrl = channel?.apiUrl;
-    credentials.set(platform, {
-      apiUrl: typeof apiUrl === "string" && apiUrl ? apiUrl : undefined,
-      botToken: botToken,
-    });
+    botTokens.set(platform, botToken);
   }
 
-  return credentials;
+  return botTokens;
 }
 
 async function desiredEndpoints(
@@ -156,12 +145,11 @@ async function desiredEndpoints(
       accountId,
     );
     for (const agent of agents) {
-      const credentials = await agentChannelCredentials(agent, cipher);
-      for (const [platform, { apiUrl, botToken }] of credentials) {
+      const botTokens = await agentChannelBotTokens(agent, cipher);
+      for (const [platform, botToken] of botTokens) {
         const entry: DesiredEndpoint = {
           agentId: agent._id,
           agentName: agent.name,
-          apiUrl: apiUrl,
           botToken: botToken,
           endpointId: deployment.endpointId,
           platform: platform,
@@ -184,7 +172,6 @@ async function endpointDigest(entry: DesiredEndpoint): Promise<string> {
   const value = JSON.stringify([
     entry.agentId,
     entry.agentName,
-    entry.apiUrl ?? null,
     entry.botToken,
     entry.endpointId,
     entry.platform,

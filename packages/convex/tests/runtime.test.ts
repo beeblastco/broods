@@ -57,6 +57,30 @@ describe("runtime persistence", () => {
     ).toBe(false);
   });
 
+  test("a limited claim is taken up to its limit", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const claim = async (): Promise<boolean> =>
+      await t.mutation(internal.runtime.claimEvent, {
+        accountId: accountId,
+        key: "message-turns:root",
+        ttlSeconds: 60,
+        limit: 2,
+      });
+
+    expect([await claim(), await claim(), await claim()]).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    // A use that started nothing is given back.
+    await t.mutation(internal.runtime.releaseClaim, {
+      accountId: accountId,
+      key: "message-turns:root",
+    });
+    expect([await claim(), await claim()]).toEqual([true, false]);
+  });
+
   test("orders conversation events", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -666,6 +690,45 @@ describe("runtime persistence", () => {
     });
   });
 
+  test("a subagent's message to its parent keeps its text and the parent's append stores it", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(internal.runtime.createAsyncAgentResult, {
+      eventId: "child",
+      conversationKey: `acct:${accountId}:agent:child:api:child`,
+      subagent: { parentConversationKey: conversationKey },
+    });
+    await t.mutation(internal.runtime.updateAsyncAgentResult, {
+      eventId: "child",
+      status: "awaiting_input",
+      question: "Which region?",
+    });
+    const row = async (): Promise<{
+      status?: string;
+      question?: string;
+      handback?: string;
+    } | null> =>
+      await t.query(internal.runtime.getAsyncAgentResult, { eventId: "child" });
+    expect(await row()).toMatchObject({
+      status: "awaiting_input",
+      question: "Which region?",
+      handback: "pending",
+    });
+
+    await t.mutation(internal.runtime.appendConversationEvent, {
+      conversationKey: conversationKey,
+      events: [
+        {
+          cursor: "001",
+          dedupeKey: subagentResultDedupeKey("child", "awaiting_input"),
+          event: { role: "user", content: "subagent question" },
+        },
+      ],
+    });
+    expect(await row()).toMatchObject({ handback: "stored" });
+  });
+
   test("a detached subagent result is not downgraded by its finish", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -851,84 +914,6 @@ describe("runtime persistence", () => {
         reservationKey: args.reservationKey,
       }),
     ).toBeNull();
-  });
-
-  test("reserves a sandbox in one trip: claims, then reuses and refreshes the row", async () => {
-    const t = runtimeTest();
-    const accountId = await createActiveAccount(t);
-    const other = await createActiveAccount(t);
-    const key = {
-      provider: "worker" as const,
-      reservationKey: `acct:${accountId}:workspace:one`,
-    };
-    expect(
-      await t.mutation(internal.runtime.reserveSandboxReservation, {
-        ...key,
-        externalId: "sandbox-1",
-        accountId: accountId,
-        ttlSeconds: 60,
-      }),
-    ).toBe("sandbox-1");
-    // A shorter deadline than a week, so a refresh is visible.
-    await t.run(async (ctx) => {
-      const row = await ctx.db.query("sandboxReservations").first();
-      if (row) await ctx.db.patch(row._id, { expiresAt: 1 });
-    });
-
-    // A second reserve, or a racer with its own fresh id, gets the first id.
-    expect(
-      await t.mutation(internal.runtime.reserveSandboxReservation, {
-        ...key,
-        externalId: "sandbox-2",
-        accountId: accountId,
-      }),
-    ).toBe("sandbox-1");
-    const refreshed = await t.run((ctx) =>
-      ctx.db.query("sandboxReservations").collect(),
-    );
-    expect(refreshed).toHaveLength(1);
-    expect(refreshed[0]?.expiresAt).toBeGreaterThanOrEqual(
-      Math.floor(Date.now() / 1000) + 59,
-    );
-    expect(refreshed[0]?.expiresAt).toBeLessThanOrEqual(
-      Math.floor(Date.now() / 1000) + 61,
-    );
-
-    // Another account learns the id, as a read would, but moves nothing.
-    await t.run(async (ctx) => {
-      const row = await ctx.db.query("sandboxReservations").first();
-      if (row) await ctx.db.patch(row._id, { expiresAt: 1 });
-    });
-    expect(
-      await t.mutation(internal.runtime.reserveSandboxReservation, {
-        ...key,
-        externalId: "sandbox-3",
-        accountId: other,
-      }),
-    ).toBe("sandbox-1");
-    const untouched = await t.run((ctx) =>
-      ctx.db.query("sandboxReservations").first(),
-    );
-    expect(untouched?.expiresAt).toBe(1);
-    expect(untouched?.accountId).toBe(accountId);
-  });
-
-  test("refuses to reserve a sandbox for an account that is not active", async () => {
-    const t = runtimeTest();
-    const accountId = await createActiveAccount(t);
-    await t.run((ctx) => ctx.db.patch(accountId, { status: "disabled" }));
-
-    await expect(
-      t.mutation(internal.runtime.reserveSandboxReservation, {
-        provider: "worker",
-        reservationKey: `acct:${accountId}:workspace:one`,
-        externalId: "sandbox-1",
-        accountId: accountId,
-      }),
-    ).rejects.toThrow("Account is not active");
-    expect(
-      await t.run((ctx) => ctx.db.query("sandboxReservations").collect()),
-    ).toEqual([]);
   });
 
   test("a shorter reservation window lapses on its own deadline", async () => {

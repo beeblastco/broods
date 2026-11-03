@@ -1709,29 +1709,7 @@ describe("applied ingress config", (): void => {
     ).rejects.toThrow("Agent not found: agent_test");
   });
 
-  it("runs a subagent's ref-less envelope on its scope's config without a read", async (): Promise<void> => {
-    setStorageForTests({
-      agents: {
-        getById: async (): Promise<never> => {
-          throw new Error("must not read");
-        },
-      },
-    } as never);
-    const subagentConfig: AgentConfig = {
-      model: { provider: "openai", modelId: "gpt-5" },
-    };
-
-    expect(
-      loadAppliedIngressConfig({
-        accountId: "acct_test",
-        agentId: "agent_test",
-        configRef: undefined,
-        subagentConfig: subagentConfig,
-      }),
-    ).resolves.toBe(subagentConfig);
-  });
-
-  it("fails any other ref-less envelope instead of running it on a guessed config", async (): Promise<void> => {
+  it("fails a ref-less envelope instead of running it on a guessed config", async (): Promise<void> => {
     expect(
       loadAppliedIngressConfig({
         accountId: "acct_test",

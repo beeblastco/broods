@@ -21,7 +21,7 @@ const SHORTCUT_DEFS = [
   {
     combos: ["mod+j"],
     id: "copilot.open",
-    label: "Ask Broods",
+    label: "Broods agent",
     scope: "global",
   },
   {

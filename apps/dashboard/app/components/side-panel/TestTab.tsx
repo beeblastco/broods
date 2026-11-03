@@ -16,6 +16,8 @@ import {
 import { QuestionCard } from "@/app/components/side-panel/QuestionCard";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import { useAgentChat } from "@/app/hooks/useAgentChat";
+import { useNow } from "@/app/hooks/useNow";
+import { useStickToBottom } from "@/app/hooks/useStickToBottom";
 import type { UIMessage } from "ai";
 import {
   ArrowUp,
@@ -24,7 +26,7 @@ import {
   Terminal,
   Wrench,
 } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import * as z from "zod/mini";
 
@@ -106,22 +108,17 @@ export function TestTab({
   );
 }
 
+// Time since `isActive` last turned on, held once it turns off.
 function useElapsedTime(isActive: boolean): number {
-  const [elapsed, setElapsed] = useState(0);
-  const startRef = useRef(0);
+  const now = useNow(isActive ? 100 : null);
+  const [start, setStart] = useState(() => (isActive ? Date.now() : null));
+  const [wasActive, setWasActive] = useState(isActive);
+  if (isActive !== wasActive) {
+    setWasActive(isActive);
+    if (isActive) setStart(Date.now());
+  }
 
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- a 100 ms interval timer
-  useEffect(() => {
-    if (!isActive) return;
-    startRef.current = Date.now();
-    const id = setInterval(() => {
-      setElapsed(Date.now() - startRef.current);
-    }, 100);
-
-    return () => clearInterval(id);
-  }, [isActive]);
-
-  return elapsed;
+  return start === null ? 0 : Math.max(0, now - start);
 }
 
 function formatElapsed(ms: number): string {
@@ -250,19 +247,15 @@ function ChatWindow({
     webSocketEnabled: true,
   });
   const [input, setInput] = useState("");
-  const listRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
   const hasAssistantMessage = messages.some((m) => m.role === "assistant");
   const awaitingAnswer = status === "ready" && pendingQuestions.length > 0;
   // A message typed while a question waits would steer the run and leave it open.
   const composerLocked = status === "streaming" || awaitingAnswer;
-
-  // Instant, not smooth: a smooth scroll restarted per streamed chunk never settles.
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- scrolls the list's DOM node
-  useEffect(() => {
-    const list = listRef.current;
-    if (list && followRef.current) list.scrollTop = list.scrollHeight;
-  }, [messages, awaitingAnswer]);
+  const listRef = useStickToBottom<HTMLDivElement>(
+    [messages, awaitingAnswer],
+    () => followRef.current,
+  );
 
   useShortcut("panel.send", send);
 
@@ -593,14 +586,11 @@ function SubagentPanelBlock({
 }): React.JSX.Element {
   const isStreaming = status === "running";
   const elapsed = useElapsedTime(isStreaming);
-  const contentRef = useRef<HTMLDivElement>(null);
-
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- scrolls the panel's DOM node
-  useEffect(() => {
-    if (contentRef.current) {
-      contentRef.current.scrollTop = contentRef.current.scrollHeight;
-    }
-  }, [events, text, isStreaming]);
+  const contentRef = useStickToBottom<HTMLDivElement>([
+    events,
+    text,
+    isStreaming,
+  ]);
 
   const [userOverride, setUserOverride] = useState<boolean | null>(null);
   const open = userOverride ?? isStreaming;
@@ -655,14 +645,10 @@ function ReasoningBlock({
   isStreaming: boolean;
 }): React.JSX.Element {
   const elapsed = useElapsedTime(isStreaming);
-  const preRef = useRef<HTMLPreElement>(null);
-
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- scrolls the reasoning's DOM node
-  useEffect(() => {
-    if (isStreaming && preRef.current) {
-      preRef.current.scrollTop = preRef.current.scrollHeight;
-    }
-  }, [text, isStreaming]);
+  const preRef = useStickToBottom<HTMLPreElement>(
+    [text, isStreaming],
+    () => isStreaming,
+  );
 
   const [userOverride, setUserOverride] = useState<boolean | null>(null);
   const open = userOverride ?? isStreaming;

@@ -30,6 +30,8 @@ export const probeAccount = {
 };
 
 const AUTH_TIMEOUT_MS = 60_000;
+const BOT_CHECK =
+  "AuthKit showed the probe its bot check: allow the probe email under Radar > Restrictions in this WorkOS environment";
 // Convex ids are 20+ characters; `/projects` and the other static segments are shorter.
 export const PROJECT_PATH = /^\/([a-z0-9]{20,})$/;
 
@@ -103,13 +105,19 @@ export async function signIn(page: Page): Promise<void> {
   // Production AuthKit may stop a fresh user at "Create a passkey"; one budget covers both stops.
   const deadline = Date.now() + AUTH_TIMEOUT_MS;
   const skipPasskey = page.getByRole("button", { name: /^skip for now$/i });
+  const botCheck = page.getByText(/sure you are human/i).first();
   const landed = (): boolean => new URL(page.url()).origin === origin;
   await expect
-    .poll(async () => landed() || (await skipPasskey.first().isVisible()), {
-      timeout: AUTH_TIMEOUT_MS,
-    })
+    .poll(
+      async () =>
+        landed() ||
+        (await skipPasskey.first().isVisible()) ||
+        (await botCheck.isVisible()),
+      { timeout: AUTH_TIMEOUT_MS },
+    )
     .toBe(true)
     .catch(() => {});
+  if (await botCheck.isVisible()) throw new Error(BOT_CHECK);
   if (!landed() && (await skipPasskey.first().isVisible())) {
     await skipPasskey.first().click({ timeout: 10_000 });
   }
@@ -119,16 +127,8 @@ export async function signIn(page: Page): Promise<void> {
     })
     .catch(async (error: unknown) => {
       // CI keeps no page snapshot (it would record the password), so name the bot check.
-      if (
-        await page
-          .getByText(/sure you are human/i)
-          .first()
-          .isVisible()
-      ) {
-        throw new Error(
-          "AuthKit showed the probe its bot check: allow the probe email under Radar > Restrictions in this WorkOS environment",
-          { cause: error },
-        );
+      if (await botCheck.isVisible()) {
+        throw new Error(BOT_CHECK, { cause: error });
       }
       throw error;
     });

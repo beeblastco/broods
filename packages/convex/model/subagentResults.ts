@@ -24,7 +24,7 @@ export const handbackMoveValidator = v.union(
   v.literal("stored"),
 );
 export type HandbackMove = Infer<typeof handbackMoveValidator>;
-type HandbackStatus = "completed" | "failed";
+type HandbackStatus = "completed" | "failed" | "awaiting_input";
 export type HandbackKey =
   | { kind: "subagent"; eventId: string; status: HandbackStatus }
   | { kind: "async-tool"; resultId: string; status: HandbackStatus };
@@ -50,7 +50,13 @@ export function parseHandbackDedupeKey(key: string): HandbackKey | undefined {
   if (prefix === undefined) return undefined;
   const separator = key.lastIndexOf(":");
   const status = key.slice(separator + 1);
-  if (status !== "completed" && status !== "failed") return undefined;
+  if (
+    status !== "completed" &&
+    status !== "failed" &&
+    status !== "awaiting_input"
+  ) {
+    return undefined;
+  }
   const id = key.slice(prefix.length, separator);
   if (id.length === 0) return undefined;
 

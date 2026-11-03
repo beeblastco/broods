@@ -127,7 +127,7 @@ sequenceDiagram
 ```
 
 - Stage URL: `/v1/webhooks/:accountId/dev/:endpointId/:channel`. One that resolves to no agent is `404`.
-- Discord messages and all Matrix traffic come from the two forwarders, posting to the same URL. Matrix replies go back through the matrix-forwarder's `/v1/send`, since only it holds the room keys.
+- Discord messages come from the discord-forwarder, posting to the same URL.
 - Unsigned requests are answered from an agent listing cached up to 10 seconds; a request that verifies lists again uncached. Detail: [channels](channels.md).
 
 ### Cron fire
@@ -264,7 +264,6 @@ flowchart LR
   Core["core"]
   CVX["Convex functions"]
   GW["gateway"]
-  MF["matrix-forwarder"]
 
   subgraph Tables["Convex tables"]
     Cfg[("config:<br/>agents, mcp, crons, policies")]
@@ -284,7 +283,6 @@ flowchart LR
   end
 
   LT[("Loki, Tempo")]
-  Vol[("crypto store volume")]
 
   CVX --> Tables
   CVX --> Buckets
@@ -296,19 +294,17 @@ flowchart LR
   GW --> WSR
   GW --> OBS
   GW --> LT
-  MF --> Vol
 ```
 
-| Store                   | Holds                                                                    | Lifetime                            |
-| ----------------------- | ------------------------------------------------------------------------ | ----------------------------------- |
-| Convex tables           | Config, runtime state, audit, usage. `packages/convex/schema.ts`         | Durable; run status 7 days          |
-| S3 `Filesystem`         | Workspace files under `<namespace>/`, staged skills, channel attachments | Durable                             |
-| S3 `Skills`             | Skill bundles under `<accountId>/<skill-name>`                           | Durable                             |
-| S3 `ToolBundles`        | Code hook and hosted MCP bundles under `account-mcp/`                    | Durable; R2 copy expires in 30 days |
-| NATS `WS_RESPONSES`     | Agent stream parts per conversation, for WebSocket replay                | 3 minutes, 2,000 per subject        |
-| NATS `OBSERVABILITY`    | Live logs and spans per stage, for dashboard replay                      | 2 hours                             |
-| Loki, Tempo             | Long-term logs and traces, via the OTel collector                        | Per collector config                |
-| Matrix forwarder volume | Each Matrix account's crypto store, sync token and outbox                | Durable; an outbox event 12 hours   |
+| Store                | Holds                                                                    | Lifetime                            |
+| -------------------- | ------------------------------------------------------------------------ | ----------------------------------- |
+| Convex tables        | Config, runtime state, audit, usage. `packages/convex/schema.ts`         | Durable; run status 7 days          |
+| S3 `Filesystem`      | Workspace files under `<namespace>/`, staged skills, channel attachments | Durable                             |
+| S3 `Skills`          | Skill bundles under `<accountId>/<skill-name>`                           | Durable                             |
+| S3 `ToolBundles`     | Code hook and hosted MCP bundles under `account-mcp/`                    | Durable; R2 copy expires in 30 days |
+| NATS `WS_RESPONSES`  | Agent stream parts per conversation, for WebSocket replay                | 3 minutes, 2,000 per subject        |
+| NATS `OBSERVABILITY` | Live logs and spans per stage, for dashboard replay                      | 2 hours                             |
+| Loki, Tempo          | Long-term logs and traces, via the OTel collector                        | Per collector config                |
 
 Core reaches Convex with `ConvexHttpClient` and the deploy key (`apps/core/src/shared/convex/client.ts`). Byte layout: [storage](storage.md).
 
@@ -372,18 +368,18 @@ Config rows such as `mcp`, `sandboxConfigs` and `workspaceConfigs` also carry `p
 
 ### Convex tables
 
-| Group                 | Tables                                                                                                                                                                                                                      |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Identity and tenancy  | `users`, `orgs`, `orgMembers`, `orgRoles`, `accounts`, `accountKeys`                                                                                                                                                        |
-| Projects and access   | `projects`, `stages`, `stageSyncs`, `agentDeployments`, `deployKeys`, `cliAuthCodes`, `cliTokens`, `accountRoles`, `roleSessions`, `permissions`                                                                            |
-| Resource config       | `agents`, `agentConfigs`, `canvasLayouts`, `agentRuntimeSecrets`, `sandboxConfigs`, `workspaceConfigs`, `mcp`, `accountHooks`, `agentPolicies`, `channelRecords`, `channelEndpoints`, `connections`, `cliExternalResources` |
-| Environment variables | `environmentVariables`, `accountEnvVars`, `environmentVariableReveals`                                                                                                                                                      |
-| Schedules             | `crons`, `cronRuns`, plus the crons component's own tables                                                                                                                                                                  |
-| Runtime               | `runtimeConversationEvents`, `runtimeHarnessSessions`, `runtimeClaims`, `runtimeConversationCoordinators`, `runtimeIngressEnvelopes`, `runtimeIngressApplications`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults`   |
-| Sandboxes             | `sandboxReservations`, `sandboxInstances`, `sandboxSnapshots`, `sandboxAuditEvents`, `machineConnections`                                                                                                                   |
-| Workspace files       | `workspaceFiles`, `workspaceDownloadTokens`, `uploadGrants`                                                                                                                                                                 |
-| Billing               | `stripeSubscriptionSyncs`, plus the Stripe component's own tables                                                                                                                                                           |
-| Audit and usage       | `auditEvents`, `auditChainHeads`, `auditSinks`, `configHttpAuthFailures`, `taskUsage`, `usageRollups`, `usageMeters`, `usageDays`, `usageProjectDays`, `usageWrites`                                                        |
+| Group                 | Tables                                                                                                                                                                                                                                                    |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity and tenancy  | `users`, `orgs`, `orgMembers`, `orgRoles`, `accounts`, `accountKeys`                                                                                                                                                                                      |
+| Projects and access   | `projects`, `stages`, `stageSyncs`, `agentDeployments`, `deployKeys`, `cliAuthCodes`, `cliTokens`, `accountRoles`, `roleSessions`, `permissions`                                                                                                          |
+| Resource config       | `agents`, `agentConfigs`, `canvasLayouts`, `agentRuntimeSecrets`, `sandboxConfigs`, `workspaceConfigs`, `mcp`, `accountHooks`, `agentPolicies`, `channelRecords`, `channelEndpoints`, `connections`, `cliExternalResources`                               |
+| Environment variables | `environmentVariables`, `accountEnvVars`, `environmentVariableReveals`                                                                                                                                                                                    |
+| Schedules             | `crons`, `cronRuns`, plus the crons component's own tables                                                                                                                                                                                                |
+| Runtime               | `runtimeConversationEvents`, `runtimeHarnessSessions`, `runtimeHarnessSessionEntries`, `runtimeClaims`, `runtimeConversationCoordinators`, `runtimeIngressEnvelopes`, `runtimeIngressApplications`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults` |
+| Sandboxes             | `sandboxReservations`, `sandboxInstances`, `sandboxSnapshots`, `sandboxAuditEvents`, `machineConnections`                                                                                                                                                 |
+| Workspace files       | `workspaceFiles`, `workspaceDownloadTokens`, `uploadGrants`                                                                                                                                                                                               |
+| Billing               | `stripeSubscriptionSyncs`, plus the Stripe component's own tables                                                                                                                                                                                         |
+| Audit and usage       | `auditEvents`, `auditChainHeads`, `auditSinks`, `configHttpAuthFailures`, `taskUsage`, `usageRollups`, `usageMeters`, `usageDays`, `usageProjectDays`, `usageWrites`                                                                                      |
 
 ## Async and deferred work
 

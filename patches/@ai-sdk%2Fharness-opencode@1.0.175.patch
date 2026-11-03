@@ -1,0 +1,30 @@
+diff --git a/dist/index.js b/dist/index.js
+index 0decd9aa373c2f67a9b85d06293c8110150418fa..179be9d50020dfc45e3a39bb0fd0b5acc167abd7 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1,3 +1,8 @@
++import bridgeAsset0 from "./bridge/package.json" with { type: "file" };
++import bridgeAsset1 from "./bridge/pnpm-lockfile.yaml" with { type: "file" };
++import bridgeAsset2 from "./bridge/pnpm-workspace.yaml" with { type: "file" };
++import bridgeAsset3 from "./bridge/index.mjs" with { type: "file" };
++import bridgeAsset4 from "./bridge/host-tool-mcp.mjs" with { type: "file" };
+ import path, { dirname, join } from "node:path";
+ import { HARNESS_V1_BUILTIN_TOOLS, HarnessCapabilityUnsupportedError, commonTool, harnessSessionDataDirectoryPath, harnessStateDirectoryPath, harnessV1BridgeInboundCommandSchemas, harnessV1BridgeOutboundMessageSchema, harnessV1BridgeStartBaseSchema, harnessV1DiagnosticFromBridgeFrame, isHarnessV1BuiltinToolIncluded } from "@ai-sdk/harness";
+ import { SandboxChannel, applyCredentialForwarding, classifyDiskLog, createBridgeErrorHandler, createBridgeStartupError, createBridgeToken, createBridgeWebSocketConnect, createCredentialRequestTransformation, createReadBridgeAsset, drainBridgeProcessStream, experimental_createBridgeUserMessageSubmitter, extractHarnessPromptContent, forwardBridgeProcessStream, getAiGatewayAuthFromEnv, getRestrictedSandboxSession, harnessPromptContentSchema, isAccessTokenExpiringSoon, isHarnessAuthenticationEnvironment, isWindows, markBridgeStarting, parseJwtPayload, refreshOAuthAccessToken, resolveBridgeEndpoint, resolveBridgePort, resolveSandboxCredentialEnvironment, resolveSandboxHomeDir, shellQuote, validateBridgeSandboxSettings, waitForBridgeReady, warnCredentialBrokeringUnavailable, writeSkills } from "@ai-sdk/harness/utils";
+@@ -8,11 +13,11 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+ import { homedir } from "node:os";
+ //#region src/opencode-bootstrap.ts
+ const readBridgeAsset = createReadBridgeAsset({
+-	"package.json": new URL("./bridge/package.json", import.meta.url),
+-	"pnpm-lock.yaml": new URL("./bridge/pnpm-lockfile.yaml", import.meta.url),
+-	"pnpm-workspace.yaml": new URL("./bridge/pnpm-workspace.yaml", import.meta.url),
+-	"index.mjs": new URL("./bridge/index.mjs", import.meta.url),
+-	"host-tool-mcp.mjs": new URL("./bridge/host-tool-mcp.mjs", import.meta.url)
++	"package.json": bridgeAsset0,
++	"pnpm-lock.yaml": bridgeAsset1,
++	"pnpm-workspace.yaml": bridgeAsset2,
++	"index.mjs": bridgeAsset3,
++	"host-tool-mcp.mjs": bridgeAsset4
+ });
+ const OPENCODE_BOOTSTRAP_DIR = ".harness-bootstrap/opencode";
+ let cachedBootstrap;

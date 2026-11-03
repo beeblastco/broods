@@ -417,13 +417,9 @@ export async function loadAppliedIngressConfig(options: {
   accountId: string;
   agentId: string;
   configRef: IngressConfigRef | undefined;
-  subagentConfig?: AgentConfig;
 }): Promise<AgentConfig> {
   const { accountId, agentId, configRef } = options;
   if (!configRef) {
-    if (options.subagentConfig) {
-      return options.subagentConfig;
-    }
     throw new Error("Queued turn was admitted before config refs; retry");
   }
   if (configRef.channel) {

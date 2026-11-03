@@ -116,11 +116,7 @@ function agentResource(mcp: Record<string, unknown>): CliManifestResource {
 function storedMcpServers(tt: T): Promise<Record<string, unknown>> {
   return tt.run(async (ctx) => {
     const config = await ctx.db.query("agentConfigs").first();
-    const extra = config?.extraConfig as
-      | { mcp?: Record<string, unknown> }
-      | undefined;
-
-    return extra?.mcp ?? {};
+    return config?.extraConfig?.mcp ?? {};
   });
 }
 

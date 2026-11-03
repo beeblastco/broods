@@ -31,6 +31,7 @@ export function McpNode({ id, data, parentId }: NodeProps): React.JSX.Element {
         icon={<Plug className="size-3.5" />}
         label={nodeData.label}
         mountable={false}
+        nodeId={id}
         nodeType="mcp"
         status={{
           color: status.color,
