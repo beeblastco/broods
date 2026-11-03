@@ -298,9 +298,15 @@ if confirm "Create the probe in production now?"; then
   step "Switch the environment to Production, then User Management → Users → Create user"
   step "  with the same email and a different password: cloud sessions hold the staging one."
   step "Radar → Restrictions: allow that email. Production shows CI a bot check otherwise."
-  step "Sign in once at https://dashboard.broods.app as the probe, then pin the project it opens:"
-  step "  gh variable set DASHBOARD_E2E_PROJECT_ID --env production --body <id from the URL>"
-  if confirm "Done in WorkOS? Write the two login secrets to 'production'?"; then
+  step "Sign in once at https://dashboard.broods.app as the probe: CI pins the project it opens."
+  if confirm "Done in WorkOS? Write the project pin and the two login secrets to 'production'?"; then
+    ask PROD_PROJECT_ID "Production project id (the URL segment after signing in):"
+    if gh variable set DASHBOARD_E2E_PROJECT_ID --env production --body "$PROD_PROJECT_ID" >/dev/null 2>&1; then
+      printf '  %s✓ set%s production variable DASHBOARD_E2E_PROJECT_ID\n' "$GREEN" "$RESET"
+    else
+      SKIPPED+=("production variable DASHBOARD_E2E_PROJECT_ID")
+      warn "could not set the production project pin; CI keeps the old one"
+    fi
     ask_secret PROD_PASSWORD "Production probe password (not kept in $ENV_FILE):"
     set_env_secret production DASHBOARD_E2E_EMAIL "$E2E_EMAIL"
     set_env_secret production DASHBOARD_E2E_PASSWORD "$PROD_PASSWORD"
