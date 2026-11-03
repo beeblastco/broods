@@ -38,7 +38,6 @@ import {
 import {
   readAgentBranch,
   readModelReasoning,
-  type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { toErrorMessage } from "@/app/lib/errors";
@@ -164,10 +163,7 @@ export function DetailsTab({
   const schemaFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const allTools = agentConfig
-    ? (readAgentBranch(
-        agentConfig as unknown as FlatAgentConfig,
-        "tools",
-      ) as Record<string, unknown>)
+    ? (readAgentBranch(agentConfig, "tools") as Record<string, unknown>)
     : {};
   const googleSearchCfg: Record<string, unknown> = parseOr(
     configObject,
@@ -176,10 +172,7 @@ export function DetailsTab({
   const googleSearchEnabled = googleSearchCfg.enabled === true;
 
   const modelBranch = agentConfig
-    ? (readAgentBranch(
-        agentConfig as unknown as FlatAgentConfig,
-        "model",
-      ) as Record<string, unknown>)
+    ? (readAgentBranch(agentConfig, "model") as Record<string, unknown>)
     : {};
   const { budgetTokens: reasoningBudget, effort: reasoningEffortValue } =
     readModelReasoning(modelBranch);
@@ -212,14 +205,12 @@ export function DetailsTab({
       ? `${coreEndpoint.websocketBaseUrl}/v1${scopePrefix}/agents/${activeDeployment.endpointId}/ws`
       : "";
 
-  const publicAccess =
-    (agentConfig?.extraConfig as Record<string, unknown> | undefined)
-      ?.publicAccess === true;
+  const publicAccess = agentConfig?.extraConfig?.publicAccess === true;
   const browserEnabled =
     readAgentBranch<{ enabled?: boolean }>(agentConfig, "browser").enabled ===
     true;
 
-  const outputFormat = parseOr(configObject, agentConfig?.outputFormat);
+  const outputFormat = agentConfig?.outputFormat;
   const outputFormatEnabled = outputFormat !== undefined;
   const configSchema = parseOr(configObject, outputFormat?.schema);
   const schemaFromConfigText = configSchema
@@ -235,7 +226,7 @@ export function DetailsTab({
   );
   const apiKey = agentConfig
     ? readAgentBranch<Record<string, { apiKey?: unknown } | undefined>>(
-        agentConfig as unknown as FlatAgentConfig,
+        agentConfig,
         "provider",
       )[editProvider]?.apiKey
     : undefined;
@@ -897,9 +888,7 @@ export function DetailsTab({
 function readCustomBaseUrl(
   agentConfig: Doc<"agentConfigs"> | null | undefined,
 ): string {
-  const extraConfig = parseOr(configObject, agentConfig?.extraConfig, {});
-  const provider = parseOr(configObject, extraConfig.provider, {});
-  const custom = parseOr(configObject, provider.custom, {});
+  const custom = agentConfig?.extraConfig?.provider?.custom ?? {};
   const value =
     typeof custom.base_url === "string" ? custom.base_url : custom.baseURL;
 

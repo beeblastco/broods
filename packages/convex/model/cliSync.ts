@@ -463,26 +463,7 @@ export function plainRecord(value: unknown): Record<string, unknown> {
 export function renameComparableAgent(agent: Doc<"agentConfigs">): unknown {
   return renameComparableResource(
     agent.description,
-    toNestedAgentConfig({
-      name: agent.name,
-      description: agent.description,
-      provider: agent.provider,
-      modelId: agent.modelId,
-      systemPrompt: agent.systemPrompt,
-      maxTurns: agent.maxTurns,
-      outputFormat: agent.outputFormat as Record<string, unknown> | undefined,
-      providerOptions: agent.providerOptions as
-        | Record<string, unknown>
-        | undefined,
-      temperature: agent.temperature,
-      maxTokens: agent.maxTokens,
-      memoryToolEnabled: agent.memoryToolEnabled,
-      searchToolEnabled: agent.searchToolEnabled,
-      searchToolConfig: agent.searchToolConfig as
-        | Record<string, unknown>
-        | undefined,
-      extraConfig: agent.extraConfig as Record<string, unknown> | undefined,
-    }),
+    toNestedAgentConfig(agent),
   );
 }
 

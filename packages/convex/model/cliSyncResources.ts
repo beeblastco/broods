@@ -37,6 +37,7 @@ import {
   type CliResource,
 } from "./cliSync";
 import { normalizeChannelRecordResource } from "./cliSyncChannels";
+import { assertStoredAgentConfig } from "./agentConfigColumns";
 import { storedRefList } from "./agentRules";
 import { parseOr } from "./storedJson";
 import { stableJson } from "./objects";
@@ -272,7 +273,9 @@ export function assertManifestResources(
       normalizePolicyDocument(resource.config);
     } else if (resource.kind === "agent") {
       const config = rewriteEnvRefs(asObject(resource.config), new Set());
-      fromNestedAgentConfig(rewriteResourceRefs(config, ids));
+      assertStoredAgentConfig(
+        fromNestedAgentConfig(rewriteResourceRefs(config, ids)),
+      );
     } else if (resource.kind === "channelRecord") {
       normalizeChannelRecordResource(resource, channelIds);
     }
