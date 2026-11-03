@@ -1,4 +1,5 @@
 import { describe, expect, it, mock, spyOn } from "bun:test";
+import openCodeBridge from "../node_modules/@ai-sdk/harness-opencode/src/bridge/package.json";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import * as log from "../src/shared/log.ts";
 
@@ -45,6 +46,10 @@ const { createConfiguredOpenCodeAdapter } =
   await import("../src/harness/ai-sdk-harness/adapters/opencode.ts");
 
 describe("harness reasoning settings", (): void => {
+  it("pins the OpenCode version whose variants are mirrored", (): void => {
+    expect(openCodeBridge.dependencies["opencode-ai"]).toBe("1.18.34");
+  });
+
   it("gives Pi an explicit level, its default when none is configured", (): void => {
     const level = (reasoning: Reasoning): unknown =>
       (
@@ -114,21 +119,6 @@ describe("harness reasoning settings", (): void => {
   });
 
   it("gives OpenCode the nearest variant the model has", (): void => {
-    const variant = (
-      provider: "anthropic" | "openai" | "vercel",
-      modelId: string,
-      reasoning: Reasoning,
-    ): unknown => {
-      const config = agent("opencode", provider, reasoning);
-      config.model = { ...config.model, modelId: modelId };
-
-      return (
-        createConfiguredOpenCodeAdapter(config) as {
-          reasoningVariant?: string;
-        }
-      ).reasoningVariant;
-    };
-
     expect(variant("anthropic", "claude-opus-5-5", "xhigh")).toBe("xhigh");
     expect(variant("anthropic", "claude-opus-5-5", "minimal")).toBe("low");
     expect(variant("anthropic", "claude-opus-5-5", "none")).toBeUndefined();
@@ -156,12 +146,41 @@ describe("harness reasoning settings", (): void => {
     ).toBeUndefined();
   });
 
+  const upstreamCases: Array<
+    ["anthropic" | "openai" | "vercel", string, Reasoning, string | undefined]
+  > = [
+    ["anthropic", "claude-4.6-opus", "xhigh", "high"],
+    ["anthropic", "claude-4-6-sonnet", "low", "low"],
+    ["anthropic", "claude-haiku-4-6", "low", "high"],
+    ["anthropic", "claude-2.1", "low", "high"],
+    ["anthropic", "claude-opus-4-7", "xhigh", "xhigh"],
+    ["vercel", "anthropic/claude-opus-4.5", "low", "high"],
+    ["vercel", "openai/gpt-5", "none", "none"],
+    ["vercel", "openai/gpt-5", "xhigh", "xhigh"],
+    ["vercel", "openai/gpt-5-mini", "xhigh", "xhigh"],
+    ["vercel", "google/gemini-2-5-pro", "low", "high"],
+    ["vercel", "xai/grok-3-mini", "medium", "high"],
+    ["vercel", "deepseek/deepseek-r1", "high", undefined],
+    ["vercel", "qwen/qwen3-235b-a22b", "high", undefined],
+    ["openai", "o3-deep-research", "high", "medium"],
+  ];
+  it.each(upstreamCases)(
+    "matches OpenCode 1.18.34 for %s/%s at %s",
+    (provider, modelId, reasoning, expected): void => {
+      expect(variant(provider, modelId, reasoning)).toBe(expected);
+    },
+  );
+
   it("warns in the logs only when a harness runs another level", (): void => {
     const warn = spyOn(log, "logWarn").mockImplementation((): void => {});
     const config = agent("opencode", "anthropic", "xhigh");
     config.model = { ...config.model, modelId: "claude-sonnet-4-6" };
     createConfiguredOpenCodeAdapter(config);
     createConfiguredCodexAdapter(agent("codex", "openai", "high"));
+    createConfiguredOpenCodeAdapter(
+      agent("opencode", "anthropic", "provider-default"),
+    );
+    createConfiguredOpenCodeAdapter(agent("opencode", "anthropic", undefined));
 
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.[1]).toMatchObject({
@@ -169,6 +188,24 @@ describe("harness reasoning settings", (): void => {
       configured: "xhigh",
       sent: "high",
     });
+    for (const harness of ["claude-code", "deepagents", "codex"] as const) {
+      const config = agent(
+        harness,
+        harness === "codex" ? "openai" : "anthropic",
+        "minimal",
+      );
+      if (harness === "claude-code") createConfiguredClaudeCodeAdapter(config);
+      if (harness === "deepagents") createConfiguredDeepAgentsAdapter(config);
+      if (harness === "codex") createConfiguredCodexAdapter(config);
+    }
+    expect(warn).toHaveBeenCalledTimes(4);
+    for (const call of warn.mock.calls.slice(1)) {
+      expect(call[1]).toMatchObject({
+        eventType: "harness.reasoning_changed",
+        configured: "minimal",
+        sent: "low",
+      });
+    }
     warn.mockRestore();
   });
 });
@@ -187,4 +224,19 @@ function agent(
     },
     provider: { [provider]: { apiKey: "test-key" } },
   };
+}
+
+function variant(
+  provider: "anthropic" | "openai" | "vercel",
+  modelId: string,
+  reasoning: Reasoning,
+): unknown {
+  const config = agent("opencode", provider, reasoning);
+  config.model = { ...config.model, modelId: modelId };
+
+  return (
+    createConfiguredOpenCodeAdapter(config) as {
+      reasoningVariant?: string;
+    }
+  ).reasoningVariant;
 }

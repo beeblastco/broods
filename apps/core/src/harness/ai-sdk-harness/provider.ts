@@ -6,7 +6,7 @@ import type {
 import { logWarn } from "../../shared/log.ts";
 
 // Claude models without effort, per the AI SDK Anthropic model table; every later model has it.
-export const CLAUDE_WITHOUT_EFFORT =
+const CLAUDE_WITHOUT_EFFORT =
   /claude-(?:3|(?:haiku|sonnet)-4[.-]5|opus-4[.-]1|(?:opus|sonnet)-4(?:[.-]0|-20\d{6}|$))/;
 
 type HarnessProviderName = NonNullable<
