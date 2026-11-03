@@ -4,7 +4,6 @@ import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts"
 import { optionalEnv } from "../../shared/env.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { logWarn } from "../../shared/log.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   DEFAULT_RELEASE_GRACE_SECONDS,
@@ -99,7 +98,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         request.timeoutSeconds,
       );
       const stdout = truncateText(
-        response.result ?? artifactStdout(response.artifacts),
+        response.result ?? response.artifacts?.stdout ?? "",
         request.outputLimitBytes,
       );
 
@@ -145,7 +144,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     if ((response.exitCode ?? 0) !== 0) {
       throw new Error(
         response.result ??
-          artifactStdout(response.artifacts) ??
+          response.artifacts?.stdout ??
           "failed to launch background job",
       );
     }
@@ -243,9 +242,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   }
 
   #workspaceRoot(): string {
-    const options = isPlainObject(this.#config.options)
-      ? this.#config.options
-      : {};
+    const options = this.#config.options ?? {};
 
     return (configString(options.workspaceRoot) ?? "/mnt/workspaces").replace(
       /\/+$/,
@@ -406,7 +403,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   async #shell(sandbox: Sandbox, code: string): Promise<string> {
     const response = await sandbox.process.executeCommand(code);
 
-    return response.result ?? artifactStdout(response.artifacts);
+    return response.result ?? response.artifacts?.stdout ?? "";
   }
 
   async #runLifecycle(sandbox: Sandbox, workDir: string): Promise<void> {
@@ -420,23 +417,17 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     if ((response.exitCode ?? 0) !== 0) {
       throw new Error(
         response.result ??
-          artifactStdout(response.artifacts) ??
+          response.artifacts?.stdout ??
           "daytona lifecycle hook failed",
       );
     }
   }
 }
 
-function artifactStdout(artifacts: unknown): string {
-  return isPlainObject(artifacts) && typeof artifacts.stdout === "string"
-    ? artifacts.stdout
-    : "";
-}
-
 function daytonaClientOptions(
   config: SandboxExecutorConfig,
 ): Record<string, unknown> {
-  const options = isPlainObject(config.options) ? config.options : {};
+  const options = config.options ?? {};
   const customApiUrl = configString(options.apiUrl);
   if (customApiUrl) {
     assertPublicHttpsUrl(customApiUrl, "config.options.apiUrl");
@@ -467,7 +458,7 @@ async function daytonaCreateOptions(
   request: Pick<SandboxRunRequest, "namespace" | "envVars" | "metadata">,
   persistent: boolean,
 ): Promise<Record<string, unknown>> {
-  const options = isPlainObject(config.options) ? config.options : {};
+  const options = config.options ?? {};
   await assertSnapshotBootable(config.controlPlane, config.snapshot);
   // No run identity: the sandbox outlives this run, and each exec lays its own over this env.
   const baseEnv = mergeSandboxEnv(config.envVars, request.envVars);
@@ -508,7 +499,7 @@ async function daytonaEnvVars(
   request: Pick<SandboxRunRequest, "namespace" | "metadata">,
   baseEnv: Record<string, string>,
 ): Promise<Record<string, string>> {
-  const options = isPlainObject(config.options) ? config.options : {};
+  const options = config.options ?? {};
   if (options.mountAwsS3Buckets !== true) {
     return baseEnv;
   }
@@ -576,7 +567,7 @@ async function mountAwsS3Buckets(
   request: { workspaceRoot?: string; namespace?: string },
   config: SandboxExecutorConfig,
 ): Promise<void> {
-  const options = isPlainObject(config.options) ? config.options : {};
+  const options = config.options ?? {};
   if (options.mountAwsS3Buckets !== true) {
     return;
   }

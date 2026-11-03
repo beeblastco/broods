@@ -6,7 +6,6 @@ export {
 
 import { toNestedAgentConfig } from "@broods/convex/model/agentConfigCodec";
 import type { FlatAgentConfig } from "@broods/convex/model/agentConfigCodec";
-import { isPlainObject } from "./utils";
 
 // Only these are cleared on rewrite, so options the UI doesn't manage survive.
 const REASONING_PROVIDER_KEYS: Record<string, string[]> = {
@@ -157,4 +156,9 @@ function reasoningSlot(
     return provider;
 
   return undefined;
+}
+
+// The canvas first load bundles this file; any zod import there ships zod's whole 85 KB chunk.
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

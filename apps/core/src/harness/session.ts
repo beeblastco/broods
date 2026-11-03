@@ -15,9 +15,10 @@ import type { Attachment } from "chat";
 import type { ChannelActions } from "../shared/channels.ts";
 import { harnessEntryBatches } from "@broods/convex/model/harnessSessionEntries";
 import { runtime, type HarnessSessionEntry } from "../shared/convex/runtime.ts";
-import type {
-  ChannelPartition,
-  AgentConfig,
+import {
+  channelPartitionOf,
+  type AgentConfig,
+  type ChannelPartition,
 } from "../shared/domain/agent-config.ts";
 import type { Principal } from "../shared/domain/principal.ts";
 import { getHarnessPublicUrl } from "../shared/env.ts";
@@ -26,7 +27,6 @@ import {
   workspaceMemoryHarnessEnabled,
 } from "../shared/domain/workspace-config.ts";
 import { collectSecretValues, logDebug, logError } from "../shared/log.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
 import { sealRunToken } from "../shared/run-token.ts";
 import { channelScopeKeyFromConversation } from "../shared/runtime-keys.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
@@ -1045,7 +1045,7 @@ export class Session {
 
   private channelPartition(): ChannelPartition | undefined {
     return this.delivery?.kind === "channel"
-      ? channelPartitionFromConfig(this.agentConfig, this.delivery.channelName)
+      ? channelPartitionOf(this.agentConfig, this.delivery.channelName)
       : undefined;
   }
 
@@ -1434,10 +1434,7 @@ export async function ingestChannelAttachments(
         context.conversationKey,
         "conversation",
       ),
-      partition: channelPartitionFromConfig(
-        context.agentConfig,
-        context.channelName,
-      ),
+      partition: channelPartitionOf(context.agentConfig, context.channelName),
     },
   );
   const parts = await ingestInboundAttachments(attachments, {
@@ -1520,16 +1517,6 @@ function appendToLatestUserEvent(
   }
 
   return [...events, { role: "user", content: parts }];
-}
-
-function channelPartitionFromConfig(
-  agentConfig: AgentConfig,
-  channelName: string,
-): ChannelPartition | undefined {
-  const config = agentConfig.channels?.[channelName];
-  const partition = isPlainObject(config) ? config.partition : undefined;
-
-  return isPartition(partition) ? partition : undefined;
 }
 
 function createSystemContextSnapshot(
@@ -1728,13 +1715,6 @@ ${workspaceList}
 Guidance:
 ${guidance}
 </workspace>`;
-}
-
-function isPartition(value: unknown): value is ChannelPartition {
-  if (!isPlainObject(value)) return false;
-  if (value.by === "shared") return value.alias === undefined;
-
-  return value.by === "conversation" && typeof value.alias === "string";
 }
 
 // Reasoning stays: OpenAI Responses rejects an item id whose reasoning item is missing.

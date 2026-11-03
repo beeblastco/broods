@@ -66,7 +66,7 @@ import {
   type CoreRequest,
 } from "../shared/http.ts";
 import { logDebug, logError, logWarn } from "../shared/log.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
 import { getStorage } from "../shared/storage.ts";
@@ -326,8 +326,7 @@ async function handleSandboxLifecycle(
     if (refusal) return refusal;
   }
 
-  const rawBody = parseJsonBody(request);
-  const body = isPlainObject(rawBody) ? rawBody : {};
+  const body = parseOr(configObject, parseJsonBody(request), {});
   const reservationKey =
     typeof body.reservationKey === "string" ? body.reservationKey.trim() : "";
   if (!reservationKey) {
@@ -857,8 +856,9 @@ function requireAccountAuth(
   return auth.account;
 }
 
-function sandboxAuditActor(value: unknown): SandboxAuditActor {
-  if (!isPlainObject(value)) {
+function sandboxAuditActor(input: unknown): SandboxAuditActor {
+  const value = parseOr(configObject, input);
+  if (!value) {
     return { source: "unknown" };
   }
   const source =

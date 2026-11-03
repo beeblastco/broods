@@ -1,4 +1,4 @@
-import { isPlainObject } from "./objects";
+import { configObject, parseOr } from "./storedJson";
 
 // Layouts are read back verbatim: never envVars or options, which hold credentials. A key
 // the config tab edits but this list drops is wiped from the stored config on canvas save.
@@ -11,8 +11,9 @@ const DISPLAY_KEYS = [
   "snapshot",
 ] as const;
 
-export function sandboxDisplayConfig(config: unknown): Record<string, unknown> {
-  if (!isPlainObject(config)) {
+export function sandboxDisplayConfig(value: unknown): Record<string, unknown> {
+  const config = parseOr(configObject, value);
+  if (!config) {
     return {};
   }
 

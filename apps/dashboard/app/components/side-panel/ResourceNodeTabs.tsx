@@ -34,7 +34,7 @@ import {
   machineState,
 } from "@/app/lib/machineConnection";
 import { snapshotImage, snapshotOptions } from "@/app/lib/sandboxSnapshots";
-import { isPlainObject } from "@/app/lib/utils";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { api } from "@broods/convex/_generated/api";
 import type { StorageTrust } from "@broods/convex/model/storageTrust";
 import { CopyRow } from "@/app/components/CopyButton";
@@ -89,7 +89,7 @@ export function ResourceConfigTab({
         value={data.config ?? fallback}
         onSave={(config) =>
           onUpdateNodeData({
-            config: isPlainObject(config) ? config : fallback,
+            config: parseOr(configObject, config, fallback),
           })
         }
       />
@@ -113,13 +113,9 @@ export function SandboxResourceDetailsTab({
   /** Code owns this row, so the canvas save discards config edits: show them read-only. */
   managedByCode?: boolean;
 }): React.JSX.Element {
-  const config: Record<string, unknown> = isPlainObject(data.config)
-    ? data.config
-    : SANDBOX_DEFAULT_CONFIG;
+  const config = parseOr(configObject, data.config, SANDBOX_DEFAULT_CONFIG);
   // Core's egress is `network.mode` (allow-all, deny-all, restricted), not an `internet` flag.
-  const network: { mode?: string } = isPlainObject(config.network)
-    ? (config.network as { mode?: string })
-    : {};
+  const network = parseOr(configObject, config.network, {});
   // Convex rejects sizing, persistence and egress rules on a machine record.
   const machine = config.provider === "machine";
   const provider =
@@ -309,17 +305,13 @@ export function WorkspaceResourceDetailsTab({
   onSaveName: () => void;
   onUpdateNodeData: UpdateNodeData;
 }): React.JSX.Element {
-  const config: Record<string, unknown> = isPlainObject(data.config)
-    ? data.config
-    : WORKSPACE_DEFAULT_CONFIG;
-  const harness = isPlainObject(config.harness) ? config.harness : {};
+  const config = parseOr(configObject, data.config, WORKSPACE_DEFAULT_CONFIG);
+  const harness = parseOr(configObject, config.harness, {});
   const isolation = isWorkspaceIsolation(config.isolation)
     ? config.isolation
     : undefined;
-  const storage: Record<string, unknown> = isPlainObject(config.storage)
-    ? config.storage
-    : { provider: "s3" };
-  const auth = isPlainObject(storage.auth) ? storage.auth : {};
+  const storage = parseOr(configObject, config.storage, { provider: "s3" });
+  const auth = parseOr(configObject, storage.auth, {});
   // Local: switching on saves nothing until a bucket is typed, so a derived switch would snap
   // back off. It re-adopts the saved value when that changes elsewhere.
   const savedOwnBucket =
@@ -332,9 +324,7 @@ export function WorkspaceResourceDetailsTab({
     setOwnBucket(savedOwnBucket);
   }
   const disabledFeatures = HARNESS_FEATURES.filter((feature) => {
-    const value = isPlainObject(harness[feature.key])
-      ? (harness[feature.key] as Record<string, unknown>)
-      : {};
+    const value = parseOr(configObject, harness[feature.key], {});
 
     return value.enabled === false;
   });

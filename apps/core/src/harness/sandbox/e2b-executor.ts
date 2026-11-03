@@ -5,7 +5,6 @@ import {
   upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
@@ -278,7 +277,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
 }
 
 function e2bApiOptions(config: SandboxExecutorConfig): Record<string, unknown> {
-  const options = isPlainObject(config.options) ? config.options : {};
+  const options = config.options ?? {};
   const apiKey = configString(options.apiKey) ?? optionalEnv("E2B_API_KEY");
 
   return {
@@ -314,7 +313,7 @@ function e2bCreateOptions(
   config: SandboxExecutorConfig,
   persistent: boolean,
 ): Record<string, unknown> {
-  const options = isPlainObject(config.options) ? config.options : {};
+  const options = config.options ?? {};
   const apiKey = configString(options.apiKey) ?? optionalEnv("E2B_API_KEY");
 
   return {

@@ -1,17 +1,26 @@
 // The only copy of config validation (Convex on write, core every run): keep it runtime-pure.
 
+import { z } from "zod/mini";
+
 import { SANDBOX_REMOVED_MESSAGE } from "./agentConfigCodec";
 import { mergeConfigObjects } from "./configValues";
-import { isPlainObject, isStringRecord } from "./objects";
+import { workspaceOnLaterSandbox } from "./sandboxMounts";
 import {
-  AGENT_HOOK_EVENT_NAMES,
-  type AgentHookEventName,
-} from "./accountHooks";
+  nonEmptyString,
+  nonEmptyStrings,
+  parseInput,
+  positiveInteger,
+  refusingProtoKey,
+  resourceCreateInput,
+  resourceUpdateInput,
+  stringRecord,
+  wholeValue,
+} from "./inputSchema";
+import { configObject } from "./storedJson";
+import { AGENT_HOOK_EVENT_NAMES } from "./accountHooks";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   PROVIDER_ENDPOINT_SETTING,
-  isAccountModelProviderName,
-  type AccountModelProviderName,
 } from "./modelProviders";
 import { ClientError } from "./clientError";
 import { MAX_CONFIGURED_SKILLS } from "./skillLimits";
@@ -19,64 +28,8 @@ import { MAX_CONFIGURED_SKILLS } from "./skillLimits";
 export type AgentStatus = "active" | "disabled";
 export type { AccountModelProviderName } from "./modelProviders";
 
-export type AgentConfig = Record<string, unknown> & {
-  agent?: Record<string, unknown>;
-  harness?: {
-    activeTools?: string[];
-    debug?: {
-      enabled?: boolean;
-      level?: (typeof AGENT_HARNESS_DEBUG_LEVELS)[number];
-      subsystems?: string[];
-    };
-    inactiveTools?: string[];
-    type: (typeof AGENT_HARNESS_TYPES)[number];
-    permissionMode?: (typeof AGENT_HARNESS_PERMISSION_MODES)[number];
-    startupTimeoutMs?: number;
-    webSearch?: boolean;
-  };
-  model?: Record<string, unknown>;
-  provider?: Partial<Record<AccountModelProviderName, Record<string, unknown>>>;
-  sandboxes?: string[];
-  workspaces?: AgentWorkspaceRef[];
-  /** Keyed by MCP server row id. */
-  mcp?: Record<string, unknown>;
-  session?: Record<string, unknown>;
-  hooks?: Record<string, unknown>;
-  channels?: Record<string, unknown>;
-  tools?: Record<string, unknown>;
-  denyTools?: string[];
-  skills?: { enabled?: boolean; allowed?: string[]; [key: string]: unknown };
-  subagent?: {
-    enabled?: boolean;
-    allowed?: string[];
-    context?: "new" | "inherited";
-    mode?: "ephemeral" | "persistent";
-    stream?: boolean;
-    visibility?: "full" | "result" | "none";
-    model?: Record<string, unknown>;
-    [key: string]: unknown;
-  };
-  scheduler?: { enabled?: boolean; [key: string]: unknown };
-  browser?: { enabled?: boolean; [key: string]: unknown };
-  policies?: string[];
-  publicAccess?: boolean;
-  allowRunOverrides?: boolean;
-};
-
 // patch: a partial config checked before its merge; cross-branch rules wait for the merge.
 export type AgentConfigCheckOptions = { patch?: boolean };
-
-export interface AgentWorkspaceRef {
-  name: string;
-  workspaceId: string;
-  sandbox?: string | null;
-}
-
-export type LaterSandboxMount = {
-  index: number;
-  sandboxId: string;
-  workspace: AgentWorkspaceRef;
-};
 
 const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
 // Input tokens; above every model context window shipped today.
@@ -100,16 +53,6 @@ export const AGENT_HARNESS_PERMISSION_MODES = [
   "allow-edits",
   "allow-all",
 ] as const;
-const AGENT_HARNESS_KEYS = new Set([
-  "activeTools",
-  "debug",
-  "inactiveTools",
-  "permissionMode",
-  "startupTimeoutMs",
-  "type",
-  "webSearch",
-]);
-const AGENT_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
 const PROVIDER_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 // Core puts the gateway id into AI Gateway URL paths, so it stays URL-safe.
 const AI_GATEWAY_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
@@ -192,45 +135,752 @@ export const AGENT_LIFECYCLE_EVENT_NAMES = [
   "subagent.task.finished",
 ] as const;
 
+const AI_GATEWAY_ID_ERROR =
+  "must be an AI Gateway id (letters, digits, - and _)";
+const CHANNEL_TRACE_MODES = ["enabled", "disabled"] as const;
+const SYSTEM_MESSAGE_ERROR =
+  "must be a string, SystemModelMessage, or SystemModelMessage[]: invalid system message";
+const optionalString = z.optional(z.string());
+const optionalBoolean = z.optional(z.boolean());
+const timerMs = positiveInteger(MAX_TIMER_MS);
+const publicHttpsUrl = z.string().check(
+  z.superRefine((value, ctx): void => {
+    const problem = publicHttpsUrlProblem(value);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+  }),
+);
+const convexDocumentId = (error: string): z.ZodMiniString =>
+  z
+    .string({ error: error })
+    .check(z.refine(isNativeConvexDocumentId, { error: error }));
+const eventList = (events: readonly string[]): z.ZodMiniType<string[]> =>
+  wholeValue(
+    z.array(z.enum(events)),
+    `must be an array of: ${events.join(", ")}`,
+  );
+const patternString = (pattern: RegExp, error: string): z.ZodMiniString =>
+  z.string().check(z.regex(pattern, { error: error }));
+const graphApiVersion = patternString(/^v\d+\.\d+$/, 'must look like "v21.0"');
+const workspaceName = nonEmptyString.check(
+  z.regex(/^[A-Za-z0-9._-]+$/, {
+    error: "must use only letters, numbers, dots, underscores, or hyphens",
+  }),
+);
+
+// The AI SDK's SystemModelMessage: Convex cannot import `ai`.
+const SYSTEM_MESSAGE = z.looseObject({
+  role: z.literal("system"),
+  content: z.string(),
+  providerOptions: z.optional(
+    z.record(z.string(), z.record(z.string(), z.unknown())),
+  ),
+});
+
+const AGENT_BEHAVIOR = z.looseObject({
+  // No ceiling: a long tool job can legitimately take hundreds of steps.
+  maxTurn: z.optional(
+    z
+      .number({ error: "must be a non-negative integer (0 lifts the cap)" })
+      .check(
+        z.refine(
+          (value): boolean => Number.isSafeInteger(value) && value >= 0,
+          {
+            error: "must be a non-negative integer (0 lifts the cap)",
+          },
+        ),
+      ),
+  ),
+  system: z.optional(
+    wholeValue(
+      z.union([z.string(), SYSTEM_MESSAGE, z.array(SYSTEM_MESSAGE)]),
+      SYSTEM_MESSAGE_ERROR,
+    ),
+  ),
+});
+
+const HARNESS = z
+  .strictObject({
+    type: z.enum(AGENT_HARNESS_TYPES),
+    permissionMode: z.optional(z.enum(AGENT_HARNESS_PERMISSION_MODES)),
+    startupTimeoutMs: z.optional(
+      positiveInteger(AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT),
+    ),
+    webSearch: optionalBoolean,
+    activeTools: z.optional(nonEmptyStrings),
+    inactiveTools: z.optional(nonEmptyStrings),
+    debug: z.optional(
+      z.strictObject({
+        enabled: optionalBoolean,
+        level: z.optional(z.enum(AGENT_HARNESS_DEBUG_LEVELS)),
+        subsystems: z.optional(nonEmptyStrings),
+      }),
+    ),
+  })
+  .check(
+    z.superRefine((harness, ctx): void => {
+      if (
+        harness.activeTools !== undefined &&
+        harness.inactiveTools !== undefined
+      )
+        ctx.addIssue({
+          code: "custom",
+          message: "must use either activeTools or inactiveTools, not both",
+        });
+      if (
+        harness.type === "codex" &&
+        harness.permissionMode !== undefined &&
+        harness.permissionMode !== "allow-all"
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: ["permissionMode"],
+          message: "must be allow-all for the codex harness",
+        });
+      if (harness.type !== "codex" && harness.webSearch !== undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: ["webSearch"],
+          message: "is only supported by the codex harness",
+        });
+      if (harness.type === "pi" && harness.startupTimeoutMs !== undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: ["startupTimeoutMs"],
+          message: "is not supported by the pi harness",
+        });
+    }),
+  );
+
+// The AI SDK's TimeoutConfiguration: a number, or limits by phase plus `tools.{toolName}Ms`.
+const MODEL_TIMEOUT = z.union(
+  [
+    timerMs,
+    z
+      .looseObject({
+        totalMs: z.optional(timerMs),
+        stepMs: z.optional(timerMs),
+        firstChunkMs: z.optional(timerMs),
+        chunkMs: z.optional(timerMs),
+        toolMs: z.optional(timerMs),
+        tools: z.optional(
+          z.record(
+            z.string().check(
+              z.regex(/^.+Ms$/, {
+                error: "must be named {toolName}Ms, like bashMs",
+              }),
+            ),
+            z.optional(timerMs),
+            {
+              error: (issue): string | undefined =>
+                issue.code === "invalid_type"
+                  ? "must be an object of {toolName}Ms limits"
+                  : undefined,
+            },
+          ),
+        ),
+      })
+      .check(
+        z.superRefine((timeout, ctx): void => {
+          for (const key of Object.keys(timeout)) {
+            if (!(MODEL_TIMEOUT_KEYS as readonly string[]).includes(key))
+              ctx.addIssue({
+                code: "custom",
+                path: [key],
+                message: `is not supported; use one of: ${MODEL_TIMEOUT_KEYS.join(", ")}`,
+              });
+          }
+        }),
+      ),
+  ],
+  {
+    error: `must be a number of milliseconds or an object with ${MODEL_TIMEOUT_KEYS.join(", ")}`,
+  },
+);
+
+const MODEL_OUTPUT = z.discriminatedUnion(
+  "type",
+  [
+    z.looseObject({
+      type: z.literal("text"),
+      name: optionalString,
+      description: optionalString,
+    }),
+    z.looseObject({
+      type: z.literal("object"),
+      name: optionalString,
+      description: optionalString,
+      schema: z.record(z.string(), z.unknown()),
+    }),
+    z.looseObject({
+      type: z.literal("array"),
+      name: optionalString,
+      description: optionalString,
+      element: z.record(z.string(), z.unknown()),
+    }),
+    z.looseObject({
+      type: z.literal("choice"),
+      name: optionalString,
+      description: optionalString,
+      options: wholeValue(
+        z.array(z.string()).check(z.minLength(1)),
+        "must be a non-empty array of strings",
+      ),
+    }),
+    z.looseObject({
+      type: z.literal("json"),
+      name: optionalString,
+      description: optionalString,
+    }),
+  ],
+  {
+    error: (issue): string | undefined =>
+      issue.code === "invalid_union"
+        ? "must be one of: text, object, array, choice, json"
+        : undefined,
+  },
+);
+
+const MODEL = z
+  .looseObject({
+    provider: z.optional(z.enum(ACCOUNT_MODEL_PROVIDER_NAMES)),
+    modelId: optionalString,
+    transcriptionModelId: optionalString,
+    reasoning: z.optional(
+      z.enum([
+        "provider-default",
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+      ]),
+    ),
+    providerOptions: z.optional(z.record(z.string(), z.unknown())),
+    timeout: z.optional(MODEL_TIMEOUT),
+    output: z.optional(MODEL_OUTPUT),
+  })
+  .check(
+    z.superRefine((model, ctx): void => {
+      for (const key of Object.keys(model)) {
+        if (!(MODEL_CONFIG_SETTING_KEYS as readonly string[]).includes(key))
+          ctx.addIssue({
+            code: "custom",
+            path: [key],
+            message:
+              "is not supported; use {parent}.providerOptions for provider-specific settings",
+          });
+      }
+    }),
+  );
+
+const PROVIDER_SETTINGS = z.pipe(
+  z
+    .looseObject({
+      apiKey: optionalString,
+      gatewayId: z.optional(
+        z
+          .string({ error: AI_GATEWAY_ID_ERROR })
+          .check(
+            z.regex(AI_GATEWAY_ID_PATTERN, { error: AI_GATEWAY_ID_ERROR }),
+          ),
+      ),
+      base_url: optionalString,
+      baseURL: optionalString,
+      headers: z.optional(stringRecord("must be an object with string values")),
+    })
+    .check(
+      z.superRefine((settings, ctx): void => {
+        const baseURL = providerBaseURL(settings);
+        if (baseURL) {
+          const problem = publicHttpsUrlProblem(baseURL);
+          const label =
+            typeof settings.base_url === "string" ? "base_url" : "baseURL";
+          if (problem)
+            ctx.addIssue({ code: "custom", path: [label], message: problem });
+        }
+        for (const key of Object.keys(settings)) {
+          if (key === "baseURL" || (key === "base_url" && baseURL)) continue;
+          const endpoint = settings[key];
+          if (!PROVIDER_ENDPOINT_SETTING.test(key) || endpoint === undefined)
+            continue;
+          if (typeof endpoint !== "string") {
+            ctx.addIssue({
+              code: "custom",
+              path: [key],
+              message: "must be a string",
+            });
+            continue;
+          }
+          const problem = endpoint.trim()
+            ? publicHttpsUrlProblem(endpoint.trim())
+            : undefined;
+          if (problem)
+            ctx.addIssue({ code: "custom", path: [key], message: problem });
+        }
+      }),
+    ),
+  // Store one spelling: a stale base_url (core prefers it) would shadow later baseURL edits.
+  z.transform((settings) => {
+    const baseURL = providerBaseURL(settings);
+    if (baseURL) {
+      settings.baseURL = baseURL;
+      delete settings.base_url;
+    }
+
+    return settings;
+  }),
+);
+
+const PROVIDERS = refusingProtoKey(
+  z
+    .partialRecord(
+      z.pipe(
+        z.string(),
+        z.enum(ACCOUNT_MODEL_PROVIDER_NAMES, {
+          error: "is not a supported provider",
+        }),
+      ),
+      PROVIDER_SETTINGS,
+    )
+    .check(
+      z.superRefine((providers, ctx): void => {
+        const custom = providers.custom;
+        if (!custom || providerBaseURL(custom)) return;
+        ctx.addIssue({
+          code: "custom",
+          path: ["custom", "base_url"],
+          message: `is required${custom.baseUrl !== undefined ? ` (found "baseUrl", use "base_url" or "baseURL")` : ""}`,
+        });
+      }),
+    ),
+  "is not a supported provider",
+);
+
+const WORKSPACE_REF = z.looseObject({
+  name: workspaceName,
+  workspaceId: z
+    .string({
+      error: (issue): string =>
+        issue.input === undefined
+          ? "must be a non-empty string"
+          : "must be a string",
+    })
+    .check(
+      z.refine((value): boolean => value.trim().length > 0, {
+        error: "must be a non-empty string",
+      }),
+    ),
+  sandbox: z.nullish(
+    z.string({ error: "must be a non-empty string or null" }).check(
+      z.refine((value): boolean => value.trim().length > 0, {
+        error: "must be a non-empty string or null",
+      }),
+    ),
+  ),
+});
+
+const WORKSPACE_REFS = z.array(WORKSPACE_REF).check(
+  z.superRefine((refs, ctx): void => {
+    const seen = new Set<string>();
+    refs.forEach((ref, index): void => {
+      if (seen.has(ref.name))
+        ctx.addIssue({
+          code: "custom",
+          path: [index, "name"],
+          message: `"${ref.name}" is used more than once`,
+        });
+      seen.add(ref.name);
+    });
+  }),
+);
+
+const WEBHOOK_HOOK = z
+  .looseObject({
+    enabled: optionalBoolean,
+    url: z.optional(nonEmptyString),
+    secret: z.optional(nonEmptyString),
+    events: z.optional(eventList(AGENT_LIFECYCLE_EVENT_NAMES)),
+  })
+  .check(
+    z.superRefine((hook, ctx): void => {
+      if (hook.enabled === true) {
+        for (const key of ["url", "secret"] as const) {
+          if (hook[key] === undefined)
+            ctx.addIssue({
+              code: "custom",
+              path: [key],
+              message: "is required when {parent}.enabled is true",
+            });
+        }
+      }
+      const problem = hook.url ? publicHttpsUrlProblem(hook.url) : undefined;
+      if (problem)
+        ctx.addIssue({ code: "custom", path: ["url"], message: problem });
+    }),
+  );
+
+const CODE_HOOK = z.looseObject({
+  hookId: convexDocumentId("must be a native Convex document id"),
+  enabled: optionalBoolean,
+  events: z.optional(eventList(AGENT_HOOK_EVENT_NAMES)),
+});
+
+const HOOKS = z.looseObject({
+  webhooks: z.optional(z.array(WEBHOOK_HOOK)),
+  code: z.optional(z.array(CODE_HOOK)),
+});
+
+const PARTITION = z
+  .looseObject({
+    by: z.enum(CHANNEL_PARTITION_MODES),
+    alias: z.optional(z.unknown()),
+  })
+  .check(
+    z.superRefine((partition, ctx): void => {
+      const { alias } = partition;
+      if (partition.by === "shared") {
+        if (alias !== undefined)
+          ctx.addIssue({
+            code: "custom",
+            path: ["alias"],
+            message: "is only supported when {parent}.by is conversation",
+          });
+
+        return;
+      }
+      const message =
+        typeof alias !== "string" || !alias.trim()
+          ? "must be a non-empty string"
+          : /^[A-Za-z0-9._-]+$/.test(alias)
+            ? undefined
+            : "must use only letters, numbers, dots, underscores, or hyphens";
+      if (message)
+        ctx.addIssue({ code: "custom", path: ["alias"], message: message });
+    }),
+  );
+
+const RETIRED_CHANNEL_KEYS: ReadonlyArray<readonly [string, string]> = [
+  ...RETIRED_REACH_KEYS,
+  ...RETIRED_PARTITION_KEYS.map((retired): readonly [string, string] => [
+    retired,
+    "partition",
+  ]),
+];
+
+const CHANNEL_IDENTITY = {
+  id: nonEmptyString,
+  trace: z.optional(z.enum(CHANNEL_TRACE_MODES)),
+  allowedChannelIds: z.optional(nonEmptyStrings),
+  allowedUserIds: z.optional(nonEmptyStrings),
+  partition: z.optional(PARTITION),
+};
+const RETIRED_CHANNEL_KEY_CHECK = z.superRefine(
+  (channel: Record<string, unknown>, ctx): void => {
+    for (const [retired, replacement] of RETIRED_CHANNEL_KEYS) {
+      if (channel[retired] !== undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: [retired],
+          message: `is no longer supported; use {parent}.${replacement}`,
+        });
+    }
+  },
+);
+
+const TELEGRAM = channelSchema({
+  apiUrl: z.optional(publicHttpsUrl),
+  botToken: optionalString,
+  webhookSecret: optionalString,
+  botUsername: optionalString,
+  reactionEmoji: optionalString,
+});
+// Without an audience no Google Chat webhook token can be verified.
+const GCHAT = channelSchema({
+  credentials: optionalString,
+  endpointUrl: z.optional(publicHttpsUrl),
+  googleChatProjectNumber: z.optional(
+    patternString(/^\d+$/, "must be the numeric project number"),
+  ),
+  workspaceAddOnServiceAccountEmail: optionalString,
+  userName: optionalString,
+});
+const GITHUB = channelSchema({
+  apiUrl: z.optional(publicHttpsUrl),
+  webhookSecret: optionalString,
+  appId: optionalString,
+  privateKey: optionalString,
+  botUserName: optionalString,
+  botUserId: z.optional(positiveInteger(Number.MAX_SAFE_INTEGER)),
+});
+// Linear has no bots: the agent posts as the key's member, mentioned by userName.
+const LINEAR = channelSchema({
+  apiKey: optionalString,
+  apiUrl: z.optional(publicHttpsUrl),
+  userName: optionalString,
+  webhookSecret: optionalString,
+});
+const SLACK = channelSchema({
+  apiUrl: z.optional(publicHttpsUrl),
+  botToken: optionalString,
+  signingSecret: optionalString,
+  reactionEmoji: optionalString,
+});
+const DISCORD = channelSchema({
+  apiUrl: z.optional(publicHttpsUrl),
+  botToken: optionalString,
+  publicKey: optionalString,
+  botUserId: optionalString,
+  mentionRoleIds: z.optional(nonEmptyStrings),
+});
+const PANCAKE = channelSchema({
+  pageId: optionalString,
+  pageAccessToken: optionalString,
+  webhookSecret: optionalString,
+  senderId: optionalString,
+});
+const TEAMS = channelSchema({
+  apiUrl: z.optional(publicHttpsUrl),
+  appId: optionalString,
+  appPassword: optionalString,
+  appTenantId: optionalString,
+  appType: z.optional(z.enum(["MultiTenant", "SingleTenant"])),
+  userName: optionalString,
+});
+const TWILIO = channelSchema({
+  accountSid: optionalString,
+  authToken: optionalString,
+  apiUrl: z.optional(publicHttpsUrl),
+  statusCallbackUrl: z.optional(publicHttpsUrl),
+  webhookUrl: z.optional(publicHttpsUrl),
+  // A sid that does not look like one would be sent as a phone number.
+  messagingServiceSid: z.optional(
+    patternString(
+      /^MG[0-9a-fA-F]{32}$/,
+      'must be a Messaging Service sid ("MG" and 32 hex digits)',
+    ),
+  ),
+  // Core matches it to the E.164 `To` Twilio posts; any other spelling ignores every message.
+  phoneNumber: z.optional(
+    patternString(
+      /^\+[1-9]\d{1,14}$/,
+      'must be an E.164 number, e.g. "+15551234567"',
+    ),
+  ),
+  userName: optionalString,
+});
+const ZALO = channelSchema({
+  botToken: optionalString,
+  webhookSecret: z.optional(
+    z
+      .string()
+      .check(
+        z.refine(
+          (secret): boolean => secret.length >= 8 && secret.length <= 256,
+          { error: "must be 8 to 256 characters" },
+        ),
+      ),
+  ),
+});
+const INSTAGRAM = channelSchema({
+  accessToken: optionalString,
+  accountId: z.optional(
+    patternString(/^\d+$/, "must be the numeric Instagram account id"),
+  ),
+  // Spliced into every Graph API path, so a version only, never a path.
+  apiVersion: z.optional(graphApiVersion),
+  appSecret: optionalString,
+  userName: optionalString,
+  verifyToken: optionalString,
+});
+const MESSENGER = channelSchema({
+  apiVersion: z.optional(graphApiVersion),
+  appSecret: optionalString,
+  pageAccessToken: optionalString,
+  userName: optionalString,
+  verifyToken: optionalString,
+});
+const WHATSAPP = channelSchema({
+  accessToken: optionalString,
+  apiUrl: z.optional(publicHttpsUrl),
+  apiVersion: z.optional(
+    patternString(/^v\d+\.\d+$/, 'must look like "v25.0"'),
+  ),
+  appSecret: optionalString,
+  // A Graph API path segment, and the SDK refuses to send to any other.
+  phoneNumberId: z.optional(
+    patternString(/^\d+$/, "must be the number's digits-only ID"),
+  ),
+  userName: optionalString,
+  verifyToken: optionalString,
+});
+
+const CHANNELS = z.looseObject({
+  telegram: z.nullish(TELEGRAM),
+  gchat: z.nullish(GCHAT),
+  github: z.nullish(GITHUB),
+  linear: z.nullish(LINEAR),
+  slack: z.nullish(SLACK),
+  discord: z.nullish(DISCORD),
+  pancake: z.nullish(PANCAKE),
+  teams: z.nullish(TEAMS),
+  twilio: z.nullish(TWILIO),
+  zalo: z.nullish(ZALO),
+  instagram: z.nullish(INSTAGRAM),
+  messenger: z.nullish(MESSENGER),
+  whatsapp: z.nullish(WHATSAPP),
+});
+
+const TOOLS = z.record(
+  z
+    .string()
+    .check(z.refine(isProviderToolName, { error: "is not a supported tool" })),
+  z.looseObject({
+    enabled: optionalBoolean,
+    needsApproval: optionalBoolean,
+    config: z.optional(z.record(z.string(), z.unknown())),
+  }),
+);
+
+/** Keyed by MCP server row id. */
+const MCP = refusingProtoKey(
+  z.record(
+    convexDocumentId("must be keyed by an MCP server id"),
+    z.looseObject({
+      enabled: optionalBoolean,
+      needsApproval: optionalBoolean,
+      headers: z.optional(stringRecord("must be an object of string values")),
+      oauth: z.optional(stringRecord("must be an object of string values")),
+    }),
+  ),
+  "must be keyed by an MCP server id",
+);
+
+const SKILLS = z
+  .looseObject({
+    enabled: optionalBoolean,
+    allowed: z.optional(nonEmptyStrings),
+  })
+  .check(
+    z.superRefine((skills, ctx): void => {
+      if (new Set(skills.allowed).size > MAX_CONFIGURED_SKILLS)
+        ctx.addIssue({
+          code: "custom",
+          path: ["allowed"],
+          message: `must list at most ${MAX_CONFIGURED_SKILLS} skills`,
+        });
+    }),
+  );
+
+const SUBAGENT = z.looseObject({
+  enabled: optionalBoolean,
+  stream: optionalBoolean,
+  allowed: z.optional(nonEmptyStrings),
+  context: z.optional(z.enum(["new", "inherited"])),
+  mode: z.optional(z.enum(["ephemeral", "persistent"])),
+  visibility: z.optional(z.enum(["full", "result", "none"])),
+  model: z.nullish(MODEL),
+});
+
+const ENABLED_SWITCH = z.looseObject({ enabled: optionalBoolean });
+
+export const AGENT_CONFIG = z.looseObject({
+  agent: z.nullish(AGENT_BEHAVIOR),
+  harness: z.nullish(HARNESS),
+  model: z.nullish(MODEL),
+  provider: z.nullish(PROVIDERS),
+  workspaces: z.nullish(WORKSPACE_REFS),
+  sandboxes: z.optional(nonEmptyStrings),
+  session: z.nullish(
+    z
+      .looseObject({
+        pruning: z.nullish(z.looseObject({ enabled: optionalBoolean })),
+        autoCompaction: z.nullish(
+          z.looseObject({
+            enabled: optionalBoolean,
+            maxContextLength: z.optional(
+              positiveInteger(SESSION_MAX_CONTEXT_LENGTH_LIMIT),
+            ),
+          }),
+        ),
+      })
+      .check(
+        z.superRefine((session, ctx): void => {
+          if (session.compaction !== undefined)
+            ctx.addIssue({
+              code: "custom",
+              path: ["compaction"],
+              message:
+                "was renamed to {parent}.autoCompaction, and maxContextLength now counts input tokens",
+            });
+        }),
+      ),
+  ),
+  hooks: z.nullish(HOOKS),
+  channels: z.nullish(CHANNELS),
+  tools: z.nullish(TOOLS),
+  mcp: z.nullish(MCP),
+  denyTools: z.optional(nonEmptyStrings),
+  skills: z.nullish(SKILLS),
+  subagent: z.nullish(SUBAGENT),
+  scheduler: z.nullish(ENABLED_SWITCH),
+  /** `browse` runs on the first sandbox: a machine, or lambda "obscura" with allow-all. */
+  browser: z.nullish(ENABLED_SWITCH),
+  policies: z.nullish(nonEmptyStrings),
+  publicAccess: optionalBoolean,
+  allowRunOverrides: optionalBoolean,
+});
+
+const OPTIONAL_MODEL = z.nullish(MODEL);
+
+// Only what a canvas save checks: an unreadable harness is the full check's to refuse.
+const AGENT_RUNTIME_REFS = z.looseObject({
+  harness: z.optional(z.unknown()),
+  workspaces: z.nullish(WORKSPACE_REFS),
+  sandboxes: z.optional(nonEmptyStrings),
+});
+const HARNESS_TYPE = z.looseObject({ type: z.optional(z.unknown()) });
+
+const UPDATE_AGENT_INPUT = z.extend(resourceUpdateInput, {
+  status: z.optional(z.enum(["active", "disabled"])),
+});
+
+// Lenient reads of a stored or manifest config: a branch that does not fit is skipped.
+export const storedRefList = z.looseObject({ allowed: z.array(z.unknown()) });
+export const storedWorkspaceRef = z.looseObject({ workspaceId: z.string() });
+
+export type AgentConfig = z.output<typeof AGENT_CONFIG>;
+export type AgentWorkspaceRef = z.output<typeof WORKSPACE_REF>;
+export type AgentModelConfig = z.output<typeof MODEL>;
+export type AgentWebhookHookConfig = z.output<typeof WEBHOOK_HOOK>;
+type AgentChannelsConfig = z.output<typeof CHANNELS>;
+type AgentRuntimeRefs = Pick<
+  z.output<typeof AGENT_RUNTIME_REFS>,
+  "sandboxes" | "workspaces"
+> & { harness?: unknown; sandbox?: unknown };
+
+// `schema` is AGENT_CONFIG, or the `z.compile` copy core checks every run with.
 export function normalizeAgentConfig(
   value: unknown,
   options: AgentConfigCheckOptions = {},
+  schema: typeof AGENT_CONFIG = AGENT_CONFIG,
 ): AgentConfig {
   if (value == null) {
     return {};
   }
-  if (!isPlainObject(value)) {
-    throw new ClientError("config must be an object");
-  }
-
-  const config = value as AgentConfig;
-  normalizeAgentBehaviorConfig(config.agent);
-  normalizeHarnessConfig(config.harness);
-  normalizeModelConfig(config.model, "config.model");
-  normalizeProviderConfig(config.provider);
-  assertAgentRuntimeRefs(config, options);
-  normalizeSessionConfig(config.session);
-  normalizeHooksConfig(config.hooks);
-  normalizeChannelsConfig(config.channels, options);
-  normalizeToolsConfig(config.tools);
-  normalizeMcpConfig(config.mcp);
-  assertOptionalStringArray(config.denyTools, "config.denyTools");
-  normalizeSkillsConfig(config.skills);
-  normalizeSubagentConfig(config.subagent);
-  normalizeEnabledSwitch(config.scheduler, "config.scheduler");
-  normalizeEnabledSwitch(config.browser, "config.browser");
+  const config = parseInput(schema, value, "config");
+  const policyIds = [...new Set(config.policies ?? [])];
+  // The parse built `config`, so it is ours to edit; a non-empty list goes back last.
+  delete config.policies;
+  assertRuntimeRefs(config, options);
+  if (!options.patch && config.channels)
+    assertCompleteChannels(config.channels);
   if (config.policy !== undefined) {
     throw new ClientError(
       "config.policy is no longer supported; use config.policies, and set mode on the policy itself",
     );
   }
-  const policies = normalizePolicyIds(config.policies);
-  if (policies) {
-    config.policies = policies;
-  } else {
-    delete config.policies;
-  }
-  if (isPlainObject(config.harness) && config.policies !== undefined) {
+  if (config.harness && policyIds.length > 0) {
     throw new ClientError(
       "config.policies is not supported with config.harness",
     );
@@ -239,19 +889,18 @@ export function normalizeAgentConfig(
     [config.model, "config.model"],
     [config.subagent?.model, "config.subagent.model"],
   ] as const) {
-    if (
-      isPlainObject(config.harness) &&
-      isPlainObject(model) &&
-      isPlainObject(model.output) &&
-      model.output.type !== "text"
-    ) {
+    if (config.harness && model?.output && model.output.type !== "text") {
       throw new ClientError(
         `${label}.output structured output is not supported with config.harness`,
       );
     }
   }
-  assertOptionalBoolean(config.publicAccess, "config.publicAccess");
-  assertOptionalBoolean(config.allowRunOverrides, "config.allowRunOverrides");
+  if (config.skills?.allowed)
+    config.skills = {
+      ...config.skills,
+      allowed: [...new Set(config.skills.allowed)],
+    };
+  if (policyIds.length > 0) config.policies = policyIds;
 
   return config;
 }
@@ -259,12 +908,10 @@ export function normalizeAgentConfig(
 export function normalizeAgentConfigPatch(
   value: unknown,
 ): Record<string, unknown> {
-  if (!isPlainObject(value)) {
-    throw new ClientError("config must be an object");
-  }
-  validateConfigPatch(value, "config");
+  const patch = parseInput(configObject, value, "config");
+  normalizeAgentConfig(removeNullConfigValues(patch), { patch: true });
 
-  return value;
+  return patch;
 }
 
 export function mergeAgentConfig(
@@ -279,16 +926,13 @@ export function normalizeCreateAgentInput(value: unknown): {
   description?: string;
   config: AgentConfig;
 } {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-  const name = normalizeRequiredString(value.name, "name");
-  const description = optionalString(value.description, "description");
-  const config = normalizeAgentConfig(value.config);
+  const input = parseInput(resourceCreateInput, value, "");
+  const description = input.description?.trim();
 
   return {
-    name: name,
+    name: input.name.trim(),
     ...(description ? { description: description } : {}),
-    config: config,
+    config: normalizeAgentConfig(input.config),
   };
 }
 
@@ -301,85 +945,44 @@ export function normalizeUpdateAgentInput(
   status?: AgentStatus;
   config: AgentConfig;
 } {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-
+  const input = parseInput(UPDATE_AGENT_INPUT, value, "");
   const config =
-    "config" in value
+    "config" in input
       ? mergeAgentConfig(
           existingConfig,
-          normalizeAgentConfigPatch(value.config),
+          normalizeAgentConfigPatch(input.config),
         )
       : existingConfig;
 
   return {
-    ...(value.name !== undefined
-      ? { name: normalizeRequiredString(value.name, "name") }
-      : {}),
-    ...(value.description !== undefined
+    ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+    ...(input.description !== undefined
       ? {
           description:
-            value.description === null
+            input.description === null
               ? null
-              : optionalString(value.description, "description"),
+              : input.description.trim() || undefined,
         }
       : {}),
-    ...(value.status !== undefined
-      ? { status: requireAgentStatus(value.status) }
-      : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
     config: config,
   };
 }
 
 // A canvas save checks only these refs, never branches the dashboard did not validate.
 export function assertAgentRuntimeRefs(
-  config: AgentConfig,
+  config: Record<string, unknown>,
   options: AgentConfigCheckOptions = {},
 ): void {
-  if (config.sandbox !== undefined)
-    throw new ClientError(SANDBOX_REMOVED_MESSAGE);
-  normalizeWorkspaceRefs(config.workspaces);
-  normalizeSandboxRefs(config.sandboxes, config.workspaces);
-  if (
-    !options.patch &&
-    isPlainObject(config.harness) &&
-    !config.sandboxes?.length
-  )
-    throw new ClientError(
-      `config.sandboxes needs at least one sandbox for the ${String(config.harness.type)} harness; the first runs it`,
-    );
+  assertRuntimeRefs(parseInput(AGENT_RUNTIME_REFS, config, "config"), options);
 }
 
 // A config-time string check: it resolves no DNS.
 export function assertPublicHttpsUrl(value: string, label: string): URL {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new ClientError(`${label} must be a valid URL`);
-  }
-  if (url.protocol !== "https:")
-    throw new ClientError(`${label} must use https`);
-  if (isPrivateHostname(url.hostname))
-    throw new ClientError(
-      `${label} must not point to a private or internal address`,
-    );
+  const problem = publicHttpsUrlProblem(value);
+  if (problem) throw new ClientError(`${label} ${problem}`);
 
-  return url;
-}
-
-export function findLaterSandboxMount(
-  sandboxes: readonly string[],
-  workspaces: readonly AgentWorkspaceRef[] | undefined,
-): LaterSandboxMount | undefined {
-  for (const [index, sandboxId] of sandboxes.entries()) {
-    const workspace = workspaceOnLaterSandbox(sandboxes, index, workspaces);
-    if (workspace) {
-      return { index: index, sandboxId: sandboxId, workspace: workspace };
-    }
-  }
-
-  return undefined;
+  return new URL(value);
 }
 
 // Shape only: core resolves at run time whether the provider ships the tool.
@@ -412,1113 +1015,18 @@ export function mergeCanvasSandboxes(
   return [...new Set([...canvas, ...hidden])];
 }
 
-export function normalizeWebhookHookConfig(value: unknown, path: string): void {
-  if (!isPlainObject(value)) throw new ClientError(`${path} must be an object`);
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, `${path}.enabled`);
-  assertOptionalNonEmptyString(config.url, `${path}.url`);
-  assertOptionalNonEmptyString(config.secret, `${path}.secret`);
-  if (
-    config.events !== undefined &&
-    (!Array.isArray(config.events) ||
-      !config.events.every(
-        (event) =>
-          typeof event === "string" &&
-          AGENT_LIFECYCLE_EVENT_NAMES.includes(
-            event as (typeof AGENT_LIFECYCLE_EVENT_NAMES)[number],
-          ),
-      ))
-  ) {
-    throw new ClientError(
-      `${path}.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`,
-    );
-  }
-  if (config.enabled === true) {
-    if (typeof config.url !== "string" || config.url.trim().length === 0)
-      throw new ClientError(
-        `${path}.url is required when ${path}.enabled is true`,
-      );
-    if (typeof config.secret !== "string" || config.secret.trim().length === 0)
-      throw new ClientError(
-        `${path}.secret is required when ${path}.enabled is true`,
-      );
-  }
-  if (typeof config.url === "string" && config.url.trim().length > 0)
-    assertPublicHttpsUrl(config.url, `${path}.url`);
-}
-
-function normalizeAgentBehaviorConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.agent must be an object");
-  const config = value as Record<string, unknown>;
-  assertOptionalMaxTurn(config.maxTurn);
-  validateAgentSystemConfig(config.system);
-}
-
-// No ceiling: a long tool job can legitimately take hundreds of steps.
-function assertOptionalMaxTurn(value: unknown): void {
-  if (value === undefined) return;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new ClientError(
-      "config.agent.maxTurn must be a non-negative integer (0 lifts the cap)",
-    );
-  }
-}
-
-// The AI SDK's SystemModelMessage, checked by hand: Convex cannot import `ai`.
-function validateAgentSystemConfig(value: unknown): void {
-  if (value === undefined || typeof value === "string") return;
-  const values = Array.isArray(value) ? value : [value];
-  for (const entry of values) {
-    if (
-      !isPlainObject(entry) ||
-      entry.role !== "system" ||
-      typeof entry.content !== "string" ||
-      (entry.providerOptions !== undefined &&
-        !(
-          isPlainObject(entry.providerOptions) &&
-          Object.values(entry.providerOptions).every(isPlainObject)
-        ))
-    ) {
-      throw new ClientError(
-        "config.agent.system must be a string, SystemModelMessage, or SystemModelMessage[]: invalid system message",
-      );
-    }
-  }
-}
-
-function normalizeHarnessConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.harness must be an object");
-  const config = value as Record<string, unknown>;
-  for (const key of Object.keys(config)) {
-    if (!AGENT_HARNESS_KEYS.has(key))
-      throw new ClientError(`config.harness has unknown option "${key}"`);
-  }
-  if (
-    typeof config.type !== "string" ||
-    !AGENT_HARNESS_TYPES.includes(
-      config.type as (typeof AGENT_HARNESS_TYPES)[number],
-    )
-  ) {
-    throw new ClientError(
-      `config.harness.type must be one of: ${AGENT_HARNESS_TYPES.join(", ")}`,
-    );
-  }
-  assertOptionalEnum(
-    config.permissionMode,
-    "config.harness.permissionMode",
-    AGENT_HARNESS_PERMISSION_MODES,
-  );
-  assertOptionalPositiveInteger(
-    config.startupTimeoutMs,
-    "config.harness.startupTimeoutMs",
-    AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT,
-  );
-  assertOptionalBoolean(config.webSearch, "config.harness.webSearch");
-  assertOptionalStringArray(config.activeTools, "config.harness.activeTools");
-  assertOptionalStringArray(
-    config.inactiveTools,
-    "config.harness.inactiveTools",
-  );
-  if (config.activeTools !== undefined && config.inactiveTools !== undefined) {
-    throw new ClientError(
-      "config.harness must use either activeTools or inactiveTools, not both",
-    );
-  }
-  normalizeHarnessDebugConfig(config.debug);
-  if (
-    config.type === "codex" &&
-    config.permissionMode !== undefined &&
-    config.permissionMode !== "allow-all"
-  ) {
-    throw new ClientError(
-      "config.harness.permissionMode must be allow-all for the codex harness",
-    );
-  }
-  if (config.type !== "codex" && config.webSearch !== undefined) {
-    throw new ClientError(
-      "config.harness.webSearch is only supported by the codex harness",
-    );
-  }
-  if (config.type === "pi" && config.startupTimeoutMs !== undefined) {
-    throw new ClientError(
-      "config.harness.startupTimeoutMs is not supported by the pi harness",
-    );
-  }
-}
-
-function normalizeHarnessDebugConfig(value: unknown): void {
-  if (value === undefined) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.harness.debug must be an object");
-  for (const key of Object.keys(value)) {
-    if (!AGENT_HARNESS_DEBUG_KEYS.has(key))
-      throw new ClientError(`config.harness.debug has unknown option "${key}"`);
-  }
-  assertOptionalBoolean(value.enabled, "config.harness.debug.enabled");
-  assertOptionalEnum(
-    value.level,
-    "config.harness.debug.level",
-    AGENT_HARNESS_DEBUG_LEVELS,
-  );
-  assertOptionalStringArray(
-    value.subsystems,
-    "config.harness.debug.subsystems",
-  );
-}
-
-export function normalizeModelConfig(value: unknown, label: string): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError(`${label} must be an object`);
-  const config = value as Record<string, unknown>;
-  for (const key of Object.keys(config)) {
-    if (
-      !MODEL_CONFIG_SETTING_KEYS.includes(
-        key as (typeof MODEL_CONFIG_SETTING_KEYS)[number],
-      )
-    ) {
-      throw new ClientError(
-        `${label}.${key} is not supported; use ${label}.providerOptions for provider-specific settings`,
-      );
-    }
-  }
-  assertOptionalProviderName(config.provider, `${label}.provider`);
-  assertOptionalString(config.modelId, `${label}.modelId`);
-  assertOptionalString(
-    config.transcriptionModelId,
-    `${label}.transcriptionModelId`,
-  );
-  assertOptionalEnum(config.reasoning, `${label}.reasoning`, [
-    "provider-default",
-    "none",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-  ]);
-  if (
-    config.providerOptions !== undefined &&
-    !isPlainObject(config.providerOptions)
-  ) {
-    throw new ClientError(`${label}.providerOptions must be an object`);
-  }
-  assertOptionalModelTimeout(config.timeout, `${label}.timeout`);
-  normalizeModelOutputConfig(config.output, label);
-}
-
-function normalizeModelOutputConfig(value: unknown, label: string): void {
-  if (value === undefined) return;
-  if (!isPlainObject(value))
-    throw new ClientError(`${label}.output must be an object`);
-  const config = value as Record<string, unknown>;
-  assertOptionalEnum(config.type, `${label}.output.type`, [
-    "text",
-    "object",
-    "array",
-    "choice",
-    "json",
-  ]);
-  if (config.type === undefined)
-    throw new ClientError(
-      `${label}.output.type must be one of: text, object, array, choice, json`,
-    );
-  assertOptionalString(config.name, `${label}.output.name`);
-  assertOptionalString(config.description, `${label}.output.description`);
-  if (config.type === "object" && !isPlainObject(config.schema))
-    throw new ClientError(`${label}.output.schema must be an object`);
-  if (config.type === "array" && !isPlainObject(config.element))
-    throw new ClientError(`${label}.output.element must be an object`);
-  if (
-    config.type === "choice" &&
-    (!Array.isArray(config.options) ||
-      config.options.length === 0 ||
-      !config.options.every((entry) => typeof entry === "string"))
-  ) {
-    throw new ClientError(
-      `${label}.output.options must be a non-empty array of strings`,
-    );
-  }
-}
-
-function normalizeProviderConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.provider must be an object");
-  for (const [providerName, providerConfig] of Object.entries(value)) {
-    if (!isAccountModelProviderName(providerName))
-      throw new ClientError(
-        `config.provider.${providerName} is not a supported provider`,
-      );
-    normalizeProviderSettings(providerName, providerConfig);
-  }
-}
-
-function normalizeProviderSettings(
-  providerName: AccountModelProviderName,
+export function normalizeWebhookHookConfig(
   value: unknown,
-): void {
-  if (!isPlainObject(value))
-    throw new ClientError(`config.provider.${providerName} must be an object`);
-  const config = value as Record<string, unknown>;
-  assertOptionalString(config.apiKey, `config.provider.${providerName}.apiKey`);
-  if (
-    config.gatewayId !== undefined &&
-    (typeof config.gatewayId !== "string" ||
-      !AI_GATEWAY_ID_PATTERN.test(config.gatewayId))
-  )
-    throw new ClientError(
-      `config.provider.${providerName}.gatewayId must be an AI Gateway id (letters, digits, - and _)`,
-    );
-  assertOptionalString(
-    config.base_url,
-    `config.provider.${providerName}.base_url`,
-  );
-  assertOptionalString(
-    config.baseURL,
-    `config.provider.${providerName}.baseURL`,
-  );
-  const baseURL = providerBaseURL(config);
-  if (providerName === "custom" && !baseURL) {
-    const hint =
-      config.baseUrl !== undefined
-        ? ` (found "baseUrl", use "base_url" or "baseURL")`
-        : "";
-    throw new ClientError(`config.provider.custom.base_url is required${hint}`);
-  }
-  if (baseURL) {
-    const label = typeof config.base_url === "string" ? "base_url" : "baseURL";
-    assertPublicHttpsUrl(baseURL, `config.provider.${providerName}.${label}`);
-    // Store one spelling: a stale base_url (core prefers it) would shadow later baseURL edits.
-    config.baseURL = baseURL;
-    delete config.base_url;
-  }
-  for (const [key, endpoint] of Object.entries(config)) {
-    if (key === "baseURL" || !PROVIDER_ENDPOINT_SETTING.test(key)) continue;
-    const label = `config.provider.${providerName}.${key}`;
-    assertOptionalString(endpoint, label);
-    if (typeof endpoint === "string" && endpoint.trim()) {
-      assertPublicHttpsUrl(endpoint.trim(), label);
-    }
-  }
-  if (config.headers !== undefined && !isStringRecord(config.headers)) {
-    throw new ClientError(
-      `config.provider.${providerName}.headers must be an object with string values`,
-    );
-  }
-}
-
-function providerBaseURL(config: Record<string, unknown>): string | undefined {
-  const raw =
-    typeof config.base_url === "string" ? config.base_url : config.baseURL;
-  if (typeof raw !== "string") return undefined;
-  const trimmed = raw.trim();
-
-  return trimmed || undefined;
-}
-
-function normalizeSandboxRefs(
-  value: unknown,
-  workspaces: AgentWorkspaceRef[] | undefined,
-): void {
-  assertOptionalStringArray(value, "config.sandboxes");
-  if (value === undefined) return;
-  const seen = new Set<string>();
-  // Index by index, duplicate first: mixed input must report the same error as core.
-  value.forEach((sandboxId, index): void => {
-    if (seen.has(sandboxId))
-      throw new ClientError(
-        `config.sandboxes[${index}] "${sandboxId}" is listed more than once`,
-      );
-    const mounted = workspaceOnLaterSandbox(value, index, workspaces);
-    if (mounted)
-      throw new ClientError(
-        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"; only the first sandbox can back a workspace`,
-      );
-    seen.add(sandboxId);
-  });
-}
-
-// Only the first sandbox mounts workspaces; a later one runs with none.
-function workspaceOnLaterSandbox(
-  sandboxes: readonly string[],
-  index: number,
-  workspaces: readonly AgentWorkspaceRef[] | undefined,
-): AgentWorkspaceRef | undefined {
-  return index === 0
-    ? undefined
-    : workspaces?.find((ref): boolean => ref.sandbox === sandboxes[index]);
-}
-
-function normalizeWorkspaceRefs(value: unknown): void {
-  if (value == null) return;
-  if (!Array.isArray(value))
-    throw new ClientError("config.workspaces must be an array");
-  const seenNames = new Set<string>();
-  value.forEach((entry, index) => {
-    if (!isPlainObject(entry))
-      throw new ClientError(`config.workspaces[${index}] must be an object`);
-    const ref = entry as Record<string, unknown>;
-    const name = ref.name;
-    if (typeof name !== "string" || name.trim().length === 0)
-      throw new ClientError(
-        `config.workspaces[${index}].name must be a non-empty string`,
-      );
-    assertWorkspaceId(name, `config.workspaces[${index}].name`);
-    assertOptionalString(
-      ref.workspaceId,
-      `config.workspaces[${index}].workspaceId`,
-    );
-    if (
-      typeof ref.workspaceId !== "string" ||
-      ref.workspaceId.trim().length === 0
-    ) {
-      throw new ClientError(
-        `config.workspaces[${index}].workspaceId must be a non-empty string`,
-      );
-    }
-    if (
-      ref.sandbox !== null &&
-      ref.sandbox !== undefined &&
-      (typeof ref.sandbox !== "string" || ref.sandbox.trim().length === 0)
-    ) {
-      throw new ClientError(
-        `config.workspaces[${index}].sandbox must be a non-empty string or null`,
-      );
-    }
-    if (seenNames.has(name))
-      throw new ClientError(
-        `config.workspaces[${index}].name "${name}" is used more than once`,
-      );
-    seenNames.add(name);
-  });
-}
-
-function normalizeSessionConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.session must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeSessionPruningConfig(config.pruning);
-  if (config.compaction !== undefined) {
-    throw new ClientError(
-      "config.session.compaction was renamed to config.session.autoCompaction, and maxContextLength now counts input tokens",
-    );
-  }
-  normalizeSessionAutoCompactionConfig(config.autoCompaction);
-}
-
-function normalizeSessionPruningConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.session.pruning must be an object");
-  assertOptionalBoolean(value.enabled, "config.session.pruning.enabled");
-}
-
-function normalizeSessionAutoCompactionConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.session.autoCompaction must be an object");
-  assertOptionalBoolean(value.enabled, "config.session.autoCompaction.enabled");
-  assertOptionalPositiveInteger(
-    value.maxContextLength,
-    "config.session.autoCompaction.maxContextLength",
-    SESSION_MAX_CONTEXT_LENGTH_LIMIT,
-  );
-}
-
-function normalizeHooksConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.hooks must be an object");
-  const config = value as Record<string, unknown>;
-  if (config.webhooks !== undefined) {
-    if (!Array.isArray(config.webhooks))
-      throw new ClientError("config.hooks.webhooks must be an array");
-    config.webhooks.forEach((webhook, index) =>
-      normalizeWebhookHookConfig(webhook, `config.hooks.webhooks[${index}]`),
-    );
-  }
-  if (config.code !== undefined) {
-    if (!Array.isArray(config.code))
-      throw new ClientError("config.hooks.code must be an array");
-    config.code.forEach((hook, index) =>
-      normalizeCodeHookConfig(hook, `config.hooks.code[${index}]`),
-    );
-  }
-}
-
-function normalizeCodeHookConfig(value: unknown, path: string): void {
-  if (!isPlainObject(value)) throw new ClientError(`${path} must be an object`);
-  const config = value as Record<string, unknown>;
-  if (
-    typeof config.hookId !== "string" ||
-    !isNativeConvexDocumentId(config.hookId)
-  ) {
-    throw new ClientError(`${path}.hookId must be a native Convex document id`);
-  }
-  assertOptionalBoolean(config.enabled, `${path}.enabled`);
-  if (
-    config.events !== undefined &&
-    (!Array.isArray(config.events) ||
-      !config.events.every(
-        (event) =>
-          typeof event === "string" &&
-          AGENT_HOOK_EVENT_NAMES.includes(event as AgentHookEventName),
-      ))
-  ) {
-    throw new ClientError(
-      `${path}.events must be an array of: ${AGENT_HOOK_EVENT_NAMES.join(", ")}`,
-    );
-  }
-}
-
-function normalizeToolsConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.tools must be an object");
-  for (const [toolName, toolConfig] of Object.entries(value))
-    normalizeToolConfig(toolName, toolConfig);
-}
-
-function normalizeToolConfig(toolName: string, value: unknown): void {
-  if (!isPlainObject(value))
-    throw new ClientError(`config.tools.${toolName} must be an object`);
-  if (!isProviderToolName(toolName)) {
-    throw new ClientError(`config.tools.${toolName} is not a supported tool`);
-  }
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, `config.tools.${toolName}.enabled`);
-  assertOptionalBoolean(
-    config.needsApproval,
-    `config.tools.${toolName}.needsApproval`,
-  );
-  if (config.config !== undefined && !isPlainObject(config.config))
-    throw new ClientError(`config.tools.${toolName}.config must be an object`);
-}
-
-function normalizeMcpConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.mcp must be an object");
-  for (const [serverId, serverConfig] of Object.entries(value)) {
-    if (!isNativeConvexDocumentId(serverId)) {
-      throw new ClientError(
-        `config.mcp.${serverId} must be keyed by an MCP server id`,
-      );
-    }
-    if (!isPlainObject(serverConfig))
-      throw new ClientError(`config.mcp.${serverId} must be an object`);
-    const config = serverConfig as Record<string, unknown>;
-    assertOptionalBoolean(config.enabled, `config.mcp.${serverId}.enabled`);
-    assertOptionalBoolean(
-      config.needsApproval,
-      `config.mcp.${serverId}.needsApproval`,
-    );
-    if (config.headers !== undefined && !isStringRecord(config.headers)) {
-      throw new ClientError(
-        `config.mcp.${serverId}.headers must be an object of string values`,
-      );
-    }
-    if (config.oauth !== undefined && !isStringRecord(config.oauth)) {
-      throw new ClientError(
-        `config.mcp.${serverId}.oauth must be an object of string values`,
-      );
-    }
-  }
-}
-
-function normalizeSkillsConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.skills must be an object");
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.skills.enabled");
-  assertOptionalStringArray(config.allowed, "config.skills.allowed");
-  if (config.allowed === undefined) return;
-  const allowed = [...new Set(config.allowed)];
-  config.allowed = allowed;
-  if (allowed.length > MAX_CONFIGURED_SKILLS) {
-    throw new ClientError(
-      `config.skills.allowed must list at most ${MAX_CONFIGURED_SKILLS} skills`,
-    );
-  }
-}
-
-function normalizeSubagentConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.subagent must be an object");
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.subagent.enabled");
-  assertOptionalBoolean(config.stream, "config.subagent.stream");
-  assertOptionalStringArray(config.allowed, "config.subagent.allowed");
-  assertOptionalEnum(config.context, "config.subagent.context", [
-    "new",
-    "inherited",
-  ]);
-  assertOptionalEnum(config.mode, "config.subagent.mode", [
-    "ephemeral",
-    "persistent",
-  ]);
-  assertOptionalEnum(config.visibility, "config.subagent.visibility", [
-    "full",
-    "result",
-    "none",
-  ]);
-  normalizeModelConfig(config.model, "config.subagent.model");
-}
-
-function normalizeEnabledSwitch(value: unknown, label: string): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError(`${label} must be an object`);
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, `${label}.enabled`);
-}
-
-function normalizePolicyIds(value: unknown): string[] | undefined {
-  if (value == null) return undefined;
-  assertOptionalStringArray(value, "config.policies");
-  const ids = [...new Set(value as string[])];
-
-  return ids.length > 0 ? ids : undefined;
-}
-
-function normalizeChannelsConfig(
-  value: unknown,
-  options: AgentConfigCheckOptions,
-): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels must be an object");
-  const channels = value as Record<string, unknown>;
-  normalizeTelegramConfig(channels.telegram);
-  normalizeGoogleChatConfig(channels.gchat, options);
-  normalizeGitHubConfig(channels.github);
-  normalizeLinearConfig(channels.linear, options);
-  normalizeSlackConfig(channels.slack);
-  normalizeDiscordConfig(channels.discord);
-  normalizePancakeConfig(channels.pancake);
-  normalizeTeamsConfig(channels.teams, options);
-  normalizeTwilioConfig(channels.twilio);
-  normalizeZaloConfig(channels.zalo);
-  normalizeInstagramConfig(channels.instagram, options);
-  normalizeMessengerConfig(channels.messenger, options);
-  normalizeWhatsAppConfig(channels.whatsapp);
-}
-
-function normalizeTelegramConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.telegram must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.telegram");
-  assertOptionalString(config.apiUrl, "config.channels.telegram.apiUrl");
-  if (typeof config.apiUrl === "string") {
-    assertPublicHttpsUrl(config.apiUrl, "config.channels.telegram.apiUrl");
-  }
-  assertOptionalString(config.botToken, "config.channels.telegram.botToken");
-  assertOptionalString(
-    config.webhookSecret,
-    "config.channels.telegram.webhookSecret",
-  );
-  assertOptionalString(
-    config.botUsername,
-    "config.channels.telegram.botUsername",
-  );
-  assertOptionalString(
-    config.reactionEmoji,
-    "config.channels.telegram.reactionEmoji",
-  );
-}
-
-// Without an audience no Google Chat webhook token can be verified.
-function normalizeGoogleChatConfig(
-  value: unknown,
-  options: AgentConfigCheckOptions,
-): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.gchat must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.gchat");
-  assertOptionalString(config.credentials, "config.channels.gchat.credentials");
-  assertOptionalString(config.endpointUrl, "config.channels.gchat.endpointUrl");
-  if (typeof config.endpointUrl === "string") {
-    assertPublicHttpsUrl(
-      config.endpointUrl,
-      "config.channels.gchat.endpointUrl",
-    );
-  }
-  assertOptionalString(
-    config.googleChatProjectNumber,
-    "config.channels.gchat.googleChatProjectNumber",
-  );
-  if (
-    typeof config.googleChatProjectNumber === "string" &&
-    !/^\d+$/.test(config.googleChatProjectNumber)
-  ) {
-    throw new ClientError(
-      "config.channels.gchat.googleChatProjectNumber must be the numeric project number",
-    );
-  }
-  assertOptionalString(
-    config.workspaceAddOnServiceAccountEmail,
-    "config.channels.gchat.workspaceAddOnServiceAccountEmail",
-  );
-  assertOptionalString(config.userName, "config.channels.gchat.userName");
-  if (
-    typeof config.credentials === "string" &&
-    config.endpointUrl === undefined &&
-    config.googleChatProjectNumber === undefined &&
-    !options.patch
-  ) {
-    throw new ClientError(
-      "config.channels.gchat needs endpointUrl or googleChatProjectNumber to verify webhooks",
-    );
-  }
-}
-
-function normalizeGitHubConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.github must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.github");
-  assertOptionalString(config.apiUrl, "config.channels.github.apiUrl");
-  if (typeof config.apiUrl === "string") {
-    assertPublicHttpsUrl(config.apiUrl, "config.channels.github.apiUrl");
-  }
-  assertOptionalString(
-    config.webhookSecret,
-    "config.channels.github.webhookSecret",
-  );
-  assertOptionalString(config.appId, "config.channels.github.appId");
-  assertOptionalString(config.privateKey, "config.channels.github.privateKey");
-  assertOptionalString(
-    config.botUserName,
-    "config.channels.github.botUserName",
-  );
-  assertOptionalPositiveInteger(
-    config.botUserId,
-    "config.channels.github.botUserId",
-    Number.MAX_SAFE_INTEGER,
-  );
-}
-
-// Linear has no bots: the agent posts as the key's member, mentioned by userName.
-// Core runs the channel only with the key, userName and webhook secret together.
-function normalizeLinearConfig(
-  value: unknown,
-  options: AgentConfigCheckOptions,
-): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.linear must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.linear");
-  assertOptionalString(config.apiKey, "config.channels.linear.apiKey");
-  assertOptionalString(config.apiUrl, "config.channels.linear.apiUrl");
-  if (typeof config.apiUrl === "string") {
-    assertPublicHttpsUrl(config.apiUrl, "config.channels.linear.apiUrl");
-  }
-  assertOptionalString(config.userName, "config.channels.linear.userName");
-  assertOptionalString(
-    config.webhookSecret,
-    "config.channels.linear.webhookSecret",
-  );
-  if (typeof config.apiKey !== "string" || options.patch) return;
-  if (typeof config.userName !== "string" || !config.userName.trim()) {
-    throw new ClientError(
-      "config.channels.linear.userName is required: the display name of the member the API key belongs to",
-    );
-  }
-  if (!config.webhookSecret) {
-    throw new ClientError(
-      "config.channels.linear.webhookSecret is required when config.channels.linear.apiKey is set",
-    );
-  }
-}
-
-function normalizeSlackConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.slack must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.slack");
-  assertOptionalString(config.apiUrl, "config.channels.slack.apiUrl");
-  if (typeof config.apiUrl === "string") {
-    assertPublicHttpsUrl(config.apiUrl, "config.channels.slack.apiUrl");
-  }
-  assertOptionalString(config.botToken, "config.channels.slack.botToken");
-  assertOptionalString(
-    config.signingSecret,
-    "config.channels.slack.signingSecret",
-  );
-  assertOptionalString(
-    config.reactionEmoji,
-    "config.channels.slack.reactionEmoji",
-  );
-}
-
-function normalizeDiscordConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.discord must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.discord");
-  assertOptionalString(config.apiUrl, "config.channels.discord.apiUrl");
-  if (typeof config.apiUrl === "string") {
-    assertPublicHttpsUrl(config.apiUrl, "config.channels.discord.apiUrl");
-  }
-  assertOptionalString(config.botToken, "config.channels.discord.botToken");
-  assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
-  assertOptionalString(config.botUserId, "config.channels.discord.botUserId");
-  assertOptionalStringArray(
-    config.mentionRoleIds,
-    "config.channels.discord.mentionRoleIds",
-  );
-}
-
-function normalizePancakeConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.pancake must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.pancake");
-  assertOptionalString(config.pageId, "config.channels.pancake.pageId");
-  assertOptionalString(
-    config.pageAccessToken,
-    "config.channels.pancake.pageAccessToken",
-  );
-  assertOptionalString(
-    config.webhookSecret,
-    "config.channels.pancake.webhookSecret",
-  );
-  assertOptionalString(config.senderId, "config.channels.pancake.senderId");
-}
-
-// A single-tenant bot signs in against its own tenant, so it cannot work without one.
-function normalizeTeamsConfig(
-  value: unknown,
-  options: AgentConfigCheckOptions,
-): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.teams must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.teams");
-  assertOptionalString(config.apiUrl, "config.channels.teams.apiUrl");
-  if (typeof config.apiUrl === "string") {
-    assertPublicHttpsUrl(config.apiUrl, "config.channels.teams.apiUrl");
-  }
-  assertOptionalString(config.appId, "config.channels.teams.appId");
-  assertOptionalString(config.appPassword, "config.channels.teams.appPassword");
-  assertOptionalString(config.appTenantId, "config.channels.teams.appTenantId");
-  assertOptionalEnum(config.appType, "config.channels.teams.appType", [
-    "MultiTenant",
-    "SingleTenant",
-  ] as const);
-  assertOptionalString(config.userName, "config.channels.teams.userName");
-  if (
-    typeof config.appId === "string" &&
-    config.appType !== "MultiTenant" &&
-    !(typeof config.appTenantId === "string" && config.appTenantId.trim()) &&
-    !options.patch
-  ) {
-    throw new ClientError(
-      'config.channels.teams.appTenantId is required unless appType is "MultiTenant"',
-    );
-  }
-}
-
-function normalizeTwilioConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.twilio must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.twilio");
-  assertOptionalString(config.accountSid, "config.channels.twilio.accountSid");
-  assertOptionalString(config.authToken, "config.channels.twilio.authToken");
-  for (const key of ["apiUrl", "statusCallbackUrl", "webhookUrl"] as const) {
-    assertOptionalString(config[key], `config.channels.twilio.${key}`);
-    if (typeof config[key] === "string") {
-      assertPublicHttpsUrl(config[key], `config.channels.twilio.${key}`);
-    }
-  }
-  assertOptionalString(
-    config.messagingServiceSid,
-    "config.channels.twilio.messagingServiceSid",
-  );
-  // A sid that does not look like one would be sent as a phone number.
-  if (
-    typeof config.messagingServiceSid === "string" &&
-    !/^MG[0-9a-fA-F]{32}$/.test(config.messagingServiceSid)
-  ) {
-    throw new ClientError(
-      'config.channels.twilio.messagingServiceSid must be a Messaging Service sid ("MG" and 32 hex digits)',
-    );
-  }
-  assertOptionalString(
-    config.phoneNumber,
-    "config.channels.twilio.phoneNumber",
-  );
-  // Core matches it to the E.164 `To` Twilio posts; any other spelling ignores every message.
-  if (
-    typeof config.phoneNumber === "string" &&
-    !/^\+[1-9]\d{1,14}$/.test(config.phoneNumber)
-  ) {
-    throw new ClientError(
-      'config.channels.twilio.phoneNumber must be an E.164 number, e.g. "+15551234567"',
-    );
-  }
-  assertOptionalString(config.userName, "config.channels.twilio.userName");
-}
-
-function normalizeWhatsAppConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.whatsapp must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.whatsapp");
-  assertOptionalString(
-    config.accessToken,
-    "config.channels.whatsapp.accessToken",
-  );
-  assertOptionalString(config.apiUrl, "config.channels.whatsapp.apiUrl");
-  if (typeof config.apiUrl === "string") {
-    assertPublicHttpsUrl(config.apiUrl, "config.channels.whatsapp.apiUrl");
-  }
-  assertOptionalString(
-    config.apiVersion,
-    "config.channels.whatsapp.apiVersion",
-  );
-  if (
-    typeof config.apiVersion === "string" &&
-    !/^v\d+\.\d+$/.test(config.apiVersion)
-  ) {
-    throw new ClientError(
-      'config.channels.whatsapp.apiVersion must look like "v25.0"',
-    );
-  }
-  assertOptionalString(config.appSecret, "config.channels.whatsapp.appSecret");
-  assertOptionalString(
-    config.phoneNumberId,
-    "config.channels.whatsapp.phoneNumberId",
-  );
-  // A Graph API path segment, and the SDK refuses to send to any other.
-  if (
-    typeof config.phoneNumberId === "string" &&
-    !/^\d+$/.test(config.phoneNumberId)
-  ) {
-    throw new ClientError(
-      "config.channels.whatsapp.phoneNumberId must be the number's digits-only ID",
-    );
-  }
-  assertOptionalString(config.userName, "config.channels.whatsapp.userName");
-  assertOptionalString(
-    config.verifyToken,
-    "config.channels.whatsapp.verifyToken",
-  );
-}
-
-function normalizeZaloConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.zalo must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.zalo");
-  assertOptionalString(config.botToken, "config.channels.zalo.botToken");
-  assertOptionalString(
-    config.webhookSecret,
-    "config.channels.zalo.webhookSecret",
-  );
-  if (typeof config.webhookSecret === "string") {
-    const length = config.webhookSecret.length;
-    if (length < 8 || length > 256)
-      throw new ClientError(
-        "config.channels.zalo.webhookSecret must be 8 to 256 characters",
-      );
-  }
-}
-
-function normalizeInstagramConfig(
-  value: unknown,
-  options: AgentConfigCheckOptions,
-): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.instagram must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.instagram");
-  assertOptionalString(
-    config.accessToken,
-    "config.channels.instagram.accessToken",
-  );
-  assertOptionalString(config.accountId, "config.channels.instagram.accountId");
-  if (typeof config.accountId === "string" && !/^\d+$/.test(config.accountId))
-    throw new ClientError(
-      "config.channels.instagram.accountId must be the numeric Instagram account id",
-    );
-  normalizeGraphApiVersion(config, "config.channels.instagram");
-  assertOptionalString(config.appSecret, "config.channels.instagram.appSecret");
-  assertOptionalString(config.userName, "config.channels.instagram.userName");
-  assertOptionalString(
-    config.verifyToken,
-    "config.channels.instagram.verifyToken",
-  );
-  assertMetaCredentials(
-    config,
-    "config.channels.instagram",
-    ["accessToken", "accountId", "appSecret", "verifyToken"],
-    options,
-  );
-}
-
-function normalizeMessengerConfig(
-  value: unknown,
-  options: AgentConfigCheckOptions,
-): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.messenger must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.messenger");
-  normalizeGraphApiVersion(config, "config.channels.messenger");
-  assertOptionalString(config.appSecret, "config.channels.messenger.appSecret");
-  assertOptionalString(
-    config.pageAccessToken,
-    "config.channels.messenger.pageAccessToken",
-  );
-  assertOptionalString(config.userName, "config.channels.messenger.userName");
-  assertOptionalString(
-    config.verifyToken,
-    "config.channels.messenger.verifyToken",
-  );
-  assertMetaCredentials(
-    config,
-    "config.channels.messenger",
-    ["appSecret", "pageAccessToken", "verifyToken"],
-    options,
-  );
-}
-
-// Core builds the adapter only with all of these set, so a partial set would never answer.
-function assertMetaCredentials(
-  config: Record<string, unknown>,
   path: string,
-  fields: readonly string[],
-  options: AgentConfigCheckOptions,
-): void {
-  if (options.patch) return;
-  const present = fields.find((field) => config[field] !== undefined);
-  if (!present) return;
-  const empty = fields.find(
-    (field) =>
-      typeof config[field] === "string" && config[field].trim().length === 0,
-  );
-  if (empty)
-    throw new ClientError(`${path}.${empty} must be a non-empty string`);
-  const missing = fields.find((field) => config[field] === undefined);
-  if (missing) {
-    throw new ClientError(
-      `${path}.${missing} is required when ${path}.${present} is set`,
-    );
-  }
+): AgentWebhookHookConfig {
+  return parseInput(WEBHOOK_HOOK, value, path);
 }
 
-// Spliced into every Graph API path, so a version only, never a path.
-function normalizeGraphApiVersion(
-  config: Record<string, unknown>,
-  name: string,
-): void {
-  assertOptionalString(config.apiVersion, `${name}.apiVersion`);
-  if (
-    typeof config.apiVersion === "string" &&
-    !/^v\d+\.\d+$/.test(config.apiVersion)
-  )
-    throw new ClientError(`${name}.apiVersion must look like "v21.0"`);
-}
-
-function normalizeChannelIdentityConfig(
-  config: Record<string, unknown>,
-  name: string,
-): void {
-  normalizeRequiredString(config.id, `${name}.id`);
-  assertOptionalEnum(config.trace, `${name}.trace`, [
-    "enabled",
-    "disabled",
-  ] as const);
-  for (const [retired, replacement] of RETIRED_REACH_KEYS) {
-    if (config[retired] !== undefined)
-      throw new ClientError(
-        `${name}.${retired} is no longer supported; use ${name}.${replacement}`,
-      );
-  }
-  assertOptionalStringArray(
-    config.allowedChannelIds,
-    `${name}.allowedChannelIds`,
-  );
-  assertOptionalStringArray(config.allowedUserIds, `${name}.allowedUserIds`);
-  for (const retired of RETIRED_PARTITION_KEYS) {
-    if (config[retired] !== undefined)
-      throw new ClientError(
-        `${name}.${retired} is no longer supported; use ${name}.partition`,
-      );
-  }
-  if (config.partition === undefined) return;
-  if (!isPlainObject(config.partition))
-    throw new ClientError(`${name}.partition must be an object`);
-  const partition = config.partition as Record<string, unknown>;
-  assertOptionalEnum(
-    partition.by,
-    `${name}.partition.by`,
-    CHANNEL_PARTITION_MODES,
-  );
-  if (partition.by === undefined)
-    throw new ClientError(
-      `${name}.partition.by must be one of: ${CHANNEL_PARTITION_MODES.join(", ")}`,
-    );
-  if (partition.by === "shared") {
-    if ("alias" in partition && partition.alias !== undefined) {
-      throw new ClientError(
-        `${name}.partition.alias is only supported when ${name}.partition.by is conversation`,
-      );
-    }
-
-    return;
-  }
-  normalizeRequiredString(partition.alias, `${name}.partition.alias`);
-  assertPartitionAlias(partition.alias, `${name}.partition.alias`);
-}
-
-function validateConfigPatch(value: unknown, path: string): void {
-  if (!isPlainObject(value)) throw new ClientError(`${path} must be an object`);
-  const candidate = value as Record<string, unknown>;
-  const withoutNulls = removeNullConfigValues(candidate);
-  if (path === "config") {
-    normalizeAgentConfig(withoutNulls, { patch: true });
-
-    return;
-  }
-}
-
-function removeNullConfigValues(
-  value: Record<string, unknown>,
-): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(value).flatMap(([key, entry]) => {
-      if (entry === null) return [];
-      if (isPlainObject(entry)) return [[key, removeNullConfigValues(entry)]];
-
-      return [[key, entry]];
-    }),
-  );
+export function normalizeModelConfig(
+  value: unknown,
+  label: string,
+): AgentModelConfig | null | undefined {
+  return parseInput(OPTIONAL_MODEL, value, label);
 }
 
 export function isPrivateHostname(hostname: string): boolean {
@@ -1537,6 +1045,160 @@ export function isPrivateHostname(hostname: string): boolean {
   if (host.includes(":")) return isPrivateIpv6(host);
 
   return false;
+}
+
+// Core builds the adapter only with all of these set, so a partial set would never answer.
+function assertMetaCredentials(
+  config: Record<string, unknown>,
+  path: string,
+  fields: readonly string[],
+): void {
+  const present = fields.find((field) => config[field] !== undefined);
+  if (!present) return;
+  const empty = fields.find(
+    (field) =>
+      typeof config[field] === "string" && config[field].trim().length === 0,
+  );
+  if (empty)
+    throw new ClientError(`${path}.${empty} must be a non-empty string`);
+  const missing = fields.find((field) => config[field] === undefined);
+  if (missing) {
+    throw new ClientError(
+      `${path}.${missing} is required when ${path}.${present} is set`,
+    );
+  }
+}
+
+function assertCompleteChannels(channels: AgentChannelsConfig): void {
+  const { gchat, linear, teams, instagram, messenger } = channels;
+  if (
+    gchat?.credentials !== undefined &&
+    gchat.endpointUrl === undefined &&
+    gchat.googleChatProjectNumber === undefined
+  ) {
+    throw new ClientError(
+      "config.channels.gchat needs endpointUrl or googleChatProjectNumber to verify webhooks",
+    );
+  }
+  // Core runs the channel only with the key, userName and webhook secret together.
+  if (linear?.apiKey !== undefined) {
+    if (!linear.userName?.trim()) {
+      throw new ClientError(
+        "config.channels.linear.userName is required: the display name of the member the API key belongs to",
+      );
+    }
+    if (!linear.webhookSecret) {
+      throw new ClientError(
+        "config.channels.linear.webhookSecret is required when config.channels.linear.apiKey is set",
+      );
+    }
+  }
+  // A single-tenant bot signs in against its own tenant, so it cannot work without one.
+  if (
+    teams?.appId !== undefined &&
+    teams.appType !== "MultiTenant" &&
+    !teams.appTenantId?.trim()
+  ) {
+    throw new ClientError(
+      'config.channels.teams.appTenantId is required unless appType is "MultiTenant"',
+    );
+  }
+  if (instagram)
+    assertMetaCredentials(instagram, "config.channels.instagram", [
+      "accessToken",
+      "accountId",
+      "appSecret",
+      "verifyToken",
+    ]);
+  if (messenger)
+    assertMetaCredentials(messenger, "config.channels.messenger", [
+      "appSecret",
+      "pageAccessToken",
+      "verifyToken",
+    ]);
+}
+
+function assertRuntimeRefs(
+  config: AgentRuntimeRefs,
+  options: AgentConfigCheckOptions,
+): void {
+  if (config.sandbox !== undefined)
+    throw new ClientError(SANDBOX_REMOVED_MESSAGE);
+  const sandboxes = config.sandboxes ?? [];
+  const seen = new Set<string>();
+  // Index by index, duplicate first: mixed input must report the same error as core.
+  sandboxes.forEach((sandboxId, index): void => {
+    if (seen.has(sandboxId))
+      throw new ClientError(
+        `config.sandboxes[${index}] "${sandboxId}" is listed more than once`,
+      );
+    const mounted = workspaceOnLaterSandbox(
+      sandboxes,
+      index,
+      config.workspaces,
+    );
+    if (mounted)
+      throw new ClientError(
+        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"; only the first sandbox can back a workspace`,
+      );
+    seen.add(sandboxId);
+  });
+  if (options.patch || sandboxes.length > 0 || config.harness == null) return;
+  const harness = HARNESS_TYPE.safeParse(config.harness);
+  if (harness.success)
+    throw new ClientError(
+      `config.sandboxes needs at least one sandbox for the ${String(harness.data.type)} harness; the first runs it`,
+    );
+}
+
+function channelSchema<Shape extends z.core.$ZodLooseShape>(
+  shape: Shape,
+): z.ZodMiniObject<typeof CHANNEL_IDENTITY & Shape, z.core.$loose> {
+  return z
+    .looseObject({ ...CHANNEL_IDENTITY, ...shape })
+    .check(RETIRED_CHANNEL_KEY_CHECK);
+}
+
+function isNativeConvexDocumentId(value: string): boolean {
+  return /^[a-z0-9]{20,}$/.test(value);
+}
+
+function providerBaseURL(config: {
+  base_url?: string;
+  baseURL?: string;
+}): string | undefined {
+  const raw =
+    typeof config.base_url === "string" ? config.base_url : config.baseURL;
+
+  return raw?.trim() || undefined;
+}
+
+function publicHttpsUrlProblem(value: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return "must be a valid URL";
+  }
+  if (url.protocol !== "https:") return "must use https";
+  if (isPrivateHostname(url.hostname))
+    return "must not point to a private or internal address";
+
+  return undefined;
+}
+
+function removeNullConfigValues(value: object): Record<string, unknown> {
+  const entries: [string, unknown][] = Object.entries(value);
+
+  return Object.fromEntries(
+    entries.flatMap(([key, entry]): [string, unknown][] => {
+      if (entry === null) return [];
+      if (typeof entry === "object" && !Array.isArray(entry))
+        return [[key, removeNullConfigValues(entry)]];
+
+      return [[key, entry]];
+    }),
+  );
 }
 
 function isPrivateIpv4(a: number, b: number): boolean {
@@ -1560,151 +1222,4 @@ function isPrivateIpv6(host: string): boolean {
     /^f[cd]/.test(host) ||
     /^fe[89ab]/.test(host)
   );
-}
-
-function assertOptionalString(value: unknown, name: string): void {
-  if (value !== undefined && typeof value !== "string")
-    throw new ClientError(`${name} must be a string`);
-}
-
-function assertOptionalProviderName(value: unknown, name: string): void {
-  if (value === undefined) return;
-  if (typeof value !== "string" || !isAccountModelProviderName(value)) {
-    throw new ClientError(
-      `${name} must be one of: ${ACCOUNT_MODEL_PROVIDER_NAMES.join(", ")}`,
-    );
-  }
-}
-
-function assertOptionalBoolean(value: unknown, name: string): void {
-  if (value !== undefined && typeof value !== "boolean")
-    throw new ClientError(`${name} must be a boolean`);
-}
-
-function assertOptionalEnum<T extends string>(
-  value: unknown,
-  name: string,
-  allowed: readonly T[],
-): void {
-  if (
-    value !== undefined &&
-    (typeof value !== "string" || !allowed.includes(value as T))
-  ) {
-    throw new ClientError(`${name} must be one of: ${allowed.join(", ")}`);
-  }
-}
-
-function normalizeRequiredString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim().length === 0)
-    throw new ClientError(`${name} must be a non-empty string`);
-
-  return value.trim();
-}
-
-function optionalString(value: unknown, name: string): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string")
-    throw new ClientError(`${name} must be a string`);
-  const trimmed = value.trim();
-
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function assertOptionalNonEmptyString(value: unknown, name: string): void {
-  assertOptionalString(value, name);
-  if (typeof value === "string" && value.trim().length === 0)
-    throw new ClientError(`${name} must be a non-empty string`);
-}
-
-function assertWorkspaceId(value: string, name: string): void {
-  if (!/^[A-Za-z0-9._-]+$/.test(value))
-    throw new ClientError(
-      `${name} must use only letters, numbers, dots, underscores, or hyphens`,
-    );
-}
-
-function assertPartitionAlias(value: unknown, name: string): void {
-  if (typeof value !== "string" || !/^[A-Za-z0-9._-]+$/.test(value)) {
-    throw new ClientError(
-      `${name} must use only letters, numbers, dots, underscores, or hyphens`,
-    );
-  }
-}
-
-function assertOptionalModelTimeout(value: unknown, name: string): void {
-  if (value === undefined) return;
-  if (typeof value === "number") {
-    assertOptionalPositiveInteger(value, name, MAX_TIMER_MS);
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new ClientError(
-      `${name} must be a number of milliseconds or an object with ${MODEL_TIMEOUT_KEYS.join(", ")}`,
-    );
-  }
-  for (const [key, limit] of Object.entries(value)) {
-    if (key === "tools") continue;
-    if (!(MODEL_TIMEOUT_KEYS as readonly string[]).includes(key)) {
-      throw new ClientError(
-        `${name}.${key} is not supported; use one of: ${MODEL_TIMEOUT_KEYS.join(", ")}`,
-      );
-    }
-    assertOptionalPositiveInteger(limit, `${name}.${key}`, MAX_TIMER_MS);
-  }
-  if (value.tools === undefined) return;
-  if (!isPlainObject(value.tools)) {
-    throw new ClientError(
-      `${name}.tools must be an object of {toolName}Ms limits`,
-    );
-  }
-  for (const [key, limit] of Object.entries(value.tools)) {
-    if (!/^.+Ms$/.test(key)) {
-      throw new ClientError(
-        `${name}.tools.${key} must be named {toolName}Ms, like bashMs`,
-      );
-    }
-    assertOptionalPositiveInteger(limit, `${name}.tools.${key}`, MAX_TIMER_MS);
-  }
-}
-
-function assertOptionalPositiveInteger(
-  value: unknown,
-  name: string,
-  max: number,
-): void {
-  if (value === undefined) return;
-  if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value) ||
-    value < 1 ||
-    value > max
-  ) {
-    throw new ClientError(`${name} must be an integer from 1 to ${max}`);
-  }
-}
-
-function assertOptionalStringArray(
-  value: unknown,
-  name: string,
-): asserts value is string[] | undefined {
-  if (value === undefined) return;
-  if (
-    !Array.isArray(value) ||
-    !value.every(
-      (entry) => typeof entry === "string" && entry.trim().length > 0,
-    )
-  ) {
-    throw new ClientError(`${name} must be an array of non-empty strings`);
-  }
-}
-
-function isNativeConvexDocumentId(value: string): boolean {
-  return /^[a-z0-9]{20,}$/.test(value);
-}
-
-function requireAgentStatus(value: unknown): AgentStatus {
-  if (value !== "active" && value !== "disabled")
-    throw new ClientError("status must be one of: active, disabled");
-
-  return value;
 }

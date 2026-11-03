@@ -37,7 +37,9 @@ import {
   type CliResource,
 } from "./cliSync";
 import { normalizeChannelRecordResource } from "./cliSyncChannels";
-import { isPlainObject, stableJson } from "./objects";
+import { storedRefList } from "./agentRules";
+import { parseOr } from "./storedJson";
+import { stableJson } from "./objects";
 import {
   assertPolicyUnreferenced,
   loadPolicyReferenceRows,
@@ -846,13 +848,9 @@ export async function hasReservation(
 }
 
 function hasSubagentAllowed(nested: Record<string, unknown>): boolean {
-  const subagent = nested.subagent;
+  const subagent = parseOr(storedRefList, nested.subagent);
 
-  return (
-    isPlainObject(subagent) &&
-    Array.isArray(subagent.allowed) &&
-    subagent.allowed.length > 0
-  );
+  return (subagent?.allowed.length ?? 0) > 0;
 }
 
 function namesOf(

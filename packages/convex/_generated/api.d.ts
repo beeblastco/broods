@@ -3865,7 +3865,23 @@ export declare const internal: {
           input: Record<string, any>;
           managedBy?: "cli";
         },
-        any
+        {
+          accountId: Id<"accounts">;
+          agentId: Id<"agents">;
+          conversationKey?: string;
+          createdAt: string;
+          cronId: Id<"crons">;
+          description?: string;
+          events: Array<any>;
+          lastError?: string;
+          lastInvokedAt?: string;
+          lastStatus?: "started" | "completed" | "failed";
+          name: string;
+          scheduleExpression: string;
+          status: "active" | "paused";
+          timezone?: string;
+          updatedAt: string;
+        }
       >;
       createRun: FunctionReference<
         "mutation",
@@ -4087,7 +4103,23 @@ export declare const internal: {
           patch: Record<string, any>;
           pin?: { projectId: string; stageId: string };
         },
-        any
+        {
+          accountId: Id<"accounts">;
+          agentId: Id<"agents">;
+          conversationKey?: string;
+          createdAt: string;
+          cronId: Id<"crons">;
+          description?: string;
+          events: Array<any>;
+          lastError?: string;
+          lastInvokedAt?: string;
+          lastStatus?: "started" | "completed" | "failed";
+          name: string;
+          scheduleExpression: string;
+          status: "active" | "paused";
+          timezone?: string;
+          updatedAt: string;
+        } | null
       >;
     };
     deployments: {

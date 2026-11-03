@@ -6,7 +6,7 @@ import type {
   HookAgentConfig,
 } from "../shared/domain/agent-config.ts";
 import { logError } from "../shared/log.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { readS3Bytes } from "../shared/s3.ts";
 import { streamIsolatePayload } from "./isolate/executor.ts";
 import { toolBundlesBucket } from "./frames.ts";
@@ -106,9 +106,10 @@ export function sanitizeHookResult(
   inputBytes = 0,
 ): Record<string, unknown> | undefined {
   if (!isHookMutableEvent(event)) return undefined;
-  if (!isPlainObject(raw)) return undefined;
+  const returned = parseOr(configObject, raw);
+  if (!returned) return undefined;
 
-  const serialized = safeStringify(raw);
+  const serialized = safeStringify(returned);
   if (serialized === undefined) return undefined;
   const limit = inputBytes + MAX_HOOK_RESULT_BYTES;
   if (Buffer.byteLength(serialized, "utf8") > limit) {
@@ -118,7 +119,7 @@ export function sanitizeHookResult(
   const allowed = HOOK_MUTABLE_FIELDS[event];
   const result: Record<string, unknown> = {};
   for (const key of allowed) {
-    if (raw[key] !== undefined) result[key] = raw[key];
+    if (returned[key] !== undefined) result[key] = returned[key];
   }
 
   return Object.keys(result).length > 0 ? result : undefined;
@@ -201,10 +202,11 @@ function sanitizeHookState(
   state: unknown,
   fallback: Record<string, unknown>,
 ): Record<string, unknown> {
-  if (!isPlainObject(state)) return fallback;
-  if (Object.keys(state).length === 0) return state;
+  const parsed = parseOr(configObject, state);
+  if (!parsed) return fallback;
+  if (Object.keys(parsed).length === 0) return parsed;
 
-  const serialized = safeStringify(state);
+  const serialized = safeStringify(parsed);
   if (
     serialized === undefined ||
     Buffer.byteLength(serialized, "utf8") > MAX_HOOK_STATE_BYTES
@@ -212,5 +214,5 @@ function sanitizeHookState(
     return fallback;
   }
 
-  return state;
+  return parsed;
 }

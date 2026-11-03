@@ -1,7 +1,6 @@
 // The only copy: Convex cannot import the Next.js app, so the dashboard re-exports this one.
 
 import { v, type Infer } from "convex/values";
-import { isPlainObject } from "./objects";
 import {
   ACCOUNT_ENV_PLACEHOLDER_PATTERN,
   ACCOUNT_ENV_REFS_ONLY_PATTERN,
@@ -152,9 +151,9 @@ export function collectEnvPlaceholderNames(
 
     return names;
   }
-  if (isPlainObject(value)) {
-    for (const item of Object.values(value))
-      collectEnvPlaceholderNames(item, names);
+  if (typeof value === "object" && value !== null) {
+    const items: unknown[] = Object.values(value);
+    for (const item of items) collectEnvPlaceholderNames(item, names);
   }
 
   return names;
@@ -473,9 +472,10 @@ function substitutePlaceholders<T>(
       substitutePlaceholders(item, variables, pattern),
     ) as unknown as T;
   }
-  if (isPlainObject(config)) {
+  if (typeof config === "object" && config !== null) {
     const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(config)) {
+    const entries: [string, unknown][] = Object.entries(config);
+    for (const [key, value] of entries) {
       // Prototype-pollution guard, as in the config merge helpers.
       if (key === "__proto__" || key === "constructor" || key === "prototype")
         continue;
@@ -486,4 +486,9 @@ function substitutePlaceholders<T>(
   }
 
   return config;
+}
+
+// The canvas first load bundles this file; any zod import there ships zod's whole 85 KB chunk.
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

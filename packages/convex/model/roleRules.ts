@@ -1,5 +1,7 @@
+import { z } from "zod/mini";
+
 import { randomToken } from "./accountSecrets";
-import { isPlainObject } from "./objects";
+import { nonEmptyString, parseInput } from "./inputSchema";
 import {
   API_POLICY_ACTIONS,
   normalizePolicyDocument,
@@ -13,6 +15,47 @@ export const ROLE_ID_PREFIX = "brole_";
 export const ROLE_SESSION_DEFAULT_TTL_SECONDS = 60 * 60;
 export const ROLE_SESSION_MAX_TTL_SECONDS = 12 * 60 * 60;
 export const ROLE_SESSION_TOKEN_PREFIX = "bsts_";
+
+const ASSUME_ROLE_INPUT = z.looseObject(
+  {
+    roleId: nonEmptyString,
+    ttlSeconds: z.optional(
+      z
+        .number({
+          error: `must be an integer between 1 and ${ROLE_SESSION_MAX_TTL_SECONDS}`,
+        })
+        .check(
+          z.refine(
+            (value): boolean =>
+              Number.isSafeInteger(value) &&
+              value >= 1 &&
+              value <= ROLE_SESSION_MAX_TTL_SECONDS,
+            {
+              error: `must be an integer between 1 and ${ROLE_SESSION_MAX_TTL_SECONDS}`,
+            },
+          ),
+        ),
+    ),
+  },
+  { error: "Request body must be an object" },
+);
+const CREATE_ROLE_INPUT = z.looseObject(
+  {
+    name: nonEmptyString,
+    policy: z.optional(z.unknown()),
+    projectId: z.optional(z.string()),
+    stageId: z.optional(z.string()),
+  },
+  { error: "Request body must be an object" },
+);
+const UPDATE_ROLE_INPUT = z.looseObject(
+  {
+    name: z.optional(nonEmptyString),
+    policy: z.optional(z.unknown()),
+    status: z.optional(z.enum(["active", "disabled"])),
+  },
+  { error: "Request body must be an object" },
+);
 
 export interface AssumeRoleInput {
   roleId: string;
@@ -42,36 +85,22 @@ export function createRoleSessionToken(): string {
 }
 
 export function normalizeAssumeRoleInput(value: unknown): AssumeRoleInput {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-  const roleId = requireString(value.roleId, "roleId");
-  if (value.ttlSeconds === undefined) {
-    return { roleId: roleId, ttlSeconds: ROLE_SESSION_DEFAULT_TTL_SECONDS };
-  }
-  if (
-    typeof value.ttlSeconds !== "number" ||
-    !Number.isSafeInteger(value.ttlSeconds) ||
-    value.ttlSeconds < 1 ||
-    value.ttlSeconds > ROLE_SESSION_MAX_TTL_SECONDS
-  ) {
-    throw new ClientError(
-      `ttlSeconds must be an integer between 1 and ${ROLE_SESSION_MAX_TTL_SECONDS}`,
-    );
-  }
+  const input = parseInput(ASSUME_ROLE_INPUT, value, "");
 
-  return { roleId: roleId, ttlSeconds: value.ttlSeconds };
+  return {
+    roleId: input.roleId.trim(),
+    ttlSeconds: input.ttlSeconds ?? ROLE_SESSION_DEFAULT_TTL_SECONDS,
+  };
 }
 
 export function normalizeCreateRoleInput(value: unknown): CreateRoleInput {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-  const name = requireString(value.name, "name");
-  const policy = normalizePolicyDocument(value.policy, API_POLICY_ACTIONS);
-  const projectId = optionalString(value.projectId, "projectId");
-  const stageId = optionalString(value.stageId, "stageId");
+  const input = parseInput(CREATE_ROLE_INPUT, value, "");
+  const policy = normalizePolicyDocument(input.policy, API_POLICY_ACTIONS);
+  const projectId = input.projectId?.trim() || undefined;
+  const stageId = input.stageId?.trim() || undefined;
 
   return {
-    name: name,
+    name: input.name.trim(),
     policy: policy,
     ...(projectId !== undefined ? { projectId: projectId } : {}),
     ...(stageId !== undefined ? { stageId: stageId } : {}),
@@ -79,39 +108,17 @@ export function normalizeCreateRoleInput(value: unknown): CreateRoleInput {
 }
 
 export function normalizeUpdateRoleInput(value: unknown): UpdateRoleInput {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-  const patch: UpdateRoleInput = {};
-  if (value.name !== undefined) patch.name = requireString(value.name, "name");
-  if (value.policy !== undefined) {
-    patch.policy = normalizePolicyDocument(value.policy, API_POLICY_ACTIONS);
-  }
-  if (value.status !== undefined) {
-    if (value.status !== "active" && value.status !== "disabled") {
-      throw new ClientError("status must be one of: active, disabled");
-    }
-    patch.status = value.status;
-  }
+  const input = parseInput(UPDATE_ROLE_INPUT, value, "");
+  const patch: UpdateRoleInput = {
+    ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+    ...(input.policy !== undefined
+      ? { policy: normalizePolicyDocument(input.policy, API_POLICY_ACTIONS) }
+      : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
+  };
   if (Object.keys(patch).length === 0) {
     throw new ClientError("Request body must include name, policy, or status");
   }
 
   return patch;
-}
-
-function optionalString(value: unknown, name: string): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string")
-    throw new ClientError(`${name} must be a string`);
-  const trimmed = value.trim();
-
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new ClientError(`${name} must be a non-empty string`);
-  }
-
-  return value.trim();
 }

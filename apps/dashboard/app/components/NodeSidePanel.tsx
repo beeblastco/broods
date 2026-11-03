@@ -59,7 +59,7 @@ import {
 import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
 import { includesSkillRef } from "@/app/lib/skillRefs";
 import { reportPerf } from "@/app/lib/perfReport";
-import { isPlainObject } from "@/app/lib/utils";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { providerApiKeyEnvName } from "@broods/convex/model/modelProviders";
@@ -427,7 +427,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const patch = fromNestedAgentConfig({
       ...base,
       model: {
-        ...(isPlainObject(base.model) ? base.model : {}),
+        ...parseOr(configObject, base.model, {}),
         provider: next.provider,
         modelId: next.modelId,
       },

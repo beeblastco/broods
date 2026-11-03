@@ -32,7 +32,11 @@ import {
   cronsInProject,
   resourceStageScope,
 } from "../model/projectScope";
-import { toCronResponse } from "../model/responses";
+import {
+  cronResponseValidator,
+  toCronResponse,
+  type CronResponse,
+} from "../model/responses";
 import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
 import { cronRunsFields, cronsFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
@@ -81,8 +85,8 @@ export const create = internalMutation({
     createdBy: v.optional(v.id("users")),
     managedBy: cronsFields.managedBy,
   },
-  returns: v.any(),
-  handler: async (ctx, args): Promise<Record<string, unknown>> => {
+  returns: cronResponseValidator,
+  handler: async (ctx, args): Promise<CronResponse> => {
     const normalized = normalizeCreateCronInput(args.input);
     const agent = await getOwnedAgent(ctx, args.accountId, normalized.agentId);
 
@@ -470,8 +474,8 @@ export const update = internalMutation({
     /** Set when code declares the job, which adopts one an agent made under that name. */
     managedBy: cronsFields.managedBy,
   },
-  returns: v.any(),
-  handler: async (ctx, args): Promise<Record<string, unknown> | null> => {
+  returns: v.union(cronResponseValidator, v.null()),
+  handler: async (ctx, args): Promise<CronResponse | null> => {
     const existing = await getOwnedByString(ctx, args.accountId, args.cronId);
     if (!existing) return null;
     const patch = normalizeUpdateCronInput(args.patch);
