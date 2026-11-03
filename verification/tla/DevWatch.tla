@@ -66,6 +66,19 @@ Signature ==
        ELSE pc' = "read" /\ failed' = TRUE
   /\ UNCHANGED <<src, stage, last, syncing, pending, timer, read, edits, watching>>
 
+\* sourceSignature() rejects: a save was replacing a file it read. syncChanged
+\* throws before marking failed and printSyncError logs it; that save's own
+\* watcher event re-arms the timer, so the next runSync retries.
+SignatureFails ==
+  /\ pc = "sig"
+  /\ edits < MaxEdits
+  /\ edits' = edits + 1
+  /\ src' \in Contents
+  /\ timer' = TRUE
+  /\ dirty' = TRUE
+  /\ pc' = "done"
+  /\ UNCHANGED <<stage, last, failed, syncing, pending, sig, read, watching>>
+
 \* The child reads the project from disk, after the signature was taken.
 ChildRead ==
   /\ pc = "read"
@@ -97,7 +110,7 @@ Done ==
        ELSE pending' = FALSE /\ pc' = "idle" /\ syncing' = FALSE
   /\ UNCHANGED <<src, stage, last, failed, timer, sig, read, edits, dirty>>
 
-Next == Edit \/ TimerFires \/ Signature \/ ChildRead \/ ChildSucceeds
+Next == Edit \/ TimerFires \/ Signature \/ SignatureFails \/ ChildRead \/ ChildSucceeds
         \/ ChildFails \/ Done
 
 Spec == Init /\ [][Next]_vars
