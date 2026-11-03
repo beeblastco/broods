@@ -11,8 +11,9 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/app/components/ui/input-group";
+import { useStickToBottom } from "@/app/hooks/useStickToBottom";
 import { ArrowUp, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 const EXAMPLES = [
   "go to scheduler",
@@ -25,14 +26,9 @@ export function CopilotDock(): React.JSX.Element | null {
   const { ask, completed, isOpen, messages, runStep, setOpen } = useCopilot();
 
   const [input, setInput] = useState("");
-  const thread = useRef<HTMLDivElement>(null);
+  const thread = useStickToBottom<HTMLDivElement>([messages]);
 
   useShortcut("copilot.open", () => setOpen(!isOpen));
-
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- scrolls the thread DOM node
-  useEffect(() => {
-    thread.current?.scrollTo({ top: thread.current.scrollHeight });
-  }, [messages]);
 
   if (!isOpen) return null;
 

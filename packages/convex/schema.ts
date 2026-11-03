@@ -123,7 +123,6 @@ export const channelEndpointsFields = {
   accountId: v.id("accounts"),
   agentId: v.string(),
   agentName: v.string(),
-  apiUrl: v.optional(v.string()),
   digest: v.string(),
   endpointId: v.string(),
   platform: v.string(),

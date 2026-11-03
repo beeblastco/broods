@@ -4839,7 +4839,6 @@ export declare const internal: {
         Array<{
           agentId: string;
           agentName: string;
-          apiUrl?: string;
           botToken: string;
           webhookPath: string;
         }>

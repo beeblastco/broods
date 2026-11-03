@@ -240,7 +240,7 @@ export interface SessionOptions {
   accountId?: string;
   agentId?: string;
   agentConfig?: AgentConfig;
-  // Absent on plain direct/async API turns: their deferred results are read by polling.
+  // Plain direct/async API turns carry `async`: their deferred results are read by polling.
   delivery?: AsyncToolDelivery;
   // A subagent replies to its parent, so it has no `delivery`, but policy names the parent's.
   policyDelivery?: AsyncToolDelivery;

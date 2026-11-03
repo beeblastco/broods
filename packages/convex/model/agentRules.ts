@@ -1002,7 +1002,6 @@ function normalizeChannelsConfig(
   normalizeLinearConfig(channels.linear, options);
   normalizeSlackConfig(channels.slack);
   normalizeDiscordConfig(channels.discord);
-  normalizeMatrixConfig(channels.matrix, options);
   normalizePancakeConfig(channels.pancake);
   normalizeTeamsConfig(channels.teams, options);
   normalizeTwilioConfig(channels.twilio);
@@ -1183,33 +1182,6 @@ function normalizeDiscordConfig(value: unknown): void {
     config.mentionRoleIds,
     "config.channels.discord.mentionRoleIds",
   );
-}
-
-// Matrix has no fixed API host: a token is useless without its homeserver.
-function normalizeMatrixConfig(
-  value: unknown,
-  options: AgentConfigCheckOptions,
-): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new ClientError("config.channels.matrix must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.matrix");
-  assertOptionalString(config.apiUrl, "config.channels.matrix.apiUrl");
-  assertOptionalString(config.botToken, "config.channels.matrix.botToken");
-  assertOptionalString(config.botName, "config.channels.matrix.botName");
-  assertOptionalString(
-    config.mentionText,
-    "config.channels.matrix.mentionText",
-  );
-  // Core and apps/matrix-forwarder call it in-cluster with the account's token: public only.
-  if (typeof config.apiUrl === "string") {
-    assertPublicHttpsUrl(config.apiUrl, "config.channels.matrix.apiUrl");
-  } else if (typeof config.botToken === "string" && !options.patch) {
-    throw new ClientError(
-      "config.channels.matrix.apiUrl is required when config.channels.matrix.botToken is set",
-    );
-  }
 }
 
 function normalizePancakeConfig(value: unknown): void {
