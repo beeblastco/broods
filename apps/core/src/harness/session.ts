@@ -605,7 +605,7 @@ export class Session {
     this.pendingHarnessEntries.push(...entries);
   }
 
-  // From where the leaf's model context starts: entries before a compaction are not read.
+  // The leaf's model context only: entries before its compaction or after it are not read.
   async readHarnessSessionEntries(
     sessionId: string,
     leafEntryId: string,
@@ -616,8 +616,9 @@ export class Session {
       const page = await runtime.query("readHarnessSessionEntries", {
         conversationKey: this.conversationKey,
         sessionId: sessionId,
+        leafEntryId: leafEntryId,
         ...(afterSequence === undefined
-          ? { leafEntryId: leafEntryId }
+          ? {}
           : { afterSequence: afterSequence }),
       });
       entries.push(...page.entries);

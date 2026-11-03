@@ -415,7 +415,7 @@ export const getHarnessSession = internalQuery({
   },
 });
 
-// Pages through a session in append order, from where the leaf's model context starts.
+// Pages through a session in append order, from where the leaf's model context starts to the leaf.
 export const readHarnessSessionEntries = internalQuery({
   args: {
     conversationKey: v.string(),
@@ -429,9 +429,9 @@ export const readHarnessSessionEntries = internalQuery({
   }),
   handler: async (ctx, args) => {
     const leaf =
-      args.afterSequence === undefined && args.leafEntryId !== undefined
-        ? await findHarnessEntry(ctx.db, args, args.leafEntryId)
-        : null;
+      args.leafEntryId === undefined
+        ? null
+        : await findHarnessEntry(ctx.db, args, args.leafEntryId);
     const { batch, full } = await takeHarnessEntryBatch(
       ctx.db
         .query("runtimeHarnessSessionEntries")
@@ -440,9 +440,12 @@ export const readHarnessSessionEntries = internalQuery({
             .eq("conversationKey", args.conversationKey)
             .eq("sessionId", args.sessionId);
 
-          return args.afterSequence !== undefined
-            ? session.gt("sequence", args.afterSequence)
-            : session.gte("sequence", leaf?.contextStart ?? 0);
+          const from =
+            args.afterSequence === undefined
+              ? session.gte("sequence", leaf?.contextStart ?? 0)
+              : session.gt("sequence", args.afterSequence);
+
+          return leaf ? from.lte("sequence", leaf.sequence) : from;
         }),
       {
         bytes: CONVERSATION_EVENT_PAGE_BYTES,

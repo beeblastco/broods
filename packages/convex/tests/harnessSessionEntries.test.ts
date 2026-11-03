@@ -214,7 +214,7 @@ describe("harness session entries inside Convex transaction limits", () => {
 });
 
 describe("harness session context window", () => {
-  test("a read starts at the leaf's latest compaction and each branch keeps its own", async (): Promise<void> => {
+  test("a read spans the leaf's latest compaction to the leaf, and each branch keeps its own", async (): Promise<void> => {
     const { t, conversationKey } = await conversation();
     await save(t, conversationKey, [
       ...chain(["e1", "e2", "e3", "e4", "e5", "e6"]),
@@ -227,7 +227,7 @@ describe("harness session context window", () => {
     ]);
 
     expect((await readAllPages(t, conversationKey, "s1", "e9")).flat()).toEqual(
-      ["e4", "e5", "e6", "e7", "e8", "e9", "f4"],
+      ["e4", "e5", "e6", "e7", "e8", "e9"],
     );
     expect((await readAllPages(t, conversationKey, "s1", "f4")).flat()).toEqual(
       ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "f4"],
@@ -316,11 +316,8 @@ async function readAllPages(
     const page = await t.query(internal.runtime.readHarnessSessionEntries, {
       conversationKey: conversationKey,
       sessionId: sessionId,
-      ...(afterSequence === undefined
-        ? leafEntryId === undefined
-          ? {}
-          : { leafEntryId: leafEntryId }
-        : { afterSequence: afterSequence }),
+      ...(leafEntryId === undefined ? {} : { leafEntryId: leafEntryId }),
+      ...(afterSequence === undefined ? {} : { afterSequence: afterSequence }),
     });
     pages.push(page.entries.map((row) => row.entryId));
     if (page.nextSequence === null) {

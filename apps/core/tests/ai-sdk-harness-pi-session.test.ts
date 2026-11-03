@@ -243,7 +243,7 @@ describe("Session harness entries", () => {
     }
   });
 
-  it("pages from the leaf's context start", async () => {
+  it("pages through the leaf's context window", async () => {
     const { Session } = await import("../src/harness/session.ts");
     const { runtime } = await import("../src/shared/convex/runtime.ts");
     const row = (entryId: string): HarnessSessionEntry => ({
@@ -271,7 +271,12 @@ describe("Session harness entries", () => {
       ).toEqual(["e1", "e2"]);
       expect(query.mock.calls.map(([, args]) => args)).toEqual([
         { conversationKey: "conversation", sessionId: "s1", leafEntryId: "e2" },
-        { conversationKey: "conversation", sessionId: "s1", afterSequence: 1 },
+        {
+          conversationKey: "conversation",
+          sessionId: "s1",
+          leafEntryId: "e2",
+          afterSequence: 1,
+        },
       ]);
     } finally {
       query.mockRestore();
