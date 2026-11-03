@@ -222,7 +222,7 @@ describe("resolveAgentRuntime", () => {
       },
     } as never);
 
-    expect(
+    await expect(
       resolveAgentRuntime({ sandboxes: ["sb_old"] }, { accountId: "acct_1" }),
     ).rejects.toThrow(
       "config.options.template was removed; set config.snapshot",
@@ -441,7 +441,7 @@ describe("resolveAgentRuntime", () => {
       one.workspaces[0]?.namespace,
     );
     expect(two.workspaces[0]?.namespace).not.toBe(one.workspaces[0]?.namespace);
-    expect(
+    await expect(
       resolveAgentRuntime(agentConfig, { accountId: "acct_1" }),
     ).rejects.toThrow('Workspace isolation "agent" requires an agent identity');
   });
@@ -456,7 +456,7 @@ describe("resolveAgentRuntime", () => {
       },
     } as never);
 
-    expect(
+    await expect(
       ingestChannelAttachments(
         [],
         [
@@ -571,7 +571,7 @@ describe("resolveAgentRuntime", () => {
       },
     } as never);
 
-    expect(
+    await expect(
       resolveAgentRuntime(
         {
           sandboxes: ["sb_mac"],
@@ -609,7 +609,7 @@ describe("resolveAgentRuntime", () => {
       },
     } as never);
 
-    expect(
+    await expect(
       resolveAgentRuntime(
         {
           sandboxes: ["sb_box"],
@@ -647,7 +647,7 @@ describe("resolveAgentRuntime", () => {
       );
     };
 
-    expect(runtimeFor("daytona")).rejects.toThrow(
+    await expect(runtimeFor("daytona")).rejects.toThrow(
       'Workspace "notes" cannot run on a daytona sandbox',
     );
     expect(await runtimeFor("vercel")).toHaveProperty("workspaces");
@@ -787,7 +787,7 @@ describe("resolveAgentRuntime", () => {
       workspaceConfigs: { getById: async () => null },
     } as never);
 
-    expect(
+    await expect(
       resolveAgentRuntime(
         { sandboxes: ["sb_1", "sb_2"] },
         { accountId: "acct_1", agentId: "ag_1" },
@@ -837,7 +837,7 @@ describe("resolveAgentRuntime", () => {
       workspaceConfigs: { getById: async () => null },
     } as never);
 
-    expect(
+    await expect(
       resolveAgentRuntime({ sandboxes: ["missing"] }, { accountId: "acct_1" }),
     ).rejects.toThrow(/Referenced sandbox not found/);
   });

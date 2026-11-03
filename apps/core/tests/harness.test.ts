@@ -824,7 +824,7 @@ describe("runAgentLoop", () => {
     );
 
     const prepareStep = streamTextMock.mock.calls.at(-1)?.[0].prepareStep;
-    expect(
+    await expect(
       prepareStep!({
         responseMessages: [],
         messages: [{ role: "user", content: "original" }],
@@ -1528,7 +1528,9 @@ describe("runAgentLoop", () => {
       },
     );
 
-    expect(stream.consumeStream()).rejects.toThrow("stream transport failed");
+    await expect(stream.consumeStream()).rejects.toThrow(
+      "stream transport failed",
+    );
     expect(stream.didFail()).toBe(true);
     expect(stream.failureText()).toBe("stream transport failed");
     expect(usageWrites[0]?.status).toBe("failed");
@@ -1684,7 +1686,7 @@ describe("runAgentLoop", () => {
       event: unknown,
     ) => Promise<unknown>;
     expect(typeof toolApproval).toBe("function");
-    expect(
+    await expect(
       toolApproval({
         toolCall: {
           type: "tool-call",
@@ -2765,7 +2767,7 @@ describe("runAgentLoop", () => {
     >;
     expect(tools.load_skill).toBeDefined();
     const loadSkillTool = tools.load_skill!;
-    expect(
+    await expect(
       loadSkillTool.execute({
         path: "acct_test/support-flow",
         resources: [],
@@ -3210,10 +3212,10 @@ describe("runAgentLoop", () => {
       systemContextSnapshot: { cursor: null, messages: [] },
     } as never;
 
-    expect(runAgentLoop(session, turn, {})).rejects.toThrow(
+    await expect(runAgentLoop(session, turn, {})).rejects.toThrow(
       "config.model.provider is required",
     );
-    expect(
+    await expect(
       runAgentLoop(session, turn, {
         model: {
           provider: "openai",
@@ -3221,7 +3223,7 @@ describe("runAgentLoop", () => {
         },
       }),
     ).rejects.toThrow("config.provider.openai is required");
-    expect(
+    await expect(
       runAgentLoop(session, turn, {
         provider: {
           openai: {},
@@ -3593,7 +3595,7 @@ describe("subagent policy input", () => {
       });
 
       // The mocked model says nothing, so the child task fails once the loop is built.
-      expect(
+      await expect(
         internals.runTask({
           taskId: "subagent_1",
           eventId: "event_child",
