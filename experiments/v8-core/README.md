@@ -162,6 +162,40 @@ task was 44 against 58 ms and memory about 250 MB against 900 MB. The bench
 leaves its cores running when it ends, so stop them before a second run.
 The page's version 7 reports these rows.
 
+## One writer per account (2026-11-03)
+
+More engines did not close the gap. `writerConfig` runs the write queue alone
+and `directEagerSpokeConfig` reaches it as an external service, so two or
+three engines (`run-gap.sh` arm `cfengines:<n>:<Config>`) still send one
+account's writes through one queue. On the local stand-in (`eng-*`, 2 rounds)
+one, two and three engines all took 104 to 110% of today's time at 20 and 40
+users: the box was busy with the database (about 800 to 900 ms of Convex CPU
+per task), not with workerd's thread.
+
+Convex's own function log (`/api/stream_function_logs`, one round at 20 users,
+both runtimes) showed why: on the `cloudflare` provider every command mirrors
+its sandbox row (`sandbox/instances:upsert`), which adds the sandbox's time to
+the account's `usageDays` row. Twenty tasks at once on one account made about
+170 executions for 40 mirror writes, a third of the database's execution time,
+and 20 of the 40 failed after four retries, so that sandbox time was never
+metered. This is today's core as much as the isolates.
+
+`per-task/write-queue.js` now keeps one Durable Object per account for usage,
+budget and mirror writes (`outbound.ts` sends all three through `WRITES`),
+sends them in order, and of the mirror writes queued for one sandbox row sends
+only the last, which meters the same time: 41 executions, no conflicts, none
+lost. With it (`acct-*`, 2 rounds) the isolates took 74% and 73% of today's
+time with a running sandbox at 20 and 40 users, and 85% and 80% with a new
+sandbox per task; two engines with the shared writer matched one.
+
+The same fix fits today's core: `CORE_FIX=1 bench/run-cf.sh` applies
+`bench/core-account-mirror.patch` (one mirror queue per account inside the
+process) for that run only. Against that (`ctl-*`) the isolates took 96% and
+95% (running sandbox) and 100% and 98% (new sandbox), so they are now level or
+slightly ahead, with about 100 to 110 ms of CPU per task against 60 to 80 and
+still about three times the memory. Today's core's queue holds only inside one
+process; the isolates' writer is one per account across every engine.
+
 ## Two ideas that did not help
 
 Commit `8f59ca0` built the two fixes the page proposed for the time still

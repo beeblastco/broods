@@ -5,7 +5,7 @@
 #   cold: a new sandbox for every task, so every task waits for a Container to start.
 # Needs the local stack up in this checkout, and CLOUDFLARE_SANDBOX_URL (https) and
 # CLOUDFLARE_SANDBOX_API_KEY in the environment; the key is never printed or written to a file.
-# Usage: [OUT_PREFIX=cf] run-cf.sh [rounds] [level] [arms]   (defaults: 3, 20, warm cold)
+# Usage: [OUT_PREFIX=cf] [CORE_FIX=1] run-cf.sh [rounds] [level] [arms]   (defaults: 3, 20, warm cold)
 # Rows go to results/$OUT_PREFIX-<arm>.jsonl; the summary is printed at the end. CF_ARMS swaps the
 # run-gap.sh arms, e.g. "bun:cf cfengines:2:directEagerSpokeConfig" for two engines and one writer.
 set -uo pipefail
@@ -22,8 +22,15 @@ status=$(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_SANDBOX_API
   curl -s -m 20 -o /dev/null -w '%{http_code}' -K - "$CLOUDFLARE_SANDBOX_URL/v1/sandboxes/bench-preflight")
 [ "$status" = 200 ] || { echo "bridge preflight: HTTP $status (want 200; 401 means the key does not match)"; exit 1; }
 
-[ -f dist/entry.js ] || bun build.ts || exit 1
-[ -f dist-slim/entry.js ] || SLIM=1 bun build.ts ./entry.ts ./dist-slim || exit 1
+# Always rebuilt, so the isolates run this checkout's core and writer.
+bun build.ts > /dev/null || exit 1
+SLIM=1 bun build.ts ./entry.ts ./dist-slim > /dev/null || exit 1
+# CORE_FIX=1: today's core queues each account's sandbox mirror writes in its own process
+# (bench/core-account-mirror.patch, applied for this run only), the fair check against the writer.
+if [ "${CORE_FIX:-0}" = 1 ]; then
+  (cd ../.. && git apply experiments/v8-core/bench/core-account-mirror.patch) || exit 1
+  trap '(cd ../.. && git apply -R experiments/v8-core/bench/core-account-mirror.patch)' EXIT
+fi
 # restart-cores.sh also starts the worker provider's settings; nothing listens there in this run.
 [ -f logs/worker-sandbox.key ] || openssl rand -hex 32 > logs/worker-sandbox.key
 

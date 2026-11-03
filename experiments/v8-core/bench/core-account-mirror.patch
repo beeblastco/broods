@@ -1,0 +1,14 @@
+diff --git a/apps/core/src/harness/sandbox/cloudflare-executor.ts b/apps/core/src/harness/sandbox/cloudflare-executor.ts
+index 10978eb..9191f40 100644
+--- a/apps/core/src/harness/sandbox/cloudflare-executor.ts
++++ b/apps/core/src/harness/sandbox/cloudflare-executor.ts
+@@ -219,7 +219,8 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
+     id: string,
+     metadata: SandboxRunRequest["metadata"],
+   ): void {
+-    void queueMirrorWrite(id, (): Promise<void> =>
++    // Bench control: one queue per account, so the account's usage rows see one write at a time.
++    void queueMirrorWrite(this.#config.controlPlane?.accountId ?? id, (): Promise<void> =>
+       upsertSandboxInstance(
+         this.#config.controlPlane,
+         "cloudflare",
