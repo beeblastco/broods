@@ -1,6 +1,23 @@
 import { v, type Infer } from "convex/values";
-import { mutation } from "./_generated/server";
+import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import {
+  action,
+  internalQuery,
+  mutation,
+  type ActionCtx,
+} from "./_generated/server";
 import { authKit } from "./auth";
+import { ClientError } from "./model/clientError";
+import {
+  broodsFolder,
+  commitFiles,
+  installationToken,
+  isAgentEditable,
+  readBroodsFolder,
+  requireGitHubApp,
+} from "./model/github";
+import { getOwnedStage, getStageForWrite } from "./model/ownership/stage";
 import { sealUserToken, USER_TOKEN_MAX_TTL_MS } from "./model/userToken";
 
 const AGENT_PATH =
@@ -8,15 +25,24 @@ const AGENT_PATH =
 
 const sessionValidator = v.object({
   agentId: v.string(),
-  endpointId: v.string(),
   expiresAt: v.number(),
-  projectSlug: v.string(),
   runtimeKey: v.string(),
-  stageSlug: v.string(),
+  url: v.string(),
   userToken: v.string(),
 });
 
+const repoFileValidator = v.object({ content: v.string(), path: v.string() });
+
+const repoTargetValidator = v.object({
+  branch: v.string(),
+  fullName: v.string(),
+  installationId: v.number(),
+  rootDirectory: v.string(),
+  viaPullRequest: v.boolean(),
+});
+
 type DockSession = Infer<typeof sessionValidator>;
+type RepoTarget = Infer<typeof repoTargetValidator>;
 
 // The dock talks to one Broods agent per deployment, as the signed-in user; null keeps its planner.
 export const session = mutation({
@@ -36,22 +62,141 @@ export const session = mutation({
 
     return {
       agentId: agent.agentId,
-      endpointId: agent.endpointId,
       expiresAt: expiresAt,
-      projectSlug: agent.projectSlug,
       runtimeKey: agent.runtimeKey,
-      stageSlug: agent.stageSlug,
+      url: agent.url,
       userToken: userToken,
     };
   },
 });
 
+// What the agent reads before it edits: the stage's `broods/` folder on the branch it deploys from.
+export const repoFiles = action({
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
+  returns: v.union(
+    v.object({
+      branch: v.string(),
+      files: v.array(repoFileValidator),
+      fullName: v.string(),
+    }),
+    v.null(),
+  ),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    branch: string;
+    files: Infer<typeof repoFileValidator>[];
+    fullName: string;
+  } | null> => {
+    const target = await repoTarget(ctx, args, false);
+    if (!target) return null;
+    const app = requireGitHubApp();
+    const token = await installationToken(app, target.installationId);
+
+    return {
+      branch: target.branch,
+      files: await readBroodsFolder(
+        app,
+        token,
+        target.fullName,
+        target.branch,
+        target.rootDirectory,
+      ),
+      fullName: target.fullName,
+    };
+  },
+});
+
+// Applies the agent's edit as one commit; Production's branch gets a pull request instead.
+export const commitChange = action({
+  args: {
+    files: v.array(repoFileValidator),
+    message: v.string(),
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+  },
+  returns: v.object({ url: v.string(), viaPullRequest: v.boolean() }),
+  handler: async (
+    ctx,
+    { files, message, ...args },
+  ): Promise<{ url: string; viaPullRequest: boolean }> => {
+    const target = await repoTarget(ctx, args, true);
+    if (!target)
+      throw new ClientError("This stage does not deploy from a repo.");
+    const folder = broodsFolder(target.rootDirectory);
+    const outside = files.find((file) => !isAgentEditable(folder, file.path));
+    if (outside || files.length === 0) {
+      throw new ClientError(
+        `The agent may only change files in ${folder}${outside ? `, not ${outside.path}` : ""}.`,
+      );
+    }
+    const app = requireGitHubApp();
+
+    return await commitFiles(
+      app,
+      await installationToken(app, target.installationId),
+      target.fullName,
+      target.branch,
+      files,
+      message.trim() || "Update broods/ from the dashboard",
+      target.viaPullRequest,
+    );
+  },
+});
+
+/** The repo branch a stage deploys from, when the caller may read (or `write`) that stage. */
+export const linkedBranch = internalQuery({
+  args: {
+    authId: v.string(),
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+    write: v.boolean(),
+  },
+  returns: v.union(repoTargetValidator, v.null()),
+  handler: async (
+    ctx,
+    { authId, projectId, stageId, write },
+  ): Promise<RepoTarget | null> => {
+    const stage = write
+      ? await getStageForWrite(ctx, authId, stageId)
+      : await getOwnedStage(ctx, authId, stageId);
+    if (stage?.projectId !== projectId) return null;
+    const repo = (await ctx.db.get(projectId))?.repo;
+    if (!repo) return null;
+    const production = stage.kind === "production";
+    const branch = production ? repo.productionBranch : repo.developmentBranch;
+    if (!branch) return null;
+
+    return {
+      branch: branch,
+      fullName: repo.fullName,
+      installationId: repo.installationId,
+      rootDirectory: repo.rootDirectory,
+      viaPullRequest: production,
+    };
+  },
+});
+
+async function repoTarget(
+  ctx: ActionCtx,
+  args: { projectId: Id<"projects">; stageId: Id<"stages"> },
+  write: boolean,
+): Promise<RepoTarget | null> {
+  const user = await authKit.getAuthUser(ctx);
+  if (!user) throw new Error("User not found or not authenticated");
+  return await ctx.runQuery(internal.agentDock.linkedBranch, {
+    authId: user.id,
+    projectId: args.projectId,
+    stageId: args.stageId,
+    write: write,
+  });
+}
+
 function dockAgent(): {
   agentId: string;
-  endpointId: string;
-  projectSlug: string;
   runtimeKey: string;
-  stageSlug: string;
+  url: string;
   userTokenSecret: string;
 } | null {
   const url = process.env.BROODS_AGENT_URL;
@@ -59,16 +204,13 @@ function dockAgent(): {
   const runtimeKey = process.env.BROODS_AGENT_RUNTIME_KEY;
   const userTokenSecret = process.env.BROODS_AGENT_USER_TOKEN_SECRET;
   if (!url || !agentId || !runtimeKey || !userTokenSecret) return null;
-  const match = AGENT_PATH.exec(new URL(url).pathname);
-  if (!match) return null;
-  const [, projectSlug, stageSlug, endpointId] = match;
+  if (!URL.canParse(url) || !AGENT_PATH.test(new URL(url).pathname))
+    return null;
 
   return {
     agentId: agentId,
-    endpointId: decodeURIComponent(endpointId),
-    projectSlug: decodeURIComponent(projectSlug),
     runtimeKey: runtimeKey,
-    stageSlug: decodeURIComponent(stageSlug),
+    url: url.replace(/\/+$/, ""),
     userTokenSecret: userTokenSecret,
   };
 }

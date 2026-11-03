@@ -91,6 +91,12 @@ function describe(action: CopilotAction): string {
       return `setEnvVar ${action.name}=${action.value}`;
     case "blocked":
       return "blocked";
+    case "connectNodes":
+      return `connect ${action.source} ${action.target}`;
+    case "addMcp":
+      return `addMcp ${action.name} ${action.url}`;
+    case "commitFiles":
+      return `commit ${action.files.map((file) => file.path).join(",")}`;
   }
 }
 

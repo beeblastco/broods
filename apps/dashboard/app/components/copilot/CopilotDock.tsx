@@ -14,7 +14,14 @@ import {
 } from "@/app/components/ui/input-group";
 import { useStickToBottom } from "@/app/hooks/useStickToBottom";
 import { ArrowUp, X } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useState } from "react";
+
+// Heavy (Shiki), so it loads with the first answer, not with the page.
+const Streamdown = dynamic(
+  () => import("streamdown").then((m) => m.Streamdown),
+  { ssr: false },
+);
 
 const EXAMPLES = [
   "go to scheduler",
@@ -95,10 +102,14 @@ export function CopilotDock(): React.JSX.Element | null {
                 )}
                 {message.pending && !message.text ? (
                   <p className="text-xs text-muted-foreground">Thinking...</p>
-                ) : (
+                ) : message.role === "user" ? (
                   <p className="whitespace-pre-wrap text-xs text-foreground">
                     {message.text}
                   </p>
+                ) : (
+                  <Streamdown className="min-w-0 wrap-break-word text-xs text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_code]:whitespace-pre-wrap [&_code]:wrap-break-word [&_pre]:max-w-full [&_pre]:overflow-x-auto">
+                    {message.text}
+                  </Streamdown>
                 )}
                 {message.plan && (
                   <CopilotPlanCard

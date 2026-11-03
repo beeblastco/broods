@@ -93,6 +93,7 @@ import {
   connectionRefusal,
   type ConnectionGraph,
 } from "@/app/lib/canvasConnections";
+import { onCanvasAction } from "@/app/lib/canvasActions";
 import { toErrorMessage } from "@/app/lib/errors";
 import { MOTION_MS, prefersReducedMotion } from "@/app/lib/motion";
 import { reportPerf } from "@/app/lib/perfReport";
@@ -143,7 +144,7 @@ import {
   type OnNodeDrag,
   type OnNodesChange,
 } from "@xyflow/react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { Group } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -1199,6 +1200,69 @@ function CanvasInner({
     () => canWrite && addNode("workspace", "Workspace"),
   );
   useShortcut("canvas.addMcp", () => canWrite && addNode("mcp", "MCP"));
+
+  // The Broods agent dock's connect and add-MCP steps land here, checked like a drag would be.
+  const saveMcp = useAction(api.mcp.saveForNode);
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- a window event listener
+  useEffect(
+    () =>
+      onCanvasAction(async (action): Promise<string | undefined> => {
+        if (!canWrite) return "Members read the canvas but cannot change it.";
+        const byLabel = (label: string): Node | undefined =>
+          nodesRef.current.find(
+            (node) =>
+              typeof node.data.label === "string" &&
+              node.data.label.toLowerCase() === label.toLowerCase(),
+          );
+        if (action.kind === "connect") {
+          const source = byLabel(action.source);
+          const target = byLabel(action.target);
+          if (!source || !target) {
+            return `${source ? action.target : action.source} is not on this canvas.`;
+          }
+          const connection = {
+            source: source.id,
+            sourceHandle: null,
+            target: target.id,
+            targetHandle: null,
+          };
+          const refusal = connectionRefusal(getConnectionGraph(), connection);
+          if (refusal) return refusal;
+          onConnect(connection);
+
+          return undefined;
+        }
+        const agent = action.agent ? byLabel(action.agent) : undefined;
+        if (action.agent && !agent)
+          return `${action.agent} is not on this canvas.`;
+        if (!stageId) return "Pick a stage first.";
+        const nodeId = String(nextId.current);
+        addNode(
+          "mcp",
+          action.name,
+          { label: action.name },
+          agent ? [agent.id] : undefined,
+        );
+        await saveMcp({
+          nodeId: nodeId,
+          nodeLabel: action.name,
+          projectId: projectId,
+          stageId: stageId,
+          url: action.url,
+        });
+
+        return undefined;
+      }),
+    [
+      addNode,
+      canWrite,
+      getConnectionGraph,
+      onConnect,
+      projectId,
+      saveMcp,
+      stageId,
+    ],
+  );
   useShortcut("canvas.rename", () => {
     if (canWrite && selectedNode) setRenamingNodeId(selectedNode.id);
   });

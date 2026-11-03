@@ -53,6 +53,14 @@ const RUN: Record<PackageManager, string> = {
 };
 
 /** Lockfiles in the order a monorepo's own beats a stray one. */
+const AGENT_FILE_LIMIT = 40;
+const AGENT_FILE_PATTERN = /\.(ts|tsx|js|mjs|json|md|txt|ya?ml)$/;
+
+export interface RepoFile {
+  content: string;
+  path: string;
+}
+
 const LOCKFILES: ReadonlyArray<{ file: string; manager: PackageManager }> = [
   { file: "bun.lock", manager: "bun" },
   { file: "bun.lockb", manager: "bun" },
@@ -392,25 +400,97 @@ export async function findBroodsRoots(
   fullName: string,
   branch: string,
 ): Promise<BroodsRoot[]> {
-  const body = await githubRequest<{
-    tree: Array<{ path: string; type: string }>;
-    truncated: boolean;
-  }>(
+  return broodsRootsFromPaths(await listFiles(app, token, fullName, branch));
+}
+
+/** The text files of the `broods/` folder under `rootDirectory`, for the dashboard agent. */
+export async function readBroodsFolder(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+  branch: string,
+  rootDirectory: string,
+): Promise<RepoFile[]> {
+  const prefix = broodsFolder(rootDirectory);
+  const paths = (await listFiles(app, token, fullName, branch))
+    .filter((path) => isAgentEditable(prefix, path))
+    .slice(0, AGENT_FILE_LIMIT);
+  const files = await Promise.all(
+    paths.map(async (path): Promise<RepoFile | null> => {
+      const file = await getFile(app, token, fullName, branch, path);
+      return file ? { content: file.content, path: path } : null;
+    }),
+  );
+
+  return files.filter((file): file is RepoFile => file !== null);
+}
+
+/**
+ * Commits `files` to `branch` as one commit, or through a pull request from a fresh branch when
+ * `viaPullRequest` or the branch refuses a direct write. Answers the commit or pull request URL.
+ */
+export async function commitFiles(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+  branch: string,
+  files: readonly RepoFile[],
+  message: string,
+  viaPullRequest: boolean,
+): Promise<{ url: string; viaPullRequest: boolean }> {
+  if (!viaPullRequest) {
+    try {
+      const commit = await commitTo(
+        app,
+        token,
+        fullName,
+        branch,
+        files,
+        message,
+      );
+
+      return { url: commit, viaPullRequest: false };
+    } catch (error) {
+      if (!(error instanceof GitHubApiError) || !isRefusedWrite(error.status)) {
+        throw error;
+      }
+    }
+  }
+  const head = `broods/agent-${Date.now().toString(36)}`;
+  await createBranch(app, token, fullName, branch, head);
+  await commitTo(app, token, fullName, head, files, message);
+  const pull = await githubRequest<{ html_url: string }>(
     app,
     token,
-    "GET",
-    `/repos/${fullName}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
+    "POST",
+    `/repos/${fullName}/pulls`,
+    {
+      title: message,
+      head: head,
+      base: branch,
+      body: "Proposed by the Broods agent and applied from the dashboard.",
+    },
   );
-  // A partial tree could miss a root or the lockfile, so it is never answered as complete.
-  if (body.truncated) {
-    throw new ClientError(
-      `${fullName} is too large for GitHub to list in one scan, so Broods cannot find its broods/ folder.`,
-    );
-  }
 
-  return broodsRootsFromPaths(
-    body.tree.filter((entry) => entry.type === "blob").map((e) => e.path),
+  return { url: pull.html_url, viaPullRequest: true };
+}
+
+/** True for a text file inside the `broods/` folder `prefix`, outside build output. */
+export function isAgentEditable(prefix: string, path: string): boolean {
+  return (
+    path.startsWith(prefix) &&
+    !path
+      .split("/")
+      .some(
+        (part) =>
+          part === ".." || part.startsWith(".") || part === "_generated",
+      ) &&
+    AGENT_FILE_PATTERN.test(path)
   );
+}
+
+export function broodsFolder(rootDirectory: string): string {
+  return rootDirectory ? `${rootDirectory}/broods/` : "broods/";
 }
 
 /**
@@ -938,6 +1018,80 @@ function derLength(length: number): number[] {
 
 function fromBase64(value: string): Uint8Array {
   return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
+}
+
+// One commit on top of `branch`'s head, so a change across files deploys once.
+async function commitTo(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+  branch: string,
+  files: readonly RepoFile[],
+  message: string,
+): Promise<string> {
+  const ref = `/repos/${fullName}/git/refs/heads/${encodeURIComponent(branch)}`;
+  const head = await githubRequest<{ object: { sha: string } }>(
+    app,
+    token,
+    "GET",
+    `/repos/${fullName}/git/ref/heads/${encodeURIComponent(branch)}`,
+  );
+  const parent = await githubRequest<{ tree: { sha: string } }>(
+    app,
+    token,
+    "GET",
+    `/repos/${fullName}/git/commits/${head.object.sha}`,
+  );
+  const tree = await githubRequest<{ sha: string }>(
+    app,
+    token,
+    "POST",
+    `/repos/${fullName}/git/trees`,
+    {
+      base_tree: parent.tree.sha,
+      tree: files.map((file) => ({
+        path: file.path,
+        mode: "100644",
+        type: "blob",
+        content: file.content,
+      })),
+    },
+  );
+  const commit = await githubRequest<{ sha: string; html_url: string }>(
+    app,
+    token,
+    "POST",
+    `/repos/${fullName}/git/commits`,
+    { message: message, tree: tree.sha, parents: [head.object.sha] },
+  );
+  await githubRequest(app, token, "PATCH", ref, { sha: commit.sha });
+
+  return commit.html_url;
+}
+
+async function listFiles(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+  branch: string,
+): Promise<string[]> {
+  const body = await githubRequest<{
+    tree: Array<{ path: string; type: string }>;
+    truncated: boolean;
+  }>(
+    app,
+    token,
+    "GET",
+    `/repos/${fullName}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
+  );
+  // A partial tree could miss a root or the lockfile, so it is never answered as complete.
+  if (body.truncated) {
+    throw new ClientError(
+      `${fullName} is too large for GitHub to list in one scan, so Broods cannot find its broods/ folder.`,
+    );
+  }
+
+  return body.tree.filter((entry) => entry.type === "blob").map((e) => e.path);
 }
 
 /** Its body when the file at `path` on `branch` exists, with the blob sha an update needs. */

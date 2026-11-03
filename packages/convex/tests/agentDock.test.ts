@@ -39,10 +39,8 @@ describe("agentDock.session", () => {
 
     expect(session).toMatchObject({
       agentId: "agent_1",
-      endpointId: "ep_1",
-      projectSlug: "broods",
       runtimeKey: "bsk_runtime",
-      stageSlug: "production",
+      url: "https://gateway.example.com/v1/projects/broods/stages/production/agents/ep_1",
     });
     const opened = await openUserToken(
       session?.userToken ?? "",

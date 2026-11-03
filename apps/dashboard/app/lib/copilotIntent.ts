@@ -29,6 +29,8 @@ export interface CopilotContext {
   envNames: readonly string[];
   items: readonly SearchItem[];
   liveCommands: ReadonlySet<string>;
+  /** Labels of nodes code owns; the canvas cannot wire them. */
+  lockedNodes?: ReadonlySet<string>;
 }
 
 export function planFromQuery(
@@ -55,6 +57,8 @@ export function planFromQuery(
 
   return (
     planEnvVar(trimmed, context) ??
+    planAddMcp(trimmed, context) ??
+    planConnect(trimmed, context) ??
     planCronStatus(trimmed, context) ??
     planCommand(trimmed, context) ??
     planLookup(trimmed, context)
@@ -82,6 +86,105 @@ export function itemAction(item: SearchItem): CopilotAction {
         type: "command",
       };
   }
+}
+
+// `add mcp <name> at <url> [to <agent>]`: a server with its address, wired to an agent.
+function planAddMcp(
+  query: string,
+  context: CopilotContext,
+): CopilotPlan | null {
+  const match =
+    /^add\s+(?:an?\s+)?mcp(?:\s+server)?\s+([\w-]+)\s+at\s+(https:\/\/\S+?)(?:\s+(?:to|for|on)\s+(.+))?$/i.exec(
+      query,
+    );
+  if (!match) return null;
+  const agent = match[3] ? findNode(context, match[3]) : undefined;
+  if (match[3] && agent?.detail !== "agent") return null;
+  if (agent && context.lockedNodes?.has(agent.title)) {
+    return lockedPlan(agent.title, `Add MCP ${match[1]} to ${agent.title}`);
+  }
+
+  return {
+    actions: [
+      {
+        ...(agent ? { agent: agent.title } : {}),
+        change: {
+          after: match[2],
+          before: "not on the canvas",
+          field: match[1],
+        },
+        label: `Add MCP ${match[1]}${agent ? ` to ${agent.title}` : ""}`,
+        name: match[1],
+        type: "addMcp",
+        url: match[2],
+      },
+    ],
+    summary: `Adds ${match[1]} and checks its tools.`,
+  };
+}
+
+// `connect <a> to <b>`: the agent end is always the source, as a drag would draw it.
+function planConnect(
+  query: string,
+  context: CopilotContext,
+): CopilotPlan | null {
+  const match = /^connect\s+(.+?)\s+(?:to|with)\s+(.+)$/i.exec(query);
+  if (!match) return null;
+  const first = findNode(context, match[1]);
+  const second = findNode(context, match[2]);
+  if (!first || !second || first === second) return null;
+  const [source, target] =
+    second.detail === "agent" && first.detail !== "agent"
+      ? [second, first]
+      : [first, second];
+  const locked = [source, target].find((node) =>
+    context.lockedNodes?.has(node.title),
+  );
+  if (locked) {
+    return lockedPlan(
+      locked.title,
+      `Connect ${source.title} to ${target.title}`,
+    );
+  }
+
+  return {
+    actions: [
+      {
+        label: `Connect ${source.title} to ${target.title}`,
+        source: source.title,
+        target: target.title,
+        type: "connectNodes",
+      },
+    ],
+    summary: `Connect ${source.title} to ${target.title}.`,
+  };
+}
+
+function lockedPlan(node: string, label: string): CopilotPlan {
+  return {
+    actions: [
+      {
+        label: label,
+        reason: `${node} is defined in code, so the canvas cannot change it. Change its broods/ files.`,
+        type: "blocked",
+      },
+    ],
+    summary: `${node} is defined in code.`,
+  };
+}
+
+function findNode(
+  context: CopilotContext,
+  name: string,
+): SearchItem | undefined {
+  const wanted = name
+    .trim()
+    .replace(/^(the|an?)\s+/i, "")
+    .toLowerCase();
+
+  return context.items.find(
+    (item) => item.group === "Nodes" && item.title.toLowerCase() === wanted,
+  );
 }
 
 function planCommand(

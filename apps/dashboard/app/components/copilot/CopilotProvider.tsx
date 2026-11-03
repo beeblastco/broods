@@ -1,22 +1,24 @@
 "use client";
 
 import { useShortcutRegistry } from "@/app/components/ShortcutProvider";
+import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import { useDashboardIndex } from "@/app/hooks/useDashboardIndex";
 import { useStage } from "@/app/hooks/useStage";
-import type { DockSession } from "@/app/lib/agentDock";
+import type { DockFacts, DockSession } from "@/app/lib/agentDock";
 import {
   actionTier,
   type CopilotAction,
   type CopilotPlan,
 } from "@/app/lib/copilotActions";
 import { planFromQuery, type CopilotContext } from "@/app/lib/copilotIntent";
-import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { navHref } from "@/app/lib/navigation";
+import { requestCanvasAction } from "@/app/lib/canvasActions";
+import { toErrorMessage } from "@/app/lib/errors";
 import type { SearchItem } from "@/app/lib/paletteSearch";
 import { STREAM_COMMIT_MS } from "@/app/lib/perfReport";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
 import {
   createContext,
@@ -70,7 +72,7 @@ export function CopilotProvider({
 }): React.JSX.Element {
   const params = useParams<{ projectId?: string }>();
   const projectId = (params.projectId ?? null) as Id<"projects"> | null;
-  const { stageId } = useStage();
+  const { stageArgs, stageId } = useStage();
   const router = useRouter();
   const registry = useShortcutRegistry();
 
@@ -89,9 +91,51 @@ export function CopilotProvider({
       ? { projectId: indexedProject, stageId: stageId }
       : "skip",
   );
+  // The same arguments as the index, so these share its subscriptions.
+  const canvas = useQuery(
+    api.canvas.getByProject,
+    indexedProject ? stageArgs : "skip",
+  );
+  const projects = useQuery(api.project.list, indexedProject ? {} : "skip");
+  const stages = useQuery(
+    api.stage.list,
+    indexedProject ? { projectId: indexedProject } : "skip",
+  );
+  const facts = useMemo((): DockFacts => {
+    const labels = new Map(
+      (canvas?.nodes ?? []).map((node) => [
+        node.id,
+        typeof node.data.label === "string" ? node.data.label : node.id,
+      ]),
+    );
+    const repo = projects?.find((project) => project._id === projectId)?.repo;
+    const branches = [
+      repo?.productionBranch && `Production from ${repo.productionBranch}`,
+      repo?.developmentBranch && `Development from ${repo.developmentBranch}`,
+    ].filter(Boolean);
+
+    return {
+      codeNodes: (canvas?.nodes ?? [])
+        .filter((node) => isCodeManagedOwner(node.data.managedBy))
+        .map((node) => labels.get(node.id) ?? node.id),
+      connections: (canvas?.edges ?? []).map(
+        (edge) =>
+          `${labels.get(edge.source) ?? edge.source} → ${labels.get(edge.target) ?? edge.target}`,
+      ),
+      project: projects?.find((project) => project._id === projectId)?.name,
+      repo: repo ? `${repo.fullName} (${branches.join(", ")})` : undefined,
+      stage: stages?.find((stage) =>
+        stageId ? stage._id === stageId : stage.isDefault,
+      )?.name,
+    };
+  }, [canvas, projectId, projects, stageId, stages]);
   const updateCron = useMutation(api.agent.cronsPublic.update);
   const setEnvVar = useMutation(api.environmentVariables.set);
   const mintSession = useMutation(api.agentDock.session);
+  const commitChange = useAction(api.agentDock.commitChange);
+  const readRepo = useAction(api.agentDock.repoFiles);
+  const currentStageId =
+    stageId ?? stages?.find((stage) => stage.isDefault)?._id ?? null;
   const sessionRef = useRef<DockSession | null | undefined>(undefined);
   const [conversationKey] = useState(() => `dock-${crypto.randomUUID()}`);
 
@@ -103,6 +147,13 @@ export function CopilotProvider({
   }, []);
   const [messages, setMessages] = useState<readonly CopilotMessage[]>([]);
   const [completed, setCompleted] = useState<ReadonlySet<string>>(new Set());
+
+  const note = useCallback((text: string): void => {
+    setMessages((prev) => [
+      ...prev,
+      { id: `${Date.now()}:note`, role: "broods", text: text },
+    ]);
+  }, []);
 
   const run = useCallback(
     (action: CopilotAction): void => {
@@ -138,9 +189,54 @@ export function CopilotProvider({
           return;
         case "blocked":
           return;
+        case "connectNodes":
+          requestCanvasAction({
+            kind: "connect",
+            source: action.source,
+            target: action.target,
+          }).catch((error: unknown) => note(toErrorMessage(error)));
+
+          return;
+        case "addMcp":
+          requestCanvasAction({
+            ...(action.agent ? { agent: action.agent } : {}),
+            kind: "addMcp",
+            name: action.name,
+            url: action.url,
+          }).catch((error: unknown) => note(toErrorMessage(error)));
+
+          return;
+        case "commitFiles":
+          if (!projectId || !currentStageId) return;
+          commitChange({
+            files: [...action.files],
+            message: action.message,
+            projectId: projectId,
+            stageId: currentStageId,
+          }).then(
+            (result) =>
+              note(
+                result.viaPullRequest
+                  ? `Opened a pull request: ${result.url}`
+                  : `Committed: ${result.url}. The stage deploys in about a minute.`,
+              ),
+            (error: unknown) => note(toErrorMessage(error)),
+          );
+
+          return;
       }
     },
-    [projectId, registry, router, setEnvVar, stageId, updateCron],
+    [
+      commitChange,
+      currentStageId,
+      note,
+      projectId,
+      registry,
+      router,
+      setEnvVar,
+      stageId,
+      updateCron,
+    ],
   );
 
   const runSafeSteps = useCallback(
@@ -193,24 +289,42 @@ export function CopilotProvider({
       let plan: CopilotPlan | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        const endpoint = resolveCoreEndpoint();
-        if (!endpoint.ok) throw new Error(endpoint.message);
         // Lazy: zod and the stream reader load on the first ask, not with every page.
-        const { dockPrompt, PROPOSE_TOOL, proposalPlan, streamDockAnswer } =
-          await import("@/app/lib/agentDock");
+        const {
+          ASK_TOOL,
+          dockPrompt,
+          PROPOSE_TOOL,
+          proposalPlan,
+          questionText,
+          streamDockAnswer,
+        } = await import("@/app/lib/agentDock");
+        // A linked repo's broods/ folder is what the agent edits; without it, it only advises.
+        const repo =
+          facts.repo && projectId && currentStageId
+            ? await readRepo({
+                projectId: projectId,
+                stageId: currentStageId,
+              }).catch(() => null)
+            : null;
         const stream = streamDockAnswer(
           session,
-          endpoint.httpBaseUrl,
           conversationKey,
-          dockPrompt(query, context),
+          dockPrompt(query, context, facts, repo ?? undefined),
         );
+        // Text after a tool call is the next model step: keep it a paragraph apart.
+        let afterTool = false;
         for await (const part of stream) {
-          if (part.type === "text-delta") text += part.text;
-          else if (
-            part.type === "tool-call" &&
-            part.toolName === PROPOSE_TOOL
-          ) {
-            plan = proposalPlan(part.input, context) ?? plan;
+          if (part.type === "text-delta") {
+            text += afterTool && text ? `\n\n${part.text}` : part.text;
+            afterTool = false;
+          } else if (part.type === "tool-call") {
+            afterTool = true;
+            if (part.toolName === PROPOSE_TOOL) {
+              plan =
+                proposalPlan(part.input, context, repo ?? undefined) ?? plan;
+            } else if (part.toolName === ASK_TOOL) {
+              text += `${text ? "\n\n" : ""}${questionText(part.input)}`;
+            } else continue;
           } else continue;
           timer ??= setTimeout(() => {
             timer = undefined;
@@ -232,7 +346,7 @@ export function CopilotProvider({
         });
       }
     },
-    [conversationKey, runSafeSteps],
+    [conversationKey, currentStageId, facts, projectId, readRepo, runSafeSteps],
   );
 
   const ask = useCallback(
@@ -251,6 +365,7 @@ export function CopilotProvider({
         envNames: (envVars ?? []).map((envVar) => envVar.name),
         items: items,
         liveCommands: registry.activeIds,
+        lockedNodes: new Set(facts.codeNodes),
       };
       setMessages((prev) => [
         ...prev,
@@ -288,6 +403,7 @@ export function CopilotProvider({
       crons,
       dockSession,
       envVars,
+      facts.codeNodes,
       items,
       runSafeSteps,
       registry.activeIds,
