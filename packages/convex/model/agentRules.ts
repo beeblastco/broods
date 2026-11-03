@@ -399,8 +399,9 @@ const PROVIDER_SETTINGS = z.pipe(
           if (problem)
             ctx.addIssue({ code: "custom", path: [label], message: problem });
         }
-        for (const [key, endpoint] of Object.entries(settings)) {
+        for (const key of Object.keys(settings)) {
           if (key === "baseURL" || (key === "base_url" && baseURL)) continue;
+          const endpoint = settings[key];
           if (!PROVIDER_ENDPOINT_SETTING.test(key) || endpoint === undefined)
             continue;
           if (typeof endpoint !== "string") {
@@ -422,10 +423,12 @@ const PROVIDER_SETTINGS = z.pipe(
   // Store one spelling: a stale base_url (core prefers it) would shadow later baseURL edits.
   z.transform((settings) => {
     const baseURL = providerBaseURL(settings);
-    if (!baseURL) return settings;
-    const { base_url: _baseUrl, ...rest } = settings;
+    if (baseURL) {
+      settings.baseURL = baseURL;
+      delete settings.base_url;
+    }
 
-    return { ...rest, baseURL: baseURL };
+    return settings;
   }),
 );
 
@@ -789,7 +792,7 @@ const SUBAGENT = z.looseObject({
 
 const ENABLED_SWITCH = z.looseObject({ enabled: optionalBoolean });
 
-const AGENT_CONFIG = z.looseObject({
+export const AGENT_CONFIG = z.looseObject({
   agent: z.nullish(AGENT_BEHAVIOR),
   harness: z.nullish(HARNESS),
   model: z.nullish(MODEL),
@@ -864,14 +867,19 @@ type AgentRuntimeRefs = Pick<
   "sandboxes" | "workspaces"
 > & { harness?: unknown; sandbox?: unknown };
 
+// `schema` is AGENT_CONFIG, or the `z.compile` copy core checks every run with.
 export function normalizeAgentConfig(
   value: unknown,
   options: AgentConfigCheckOptions = {},
+  schema: typeof AGENT_CONFIG = AGENT_CONFIG,
 ): AgentConfig {
   if (value == null) {
     return {};
   }
-  const { policies, ...config } = parseInput(AGENT_CONFIG, value, "config");
+  const config = parseInput(schema, value, "config");
+  const policyIds = [...new Set(config.policies ?? [])];
+  // The parse built `config`, so it is ours to edit; a non-empty list goes back last.
+  delete config.policies;
   assertRuntimeRefs(config, options);
   if (!options.patch && config.channels)
     assertCompleteChannels(config.channels);
@@ -880,7 +888,6 @@ export function normalizeAgentConfig(
       "config.policy is no longer supported; use config.policies, and set mode on the policy itself",
     );
   }
-  const policyIds = [...new Set(policies ?? [])];
   if (config.harness && policyIds.length > 0) {
     throw new ClientError(
       "config.policies is not supported with config.harness",
@@ -896,19 +903,14 @@ export function normalizeAgentConfig(
       );
     }
   }
+  if (config.skills?.allowed)
+    config.skills = {
+      ...config.skills,
+      allowed: [...new Set(config.skills.allowed)],
+    };
+  if (policyIds.length > 0) config.policies = policyIds;
 
-  return {
-    ...config,
-    ...(config.skills?.allowed
-      ? {
-          skills: {
-            ...config.skills,
-            allowed: [...new Set(config.skills.allowed)],
-          },
-        }
-      : {}),
-    ...(policyIds.length > 0 ? { policies: policyIds } : {}),
-  };
+  return config;
 }
 
 export function normalizeAgentConfigPatch(
@@ -1155,8 +1157,9 @@ function assertRuntimeRefs(
       );
     seen.add(sandboxId);
   });
+  if (options.patch || sandboxes.length > 0 || config.harness == null) return;
   const harness = HARNESS_TYPE.safeParse(config.harness);
-  if (!options.patch && harness.success && sandboxes.length === 0)
+  if (harness.success)
     throw new ClientError(
       `config.sandboxes needs at least one sandbox for the ${String(harness.data.type)} harness; the first runs it`,
     );

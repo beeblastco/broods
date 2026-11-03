@@ -93,7 +93,6 @@ export function stringRecord(
   return wholeValue(stringValues, error);
 }
 
-// Any issue inside `schema` reports once, on the value itself, worded `error`.
 export function unsupportedKeys(
   keys: readonly string[],
 ): z.core.$ZodCheck<Record<string, unknown>> {
@@ -109,16 +108,18 @@ export function unsupportedKeys(
   });
 }
 
+// Any issue inside `schema` reports once, on the value itself, worded `error`.
+// A catch, not a nested parse, so `z.compile` inlines `schema`; the issue keeps no input.
 export function wholeValue<T>(
   schema: z.ZodMiniType<T>,
   error: string,
 ): z.ZodMiniType<T> {
   return z.pipe(
-    z.unknown(),
+    // oxlint-disable-next-line promise/valid-params -- zod's catch, not Promise#catch
+    z.catch(schema, z.NEVER),
     z.transform((value, ctx): T => {
-      const result = schema.safeParse(value);
-      if (result.success) return result.data;
-      ctx.issues.push({ code: "custom", message: error, input: value });
+      if (value !== z.NEVER) return value;
+      ctx.issues.push({ code: "custom", message: error, input: undefined });
 
       return z.NEVER;
     }),
