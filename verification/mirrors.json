@@ -1,0 +1,121 @@
+{
+  "AsyncResults": {
+    "apps/core/src/harness/handler.ts": {
+      "handleAsyncWorkerRequest": "c9fd8d1b1e54557b"
+    },
+    "apps/core/src/harness/subagents.ts": {
+      "SubagentCoordinator.recordOutcome": "acdd4f7aaef4349e"
+    },
+    "apps/core/src/harness/continuation.ts": {
+      "runAgentLoopUntilSubagentsIdle": "b92204a153c81240"
+    },
+    "apps/core/src/harness/async-tool-result.ts": {
+      "settleAsyncToolResultFromCallback": "3c7b09c1b30d9fd2"
+    },
+    "packages/convex/runtime.ts": {
+      "updateAsyncToolResult": "0cd2dc654067a414",
+      "markAsyncToolHandback": "4aaa38ae26112c36"
+    }
+  },
+  "Cron": {
+    "packages/convex/agent/crons.ts": {
+      "createRun": "98d9040333f0d638",
+      "completeRun": "3d80e2fe374a0f0d",
+      "failRun": "c470e713839415e2",
+      "settleRun": "f99981a08cf219dd",
+      "recordFailedFire": "30a832bd8c974080"
+    },
+    "apps/core/src/harness/handler.ts": {
+      "settleCronRun": "1c759b7a4542c6c0",
+      "startScheduledAgentRun": "2b2630d35e8ba48a"
+    }
+  },
+  "DevWatch": {
+    "packages/broods/src/cli/index.ts": {
+      "dev": "e3c57e1660287424"
+    }
+  },
+  "EscFilter": {
+    "packages/broods/src/cli/tui.ts": {
+      "stopTurnOnEscape": "491d19c074632e31"
+    }
+  },
+  "Gateway": {
+    "apps/edge/src/routes.ts": {
+      "ROUTERS": "32d28d1d454a7aa2",
+      "resolveRouter": "95d096e6f7907039"
+    },
+    "apps/core/src/shared/paths.ts": {
+      "stripTrailingSlashes": "d9053a3fe73a9b76"
+    }
+  },
+  "Ingress": {
+    "packages/convex/runtimeIngress.ts": {
+      "TERMINAL_STATUSES": "33fa288146a88018",
+      "applySteering": "69f895acb0a39df8",
+      "claimSteering": "040e382691711ea3",
+      "promoteQueuedGroup": "b7a0b2ec89860822",
+      "settleAppliedEnvelopes": "eb59517fa4a95625",
+      "expireQueuedEnvelopes": "eaf1afb9cfa294d2",
+      "expireStaleOwner": "95488d8c32eb3101",
+      "maintain": "1e1e552b20be9e1b",
+      "releaseOwner": "c27c7dc71a301ed1",
+      "renewOwner": "890c37e013a992c9",
+      "settle": "e17252a0520da309",
+      "stepBoundary": "688401ffe4068298",
+      "takeNext": "2a431332ee0dbfa3"
+    }
+  },
+  "StageTicket": {
+    "packages/broods/src/cli/index.ts": {
+      "run": "43c59c02fa239ae4"
+    },
+    "packages/convex/agent/deployments.ts": {
+      "mintStageSessionTicket": "d4e5a4b26a38fbe3"
+    },
+    "packages/convex/model/stageSessionTicket.ts": {
+      "openStageSessionTicket": "940993cf700965dc"
+    }
+  },
+  "Sync": {
+    "packages/broods/src/sync.ts": {
+      "BroodsSyncClient.putManifest": "7c8dd35782407a20",
+      "diffManifests": "a262255109c163c4"
+    },
+    "packages/convex/cli/types.ts": {
+      "CliManifestResource": "d632c895272ed721"
+    }
+  },
+  "SyncConcurrency": {
+    "packages/convex/cli/httpRoutes.ts": {
+      "handleManifestSync": "6bb3298d28147c51"
+    },
+    "packages/convex/cli/sync.ts": {
+      "recordExternalResourcesBySecretHash": "e8d643cb4b5bfd07",
+      "syncManifestBySecretHash": "bbf966b678cd2628"
+    }
+  },
+  "SyncCron": {
+    "packages/convex/cli/httpRoutes.ts": {
+      "desiredCrons": "60ba80c7d0ea2785",
+      "syncCrons": "cc5ef4f66ec61b15"
+    },
+    "packages/convex/model/agentSync.ts": {
+      "deleteAgentRow": "0c80e5d8508f425b"
+    }
+  },
+  "SyncEnv": {
+    "packages/broods/src/cli/index.ts": {
+      "pushLocalEnvVars": "5e43c5d0186b89cd"
+    },
+    "packages/convex/model/cliSync.ts": {
+      "assertEnvRefsResolved": "b08f3597ca117e8f"
+    }
+  },
+  "SyncExternal": {
+    "packages/convex/cli/httpRoutes.ts": {
+      "pruneExternalResources": "60228ff8d1be688a",
+      "syncExternalResources": "029bccd198c58b0a"
+    }
+  }
+}
