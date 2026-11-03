@@ -2477,8 +2477,25 @@ describe("message-agents in the coordinator", () => {
 
       return { task: task, session: session };
     };
+    const delivered = async (session: Session): Promise<void> => {
+      await session.stepBoundary([
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-read",
+              toolName: "async_status",
+              output: { type: "json", value: { status: "completed" } },
+            },
+          ],
+        },
+      ]);
+    };
     const answered = run("event_answered");
     const failed = run("event_failed");
+    await delivered(answered.session);
+    await delivered(failed.session);
 
     await coordinator["completeRun"](answered.session, answered.task, {
       status: "completed",

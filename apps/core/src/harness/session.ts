@@ -289,9 +289,11 @@ export class Session {
   private pendingStoredEvents: AppendedConversationEvent[] = [];
   // Pi's entries for the next checkpoint save, which carries them.
   private pendingHarnessEntries: HarnessSessionEntry[] = [];
-  // This turn's `async_status` reads: tool call id to the async tool result it returned. A read
-  // stores nothing; the saved row of its tool result does, or else the write of the run's answer.
-  readonly toolResultReads = new Map<string, string>();
+  // This turn's `async_status` reads: tool call id to the async tool result it
+  // returned. A read stores nothing; the saved row of its tool result does.
+  private readonly toolResultReads = new Map<string, string>();
+  // The reads a session that saves no history handed over: the write of its answer stores them.
+  readonly unsavedToolResults = new Set<string>();
   private hasLoggedMissingMemoryFile = false;
   private loadedSkillPrompts: SystemModelMessage[] = [];
   private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
@@ -1370,7 +1372,15 @@ export class Session {
     messages: ConversationIngressEvent[],
     dedupeKeys?: string[],
   ): Promise<AppendedConversationEvent[]> {
-    if (!this.persist) return [];
+    if (!this.persist) {
+      for (const message of messages) {
+        for (const resultId of this.toolResultIdsOf(message)) {
+          this.unsavedToolResults.add(resultId);
+        }
+      }
+
+      return [];
+    }
     const producer: MessageProducer = {
       model: modelIdentityFromModelConfig(this.agentConfig),
       retainsReasoning: retainsReasoningParts(this.agentConfig),

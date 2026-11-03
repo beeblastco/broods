@@ -1412,7 +1412,7 @@ export class SubagentCoordinator {
     // A child that saves no history: the answer's write stores the results the model read.
     const toolResultIds =
       !task.persistent && outcome.status === "completed"
-        ? [...childSession.toolResultReads.values()]
+        ? [...childSession.unsavedToolResults]
         : [];
     if (!settled) {
       await recordAsyncAgentResult(
