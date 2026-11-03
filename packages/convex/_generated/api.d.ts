@@ -958,17 +958,41 @@ export declare const api: {
     };
   };
   agentDock: {
+    commitChange: FunctionReference<
+      "action",
+      "public",
+      {
+        baseSha: string;
+        branch: string;
+        files: Array<{ content: string; path: string }>;
+        fullName: string;
+        message: string;
+        projectId: Id<"projects">;
+        stageId: Id<"stages">;
+      },
+      { sha: string; url: string; viaPullRequest: boolean }
+    >;
+    repoFiles: FunctionReference<
+      "action",
+      "public",
+      { projectId: Id<"projects">; stageId: Id<"stages"> },
+      {
+        baseSha: string;
+        branch: string;
+        files: Array<{ content: string; path: string }>;
+        fullName: string;
+        omitted: number;
+      } | null
+    >;
     session: FunctionReference<
       "mutation",
       "public",
       {},
       {
         agentId: string;
-        endpointId: string;
         expiresAt: number;
-        projectSlug: string;
         runtimeKey: string;
-        stageSlug: string;
+        url: string;
         userToken: string;
       } | null
     >;
@@ -4534,6 +4558,25 @@ export declare const internal: {
         null
       >;
     };
+  };
+  agentDock: {
+    linkedBranch: FunctionReference<
+      "query",
+      "internal",
+      {
+        authId: string;
+        projectId: Id<"projects">;
+        stageId: Id<"stages">;
+        write: boolean;
+      },
+      {
+        branch: string;
+        fullName: string;
+        installationId: number;
+        rootDirectory: string;
+        viaPullRequest: boolean;
+      } | null
+    >;
   };
   audit: {
     ledger: {

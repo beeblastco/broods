@@ -14,7 +14,14 @@ import {
 } from "@/app/components/ui/input-group";
 import { useStickToBottom } from "@/app/hooks/useStickToBottom";
 import { ArrowUp, X } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useState } from "react";
+
+// Heavy (Shiki), so it loads with the first answer, not with the page.
+const Streamdown = dynamic(
+  () => import("streamdown").then((m) => m.Streamdown),
+  { ssr: false },
+);
 
 const EXAMPLES = [
   "go to scheduler",
@@ -24,7 +31,8 @@ const EXAMPLES = [
 
 // Takes its width from the page, not floating, so what the plan changes stays on screen.
 export function CopilotDock(): React.JSX.Element | null {
-  const { ask, completed, isOpen, messages, runStep, setOpen } = useCopilot();
+  const { ask, completed, dismissed, isOpen, messages, runStep, setOpen } =
+    useCopilot();
 
   const [input, setInput] = useState("");
   const thread = useStickToBottom<HTMLDivElement>([messages]);
@@ -81,38 +89,43 @@ export function CopilotDock(): React.JSX.Element | null {
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            {messages.map((message) => (
-              <div key={message.id} className="flex flex-col gap-1">
-                {message.role === "user" ? (
-                  <span className="text-3xs uppercase tracking-wide text-muted-foreground">
-                    you
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1 text-2xs font-medium">
-                    <BroodsMark className="size-3" />
-                    Broods agent
-                  </span>
-                )}
-                {message.pending && !message.text ? (
-                  <p className="text-xs text-muted-foreground">Thinking...</p>
-                ) : (
-                  <p className="whitespace-pre-wrap text-xs text-foreground">
-                    {message.text}
-                  </p>
-                )}
-                {message.plan && (
-                  <CopilotPlanCard
-                    completed={completed}
-                    messageId={message.id}
-                    onRun={(index, action) =>
-                      runStep(message.id, index, action)
-                    }
-                    plan={message.plan}
-                    stale={message.stale}
-                  />
-                )}
-              </div>
-            ))}
+            {messages.map((message) =>
+              message.role === "user" ? (
+                <p
+                  key={message.id}
+                  className="ml-8 self-end whitespace-pre-wrap rounded-lg bg-muted px-2.5 py-1.5 text-xs text-foreground"
+                >
+                  {message.text}
+                </p>
+              ) : (
+                <div key={message.id} className="flex items-start gap-2">
+                  <BroodsMark className="mt-0.5 size-3.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    {message.pending && !message.text ? (
+                      <p className="text-xs text-muted-foreground">
+                        Thinking...
+                      </p>
+                    ) : (
+                      <Streamdown className="min-w-0 wrap-break-word text-xs text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_code]:whitespace-pre-wrap [&_code]:wrap-break-word [&_pre]:max-w-full [&_pre]:overflow-x-auto">
+                        {message.text}
+                      </Streamdown>
+                    )}
+                    {message.plan && (
+                      <CopilotPlanCard
+                        completed={completed}
+                        dismissed={dismissed}
+                        messageId={message.id}
+                        onRun={(index, action) =>
+                          runStep(message.id, index, action)
+                        }
+                        plan={message.plan}
+                        stale={message.stale}
+                      />
+                    )}
+                  </div>
+                </div>
+              ),
+            )}
           </div>
         )}
       </div>
