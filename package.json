@@ -37,6 +37,7 @@
     "local:status": "bun scripts/local-stack.ts status",
     "local:verify": "bun scripts/local-stack.ts verify",
     "local:perf": "bun scripts/local-stack.ts perf",
+    "harness:perf": "bun run --cwd apps/core perf:harness",
     "dashboard": "bun run --filter @broods/dashboard dev",
     "dashboard:build": "bun run --filter @broods/dashboard build",
     "docs": "bun run --filter @broods/docs start",
@@ -85,10 +86,10 @@
     "bun": ">=1.4.2"
   },
   "patchedDependencies": {
-    "@ai-sdk/harness-claude-code@1.0.169": "patches/@ai-sdk%2Fharness-claude-code@1.0.169.patch",
-    "@ai-sdk/harness-codex@1.0.167": "patches/@ai-sdk%2Fharness-codex@1.0.167.patch",
-    "@ai-sdk/harness-deepagents@1.0.165": "patches/@ai-sdk%2Fharness-deepagents@1.0.165.patch",
-    "@ai-sdk/harness-opencode@1.0.167": "patches/@ai-sdk%2Fharness-opencode@1.0.167.patch"
+    "@ai-sdk/harness-claude-code@1.0.176": "patches/@ai-sdk%2Fharness-claude-code@1.0.176.patch",
+    "@ai-sdk/harness-codex@1.0.174": "patches/@ai-sdk%2Fharness-codex@1.0.174.patch",
+    "@ai-sdk/harness-deepagents@1.0.172": "patches/@ai-sdk%2Fharness-deepagents@1.0.172.patch",
+    "@ai-sdk/harness-opencode@1.0.175": "patches/@ai-sdk%2Fharness-opencode@1.0.175.patch"
   },
   "trustedDependencies": [
     "sharp"

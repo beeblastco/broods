@@ -463,14 +463,16 @@ export async function duplicateStageContents(
     const clone = await ctx.db.get(newConfigId);
     if (!clone) continue;
 
-    const extraConfig = asRecord(clone.extraConfig);
+    const extraConfig = clone.extraConfig ?? {};
     const nextExtra = { ...extraConfig };
     let changed = false;
 
-    const subagent = asRecord(extraConfig.subagent);
-    if (Array.isArray(subagent.allowed)) {
-      const remapped = (subagent.allowed as string[])
-        .map((agentId) => agentIdMap.get(agentId))
+    const subagent = extraConfig.subagent;
+    if (subagent && Array.isArray(subagent.allowed)) {
+      const remapped = subagent.allowed
+        .map((agentId) =>
+          typeof agentId === "string" ? agentIdMap.get(agentId) : undefined,
+        )
         .filter((agentId): agentId is string => !!agentId);
       if (remapped.length > 0) {
         nextExtra.subagent = { ...subagent, allowed: remapped, enabled: true };
@@ -480,7 +482,7 @@ export async function duplicateStageContents(
       changed = true;
     }
 
-    const mcp = asRecord(extraConfig.mcp);
+    const mcp = extraConfig.mcp ?? {};
     if (Object.keys(mcp).length > 0 && mcpIdMap.size > 0) {
       nextExtra.mcp = Object.fromEntries(
         Object.entries(mcp).map(([key, value]) => [

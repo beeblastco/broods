@@ -2,7 +2,7 @@ import {
   ACCOUNT_ENV_REFS_ONLY_PATTERN,
   CREDENTIAL_HEADER_VALUE_PATTERN,
 } from "./envRefs";
-import { isPlainObject } from "./objects";
+import { configObject, parseOr } from "./storedJson";
 import { isSecretName } from "./secretNames";
 
 export const REDACTED_SECRET_VALUE = "********";
@@ -11,9 +11,7 @@ export function mergeConfigObjects(
   existing: object,
   patch: object,
 ): Record<string, unknown> {
-  const merged = mergeConfigValue(existing, patch);
-
-  return isPlainObject(merged) ? merged : {};
+  return parseOr(configObject, mergeConfigValue(existing, patch), {});
 }
 
 export function redactConfigSecrets<T>(value: T): T {
@@ -30,13 +28,14 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
   if (patch === null) {
     return undefined;
   }
-  if (Array.isArray(patch) || !isPlainObject(patch)) {
+  const patchObject = parseOr(configObject, patch);
+  if (!patchObject) {
     return patch;
   }
 
-  const existingObject = isPlainObject(existing) ? existing : {};
+  const existingObject = parseOr(configObject, existing, {});
   const merged = { ...existingObject };
-  for (const [key, value] of Object.entries(patch)) {
+  for (const [key, value] of Object.entries(patchObject)) {
     // JSON.parse makes "__proto__" an own key; assigning it would swap the prototype.
     if (key === "__proto__" || key === "constructor" || key === "prototype") {
       continue;
@@ -57,12 +56,13 @@ function redactSecrets(value: unknown, inHeaders = false): unknown {
   if (Array.isArray(value)) {
     return value.map((entry): unknown => redactSecrets(entry));
   }
-  if (!isPlainObject(value)) {
+  const object = parseOr(configObject, value);
+  if (!object) {
     return value;
   }
 
   return Object.fromEntries(
-    Object.entries(value).map(([key, entry]): [string, unknown] => {
+    Object.entries(object).map(([key, entry]): [string, unknown] => {
       if (inHeaders) {
         return [
           key,

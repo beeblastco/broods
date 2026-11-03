@@ -12,6 +12,7 @@ import {
 } from "@opentelemetry/api";
 import {
   isStepCount,
+  modelMessageSchema,
   streamText,
   wrapLanguageModel,
   type AssistantModelMessage,
@@ -30,6 +31,7 @@ import {
   type TypedToolCall,
   type UserModelMessage,
 } from "ai";
+import { z } from "zod";
 import { HarnessCapabilityUnsupportedError } from "@ai-sdk/harness";
 import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
 import { extractHarnessPromptContent } from "@ai-sdk/harness/utils";
@@ -61,7 +63,6 @@ import {
   tracesSubject,
 } from "../shared/nats.ts";
 import type { ProviderOptions, ToolResultOutput } from "@ai-sdk/provider-utils";
-import { isPlainObject } from "@broods/convex/model/objects";
 import {
   getObservabilityContext,
   getTracer,
@@ -166,6 +167,7 @@ import {
 } from "./usage-metering.ts";
 
 const MAX_AGENT_ITERATIONS = 30;
+const MODEL_MESSAGES = z.array(modelMessageSchema);
 // A slow step on a long context can take two minutes, so wind down with room for one more.
 export const DEADLINE_WIND_DOWN_MS = 3 * 60 * 1000;
 const WIND_DOWN_INSTRUCTION =
@@ -1558,6 +1560,16 @@ export async function runAgentLoop(
     } catch (error) {
       const message = errorMessage(error);
       finalizationError ??= error instanceof Error ? error : new Error(message);
+      if (finishObserved) {
+        logError(
+          "Harness checkpoint not saved; the next turn resumes from the last saved one",
+          {
+            eventId: session.eventId,
+            conversationKey: session.conversationKey,
+            error: message,
+          },
+        );
+      }
     } finally {
       activeHarnessSession = undefined;
     }
@@ -2118,25 +2130,14 @@ function applyAgentStartedMutation(
     // Ephemeral too, so it survives each prepareStep system refresh.
     turnContext.ephemeralSystem = [...turnContext.ephemeralSystem, message];
   }
-  if (
-    Array.isArray(mutation.messages) &&
-    mutation.messages.every(isModelMessageShape)
-  ) {
-    turnContext.messages = mutation.messages as ModelMessage[];
+  const messages = MODEL_MESSAGES.safeParse(mutation.messages);
+  if (messages.success) {
+    turnContext.messages = messages.data;
   } else if (mutation.messages !== undefined) {
     logWarn(
       "Ignoring agent.started hook messages override: entries are not model messages",
     );
   }
-}
-
-function isModelMessageShape(entry: unknown): boolean {
-  return (
-    isPlainObject(entry) &&
-    typeof entry.role === "string" &&
-    ["system", "user", "assistant", "tool"].includes(entry.role) &&
-    entry.content !== undefined
-  );
 }
 
 // On SSE the tokens are already sent: this changes the stored and delivered result only.

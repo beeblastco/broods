@@ -4,6 +4,7 @@ import type { DeepAgentsHarnessSettings } from "@ai-sdk/harness-deepagents";
 import type { OpenCodeHarnessSettings } from "@ai-sdk/harness-opencode";
 import type { PiHarnessSettings } from "@ai-sdk/harness-pi";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
+import type { HarnessEntryLog } from "../../session.ts";
 import type {
   AgentConfig,
   AgentHarnessConfig,
@@ -115,6 +116,7 @@ export function createAiSdkHarnessAdapter(
 
 export function createConfiguredAiSdkHarnessAdapter(
   agentConfig: AgentConfig,
+  session?: HarnessEntryLog,
 ): HarnessAgentAdapter {
   const type = agentConfig.harness?.type;
   if (!type) {
@@ -133,7 +135,7 @@ export function createConfiguredAiSdkHarnessAdapter(
     return createConfiguredOpenCodeAdapter(agentConfig);
   }
 
-  return createConfiguredPiAdapter(agentConfig);
+  return createConfiguredPiAdapter(agentConfig, session);
 }
 
 export function harnessAdapterVersion(type: AiSdkHarnessType): string {

@@ -7,7 +7,7 @@ const CONVEX_URL = process.env.CONVEX_URL ?? "";
 const TRACE_PATH = process.env.BROODS_LOCAL_CONVEX_TRACE ?? "";
 const USAGE = { input_tokens: 100, output_tokens: 10 };
 
-interface MessagesRequest {
+export interface MessagesRequest {
   messages: { content: unknown }[];
   model: string;
   stream?: boolean;
@@ -42,7 +42,7 @@ function event(type: string, fields: Record<string, unknown>): string {
   return `event: ${type}\ndata: ${JSON.stringify({ type: type, ...fields })}\n\n`;
 }
 
-function fakeModel(request: MessagesRequest): Response {
+export function fakeModel(request: MessagesRequest): Response {
   const message = {
     id: `msg_${Date.now()}`,
     type: "message",

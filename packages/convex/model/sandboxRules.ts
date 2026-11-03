@@ -1,7 +1,18 @@
+import { z } from "zod/mini";
+
 import { assertPublicHttpsUrl } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
+import {
+  nonEmptyString,
+  nonEmptyStrings,
+  parseInput,
+  resourceCreateInput,
+  resourceUpdateInput,
+  stringRecord,
+  wholeValue,
+} from "./inputSchema";
+import { configObject, stringValues } from "./storedJson";
 import { normalizeHeaders } from "./mcp";
-import { isPlainObject, isStringRecord } from "./objects";
 import {
   MOUNT_FLAG_SANDBOX_PROVIDERS,
   PLATFORM_WORKER_SANDBOX_PROVIDERS,
@@ -70,6 +81,58 @@ const RETIRED_IMAGE_OPTIONS: Partial<
   e2b: ["template", "templateId"],
   vercel: ["image", "runtime"],
 };
+
+const POSITIVE_INTEGER = z
+  .number({ error: "must be a positive integer" })
+  .check(
+    z.refine((value): boolean => Number.isSafeInteger(value) && value >= 1, {
+      error: "must be a positive integer",
+    }),
+  );
+const HOOK_LIST = wholeValue(
+  z.array(nonEmptyString).check(z.minLength(1)),
+  "must be a non-empty array of non-empty strings",
+);
+const SANDBOX_CONFIG_INPUT = z.looseObject({
+  provider: z.optional(z.enum(SANDBOX_PROVIDERS)),
+  fallbackProvider: z.optional(z.enum(SANDBOX_PROVIDERS)),
+  permissionMode: z.optional(z.enum(SANDBOX_PERMISSION_MODES)),
+  size: z.optional(z.enum(SANDBOX_SIZE_NAMES)),
+  persistent: z.optional(z.boolean()),
+  snapshot: z.optional(z.string()),
+  image: z.optional(z.enum(SANDBOX_IMAGES)),
+  network: z.optional(
+    z.looseObject({
+      mode: z.optional(z.enum(SANDBOX_NETWORK_MODES)),
+      allowDomains: z.optional(nonEmptyStrings),
+      allowCidrs: z.optional(nonEmptyStrings),
+    }),
+  ),
+  lifecycle: z.optional(
+    z.object({
+      idleTimeoutSeconds: z.optional(
+        boundedPositiveInteger(MAX_IDLE_TIMEOUT_SECONDS),
+      ),
+      maxLifetimeSeconds: z.optional(
+        boundedPositiveInteger(MAX_LIFETIME_SECONDS),
+      ),
+    }),
+  ),
+  onCreate: z.optional(HOOK_LIST),
+  onResume: z.optional(HOOK_LIST),
+  runtimes: z.optional(
+    wholeValue(
+      z.array(z.enum(SANDBOX_RUNTIMES)).check(z.minLength(1)),
+      `must be a non-empty array of: ${SANDBOX_RUNTIMES.join(", ")}`,
+    ),
+  ),
+  timeout: z.optional(POSITIVE_INTEGER),
+  outputLimitBytes: z.optional(POSITIVE_INTEGER),
+  envVars: z.optional(stringRecord("must be an object with string values")),
+  options: z.optional(configObject),
+});
+
+type SandboxConfigInput = z.output<typeof SANDBOX_CONFIG_INPUT>;
 
 export type RuntimeName = (typeof SANDBOX_RUNTIMES)[number];
 
@@ -150,32 +213,15 @@ export function normalizeSandboxConfig(
       network: { mode: "deny-all" },
     };
   }
-  if (!isPlainObject(value)) {
-    throw new ClientError("config must be an object");
-  }
-
-  const config = value;
+  const config = parseInput(SANDBOX_CONFIG_INPUT, value, "config");
   if ("internet" in config) {
     throw new ClientError(
       "config.internet is no longer supported; use config.network",
     );
   }
-  const provider =
-    assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS) ??
-    DEFAULT_SANDBOX_PROVIDER;
-  const fallbackProvider = assertOptionalEnum(
-    config.fallbackProvider,
-    "config.fallbackProvider",
-    SANDBOX_PROVIDERS,
-  );
-  assertOptionalEnum(
-    config.permissionMode,
-    "config.permissionMode",
-    SANDBOX_PERMISSION_MODES,
-  );
-  assertOptionalEnum(config.size, "config.size", SANDBOX_SIZE_NAMES);
-  assertOptionalBoolean(config.persistent, "config.persistent");
-  const snapshot = optionalString(config.snapshot, "config.snapshot");
+  const provider = config.provider ?? DEFAULT_SANDBOX_PROVIDER;
+  const { fallbackProvider, image } = config;
+  const snapshot = config.snapshot?.trim() || undefined;
   if (
     config.snapshot !== undefined &&
     !SNAPSHOT_SANDBOX_PROVIDERS.has(provider)
@@ -184,11 +230,6 @@ export function normalizeSandboxConfig(
       `config.snapshot does not apply to the ${provider} provider`,
     );
   }
-  const image = assertOptionalEnum(
-    config.image,
-    "config.image",
-    SANDBOX_IMAGES,
-  );
   assertImage(image, provider, fallbackProvider);
 
   if (fallbackProvider === provider) {
@@ -210,7 +251,6 @@ export function normalizeSandboxConfig(
   assertStatelessProviderFields(config, provider);
   const network = normalizeNetwork(config.network);
   const persistentFields = normalizePersistentFields(config, provider);
-  assertRuntimes(config.runtimes);
   for (const runsOn of fallbackProvider
     ? [provider, fallbackProvider]
     : [provider]) {
@@ -235,11 +275,10 @@ export function normalizeCreateSandboxConfigInput(value: unknown): {
   description?: string;
   config: SandboxConfig;
 } {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-  const name = requireString(value.name, "name");
-  const description = optionalString(value.description, "description");
-  const config = normalizeSandboxConfig(value.config);
+  const input = parseInput(resourceCreateInput, value, "");
+  const name = input.name.trim();
+  const description = input.description?.trim() || undefined;
+  const config = normalizeSandboxConfig(input.config);
 
   return {
     name: name,
@@ -315,37 +354,30 @@ export function normalizeUpdateSandboxConfigInput(
   existingConfig: SandboxConfig,
   value: unknown,
 ): { name?: string; description?: string | null; config: SandboxConfig } {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-
+  const input = parseInput(resourceUpdateInput, value, "");
   const config =
-    "config" in value
+    "config" in input
       ? normalizeSandboxConfig(
-          mergeConfigObjects(existingConfig, asObject(value.config)),
+          mergeConfigObjects(
+            existingConfig,
+            parseInput(configObject, input.config, "config"),
+          ),
           existingConfig,
         )
       : existingConfig;
 
   return {
-    ...(value.name !== undefined
-      ? { name: requireString(value.name, "name") }
-      : {}),
-    ...(value.description !== undefined
+    ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+    ...(input.description !== undefined
       ? {
           description:
-            value.description === null
+            input.description === null
               ? null
-              : optionalString(value.description, "description"),
+              : input.description.trim() || undefined,
         }
       : {}),
     config: config,
   };
-}
-
-function asObject(value: unknown): Record<string, unknown> {
-  if (!isPlainObject(value)) throw new ClientError("config must be an object");
-
-  return value;
 }
 
 function assertCustomOptions(
@@ -371,26 +403,16 @@ function assertCustomOptions(
     requireString(options.token, "config.options.token");
   }
   if (options.headers !== undefined) {
-    normalizeHeaders(
-      options.headers,
-      isStringRecord(storedHeaders) ? storedHeaders : undefined,
-    );
+    const stored = stringValues.safeParse(storedHeaders);
+    normalizeHeaders(options.headers, stored.success ? stored.data : undefined);
   }
 }
 
 function assertEnvVarsAndOptions(
-  config: Record<string, unknown>,
+  config: SandboxConfigInput,
   provider: SandboxProvider,
   stored: SandboxConfig | undefined,
 ): void {
-  if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
-    throw new ClientError(
-      "config.envVars must be an object with string values",
-    );
-  }
-  if (config.options !== undefined && !isPlainObject(config.options)) {
-    throw new ClientError("config.options must be an object");
-  }
   if (config.options !== undefined) {
     validateProviderOptions(provider, config.options, config.snapshot);
   }
@@ -446,79 +468,28 @@ function assertNetworkEnforceable(
   }
 }
 
-function assertOptionalBoolean(value: unknown, name: string): void {
-  if (value !== undefined && typeof value !== "boolean") {
-    throw new ClientError(`${name} must be a boolean`);
-  }
-}
-
-function assertOptionalEnum<T extends string>(
-  value: unknown,
-  name: string,
-  allowed: readonly T[],
-): T | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string" || !allowed.includes(value as T)) {
-    throw new ClientError(`${name} must be one of: ${allowed.join(", ")}`);
-  }
-
-  return value as T;
-}
-
-function assertOptionalPositiveInteger(
-  value: unknown,
-  name: string,
-  max?: number,
-): void {
-  if (value === undefined) return;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
-    throw new ClientError(`${name} must be a positive integer`);
-  }
-  if (max !== undefined && value > max) {
-    throw new ClientError(`${name} must be an integer from 1 to ${max}`);
-  }
-}
-
 function assertResourceLimits(
-  config: Record<string, unknown>,
+  config: SandboxConfigInput,
   provider: SandboxProvider,
 ): void {
   const limits = workspaceSandboxLimits(provider);
-  assertOptionalPositiveInteger(
-    config.timeout,
-    "config.timeout",
-    limits.maxTimeoutSeconds,
-  );
-  assertOptionalPositiveInteger(
-    config.outputLimitBytes,
-    "config.outputLimitBytes",
-    limits.maxOutputLimitBytes,
-  );
-}
-
-function assertRuntimes(value: unknown): void {
-  if (value === undefined) return;
-  if (
-    !Array.isArray(value) ||
-    value.length === 0 ||
-    !value.every(
-      (entry) =>
-        typeof entry === "string" &&
-        SANDBOX_RUNTIMES.includes(entry as RuntimeName),
-    )
-  ) {
-    throw new ClientError(
-      `config.runtimes must be a non-empty array of: ${SANDBOX_RUNTIMES.join(", ")}`,
-    );
+  for (const [name, value, max] of [
+    ["timeout", config.timeout, limits.maxTimeoutSeconds],
+    ["outputLimitBytes", config.outputLimitBytes, limits.maxOutputLimitBytes],
+  ] as const) {
+    if (value !== undefined && value > max)
+      throw new ClientError(
+        `config.${name} must be an integer from 1 to ${max}`,
+      );
   }
 }
 
 function assertStatelessProviderFields(
-  config: Record<string, unknown>,
+  config: SandboxConfigInput,
   provider: SandboxProvider,
 ): void {
   if (!STATELESS_SANDBOX_PROVIDERS.has(provider)) return;
-  for (const field of ["persistent", "size"]) {
+  for (const field of ["persistent", "size"] as const) {
     if (config[field] !== undefined) {
       throw new ClientError(
         `config.${field} does not apply to the ${provider} provider`,
@@ -528,7 +499,7 @@ function assertStatelessProviderFields(
 }
 
 function buildNormalizedConfig(
-  config: Record<string, unknown>,
+  config: SandboxConfigInput,
   provider: SandboxProvider,
   fallbackProvider: SandboxProvider | undefined,
   network: SandboxNetworkConfig,
@@ -540,93 +511,35 @@ function buildNormalizedConfig(
     provider: provider,
     ...(fallbackProvider ? { fallbackProvider: fallbackProvider } : {}),
     network: network,
-    permissionMode:
-      (config.permissionMode as PermissionMode | undefined) ?? "ask",
-    ...(config.size !== undefined ? { size: config.size as SandboxSize } : {}),
+    permissionMode: config.permissionMode ?? "ask",
+    ...(config.size !== undefined ? { size: config.size } : {}),
     ...(image ? { image: image } : {}),
     ...(snapshot ? { snapshot: snapshot } : {}),
     ...(config.persistent !== undefined
-      ? { persistent: config.persistent as boolean }
+      ? { persistent: config.persistent }
       : {}),
     ...persistentFields,
     ...(config.runtimes !== undefined
-      ? { runtimes: [...(config.runtimes as RuntimeName[])] }
+      ? { runtimes: [...config.runtimes] }
       : {}),
-    ...(config.timeout !== undefined
-      ? { timeout: config.timeout as number }
-      : {}),
+    ...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
     ...(config.outputLimitBytes !== undefined
-      ? { outputLimitBytes: config.outputLimitBytes as number }
+      ? { outputLimitBytes: config.outputLimitBytes }
       : {}),
-    ...(config.envVars !== undefined
-      ? { envVars: { ...(config.envVars as Record<string, string>) } }
-      : {}),
-    ...(config.options !== undefined
-      ? { options: { ...(config.options as Record<string, unknown>) } }
-      : {}),
+    ...(config.envVars !== undefined ? { envVars: { ...config.envVars } } : {}),
+    ...(config.options !== undefined ? { options: { ...config.options } } : {}),
   };
 }
 
-function normalizeHookList(value: unknown, name: string): string[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new ClientError(
-      `${name} must be a non-empty array of non-empty strings`,
-    );
-  }
-  const commands = value.map((entry) =>
-    typeof entry === "string" ? entry.trim() : "",
-  );
-  if (commands.some((entry) => entry.length === 0)) {
-    throw new ClientError(
-      `${name} must be a non-empty array of non-empty strings`,
-    );
-  }
-
-  return commands;
-}
-
-function normalizeLifecycle(value: unknown): SandboxLifecycleConfig {
-  if (!isPlainObject(value)) {
-    throw new ClientError("config.lifecycle must be an object");
-  }
-  assertOptionalPositiveInteger(
-    value.idleTimeoutSeconds,
-    "config.lifecycle.idleTimeoutSeconds",
-    MAX_IDLE_TIMEOUT_SECONDS,
-  );
-  assertOptionalPositiveInteger(
-    value.maxLifetimeSeconds,
-    "config.lifecycle.maxLifetimeSeconds",
-    MAX_LIFETIME_SECONDS,
-  );
-
-  return {
-    ...(value.idleTimeoutSeconds !== undefined
-      ? { idleTimeoutSeconds: value.idleTimeoutSeconds as number }
-      : {}),
-    ...(value.maxLifetimeSeconds !== undefined
-      ? { maxLifetimeSeconds: value.maxLifetimeSeconds as number }
-      : {}),
-  };
-}
-
-function normalizeNetwork(value: unknown): SandboxNetworkConfig {
+function normalizeNetwork(
+  value: SandboxConfigInput["network"],
+): SandboxNetworkConfig {
   if (value === undefined) {
     return { mode: "deny-all" };
   }
-  if (!isPlainObject(value)) {
-    throw new ClientError("config.network must be an object");
-  }
-  assertOptionalEnum(value.mode, "config.network.mode", SANDBOX_NETWORK_MODES);
-  const mode = (value.mode as NetworkMode | undefined) ?? "deny-all";
-  const allowDomains = normalizeOptionalStringList(
-    value.allowDomains,
-    "config.network.allowDomains",
-  );
-  const allowCidrs = normalizeOptionalStringList(
-    value.allowCidrs,
-    "config.network.allowCidrs",
-  );
+  const mode = value.mode ?? "deny-all";
+  const allowDomains = value.allowDomains?.map((entry) => entry.trim());
+  const allowCidrs = value.allowCidrs?.map((entry) => entry.trim());
   if (mode !== "restricted" && (allowDomains || allowCidrs)) {
     throw new ClientError(
       "config.network.allowDomains and config.network.allowCidrs are only valid when config.network.mode is restricted",
@@ -640,31 +553,13 @@ function normalizeNetwork(value: unknown): SandboxNetworkConfig {
   };
 }
 
-function normalizeOptionalStringList(
-  value: unknown,
-  name: string,
-): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    throw new ClientError(`${name} must be an array of non-empty strings`);
-  }
-  const entries = value.map((entry) =>
-    typeof entry === "string" ? entry.trim() : "",
-  );
-  if (entries.some((entry) => entry.length === 0)) {
-    throw new ClientError(`${name} must be an array of non-empty strings`);
-  }
-
-  return entries;
-}
-
 function assertWorkerLifecycle(
-  config: Record<string, unknown>,
+  config: SandboxConfigInput,
   provider: SandboxProvider,
   lifecycle: SandboxConfig["lifecycle"],
 ): void {
   if (!PLATFORM_WORKER_SANDBOX_PROVIDERS.has(provider)) return;
-  for (const field of ["onCreate", "onResume"]) {
+  for (const field of ["onCreate", "onResume"] as const) {
     if (config[field] !== undefined)
       throw new ClientError(
         `config.${field} is not supported by the ${provider} provider; the Worker sets the machine`,
@@ -685,26 +580,17 @@ function assertWorkerLifecycle(
 }
 
 function normalizePersistentFields(
-  config: Record<string, unknown>,
+  config: SandboxConfigInput,
   provider: SandboxProvider,
 ): Pick<SandboxConfig, "lifecycle" | "onCreate" | "onResume"> {
-  const lifecycle =
-    config.lifecycle !== undefined
-      ? normalizeLifecycle(config.lifecycle)
-      : undefined;
+  const { lifecycle } = config;
   if (lifecycle && config.persistent !== true) {
     throw new ClientError(
       "config.lifecycle requires config.persistent to be true",
     );
   }
-  const onCreate =
-    config.onCreate !== undefined
-      ? normalizeHookList(config.onCreate, "config.onCreate")
-      : undefined;
-  const onResume =
-    config.onResume !== undefined
-      ? normalizeHookList(config.onResume, "config.onResume")
-      : undefined;
+  const onCreate = config.onCreate?.map((entry) => entry.trim());
+  const onResume = config.onResume?.map((entry) => entry.trim());
   if ((onCreate || onResume) && config.persistent !== true) {
     throw new ClientError(
       "config.onCreate and config.onResume require config.persistent to be true",
@@ -763,12 +649,9 @@ function requireString(value: unknown, name: string): string {
 
 function validateProviderOptions(
   provider: SandboxProvider,
-  options: unknown,
+  options: Record<string, unknown>,
   snapshot: unknown,
 ): void {
-  if (!isPlainObject(options)) {
-    return;
-  }
   if ("docker" in options) {
     if (typeof options.docker !== "boolean") {
       throw new ClientError("config.options.docker must be a boolean");
@@ -830,4 +713,12 @@ function validateProviderOptions(
       "config.snapshot and config.options.image cannot both be set: Daytona boots a snapshot or builds one from an image",
     );
   }
+}
+
+function boundedPositiveInteger(max: number): z.ZodMiniNumber {
+  return POSITIVE_INTEGER.check(
+    z.refine((value): boolean => value <= max, {
+      error: `must be an integer from 1 to ${max}`,
+    }),
+  );
 }

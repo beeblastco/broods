@@ -2,7 +2,6 @@ import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
-import { isPlainObject } from "../../model/objects";
 import type { RolePrincipal } from "../../model/apiAuthorization";
 import { toCronResponse, toCronRunResponse } from "../../model/responses";
 import {
@@ -99,22 +98,13 @@ async function handleCronCollectionRoute(
       accountId: accountId,
       input: await req.json(),
     });
-    const cronRecord = isPlainObject(cron) ? cron : {};
     await writeAudit(ctx, {
       accountId: accountId,
       actor: actor,
       action: "created",
-      resource: {
-        kind: "cron",
-        id:
-          typeof cronRecord.cronId === "string" ? cronRecord.cronId : undefined,
-        name: typeof cronRecord.name === "string" ? cronRecord.name : undefined,
-      },
+      resource: { kind: "cron", id: cron.cronId, name: cron.name },
       summary: "Cron job created",
-      detailsJson:
-        typeof cronRecord.cronId === "string"
-          ? auditDetailsJson({ cronId: cronRecord.cronId })
-          : undefined,
+      detailsJson: auditDetailsJson({ cronId: cron.cronId }),
     });
 
     return json(cron, 201);
@@ -171,16 +161,11 @@ async function patchCronRoute(
       : {}),
   });
   if (cron) {
-    const cronRecord = isPlainObject(cron) ? cron : {};
     await writeAudit(ctx, {
       accountId: accountId,
       actor: actor,
       action: "updated",
-      resource: {
-        kind: "cron",
-        id: typeof cronRecord.cronId === "string" ? cronRecord.cronId : cronId,
-        name: typeof cronRecord.name === "string" ? cronRecord.name : undefined,
-      },
+      resource: { kind: "cron", id: cron.cronId, name: cron.name },
       summary: "Cron job updated",
       detailsJson: auditDetailsJson({ cronId: cronId }),
     });
