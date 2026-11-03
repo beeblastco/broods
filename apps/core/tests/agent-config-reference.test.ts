@@ -369,7 +369,7 @@ const PROVIDERS = refusingProtoKey(
     .check(
       z.superRefine((providers, ctx): void => {
         const custom = providers.custom;
-        if (!custom || custom.baseURL) return;
+        if (!custom || providerBaseURL(custom)) return;
         ctx.addIssue({
           code: "custom",
           path: ["custom", "base_url"],

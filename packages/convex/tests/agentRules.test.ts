@@ -503,6 +503,14 @@ describe("agent rules", () => {
     expect(() => normalizeAgentConfig({ provider: { custom: {} } })).toThrow(
       "config.provider.custom.base_url is required",
     );
+    // Core reads base_url first, so an empty one hides a valid baseURL.
+    expect(() =>
+      normalizeAgentConfig({
+        provider: {
+          custom: { base_url: "", baseURL: "https://api.example.com" },
+        },
+      }),
+    ).toThrow("config.provider.custom.base_url is required");
     expect(() =>
       normalizeAgentConfig({
         provider: { custom: { baseUrl: "https://api.example.com" } },

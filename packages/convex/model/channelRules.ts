@@ -9,6 +9,19 @@ import {
   unsupportedKeys,
 } from "./inputSchema";
 
+// A folder in the workspace path: one segment, never `.` or `..`, or it reaches another
+// workspace's files.
+export const partitionAlias = nonEmptyString.check(
+  z.refine(
+    (alias): boolean => {
+      const segment = alias.trim();
+
+      return !/[/\\]/.test(segment) && segment !== "." && segment !== "..";
+    },
+    { error: "must be one path segment: no /, \\, . or .." },
+  ),
+);
+
 const CHANNEL_CONFIG_KEYS = [
   "instructions",
   "agentBindings",
@@ -77,7 +90,7 @@ const CHANNEL_RECORD_CONFIG = z
           ),
           z.looseObject({
             by: z.literal("conversation"),
-            alias: nonEmptyString,
+            alias: partitionAlias,
           }),
         ],
         {

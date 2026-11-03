@@ -18,6 +18,7 @@ import type {
 } from "ai";
 import { z } from "zod/mini";
 import type { AgentHookEventName } from "@broods/convex/model/accountHooks";
+import { partitionAlias } from "@broods/convex/model/channelRules";
 import { parseOr } from "@broods/convex/model/storedJson";
 import {
   AGENT_CONFIG,
@@ -71,7 +72,7 @@ const CHANNEL_PARTITION = z.looseObject({
       by: z.literal("shared"),
       alias: z.optional(z.undefined()),
     }),
-    z.looseObject({ by: z.literal("conversation"), alias: z.string() }),
+    z.looseObject({ by: z.literal("conversation"), alias: partitionAlias }),
   ]),
 });
 
