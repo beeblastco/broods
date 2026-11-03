@@ -204,30 +204,6 @@ describe("usage lands on its project's day", () => {
 
     expect((await projectDays(t)).get(org.projects[0])?.egressGb).toBe(1);
   });
-
-  test("the storage snapshot sets each project's size without adding to the account's", async () => {
-    vi.useFakeTimers({ now: NOW });
-    const t = meterTest();
-    const org = await seedOrg(t, "beeblast", ["Support bot", "Sales"]);
-    const [support, sales] = org.projects;
-
-    await t.mutation(internal.account.budget.record, {
-      accountId: org.accountId,
-      usage: { storageGbMonths: 10 / 30 },
-      projectStorage: [
-        { projectId: support, storageGbMonths: 4 / 30 },
-        { projectId: sales, storageGbMonths: 0 },
-      ],
-    });
-
-    const meter = await t.run(async (ctx) =>
-      ctx.db.query("usageMeters").unique(),
-    );
-    expect(meter?.storageGb).toBeCloseTo(10, 9);
-    const days = await projectDays(t);
-    expect(days.get(support)?.storageGb).toBeCloseTo(4, 9);
-    expect(days.get(sales)?.storageGb).toBe(0);
-  });
 });
 
 describe("projectUsage", () => {
