@@ -1,24 +1,31 @@
 /-!
 # Esc mid-turn
 
-`stopTurnOnEscape` in `packages/broods/src/cli/tui.ts`. A lone Esc is held 30 ms: `[` joins it
-into a key, else it stops a streaming turn or reaches the TUI. Esc plus more in one read
-(Alt+key) is a key and passes. `out` is what the TUI saw, `.stop` a `stopTurn()` call, and
-`expected` what the keys read so far meant. Any number of keys.
+`stopTurnOnEscape` in `packages/broods/src/cli/tui.ts`. A lone Esc is held 30 ms: a read starting
+`[` or `O` joins it into a key, else it stops a streaming turn or reaches the TUI. Esc plus more in
+one read (Alt+key) is a key and passes. `out` is what the TUI saw, `.stop` a `stopTurn()` call,
+and `expected` what the keys read so far meant. Any number of keys.
 -/
 
 namespace Broods.EscFilter
 
-/-- One read from stdin. `escKey` and `escArrow` are the same lone Esc byte; `escArrow` is the
-first half of an arrow key split across reads, `arrowTail` its `[A`. `arrow` is a whole
-arrow key in one read, `key` any other read (a letter, Ctrl+C, Alt+key). -/
-inductive Chunk where
-  | escKey | escArrow | arrow | arrowTail | key (k : Nat)
+/-- The byte after Esc in an arrow key: `[` (0x5b, CSI) or `O` (0x4f, SS3, sent in application
+cursor mode). -/
+inductive Intro where
+  | csi | ss3
   deriving DecidableEq, Repr
 
-/-- What reaches the TUI, or `stop` for `transport.stopTurn()`. `tail` is a bare `[A`. -/
+/-- One read from stdin. `escKey` and `escArrow` are the same lone Esc byte; `escArrow` is the
+first half of an arrow key split across reads, `arrowTail i` its `[A` or `OA`. `arrow i` is a
+whole arrow key in one read, `key` any other read (a letter, Ctrl+C, Alt+key) not starting `[` or
+`O`. -/
+inductive Chunk where
+  | escKey | escArrow | arrow (i : Intro) | arrowTail (i : Intro) | key (k : Nat)
+  deriving DecidableEq, Repr
+
+/-- What reaches the TUI, or `stop` for `transport.stopTurn()`. `tail i` is a bare `[A` or `OA`. -/
 inductive Out where
-  | stop | esc | arrow | tail | key (k : Nat)
+  | stop | esc | arrow (i : Intro) | tail (i : Intro) | key (k : Nat)
   deriving DecidableEq, Repr
 
 /-- The bytes still in flight, the held Esc and whether it was read mid-turn, the turn. -/
@@ -37,16 +44,23 @@ def Chunk.isEsc : Chunk → Bool
 
 /-- A read passed through as is. -/
 def Chunk.plain : Chunk → Out
-  | .arrow | .escKey | .escArrow => .arrow
-  | .arrowTail => .tail
+  | .escKey | .escArrow => .esc
+  | .arrow i => .arrow i
+  | .arrowTail i => .tail i
   | .key k => .key k
 
+/-- `chunk[0] === 0x5b || chunk[0] === 0x4f`: the key a held Esc and this read make together. -/
+def Chunk.joined : Chunk → Option Out
+  | .arrowTail .csi => some (.arrow .csi)
+  | .arrowTail .ss3 => some (.arrow .ss3)
+  | _ => none
+
 /-- What reading `c` means for its key, once the keys before it took effect (a held Esc that
-stops the turn makes a second Esc an idle one). -/
+stops the turn makes a second Esc an idle one). A split arrow means its key at its last read. -/
 def meaning (s : State) : Chunk → List Out
   | .escKey => [if s.streaming && !(s.held && s.heldMidTurn) then .stop else .esc]
-  | .escArrow | .arrow => [.arrow]
-  | .arrowTail => []
+  | .escArrow => []
+  | .arrow i | .arrowTail i => [.arrow i]
   | .key k => [.key k]
 
 /-- `settle()`: what a held Esc turns into. -/
@@ -58,8 +72,9 @@ def receive (s : State) : Option State :=
   | [] => none
   | c :: rest =>
     let t := { s with wire := rest, expected := s.expected ++ meaning s c }
-    if s.held ∧ c = .arrowTail then some { t with out := s.out ++ [.arrow], held := false }
-    else
+    match s.held, c.joined with
+    | true, some k => some { t with out := s.out ++ [k], held := false }
+    | _, _ =>
       let settled := if s.held then [settleOut s.heldMidTurn] else []
       let still := s.streaming && !(s.held && s.heldMidTurn)
       if c.isEsc then
@@ -67,10 +82,16 @@ def receive (s : State) : Option State :=
           out := s.out ++ settled, held := true, heldMidTurn := still, streaming := still }
       else some { t with out := s.out ++ settled ++ [c.plain], held := false, streaming := still }
 
+/-- The next read is the rest of a split arrow. -/
+def tailNext (s : State) : Bool :=
+  match s.wire with
+  | .arrowTail _ :: _ => true
+  | _ => false
+
 /-- The hold timer. A split arrow's halves arrive within the wait (30 ms), so it never fires
 between them; past that, the arrow reaches the TUI as Esc. -/
 def timerFires (s : State) : Option State :=
-  if s.held ∧ s.wire.head? ≠ some .arrowTail then
+  if s.held && !tailNext s then
     some { s with
       out := s.out ++ [settleOut s.heldMidTurn], streaming := s.streaming && !s.heldMidTurn,
       held := false }
@@ -79,8 +100,8 @@ def timerFires (s : State) : Option State :=
 /-- The reads one key press puts on the wire. -/
 inductive Press : List Chunk → Prop where
   | esc : Press [.escKey]
-  | arrow : Press [.arrow]
-  | splitArrow : Press [.escArrow, .arrowTail]
+  | arrow (i : Intro) : Press [.arrow i]
+  | splitArrow (i : Intro) : Press [.escArrow, .arrowTail i]
   | key (k : Nat) : Press [.key k]
 
 inductive Step : State → State → Prop where
@@ -97,84 +118,95 @@ inductive Reachable : State → Prop where
   | init (s : State) : Init s → Reachable s
   | step (s t : State) : Reachable s → Step s t → Reachable t
 
-/-- Every `[A` on the wire right behind the Esc it completes, as one press puts them. -/
+/-- Every arrow tail on the wire right behind the Esc it completes, as one press puts them. -/
 def ok : List Chunk → Bool
   | [] => true
-  | .arrowTail :: _ => false
-  | .escArrow :: .arrowTail :: r => ok r
+  | .arrowTail _ :: _ => false
+  | .escArrow :: .arrowTail _ :: r => ok r
   | .escArrow :: _ => false
   | _ :: r => ok r
 
 theorem ok_append : ∀ a b : List Chunk, ok a = true → ok b = true → ok (a ++ b) = true
   | [], _, _, hb => hb
-  | .arrowTail :: _, _, ha, _ => by simp [ok] at ha
-  | .escArrow :: .arrowTail :: r, b, ha, hb => by
+  | .arrowTail _ :: _, _, ha, _ => by simp [ok] at ha
+  | .escArrow :: .arrowTail _ :: r, b, ha, hb => by
     simp only [ok, List.cons_append] at ha ⊢; exact ok_append r b ha hb
   | [.escArrow], _, ha, _ => by simp [ok] at ha
   | .escArrow :: .escKey :: _, _, ha, _ => by simp [ok] at ha
   | .escArrow :: .escArrow :: _, _, ha, _ => by simp [ok] at ha
-  | .escArrow :: .arrow :: _, _, ha, _ => by simp [ok] at ha
+  | .escArrow :: .arrow _ :: _, _, ha, _ => by simp [ok] at ha
   | .escArrow :: .key _ :: _, _, ha, _ => by simp [ok] at ha
   | .escKey :: r, b, ha, hb => by simp only [ok, List.cons_append] at ha ⊢; exact ok_append r b ha hb
-  | .arrow :: r, b, ha, hb => by simp only [ok, List.cons_append] at ha ⊢; exact ok_append r b ha hb
+  | .arrow _ :: r, b, ha, hb => by
+    simp only [ok, List.cons_append] at ha ⊢; exact ok_append r b ha hb
   | .key _ :: r, b, ha, hb => by simp only [ok, List.cons_append] at ha ⊢; exact ok_append r b ha hb
 
 /-- Nothing held and the TUI saw every meaning; an Esc held that will settle to its meaning;
-or the first half of a split arrow held, its `[A` next. -/
+or the first half of a split arrow held, its tail next. -/
 def Inv (s : State) : Prop :=
   (s.held = false ∧ s.expected = s.out ∧ ok s.wire = true) ∨
     (s.held = true ∧ s.expected = s.out ++ [settleOut s.heldMidTurn] ∧ ok s.wire = true) ∨
-    (s.held = true ∧ s.expected = s.out ++ [.arrow] ∧ ∃ r, s.wire = .arrowTail :: r ∧ ok r = true)
+    (s.held = true ∧ s.expected = s.out ∧ ∃ i r, s.wire = .arrowTail i :: r ∧ ok r = true)
 
 theorem press_ok {cs : List Chunk} (h : Press cs) : ok cs = true := by cases h <;> rfl
+
+theorem tail_of_tailNext {s : State} (h : tailNext s = true) :
+    ∃ i r, s.wire = .arrowTail i :: r := by
+  obtain ⟨wire, held, mid, streaming, out, expected⟩ := s
+  rcases wire with _ | ⟨_ | _ | _ | i | _, r⟩ <;> simp_all [tailNext]
 
 theorem inv_step (s t : State) (hs : Inv s) (hst : Step s t) : Inv t := by
   cases hst with
   | press cs hc =>
     have := press_ok hc
-    rcases hs with ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩ | ⟨h1, h2, r, h3, h4⟩
+    rcases hs with ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩ | ⟨h1, h2, i, r, h3, h4⟩
     · exact .inl ⟨h1, h2, ok_append _ _ h3 this⟩
     · exact .inr (.inl ⟨h1, h2, ok_append _ _ h3 this⟩)
-    · exact .inr (.inr ⟨h1, h2, r ++ cs, by simp [h3], ok_append _ _ h4 this⟩)
+    · exact .inr (.inr ⟨h1, h2, i, r ++ cs, by simp [h3], ok_append _ _ h4 this⟩)
   | receive _ h =>
     obtain ⟨wire, held, mid, streaming, out, expected⟩ := s
     simp only [receive] at h
-    rcases hs with ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩ | ⟨h1, h2, r, h3, h4⟩ <;> simp only at h1 h2 h3
+    rcases hs with ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩ | ⟨h1, h2, i, r, h3, h4⟩ <;> simp only at h1 h2 h3
     · subst h1 h2
       match wire, h3 with
       | .escKey :: rest, h3 =>
         simp [Chunk.isEsc] at h; subst h; refine .inr (.inl ?_)
         simp_all [ok, meaning, settleOut]
-      | .escArrow :: .arrowTail :: rest, h3 =>
-        simp [Chunk.isEsc] at h; subst h; refine .inr (.inr ?_)
-        simp_all [ok, meaning]
-      | .arrow :: rest, h3 => simp [Chunk.isEsc] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
-      | .key k :: rest, h3 => simp [Chunk.isEsc] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
-      | [], _ | .arrowTail :: _, h3 | [.escArrow], h3 | .escArrow :: .escKey :: _, h3
-      | .escArrow :: .escArrow :: _, h3 | .escArrow :: .arrow :: _, h3
+      | .escArrow :: .arrowTail i :: rest, h3 =>
+        simp [Chunk.isEsc] at h; subst h; refine .inr (.inr ⟨rfl, ?_, i, rest, rfl, by simpa [ok] using h3⟩)
+        simp [meaning]
+      | .arrow i :: rest, h3 =>
+        simp [Chunk.isEsc] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
+      | .key k :: rest, h3 =>
+        simp [Chunk.isEsc] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
+      | [], _ | .arrowTail _ :: _, h3 | [.escArrow], h3 | .escArrow :: .escKey :: _, h3
+      | .escArrow :: .escArrow :: _, h3 | .escArrow :: .arrow _ :: _, h3
       | .escArrow :: .key _ :: _, h3 => simp [ok] at h3 h
     · subst h1 h2
       match wire, h3 with
       | .escKey :: rest, h3 =>
-        simp [Chunk.isEsc] at h; subst h; refine .inr (.inl ?_)
+        simp [Chunk.isEsc, Chunk.joined] at h; subst h; refine .inr (.inl ?_)
         cases mid <;> cases streaming <;> simp_all [ok, meaning, settleOut]
-      | .escArrow :: .arrowTail :: rest, h3 =>
-        simp [Chunk.isEsc] at h; subst h; refine .inr (.inr ?_)
-        simp_all [ok, meaning]
-      | .arrow :: rest, h3 => simp [Chunk.isEsc] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
-      | .key k :: rest, h3 => simp [Chunk.isEsc] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
-      | [], _ | .arrowTail :: _, h3 | [.escArrow], h3 | .escArrow :: .escKey :: _, h3
-      | .escArrow :: .escArrow :: _, h3 | .escArrow :: .arrow :: _, h3
+      | .escArrow :: .arrowTail i :: rest, h3 =>
+        simp [Chunk.isEsc, Chunk.joined] at h; subst h; refine .inr (.inr ⟨rfl, ?_, i, rest, rfl, by simpa [ok] using h3⟩)
+        simp [meaning]
+      | .arrow i :: rest, h3 =>
+        simp [Chunk.isEsc, Chunk.joined] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
+      | .key k :: rest, h3 =>
+        simp [Chunk.isEsc, Chunk.joined] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
+      | [], _ | .arrowTail _ :: _, h3 | [.escArrow], h3 | .escArrow :: .escKey :: _, h3
+      | .escArrow :: .escArrow :: _, h3 | .escArrow :: .arrow _ :: _, h3
       | .escArrow :: .key _ :: _, h3 => simp [ok] at h3 h
     · subst h1 h2 h3
-      simp at h; subst h; left; simp_all [meaning]
+      cases i <;> simp [Chunk.joined] at h <;> subst h <;> left <;> simp_all [meaning]
   | timer _ h =>
     obtain ⟨wire, held, mid, streaming, out, expected⟩ := s
     simp only [timerFires] at h
     split at h
     · rename_i hg
       simp at h; subst h
-      rcases hs with ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩ | ⟨h1, h2, r, h3, h4⟩ <;> simp_all [Inv]
+      rcases hs with ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩ | ⟨h1, h2, i, r, h3, h4⟩ <;>
+        simp_all [Inv, tailNext]
     · simp at h
   | turnStarts h => exact hs
   | turnEnds h => exact hs
@@ -215,25 +247,23 @@ theorem receive_isSome {s : State} (h : s.wire ≠ []) : (receive s).isSome := b
   | cons c r => simp only [receive, hw]; repeat' split
                 all_goals rfl
 
-theorem receive_clears_held {s t : State} (hs : Inv s) (hw : s.wire.head? = some .arrowTail)
+theorem receive_clears_held {s t : State} (hs : Inv s) (hw : tailNext s = true)
     (h : receive s = some t) : t.held = false := by
+  obtain ⟨i, r, hw⟩ := tail_of_tailNext hw
   obtain ⟨wire, held, mid, streaming, out, expected⟩ := s
-  rcases hs with ⟨_, _, h3⟩ | ⟨h1, _, h3⟩ | ⟨h1, _, r, h3, _⟩ <;> simp only at *
-  · match wire, h3, hw with
-    | .arrowTail :: _, h3, _ => simp [ok] at h3
-  · match wire, h3, hw with
-    | .arrowTail :: _, h3, _ => simp [ok] at h3
-  · subst h1 h3; simp [receive] at h; subst h; rfl
+  simp only at hw; subst hw
+  rcases hs with ⟨_, _, h3⟩ | ⟨_, _, h3⟩ | ⟨h1, _⟩
+  · simp [ok] at h3
+  · simp [ok] at h3
+  · simp only at h1; subst h1; cases i <;> simp [receive, Chunk.joined] at h <;> subst h <;> rfl
 
-/-- A held split-arrow Esc stays one, `[A` next, until a read is handled. -/
+/-- A held split-arrow Esc stays one, its tail next, until a read is handled. -/
 theorem tail_held_step {s t : State} (hs : Inv s) (hh : s.held = true)
-    (hw : s.wire.head? = some .arrowTail) (hst : Step s t) (ht : t.held = true) :
-    t.wire.head? = some .arrowTail := by
+    (hw : tailNext s = true) (hst : Step s t) (ht : t.held = true) : tailNext t = true := by
   cases hst with
   | press cs _ =>
-    obtain ⟨c, rest, hc⟩ : ∃ c rest, s.wire = c :: rest := by
-      cases h : s.wire <;> simp_all
-    simp_all
+    obtain ⟨i, r, hc⟩ := tail_of_tailNext hw
+    simp [tailNext, hc]
   | receive _ h => simp [receive_clears_held hs hw h] at ht
   | timer _ h => simp [timerFires, hh, hw] at h
   | turnStarts | turnEnds => exact hw
@@ -245,9 +275,9 @@ theorem held_settles (hb : Behavior σ) (n : Nat) : ∃ m ≥ n, (σ m).held = f
     cases h : (σ m).held
     · exact absurd ⟨m, hm, h⟩ hne
     · rfl
-  by_cases htail : ∃ m ≥ n, (σ m).wire.head? = some .arrowTail
+  by_cases htail : ∃ m ≥ n, tailNext (σ m) = true
   · obtain ⟨m, hm, hw⟩ := htail
-    have hkeep : ∀ k ≥ m, (σ k).wire.head? = some .arrowTail := by
+    have hkeep : ∀ k ≥ m, tailNext (σ k) = true := by
       intro k hk
       induction hk with
       | refl => exact hw
@@ -257,12 +287,12 @@ theorem held_settles (hb : Behavior σ) (n : Nat) : ∃ m ≥ n, (σ m).held = f
             (hall (k + 1) (Nat.le_trans hm (Nat.le_succ_of_le hk)))
         · rw [h]; exact ih
     obtain ⟨k, hk, hr⟩ := hb.fairReceive m fun k hk =>
-      receive_isSome fun h => by simpa [h] using hkeep k hk
+      receive_isSome fun h => by simpa [tailNext, h] using hkeep k hk
     have := receive_clears_held (inv _ (hb.reachable k)) (hkeep k hk) hr
     simp [hall (k + 1) (by omega)] at this
   · obtain ⟨k, hk, ht⟩ := hb.fairTimer n fun k hk => by
       have := hall k hk
-      have hw : (σ k).wire.head? ≠ some .arrowTail := fun h => htail ⟨k, hk, h⟩
+      have hw : tailNext (σ k) ≠ true := fun h => htail ⟨k, hk, h⟩
       simp [timerFires, this, hw]
     simp only [timerFires] at ht
     split at ht
@@ -280,13 +310,13 @@ theorem receive_measure {s t : State} (h : receive s = some t) : measure t < mea
   | c :: rest =>
     simp only [receive] at h
     split at h
-    · simp at h; subst h; simp [measure]; split <;> omega
+    · simp at h; subst h; simp [measure]; omega
     · split at h <;> (simp at h; subst h; simp [measure]; split <;> omega)
 
 theorem timer_measure {s t : State} (h : timerFires s = some t) : measure t < measure s := by
   simp only [timerFires] at h
   split at h
-  · rename_i hg; simp at h; subst h; simp [measure, hg.1]
+  · rename_i hg; simp at h hg; subst h; simp [measure, hg.1]
   · simp at h
 
 theorem quiet_step {s t : State} (h : Step s t)
@@ -351,7 +381,7 @@ theorem drains (hb : Behavior σ) (n : Nat)
       · exact ⟨k, Nat.le_refl _, hw, hh⟩
       · obtain ⟨j, hj, ht⟩ := hb.fairTimer k fun j hj => by
           obtain ⟨h1, h2⟩ := hconst j hj
-          simp_all [timerFires]
+          simp_all [timerFires, tailNext]
         exact absurd ⟨j, hj, .inr ht⟩ hfire
     · obtain ⟨j, hj, hr⟩ := hb.fairReceive k fun j hj =>
         receive_isSome fun h => hw ((hconst j hj).1.symm.trans h)

@@ -403,6 +403,9 @@ test("Esc stops a streaming turn; keys, split keys, Ctrl+C and idle Esc reach th
   // An arrow split across two reads is still an arrow, not a stop.
   send("\x1b");
   send("[B");
+  // Application cursor mode sends SS3 arrows, `ESC O C`.
+  send("\x1b");
+  send("OC");
   expect(stops).toBe(0);
   // Pressed mid-turn: stops it, and never quits, even if the turn already ended.
   send("\x1b");
@@ -420,7 +423,7 @@ test("Esc stops a streaming turn; keys, split keys, Ctrl+C and idle Esc reach th
   restore();
   send("x");
 
-  expect(seen).toEqual(["\x1b[A", "\x1b[B", "\x03", "\x1b", "x"]);
+  expect(seen).toEqual(["\x1b[A", "\x1b[B", "\x1bOC", "\x03", "\x1b", "x"]);
 });
 
 test("Esc before the first part counts the turn as sent", async () => {
