@@ -1,8 +1,9 @@
 import { optionalEnv } from "../../shared/env.ts";
 import {
+  claimSandboxInstance,
   deleteSandboxInstance,
   getSandboxExternalId,
-  reserveSandboxInstance,
+  saveSandboxInstance,
 } from "./instance-store.ts";
 import type { SandboxProvider, SandboxReleaseRequest } from "./types.ts";
 import {
@@ -17,37 +18,6 @@ const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
   "localhost",
 ]);
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
-// How long a held reservation is trusted before the next command books it
-// again, which re-reads the row, checks the account and pushes the idle
-// deadline out. Far inside the 7-day TTL.
-const REVALIDATE_MS = 60_000;
-const MAX_HELD = 10_000;
-
-/**
- * Reservations this process resolved, by provider and key, so a held one makes no Convex call.
- * After `REVALIDATE_MS` the next command books again, noticing a key released or repointed
- * elsewhere or an inactive account; one released here drops out at once.
- */
-const held = new Map<string, { id: string; checkedAt: number }>();
-
-function heldKey(provider: SandboxProvider, key: string): string {
-  return `${provider}\u0000${key}`;
-}
-
-// Re-holding moves the key to the end, so the cap drops the longest unused.
-function hold(provider: SandboxProvider, key: string, id: string): void {
-  const entry = heldKey(provider, key);
-  held.delete(entry);
-  if (held.size >= MAX_HELD) {
-    const oldest = held.keys().next().value;
-    if (oldest !== undefined) held.delete(oldest);
-  }
-  held.set(entry, { id: id, checkedAt: Date.now() });
-}
-
-export function resetHeldReservationsForTests(): void {
-  held.clear();
-}
 
 export interface PlatformWorkerConnection {
   baseURL: string;
@@ -119,8 +89,6 @@ export async function releasePlatformSandbox(
 ): Promise<void> {
   const key = sandboxReservationKey(request);
   if (!key) return;
-  const entry = heldKey(provider, key);
-  held.delete(entry);
   const id =
     request.expectedExternalId ?? (await getSandboxExternalId(provider, key));
   if (!id) return;
@@ -128,8 +96,6 @@ export async function releasePlatformSandbox(
   // Drain queued mirror upserts so none writes the row back after the delete.
   await queueMirrorWrite(id, async (): Promise<void> => {});
   await deleteSandboxInstance(provider, key, accountId, id);
-  // A command that came in while this ran may have held the id again.
-  if (held.get(entry)?.id === id) held.delete(entry);
 }
 
 // A Worker-side resource exists once named, so reserving is just the claim. Reuse goes by key
@@ -139,21 +105,20 @@ export async function reservePlatformSandbox(
   accountId: string | undefined,
   key: string,
 ): Promise<string | undefined> {
-  const hit = held.get(heldKey(provider, key));
-  if (hit && Date.now() - hit.checkedAt < REVALIDATE_MS) return hit.id;
-  if (!accountId) {
-    const existing = await getSandboxExternalId(provider, key);
-    if (existing) hold(provider, key, existing);
+  const existing = await getSandboxExternalId(provider, key);
+  if (existing) {
+    await saveSandboxInstance(provider, key, existing, accountId);
 
-    return existing ?? undefined;
+    return existing;
   }
-  const id = await reserveSandboxInstance(
-    provider,
-    key,
-    `${sandboxNamePrefix(key)}-${crypto.randomUUID().slice(0, 8)}`,
-    accountId,
-  );
-  hold(provider, key, id);
+  if (!accountId) return undefined;
+  const id = `${sandboxNamePrefix(key)}-${crypto.randomUUID().slice(0, 8)}`;
+  if (await claimSandboxInstance(provider, key, id, accountId)) return id;
+  const winner = await getSandboxExternalId(provider, key);
+  if (!winner)
+    throw new Error(
+      `failed to reserve a ${provider} sandbox (lost the reservation race)`,
+    );
 
-  return id;
+  return winner;
 }
