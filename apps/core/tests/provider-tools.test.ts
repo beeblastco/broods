@@ -108,6 +108,27 @@ describe("provider tools by id", () => {
     ).rejects.toThrow(/config\.tools\.read is a Broods tool name/);
   });
 
+  it("refuses a key that names a tool Broods already registered", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    expect(
+      createTools(
+        {
+          accountId: "acct_test",
+          conversationKey: "conversation",
+          modelProviderName: "anthropic",
+          modelProvider: anthropic,
+          sandboxes: [{ name: "mac", sandbox: { provider: "machine" } }],
+        },
+        {
+          tools: {
+            computer: descriptor(anthropic.tools.webSearch_20260318({})),
+          },
+        },
+      ),
+    ).rejects.toThrow(/config\.tools\.computer is a Broods tool name/);
+  });
+
   it("refuses a client-executed tool Broods cannot run", async () => {
     expect(
       build("anthropic", anthropic, {

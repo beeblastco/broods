@@ -554,7 +554,8 @@ function registerProviderTools(
             fileContext: sandbox.fileContext,
           })
         : undefined;
-    if (harnessName && !standIn?.replaces.some((name) => name === toolName)) {
+    const taken = harnessName || toolName in tools;
+    if (taken && !standIn?.replaces.some((name) => name === toolName)) {
       throw new Error(harnessNameError(toolName));
     }
     if (!standIn) {
