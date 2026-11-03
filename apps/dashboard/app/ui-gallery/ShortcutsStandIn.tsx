@@ -97,6 +97,8 @@ function describe(action: CopilotAction): string {
       return `connect ${action.source} ${action.target}`;
     case "addMcp":
       return `addMcp ${action.name} ${action.url}`;
+    case "addNode":
+      return `addNode ${action.nodeType} ${action.agent}`;
     case "commitFiles":
       return `commit ${action.files.map((file) => file.path).join(",")}`;
   }

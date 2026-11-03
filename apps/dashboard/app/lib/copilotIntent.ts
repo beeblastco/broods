@@ -13,6 +13,8 @@ const NAVIGATION_VERBS =
 const BLOCKED_VERBS =
   /\b(deploy|promote|delete|destroy|drop|rotate|revoke|uninstall)\b/i;
 
+const ATTACHED_TYPES = ["sandbox", "skill", "workspace"] as const;
+
 const CANVAS_VERB_COMMANDS: Record<string, ShortcutId> = {
   fit: "canvas.fitView",
   tidy: "canvas.tidy",
@@ -58,6 +60,7 @@ export function planFromQuery(
   return (
     planEnvVar(trimmed, context) ??
     planAddMcp(trimmed, context) ??
+    planAddNode(trimmed, context) ??
     planConnect(trimmed, context) ??
     planCronStatus(trimmed, context) ??
     planCommand(trimmed, context) ??
@@ -131,6 +134,50 @@ function planAddMcp(
       },
     ],
     summary: `Adds ${match[1]} and checks its tools.`,
+  };
+}
+
+// `add <sandbox|workspace|skill> to <agent>`: a new node that lands wired to that agent.
+function planAddNode(
+  query: string,
+  context: CopilotContext,
+): CopilotPlan | null {
+  const match =
+    /^add\s+(?:an?\s+|another\s+|a\s+new\s+)?(sandbox|workspace|skill)(?:\s+node)?\s+(?:to|for|on)\s+(.+)$/i.exec(
+      query,
+    );
+  const nodeType = ATTACHED_TYPES.find(
+    (type) => type === match?.[1].toLowerCase(),
+  );
+  if (!match || !nodeType) return null;
+  const label = `Add a ${nodeType} to ${match[2]}`;
+  const agent = findNode(context, match[2]);
+  if (agent?.detail !== "agent") {
+    return {
+      actions: [
+        {
+          label: label,
+          reason: `${match[2]} is not an agent on this canvas.`,
+          type: "blocked",
+        },
+      ],
+      summary: `${match[2]} is not an agent.`,
+    };
+  }
+  if (context.lockedNodes?.has(agent.title)) {
+    return lockedPlan(agent.title, `Add a ${nodeType} to ${agent.title}`);
+  }
+
+  return {
+    actions: [
+      {
+        agent: agent.title,
+        label: `Add a ${nodeType} to ${agent.title}`,
+        nodeType: nodeType,
+        type: "addNode",
+      },
+    ],
+    summary: `Adds a ${nodeType} wired to ${agent.title}.`,
   };
 }
 

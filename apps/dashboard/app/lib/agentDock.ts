@@ -63,7 +63,9 @@ export function dockPrompt(
     `Project: ${facts.project ?? "none open"}, stage: ${facts.stage ?? "unknown"}`,
     facts.repo
       ? `Deploys from GitHub ${facts.repo}: resources defined in its broods/ folder change in code, not on the canvas.`
-      : "Not linked to GitHub: the canvas is the source of truth.",
+      : facts.codeNodes.length > 0
+        ? "Not linked to GitHub: code-defined resources change only where `broods deploy` runs. Settings > Git links a repo so you can commit."
+        : "Not linked to GitHub: the canvas is the source of truth.",
     ...context.items.slice(0, MAX_CONTEXT_ITEMS).map((item) => {
       const notes = [
         item.detail,

@@ -2,7 +2,12 @@ const CANVAS_ACTION_EVENT = "broods:canvas-action";
 
 export type CanvasAction =
   | { kind: "connect"; source: string; target: string }
-  | { agent?: string; kind: "addMcp"; name: string; url: string };
+  | { agent?: string; kind: "addMcp"; name: string; url: string }
+  | {
+      agent: string;
+      kind: "addNode";
+      nodeType: "sandbox" | "skill" | "workspace";
+    };
 
 interface CanvasActionDetail {
   action: CanvasAction;

@@ -31,6 +31,12 @@ export type CopilotAction =
   | { label: string; reason: string; type: "blocked" }
   | { label: string; source: string; target: string; type: "connectNodes" }
   | {
+      agent: string;
+      label: string;
+      nodeType: "sandbox" | "skill" | "workspace";
+      type: "addNode";
+    }
+  | {
       agent?: string;
       change: CopilotChange;
       label: string;
@@ -62,6 +68,7 @@ export interface PendingChange {
 
 const TIERS: Record<CopilotAction["type"], CopilotTier> = {
   addMcp: "approval",
+  addNode: "approval",
   blocked: "blocked",
   command: "safe",
   commitFiles: "approval",

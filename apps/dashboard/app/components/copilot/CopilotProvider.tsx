@@ -221,6 +221,14 @@ export function CopilotProvider({
             });
 
             return true;
+          case "addNode":
+            await requestCanvasAction({
+              agent: action.agent,
+              kind: "addNode",
+              nodeType: action.nodeType,
+            });
+
+            return true;
           case "commitFiles": {
             if (!projectId || !currentStageId) return false;
             const result = await commitChange({

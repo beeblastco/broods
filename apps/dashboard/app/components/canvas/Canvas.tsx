@@ -391,6 +391,53 @@ function writeCollapsedFrames(key: string, ids: ReadonlySet<string>): void {
   }
 }
 
+// The dock names nodes by label; an agent pair or a workspace mount joins side to side.
+function dockConnection(
+  nodes: readonly Node[],
+  names: { source: string; target: string },
+): Connection | string {
+  const source = nodeByLabel(nodes, names.source);
+  const target = nodeByLabel(nodes, names.target);
+  if (!source || !target) {
+    return `${source ? names.target : names.source} is not on this canvas.`;
+  }
+  const mounts = new Set(["sandbox", "workspace"]);
+  const sideways =
+    (source.type === "agent" && target.type === "agent") ||
+    (mounts.has(source.type ?? "") && mounts.has(target.type ?? ""));
+
+  return {
+    source: source.id,
+    sourceHandle: sideways ? "right" : null,
+    target: target.id,
+    targetHandle: sideways ? "left" : null,
+  };
+}
+
+// The agent a dock step wires a new node to, or why the canvas cannot.
+function dockAgent(
+  nodes: readonly Node[],
+  name: string | undefined,
+): Node | undefined | string {
+  if (!name) return undefined;
+  const agent = nodeByLabel(nodes, name);
+  if (!agent) return `${name} is not on this canvas.`;
+  if (agent.type !== "agent") return `${name} is not an agent on this canvas.`;
+  if (isCodeManagedOwner(agent.data.managedBy)) {
+    return `${name} is defined in code, so the canvas cannot change it.`;
+  }
+
+  return agent;
+}
+
+function nodeByLabel(nodes: readonly Node[], label: string): Node | undefined {
+  return nodes.find(
+    (node) =>
+      typeof node.data.label === "string" &&
+      node.data.label.toLowerCase() === label.toLowerCase(),
+  );
+}
+
 function findNearestAgentNode(
   nodes: Node[],
   position: { x: number; y: number },
@@ -1201,48 +1248,32 @@ function CanvasInner({
   );
   useShortcut("canvas.addMcp", () => canWrite && addNode("mcp", "MCP"));
 
-  // The Broods agent dock's connect and add-MCP steps land here, checked like a drag would be.
+  // The Broods agent dock's canvas steps land here, checked like a drag would be.
   const saveMcp = useAction(api.mcp.saveForNode);
   // oxlint-disable-next-line broods/no-unreasoned-state-sync -- a window event listener
   useEffect(
     () =>
       onCanvasAction(async (action): Promise<string | undefined> => {
         if (!canWrite) return "Members read the canvas but cannot change it.";
-        const byLabel = (label: string): Node | undefined =>
-          nodesRef.current.find(
-            (node) =>
-              typeof node.data.label === "string" &&
-              node.data.label.toLowerCase() === label.toLowerCase(),
-          );
         if (action.kind === "connect") {
-          const source = byLabel(action.source);
-          const target = byLabel(action.target);
-          if (!source || !target) {
-            return `${source ? action.target : action.source} is not on this canvas.`;
-          }
-          // Agent pairs and workspace mounts join side to side; a service hangs below its agent.
-          const mounts = new Set(["sandbox", "workspace"]);
-          const sideways =
-            (source.type === "agent" && target.type === "agent") ||
-            (mounts.has(source.type ?? "") && mounts.has(target.type ?? ""));
-          const connection = {
-            source: source.id,
-            sourceHandle: sideways ? "right" : null,
-            target: target.id,
-            targetHandle: sideways ? "left" : null,
-          };
+          const connection = dockConnection(nodesRef.current, action);
+          if (typeof connection === "string") return connection;
           const refusal = connectionRefusal(getConnectionGraph(), connection);
           if (refusal) return refusal;
           onConnect(connection);
 
           return undefined;
         }
-        const agent = action.agent ? byLabel(action.agent) : undefined;
-        if (action.agent && !agent) {
-          return `${action.agent} is not on this canvas.`;
-        }
-        if (agent && agent.type !== "agent") {
-          return `${action.agent} is not an agent on this canvas.`;
+        const agent = dockAgent(nodesRef.current, action.agent);
+        if (typeof agent === "string") return agent;
+        if (action.kind === "addNode") {
+          const template = NODE_TEMPLATES.find(
+            (item) => item.type === action.nodeType,
+          );
+          if (!template || !agent) return "Nothing to add.";
+          addNode(template.type, template.label, undefined, [agent.id]);
+
+          return undefined;
         }
         if (!stageId) return "Pick a stage first.";
         const nodeId = String(nextId.current);

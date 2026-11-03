@@ -124,6 +124,20 @@ describe("agent dock", () => {
     expect(plan?.actions.map(actionTier)).toEqual(["approval"]);
   });
 
+  test("a resource added to an agent lands wired to it, and a code-defined one is refused", () => {
+    expect(
+      planFromQuery("add a workspace to broods", WIRED)?.actions,
+    ).toMatchObject([
+      { agent: "broods", nodeType: "workspace", type: "addNode" },
+    ]);
+    expect(
+      planFromQuery("add sandbox to broods", {
+        ...WIRED,
+        lockedNodes: new Set(["broods"]),
+      })?.actions.map((action) => action.type),
+    ).toEqual(["blocked"]);
+  });
+
   test("proposed file edits become one commit to the stage's branch", () => {
     const plan = proposalPlan(
       {
