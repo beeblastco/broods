@@ -9,6 +9,7 @@ import { browserSandbox } from "./browser-sandbox.ts";
 import { cloudflareSandbox } from "./cloudflare-sandbox.ts";
 import { connections } from "./connections.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
+import { devWatch } from "./dev-watch.ts";
 import { edgeHeaders } from "./edge-headers.ts";
 import { githubRepo } from "./github-repo.ts";
 import { workerSandbox } from "./worker-sandbox.ts";
@@ -81,6 +82,7 @@ export const verifyCases: readonly VerifyCase[] = [
   credentialPrefixes,
   scopedAccountKey,
   manifestSync,
+  devWatch,
   githubRepo,
   productionRegion,
   projectUsage,

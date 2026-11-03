@@ -65,6 +65,7 @@ import {
 } from "../runtime-config.ts";
 import {
   fetchObservabilityTrace,
+  StageSessionRefusedError,
   subscribeObservabilityLogs,
   type ObservabilityClientOptions,
 } from "../observability-client.ts";
@@ -115,6 +116,7 @@ import {
 } from "./output.ts";
 import {
   isNewerVersion,
+  isInstalledPackage,
   latestPublishedVersion,
   majorVersion,
   updateTarget,
@@ -634,11 +636,17 @@ async function init(args: string[]): Promise<void> {
     force,
   );
   await ensureAgentSkill(force);
+  // Like login and dev: BROODS_DASHBOARD_URL / BROODS_BASE_URL pick the server.
+  const runtime = loadBroodsRuntimeConfig();
+  const dashboardFlag = optionValue(args, "--dashboard-url");
   const dashboardUrl =
-    optionValue(args, "--dashboard-url") ?? DEFAULT_DASHBOARD_URL;
+    dashboardFlag ?? runtime.dashboardUrl ?? DEFAULT_DASHBOARD_URL;
   await writeLocalEnvDefaults({
     dashboardUrl: dashboardUrl,
-    baseUrl: gatewayUrlForDashboard(dashboardUrl),
+    // The flag names one server, so its gateway wins over a stored login's.
+    baseUrl:
+      (dashboardFlag ? undefined : runtime.baseUrl) ??
+      gatewayUrlForDashboard(dashboardUrl),
     project: optionValue(args, "--project") ?? inferProjectName(process.cwd()),
     stage: optionValue(args, "--stage") ?? "development",
     region: optionValue(args, "--region") ?? DEFAULT_SERVICE_REGION,
@@ -1476,6 +1484,8 @@ async function update(): Promise<void> {
 }
 
 async function warnOnOutdatedCli(): Promise<void> {
+  // A monorepo build's workspace version is never the released one, so it would always nag.
+  if (!isInstalledPackage()) return;
   const latest = await latestPublishedVersion();
   if (latest === null || !isNewerVersion(latest, VERSION)) return;
   printWarning(
@@ -1516,16 +1526,40 @@ async function dev(args: string[]): Promise<void> {
   let pending = false;
   let lastSourceSignature: string | undefined;
 
+  // Live logs like `convex dev`, retried after each sync: a new stage has none until a deploy.
+  const logController = new AbortController();
+  let logs: "off" | "on" | "failed" = "off";
+  let hinted = false;
+  const startLogs = (): void => {
+    if (logs !== "off") return;
+    logs = "on";
+    void streamDevLogs(args, logController.signal).then((outcome) => {
+      if (outcome === "refused" && !hinted) {
+        hinted = true;
+        console.log("· live logs start after the first sync lands.");
+      }
+      logs = outcome === "failed" ? "failed" : "off";
+    });
+  };
+  let lastSyncFailed = false;
+  // A save after the signature may be in what the child read, so that sync records no signature.
+  let savedSinceSignature = false;
   const syncChanged = async (): Promise<void> => {
+    savedSinceSignature = false;
     const signature = await sourceSignature();
-    if (signature === lastSourceSignature) return;
-    await runSyncChild(args, childEnv);
-    lastSourceSignature = signature;
+    // A failed sync may have written part of the stage, so even an undo syncs again.
+    if (signature === lastSourceSignature && !lastSyncFailed) return;
+    lastSyncFailed = true;
+    try {
+      await runSyncChild(args, childEnv);
+      lastSyncFailed = false;
+      lastSourceSignature = savedSinceSignature ? undefined : signature;
+    } finally {
+      startLogs();
+    }
   };
   const printSyncError = (error: unknown): void =>
     console.error(error instanceof Error ? error.message : String(error));
-
-  await syncChanged().catch(printSyncError);
 
   const runSync = (): void => {
     if (syncing) {
@@ -1550,13 +1584,13 @@ async function dev(args: string[]): Promise<void> {
     { recursive: true },
     (_event, filename) => {
       if (!filename || isGeneratedPath(filename)) return;
+      if (/\.(ts|md)$/.test(filename)) savedSinceSignature = true;
       clearTimeout(timer);
       timer = setTimeout(runSync, 150);
     },
   );
-
-  const logController = new AbortController();
-  void streamDevLogs(args, logController.signal);
+  // Watching before the first sync, so a save made during it is not missed.
+  runSync();
 
   process.on("SIGINT", () => {
     logController.abort();
@@ -1565,19 +1599,21 @@ async function dev(args: string[]): Promise<void> {
   });
 }
 
+// "refused" (no deployment yet) and "dropped" retry after the next sync; "failed" is printed.
 async function streamDevLogs(
   args: string[],
   signal: AbortSignal,
-): Promise<void> {
+): Promise<"refused" | "dropped" | "failed"> {
   let session: ObservabilityClientOptions;
   try {
     session = await openStageSession(args);
   } catch (error) {
+    if (error instanceof StageSessionRefusedError) return "refused";
     console.log(
       `· live logs off. ${error instanceof Error ? error.message : String(error)}`,
     );
 
-    return;
+    return "failed";
   }
 
   const minLevel = resolveMinLevel(args);
@@ -1598,6 +1634,8 @@ async function streamDevLogs(
       );
     }
   }
+
+  return "dropped";
 }
 
 async function ensureDevOnboarding(args: string[]): Promise<void> {
@@ -2080,9 +2118,10 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
       }
       reject(
         new Error(
+          // The child already printed why; say what happens next.
           signal
-            ? `Sync child exited from signal ${signal}`
-            : `Sync child exited with code ${code ?? "unknown"}`,
+            ? `Sync stopped (${signal}). Watching for changes: save a file in broods/ to retry.`
+            : "Sync failed. Watching for changes: fix it, then save a file in broods/ to retry.",
         ),
       );
     });
@@ -2107,7 +2146,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const pushed = await pushLocalEnvVars(
     client,
     compiled.manifest,
-    await inspectEnvRefs(client, compiled.manifest),
+    await askForUnresolvedEnv(await inspectEnvRefs(client, compiled.manifest)),
   );
   if (pushed.length > 0) printEnvSync(pushed);
 
@@ -2259,6 +2298,26 @@ async function inspectEnvRefs(
     name: name,
     state: envRefState(name, remote),
   }));
+}
+
+// In a TTY, asks for each `env()` value nothing holds yet and saves it to `.env.local`.
+async function askForUnresolvedEnv(refs: EnvRef[]): Promise<EnvRef[]> {
+  const missing = namesInState(refs, "unresolved");
+  if (missing.length === 0 || !process.stdin.isTTY) return refs;
+  console.log(
+    `The project needs ${missing.length === 1 ? "a value" : `${missing.length} values`} no one has set yet. ` +
+      "Input is hidden and saved to .env.local, which stays out of git.",
+  );
+  for (const name of missing) {
+    const value = await promptSecret(name, { optional: true });
+    if (value) await writeEnvValue(name, value);
+  }
+
+  return refs.map((ref) =>
+    ref.state === "unresolved" && process.env[ref.name]
+      ? { ...ref, state: "unset" }
+      : ref,
+  );
 }
 
 async function pushLocalEnvVars(

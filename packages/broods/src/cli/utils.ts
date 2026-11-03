@@ -210,7 +210,10 @@ export async function promptConfirm(question: string): Promise<boolean> {
  * A TTY gives one line, a pipe every line to its end (a PEM key). Iterated, not
  * `rl.question`: a question never settles when input ends first (Ctrl+D).
  */
-export async function promptSecret(label: string): Promise<string> {
+export async function promptSecret(
+  label: string,
+  options: { optional?: boolean } = {},
+): Promise<string> {
   output.write(`${label}: `);
   const muted = new Writable({
     write: (_chunk, _encoding, callback): void => callback(),
@@ -230,7 +233,11 @@ export async function promptSecret(label: string): Promise<string> {
       if (terminal) break;
     }
     const value = lines.join("\n");
-    if (!value) throw new Error(`${label} is required`);
+    // An optional prompt takes an empty line as "skip"; input that ends
+    // without one (Ctrl+D, Ctrl+C) still stops, so a user can always abort.
+    if (!value && (!options.optional || lines.length === 0)) {
+      throw new Error(`${label} is required`);
+    }
 
     return value;
   } finally {
@@ -310,6 +317,7 @@ export async function promptSelectOrText<T extends object>(
   }
 }
 
+// Enter keeps the `[default]`. No TTY returns the default, so CI fails on it instead of hanging.
 export async function promptText(
   label: string,
   defaultValue?: string,
@@ -317,13 +325,11 @@ export async function promptText(
   if (!input.isTTY) return defaultValue ?? "";
   const rl = createInterface({ input: input, output: output });
   try {
-    const pending = rl.question(`${label}: `);
-    if (defaultValue) {
-      if (input.isTTY && output.isTTY) output.write("\x1b[90m");
-      rl.write(defaultValue);
-      if (input.isTTY && output.isTTY) output.write("\x1b[0m");
-    }
-    const answer = (await pending).trim();
+    const answer = (
+      await rl.question(
+        defaultValue ? `${label} [${defaultValue}]: ` : `${label}: `,
+      )
+    ).trim();
 
     return answer || defaultValue || "";
   } finally {
