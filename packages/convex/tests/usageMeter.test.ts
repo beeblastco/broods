@@ -290,6 +290,69 @@ test("a running sandbox's per-command refreshes bill once a minute, to the same 
   });
 });
 
+test.each([
+  ["resumed after a suspend", {}, "suspend"],
+  ["was replaced by a new machine", { externalId: "cf-2" }, undefined],
+  ["switched to its own credentials", { ownCredentials: true }, undefined],
+  ["moved to a project", {}, "project"],
+] as const)(
+  "a refresh inside the minute still bills when the machine %s",
+  async (_case, change, step) => {
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    const sandbox = {
+      accountId: accountId,
+      provider: "cloudflare" as const,
+      reservationKey: "cf-abc",
+      externalId: "cf-1",
+      name: "default",
+      specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+    };
+    await t.mutation(internal.sandbox.instances.upsert, sandbox);
+    vi.setSystemTime(NOW + 10_000);
+    if (step === "suspend") {
+      await t.mutation(internal.sandbox.instances.setStatus, {
+        accountId: accountId,
+        reservationKey: "cf-abc",
+        status: "suspended",
+      });
+    }
+    const projectId =
+      step === "project"
+        ? await t.run(async (ctx) => {
+            const org = await ctx.db.query("orgs").unique();
+            if (!org) throw new Error("no org seeded");
+
+            return await ctx.db.insert("projects", {
+              authId: "auth_owner",
+              orgId: org._id,
+              name: "demo-app",
+              slug: "demo-app",
+              updatedAt: NOW,
+            });
+          })
+        : undefined;
+
+    vi.setSystemTime(NOW + 20_000);
+    await t.mutation(internal.sandbox.instances.upsert, {
+      ...sandbox,
+      ...change,
+      ...(projectId ? { projectId: projectId } : {}),
+    });
+
+    const billed = await t.run(async (ctx) => ({
+      meter: await ctx.db.query("usageMeters").unique(),
+      row: await ctx.db.query("sandboxInstances").unique(),
+    }));
+    expect(billed.row?.meteredUntil).toBe(NOW + 20_000);
+    // Billed on the terms it ran under: a suspended machine stopped running at 10 s.
+    expect(billed.meter).toMatchObject({
+      sandboxVcpuSeconds: step === "suspend" ? 10 : 20,
+    });
+  },
+);
+
 test("a refresh at a new size bills the time before it at the old size", async () => {
   vi.useFakeTimers({ now: NOW });
   const t = meterTest();

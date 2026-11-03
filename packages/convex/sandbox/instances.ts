@@ -449,8 +449,10 @@ async function accrue(
   return accrual.meteredUntil;
 }
 
-// Bills the stretch a refresh ends, or leaves it to the next bill, and returns the row's new
-// `meteredUntil`. A relaunch also bills its launch.
+// Bills the stretch a refresh ends and returns the row's new `meteredUntil`. A machine still
+// running at the size, credentials and project it was last billed at leaves the stretch to a
+// later bill for up to a minute; `meteredUntil` keeps saying where it starts. A relaunch also
+// bills its launch.
 async function billRefresh(
   ctx: MutationCtx,
   refresh: {
@@ -462,36 +464,11 @@ async function billRefresh(
     launch: ReturnType<typeof sandboxLaunchUsage> | undefined;
     now: number;
   },
-): Promise<number | undefined> {
+): Promise<number> {
   const { existing, refreshed, launch, now } = refresh;
-  if (!launch && billsWithNextRefresh(existing, refreshed, now)) {
-    return existing.meteredUntil;
-  }
-  await accrue(ctx, existing, now);
-  if (launch) {
-    await addUsage(
-      ctx,
-      existing.accountId,
-      launch,
-      now,
-      refreshed.projectId ?? existing.projectId,
-    );
-  }
-
-  return now;
-}
-
-// The next bill covers this stretch too only if the machine kept running at the size,
-// credentials and project it was last billed at, which `meteredUntil` must say when.
-function billsWithNextRefresh(
-  existing: Doc<"sandboxInstances">,
-  refreshed: Pick<
-    Doc<"sandboxInstances">,
-    "specs" | "ownCredentials" | "projectId"
-  >,
-  now: number,
-): boolean {
-  return (
+  const projectId = refreshed.projectId ?? existing.projectId;
+  if (
+    !launch &&
     existing.status === "running" &&
     existing.meteredUntil !== undefined &&
     now - existing.meteredUntil < REFRESH_BILL_EVERY_MS &&
@@ -499,8 +476,16 @@ function billsWithNextRefresh(
     refreshed.specs.memoryMb === existing.specs.memoryMb &&
     (refreshed.ownCredentials === true) ===
       (existing.ownCredentials === true) &&
-    (refreshed.projectId ?? existing.projectId) === existing.projectId
-  );
+    projectId === existing.projectId
+  ) {
+    return existing.meteredUntil;
+  }
+  await accrue(ctx, existing, now);
+  if (launch) {
+    await addUsage(ctx, existing.accountId, launch, now, projectId);
+  }
+
+  return now;
 }
 
 // A size-less write (a workdir or e2b reconnect) must not unverify the same machine.
