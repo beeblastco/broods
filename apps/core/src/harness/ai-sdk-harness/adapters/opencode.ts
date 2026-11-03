@@ -12,6 +12,7 @@ import {
   resolveAnthropicAuthEnv,
   resolveGatewayAuthEnv,
   resolveOpenAiAuthEnv,
+  warnReasoningChanged,
 } from "../provider.ts";
 
 const OPENCODE_LEVELS = [
@@ -47,11 +48,13 @@ export function createConfiguredOpenCodeAdapter(
       "config.harness.type opencode requires the anthropic, openai, or vercel model provider",
     );
   }
+  const reasoningVariant = openCodeVariant(agentConfig.model);
+  warnReasoningChanged(agentConfig, reasoningVariant);
 
   return createOpenCode({
     auth: auth,
     provider: providerName,
-    reasoningVariant: openCodeVariant(agentConfig.model),
+    reasoningVariant: reasoningVariant,
     startupTimeoutMs: harness.startupTimeoutMs,
   });
 }
@@ -80,11 +83,13 @@ function openCodeVariant(
   const distance = (level: OpenCodeLevel): number =>
     Math.abs(OPENCODE_LEVELS.indexOf(level) - rank);
 
-  return variants
-    .filter((variant) => variant !== "none")
-    .reduce((best, variant) =>
-      distance(variant) <= distance(best) ? variant : best,
-    );
+  return variants.reduce<OpenCodeLevel | undefined>(
+    (best, variant): OpenCodeLevel | undefined =>
+      variant !== "none" && (!best || distance(variant) <= distance(best))
+        ? variant
+        : best,
+    undefined,
+  );
 }
 
 // OpenCode 1.18 variant names per model (provider/transform.ts), less `max`: it is above `xhigh`.
@@ -95,7 +100,6 @@ function openCodeVariants(
   const id = modelId.toLowerCase();
   if (provider === "anthropic" || id.startsWith("anthropic/")) {
     if (CLAUDE_WITHOUT_EFFORT.test(id)) return ["high"];
-
     return /opus-4[.-]5|(?:opus|sonnet)-4[.-]6/.test(id)
       ? ["low", "medium", "high"]
       : ["low", "medium", "high", "xhigh"];
@@ -106,19 +110,14 @@ function openCodeVariants(
   if (provider === "vercel" && !id.startsWith("openai/")) {
     return OPENCODE_LEVELS;
   }
-  const version = Number(/gpt-5[.-](\d+)(?:[.-]|$)/.exec(id)?.[1] ?? 0);
+  // One or two digits: `gpt-5-2025-08-07` is a dated GPT-5, not GPT-5.2025.
+  const version = Number(/gpt-5[.-](\d{1,2})(?:[.-]|$)/.exec(id)?.[1] ?? 0);
   const codex = id.includes("codex");
-  const none = codex ? version >= 3 : version >= 1;
-  const minimal = version === 0 && !codex && id.includes("gpt-5");
-  const xhigh = version >= 2 || id.includes("codex-max");
+  const gated: Partial<Record<OpenCodeLevel, boolean>> = {
+    none: codex ? version >= 3 : version >= 1,
+    minimal: version === 0 && !codex && id.includes("gpt-5"),
+    xhigh: version >= 2 || id.includes("codex-max"),
+  };
 
-  return OPENCODE_LEVELS.filter((level) =>
-    level === "none"
-      ? none
-      : level === "minimal"
-        ? minimal
-        : level === "xhigh"
-          ? xhigh
-          : true,
-  );
+  return OPENCODE_LEVELS.filter((level): boolean => gated[level] ?? true);
 }
