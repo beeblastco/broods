@@ -13,6 +13,10 @@ import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type { SessionMessageResult } from "../src/harness/ingress.ts";
 import type { Session } from "../src/harness/session.ts";
 import type { ToolContext } from "../src/harness/tools/index.ts";
+import type {
+  AgentMessage,
+  AgentMessageResult,
+} from "../src/harness/tools/utils.ts";
 import {
   resetStorageForTests,
   setStorageForTests,
@@ -752,6 +756,7 @@ describe("createTools", () => {
       dispatch,
     ) as unknown as Record<string, unknown>;
     context.session = { eventId: "acct:acct_test:agent:parent:event" };
+    context.messageChild = mock(async () => ({}));
 
     expect(
       Object.keys(
@@ -759,7 +764,7 @@ describe("createTools", () => {
           subagent: { enabled: true, mode: "persistent" },
         }),
       ),
-    ).toEqual(["run_subagent", "update_subagent", "stop_subagent"]);
+    ).toEqual(["run_subagent", "stop_subagent", "message-agents"]);
     expect(
       Object.keys(
         await createTools(context as never, {
@@ -767,6 +772,25 @@ describe("createTools", () => {
         }),
       ),
     ).toEqual(["run_subagent"]);
+  });
+
+  it("gives a persistent child message-agents to reach its parent", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const context = {
+      ...createToolContext(undefined, "google"),
+      parentLink: {
+        ask: (): boolean => true,
+        note: async (message: AgentMessage): Promise<AgentMessageResult> => ({
+          status: "delivered",
+          exchangeId: message.exchangeId,
+          note: "",
+        }),
+      },
+    };
+
+    expect(Object.keys(await createTools(context, {}))).toEqual([
+      "message-agents",
+    ]);
   });
 
   it("exposes subagent conversation keys in persistent mode", async () => {

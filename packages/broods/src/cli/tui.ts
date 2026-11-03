@@ -1,3 +1,4 @@
+import type { EventEmitter } from "node:events";
 import { runAgentTUI } from "@ai-sdk/tui";
 import {
   convertToModelMessages,
@@ -5,6 +6,7 @@ import {
   toTextStream,
   toUIMessageStream,
   type ChatTransport,
+  type DynamicToolCall,
   type ModelMessage,
   type TextStreamPart,
   type ToolApprovalResponse,
@@ -12,7 +14,11 @@ import {
   type UIMessage,
   type UIMessageChunk,
 } from "ai";
-import type { AgentReference, BroodsClient } from "../client.ts";
+import {
+  IngressAcceptedError,
+  type AgentReference,
+  type BroodsClient,
+} from "../client.ts";
 
 type SendMessagesOptions = Parameters<
   ChatTransport<UIMessage>["sendMessages"]
@@ -25,13 +31,73 @@ export interface AgentRunOptions {
 }
 
 export async function runAgentTui(options: AgentRunOptions): Promise<void> {
+  const transport = new RemoteAgentTransport(options.client, options.agent);
+  const restoreInput = stopTurnOnEscape(transport);
   if (options.prompt !== undefined) void submitPrompt(options.prompt);
-  await runAgentTUI({
-    title: `broods · ${options.agent.name}`,
-    // The default collapses tool cards, whose input and output a dev came here to see.
-    tools: "full",
-    transport: new RemoteAgentTransport(options.client, options.agent),
-  });
+  try {
+    await runAgentTUI({
+      title: `broods · ${options.agent.name}`,
+      // The default collapses tool cards, whose input and output a dev came here to see.
+      tools: "full",
+      transport: transport,
+    });
+  } finally {
+    restoreInput();
+  }
+}
+
+// How long a lone Esc waits for the rest of a key sequence split across reads.
+const ESC_SEQUENCE_WAIT_MS = 30;
+
+const ESC = Buffer.from("\x1b");
+
+// Esc mid-turn stops the turn instead of quitting; idle Esc and Ctrl+C still quit. A lone Esc is
+// held briefly, since a following `[` or `O` makes it part of a split arrow key. Returns the undo.
+export function stopTurnOnEscape(
+  transport: Pick<RemoteAgentTransport, "stopTurn" | "streaming">,
+  input: EventEmitter = process.stdin,
+): () => void {
+  const emit = input.emit.bind(input);
+  let held:
+    | { timer: ReturnType<typeof setTimeout>; streaming: boolean }
+    | undefined;
+  const settle = (): void => {
+    if (!held) return;
+    clearTimeout(held.timer);
+    const pressedMidTurn = held.streaming;
+    held = undefined;
+    if (pressedMidTurn) transport.stopTurn();
+    else emit("data", ESC);
+  };
+  input.emit = (event: string | symbol, ...args: unknown[]): boolean => {
+    if (event !== "data") return emit(event, ...args);
+    const chunk = Buffer.isBuffer(args[0])
+      ? args[0]
+      : Buffer.from(String(args[0]));
+    if (held && (chunk[0] === 0x5b || chunk[0] === 0x4f)) {
+      clearTimeout(held.timer);
+      held = undefined;
+
+      return emit("data", Buffer.concat([ESC, chunk]));
+    }
+    // Anything else (a second Esc, Ctrl+C) confirms the held Esc first.
+    settle();
+    if (chunk.equals(ESC)) {
+      held = {
+        timer: setTimeout(settle, ESC_SEQUENCE_WAIT_MS),
+        streaming: transport.streaming,
+      };
+
+      return true;
+    }
+
+    return emit(event, ...args);
+  };
+
+  return () => {
+    if (held) clearTimeout(held.timer);
+    input.emit = emit;
+  };
 }
 
 export async function streamAgentText(
@@ -68,6 +134,10 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   private readonly conversationKey = `tui-${generateId()}`;
   private readonly sentApprovals = new Set<string>();
   private sentUserTurns = 0;
+  /** The streaming turn, which `stopTurn` ends, and how to record it sent. */
+  private activeTurn:
+    | { controller: AbortController; commit: () => void }
+    | undefined;
 
   constructor(
     private readonly client: BroodsClient,
@@ -88,17 +158,44 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
       throw new Error("Nothing new to send: the agent already saw this turn.");
     }
 
-    const stream = this.client.stream(this.agent, {
-      conversationKey: this.conversationKey,
-      events: pending.events as [ModelMessage, ...ModelMessage[]],
-    });
+    const turn = { controller: new AbortController(), commit: pending.commit };
+    const stream = queuedAnswer(
+      pending.commit,
+      this.client,
+      this.client.stream(this.agent, {
+        conversationKey: this.conversationKey,
+        events: pending.events as [ModelMessage, ...ModelMessage[]],
+      }),
+      turn.controller.signal,
+    );
+    this.activeTurn = turn;
+    const signal = options.abortSignal
+      ? AbortSignal.any([options.abortSignal, turn.controller.signal])
+      : turn.controller.signal;
 
     return toUIMessageStream({
-      stream: toReadableStream(stream, options.abortSignal, pending.commit),
+      stream: toReadableStream(stream, signal, pending.commit, () => {
+        if (this.activeTurn === turn) this.activeTurn = undefined;
+      }),
       originalMessages: options.messages,
       generateMessageId: generateId,
       sendSources: true,
     });
+  }
+
+  get streaming(): boolean {
+    return this.activeTurn !== undefined;
+  }
+
+  // Ends the turn on screen, keeping its text. Core still finishes the run (the runtime key has no
+  // cancel), so the turn counts as sent. False when no turn is streaming.
+  stopTurn(): boolean {
+    if (!this.activeTurn) return false;
+    this.activeTurn.commit();
+    this.activeTurn.controller.abort();
+    this.activeTurn = undefined;
+
+    return true;
   }
 
   // Records nothing: `commit` runs once core answers, so a turn that never reached it is re-sent.
@@ -141,6 +238,54 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   }
 }
 
+// A turn sent while core still runs a stopped one is queued (202): wait and stream its answer.
+async function* queuedAnswer(
+  onAccepted: () => void,
+  client: BroodsClient,
+  stream: AsyncGenerator<TextStreamPart<ToolSet>>,
+  signal: AbortSignal,
+): AsyncGenerator<TextStreamPart<ToolSet>> {
+  try {
+    yield* stream;
+  } catch (error) {
+    if (!(error instanceof IngressAcceptedError)) throw error;
+    // Core holds the turn now, however it ends, so it is never sent again.
+    onAccepted();
+    const status = await client.waitForAsyncStatus(error.accepted, {
+      signal: signal,
+    });
+    // The approval cards the TUI answers through its usual path, which resumes the run.
+    if (status.status === "awaiting_approval") {
+      for (const approval of status.approvals ?? []) {
+        const toolCall: DynamicToolCall = {
+          type: "tool-call",
+          toolCallId: approval.toolCallId,
+          toolName: approval.toolName,
+          input: approval.input,
+          dynamic: true,
+        };
+        yield toolCall;
+        yield {
+          type: "tool-approval-request",
+          approvalId: approval.approvalId,
+          toolCall: toolCall,
+        };
+      }
+
+      return;
+    }
+    const answer = [status.response, status.result].find(
+      (value): value is string => typeof value === "string",
+    );
+    if (status.status !== "completed" || answer === undefined) {
+      throw new Error(`The queued turn ended ${status.status}.`);
+    }
+    yield { type: "text-start", id: "queued" };
+    yield { type: "text-delta", id: "queued", text: answer };
+    yield { type: "text-end", id: "queued" };
+  }
+}
+
 function abortedRead(
   signal: AbortSignal | undefined,
 ): Promise<IteratorResult<TextStreamPart<ToolSet>>> {
@@ -156,6 +301,7 @@ function toReadableStream(
   stream: AsyncGenerator<TextStreamPart<ToolSet>>,
   signal: AbortSignal | undefined,
   onAnswered: () => void,
+  onClosed: () => void = () => {},
 ): ReadableStream<TextStreamPart<ToolSet>> {
   let answered = false;
   // Never awaited: `return()` queues behind a read that may never complete, so awaiting it
@@ -164,10 +310,17 @@ function toReadableStream(
 
   return new ReadableStream({
     pull: async function (controller): Promise<void> {
-      const next = await Promise.race([stream.next(), abortedRead(signal)]);
+      const next = await Promise.race([
+        stream.next(),
+        abortedRead(signal),
+      ]).catch((error: unknown) => {
+        onClosed();
+        throw error;
+      });
       if (signal?.aborted) {
         release();
         controller.close();
+        onClosed();
 
         return;
       }
@@ -175,9 +328,14 @@ function toReadableStream(
         answered = true;
         onAnswered();
       }
-      if (next.done) controller.close();
-      else controller.enqueue(next.value);
+      if (next.done) {
+        controller.close();
+        onClosed();
+      } else controller.enqueue(next.value);
     },
-    cancel: release,
+    cancel: () => {
+      release();
+      onClosed();
+    },
   });
 }

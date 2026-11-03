@@ -15,7 +15,7 @@ import {
   appendAuditEvent,
   type AuditActor,
 } from "./model/auditEvents";
-import { isPlainObject } from "./model/objects";
+import { configObject, parseOr } from "./model/storedJson";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForWrite } from "./model/ownership/project";
 
@@ -201,12 +201,8 @@ async function mutateAgentWebhooks(
     throw new Error(WEBHOOK_ADMIN_REQUIRED);
   }
 
-  const extra: Record<string, unknown> = isPlainObject(config.extraConfig)
-    ? { ...config.extraConfig }
-    : {};
-  const hooks: Record<string, unknown> = isPlainObject(extra.hooks)
-    ? { ...extra.hooks }
-    : {};
+  const extra = parseOr(configObject, config.extraConfig, {});
+  const hooks = parseOr(configObject, extra.hooks, {});
   hooks.webhooks = mutate(readWebhooks(config.extraConfig));
   extra.hooks = hooks;
 
@@ -222,13 +218,17 @@ async function mutateAgentWebhooks(
 }
 
 function readWebhooks(extraConfig: unknown): Record<string, unknown>[] {
-  const hooks =
-    isPlainObject(extraConfig) && isPlainObject(extraConfig.hooks)
-      ? extraConfig.hooks
-      : undefined;
+  const hooks = parseOr(
+    configObject,
+    parseOr(configObject, extraConfig)?.hooks,
+  );
   const webhooks = hooks && Array.isArray(hooks.webhooks) ? hooks.webhooks : [];
 
-  return webhooks.filter(isPlainObject);
+  return webhooks.flatMap((webhook): Record<string, unknown>[] => {
+    const parsed = parseOr(configObject, webhook);
+
+    return parsed ? [parsed] : [];
+  });
 }
 
 async function recordWebhookAudit(

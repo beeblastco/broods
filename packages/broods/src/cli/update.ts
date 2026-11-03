@@ -8,6 +8,7 @@ import packageJson from "../../package.json" with { type: "json" };
 const CACHE_PATH = join(dirname(USER_CONFIG_PATH), "update-check.json");
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const REGISTRY_URL = "https://registry.npmjs.org/broods/latest";
+const NODE_MODULES_SEGMENT = `${sep}node_modules${sep}`;
 // A version check never stalls a sync: past this the notice is just skipped.
 const REGISTRY_TIMEOUT_MS = 2_000;
 // First match wins, so a project that holds two lockfiles picks the same one each run.
@@ -65,6 +66,13 @@ export function majorVersion(version: string): number {
   return releaseTriple(version)[0] ?? 0;
 }
 
+// An installed package, not a monorepo build: a workspace version is never the released one.
+export function isInstalledPackage(
+  self = fileURLToPath(import.meta.url),
+): boolean {
+  return self.includes(NODE_MODULES_SEGMENT);
+}
+
 // The first `node_modules` in this module's path is the project root, even in pnpm's and bun's
 // isolated stores. From inside that root, update upgrades the dependency instead of putting a
 // second copy on the PATH. It stays on the running major: a new one can break the project.
@@ -73,8 +81,7 @@ export function updateTarget(
   self = fileURLToPath(import.meta.url),
   version = packageJson.version,
 ): UpdateTarget {
-  const marker = `${sep}node_modules${sep}`;
-  const markerAt = self.indexOf(marker);
+  const markerAt = self.indexOf(NODE_MODULES_SEGMENT);
   const projectRoot = markerAt === -1 ? null : self.slice(0, markerAt);
   const local =
     projectRoot === null

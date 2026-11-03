@@ -61,6 +61,15 @@ describe("normalizeChannelRecordConfig", () => {
       }),
     ).toThrow("config.partition.alias must be a non-empty string");
 
+    for (const alias of ["../other", "a/b", "a\\b", "..", " . "]) {
+      expect(() =>
+        normalizeChannelRecordConfig({
+          agentBindings: bindings,
+          partition: { by: "conversation", alias: alias },
+        }),
+      ).toThrow("config.partition.alias must be one path segment");
+    }
+
     expect(() =>
       normalizeChannelRecordConfig({
         agentBindings: bindings,

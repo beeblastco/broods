@@ -26,6 +26,7 @@ describe("openAiSdkHarnessSession", () => {
     await openAiSdkHarnessSession({
       abortSignal: abortController.signal,
       agent: { createSession: createSession } as never,
+      sandbox: {} as never,
       stored: {
         harnessType: "codex",
         sessionId: "native-session",
@@ -53,6 +54,7 @@ describe("openAiSdkHarnessSession", () => {
     const session = await openAiSdkHarnessSession({
       abortSignal: new AbortController().signal,
       agent: { createSession: createSession } as never,
+      sandbox: {} as never,
       stored: {
         harnessType: "codex",
         sessionId: "native-session",
@@ -71,6 +73,7 @@ describe("openAiSdkHarnessSession", () => {
       openAiSdkHarnessSession({
         abortSignal: new AbortController().signal,
         agent: { createSession: createSession } as never,
+        sandbox: {} as never,
         stored: {
           harnessType: "pi",
           sessionId: "native-session",
@@ -452,6 +455,7 @@ describe("Session.saveHarnessSession", () => {
           ownerEventId: "event",
           ownerGeneration: 3,
           ...state,
+          entries: [],
         },
       ],
     ]);

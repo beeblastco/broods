@@ -469,14 +469,77 @@ export declare const api: {
           allowedTools?: Array<string>;
           authId: string;
           description?: string;
-          extraConfig?: any;
+          extraConfig?: {
+            agent?: Record<string, any> | null;
+            allowRunOverrides?: boolean;
+            browser?: Record<string, any> | null;
+            channels?: Record<string, any> | null;
+            denyTools?: Array<string>;
+            harness?: {
+              activeTools?: Array<string>;
+              debug?: {
+                enabled?: boolean;
+                level?: string;
+                subsystems?: Array<string>;
+              };
+              inactiveTools?: Array<string>;
+              permissionMode?: string;
+              startupTimeoutMs?: number;
+              type: string;
+              webSearch?: boolean;
+            } | null;
+            hooks?: Record<string, any> | null;
+            mcp?: Record<string, Record<string, any>> | null;
+            model?: Record<string, any> | null;
+            policies?: Array<string> | null;
+            provider?: {
+              alibaba?: Record<string, any>;
+              anthropic?: Record<string, any>;
+              azure?: Record<string, any>;
+              baseten?: Record<string, any>;
+              bedrock?: Record<string, any>;
+              cerebras?: Record<string, any>;
+              chatgpt?: Record<string, any>;
+              cloudflare?: Record<string, any>;
+              cohere?: Record<string, any>;
+              custom?: Record<string, any>;
+              deepinfra?: Record<string, any>;
+              deepseek?: Record<string, any>;
+              fireworks?: Record<string, any>;
+              google?: Record<string, any>;
+              groq?: Record<string, any>;
+              huggingface?: Record<string, any>;
+              llmgateway?: Record<string, any>;
+              minimax?: Record<string, any>;
+              mistral?: Record<string, any>;
+              moonshotai?: Record<string, any>;
+              ollama?: Record<string, any>;
+              openai?: Record<string, any>;
+              openrouter?: Record<string, any>;
+              perplexity?: Record<string, any>;
+              togetherai?: Record<string, any>;
+              v0?: Record<string, any>;
+              vercel?: Record<string, any>;
+              vertex?: Record<string, any>;
+              xai?: Record<string, any>;
+              zai?: Record<string, any>;
+            } | null;
+            publicAccess?: boolean;
+            sandboxes?: Array<string>;
+            scheduler?: Record<string, any> | null;
+            session?: Record<string, any> | null;
+            skills?: Record<string, any> | null;
+            subagent?: Record<string, any> | null;
+            tools?: Record<string, Record<string, any>> | null;
+            workspaces?: Array<Record<string, any>> | null;
+          };
           managedBy?: "cli" | "dashboard" | "api";
           maxTokens?: number;
           maxTurns?: number;
           memoryToolEnabled?: boolean;
           modelId?: string;
           name: string;
-          outputFormat?: any;
+          outputFormat?: Record<string, any>;
           permissionMode?: string;
           projectId: Id<"projects">;
           provider?: string;
@@ -509,13 +572,76 @@ export declare const api: {
           allowedTools?: Array<string>;
           configId: Id<"agentConfigs">;
           description?: string;
-          extraConfig?: any;
+          extraConfig?: {
+            agent?: Record<string, any> | null;
+            allowRunOverrides?: boolean;
+            browser?: Record<string, any> | null;
+            channels?: Record<string, any> | null;
+            denyTools?: Array<string>;
+            harness?: {
+              activeTools?: Array<string>;
+              debug?: {
+                enabled?: boolean;
+                level?: string;
+                subsystems?: Array<string>;
+              };
+              inactiveTools?: Array<string>;
+              permissionMode?: string;
+              startupTimeoutMs?: number;
+              type: string;
+              webSearch?: boolean;
+            } | null;
+            hooks?: Record<string, any> | null;
+            mcp?: Record<string, Record<string, any>> | null;
+            model?: Record<string, any> | null;
+            policies?: Array<string> | null;
+            provider?: {
+              alibaba?: Record<string, any>;
+              anthropic?: Record<string, any>;
+              azure?: Record<string, any>;
+              baseten?: Record<string, any>;
+              bedrock?: Record<string, any>;
+              cerebras?: Record<string, any>;
+              chatgpt?: Record<string, any>;
+              cloudflare?: Record<string, any>;
+              cohere?: Record<string, any>;
+              custom?: Record<string, any>;
+              deepinfra?: Record<string, any>;
+              deepseek?: Record<string, any>;
+              fireworks?: Record<string, any>;
+              google?: Record<string, any>;
+              groq?: Record<string, any>;
+              huggingface?: Record<string, any>;
+              llmgateway?: Record<string, any>;
+              minimax?: Record<string, any>;
+              mistral?: Record<string, any>;
+              moonshotai?: Record<string, any>;
+              ollama?: Record<string, any>;
+              openai?: Record<string, any>;
+              openrouter?: Record<string, any>;
+              perplexity?: Record<string, any>;
+              togetherai?: Record<string, any>;
+              v0?: Record<string, any>;
+              vercel?: Record<string, any>;
+              vertex?: Record<string, any>;
+              xai?: Record<string, any>;
+              zai?: Record<string, any>;
+            } | null;
+            publicAccess?: boolean;
+            sandboxes?: Array<string>;
+            scheduler?: Record<string, any> | null;
+            session?: Record<string, any> | null;
+            skills?: Record<string, any> | null;
+            subagent?: Record<string, any> | null;
+            tools?: Record<string, Record<string, any>> | null;
+            workspaces?: Array<Record<string, any>> | null;
+          };
           maxTokens?: number;
           maxTurns?: number;
           memoryToolEnabled?: boolean;
           modelId?: string;
           name?: string;
-          outputFormat?: any;
+          outputFormat?: Record<string, any> | null;
           permissionMode?: string;
           provider?:
             | "alibaba"
@@ -830,6 +956,22 @@ export declare const api: {
         Record<string, number>
       >;
     };
+  };
+  agentDock: {
+    session: FunctionReference<
+      "mutation",
+      "public",
+      {},
+      {
+        agentId: string;
+        endpointId: string;
+        expiresAt: number;
+        projectSlug: string;
+        runtimeKey: string;
+        stageSlug: string;
+        userToken: string;
+      } | null
+    >;
   };
   apiKeys: {
     listForOrg: FunctionReference<
@@ -3865,7 +4007,23 @@ export declare const internal: {
           input: Record<string, any>;
           managedBy?: "cli";
         },
-        any
+        {
+          accountId: Id<"accounts">;
+          agentId: Id<"agents">;
+          conversationKey?: string;
+          createdAt: string;
+          cronId: Id<"crons">;
+          description?: string;
+          events: Array<any>;
+          lastError?: string;
+          lastInvokedAt?: string;
+          lastStatus?: "started" | "completed" | "failed";
+          name: string;
+          scheduleExpression: string;
+          status: "active" | "paused";
+          timezone?: string;
+          updatedAt: string;
+        }
       >;
       createRun: FunctionReference<
         "mutation",
@@ -4087,7 +4245,23 @@ export declare const internal: {
           patch: Record<string, any>;
           pin?: { projectId: string; stageId: string };
         },
-        any
+        {
+          accountId: Id<"accounts">;
+          agentId: Id<"agents">;
+          conversationKey?: string;
+          createdAt: string;
+          cronId: Id<"crons">;
+          description?: string;
+          events: Array<any>;
+          lastError?: string;
+          lastInvokedAt?: string;
+          lastStatus?: "started" | "completed" | "failed";
+          name: string;
+          scheduleExpression: string;
+          status: "active" | "paused";
+          timezone?: string;
+          updatedAt: string;
+        } | null
       >;
     };
     deployments: {
@@ -5932,7 +6106,12 @@ export declare const internal: {
     claimEvent: FunctionReference<
       "mutation",
       "internal",
-      { accountId: Id<"accounts">; key: string; ttlSeconds: number },
+      {
+        accountId: Id<"accounts">;
+        key: string;
+        limit?: number;
+        ttlSeconds: number;
+      },
       boolean
     >;
     claimSandboxReservation: FunctionReference<
@@ -6122,6 +6301,7 @@ export declare const internal: {
         eventId: string;
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
+        question?: string;
         questions?: Array<{
           answerBy: string;
           questions: Array<{
@@ -6446,6 +6626,7 @@ export declare const internal: {
           eventId: string;
           expiresAt: number;
           handback?: "pending" | "detached" | "stored";
+          question?: string;
           questions?: Array<{
             answerBy: string;
             questions: Array<{
@@ -6631,6 +6812,26 @@ export declare const internal: {
       null
     >;
     pruneExpired: FunctionReference<"mutation", "internal", {}, number>;
+    pruneHarnessSessionEntries: FunctionReference<
+      "mutation",
+      "internal",
+      { conversationKey: string },
+      null
+    >;
+    readHarnessSessionEntries: FunctionReference<
+      "query",
+      "internal",
+      { afterSequence?: number; conversationKey: string; sessionId: string },
+      {
+        entries: Array<{
+          entry: string;
+          entryId: string;
+          parentEntryId?: string;
+          version: number;
+        }>;
+        nextSequence: number | null;
+      }
+    >;
     releaseClaim: FunctionReference<
       "mutation",
       "internal",
@@ -6672,6 +6873,7 @@ export declare const internal: {
         eventId: string;
         handback?: "detached";
         onlyWhileProcessing?: boolean;
+        question?: string;
         questions?: Array<{
           answerBy: string;
           questions: Array<{
@@ -6977,6 +7179,24 @@ export declare const internal: {
       },
       null
     >;
+    appendHarnessSessionEntries: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        afterSequence?: number;
+        conversationKey: string;
+        entries: Array<{
+          entry: string;
+          entryId: string;
+          parentEntryId?: string;
+          version: number;
+        }>;
+        ownerEventId: string;
+        ownerGeneration: number;
+        sessionId: string;
+      },
+      number
+    >;
     applySteering: FunctionReference<
       "mutation",
       "internal",
@@ -7277,7 +7497,14 @@ export declare const internal: {
       "mutation",
       "internal",
       {
+        afterSequence?: number;
         conversationKey: string;
+        entries?: Array<{
+          entry: string;
+          entryId: string;
+          parentEntryId?: string;
+          version: number;
+        }>;
         harnessType: "claude-code" | "codex" | "deepagents" | "opencode" | "pi";
         ownerEventId: string;
         ownerGeneration: number;
@@ -7301,6 +7528,7 @@ export declare const internal: {
               toolName: string;
             }>;
             error?: string;
+            question?: string;
             questions?: Array<{
               answerBy: string;
               questions: Array<{

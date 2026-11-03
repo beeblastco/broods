@@ -630,6 +630,8 @@ flowchart TD
 ```
 
 - The key is stored on `runtimeHarnessSessions`, so a conversation resumes on the machine it started on. A session ending on a shared machine neither suspends nor deletes it.
+- Claude Code, Codex, Deep Agents and OpenCode keep the conversation on the machine (each CLI's own session store), and the checkpoint holds only its id. When the machine is released, or an adapter version bump moves the conversation to a new one, the next turn starts a fresh session.
+- Pi keeps its conversation in Convex: Pi appends each session entry through `sessionStorage` (`adapters/pi.ts`), the Broods `Session` holds the entries until `saveHarnessSession`, and the checkpoint holds only the leaf entry id and the last entry sequence. A turn usually costs one save and one paged read whatever the history length; a turn over one transaction's budget (4 MiB or 100 entries) stages the rest in `appendHarnessSessionEntries` first. When Pi's machine is released, `openAiSdkHarnessSession` resumes the same session on a fresh machine and logs it; the other adapters start a fresh session. An entry over 512 KiB is stored with every image swapped for `[attachment not retained]` and every long string truncated, in one pass.
 - Neither provider streams processes, so `harness-shell-process.ts` runs the adapter detached and file-spooled; short shell calls poll its output in 180 KiB chunks every 25 ms.
 - On `lambda`, WebSocket ingress needs the AWS token and port as subprotocols, so `microvm-websocket-proxy.ts` hands the adapter a loopback URL and adds them upstream. The token stays in core and the upstream header, never a URL or log.
 

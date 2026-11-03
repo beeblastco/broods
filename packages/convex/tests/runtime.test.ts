@@ -57,6 +57,30 @@ describe("runtime persistence", () => {
     ).toBe(false);
   });
 
+  test("a limited claim is taken up to its limit", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const claim = async (): Promise<boolean> =>
+      await t.mutation(internal.runtime.claimEvent, {
+        accountId: accountId,
+        key: "message-turns:root",
+        ttlSeconds: 60,
+        limit: 2,
+      });
+
+    expect([await claim(), await claim(), await claim()]).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    // A use that started nothing is given back.
+    await t.mutation(internal.runtime.releaseClaim, {
+      accountId: accountId,
+      key: "message-turns:root",
+    });
+    expect([await claim(), await claim()]).toEqual([true, false]);
+  });
+
   test("orders conversation events", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -664,6 +688,45 @@ describe("runtime persistence", () => {
     expect(await row("child")).toMatchObject({
       handback: "stored",
     });
+  });
+
+  test("a subagent's message to its parent keeps its text and the parent's append stores it", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(internal.runtime.createAsyncAgentResult, {
+      eventId: "child",
+      conversationKey: `acct:${accountId}:agent:child:api:child`,
+      subagent: { parentConversationKey: conversationKey },
+    });
+    await t.mutation(internal.runtime.updateAsyncAgentResult, {
+      eventId: "child",
+      status: "awaiting_input",
+      question: "Which region?",
+    });
+    const row = async (): Promise<{
+      status?: string;
+      question?: string;
+      handback?: string;
+    } | null> =>
+      await t.query(internal.runtime.getAsyncAgentResult, { eventId: "child" });
+    expect(await row()).toMatchObject({
+      status: "awaiting_input",
+      question: "Which region?",
+      handback: "pending",
+    });
+
+    await t.mutation(internal.runtime.appendConversationEvent, {
+      conversationKey: conversationKey,
+      events: [
+        {
+          cursor: "001",
+          dedupeKey: subagentResultDedupeKey("child", "awaiting_input"),
+          event: { role: "user", content: "subagent question" },
+        },
+      ],
+    });
+    expect(await row()).toMatchObject({ handback: "stored" });
   });
 
   test("a detached subagent result is not downgraded by its finish", async (): Promise<void> => {

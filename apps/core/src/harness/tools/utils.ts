@@ -68,13 +68,43 @@ export interface SubagentToolContext {
   conversationKey: string;
 }
 
-export type AskParent = (
-  question: string,
-  abortSignal?: AbortSignal,
-) => Promise<string | null>;
+/** The longest a `message-agents` sender waits for the reply. */
+export const MAX_AGENT_WAIT_SECONDS = 60 * 60;
+
+/** A `message-agents` send: `exchangeId` labels the exchange, and a follow-up reuses it. */
+export interface AgentMessage {
+  text: string;
+  exchangeId: string;
+  followUp: boolean;
+  /** Set when the sender waits for the reply, up to this long. */
+  waitSeconds?: number;
+}
+
+/** What a `message-agents` send did; a turn it started has run_subagent's handles. */
+export interface AgentMessageResult {
+  status: "delivered" | "resumed" | "not_delivered";
+  exchangeId: string;
+  note: string;
+  taskId?: string;
+  runId?: string;
+  statusPath?: string;
+}
+
+/** A persistent subagent's line to its parent, behind its `message-agents` tool. */
+export interface ParentLink {
+  /** Ends the turn on a question; false when one is already asked this turn. */
+  ask(message: AgentMessage): boolean;
+  /** Hands the parent a note while the child keeps working. */
+  note(message: AgentMessage): Promise<AgentMessageResult>;
+}
+
+/** A parent's message to one of its persistent children, named by its address. */
+export type MessageChild = (
+  to: string,
+  message: AgentMessage,
+) => Promise<AgentMessageResult>;
 
 export interface SubagentWatch {
-  answerQuestion(taskId: string, answer: string): boolean;
   takeParentMessages(): Promise<IngressUserMessage[]>;
 }
 

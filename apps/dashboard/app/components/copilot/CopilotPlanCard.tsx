@@ -15,11 +15,13 @@ export function CopilotPlanCard({
   messageId,
   onRun,
   plan,
+  stale = false,
 }: {
   completed: ReadonlySet<string>;
   messageId: string;
   onRun: (index: number, action: CopilotAction) => void;
   plan: CopilotPlan;
+  stale?: boolean;
 }): React.JSX.Element | null {
   if (plan.actions.length === 0) return null;
 
@@ -66,7 +68,13 @@ export function CopilotPlanCard({
               </p>
             )}
 
-            {tier === "approval" && !isDone && (
+            {tier === "approval" && !isDone && stale && (
+              <p className="ml-5 text-2xs text-muted-foreground">
+                Asked on another project or stage. Switch back to apply.
+              </p>
+            )}
+
+            {tier === "approval" && !isDone && !stale && (
               <div className="ml-5">
                 <Button size="xs" onClick={() => onRun(index, action)}>
                   Apply

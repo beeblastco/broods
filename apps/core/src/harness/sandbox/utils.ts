@@ -1,3 +1,4 @@
+import { z } from "zod/mini";
 import {
   removeSandboxInstance,
   setSandboxInstanceSpecs,
@@ -9,7 +10,7 @@ import {
 } from "../../shared/convex/sandbox-snapshots.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import {
   CONFIGURED_SIZE_PROVIDERS,
   type SandboxControlPlane,
@@ -27,6 +28,14 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
+
+// A provider SDK's thrown error, read leniently: any of these fields may be missing.
+const ERROR_FIELDS = z.looseObject({
+  message: z.optional(z.unknown()),
+  statusCode: z.optional(z.unknown()),
+  status: z.optional(z.unknown()),
+  code: z.optional(z.unknown()),
+});
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -132,9 +141,10 @@ export function configuredSandboxSpecs(
 }
 
 export function isNoRunnersError(error: unknown): boolean {
+  const fields = parseOr(ERROR_FIELDS, error)?.message;
   const message =
-    isPlainObject(error) && typeof error.message === "string"
-      ? error.message
+    typeof fields === "string"
+      ? fields
       : typeof error === "string"
         ? error
         : "";
@@ -144,17 +154,18 @@ export function isNoRunnersError(error: unknown): boolean {
 
 export function isSandboxGoneError(error: unknown): boolean {
   if (error instanceof SandboxGoneError) return true;
-  if (!isPlainObject(error)) {
+  const fields = parseOr(ERROR_FIELDS, error);
+  if (!fields) {
     return (
       typeof error === "string" &&
       /not ?found|does not exist|no such/i.test(error)
     );
   }
-  const status = error.statusCode ?? error.status ?? error.code;
+  const status = fields.statusCode ?? fields.status ?? fields.code;
   if (status === 404 || status === 410) {
     return true;
   }
-  const message = typeof error.message === "string" ? error.message : "";
+  const message = typeof fields.message === "string" ? fields.message : "";
 
   return /not ?found|does not exist|no such|already (deleted|destroyed)/i.test(
     message,
@@ -293,12 +304,8 @@ export function slugFor(
 }
 
 export function stringRecord(value: unknown): Record<string, string> {
-  if (!isPlainObject(value)) {
-    return {};
-  }
-
   return Object.fromEntries(
-    Object.entries(value).filter(
+    Object.entries(parseOr(configObject, value, {})).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );

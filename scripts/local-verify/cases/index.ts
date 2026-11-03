@@ -9,6 +9,7 @@ import { browserSandbox } from "./browser-sandbox.ts";
 import { cloudflareSandbox } from "./cloudflare-sandbox.ts";
 import { connections } from "./connections.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
+import { devWatch } from "./dev-watch.ts";
 import { edgeHeaders } from "./edge-headers.ts";
 import { githubRepo } from "./github-repo.ts";
 import { workerSandbox } from "./worker-sandbox.ts";
@@ -31,6 +32,10 @@ import { snapshotStage } from "./snapshot-stage.ts";
 import { statusReadHandback } from "./status-read-handback.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { streamedBurst } from "./streamed-burst.ts";
+import {
+  subagentMessageAgents,
+  subagentNoReplyWake,
+} from "./subagent-message-agents.ts";
 import { subagentModel } from "./subagent-model.ts";
 import { subagentResume } from "./subagent-resume.ts";
 import { subagentStop } from "./subagent-stop.ts";
@@ -57,6 +62,8 @@ export const verifyCases: readonly VerifyCase[] = [
   subagentStop,
   subagentModel,
   subagentResume,
+  subagentMessageAgents,
+  subagentNoReplyWake,
   asyncToolHandback,
   mcpTasks,
   statusReadHandback,
@@ -75,6 +82,7 @@ export const verifyCases: readonly VerifyCase[] = [
   credentialPrefixes,
   scopedAccountKey,
   manifestSync,
+  devWatch,
   githubRepo,
   productionRegion,
   projectUsage,

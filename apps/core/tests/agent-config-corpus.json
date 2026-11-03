@@ -1,0 +1,2948 @@
+[
+  {
+    "patch": true,
+    "value": {
+      "sandboxes": ["000000000000010010sandboxConfigs"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "sandboxes": ["000000000000010010sandboxConfigs"]
+    }
+  },
+  {
+    "patch": true,
+    "value": {
+      "systemPrompt": "leak ${PROD_DB_PASSWORD}"
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "systemPrompt": "leak ${PROD_DB_PASSWORD}"
+    }
+  },
+  {
+    "patch": true,
+    "value": {
+      "systemPrompt": "use ${PROD_DB_PASSWORD}"
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "systemPrompt": "use ${PROD_DB_PASSWORD}"
+    }
+  },
+  {
+    "patch": true,
+    "value": {
+      "systemPrompt": "say ${PROD_DB_PASSWORD}"
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "systemPrompt": "say ${PROD_DB_PASSWORD}"
+    }
+  },
+  {
+    "patch": true,
+    "value": {
+      "mcp": {
+        "00000000000000000000000010010mcp": {
+          "headers": {
+            "Authorization": "Bearer ${GITHUB_TOKEN}"
+          }
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "mcp": {
+        "00000000000000000000000010010mcp": {
+          "headers": {
+            "Authorization": "Bearer ${GITHUB_TOKEN}"
+          }
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "sandboxes": ["sb_default", "sb_browser"],
+      "workspaces": [
+        {
+          "name": "repo",
+          "workspaceId": "ws_1",
+          "sandbox": "sb_default"
+        }
+      ]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "sandbox": "sb_default"
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "sandboxes": "sb_offline"
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "sandboxes": ["sb_offline", "sb_offline"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "sandboxes": ["sb_default", "sb_browser"],
+      "workspaces": [
+        {
+          "name": "repo",
+          "workspaceId": "ws_1",
+          "sandbox": "sb_browser"
+        }
+      ]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "sandboxes": ["sb_a", "sb_b", "sb_b"],
+      "workspaces": [
+        {
+          "name": "repo",
+          "workspaceId": "ws_1",
+          "sandbox": "sb_b"
+        }
+      ]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "mcp": {
+        "k57mcpserver00000000000000000000": {
+          "enabled": true,
+          "needsApproval": true,
+          "headers": {
+            "Authorization": "Bearer ${SEARCH_TOKEN}"
+          }
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "mcp": {
+        "not-an-id": {}
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "mcp": {
+        "k57mcpserver00000000000000000000": {
+          "headers": {
+            "Authorization": 5
+          }
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "mcp": {
+        "k57mcpserver00000000000000000000": {
+          "oauth": {
+            "clientSecret": 5
+          }
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "zalo": {
+          "id": "support",
+          "trace": "disabled"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "zalo": {
+          "id": "support",
+          "trace": "hidden"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "linear": {
+          "id": "lin",
+          "apiUrl": "https://169.254.169.254/graphql"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "linear": {
+          "id": "lin",
+          "apiKey": "lin_api_key"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "linear": {
+          "id": "lin",
+          "apiKey": "lin_api_key",
+          "userName": " ",
+          "webhookSecret": "lin-secret"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "linear": {
+          "id": "lin",
+          "apiKey": "lin_api_key",
+          "userName": "acme-agent"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "twilio": {
+          "id": "sms",
+          "apiUrl": "https://169.254.169.254"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "twilio": {
+          "id": "sms",
+          "statusCallbackUrl": "https://169.254.169.254"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "twilio": {
+          "id": "sms",
+          "webhookUrl": "https://169.254.169.254"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "twilio": {
+          "id": "sms",
+          "messagingServiceSid": "+1555"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "twilio": {
+          "id": "sms",
+          "phoneNumber": "+1 (555) 000-1111"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "telegram": {
+          "id": "tg",
+          "allowedChannelIds": ["*"]
+        },
+        "github": {
+          "id": "gh",
+          "allowedUserIds": ["octocat"]
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "discord": {
+          "id": "dc",
+          "allowedGuildIds": ["G1"]
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "slack": {
+          "id": "sl",
+          "allowedChannelIds": [""]
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "discord": {
+          "id": "dc",
+          "botUserId": "bot-9",
+          "mentionRoleIds": ["role-oncall"]
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "discord": {
+          "id": "dc",
+          "botUserId": 9
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "discord": {
+          "id": "dc",
+          "mentionRoleIds": "role-oncall"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "matrix": {
+          "id": "mx",
+          "apiUrl": "https://matrix.org",
+          "botToken": "syt_token",
+          "botName": "Georgi AI",
+          "mentionText": "@georgi-ai"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "matrix": {
+          "id": "mx",
+          "botToken": "syt_token"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "matrix": {
+          "id": "mx",
+          "apiUrl": "http://10.0.0.5:8008",
+          "botToken": "syt_token"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "matrix": {
+          "id": "mx",
+          "apiUrl": "https://core.internal",
+          "botToken": "syt_token"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "discord": {
+          "id": "c",
+          "apiUrl": "http://10.43.0.1:80#"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "github": {
+          "id": "c",
+          "apiUrl": "http://10.43.0.1:80#"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "slack": {
+          "id": "c",
+          "apiUrl": "http://10.43.0.1:80#"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "telegram": {
+          "id": "c",
+          "apiUrl": "http://10.43.0.1:80#"
+        }
+      }
+    }
+  },
+  {
+    "patch": true,
+    "value": {
+      "channels": {
+        "matrix": {
+          "id": "mx",
+          "botToken": "syt_rotated"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "agent": {
+        "system": [
+          {
+            "role": "system",
+            "content": "Be brief.",
+            "providerOptions": {
+              "anthropic": {
+                "cacheControl": {
+                  "type": "ephemeral"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "agent": {
+        "system": {
+          "role": "user",
+          "content": "Be brief."
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "agent": {
+        "system": {
+          "role": "system",
+          "content": ["Be brief."]
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "agent": {
+        "system": {
+          "role": "system",
+          "content": "Be brief.",
+          "providerOptions": "anthropic"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "agent": {
+        "system": {
+          "role": "system",
+          "content": "Be brief.",
+          "providerOptions": {
+            "anthropic": true
+          }
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": null
+  },
+  {
+    "patch": false,
+    "value": "bad"
+  },
+  {
+    "patch": false,
+    "value": {
+      "agent": {
+        "maxTurn": -1
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "agent": {
+        "maxTurn": 500
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "agent": {
+        "maxTurn": 0
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "session": {
+        "autoCompaction": {
+          "maxContextLength": 10000001
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "session": {
+        "autoCompaction": {
+          "enabled": "yes"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "session": {
+        "autoCompaction": {
+          "enabled": false,
+          "maxContextLength": 500000
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "session": {
+        "compaction": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "apiKey": "x"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "provider": "other"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "provider": "deepseek"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "transcriptionModelId": 42
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "transcriptionModelId": "whisper-1"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": 60000
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": {}
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": {
+          "totalMs": 600000
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": {
+          "stepMs": 120000,
+          "firstChunkMs": 30000,
+          "chunkMs": 10000
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": {
+          "toolMs": 60000,
+          "tools": {
+            "bashMs": 300000
+          }
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": 0
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": 1.5
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": 2147483648
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": "60000"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": {
+          "firstChunkMS": 30000
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": {
+          "chunkMs": -1
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": {
+          "tools": []
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": {
+          "tools": {
+            "bash": 1000
+          }
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "timeout": {
+          "tools": {
+            "bashMs": "1s"
+          }
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "subagent": {
+        "model": {
+          "timeout": {
+            "stepMs": 0
+          }
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "cloudflare": {
+          "gatewayId": 7
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "cloudflare": {
+          "gatewayId": "gw/../other"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "cloudflare": {
+          "gatewayId": "gw?x=1"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "cloudflare": {
+          "gatewayId": "broods-dev_1"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "provider": "constructor"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "constructor": {
+          "apiKey": "k"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "provider": "__proto__"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "__proto__": {
+          "apiKey": "k"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "provider": "toString"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "toString": {
+          "apiKey": "k"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "vertex": {
+          "apiKey": "k",
+          "project": "p",
+          "location": "us"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "custom": {}
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "custom": {
+          "baseUrl": "https://api.example.com"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "custom": {
+          "base_url": "http://api.example.com"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "custom": {
+          "base_url": "https://localhost"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "openrouter": {
+          "apiKey": "sk",
+          "baseUrl": "https://169.254.169.254"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "openrouter": {
+          "apiKey": "sk",
+          "decisionsBaseURL": "http://example.com"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "custom": {
+          "base_url": "https://api.example.com"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "custom": {
+          "base_url": "https://old.example.com",
+          "baseURL": "https://api.example.com"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "output": {
+          "type": "object"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "output": {
+          "type": "array"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "output": {
+          "type": "choice",
+          "options": []
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "workspaces": [
+        {
+          "name": "repo",
+          "workspaceId": "ws_1",
+          "sandbox": null
+        }
+      ]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "workspaces": [
+        {
+          "name": "bad/name",
+          "workspaceId": "ws_1"
+        }
+      ]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "workspaces": [
+        {
+          "name": "repo",
+          "workspaceId": "ws_1"
+        },
+        {
+          "name": "repo",
+          "workspaceId": "ws_2"
+        }
+      ]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "skills": {
+        "allowed": [1]
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "skills": {
+        "allowed": [
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill",
+          "acct/skill"
+        ]
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "skills": {
+        "allowed": [
+          "acct/skill-0",
+          "acct/skill-1",
+          "acct/skill-2",
+          "acct/skill-3",
+          "acct/skill-4",
+          "acct/skill-5",
+          "acct/skill-6",
+          "acct/skill-7",
+          "acct/skill-8",
+          "acct/skill-9",
+          "acct/skill-10",
+          "acct/skill-11",
+          "acct/skill-12",
+          "acct/skill-13",
+          "acct/skill-14",
+          "acct/skill-15",
+          "acct/skill-16",
+          "acct/skill-17",
+          "acct/skill-18",
+          "acct/skill-19",
+          "acct/skill-20",
+          "acct/skill-21",
+          "acct/skill-22",
+          "acct/skill-23",
+          "acct/skill-24",
+          "acct/skill-25",
+          "acct/skill-26",
+          "acct/skill-27",
+          "acct/skill-28",
+          "acct/skill-29",
+          "acct/skill-30",
+          "acct/skill-31"
+        ]
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "skills": {
+        "allowed": [
+          "acct/skill-0",
+          "acct/skill-1",
+          "acct/skill-2",
+          "acct/skill-3",
+          "acct/skill-4",
+          "acct/skill-5",
+          "acct/skill-6",
+          "acct/skill-7",
+          "acct/skill-8",
+          "acct/skill-9",
+          "acct/skill-10",
+          "acct/skill-11",
+          "acct/skill-12",
+          "acct/skill-13",
+          "acct/skill-14",
+          "acct/skill-15",
+          "acct/skill-16",
+          "acct/skill-17",
+          "acct/skill-18",
+          "acct/skill-19",
+          "acct/skill-20",
+          "acct/skill-21",
+          "acct/skill-22",
+          "acct/skill-23",
+          "acct/skill-24",
+          "acct/skill-25",
+          "acct/skill-26",
+          "acct/skill-27",
+          "acct/skill-28",
+          "acct/skill-29",
+          "acct/skill-30",
+          "acct/skill-31",
+          "acct/skill-32"
+        ]
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "subagent": {
+        "context": "same"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "policies": []
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "policies": ["policy_a", "policy_a"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "policy": {
+        "policyIds": ["policy_1"]
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "policies": [1]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "tools": {
+        "bash": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "tools": {
+        "tool_legacy": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "tools": {
+        "googleSearch": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "slack": {
+          "id": "slack",
+          "partition": {
+            "by": "shared",
+            "alias": "x"
+          }
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "slack": {
+          "id": "slack",
+          "workspaceScope": {
+            "level": "channel"
+          }
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "slack": {
+          "id": "slack",
+          "workspaceIsolationScope": "channel"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "zalo": {
+          "id": "zalo",
+          "webhookSecret": "short"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "messenger": {
+          "id": "fb",
+          "apiVersion": "../me"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "instagram": {
+          "id": "ig",
+          "accountId": "1/../me"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "instagram": {
+          "id": "ig",
+          "accessToken": "ig-token",
+          "accountId": "17841400000000000",
+          "apiVersion": "v26.0",
+          "appSecret": "ig-secret",
+          "verifyToken": "ig-verify"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "instagram": {
+          "id": "ig",
+          "accountId": "17841400000000000"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "messenger": {
+          "id": "fb",
+          "pageAccessToken": "fb-token",
+          "appSecret": "s"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "messenger": {
+          "id": "fb",
+          "appSecret": "  ",
+          "pageAccessToken": "",
+          "verifyToken": ""
+        }
+      }
+    }
+  },
+  {
+    "patch": true,
+    "value": {
+      "channels": {
+        "messenger": {
+          "id": "fb",
+          "pageAccessToken": "rotated"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "whatsapp": {
+          "id": "wa",
+          "apiUrl": "https://169.254.169.254"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "whatsapp": {
+          "id": "wa",
+          "apiVersion": "../me"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "whatsapp": {
+          "id": "wa",
+          "phoneNumberId": " 1065403522"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "teams": {
+          "id": "teams",
+          "appId": "app",
+          "appPassword": "pw"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "teams": {
+          "id": "teams",
+          "appId": "app",
+          "appPassword": "pw",
+          "appTenantId": "  "
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "teams": {
+          "id": "teams",
+          "appId": "app",
+          "appType": "MultiTenant"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "gchat": {
+          "id": "gchat",
+          "credentials": "{}"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "channels": {
+        "gchat": {
+          "id": "gchat",
+          "endpointUrl": "http://example.com/hook"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "activeTools": ["shell", "read"],
+        "debug": {
+          "enabled": true,
+          "level": "debug",
+          "subsystems": ["bridge"]
+        },
+        "type": "codex",
+        "permissionMode": "allow-all",
+        "startupTimeoutMs": 180000,
+        "webSearch": true
+      },
+      "sandboxes": ["sandbox_1"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "type": "default"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "type": "claude-code",
+        "webSearch": true
+      },
+      "sandboxes": ["sandbox_1"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "type": "opencode",
+        "activeTools": ["bash"],
+        "inactiveTools": ["write"]
+      },
+      "sandboxes": ["sandbox_1"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "type": "codex",
+        "debug": {
+          "subystems": ["bridge"]
+        }
+      },
+      "sandboxes": ["sandbox_1"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "type": "codex"
+      },
+      "model": {
+        "output": {
+          "type": "object",
+          "schema": {
+            "type": "object"
+          }
+        }
+      },
+      "sandboxes": ["sandbox_1"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "type": "codex"
+      },
+      "subagent": {
+        "model": {
+          "output": {
+            "type": "object",
+            "schema": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "sandboxes": ["sandbox_1"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "type": "codex"
+      },
+      "policies": ["policy_1"],
+      "sandboxes": ["sandbox_1"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "type": "claude-code",
+        "turbo": true
+      },
+      "sandboxes": ["sandbox_1"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "type": "claude-code"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "type": "codex"
+      },
+      "sandboxes": []
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "type": "codex",
+        "permissionMode": "allow-edits"
+      },
+      "sandboxes": ["sandbox_1"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "type": "pi",
+        "startupTimeoutMs": 1000
+      },
+      "sandboxes": ["sandbox_1"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "scheduler": {
+        "enabled": true
+      }
+    }
+  },
+  {
+    "patch": true,
+    "value": {
+      "scheduler": {
+        "enabled": "yes"
+      }
+    }
+  },
+  {
+    "patch": true,
+    "value": {
+      "subagent": {
+        "allowed": ["  "]
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "subagent": {
+        "visibility": "steps"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "denyTools": "bash"
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "subagent": {
+        "model": {
+          "modelId": "o3"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "subagent": {
+        "model": {
+          "apiKey": "sk"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "subagent": {
+        "model": {
+          "provider": "nope"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "subagent": {
+        "stream": true
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "subagent": {
+        "stream": false
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "subagent": {
+        "stream": "yes"
+      }
+    }
+  },
+  {
+    "patch": true,
+    "value": {
+      "subagent": {
+        "stream": "yes"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "hooks": {
+        "code": [
+          {
+            "hookId": "k17zwc4z4q5ysxm74fgrhd13s88xxtv"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "tools": {
+        "1s78zwc4z4q5ysxm74fgrhd13s88xxt": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "hooks": {
+        "code": [
+          {
+            "hookId": "hook_legacy"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "provider": {
+        "openai": {
+          "apiKey": "secret"
+        }
+      },
+      "skills": {
+        "allowed": ["acct/new"]
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "name": "ok"
+    }
+  },
+  {
+    "patch": true,
+    "value": {
+      "agent": {
+        "maxTurn": 4
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "agent": {
+        "maxTurn": 4
+      }
+    }
+  },
+  {
+    "patch": true,
+    "value": {
+      "harness": {
+        "type": "codex"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "sandboxes": ["sb_a"],
+      "harness": {
+        "type": "codex"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "harness": {
+        "type": "codex"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "sandbox": "sb_default",
+      "sandboxes": ["sb_offline"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "provider": "google",
+        "modelId": "gemini-test"
+      },
+      "provider": {
+        "google": {
+          "apiKey": "google-key"
+        }
+      },
+      "sandboxes": ["sb_1"],
+      "workspaces": [
+        {
+          "name": "notes",
+          "workspaceId": "ws_a"
+        }
+      ],
+      "publicAccess": true
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "provider": "google",
+        "modelId": "gemini-test"
+      },
+      "provider": {
+        "google": {
+          "apiKey": "google-key"
+        }
+      },
+      "sandboxes": ["sb_1"],
+      "workspaces": [
+        {
+          "name": "notes",
+          "workspaceId": "ws_a"
+        }
+      ]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "provider": "google",
+        "modelId": "gemini-test"
+      },
+      "provider": {
+        "google": {
+          "apiKey": "google-key"
+        }
+      },
+      "sandboxes": ["sb_1"],
+      "workspaces": [
+        {
+          "name": "notes",
+          "workspaceId": "ws_a"
+        }
+      ],
+      "publicAccess": true,
+      "allowRunOverrides": true
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "provider": "vertex",
+        "modelId": "gemini-2.5-flash"
+      },
+      "provider": {
+        "vertex": {
+          "apiKey": "sk-test",
+          "project": "p",
+          "location": "us-central1"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {}
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "provider": "openai",
+        "modelId": "gpt-5.5"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "provider": "openai",
+        "modelId": "gpt-5.5"
+      },
+      "sandboxes": ["sb_1"]
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "provider": "openai",
+        "modelId": "gpt-5",
+        "temperature": 0
+      },
+      "provider": {
+        "openai": {
+          "apiKey": "sk-live"
+        }
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "model": {
+        "provider": "vertex",
+        "modelId": "gemini-3.7-flash"
+      },
+      "mcp": {
+        "k57mcpserver00000000000000000000": {
+          "enabled": true
+        }
+      },
+      "browser": {
+        "enabled": true
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "sandbox": "sb_a",
+      "sandboxes": ["sb_b"]
+    }
+  }
+]

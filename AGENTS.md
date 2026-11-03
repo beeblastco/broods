@@ -18,7 +18,7 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 - `packages/broods` (`broods`) is the published CLI + TS SDK. `broods dev` / `deploy` sync a local `broods/` project to a stage, like `convex dev`. also login, env, logs, stream, agent, run.
 - `packages/ai-sdk-sandbox` (`@broods/ai-sdk-sandbox`) is the AI SDK Harness sandbox adapter over Broods sandbox drivers: it is how an external harness (claude-code, codex, ...) runs its shell on a Broods sandbox.
 - `packages/demos` is runnable demos on SDK against deployed core. not a workspace package.
-- `verification` is Lean 4 models of gateway routing, the run lifecycle and SDK sync, with proofs. not a workspace package. `lake build` there; touch the mirrored code = update the model.
+- `verification` is Lean 4 models of gateway routing, the run lifecycle and SDK sync, with proofs, plus TLA+ specs (`verification/tla`) of the CLI's concurrent loops checked with TLC. not a workspace package. `lake build` and `tla/check.sh` there; touch the mirrored code = update the model.
 
 they are one product, not thirteen islands. Traefik (`apps/edge`) is the door, the gateway own the sockets, core own runtime truth, convex own config + persistence, dashboard and CLI are two faces on the same config plane, docs and demos describe it. touch a public contract in one, walk the others.
 
@@ -41,6 +41,15 @@ outside repo, sibling of checkout:
 - keep change inside workspace you touch. but public contract move = also move `apps/docs/docs/api-reference/openapi.yaml`, the docs, `packages/demos`, SDK types/client in `packages/broods`, and the focused tests.
 - Convex schema or function change = `bun run --filter @broods/convex codegen`, commit the generated diff. it is committed on purpose so core and dashboard typecheck with no local codegen. the API is static (`codegen.staticApi`): `_generated/api.d.ts` spells each function's args and result from its validators, so changing a validator without codegen leaves every caller typed against the old contract. CI `local-stack` deploys the backend (which regenerates it) and fails on any diff under `_generated`.
 - React version pinned per app package. never add React to root package.
+
+## Cloud Sessions (Claude Code on the web)
+
+- a session acts as the probe user (`apps/dashboard/AGENTS.md`), never a person. refresh the environment with `bash scripts/cloud-setup.sh --login`: upload `~/.broods-cloud/setup.sh` as "Setup script", paste `env.txt` as "Environment variables", network access Full. rerun it after a version bump (`.bun-version`, Playwright, `verification/lean-toolchain`, `local-stack.ts` images), when the probe's 90-day login runs out, or after a probe password reset.
+- no network secret for a broods gateway: the proxy overwrites Authorization on every request to it, so runtime-key calls get 401. the probe's tokens sit in `env.txt`. `ANTHROPIC_API_KEY` cannot be a network secret either, and a session drops it from env: `env.txt` carries `CLOUD_ANTHROPIC_API_KEY`, passed to a command only when it touches the model path (it costs money). use spend-limited keys.
+- `scripts/cloud-session-start.sh` is the SessionStart hook (`.claude/settings.json`), cloud only (`CLAUDE_CODE_REMOTE=true`): dockerd, `bun install` when `bun.lock` moves, `origin/dev`, `BROODS_CLOUD_PROJECT=cloud-<session id>`, and `broods-dev` (this checkout's CLI from source against dev, token read at run time). it also reports installs the setup script could not do.
+- unattended request = skill `broods-cloud-run`: branch from `origin/dev`, check, verify and compare with an `origin/dev` baseline, PR to `dev`, report with numbers.
+- a session has no prod access: no prod token, no prod CLI. it never pushes `dev`/`main`, deploys, or adds the `real-model` label. on dev it uses only its own `$BROODS_CLOUD_PROJECT` and deletes it when done.
+- GitHub goes through Anthropic's proxy: `gh pr` / `gh issue` get GraphQL 403. use the built-in GitHub tools or `gh api repos/beeblastco/broods/...`.
 
 ## Code Style
 

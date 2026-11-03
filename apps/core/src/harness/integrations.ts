@@ -1,3 +1,4 @@
+import { z } from "zod/mini";
 import type { ApiErrorInit } from "@broods/convex/model/apiError";
 import {
   userConversationKey,
@@ -42,9 +43,9 @@ import type { AccountRecord } from "../shared/domain/accounts.ts";
 import { normalizeModelConfig } from "@broods/convex/model/agentRules";
 import {
   applyRunOverrides,
+  channelPartitionOf,
   RUN_OVERRIDE_RESERVED_MODEL_KEYS,
   toRuntimeAgentConfig,
-  type ChannelPartition,
   type AgentConfig,
   type RunOverrides,
 } from "../shared/domain/agent-config.ts";
@@ -79,7 +80,7 @@ import {
   logInfo,
   logWarn,
 } from "../shared/log.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import {
   getObservabilityContext,
   mintTraceId,
@@ -135,7 +136,6 @@ import {
   getIngressStatus,
   getIngressStatusByEventId,
   INGRESS_RETRY_HEADERS,
-  type AppliedIngress,
   type ChannelTargetRefs,
   type IngressConfigRef,
   type IngressMode,
@@ -152,6 +152,10 @@ import type { ConversationIngressEvent } from "./session.ts";
 import { WORKER_QUEUE_FULL } from "./worker-queue.ts";
 
 // Under Slack's and Discord's 3s, so a slow hook or a large file never earns a retry.
+const QUESTION_ANSWER = z.looseObject({
+  statusId: z.string(),
+  answers: configObject,
+});
 const CHANNEL_ACK_BUDGET_MS = 2_000;
 const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
 // Listing (and decrypting) runs before any signature check, so caching it holds an unsigned
@@ -211,8 +215,6 @@ export interface DirectInboundEvent {
   agentId: string;
   agentConfig: AgentConfig;
   configRef?: IngressConfigRef;
-  // A subagent's config derives from its parent, so no ref can rebuild it.
-  subagentConfig?: AgentConfig;
   endpointId?: string;
   projectSlug?: string;
   stageSlug?: string;
@@ -254,13 +256,7 @@ export type IngressDispatchScope = Pick<
   | "endpointId"
   | "projectSlug"
   | "stageSlug"
-  | "subagentConfig"
 >;
-
-export type DispatchAppliedIngress = (
-  scope: IngressDispatchScope,
-  ingress: AppliedIngress,
-) => Promise<void>;
 
 export interface AsyncDirectInboundEvent extends DirectInboundEvent {
   statusUrl: string;
@@ -798,7 +794,12 @@ async function handleHttpRequest(
         context,
         deployment,
       )),
-      principalChain: [{ kind: "api", keyKind: auth.kind } as const],
+      principalChain: [
+        ...(deployment?.user
+          ? [{ kind: "user", id: deployment.user.userId } as const]
+          : []),
+        { kind: "api", keyKind: auth.kind } as const,
+      ],
       ...(deployment
         ? {
             endpointId: deployment.endpointId,
@@ -1647,11 +1648,10 @@ async function cleanupChannelPartitions(options: {
   channelName: string;
   conversationKey: string;
 }): Promise<void> {
-  const channelConfig = options.agentConfig.channels?.[options.channelName];
-  const rawPartition = isPlainObject(channelConfig)
-    ? channelConfig.partition
-    : undefined;
-  const partition = isChannelPartition(rawPartition) ? rawPartition : undefined;
+  const partition = channelPartitionOf(
+    options.agentConfig,
+    options.channelName,
+  );
   if (partition?.by !== "conversation") {
     return;
   }
@@ -1702,13 +1702,6 @@ async function cleanupChannelPartitions(options: {
     deleted: deleted,
     reservedSandboxesReleased: reservedSandboxesReleased,
   });
-}
-
-function isChannelPartition(value: unknown): value is ChannelPartition {
-  if (!isPlainObject(value)) return false;
-  if (value.by === "shared") return value.alias === undefined;
-
-  return value.by === "conversation" && typeof value.alias === "string";
 }
 
 export function attachMetadataToLatestUserIngress(
@@ -2110,11 +2103,11 @@ async function parseDirectPayload(
     );
   }
 
-  if (!isPlainObject(parsed)) {
+  const record = parseOr(configObject, parsed);
+  if (!record) {
     throw new Error("Request body must be a JSON object");
   }
 
-  const record = parsed;
   if (
     typeof record.eventId !== "string" ||
     typeof record.conversationKey !== "string"
@@ -2381,12 +2374,9 @@ function parseDirectQuestionAnswers(value: unknown): QuestionAnswer[] {
     throw new Error("Request body field 'answers' must be an array");
   }
 
-  return value.map((entry): QuestionAnswer => {
-    if (
-      !isPlainObject(entry) ||
-      typeof entry.statusId !== "string" ||
-      !isPlainObject(entry.answers)
-    ) {
+  return value.map((value): QuestionAnswer => {
+    const entry = parseOr(QUESTION_ANSWER, value);
+    if (!entry) {
       throw new Error(
         "Each answer must be an object with statusId and answers",
       );
@@ -2517,11 +2507,11 @@ function parseSandboxJobCompletionPayload(
     );
   }
 
-  if (!isPlainObject(parsed)) {
+  const record = parseOr(configObject, parsed);
+  if (!record) {
     throw new Error("Background job completion body must be an object");
   }
 
-  const record = parsed;
   if (record.status !== "completed" && record.status !== "failed") {
     throw new Error(
       "Background job completion status must be completed or failed",

@@ -65,6 +65,7 @@ import {
 } from "../runtime-config.ts";
 import {
   fetchObservabilityTrace,
+  StageSessionRefusedError,
   subscribeObservabilityLogs,
   type ObservabilityClientOptions,
 } from "../observability-client.ts";
@@ -85,7 +86,6 @@ import {
 import { connectInBrowser } from "./connect.ts";
 import {
   hasFlag,
-  isPlainObject,
   loginWithBrowser,
   optionValue,
   positionalArgs,
@@ -116,15 +116,21 @@ import {
 } from "./output.ts";
 import {
   isNewerVersion,
+  isInstalledPackage,
   latestPublishedVersion,
   majorVersion,
   updateTarget,
 } from "./update.ts";
+import { z } from "zod/mini";
 import packageJson from "../../package.json" with { type: "json" };
 import agentSkillText from "../../skills/broods/SKILL.md" with { type: "text" };
 import agentSkillOnboardText from "../../skills/broods/scripts/onboard.sh" with { type: "text" };
 
 const VERSION = packageJson.version;
+// Manifest branches `agent get` prints, read leniently: one that does not fit prints as none.
+const CONFIG_BRANCH = z.record(z.string(), z.unknown());
+const SUBAGENT_REFS = z.looseObject({ allowed: z.array(z.unknown()) });
+const WEBHOOK_LIST = z.looseObject({ webhooks: z.array(z.unknown()) });
 const AGENT_SKILL_DIR = join(".agents", "skills", "broods");
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const DEV_SYNC_ATTEMPTS = 3;
@@ -630,11 +636,17 @@ async function init(args: string[]): Promise<void> {
     force,
   );
   await ensureAgentSkill(force);
+  // Like login and dev: BROODS_DASHBOARD_URL / BROODS_BASE_URL pick the server.
+  const runtime = loadBroodsRuntimeConfig();
+  const dashboardFlag = optionValue(args, "--dashboard-url");
   const dashboardUrl =
-    optionValue(args, "--dashboard-url") ?? DEFAULT_DASHBOARD_URL;
+    dashboardFlag ?? runtime.dashboardUrl ?? DEFAULT_DASHBOARD_URL;
   await writeLocalEnvDefaults({
     dashboardUrl: dashboardUrl,
-    baseUrl: gatewayUrlForDashboard(dashboardUrl),
+    // The flag names one server, so its gateway wins over a stored login's.
+    baseUrl:
+      (dashboardFlag ? undefined : runtime.baseUrl) ??
+      gatewayUrlForDashboard(dashboardUrl),
     project: optionValue(args, "--project") ?? inferProjectName(process.cwd()),
     stage: optionValue(args, "--stage") ?? "development",
     region: optionValue(args, "--region") ?? DEFAULT_SERVICE_REGION,
@@ -1472,6 +1484,8 @@ async function update(): Promise<void> {
 }
 
 async function warnOnOutdatedCli(): Promise<void> {
+  // A monorepo build's workspace version is never the released one, so it would always nag.
+  if (!isInstalledPackage()) return;
   const latest = await latestPublishedVersion();
   if (latest === null || !isNewerVersion(latest, VERSION)) return;
   printWarning(
@@ -1512,16 +1526,40 @@ async function dev(args: string[]): Promise<void> {
   let pending = false;
   let lastSourceSignature: string | undefined;
 
+  // Live logs like `convex dev`, retried after each sync: a new stage has none until a deploy.
+  const logController = new AbortController();
+  let logs: "off" | "on" | "failed" = "off";
+  let hinted = false;
+  const startLogs = (): void => {
+    if (logs !== "off") return;
+    logs = "on";
+    void streamDevLogs(args, logController.signal).then((outcome) => {
+      if (outcome === "refused" && !hinted) {
+        hinted = true;
+        console.log("· live logs start after the first sync lands.");
+      }
+      logs = outcome === "failed" ? "failed" : "off";
+    });
+  };
+  let lastSyncFailed = false;
+  // A save after the signature may be in what the child read, so that sync records no signature.
+  let savedSinceSignature = false;
   const syncChanged = async (): Promise<void> => {
+    savedSinceSignature = false;
     const signature = await sourceSignature();
-    if (signature === lastSourceSignature) return;
-    await runSyncChild(args, childEnv);
-    lastSourceSignature = signature;
+    // A failed sync may have written part of the stage, so even an undo syncs again.
+    if (signature === lastSourceSignature && !lastSyncFailed) return;
+    lastSyncFailed = true;
+    try {
+      await runSyncChild(args, childEnv);
+      lastSyncFailed = false;
+      lastSourceSignature = savedSinceSignature ? undefined : signature;
+    } finally {
+      startLogs();
+    }
   };
   const printSyncError = (error: unknown): void =>
     console.error(error instanceof Error ? error.message : String(error));
-
-  await syncChanged().catch(printSyncError);
 
   const runSync = (): void => {
     if (syncing) {
@@ -1546,13 +1584,13 @@ async function dev(args: string[]): Promise<void> {
     { recursive: true },
     (_event, filename) => {
       if (!filename || isGeneratedPath(filename)) return;
+      if (/\.(ts|md)$/.test(filename)) savedSinceSignature = true;
       clearTimeout(timer);
       timer = setTimeout(runSync, 150);
     },
   );
-
-  const logController = new AbortController();
-  void streamDevLogs(args, logController.signal);
+  // Watching before the first sync, so a save made during it is not missed.
+  runSync();
 
   process.on("SIGINT", () => {
     logController.abort();
@@ -1561,19 +1599,21 @@ async function dev(args: string[]): Promise<void> {
   });
 }
 
+// "refused" (no deployment yet) and "dropped" retry after the next sync; "failed" is printed.
 async function streamDevLogs(
   args: string[],
   signal: AbortSignal,
-): Promise<void> {
+): Promise<"refused" | "dropped" | "failed"> {
   let session: ObservabilityClientOptions;
   try {
     session = await openStageSession(args);
   } catch (error) {
+    if (error instanceof StageSessionRefusedError) return "refused";
     console.log(
       `· live logs off. ${error instanceof Error ? error.message : String(error)}`,
     );
 
-    return;
+    return "failed";
   }
 
   const minLevel = resolveMinLevel(args);
@@ -1594,6 +1634,8 @@ async function streamDevLogs(
       );
     }
   }
+
+  return "dropped";
 }
 
 async function ensureDevOnboarding(args: string[]): Promise<void> {
@@ -2076,9 +2118,10 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
       }
       reject(
         new Error(
+          // The child already printed why; say what happens next.
           signal
-            ? `Sync child exited from signal ${signal}`
-            : `Sync child exited with code ${code ?? "unknown"}`,
+            ? `Sync stopped (${signal}). Watching for changes: save a file in broods/ to retry.`
+            : "Sync failed. Watching for changes: fix it, then save a file in broods/ to retry.",
         ),
       );
     });
@@ -2103,7 +2146,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const pushed = await pushLocalEnvVars(
     client,
     compiled.manifest,
-    await inspectEnvRefs(client, compiled.manifest),
+    await askForUnresolvedEnv(await inspectEnvRefs(client, compiled.manifest)),
   );
   if (pushed.length > 0) printEnvSync(pushed);
 
@@ -2255,6 +2298,26 @@ async function inspectEnvRefs(
     name: name,
     state: envRefState(name, remote),
   }));
+}
+
+// In a TTY, asks for each `env()` value nothing holds yet and saves it to `.env.local`.
+async function askForUnresolvedEnv(refs: EnvRef[]): Promise<EnvRef[]> {
+  const missing = namesInState(refs, "unresolved");
+  if (missing.length === 0 || !process.stdin.isTTY) return refs;
+  console.log(
+    `The project needs ${missing.length === 1 ? "a value" : `${missing.length} values`} no one has set yet. ` +
+      "Input is hidden and saved to .env.local, which stays out of git.",
+  );
+  for (const name of missing) {
+    const value = await promptSecret(name, { optional: true });
+    if (value) await writeEnvValue(name, value);
+  }
+
+  return refs.map((ref) =>
+    ref.state === "unresolved" && process.env[ref.name]
+      ? { ...ref, state: "unset" }
+      : ref,
+  );
 }
 
 async function pushLocalEnvVars(
@@ -2878,26 +2941,24 @@ async function agentGet(
         )
         .filter(Boolean)
     : [];
-  const tools = isPlainObject(config.tools) ? Object.keys(config.tools) : [];
-  const channels = isPlainObject(config.channels)
-    ? Object.keys(config.channels)
-    : [];
-  const subagents =
-    isPlainObject(config.subagent) &&
-    Array.isArray((config.subagent as { allowed?: unknown }).allowed)
-      ? (config.subagent as { allowed: unknown[] }).allowed
-          .map((entry) =>
-            typeof entry === "string"
-              ? entry
-              : (entry as { name?: string }).name,
-          )
-          .filter(Boolean)
-      : [];
-  const webhooks =
-    isPlainObject(config.hooks) &&
-    Array.isArray((config.hooks as { webhooks?: unknown }).webhooks)
-      ? (config.hooks as { webhooks: unknown[] }).webhooks.filter(isPlainObject)
-      : [];
+  const tools = Object.keys(CONFIG_BRANCH.safeParse(config.tools).data ?? {});
+  const channels = Object.keys(
+    CONFIG_BRANCH.safeParse(config.channels).data ?? {},
+  );
+  const subagents = (
+    SUBAGENT_REFS.safeParse(config.subagent).data?.allowed ?? []
+  )
+    .map((entry) =>
+      typeof entry === "string" ? entry : (entry as { name?: string }).name,
+    )
+    .filter(Boolean);
+  const webhooks = (
+    WEBHOOK_LIST.safeParse(config.hooks).data?.webhooks ?? []
+  ).flatMap((webhook): Record<string, unknown>[] => {
+    const parsed = CONFIG_BRANCH.safeParse(webhook);
+
+    return parsed.success ? [parsed.data] : [];
+  });
 
   console.log(`Agent: ${agent.name}`);
   console.log(`  Project/Stage: ${manifest.project}/${manifest.stage}`);
@@ -2936,7 +2997,7 @@ async function agentGet(
 }
 
 function agentModelLabel(config: Record<string, unknown>): string {
-  const model = isPlainObject(config.model) ? config.model : {};
+  const model = CONFIG_BRANCH.safeParse(config.model).data ?? {};
   const provider =
     typeof model.provider === "string" ? model.provider : undefined;
   const modelId = typeof model.modelId === "string" ? model.modelId : undefined;
@@ -2986,21 +3047,55 @@ async function run(args: string[]): Promise<void> {
     await writeEnvValue("BROODS_API_KEY", runtimeKey.apiKey);
   }
 
-  if ((agent.config as Record<string, unknown>).publicAccess !== true) {
+  // A `broods login` mints the stage ticket `logs` uses: it runs private agents with no user
+  // token. It lasts 15 minutes, so a request re-mints it near expiry. Keys keep the runtime key.
+  let session = await syncClient
+    .mintStageSession(manifest.project, manifest.stage)
+    .catch((error: unknown) => {
+      if (error instanceof StageSessionRefusedError) return null;
+      throw error;
+    });
+  if (!session) {
     printWarning(
-      `Agent "${agentName}" does not set publicAccess: true. The public endpoint is secured by default; ` +
-        "if the deployed agent has not enabled it, this run will be refused.",
+      "No broods login, so run uses the runtime key: it reaches only agents with publicAccess that need no user token. Run `broods login` to reach every agent.",
     );
   }
+  const credential = async (): Promise<string> => {
+    if (session && session.expiresAt - Date.now() < 60_000) {
+      session = await syncClient.mintStageSession(
+        manifest.project,
+        manifest.stage,
+      );
+    }
 
-  // Without a base URL the SDK falls back to prod, which rejects a dev runtime key.
+    return session?.token ?? "";
+  };
+  const clientAuth = session
+    ? {
+        apiKey: session.token,
+        fetch: Object.assign(
+          async (
+            ...[input, init]: Parameters<typeof fetch>
+          ): Promise<Response> => {
+            const headers = new Headers(init?.headers);
+            headers.set("Authorization", `Bearer ${await credential()}`);
+
+            return await fetch(input, { ...init, headers: headers });
+          },
+          { preconnect: fetch.preconnect },
+        ),
+      }
+    : runtimeKey?.apiKey
+      ? { apiKey: runtimeKey.apiKey }
+      : {};
+  // Without a base URL the SDK falls back to prod, which rejects a dev credential.
   const client = new BroodsClient({
     baseUrl:
       optionValue(args, "--base-url") ??
       process.env.BROODS_BASE_URL ??
       process.env.BROODS_HOST ??
       auth.baseUrl,
-    ...(runtimeKey?.apiKey ? { apiKey: runtimeKey.apiKey } : {}),
+    ...clientAuth,
   });
   const ref: AgentReference = {
     kind: "agent",
@@ -3013,27 +3108,16 @@ async function run(args: string[]): Promise<void> {
     ...(runtimeKey?.stageSlug ? { stageSlug: runtimeKey.stageSlug } : {}),
   };
   const { runAgentTui, streamAgentText } = await import("./tui.ts");
-  try {
-    if (interactive) {
-      await runAgentTui({
-        client: client,
-        agent: ref,
-        ...(prompt ? { prompt: prompt } : {}),
-      });
+  if (interactive) {
+    await runAgentTui({
+      client: client,
+      agent: ref,
+      ...(prompt ? { prompt: prompt } : {}),
+    });
 
-      return;
-    }
-    await streamAgentText({ client: client, agent: ref, prompt: prompt });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("public_access_disabled")) {
-      throw new Error(
-        `Agent "${agentName}" is not publicly accessible (secured by default). ` +
-          "Set publicAccess: true in its config and redeploy, or enable Public access in the dashboard.",
-      );
-    }
-    throw error;
+    return;
   }
+  await streamAgentText({ client: client, agent: ref, prompt: prompt });
 }
 
 async function writeStarter(

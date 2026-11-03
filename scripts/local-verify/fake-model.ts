@@ -16,7 +16,7 @@ const HISTORY_WRITES = new Set([
   "runtimeIngress:takeNext",
 ]);
 
-interface MessagesRequest {
+export interface MessagesRequest {
   messages: { content: unknown }[];
   model: string;
   stream?: boolean;
@@ -66,7 +66,7 @@ function event(type: string, fields: Record<string, unknown>): string {
   return `event: ${type}\ndata: ${JSON.stringify({ type: type, ...fields })}\n\n`;
 }
 
-function fakeModel(request: MessagesRequest): Response {
+export function fakeModel(request: MessagesRequest): Response {
   const message = {
     id: `msg_${Date.now()}`,
     type: "message",

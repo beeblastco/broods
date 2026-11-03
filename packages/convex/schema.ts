@@ -1,6 +1,10 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { DEPLOYMENT_REGIONS } from "./cli/types";
+import {
+  agentExtraConfigColumn,
+  agentOutputFormatColumn,
+} from "./model/agentConfigColumns";
 import { canvasEdgeValidator, canvasNodeValidator } from "./model/canvasShapes";
 import { CONNECTION_TYPE_NAMES } from "./model/connections";
 import { policyDocumentValidator } from "./model/policyDocument";
@@ -102,7 +106,7 @@ export const agentConfigsFields = {
   maxTurns: v.optional(v.number()),
   allowedTools: v.optional(v.array(v.string())),
   permissionMode: v.optional(v.string()),
-  outputFormat: v.optional(v.any()),
+  outputFormat: v.optional(agentOutputFormatColumn),
   providerOptions: v.optional(v.any()),
   temperature: v.optional(v.number()),
   maxTokens: v.optional(v.number()),
@@ -113,7 +117,7 @@ export const agentConfigsFields = {
     v.array(v.object({ key: v.string(), value: v.string() })),
   ),
   // Plaintext: secrets only as `${ENV_NAME}` placeholders resolved from runtime secrets.
-  extraConfig: v.optional(v.any()),
+  extraConfig: v.optional(agentExtraConfigColumn),
   managedBy: managedByValidator,
   updatedAt: v.number(),
 };
@@ -889,12 +893,30 @@ export const runtimeHarnessSessionsFields = {
   sessionId: v.string(),
   resumeState: v.any(),
   reservationKey: v.optional(v.string()),
+  // Highest entry sequence written for `sessionId`; the next append continues after it.
+  lastSequence: v.optional(v.number()),
   updatedAt: v.number(),
+};
+// One Pi session entry, as JSON text: tool arguments may hold keys Convex refuses.
+export const harnessSessionEntryFields = {
+  entryId: v.string(),
+  parentEntryId: v.optional(v.string()),
+  version: v.number(),
+  entry: v.string(),
+};
+export const runtimeHarnessSessionEntriesFields = {
+  accountId: v.id("accounts"),
+  conversationKey: v.string(),
+  sessionId: v.string(),
+  sequence: v.number(),
+  ...harnessSessionEntryFields,
 };
 export const runtimeClaimsFields = {
   accountId: v.id("accounts"),
   key: v.string(),
   kind: v.literal("event"),
+  // How often a claim with a limit was taken until it expires.
+  count: v.optional(v.number()),
   expiresAt: v.number(),
 };
 export const ingressModeValidator = v.union(
@@ -1118,6 +1140,8 @@ export const runtimeAsyncAgentResultsFields = {
   error: v.optional(v.string()),
   approvals: v.optional(v.array(toolApprovalSummaryValidator)),
   questions: v.optional(v.array(pendingQuestionSummaryValidator)),
+  // A persistent subagent's message-agents to its parent while status is awaiting_input.
+  question: v.optional(v.string()),
   createdAt: v.string(),
   updatedAt: v.string(),
   expiresAt: v.number(),
@@ -1557,6 +1581,18 @@ export default defineSchema({
     .index("by_accountId", ["accountId"]),
   runtimeHarnessSessions: defineTable(runtimeHarnessSessionsFields)
     .index("by_conversationKey", ["conversationKey"])
+    .index("by_accountId", ["accountId"]),
+  runtimeHarnessSessionEntries: defineTable(runtimeHarnessSessionEntriesFields)
+    .index("by_conversationKey_and_sessionId_and_sequence", [
+      "conversationKey",
+      "sessionId",
+      "sequence",
+    ])
+    .index("by_conversationKey_and_sessionId_and_entryId", [
+      "conversationKey",
+      "sessionId",
+      "entryId",
+    ])
     .index("by_accountId", ["accountId"]),
   runtimeClaims: defineTable(runtimeClaimsFields)
     .index("by_key", ["key"])

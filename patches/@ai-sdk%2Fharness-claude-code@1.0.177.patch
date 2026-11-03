@@ -1,0 +1,27 @@
+diff --git a/dist/index.js b/dist/index.js
+index 54a3f41c5018dfbbfca3dea72dffbaabe4edf814..0fcde6e22b061ac148c66826c69819b43fd44c65 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1,3 +1,7 @@
++import bridgeAsset0 from "./bridge/package.json" with { type: "file" };
++import bridgeAsset1 from "./bridge/pnpm-lockfile.yaml" with { type: "file" };
++import bridgeAsset2 from "./bridge/pnpm-workspace.yaml" with { type: "file" };
++import bridgeAsset3 from "./bridge/index.mjs" with { type: "file" };
+ import { dirname, join, posix, resolve } from "node:path";
+ import { HARNESS_V1_BUILTIN_TOOLS, HarnessCapabilityUnsupportedError, commonTool, harnessSessionDataDirectoryPath, harnessStateDirectoryPath, harnessV1BridgeInboundCommandSchemas, harnessV1BridgeOutboundMessageSchema, harnessV1BridgeStartBaseSchema, harnessV1DiagnosticFromBridgeFrame } from "@ai-sdk/harness";
+ import { SandboxChannel, applyCredentialForwarding, classifyDiskLog, createBridgeErrorHandler, createBridgeStartupError, createBridgeToken, createBridgeWebSocketConnect, createCredentialRequestTransformation, createReadBridgeAsset, drainBridgeProcessStream, experimental_createBridgeUserMessageSubmitter, extractHarnessPromptContent, forwardBridgeProcessStream, getAiGatewayAuthFromEnv, getRestrictedSandboxSession, harnessPromptContentSchema, isAccessTokenExpiringSoon, isHarnessAuthenticationEnvironment, isMacOS, markBridgeStarting, readMacOSKeychainPassword, refreshOAuthAccessToken, resolveBridgeEndpoint, resolveBridgePort, resolveSandboxCredentialEnvironment, resolveSandboxHomeDir, shellQuote, shouldResolveNativeSubscription, validateBridgeSandboxSettings, waitForBridgeReady, warnCredentialBrokeringUnavailable, writeSkills } from "@ai-sdk/harness/utils";
+@@ -10,10 +14,10 @@ import { homedir } from "node:os";
+ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+ //#region src/claude-code-bootstrap.ts
+ const readBridgeAsset = createReadBridgeAsset({
+-	"package.json": new URL("./bridge/package.json", import.meta.url),
+-	"pnpm-lock.yaml": new URL("./bridge/pnpm-lockfile.yaml", import.meta.url),
+-	"pnpm-workspace.yaml": new URL("./bridge/pnpm-workspace.yaml", import.meta.url),
+-	"index.mjs": new URL("./bridge/index.mjs", import.meta.url)
++	"package.json": bridgeAsset0,
++	"pnpm-lock.yaml": bridgeAsset1,
++	"pnpm-workspace.yaml": bridgeAsset2,
++	"index.mjs": bridgeAsset3
+ });
+ const CLAUDE_CODE_BOOTSTRAP_DIR = ".harness-bootstrap/claude-code";
+ let cachedBootstrap;

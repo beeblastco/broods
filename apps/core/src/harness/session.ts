@@ -13,10 +13,12 @@ import {
 } from "ai";
 import type { Attachment } from "chat";
 import type { ChannelActions } from "../shared/channels.ts";
-import { runtime } from "../shared/convex/runtime.ts";
-import type {
-  ChannelPartition,
-  AgentConfig,
+import { harnessEntryBatches } from "@broods/convex/model/harnessSessionEntries";
+import { runtime, type HarnessSessionEntry } from "../shared/convex/runtime.ts";
+import {
+  channelPartitionOf,
+  type AgentConfig,
+  type ChannelPartition,
 } from "../shared/domain/agent-config.ts";
 import type { Principal } from "../shared/domain/principal.ts";
 import { getHarnessPublicUrl } from "../shared/env.ts";
@@ -25,7 +27,6 @@ import {
   workspaceMemoryHarnessEnabled,
 } from "../shared/domain/workspace-config.ts";
 import { collectSecretValues, logDebug, logError } from "../shared/log.ts";
-import { isPlainObject } from "@broods/convex/model/objects";
 import { sealRunToken } from "../shared/run-token.ts";
 import { channelScopeKeyFromConversation } from "../shared/runtime-keys.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
@@ -38,6 +39,7 @@ import {
 } from "../shared/workspaces.ts";
 import {
   markAsyncToolHandback,
+  rootEventId,
   type AsyncToolDelivery,
 } from "./async-tool-result.ts";
 import {
@@ -90,7 +92,7 @@ import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 // Half of Convex's per-mutation caps (16 MiB of arguments, 16,000 written documents).
 const APPEND_EVENT_BYTES = 8 * 1_024 * 1_024;
 const APPEND_EVENT_COUNT = 8_000;
-const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
+export const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
 // Tool outputs that hand the model no result: a hook or the run turned the
 // call into an error or a denial, so a status read in it stores nothing.
 const UNDELIVERED_OUTPUTS: ReadonlySet<string> = new Set([
@@ -179,6 +181,12 @@ interface SubagentMetadata {
   name: string;
   description?: string;
 }
+
+// What Pi's session storage needs from a Broods session.
+export type HarnessEntryLog = Pick<
+  Session,
+  "appendHarnessSessionEntries" | "readHarnessSessionEntries"
+>;
 
 export interface StoredHarnessSession {
   harnessType: "claude-code" | "codex" | "deepagents" | "opencode" | "pi";
@@ -283,6 +291,8 @@ export class Session {
   private ownerConfirmedAt = Number.NEGATIVE_INFINITY;
   // They ride the next fenced mutation (step boundary, settle, takeNext), not an append.
   private pendingStoredEvents: AppendedConversationEvent[] = [];
+  // Pi's entries for the next checkpoint save, which carries them.
+  private pendingHarnessEntries: HarnessSessionEntry[] = [];
   // This turn's `async_status` reads: tool call id to the async tool result it
   // returned. A read stores nothing; the saved row of its tool result does.
   private readonly toolResultReads = new Map<string, string>();
@@ -357,6 +367,33 @@ export class Session {
       accountId: this.accountId,
       key: this.eventId,
       ttlSeconds: 86400,
+    });
+  }
+
+  // One of the `limit` turns a lineage (a person's run and every run continuing it) may start
+  // by messaging, so two agents cannot keep waking each other.
+  async claimMessageTurn(limit: number): Promise<boolean> {
+    if (!this.accountId) {
+      throw new Error("Account ID is required for runtime claims");
+    }
+
+    return runtime.mutate("claimEvent", {
+      accountId: this.accountId,
+      key: messageTurnsKey(this.eventId),
+      ttlSeconds: 86400,
+      limit: limit,
+    });
+  }
+
+  /** Gives back a message turn that started no turn. */
+  async releaseMessageTurn(): Promise<void> {
+    if (!this.accountId) {
+      throw new Error("Account ID is required for runtime claims");
+    }
+
+    await runtime.mutate("releaseClaim", {
+      accountId: this.accountId,
+      key: messageTurnsKey(this.eventId),
     });
   }
 
@@ -564,7 +601,35 @@ export class Session {
     });
   }
 
+  appendHarnessSessionEntries(entries: HarnessSessionEntry[]): void {
+    this.pendingHarnessEntries.push(...entries);
+  }
+
+  async readHarnessSessionEntries(
+    sessionId: string,
+  ): Promise<HarnessSessionEntry[]> {
+    const entries: HarnessSessionEntry[] = [];
+    let afterSequence: number | undefined;
+    for (;;) {
+      const page = await runtime.query("readHarnessSessionEntries", {
+        conversationKey: this.conversationKey,
+        sessionId: sessionId,
+        ...(afterSequence === undefined
+          ? {}
+          : { afterSequence: afterSequence }),
+      });
+      entries.push(...page.entries);
+      if (page.nextSequence === null) {
+        return entries;
+      }
+      afterSequence = page.nextSequence;
+    }
+  }
+
+  // Entries past one transaction's budget are staged first; the last mutation commits.
   async saveHarnessSession(state: StoredHarnessSession): Promise<void> {
+    const batches = harnessEntryBatches(this.pendingHarnessEntries);
+    this.pendingHarnessEntries = [];
     if (!this.persist) return;
     if (this.ownerGeneration === undefined) {
       throw new Error("Harness checkpoint needs a conversation owner");
@@ -573,12 +638,28 @@ export class Session {
     if (serialized === undefined) {
       throw new Error("Harness resume state must be JSON serializable");
     }
-    const startedAt = performance.now();
-    await runtime.mutate("saveHarnessSession", {
+    const owner = {
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
+    };
+    const startedAt = performance.now();
+    let afterSequence: number | undefined;
+    for (const entries of batches.slice(0, -1)) {
+      afterSequence = await runtime.mutate("appendHarnessSessionEntries", {
+        ...owner,
+        sessionId: state.sessionId,
+        entries: entries,
+        ...(afterSequence === undefined
+          ? {}
+          : { afterSequence: afterSequence }),
+      });
+    }
+    await runtime.mutate("saveHarnessSession", {
+      ...owner,
       ...state,
+      entries: batches.at(-1)!,
+      ...(afterSequence === undefined ? {} : { afterSequence: afterSequence }),
     });
     this.confirmOwner(startedAt);
   }
@@ -992,7 +1073,7 @@ export class Session {
 
   private channelPartition(): ChannelPartition | undefined {
     return this.delivery?.kind === "channel"
-      ? channelPartitionFromConfig(this.agentConfig, this.delivery.channelName)
+      ? channelPartitionOf(this.agentConfig, this.delivery.channelName)
       : undefined;
   }
 
@@ -1381,10 +1462,7 @@ export async function ingestChannelAttachments(
         context.conversationKey,
         "conversation",
       ),
-      partition: channelPartitionFromConfig(
-        context.agentConfig,
-        context.channelName,
-      ),
+      partition: channelPartitionOf(context.agentConfig, context.channelName),
     },
   );
   const parts = await ingestInboundAttachments(attachments, {
@@ -1467,16 +1545,6 @@ function appendToLatestUserEvent(
   }
 
   return [...events, { role: "user", content: parts }];
-}
-
-function channelPartitionFromConfig(
-  agentConfig: AgentConfig,
-  channelName: string,
-): ChannelPartition | undefined {
-  const config = agentConfig.channels?.[channelName];
-  const partition = isPlainObject(config) ? config.partition : undefined;
-
-  return isPartition(partition) ? partition : undefined;
 }
 
 function createSystemContextSnapshot(
@@ -1677,13 +1745,6 @@ ${guidance}
 </workspace>`;
 }
 
-function isPartition(value: unknown): value is ChannelPartition {
-  if (!isPlainObject(value)) return false;
-  if (value.by === "shared") return value.alias === undefined;
-
-  return value.by === "conversation" && typeof value.alias === "string";
-}
-
 // Reasoning stays: OpenAI Responses rejects an item id whose reasoning item is missing.
 function isPersistedAssistantContentPart(
   part: Exclude<AssistantModelMessage["content"], string>[number],
@@ -1728,6 +1789,11 @@ function isToolApprovalResponseMessage(
     message.content.length > 0 &&
     message.content.every((part) => part.type === "tool-approval-response")
   );
+}
+
+// One claim per run lineage: the run a person started and every run continuing it.
+function messageTurnsKey(eventId: string): string {
+  return `message-turns:${rootEventId(eventId)}`;
 }
 
 function projectActiveConversationEntries(
