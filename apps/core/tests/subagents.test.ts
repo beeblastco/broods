@@ -396,7 +396,10 @@ describe("SubagentCoordinator", () => {
     internals.startTask(resolvedTask());
 
     expect(coordinator.waitForIdle()).resolves.toBe("idle");
-    expect(internals.completeTask).toHaveBeenCalledWith(completedTurn());
+    expect(internals.completeTask).toHaveBeenCalledWith(
+      completedTurn(),
+      coordinator,
+    );
     expect(publisher.publish).toHaveBeenCalledTimes(2);
     expect(publisher.close).toHaveBeenCalledTimes(1);
   });
@@ -2338,13 +2341,12 @@ describe("message-agents in the coordinator", () => {
   }
 
   // Queues `child`'s question for the parent's next write, as its latest turn ends.
-  function askedParent(
+  async function askedParent(
     coordinator: SubagentCoordinator,
     child: ReturnType<typeof waitingChild>,
-  ): void {
-    coordinator["latestTurn"].set(child.conversationKey, child.eventId);
-    coordinator["pendingMetadata"].set(child.taskId, child);
-    coordinator["enqueue"]({
+  ): Promise<void> {
+    coordinator["detached"].set(child.taskId, child);
+    await coordinator["completeTask"]({
       ...child,
       status: "awaiting_input",
       question: "Which region?",
@@ -2624,7 +2626,7 @@ describe("message-agents in the coordinator", () => {
 
   it("wakes a child whose question the parent's passes left unanswered, once", async (): Promise<void> => {
     const { coordinator, key, resume, turns } = await parentRun({});
-    askedParent(coordinator, waitingChild(key));
+    await askedParent(coordinator, waitingChild(key));
     await coordinator.takeParentMessages();
 
     await coordinator.closePasses();
@@ -2650,8 +2652,8 @@ describe("message-agents in the coordinator", () => {
       ownerGeneration: 1,
     });
     const other = coordinator["mintChildKey"]("account_1", crypto.randomUUID());
-    askedParent(coordinator, waitingChild(key));
-    askedParent(coordinator, waitingChild(other, "subagent_2"));
+    await askedParent(coordinator, waitingChild(key));
+    await askedParent(coordinator, waitingChild(other, "subagent_2"));
     await coordinator.takeParentMessages();
 
     await coordinator.messageChild(address, message({ text: "eu-west" }));
@@ -2677,7 +2679,7 @@ describe("message-agents in the coordinator", () => {
     });
     runChildren(coordinator);
     const accept = spyOn(ingress, "acceptIngress");
-    askedParent(coordinator, waitingChild(key));
+    await askedParent(coordinator, waitingChild(key));
     await coordinator.takeParentMessages();
 
     await coordinator.dispatch([{ prompt: "go on", conversationKey: key }], []);
@@ -2694,7 +2696,7 @@ describe("message-agents in the coordinator", () => {
     const { coordinator, key, resume, turns } = await parentRun({});
     runChildren(coordinator);
     spyOn(ingress, "acceptIngress").mockRejectedValue(new Error("convex down"));
-    askedParent(coordinator, waitingChild(key));
+    await askedParent(coordinator, waitingChild(key));
     await coordinator.takeParentMessages();
 
     await coordinator.dispatch([{ prompt: "go on", conversationKey: key }], []);
@@ -2709,7 +2711,7 @@ describe("message-agents in the coordinator", () => {
     const { coordinator, key, resume } = await parentRun({
       turns: new Map([["lineage", 40]]),
     });
-    askedParent(coordinator, waitingChild(key));
+    await askedParent(coordinator, waitingChild(key));
     await coordinator.takeParentMessages();
 
     await coordinator.closePasses();
@@ -2722,7 +2724,7 @@ describe("message-agents in the coordinator", () => {
 
   it("wakes no child after the parent's user stop", async (): Promise<void> => {
     const { coordinator, key, resume } = await parentRun({});
-    askedParent(coordinator, waitingChild(key));
+    await askedParent(coordinator, waitingChild(key));
     await coordinator.takeParentMessages();
 
     coordinator.stopChildren();
@@ -2740,7 +2742,6 @@ describe("message-agents in the coordinator", () => {
     });
     const child = waitingChild(key);
     coordinator["detached"].set(child.taskId, child);
-    coordinator["latestTurn"].set(key, child.eventId);
 
     await coordinator["completeTask"]({
       ...child,
@@ -2874,8 +2875,7 @@ describe("message-agents in the coordinator", () => {
 
     interface ChildRuntime {
       turns: ChildTurn[];
-      // Envelopes queued on each child conversation, and its owner's task id.
-      queued: Map<string, IngressCandidate[]>;
+      // Each child conversation's owner task id.
       owners: Map<string, string | undefined>;
     }
 
@@ -2894,7 +2894,6 @@ describe("message-agents in the coordinator", () => {
       running.push(...coordinators);
       const runtimeState: ChildRuntime = {
         turns: [],
-        queued: new Map(),
         owners: new Map(),
       };
       let generation = 0;
@@ -2904,34 +2903,12 @@ describe("message-agents in the coordinator", () => {
         ): Promise<ingress.IngressAdmission> => {
           const key = candidate.conversationKey;
           if (runtimeState.owners.get(key) !== undefined) {
-            if (candidate.requestedMode === "reject") {
-              return { outcome: "rejected" };
-            }
-            runtimeState.queued.set(key, [
-              ...(runtimeState.queued.get(key) ?? []),
-              candidate,
-            ]);
-
-            return { outcome: "queued" };
+            return { outcome: "rejected" };
           }
           runtimeState.owners.set(key, candidate.ownerTaskId ?? "");
           generation += 1;
 
           return { outcome: "owner", ownerGeneration: generation };
-        },
-      );
-      spyOn(Session.prototype, "takeNextIngress").mockImplementation(
-        async function (this: Session): Promise<ingress.AppliedIngress | null> {
-          const next = runtimeState.queued.get(this.conversationKey)?.shift();
-          if (!next) return null;
-          runtimeState.owners.set(this.conversationKey, next.ownerTaskId ?? "");
-          generation += 1;
-
-          return {
-            eventId: next.eventId,
-            events: next.events,
-            ownerGeneration: generation,
-          } as ingress.AppliedIngress;
         },
       );
       spyOn(Session.prototype, "releaseConversationLease").mockImplementation(
@@ -3052,7 +3029,6 @@ describe("message-agents in the coordinator", () => {
       ]);
       expect(run.coordinator["waitDeadlines"].size).toBe(0);
       expect(run.coordinator.pendingCount).toBe(1);
-      expect(runtimeState.queued.size).toBe(0);
     });
 
     it("tells a later parent run that a child an earlier run left running replies later", async (): Promise<void> => {
@@ -3164,7 +3140,6 @@ describe("message-agents in the coordinator", () => {
       );
       await run.coordinator.waitForIdle();
 
-      expect(runtimeState.queued.size).toBe(0);
       expect(run.turns.get("lineage")).toBe(0);
     });
 
@@ -3188,13 +3163,6 @@ describe("message-agents in the coordinator", () => {
       expect(
         runtimeState.turns.map((turn): string => turn.prompt).join("\n"),
       ).not.toContain("No reply from your parent");
-      expect(
-        [...runtimeState.queued.values()]
-          .flat()
-          .map((candidate): string =>
-            messageText(candidate.events[0] as UserModelMessage),
-          ),
-      ).toEqual([]);
     });
 
     it("charges a later turn to the run that sent the message, not the one that started the task", async (): Promise<void> => {
@@ -3270,6 +3238,159 @@ describe("message-agents in the coordinator", () => {
 
       expect(runtimeState.turns).toHaveLength(1);
       expect(run.turns.get("lineage")).toBe(0);
+    });
+
+    it("refuses a message that waited on a later turn whose admission another runtime took", async (): Promise<void> => {
+      const run = await parentRun({});
+      const runtimeState = childRuntime([run.coordinator]);
+      const child = await liveChild(run, runtimeState);
+      const claim = spyOn(run.coordinator["parentSession"], "claimMessageTurn");
+      let pay = (_paid: boolean): void => {};
+      claim.mockImplementationOnce(
+        (): Promise<boolean> =>
+          new Promise((resolve): void => {
+            pay = resolve;
+          }),
+      );
+
+      await run.coordinator.messageChild(child.address, message({ text: "a" }));
+      runtimeState.turns[0]?.answer("first");
+      await until((): boolean => claim.mock.calls.length === 1);
+      const late = run.coordinator.messageChild(
+        child.address,
+        message({ text: "b" }),
+      );
+      await Bun.sleep(1);
+      runtimeState.owners.set(child.conversationKey, "subagent~elsewhere");
+      pay(true);
+
+      expect(await late).toMatchObject({ status: "not_delivered" });
+      expect(runtimeState.turns).toHaveLength(1);
+    });
+
+    it("refuses a message sent while a new child's admission is pending, once another runtime takes it", async (): Promise<void> => {
+      const run = await parentRun({});
+      run.resume.mockRestore();
+      const runtimeState = childRuntime([run.coordinator]);
+      const child = await run.coordinator.resolveAddress(run.address);
+      let admit = (_admission: ingress.IngressAdmission): void => {};
+      spyOn(ingress, "acceptIngress").mockImplementationOnce(
+        (): Promise<ingress.IngressAdmission> =>
+          new Promise((resolve): void => {
+            admit = resolve;
+          }),
+      );
+
+      await run.coordinator.dispatch(
+        [{ prompt: "research", conversationKey: run.key }],
+        [],
+      );
+      const sent = run.coordinator.messageChild(run.address, message());
+      await Bun.sleep(1);
+      runtimeState.owners.set(child.conversationKey, "subagent~elsewhere");
+      admit({ outcome: "rejected" });
+
+      expect(await sent).toMatchObject({ status: "not_delivered" });
+      await run.coordinator.waitForIdle();
+      const failures = await run.coordinator.takeParentMessages();
+      expect(failures).toHaveLength(1);
+      expect(runtimeState.turns).toHaveLength(0);
+    });
+
+    it("stops a later turn with the run that sent its message", async (): Promise<void> => {
+      const older = await parentRun({});
+      const newer = await parentRun({
+        eventId: "acct:account_1:agent:agent_parent:api:event_newer",
+      });
+      const runtimeState = childRuntime([older.coordinator, newer.coordinator]);
+      const child = await liveChild(older, runtimeState);
+
+      await newer.coordinator.messageChild(child.address, message());
+      runtimeState.turns[0]?.answer("first");
+      await until((): boolean => runtimeState.turns.length === 2);
+      newer.coordinator.stopChildren();
+
+      expect(runtimeState.turns[1]?.options.abortSignal?.aborted).toBe(true);
+    });
+
+    it("starts no later turn for a message whose run stopped before the turn ended", async (): Promise<void> => {
+      const older = await parentRun({});
+      const newer = await parentRun({
+        eventId: "acct:account_1:agent:agent_parent:api:event_newer",
+      });
+      const runtimeState = childRuntime([older.coordinator, newer.coordinator]);
+      const child = await liveChild(older, runtimeState);
+
+      await newer.coordinator.messageChild(child.address, message());
+      newer.coordinator.stopChildren();
+      runtimeState.turns[0]?.answer("first");
+      await until((): boolean => older.coordinator.runningCount === 0);
+
+      expect(runtimeState.turns).toHaveLength(1);
+      expect(newer.turns.get("lineage")).toBeUndefined();
+    });
+
+    it("lets a later turn note the parent on the turns of the run that pays for it", async (): Promise<void> => {
+      const resumeParent = mock(
+        async (): Promise<SubagentResumeOutcome> => "queued",
+      );
+      const older = await parentRun({
+        turns: new Map([["lineage", 40]]),
+        resumeParent: resumeParent,
+      });
+      const newer = await parentRun({
+        eventId: "acct:account_1:agent:agent_parent:api:event_newer",
+        resumeParent: resumeParent,
+      });
+      const runtimeState = childRuntime([older.coordinator, newer.coordinator]);
+      const child = await liveChild(older, runtimeState);
+
+      await newer.coordinator.messageChild(child.address, message());
+      runtimeState.turns[0]?.answer("first");
+      await until((): boolean => runtimeState.turns.length === 2);
+
+      expect(
+        await runtimeState.turns[1]?.options.parentLink?.note(
+          message({ text: "halfway" }),
+        ),
+      ).toMatchObject({ status: "delivered" });
+      expect(newer.turns.get("lineage")).toBe(2);
+      expect(older.turns.get("lineage")).toBe(40);
+    });
+
+    it("wakes no child whose question another run of the parent answered during the wake's claim", async (): Promise<void> => {
+      const older = await parentRun({});
+      const newer = await parentRun({
+        eventId: "acct:account_1:agent:agent_parent:api:event_newer",
+      });
+      const runtimeState = childRuntime([older.coordinator, newer.coordinator]);
+      const child = await liveChild(older, runtimeState);
+      newer.resume.mockRestore();
+      runtimeState.turns[0]?.ask("Which region?");
+      expect(await older.coordinator.waitForIdle()).toBe("message");
+      await older.coordinator.takeParentMessages();
+      await until((): boolean => older.coordinator.runningCount === 0);
+      spyOn(
+        older.coordinator["parentSession"],
+        "claimMessageTurn",
+      ).mockImplementationOnce(async (): Promise<boolean> => {
+        await newer.coordinator.messageChild(
+          child.address,
+          message({ text: "eu-west" }),
+        );
+        await until((): boolean => runtimeState.turns.length === 2);
+        runtimeState.turns[1]?.answer("done");
+        await until((): boolean => newer.coordinator.runningCount === 0);
+        older.turns.set("lineage", 1);
+
+        return true;
+      });
+
+      await older.coordinator.closePasses();
+      await Bun.sleep(5);
+
+      expect(runtimeState.turns).toHaveLength(2);
+      expect(older.turns.get("lineage")).toBe(0);
     });
 
     it("keeps one note's ids across its tries, so a note admitted before a failure is delivered once", async (): Promise<void> => {

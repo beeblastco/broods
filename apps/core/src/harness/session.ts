@@ -361,11 +361,8 @@ export class Session {
     });
   }
 
-  /**
-   * Takes one of the turns this run's lineage may start by messaging its
-   * subagents: the run a person started and every run continuing it share
-   * `limit`, so two agents cannot keep waking each other.
-   */
+  // One of the `limit` turns a lineage (a person's run and every run continuing it) may start
+  // by messaging, so two agents cannot keep waking each other.
   async claimMessageTurn(limit: number): Promise<boolean> {
     if (!this.accountId) {
       throw new Error("Account ID is required for runtime claims");

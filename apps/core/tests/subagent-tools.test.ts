@@ -1,3 +1,4 @@
+import type { Tool } from "ai";
 import { afterEach, expect, it, mock, spyOn } from "bun:test";
 import type {
   AgentMessage,
@@ -307,7 +308,9 @@ it("message-agents waits on the parent once a turn, notes without a wait, and re
   });
 });
 
-async function subagentTools(parentEventId: string) {
+async function subagentTools(
+  parentEventId: string,
+): Promise<{ stop_subagent: Tool }> {
   const { default: stop } =
     await import("../src/harness/tools/stop-subagent.tool.ts");
   const context = {
