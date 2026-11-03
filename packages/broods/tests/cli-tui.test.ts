@@ -478,3 +478,46 @@ test("a turn queued behind a stopped one streams its answer, not the 202", async
     expect.objectContaining({ type: "text", text: "queued answer" }),
   );
 });
+
+test("a queued turn that fails still counts as sent", async () => {
+  const bodies: RunBody[] = [];
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    baseUrl: "http://core.test",
+    fetch: Object.assign(
+      async (...[input, init]: Parameters<typeof fetch>): Promise<Response> => {
+        const url = input instanceof Request ? input.url : input.toString();
+        if (url.endsWith("/status/run_2"))
+          return Response.json({ status: "failed" });
+        bodies.push(
+          JSON.parse(
+            typeof init?.body === "string" ? init.body : "",
+          ) as RunBody,
+        );
+
+        return Response.json(
+          {
+            statusUrl: "http://core.test/status/run_2",
+            runId: "run_2",
+            status: "queued",
+          },
+          { status: 202 },
+        );
+      },
+      { preconnect: fetch.preconnect },
+    ),
+  });
+  const transport = new RemoteAgentTransport(client, AGENT);
+
+  await readTurn(transport, [userMessage("m1", "first")]).catch(
+    () => undefined,
+  );
+  await readTurn(transport, [
+    userMessage("m1", "first"),
+    userMessage("m2", "second"),
+  ]).catch(() => undefined);
+
+  expect(bodies[1]?.events).toEqual([
+    { role: "user", content: [{ type: "text", text: "second" }] },
+  ]);
+});
