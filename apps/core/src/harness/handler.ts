@@ -42,6 +42,7 @@ import {
   errorResponse,
   jsonResponse,
   methodNotAllowed,
+  normalizePath,
   parseJsonBody,
   type CoreRequest,
   type RequestContext,
@@ -77,6 +78,8 @@ import {
 } from "./async-agent-result.ts";
 import {
   getAsyncToolResult,
+  askingEventId,
+  asyncToolContinuationEventId,
   rootEventId,
   settleAsyncToolResultFromCallback,
   verifyAsyncToolCompletionToken,
@@ -111,6 +114,7 @@ import {
   type IngressDelivery,
   type IngressMode,
   type IngressSettlement,
+  type PublicDeploymentIngress,
   type SessionMessageInput,
   type SessionMessageResult,
 } from "./ingress.ts";
@@ -128,6 +132,7 @@ import {
   type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
+import { handleMcpRequest, MCP_PATH } from "./mcp-tasks.ts";
 import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   admitRun,
@@ -338,6 +343,11 @@ async function handleRequest(
 
   if (event.path === "/v1/cron-runs") {
     return handleCronHttpRequest(event);
+  }
+  if (normalizePath(event.path) === MCP_PATH) {
+    return handleMcpRequest(event, (replayed): Promise<Response> =>
+      handleRequest(replayed, context),
+    );
   }
 
   return routeIncomingEvent(
@@ -554,9 +564,20 @@ export async function continueAfterAsyncToolSettlement(
   }
   const publicEventId = `async-tools-${settled.resultId}`;
   const question = settled.toolName === ASK_QUESTIONS_TOOL_NAME;
+  // The continuation keeps the asking turn's stage, so a runtime key can still read it.
+  const asking =
+    settled.delivery?.kind === "channel"
+      ? null
+      : await getIngressStatusByEventId({
+          ...scope,
+          eventId: askingEventId(settled),
+        });
 
   return resumeConversation({
     ...scope,
+    ...(asking?.publicDeploymentIngress
+      ? { publicDeploymentIngress: asking.publicDeploymentIngress }
+      : {}),
     eventId: asyncToolContinuationEventId(settled),
     publicEventId: publicEventId,
     toolResultId: settled.resultId,
@@ -640,6 +661,7 @@ async function resumeConversation(options: {
   conversationKey: string;
   delivery: AsyncToolDelivery | undefined;
   asyncResultEventId?: string;
+  publicDeploymentIngress?: PublicDeploymentIngress;
   message: IngressUserMessage;
   requestedMode: IngressMode;
   resultEventId?: string;
@@ -675,6 +697,9 @@ async function resumeConversation(options: {
     eventId: options.eventId,
     ...(options.asyncResultEventId
       ? { asyncResultEventId: options.asyncResultEventId }
+      : {}),
+    ...(options.publicDeploymentIngress
+      ? { publicDeploymentIngress: options.publicDeploymentIngress }
       : {}),
     ...(options.delivery?.kind === "channel"
       ? {
@@ -2016,6 +2041,15 @@ async function handleStatusRequest(
       approvals: asyncResult?.approvals,
       questions: asyncResult?.questions,
       error: (result.error ?? asyncResult?.error) || undefined,
+      createdAt: new Date(result.createdAt).toISOString(),
+      // The polling row moves on its own while the envelope rests: an answered
+      // question or a hand-back updates only the row.
+      lastUpdatedAt: new Date(
+        Math.max(
+          result.updatedAt,
+          asyncResult ? Date.parse(asyncResult.updatedAt) : 0,
+        ),
+      ).toISOString(),
     }),
   );
 }
@@ -2485,6 +2519,9 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
       publicConversationKey: event.publicConversationKey,
       connectionId: event.connectionId,
       ...(directStatusUrl(event) ? { statusUrl: directStatusUrl(event)! } : {}),
+      ...(event.publicDeploymentIngress
+        ? { publicDeploymentIngress: event.publicDeploymentIngress }
+        : {}),
     };
   }
   if (event.replyTarget) {
@@ -2505,6 +2542,9 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
     publicEventId: event.publicEventId,
     publicConversationKey: event.publicConversationKey,
     statusUrl: statusUrl,
+    ...(event.publicDeploymentIngress
+      ? { publicDeploymentIngress: event.publicDeploymentIngress }
+      : {}),
   };
 }
 
@@ -2523,13 +2563,6 @@ async function invokeHarnessWorker(
           ownerGeneration: event.ownerGeneration,
         },
   );
-}
-
-// Root event, not parent: a detached row's parent event id already names the row.
-function asyncToolContinuationEventId(
-  row: Pick<AsyncToolResultRecord, "parentEventId" | "resultId">,
-): string {
-  return `${rootEventId(row.parentEventId)}:async-tools:${row.resultId}`;
 }
 
 async function startOwnedAsyncRun(
