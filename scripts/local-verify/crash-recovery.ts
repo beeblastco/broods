@@ -54,34 +54,38 @@ export async function runCrashRecovery(
   };
   const holdOff = `${options.tracePath}.hold-off`;
   rmSync(holdOff, { force: true });
-  const trials: Array<{ conversationKey: string; resultId: string }> = [];
-  for (let index = 0; index < options.trials; index += 1) {
-    const conversationKey = `crash-${context.runId}-${index}`;
-    await openConversation(env, conversationKey);
-    trials.push({
-      conversationKey: conversationKey,
-      resultId: await seedDetachedResult(env, conversationKey),
-    });
-  }
   const ledger = `${options.tracePath}.held`;
   const heldBefore = heldCount(ledger);
-  const held = await pollUntil(
-    {
-      initialIntervalMs: 500,
-      maxIntervalMs: 2_000,
-      timeoutMs: SWEEP_PICKUP_MS,
-    },
-    async (): Promise<true | null> =>
-      heldCount(ledger) > heldBefore ? true : null,
-  );
-  if (!held) throw new Error("the sweep handed no resume to a run");
-  // The sweep's pass admits the rest; those wait for a worker and never write.
-  await Bun.sleep(5_000);
-  console.log(
-    `${heldCount(ledger) - heldBefore} resume saves held; killing core`,
-  );
-  writeFileSync(holdOff, "");
-  await options.restartCore();
+  const trials: Array<{ conversationKey: string; resultId: string }> = [];
+  // Always restarted: a held write keeps its run, and its worker slot, until core dies.
+  try {
+    for (let index = 0; index < options.trials; index += 1) {
+      const conversationKey = `crash-${context.runId}-${index}`;
+      await openConversation(env, conversationKey);
+      trials.push({
+        conversationKey: conversationKey,
+        resultId: await seedDetachedResult(env, conversationKey),
+      });
+    }
+    const held = await pollUntil(
+      {
+        initialIntervalMs: 500,
+        maxIntervalMs: 2_000,
+        timeoutMs: SWEEP_PICKUP_MS,
+      },
+      async (): Promise<true | null> =>
+        heldCount(ledger) > heldBefore ? true : null,
+    );
+    if (!held) throw new Error("the sweep handed no resume to a run");
+    // The sweep's pass admits the rest; those wait for a worker and never write.
+    await Bun.sleep(5_000);
+    console.log(
+      `${heldCount(ledger) - heldBefore} resume saves held; killing core`,
+    );
+  } finally {
+    writeFileSync(holdOff, "");
+    await options.restartCore();
+  }
 
   return waitUntilTold(env, trials);
 }
