@@ -1,5 +1,6 @@
 "use client";
 
+import { BroodsMark } from "@/app/components/BroodsMark";
 import { CopilotPlanCard } from "@/app/components/copilot/CopilotPlanCard";
 import { useCopilot } from "@/app/components/copilot/CopilotProvider";
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
@@ -41,7 +42,8 @@ export function CopilotDock(): React.JSX.Element | null {
   return (
     <aside className="flex w-80 shrink-0 flex-col border-l border-border">
       <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
-        <span className="text-xs font-medium">Broods</span>
+        <BroodsMark className="size-3.5" />
+        <span className="text-xs font-medium">Broods agent</span>
         <span className="ml-auto flex items-center gap-1">
           <ShortcutKeys id="copilot.open" bordered />
           <Button
@@ -49,7 +51,7 @@ export function CopilotDock(): React.JSX.Element | null {
             variant="ghost"
             tone="muted"
             onClick={() => setOpen(false)}
-            aria-label="Close Broods"
+            aria-label="Close Broods agent"
           >
             <X />
           </Button>
@@ -81,9 +83,16 @@ export function CopilotDock(): React.JSX.Element | null {
           <div className="flex flex-col gap-3">
             {messages.map((message) => (
               <div key={message.id} className="flex flex-col gap-1">
-                <span className="text-3xs uppercase tracking-wide text-muted-foreground">
-                  {message.role === "user" ? "you" : "broods"}
-                </span>
+                {message.role === "user" ? (
+                  <span className="text-3xs uppercase tracking-wide text-muted-foreground">
+                    you
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-2xs font-medium">
+                    <BroodsMark className="size-3" />
+                    Broods agent
+                  </span>
+                )}
                 <p className="text-xs text-foreground">{message.text}</p>
                 {message.plan && (
                   <CopilotPlanCard
