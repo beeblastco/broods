@@ -372,8 +372,6 @@ async function crash(args: string[]): Promise<void> {
   const { context, state } = await perfStack("crash");
   const waitMin = value("--wait-min");
   const trials = await runCrashRecovery(context, {
-    adminKey: state.adminKey ?? "",
-    convexUrl: `http://127.0.0.1:${ports(state).convexApi}`,
     restartCore: async (): Promise<void> => {
       if (state.pids.core) process.kill(state.pids.core, "SIGKILL");
       await pollUntil(

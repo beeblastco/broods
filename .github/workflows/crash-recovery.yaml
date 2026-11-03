@@ -1,15 +1,6 @@
-# Crash recovery.
-# Runs `local-stack crash` on dev: core is SIGKILLed after the recovery sweep
-# hands 20 late results to resumes and before any resume's message is saved;
-# each conversation must then be told its result exactly once (#1183).
-#
-# Not on pull requests: recovery waits out the real timers (a dead run's
-# 15-minute lease, the 5-minute maintain cron), so one run takes ~25 minutes.
-#
-# Output: one open issue labelled `crash-recovery` while the last run failed,
-# rewritten in place each failing run, and closed by the next passing one. A
-# failing run on dev also hands the issue to Claude Code, which opens one fix PR
-# against dev (never merges) or explains on the issue why it could not.
+# Nightly `bun run local:crash` on dev (#1183): every late result must be told exactly once after
+# core is killed mid-resume. ~25 min, so not on PRs. A failure keeps one `crash-recovery` issue
+# open and hands it to Claude Code, which opens a fix PR (never merges) or comments why not.
 
 name: Crash Recovery
 
@@ -48,19 +39,9 @@ jobs:
 
       - name: Crash core between a resume's handover and its save
         id: crash
-        shell: bash
         run: |
-          set -uo pipefail
-          exit_code=0
-          bun run local:crash -- --trials 20 --out crash.json 2>&1 | tee crash.log || exit_code=$?
-          {
-            echo '### Crash recovery'
-            echo '```'
-            tail -n 20 crash.log
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "failed=$([ "$exit_code" -ne 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          exit "$exit_code"
+          set -o pipefail
+          bun run local:crash -- --out crash.json 2>&1 | tee crash.log
 
       - name: Upload results and stack logs
         if: always()
@@ -71,7 +52,6 @@ jobs:
             crash.json
             crash.log
             ~/.broods-local/*/logs/
-            ~/.broods-local/*/convex-calls.jsonl
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
@@ -81,35 +61,27 @@ jobs:
         if: always() && github.ref == 'refs/heads/dev'
         env:
           GH_TOKEN: ${{ github.token }}
-          FAILED: ${{ steps.crash.outputs.failed != 'false' }}
+          GH_REPO: ${{ github.repository }}
+          PASSED: ${{ steps.crash.outcome == 'success' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SHA: ${{ github.sha }}
-        shell: bash
         run: |
           set -euo pipefail
-          gh label create crash-recovery --repo "$GITHUB_REPOSITORY" \
-            --color B60205 --description "Nightly crash-recovery test failed" \
-            --force >/dev/null
-          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" \
-            --label crash-recovery --state open --limit 1 --json number \
-            --jq '.[0].number // empty')
-          if [[ "$FAILED" != "true" ]]; then
-            if [[ -n "$existing" ]]; then
-              gh issue close "$existing" --repo "$GITHUB_REPOSITORY" \
-                --comment "Passed on \`$SHA\`: $RUN_URL"
-            fi
+          gh label create crash-recovery --color B60205 --force >/dev/null
+          number=$(gh issue list --label crash-recovery --state open --limit 1 \
+            --json number --jq '.[0].number // empty')
+          if [[ "$PASSED" == "true" ]]; then
+            [[ -z "$number" ]] || gh issue close "$number" --comment "Passed on $GITHUB_SHA: $RUN_URL"
             exit 0
           fi
-          log=$(tail -n 40 crash.log 2>/dev/null || echo "no log: the run failed before the crash step")
-          body=$(printf 'The nightly crash-recovery run failed on `%s`.\n\nRun: %s\n\n```\n%s\n```\n\nReproduce: `bun run local:up -- --perf` then `bun run local:crash`. Each conversation must be told its result once and its row must read `stored`; `crash.json` in the run artifact lists every trial.\n' "$SHA" "$RUN_URL" "$log")
-          if [[ -n "$existing" ]]; then
-            gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
+          body=$(printf 'Failed on %s: %s\n\n```\n%s\n```\n' "$GITHUB_SHA" "$RUN_URL" \
+            "$(tail -n 40 crash.log 2>/dev/null || echo 'failed before the crash step')")
+          if [[ -n "$number" ]]; then
+            gh issue edit "$number" --body "$body"
           else
-            existing=$(gh issue create --repo "$GITHUB_REPOSITORY" \
-              --title "Crash recovery: a late result was lost or told twice" \
-              --label crash-recovery --body "$body" | grep -oE '[0-9]+$')
+            number=$(gh issue create --label crash-recovery --body "$body" \
+              --title "Crash recovery: a late result was lost or told twice" | grep -oE '[0-9]+$')
           fi
-          echo "number=$existing" >> "$GITHUB_OUTPUT"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
 
       - name: Hand the failure to Claude Code
         if: failure() && steps.issue.outputs.number != ''
@@ -120,29 +92,21 @@ jobs:
             --max-turns 200
             --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
           prompt: |
-            REPO: ${{ github.repository }}
-            ISSUE: #${{ steps.issue.outputs.number }}
-            RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            The nightly crash-recovery test failed on dev at ${{ github.sha }}.
+            Issue: #${{ steps.issue.outputs.number }}. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-            The nightly crash-recovery test failed on `dev` at ${{ github.sha }}. Read the root
-            AGENTS.md first and follow it.
+            Follow the root AGENTS.md. `bun run local:crash` (scripts/local-verify/crash-recovery.ts,
+            hold in scripts/local-verify/fake-model.ts) kills core after the sweep hands late results
+            to resumes and before their messages are saved; each must then be told once and read
+            `stored`. The perf stack is still up; crash.json, crash.log and ~/.broods-local/*/logs/
+            are on this runner.
 
-            The test, `bun run local:crash` (scripts/local-verify/crash-recovery.ts, with the hold
-            in scripts/local-verify/fake-model.ts), kills core after the recovery sweep hands late
-            async results to resumes and before any resume's message is saved. Every conversation
-            must then be told its result exactly once, and every row must read `stored`. This
-            runner's local stack is still up in perf mode; `crash.json` and `crash.log` are in the
-            working directory, and the stack logs are under ~/.broods-local/*/logs/.
-
-            1. Find the root cause; "flake" is not one. Rerun `bun run local:crash` to confirm.
-            2. Product bug: fix it on a new branch `claude/crash-recovery-${{ github.run_id }}` from
-               dev with focused tests and the checks AGENTS.md requires, rerun `bun run local:crash`
-               until it passes, push, and open one PR against dev that links the issue and gives
-               the cause, the fix and the before/after result. Harness bug: fix the harness the
-               same way. Never weaken, skip or loosen the assertion to get green.
-            3. No clear cause, or the fix is a large design change: do not open a PR; comment your
-               diagnosis on the issue and say what decision is needed.
-            Never merge, approve or deploy. End every issue or PR text you write with:
+            Find the root cause ("flake" is not one) and confirm it with `bun run local:crash`. If you
+            can fix it, in the product or the harness, do it on branch
+            `claude/crash-recovery-${{ github.run_id }}` from dev with focused tests, rerun the test
+            until it passes, and open one PR against dev that links the issue. Never loosen the
+            assertion. If the cause is unclear or the fix is a design change, comment your diagnosis
+            on the issue instead. Never merge, approve or deploy. End anything you post with:
 
             ---
             _Generated by [Claude Code](https://claude.ai/code)_

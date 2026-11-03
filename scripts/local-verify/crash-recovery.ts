@@ -7,16 +7,13 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../../apps/core/src/shared/runtime-keys.ts";
-import { pollUntil, type VerifyContext } from "./harness.ts";
+import { convexResult, pollUntil, type VerifyContext } from "./harness.ts";
 
 const PAYLOAD = "CRASHPAYLOAD-";
-const SWEEP_PICKUP_MS = 4 * 60_000;
 // The dead run's lease (15 min), a `maintain` pass (5 min) and the sweep after it.
 const RECOVERY_WAIT_MS = 25 * 60_000;
 
 export interface CrashOptions {
-  adminKey: string;
-  convexUrl: string;
   restartCore: () => Promise<void>;
   tracePath: string;
   trials: number;
@@ -30,13 +27,6 @@ export interface CrashTrial {
   told: number;
 }
 
-interface Env {
-  accountId: string;
-  agentId: string;
-  context: VerifyContext;
-  options: CrashOptions;
-}
-
 export async function runCrashRecovery(
   context: VerifyContext,
   options: CrashOptions,
@@ -46,214 +36,131 @@ export async function runCrashRecovery(
     name: `crash-${context.runId}`,
     config: { ...context.model, agent: { system: "Say OK." } },
   });
-  const env: Env = {
-    accountId: accountId,
-    agentId: agentId,
-    context: context,
-    options: options,
-  };
   const holdOff = `${options.tracePath}.hold-off`;
-  rmSync(holdOff, { force: true });
   const ledger = `${options.tracePath}.held`;
-  const heldBefore = heldCount(ledger);
-  const trials: Array<{ conversationKey: string; resultId: string }> = [];
+  const held = (): number =>
+    existsSync(ledger)
+      ? readFileSync(ledger, "utf8").split("\n").length - 1
+      : 0;
+  rmSync(holdOff, { force: true });
+  const heldBefore = held();
+  const trials: CrashTrial[] = [];
   // Always restarted: a held write keeps its run, and its worker slot, until core dies.
   try {
     for (let index = 0; index < options.trials; index += 1) {
-      const conversationKey = `crash-${context.runId}-${index}`;
-      await openConversation(env, conversationKey);
+      const publicKey = `crash-${context.runId}-${index}`;
+      for await (const _part of context.client.agent("crash", agentId).stream({
+        conversationKey: publicKey,
+        eventId: `${publicKey}-t0`,
+        input: "Say OK.",
+      })) {
+        continue;
+      }
+      const conversationKey = scopedDirectConversationKey(
+        accountId,
+        agentId,
+        publicKey,
+      );
+      const parent = scopedDirectEventId(accountId, agentId, `${publicKey}-t0`);
       trials.push({
         conversationKey: conversationKey,
-        resultId: await seedDetachedResult(env, conversationKey),
+        handback: "detached",
+        resultId: seedDetachedResult(context, conversationKey, parent),
+        told: 0,
       });
     }
-    const held = await pollUntil(
-      {
-        initialIntervalMs: 500,
-        maxIntervalMs: 2_000,
-        timeoutMs: SWEEP_PICKUP_MS,
-      },
-      async (): Promise<true | null> =>
-        heldCount(ledger) > heldBefore ? true : null,
+    const picked = await pollUntil(
+      { initialIntervalMs: 500, maxIntervalMs: 2_000, timeoutMs: 4 * 60_000 },
+      async (): Promise<true | null> => (held() > heldBefore ? true : null),
     );
-    if (!held) throw new Error("the sweep handed no resume to a run");
+    if (!picked) throw new Error("the sweep handed no resume to a run");
     // The sweep's pass admits the rest; those wait for a worker and never write.
     await Bun.sleep(5_000);
-    console.log(
-      `${heldCount(ledger) - heldBefore} resume saves held; killing core`,
-    );
+    console.log(`${held() - heldBefore} resume saves held; killing core`);
   } finally {
     writeFileSync(holdOff, "");
     await options.restartCore();
   }
 
-  return waitUntilTold(env, trials);
-}
-
-function heldCount(ledger: string): number {
-  return existsSync(ledger)
-    ? readFileSync(ledger, "utf8").split("\n").length - 1
-    : 0;
-}
-
-async function openConversation(
-  env: Env,
-  conversationKey: string,
-): Promise<void> {
-  for await (const _part of env.context.client
-    .agent("crash", env.agentId)
-    .stream({
-      conversationKey: conversationKey,
-      eventId: `${conversationKey}-t0`,
-      input: "Say OK.",
-    })) {
-    continue;
-  }
-}
-
-// Created under the conversation's first turn, settled, and left to the recovery sweep.
-async function seedDetachedResult(
-  env: Env,
-  conversationKey: string,
-): Promise<string> {
-  const resultId = `async_tool_resumehold_${crypto.randomUUID()}`;
-  const parent = scopedDirectEventId(
-    env.accountId,
-    env.agentId,
-    `${conversationKey}-t0`,
-  );
-  await convexAdmin(env, "mutation", "runtime:createAsyncToolResult", {
-    resultId: resultId,
-    parentEventId: `${parent}:async-bg:${resultId}`,
-    conversationKey: scopedKey(env, conversationKey),
-    toolName: "bash",
-    toolCallId: `seed-${resultId}`,
-    input: { command: "crash seed" },
-    delivery: { kind: "async" },
-  });
-  await convexAdmin(env, "mutation", "runtime:updateAsyncToolResult", {
-    resultId: resultId,
-    status: "completed",
-    response: { output: `${PAYLOAD}${resultId}` },
-    onlyWhenProcessing: true,
-  });
-  await convexAdmin(env, "mutation", "runtime:markAsyncToolHandback", {
-    resultId: resultId,
-    handback: "detached",
-  });
-
-  return resultId;
-}
-
-async function waitUntilTold(
-  env: Env,
-  trials: Array<{ conversationKey: string; resultId: string }>,
-): Promise<CrashTrial[]> {
-  const waitMs = env.options.waitMs ?? RECOVERY_WAIT_MS;
+  const deadline = Date.now() + (options.waitMs ?? RECOVERY_WAIT_MS);
   console.log(
-    `core restarted; waiting up to ${waitMs / 60_000} min for recovery`,
+    `core restarted; waiting until ${new Date(deadline).toISOString()}`,
   );
-  const deadline = Date.now() + waitMs;
-  let told = await tell(env, trials);
   while (
     Date.now() < deadline &&
-    told.some((trial): boolean => trial.told === 0)
+    tell(context, trials).some((trial) => trial.told === 0)
   ) {
     await Bun.sleep(30_000);
-    told = await tell(env, trials);
   }
   // A second telling still in flight shows up here.
   await Bun.sleep(5_000);
 
-  return tell(env, trials);
+  return tell(context, trials);
 }
 
-async function tell(
-  env: Env,
-  trials: Array<{ conversationKey: string; resultId: string }>,
-): Promise<CrashTrial[]> {
-  return Promise.all(
-    trials.map(async ({ conversationKey, resultId }): Promise<CrashTrial> => {
-      const events = await conversationEvents(
-        env,
-        scopedKey(env, conversationKey),
-      );
-      const row = (await convexAdmin(
-        env,
-        "query",
-        "runtime:getAsyncToolResult",
-        {
-          resultId: resultId,
-        },
-      )) as { handback?: string } | null;
-
-      return {
-        conversationKey: conversationKey,
-        handback: row?.handback ?? "missing",
-        resultId: resultId,
-        told: events.filter((event): boolean =>
-          event.includes(`${PAYLOAD}${resultId}`),
-        ).length,
-      };
-    }),
-  );
-}
-
-async function conversationEvents(
-  env: Env,
+// Created under the conversation's first turn, settled, and left to the recovery sweep.
+function seedDetachedResult(
+  context: VerifyContext,
   conversationKey: string,
-): Promise<string[]> {
-  const events: string[] = [];
-  let afterCursor: string | undefined;
-  for (;;) {
-    const page = (await convexAdmin(
-      env,
-      "query",
-      "runtime:listConversationEvents",
-      {
-        conversationKey: conversationKey,
-        ...(afterCursor ? { afterCursor: afterCursor } : {}),
-      },
-    )) as {
-      continueCursor: string | null;
-      isDone: boolean;
-      page: { event: unknown }[];
-    };
-    events.push(...page.page.map((row): string => JSON.stringify(row.event)));
-    if (page.isDone || !page.continueCursor) return events;
-    afterCursor = page.continueCursor;
-  }
-}
-
-function scopedKey(env: Env, conversationKey: string): string {
-  return scopedDirectConversationKey(
-    env.accountId,
-    env.agentId,
-    conversationKey,
-  );
-}
-
-// The admin key may call internal functions.
-async function convexAdmin(
-  env: Env,
-  kind: "query" | "mutation",
-  path: string,
-  args: Record<string, unknown>,
-): Promise<unknown> {
-  const response = await fetch(`${env.options.convexUrl}/api/${kind}`, {
-    method: "POST",
-    headers: {
-      authorization: `Convex ${env.options.adminKey}`,
-      "content-type": "application/json",
+  parentEventId: string,
+): string {
+  const resultId = `async_tool_resumehold_${crypto.randomUUID()}`;
+  convexResult(
+    context,
+    "runtime:createAsyncToolResult",
+    {
+      resultId: resultId,
+      parentEventId: `${parentEventId}:async-bg:${resultId}`,
+      conversationKey: conversationKey,
+      toolName: "bash",
+      toolCallId: `seed-${resultId}`,
+      input: { command: "crash seed" },
+      delivery: { kind: "async" },
     },
-    body: JSON.stringify({ path: path, args: args, format: "json" }),
-    signal: AbortSignal.timeout(30_000),
-  });
-  const body = (await response.json()) as
-    | { status: "success"; value: unknown }
-    | { status: "error"; errorMessage: string };
-  if (body.status !== "success")
-    throw new Error(`${path}: ${body.errorMessage}`);
+    "seed a background result",
+  );
+  convexResult(
+    context,
+    "runtime:updateAsyncToolResult",
+    {
+      resultId: resultId,
+      status: "completed",
+      response: { output: `${PAYLOAD}${resultId}` },
+      onlyWhenProcessing: true,
+    },
+    "settle the result",
+  );
+  convexResult(
+    context,
+    "runtime:markAsyncToolHandback",
+    { resultId: resultId, handback: "detached" },
+    "hand the result to the recovery sweep",
+  );
 
-  return body.value;
+  return resultId;
+}
+
+function tell(context: VerifyContext, trials: CrashTrial[]): CrashTrial[] {
+  return trials.map((trial): CrashTrial => {
+    const history = convexResult<{ page: { event: unknown }[] }>(
+      context,
+      "runtime:listConversationEvents",
+      { conversationKey: trial.conversationKey },
+      "read the conversation",
+    );
+    const row = convexResult<{ handback?: string } | null>(
+      context,
+      "runtime:getAsyncToolResult",
+      { resultId: trial.resultId },
+      "read the result row",
+    );
+
+    return {
+      ...trial,
+      handback: row?.handback ?? "missing",
+      told: history.page.filter((entry): boolean =>
+        JSON.stringify(entry.event).includes(`${PAYLOAD}${trial.resultId}`),
+      ).length,
+    };
+  });
 }
