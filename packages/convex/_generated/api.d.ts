@@ -957,6 +957,22 @@ export declare const api: {
       >;
     };
   };
+  agentDock: {
+    session: FunctionReference<
+      "mutation",
+      "public",
+      {},
+      {
+        agentId: string;
+        endpointId: string;
+        expiresAt: number;
+        projectSlug: string;
+        runtimeKey: string;
+        stageSlug: string;
+        userToken: string;
+      } | null
+    >;
+  };
   apiKeys: {
     listForOrg: FunctionReference<
       "query",
