@@ -11,19 +11,19 @@ type HarnessReasoning = NonNullable<AgentConfig["model"]>["reasoning"];
 type HarnessEffort = "low" | "medium" | "high" | "xhigh";
 
 interface AnthropicHarnessReasoning {
-  effort?: HarnessEffort;
-  thinking?: { type: "disabled" };
+  effort?: Exclude<HarnessEffort, "xhigh">;
 }
 
-// Claude Code and Deep Agents take Anthropic's effort; `none` turns thinking off instead.
+// Claude Code and Deep Agents take Anthropic effort. Current Claude models refuse thinking off
+// and older ones refuse xhigh, so those run as low and high, which every effort model takes.
 export function anthropicHarnessReasoning(
   agentConfig: AgentConfig,
 ): AnthropicHarnessReasoning {
   const reasoning = agentConfig.model?.reasoning;
-  if (reasoning === "none") return { thinking: { type: "disabled" } };
-  const effort = harnessEffort(reasoning);
+  const effort = reasoning === "none" ? "low" : harnessEffort(reasoning);
+  if (!effort) return {};
 
-  return effort ? { effort: effort } : {};
+  return { effort: effort === "xhigh" ? "high" : effort };
 }
 
 // The effort levels Claude Code, Deep Agents and Codex share; `minimal` is below their lowest.
