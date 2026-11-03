@@ -360,12 +360,15 @@ describe("parkAiSdkHarnessSession", () => {
 
     expect(detach).toHaveBeenCalledTimes(1);
     expect(stop).not.toHaveBeenCalled();
-    expect(saveHarnessSession).toHaveBeenCalledWith({
-      harnessType: "deepagents",
-      sessionId: "native-session",
-      resumeState: CHECKPOINT,
-      reservationKey: "acct:a:agent:b:sandbox",
-    });
+    expect(saveHarnessSession).toHaveBeenCalledWith(
+      {
+        harnessType: "deepagents",
+        sessionId: "native-session",
+        resumeState: CHECKPOINT,
+        reservationKey: "acct:a:agent:b:sandbox",
+      },
+      undefined,
+    );
   });
 
   it("stops snapshot-backed adapters after successful turns", async () => {

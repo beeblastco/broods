@@ -34,6 +34,7 @@ const CONVERSATION_CLEAR_BATCH_SIZE = 100;
 const CONVERSATION_EVENT_PAGE_BYTES = 4 * 1_024 * 1_024;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
+const HARNESS_ENTRY_PAGE_BYTES = 4 * 1_024 * 1_024;
 // One recovery sweep's page of late subagent or async tool results.
 const OWED_RESULT_PAGE_SIZE = 100;
 
@@ -41,6 +42,13 @@ const REPLACED_SANDBOX_ERROR =
   "Background job ran on a sandbox that has since been replaced";
 
 const RUNTIME_DELETE_BATCH_SIZE = 100;
+
+export const harnessSessionEntryValidator = v.object({
+  entryId: v.string(),
+  parentEntryId: v.optional(v.string()),
+  version: v.number(),
+  entry: v.string(),
+});
 
 // Only core's sandbox sweeper may expire a reservation: the row is the sole copy of
 // `externalId`, so deleting it before the sandbox strands the machine.
@@ -376,6 +384,77 @@ export const getHarnessSession = internalQuery({
   },
 });
 
+// Pages through every entry of a session in append order; a page stops at about 4 MiB.
+export const readHarnessSessionEntries = internalQuery({
+  args: {
+    conversationKey: v.string(),
+    sessionId: v.string(),
+    afterSequence: v.optional(v.number()),
+  },
+  returns: v.object({
+    entries: v.array(harnessSessionEntryValidator),
+    nextSequence: v.union(v.number(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    const accountId = accountIdFromKey(args.conversationKey);
+    const entries: Infer<typeof harnessSessionEntryValidator>[] = [];
+    let pageBytes = 0;
+    let last: number | undefined;
+    for await (const row of ctx.db
+      .query("runtimeHarnessSessionEntries")
+      .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) => {
+        const session = q
+          .eq("conversationKey", args.conversationKey)
+          .eq("sessionId", args.sessionId);
+
+        return args.afterSequence === undefined
+          ? session
+          : session.gt("sequence", args.afterSequence);
+      })) {
+      if (pageBytes >= HARNESS_ENTRY_PAGE_BYTES) {
+        return { entries: entries, nextSequence: last ?? null };
+      }
+      if (row.accountId !== accountId) {
+        throw new Error(
+          "Harness session entry does not belong to conversation account",
+        );
+      }
+      entries.push({
+        entryId: row.entryId,
+        parentEntryId: row.parentEntryId,
+        version: row.version,
+        entry: row.entry,
+      });
+      pageBytes += row.entry.length;
+      last = row.sequence;
+    }
+
+    return { entries: entries, nextSequence: null };
+  },
+});
+
+// Schedules itself until every entry of the replaced session is gone.
+export const pruneHarnessSessionEntries = internalMutation({
+  args: { conversationKey: v.string(), sessionId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const hasMore = await deleteHarnessSessionEntries(
+      ctx,
+      args.conversationKey,
+      args.sessionId,
+    );
+    if (hasMore) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.runtime.pruneHarnessSessionEntries,
+        args,
+      );
+    }
+
+    return null;
+  },
+});
+
 export const clearConversation = internalMutation({
   args: { conversationKey: v.string() },
   returns: v.object({
@@ -402,10 +481,14 @@ export const clearConversation = internalMutation({
       )
       .unique();
     if (harnessSession) await ctx.db.delete(harnessSession._id);
+    const entriesLeft = await deleteHarnessSessionEntries(
+      ctx,
+      args.conversationKey,
+    );
 
     return {
       deleted: batch.length,
-      hasMore: rows.length > CONVERSATION_CLEAR_BATCH_SIZE,
+      hasMore: rows.length > CONVERSATION_CLEAR_BATCH_SIZE || entriesLeft,
     };
   },
 });
@@ -1272,6 +1355,12 @@ export const deleteAgentRuntimeData = internalMutation({
         q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
       )
       .take(RUNTIME_DELETE_BATCH_SIZE);
+    const harnessEntryRows = await ctx.db
+      .query("runtimeHarnessSessionEntries")
+      .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
+        q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
+      )
+      .take(RUNTIME_DELETE_BATCH_SIZE);
     const asyncAgentRows = await ctx.db
       .query("runtimeAsyncAgentResults")
       .withIndex("by_conversationKey", (q) =>
@@ -1290,6 +1379,7 @@ export const deleteAgentRuntimeData = internalMutation({
       ...ingressRows,
       ...applicationRows,
       ...harnessSessionRows,
+      ...harnessEntryRows,
       ...asyncAgentRows,
       ...asyncToolRows,
     ])
@@ -1301,6 +1391,7 @@ export const deleteAgentRuntimeData = internalMutation({
         ingressRows,
         applicationRows,
         harnessSessionRows,
+        harnessEntryRows,
         asyncAgentRows,
         asyncToolRows,
       ].some((batch) => batch.length === RUNTIME_DELETE_BATCH_SIZE)
@@ -1317,7 +1408,8 @@ export const deleteAgentRuntimeData = internalMutation({
       coordinatorDeleted: coordinatorRows.length,
       ingressDeleted: ingressRows.length,
       applicationDeleted: applicationRows.length,
-      harnessSessionDeleted: harnessSessionRows.length,
+      harnessSessionDeleted:
+        harnessSessionRows.length + harnessEntryRows.length,
       asyncAgentResultDeleted: asyncAgentRows.length,
       asyncToolResultDeleted: asyncToolRows.length,
       totalDeleted:
@@ -1326,6 +1418,7 @@ export const deleteAgentRuntimeData = internalMutation({
         ingressRows.length +
         applicationRows.length +
         harnessSessionRows.length +
+        harnessEntryRows.length +
         asyncAgentRows.length +
         asyncToolRows.length,
     };
@@ -1375,6 +1468,10 @@ export const deleteAccountRuntimeData = internalMutation({
       .query("runtimeHarnessSessions")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
       .take(100);
+    const harnessEntryRows = await ctx.db
+      .query("runtimeHarnessSessionEntries")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .take(100);
     const toolRows = await ctx.db
       .query("runtimeAsyncToolResults")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
@@ -1390,6 +1487,7 @@ export const deleteAccountRuntimeData = internalMutation({
       ...ingressRows,
       ...applicationRows,
       ...harnessSessionRows,
+      ...harnessEntryRows,
       ...agentRows,
       ...toolRows,
       ...reservationRows,
@@ -1405,7 +1503,8 @@ export const deleteAccountRuntimeData = internalMutation({
         applicationRows.length,
       asyncAgentResultDeleted: agentRows.length,
       asyncToolResultDeleted: toolRows.length,
-      harnessSessionDeleted: harnessSessionRows.length,
+      harnessSessionDeleted:
+        harnessSessionRows.length + harnessEntryRows.length,
       sandboxReservationDeleted: reservationRows.length,
       totalDeleted:
         conversationRows.length +
@@ -1414,6 +1513,7 @@ export const deleteAccountRuntimeData = internalMutation({
         ingressRows.length +
         applicationRows.length +
         harnessSessionRows.length +
+        harnessEntryRows.length +
         agentRows.length +
         toolRows.length +
         reservationRows.length,
@@ -1450,6 +1550,27 @@ export const pruneExpired = internalMutation({
     return rows.length;
   },
 });
+
+// Deletes one batch of a conversation's harness entries, or one session's; true when more remain.
+export async function deleteHarnessSessionEntries(
+  ctx: MutationCtx,
+  conversationKey: string,
+  sessionId?: string,
+): Promise<boolean> {
+  const rows = await ctx.db
+    .query("runtimeHarnessSessionEntries")
+    .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
+      sessionId === undefined
+        ? q.eq("conversationKey", conversationKey)
+        : q.eq("conversationKey", conversationKey).eq("sessionId", sessionId),
+    )
+    .take(RUNTIME_DELETE_BATCH_SIZE + 1);
+  for (const row of rows.slice(0, RUNTIME_DELETE_BATCH_SIZE)) {
+    await ctx.db.delete(row._id);
+  }
+
+  return rows.length > RUNTIME_DELETE_BATCH_SIZE;
+}
 
 function claimKeyForAccount(accountId: string, key: string): string {
   if (!key.startsWith("acct:")) {

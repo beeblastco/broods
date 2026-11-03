@@ -1527,12 +1527,23 @@ export async function runAgentLoop(
         broodsSession: session,
         nativeSession: activeHarnessSession,
         reservationKey: harnessTurn?.reservationKey ?? session.conversationKey,
+        sessionLog: harnessTurn?.sessionLog,
         successful: finalizationError === undefined,
         type: agentConfig.harness!.type,
       });
     } catch (error) {
       const message = errorMessage(error);
       finalizationError ??= error instanceof Error ? error : new Error(message);
+      if (finishObserved) {
+        logError(
+          "Harness checkpoint not saved; the next turn resumes from the last saved one",
+          {
+            eventId: session.eventId,
+            conversationKey: session.conversationKey,
+            error: message,
+          },
+        );
+      }
     } finally {
       activeHarnessSession = undefined;
     }
