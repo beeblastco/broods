@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
 const oxlintBin = join(repoRoot, "node_modules", ".bin", "oxlint");
@@ -51,6 +51,7 @@ const dedent = (source: string): string => {
 };
 
 interface Fixture {
+  readonly name: string;
   readonly filename: string;
   readonly source: string;
   findings?: Array<Finding>;
@@ -80,7 +81,7 @@ const lintPending = (group: FixtureGroup): void => {
       }),
     );
     const paths = pending.map((fixture, index) => {
-      const path = join(String(index), fixture.filename);
+      const path = posix.join(String(index), fixture.filename);
       mkdirSync(dirname(join(dir, path)), { recursive: true });
       writeFileSync(join(dir, path), dedent(fixture.source));
       return path;
@@ -91,7 +92,12 @@ const lintPending = (group: FixtureGroup): void => {
     );
     const stdout = result.stdout.toString();
     if (!stdout.trimStart().startsWith("{")) {
-      throw new Error(`oxlint failed: ${stdout}${result.stderr.toString()}`);
+      const cases = pending.map(
+        (fixture, index) => `${paths[index]}: ${fixture.name}`,
+      );
+      throw new Error(
+        `oxlint failed on one of:\n${cases.join("\n")}\n${stdout}${result.stderr.toString()}`,
+      );
     }
     const report = JSON.parse(stdout) as OxlintReport;
     const [plugin, name] = group.rule.split("/");
@@ -100,7 +106,7 @@ const lintPending = (group: FixtureGroup): void => {
         .filter(
           (diagnostic) =>
             diagnostic.code === `${plugin}(${name})` &&
-            diagnostic.filename === paths[index],
+            diagnostic.filename.replaceAll("\\", "/") === paths[index],
         )
         .map((diagnostic) => ({
           line: diagnostic.labels[0]?.span.line ?? 0,
@@ -113,6 +119,7 @@ const lintPending = (group: FixtureGroup): void => {
 };
 
 const register = (
+  name: string,
   rule: string,
   source: string,
   settings: FixtureSettings,
@@ -126,6 +133,7 @@ const register = (
   };
   groups.set(key, group);
   const fixture: Fixture = {
+    name: name,
     filename: settings.filename ?? "fixture.ts",
     source: source,
   };
@@ -141,13 +149,13 @@ export const ruleTester = (
   settings: FixtureSettings = {},
 ): RuleTester => ({
   valid: (name, source) => {
-    const findings = register(rule, source, settings);
+    const findings = register(name, rule, source, settings);
     test(name, () => {
       expect(findings()).toEqual([]);
     });
   },
   invalid: (name, source, expected) => {
-    const findings = register(rule, source, settings);
+    const findings = register(name, rule, source, settings);
     test(name, () => {
       expect(findings()).toEqual(
         expected.map(({ line, message }) => ({
