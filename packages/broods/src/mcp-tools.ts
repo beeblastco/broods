@@ -225,10 +225,11 @@ export function registerBroodsTools(
   server: McpServer,
   client: BroodsAccountClient,
   scope: McpScopeDefaults = {},
+  observer: BroodsAccountClient = client,
 ): void {
   for (const spec of RESOURCES) registerResource(server, client, spec, scope);
   registerExtras(server, client);
-  registerObservability(server, client, scope);
+  registerObservability(server, observer, scope);
 }
 
 function assertConfirmed(
@@ -630,7 +631,7 @@ const UNTRUSTED =
 const LOG_LEVELS = ["DEBUG", "INFO", "WARN", "ERROR"] as const;
 const USAGE_RANGES = ["1h", "3h", "1d", "7d", "30d", "1y"] as const;
 
-function registerObservability(
+export function registerObservability(
   server: McpServer,
   client: BroodsAccountClient,
   defaults: McpScopeDefaults,

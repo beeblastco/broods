@@ -11,12 +11,7 @@ import type {
   UpdateCronInput,
   WorkspaceConfig,
 } from "./contracts.ts";
-import {
-  fetchObservabilityLogs,
-  fetchObservabilitySpans,
-  fetchObservabilityTrace,
-  type ObservabilityClientOptions,
-} from "./observability-client.ts";
+import type { ObservabilityClientOptions } from "./observability-client.ts";
 import {
   type LogLevel,
   MAX_OBSERVABILITY_BACKFILL,
@@ -479,6 +474,7 @@ export class BroodsAccountClient {
     scope: StageScope,
     options: { level?: LogLevel; limit?: number; sandboxId?: string } = {},
   ): Promise<LogLine[]> {
+    const { fetchObservabilityLogs } = await observabilityClient();
     const entries = await fetchObservabilityLogs(
       await this.openObservabilitySession(scope.project, scope.stage),
       {
@@ -492,6 +488,8 @@ export class BroodsAccountClient {
   }
 
   async readTrace(scope: StageScope, traceId: string): Promise<TraceStep[]> {
+    const { fetchObservabilityTrace } = await observabilityClient();
+
     return traceSteps(
       await fetchObservabilityTrace(
         await this.openObservabilitySession(scope.project, scope.stage),
@@ -505,6 +503,7 @@ export class BroodsAccountClient {
     options: { agentId?: string; limit?: number; status?: string } = {},
   ): Promise<RunSummary[]> {
     const limit = options.limit ?? 20;
+    const { fetchObservabilitySpans } = await observabilityClient();
     const spans = await fetchObservabilitySpans(
       await this.openObservabilitySession(scope.project, scope.stage),
       Math.min(MAX_OBSERVABILITY_BACKFILL, limit * RUN_SPAN_FACTOR),
@@ -1522,6 +1521,13 @@ export class BroodsAccountClient {
 
     return (await response.json()) as T;
   }
+}
+
+// Lazy: the socket client reaches Node-only config, and this entry also loads on edge runtimes.
+async function observabilityClient(): Promise<
+  typeof import("./observability-client.ts")
+> {
+  return await import("./observability-client.ts");
 }
 
 function envVar(name: string): string | undefined {

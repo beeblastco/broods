@@ -3459,6 +3459,12 @@ async function mcp(): Promise<void> {
       process.env.BROODS_MCP_ALLOW_DESTRUCTIVE === "1" &&
       isShellOwnedEnv("BROODS_MCP_ALLOW_DESTRUCTIVE"),
     cli: cli,
+    login: auth
+      ? new BroodsAccountClient({
+          baseUrl: auth.baseUrl,
+          sessionToken: auth.token,
+        })
+      : null,
     scope: { project: runtime.project, stage: runtime.stage },
   });
   serveBroodsMcp(server);

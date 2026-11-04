@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { MCP_PROTOCOL_VERSION } from "../../../apps/core/src/shared/mcp-protocol.ts";
+import { BroodsAccountClient } from "../src/account.ts";
 import type { BroodsMcpServerOptions } from "../src/mcp.ts";
 import { createBroodsMcpServer, serveBroodsMcp } from "../src/mcp.ts";
 import { BroodsSyncClient } from "../src/sync.ts";
@@ -35,6 +36,26 @@ afterEach(async (): Promise<void> => {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
+});
+
+test("a stored login alone still reads logs, traces, runs, audit and usage", async (): Promise<void> => {
+  const client = await connect({
+    login: new BroodsAccountClient({
+      baseUrl: "http://127.0.0.1:9",
+      sessionToken: "bcli_test",
+    }),
+  });
+
+  const names = await toolNames(client);
+  for (const tool of [
+    "read-logs",
+    "read-trace",
+    "list-runs",
+    "read-audit",
+    "read-usage",
+  ])
+    expect(names).toContain(tool);
+  expect(names).not.toContain("list-agents");
 });
 
 test("an account credential registers the config plane, without the destructive or CLI tools", async (): Promise<void> => {

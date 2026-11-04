@@ -12,12 +12,15 @@ import {
   registerBroodsTools,
   registerCliScope,
   registerDestructive,
+  registerObservability,
 } from "./mcp-tools.ts";
 import type { BroodsSyncClient } from "./sync.ts";
 
 export interface BroodsMcpServerOptions {
   allowDestructive?: boolean;
   cli?: BroodsSyncClient | null;
+  /** The stored login: logs and traces open only with one, whatever else the shell holds. */
+  login?: BroodsAccountClient | null;
   scope?: McpScopeDefaults;
 }
 
@@ -36,7 +39,15 @@ export function createBroodsMcpServer(
     { capabilities: { tools: {} } },
   );
 
-  if (client) registerBroodsTools(server, client, options.scope ?? {});
+  if (client)
+    registerBroodsTools(
+      server,
+      client,
+      options.scope ?? {},
+      options.login ?? client,
+    );
+  else if (options.login)
+    registerObservability(server, options.login, options.scope ?? {});
   if (options.cli) registerCliScope(server, options.cli);
   if (options.allowDestructive) {
     registerDestructive(server, client, options.cli ?? null);
