@@ -5,3 +5,9 @@ defaultTargets = ["Broods"]
 name = "Broods"
 # A `sorry` is only a warning; this makes it, and any other warning, fail the build.
 leanOptions = { warningAsError = true }
+
+# Differential oracle: `tests/gateway-oracle.test.ts` runs it against `resolveRouter`.
+[[lean_exe]]
+name = "gateway-oracle"
+root = "GatewayOracle"
+leanOptions = { warningAsError = true }
