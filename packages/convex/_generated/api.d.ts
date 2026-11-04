@@ -7020,26 +7020,6 @@ export declare const internal: {
       { accountId: Id<"accounts">; key: string },
       null
     >;
-    reserveSandboxReservation: FunctionReference<
-      "mutation",
-      "internal",
-      {
-        accountId: Id<"accounts">;
-        externalId: string;
-        provider:
-          | "sandbox"
-          | "lambda"
-          | "e2b"
-          | "daytona"
-          | "vercel"
-          | "cloudflare"
-          | "worker"
-          | "machine"
-          | "custom";
-        reservationKey: string;
-      },
-      string
-    >;
     saveSandboxReservation: FunctionReference<
       "mutation",
       "internal",

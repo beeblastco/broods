@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
-import type { Doc, Id } from "../_generated/dataModel";
+import type { Id } from "../_generated/dataModel";
 import {
   FREE_MONTHLY_BUDGET_EUR,
   PLAN_LIMITS,
@@ -214,21 +214,18 @@ test("maxing every cap costs no more than the plan's budget", () => {
 });
 
 test("a sandbox's launch and running time land on its account's meter", async () => {
-  vi.useFakeTimers({ now: NOW - 1000 });
+  vi.useFakeTimers({ now: NOW });
   const t = meterTest();
   const accountId = await seedAccount(t);
-  const sandbox = {
+
+  await t.mutation(internal.sandbox.instances.upsert, {
     accountId: accountId,
-    provider: "lambda" as const,
+    provider: "lambda",
     reservationKey: "fs-abc",
     externalId: "vm-1",
     name: "default",
     specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
-  };
-
-  await reserve(t, sandbox);
-  vi.setSystemTime(NOW);
-  await t.mutation(internal.sandbox.instances.upsert, sandbox);
+  });
   vi.setSystemTime(NOW + 10 * 60 * 1000);
   await t.mutation(internal.sandbox.instances.remove, {
     accountId: accountId,
@@ -247,22 +244,20 @@ test("a sandbox's launch and running time land on its account's meter", async ()
 });
 
 test("a running sandbox's per-command refreshes bill once a minute, to the same total", async () => {
-  vi.useFakeTimers({ now: NOW - 1000 });
+  vi.useFakeTimers({ now: NOW });
   const t = meterTest();
   const accountId = await seedAccount(t);
-  const sandbox = {
-    accountId: accountId,
-    provider: "cloudflare" as const,
-    reservationKey: "cf-abc",
-    externalId: "cf-1",
-    name: "default",
-    specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
-  };
-  await reserve(t, sandbox);
   const refresh = (atSeconds: number) => {
     vi.setSystemTime(NOW + atSeconds * 1000);
 
-    return t.mutation(internal.sandbox.instances.upsert, sandbox);
+    return t.mutation(internal.sandbox.instances.upsert, {
+      accountId: accountId,
+      provider: "cloudflare",
+      reservationKey: "cf-abc",
+      externalId: "cf-1",
+      name: "default",
+      specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+    });
   };
   const billed = () =>
     t.run(async (ctx) => ({
@@ -303,7 +298,7 @@ test.each([
 ] as const)(
   "a refresh inside the minute still bills when the machine %s",
   async (_case, change, step) => {
-    vi.useFakeTimers({ now: NOW - 1000 });
+    vi.useFakeTimers({ now: NOW });
     const t = meterTest();
     const accountId = await seedAccount(t);
     const sandbox = {
@@ -314,8 +309,6 @@ test.each([
       name: "default",
       specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
     };
-    await reserve(t, sandbox);
-    vi.setSystemTime(NOW);
     await t.mutation(internal.sandbox.instances.upsert, sandbox);
     vi.setSystemTime(NOW + 10_000);
     if (step === "suspend") {
@@ -341,7 +334,6 @@ test.each([
           })
         : undefined;
 
-    await reserve(t, { ...sandbox, ...change });
     vi.setSystemTime(NOW + 20_000);
     await t.mutation(internal.sandbox.instances.upsert, {
       ...sandbox,
@@ -362,22 +354,18 @@ test.each([
 );
 
 test("a refresh at a new size bills the time before it at the old size", async () => {
-  vi.useFakeTimers({ now: NOW - 1000 });
+  vi.useFakeTimers({ now: NOW });
   const t = meterTest();
   const accountId = await seedAccount(t);
-  const sandbox = {
-    accountId: accountId,
-    provider: "cloudflare" as const,
-    reservationKey: "cf-abc",
-    externalId: "cf-1",
-    name: "default",
-  };
-  await reserve(t, sandbox);
   const refresh = (atSeconds: number, vcpu: number) => {
     vi.setSystemTime(NOW + atSeconds * 1000);
 
     return t.mutation(internal.sandbox.instances.upsert, {
-      ...sandbox,
+      accountId: accountId,
+      provider: "cloudflare",
+      reservationKey: "cf-abc",
+      externalId: "cf-1",
+      name: "default",
       specs: { vcpu: vcpu, memoryMb: 2048, storageGb: 8 },
     });
   };
@@ -413,16 +401,14 @@ test("a MicroVM's burst lands on its account's meter once per report", async () 
   vi.useFakeTimers({ now: NOW });
   const t = meterTest();
   const accountId = await seedAccount(t);
-  const sandbox = {
+  await t.mutation(internal.sandbox.instances.upsert, {
     accountId: accountId,
-    provider: "lambda" as const,
+    provider: "lambda",
     reservationKey: "fs-abc",
     externalId: "vm-1",
     name: "default",
     specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
-  };
-  await reserve(t, sandbox);
-  await t.mutation(internal.sandbox.instances.upsert, sandbox);
+  });
   const before = await t.run(async (ctx) =>
     ctx.db.query("usageMeters").unique(),
   );
@@ -456,21 +442,16 @@ test("a sandbox on the account's own credentials never reaches the meter", async
   vi.useFakeTimers({ now: NOW });
   const t = meterTest();
   const accountId = await seedAccount(t);
-  const sandbox = {
+
+  await t.mutation(internal.sandbox.instances.upsert, {
     accountId: accountId,
-    provider: "daytona" as const,
+    provider: "daytona",
     reservationKey: "fs-own",
     externalId: "dt-1",
     name: "own-daytona",
     specs: { vcpu: 2, memoryMb: 4096, storageGb: 16 },
     ownCredentials: true,
-  };
-
-  await reserve(t, sandbox);
-  await t.mutation(internal.sandbox.instances.upsert, sandbox);
-  expect(
-    await t.run(async (ctx) => ctx.db.query("sandboxInstances").unique()),
-  ).toMatchObject({ ownCredentials: true });
+  });
   vi.setSystemTime(NOW + 10 * 60 * 1000);
   await t.mutation(internal.sandbox.instances.remove, {
     accountId: accountId,
@@ -854,33 +835,6 @@ async function seedAccount(t: T, plan: Plan = "free"): Promise<Id<"accounts">> {
       status: "active" as const,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    });
-  });
-}
-
-async function reserve(
-  t: T,
-  sandbox: Pick<
-    Doc<"sandboxReservations">,
-    "accountId" | "provider" | "reservationKey" | "externalId"
-  >,
-): Promise<void> {
-  await t.run(async (ctx) => {
-    const held = await ctx.db
-      .query("sandboxReservations")
-      .withIndex("by_provider_and_reservationKey", (q) =>
-        q
-          .eq("provider", sandbox.provider)
-          .eq("reservationKey", sandbox.reservationKey),
-      )
-      .unique();
-    if (held) await ctx.db.delete(held._id);
-    await ctx.db.insert("sandboxReservations", {
-      accountId: sandbox.accountId,
-      provider: sandbox.provider,
-      reservationKey: sandbox.reservationKey,
-      externalId: sandbox.externalId,
-      expiresAt: Math.floor(Date.now() / 1000) + 3600,
     });
   });
 }
