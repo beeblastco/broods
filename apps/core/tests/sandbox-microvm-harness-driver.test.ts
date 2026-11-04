@@ -61,7 +61,7 @@ describe("MicrovmHarnessDriver", () => {
     expect(portUrl).not.toContain("microvm-1");
     expect(portUrl).not.toContain("secret-token");
     expect(executor.authRequests).toHaveLength(0);
-    expect(
+    await expect(
       created.session.getPortUrl!({ port: 4_321, protocol: "http" }),
     ).rejects.toThrow("supports WebSocket ports only");
 
@@ -122,9 +122,9 @@ describe("MicrovmHarnessDriver", () => {
       executor.files.set("/workspace/shot.png", new Uint8Array(300_000)),
     );
 
-    expect(session.readFile({ path: "/workspace/shot.png" })).rejects.toThrow(
-      "changed while it was being read",
-    );
+    await expect(
+      session.readFile({ path: "/workspace/shot.png" }),
+    ).rejects.toThrow("changed while it was being read");
   });
 
   test("resumes the same reservation and validates bootstrap identity", async () => {
@@ -134,7 +134,7 @@ describe("MicrovmHarnessDriver", () => {
       executor.value as never,
     );
 
-    expect(
+    await expect(
       driver.createSession({ identity: "other-bootstrap" }),
     ).rejects.toThrow("bootstrap identity does not match");
 
@@ -158,7 +158,7 @@ describe("MicrovmHarnessDriver", () => {
       executor.value as never,
     );
 
-    expect(
+    await expect(
       driver.createSession({
         identity: "bootstrap-v1",
         abortSignal: controller.signal,

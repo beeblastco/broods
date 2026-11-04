@@ -63,7 +63,7 @@ it("stops its own persistent child", async () => {
   }) as never;
   const tools = await subagentTools(PARENT_EVENT_ID);
 
-  expect(
+  await expect(
     execute(tools.stop_subagent, {
       taskId: taskId,
       agentId: AGENT_ID,
@@ -102,7 +102,7 @@ it("reports a late stop as not running without trusting stale task status", asyn
   })) as never;
   const tools = await subagentTools(PARENT_EVENT_ID);
 
-  expect(
+  await expect(
     execute(tools.stop_subagent, {
       taskId: taskId,
       agentId: AGENT_ID,
@@ -119,7 +119,7 @@ it("rejects another account's task before reading durable state", async () => {
   const tools = await subagentTools(PARENT_EVENT_ID);
 
   for (const tool of Object.values(tools)) {
-    expect(
+    await expect(
       execute(tool, {
         taskId: foreignTaskId,
         agentId: AGENT_ID,
@@ -140,7 +140,7 @@ it("rejects a task another conversation started", async () => {
   } as never);
   const tools = await subagentTools(PARENT_EVENT_ID);
 
-  expect(
+  await expect(
     execute(tools.stop_subagent, {
       taskId: foreignTaskId,
       agentId: AGENT_ID,
@@ -207,7 +207,7 @@ it("rejects a sibling task and an agent mismatch as not found", async () => {
   const tools = await subagentTools(PARENT_EVENT_ID);
 
   for (const tool of Object.values(tools)) {
-    expect(
+    await expect(
       execute(tool, {
         taskId: taskId,
         agentId: "agent_sibling",
@@ -235,7 +235,7 @@ it("rejects a durable record with a mismatched account", async () => {
   })) as never;
   const tools = await subagentTools(PARENT_EVENT_ID);
 
-  expect(
+  await expect(
     execute(tools.stop_subagent, {
       taskId: taskId,
       agentId: AGENT_ID,
@@ -273,7 +273,7 @@ it("message-agents waits on the parent once a turn, notes without a wait, and re
   });
   const tool = tools["message-agents"];
 
-  expect(
+  await expect(
     execute(tool, { to: "parent", text: " Use staging? ", waitSeconds: 600 }),
   ).resolves.toMatchObject({ status: "delivered" });
   expect(asked[0]).toMatchObject({
@@ -281,13 +281,13 @@ it("message-agents waits on the parent once a turn, notes without a wait, and re
     followUp: false,
     waitSeconds: 600,
   });
-  expect(
+  await expect(
     execute(tool, { to: "parent", text: "And prod?", waitSeconds: 60 }),
   ).rejects.toThrow("already wait");
-  expect(
+  await expect(
     execute(tool, { to: "parent", text: "halfway there" }),
   ).resolves.toMatchObject({ status: "delivered", note: "noted" });
-  expect(execute(tool, { to: "parent", text: "  " })).rejects.toThrow(
+  await expect(execute(tool, { to: "parent", text: "  " })).rejects.toThrow(
     "non-empty text",
   );
 

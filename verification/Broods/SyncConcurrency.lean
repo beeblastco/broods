@@ -117,42 +117,61 @@ private theorem run_ext_untouched (post : List Step) (s : Server)
     | record => simp [Step.isRecord] at h
     | main => rfl
 
+/-- No step adds a cron code did not declare, to either row group. -/
+private theorem run_codeCrons (steps : List Step) (s : Server)
+    (hs : s.ext.codeCrons ∧ s.main.codeCrons) :
+    (run store steps s).ext.codeCrons ∧ (run store steps s).main.codeCrons := by
+  induction steps generalizing s with
+  | nil => exact hs
+  | cons st rest ih =>
+    simp only [run, List.foldl_cons] at ih ⊢
+    refine ih _ ?_
+    cases st with
+    | claim | release => simp only [apply]; split <;> exact hs
+    | record m p => exact ⟨sync_codeCrons p hs.1, hs.2⟩
+    | main m p => exact ⟨hs.1, sync_codeCrons p hs.2⟩
+
 /-- Whatever the interleaving, the rows `syncManifestBySecretHash` owns converge to
-the session whose main mutation committed last. -/
+the session whose main mutation committed last, on a stage whose crons code declared. -/
 theorem last_main_wins (hkey : ∀ r, (store r).key = r.key)
     (hsnap : ∀ r, diff.snapshot (store r) = diff.snapshot r)
     {m : Manifest} (hu : m.unique) (pre post : List Step) (s : Server)
+    (hs : s.ext.codeCrons ∧ s.main.codeCrons)
     (hpost : ∀ st ∈ post, st.isRecord = true) :
     diff (mainPart m) (read (run store (pre ++ .main m true :: post) s).main) = [] := by
+  have hpre := (run_codeCrons (store := store) pre s hs).2
   rw [run, List.foldl_append, List.foldl_cons]
   rw [show (post.foldl (fun s st => apply store st s) _) = run store post _ from rfl,
     run_main_untouched post _ hpost]
-  exact (sync_converges hkey hsnap (unique_filter _ hu) true _).2 rfl
+  exact (sync_converges hkey hsnap (unique_filter _ hu) true _).2 rfl hpre
 
 /-- And the recorded skills, hooks and MCP servers converge to the session whose
 record mutation committed last. -/
 theorem last_record_wins (hkey : ∀ r, (store r).key = r.key)
     (hsnap : ∀ r, diff.snapshot (store r) = diff.snapshot r)
     {m : Manifest} (hu : m.unique) (pre post : List Step) (s : Server)
+    (hs : s.ext.codeCrons ∧ s.main.codeCrons)
     (hpost : ∀ st ∈ post, st.isRecord = false) :
     diff (extPart m) (read (run store (pre ++ .record m true :: post) s).ext) = [] := by
+  have hpre := (run_codeCrons (store := store) pre s hs).1
   rw [run, List.foldl_append, List.foldl_cons]
   rw [show (post.foldl (fun s st => apply store st s) _) = run store post _ from rfl,
     run_ext_untouched post _ hpost]
-  exact (sync_converges hkey hsnap (unique_filter _ hu) true _).2 rfl
+  exact (sync_converges hkey hsnap (unique_filter _ hu) true _).2 rfl hpre
 
 /-- Serialized PUTs are last-writer-wins: after A then B, both row groups match B. -/
 theorem serial_last_writer (hkey : ∀ r, (store r).key = r.key)
     (hsnap : ∀ r, diff.snapshot (store r) = diff.snapshot r)
-    {mA mB : Manifest} (pA : Bool) (hu : mB.unique) (s : Server) :
+    {mA mB : Manifest} (pA : Bool) (hu : mB.unique) (s : Server)
+    (hs : s.ext.codeCrons ∧ s.main.codeCrons) :
     diff (extPart mB) (read (run store (put mA pA ++ put mB true) s).ext) = [] ∧
       diff (mainPart mB) (read (run store (put mA pA ++ put mB true) s).main) = [] := by
   constructor
   · have := last_record_wins hkey hsnap hu (put mA pA ++ [.record mB false, .main mB true]) []
-      s (by simp)
+      s hs (by simp)
     simpa [put] using this
   · have := last_main_wins hkey hsnap hu (put mA pA ++ [.record mB false]) [.record mB true] s
-      (by simp [Step.isRecord])
+      hs (by simp [Step.isRecord])
     simpa [put] using this
 
 /-- A PUT sent with a revision another sync has moved past writes nothing. -/

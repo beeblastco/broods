@@ -137,7 +137,7 @@ describe("handleScheduledCron", () => {
     channelTarget = CHANNEL_TARGET;
     conversationKey = "slack:T1:C1";
 
-    expect(invokeCron()).rejects.toThrow(
+    await expect(invokeCron()).rejects.toThrow(
       "Cron conversation is already processing another turn",
     );
     expect(admitted).toHaveLength(1);
@@ -161,7 +161,7 @@ describe("handleScheduledCron", () => {
   it("admits a run under the same id its own status URL names", async () => {
     conversationKey = "nightly-maintenance";
 
-    expect(invokeCron()).rejects.toThrow(
+    await expect(invokeCron()).rejects.toThrow(
       "Cron conversation is already processing another turn",
     );
 
@@ -178,7 +178,7 @@ describe("handleScheduledCron", () => {
   it("keeps a cron with no live session on its own direct conversation", async () => {
     conversationKey = "nightly-maintenance";
 
-    expect(invokeCron()).rejects.toThrow(
+    await expect(invokeCron()).rejects.toThrow(
       "Cron conversation is already processing another turn",
     );
     expect(admitted[0]?.conversationKey).toBe(
@@ -191,14 +191,14 @@ describe("handleScheduledCron", () => {
   it("retires a one-time job whose run could not even start", async () => {
     scheduleExpression = "at(2027-01-01T09:00:00)";
 
-    expect(invokeCron()).rejects.toThrow(
+    await expect(invokeCron()).rejects.toThrow(
       "Cron conversation is already processing another turn",
     );
     expect(removed).toEqual(["cron_1"]);
   });
 
   it("frames the stored instructions with the schedule that fired", async () => {
-    expect(
+    await expect(
       invokeCron({ scheduledTime: "2026-08-14T09:00:00Z" }),
     ).rejects.toThrow("Cron conversation is already processing another turn");
 
@@ -370,7 +370,7 @@ describe("queued envelope without a config ref", () => {
       return null;
     } as never;
 
-    expect(
+    await expect(
       dispatchAppliedIngress(
         {
           accountId: "acct_1",

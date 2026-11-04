@@ -26,7 +26,9 @@ test("the host reads a .mcp.json, spawns the server on first use, lists and call
   expect(
     (await host.callTool("echo", "echo", { text: "pong" })).content,
   ).toEqual([{ type: "text", text: "echo: pong" }]);
-  expect(host.listTools("nope")).rejects.toThrow('no MCP server named "nope"');
+  await expect(host.listTools("nope")).rejects.toThrow(
+    'no MCP server named "nope"',
+  );
 });
 
 test("a bad file fails before any server runs", () => {
@@ -60,7 +62,7 @@ test("a daemon started with --mcp advertises its servers and answers both frames
   });
   servers.push(core.server);
 
-  expect(
+  await expect(
     runMachineDaemon({
       credential: async (): Promise<string> => "key",
       baseUrl: core.url,

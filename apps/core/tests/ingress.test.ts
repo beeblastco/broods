@@ -617,7 +617,7 @@ describe("step boundary", (): void => {
       steering: null,
     });
     expect(calls[0]).not.toHaveProperty("events");
-    expect(session.assertRecentOwner()).rejects.toThrow(
+    await expect(session.assertRecentOwner()).rejects.toThrow(
       "Stale conversation owner generation",
     );
     expect(reads).toHaveBeenCalledTimes(1);
@@ -646,7 +646,7 @@ describe("async turn without model input", (): void => {
       ownerGeneration: 1,
     };
 
-    expect(
+    await expect(
       handler({ kind: "direct-api-async-worker", event: event }),
     ).rejects.toThrow("ArgumentValidationError");
 
@@ -1718,7 +1718,7 @@ describe("applied ingress config", (): void => {
       agents: { getById: async (): Promise<null> => null },
     } as never);
 
-    expect(
+    await expect(
       loadAppliedIngressConfig({
         accountId: "acct_test",
         agentId: "agent_test",
@@ -1728,7 +1728,7 @@ describe("applied ingress config", (): void => {
   });
 
   it("fails a ref-less envelope instead of running it on a guessed config", async (): Promise<void> => {
-    expect(
+    await expect(
       loadAppliedIngressConfig({
         accountId: "acct_test",
         agentId: "agent_test",
@@ -1851,13 +1851,13 @@ describe("session messages", (): void => {
       sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
     };
 
-    expect(
+    await expect(
       prepareSessionMessage({
         ...options,
         input: { conversationKey: "tg:source-chat", message: "loop" },
       }),
     ).rejects.toThrow("cannot target the current conversation");
-    expect(
+    await expect(
       prepareSessionMessage({
         ...options,
         input: {
@@ -1875,7 +1875,7 @@ describe("session messages", (): void => {
       return null as T;
     };
 
-    expect(
+    await expect(
       prepareSessionMessage({
         accountId: "acct_test",
         agentId: "agent_test",

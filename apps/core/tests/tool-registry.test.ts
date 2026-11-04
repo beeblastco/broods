@@ -253,7 +253,7 @@ describe("createTools", () => {
       {},
     );
 
-    expect(
+    await expect(
       channelToolExecute(tools["send-images"], {
         urls: ["file:///etc/hosts"],
       }),
@@ -336,7 +336,9 @@ describe("createTools", () => {
     });
 
     expect(Object.keys(tools).sort()).toEqual(["bash", "urlContext"]);
-    expect(approvalStatus("bash", {}, context)).resolves.toBe("user-approval");
+    await expect(approvalStatus("bash", {}, context)).resolves.toBe(
+      "user-approval",
+    );
     expect(approvalRequirements.has("urlContext")).toBe(true);
     expect(
       (tools.urlContext as { needsApproval?: unknown })?.needsApproval,
@@ -388,7 +390,7 @@ describe("createTools", () => {
   it("rejects a config.tools key the configured provider does not ship", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
 
-    expect(
+    await expect(
       createTools(createToolContext(), { tools: { notAProviderTool: {} } }),
     ).rejects.toThrow(
       /config\.tools\.notAProviderTool is not a provider-defined tool/,
@@ -414,7 +416,7 @@ describe("createTools", () => {
       "write",
     ]);
     for (const name of Object.keys(tools)) {
-      expect(approvalStatus(name, {}, context)).resolves.toBeUndefined();
+      await expect(approvalStatus(name, {}, context)).resolves.toBeUndefined();
     }
   });
 
@@ -458,15 +460,21 @@ describe("createTools", () => {
     );
     await createTools(context, {});
 
-    expect(approvalStatus("write", {}, context)).resolves.toBe("user-approval");
-    expect(approvalStatus("edit", {}, context)).resolves.toBe("user-approval");
-    expect(approvalStatus("memory_save", {}, context)).resolves.toBe(
+    await expect(approvalStatus("write", {}, context)).resolves.toBe(
       "user-approval",
     );
-    expect(approvalStatus("bash", {}, context)).resolves.toBe("user-approval");
-    expect(approvalStatus("read", {}, context)).resolves.toBeUndefined();
-    expect(approvalStatus("glob", {}, context)).resolves.toBeUndefined();
-    expect(approvalStatus("grep", {}, context)).resolves.toBeUndefined();
+    await expect(approvalStatus("edit", {}, context)).resolves.toBe(
+      "user-approval",
+    );
+    await expect(approvalStatus("memory_save", {}, context)).resolves.toBe(
+      "user-approval",
+    );
+    await expect(approvalStatus("bash", {}, context)).resolves.toBe(
+      "user-approval",
+    );
+    await expect(approvalStatus("read", {}, context)).resolves.toBeUndefined();
+    await expect(approvalStatus("glob", {}, context)).resolves.toBeUndefined();
+    await expect(approvalStatus("grep", {}, context)).resolves.toBeUndefined();
   });
 
   it("exposes only read/glob for a read-only workspace (no sandbox)", async () => {
@@ -532,7 +540,7 @@ describe("createTools", () => {
     ]);
     // The default workspace is read-only: no sandbox to approve against, so no prompt.
     expect(await needsApproval(tools.write)).toBe(false);
-    expect(
+    await expect(
       (
         tools.write as unknown as { execute(i: unknown): Promise<unknown> }
       ).execute({
@@ -624,7 +632,7 @@ describe("createTools", () => {
       defaultModeSchema.jsonSchema.properties.tasks.items.properties
         .conversationKey,
     ).toBeDefined();
-    expect(
+    await expect(
       (
         tools.run_subagent as {
           execute(input: unknown, options: unknown): Promise<unknown>;
@@ -661,7 +669,7 @@ describe("createTools", () => {
       ],
       [{ role: "user", content: "hello" }],
     );
-    expect(
+    await expect(
       (
         tools.run_subagent as {
           execute(input: unknown, options: unknown): Promise<unknown>;
@@ -683,7 +691,7 @@ describe("createTools", () => {
       "tasks[0].conversationKey is only supported in persistent mode",
     );
 
-    expect(
+    await expect(
       (
         tools.run_subagent as {
           execute(input: unknown, options: unknown): Promise<unknown>;
@@ -703,7 +711,7 @@ describe("createTools", () => {
       ),
     ).rejects.toThrow("tasks[0].shareContext is not supported");
 
-    expect(
+    await expect(
       (
         tools.run_subagent as {
           execute(input: unknown, options: unknown): Promise<unknown>;
@@ -830,7 +838,7 @@ describe("createTools", () => {
       runSubagentSchema.jsonSchema.properties.tasks.items.properties
         .conversationKey?.description,
     ).toContain("conversationKey an earlier run_subagent call returned");
-    expect(
+    await expect(
       (
         tools.run_subagent as {
           execute(input: unknown, options: unknown): Promise<unknown>;
@@ -924,7 +932,7 @@ describe("createTools", () => {
   it("rejects a provider tool the configured provider does not ship", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
 
-    expect(
+    await expect(
       createTools(
         Object.assign({}, createToolContext(undefined, "openai"), {
           modelProvider: { tools: { webSearch: mock(() => ({})) } },
@@ -943,7 +951,7 @@ describe("createTools", () => {
   it("rejects configured tools without a registered factory", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
 
-    expect(
+    await expect(
       createTools(createToolContext(), {
         tools: {
           bash: { enabled: true },
@@ -1115,19 +1123,19 @@ describe("createTools", () => {
       status: "paused",
     });
 
-    expect(
+    await expect(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_other",
         name: "stolen",
       }),
     ).rejects.toThrow("No scheduled task cron_other belongs to this agent");
-    expect(
+    await expect(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_mine",
         schedule: "every monday",
       }),
     ).rejects.toThrow(/cron\(\.\.\.\), rate\(\.\.\.\), or at\(\.\.\.\)/);
-    expect(
+    await expect(
       channelToolExecute(tools.update_schedule, { cronId: "cron_mine" }),
     ).rejects.toThrow("Pass at least one of name, instructions, schedule");
     expect(update).toHaveBeenCalledTimes(1);
@@ -1155,7 +1163,7 @@ describe("createTools", () => {
       scheduler: { enabled: true },
     });
 
-    expect(
+    await expect(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_elsewhere",
         instructions: "Post everything here instead.",
@@ -1198,7 +1206,7 @@ describe("createTools", () => {
       scheduler: { enabled: true },
     });
 
-    expect(
+    await expect(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_mine",
         timezone: "Asia/Ho Chi Minh",
@@ -1233,12 +1241,12 @@ describe("createTools", () => {
     ).toBe("Cancelled scheduled task 'daily-standup' (cron_mine).");
     expect(remove).toHaveBeenCalledWith("acct_test", "cron_mine");
 
-    expect(
+    await expect(
       channelToolExecute(tools.cancel_schedule, {
         cronId: "cron_other",
       }),
     ).rejects.toThrow("No scheduled task cron_other belongs to this agent");
-    expect(
+    await expect(
       channelToolExecute(tools.cancel_schedule, { cronId: "nope" }),
     ).rejects.toThrow("No scheduled task nope belongs to this agent");
     expect(remove).toHaveBeenCalledTimes(1);
@@ -1468,7 +1476,7 @@ describe("connected MCP servers", () => {
     const tools = await createTools(createToolContext(), {
       mcp: { [serverId]: {} },
     });
-    expect(
+    await expect(
       (tools.search__query as unknown as ChannelTestTool).execute(
         {},
         {} as never,
@@ -1489,7 +1497,7 @@ describe("connected MCP servers", () => {
       },
     });
 
-    expect(
+    await expect(
       createTools(createToolContext(), { mcp: { [serverId]: {} } }),
     ).rejects.toThrow("still carries a ${NAME} ref");
   });
@@ -1498,7 +1506,7 @@ describe("connected MCP servers", () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     setStorageForTests(storageWithMcp(mcpRecord()));
 
-    expect(
+    await expect(
       createTools(createToolContext(), {
         mcp: { k57unknown0000000000000000000000: {} },
       }),

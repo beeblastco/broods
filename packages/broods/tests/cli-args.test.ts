@@ -61,7 +61,7 @@ test("loginWithBrowser fails at once with the dashboard's error, browser or not"
     },
   });
   try {
-    expect(loginWithBrowser(dashboard.url.origin)).rejects.toThrow(
+    await expect(loginWithBrowser(dashboard.url.origin)).rejects.toThrow(
       "Login failed: No active org",
     );
   } finally {

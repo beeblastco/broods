@@ -106,7 +106,7 @@ test("stream reports a busy accepted ingress without treating JSON as SSE", asyn
       ),
   });
 
-  expect(
+  await expect(
     client.run({
       agentId: "agent_1",
       eventId: "steer-2",
@@ -329,7 +329,7 @@ test("runAsync rejects an accepted answer without a runId", async () => {
       ),
   });
 
-  expect(
+  await expect(
     client.runAsync({ agentId: "agent_1", input: "hello" }),
   ).rejects.toThrow("Async response missing runId");
 });
@@ -442,13 +442,13 @@ test("client rejects misrouted async SSE responses without dumping stream intern
       ),
   });
 
-  expect(
+  await expect(
     client.runAsync({
       agentId: "agent_1",
       input: "hello",
     }),
   ).rejects.toThrow("server returned an SSE stream");
-  expect(
+  await expect(
     client.runAsync({
       agentId: "agent_1",
       input: "hello",

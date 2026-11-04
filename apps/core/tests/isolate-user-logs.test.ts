@@ -265,7 +265,7 @@ describe("user logs through the isolate paths", () => {
         }
       };
 
-      expect(drain()).rejects.toThrow(/did not return a result/);
+      await expect(drain()).rejects.toThrow(/did not return a result/);
       await drain().catch(() => {});
     });
   });
