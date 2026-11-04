@@ -71,7 +71,10 @@ export async function conversationFiles(context: VerifyContext): Promise<void> {
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
 
-    return { status: response.status, body: await response.json() };
+    return {
+      status: response.status,
+      body: (await response.json()) as { files?: unknown },
+    };
   };
   const seed = {
     files: [
