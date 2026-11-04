@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   broodsRootsFromPaths,
   commitFiles,
+  lastErrorLine,
   deployWorkflow,
   isAgentEditable,
   type GitHubApp,
@@ -154,6 +155,20 @@ test("verifyWebhookSignature accepts only the secret's HMAC", async () => {
   expect(await verifyWebhookSignature("secret", body, null)).toBe(false);
 });
 
+test("a failed run's reason is its last logged error line, without GitHub's framing", () => {
+  const log = [
+    "2026-11-04T00:11:50.1000000Z ##[group]Run bunx broods deploy",
+    "2026-11-04T00:11:57.2000000Z Error: defineMcp needs a url or a handler",
+    "2026-11-04T00:11:57.2100000Z     at compile (broods/deepwiki.ts:3:1)",
+    "2026-11-04T00:11:57.3000000Z ##[error]Process completed with exit code 1.",
+  ].join("\n");
+
+  expect(lastErrorLine(log)).toBe("Error: defineMcp needs a url or a handler");
+  expect(
+    lastErrorLine("2026-11-04T00:11:57.3000000Z all good"),
+  ).toBeUndefined();
+});
+
 describe("agent edits", () => {
   const app: GitHubApp = {
     apiUrl: "https://api.github.test",
@@ -247,6 +262,40 @@ describe("agent edits", () => {
       "POST /repos/o/r/git/commits",
     ]);
     expect(calls).toContain("PATCH /repos/o/r/git/refs/heads/dev");
+  });
+
+  test("a null content deletes the file in the same commit", async () => {
+    stubGitHub(false);
+    const answer = globalThis.fetch;
+    let tree: unknown;
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      if (url.endsWith("/git/trees") && typeof init.body === "string") {
+        tree = JSON.parse(init.body).tree;
+      }
+
+      return await answer(url, init);
+    });
+
+    await commitFiles(
+      app,
+      "t",
+      "o/r",
+      "dev",
+      [...files, { content: null, path: "broods/old.ts" }],
+      "m",
+      false,
+      "head",
+    );
+
+    expect(tree).toEqual([
+      {
+        path: "broods/index.ts",
+        mode: "100644",
+        type: "blob",
+        content: "export {};\n",
+      },
+      { path: "broods/old.ts", mode: "100644", type: "blob", sha: null },
+    ]);
   });
 
   test("a branch that refuses the write gets a pull request instead", async () => {

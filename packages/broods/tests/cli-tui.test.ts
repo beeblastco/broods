@@ -423,6 +423,43 @@ test("Esc stops a streaming turn; keys, split keys, Ctrl+C and idle Esc reach th
   expect(seen).toEqual(["\x1b[A", "\x1b[B", "\x03", "\x1b", "x"]);
 });
 
+test("Esc then a typed [ or O stops the turn; a split CSI or SS3 key stays one key", () => {
+  const input = new EventEmitter();
+  const seen: string[] = [];
+  input.on("data", (chunk: Buffer) => seen.push(String(chunk)));
+  let stops = 0;
+  const transport = {
+    streaming: true,
+    stopTurn: (): boolean => {
+      stops += 1;
+
+      return true;
+    },
+  };
+  const send = (text: string): boolean => input.emit("data", Buffer.from(text));
+
+  const restore = stopTurnOnEscape(transport, input);
+  for (const typed of ["[", "O", "[1;"]) {
+    send("\x1b");
+    send(typed);
+  }
+  for (const tail of ["[1;5C", "OP", "[200~pasted"]) {
+    send("\x1b");
+    send(tail);
+  }
+  restore();
+
+  expect(stops).toBe(3);
+  expect(seen).toEqual([
+    "[",
+    "O",
+    "[1;",
+    "\x1b[1;5C",
+    "\x1bOP",
+    "\x1b[200~pasted",
+  ]);
+});
+
 test("Esc before the first part counts the turn as sent", async () => {
   const { transport, bodies } = testTransport([
     openSse(),
