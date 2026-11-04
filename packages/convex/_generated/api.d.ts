@@ -2077,6 +2077,24 @@ export declare const api: {
       Id<"stages">
     >;
   };
+  stageSources: {
+    latest: FunctionReference<
+      "query",
+      "public",
+      { stageId: Id<"stages"> },
+      {
+        bytes: number;
+        commitSha?: string;
+        createdAt: number;
+        fileCount: number;
+        hash: string;
+        manifestHash?: string;
+        origin: "cli" | "apply" | "github";
+        revision: number;
+        url: string | null;
+      } | null
+    >;
+  };
   stripe: {
     addSeat: FunctionReference<"action", "public", {}, { seats: number }>;
     createCheckoutSession: FunctionReference<
@@ -8252,6 +8270,31 @@ export declare const internal: {
         null
       >;
     };
+  };
+  stageSources: {
+    latestHash: FunctionReference<
+      "query",
+      "internal",
+      { stageId: Id<"stages"> },
+      string | null
+    >;
+    recordSync: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        manifestHash: string;
+        source?: {
+          bytes: number;
+          commitSha?: string;
+          fileCount: number;
+          hash: string;
+          origin: "cli" | "apply" | "github";
+          storageId?: Id<"_storage">;
+        };
+        stageId: Id<"stages">;
+      },
+      number | null
+    >;
   };
   stripe: {
     applySubscriptionInternal: FunctionReference<

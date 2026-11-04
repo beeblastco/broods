@@ -207,7 +207,8 @@ sequenceDiagram
     V->>V: run manifest rules, before any write
     V->>V: cliSync: resolve env refs,<br/>encrypt config, write rows
     V->>S: skill and bundle bytes
-    V-->>CLI: ids, deployment, runtime key
+    V->>V: hash the manifest read back,<br/>store the source when it changed
+    V-->>CLI: ids, deployment, runtime key, manifestHash
     CLI->>CLI: write broods/_generated/, BROODS_API_KEY
   end
 ```
@@ -215,6 +216,7 @@ sequenceDiagram
 - `broods dev` sends the revision it read; `broods deploy` sends none and replaces the last completed sync.
 - The claim is released in `finally`; an abandoned claim expires after 45 minutes.
 - `verification/Broods/Sync*.lean` proves the next diff after a sync is deletes only and that overlapping PUTs are refused.
+- The body's optional `source` (`{ files: [{ path, content }], commitSha? }`, `model/stageSource.ts`) is checked before any write. `recordStageSync` hashes the read-back manifest (`manifestHash` in `model/manifestSnapshot.ts`, the same snapshot `diffManifests` compares, so an empty diff means an equal hash) onto `stageSyncs`, and stores the source as a new `stageSources` revision only when its content hash moved. `GET /manifest` answers the live hash.
 
 ## Run lifecycle
 
