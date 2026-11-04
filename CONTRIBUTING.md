@@ -17,8 +17,9 @@ cp apps/core/.env.example apps/core/.env
 bun run check            # type-aware oxlint, oxfmt check, and every workspace check (dashboard adds @shadcn/lint)
 bun run test             # every workspace's unit tests, scripts and benchmark gates
 bun run build            # build the core Bun container binary
-bun run verification:test # TypeScript contracts mirrored by the Lean models
-(cd verification && lake build) # machine-check those models
+(cd verification && lake build && lake build gateway-oracle && lake env lean Statements.lean) # machine-check the models, their pinned statements and the oracle
+bun verification/drift.ts # fail when code a Lean model mirrors changed without the model
+bun run verification:test # TypeScript contracts, and the Lean route table diffed against resolveRouter
 # Try a demo (from repo root):
 cd packages/demos/basic-stream && bun run start
 ```
