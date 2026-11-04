@@ -483,7 +483,7 @@ export async function readStageSourceAt(
 
 /**
  * Commits `files` to `branch` as one commit, or through a pull request from a fresh branch when
- * `viaPullRequest` or the branch refuses a direct write. Answers the commit and the URL to see it.
+ * the branch refuses a direct write. Answers the commit and the URL to see it.
  */
 export async function commitFiles(
   app: GitHubApp,
@@ -492,7 +492,6 @@ export async function commitFiles(
   branch: string,
   files: readonly CommitFile[],
   message: string,
-  viaPullRequest: boolean,
   baseSha: string,
 ): Promise<{ sha: string; url: string; viaPullRequest: boolean }> {
   // Built on the commit the agent read, so a fast-forward update refuses once the branch moved.
@@ -502,26 +501,24 @@ export async function commitFiles(
     );
   }
   const commit = await commitOn(app, token, fullName, baseSha, files, message);
-  if (!viaPullRequest) {
-    try {
-      await githubRequest(
-        app,
-        token,
-        "PATCH",
-        `/repos/${fullName}/git/refs/heads/${encodeURIComponent(branch)}`,
-        { sha: commit.sha, force: false },
-      );
+  try {
+    await githubRequest(
+      app,
+      token,
+      "PATCH",
+      `/repos/${fullName}/git/refs/heads/${encodeURIComponent(branch)}`,
+      { sha: commit.sha, force: false },
+    );
 
-      return { sha: commit.sha, url: commit.url, viaPullRequest: false };
-    } catch (error) {
-      if (!(error instanceof GitHubApiError) || !isRefusedWrite(error.status)) {
-        throw error;
-      }
-      if ((await branchHead(app, token, fullName, branch)) !== baseSha) {
-        throw new ClientError(
-          `${branch} changed since the agent read it. Ask again so it edits the latest files.`,
-        );
-      }
+    return { sha: commit.sha, url: commit.url, viaPullRequest: false };
+  } catch (error) {
+    if (!(error instanceof GitHubApiError) || !isRefusedWrite(error.status)) {
+      throw error;
+    }
+    if ((await branchHead(app, token, fullName, branch)) !== baseSha) {
+      throw new ClientError(
+        `${branch} changed since the agent read it. Ask again so it edits the latest files.`,
+      );
     }
   }
   const head = `broods/agent-${crypto.randomUUID().slice(0, 8)}`;

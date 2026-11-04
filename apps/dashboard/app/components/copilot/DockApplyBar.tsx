@@ -81,7 +81,7 @@ export function DockApplyBar(): React.JSX.Element | null {
             tone="muted"
             onClick={() => discardProposal(messageId)}
           >
-            Discard
+            {apply.sha ? "Stop tracking" : "Discard"}
           </Button>
         )}
         {apply.phase === "failed" && canRevert(proposal) && (

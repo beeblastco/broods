@@ -283,7 +283,7 @@ function commitAction(
       ),
       path: file.path,
     })),
-    label: `${repo.viaPullRequest ? "Pull request into" : "Commit to"} ${repo.branch}: ${message || "update broods/"}`,
+    label: `Commit to ${repo.branch}: ${message || "update broods/"}`,
     message: message,
     type: "commitFiles",
     via: {

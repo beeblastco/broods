@@ -95,7 +95,6 @@ export const deepwiki = defineMcp({
     ],
     fullName: "acme/agents",
     omitted: 0,
-    viaPullRequest: false,
   },
 );
 

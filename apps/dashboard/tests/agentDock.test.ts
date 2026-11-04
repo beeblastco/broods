@@ -20,7 +20,6 @@ const REPO = {
   files: [{ content: "a", path: "broods/index.ts" }],
   fullName: "acme/agents",
   omitted: 0,
-  viaPullRequest: false,
 };
 
 const CONTEXT: CopilotContext = {
@@ -171,7 +170,6 @@ describe("agent dock", () => {
         files: [{ content: "a", path: "broods/index.ts" }],
         fullName: "acme/agents",
         omitted: 0,
-        viaPullRequest: false,
       },
     );
 
@@ -185,29 +183,6 @@ describe("agent dock", () => {
     const [action] = plan?.actions ?? [];
     expect(action?.type === "commitFiles" ? action.files[0].patch : []).toEqual(
       ["@@ 1,1 → 1,3", " a", "+b", "+c"],
-    );
-  });
-
-  test("a change to a stage that deploys through pull requests says so", () => {
-    const plan = proposalPlan(
-      {
-        files: [{ content: "a", path: "broods/index.ts" }],
-        message: "Add firecrawl",
-        summary: "",
-      },
-      CONTEXT,
-      {
-        baseSha: "abc",
-        branch: "main",
-        files: [],
-        fullName: "acme/agents",
-        omitted: 0,
-        viaPullRequest: true,
-      },
-    );
-
-    expect(plan?.actions[0]?.label).toBe(
-      "Pull request into main: Add firecrawl",
     );
   });
 
@@ -225,7 +200,6 @@ describe("agent dock", () => {
         files: [{ content: "a", path: "broods/index.ts" }],
         fullName: "acme/agents",
         omitted: 3,
-        viaPullRequest: false,
       },
     );
 

@@ -1001,7 +1001,6 @@ export declare const api: {
         files: Array<{ content: string; path: string }>;
         fullName: string;
         omitted: number;
-        viaPullRequest: boolean;
       } | null
     >;
     session: FunctionReference<
@@ -4629,7 +4628,6 @@ export declare const internal: {
       {
         accountId: string;
         commitSha?: string;
-        production: boolean;
         project: string;
         revision: number | null;
         stage: string;
@@ -4649,7 +4647,6 @@ export declare const internal: {
         fullName: string;
         installationId: number;
         rootDirectory: string;
-        viaPullRequest: boolean;
       } | null
     >;
     snapshotRepo: FunctionReference<
@@ -4673,7 +4670,6 @@ export declare const internal: {
         fullName: string;
         installationId: number;
         rootDirectory: string;
-        viaPullRequest: boolean;
       } | null
     >;
     storedSource: FunctionReference<

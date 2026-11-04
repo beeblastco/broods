@@ -58,7 +58,6 @@ const repoTargetValidator = v.object({
   fullName: v.string(),
   installationId: v.number(),
   rootDirectory: v.string(),
-  viaPullRequest: v.boolean(),
 });
 
 const applyResultValidator = v.object({
@@ -74,7 +73,6 @@ const applyTargetValidator = v.object({
   accountId: v.string(),
   project: v.string(),
   stage: v.string(),
-  production: v.boolean(),
   revision: v.union(v.number(), v.null()),
   commitSha: v.optional(v.string()),
 });
@@ -126,7 +124,6 @@ export const repoFiles = action({
       files: v.array(repoFileValidator),
       fullName: v.string(),
       omitted: v.number(),
-      viaPullRequest: v.boolean(),
     }),
     v.null(),
   ),
@@ -139,7 +136,6 @@ export const repoFiles = action({
     files: Infer<typeof repoFileValidator>[];
     fullName: string;
     omitted: number;
-    viaPullRequest: boolean;
   } | null> => {
     const target = await repoTarget(ctx, args, false);
     if (!target) return null;
@@ -149,7 +145,6 @@ export const repoFiles = action({
     return {
       branch: target.branch,
       fullName: target.fullName,
-      viaPullRequest: target.viaPullRequest,
       ...(await readBroodsFolder(
         app,
         token,
@@ -161,7 +156,7 @@ export const repoFiles = action({
   },
 });
 
-// Applies the agent's edit as one commit; Production's branch gets a pull request instead.
+// Applies the agent's edit as one commit; a branch that refuses the write gets a pull request.
 export const commitChange = action({
   args: {
     baseSha: v.string(),
@@ -206,7 +201,6 @@ export const commitChange = action({
       target.branch,
       files,
       message.trim() || "Update broods/ from the dashboard",
-      target.viaPullRequest,
       baseSha,
     );
   },
@@ -214,7 +208,6 @@ export const commitChange = action({
 
 // The fast path: the approved files deploy from a compile sandbox with a ticket only this mints,
 // become the stage's source, then go to a linked branch, whose CI must land on the same hash.
-// Production keeps its pull request: a fast deploy there would skip review.
 export const apply = action({
   args: {
     projectId: v.id("projects"),
@@ -226,10 +219,6 @@ export const apply = action({
   returns: applyResultValidator,
   handler: async (ctx, args): Promise<ApplyResult> => {
     const { authId, target } = await writableTarget(ctx, args);
-    if (target.production)
-      throw new ClientError(
-        "Production deploys through a pull request. Apply to a development stage.",
-      );
     if (target.revision !== args.baseRevision)
       throw new ClientError(
         `The stage's source is now revision ${target.revision ?? "none"}. Review the new diff and apply again.`,
@@ -285,17 +274,18 @@ export const apply = action({
         content: file.content,
       })),
       args.message.trim() || "Update broods/ from the dashboard",
-      false,
       head,
     );
+    // A protected branch took a pull request: the stage already runs the change, CI runs on merge.
+    const phase = committed.viaPullRequest ? "deployed" : "verifying";
     await ctx.runMutation(internal.stageSources.setVerification, {
       stageId: args.stageId,
       revision: deployed.revision,
-      verification: { phase: "verifying", runUrl: committed.url },
+      verification: { phase: phase, runUrl: committed.url },
       commitSha: committed.sha,
     });
 
-    return { ...deployed, phase: "verifying", commitSha: committed.sha };
+    return { ...deployed, phase: phase, commitSha: committed.sha };
   },
 });
 
@@ -425,8 +415,10 @@ export const stageRepo = internalQuery({
     const stage = await ctx.db.get(stageId);
     const repo = stage ? (await ctx.db.get(stage.projectId))?.repo : undefined;
     if (!stage || !repo) return null;
-    const production = stage.kind === "production";
-    const branch = production ? repo.productionBranch : repo.developmentBranch;
+    const branch =
+      stage.kind === "production"
+        ? repo.productionBranch
+        : repo.developmentBranch;
 
     return branch
       ? {
@@ -434,7 +426,6 @@ export const stageRepo = internalQuery({
           fullName: repo.fullName,
           installationId: repo.installationId,
           rootDirectory: repo.rootDirectory,
-          viaPullRequest: production,
         }
       : null;
   },
@@ -469,7 +460,6 @@ export const applyTarget = internalQuery({
       project: project.slug,
       // The CLI's spelling: the dashboard shows `Development`, `broods` takes `development`.
       stage: stage.name.toLowerCase(),
-      production: stage.kind === "production",
       revision: newest?.revision ?? null,
       ...(newest?.commitSha ? { commitSha: newest.commitSha } : {}),
     };
@@ -495,8 +485,10 @@ export const linkedBranch = internalQuery({
     if (stage?.projectId !== projectId) return null;
     const repo = (await ctx.db.get(projectId))?.repo;
     if (!repo) return null;
-    const production = stage.kind === "production";
-    const branch = production ? repo.productionBranch : repo.developmentBranch;
+    const branch =
+      stage.kind === "production"
+        ? repo.productionBranch
+        : repo.developmentBranch;
     if (!branch) return null;
 
     return {
@@ -504,7 +496,6 @@ export const linkedBranch = internalQuery({
       fullName: repo.fullName,
       installationId: repo.installationId,
       rootDirectory: repo.rootDirectory,
-      viaPullRequest: production,
     };
   },
 });

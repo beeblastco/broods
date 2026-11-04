@@ -306,7 +306,7 @@ export function applyStatus({ apply, applied, branch }: DockProposal): string {
     case "failed":
       return `Deploy failed: ${apply.error ?? "unknown error."}`;
     case "discarded":
-      if (sha) return `Discarded. ${sha} stays on ${branch}.`;
+      if (sha) return `Stopped tracking. ${sha} stays on ${branch}.`;
 
       return applied
         ? "Discarded. Steps already applied stay."
