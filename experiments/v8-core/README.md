@@ -208,6 +208,55 @@ rounds) and 79% (2.7 against 3.4 s, today's core at 4.4 then 2.4 s). Rounds on
 the bridge swing by a third or more, so the new-sandbox lead is likely, not
 settled. Memory was 500 to 850 MB against about 210.
 
+## Memory (2026-11-04)
+
+`bench/mem-probe.sh <out> <level> <arm>...` runs one round of `run-isolate.sh` per arm on core's
+`cloudflare` provider against the local stand-in (scripted model, no docs search, one sandbox per
+agent) and records the router's memory freshly started, with every worker warm and idle, and after
+each worker collected its garbage (the `mem*` configs, `MEM_DEBUG=1`). The arm `bun` is today's
+core on the same stand-in. At 20 tasks at once on 20 agents (`mem-cut`, 2 rounds, MB):
+
+| Arm                                           | Fresh | Warm, idle | CPU per task |
+| --------------------------------------------- | ----- | ---------- | ------------ |
+| `bun`, today's core                           | 248   | 320 to 330 | 70 to 74 ms  |
+| `memEagerConfig`, directEagerIdConfig's flags | 73    | 1154, 1157 | 112, 114 ms  |
+| `memPlainConfig`, no V8 flags                 | 73    | 1053, 1056 | 110, 116 ms  |
+| `memAsciiConfig`, no flags, `ASCII=1` bundle  | 70    | 986, 987   | 111, 114 ms  |
+| `memAsciiConfig:one`, every task on one agent | 70    | 230, 231   | 85, 95 ms    |
+
+- A warm worker keeps what it holds: collecting its garbage frees under 2%. Each agent's worker
+  holds 46 to 54 MB. Core's bundle alone holds 18 to 21 MB once loaded (Node heap snapshot of
+  `dist-slim`), so the rest is what running a task leaves compiled and cached.
+- Any V8 flag, even `--expose-gc`, fails workerd's check on the compile cache for its own built-in
+  modules ("per-isolate bootstrap compile cache failed its compatibility check"), so every worker
+  compiles them from source. Without the eager flags (`memPlainConfig`) a worker holds about 5 MB
+  less, at no speed difference these rounds could see. Of the other flags (`mem-flags`, 1 round),
+  `--max-semi-space-size=2` and `--optimize-for-size` each saved 14 to 17%, and both with default
+  tiering 27%, but with that set a typical task took 5.3 s against 3.6 s.
+- The bundle has 129 characters past Latin-1 (dashes, box drawing, emoji in messages), so V8 keeps
+  the whole 3.1 MB source at two bytes a character, in every worker. `ASCII=1 bun build.ts` writes
+  them as `\u` escapes: 3 MB less per worker.
+- One worker for every task (`:one`) holds less than today's core, but that is one shared worker,
+  not a worker per agent.
+
+**Unloading idle workers.** workerd never unloads a named worker (`LOADER.get`). An unnamed one
+(`LOADER.load`) is freed once nothing holds it, but its stub belongs to the request that made it:
+reusing it fails with "Cannot perform I/O on behalf of a different request" (`mem-trial-unnamed`).
+`per-task/holder-router.js` (`memHolderConfig`, `memHolderGcConfig`) gives each agent a Durable
+Object that holds the agent's unnamed worker across requests and lets go of it `IDLE_UNLOAD_MS`
+after the agent's last task has been read to the end. The engine frees the worker once the
+router's handle to it is collected, so `memHolderGcConfig` runs with `--expose-gc` and collects on
+unload; without it (`mem-holder`) nothing came back. The memory falls only on the router's next
+request, so a health check every few seconds is enough. `bench/holder-cycles.sh`
+(`mem-holder-cycles`: 3 batches of 20 new agents, 5 s idle) peaked at 964 to 1006 MB, sat at 766
+to 772 MB once idle and fell to 303 to 310 MB after the next request, every cycle, with tasks as
+fast as `memAsciiConfig`. About 230 MB of what the freed workers held stays with the process (the
+allocator keeps it) and the next batch reuses it.
+
+Twenty new agents at once load their workers one after another on the engine's one thread: the
+slowest first task took 8.6 to 10.8 s against 4.6 to 5.0 s on today's core. An unloaded agent
+pays its load again on its next task (about 0.3 s for the slim bundle on its own, above).
+
 ## Two ideas that did not help
 
 Commit `8f59ca0` built the two fixes the page proposed for the time still

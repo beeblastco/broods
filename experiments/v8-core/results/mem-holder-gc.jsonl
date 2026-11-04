@@ -1,0 +1,7 @@
+{"kind":"mem","round":1,"label":"memHolderGcConfig@5000","stage":"fresh","rssMb":70.5}
+{"label":"isolate+v8-memHolderGcConfig-5000","at":"2026-11-04T10:52:29.253Z","kind":"batch","level":20,"rep":0,"batchMs":3663.6618290000006,"p50":3559.098345000002,"p95":3663.414205000001,"max":3663.414205000001,"firstPartP50":304.1865969999999,"mcpP50":0,"exMcpP50":3559.098345000002,"exMcpP95":3663.414205000001,"ok":20,"failed":0,"problems":[],"toolCallsP50":2,"runtimeCpuMs":2030,"runtimeRssStartMb":839.05859375,"runtimeRssPeakMb":958.54296875,"sandboxCpuMs":1010,"sandboxRssStartMb":27.96484375,"sandboxRssPeakMb":32.32421875,"convexCallsPerTask":31.15,"backgroundConvexCalls":0,"modelCallsPerTask":6,"otherRuntimeModelCalls":0,"otherRuntimeTaskConvexCalls":0,"taskMs":[3339,3498,3446,3496,3663,3631,3559,3582,3661,3629,3492,3467,3581,3520,3582,3363,3425,3619,3634,3241],"mcpMs":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}
+{"label":"isolate+v8-memHolderGcConfig-5000","at":"2026-11-04T10:52:33.527Z","kind":"audit","tasksStarted":41,"runsCompleted":123,"runsPerTask":3}
+{"kind":"mem","round":1,"label":"memHolderGcConfig@5000","stage":"warm-idle","rssMb":761.5}
+{"kind":"mem","round":1,"label":"memHolderGcConfig@5000","stage":"after-gc","rssMb":299.3}
+{"kind":"mem","round":1,"label":"memHolderGcConfig@5000","stage":"after-idle","rssMb":299.4}
+{"kind":"mem","round":1,"label":"memHolderGcConfig@5000","stage":"after-unload","rssMb":299.4}

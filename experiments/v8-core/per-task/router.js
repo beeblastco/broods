@@ -1,7 +1,7 @@
 /**
- * Loads core's bundle into a fresh worker per request, so nothing carries over between tasks.
- * ROUTER_KEY=agent keeps one worker per agent (from the run body's agentId) instead. An OUTBOUND
- * binding becomes every loaded worker's outbound fetch (per-task/write-queue.js).
+ * A fresh worker per request, or with ROUTER_KEY=agent one named worker per agent, which workerd
+ * keeps until the process ends. OUTBOUND becomes each worker's outbound fetch. MEM_DEBUG=1 adds
+ * POST /__mem/gc: every named worker collects its garbage (the engine needs --expose-gc).
  */
 
 import BUNDLE from "bundle";
@@ -35,6 +35,8 @@ const FLAGS = [
 ];
 
 let loaded = 0;
+/** Named workers this router has asked for, so /__mem/gc can reach them. */
+const named = new Set();
 
 /** The agent a run request is for, or undefined. */
 async function agentOf(request) {
@@ -52,18 +54,36 @@ export default {
   fetch: async function (request, env) {
     loaded += 1;
     const { LOADER, ROUTER_KEY, OUTBOUND, ...vars } = env;
-    const agent = ROUTER_KEY === "agent" ? await agentOf(request) : undefined;
-    const id = agent
-      ? `agent-${agent}`
-      : `task-${loaded}-${crypto.randomUUID()}`;
-    const worker = LOADER.get(id, () => ({
+    const code = () => ({
       compatibilityDate: "2026-09-30",
       compatibilityFlags: FLAGS,
       mainModule: "entry.js",
       modules: { "entry.js": BUNDLE },
       env: { ...vars, SERVICE_NAME: `${vars.SERVICE_NAME}-${loaded}` },
       ...(OUTBOUND ? { globalOutbound: OUTBOUND } : {}),
-    }));
+    });
+    if (
+      vars.MEM_DEBUG === "1" &&
+      request.method === "POST" &&
+      new URL(request.url).pathname === "/__mem/gc"
+    ) {
+      await Promise.all(
+        [...named].map((name) =>
+          LOADER.get(name, code)
+            .getEntrypoint()
+            .fetch("http://worker/__mem/gc", { method: "POST" }),
+        ),
+      );
+      globalThis.gc?.();
+
+      return Response.json({ workers: named.size });
+    }
+    const agent = ROUTER_KEY === "agent" ? await agentOf(request) : undefined;
+    const id = agent
+      ? `agent-${agent}`
+      : `task-${loaded}-${crypto.randomUUID()}`;
+    if (agent) named.add(id);
+    const worker = LOADER.get(id, code);
     const response = await worker.getEntrypoint().fetch(request);
     const headers = new Headers(response.headers);
     headers.set("x-isolate", id);

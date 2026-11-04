@@ -138,6 +138,21 @@ if (!result.success) {
   for (const log of result.logs) console.error(log);
   process.exit(1);
 }
+// ASCII=1: write every character past ASCII as a \u escape. A JS engine stores a source with even
+// one character past Latin-1 at two bytes a character, and every loaded worker keeps its own copy.
+if (process.env.ASCII === "1") {
+  for (const output of result.outputs) {
+    if (!output.path.endsWith(".js")) continue;
+    const text = await Bun.file(output.path).text();
+    let ascii = "";
+    for (let i = 0; i < text.length; i++) {
+      const code = text.charCodeAt(i);
+      ascii +=
+        code < 0x80 ? text[i] : `\\u${code.toString(16).padStart(4, "0")}`;
+    }
+    await Bun.write(output.path, ascii);
+  }
+}
 for (const output of result.outputs) {
-  console.log(output.path, (output.size / 1e6).toFixed(2), "MB");
+  console.log(output.path, (Bun.file(output.path).size / 1e6).toFixed(2), "MB");
 }

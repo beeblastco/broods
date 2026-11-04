@@ -1,0 +1,7 @@
+{"kind":"mem","label":"memEagerConfig@600000","stage":"fresh","rssMb":73.4}
+{"label":"isolate+v8-memEagerConfig@600000","at":"2026-11-04T10:35:32.090Z","kind":"batch","level":20,"rep":0,"batchMs":9.915683999999601,"p50":7.598460000001069,"p95":8.515097999999853,"max":8.515097999999853,"firstPartP50":0,"mcpP50":0,"exMcpP50":7.598460000001069,"exMcpP95":8.515097999999853,"ok":0,"failed":20,"problems":["stream threw: Error: Run failed: 500 Internal Server Error","no sha256 in any tool result","final text lacks the child's real result: "],"toolCallsP50":0,"runtimeCpuMs":10,"runtimeRssStartMb":655.08984375,"runtimeRssPeakMb":655.140625,"sandboxCpuMs":0,"sandboxRssStartMb":27.7578125,"sandboxRssPeakMb":27.7578125,"convexCallsPerTask":0,"backgroundConvexCalls":0,"modelCallsPerTask":0,"otherRuntimeModelCalls":0,"otherRuntimeTaskConvexCalls":0,"taskMs":[4,8,8,8,8,8,8,8,8,8,8,8,8,7,7,7,8,9,9,8],"mcpMs":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}
+{"label":"isolate+v8-memEagerConfig@600000","at":"2026-11-04T10:35:36.233Z","kind":"audit","tasksStarted":41,"runsCompleted":22,"runsPerTask":0.5365853658536586}
+{"kind":"mem","label":"memEagerConfig@600000","stage":"warm-idle","rssMb":655.1}
+{"kind":"mem","label":"memEagerConfig@600000","stage":"after-gc","rssMb":655.1}
+{"kind":"mem","label":"memEagerConfig@600000","stage":"after-unload","rssMb":276.0}
+{"kind":"mem","label":"memEagerConfig@600000","stage":"after-unload-2","rssMb":275.9}

@@ -29,9 +29,23 @@ const route = createRoute(
 export default {
   fetch: async function (
     request: Request,
-    env: { WRITES?: { fetch: typeof fetch }; IDENTITY_STREAM?: string },
+    env: {
+      WRITES?: { fetch: typeof fetch };
+      IDENTITY_STREAM?: string;
+      MEM_DEBUG?: string;
+    },
     ctx: { waitUntil(promise: Promise<unknown>): void },
   ): Promise<Response> {
+    // MEM_DEBUG=1 (mem* configs, --expose-gc): the router asks each worker to collect its
+    // garbage, to split a warm worker's memory into what it keeps and what it could free.
+    if (
+      env.MEM_DEBUG === "1" &&
+      new URL(request.url).pathname === "/__mem/gc"
+    ) {
+      (globalThis as { gc?: () => void }).gc?.();
+
+      return new Response(null, { status: 204 });
+    }
     setWriteQueue(env.WRITES);
     (globalThis as { __slimServing?: boolean }).__slimServing = true;
     const response = await route(

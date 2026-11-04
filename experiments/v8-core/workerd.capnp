@@ -370,3 +370,194 @@ const directIdBindings :List(Workerd.Worker.Binding) = [
     (name = "STAGE_TICKET_SECRET", fromEnvironment = "STAGE_TICKET_SECRET"),
     (name = "TERMINAL_TICKET_SECRET", fromEnvironment = "TERMINAL_TICKET_SECRET"),
   ];
+
+# Memory variants of directEagerIdConfig (bench/mem-probe.sh). All run with --expose-gc so
+# MEM_DEBUG=1 can make every loaded worker collect its garbage (per-task/router.js). Only the V8
+# flags differ.
+const memRouter :Workerd.Worker = (
+  modules = [
+    (name = "router.js", esModule = embed "per-task/router.js"),
+    (name = "bundle", text = embed "dist-slim/entry.js"),
+  ],
+  compatibilityDate = "2026-09-30",
+  compatibilityFlags = ["nodejs_compat"],
+  globalOutbound = "net",
+  bindings = .memBindings,
+);
+
+# The eager flags of directEagerIdConfig.
+const memEagerConfig :Workerd.Config = (
+  services = [
+    (name = "router", worker = .memRouter),
+    (name = "writes", worker = .writeQueue),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4370", http = (), service = "router") ],
+  v8Flags = ["--expose-gc", "--no-lazy-feedback-allocation", "--always-sparkplug"],
+);
+
+# V8's default tiering: feedback and baseline code only for functions that run often.
+const memLazyConfig :Workerd.Config = (
+  services = [
+    (name = "router", worker = .memRouter),
+    (name = "writes", worker = .writeQueue),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4371", http = (), service = "router") ],
+  v8Flags = ["--expose-gc"],
+);
+
+# A young generation of at most 2 MB per half, so a worker keeps less short-lived space.
+const memSemiConfig :Workerd.Config = (
+  services = [
+    (name = "router", worker = .memRouter),
+    (name = "writes", worker = .writeQueue),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4372", http = (), service = "router") ],
+  v8Flags = ["--expose-gc", "--no-lazy-feedback-allocation", "--always-sparkplug", "--max-semi-space-size=2"],
+);
+
+# V8's own memory-over-speed switch.
+const memSizeConfig :Workerd.Config = (
+  services = [
+    (name = "router", worker = .memRouter),
+    (name = "writes", worker = .writeQueue),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4373", http = (), service = "router") ],
+  v8Flags = ["--expose-gc", "--no-lazy-feedback-allocation", "--always-sparkplug", "--optimize-for-size"],
+);
+
+# Default tiering, small young generation and optimize-for-size together.
+const memLeanConfig :Workerd.Config = (
+  services = [
+    (name = "router", worker = .memRouter),
+    (name = "writes", worker = .writeQueue),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4374", http = (), service = "router") ],
+  v8Flags = ["--expose-gc", "--max-semi-space-size=2", "--optimize-for-size"],
+);
+
+# No V8 flags at all. Any flag, even --expose-gc, fails the check on workerd's own compile cache
+# for its built-in modules, so every loaded worker compiles those from source.
+const memPlainConfig :Workerd.Config = (
+  services = [
+    (name = "router", worker = .memRouter),
+    (name = "writes", worker = .writeQueue),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4375", http = (), service = "router") ],
+);
+
+# memPlainConfig on the bundle built with ASCII=1 (dist-slim-ascii/): the same code, but each
+# worker's copy of the source takes one byte a character instead of two.
+const memAsciiConfig :Workerd.Config = (
+  services = [
+    (name = "router", worker = .memAsciiRouter),
+    (name = "writes", worker = .writeQueue),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4376", http = (), service = "router") ],
+);
+
+const memAsciiRouter :Workerd.Worker = (
+  modules = [
+    (name = "router.js", esModule = embed "per-task/router.js"),
+    (name = "bundle", text = embed "dist-slim-ascii/entry.js"),
+  ],
+  compatibilityDate = "2026-09-30",
+  compatibilityFlags = ["nodejs_compat"],
+  globalOutbound = "net",
+  bindings = .memBindings,
+);
+
+const memBindings :List(Workerd.Worker.Binding) = [
+    (name = "ROUTER_KEY", text = "agent"),
+    (name = "LOADER", workerLoader = ()),
+    (name = "WRITES", service = "writes"),
+    (name = "IDENTITY_STREAM", text = "1"),
+    (name = "MEM_DEBUG", fromEnvironment = "MEM_DEBUG"),
+    (name = "ACCOUNT_CONFIG_ENCRYPTION_SECRET", fromEnvironment = "ACCOUNT_CONFIG_ENCRYPTION_SECRET"),
+    (name = "ADMIN_ACCOUNT_SECRET", fromEnvironment = "ADMIN_ACCOUNT_SECRET"),
+    (name = "ANTHROPIC_BASE_URL", fromEnvironment = "ANTHROPIC_BASE_URL"),
+    (name = "CLOUDFLARE_WORKER_URL", fromEnvironment = "CLOUDFLARE_WORKER_URL"),
+    (name = "CLOUDFLARE_WORKER_API_KEY", fromEnvironment = "CLOUDFLARE_WORKER_API_KEY"),
+    (name = "CLOUDFLARE_SANDBOX_URL", fromEnvironment = "CLOUDFLARE_SANDBOX_URL"),
+    (name = "CLOUDFLARE_SANDBOX_API_KEY", fromEnvironment = "CLOUDFLARE_SANDBOX_API_KEY"),
+    (name = "BENCH_SCRIPTED_MODEL", fromEnvironment = "BENCH_SCRIPTED_MODEL"),
+    (name = "BENCH_MODEL_DELAY_MS", fromEnvironment = "BENCH_MODEL_DELAY_MS"),
+    (name = "MAX_INPROCESS_WORKERS", fromEnvironment = "MAX_INPROCESS_WORKERS"),
+    (name = "CONVEX_DEPLOY_KEY", fromEnvironment = "CONVEX_DEPLOY_KEY"),
+    (name = "CONVEX_URL", fromEnvironment = "CONVEX_URL"),
+    (name = "MEDIA_TICKET_SECRET", fromEnvironment = "MEDIA_TICKET_SECRET"),
+    (name = "PUBLIC_BASE_URL", fromEnvironment = "PUBLIC_BASE_URL"),
+    (name = "SERVICE_AUTH_SECRET", fromEnvironment = "SERVICE_AUTH_SECRET"),
+    (name = "SERVICE_NAME", fromEnvironment = "SERVICE_NAME"),
+    (name = "STAGE_TICKET_SECRET", fromEnvironment = "STAGE_TICKET_SECRET"),
+    (name = "TERMINAL_TICKET_SECRET", fromEnvironment = "TERMINAL_TICKET_SECRET"),
+  ];
+
+# memAsciiConfig with a Durable Object per agent holding that agent's worker
+# (per-task/holder-router.js), so a worker can be unloaded IDLE_UNLOAD_MS after its agent's last task.
+const memHolderConfig :Workerd.Config = (
+  services = [
+    (name = "router", worker = .memHolderRouter),
+    (name = "writes", worker = .writeQueue),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4377", http = (), service = "router") ],
+);
+
+# memHolderConfig with --expose-gc, so a holder that lets go also collects the router's handle.
+const memHolderGcConfig :Workerd.Config = (
+  services = [
+    (name = "router", worker = .memHolderRouter),
+    (name = "writes", worker = .writeQueue),
+    (name = "net", network = (allow = ["public", "private", "local"], tlsOptions = (trustBrowserCas = true))),
+  ],
+  sockets = [ (name = "http", address = "127.0.0.1:4378", http = (), service = "router") ],
+  v8Flags = ["--expose-gc"],
+);
+
+const memHolderRouter :Workerd.Worker = (
+  modules = [
+    (name = "router.js", esModule = embed "per-task/holder-router.js"),
+    (name = "bundle", text = embed "dist-slim-ascii/entry.js"),
+  ],
+  compatibilityDate = "2026-09-30",
+  compatibilityFlags = ["nodejs_compat"],
+  globalOutbound = "net",
+  durableObjectNamespaces = [ (className = "AgentHolder", uniqueKey = "broods-bench-agent-holder") ],
+  durableObjectStorage = (inMemory = void),
+  bindings = .holderBindings,
+);
+
+const holderBindings :List(Workerd.Worker.Binding) = [
+    (name = "ROUTER_KEY", text = "agent"),
+    (name = "LOADER", workerLoader = ()),
+    (name = "WRITES", service = "writes"),
+    (name = "IDENTITY_STREAM", text = "1"),
+    (name = "MEM_DEBUG", fromEnvironment = "MEM_DEBUG"),
+    (name = "HOLDER", durableObjectNamespace = "AgentHolder"),
+    (name = "IDLE_UNLOAD_MS", fromEnvironment = "IDLE_UNLOAD_MS"),
+    (name = "ACCOUNT_CONFIG_ENCRYPTION_SECRET", fromEnvironment = "ACCOUNT_CONFIG_ENCRYPTION_SECRET"),
+    (name = "ADMIN_ACCOUNT_SECRET", fromEnvironment = "ADMIN_ACCOUNT_SECRET"),
+    (name = "ANTHROPIC_BASE_URL", fromEnvironment = "ANTHROPIC_BASE_URL"),
+    (name = "CLOUDFLARE_WORKER_URL", fromEnvironment = "CLOUDFLARE_WORKER_URL"),
+    (name = "CLOUDFLARE_WORKER_API_KEY", fromEnvironment = "CLOUDFLARE_WORKER_API_KEY"),
+    (name = "CLOUDFLARE_SANDBOX_URL", fromEnvironment = "CLOUDFLARE_SANDBOX_URL"),
+    (name = "CLOUDFLARE_SANDBOX_API_KEY", fromEnvironment = "CLOUDFLARE_SANDBOX_API_KEY"),
+    (name = "BENCH_SCRIPTED_MODEL", fromEnvironment = "BENCH_SCRIPTED_MODEL"),
+    (name = "BENCH_MODEL_DELAY_MS", fromEnvironment = "BENCH_MODEL_DELAY_MS"),
+    (name = "MAX_INPROCESS_WORKERS", fromEnvironment = "MAX_INPROCESS_WORKERS"),
+    (name = "CONVEX_DEPLOY_KEY", fromEnvironment = "CONVEX_DEPLOY_KEY"),
+    (name = "CONVEX_URL", fromEnvironment = "CONVEX_URL"),
+    (name = "MEDIA_TICKET_SECRET", fromEnvironment = "MEDIA_TICKET_SECRET"),
+    (name = "PUBLIC_BASE_URL", fromEnvironment = "PUBLIC_BASE_URL"),
+    (name = "SERVICE_AUTH_SECRET", fromEnvironment = "SERVICE_AUTH_SECRET"),
+    (name = "SERVICE_NAME", fromEnvironment = "SERVICE_NAME"),
+    (name = "STAGE_TICKET_SECRET", fromEnvironment = "STAGE_TICKET_SECRET"),
+    (name = "TERMINAL_TICKET_SECRET", fromEnvironment = "TERMINAL_TICKET_SECRET"),
+  ];

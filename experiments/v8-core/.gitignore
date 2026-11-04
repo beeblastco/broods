@@ -3,5 +3,6 @@ node_modules/
 .wrangler/
 dist-task/
 dist-slim/
+dist-slim-ascii/
 dist-slim-task/
 logs/
