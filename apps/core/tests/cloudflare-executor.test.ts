@@ -2,7 +2,8 @@
 
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { drainInFlight } from "../src/shared/in-flight.ts";
-import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
+import { resetHeldReservationsForTests } from "../src/harness/sandbox/instance-store.ts";
+import { runtime } from "../src/shared/convex/runtime.ts";
 import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
 import {
   CloudflareSandboxExecutor,
@@ -47,10 +48,14 @@ interface BridgeCall {
 const calls: BridgeCall[] = [];
 const mirrored: string[] = [];
 const restores: (() => void)[] = [];
+// The reservation calls that reach Convex, in order.
+const convex: string[] = [];
 let stored: string | null = null;
 let claimWins = true;
 
 beforeEach((): void => {
+  resetHeldReservationsForTests();
+  convex.length = 0;
   process.env.CLOUDFLARE_SANDBOX_URL = "https://bridge.example.com/";
   process.env.CLOUDFLARE_SANDBOX_API_KEY = "bridge-key";
   stored = null;
@@ -76,25 +81,28 @@ beforeEach((): void => {
   const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
     Object.assign(bridge, { preconnect: (): void => {} }),
   );
-  const getSpy = spyOn(
-    instanceStore,
-    "getSandboxExternalId",
-  ).mockImplementation(async (): Promise<string | null> => stored);
-  const claimSpy = spyOn(
-    instanceStore,
-    "claimSandboxInstance",
-  ).mockImplementation(
-    async (_provider, _key, externalId): Promise<boolean> => {
-      if (claimWins) stored = externalId;
-      else stored = "winner-id";
+  // `stored` is the one reservation row under the key.
+  const querySpy = spyOn(runtime, "query").mockImplementation(
+    (async (): Promise<string | null> => {
+      convex.push("get");
 
-      return claimWins;
-    },
+      return stored;
+    }) as never,
   );
-  const saveSpy = spyOn(
-    instanceStore,
-    "saveSandboxInstance",
-  ).mockImplementation(async (): Promise<void> => {});
+  const mutateSpy = spyOn(runtime, "mutate").mockImplementation((async (
+    name: string,
+    args: { externalId: string },
+  ): Promise<unknown> => {
+    if (name === "deleteSandboxReservation") {
+      convex.push("delete");
+
+      return true;
+    }
+    convex.push("reserve");
+    stored ??= claimWins ? args.externalId : "winner-id";
+
+    return stored;
+  }) as never);
   const upsertSpy = spyOn(
     sandboxInstances,
     "upsertSandboxInstance",
@@ -113,9 +121,8 @@ beforeEach((): void => {
   });
   restores.push(
     (): void => fetchSpy.mockRestore(),
-    (): void => getSpy.mockRestore(),
-    (): void => claimSpy.mockRestore(),
-    (): void => saveSpy.mockRestore(),
+    (): void => querySpy.mockRestore(),
+    (): void => mutateSpy.mockRestore(),
     (): void => upsertSpy.mockRestore(),
     (): void => removeSpy.mockRestore(),
   );
@@ -180,6 +187,28 @@ it("reserves one persistent container, keeps it across runs and mirrors it", asy
     "upsert acct:workspace false",
     "upsert acct:workspace false",
   ]);
+  expect(convex).toEqual(["reserve"]);
+});
+
+it("books a prewarmed container's first command from the hold, and books again on release", async (): Promise<void> => {
+  const executor = new CloudflareSandboxExecutor({
+    ...config,
+    persistent: true,
+  });
+  await executor.prewarm(request);
+  await executor.run(request);
+  await executor.release(request);
+  stored = null;
+  await executor.run(request);
+
+  expect(convex).toEqual(["reserve", "get", "delete", "reserve"]);
+  expect(calls.map((call): string => call.method)).toEqual([
+    "POST",
+    "POST",
+    "DELETE",
+    "POST",
+  ]);
+  expect(calls[3]?.url).not.toBe(calls[1]?.url);
 });
 
 it("never mirrors a reservation whose first start failed, so it is not billed", async (): Promise<void> => {
@@ -224,6 +253,7 @@ it("reuses an existing reservation without an account, as the dashboard console 
 
   expect(calls.map((call): string => call.method)).toEqual(["POST"]);
   expect(calls[0]?.url).toContain("/v1/sandboxes/fp-p-existing/exec");
+  expect(convex).toEqual(["get"]);
 });
 
 it("runs a persistent config with no account and no reservation as ephemeral", async (): Promise<void> => {

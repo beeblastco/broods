@@ -100,7 +100,6 @@ export const MODEL_CONFIG_SETTING_KEYS = [
   "provider",
   "modelId",
   "transcriptionModelId",
-  "transcriptionProvider",
   "providerOptions",
   "output",
   "maxOutputTokens",
@@ -350,7 +349,6 @@ const MODEL = z
     provider: z.optional(z.enum(ACCOUNT_MODEL_PROVIDER_NAMES)),
     modelId: optionalString,
     transcriptionModelId: optionalString,
-    transcriptionProvider: z.optional(z.enum(ACCOUNT_MODEL_PROVIDER_NAMES)),
     reasoning: z.optional(
       z.enum([
         "provider-default",

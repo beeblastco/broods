@@ -4,7 +4,6 @@ import type {
   NetworkPolicy,
   Sandbox as VercelSandbox,
 } from "@vercel/sandbox";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
@@ -57,6 +56,7 @@ import {
   isSandboxGoneError,
   mergeSandboxEnv,
   meterEphemeralSandbox,
+  queueMirrorUpsert,
   sandboxNamePrefix,
   sandboxReservationKey,
   shellQuote,
@@ -406,7 +406,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
             storedName,
             this.#config.controlPlane?.accountId,
           ).catch(() => {});
-          await upsertSandboxInstance(
+          void queueMirrorUpsert(
             this.#config.controlPlane,
             "vercel",
             key,
@@ -456,7 +456,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
         )
       ) {
-        await upsertSandboxInstance(
+        void queueMirrorUpsert(
           this.#config.controlPlane,
           "vercel",
           key,
@@ -480,20 +480,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     }
 
     const winner = await getSandboxExternalId("vercel", key);
-    if (!winner) {
-      // The row vanished after the refused claim; the sweeper's orphan adoption reaches it now.
-      await upsertSandboxInstance(
-        this.#config.controlPlane,
-        "vercel",
-        key,
-        name,
-        request.metadata,
-        { specs: vercelSpecs(sandbox) },
-      );
-
-      return sandbox;
-    }
     await sandbox.delete().catch(() => {});
+    if (!winner)
+      throw new Error("failed to reserve vercel sandbox (lost create race)");
 
     return Sandbox.get({
       name: winner,

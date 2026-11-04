@@ -354,9 +354,6 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ model: { transcriptionModelId: "whisper-1" } }),
     ).not.toThrow();
-    expect(() =>
-      normalizeAgentConfig({ model: { transcriptionProvider: "whisper" } }),
-    ).toThrow("config.model.transcriptionProvider must be one of:");
     for (const timeout of [
       60_000,
       {},

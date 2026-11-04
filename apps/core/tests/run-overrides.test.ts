@@ -25,14 +25,8 @@ describe("parseRunOverrides", () => {
     });
   });
 
-  it("rejects reserved identity/credential keys", () => {
-    for (const key of [
-      "provider",
-      "modelId",
-      "output",
-      "apiKey",
-      "transcriptionProvider",
-    ]) {
+  it("rejects reserved identity/credential keys (provider/modelId/output/apiKey)", () => {
+    for (const key of ["provider", "modelId", "output", "apiKey"]) {
       expect(() => parseRunOverrides({ model: { [key]: "x" } })).toThrow(
         /cannot be overridden per run/,
       );
