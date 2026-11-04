@@ -50,8 +50,8 @@ export interface FakeGitHub {
   repos: Map<number, FakeRepo>;
   /** Adds a repo with one commit holding `files` on `defaultBranch`. */
   addRepo: (repo: NewRepo) => FakeRepo;
-  /** The files at a branch's head; null when the branch is missing. */
-  filesAt: (repoId: number, branch: string) => Map<string, string> | null;
+  /** The files at a branch's head or a commit sha; null when neither exists. */
+  filesAt: (repoId: number, ref: string) => Map<string, string> | null;
   /** Posts a webhook delivery to `target`, signed with `secret`. */
   deliver: (
     target: string,
@@ -131,11 +131,11 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
 
     return id;
   };
-  const filesAt = (
-    repoId: number,
-    branch: string,
-  ): Map<string, string> | null => {
-    const head = repos.get(repoId)?.branches.get(branch);
+  // A ref is a branch or, as GitHub also takes, a commit sha.
+  const filesAt = (repoId: number, ref: string): Map<string, string> | null => {
+    const head =
+      repos.get(repoId)?.branches.get(ref) ??
+      (commits.has(ref) ? ref : undefined);
     const tree = head ? commits.get(head)?.tree : undefined;
 
     return tree ? (trees.get(tree) ?? null) : null;
@@ -306,6 +306,30 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
   ];
 
   const repoRoutes: Route<RepoCall>[] = [
+    // Every run fails in its deploy step, so a failed run's reason can be read back.
+    [
+      "GET",
+      /^\/actions\/runs\/(\d+)\/jobs$/,
+      ({ match }): Response =>
+        json(200, {
+          jobs: [
+            {
+              conclusion: "failure",
+              id: Number(match[1]),
+              steps: [{ conclusion: "failure", name: "Deploy" }],
+            },
+          ],
+        }),
+    ],
+    [
+      "GET",
+      /^\/actions\/jobs\/\d+\/logs$/,
+      (): Response =>
+        new Response(
+          "2026-11-04T00:11:57.2000000Z Error: defineMcp needs a url or a handler\n" +
+            "2026-11-04T00:11:57.3000000Z ##[error]Process completed with exit code 1.\n",
+        ),
+    ],
     [
       "GET",
       /^\/git\/trees\/(.+)$/,
@@ -328,11 +352,14 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
       /^\/git\/trees$/,
       ({ body }): Response => {
         const files = new Map(trees.get(String(body.base_tree)) ?? []);
+        // A null blob sha deletes the path, as GitHub does.
         for (const entry of body.tree as Array<{
           path: string;
-          content: string;
+          content?: string;
+          sha?: null;
         }>) {
-          files.set(entry.path, entry.content);
+          if (entry.sha === null) files.delete(entry.path);
+          else files.set(entry.path, entry.content ?? "");
         }
         const tree = sha();
         trees.set(tree, files);
@@ -359,7 +386,10 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
         const id = sha();
         commits.set(id, { tree: String(body.tree) });
 
-        return json(201, { sha: id });
+        return json(201, {
+          sha: id,
+          html_url: `https://github.com/commit/${id}`,
+        });
       },
     ],
     [

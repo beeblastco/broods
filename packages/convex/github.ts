@@ -36,6 +36,7 @@ import {
   STAGES,
   GitHubApiError,
   WORKFLOW_PATH,
+  runFailure,
   administeredInstallations,
   authorizeUrl,
   commitWorkflow,
@@ -109,6 +110,7 @@ const deployValidator = v.object({
   sha: v.string(),
   status: v.string(),
   conclusion: v.optional(v.string()),
+  error: v.optional(v.string()),
   url: v.string(),
   updatedAt: v.number(),
 });
@@ -181,7 +183,8 @@ interface CliLinkRequest {
 
 interface WorkflowRunEvent {
   action: string;
-  repository: { id: number };
+  installation: { id: number };
+  repository: { full_name: string; id: number };
   workflow_run: {
     id: number;
     run_attempt?: number;
@@ -296,6 +299,7 @@ async function readStatus(
       sha: deploy.sha,
       status: deploy.status,
       conclusion: deploy.conclusion,
+      error: deploy.error,
       url: deploy.url,
       updatedAt: deploy.updatedAt,
     })),
@@ -797,7 +801,18 @@ export const webhook = httpAction(async (ctx, request): Promise<Response> => {
     const payload = JSON.parse(body) as WorkflowRunEvent;
     const run = payload.workflow_run;
     if (run.path === WORKFLOW_PATH) {
+      // A failed run carries its reason, as a hosted build log would; GitHub keeps it in the log.
+      const error =
+        run.conclusion === "failure"
+          ? await runFailure(
+              app,
+              payload.installation.id,
+              payload.repository.full_name,
+              run.id,
+            ).catch(() => undefined)
+          : undefined;
       await ctx.runMutation(internal.github.recordDeploy, {
+        error: error,
         repoId: payload.repository.id,
         branch: run.head_branch,
         runId: run.id,
@@ -1117,6 +1132,7 @@ export const saveLink = internalMutation({
 /** Keeps the latest workflow run per linked project and branch. */
 export const recordDeploy = internalMutation({
   args: {
+    error: v.optional(v.string()),
     repoId: v.number(),
     branch: v.string(),
     runId: v.number(),
