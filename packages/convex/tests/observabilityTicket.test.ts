@@ -12,7 +12,11 @@ import {
   openStageSessionTicket,
   sealStageSessionTicket,
 } from "../model/stageSessionTicket";
-import { openUserToken } from "../model/userToken";
+import {
+  openUserToken,
+  userConversationKey,
+  userConversationPrefix,
+} from "../model/userToken";
 import schema from "../schema";
 
 const AUTH_ID = "user_01OBSERVE";
@@ -238,6 +242,39 @@ describe("the read-only logs ticket", () => {
     ).toEqual([]);
 
     expect((await write(t, await lentLogin(t, "dock-1"))).status).toBe(403);
+  });
+
+  test("the dock's token runs only its conversation, under either spelling of it", async () => {
+    const t = await seed();
+    const session = await t.mutation(api.agentDock.session, {
+      conversationKey: `${userConversationPrefix(AUTH_ID)}dock-1`,
+    });
+    const opened = await openUserToken(
+      session?.userToken ?? "",
+      SIGNING_SECRET,
+    );
+    if (!opened) throw new Error("no user token");
+
+    expect(opened.conversations).toEqual(["dock-1"]);
+    expect(userConversationKey(opened, "dock-1")).not.toBeNull();
+    expect(userConversationKey(opened, "dock-2")).toBeNull();
+    expect((await open(t, opened.credential ?? "")).status).toBe(200);
+    // The mark holds for the bare key, the one other logins in this conversation carry.
+    expect((await write(t, await lentLogin(t, "dock-1"))).status).toBe(403);
+  });
+
+  test("a null body is a 400", async () => {
+    const t = await seed();
+    const response = await t.fetch("/v1/account/observability-session", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${await lentLogin(t, "dock-1")}`,
+        "Content-Type": "application/json",
+      },
+      body: "null",
+    });
+
+    expect(response.status).toBe(400);
   });
 
   test("a lent login with no conversation cannot open logs", async () => {

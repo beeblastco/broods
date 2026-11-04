@@ -237,6 +237,9 @@ export const mintObservabilityByLogin = internalMutation({
     const resolved = await resolveActiveCliToken(ctx, args.tokenHash, true);
     if (!resolved) return null;
     const { account, token } = resolved;
+    const now = Date.now();
+    // Expiring this instant, it would mark and audit an opening whose ticket cannot open.
+    if (token.expiresAt !== undefined && token.expiresAt <= now) return null;
     const conversation = token.lentConversation;
     if (token.lentToAgent === true && conversation === undefined) return null;
     const projectDoc = await projectForAccount(ctx, account._id, args.project);
@@ -252,7 +255,6 @@ export const mintObservabilityByLogin = internalMutation({
       ? await activeDeployment(ctx, projectDoc._id, stage._id)
       : null;
     if (!deployment) return null;
-    const now = Date.now();
     if (token.lentToAgent === true && conversation !== undefined) {
       const mark = await ctx.db
         .query("observedConversations")
@@ -307,8 +309,11 @@ export const observabilitySessionHttpHandle = httpAction(
   async (ctx, req): Promise<Response> => {
     try {
       const tokenHash = await cliLoginTokenHash(req);
-      const body = (await req.json()) as { project?: unknown; stage?: unknown };
-      if (typeof body.project !== "string" || !body.project.trim())
+      const body = (await req.json()) as {
+        project?: unknown;
+        stage?: unknown;
+      } | null;
+      if (typeof body?.project !== "string" || !body.project.trim())
         return jsonError(400, "Request body must include a project");
       if (typeof body.stage !== "string" || !body.stage.trim())
         return jsonError(400, "Request body must include a stage");

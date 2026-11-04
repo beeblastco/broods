@@ -5,7 +5,9 @@ Logs carry end users' chats, so text in them may try to steer an agent that read
 agent holds a login lent by the signed-in owner or admin (`agentDock.session`,
 `packages/convex/agentDock.ts`). `mintObservabilityByLogin` (`packages/convex/cli/stages.ts`) trades
 it for a `bdob_` ticket and, in the same mutation, marks its conversation as having read logs.
-`observedLoginRefusal` (`packages/convex/config/routes/shared.ts`) then refuses every write by a login
+The user token lists that one conversation (`agentDock.session`), so core runs its login nowhere else:
+that is why each login here has one `conv`. `observedLoginRefusal`
+(`packages/convex/config/routes/shared.ts`) then refuses every write by a login
 of that conversation, using `conversationObserved` (`packages/convex/cli/auth.ts`), so a login
 re-minted mid-conversation inherits it. The mark has its own table, so pruning logins keeps it. `observabilityTicketExpiry`
 (`packages/convex/model/observabilityTicket.ts`) bounds the ticket, and `observabilityTicketScope`
@@ -233,7 +235,8 @@ conversation is already read-only: no ticket ever exists beside a login that can
 theorem tickets_sound {s : State} (hs : Reachable s) : TicketsSound s :=
   ticketsSound_steps hs (by intro t ht; simp [init] at ht)
 
-/-- Membership never comes back on its own, so a demoted user's lent logins stay dead. -/
+/-- The model has no restore step, so membership stays false once demoted. `updateRole` can restore
+it, which revives an unexpired login: these two theorems hold only until then. -/
 theorem demoted_stays_out {s s' : State} (hs : Steps s s') (hm : s.member = false) :
     s'.member = false := by
   induction hs with
@@ -253,7 +256,7 @@ theorem demoted_step {a b : State} (hs : Step a b) (hm : a.member = false) :
   | tick => exact ⟨hm, rfl, rfl⟩
   | demote => exact ⟨rfl, rfl, rfl⟩
 
-/-- Once the user is demoted, no ticket is minted and no further write is admitted. -/
+/-- Until membership is restored, no ticket is minted and no further write is admitted. -/
 theorem demoted_cannot_act {s s' : State} (hs : Steps s s') (hm : s.member = false) :
     s'.tickets = s.tickets ∧ s'.admitted = s.admitted := by
   induction hs with
@@ -275,6 +278,20 @@ example : Step lent
       admitted := fun c => if c = alice.conv then lent.admitted c + 1 else lent.admitted c
       pending := fun c => if c = alice.conv then lent.pending c + 1 else lent.pending c } :=
   .admit lent alice ⟨by simp [lent, alice], by simp [lent, alice, init], rfl⟩ rfl
+
+/-! The route predicate opens what it should, and refuses the rest. -/
+
+def ticket : Ticket := ⟨3, alice.conv, 0, 100, 50⟩
+
+example : ticketOpens 10 ticket (.logs 3) = true := by decide
+example : ticketOpens 10 ticket (.logs 4) = false := by decide
+example : ticketOpens 50 ticket (.logs 3) = false := by decide
+example : ticketOpens 10 ticket .accountRead = false := by decide
+
+/-! A demoted user is refused by the same check that lets a member through. -/
+
+example : Live lent alice := ⟨by simp [lent, alice], by simp [lent, alice, init], rfl⟩
+example : ¬ Live { lent with member := false } alice := by simp [Live]
 
 /-! Broken variants these properties catch. -/
 
