@@ -1,3 +1,4 @@
+import { SHELL_ONLY_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
@@ -9,6 +10,7 @@ import {
   workspaceParamSchema,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
+import { shellQuote } from "../sandbox/utils.ts";
 import { toolError, toolText } from "./utils.ts";
 
 interface GlobInput {
@@ -42,6 +44,31 @@ Usage notes:
             return await s3Glob(ws, pattern, path);
           }
           const root = path ? toWorkspaceRelative(path) : ".";
+          if (SHELL_ONLY_SANDBOX_PROVIDERS.has(runner.provider)) {
+            const listed = await runSandbox(
+              runner,
+              ws.namespace,
+              `cd ${shellQuote(`./${root}`)} && find . -type f`,
+              { metadata: sandboxRunMetadata(context, ws) },
+            );
+            if (!listed.ok)
+              return toolError(
+                `${listed.stderr}${listed.stdout}`.trim() ||
+                  "Error: glob failed",
+              );
+            const matcher = new Bun.Glob(pattern);
+            const matches = listed.stdout
+              .split("\n")
+              .map((line) => line.replace(/^\.\//, ""))
+              .filter((rel) => rel.length > 0 && matcher.match(rel))
+              .sort();
+
+            return toolText(
+              matches.length > 0
+                ? `${matches.join("\n")}\n`
+                : "No files found\n",
+            );
+          }
           const code = globScript(toBase64(pattern), toBase64(root));
           const result = await runSandbox(runner, ws.namespace, code, {
             metadata: sandboxRunMetadata(context, ws),

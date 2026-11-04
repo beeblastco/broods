@@ -1,4 +1,8 @@
-import { supportsS3WorkspaceMount } from "@broods/convex/model/sandboxProviders";
+import {
+  DISK_WORKSPACE_HINT,
+  sandboxHoldsWorkspace,
+  supportsS3WorkspaceMount,
+} from "@broods/convex/model/sandboxProviders";
 import { assertNoRetiredImageOptions } from "@broods/convex/model/sandboxRules";
 import type { ChannelPartition, AgentConfig } from "./domain/agent-config.ts";
 import type {
@@ -216,7 +220,13 @@ export async function resolveAgentRuntime(
         effectiveSandbox = sandbox;
       }
       const ownBucket = Boolean(record.config.storage?.bucket);
-      assertSandboxReachesWorkspace(ref.name, effectiveSandbox, ownBucket);
+      const onDisk = record.config.storage?.provider === "disk";
+      assertSandboxReachesWorkspace(
+        ref.name,
+        effectiveSandbox,
+        ownBucket,
+        onDisk,
+      );
       const readMount: SandboxConfig | undefined =
         !effectiveSandbox && ref.sandbox !== null && !ownBucket
           ? { provider: "lambda", network: { mode: "deny-all" } }
@@ -235,7 +245,7 @@ export async function resolveAgentRuntime(
           ? {
               sandbox: {
                 ...effectiveSandbox,
-                ...(record.config.storage
+                ...(record.config.storage && !onDisk
                   ? { storage: record.config.storage }
                   : {}),
               },
@@ -303,7 +313,12 @@ function assertSandboxReachesWorkspace(
   workspaceName: string,
   sandbox: WorkspaceSandboxConfig | undefined,
   ownBucket: boolean,
+  onDisk: boolean,
 ): void {
+  if (onDisk) {
+    if (sandbox && sandboxHoldsWorkspace("disk", sandbox)) return;
+    throw new Error(`Workspace "${workspaceName}": ${DISK_WORKSPACE_HINT}`);
+  }
   const unmountable = !sandbox
     ? undefined
     : !supportsS3WorkspaceMount(sandbox.provider, sandbox.options)
