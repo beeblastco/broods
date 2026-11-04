@@ -65,7 +65,7 @@ export function requestUrl(input: string | URL | Request): string {
   return input instanceof URL ? input.href : input.url;
 }
 
-export async function responseJson(response: Response): Promise<any> {
+export async function responseJson(response: Response): Promise<unknown> {
   return await response.json();
 }
 

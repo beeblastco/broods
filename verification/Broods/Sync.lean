@@ -66,12 +66,9 @@ structure Row where
 /-- The stage's rows the server reconciles, across every resource family. -/
 abbrev State := List Row
 
-/-- `resourcesForStage` lists a CLI-managed row, and a cron whatever its `managedBy`. -/
-def Row.listed (row : Row) : Bool := row.cli || row.res.kind == .cron
-
-/-- Every cron on the stage was declared by code: none an agent scheduled at
-runtime or the dashboard made. -/
-def State.codeCrons (s : State) : Prop := ∀ row ∈ s, row.res.kind = .cron → row.cli = true
+/-- `resourcesForStage` lists only CLI-managed rows: an agent's or the dashboard's
+own cron is not code's to diff. -/
+def Row.listed (row : Row) : Bool := row.cli
 
 /-- Skills, hooks and MCP servers: account-service resources whose bytes the
 server does not keep in the manifest snapshot. -/
@@ -184,18 +181,6 @@ private theorem lookup_read (s : State) (k : Kind × Nat) :
     cases hc : row.listed <;> by_cases hk : row.res.key = k <;>
       simp_all
 
-/-- A sync adds only CLI-managed rows, so it keeps every cron declared by code. -/
-private theorem fold_codeCrons {m : Manifest} (l : Manifest) (s : State)
-    (hs : s.codeCrons) : (l.foldl (upsert store m) s).codeCrons := by
-  induction l generalizing s with
-  | nil => exact hs
-  | cons r rest ih =>
-    refine ih _ (fun row hrow hk => ?_)
-    simp only [upsert, List.mem_cons, List.mem_filter] at hrow
-    rcases hrow with rfl | ⟨hr, _⟩
-    · rfl
-    · exact hs row hr hk
-
 private theorem find?_filter_same {p q : Row → Bool} (s : State)
     (h : ∀ row, p row = true → q row = true) :
     (s.filter q).find? p = s.find? p := by
@@ -307,28 +292,19 @@ private theorem diff_of_lookups {m r : Manifest}
   congr 1
   exact List.filter_eq_self.mpr (fun _ _ => rfl)
 
-/-- A sync keeps every cron on the stage one code declared. -/
-theorem sync_codeCrons {m : Manifest} (prune : Bool) {s : State} (hs : s.codeCrons) :
-    (sync store m prune s).codeCrons := by
-  have hf := fold_codeCrons (store := store) (m := m) m s hs
-  cases prune
-  · exact hf
-  · exact fun row hrow hk => hf row (List.mem_filter.mp hrow).1 hk
-
 /-! ## Properties -/
 
 /-- `dev` and `deploy` converge, with the server's rename matching in play: when
 the server reads back what it was given (up to what the diff compares), the next
-`broods diff` holds only deletes, and none at all after a pruning sync of a stage
-whose crons code declared (finding below). -/
+`broods diff` holds only deletes, and none at all after a pruning sync. -/
 theorem sync_converges (hkey : ∀ r, (store r).key = r.key)
     (hsnap : ∀ r, diff.snapshot (store r) = diff.snapshot r)
     {m : Manifest} (hu : m.unique) (prune : Bool) (s : State) :
     (∀ e ∈ diff m (read (sync store m prune s)), e.op = .delete) ∧
-      (prune = true → s.codeCrons → diff m (read (sync store m prune s)) = []) := by
+      (prune = true → diff m (read (sync store m prune s)) = []) := by
   have hd := diff_of_lookups (m := m) (r := read (sync store m prune s))
     (fun x hx => ⟨store x, lookup_after_sync hkey hu prune s hx, hsnap x⟩)
-  refine ⟨fun e he => ?_, fun hp hcc => ?_⟩
+  refine ⟨fun e he => ?_, fun hp => ?_⟩
   · rw [hd, List.mem_map] at he
     obtain ⟨_, _, rfl⟩ := he
     rfl
@@ -339,9 +315,7 @@ theorem sync_converges (hkey : ∀ r, (store r).key = r.key)
     obtain ⟨row, ⟨⟨hrow, hkeep⟩, hlisted⟩, rfl⟩ := hy
     simp only [Bool.or_eq_true, Bool.not_eq_true', List.any_eq_true, beq_iff_eq] at hkeep
     rcases hkeep with hc | ⟨x, hx, hk⟩
-    · have hcron : row.res.kind = .cron := by simpa [Row.listed, hc] using hlisted
-      have := fold_codeCrons (store := store) (m := m) m s hcc row hrow hcron
-      simp_all
+    · simp_all [Row.listed]
     · have hs := lookup_self hx
       rw [hk] at hs
       cases hl : lookup m row.res.key <;> simp_all
@@ -376,7 +350,7 @@ theorem sync_converges_real (large : Nat → Bool) (normalize : Resource → Res
     (hround : ∀ r, r.kind.external = false → diff.snapshot (normalize r) = diff.snapshot r)
     {m : Manifest} (hu : m.unique) (prune : Bool) (s : State) :
     (∀ e ∈ diff m (read (sync (storeReal large normalize) m prune s)), e.op = .delete) ∧
-      (prune = true → s.codeCrons →
+      (prune = true →
         diff m (read (sync (storeReal large normalize) m prune s)) = []) := by
   refine sync_converges (fun r => ?_) (fun r => ?_) hu prune s
   · unfold storeReal
@@ -415,16 +389,17 @@ example :
     read s = m ∧ diff m (read s) = [] := by
   decide
 
-/-! ## Findings, open -/
-
 /-- A cron an agent scheduled on its CLI agent survives `deploy --prune`, as
-91798774f intends, but `GET /manifest` still lists it: the next diff shows a delete
-no prune performs, and `broods dev` asks to delete it after every sync. -/
+91798774f intends, and `GET /manifest` no longer lists it, so the next diff is
+empty. Listing every cron, as `resourcesForStage` did before, shows a delete no
+prune performs, and `broods dev` asked to delete it after every sync. -/
 example :
     let agent : Resource := ⟨.agent, 1, ⟨7, none, none⟩⟩
     let own : Resource := ⟨.cron, 5, ⟨0, none, none⟩⟩
-    diff [agent] (read (sync id [agent] true [⟨agent, true⟩, ⟨own, false⟩])) =
-      [⟨.delete, .cron, 5⟩] := by
+    let after := sync id [agent] true [⟨agent, true⟩, ⟨own, false⟩]
+    diff [agent] (read after) = [] ∧
+      diff [agent] ((after.filter (fun row => row.cli || row.res.kind == .cron)).map (·.res)) =
+        [⟨.delete, .cron, 5⟩] := by
   decide
 
 end Broods.Sync
