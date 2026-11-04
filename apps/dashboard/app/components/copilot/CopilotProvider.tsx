@@ -40,7 +40,7 @@ import {
 } from "react";
 
 const NO_MODEL_REPLY =
-  'I can only run what I can resolve from this project right now. Try a name, "go to <section>", "pause <cron>", "add an agent", or "set KEY to value".';
+  "I can only run what I can resolve from this project right now. Try a name, `go to <section>`, `pause <cron>`, `add an agent`, or `set KEY to value`.";
 
 // A session minted this close to expiry is renewed before the next ask.
 const SESSION_RENEW_MS = 60 * 1000;

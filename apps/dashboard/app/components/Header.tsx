@@ -5,7 +5,6 @@ import { CommandMenu } from "@/app/components/CommandMenu";
 import { useCopilot } from "@/app/components/copilot/CopilotProvider";
 import { OrgSwitcher } from "@/app/components/header/OrgSwitcher";
 import { ProjectHeaderLeft } from "@/app/components/header/ProjectHeaderLeft";
-import { ShortcutKeys } from "@/app/components/ShortcutKeys";
 import { Button } from "@/app/components/ui/button";
 import { useSidebar } from "@/app/components/ui/sidebar";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -68,7 +67,6 @@ function AgentButton(): React.JSX.Element {
     >
       <BroodsMark className="size-3.5" />
       <span className="hidden lg:inline">Agent</span>
-      <ShortcutKeys id="copilot.open" className="hidden lg:flex" />
     </Button>
   );
 }

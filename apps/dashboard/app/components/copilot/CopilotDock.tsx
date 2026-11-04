@@ -3,7 +3,6 @@
 import { BroodsMark } from "@/app/components/BroodsMark";
 import { CopilotPlanCard } from "@/app/components/copilot/CopilotPlanCard";
 import { useCopilot } from "@/app/components/copilot/CopilotProvider";
-import { ShortcutKeys } from "@/app/components/ShortcutKeys";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -13,7 +12,7 @@ import {
   InputGroupTextarea,
 } from "@/app/components/ui/input-group";
 import { useStickToBottom } from "@/app/hooks/useStickToBottom";
-import { ArrowUp, X } from "lucide-react";
+import { ArrowUp } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useState } from "react";
 
@@ -48,23 +47,6 @@ export function CopilotDock(): React.JSX.Element | null {
 
   return (
     <aside className="flex w-80 shrink-0 flex-col border-l border-border">
-      <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
-        <BroodsMark className="size-3.5" />
-        <span className="text-xs font-medium">Broods agent</span>
-        <span className="ml-auto flex items-center gap-1">
-          <ShortcutKeys id="copilot.open" bordered />
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            tone="muted"
-            onClick={() => setOpen(false)}
-            aria-label="Close Broods agent"
-          >
-            <X />
-          </Button>
-        </span>
-      </header>
-
       <div ref={thread} className="flex-1 overflow-y-auto px-3 py-3">
         {messages.length === 0 ? (
           <div className="flex flex-col gap-2">
@@ -105,7 +87,7 @@ export function CopilotDock(): React.JSX.Element | null {
                         Thinking...
                       </p>
                     ) : (
-                      <Streamdown className="min-w-0 wrap-break-word text-xs text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_code]:whitespace-pre-wrap [&_code]:wrap-break-word [&_pre]:max-w-full [&_pre]:overflow-x-auto">
+                      <Streamdown className="min-w-0 wrap-break-word text-xs text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_code]:whitespace-pre-wrap [&_code]:wrap-break-word [&_code]:text-xs [&_pre]:max-w-full [&_pre]:overflow-x-auto">
                         {message.text}
                       </Streamdown>
                     )}
@@ -127,7 +109,7 @@ export function CopilotDock(): React.JSX.Element | null {
       </div>
 
       <div className="px-3 pb-3">
-        <InputGroup className="rounded-lg">
+        <InputGroup variant="plain" className="rounded-lg">
           <InputGroupTextarea
             // oxlint-disable-next-line jsx-a11y/no-autofocus -- the user just opened the dock
             autoFocus
