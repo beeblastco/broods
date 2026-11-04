@@ -10,7 +10,7 @@
     "serve": "bun run scripts/compaction-prompt.ts && bun run src/server.ts",
     "build": "bun run scripts/build.ts",
     "check": "bun run scripts/compaction-prompt.ts && bunx tsc --noEmit",
-    "test": "bun run scripts/compaction-prompt.ts && bun test --isolate --max-concurrency=1",
+    "test": "bun run scripts/compaction-prompt.ts && bun test --isolate --max-concurrency=1 ${CI:+--coverage --coverage-reporter=lcov --coverage-dir=coverage}",
     "perf:harness": "bun run scripts/compaction-prompt.ts && bun run scripts/harness-turns-perf.ts",
     "test:coverage": "bun run scripts/compaction-prompt.ts && bun test --isolate --coverage --max-concurrency=1",
     "daytona:s3-snapshot": "bun run scripts/daytona-s3-snapshot.ts",

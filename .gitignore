@@ -33,3 +33,6 @@ wrangler.deploy.json
 resource.enc
 .env.local
 .env
+
+# Coverage written by CI test runs
+coverage/
