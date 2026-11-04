@@ -14,11 +14,6 @@ import {
 const COMPACT_TIMEOUT_MS = 120_000;
 const COMPACTED = /^Context compacted\. \d+ message\(s\) summarized\.$/;
 
-/**
- * `/compact` sent while a run owns the conversation waits behind it, even
- * sent as a steer, and runs in place of a model turn once that run has ended.
- * On an idle conversation a sync run answers it straight away.
- */
 export async function queuedCompact(context: VerifyContext): Promise<void> {
   const key = `compact-${context.runId}`;
   const { agentId } = await context.measure(
@@ -44,8 +39,7 @@ export async function queuedCompact(context: VerifyContext): Promise<void> {
           eventId: `${key}-first`,
           input: "Say OK.",
         })) {
-          // The first part means this run owns the conversation. A steer
-          // would join it; a command must wait for it to end instead.
+          // The first part means this run owns the conversation; a command waits, even as a steer.
           admitted ??= await context.client.runAsync({
             agentId: agentId,
             conversationKey: key,
@@ -84,8 +78,7 @@ export async function queuedCompact(context: VerifyContext): Promise<void> {
     status.requestedMode === "followup",
     JSON.stringify(status),
   );
-  // Without a key the summary call fails and the run must say so, unless the
-  // perf stack answers the model in process.
+  // Without a key the summary fails, unless the perf stack answers the model in process.
   assertStep(
     context.hasModelKey
       ? "queued /compact summarized the finished turn"
@@ -123,5 +116,33 @@ export async function queuedCompact(context: VerifyContext): Promise<void> {
         ? idle.message.startsWith("Agent run failed")
         : idle.text.length > 0,
     idle instanceof Error ? idle.message : idle.text,
+  );
+
+  if (!context.hasModelKey) return;
+  // /compact runs no model loop: its usage row has no steps, only the summary's tokens.
+  const data = context.convex([
+    "data",
+    "taskUsage",
+    "--order",
+    "desc",
+    "--limit",
+    "200",
+    "--format",
+    "jsonArray",
+  ]);
+  assertStep("taskUsage is readable", data.ok, data.output.slice(-300));
+  // The array starts a line; a log line before it may hold a bracket.
+  const rows: Array<{
+    conversationKey: string;
+    stepCount: number;
+    totalTokens: number;
+  }> = JSON.parse(data.output.slice(data.output.search(/^\[/m)));
+  const compactRows = rows.filter(
+    (row): boolean => row.conversationKey.endsWith(key) && row.stepCount === 0,
+  );
+  assertStep(
+    "/compact recorded its summary tokens on a usage row",
+    compactRows.some((row): boolean => row.totalTokens > 0),
+    JSON.stringify(compactRows),
   );
 }

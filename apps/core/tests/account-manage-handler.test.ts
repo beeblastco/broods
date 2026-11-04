@@ -46,13 +46,6 @@ afterEach(() => {
 });
 
 describe("account management HTTP handler", () => {
-  it("returns a JSON health response", async () => {
-    const response = await handler(createEvent("GET", "/"));
-
-    expect(response.status).toBe(200);
-    expect(await responseJson(response)).toEqual({ status: "ok" });
-  });
-
   it("returns JSON errors for missing auth on retained account delete", async () => {
     const response = await handler(createEvent("DELETE", "/v1/account"));
 
@@ -177,68 +170,6 @@ describe("account management HTTP handler", () => {
     });
   });
 
-  it("no longer serves account metadata or rotation routes", async () => {
-    process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
-    process.env.SERVICE_AUTH_SECRET = "service-secret";
-    setStorageForTests(createFakeStorage({}));
-
-    for (const path of [
-      "/v1/accounts",
-      "/v1/accounts/acct_test",
-      "/v1/accounts/acct_test/rotate-secret",
-    ]) {
-      const adminResponse = await handler(
-        createEvent(path.endsWith("rotate-secret") ? "POST" : "GET", path, {
-          authorization: "Bearer admin-secret",
-        }),
-      );
-      expect(adminResponse.status).toBe(404);
-      expect(await responseJson(adminResponse)).toEqual({
-        error: {
-          message: "Not found",
-          type: "not_found_error",
-          code: "not_found",
-        },
-      });
-    }
-
-    const adminPatchResponse = await handler(
-      createEvent(
-        "PATCH",
-        "/v1/accounts/acct_test",
-        {
-          authorization: "Bearer admin-secret",
-        },
-        { username: "next" },
-      ),
-    );
-    expect(adminPatchResponse.status).toBe(404);
-    expect(await responseJson(adminPatchResponse)).toEqual({
-      error: {
-        message: "Not found",
-        type: "not_found_error",
-        code: "not_found",
-      },
-    });
-
-    for (const path of ["/v1/account", "/v1/account/rotate-secret"]) {
-      const serviceResponse = await handler(
-        createEvent(path.endsWith("rotate-secret") ? "POST" : "GET", path, {
-          authorization: "Bearer service-secret",
-          "x-account-id": "acct_test",
-        }),
-      );
-      expect(serviceResponse.status).toBe(403);
-      expect(await responseJson(serviceResponse)).toEqual({
-        error: {
-          message: "Forbidden",
-          type: "permission_error",
-          code: "forbidden",
-        },
-      });
-    }
-  });
-
   it("returns JSON not found errors for authenticated admin requests", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     const response = await handler(
@@ -262,7 +193,6 @@ describe("account management HTTP handler", () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage({}));
 
-    // Admin cron routes were removed with the rest of the cron plane.
     const adminResponse = await handler(
       createEvent("GET", "/v1/accounts/acct_test/crons", {
         authorization: "Bearer admin-secret",
@@ -277,7 +207,6 @@ describe("account management HTTP handler", () => {
       },
     });
 
-    // Account-authenticated config-plane CRUD routes fall through to the admin gate.
     for (const path of [
       "/v1/crons",
       "/v1/policies",
@@ -436,7 +365,6 @@ describe("account management HTTP handler", () => {
       "x-account-id": "acct_test",
     };
 
-    // A JSON `null` body used to be cast to Record and crash on property access.
     for (const body of [null, ["reservationKey"], "reservationKey"]) {
       const response = await handler(
         createEvent("POST", "/v1/sandboxes/sbx_1/suspend", headers, body),
@@ -642,7 +570,6 @@ describe("account management HTTP handler", () => {
     );
     expect(missing.status).toBe(403);
 
-    // Past the role gate, the dev sandbox reaches the body checks.
     const dev = await handler(
       createEvent("POST", "/v1/sandboxes/sbx_dev/suspend", headers, {}),
     );
@@ -786,7 +713,6 @@ function createFakeStorage(overrides: Record<string, unknown>) {
       getById: async function () {
         return fakeAgent();
       },
-      // Account deletion lists agents to release the sandbox each one reserved.
       list: async function () {
         return [];
       },

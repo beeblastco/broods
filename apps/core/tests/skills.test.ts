@@ -1,8 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
-  contentTypeForSkillPath,
   formatSkillPath,
-  isExecutableSkillPath,
   parseGitHubSkillUrl,
   parseSkillMarkdown,
   parseSkillPath,
@@ -124,7 +122,6 @@ describe("validateSkillBundle", () => {
       "SKILL.md",
       "scripts/run.sh",
     ]);
-    // The caller's objects are left untouched; normalization happens on a copy.
     expect(input[0]?.path).toBe("  SKILL.md  ");
   });
 
@@ -176,45 +173,5 @@ describe("validateSkillBundle", () => {
     expect(() =>
       validateSkillBundle([bundleFile("SKILL.md", lateFrontmatter)]),
     ).toThrow("SKILL.md must start with YAML frontmatter");
-  });
-});
-
-describe("isExecutableSkillPath", () => {
-  it("marks script files as executable", () => {
-    for (const path of [
-      "scripts/run.sh",
-      "a.bash",
-      "b.zsh",
-      "tool.py",
-      "x.js",
-      "y.mjs",
-      "z.ts",
-    ]) {
-      expect(isExecutableSkillPath(path)).toBe(true);
-    }
-  });
-
-  it("does not mark documents or data files as executable", () => {
-    for (const path of [
-      "SKILL.md",
-      "config.json",
-      "notes.txt",
-      "data.yaml",
-      "Makefile",
-    ]) {
-      expect(isExecutableSkillPath(path)).toBe(false);
-    }
-  });
-});
-
-describe("contentTypeForSkillPath", () => {
-  it("returns application/json for JSON files and text/plain otherwise", () => {
-    expect(contentTypeForSkillPath("config.json")).toBe("application/json");
-    expect(contentTypeForSkillPath("SKILL.md")).toBe(
-      "text/plain; charset=utf-8",
-    );
-    expect(contentTypeForSkillPath("scripts/run.sh")).toBe(
-      "text/plain; charset=utf-8",
-    );
   });
 });

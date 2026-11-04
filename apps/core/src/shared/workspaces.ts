@@ -1,26 +1,10 @@
-/**
- * Workspace + sandbox runtime resolution shared by harness sessions and cleanup.
- *
- * Agents reference standalone, account-scoped sandbox / workspace records by id.
- * This module resolves those references into concrete runtime configs and derives
- * each workspace's filesystem namespace. The base namespace is scoped by
- * `accountId:workspaceId`, so agents that share a workspaceId read and write the
- * SAME files unless the record sets `isolation`: "conversation" adds a folder per
- * channel partition, "agent" a folder per agent. The full namespace is what a
- * sandbox reserves on and what the mount's STS session is scoped to, so an
- * isolated folder is its own VM and its own S3 prefix.
- */
-
 import {
-  assertNoRetiredImageOptions,
-  PLATFORM_WORKER_SANDBOX_PROVIDERS,
-  STATELESS_SANDBOX_PROVIDERS,
-} from "@broods/convex/model/sandboxRules";
-import type {
-  ChannelPartition,
-  AgentConfig,
-  AgentWorkspaceRef,
-} from "./domain/agent-config.ts";
+  DISK_WORKSPACE_HINT,
+  sandboxHoldsWorkspace,
+  supportsS3WorkspaceMount,
+} from "@broods/convex/model/sandboxProviders";
+import { assertNoRetiredImageOptions } from "@broods/convex/model/sandboxRules";
+import type { ChannelPartition, AgentConfig } from "./domain/agent-config.ts";
 import type {
   SandboxConfig,
   SandboxConfigRecord,
@@ -41,47 +25,33 @@ import {
 } from "./sandbox-sizes.ts";
 import { getStorage } from "./storage.ts";
 
-// The effective sandbox for a workspace, with the workspace's storage identity and
-// control-plane identity attached. Storage drives the S3 mount target/creds and
-// belongs to the workspace; controlPlane lets a reserved instance mirror itself into
-// Convex. Both are merged onto the sandbox compute record here, not stored on it.
+const USER_PARTITION_ALIAS = "users";
+
 export type WorkspaceSandboxConfig = SandboxConfig & {
   storage?: WorkspaceStorageConfig;
   controlPlane?: SandboxControlPlane;
 };
 
-// A workspace resolved for a turn: the storage record plus its effective sandbox.
-// This is the single shape the session, tools, and prompts all consume. Conventions:
-//   - `name` is the agent-facing mount label (the `workspace` arg the model selects).
-//   - the FIRST workspace in the list is the default (used when the model omits `workspace`).
-//   - `sandbox` undefined => the workspace is read-only (write/edit/grep/bash are not
-//     exposed). read/glob then run through `readMount` (a service-managed read-only
-//     Lambda mount) by default, or straight from S3 when the ref opts out with
-//     `sandbox: null` or the workspace brings its own bucket.
 export interface ResolvedWorkspace {
   name: string;
   workspaceId: string;
   namespace: string;
   description?: string;
   config: WorkspaceRuntimeConfig;
+  // Unset: the workspace is read-only (no write, edit, grep or bash).
   sandbox?: WorkspaceSandboxConfig;
-  // Read-only read runner. Set when the workspace has no effective sandbox, the ref
-  // did not opt out with `sandbox: null`, and the workspace uses the managed bucket.
-  // read/glob use it to read through the mount so they see committed writes
-  // immediately; undefined => read S3 directly (skips Lambda/VPC but lags mount writes).
+  // Unset: read/glob read S3 directly, which lags writes made through a mount.
   readMount?: SandboxConfig;
 }
 
-// A sandbox from `config.sandboxes`. `name` is the sandbox record name the model
-// picks with bash `sandbox`; `description` tells it what the sandbox is for.
 export interface ResolvedAgentSandbox {
   name: string;
   description?: string;
   sandbox: WorkspaceSandboxConfig;
 }
 
+// In both lists the first entry is the default.
 export interface ResolvedAgentRuntime {
-  // Resolved config.sandboxes; the first is the default.
   sandboxes: ResolvedAgentSandbox[];
   workspaces: ResolvedWorkspace[];
 }
@@ -92,28 +62,21 @@ export interface WorkspaceIsolationScope {
   channelScopeKey?: string;
   conversationKey?: string;
   partition?: ChannelPartition;
+  /** A user-token conversation (`bsu:`): its folder, never the root, whatever the isolation. */
+  userConversationKey?: string;
 }
 
-// Who the runtime is being resolved for. The agent's own sandbox is reserved per
-// agent, so resolution needs the agent identity as well as the account.
 export interface AgentRuntimeIdentity {
   accountId?: string;
   agentId?: string;
 }
 
-// A sandbox record as resolution loads it: the record for its name and description,
-// the runtime config with the control-plane identity attached.
 interface LoadedSandbox {
   record: SandboxConfigRecord;
   sandbox: WorkspaceSandboxConfig;
 }
 
-/**
- * The key an agent-level sandbox (any entry of `config.sandboxes`) reserves on, or
- * undefined when it reserves nothing. A pinned `options.reservationKey` wins over
- * the derived key, and both `resolveAgentRuntime` and account-deletion cleanup ask
- * this one function so the machine released is the machine reserved.
- */
+// Account cleanup asks this too, so the machine it releases is the one reserved.
 export function agentSandboxReservation(
   sandbox: WorkspaceSandboxConfig,
   accountId: string | undefined,
@@ -134,12 +97,6 @@ export function agentSandboxReservation(
   return agentSandboxReservationKey(accountId, agentId, sandboxId);
 }
 
-/**
- * Derive the reservation key for a workspace-less sandbox an agent reserves, scoped
- * `accountId:agentId:sandboxId` like workspaceNamespace's account-plus-record
- * scope: agents never share a machine by accident, and re-pointing an agent at
- * another sandbox record hands it that record's machine.
- */
 export function agentSandboxReservationKey(
   accountId: string,
   agentId: string,
@@ -148,58 +105,25 @@ export function agentSandboxReservationKey(
   return normalizeFilesystemNamespace(`${accountId}:${agentId}:${sandboxId}`);
 }
 
-/**
- * The namespace one run mounts: the base for a shared workspace, a folder per
- * agent under `agent/` for "agent" isolation, or the channel partition's folder
- * for "conversation" isolation. Cleanup derives the same string to find what a
- * run left behind.
- */
 export function isolatedWorkspaceNamespace(
   baseNamespace: string,
   isolation: WorkspaceIsolation | undefined,
   scope: WorkspaceIsolationScope = {},
 ): string {
-  if (isolation === undefined) {
-    return baseNamespace;
-  }
-  if (isolation === "agent") {
-    if (!scope.agentId) {
-      throw new Error('Workspace isolation "agent" requires an agent identity');
-    }
+  if (!scope.userConversationKey)
+    return sharedWorkspaceNamespace(baseNamespace, isolation, scope);
+  // The user folder is already one conversation's, so its subagents share it; only an
+  // agent folder still splits it.
+  const namespace =
+    isolation === "agent"
+      ? sharedWorkspaceNamespace(baseNamespace, isolation, scope)
+      : baseNamespace;
 
-    return `${baseNamespace}/${agentNamespaceFolder(scope.agentId)}`;
-  }
-
-  const partition = scope.partition;
-  if (!partition) {
-    if (!scope.channelName) {
-      return baseNamespace;
-    }
-    throw new Error(
-      "Workspace isolation requires the active channel to define partition",
-    );
-  }
-
-  if (partition.by === "shared") {
-    return baseNamespace;
-  }
-
-  const conversationKey = scope.conversationKey ?? scope.channelScopeKey;
-  if (!conversationKey) {
-    throw new Error(
-      "Conversation workspace isolation requires an active conversation key",
-    );
-  }
-
-  return `${baseNamespace}/${partition.alias}/${normalizeFilesystemNamespace(conversationKey)}`;
+  return `${namespace}/${USER_PARTITION_ALIAS}/${normalizeFilesystemNamespace(scope.userConversationKey)}`;
 }
 
-/**
- * Scope an author-pinned reservation key to its account. The registry lookup is
- * keyed by reservation key alone, so raw pinned text must never reach it: an
- * unscoped key could name, and reconnect to, another account's reserved machine.
- * The same string within one account still maps to one machine.
- */
+// The registry is keyed by reservation key alone, so unscoped pinned text could
+// reconnect to another account's reserved machine.
 export function pinnedSandboxReservationKey(
   accountId: string,
   reservationKey: string,
@@ -207,11 +131,6 @@ export function pinnedSandboxReservationKey(
   return normalizeFilesystemNamespace(`${accountId}:pinned:${reservationKey}`);
 }
 
-/**
- * Resolve an agent's `sandboxes` and `workspaces` references into
- * concrete records. Throws a clear error when a referenced record is missing
- * (misconfigured agent).
- */
 export async function resolveAgentRuntime(
   agentConfig: AgentConfig,
   identity: AgentRuntimeIdentity,
@@ -219,13 +138,9 @@ export async function resolveAgentRuntime(
 ): Promise<ResolvedAgentRuntime> {
   const accountId = identity.accountId;
   const storage = getStorage();
-  // Keyed on the in-flight fetch, so a record the agent list and a workspace share
-  // is fetched once even while both resolve concurrently.
   const sandboxCache = new Map<string, Promise<LoadedSandbox>>();
 
-  // Every agent-level entry, the default included, reserves per agent and sandbox
-  // when persistent. Workspaces that inherit the default load their own unreserved
-  // copy and key their reservation on the workspace namespace instead.
+  // Workspaces inheriting the default take the unreserved copy and reserve on their namespace.
   async function loadAgentSandbox(
     sandboxId: string,
   ): Promise<ResolvedAgentSandbox> {
@@ -241,13 +156,11 @@ export async function resolveAgentRuntime(
         accountId,
         identity.agentId,
         sandboxId,
+        isolationScope.userConversationKey,
       ),
     };
   }
 
-  // Load (and memoize) a sandbox record so a sandbox shared across workspaces is
-  // only fetched once. The control-plane identity (account + size specs) is attached
-  // here so a reserved instance mirrors itself into Convex from the executor.
   function loadSandbox(sandboxId: string): Promise<LoadedSandbox> {
     if (!accountId) {
       throw new Error("Cannot resolve sandbox reference without an account");
@@ -262,8 +175,7 @@ export async function resolveAgentRuntime(
         if (!record) {
           throw new Error(`Referenced sandbox not found: ${sandboxId}`);
         }
-        // Validation runs on write only, so a config stored before `snapshot`
-        // replaced these options would otherwise boot the provider default.
+        // Write-time validation misses rows stored before `snapshot` replaced these.
         assertNoRetiredImageOptions(
           record.config.provider,
           record.config.options ?? {},
@@ -304,10 +216,6 @@ export async function resolveAgentRuntime(
           `Referenced workspace not found: ${ref.workspaceId} (as "${ref.name}")`,
         );
       }
-      // Effective sandbox cascade:
-      //   null            => read-only opt-out (even when an agent default exists)
-      //   "sb_…" (string) => per-workspace override
-      //   undefined       => inherit the agent-level default (read-only if none)
       let effectiveSandbox: WorkspaceSandboxConfig | undefined;
       if (ref.sandbox === null) {
         effectiveSandbox = undefined;
@@ -317,13 +225,13 @@ export async function resolveAgentRuntime(
         effectiveSandbox = sandbox;
       }
       const ownBucket = Boolean(record.config.storage?.bucket);
-      assertSandboxReachesWorkspace(ref.name, effectiveSandbox, ownBucket);
-      // Read-only workspace (no effective sandbox): default to reading through a
-      // service-managed read-only Lambda mount (network denied, cheapest mount slot)
-      // so reads reflect committed writes immediately. The existing `sandbox: null`
-      // opt-out ("no sandbox, no compute") also skips the mount: read straight from
-      // S3 instead, and so does a workspace on its own bucket (see
-      // assertSandboxReachesWorkspace).
+      const onDisk = record.config.storage?.provider === "disk";
+      assertSandboxReachesWorkspace(
+        ref.name,
+        effectiveSandbox,
+        ownBucket,
+        onDisk,
+      );
       const readMount: SandboxConfig | undefined =
         !effectiveSandbox && ref.sandbox !== null && !ownBucket
           ? { provider: "lambda", network: { mode: "deny-all" } }
@@ -338,13 +246,11 @@ export async function resolveAgentRuntime(
         ),
         ...(record.description ? { description: record.description } : {}),
         config: record.config,
-        // Attach the workspace's storage identity to its effective sandbox so the
-        // executor resolves the mount target against the right bucket/creds.
         ...(effectiveSandbox
           ? {
               sandbox: {
                 ...effectiveSandbox,
-                ...(record.config.storage
+                ...(record.config.storage && !onDisk
                   ? { storage: record.config.storage }
                   : {}),
               },
@@ -370,22 +276,10 @@ export async function resolveAgentRuntime(
   };
 }
 
-export function resolveWorkspaceRefs(
-  agentConfig: AgentConfig,
-): AgentWorkspaceRef[] {
-  return agentConfig.workspaces ?? [];
-}
-
-/**
- * True when the account's own provider account pays for this sandbox, so the
- * platform must not meter it or hold it to the plan's budget. Mirrors where
- * each executor takes its credentials: the config's own key wins over the
- * platform env. A MicroVM always runs on the platform's AWS account; a machine
- * is the user's computer and a custom server is the account's own compute.
- */
+// Unmetered and outside the plan budget. Mirrors each executor's credential pick: its own
+// key wins over the platform env, and a blank one falls back to the platform's.
 export function runsOnOwnCredentials(config: SandboxConfig): boolean {
   const options = config.options ?? {};
-  // Blank matches the executors' trimming, which falls back to platform keys.
   const has = (key: string): boolean => {
     const value = options[key];
 
@@ -418,37 +312,26 @@ export function workspaceNamespace(
   return normalizeFilesystemNamespace(scope);
 }
 
-/**
- * Namespaces for an account's workspace records, used by cleanup to purge the
- * S3 data for shared workspaces. Pass the account's workspace ids.
- */
-export function workspaceNamespacesForAccount(
-  accountId: string,
-  workspaceIds: string[],
-): string[] {
-  return workspaceIds.map((workspaceId) =>
-    workspaceNamespace(accountId, workspaceId),
-  );
-}
-
-// The file tools need the workspace's S3 mount. A stateless provider has none (a
-// machine's would act on the daemon's own disk, a custom server is never handed
-// mount credentials), and a MicroVM network other than allow-all only routes to
-// the managed bucket, so it can never mount a bucket the workspace names itself.
+// The CLI sync's rule, held here so an API-made config cannot skip it. A fallback gets none
+// of the primary's options; a lambda off allow-all reaches only the managed bucket.
 function assertSandboxReachesWorkspace(
   workspaceName: string,
   sandbox: WorkspaceSandboxConfig | undefined,
   ownBucket: boolean,
+  onDisk: boolean,
 ): void {
-  // The file tools need an S3 mount. A machine, a custom server and the
-  // Cloudflare Workers have none, so they would act on their own disk. A
-  // fallback runs the same workspace, so it is held to the same rule.
-  const unmountable = [sandbox?.provider, sandbox?.fallbackProvider].find(
-    (provider): boolean =>
-      provider !== undefined &&
-      (PLATFORM_WORKER_SANDBOX_PROVIDERS.has(provider) ||
-        STATELESS_SANDBOX_PROVIDERS.has(provider)),
-  );
+  if (onDisk) {
+    if (sandbox && sandboxHoldsWorkspace("disk", sandbox)) return;
+    throw new Error(`Workspace "${workspaceName}": ${DISK_WORKSPACE_HINT}`);
+  }
+  const unmountable = !sandbox
+    ? undefined
+    : !supportsS3WorkspaceMount(sandbox.provider, sandbox.options)
+      ? sandbox.provider
+      : sandbox.fallbackProvider &&
+          !supportsS3WorkspaceMount(sandbox.fallbackProvider, undefined)
+        ? sandbox.fallbackProvider
+        : undefined;
   if (unmountable) {
     throw new Error(
       `Workspace "${workspaceName}" cannot run on a ${unmountable} sandbox; give it its own sandbox or set sandbox: null`,
@@ -465,8 +348,6 @@ function assertSandboxReachesWorkspace(
   }
 }
 
-// bash picks a sandbox by record name, so two records under one name would leave
-// the model no way to reach the second.
 function assertDistinctSandboxNames(sandboxes: ResolvedAgentSandbox[]): void {
   const seen = new Set<string>();
   for (const entry of sandboxes) {
@@ -479,24 +360,27 @@ function assertDistinctSandboxNames(sandboxes: ResolvedAgentSandbox[]): void {
   }
 }
 
-/**
- * Give a persistent agent-level sandbox the reservation key its workspace-less
- * runs key persistence on, so `persistent: true` works without the author also
- * supplying `options.reservationKey`. A sandbox that reserves nothing passes
- * through untouched.
- */
+// A pinned key is the owner's choice to share; otherwise each user conversation gets its own.
 function reservedAgentSandbox(
   sandbox: WorkspaceSandboxConfig,
   accountId: string | undefined,
   agentId: string | undefined,
   sandboxId: string,
+  userConversationKey: string | undefined,
 ): WorkspaceSandboxConfig {
-  const reservationKey = agentSandboxReservation(
+  const agentKey = agentSandboxReservation(
     sandbox,
     accountId,
     agentId,
     sandboxId,
   );
+  const pinned = sandbox.options?.reservationKey;
+  const reservationKey =
+    agentKey &&
+    userConversationKey &&
+    !(typeof pinned === "string" && pinned.trim().length > 0)
+      ? normalizeFilesystemNamespace(`${agentKey}:${userConversationKey}`)
+      : agentKey;
   if (!reservationKey || reservationKey === sandbox.options?.reservationKey) {
     return sandbox;
   }
@@ -510,11 +394,6 @@ function reservedAgentSandbox(
   };
 }
 
-/**
- * Build the control-plane identity for a sandbox config so a reserved instance can
- * mirror itself into the Convex `sandboxInstances` registry (account, config row,
- * display name, size specs, and the idle timeout the meter bills it up to).
- */
 export function sandboxControlPlane(
   accountId: string,
   record: SandboxConfigRecord,
@@ -539,4 +418,44 @@ export function sandboxControlPlane(
     idleTimeoutSeconds: resolveSandboxLifecycle(record.config.lifecycle)
       .idleTimeoutSeconds,
   };
+}
+
+function sharedWorkspaceNamespace(
+  baseNamespace: string,
+  isolation: WorkspaceIsolation | undefined,
+  scope: WorkspaceIsolationScope,
+): string {
+  if (isolation === undefined) {
+    return baseNamespace;
+  }
+  if (isolation === "agent") {
+    if (!scope.agentId) {
+      throw new Error('Workspace isolation "agent" requires an agent identity');
+    }
+
+    return `${baseNamespace}/${agentNamespaceFolder(scope.agentId)}`;
+  }
+
+  const partition = scope.partition;
+  if (!partition) {
+    if (!scope.channelName) {
+      return baseNamespace;
+    }
+    throw new Error(
+      "Workspace isolation requires the active channel to define partition",
+    );
+  }
+
+  if (partition.by === "shared") {
+    return baseNamespace;
+  }
+
+  const conversationKey = scope.conversationKey ?? scope.channelScopeKey;
+  if (!conversationKey) {
+    throw new Error(
+      "Conversation workspace isolation requires an active conversation key",
+    );
+  }
+
+  return `${baseNamespace}/${partition.alias}/${normalizeFilesystemNamespace(conversationKey)}`;
 }

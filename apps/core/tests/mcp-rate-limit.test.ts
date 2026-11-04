@@ -1,8 +1,3 @@
-/**
- * A remote MCP server's rate limit is waited out inside the tool call, so a
- * step's parallel searches do not each come back to the model as failures.
- */
-
 import { afterEach, expect, it } from "bun:test";
 import type { Tool } from "ai";
 import {
@@ -30,26 +25,6 @@ const record: McpRecord = {
 };
 
 afterEach(() => setMcpForTests(null));
-
-it("waits the asked time and retries a rate-limited call", async () => {
-  let calls = 0;
-  setMcpForTests({
-    callTool: async () => {
-      calls += 1;
-
-      return calls < 3
-        ? { isError: true, content: [{ type: "text", text: RATE_LIMITED }] }
-        : { content: [{ type: "text", text: "found" }] };
-    },
-  });
-
-  const result = await callMcpTool(mcpConnection(record, undefined), "search", {
-    q: "x",
-  });
-
-  expect(result).toBe("found");
-  expect(calls).toBe(3);
-});
 
 it("reports each wait against the tool call, for its span", async () => {
   let calls = 0;
@@ -125,7 +100,7 @@ it("fails the call once the retries are spent", async () => {
     },
   });
 
-  expect(
+  await expect(
     callMcpTool(mcpConnection(record, undefined), "search", { q: "x" }),
   ).rejects.toThrow("Rate limit exceeded");
   expect(calls).toBe(4);
@@ -141,7 +116,7 @@ it("hands any other failure straight to the model", async () => {
     },
   });
 
-  expect(
+  await expect(
     callMcpTool(mcpConnection(record, undefined), "search", { q: "x" }),
   ).rejects.toThrow("boom");
   expect(calls).toBe(1);

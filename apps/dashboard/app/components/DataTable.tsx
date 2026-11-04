@@ -16,21 +16,17 @@ import { cn } from "@/app/lib/utils";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
-/** One value a column can filter by, with how the menu shows it. */
 export interface FilterValue {
   value: string;
   label: ReactNode;
 }
 
-/** The sort half of a header menu: which way this column is sorted, if at all. */
 export interface HeadSort {
   dir: SortDir | null;
   onSort: (dir: SortDir) => void;
-  /** Word pairs for the two directions; dates say oldest and newest first. */
   words?: [string, string];
 }
 
-/** The filter half of a header menu: the column's values and the ones in effect. */
 export interface HeadFilter {
   field: string;
   values: FilterValue[];
@@ -39,11 +35,6 @@ export interface HeadFilter {
   onClear: () => void;
 }
 
-/**
- * The dense list table every page shares: a sticky muted header, 12px cells,
- * row hover, and a selected row. Pages bring their own columns; the look is
- * fixed here so the lists read the same on logs, jobs and sandboxes.
- */
 export function DataTable({
   className,
   ...props
@@ -56,13 +47,6 @@ export function DataTable({
   );
 }
 
-/**
- * The column header cell. With `sort` alone a click sorts the column and a
- * second click flips it. With `filter` it opens one menu instead: sort
- * either way, then the column's values with a check on the ones in effect.
- * The sorted column reads in foreground with an arrow. `align="right"` for
- * numbers and switches.
- */
 export function DataTableHead({
   align = "left",
   sort,
@@ -100,7 +84,6 @@ export function DataTableHead({
   );
 }
 
-/** The header as one button: a click sorts ascending, another flips it. */
 function SortButton({
   sort,
   children,
@@ -125,7 +108,6 @@ function SortButton({
   );
 }
 
-/** The header's menu for a filterable column: the sort pair, a rule, then the filter values. */
 function HeadMenu({
   sort,
   filter,
@@ -184,7 +166,6 @@ function HeadMenu({
   );
 }
 
-/** The header row group, sticky over the scrolling body. */
 export function DataTableHeader({
   className,
   ...props
@@ -200,7 +181,6 @@ export function DataTableHeader({
   );
 }
 
-/** The body row group; the last row drops its rule so the frame closes it. */
 export function DataTableBody({
   className,
   ...props
@@ -210,7 +190,6 @@ export function DataTableBody({
   );
 }
 
-/** A body row. Clickable rows get the pointer and the hover; `selected` holds the accent. */
 export function DataTableRow({
   selected = false,
   className,
@@ -231,7 +210,6 @@ export function DataTableRow({
   );
 }
 
-/** A body cell. `muted` for secondary text, `align="right"` to match its head. */
 export function DataTableCell({
   align = "left",
   muted = false,
@@ -254,7 +232,6 @@ export function DataTableCell({
   );
 }
 
-/** The second line under a cell's main text. */
 export function DataTableSub({
   className,
   ...props
@@ -267,21 +244,17 @@ export function DataTableSub({
   );
 }
 
-/**
- * The line under a list: "4 jobs", or "2 of 4 jobs" while a filter hides
- * some. `children` sits at the right: a Load more button, or a note like
- * ", 3 active" when it is text.
- */
 export function DataTableFooter({
   shown,
   total,
   noun,
+  detail,
   children,
 }: {
   shown?: number;
   total: number;
-  /** The rows' name, singular and plural: `["job", "jobs"]`. */
   noun: [string, string];
+  detail?: string;
   children?: ReactNode;
 }): React.JSX.Element {
   const count =
@@ -293,6 +266,7 @@ export function DataTableFooter({
     <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border px-3 py-1.5 text-2xs text-muted-foreground tabular-nums">
       <span>
         {count} {total === 1 ? noun[0] : noun[1]}
+        {detail}
         {typeof children === "string" && children}
       </span>
       {typeof children !== "string" && children}
@@ -300,7 +274,6 @@ export function DataTableFooter({
   );
 }
 
-/** The value list of a filter menu; the header menu and the Filter button share it. */
 export function FilterItems({
   filter,
   label,

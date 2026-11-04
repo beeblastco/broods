@@ -1,16 +1,14 @@
-/** Agent config rules, the one copy the config plane and core both run. */
-
 import { describe, expect, it } from "vitest";
 import {
   assertAgentRuntimeRefs,
-  defaultSandboxOf,
-  isProviderToolName,
+  isHarnessToolName,
   mergeAgentConfig,
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
   normalizeCreateAgentInput,
   mergeCanvasSandboxes,
   normalizeUpdateAgentInput,
+  normalizeWebhookHookConfig,
 } from "../model/agentRules";
 import { redactConfigSecrets } from "../model/configValues";
 import {
@@ -54,8 +52,7 @@ describe("agent rules", () => {
     ).toThrow(
       'config.sandboxes[1] "sb_browser" also backs workspace "repo"; only the first sandbox can back a workspace',
     );
-    // Each index is judged in turn, so the later mount at [1] wins over the
-    // repeat at [2], as in core.
+    // Each index is judged in turn, as in core: the mount at [1] wins over the repeat at [2].
     expect(() =>
       normalizeAgentConfig({
         sandboxes: ["sb_a", "sb_b", "sb_b"],
@@ -252,47 +249,8 @@ describe("agent rules", () => {
     );
   });
 
-  it("requires an http(s) homeserver URL for a Matrix token", () => {
-    const matrix = {
-      id: "mx",
-      apiUrl: "https://matrix.org",
-      botToken: "syt_token",
-      botName: "Georgi AI",
-      mentionText: "@georgi-ai",
-    };
-    expect(normalizeAgentConfig({ channels: { matrix: matrix } })).toEqual({
-      channels: { matrix: matrix },
-    });
-    expect(() =>
-      normalizeAgentConfig({
-        channels: { matrix: { id: "mx", botToken: "syt_token" } },
-      }),
-    ).toThrow(
-      "config.channels.matrix.apiUrl is required when config.channels.matrix.botToken is set",
-    );
-    expect(() =>
-      normalizeAgentConfig({
-        channels: {
-          matrix: {
-            id: "mx",
-            apiUrl: "http://10.0.0.5:8008",
-            botToken: "syt_token",
-          },
-        },
-      }),
-    ).toThrow("config.channels.matrix.apiUrl must use https");
-    expect(() =>
-      normalizeAgentConfig({
-        channels: {
-          matrix: {
-            id: "mx",
-            apiUrl: "https://core.internal",
-            botToken: "syt_token",
-          },
-        },
-      }),
-    ).toThrow("must not point to a private or internal address");
-    // Core posts to every channel apiUrl from inside the cluster.
+  // Core posts to every channel apiUrl from inside the cluster.
+  it("requires a public https channel apiUrl", () => {
     for (const channel of ["discord", "github", "slack", "telegram"]) {
       expect(() =>
         normalizeAgentConfig({
@@ -300,12 +258,6 @@ describe("agent rules", () => {
         }),
       ).toThrow(`config.channels.${channel}.apiUrl must use https`);
     }
-    // A patch may rotate the token alone; the merged config still has the URL.
-    expect(
-      normalizeAgentConfigPatch({
-        channels: { matrix: { id: "mx", botToken: "syt_rotated" } },
-      }),
-    ).toEqual({ channels: { matrix: { id: "mx", botToken: "syt_rotated" } } });
   });
 
   it("accepts a system prompt as a string or AI SDK system messages", () => {
@@ -396,7 +348,6 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ model: { provider: "deepseek" } }),
     ).not.toThrow();
-    // It reaches the AI SDK as a model id, which is string-only.
     expect(() =>
       normalizeAgentConfig({ model: { transcriptionModelId: 42 } }),
     ).toThrow("config.model.transcriptionModelId must be a string");
@@ -406,6 +357,58 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ model: { transcriptionProvider: "whisper" } }),
     ).toThrow("config.model.transcriptionProvider must be one of:");
+    for (const timeout of [
+      60_000,
+      {},
+      { totalMs: 600_000 },
+      { stepMs: 120_000, firstChunkMs: 30_000, chunkMs: 10_000 },
+      { toolMs: 60_000, tools: { bashMs: 300_000 } },
+    ]) {
+      expect(
+        normalizeAgentConfig({ model: { timeout: timeout } }).model,
+      ).toEqual({ timeout: timeout });
+    }
+    for (const [timeout, message] of [
+      [0, "config.model.timeout must be an integer from 1 to 2147483647"],
+      [1.5, "config.model.timeout must be an integer from 1 to 2147483647"],
+      [
+        2_147_483_648,
+        "config.model.timeout must be an integer from 1 to 2147483647",
+      ],
+      [
+        "60000",
+        "config.model.timeout must be a number of milliseconds or an object with totalMs, stepMs, firstChunkMs, chunkMs, toolMs, tools",
+      ],
+      [
+        { firstChunkMS: 30_000 },
+        "config.model.timeout.firstChunkMS is not supported; use one of: totalMs, stepMs, firstChunkMs, chunkMs, toolMs, tools",
+      ],
+      [
+        { chunkMs: -1 },
+        "config.model.timeout.chunkMs must be an integer from 1 to 2147483647",
+      ],
+      [
+        { tools: [] },
+        "config.model.timeout.tools must be an object of {toolName}Ms limits",
+      ],
+      [
+        { tools: { bash: 1_000 } },
+        "config.model.timeout.tools.bash must be named {toolName}Ms, like bashMs",
+      ],
+      [
+        { tools: { bashMs: "1s" } },
+        "config.model.timeout.tools.bashMs must be an integer from 1 to 2147483647",
+      ],
+    ] as const) {
+      expect(() =>
+        normalizeAgentConfig({ model: { timeout: timeout } }),
+      ).toThrow(message);
+    }
+    expect(() =>
+      normalizeAgentConfig({ subagent: { model: { timeout: { stepMs: 0 } } } }),
+    ).toThrow(
+      "config.subagent.model.timeout.stepMs must be an integer from 1 to 2147483647",
+    );
     // Core puts it into AI Gateway URL paths.
     for (const gatewayId of [7, "gw/../other", "gw?x=1"]) {
       expect(() =>
@@ -421,8 +424,7 @@ describe("agent rules", () => {
         provider: { cloudflare: { gatewayId: "broods-dev_1" } },
       }),
     ).not.toThrow();
-    // An upstream key in a literal header is as secret as an apiKey; a header
-    // made only of an env ref is not. Outside headers only refs are shown.
+    // A literal header holding an upstream key is as secret as an apiKey; an env ref is not.
     expect(
       redactConfigSecrets({
         provider: {
@@ -493,7 +495,6 @@ describe("agent rules", () => {
         normalizeAgentConfig({ provider: { [inherited]: { apiKey: "k" } } }),
       ).toThrow("is not a supported provider");
     }
-    // Settings a provider's AI SDK factory owns pass straight through.
     expect(() =>
       normalizeAgentConfig({
         provider: { vertex: { apiKey: "k", project: "p", location: "us" } },
@@ -505,6 +506,14 @@ describe("agent rules", () => {
     expect(() => normalizeAgentConfig({ provider: { custom: {} } })).toThrow(
       "config.provider.custom.base_url is required",
     );
+    // Core reads base_url first, so an empty one hides a valid baseURL.
+    expect(() =>
+      normalizeAgentConfig({
+        provider: {
+          custom: { base_url: "", baseURL: "https://api.example.com" },
+        },
+      }),
+    ).toThrow("config.provider.custom.base_url is required");
     expect(() =>
       normalizeAgentConfig({
         provider: { custom: { baseUrl: "https://api.example.com" } },
@@ -524,8 +533,7 @@ describe("agent rules", () => {
     ).toThrow(
       "config.provider.custom.base_url must not point to a private or internal address",
     );
-    // Every endpoint a factory reads is held to the base URL's rule, not only
-    // the two spellings broods names itself.
+    // Every endpoint a factory reads is held to the base URL's rule, not just broods's two.
     expect(() =>
       normalizeAgentConfig({
         provider: {
@@ -625,11 +633,17 @@ describe("agent rules", () => {
     expect(() => normalizeAgentConfig({ policies: [1] })).toThrow(
       "config.policies must be an array of non-empty strings",
     );
-    // Harness-owned names stay rejected; free-form provider tool names are
-    // resolved against the configured provider by core at run time.
+    // A harness-owned name only keys a provider tool; core decides at run time if it fits.
     expect(() =>
       normalizeAgentConfig({ tools: { bash: { enabled: true } } }),
-    ).toThrow("config.tools.bash is not a supported tool");
+    ).toThrow("config.tools.bash is a Broods tool name");
+    expect(
+      normalizeAgentConfig({
+        tools: {
+          bash: { type: "provider", id: "anthropic.bash_20250124", args: {} },
+        },
+      }).tools,
+    ).toMatchObject({ bash: { id: "anthropic.bash_20250124" } });
     expect(() =>
       normalizeAgentConfig({ tools: { tool_legacy: { enabled: true } } }),
     ).toThrow("config.tools.tool_legacy is not a supported tool");
@@ -649,8 +663,7 @@ describe("agent rules", () => {
     ).toThrow(
       "config.channels.slack.partition.alias is only supported when config.channels.slack.partition.by is conversation",
     );
-    // The channel configs take an index signature, so the retired spellings of
-    // partition only fail if this rejects them.
+    // Channel configs take an index signature: only this rejects retired partition keys.
     expect(() =>
       normalizeAgentConfig({
         channels: {
@@ -708,8 +721,7 @@ describe("agent rules", () => {
   });
 
   it("refuses Messenger and Instagram credentials core could not run", () => {
-    // Core builds no adapter without all of them, so the channel would
-    // silently never answer.
+    // Core builds no adapter without all of them, so the channel would silently never answer.
     expect(() =>
       normalizeAgentConfig({
         channels: {
@@ -741,7 +753,6 @@ describe("agent rules", () => {
         },
       }),
     ).toThrow("config.channels.messenger.appSecret must be a non-empty string");
-    // A patch may rotate one secret alone; the merged config still has the rest.
     expect(
       normalizeAgentConfigPatch({
         channels: { messenger: { id: "fb", pageAccessToken: "rotated" } },
@@ -764,6 +775,13 @@ describe("agent rules", () => {
         channels: { whatsapp: { id: "wa", apiVersion: "../me" } },
       }),
     ).toThrow('config.channels.whatsapp.apiVersion must look like "v25.0"');
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { whatsapp: { id: "wa", phoneNumberId: " 1065403522" } },
+      }),
+    ).toThrow(
+      "config.channels.whatsapp.phoneNumberId must be the number's digits-only ID",
+    );
     expect(() =>
       normalizeAgentConfig({
         channels: { teams: { id: "teams", appId: "app", appPassword: "pw" } },
@@ -851,8 +869,7 @@ describe("agent rules", () => {
         sandboxes: ["sandbox_1"],
       }),
     ).toThrow('config.harness.debug has unknown option "subystems"');
-    // The harness runs its own loop, so broods-side policy and structured
-    // output would silently not apply.
+    // The harness runs its own loop: broods-side policy and structured output would not apply.
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "codex" },
@@ -872,6 +889,24 @@ describe("agent rules", () => {
       }),
     ).toThrow(
       "config.subagent.model.output structured output is not supported with config.harness",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { type: "codex" },
+        model: { providerOptions: { openai: { reasoningEffort: "high" } } },
+        sandboxes: ["sandbox_1"],
+      }),
+    ).toThrow(
+      "config.model.providerOptions is not supported with config.harness; set config.model.reasoning",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { type: "claude-code" },
+        subagent: { model: { providerOptions: { anthropic: {} } } },
+        sandboxes: ["sandbox_1"],
+      }),
+    ).toThrow(
+      "config.subagent.model.providerOptions is not supported with config.harness",
     );
     expect(() =>
       normalizeAgentConfig({
@@ -991,11 +1026,7 @@ describe("agent rules", () => {
     expect(
       normalizeAgentConfig({ hooks: { code: [{ hookId: hookId }] } }),
     ).toEqual({ hooks: { code: [{ hookId: hookId }] } });
-    expect(() =>
-      normalizeAgentConfig({ tools: { tool_legacy: { enabled: true } } }),
-    ).toThrow("config.tools.tool_legacy is not a supported tool");
-    // Custom tools keyed config.tools by row id and are gone. A row id that
-    // starts with a digit is no provider tool name, so it is refused.
+    // Removed custom tools keyed config.tools by row id; a digit-led id names no provider tool.
     expect(() =>
       normalizeAgentConfig({
         tools: { "1s78zwc4z4q5ysxm74fgrhd13s88xxt": { enabled: true } },
@@ -1044,9 +1075,8 @@ describe("agent rules", () => {
   });
 
   it("drops dangerous keys instead of rewriting the merged prototype", () => {
-    // JSON.parse makes "__proto__" an own key, so a plain assignment would
-    // route it to the setter and hide the value from every own-key walk,
-    // including the normalize pass that runs right after the merge.
+    // JSON.parse makes "__proto__" an own key; a plain assignment would route it to the
+    // setter and hide it from every own-key walk, the normalize after the merge included.
     const patch: Record<string, unknown> = JSON.parse(
       '{"__proto__":{"polluted":"yes"},"name":"ok"}',
     );
@@ -1074,7 +1104,6 @@ describe("agent rules", () => {
       provider: { apiKey: "secret" },
       list: ["prefix-eu", "${lowercase}"],
     });
-    // Dangerous keys are dropped, not copied, when rebuilding the config.
     const polluted: Record<string, unknown> = JSON.parse(
       '{"__proto__": {"x": 1}, "safe": "${REGION}"}',
     );
@@ -1141,40 +1170,7 @@ describe("mergeCanvasSandboxes", () => {
   });
 });
 
-describe("defaultSandboxOf", () => {
-  it("reads the first of sandboxes", () => {
-    expect(defaultSandboxOf({ sandboxes: ["sb_a", "sb_b"] })).toBe("sb_a");
-  });
-
-  it("finds no default without a string first entry", () => {
-    expect(defaultSandboxOf({})).toBeUndefined();
-    expect(defaultSandboxOf({ sandboxes: [] })).toBeUndefined();
-    expect(defaultSandboxOf({ sandboxes: "sb_a" })).toBeUndefined();
-    expect(defaultSandboxOf({ sandboxes: [42] })).toBeUndefined();
-  });
-});
-
-// The rules a canvas save checks before it stores the refs it drew.
 describe("assertAgentRuntimeRefs", () => {
-  it("refuses a workspace drawn onto a later sandbox", () => {
-    expect(() =>
-      assertAgentRuntimeRefs({
-        sandboxes: ["sb_a", "sb_b"],
-        workspaces: [{ name: "repo", workspaceId: "ws_1", sandbox: "sb_b" }],
-      }),
-    ).toThrow(
-      'config.sandboxes[1] "sb_b" also backs workspace "repo"; only the first sandbox can back a workspace',
-    );
-  });
-
-  it("refuses a harness left without its default", () => {
-    expect(() =>
-      assertAgentRuntimeRefs({ harness: { type: "codex" } }),
-    ).toThrow(
-      "config.sandboxes needs at least one sandbox for the codex harness; the first runs it",
-    );
-  });
-
   it("leaves branches a canvas save never touches to their owner", () => {
     expect(() =>
       assertAgentRuntimeRefs({
@@ -1204,17 +1200,26 @@ describe("config patch pre-validation", () => {
   });
 });
 
-describe("isProviderToolName", () => {
+describe("isHarnessToolName", () => {
   it("keeps the subagent tool names for the harness", () => {
-    for (const name of [
-      "ask_parent",
-      "get_subagent_status",
-      "run_subagent",
-      "stop_subagent",
-      "update_subagent",
-    ]) {
-      expect(isProviderToolName(name)).toBe(false);
+    for (const name of ["message-agents", "run_subagent", "stop_subagent"]) {
+      expect(isHarnessToolName(name)).toBe(true);
     }
-    expect(isProviderToolName("web_search")).toBe(true);
+    expect(isHarnessToolName("web_search")).toBe(false);
+  });
+});
+
+describe("normalizeWebhookHookConfig", () => {
+  it("holds a webhook row to a public https URL and known events", () => {
+    const row = { enabled: true, secret: "s", url: "https://10.0.0.8/hook" };
+    expect(() => normalizeWebhookHookConfig(row, "webhook")).toThrow(
+      /private or internal/,
+    );
+    expect(() =>
+      normalizeWebhookHookConfig(
+        { ...row, url: "https://example.invalid/hook", events: ["nope"] },
+        "webhook",
+      ),
+    ).toThrow(/events must be an array of/);
   });
 });

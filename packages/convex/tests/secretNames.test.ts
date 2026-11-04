@@ -1,8 +1,3 @@
-/**
- * The one secret-name rule config redaction, MCP header refs and core's log
- * and policy redaction share.
- */
-
 import { describe, expect, it } from "vitest";
 import { isSecretName } from "../model/secretNames";
 

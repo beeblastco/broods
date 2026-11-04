@@ -1,7 +1,3 @@
-/**
- * The sealed ticket is the only credential, so cover what it opens and what it refuses.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { CoreRequest } from "../src/shared/http.ts";
 import { sealMediaTicket } from "../src/shared/media-ticket.ts";
@@ -22,7 +18,7 @@ const readS3BytesMock = mock(
 await mock.module("../src/shared/s3.ts", () => ({
   headS3Object: headS3ObjectMock,
   readS3Bytes: readS3BytesMock,
-  // Full surface so transitive importers keep working (mock.module replaces the module).
+  // mock.module swaps the whole module, so transitive importers need its full surface.
   s3ObjectExists: mock(async () => true),
   getS3ObjectUrl: mock(async () => "https://signed.example/photo"),
   readS3Text: mock(async () => ""),
@@ -47,6 +43,7 @@ beforeEach(() => {
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.MEDIA_TICKET_SECRET = SECRET;
+  delete process.env.MEDIA_TICKET_TTL_SECONDS;
   headS3ObjectMock.mockClear();
   readS3BytesMock.mockClear();
   headS3ObjectMock.mockImplementation(async () => ({
@@ -68,8 +65,7 @@ describe("handleMediaRequest", () => {
     const response = await handleMediaRequest(mediaRequest(ticket()));
 
     expect(response.status).toBe(200);
-    // No stored content type on a file written through the sandbox mount, so the
-    // extension is what keeps the provider from treating it as a download.
+    // Mount-written files have no stored content type; the extension keeps it from downloading.
     expect(response.headers.get("content-type")).toBe("image/png");
     expect(headS3ObjectMock.mock.calls[0]).toEqual([
       "filesystem-bucket",
@@ -99,6 +95,19 @@ describe("handleMediaRequest", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-length")).toBe("12");
     expect(readS3BytesMock).not.toHaveBeenCalled();
+  });
+
+  it("lets a cache hold the file only until the ticket expires", async (): Promise<void> => {
+    const { handleMediaRequest } = await import("../src/media.ts");
+    process.env.MEDIA_TICKET_TTL_SECONDS = "60";
+
+    const response = await handleMediaRequest(mediaRequest(ticket()));
+    const maxAge = Number(
+      /max-age=(\d+)/.exec(response.headers.get("cache-control") ?? "")?.[1],
+    );
+
+    expect(maxAge).toBeGreaterThanOrEqual(59);
+    expect(maxAge).toBeLessThanOrEqual(60);
   });
 
   it("refuses a ticket sealed with another secret", async (): Promise<void> => {
@@ -131,8 +140,7 @@ describe("handleMediaRequest", () => {
 
   it("types the response from the extension, not from the stored object", async (): Promise<void> => {
     const { handleMediaRequest } = await import("../src/media.ts");
-    // An account on a bring-your-own bucket sets this itself, so serving it back
-    // would let it host text/html on our own unauthenticated origin.
+    // A bring-your-own bucket sets this itself: serving it would host text/html on our origin.
     headS3ObjectMock.mockImplementation(async () => ({
       contentLength: 12,
       contentType: "text/html",
@@ -184,10 +192,31 @@ describe("handleMediaRequest", () => {
       "filesystem-bucket",
       `attachments/${ACCOUNT}/media/ab12/0-photo.png`,
     ]);
-    // Three bytes out of the managed bucket are three bytes of AWS egress.
     expect(meterWrites).toEqual([
       { accountId: ACCOUNT, usage: { egressGb: 3 / 1e9 } },
     ]);
+  });
+
+  it("404s an expired ticket without touching storage", async (): Promise<void> => {
+    const { handleMediaRequest } = await import("../src/media.ts");
+    const { DEFAULT_MEDIA_TICKET_TTL_SECONDS, sealMediaTicket: seal } =
+      await import("../src/shared/media-ticket.ts");
+    const expired = seal(
+      {
+        accountId: ACCOUNT,
+        workspaceId: "ws_a",
+        namespace: NS,
+        path: "pics/shot.png",
+      },
+      SECRET,
+      Date.now() - (DEFAULT_MEDIA_TICKET_TTL_SECONDS + 60) * 1000,
+    );
+
+    const response = await handleMediaRequest(mediaRequest(expired));
+
+    expect(response.status).toBe(404);
+    expect(headS3ObjectMock).not.toHaveBeenCalled();
+    expect(readS3BytesMock).not.toHaveBeenCalled();
   });
 
   it("404s once the file is gone", async (): Promise<void> => {

@@ -23,13 +23,19 @@ Agent-platform domain (shared with core): `accounts`, `agents`,
 `skills`, `workspaceFiles`,
 `crons`. Core runtime coordination uses `runtimeConversationEvents`,
 `runtimeClaims`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults`,
-`runtimeHarnessSessions`, and
+`runtimeHarnessSessions`, `runtimeHarnessSessionEntries`, and
 `sandboxReservations`.
 `runtimeHarnessSessions` stores only the opaque adapter checkpoint for Claude
 Code, Codex, Deep Agents, OpenCode, or Pi, with a 64 KiB write limit. The
 checkpoint is made of identifiers, bridge coordinates, and unfinished-tool
 metadata; it does not store the native harness conversation as one JSON
-document or limit the model's context window.
+document or limit the model's context window. Pi's conversation lives in
+`runtimeHarnessSessionEntries` instead: one append-only row per Pi session
+entry (512 KiB each). `saveHarnessSession` writes the turn's entries with the
+checkpoint that names its leaf entry; a turn over one batch (4 MiB or 100
+entries) stages the rest in `appendHarnessSessionEntries` first. Every entry
+read and delete runs in batches of that size, and a save that switches session
+schedules a prune of every other session's entries.
 
 Sensitive config (agent configs, sandbox credentials) is stored as encrypted
 blobs. Core encrypts before writing; the dashboard never reads the plaintext.
@@ -110,6 +116,8 @@ Deployment environment variables:
   core refuses the service token there.
 - `STAGE_TICKET_SECRET`: signs dashboard stage session tickets; same value as
   core's.
+- `ANALYTICS_ID_SECRET`: optional, keys the dashboard's PostHog user id (`user.analyticsId`);
+  same value as core's. Never rotate it: a new value makes every user look new.
 
 ## Workflow
 

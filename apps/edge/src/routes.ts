@@ -1,12 +1,3 @@
-/**
- * The public route table: which upstream a request to the API host reaches.
- * `traefik.ts` renders each router as one Traefik router, and
- * `verification/Broods/Gateway.lean` models the table. A route added to core or
- * the config plane must be added here too, or it lands on the wrong upstream.
- *
- * Order is priority: the first router with a matching rule wins. Each router is
- * one rate-limit bucket in Traefik, so a new router means a new bucket.
- */
 import { stripTrailingSlashes } from "../../core/src/shared/paths.ts";
 
 export const METHODS = [
@@ -25,14 +16,11 @@ export type Method = (typeof METHODS)[number];
 
 export type Upstream = "config" | "core" | "gateway";
 
-/** Which per-address limit a router spends. */
 export type Limit = "http" | "none" | "upgrade";
 
-/** One path a router matches. */
 export interface EdgeRule {
-  /** Anchored path regex without `^` and `$`; trailing slashes are stripped first. */
+  /** Anchored regex without `^` and `$`, matched after trailing slashes are stripped. */
   path: string;
-  /** Every method when absent. */
   methods?: readonly Method[];
 }
 
@@ -40,11 +28,12 @@ export interface EdgeRouter {
   name: string;
   upstream: Upstream;
   limit: Limit;
-  /** The path itself is a credential, so the access log skips this router. */
   secretPath?: true;
   rules: readonly EdgeRule[];
 }
 
+// First match wins, and each router is its own Traefik rate-limit bucket.
+// verification/Broods/Gateway.lean models this table: change one, change the other.
 export const ROUTERS: readonly EdgeRouter[] = [
   {
     name: "health",
@@ -52,7 +41,6 @@ export const ROUTERS: readonly EdgeRouter[] = [
     limit: "none",
     rules: [{ path: "/(?:healthz)?", methods: ["GET"] }],
   },
-  // The gateway answers anything but an upgrade on these with a 404.
   {
     name: "sockets",
     upstream: "gateway",
@@ -66,8 +54,7 @@ export const ROUTERS: readonly EdgeRouter[] = [
       },
     ],
   },
-  // Redeeming a workspace download link. Unauthenticated by design: the token
-  // in the path is the credential, and the config plane answers with a 302.
+  // Unauthenticated by design: the token in the path is the credential.
   {
     name: "downloads",
     upstream: "config",
@@ -95,7 +82,6 @@ export const ROUTERS: readonly EdgeRouter[] = [
       { path: "/v1/env", methods: ["GET"] },
       { path: `/v1/env/${SEGMENT}`, methods: ["PUT", "DELETE"] },
       { path: `/v1/workspaces/${SEGMENT}/download-links`, methods: ["POST"] },
-      // The audit ledger is read-only except for its one webhook sink.
       { path: "/v1/audit(?:/verify)?", methods: ["GET"] },
       { path: "/v1/audit/sink", methods: ["GET", "PUT", "DELETE"] },
       {
@@ -105,15 +91,24 @@ export const ROUTERS: readonly EdgeRouter[] = [
       { path: `/v1/crons/${SEGMENT}/runs` },
     ],
   },
-  // Channel providers post from shared egress addresses, so no per-address limit.
+  // Providers post from shared egress addresses, hence no limit. Pancake's `?secret=` and a
+  // Meta verification GET's `hub.verify_token` put a credential in the query string.
+  {
+    name: "secret-webhooks",
+    upstream: "core",
+    limit: "none",
+    secretPath: true,
+    rules: [
+      { path: `/v1/webhooks/${SEGMENT}(?:/dev/${SEGMENT})?/pancake` },
+      { path: "/v1/webhooks/.*[^/]", methods: ["GET"] },
+    ],
+  },
   {
     name: "webhooks",
     upstream: "core",
     limit: "none",
     rules: [{ path: "/v1/webhooks/.*[^/]" }],
   },
-  // A media link never expires and its ticket is the path. Channel providers
-  // fetch it from shared egress addresses, like webhooks.
   {
     name: "media",
     upstream: "core",
@@ -121,21 +116,15 @@ export const ROUTERS: readonly EdgeRouter[] = [
     secretPath: true,
     rules: [{ path: "/v1/media/.*[^/]", methods: ["GET", "HEAD"] }],
   },
-  // Includes the in-cluster-only paths (`/v1/cron-runs`, `/v1/mcp-service/rpc`):
-  // core refuses them without the service token, which is never valid on a
-  // request the edge stamped.
+  // `/mcp` sits off `/v1` because `/v1/mcp` is the config plane's server CRUD.
   {
     name: "core",
     upstream: "core",
     limit: "http",
-    rules: [{ path: "/v1(?:/.*)?" }],
+    rules: [{ path: "/v1(?:/.*)?" }, { path: "/mcp" }],
   },
 ];
 
-/**
- * The router a request takes, or null for a 404. Mirrors what the rendered
- * Traefik routers do, so tests and the Lean model can check the table itself.
- */
 export function resolveRouter(
   method: string,
   pathname: string,

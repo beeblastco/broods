@@ -24,8 +24,9 @@ import {
   type BroodsSandboxDriver,
 } from "@broods/ai-sdk-sandbox";
 
-const driver: BroodsSandboxDriver =
-  createCoreHarnessDriver(/* runtime context */);
+const driver: BroodsSandboxDriver = createCoreHarnessDriver(
+  /* runtime context */
+);
 const sandbox = createBroodsSandbox({ driver });
 
 // Core passes `sandbox` to the selected AI SDK Harness adapter.

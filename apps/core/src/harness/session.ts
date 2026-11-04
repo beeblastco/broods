@@ -1,8 +1,3 @@
-/**
- * Session lifecycle for harness-processing.
- * Keep event persistence, context projection, leases, and prompt loading here.
- */
-
 import type { HarnessAgentSkill } from "@ai-sdk/harness/agent";
 import {
   systemModelMessageSchema,
@@ -18,10 +13,12 @@ import {
 } from "ai";
 import type { Attachment } from "chat";
 import type { ChannelActions } from "../shared/channels.ts";
-import { runtime } from "../shared/convex/runtime.ts";
-import type {
-  ChannelPartition,
-  AgentConfig,
+import { harnessEntryBatches } from "@broods/convex/model/harnessSessionEntries";
+import { runtime, type HarnessSessionEntry } from "../shared/convex/runtime.ts";
+import {
+  channelPartitionOf,
+  type AgentConfig,
+  type ChannelPartition,
 } from "../shared/domain/agent-config.ts";
 import type { Principal } from "../shared/domain/principal.ts";
 import { getHarnessPublicUrl } from "../shared/env.ts";
@@ -29,10 +26,12 @@ import {
   workspaceGuidanceEnabled,
   workspaceMemoryHarnessEnabled,
 } from "../shared/domain/workspace-config.ts";
-import { logDebug, logError } from "../shared/log.ts";
-import { isPlainObject } from "../shared/object.ts";
+import { collectSecretValues, logDebug, logError } from "../shared/log.ts";
 import { sealRunToken } from "../shared/run-token.ts";
-import { channelScopeKeyFromConversation } from "../shared/runtime-keys.ts";
+import {
+  channelScopeKeyFromConversation,
+  isUserConversationKey,
+} from "../shared/runtime-keys.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
@@ -41,14 +40,16 @@ import {
   type ResolvedAgentSandbox,
   type ResolvedWorkspace,
 } from "../shared/workspaces.ts";
-import type { AsyncToolDelivery } from "./async-tool-result.ts";
+import { rootEventId, type AsyncToolDelivery } from "./async-tool-result.ts";
 import {
   ingestInboundAttachments,
   MEDIA_REFERENCE_SCHEME,
   rehydrateStoredMedia,
+  sealConversationMedia,
 } from "./channel-media.ts";
 import {
   COMPACTION_MARKER,
+  type CompactionResult,
   isCompactionSummaryMessage,
   summarizeConversation,
 } from "./compaction.ts";
@@ -87,34 +88,42 @@ import {
 import { bashTargetLines } from "./tools/filesystem-utils.ts";
 import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 
-// Convex caps one mutation's arguments at 16 MiB. Half of that leaves room for
-// the fence fields and for the encoding the client adds around each event.
+// Half of Convex's per-mutation caps (16 MiB of arguments, 16,000 written documents).
 const APPEND_EVENT_BYTES = 8 * 1_024 * 1_024;
-// Convex also caps one mutation at 16,000 written documents, which many small
-// events reach long before the byte cap does.
 const APPEND_EVENT_COUNT = 8_000;
-const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
+export const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
+// Tool outputs that hand the model no result: a hook or the run turned the
+// call into an error or a denial, so a status read in it stores nothing.
+const UNDELIVERED_OUTPUTS: ReadonlySet<string> = new Set([
+  "error-text",
+  "error-json",
+  "execution-denied",
+]);
 // How old the last ownership proof may be before a periodic check reads Convex
 // again. Ownership moves only through this run's own hand-off or lease expiry,
 // and a successful fenced write proves it as well as a read does.
 export const OWNER_CHECK_INTERVAL_MS = 2_000;
-// Convex refuses a document over 1 MiB. One tool message shares this budget
-// across its results, which leaves room for the rest of the row.
+// Under Convex's 1 MiB document cap, leaving room for the rest of the row.
 const STORED_TOOL_MESSAGE_BYTES = 768 * 1024;
 
-// What started a run when it was not a person asking: so far only the scheduler
-// firing a cron. It names the root trace span and withholds every schedule tool.
 export type RunTrigger = "cron";
 
+/**
+ * A user message as ingress carries it. `metadata` is hook data kept on the stored-event envelope,
+ * never in the model message. `dedupeKey` keys its saved row: a resume carries its result's
+ * hand-back key, so saving the row stores the result, once even on a retried write.
+ */
+export type IngressUserMessage = UserModelMessage & {
+  metadata?: unknown;
+  dedupeKey?: string;
+};
+
 export type ConversationIngressEvent =
-  // `metadata` is opaque hook data persisted on the stored-event envelope,
-  // never inside the model message. See StoredEventBase.
-  | (UserModelMessage & { metadata?: unknown })
+  | IngressUserMessage
   | AssistantModelMessage
   | ToolModelMessage
   | (SystemModelMessage & { persist?: boolean });
 
-/** What `Session.stepBoundary` reports to the model step about to start. */
 export interface StepBoundary {
   renewal: "renewed" | "stopped" | "stale";
   steering: AppliedIngress | null;
@@ -123,26 +132,19 @@ export interface StepBoundary {
 export interface TurnContextSnapshot {
   messages: ModelMessage[];
   system: SystemModelMessage[];
-  // Request-local system messages. These are already included in `system`, but
-  // the harness keeps the source list so prepareStep can rebuild system prompts
-  // during the same model run without dropping temporary instructions.
+  // Also inside `system`; kept apart so a prepareStep rebuild does not drop them.
   ephemeralSystem: SystemModelMessage[];
-  // Cursor-backed system context that prepareStep can refresh incrementally mid-run.
   systemContextSnapshot: SystemContextSnapshot;
-  // Wall-clock windows for the work that precedes the model run, so the harness
-  // can surface them as trace phase spans. Absent for in-memory ephemeral turns.
   timings?: TurnContextTimings;
 }
 
 export interface TurnContextTimings {
-  // The whole of createTurnContext: load, project, system prompt, prune.
   prepareStartedMs: number;
   prepareEndedMs: number;
   phases: ContextPreparePhases;
 }
 
-// Each prepare load's own wall time. The loads overlap, so these do not add up
-// to the prepare span.
+// The loads overlap, so these do not add up to the prepare span.
 export interface ContextPreparePhases {
   historyMs: number;
   historyRows: number;
@@ -164,20 +166,10 @@ interface TurnHistory {
 }
 
 export interface SystemContextSnapshot {
-  // Highest conversation row already folded into the dynamic system-context view.
-  // `loadRefreshedSystemPromptParts` uses this as a Convex cursor so each
-  // prepareStep only loads newly persisted system messages instead of
-  // rebuilding system context from the full conversation every time.
   cursor: string | null;
-  // Persisted system-role events accumulated up to cursor.
-  // These are not normal chat history. `buildSystemPromptParts` appends them
-  // to the model's `system` prompt while `projectEntriesToMessages` omits them
-  // from the user/assistant/tool message list.
   messages: SystemModelMessage[];
 }
 
-// The run's system prompt. `storedSystemEnd` indexes its last stored part; the
-// run's ephemeral system follows, so the next run starts with what precedes it.
 interface SystemPromptParts {
   system: SystemModelMessage[];
   storedSystemEnd: number;
@@ -189,45 +181,34 @@ interface SubagentMetadata {
   description?: string;
 }
 
+// What Pi's session storage needs from a Broods session.
+export type HarnessEntryLog = Pick<
+  Session,
+  "appendHarnessSessionEntries" | "readHarnessSessionEntries"
+>;
+
 export interface StoredHarnessSession {
   harnessType: "claude-code" | "codex" | "deepagents" | "opencode" | "pi";
   sessionId: string;
   resumeState: unknown;
-  /** The machine's base reservation key, before the adapter version is appended. */
+  // The base key, before the adapter version is appended.
   reservationKey?: string;
 }
 
-/**
- * Shared fields for every stored conversation event.
- * `version` gives us a migration hook for future schema changes, and
- * `sourceEventId` ties projected rows back to the inbound request/webhook event
- * that created them for dedupe/debugging.
- * `metadata` is opaque channel.message.received hook data; core never
- * interprets it, only persists and re-exposes it on hook payloads.
- */
 interface StoredEventBase {
   version: 1;
   sourceEventId: string;
   metadata?: unknown;
-  // Which model produced an assistant message, as `provider/modelId`. Reasoning
-  // and the stored-item ids beside it are only replayable to that same model,
-  // so projection needs to know. Absent on rows written before we recorded it,
-  // and on every message a model did not write.
+  // `provider/modelId` of an assistant row: its reasoning and item ids replay to it alone.
   model?: string;
 }
 
-/**
- * The model behind a message being persisted. `retainsReasoning` is what the
- * provider will actually replay: storing reasoning nobody sends back is dead
- * weight, and on a stored-item provider dropping it breaks the next turn.
- */
 interface MessageProducer {
   model?: string;
+  // Whether the provider replays reasoning; a stored-item provider breaks without it.
   retainsReasoning?: boolean;
 }
 
-// Internal normalized shapes persisted in Convex: AI SDK roles here too, so an
-// event is a stored model message plus metadata.
 interface StoredConversationEventBase<
   TMessage extends ModelMessage,
 > extends StoredEventBase {
@@ -240,20 +221,17 @@ type StoredConversationEvent =
   | StoredConversationEventBase<ToolModelMessage>
   | StoredConversationEventBase<SystemModelMessage>;
 
-// Query results need both the stored event payload and its ordered cursor so
-// we can build point-in-time snapshots and later fetch only prompt deltas after
-// a known cursor.
 interface StoredConversationEntry {
   createdAt: string;
   event: StoredConversationEvent;
 }
 
-// A row this session appends. A writer that retries a failed append sets
-// `dedupeKey`, and Convex stores a row once per key in the conversation.
+// Convex stores one row per `dedupeKey` in a conversation, so a retried append is safe.
 interface AppendedConversationEvent {
   cursor: string;
   dedupeKey?: string;
   event: StoredConversationEvent;
+  toolResultIds?: string[];
 }
 
 export interface StoredConversationEventPage {
@@ -262,56 +240,32 @@ export interface StoredConversationEventPage {
   continueCursor: string | null;
 }
 
-/**
- * What a turn carries into its session. Only the event and its conversation are
- * always known; every other field depends on how the run arrived.
- */
 export interface SessionOptions {
   eventId: string;
   conversationKey: string;
   accountId?: string;
   agentId?: string;
   agentConfig?: AgentConfig;
-  // Where a deferred result spawned in this turn (a detached background job)
-  // should be delivered when it settles in a later invocation. Carries the
-  // originating chat channel or WebSocket connection; absent for plain
-  // direct/async API turns, which fall back to status polling.
+  // Plain direct/async API turns carry `async`: their deferred results are read by polling.
   delivery?: AsyncToolDelivery;
-  // A subagent replies to its parent, not to the channel, so it has no
-  // `delivery`. Its policy input still has to name the parent's place and person.
+  // A subagent replies to its parent, so it has no `delivery`, but policy names the parent's.
   policyDelivery?: AsyncToolDelivery;
-  // Per-deployment id from the runtime key that authorized this turn. Present
-  // for deployment-key traffic and resolved channel integrations.
-  // Used to scope realtime telemetry to the dashboard's deployment view.
   endpointId?: string;
-  // Project and stage slugs from the runtime key scope. Present for
-  // deployment-key traffic and resolved channel integrations. Used to build
-  // NATS observability subjects (tracesSubject, logsSubject) for live streaming.
   projectSlug?: string;
   stageSlug?: string;
-  // Monotonic Convex fencing token. Present for every coordinator-admitted run;
-  // absent only on context-only writes that do not execute a model turn.
+  // Convex fencing token; absent only on context-only writes that run no model turn.
   ownerGeneration?: number;
-  // Bound to the current inbound message so model-facing channel tools retain
-  // the credential holder and exact provider reply target.
   channelActions?: ChannelActions;
-  // Absent for the ordinary channel/API paths, where a person is waiting.
   trigger?: RunTrigger;
-  // false keeps an ephemeral subagent's messages out of Convex.
   persist?: boolean;
-  // Who this run acts as and who asked. Set on every session that runs the
-  // agent loop; a context-only session (command, claim, failure) has none.
   principal?: Principal;
+  /** A subagent mounts the folder of the user conversation that started it. */
+  userConversationKey?: string | undefined;
 }
 
-/**
- * A channel message's events after attachment ingestion, split by durability.
- * `events` carries only sealed links and text, safe for admission to queue or
- * persist. `turnEvents` adds the byte-backed parts an agent with no workspace
- * gets for the current turn; those must never reach a stored record.
- */
 export interface IngestedChannelEvents {
   events: ConversationIngressEvent[];
+  // Adds this turn's byte-backed media for an agent with no workspace: never store it.
   turnEvents: ConversationIngressEvent[];
 }
 
@@ -329,30 +283,29 @@ export class Session {
   readonly channelActions: ChannelActions | undefined;
   readonly trigger: RunTrigger | undefined;
   readonly principal: Principal | undefined;
+  readonly userConversationKey: string | undefined;
   private readonly agentConfig: AgentConfig;
   private readonly persist: boolean;
   private messageSequence = 0;
   private lastSystemCursor: string | null = null;
   private ownerHandedOff = false;
-  // performance.now() at the start of the latest call Convex fenced against
-  // this generation and accepted. Taken before the call, so the proof is never
-  // younger than the commit that gave it.
+  // Taken before the call, so the proof is never newer than the commit that gave it.
   private ownerConfirmedAt = Number.NEGATIVE_INFINITY;
-  // Rows a fenced turn still has to write. They ride the next fenced mutation
-  // (a step boundary, the settle or takeNext) instead of an append of their own.
+  // They ride the next fenced mutation (step boundary, settle, takeNext), not an append.
   private pendingStoredEvents: AppendedConversationEvent[] = [];
+  // Pi's entries for the next checkpoint save, which carries them.
+  private pendingHarnessEntries: HarnessSessionEntry[] = [];
+  // This turn's `async_status` reads: tool call id to the async tool result it
+  // returned. A read stores nothing; the saved row of its tool result does.
+  private readonly toolResultReads = new Map<string, string>();
+  // The reads a session that saves no history handed over: the write of its answer stores them.
+  readonly unsavedToolResults = new Set<string>();
   private hasLoggedMissingMemoryFile = false;
   private loadedSkillPrompts: SystemModelMessage[] = [];
   private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
-  // Read once per run. prepareStep rebuilds the system prompt before every step
-  // and would otherwise go back to S3 each time. No re-read after memory_save
-  // either: it writes through the sandbox mount, which reaches S3 a minute or
-  // two later, so the run would get the same index back.
+  // Read once per run: a memory_save goes through the mount and reaches S3 minutes later.
   private memoryFilesPromise: Promise<MemoryFile[]> | undefined;
   private skillMetadataPromise: Promise<SkillMetadata[]> | undefined;
-  // Resolved sandbox + workspace records (from the agent's `sandboxes`/`workspaces`
-  // refs). Resolved once per session at turn-context construction; the sync
-  // getters below read the cached value.
   private resolvedRuntime: ResolvedAgentRuntime | undefined;
   private resolvedRuntimePromise: Promise<ResolvedAgentRuntime> | undefined;
 
@@ -372,13 +325,14 @@ export class Session {
     this.trigger = options.trigger;
     this.principal = options.principal;
     this.persist = options.persist ?? true;
+    this.userConversationKey =
+      options.userConversationKey ??
+      (isUserConversationKey(this.conversationKey)
+        ? this.conversationKey
+        : undefined);
   }
 
-  /**
-   * The identity a sandbox exec runs with. Its `brt_` bearer is minted per
-   * exec, so a run with no exec never signs one and a run that yields its
-   * worker slot never hands out a token that aged in the queue.
-   */
+  // Called per exec, so no `brt_` token ages in the queue while the run waits for a slot.
   sandboxPrincipal(): SandboxRunPrincipal | undefined {
     if (!this.principal) return undefined;
     const baseUrl = getHarnessPublicUrl();
@@ -391,7 +345,6 @@ export class Session {
     };
   }
 
-  /** Rejects a side effect when this run no longer owns the conversation. */
   async assertCurrentOwner(): Promise<void> {
     if (this.ownerGeneration === undefined) return;
     const startedAt = performance.now();
@@ -404,10 +357,6 @@ export class Session {
     this.confirmOwner(startedAt);
   }
 
-  /**
-   * `assertCurrentOwner` for checks on the OWNER_CHECK_INTERVAL_MS clock (stream
-   * chunks, tool starts): a fenced call inside the interval already answered.
-   */
   async assertRecentOwner(): Promise<void> {
     if (
       !this.ownerHandedOff &&
@@ -427,6 +376,33 @@ export class Session {
       accountId: this.accountId,
       key: this.eventId,
       ttlSeconds: 86400,
+    });
+  }
+
+  // One of the `limit` turns a lineage (a person's run and every run continuing it) may start
+  // by messaging, so two agents cannot keep waking each other.
+  async claimMessageTurn(limit: number): Promise<boolean> {
+    if (!this.accountId) {
+      throw new Error("Account ID is required for runtime claims");
+    }
+
+    return runtime.mutate("claimEvent", {
+      accountId: this.accountId,
+      key: messageTurnsKey(this.eventId),
+      ttlSeconds: 86400,
+      limit: limit,
+    });
+  }
+
+  /** Gives back a message turn that started no turn. */
+  async releaseMessageTurn(): Promise<void> {
+    if (!this.accountId) {
+      throw new Error("Account ID is required for runtime claims");
+    }
+
+    await runtime.mutate("releaseClaim", {
+      accountId: this.accountId,
+      key: messageTurnsKey(this.eventId),
     });
   }
 
@@ -458,7 +434,6 @@ export class Session {
     this.ownerHandedOff = true;
   }
 
-  /** Renews the current fenced owner before another model/tool boundary. */
   async renewConversationLease(): Promise<"renewed" | "stopped" | "stale"> {
     if (this.ownerGeneration === undefined) return "renewed";
     const startedAt = performance.now();
@@ -472,18 +447,14 @@ export class Session {
     return renewal;
   }
 
-  /**
-   * The model step boundary as one fenced mutation: stores the step's new
-   * messages, reports a stop or a lost lease, renews the lease, and claims the
-   * steers waiting to join this turn, unless `claimSteering` is false. The
-   * first boundary also carries the turn's own input. A stale boundary stores
-   * nothing and drops it: the conversation has moved on.
-   */
+  // A stale boundary stores nothing and drops its rows: the conversation has moved on.
   async stepBoundary(
     messages: ModelMessage[],
-    options: { claimSteering: boolean } = { claimSteering: true },
+    options: { claimSteering: boolean; dedupeKeys?: string[] } = {
+      claimSteering: true,
+    },
   ): Promise<StepBoundary> {
-    const events = this.storedEvents(messages);
+    const events = await this.storedEvents(messages, options.dedupeKeys);
     if (this.ownerGeneration === undefined) {
       await this.appendStoredEvents(events);
 
@@ -511,10 +482,6 @@ export class Session {
     );
   }
 
-  /**
-   * Writes the rows waiting for a fenced mutation now. A `config.harness` run
-   * has no step boundary to carry them, and a lease release must not drop them.
-   */
   async flushPendingStoredEvents(): Promise<void> {
     if (this.pendingStoredEvents.length === 0) return;
     await this.writeFenced([], (inline) => this.appendStoredEvents(inline));
@@ -529,8 +496,6 @@ export class Session {
     return ephemeralSystem;
   }
 
-  /** Applies all queued steer envelopes to this active event. */
-  /** @param options.textOnly claim only the steers made of plain user text */
   async applySteeringIngress(
     options: { textOnly?: boolean } = {},
   ): Promise<AppliedIngress | null> {
@@ -547,11 +512,6 @@ export class Session {
     return steering;
   }
 
-  /**
-   * Marks this event and every applied contributor terminal, with an async
-   * run's polling rows in the same mutation.
-   * @returns false when this session owns no envelope, so nothing was written
-   */
   async settleIngress(
     status: "completed" | "failed",
     options: {
@@ -576,9 +536,7 @@ export class Session {
     };
     await this.writeFenced([], settle).catch(
       async (err: unknown): Promise<void> => {
-        // The outcome beats the history: a settle that fails twice with rows
-        // to carry goes out without them. The rows are keyed, so the retry
-        // stores nothing a committed first attempt already did.
+        // The outcome beats the history: on a second failure, settle without the rows.
         if (this.pendingStoredEvents.length === 0) throw err;
         const retried = await this.writeFenced([], settle).then(
           (): boolean => true,
@@ -598,13 +556,6 @@ export class Session {
     return true;
   }
 
-  /**
-   * Transfers to the next durable FIFO application, or atomically releases
-   * ownership. With `settle`, this event is settled in the same mutation; if
-   * that mutation fails, the settle is written on its own before the error
-   * reaches the caller. Only when that write fails too is the outcome lost,
-   * and that is logged.
-   */
   async takeNextIngress(
     settle?: IngressSettlement,
   ): Promise<AppliedIngress | null> {
@@ -640,21 +591,15 @@ export class Session {
     return next;
   }
 
-  /**
-   * @param onSaved called after each append Convex accepts, with how many of
-   * the stored events are saved so far. A large batch takes several appends,
-   * so a caller that retries a failure can skip what is already saved.
-   * @param dedupeKeys one per message, for a caller that retries a failed
-   * write: Convex stores a row once per key, so a write that committed but
-   * lost its reply is not stored twice.
-   */
   async persistModelMessages(
-    messages: ModelMessage[],
-    onSaved?: (saved: number) => void,
-    dedupeKeys?: string[],
+    messages: ConversationIngressEvent[],
+    options: {
+      onSaved?: (saved: number) => void;
+      dedupeKeys?: string[];
+    } = {},
   ): Promise<string[]> {
-    const events = this.storedEvents(messages, dedupeKeys);
-    await this.appendStoredEvents(events, onSaved);
+    const events = await this.storedEvents(messages, options.dedupeKeys);
+    await this.appendStoredEvents(events, options.onSaved);
 
     return events.map((entry): string => entry.cursor);
   }
@@ -665,12 +610,38 @@ export class Session {
     });
   }
 
-  /**
-   * Stores the native checkpoint under the owner fence, in the write itself. An
-   * ephemeral run keeps nothing; a persisted one always runs under an owner, so a
-   * missing one is a bug, not a write to let through unfenced.
-   */
+  appendHarnessSessionEntries(entries: HarnessSessionEntry[]): void {
+    this.pendingHarnessEntries.push(...entries);
+  }
+
+  // The leaf's model context only: entries before its compaction or after it are not read.
+  async readHarnessSessionEntries(
+    sessionId: string,
+    leafEntryId: string,
+  ): Promise<HarnessSessionEntry[]> {
+    const entries: HarnessSessionEntry[] = [];
+    let afterSequence: number | undefined;
+    for (;;) {
+      const page = await runtime.query("readHarnessSessionEntries", {
+        conversationKey: this.conversationKey,
+        sessionId: sessionId,
+        leafEntryId: leafEntryId,
+        ...(afterSequence === undefined
+          ? {}
+          : { afterSequence: afterSequence }),
+      });
+      entries.push(...page.entries);
+      if (page.nextSequence === null) {
+        return entries;
+      }
+      afterSequence = page.nextSequence;
+    }
+  }
+
+  // Entries past one transaction's budget are staged first; the last mutation commits.
   async saveHarnessSession(state: StoredHarnessSession): Promise<void> {
+    const batches = harnessEntryBatches(this.pendingHarnessEntries);
+    this.pendingHarnessEntries = [];
     if (!this.persist) return;
     if (this.ownerGeneration === undefined) {
       throw new Error("Harness checkpoint needs a conversation owner");
@@ -679,34 +650,45 @@ export class Session {
     if (serialized === undefined) {
       throw new Error("Harness resume state must be JSON serializable");
     }
-    const startedAt = performance.now();
-    await runtime.mutate("saveHarnessSession", {
+    const owner = {
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,
+    };
+    const startedAt = performance.now();
+    let afterSequence: number | undefined;
+    for (const entries of batches.slice(0, -1)) {
+      afterSequence = await runtime.mutate("appendHarnessSessionEntries", {
+        ...owner,
+        sessionId: state.sessionId,
+        entries: entries,
+        ...(afterSequence === undefined
+          ? {}
+          : { afterSequence: afterSequence }),
+      });
+    }
+    await runtime.mutate("saveHarnessSession", {
+      ...owner,
       ...state,
+      entries: batches.at(-1)!,
+      ...(afterSequence === undefined ? {} : { afterSequence: afterSequence }),
     });
     this.confirmOwner(startedAt);
   }
 
-  /**
-   * Folds the stored history into a summary under the owner lease. Serves
-   * /compact and the harness auto-compaction after a finished turn. Returns
-   * how many messages were summarized; 0 means there was nothing to compact.
-   */
-  async compactConversation(instructions: string): Promise<number> {
+  async compactConversation(
+    instructions: string,
+  ): Promise<CompactionResult | null> {
     const entries = await this.loadConversationEntries();
     const activeEntries = projectActiveConversationEntries(entries);
     const systemContextSnapshot = createSystemContextSnapshot(entries);
-    // Stored media stays as its persisted reference parts: the summarizer only
-    // needs the text around them, not the rehydrated bytes.
+    // Not rehydrated: the summarizer needs only the text around stored media.
     const messages = projectEntriesToMessages(
       activeEntries,
       modelIdentityFromModelConfig(this.agentConfig),
     );
-    // Nothing said since the last summary leaves nothing to fold in.
     if (messages.length === 0 || hasPendingToolApprovalResponse(messages)) {
-      return 0;
+      return null;
     }
     const summary = await summarizeConversation({
       accountId: this.accountId,
@@ -719,11 +701,12 @@ export class Session {
       instructions: instructions,
     });
     if (!summary) {
-      return 0;
+      return null;
     }
-    await this.persistModelMessages([summary]);
+    const { message, ...cost } = summary;
+    await this.persistModelMessages([message]);
 
-    return messages.length;
+    return { ...cost, messageCount: messages.length };
   }
 
   async createEphemeralTurnContext(
@@ -732,8 +715,6 @@ export class Session {
   ): Promise<TurnContextSnapshot> {
     await this.ensureResolvedRuntime();
 
-    // Ephemeral child turns are in-memory only, but they still need the same
-    // source `ephemeralSystem` list so system prompt refreshes preserve it.
     return {
       messages: pruneSessionMessages(messages, this.agentConfig),
       system: (await this.buildSystemPromptParts([], ephemeralSystem)).system,
@@ -742,11 +723,6 @@ export class Session {
     };
   }
 
-  /**
-   * Builds the turn's context. `ingress` is the turn's own input: its write
-   * overlaps the history read, and the appended rows are merged into the
-   * history by cursor, so the result is the same whichever lands first.
-   */
   async createTurnContext(
     extraEphemeralSystem: SystemModelMessage[] = [],
     ingress: ConversationIngressEvent[] = [],
@@ -754,10 +730,15 @@ export class Session {
     const prepareStartedMs = Date.now();
     const input = splitIngressEvents(ingress);
     const ephemeralSystem = [...input.ephemeralSystem, ...extraEphemeralSystem];
-    const appended = this.storedEvents(input.persisted);
-    // The turn's own rows merge into the history read by cursor either way. A
-    // fenced turn writes them with its first step boundary, one mutation
-    // fewer; an unfenced one appends them now.
+    const appended: AppendedConversationEvent[] = [];
+    const turnContent = new Map<string, UserContent>();
+    for (const message of input.persisted) {
+      const [row] = await this.storedEvents([message]);
+      if (!row) continue;
+      appended.push(row);
+      if (message.role === "user") turnContent.set(row.cursor, message.content);
+    }
+    // A fenced turn writes its rows with the first step boundary: one mutation fewer.
     const unwritten = [...this.pendingStoredEvents, ...appended];
     const fenced = this.ownerGeneration !== undefined;
     if (fenced) this.pendingStoredEvents.push(...appended);
@@ -770,19 +751,14 @@ export class Session {
       skillsMs: 0,
       subagentsMs: 0,
     };
-    // Every load behind the turn starts at once; buildSystemPromptParts below
-    // reads the memoized results.
     const [history] = await Promise.all([
-      this.loadTurnHistory(phases, unwritten),
+      this.loadTurnHistory(phases, unwritten, turnContent),
       fenced ? undefined : this.appendStoredEvents(appended),
       timePhase(phases, "runtimeMs", () => this.ensureResolvedRuntime()),
       timePhase(phases, "memoryMs", () => this.loadMemoryFiles()),
       timePhase(phases, "skillsMs", () => this.loadSkillMetadata()),
       timePhase(phases, "subagentsMs", () => this.loadSubagentMetadata()),
     ]);
-    // Snapshot persisted system context separately from chat messages. The
-    // harness passes this through prepareStep so long-running tool loops can
-    // refresh system prompt parts without duplicating old system rows.
     const systemContextSnapshot = createSystemContextSnapshot(history.entries);
     let messages = history.messages;
     const { system } = await this.buildSystemPromptParts(
@@ -812,12 +788,6 @@ export class Session {
     };
   }
 
-  /**
-   * Called from harness.ts prepareStep. Keep `systemContextSnapshot` updated across
-   * model steps so newly persisted system rows become visible while prior
-   * system rows remain included exactly once. Reads Convex only when this
-   * session wrote a system row the snapshot does not cover yet.
-   */
   async loadRefreshedSystemPromptParts(options: {
     systemContextSnapshot: SystemContextSnapshot;
     ephemeralSystem?: SystemModelMessage[];
@@ -883,14 +853,7 @@ export class Session {
     return loaded;
   }
 
-  /**
-   * Live state the agent would otherwise spend steps probing for. The harness
-   * sends it after the history and never stores it, so the system prompt and
-   * the history stay a cached prefix and only this block is new. Built from
-   * what the run already holds: no extra storage read. Reads the clock per
-   * call, so each model pass sees its own time. `machine` is the live status of
-   * the machine the run works on, when it has one.
-   */
+  // Sent after the history and never stored, so the prompt and history stay a cached prefix.
   environmentText(machine: string[] = []): string {
     const workspaces = this.resolvedWorkspaces();
     const sandboxes = this.sandboxes();
@@ -907,23 +870,32 @@ export class Session {
     });
   }
 
-  // Resolved config.sandboxes; the first is the default. Empty when none.
   sandboxes(): ResolvedAgentSandbox[] {
     return this.resolvedRuntime?.sandboxes ?? [];
   }
 
-  // Namespace of the default (first) workspace, used for memory/skill staging
-  // S3 reads. Empty string when no workspace is attached.
   filesystemNamespace(): string {
     return this.resolvedWorkspaces()[0]?.namespace ?? "";
   }
 
-  /** Resolved workspaces for this turn (first is the default). Empty when none. */
   resolvedWorkspaces(): ResolvedWorkspace[] {
     return this.resolvedRuntime?.workspaces ?? [];
   }
 
-  /** One append mutation, fenced against the owner generation when there is one. */
+  /** Records that tool call `toolCallId` handed the model the async tool result `resultId`. */
+  recordToolResultRead(toolCallId: string, resultId: string): void {
+    this.toolResultReads.set(toolCallId, resultId);
+  }
+
+  /** The agent's own secret values, which every log line and span of its runs drops. */
+  secretValues(): string[] {
+    return collectSecretValues([
+      this.agentConfig,
+      this.sandboxes(),
+      this.resolvedWorkspaces(),
+    ]);
+  }
+
   private async appendConversationEvents(
     events: AppendedConversationEvent[],
   ): Promise<void> {
@@ -945,7 +917,6 @@ export class Session {
     });
   }
 
-  /** Writes stored rows in as few appends as Convex accepts, in cursor order. */
   private async appendStoredEvents(
     events: AppendedConversationEvent[],
     onSaved?: (saved: number) => void,
@@ -960,14 +931,8 @@ export class Session {
     this.trackSystemCursor(events);
   }
 
-  /**
-   * Runs one fenced write with the rows waiting for it in front of `events`.
-   * Rows beyond what one mutation takes are appended first, in cursor order;
-   * `write` gets the last batch to carry, and every row for its bookkeeping.
-   * Every row is keyed by its cursor from the first attempt, so a write that
-   * throws keeps the rows for the next one and a commit whose reply was lost
-   * stores nothing twice.
-   */
+  // `write` carries the last batch once the rest are appended. Rows keyed by cursor survive
+  // a failed write for the next one, and a commit whose reply was lost stores none twice.
   private async writeFenced<T>(
     events: AppendedConversationEvent[],
     write: (
@@ -994,12 +959,10 @@ export class Session {
     }
   }
 
-  /** Records a fenced call Convex accepted, by the time the call started. */
   private confirmOwner(startedAt: number): void {
     this.ownerConfirmedAt = Math.max(this.ownerConfirmedAt, startedAt);
   }
 
-  /** Remembers the newest stored system row, so a step refresh knows to read it. */
   private trackSystemCursor(
     events: { cursor: string; event: StoredConversationEvent }[],
   ): void {
@@ -1055,8 +1018,6 @@ export class Session {
           },
         ]
       : [];
-    // Scheduling is the one surface that needs a clock: without one the model
-    // guesses the date behind an at(...) expression.
     const schedulerSystem: SystemModelMessage[] =
       this.agentConfig.scheduler?.enabled === true
         ? [
@@ -1112,7 +1073,7 @@ export class Session {
 
   private channelPartition(): ChannelPartition | undefined {
     return this.delivery?.kind === "channel"
-      ? channelPartitionFromConfig(this.agentConfig, this.delivery.channelName)
+      ? channelPartitionOf(this.agentConfig, this.delivery.channelName)
       : undefined;
   }
 
@@ -1120,8 +1081,7 @@ export class Session {
     return Boolean(this.resolvedWorkspaces()[0]?.sandbox);
   }
 
-  // The <workspace> prompt is the default harness's own guidance. An AI SDK
-  // harness brings its own, and takes over the tools this prompt describes.
+  // An AI SDK harness brings its own workspace guidance and takes over these tools.
   private enableDefaultHarness(): boolean {
     if (this.agentConfig.harness !== undefined) {
       return false;
@@ -1132,10 +1092,6 @@ export class Session {
     );
   }
 
-  /**
-   * Lazily fetches and caches the resolved runtime (sandbox + workspaces hydrated
-   * from their storage IDs). Promise-memoized so concurrent callers share one fetch.
-   */
   private async ensureResolvedRuntime(): Promise<ResolvedAgentRuntime> {
     const channelScopeKey = channelScopeKeyFromConversation(
       this.conversationKey,
@@ -1155,6 +1111,9 @@ export class Session {
         channelScopeKey: channelScopeKey,
         conversationKey: conversationScopeKey,
         partition: this.channelPartition(),
+        ...(this.userConversationKey
+          ? { userConversationKey: this.userConversationKey }
+          : {}),
       },
     ).then((resolved) => {
       this.resolvedRuntime = resolved;
@@ -1165,8 +1124,7 @@ export class Session {
     return this.resolvedRuntimePromise;
   }
 
-  // Mirrors the registry condition in tools/index.ts: memory_save exists when a
-  // sandbox-backed workspace has the memory harness enabled (default: on).
+  // Must match the memory_save registry condition in tools/index.ts.
   private isMemoryToolEnabled(): boolean {
     return this.resolvedWorkspaces().some(
       (workspace) =>
@@ -1181,15 +1139,17 @@ export class Session {
   private async loadConversationEntries(
     options: {
       afterCreatedAt?: string | null;
+      beforeCreatedAt?: string;
+      role?: "system";
+      stopAtRole?: "assistant" | "user";
     } = {},
   ): Promise<StoredConversationEntry[]> {
     if (!this.persist) return [];
     const afterCursor = options.afterCreatedAt ?? undefined;
-    // A full read pages back from the newest row and stops at the latest
-    // compaction summary: every reader projects from there on.
+    // A full read pages back and stops at the latest compaction summary: none reads past it.
     const backward = afterCursor === undefined;
     const pages: StoredConversationEntry[][] = [];
-    let cursor = afterCursor;
+    let cursor = afterCursor ?? options.beforeCreatedAt;
     for (;;) {
       const result = await runtime.query(
         "listConversationEvents",
@@ -1198,6 +1158,8 @@ export class Session {
               conversationKey: this.conversationKey,
               beforeCursor: cursor,
               fromSystemPrefix: COMPACTION_MARKER,
+              role: options.role,
+              stopAtRole: options.stopAtRole,
             }
           : { conversationKey: this.conversationKey, afterCursor: cursor },
       );
@@ -1217,13 +1179,48 @@ export class Session {
     }
   }
 
+  // A harness keeps its own context, so its prompt needs only the rows since its newest reply.
+  private async loadHarnessTurnEntries(
+    unwritten: AppendedConversationEvent[],
+  ): Promise<StoredConversationEntry[]> {
+    const [systemRows, newest] = await Promise.all([
+      this.loadConversationEntries({ role: "system" }),
+      this.loadConversationEntries({ stopAtRole: "assistant" }),
+    ]);
+    let tail = newest;
+    // A read that ended on a compaction summary or the first row has nothing older to give.
+    while (
+      tail[0]?.event.message.role === "assistant" ||
+      tail[0]?.event.message.role === "user"
+    ) {
+      const stopAtRole = missingHarnessRole(
+        withUnwrittenRows(tail, unwritten),
+        this.agentConfig,
+      );
+      if (!stopAtRole) break;
+      const older = await this.loadConversationEntries({
+        beforeCreatedAt: tail[0].createdAt,
+        stopAtRole: stopAtRole,
+      });
+      if (older.length === 0) break;
+      tail = older.concat(tail);
+    }
+
+    // Each read has its own snapshot, so a system row the tail missed is merged in by cursor.
+    return withUnwrittenRows(
+      tail,
+      systemRows.map((row): AppendedConversationEvent => ({
+        cursor: row.createdAt,
+        event: row.event,
+      })),
+    );
+  }
+
   private async loadMemoryFile(
     workspace: ResolvedWorkspace,
   ): Promise<string | null> {
-    // Reads memory/MEMORY.md over the S3 API, not the sandbox mount, so a workspace
-    // with no sandbox still serves memory. A mount write reaches S3 only once
-    // Mountpoint uploads it on close, so this can be briefly stale; memory
-    // converges across turns. See docs/internals/storage.md.
+    if (workspace.config.storage.provider === "disk") return null;
+    // S3 API, not the mount, so a workspace with no sandbox still serves its memory.
     const target = await resolveS3ReadTarget(
       workspaceReadContext(workspace.config.storage, workspace.namespace),
     );
@@ -1258,15 +1255,11 @@ export class Session {
   }
 
   private async loadMemoryFiles(): Promise<MemoryFile[]> {
-    // The runtime names the workspaces, so this waits on it and its phase time
-    // includes that wait.
     await this.ensureResolvedRuntime();
     if (!this.isWorkspaceEnabled()) {
       return [];
     }
 
-    // harness.memory.enabled: false is a full opt-out. The index is not loaded
-    // into the model context either.
     this.memoryFilesPromise ??= Promise.all(
       this.resolvedWorkspaces()
         .filter((workspace) => workspaceMemoryHarnessEnabled(workspace.config))
@@ -1322,36 +1315,38 @@ export class Session {
     return this.subagentMetadataPromise;
   }
 
-  // Media the rows only point at is read back here, before anything else looks
-  // at the history: compaction, the system prompt and the model all see the
-  // same messages, and none of them should have to know how it got there.
+  // `turnContent` puts this turn's own input, media included, back over its stored rows.
   private async loadTurnHistory(
     phases: ContextPreparePhases,
-    appended: { cursor: string; event: StoredConversationEvent }[] = [],
+    appended: AppendedConversationEvent[],
+    turnContent: ReadonlyMap<string, UserContent>,
   ): Promise<TurnHistory> {
-    const entries = await timePhase(phases, "historyMs", () =>
-      this.loadConversationEntries(),
+    const entries = withUnwrittenRows(
+      await timePhase(phases, "historyMs", () =>
+        this.agentConfig.harness === undefined
+          ? this.loadConversationEntries()
+          : this.loadHarnessTurnEntries(appended),
+      ),
+      appended,
     );
-    // A context-only channel message is written without the lease, so it can
-    // land with a newer cursor before this run's own rows: merge by cursor.
-    const read = new Set(entries.map((entry): string => entry.createdAt));
-    const missing = appended.filter((row): boolean => !read.has(row.cursor));
-    if (missing.length > 0) {
-      entries.push(
-        ...missing.map((row): StoredConversationEntry => ({
-          createdAt: row.cursor,
-          event: row.event,
-        })),
-      );
-      entries.sort((left, right): number =>
-        left.createdAt < right.createdAt ? -1 : 1,
-      );
-    }
     phases.historyRows = entries.length;
+    const turnEntries = entries.map((entry): StoredConversationEntry => {
+      const content = turnContent.get(entry.createdAt);
+
+      return content !== undefined && entry.event.message.role === "user"
+        ? {
+            ...entry,
+            event: {
+              ...entry.event,
+              message: { ...entry.event.message, content: content },
+            },
+          }
+        : entry;
+    });
     const messages = await timePhase(phases, "mediaMs", () =>
       rehydrateStoredMedia(
         projectEntriesToMessages(
-          projectActiveConversationEntries(entries),
+          projectActiveConversationEntries(turnEntries),
           modelIdentityFromModelConfig(this.agentConfig),
         ),
         this.agentConfig,
@@ -1369,24 +1364,58 @@ export class Session {
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
   }
 
-  /** The rows a persisting session writes for these messages, cursors minted here. */
-  private storedEvents(
-    messages: ModelMessage[],
+  /** The async tool results the `async_status` reads in a tool message handed over. */
+  private toolResultIdsOf(message: ModelMessage): string[] {
+    if (message.role !== "tool" || this.toolResultReads.size === 0) return [];
+
+    return message.content.flatMap((part): string[] => {
+      const resultId =
+        part.type === "tool-result" &&
+        !UNDELIVERED_OUTPUTS.has(part.output.type)
+          ? this.toolResultReads.get(part.toolCallId)
+          : undefined;
+
+      return resultId === undefined ? [] : [resultId];
+    });
+  }
+
+  /**
+   * The rows a persisting session writes for these messages, cursors minted
+   * here. Media carried as bytes is stored first, so the row keeps its link.
+   */
+  private async storedEvents(
+    messages: ConversationIngressEvent[],
     dedupeKeys?: string[],
-  ): AppendedConversationEvent[] {
-    if (!this.persist) return [];
+  ): Promise<AppendedConversationEvent[]> {
+    if (!this.persist) {
+      for (const message of messages) {
+        for (const resultId of this.toolResultIdsOf(message)) {
+          this.unsavedToolResults.add(resultId);
+        }
+      }
+
+      return [];
+    }
     const producer: MessageProducer = {
       model: modelIdentityFromModelConfig(this.agentConfig),
       retainsReasoning: retainsReasoningParts(this.agentConfig),
     };
+    const sealed =
+      this.accountId === undefined
+        ? messages
+        : await sealConversationMedia(messages, this.accountId);
 
-    return messages.flatMap((message, index): AppendedConversationEvent[] => {
+    return sealed.flatMap((message, index): AppendedConversationEvent[] => {
       const event = createStoredEventFromModelMessage(
         message,
         this.eventId,
         producer,
       );
-      const dedupeKey = dedupeKeys?.[index];
+      const source = messages[index];
+      const dedupeKey =
+        dedupeKeys?.[index] ??
+        (source?.role === "user" ? source.dedupeKey : undefined);
+      const toolResultIds = this.toolResultIdsOf(message);
 
       return event
         ? [
@@ -1394,6 +1423,9 @@ export class Session {
               cursor: this.nextCreatedAt(),
               ...(dedupeKey !== undefined ? { dedupeKey: dedupeKey } : {}),
               event: event,
+              ...(toolResultIds.length > 0
+                ? { toolResultIds: toolResultIds }
+                : {}),
             },
           ]
         : [];
@@ -1401,8 +1433,6 @@ export class Session {
   }
 }
 
-// Message persistence sanitization. Exported so tests can verify the
-// metadata-envelope split without going through Convex.
 export function createStoredEventFromModelMessage(
   message: ModelMessage | undefined,
   sourceEventId: string,
@@ -1416,9 +1446,11 @@ export function createStoredEventFromModelMessage(
     case "user": {
       // Opaque hook metadata rides the stored envelope; the persisted model
       // message stays a clean AI SDK shape.
-      const { metadata, ...userMessage } = message as UserModelMessage & {
-        metadata?: unknown;
-      };
+      const {
+        metadata,
+        dedupeKey: _dedupeKey,
+        ...userMessage
+      } = message as IngressUserMessage;
 
       return toStoredConversationEvent(
         sanitizeUserMessage(userMessage),
@@ -1448,17 +1480,8 @@ export function createStoredEventFromModelMessage(
   }
 }
 
-/**
- * Stores the media a channel delivered and folds it into the newest user event.
- *
- * Standalone rather than a Session method because the channel path must run it
- * before admission: a queued turn replays exactly the events that were queued, so
- * parts added later never reach it. It cannot move into the adapter either, since
- * the target workspace is only known once the runtime resolves and parsing runs
- * before the webhook is acknowledged, where downloading would hold the provider's
- * connection open for the length of a video. Events come back unchanged when
- * nothing is attached.
- */
+// Runs before admission, as a queued turn replays only the queued events, and after the
+// webhook ack, as a download would hold the provider's connection open.
 export async function ingestChannelAttachments(
   events: ConversationIngressEvent[],
   attachments: Attachment[] | undefined,
@@ -1484,10 +1507,7 @@ export async function ingestChannelAttachments(
         context.conversationKey,
         "conversation",
       ),
-      partition: channelPartitionFromConfig(
-        context.agentConfig,
-        context.channelName,
-      ),
+      partition: channelPartitionOf(context.agentConfig, context.channelName),
     },
   );
   const parts = await ingestInboundAttachments(attachments, {
@@ -1496,8 +1516,6 @@ export async function ingestChannelAttachments(
     channelName: context.channelName,
     eventId: context.eventId,
     agentConfig: context.agentConfig,
-    // The first workspace is the agent's default, the same one the file tools
-    // write to when the model names none.
     workspace: runtimeConfig.workspaces[0],
   });
 
@@ -1513,20 +1531,26 @@ export async function ingestChannelAttachments(
   };
 }
 
-// Projection attaches metadata/createdAt for hook payloads; model calls must
-// receive clean AI SDK message shapes, so they pass through this first.
 export function stripEnvelopeFieldsFromMessages(
   messages: ModelMessage[],
 ): ModelMessage[] {
   return messages.map((message) => {
-    if (!("metadata" in message) && !("createdAt" in message)) {
+    if (
+      !("metadata" in message) &&
+      !("createdAt" in message) &&
+      !("dedupeKey" in message)
+    ) {
       return message;
     }
     const {
       metadata: _metadata,
       createdAt: _createdAt,
+      dedupeKey: _dedupeKey,
       ...rest
-    } = message as ModelMessage & { metadata?: unknown; createdAt?: string };
+    } = message as ModelMessage &
+      Partial<Pick<IngressUserMessage, "metadata" | "dedupeKey">> & {
+        createdAt?: string;
+      };
 
     return rest as ModelMessage;
   });
@@ -1545,12 +1569,7 @@ function agentSystemMessages(
   return Array.isArray(system) ? system : [system];
 }
 
-/**
- * Puts the stored media on the message it arrived with, the newest user event.
- * Earlier events are the context a channel batched ahead of it, and attaching a
- * picture to one of those would date it to the wrong turn. A string content is
- * widened to parts, since that is the only shape that holds a picture.
- */
+// Earlier events are batched context; media on one of them would date it to the wrong turn.
 function appendToLatestUserEvent(
   events: ConversationIngressEvent[],
   parts: Exclude<UserContent, string>,
@@ -1558,9 +1577,7 @@ function appendToLatestUserEvent(
   for (let index = events.length - 1; index >= 0; index--) {
     const event = events[index]!;
     if (event.role !== "user") continue;
-    // An empty text part is dropped rather than carried: a picture sent with no
-    // caption is a message whose text field a channel still filled in with "",
-    // and some providers reject a text part that says nothing.
+    // Some providers reject an empty text part, which a captionless picture arrives with.
     const existing = (
       typeof event.content === "string"
         ? [{ type: "text" as const, text: event.content }]
@@ -1573,18 +1590,6 @@ function appendToLatestUserEvent(
   }
 
   return [...events, { role: "user", content: parts }];
-}
-
-// The partition one channel's config carries, shared by the Session and the
-// pre-admission attachment path so both resolve the same runtime scope.
-function channelPartitionFromConfig(
-  agentConfig: AgentConfig,
-  channelName: string,
-): ChannelPartition | undefined {
-  const config = agentConfig.channels?.[channelName];
-  const partition = isPlainObject(config) ? config.partition : undefined;
-
-  return isPartition(partition) ? partition : undefined;
 }
 
 function createSystemContextSnapshot(
@@ -1632,7 +1637,6 @@ You have a persistent memory: markdown files in the workspace's memory/ folder, 
 </memory>`;
 }
 
-/** The <environment> block: the clock, where replies go, where bash runs, and that machine's live state. */
 function formatEnvironmentPrompt(environment: {
   now: Date;
   channel: string;
@@ -1786,18 +1790,7 @@ ${guidance}
 </workspace>`;
 }
 
-function isPartition(value: unknown): value is ChannelPartition {
-  if (!isPlainObject(value)) return false;
-  if (value.by === "shared") return value.alias === undefined;
-
-  return value.by === "conversation" && typeof value.alias === "string";
-}
-
-/**
- * Reasoning rides along because OpenAI's Responses API replays a stored
- * assistant message by item id and rejects the reference when the reasoning
- * item that produced it is missing. See `retainsReasoningParts` in pruning.ts.
- */
+// Reasoning stays: OpenAI Responses rejects an item id whose reasoning item is missing.
 function isPersistedAssistantContentPart(
   part: Exclude<AssistantModelMessage["content"], string>[number],
 ): boolean {
@@ -1816,12 +1809,7 @@ function isPersistedToolContentPart(
   return part.type === "tool-approval-response" || part.type === "tool-result";
 }
 
-// Whether a media part points at its bytes instead of carrying them. A URL
-// object or an `http(s)` string is a reference; a base64 string, a Buffer or a
-// typed array is the payload itself. A `data:` URL is a payload wearing a URL's
-// clothes, so it is excluded by the scheme check rather than by the type.
-// A file part may also tag its data (`{ type: "url", url }`), which the direct
-// API accepts, so that shape unwraps to the same check.
+// A `data:` URL carries its bytes, so only http(s) and sealed media links are references.
 function isStorableMediaReference(
   value: ImagePart["image"] | FilePart["data"],
 ): boolean {
@@ -1848,6 +1836,32 @@ function isToolApprovalResponseMessage(
   );
 }
 
+// One claim per run lineage: the run a person started and every run continuing it.
+function messageTurnsKey(eventId: string): string {
+  return `message-turns:${rootEventId(eventId)}`;
+}
+
+function missingHarnessRole(
+  entries: StoredConversationEntry[],
+  agentConfig: AgentConfig,
+): "assistant" | "user" | undefined {
+  const messages = pruneSessionMessages(
+    projectEntriesToMessages(
+      projectActiveConversationEntries(entries),
+      modelIdentityFromModelConfig(agentConfig),
+    ),
+    agentConfig,
+  );
+  // The reply the prompt starts after, and the ask the run's trace shows as its input.
+  if (!messages.slice(0, -1).some((message) => message.role === "assistant")) {
+    return "assistant";
+  }
+
+  return messages.some((message) => message.role === "user")
+    ? undefined
+    : "user";
+}
+
 function projectActiveConversationEntries(
   entries: StoredConversationEntry[],
 ): StoredConversationEntry[] {
@@ -1858,8 +1872,6 @@ function projectActiveConversationEntries(
     : entries.slice(latestCompactionIndex + 1);
 }
 
-// Conversation projection. User messages carry envelope metadata/createdAt for
-// hook payloads; stripEnvelopeFieldsFromMessages removes both for model calls.
 function projectEntriesToMessages(
   entries: StoredConversationEntry[],
   model: string | undefined,
@@ -1956,19 +1968,8 @@ function sanitizeToolMessage(
   return content.length > 0 ? { ...message, content: content } : null;
 }
 
-/**
- * Filters a user message to what a stored row can hold.
- *
- * Text and media named by URL keep their part: a sealed media link is a short
- * string that still resolves on every later turn, which is the whole reason
- * inbound attachments are stored and linked rather than inlined. Media carrying
- * its own bytes is dropped. A base64 picture is megabytes of row per turn, and
- * the model already saw it in the turn it arrived.
- *
- * A message left with nothing keeps a note rather than becoming null: dropping
- * the row entirely would leave the assistant's reply in history answering a user
- * turn that is not there.
- */
+// Unsealed bytes are dropped: the model saw them this turn. An emptied message keeps a note,
+// or the reply in history would answer a user turn that is not there.
 function sanitizeUserMessage(
   message: UserModelMessage,
 ): UserModelMessage | null {
@@ -1994,7 +1995,6 @@ function sanitizeUserMessage(
     : null;
 }
 
-/** A turn's input split into one-turn system instructions and the messages to store. */
 function splitIngressEvents(events: ConversationIngressEvent[]): {
   ephemeralSystem: SystemModelMessage[];
   persisted: ModelMessage[];
@@ -2007,8 +2007,6 @@ function splitIngressEvents(events: ConversationIngressEvent[]): {
       continue;
     }
     const message = systemModelMessageSchema.parse(event);
-    // Direct API system injections are one-turn instructions. They join the
-    // current turn's system prompt but are never written to Convex.
     if (event.persist === false) {
       ephemeralSystem.push(message);
     } else {
@@ -2019,12 +2017,7 @@ function splitIngressEvents(events: ConversationIngressEvent[]): {
   return { ephemeralSystem: ephemeralSystem, persisted: persisted };
 }
 
-/**
- * A tool result as a stored row can hold it. Media follows the rule in
- * `sanitizeUserMessage`: bytes are dropped, a URL stays. Whatever is still over
- * `limit` is stored as truncated text, so one oversized result can not fail the
- * write and end the run.
- */
+// Truncated past `limit`, so one oversized result cannot fail the write and end the run.
 function storableToolResultOutput(
   output: ToolResultPart["output"],
   limit: number,
@@ -2077,10 +2070,6 @@ function storableToolResultOutput(
   };
 }
 
-/**
- * Splits stored rows, in cursor order, into the fewest appends Convex accepts.
- * A step fits one, but a harness run hands over its whole history at once.
- */
 function storedEventBatches(
   events: AppendedConversationEvent[],
 ): AppendedConversationEvent[][] {
@@ -2137,14 +2126,7 @@ function toStoredConversationEvent<
     : null;
 }
 
-/**
- * Drops what only the producing model can replay: its reasoning, and the ids
- * the provider would otherwise resolve that reasoning through. Applied to every
- * assistant message the current model did not write. Another model cannot
- * decrypt that reasoning, and a row stored before we recorded a producer has no
- * reasoning to pair its ids with in the first place. The message still replays,
- * as plain content.
- */
+// Another model cannot decrypt this reasoning, and the provider resolves item ids through it.
 function withoutStoredItems(
   message: AssistantModelMessage,
 ): AssistantModelMessage {
@@ -2160,13 +2142,8 @@ function withoutStoredItems(
   };
 }
 
-/**
- * Drops a tool call the history never answers: an abandoned approval, or a step
- * cut short. The AI SDK refuses such a history on every later turn. The call's
- * message loses its stored-item state too, because the provider refuses a
- * reasoning item without the call it produced. The approval the last message
- * answers is still pending, so its call stays.
- */
+// The AI SDK refuses a history with an unanswered tool call, and the provider a reasoning
+// item without its call. The approval the last message answers is pending, so it stays.
 function withoutUnresolvedToolCalls(messages: ModelMessage[]): ModelMessage[] {
   const lastMessage = messages.at(-1);
   const pendingApprovalIds = new Set(
@@ -2207,4 +2184,22 @@ function withoutUnresolvedToolCalls(messages: ModelMessage[]): ModelMessage[] {
 
     return repaired.content.length > 0 ? [repaired] : [];
   });
+}
+
+// A lease-free context write can land before this run's rows: merge by cursor.
+function withUnwrittenRows(
+  entries: StoredConversationEntry[],
+  unwritten: AppendedConversationEvent[],
+): StoredConversationEntry[] {
+  const read = new Set(entries.map((entry): string => entry.createdAt));
+  const missing = unwritten.filter((row): boolean => !read.has(row.cursor));
+  if (missing.length === 0) return entries;
+
+  return [
+    ...entries,
+    ...missing.map((row): StoredConversationEntry => ({
+      createdAt: row.cursor,
+      event: row.event,
+    })),
+  ].sort((left, right): number => (left.createdAt < right.createdAt ? -1 : 1));
 }

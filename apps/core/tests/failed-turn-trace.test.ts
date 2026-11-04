@@ -1,8 +1,3 @@
-/**
- * A turn that dies before the agent loop opens its root span still leaves a
- * failed task on the trace id its log lines carry, so "View trace" finds it.
- */
-
 import { afterEach, beforeEach, expect, it } from "bun:test";
 import {
   context as otelContextApi,
@@ -43,7 +38,7 @@ it("records a failed task on the trace id the turn's logs carry", async () => {
     accountId: "acct_1",
     agentId: "agent_1",
     endpointId: "ep_1",
-    projectSlug: "tracy",
+    projectSlug: "support",
     stageSlug: "development",
   });
   const startedAt = Date.now() - 250;
@@ -51,7 +46,7 @@ it("records a failed task on the trace id the turn's logs carry", async () => {
   await runWithObservabilityScope(async () => {
     setObservabilityContext({
       accountId: "acct_1",
-      project: "tracy",
+      project: "support",
       stage: "development",
       endpointId: "ep_1",
       agentId: "agent_1",
@@ -77,7 +72,7 @@ it("records a failed task on the trace id the turn's logs carry", async () => {
   });
   expect(span?.attributes).toMatchObject({
     account_id: "acct_1",
-    project: "tracy",
+    project: "support",
     stage: "development",
     "task.state": "failed",
   });

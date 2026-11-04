@@ -1,9 +1,4 @@
-/**
- * Write tool. Writes a file to the workspace (creating parent dirs), overwriting
- * if it exists. Content is base64-piped to avoid any quoting hazards. Only
- * registered for sandbox-backed workspaces (read-only workspaces cannot write).
- */
-
+import { SHELL_ONLY_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
@@ -46,12 +41,12 @@ Usage notes:
           }
           const q = shellQuote(rel);
           const b64 = toBase64(content ?? "");
-          // `sync ${q}` fsyncs the file so the mount uploads it before the sandbox
-          // can freeze or suspend; without it the write can be lost.
-          // See docs/internals/storage.md.
+          // Without `sync` the mount may not upload before the sandbox freezes: the write is lost.
           const code =
             `mkdir -p "$(dirname -- ${q})" && printf '%s' ${shellQuote(b64)} | base64 -d > ${q} && ` +
-            `sync ${q} && ` +
+            (SHELL_ONLY_SANDBOX_PROVIDERS.has(ws.sandbox.provider)
+              ? ""
+              : `sync ${q} && `) +
             `printf 'Wrote %s (%s bytes)\\n' ${q} "$(wc -c < ${q})"`;
           const result = await runSandbox(ws.sandbox, ws.namespace, code, {
             onSandboxCpu: context.onSandboxCpu,
@@ -66,8 +61,7 @@ Usage notes:
 
           return toolText(result.stdout.trim());
         } catch (cause) {
-          // toolError throws, so an in-try call already landed here. Feeding its
-          // message back through would prefix a fatal setup error a second time.
+          // toolError already threw; re-wrapping would prefix a setup error twice.
           throw cause instanceof Error ? cause : new Error(String(cause));
         }
       },

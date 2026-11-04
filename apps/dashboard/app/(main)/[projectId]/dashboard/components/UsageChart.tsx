@@ -2,33 +2,31 @@
 
 import { useTween } from "@/app/hooks/useTween";
 import {
+  knownRuns,
   monotonePath,
   niceTicks,
   resampleRows,
   type TokenParts,
 } from "@/app/lib/usageChart";
+import { observeResize } from "@/app/lib/observeResize";
 import { cn } from "@/app/lib/utils";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 const PAD_TOP = 6;
 const PAD_BOTTOM = 18;
-// Minimum pixels between x-axis labels; wider for "Sep 24 06:00" style labels.
 const LABEL_GAP_PX = 64;
 const WIDE_LABEL_GAP_PX = 120;
-// Gap between the hovered point and the tooltip, on whichever side it opens.
 const TOOLTIP_OFFSET_PX = 12;
-// The tooltip's `min-w-44`, used until its real width is measured.
+// The tooltip's `min-w-44`, until its real width is measured.
 const TOOLTIP_MIN_WIDTH_PX = 176;
 
 export interface UsageChartSeries {
   key: string;
   label: string;
-  /** CSS color, usually a `var(--color-usage-*)` token. */
   color: string;
 }
 
-// The token chart's series, stacked bottom to top. The parts add up to
-// totalTokens; see tokenParts. Shared by the Usage tab and its gallery fixture.
+// Stacked bottom to top; the parts sum to totalTokens (see tokenParts).
 export const TOKEN_SERIES: Array<UsageChartSeries & { key: keyof TokenParts }> =
   [
     {
@@ -59,23 +57,19 @@ export const TOKEN_SERIES: Array<UsageChartSeries & { key: keyof TokenParts }> =
   ];
 
 interface Props {
-  kind: "area" | "bars";
-  /** Plot height in px, axis labels included. */
+  kind: "area" | "bars" | "line";
   height: number;
   series: UsageChartSeries[];
-  /**
-   * One row per bin, one value per series; null is unknown, drawn as nothing
-   * and "–" in the tooltip. Memoize: a new array starts a transition.
-   */
+  /** Per bin, per series; null is unknown. Memoize: a new array starts a transition. */
   rows: Array<Array<number | null>>;
   bucketStarts: number[];
   binSeconds: number;
   selected: number | null;
-  /** Absent on a chart with nothing to drill into; clicks then do nothing. */
   onSelect?: (index: number) => void;
   formatAxis: (n: number) => string;
   formatValue: (n: number) => string;
   tickCount?: number;
+  detail?: (index: number) => string;
 }
 
 interface Scale {
@@ -85,12 +79,6 @@ interface Scale {
   y: (v: number) => number;
 }
 
-/**
- * Stacked usage chart for the Usage tab. Draws at the container's real pixel
- * width so text and lines never scale, eases between datasets (range switch,
- * model filter, live updates), and reports a clicked or Enter-ed bin through
- * `onSelect`. Arrow keys move the hover when the chart has focus.
- */
 export function UsageChart({
   kind,
   height,
@@ -103,11 +91,11 @@ export function UsageChart({
   formatAxis,
   formatValue,
   tickCount = 4,
+  detail,
 }: Props): React.JSX.Element {
   const [width, measureRef] = useElementWidth(0);
   const [hover, setHover] = useState<number | null>(null);
 
-  // Unknown values stack as 0, which draws no mark.
   const drawn = useMemo(
     () => rows.map((row) => row.map((value) => value ?? 0)),
     [rows],
@@ -124,8 +112,7 @@ export function UsageChart({
   const yMax = useTween(yMaxTarget)[0][0] || 1;
   const tweened = useTween(drawn);
   const n = bucketStarts.length;
-  // The first frame after a range switch still holds the old bin count, and
-  // after a series switch the old series count: a series it lacks starts at 0.
+  // The tween's first frame after a switch still has the old bin and series counts.
   const shown = (tweened.length === n ? tweened : resampleRows(tweened, n)).map(
     (row) =>
       row.length === series.length ? row : series.map((_, k) => row[k] ?? 0),
@@ -168,17 +155,17 @@ export function UsageChart({
           )
         }
         onMouseLeave={() => setHover(null)}
-        onClick={(event) =>
-          // detail is 0 when Enter or Space fired the click.
+        onClick={(event) => {
+          const fromKeyboard = event.detail === 0;
           onSelect?.(
-            event.detail === 0
+            fromKeyboard
               ? active
               : indexAt(
                   event.clientX,
                   event.currentTarget.getBoundingClientRect(),
                 ),
-          )
-        }
+          );
+        }}
       >
         {width > 0 && n > 0 && (
           <svg width={width} height={height} className="block">
@@ -199,9 +186,18 @@ export function UsageChart({
                 scale={scale}
                 hover={hover}
               />
+            ) : kind === "line" ? (
+              <LineLayers
+                rows={shown}
+                known={rows}
+                series={series}
+                scale={scale}
+                hover={hover}
+              />
             ) : (
               <BarLayers
                 rows={shown}
+                bucketStarts={bucketStarts}
                 series={series}
                 scale={scale}
                 active={hover ?? selected}
@@ -226,13 +222,13 @@ export function UsageChart({
           values={rows[hover]}
           formatValue={formatValue}
           clickable={onSelect !== undefined}
+          detail={detail?.(hover)}
         />
       )}
     </div>
   );
 }
 
-/** A swatch and label per series, under a chart. */
 export function UsageLegend({
   series,
   className,
@@ -260,11 +256,7 @@ export function UsageLegend({
   );
 }
 
-/**
- * Time label for a bin: clock time for sub-day bins, date for day bins, and
- * the first to last day for a long label of a multi-day bin. Day bins start at
- * UTC midnight, so their dates are the UTC ones.
- */
+// Day bins start at UTC midnight, so they print UTC dates.
 export function formatBucketLabel(
   ms: number,
   binSeconds: number,
@@ -294,7 +286,6 @@ export function formatBucketLabel(
   return `${date} ${time}`;
 }
 
-/** Stacked smooth areas, one per series, plus the hover crosshair and dots. */
 function AreaLayers({
   rows,
   series,
@@ -366,7 +357,6 @@ function AreaLayers({
   );
 }
 
-/** Y labels sit inside the plot above their gridline, with a halo so marks never hide them. */
 function AxisLabels({
   ticks,
   scale,
@@ -425,14 +415,89 @@ function AxisLabels({
   );
 }
 
-/** Stacked bars, one per bin; bins other than the active one dim. */
+function LineLayers({
+  rows,
+  known,
+  series,
+  scale,
+  hover,
+}: {
+  rows: number[][];
+  known: Array<Array<number | null>>;
+  series: UsageChartSeries[];
+  scale: Scale;
+  hover: number | null;
+}): React.JSX.Element {
+  const { slot, y } = scale;
+  const isKnown = (i: number, k: number): boolean =>
+    known[i] !== undefined && known[i][k] !== null;
+  const x = (i: number): number => i * slot + slot / 2;
+
+  return (
+    <>
+      {series.map((s, k) =>
+        knownRuns(rows.map((row, i) => (isKnown(i, k) ? row[k] : null))).map(
+          (run) =>
+            run.length === 1 ? (
+              <circle
+                key={`${s.key}-${run[0][0]}`}
+                cx={x(run[0][0])}
+                cy={y(run[0][1])}
+                r={4}
+                className="fill-(--series-color)"
+                style={{ "--series-color": s.color }}
+              />
+            ) : (
+              <path
+                key={`${s.key}-${run[0][0]}`}
+                d={run
+                  .map(([i, v], j) => `${j === 0 ? "M" : "L"}${x(i)},${y(v)}`)
+                  .join("")}
+                fill="none"
+                strokeWidth={2}
+                strokeLinejoin="round"
+                className="stroke-(--series-color)"
+                style={{ "--series-color": s.color }}
+              />
+            ),
+        ),
+      )}
+      {hover !== null && hover < rows.length && (
+        <>
+          <line
+            x1={x(hover)}
+            x2={x(hover)}
+            y1={y(0)}
+            y2={PAD_TOP}
+            className="stroke-foreground/30"
+          />
+          {series.map((s, k) =>
+            isKnown(hover, k) ? (
+              <circle
+                key={s.key}
+                cx={x(hover)}
+                cy={y(rows[hover][k])}
+                r={3}
+                className="fill-(--series-color) stroke-card"
+                style={{ "--series-color": s.color }}
+              />
+            ) : null,
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
 function BarLayers({
   rows,
+  bucketStarts,
   series,
   scale,
   active,
 }: {
   rows: number[][];
+  bucketStarts: number[];
   series: UsageChartSeries[];
   scale: Scale;
   active: number | null;
@@ -448,7 +513,7 @@ function BarLayers({
 
         return (
           <g
-            key={i}
+            key={bucketStarts[i]}
             opacity={active === null || active === i ? 1 : 0.5}
             className="transition-opacity duration-150"
           >
@@ -477,11 +542,6 @@ function BarLayers({
   );
 }
 
-/**
- * Hover card that glides between bins instead of jumping. Opens right of the
- * point, or left when its measured width does not fit, clamped inside the
- * chart on both sides.
- */
 function ChartTooltip({
   x,
   chartWidth,
@@ -490,6 +550,7 @@ function ChartTooltip({
   values,
   formatValue,
   clickable,
+  detail,
 }: {
   x: number;
   chartWidth: number;
@@ -498,6 +559,7 @@ function ChartTooltip({
   values: Array<number | null>;
   formatValue: (n: number) => string;
   clickable: boolean;
+  detail?: string | undefined;
 }): React.JSX.Element {
   const [boxWidth, measureRef] = useElementWidth(TOOLTIP_MIN_WIDTH_PX);
   const right = x + TOOLTIP_OFFSET_PX;
@@ -534,14 +596,17 @@ function ChartTooltip({
               </span>
             </div>
           ))}
-        <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border pt-0.5 font-medium">
-          <span className="text-muted-foreground">Total</span>
-          <span className="tabular-nums">
-            {known.length === 0
-              ? "–"
-              : formatValue(known.reduce((a, b) => a + b, 0))}
-          </span>
-        </div>
+        {series.length > 1 && (
+          <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border pt-0.5 font-medium">
+            <span className="text-muted-foreground">Total</span>
+            <span className="tabular-nums">
+              {known.length === 0
+                ? "–"
+                : formatValue(known.reduce((a, b) => a + b, 0))}
+            </span>
+          </div>
+        )}
+        {detail && <div className="text-muted-foreground">{detail}</div>}
         {clickable && (
           <div className="text-muted-foreground">Click to see traces</div>
         )}
@@ -550,7 +615,6 @@ function ChartTooltip({
   );
 }
 
-/** Horizontal gridline per tick, drawn under the data. */
 function GridLines({
   ticks,
   scale,
@@ -579,19 +643,15 @@ function GridLines({
   );
 }
 
-/** Width of the element under the returned callback ref, kept current as it resizes. */
 function useElementWidth(
   initial: number,
-): [number, (el: HTMLElement | null) => void] {
+): [number, (el: HTMLElement | null) => (() => void) | undefined] {
   const [width, setWidth] = useState(initial);
-  const observerRef = useRef<ResizeObserver | null>(null);
-  const measureRef = useCallback((el: HTMLElement | null): void => {
-    observerRef.current?.disconnect();
-    if (!el) return;
-    const observer = new ResizeObserver(() => setWidth(el.offsetWidth));
-    observer.observe(el);
-    observerRef.current = observer;
-  }, []);
+  const measureRef = useCallback(
+    (el: HTMLElement | null) =>
+      el ? observeResize(el, () => setWidth(el.offsetWidth)) : undefined,
+    [],
+  );
 
   return [width, measureRef];
 }

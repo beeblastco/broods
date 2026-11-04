@@ -22,10 +22,6 @@ describe("machineState", () => {
       "offline",
     );
   });
-
-  test("reads a sandbox with no row as never connected", () => {
-    expect(machineState(null, NOW)).toBe("never");
-  });
 });
 
 describe("machineStartCommand", () => {

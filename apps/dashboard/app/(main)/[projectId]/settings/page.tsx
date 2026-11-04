@@ -4,13 +4,32 @@ import { useStage } from "@/app/hooks/useStage";
 import { pickTab, SETTINGS_TABS } from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import dynamic from "next/dynamic";
 import { useParams, useSearchParams } from "next/navigation";
-import { DangerPanel } from "./components/DangerPanel";
-import { EnvironmentVariablesPanel } from "./components/EnvironmentVariablesPanel";
-import { KeysPanel } from "./components/KeysPanel";
-import { PoliciesPanel } from "./components/PoliciesPanel";
 import { ProjectGeneralPanel } from "./components/ProjectGeneralPanel";
-import { WebhooksPanel } from "./components/WebhooksPanel";
+import {
+  loadDangerPanel,
+  loadEnvironmentVariablesPanel,
+  loadGitPanel,
+  loadKeysPanel,
+  loadPoliciesPanel,
+  loadWebhooksPanel,
+} from "./panels";
+
+function PanelLoading(): React.JSX.Element {
+  return <p className="text-sm text-muted-foreground">Loading…</p>;
+}
+
+// `loading` gives each its own Suspense boundary instead of the route's loading.tsx.
+// Turbopack reads the options statically, so each call spells them out.
+const EnvironmentVariablesPanel = dynamic(loadEnvironmentVariablesPanel, {
+  loading: PanelLoading,
+});
+const GitPanel = dynamic(loadGitPanel, { loading: PanelLoading });
+const KeysPanel = dynamic(loadKeysPanel, { loading: PanelLoading });
+const WebhooksPanel = dynamic(loadWebhooksPanel, { loading: PanelLoading });
+const PoliciesPanel = dynamic(loadPoliciesPanel, { loading: PanelLoading });
+const DangerPanel = dynamic(loadDangerPanel, { loading: PanelLoading });
 
 export default function SettingsPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
@@ -24,6 +43,8 @@ export default function SettingsPage(): React.JSX.Element {
     switch (tab.id) {
       case "general":
         return <ProjectGeneralPanel projectId={projectId} />;
+      case "git":
+        return <GitPanel projectId={projectId} />;
       case "variables":
         return (
           <EnvironmentVariablesPanel

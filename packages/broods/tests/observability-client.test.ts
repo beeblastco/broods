@@ -43,11 +43,14 @@ class FakeObservabilitySocket {
 const originalWebSocket = globalThis.WebSocket;
 
 afterEach(() => {
+  jest.useRealTimers();
+  setSystemTime();
   FakeObservabilitySocket.instances = [];
   globalThis.WebSocket = originalWebSocket;
 });
 
 test("reconnects transient log sockets and de-duplicates overlap backfill", async () => {
+  jest.useFakeTimers();
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
   const stream = subscribeObservabilityLogs(
@@ -73,7 +76,7 @@ test("reconnects transient log sockets and de-duplicates overlap backfill", asyn
   };
 
   const first = stream.next();
-  await Bun.sleep(0);
+  await flushMicrotasks();
   FakeObservabilitySocket.instances[0]!.emit({
     type: "log",
     entry: firstEntry,
@@ -82,7 +85,7 @@ test("reconnects transient log sockets and de-duplicates overlap backfill", asyn
 
   const second = stream.next();
   FakeObservabilitySocket.instances[0]!.close(1006, "gateway restart");
-  await Bun.sleep(550);
+  await advance(550);
   expect(FakeObservabilitySocket.instances).toHaveLength(2);
   FakeObservabilitySocket.instances[1]!.emit({
     type: "backfill",
@@ -95,8 +98,8 @@ test("reconnects transient log sockets and de-duplicates overlap backfill", asyn
   await stream.return(undefined);
 });
 
-// The tail used to retry a dead gateway forever without a word.
 test("reports each reconnect and gives up after a minute down", async () => {
+  jest.useFakeTimers();
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const attempts: string[] = [];
   const stream = subscribeObservabilityLogs(
@@ -113,27 +116,23 @@ test("reports each reconnect and gives up after a minute down", async () => {
     },
   );
   const result = stream.next();
-  await Bun.sleep(0);
+  await flushMicrotasks();
   FakeObservabilitySocket.instances[0]!.close(1006, "gateway down");
-  await Bun.sleep(0);
+  await flushMicrotasks();
   expect(attempts).toEqual(["1: Observability WebSocket closed: gateway down"]);
 
   setSystemTime(new Date(Date.now() + 61_000));
-  try {
-    await Bun.sleep(550);
-    FakeObservabilitySocket.instances[1]!.close(1006, "gateway down");
+  await advance(550);
+  FakeObservabilitySocket.instances[1]!.close(1006, "gateway down");
 
-    expect(result).rejects.toThrow(
-      "Gave up reconnecting to the live logs after 60 s. Last error: Observability WebSocket closed: gateway down",
-    );
-    expect(attempts).toHaveLength(1);
-  } finally {
-    setSystemTime();
-  }
+  await expect(result).rejects.toThrow(
+    "Gave up reconnecting to the live logs after 60 s. Last error: Observability WebSocket closed: gateway down",
+  );
+  expect(attempts).toHaveLength(1);
 });
 
-// `broods dev` tails for the whole session, so an outage must not end it.
 test("keeps reconnecting past a minute down when asked to", async () => {
+  jest.useFakeTimers();
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
   const stream = subscribeObservabilityLogs(
@@ -146,58 +145,48 @@ test("keeps reconnecting past a minute down when asked to", async () => {
     { keepReconnecting: true, signal: controller.signal },
   );
   const result = stream.next();
-  await Bun.sleep(0);
+  await flushMicrotasks();
   FakeObservabilitySocket.instances[0]!.close(1006, "gateway down");
 
   setSystemTime(new Date(Date.now() + 61_000));
-  try {
-    await Bun.sleep(550);
-    FakeObservabilitySocket.instances[1]!.close(1006, "gateway down");
-    await Bun.sleep(1_050);
-    expect(FakeObservabilitySocket.instances).toHaveLength(3);
-  } finally {
-    setSystemTime();
-  }
+  await advance(550);
+  FakeObservabilitySocket.instances[1]!.close(1006, "gateway down");
+  await advance(1_050);
+  expect(FakeObservabilitySocket.instances).toHaveLength(3);
 
   controller.abort();
   await result;
 });
 
-// A socket that opened but never answered used to hang the tail for good.
 test("reconnects a socket the gateway never answers", async () => {
+  jest.useFakeTimers();
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
   const attempts: string[] = [];
-  jest.useFakeTimers();
-  try {
-    const stream = subscribeObservabilityLogs(
-      {
-        baseUrl: "https://app.example",
-        credential: async (): Promise<string> => "secret-key",
-        project: "demo",
-        stage: "development",
+  const stream = subscribeObservabilityLogs(
+    {
+      baseUrl: "https://app.example",
+      credential: async (): Promise<string> => "secret-key",
+      project: "demo",
+      stage: "development",
+    },
+    {
+      signal: controller.signal,
+      onReconnect: (attempt: number, reason: string): void => {
+        attempts.push(`${attempt}: ${reason}`);
       },
-      {
-        signal: controller.signal,
-        onReconnect: (attempt: number, reason: string): void => {
-          attempts.push(`${attempt}: ${reason}`);
-        },
-      },
-    );
-    const result = stream.next();
-    await flushMicrotasks();
-    expect(FakeObservabilitySocket.instances[0]!.sent).toHaveLength(1);
-    jest.advanceTimersByTime(15_000);
-    await flushMicrotasks();
-    expect(attempts).toEqual([
-      "1: The observability gateway did not answer within 15 s.",
-    ]);
+    },
+  );
+  const result = stream.next();
+  await flushMicrotasks();
+  expect(FakeObservabilitySocket.instances[0]!.sent).toHaveLength(1);
+  await advance(15_000);
+  expect(attempts).toEqual([
+    "1: The observability gateway did not answer within 15 s.",
+  ]);
 
-    controller.abort();
-    await result;
-  } finally {
-    jest.useRealTimers();
-  }
+  controller.abort();
+  await result;
 });
 
 test("requests live-only logs when no backfill is requested", async () => {
@@ -242,13 +231,18 @@ test("does not include the credential in connection errors", async () => {
     error: "Unauthorized",
   });
 
-  expect(result).rejects.toThrow("Unauthorized");
-  expect(result).rejects.not.toThrow("do-not-leak");
+  await expect(result).rejects.toThrow("Unauthorized");
+  await expect(result).rejects.not.toThrow("do-not-leak");
 });
 
-// Lets awaited credentials and queued socket events run while timers are fake.
 async function flushMicrotasks(): Promise<void> {
-  for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+  for (let turn = 0; turn < 50; turn++) await Promise.resolve();
+}
+
+async function advance(ms: number): Promise<void> {
+  await flushMicrotasks();
+  jest.advanceTimersByTime(ms);
+  await flushMicrotasks();
 }
 
 const traceOptions = {
@@ -299,5 +293,5 @@ test("rejects with the gateway's reason when the trace is not in the stage", asy
     error: "Trace not found in this stage",
   });
 
-  expect(pending).rejects.toThrow("Trace not found in this stage");
+  await expect(pending).rejects.toThrow("Trace not found in this stage");
 });

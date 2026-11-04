@@ -1,15 +1,15 @@
-/**
- * `local-stack perf`: what a turn costs Broods itself, with core started by
- * `up --perf` so the model answers in process. Convex calls per turn are
- * exact on any machine, so a scenario that makes more calls than
- * perf-baseline.json fails. Timings depend on the machine, so drift against
- * the same platform's baseline only warns.
- */
+// Convex calls per turn are exact on any machine, so they gate; timings drift, so they warn.
 
 import { appendFileSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { assertStep, connectMachine, type VerifyContext } from "./harness.ts";
+import { percentile } from "./percentile.ts";
+import {
+  assertStep,
+  connectMachine,
+  pollUntil,
+  type VerifyContext,
+} from "./harness.ts";
 
 const BASELINE_PATH = join(import.meta.dir, "perf-baseline.json");
 const BURST_ROUNDS = 3;
@@ -32,7 +32,6 @@ interface ScenarioResult {
   p95: number;
 }
 
-/** Runs every scenario, prints and summarizes it, and returns false when a Convex call budget grew. */
 export async function runPerf(
   context: VerifyContext,
   options: { record: boolean; tracePath: string },
@@ -126,6 +125,25 @@ export async function runPerf(
       p50: percentile(burst, 0.5),
       p95: percentile(burst, 0.95),
     });
+    const expectedRuns = WARMUP + ITERATIONS * 3 + BURST_ROUNDS * BURST_SIZE;
+    let persistedRuns = 0;
+    await pollUntil(
+      { initialIntervalMs: 50, maxIntervalMs: 500, timeoutMs: 15_000 },
+      async (): Promise<true | null> => {
+        const page = await context.account.audit.list({ limit: 500 });
+        // run.completed is appended in the same transaction as task usage.
+        persistedRuns = page.events.filter(
+          (event): boolean => event.action === "run.completed",
+        ).length;
+
+        return persistedRuns === expectedRuns ? true : null;
+      },
+    );
+    assertStep(
+      "every measured run persisted its usage",
+      persistedRuns === expectedRuns,
+      `${persistedRuns}/${expectedRuns} run.completed rows`,
+    );
 
     return report(results, options.record);
   } finally {
@@ -133,7 +151,6 @@ export async function runPerf(
   }
 }
 
-/** Timed like `timed`, and counts the Convex calls each iteration made once core goes quiet. */
 async function counted(
   tracePath: string,
   name: string,
@@ -165,19 +182,10 @@ async function counted(
   };
 }
 
-function percentile(values: number[], fraction: number): number {
-  const sorted = [...values].sort((left, right): number => left - right);
-
-  return sorted[
-    Math.min(sorted.length - 1, Math.floor(fraction * sorted.length))
-  ]!;
-}
-
 function platformKey(): string {
   return `${process.platform}-${process.arch}`;
 }
 
-/** Prints the table, appends it to the GitHub job summary, and records or grades against the baseline. */
 function report(results: ScenarioResult[], record: boolean): boolean {
   const baseline = JSON.parse(
     readFileSync(BASELINE_PATH, "utf8"),
@@ -265,7 +273,6 @@ function report(results: ScenarioResult[], record: boolean): boolean {
   return failures.length === 0;
 }
 
-/** Timings for ITERATIONS runs of one scenario. */
 async function timed(
   name: string,
   run: (index: number) => Promise<number>,
@@ -282,7 +289,7 @@ async function timed(
   };
 }
 
-/** Every complete trace line; a line core is still appending has no newline yet and waits for the next read. */
+// Drops a partial last line: core may still be appending it.
 function traceLines(tracePath: string): string[] {
   let text = "";
   try {
@@ -298,7 +305,7 @@ function traceLines(tracePath: string): string[] {
     .map((line): string => (JSON.parse(line) as { fn: string }).fn);
 }
 
-/** Waits until core has made no Convex call for QUIET_MS, so a run's tail writes count toward it. */
+// Core keeps writing after a stream ends; those tail calls belong to that run.
 async function waitForQuiet(tracePath: string): Promise<void> {
   const deadline = Date.now() + QUIET_TIMEOUT_MS;
   let size = -1;

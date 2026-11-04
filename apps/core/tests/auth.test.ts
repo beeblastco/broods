@@ -58,6 +58,7 @@ const ROLE_PRINCIPAL: RolePrincipal = {
   },
 };
 const ROLE_SESSION_TOKEN = "bsts_known-session";
+const SCOPED_KEY = "bask_scoped-key";
 
 let accountsById: Record<string, AccountRecord>;
 let accountsBySecretHash: Record<string, AccountRecord>;
@@ -105,6 +106,18 @@ beforeEach(() => {
     roleSessions: {
       resolveByTokenHash: async (tokenHash: string) =>
         roleSessionsByTokenHash[tokenHash] ?? null,
+    },
+    accountApiKeys: {
+      resolveByKeyHash: async (keyHash: string) =>
+        keyHash === hashAccountSecret(SCOPED_KEY)
+          ? {
+              keyId: "key_1",
+              account: ACCOUNT,
+              principal: ROLE_PRINCIPAL,
+              stampDue: true,
+            }
+          : null,
+      touchLastUsed: async () => {},
     },
   } as unknown as Storage);
 });
@@ -220,6 +233,19 @@ describe("resolveBearerAuth", () => {
       account: { accountId: "acct_1" },
       role: { roleId: "brole_1" },
     });
+  });
+
+  it("resolves a scoped bask_ key to role auth and stamps its use", async () => {
+    const touch = spyOn(getStorage().accountApiKeys, "touchLastUsed");
+    const auth = await resolveBearerAuth({
+      authorization: `Bearer ${SCOPED_KEY}`,
+    });
+    expect(auth).toMatchObject({
+      kind: "role",
+      account: { accountId: "acct_1" },
+      role: { roleId: "brole_1" },
+    });
+    expect(touch).toHaveBeenCalledWith("key_1", expect.any(Number));
   });
 
   it("rejects unknown or foreign bsts_ tokens without falling through", async () => {

@@ -11,12 +11,6 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-/**
- * `broods init` and `broods dev` vendor the broods skill for coding agents
- * into repos that already work with one, and leave everything else alone:
- * no marker file means no install, and an existing install is not rewritten.
- */
-
 const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
 const SKILL_PATH = join(".agents", "skills", "broods", "SKILL.md");
 const ONBOARD_PATH = join(
@@ -74,7 +68,7 @@ test("init skips the agent skill when no agent marker exists", async () => {
 
   expect(await runInit(cwd)).toBe(0);
 
-  expect(stat(join(cwd, SKILL_PATH))).rejects.toThrow();
+  await expect(stat(join(cwd, SKILL_PATH))).rejects.toThrow();
 });
 
 test("init leaves an existing skill install alone", async () => {
@@ -102,6 +96,6 @@ test("init refuses to write the skill through a symlink", async () => {
 
   expect(await runInit(cwd)).toBe(0);
 
-  expect(stat(join(cwd, SKILL_PATH))).rejects.toThrow();
-  expect(stat(join(outside, "clobbered"))).rejects.toThrow();
+  await expect(stat(join(cwd, SKILL_PATH))).rejects.toThrow();
+  await expect(stat(join(outside, "clobbered"))).rejects.toThrow();
 });

@@ -1,9 +1,4 @@
-/**
- * The cloudflare executor against a mocked bridge Worker: what it sends, when
- * it reserves, reuses and destroys a Container, and which instance rows it
- * mirrors for metering. The bridge itself needs workerd and Docker, so it is
- * not run here.
- */
+// The bridge Worker is mocked: running it needs workerd and Docker.
 
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { drainInFlight } from "../src/shared/in-flight.ts";
@@ -15,7 +10,6 @@ import {
 } from "../src/harness/sandbox/cloudflare-executor.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 
-// A successful bridge exec answer, in the shared exec contract's shape.
 const EXEC_OK = {
   ok: true,
   exit_code: 0,
@@ -270,7 +264,6 @@ it("refuses a plain-HTTP bridge outside loopback, since every call carries the k
   expect(cloudflareConnection().baseURL).toBe("http://127.0.0.1:8795");
 });
 
-// Lets the queued mirror writes, which run off the command's path, settle.
 async function settled(): Promise<void> {
   await new Promise((resolve): void => {
     setTimeout(resolve, 0);

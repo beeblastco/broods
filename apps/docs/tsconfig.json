@@ -20,7 +20,10 @@
     "docusaurus.config.ts",
     "sidebar.ts",
     "docs/**/*.ts",
-    "docs/**/*.tsx"
+    "docs/**/*.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tests/**/*.ts"
   ],
   "exclude": ["node_modules", "build", ".docusaurus"]
 }

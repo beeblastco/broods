@@ -1,12 +1,8 @@
-/**
- * Tool-execute wrapper tests: a tool.call.started hook can deny or edit args and
- * a tool.result hook can transform output. Real isolate execution + the
- * config→dispatcher→isolate→mutation path are covered in hooks-integration.test.ts
- * and hook-runner.test.ts; here the dispatcher is a local fake.
- */
+// The dispatcher is a local fake; hooks-integration.test.ts runs real isolates.
 
 import { describe, expect, it } from "bun:test";
-import type { ToolSet } from "ai";
+import { tool, type ToolSet } from "ai";
+import { z } from "zod";
 import type { AgentHookEventName } from "../src/shared/domain/agent-config.ts";
 import type { HookDispatcher } from "../src/harness/hook-dispatcher.ts";
 import { wrapToolsWithHooks } from "../src/harness/hook-dispatcher.ts";
@@ -33,15 +29,6 @@ function dispatcherReturning(
 }
 
 describe("wrapToolsWithHooks", () => {
-  it("returns the same ToolSet when no tool-scoped hooks exist", () => {
-    const tools: ToolSet = { echo: fakeTool((input) => input) };
-    const wrapped = wrapToolsWithHooks(
-      tools,
-      dispatcherReturning(() => undefined, []),
-    );
-    expect(wrapped).toBe(tools);
-  });
-
   it("denies a tool call when the hook returns decision: deny", async () => {
     const tools: ToolSet = { bash: fakeTool(() => "ran") };
     const wrapped = wrapToolsWithHooks(
@@ -52,12 +39,47 @@ describe("wrapToolsWithHooks", () => {
           : undefined,
       ),
     );
-    expect(
+    await expect(
       (wrapped.bash!.execute as (i: unknown, o: unknown) => Promise<unknown>)(
         { cmd: "ls" },
         {},
       ),
     ).rejects.toThrow(/blocked by hook: no shell/);
+  });
+
+  it("shows a stand-in call as the Broods call it runs as", async () => {
+    let seen: Record<string, unknown> | undefined;
+    const tools: ToolSet = { shell: fakeTool(() => "ran") };
+    const shellAsBash = new Map([
+      [
+        "shell",
+        {
+          toSandboxCall: () => ({
+            toolName: "bash" as const,
+            input: { command: "rm -rf x" },
+          }),
+          execute: async () => "ran",
+          replaces: ["bash" as const],
+          runsAs: ["bash" as const],
+        },
+      ],
+    ]);
+    const wrapped = wrapToolsWithHooks(
+      tools,
+      dispatcherReturning((event, payload) => {
+        if (event === "tool.call.started") seen = payload;
+        return undefined;
+      }),
+      shellAsBash,
+    );
+    await (
+      wrapped.shell!.execute as (i: unknown, o: unknown) => Promise<unknown>
+    )({ action: { commands: ["rm -rf x"] } }, {});
+    expect(seen).toEqual({
+      toolName: "shell",
+      input: { action: { commands: ["rm -rf x"] } },
+      runsAs: { toolName: "bash", input: { command: "rm -rf x" } },
+    });
   });
 
   it("edits tool args before execution", async () => {
@@ -82,6 +104,68 @@ describe("wrapToolsWithHooks", () => {
     )({ query: "original" }, {});
     expect(seen).toEqual({ query: "edited" });
     expect(result).toBe("ok");
+  });
+
+  // The SDK validates args before execute and never sees a hook's replacement.
+  it("refuses edited args the tool's input schema rejects", async () => {
+    let ran = false;
+    const tools: ToolSet = {
+      search: tool({
+        inputSchema: z.strictObject({ query: z.string().min(1) }),
+        execute: async (): Promise<string> => {
+          ran = true;
+
+          return "ok";
+        },
+      }),
+    };
+    const editTo = (args: unknown): ToolSet =>
+      wrapToolsWithHooks(
+        tools,
+        dispatcherReturning((event) =>
+          event === "tool.call.started"
+            ? { decision: "allow", args: args }
+            : undefined,
+        ),
+      );
+    const run = (wrapped: ToolSet): Promise<unknown> =>
+      (wrapped.search!.execute as (i: unknown, o: unknown) => Promise<unknown>)(
+        { query: "original" },
+        {},
+      );
+
+    await expect(run(editTo({ query: "" }))).rejects.toThrow(
+      /invalid args from hook/,
+    );
+    await expect(run(editTo({ query: "x", extra: 1 }))).rejects.toThrow(
+      /invalid args from hook/,
+    );
+    expect(ran).toBe(false);
+    expect(await run(editTo({ query: "edited" }))).toBe("ok");
+  });
+
+  it("ignores edited args that are not an object", async () => {
+    let seen: unknown;
+    const tools: ToolSet = {
+      search: fakeTool((input) => {
+        seen = input;
+
+        return "ok";
+      }),
+    };
+    const wrapped = wrapToolsWithHooks(
+      tools,
+      dispatcherReturning((event) =>
+        event === "tool.call.started"
+          ? { decision: "allow", args: null }
+          : undefined,
+      ),
+    );
+    await (
+      wrapped.search!.execute as (i: unknown, o: unknown) => Promise<unknown>
+    )({ query: "original" }, {});
+
+    expect(seen).toEqual({ query: "original" });
   });
 
   it("transforms tool output via a tool.result hook", async () => {

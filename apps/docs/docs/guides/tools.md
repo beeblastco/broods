@@ -2,41 +2,83 @@
 
 An agent gets tools from four places:
 
-| Source                | How you enable it                | Examples                                                    |
-| --------------------- | -------------------------------- | ----------------------------------------------------------- |
-| Your model provider   | `tools` on the agent             | `googleSearch`, OpenAI `webSearch`, Anthropic `computerUse` |
-| MCP servers           | `defineMcp` + `mcp` on the agent | Any MCP server, yours or a vendor's                         |
-| Sandboxes, workspaces | `sandboxes`, `workspaces`        | `bash`, `read`, `write`, `edit`, `glob`, `grep`             |
-| Broods features       | the matching agent setting       | `browse`, `load_skill`, `run_subagent`, `schedule`          |
+| Source                | How you enable it                | Examples                                                  |
+| --------------------- | -------------------------------- | --------------------------------------------------------- |
+| Your model provider   | `tools` on the agent             | `googleSearch`, OpenAI `webSearch`, Anthropic `webSearch` |
+| MCP servers           | `defineMcp` + `mcp` on the agent | Any MCP server, yours or a vendor's                       |
+| Sandboxes, workspaces | `sandboxes`, `workspaces`        | `bash`, `read`, `write`, `edit`, `glob`, `grep`           |
+| Broods features       | the matching agent setting       | `browse`, `load_skill`, `run_subagent`, `schedule`        |
 
 This page covers the first two, approvals, and the built-in tools. Sandbox tools are in [Sandboxes](sandboxes/index.md).
 
 ## Provider tools
 
-Import the tool from the provider's AI SDK package and pass it in, keyed by the name the provider uses:
+Import the tool from the provider's AI SDK package and pass it in under any key, as in the AI SDK:
 
 ```ts title="broods/index.ts"
-import { google } from "@ai-sdk/google";
+import { anthropic } from "@ai-sdk/anthropic";
 import { defineAgent, env } from "broods";
 
 export const researcher = defineAgent({
   name: "researcher",
-  provider: { google: { apiKey: env("GOOGLE_API_KEY") } },
-  model: { provider: "google", modelId: "gemini-3-flash" },
+  provider: { anthropic: { apiKey: env("ANTHROPIC_API_KEY") } },
+  model: { provider: "anthropic", modelId: "claude-haiku-5-5" },
   tools: {
-    googleSearch: google.tools.googleSearch({ searchTypes: { webSearch: {} } }),
-    urlContext: { ...google.tools.urlContext({}), needsApproval: true },
+    webSearch: anthropic.tools.webSearch_20260318({ maxUses: 3 }),
+    webFetch: { ...anthropic.tools.webFetch_20260318({}), needsApproval: true },
   },
 });
 ```
 
-The provider runs these tools itself during the model call. Available names depend on `model.provider`. Google has `googleSearch`, `urlContext`, `googleMaps`, `codeExecution`, `fileSearch` and `enterpriseWebSearch`. OpenAI has `webSearch`, `codeInterpreter` and `fileSearch`. Anthropic has `computerUse`, `bash`, `textEditor` and `webSearch`. A name the provider does not have fails the run and lists the names it does have.
+Broods finds the tool by its `id` (`anthropic.web_search_20260318`) on the agent's `model.provider`, so a tool from another provider's package fails the run and lists the ids that provider has. Which tools a provider has, and which models take them, is in its AI SDK docs.
 
-A tool that your code would execute, such as the Tavily AI SDK package, cannot go in `tools`, because a function does not survive sync. Put it behind an MCP server.
+### Tools the provider runs
+
+Hosted tools run at the provider during the model call: Anthropic web search, web fetch, code execution, tool search and advisor; OpenAI web search, code interpreter, file search, image generation, MCP, tool search and `shell` with a `containerAuto` or `containerReference` environment; Google search, URL context, maps, code execution, file search and enterprise search; xAI web and X search, code execution and the rest of `xai.tools`; Groq browser search, Mistral web search, the Vercel AI Gateway search tools and OpenRouter web search.
+
+### Tools that run on your sandbox
+
+Some provider tools define only the schema; the caller runs them. Broods runs these on the agent's sandbox, as the Broods tool each one stands for, so they follow the same sandbox approvals, policies and `denyTools`:
+
+| Provider tool                                    | Runs as                 | Needs                |
+| ------------------------------------------------ | ----------------------- | -------------------- |
+| `anthropic.tools.bash_20250124`, `bash_20241022` | `bash`                  | a sandbox            |
+| `openai.tools.shell` (no container environment)  | `bash`                  | a sandbox            |
+| `openai.tools.localShell`                        | `bash`                  | a sandbox            |
+| `anthropic.tools.textEditor_*`                   | `read`, `write`, `edit` | a writable workspace |
+| `openai.tools.applyPatch`                        | `write`, `edit`         | a writable workspace |
+| `openai.tools.customTool`                        | `bash`, with `command`  | a sandbox            |
+
+```ts
+tools: {
+  bash: anthropic.tools.bash_20250124({}),
+  str_replace_based_edit_tool: anthropic.tools.textEditor_20250728({}),
+},
+```
+
+- The provider tool replaces the Broods tool it stands for, so the model sees one tool per job. A key may be a Broods tool name, such as `bash`, only for the provider tool that runs as it.
+- `denyTools: ["bash"]` withholds every tool that runs as `bash`. A withheld stand-in gives back the Broods tools it replaced that `denyTools` allows, so `denyTools: ["write"]` with the text editor leaves `read` and `edit`.
+- Each call starts a fresh shell, as Broods `bash` does, so the bash tool's `restart` does nothing.
+- The text editor's `view`, `create` and `str_replace` run as `read`, `write` and `edit`. `insert` adds text after a line (`0` is the top) and is judged as `edit`. `undo_edit` is refused.
+- These tools have no input to pick a workspace or sandbox, so an agent where Broods tools would offer that choice (two workspaces, or a workspace and a separate sandbox) refuses them. Keep one, or use the Broods tools.
+- A hook sees the provider tool's own name and input, plus `runsAs`, the Broods call it makes. See [hooks](hooks.md).
+- An OpenAI custom tool needs `command`, the sandbox command that reads the model's text on stdin. The text goes in a quoted heredoc, so bash never parses it:
+
+```ts
+write_sql: {
+  ...openai.tools.customTool({
+    description: "Run one SQLite SELECT against data.db.",
+    format: { type: "grammar", syntax: "regex", definition: "SELECT [^;]+" },
+  }),
+  command: "sqlite3 -readonly data.db",
+},
+```
+
+Anthropic computer use and memory, and OpenAI computer use and tool search with `execution: "client"`, are refused: they need code Broods does not have. A machine sandbox gives the agent Broods' own `computer` tool. A tool your own code runs (an AI SDK `tool({ execute })`) is refused at sync, and an `execute` you pass to a provider factory gives way to the sandbox. Put your code behind an MCP server. `needsApproval` must be `true`: sync refuses a function, which would otherwise vanish and leave the tool unapproved.
 
 ## MCP servers
 
-Broods connects to any MCP server that speaks the stateless Streamable HTTP transport. Tools show up as `<server>__<tool>`, for example `search__query`. A result with an image, such as a screenshot, reaches the model as an image the model can look at: a PNG, JPEG, GIF or WebP no wider or taller than 8000 pixels, up to 8 images and 6 MB per result. Any other image, and other non-text blocks, are named in the text.
+Broods connects to any MCP server that speaks MCP 2026-07-28 over the stateless Streamable HTTP transport; a server on a 2025-era revision is refused. Tools show up as `<server>__<tool>`, for example `search__query`. A result with an image, such as a screenshot, reaches the model as an image the model can look at: a PNG, JPEG, GIF or WebP no wider or taller than 8000 pixels, up to 8 images and 6 MB per result. A resource link to such an image on a public http(s) address is fetched and shown the same way. Any other image, and other non-text blocks, are named in the text. The model keeps seeing the conversation's most recent images on later turns: up to 20, and older ones ten at a time become a line of text.
 
 ### Connect a server
 
@@ -65,7 +107,7 @@ Rules:
 - Every agent that connects the server gets its headers and `oauth`, and an agent's own value wins. Header names compare case-insensitively. `broods dev` pushes the named variables from `.env.local`, and a sync is refused while one has no value on the stage.
 - Removing `headers` or `allowedTools` from `defineMcp` removes them from the server on the next sync.
 - Tool lists are cached for the time the server's listing allows. Server-pushed list changes are not supported.
-- Every request carries `X-Broods-Agent-Id` (the calling agent) and, when the requester is known, `X-Broods-Principal` (base64url JSON of the delegation chain: who asked, then each agent that delegated, the caller last; ids and kinds only, no display names). A server can authorize per agent on them. Hosted servers read the same headers off the `Request` they are handed. Both names are reserved: a configured header of either name, in any case, is dropped. Tool lists are shared across agents, so authorize in the call, not by hiding tools from the list.
+- Every request carries `X-Broods-Agent-Id` (the calling agent) and, when the requester is known, `X-Broods-Principal` (base64url JSON of the delegation chain: who asked, then each agent that delegated, the caller last; ids and kinds only, no display names). On remote and hosted servers, a run made with a [user token](security.md#users-behind-the-runtime-key) starts the chain with `{"kind":"user","id":"<userId>"}`, so a server can act for that user. A server can authorize per agent on them. Hosted servers read the same headers off the `Request` they are handed. Both names are reserved: a configured header of either name, in any case, is dropped. Tool lists are shared across agents, so authorize in the call, not by hiding tools from the list.
 
 ### Servers with expiring OAuth tokens
 
@@ -102,11 +144,14 @@ import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 
 export const greeter = defineMcp({
   name: "greeter",
-  handler: createMcpHandler(() => {
-    const server = new McpServer({ name: "greeter", version: "1.0.0" });
-    // server.registerTool(...)
-    return server;
-  }),
+  handler: createMcpHandler(
+    () => {
+      const server = new McpServer({ name: "greeter", version: "1.0.0" });
+      // server.registerTool(...)
+      return server;
+    },
+    { legacy: "reject" },
+  ),
 });
 ```
 
@@ -202,7 +247,7 @@ Keep approval off for agents that only live in channels. Approval also breaks su
 
 ## Asking the user
 
-`ask_questions` lets the agent ask one to three multiple-choice questions and keep working. It is on automatically for channel and WebSocket runs, which have somewhere to post the question and resume. Plain HTTP runs, cron runs and subagents do not get it.
+`ask_questions` lets the agent ask one to three multiple-choice questions and keep working. It is on automatically for channel, WebSocket and HTTP runs. An HTTP run that asks reads `awaiting_input` when polled. Cron runs and subagents do not get it.
 
 Each question has an `id`, a short `header`, the `question`, and two to four `options`. Every question also takes the person's own typed answer, so the agent never needs an "Other" option. With `blocking: false`, the default, the agent keeps working and the answer arrives later. With `blocking: true` the turn ends and the answer resumes it. Unanswered questions expire after `timeoutSeconds`, one day by default, between 30 seconds and 7 days.
 
@@ -220,19 +265,19 @@ Each question has an `id`, a short `header`, the `question`, and two to four `op
 
 ## Background tools
 
-`async_status` appears on its own when the agent can start background work, through a workspace on a persistent sandbox or a tool marked `async: true`. The model uses it to check, tail or stop that work. See [Persistent sandboxes](sandboxes/persistent.md).
+`async_status` appears on its own when the agent has a workspace on a persistent sandbox, where `bash` can start background jobs. The model uses it to check, tail or stop a job. Tools no longer take an `async` flag. See [Persistent sandboxes](sandboxes/persistent.md).
 
 ## Other built-in tools
 
-| Tool                                                                      | Enabled by                          | Guide                                         |
-| ------------------------------------------------------------------------- | ----------------------------------- | --------------------------------------------- |
-| `browse`                                                                  | `browser`                           | [Web browsing](sandboxes/browsing.md)         |
-| `load_skill`                                                              | `skills`                            | [Skills](skills.md)                           |
-| `run_subagent`, `get_subagent_status`, `update_subagent`, `stop_subagent` | `subagent`                          | [Subagents](subagents.md)                     |
-| `ask_parent`                                                              | the run being a persistent subagent | [Subagents](subagents.md)                     |
-| `schedule`, `list_schedules`, `update_schedule`, `cancel_schedule`        | `scheduler`                         | [Scheduling](scheduling.md)                   |
-| `memory_save`                                                             | a workspace with a sandbox          | [Memory and sessions](memory-and-sessions.md) |
-| `send-message`, `send-images`, `send-files`, `send-update`, ...           | channel turns                       | [Channels](../channels/index.md)              |
-| `computer`                                                                | a machine sandbox with `--computer` | [Machine](sandboxes/machine.md)               |
+| Tool                                                               | Enabled by                                                                                                                                | Guide                                         |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `browse`                                                           | `browser`                                                                                                                                 | [Web browsing](sandboxes/browsing.md)         |
+| `load_skill`                                                       | `skills`                                                                                                                                  | [Skills](skills.md)                           |
+| `run_subagent`, `stop_subagent`, `message-agents`                  | `subagent`; `message-agents` to `"parent"` comes with the run being a persistent subagent                                                 | [Subagents](subagents.md)                     |
+| `schedule`, `list_schedules`, `update_schedule`, `cancel_schedule` | `scheduler`                                                                                                                               | [Scheduling](scheduling.md)                   |
+| `memory_save`                                                      | a workspace with a sandbox and memory not turned off                                                                                      | [Memory and sessions](memory-and-sessions.md) |
+| `send-images`, `send-files`, `send-update`, ...                    | channel turns                                                                                                                             | [Channels](../channels/index.md)              |
+| `send-message`                                                     | an agent with at least one channel. Sends to another channel conversation of the same agent, never to a subagent. Subagents do not get it | [Channels](../channels/index.md)              |
+| `computer`                                                         | a machine sandbox with `--computer`                                                                                                       | [Machine](sandboxes/machine.md)               |
 
 Withhold any tool in one channel with `denyTools` on its [channel record](../channels/channel-records.md), or everywhere with a [policy](policies.md).

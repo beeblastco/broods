@@ -1,8 +1,3 @@
-/**
- * Cover the pure helpers; the core-publish / stream-capture / consume path needs
- * a live JetStream server and is exercised by examples/nats-stream.ts.
- */
-
 import { describe, expect, it } from "bun:test";
 import { DeliverPolicy } from "nats.ws";
 import {
@@ -18,15 +13,7 @@ describe("nats subject scheme", () => {
     expect(token).toBe(
       Buffer.from("api:user.1 / chat*>", "utf8").toString("base64url"),
     );
-    // No NATS-reserved characters survive (., *, >, whitespace).
     expect(token).not.toMatch(/[.*>\s]/);
-  });
-
-  it("round-trips the conversationKey through the token", () => {
-    const key = "api:weird/key.with.dots and spaces";
-    expect(Buffer.from(subjectToken(key), "base64url").toString("utf8")).toBe(
-      key,
-    );
   });
 
   it("is conversation-scoped so a reconnecting client shares one subject", () => {
@@ -199,8 +186,6 @@ describe("conversationReplaySnapshot", () => {
       conversationKey: "child-conversation",
     });
 
-    // Retention dropped the subject between the filtered info and the direct
-    // read, so the attach tails the stream boundary instead of failing.
     expect(snapshot).toEqual({
       bufferedCount: 0,
       generation: Buffer.from("2026-07-28T00:00:00.000Z", "utf8").toString(

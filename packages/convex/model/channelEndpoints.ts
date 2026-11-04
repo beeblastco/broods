@@ -1,14 +1,5 @@
-/**
- * Single writer for the `channelEndpoints` projection: one small row per
- * (agent, channel, deployment) that configures a bot token, so the forwarder's
- * standing `listConnections` subscription reads a few rows keyed by platform
- * instead of every deployment plus every agent's encrypted config blob.
- *
- * Every seam that changes an agent's channels, its deployment, or its stage
- * calls `refreshAccountChannelEndpoints`; the hourly reconcile in
- * `channelConnections.ts` sweeps every account so a missed seam self-heals
- * instead of leaving a bot silently connected or absent.
- */
+// Single writer of the `channelEndpoints` projection the forwarders subscribe to. Every seam
+// that changes channels, deployments or stages refreshes it; `endpointReconcile.ts` heals misses.
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
@@ -16,21 +7,13 @@ import { accountCipherForWrite, hasEncryptionSecret } from "./accountKeys";
 import type { AccountCipher } from "./envelope";
 import { agentsInStage } from "./projectScope";
 
-/** What a forwarder needs to connect as one channel: its token, and for Matrix the homeserver. */
-type ChannelCredentials = Pick<DesiredEndpoint, "apiUrl" | "botToken">;
-
-/** The slice of a decrypted agent config the projection reads. */
 interface ChannelsConfigView {
-  channels?: Record<
-    string,
-    { apiUrl?: unknown; botToken?: unknown } | undefined
-  >;
+  channels?: Record<string, { botToken?: unknown } | undefined>;
 }
 
 interface DesiredEndpoint {
   agentId: string;
   agentName: string;
-  apiUrl?: string;
   botToken: string;
   endpointId: string;
   platform: string;
@@ -51,14 +34,6 @@ export async function channelEndpointBotToken(
   return typeof botToken === "string" && botToken ? botToken : null;
 }
 
-/**
- * Recomputes every projection row for one account from the source tables and
- * diffs it against what is stored: unchanged rows are left untouched (a digest
- * comparison, because re-encrypting a token mints a fresh IV and would dirty
- * the row, and the forwarder's subscription, on every refresh), changed rows
- * are replaced, and rows no longer derivable are deleted. Safe to call from
- * any mutation seam; a refresh that derives nothing clears the account.
- */
 export async function refreshAccountChannelEndpoints(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -79,6 +54,7 @@ export async function refreshAccountChannelEndpoints(
     const digest = await endpointDigest(entry);
     const current = existingByKey.get(endpointKey(entry));
     existingByKey.delete(endpointKey(entry));
+    // Re-encrypting mints a fresh IV, so rewriting an unchanged row would wake every forwarder.
     if (current?.digest === digest) continue;
     const encrypted = await cipher.encrypt("channelEndpoints:tokenCiphertext", {
       botToken: entry.botToken,
@@ -87,7 +63,6 @@ export async function refreshAccountChannelEndpoints(
       accountId: accountId,
       agentId: entry.agentId,
       agentName: entry.agentName,
-      apiUrl: entry.apiUrl,
       digest: digest,
       endpointId: entry.endpointId,
       platform: entry.platform,
@@ -108,15 +83,8 @@ export async function refreshAccountChannelEndpoints(
   }
 }
 
-/**
- * The inbound webhook URL shape, which lives in three places by necessity: built
- * here, built for the generated resource file in `packages/broods/src/codegen.ts`,
- * and parsed by `matchWebhookPath` in `apps/core/src/harness/integrations.ts`.
- * Change one, change all three.
- *
- * Production keeps the bare path; every other stage is addressed through its own
- * `endpointId` so two stages of one account never contend for a delivery.
- */
+// Also built in `packages/broods/src/codegen.ts` and parsed by `matchWebhookPath` in
+// `apps/core/src/harness/integrations.ts`: change all three together.
 export function webhookPath(
   accountId: string,
   endpointId: string,
@@ -132,14 +100,13 @@ export function webhookPath(
   return `/v1/webhooks/${account}/dev/${encodeURIComponent(endpointId)}/${name}`;
 }
 
-/** Every channel with a bot token in one agent's decrypted config, keyed by channel. */
-async function agentChannelCredentials(
+async function agentChannelBotTokens(
   agent: Doc<"agents">,
   cipher: AccountCipher,
-): Promise<Map<string, ChannelCredentials>> {
-  const credentials = new Map<string, ChannelCredentials>();
+): Promise<Map<string, string>> {
+  const botTokens = new Map<string, string>();
   if (!agent.encryptedConfig || !agent.encryptionIv || !agent.encryptionTag) {
-    return credentials;
+    return botTokens;
   }
 
   const config = (await cipher.decrypt("agents:encryptedConfig", {
@@ -150,14 +117,10 @@ async function agentChannelCredentials(
   for (const [platform, channel] of Object.entries(config?.channels ?? {})) {
     const botToken = channel?.botToken;
     if (typeof botToken !== "string" || !botToken) continue;
-    const apiUrl = channel?.apiUrl;
-    credentials.set(platform, {
-      apiUrl: typeof apiUrl === "string" && apiUrl ? apiUrl : undefined,
-      botToken: botToken,
-    });
+    botTokens.set(platform, botToken);
   }
 
-  return credentials;
+  return botTokens;
 }
 
 async function desiredEndpoints(
@@ -182,12 +145,11 @@ async function desiredEndpoints(
       accountId,
     );
     for (const agent of agents) {
-      const credentials = await agentChannelCredentials(agent, cipher);
-      for (const [platform, { apiUrl, botToken }] of credentials) {
+      const botTokens = await agentChannelBotTokens(agent, cipher);
+      for (const [platform, botToken] of botTokens) {
         const entry: DesiredEndpoint = {
           agentId: agent._id,
           agentName: agent.name,
-          apiUrl: apiUrl,
           botToken: botToken,
           endpointId: deployment.endpointId,
           platform: platform,
@@ -206,12 +168,10 @@ async function desiredEndpoints(
   return desired;
 }
 
-/** Stable content digest so an unchanged row is never rewritten. */
 async function endpointDigest(entry: DesiredEndpoint): Promise<string> {
   const value = JSON.stringify([
     entry.agentId,
     entry.agentName,
-    entry.apiUrl ?? null,
     entry.botToken,
     entry.endpointId,
     entry.platform,

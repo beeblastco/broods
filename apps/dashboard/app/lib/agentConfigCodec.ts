@@ -1,58 +1,32 @@
-/**
- * Dashboard-side agent config helpers.
- *
- * The flat <-> nested projection itself lives in `@broods/convex` and is
- * re-exported here: Convex mutations cannot import from the Next.js app tree, so
- * the shared direction has to be app -> convex. Only helpers with no server-side
- * caller stay in this file.
- */
-
 export {
   fromNestedAgentConfig,
-  substituteEnvPlaceholders,
   toNestedAgentConfig,
   type FlatAgentConfig,
-  type FlatPatch,
-  type NestedAgentConfig,
 } from "@broods/convex/model/agentConfigCodec";
 
 import { toNestedAgentConfig } from "@broods/convex/model/agentConfigCodec";
 import type { FlatAgentConfig } from "@broods/convex/model/agentConfigCodec";
-import { isPlainObject } from "./utils";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 
-/**
- * Vercel AI SDK `providerOptions` keys the budget/effort knobs own per provider.
- * Only these are cleared on rewrite so unrelated options the UI doesn't manage
- * (e.g. OpenAI `reasoningSummary`) survive. MiniMax's default provider is
- * Anthropic-compatible, so it reuses the `anthropic` slot. Mirrors the
- * provider-specific overrides in the docs (guides/agents.md, "Reasoning").
- */
+// Only these are cleared on rewrite, so options the UI doesn't manage survive.
 const REASONING_PROVIDER_KEYS: Record<string, string[]> = {
   openai: ["reasoningEffort"],
   anthropic: ["thinking", "effort"],
   google: ["thinkingConfig"],
 };
 
-/**
- * Rewrite the reasoning portion of a `model` branch for `provider`, returning a
- * new model object. Strips every provider's known reasoning keys first (so
- * toggling off or switching providers leaves no residue), then writes the
- * active provider's reasoning under `model.providerOptions`.
- */
 export function applyModelReasoning(
   model: Record<string, unknown>,
   provider: string,
   next: { budgetTokens?: number; effort?: string },
 ): Record<string, unknown> {
   const result: Record<string, unknown> = { ...model };
-  const providerOptions: Record<string, unknown> = isPlainObject(
-    result.providerOptions,
-  )
-    ? { ...result.providerOptions }
-    : {};
+  const providerOptions: Record<string, unknown> = {
+    ...parseOr(configObject, result.providerOptions),
+  };
   for (const [slot, keys] of Object.entries(REASONING_PROVIDER_KEYS)) {
-    if (!isPlainObject(providerOptions[slot])) continue;
-    const sub = { ...providerOptions[slot] };
+    const sub = parseOr(configObject, providerOptions[slot]);
+    if (!sub) continue;
     for (const key of keys) delete sub[key];
     if (Object.keys(sub).length > 0) providerOptions[slot] = sub;
     else delete providerOptions[slot];
@@ -61,10 +35,10 @@ export function applyModelReasoning(
   const slot = reasoningSlot(provider);
   const slice = slot ? reasoningSlice(slot, next) : undefined;
   if (slot && slice) {
-    const existing = isPlainObject(providerOptions[slot])
-      ? providerOptions[slot]
-      : {};
-    providerOptions[slot] = { ...existing, ...slice };
+    providerOptions[slot] = {
+      ...parseOr(configObject, providerOptions[slot]),
+      ...slice,
+    };
   }
 
   if (Object.keys(providerOptions).length > 0)
@@ -74,11 +48,6 @@ export function applyModelReasoning(
   return result;
 }
 
-/**
- * Reads a single top-level branch (e.g. `workspace`, `skills`) from a flat agent
- * config as an object, returning `{}` when the config or branch is absent. Lets
- * node side-panels project just their slice without repeating the codec call.
- */
 export function readAgentBranch<T extends Record<string, unknown>>(
   agentConfig: FlatAgentConfig | null | undefined,
   branch: string,
@@ -92,51 +61,20 @@ export function readAgentBranch<T extends Record<string, unknown>>(
   return (nested[branch] as T | undefined) ?? ({} as T);
 }
 
-/**
- * Policy ids attached to an agent. Attachment is a flat list: whether a policy
- * blocks or only records rides on the policy document, not on the agent.
- */
-export function readAgentPolicies(extraConfig: unknown): string[] {
-  const policies = isPlainObject(extraConfig) ? extraConfig.policies : null;
-
-  return Array.isArray(policies)
-    ? policies.filter((entry): entry is string => typeof entry === "string")
-    : [];
-}
-
-/**
- * Read the dashboard's reasoning knobs back out of a `model` branch's
- * `providerOptions`, regardless of which provider stored them. Inverse of
- * {@link applyModelReasoning}.
- */
 export function readModelReasoning(modelBranch: Record<string, unknown>): {
   budgetTokens?: number;
   effort?: string;
 } {
-  const providerOptions = isPlainObject(modelBranch.providerOptions)
-    ? modelBranch.providerOptions
-    : {};
-  const anthropic: Record<string, unknown> = isPlainObject(
-    providerOptions.anthropic,
-  )
-    ? providerOptions.anthropic
-    : {};
-  const openai: Record<string, unknown> = isPlainObject(providerOptions.openai)
-    ? providerOptions.openai
-    : {};
-  const google: Record<string, unknown> = isPlainObject(providerOptions.google)
-    ? providerOptions.google
-    : {};
-  const anthropicThinking: Record<string, unknown> = isPlainObject(
-    anthropic.thinking,
-  )
-    ? anthropic.thinking
-    : {};
-  const googleThinking: Record<string, unknown> = isPlainObject(
-    google.thinkingConfig,
-  )
-    ? google.thinkingConfig
-    : {};
+  const providerOptions = parseOr(
+    configObject,
+    modelBranch.providerOptions,
+    {},
+  );
+  const anthropic = parseOr(configObject, providerOptions.anthropic, {});
+  const openai = parseOr(configObject, providerOptions.openai, {});
+  const google = parseOr(configObject, providerOptions.google, {});
+  const anthropicThinking = parseOr(configObject, anthropic.thinking, {});
+  const googleThinking = parseOr(configObject, google.thinkingConfig, {});
 
   const budgetTokens =
     typeof anthropicThinking.budgetTokens === "number"
@@ -157,13 +95,6 @@ export function readModelReasoning(modelBranch: Record<string, unknown>): {
   };
 }
 
-/**
- * Build the reasoning slice for a provider's `providerOptions` sub-object from
- * the dashboard's two knobs. Budget tokens map to Anthropic/MiniMax `thinking`
- * or Google `thinkingConfig.thinkingBudget`; effort maps to OpenAI
- * `reasoningEffort` or Anthropic `effort`. Returns undefined when neither knob
- * applies to the slot.
- */
 function reasoningSlice(
   slot: "openai" | "anthropic" | "google",
   next: { budgetTokens?: number; effort?: string },
@@ -182,8 +113,6 @@ function reasoningSlice(
       : undefined;
   }
 
-  // anthropic (and minimax via the anthropic slot): prefer an explicit budget,
-  // otherwise fall back to effort.
   if (typeof next.budgetTokens === "number") {
     return { thinking: { type: "enabled", budgetTokens: next.budgetTokens } };
   }
@@ -191,7 +120,6 @@ function reasoningSlice(
   return next.effort ? { effort: next.effort } : undefined;
 }
 
-/** The `providerOptions` slot a provider stores reasoning under, if any. */
 function reasoningSlot(
   provider: string,
 ): "openai" | "anthropic" | "google" | undefined {

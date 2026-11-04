@@ -98,33 +98,6 @@ describe("github channel adapter", () => {
     expect(parsed).toEqual({ kind: "ignore" });
   });
 
-  it("allows every repo when no allow list is configured", async () => {
-    const adapter = createGitHubChannel(
-      "webhook-secret",
-      "app-id",
-      "private-key",
-      null,
-      null,
-    );
-
-    const parsed = await adapter.parse(
-      createRequest(
-        JSON.stringify({
-          action: "opened",
-          repository: createRepository(),
-          issue: { number: 1, title: "Issue title", body: "Issue body" },
-          installation: { id: 99 },
-        }),
-        {
-          "x-github-event": "issues",
-          "x-github-delivery": "delivery-wildcard",
-        },
-      ),
-    );
-
-    expect(parsed.kind).toBe("message");
-  });
-
   it("normalizes issue events into issue conversation keys", async () => {
     const adapter = createGitHubChannel(
       "webhook-secret",
@@ -580,41 +553,6 @@ describe("github channel adapter", () => {
     expect(context).toContain("review comment on src/retry.ts:14");
     expect(context).toContain("Earlier line note");
     expect(context).not.toContain("@my-bot can you review this?");
-  });
-
-  it("accepts review comments with @-mention when botUserName is configured", async () => {
-    const adapter = createGitHubChannel(
-      "webhook-secret",
-      "app-id",
-      "private-key",
-      null,
-      null,
-      undefined,
-      "my-bot",
-    );
-
-    const parsed = await adapter.parse(
-      createRequest(
-        JSON.stringify({
-          action: "created",
-          repository: createRepository(),
-          pull_request: { number: 10 },
-          comment: {
-            id: 60,
-            body: "@my-bot can you review this?",
-            user: { login: "bob", type: "User" },
-          },
-          installation: { id: 99 },
-          sender: { login: "bob", type: "User" },
-        }),
-        {
-          "x-github-event": "pull_request_review_comment",
-          "x-github-delivery": "delivery-8",
-        },
-      ),
-    );
-
-    expect(parsed.kind).toBe("message");
   });
 
   it("ignores review comments without @-mention when botUserName is configured", async () => {

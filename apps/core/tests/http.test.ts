@@ -78,13 +78,13 @@ describe("publicHostFetch", () => {
   });
 
   it("refuses private hostnames and literal private addresses before connecting", async () => {
-    expect(publicHostFetch("https://localhost/v1")).rejects.toThrow(
+    await expect(publicHostFetch("https://localhost/v1")).rejects.toThrow(
       /private address/,
     );
-    expect(publicHostFetch("https://10.0.0.8/v1")).rejects.toThrow(
+    await expect(publicHostFetch("https://10.0.0.8/v1")).rejects.toThrow(
       /private address/,
     );
-    expect(
+    await expect(
       publicHostFetch(new Request("https://169.254.169.254/latest")),
     ).rejects.toThrow(/private address/);
   });
@@ -95,7 +95,7 @@ describe("publicHostFetch", () => {
       { address: "10.0.0.8", family: 4, ttl: 30 },
     ]);
     try {
-      expect(
+      await expect(
         publicHostFetch("https://api.example.com/v1/chat"),
       ).rejects.toThrow(/resolves to a private address/);
     } finally {
@@ -205,7 +205,7 @@ describe("publicHostFetch", () => {
       return new Response("ok");
     }) as typeof fetch;
     try {
-      expect(
+      await expect(
         publicHostFetch("https://api.example.com/v1/chat"),
       ).rejects.toThrow("connection refused");
       await publicHostFetch("https://api.example.com/v1/chat");
@@ -219,5 +219,25 @@ describe("publicHostFetch", () => {
       "https://93.184.216.34/v1/chat",
       "https://93.184.216.35/v1/chat",
     ]);
+  });
+
+  it("ends a lookup that never returns when the request's signal aborts", async () => {
+    const lookup = spyOn(dns, "lookup").mockImplementation(
+      (): ReturnType<typeof dns.lookup> => new Promise((): void => {}),
+    );
+    const controller = new AbortController();
+    try {
+      const pending = publicHostFetch("https://api.example.com/v1/chat", {
+        signal: controller.signal,
+      });
+      const reason = new Error("caller gave up");
+      controller.abort(reason);
+
+      expect(await pending.catch((error: unknown): unknown => error)).toBe(
+        reason,
+      );
+    } finally {
+      lookup.mockRestore();
+    }
   });
 });

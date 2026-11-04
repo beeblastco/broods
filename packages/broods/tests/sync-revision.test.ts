@@ -1,8 +1,3 @@
-/**
- * `putManifest` sends the revision a dev sync read, and turns the server's
- * `manifest_conflict` into a `ManifestConflictError` that `broods dev` retries.
- */
-
 import { expect, test } from "bun:test";
 import type { CliManifest } from "../src/contracts.ts";
 import { BroodsSyncClient, ManifestConflictError } from "../src/sync.ts";
@@ -44,7 +39,7 @@ test("a manifest conflict is its own error, another 409 is not", async () => {
     ),
   );
 
-  expect(conflict.putManifest(MANIFEST, false, false, 5)).rejects.toThrow(
+  await expect(conflict.putManifest(MANIFEST, false, false, 5)).rejects.toThrow(
     ManifestConflictError,
   );
   const error = await nameClash

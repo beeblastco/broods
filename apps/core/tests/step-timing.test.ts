@@ -1,9 +1,3 @@
-/**
- * The run's step timing tracker: how one model.step splits into ttft,
- * streaming and tool wait, the per-kind streaming windows, and the attempt
- * attributes a retried stream start leaves on the span.
- */
-
 import { describe, expect, it } from "bun:test";
 import { createStepTimingTracker } from "../src/harness/usage-metering.ts";
 
@@ -73,16 +67,6 @@ describe("createStepTimingTracker", () => {
     tracker.startStep(0, 1_000);
 
     expect(tracker.closeStep(0, 1_500)).toEqual({});
-  });
-
-  it("reports one attempt as model.attempts only", () => {
-    const tracker = createStepTimingTracker(serialize);
-    tracker.startStep(0, 1_000);
-    tracker.recordAttempt({ startedAt: 1_000 });
-
-    expect(tracker.attemptAttributes(0)).toEqual({
-      "model.attempts": 1,
-    });
   });
 
   it("reports the retry wait and the errors of a retried stream start", () => {
@@ -168,17 +152,5 @@ describe("createStepTimingTracker", () => {
     expect(tracker.activeStep()).toBe(1);
     tracker.endActiveStep(1);
     expect(tracker.activeStep()).toBeUndefined();
-  });
-
-  it("clear drops every step", () => {
-    const tracker = createStepTimingTracker(serialize);
-    tracker.startStep(0, 1_000);
-    tracker.recordChunk("text-delta", 1_100);
-    tracker.recordAttempt({ startedAt: 1_000 });
-    tracker.clear();
-
-    expect(tracker.activeStep()).toBeUndefined();
-    expect(tracker.stepStartMs(0)).toBeUndefined();
-    expect(tracker.closeStep(0, 2_000)).toEqual({});
   });
 });

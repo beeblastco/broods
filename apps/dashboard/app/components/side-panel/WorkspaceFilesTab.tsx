@@ -1,14 +1,25 @@
 "use client";
 
-/** VSCode-style file explorer for a workspace canvas node with drag-and-drop upload. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { IconTooltip } from "@/app/components/IconTooltip";
+import {
+  FilePreview,
+  isImageFile,
+  usePreviewTabs,
+  type FileContent,
+} from "@/app/components/side-panel/FilePreview";
 import { Button } from "@/app/components/ui/button";
+import { InlineEdit } from "@/app/components/ui/inline-edit";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/app/components/ui/resizable";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import {
   ChevronDown,
   ChevronRight,
@@ -20,12 +31,13 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useDefaultLayout, type LayoutStorage } from "react-resizable-panels";
 import type { StyleProps } from "react-file-icon";
 import { FileIcon, defaultStyles } from "react-file-icon";
 import { toErrorMessage } from "@/app/lib/errors";
 
-type FileRecord = {
+export type FileRecord = {
   _id?: Id<"workspaceFiles">;
   path: string;
   name: string;
@@ -36,6 +48,8 @@ type FileRecord = {
   updatedAt?: string | number;
 };
 
+export type UploadEntry = { file: File; path: string };
+
 type FileNode = FileRecord & {
   children?: FileNode[];
 };
@@ -45,9 +59,16 @@ type RuntimeFileCacheEntry = {
   cachedAt: number;
 };
 
+type TreeKeyTarget = { focus: string } | { toggle: string };
+
 const RUNTIME_FILE_CACHE_PREFIX = "broods.workspace-files.v1";
-// How often the file list is re-read from core. Slow is fine: the focus and
-// visibility refreshes cover active use.
+// The library's default store reads localStorage during the server render.
+const SPLIT_STORAGE: LayoutStorage = {
+  getItem: (key) =>
+    typeof window === "undefined" ? null : window.localStorage.getItem(key),
+  setItem: (key, value) => window.localStorage.setItem(key, value),
+};
+// Slow on purpose: the focus and visibility refreshes cover active use.
 const RUNTIME_FILES_POLL_MS = 15_000;
 const runtimeFileCache = new Map<string, RuntimeFileCacheEntry>();
 
@@ -77,31 +98,22 @@ export function WorkspaceFilesTab({
   const uploadRuntimeFile = useAction(api.workspace.filesPublic.upload);
   const removeRuntimePath = useAction(api.workspace.filesPublic.remove);
   const renameRuntimePath = useAction(api.workspace.filesPublic.rename);
+  const readRuntimeFile = useAction(api.workspace.filesPublic.read);
+  const runtimeFileUrl = useAction(api.workspace.filesPublic.downloadUrl);
+  const convex = useConvex();
 
   const cacheKey = runtimeFileCacheKey(projectId, workspaceId);
   const [runtimeFiles, setRuntimeFiles] = useState<FileRecord[] | undefined>(
     () => runtimeFileCache.get(cacheKey ?? "")?.files,
   );
   const [syncedWorkspaceId, setSyncedWorkspaceId] = useState(workspaceId);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [selected, setSelected] = useState<string | null>(null);
-  const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [uploading, setUploading] = useState<Set<string>>(new Set());
-  const [isDragOver, setIsDragOver] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pendingDeleteNode, setPendingDeleteNode] = useState<FileNode | null>(
-    null,
-  );
-  const [isDeletingNode, setIsDeletingNode] = useState(false);
   const refreshRequestRef = useRef(0);
   const refreshPromiseRef = useRef<Promise<FileRecord[]> | undefined>(
     undefined,
   );
-  const dragCounter = useRef(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   if (workspaceId !== syncedWorkspaceId) {
     setSyncedWorkspaceId(workspaceId);
@@ -141,6 +153,7 @@ export function WorkspaceFilesTab({
     [applyRuntimeFiles, listRuntimeFiles, projectId, workspaceId],
   );
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- loads the list from core via Convex
   useEffect(() => {
     if (!projectId || !workspaceId) return;
     let cancelled = false;
@@ -159,7 +172,7 @@ export function WorkspaceFilesTab({
     void pending
       .then((next) => {
         if (!cancelled && request === refreshRequestRef.current)
-          // oxlint-disable-next-line no-callback-in-promise -- state applier, not an error-first callback.
+          // oxlint-disable-next-line no-callback-in-promise -- state setter, not a Node callback
           applyRuntimeFiles(next);
       })
       .catch((err) => {
@@ -177,6 +190,7 @@ export function WorkspaceFilesTab({
     };
   }, [applyRuntimeFiles, cacheKey, listRuntimeFiles, projectId, workspaceId]);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- a poll timer and focus listeners
   useEffect(() => {
     if (!workspaceId) return;
     const refreshWhenVisible = (): void => {
@@ -200,15 +214,9 @@ export function WorkspaceFilesTab({
 
   const files = workspaceId ? runtimeFiles : convexFiles;
 
-  const handleContainerClick = useCallback(() => {
-    setSelected(null);
-    setRenamingPath(null);
-  }, []);
-
-  const executeDelete = useCallback(
-    async (node: FileNode) => {
+  const handleDelete = useCallback(
+    async (node: FileRecord) => {
       if (!projectId) return;
-      setSelected(null);
       if (workspaceId) {
         refreshRequestRef.current += 1;
         const optimistic = runtimeFiles
@@ -221,10 +229,12 @@ export function WorkspaceFilesTab({
             workspaceId: workspaceId,
             path: node.path,
           });
-          await refreshRuntimeFiles(false, true);
         } catch (err) {
           setError(toErrorMessage(err));
-          await refreshRuntimeFiles(false, true);
+        } finally {
+          await refreshRuntimeFiles(false, true).catch((err) =>
+            setError(toErrorMessage(err)),
+          );
         }
 
         return;
@@ -252,46 +262,8 @@ export function WorkspaceFilesTab({
     ],
   );
 
-  const handleDelete = useCallback((node: FileNode) => {
-    setPendingDeleteNode(node);
-  }, []);
-
-  // Keyboard: Delete/Backspace = open delete dialog for selected, F2 = rename selected
-  useEffect(() => {
-    const handler = (e: KeyboardEvent): void => {
-      if (renamingPath) return;
-      if (
-        (e.key === "Delete" || e.key === "Backspace") &&
-        selected &&
-        document.activeElement?.tagName !== "INPUT"
-      ) {
-        const match = files?.find((f: FileRecord) => f.path === selected);
-        if (match) setPendingDeleteNode(match as FileNode);
-      }
-      if (e.key === "F2" && selected) {
-        setRenamingPath(selected);
-      }
-    };
-    window.addEventListener("keydown", handler);
-
-    return () => window.removeEventListener("keydown", handler);
-  }, [selected, renamingPath, files]);
-
-  const toggleFolder = useCallback((path: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-
-      return next;
-    });
-  }, []);
-
   const uploadFiles = useCallback(
-    async (entries: Array<{ file: File; path: string }>, folders: string[]) => {
+    async (entries: UploadEntry[], folders: string[]) => {
       if (!projectId) return;
       setError(null);
 
@@ -301,15 +273,6 @@ export function WorkspaceFilesTab({
 
         return next;
       });
-
-      if (folders.length > 0) {
-        setExpanded((prev) => {
-          const next = new Set(prev);
-          for (const fp of folders) next.add(fp);
-
-          return next;
-        });
-      }
 
       try {
         if (!workspaceId) {
@@ -325,9 +288,7 @@ export function WorkspaceFilesTab({
           }
         }
 
-        // Failures are caught per entry: one bad file (too large, rejected)
-        // must not abort the loop. That would strand the remaining paths in
-        // `uploading` as permanent spinner rows and silently skip them.
+        // Caught per entry: one bad file must not strand the rest in `uploading`.
         let entryError: string | null = null;
         for (const { file, path } of entries) {
           try {
@@ -378,8 +339,6 @@ export function WorkspaceFilesTab({
         if (workspaceId) await refreshRuntimeFiles(false, true);
       } catch (err) {
         setError(toErrorMessage(err));
-        // The folder-creation path can fail before the loop starts; clear
-        // every pending path so no row is left spinning forever.
         setUploading((prev) => {
           const next = new Set(prev);
           for (const { path } of entries) next.delete(path);
@@ -399,80 +358,10 @@ export function WorkspaceFilesTab({
     ],
   );
 
-  const handleDrop = useCallback(
-    async (e: React.DragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      dragCounter.current = 0;
-      setIsDragOver(false);
-
-      const fileEntries: Array<{ file: File; path: string }> = [];
-      const folderPaths: string[] = [];
-
-      for (const item of Array.from(e.dataTransfer.items)) {
-        if (item.kind !== "file") continue;
-        const entry = item.webkitGetAsEntry?.();
-        if (entry) {
-          await collectEntries(entry, "", fileEntries, folderPaths);
-        } else {
-          const f = item.getAsFile();
-          if (f) fileEntries.push({ file: f, path: f.name });
-        }
-      }
-
-      await uploadFiles(fileEntries, folderPaths);
-    },
-    [uploadFiles],
-  );
-
-  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    dragCounter.current += 1;
-    setIsDragOver(true);
-  }, []);
-
-  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    dragCounter.current -= 1;
-    if (dragCounter.current === 0) setIsDragOver(false);
-  }, []);
-
-  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-  }, []);
-
-  const handleFileInputChange = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const selected = Array.from(e.target.files ?? []);
-      if (!selected.length) return;
-
-      const entries = selected.map((f) => ({
-        file: f,
-        path:
-          (f as File & { webkitRelativePath?: string }).webkitRelativePath ||
-          f.name,
-      }));
-
-      const folderSet = new Set<string>();
-      for (const { path } of entries) {
-        const parts = path.split("/");
-        for (let i = 1; i < parts.length; i++) {
-          folderSet.add(parts.slice(0, i).join("/"));
-        }
-      }
-
-      await uploadFiles(entries, Array.from(folderSet));
-      e.target.value = "";
-    },
-    [uploadFiles],
-  );
-
-  const handleRenameCommit = useCallback(
-    async (node: FileNode, newName: string) => {
-      setRenamingPath(null);
+  const handleRename = useCallback(
+    async (node: FileRecord, newName: string): Promise<boolean> => {
       if (workspaceId && projectId) {
-        const slash = node.path.lastIndexOf("/");
-        const newPath =
-          slash === -1 ? newName : `${node.path.slice(0, slash)}/${newName}`;
+        const newPath = renamedPath(node.path, newName);
         refreshRequestRef.current += 1;
         const optimistic = runtimeFiles
           ? withRenamedPath(runtimeFiles, node.path, newPath)
@@ -485,18 +374,26 @@ export function WorkspaceFilesTab({
             path: node.path,
             newPath: newPath,
           });
-          await refreshRuntimeFiles(false, true);
+
+          return true;
         } catch (err) {
           setError(toErrorMessage(err));
-          await refreshRuntimeFiles(false, true);
-        }
 
-        return;
+          return false;
+        } finally {
+          await refreshRuntimeFiles(false, true).catch((err) =>
+            setError(toErrorMessage(err)),
+          );
+        }
       }
       try {
         await renameMut({ fileId: node._id!, newName: newName });
+
+        return true;
       } catch (err) {
         setError(toErrorMessage(err));
+
+        return false;
       }
     },
     [
@@ -510,11 +407,337 @@ export function WorkspaceFilesTab({
     ],
   );
 
-  const tree = files ? buildTree(files as FileRecord[]) : [];
+  const fileUrl = useCallback(
+    async (file: FileRecord): Promise<string> => {
+      if (!projectId) throw new Error("Project not loaded");
+      if (workspaceId) {
+        return await runtimeFileUrl({
+          projectId: projectId,
+          workspaceId: workspaceId,
+          path: file.path,
+        });
+      }
+      const url = await convex.query(api.workspace.files.getFileDownloadUrl, {
+        projectId: projectId,
+        nodeId: nodeId,
+        path: file.path,
+      });
+      if (!url) throw new Error("File not found");
+
+      return url;
+    },
+    [convex, nodeId, projectId, runtimeFileUrl, workspaceId],
+  );
+
+  // Runtime files are read through Convex, so their bucket needs no CORS rule.
+  const loadFile = useCallback(
+    async (file: FileRecord): Promise<FileContent> => {
+      if (isImageFile(file.name)) {
+        return { kind: "image", url: await fileUrl(file) };
+      }
+      if (workspaceId && projectId) {
+        const text = await readRuntimeFile({
+          projectId: projectId,
+          workspaceId: workspaceId,
+          path: file.path,
+        });
+
+        return { kind: "text", text: text };
+      }
+      const response = await fetch(await fileUrl(file));
+      if (!response.ok) throw new Error(`Could not read ${file.name}`);
+
+      return { kind: "text", text: await response.text() };
+    },
+    [fileUrl, projectId, readRuntimeFile, workspaceId],
+  );
+
+  return (
+    <WorkspaceFilesView
+      files={files}
+      uploading={uploading}
+      error={error}
+      canWrite={canWrite}
+      isRefreshing={isRefreshing}
+      onRefresh={
+        workspaceId
+          ? () => {
+              void refreshRuntimeFiles(true, true).catch((err) => {
+                setError(toErrorMessage(err));
+              });
+            }
+          : undefined
+      }
+      onDismissError={() => setError(null)}
+      onUpload={uploadFiles}
+      onDelete={handleDelete}
+      onRename={handleRename}
+      loadFile={loadFile}
+      fileUrl={fileUrl}
+    />
+  );
+}
+
+// Data-free so the UI gallery can render it.
+export function WorkspaceFilesView({
+  files,
+  uploading,
+  error,
+  canWrite,
+  isRefreshing = false,
+  onRefresh,
+  onDismissError,
+  onUpload,
+  onDelete,
+  onRename,
+  loadFile,
+  fileUrl,
+}: {
+  files: FileRecord[] | undefined;
+  uploading: Set<string>;
+  error: string | null;
+  canWrite: boolean;
+  isRefreshing?: boolean;
+  onRefresh?: () => void;
+  onDismissError: () => void;
+  onUpload: (entries: UploadEntry[], folders: string[]) => Promise<void>;
+  onDelete: (node: FileRecord) => Promise<void>;
+  onRename: (node: FileRecord, newName: string) => Promise<boolean>;
+  /** Keep it stable: a new function reloads the open file. */
+  loadFile: (file: FileRecord) => Promise<FileContent>;
+  fileUrl: (file: FileRecord) => Promise<string>;
+}): React.JSX.Element {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<string | null>(null);
+  const previewTabs = usePreviewTabs(files, selected);
+  const split = useDefaultLayout({
+    id: "workspace-files-split",
+    storage: SPLIT_STORAGE,
+    panelIds:
+      previewTabs.tabs.length > 0
+        ? ["files-tree", "files-preview"]
+        : ["files-tree"],
+  });
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [pendingDeleteNode, setPendingDeleteNode] = useState<FileNode | null>(
+    null,
+  );
+  const [isDeletingNode, setIsDeletingNode] = useState(false);
+  const dragCounter = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const treeRef = useRef<HTMLDivElement>(null);
+  const pendingFocusRef = useRef<string | null>(null);
+
+  const tree = useMemo(
+    (): FileNode[] => (files ? buildTree(files) : []),
+    [files],
+  );
+  const visible = useMemo(
+    (): FileNode[] => visibleNodes(tree, expanded),
+    [tree, expanded],
+  );
+  const tabStop = visible.some((node) => node.path === selected)
+    ? selected
+    : (visible[0]?.path ?? null);
+
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- focuses the row's DOM node
+  useEffect(() => {
+    const path = pendingFocusRef.current;
+    if (!path) return;
+    const active = document.activeElement;
+    if (
+      active &&
+      active !== document.body &&
+      !treeRef.current?.contains(active)
+    ) {
+      pendingFocusRef.current = null;
+
+      return;
+    }
+    // A Convex rename renders the new row only once its query catches up.
+    const row = rowElement(treeRef.current, path);
+    if (!row) return;
+    pendingFocusRef.current = null;
+    row.focus();
+  });
+
+  const toggleFolder = useCallback((path: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+
+      return next;
+    });
+  }, []);
+
+  const upload = async (
+    entries: UploadEntry[],
+    folders: string[],
+  ): Promise<void> => {
+    if (folders.length > 0) {
+      setExpanded((prev) => new Set([...prev, ...folders]));
+    }
+    await onUpload(entries, folders);
+  };
+
+  const handleDrop = async (
+    e: React.DragEvent<HTMLDivElement>,
+  ): Promise<void> => {
+    e.preventDefault();
+    dragCounter.current = 0;
+    setIsDragOver(false);
+    if (!canWrite) return;
+
+    const fileEntries: UploadEntry[] = [];
+    const folderPaths: string[] = [];
+    // The drag data store closes at this handler's first await: read every item before it.
+    const dropped = Array.from(e.dataTransfer.items)
+      .filter((item) => item.kind === "file")
+      .map((item) => item.webkitGetAsEntry?.() ?? item.getAsFile());
+
+    for (const entry of dropped) {
+      if (entry instanceof File) {
+        fileEntries.push({ file: entry, path: entry.name });
+      } else if (entry) {
+        await collectEntries(entry, "", fileEntries, folderPaths);
+      }
+    }
+
+    await upload(fileEntries, folderPaths);
+  };
+
+  // A member's drop is cancelled too: an uncancelled drop opens the file and leaves the page.
+  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>): void => {
+    e.preventDefault();
+    if (!canWrite) return;
+    dragCounter.current += 1;
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>): void => {
+    e.preventDefault();
+    if (!canWrite) return;
+    dragCounter.current -= 1;
+    if (dragCounter.current === 0) setIsDragOver(false);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>): void => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = canWrite ? "copy" : "none";
+  };
+
+  const handleFileInputChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ): Promise<void> => {
+    const picked = Array.from(e.target.files ?? []);
+    if (!picked.length) return;
+
+    const entries = picked.map((f) => ({
+      file: f,
+      path:
+        (f as File & { webkitRelativePath?: string }).webkitRelativePath ||
+        f.name,
+    }));
+
+    const folderSet = new Set<string>();
+    for (const { path } of entries) {
+      const parts = path.split("/");
+      for (let i = 1; i < parts.length; i++) {
+        folderSet.add(parts.slice(0, i).join("/"));
+      }
+    }
+
+    await upload(entries, Array.from(folderSet));
+    e.target.value = "";
+  };
+
+  const select = (node: FileNode): void => {
+    setSelected(node.path);
+    if (!node.isFolder) previewTabs.show(node.path);
+  };
+
+  const focusRow = (path: string): void => {
+    const node = visible.find((row) => row.path === path);
+    if (node) select(node);
+    rowElement(treeRef.current, path)?.focus();
+  };
+
+  const activate = (node: FileNode): void => {
+    select(node);
+    if (node.isFolder) toggleFolder(node.path);
+  };
+
+  const handleTreeClick = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const node = nodeAt(visible, e.target);
+    if (!node) {
+      setSelected(null);
+      setRenamingPath(null);
+
+      return;
+    }
+    activate(node);
+  };
+
+  const handleTreeKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    // Only a focused row: the rename input and row buttons keep their keys.
+    const path =
+      e.target instanceof HTMLElement ? e.target.dataset.path : undefined;
+    const node = path ? visible.find((row) => row.path === path) : undefined;
+    if (!node) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      activate(node);
+      if (e.key === "Enter" && !node.isFolder) previewTabs.pin(node.path);
+
+      return;
+    }
+    if (canWrite && e.key === "F2") {
+      e.preventDefault();
+      setRenamingPath(node.path);
+
+      return;
+    }
+    if (canWrite && (e.key === "Delete" || e.key === "Backspace")) {
+      e.preventDefault();
+      setPendingDeleteNode(node);
+
+      return;
+    }
+    const target = treeKeyTarget(e.key, node, visible, expanded);
+    if (!target) return;
+    e.preventDefault();
+    if ("focus" in target) focusRow(target.focus);
+    else toggleFolder(target.toggle);
+  };
+
+  const endRename = (focusPath: string): void => {
+    setRenamingPath(null);
+    pendingFocusRef.current = focusPath;
+  };
+
+  const handleRenameCommit = (node: FileNode, newName: string): void => {
+    const newPath = renamedPath(node.path, newName);
+    setSelected(newPath);
+    endRename(newPath);
+    void onRename(node, newName).then((renamed) => {
+      if (renamed) {
+        previewTabs.rename(node.path, newPath);
+
+        return;
+      }
+      setSelected(node.path);
+      pendingFocusRef.current = node.path;
+    });
+  };
 
   return (
     <div
-      ref={containerRef}
       className={cn(
         "relative flex flex-1 flex-col overflow-hidden",
         isDragOver && "ring-2 ring-inset ring-primary/50",
@@ -522,24 +745,17 @@ export function WorkspaceFilesTab({
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
-      onDrop={canWrite ? handleDrop : undefined}
-      onClick={handleContainerClick}
+      onDrop={handleDrop}
     >
-      {/* Toolbar */}
       <div className="flex shrink-0 items-center justify-end gap-0.5 px-3 py-2">
-        {workspaceId && (
+        {onRefresh && (
           <IconTooltip label="Refresh workspace files">
             <Button
               size="icon-xs"
               variant="ghost"
               className="cursor-pointer"
               disabled={isRefreshing}
-              onClick={(e) => {
-                e.stopPropagation();
-                void refreshRuntimeFiles(true, true).catch((err) => {
-                  setError(toErrorMessage(err));
-                });
-              }}
+              onClick={onRefresh}
             >
               <RefreshCw className="size-3.5" />
             </Button>
@@ -552,10 +768,7 @@ export function WorkspaceFilesTab({
                 size="icon-xs"
                 variant="ghost"
                 className="cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  fileInputRef.current?.click();
-                }}
+                onClick={() => fileInputRef.current?.click()}
               >
                 <Upload className="size-3.5" />
               </Button>
@@ -565,10 +778,7 @@ export function WorkspaceFilesTab({
                 size="icon-xs"
                 variant="ghost"
                 className="cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  folderInputRef.current?.click();
-                }}
+                onClick={() => folderInputRef.current?.click()}
               >
                 <FolderUp className="size-3.5" />
               </Button>
@@ -577,7 +787,6 @@ export function WorkspaceFilesTab({
         )}
       </div>
 
-      {/* Hidden inputs */}
       <input
         ref={fileInputRef}
         type="file"
@@ -585,7 +794,6 @@ export function WorkspaceFilesTab({
         className="hidden"
         onChange={handleFileInputChange}
       />
-      {/* webkitdirectory lets the user pick an entire folder */}
       <input
         ref={folderInputRef}
         type="file"
@@ -596,81 +804,114 @@ export function WorkspaceFilesTab({
         onChange={handleFileInputChange}
       />
 
-      {/* Error banner */}
       {error && (
         <div className="mx-3 mb-2 rounded-md bg-destructive/10 px-3 py-2 text-2xs text-destructive">
           {error}
           <button
             className="ml-2 cursor-pointer underline"
-            onClick={() => setError(null)}
+            onClick={onDismissError}
           >
             Dismiss
           </button>
         </div>
       )}
 
-      {/* File tree */}
-      <div className="flex-1 overflow-y-auto">
-        {files === undefined ? (
-          <div className="flex items-center justify-center py-10">
-            <span className="text-xs text-muted-foreground">Loading…</span>
-          </div>
-        ) : tree.length === 0 && uploading.size === 0 ? (
-          <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
-            <div className="flex size-10 items-center justify-center rounded-lg border border-dashed border-border bg-muted/30">
-              <Upload className="size-4 text-muted-foreground" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <p className="text-xs font-medium text-foreground/70">
-                No files yet
-              </p>
-              <p className="text-2xs text-muted-foreground">
-                Drop files or folders here, or use the buttons above.
-              </p>
-            </div>
-          </div>
-        ) : (
-          <>
-            {tree.map((node) => (
-              <TreeRow
-                key={node.path}
-                node={node}
-                depth={0}
-                expanded={expanded}
-                uploading={uploading}
-                selected={selected}
-                renamingPath={renamingPath}
-                onSelect={setSelected}
-                onToggle={toggleFolder}
-                onDelete={handleDelete}
-                onRenameStart={setRenamingPath}
-                onRenameCommit={handleRenameCommit}
-                onRenameCancel={() => setRenamingPath(null)}
-              />
-            ))}
-            {/* In-flight uploads not yet reflected in DB */}
-            {Array.from(uploading).map((path) => {
-              const alreadyInTree = files?.some(
-                (f: FileRecord) => f.path === path,
-              );
-              if (alreadyInTree) return null;
-              const name = path.split("/").pop() ?? path;
-
-              return (
-                <div
-                  key={`uploading-${path}`}
-                  className="flex h-5.5 items-center gap-1.5 pl-5 text-xs text-muted-foreground"
-                >
-                  <Upload className="size-3" />
-                  <span className="truncate font-mono">{name}</span>
+      {/* Always rendered, so opening the first file keeps the tree's focus. */}
+      <ResizablePanelGroup
+        orientation="vertical"
+        className="min-h-0 flex-1"
+        defaultLayout={split.defaultLayout}
+        onLayoutChanged={split.onLayoutChanged}
+      >
+        <ResizablePanel id="files-tree" minSize={88}>
+          <div className="h-full overflow-y-auto">
+            {files === undefined ? (
+              <div className="flex items-center justify-center py-10">
+                <span className="text-xs text-muted-foreground">Loading…</span>
+              </div>
+            ) : tree.length === 0 && uploading.size === 0 ? (
+              <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
+                <div className="flex size-10 items-center justify-center rounded-lg border border-dashed border-border bg-muted/30">
+                  <Upload className="size-4 text-muted-foreground" />
                 </div>
-              );
-            })}
+                <div className="flex flex-col gap-1">
+                  <p className="text-xs font-medium text-foreground/70">
+                    No files yet
+                  </p>
+                  <p className="text-2xs text-muted-foreground">
+                    Drop files or folders here, or use the buttons above.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div
+                ref={treeRef}
+                role="tree"
+                aria-label="Workspace files"
+                className="min-h-full"
+                onClick={handleTreeClick}
+                onKeyDown={handleTreeKeyDown}
+              >
+                {tree.map((node, index) => (
+                  <TreeRow
+                    key={node.path}
+                    node={node}
+                    depth={0}
+                    position={index + 1}
+                    setSize={tree.length}
+                    canWrite={canWrite}
+                    expanded={expanded}
+                    uploading={uploading}
+                    selected={selected}
+                    tabStop={tabStop}
+                    renamingPath={renamingPath}
+                    onDelete={setPendingDeleteNode}
+                    onRenameStart={setRenamingPath}
+                    onRenameCommit={handleRenameCommit}
+                    onRenameCancel={endRename}
+                  />
+                ))}
+                {Array.from(uploading).map((path) => {
+                  const alreadyInTree = files.some((f) => f.path === path);
+                  if (alreadyInTree) return null;
+                  const name = path.split("/").pop() ?? path;
+
+                  return (
+                    <div
+                      key={`uploading-${path}`}
+                      role="treeitem"
+                      aria-selected={false}
+                      aria-disabled
+                      aria-busy
+                      className="flex h-5.5 items-center gap-1.5 pl-5 text-xs text-muted-foreground"
+                    >
+                      <Upload className="size-3" />
+                      <span className="truncate font-mono">{name}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </ResizablePanel>
+        {previewTabs.tabs.length > 0 && (
+          <>
+            <ResizableHandle withHandle aria-label="Resize the file preview" />
+            <ResizablePanel id="files-preview" defaultSize="50%" minSize={120}>
+              <FilePreview
+                tabs={previewTabs.tabs}
+                activePath={previewTabs.activePath}
+                onActivate={previewTabs.show}
+                onPin={previewTabs.pin}
+                onClose={previewTabs.close}
+                loadFile={loadFile}
+                fileUrl={fileUrl}
+              />
+            </ResizablePanel>
           </>
         )}
-      </div>
+      </ResizablePanelGroup>
 
-      {/* Drag-over overlay */}
       {isDragOver && (
         <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded bg-primary/5">
           <div className="flex size-12 items-center justify-center rounded-full border-2 border-dashed border-primary/50 bg-background">
@@ -684,15 +925,21 @@ export function WorkspaceFilesTab({
         <DeleteConfirmDialog
           open={pendingDeleteNode !== null}
           onOpenChange={(open) => {
-            if (!open) setPendingDeleteNode(null);
+            if (open) return;
+            // The dialog unmounts with this, before it can hand focus back.
+            pendingFocusRef.current = pendingDeleteNode.path;
+            setPendingDeleteNode(null);
           }}
           resourceName={pendingDeleteNode.name}
           resourceType={pendingDeleteNode.isFolder ? "folder" : "file"}
           critical={false}
           onConfirm={async () => {
             setIsDeletingNode(true);
+            const next = rowAfterRemoval(visible, pendingDeleteNode.path);
             try {
-              await executeDelete(pendingDeleteNode);
+              await onDelete(pendingDeleteNode);
+              setSelected(next);
+              pendingFocusRef.current = next;
               setPendingDeleteNode(null);
             } finally {
               setIsDeletingNode(false);
@@ -742,13 +989,93 @@ function buildTree(files: FileRecord[]): FileNode[] {
   return roots;
 }
 
-function withoutPath(files: FileRecord[], path: string): FileRecord[] {
+function nodeAt(
+  visible: FileNode[],
+  target: EventTarget,
+): FileNode | undefined {
+  if (!(target instanceof Element)) return undefined;
+  const path = target.closest<HTMLElement>("[data-path]")?.dataset.path;
+
+  return visible.find((node) => node.path === path);
+}
+
+export function renamedPath(path: string, newName: string): string {
+  const slash = path.lastIndexOf("/");
+
+  return slash === -1 ? newName : `${path.slice(0, slash)}/${newName}`;
+}
+
+function rowAfterRemoval(visible: FileNode[], path: string): string | null {
+  const index = visible.findIndex((node) => node.path === path);
+  const after = visible
+    .slice(index + 1)
+    .find((node) => !node.path.startsWith(`${path}/`));
+
+  return after?.path ?? visible[index - 1]?.path ?? null;
+}
+
+function rowElement(
+  tree: HTMLElement | null,
+  path: string,
+): HTMLElement | null {
+  return (
+    tree?.querySelector<HTMLElement>(`[data-path="${CSS.escape(path)}"]`) ??
+    null
+  );
+}
+
+function treeKeyTarget(
+  key: string,
+  node: FileNode,
+  visible: FileNode[],
+  expanded: Set<string>,
+): TreeKeyTarget | undefined {
+  const index = visible.indexOf(node);
+  const isOpen = node.isFolder && expanded.has(node.path);
+  const focus = (to: FileNode | undefined): TreeKeyTarget | undefined =>
+    to ? { focus: to.path } : undefined;
+  switch (key) {
+    case "ArrowDown":
+      return focus(visible[index + 1]);
+    case "ArrowUp":
+      return focus(visible[index - 1]);
+    case "Home":
+      return focus(visible[0]);
+    case "End":
+      return focus(visible.at(-1));
+    case "ArrowRight":
+      if (isOpen) return focus(node.children?.[0]);
+
+      return node.isFolder ? { toggle: node.path } : undefined;
+    case "ArrowLeft": {
+      if (isOpen) return { toggle: node.path };
+      const parent = node.path.slice(
+        0,
+        Math.max(node.path.lastIndexOf("/"), 0),
+      );
+
+      return focus(visible.find((row) => row.path === parent));
+    }
+    default:
+      return undefined;
+  }
+}
+
+function visibleNodes(nodes: FileNode[], expanded: Set<string>): FileNode[] {
+  return nodes.flatMap((node) =>
+    node.children && expanded.has(node.path)
+      ? [node, ...visibleNodes(node.children, expanded)]
+      : [node],
+  );
+}
+
+export function withoutPath(files: FileRecord[], path: string): FileRecord[] {
   return files.filter(
     (file) => file.path !== path && !file.path.startsWith(`${path}/`),
   );
 }
 
-function withRenamedPath(
+export function withRenamedPath(
   files: FileRecord[],
   path: string,
   newPath: string,
@@ -823,7 +1150,7 @@ function formatBytes(bytes: number): string {
 async function collectEntries(
   entry: FileSystemEntry,
   parentPath: string,
-  files: Array<{ file: File; path: string }>,
+  files: UploadEntry[],
   folders: string[],
 ): Promise<void> {
   const currentPath = parentPath ? `${parentPath}/${entry.name}` : entry.name;
@@ -888,62 +1215,17 @@ function ExtIcon({ name }: { name: string }): React.JSX.Element {
   );
 }
 
-function RenameInput({
-  initialValue,
-  onCommit,
-  onCancel,
-}: {
-  initialValue: string;
-  onCommit: (value: string) => void;
-  onCancel: () => void;
-}): React.JSX.Element {
-  const [draft, setDraft] = useState(initialValue);
-  const ref = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    ref.current?.select();
-  }, []);
-
-  const commit = (): void => {
-    const trimmed = draft.trim();
-    if (trimmed && trimmed !== initialValue) {
-      onCommit(trimmed);
-    } else {
-      onCancel();
-    }
-  };
-
-  return (
-    <input
-      ref={ref}
-      value={draft}
-      className="h-4.5 w-full min-w-0 flex-1 rounded-sm border border-primary bg-transparent px-1 py-0 font-mono text-xs shadow-xs outline-none transition-shadow placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30"
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          commit();
-        }
-        if (e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
-      }}
-      onClick={(e) => e.stopPropagation()}
-    />
-  );
-}
-
 function TreeRow({
   node,
   depth,
+  position,
+  setSize,
+  canWrite,
   expanded,
   uploading,
   selected,
+  tabStop,
   renamingPath,
-  onSelect,
-  onToggle,
   onDelete,
   onRenameStart,
   onRenameCommit,
@@ -951,44 +1233,47 @@ function TreeRow({
 }: {
   node: FileNode;
   depth: number;
+  position: number;
+  setSize: number;
+  canWrite: boolean;
   expanded: Set<string>;
   uploading: Set<string>;
   selected: string | null;
+  tabStop: string | null;
   renamingPath: string | null;
-  onSelect: (path: string) => void;
-  onToggle: (path: string) => void;
   onDelete: (node: FileNode) => void;
   onRenameStart: (path: string) => void;
   onRenameCommit: (node: FileNode, newName: string) => void;
-  onRenameCancel: () => void;
+  onRenameCancel: (path: string) => void;
 }): React.JSX.Element {
-  const { canWrite } = useOrgRole();
   const isExpanded = expanded.has(node.path);
   const isSelected = selected === node.path;
   const isRenaming = renamingPath === node.path;
   const isUploading = uploading.has(node.path);
 
-  const handleClick = (e: React.MouseEvent): void => {
-    e.stopPropagation();
-    onSelect(node.path);
-    if (node.isFolder) onToggle(node.path);
-  };
-
   return (
     <>
       <div
+        role="treeitem"
+        data-path={node.path}
+        tabIndex={tabStop === node.path ? 0 : -1}
+        aria-label={node.name}
+        aria-level={depth + 1}
+        aria-posinset={position}
+        aria-setsize={setSize}
+        aria-selected={isSelected}
+        aria-expanded={node.isFolder ? isExpanded : undefined}
+        aria-keyshortcuts={canWrite ? "F2 Delete" : undefined}
         className={cn(
           "group flex h-5.5 select-none items-center gap-0 pl-(--indent) pr-1 text-xs",
-          "cursor-pointer",
+          "cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
           isSelected
             ? "bg-accent text-accent-foreground"
             : "text-foreground/80 hover:bg-muted/50",
         )}
         style={{ "--indent": `${4 + depth * 16}px` }}
-        onClick={handleClick}
         title={isRenaming ? undefined : node.path}
       >
-        {/* chevron / spacer */}
         <span className="flex w-4 shrink-0 items-center justify-center">
           {node.isFolder ? (
             isExpanded ? (
@@ -999,7 +1284,6 @@ function TreeRow({
           ) : null}
         </span>
 
-        {/* icon */}
         {node.isFolder ? (
           isExpanded ? (
             <FolderOpen className="mr-1.5 size-3.5 shrink-0 text-folder" />
@@ -1010,95 +1294,98 @@ function TreeRow({
           <ExtIcon name={node.name} />
         )}
 
-        {/* name or rename input */}
         {isRenaming ? (
-          <RenameInput
-            initialValue={node.name}
-            onCommit={(newName) => onRenameCommit(node, newName)}
-            onCancel={onRenameCancel}
-          />
+          <span className="flex min-w-0 flex-1 font-mono">
+            <InlineEdit
+              value={node.name}
+              label={`Rename ${node.name}`}
+              onCommit={(newName) => onRenameCommit(node, newName)}
+              onCancel={() => onRenameCancel(node.path)}
+            />
+          </span>
         ) : (
-          <span
-            className="flex-1 truncate font-mono text-xs"
-            onDoubleClick={(e) => {
-              if (!canWrite) return;
-              e.stopPropagation();
-              onRenameStart(node.path);
-            }}
-          >
-            {node.name}
-          </span>
-        )}
-
-        {/* size hint when selected */}
-        {!node.isFolder &&
-          node.sizeBytes !== undefined &&
-          isSelected &&
-          !isRenaming && (
-            <span className="mr-1 shrink-0 text-3xs text-muted-foreground">
-              {formatBytes(node.sizeBytes)}
+          <>
+            <span
+              className="flex-1 truncate font-mono text-xs"
+              onDoubleClick={(e) => {
+                if (!canWrite) return;
+                e.stopPropagation();
+                onRenameStart(node.path);
+              }}
+            >
+              {node.name}
             </span>
-          )}
 
-        {/* action buttons, visible on hover or when selected */}
-        {!isRenaming && (
-          <span
-            className={cn(
-              "flex shrink-0 items-center gap-0.5",
-              isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+            {!node.isFolder && node.sizeBytes !== undefined && isSelected && (
+              <span className="mr-1 shrink-0 text-3xs text-muted-foreground">
+                {formatBytes(node.sizeBytes)}
+              </span>
             )}
-          >
-            {isUploading ? (
-              <Upload className="size-3.5 text-muted-foreground" />
-            ) : canWrite ? (
-              <>
-                <IconTooltip label={`Rename ${node.name}`}>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 cursor-pointer"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRenameStart(node.path);
-                    }}
-                  >
-                    <Pencil className="size-3.5" />
-                  </Button>
-                </IconTooltip>
-                <IconTooltip label={`Delete ${node.name}`}>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    tone="destructive"
-                    className="size-5 cursor-pointer"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(node);
-                    }}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </IconTooltip>
-              </>
-            ) : null}
-          </span>
+
+            {/* Out of the tab order: the tree has one tab stop and F2 / Delete do the same. */}
+            <span
+              className={cn(
+                "flex shrink-0 items-center gap-0.5",
+                isSelected
+                  ? "opacity-100"
+                  : "opacity-0 group-hover:opacity-100",
+              )}
+            >
+              {isUploading ? (
+                <Upload className="size-3.5 text-muted-foreground" />
+              ) : canWrite ? (
+                <>
+                  <IconTooltip label={`Rename ${node.name}`}>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      tabIndex={-1}
+                      className="size-5 cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRenameStart(node.path);
+                      }}
+                    >
+                      <Pencil className="size-3.5" />
+                    </Button>
+                  </IconTooltip>
+                  <IconTooltip label={`Delete ${node.name}`}>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      tone="destructive"
+                      tabIndex={-1}
+                      className="size-5 cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(node);
+                      }}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </IconTooltip>
+                </>
+              ) : null}
+            </span>
+          </>
         )}
       </div>
 
-      {/* children */}
       {node.isFolder &&
         isExpanded &&
-        node.children?.map((child) => (
+        node.children?.map((child, index, siblings) => (
           <TreeRow
             key={child.path}
             node={child}
             depth={depth + 1}
+            position={index + 1}
+            setSize={siblings.length}
+            canWrite={canWrite}
             expanded={expanded}
             uploading={uploading}
             selected={selected}
+            tabStop={tabStop}
             renamingPath={renamingPath}
-            onSelect={onSelect}
-            onToggle={onToggle}
             onDelete={onDelete}
             onRenameStart={onRenameStart}
             onRenameCommit={onRenameCommit}

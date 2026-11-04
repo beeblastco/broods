@@ -1,22 +1,17 @@
-/**
- * CLI manifest sync for channel records: name→id resolution against the synced
- * agents/workspaces/policies, the one-record-per-place ownership guard, prune,
- * and the inverse id→name mapping used when reading the manifest back.
- */
+import { z } from "zod/mini";
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { storedWorkspaceRef } from "./agentRules";
 import { normalizeChannelRecordConfig } from "./channelRules";
 import { resourceName, type CliResource } from "./cliSync";
-import { isPlainObject } from "./objects";
 import { ClientError } from "./clientError";
+import { parseInput } from "./inputSchema";
+import { configObject, parseOr } from "./storedJson";
 
-/**
- * Inverse of `resolveChannelRecordRefs`: ids back to resource names, and the
- * place columns folded back into the config the manifest declares. It must land
- * exactly where the local manifest normalizes, or `broods dev` reports a diff
- * that never settles.
- */
+const AGENT_BINDING = z.looseObject({ agentId: z.string() });
+
+// Must land exactly where the local manifest normalizes, or the `broods dev` diff never settles.
 export function channelRecordManifestConfig(
   record: Doc<"channelRecords">,
   names: {
@@ -25,20 +20,20 @@ export function channelRecordManifestConfig(
     workspaceNames: Record<string, string>;
   },
 ): Record<string, unknown> {
-  const config = isPlainObject(record.config)
-    ? (record.config as Record<string, unknown>)
-    : {};
+  const config = parseOr(configObject, record.config, {});
   const { agentBindings, policyIds, workspaces, ...rest } = config;
 
   return {
     platform: record.platform,
     externalId: record.externalId,
     ...(record.workspaceRef ? { workspaceRef: record.workspaceRef } : {}),
-    agents: (Array.isArray(agentBindings) ? agentBindings : []).map((entry) =>
-      isPlainObject(entry) && typeof entry.agentId === "string"
-        ? (names.agentNames[entry.agentId] ?? entry.agentId)
-        : entry,
-    ),
+    agents: (Array.isArray(agentBindings) ? agentBindings : []).map((entry) => {
+      const binding = parseOr(AGENT_BINDING, entry);
+
+      return binding
+        ? (names.agentNames[binding.agentId] ?? binding.agentId)
+        : entry;
+    }),
     ...rest,
     ...(Array.isArray(policyIds)
       ? {
@@ -51,16 +46,17 @@ export function channelRecordManifestConfig(
       : {}),
     ...(Array.isArray(workspaces)
       ? {
-          workspaces: workspaces.map((entry) =>
-            isPlainObject(entry) && typeof entry.workspaceId === "string"
+          workspaces: workspaces.map((entry) => {
+            const ref = parseOr(storedWorkspaceRef, entry);
+
+            return ref
               ? {
-                  ...entry,
+                  ...ref,
                   workspaceId:
-                    names.workspaceNames[entry.workspaceId] ??
-                    entry.workspaceId,
+                    names.workspaceNames[ref.workspaceId] ?? ref.workspaceId,
                 }
-              : entry,
-          ),
+              : entry;
+          }),
         }
       : {}),
   };
@@ -91,13 +87,6 @@ export async function pruneChannelRecordResources(
   }
 }
 
-/**
- * Channel records name agents, workspaces and policies by resource name, so this
- * runs after those are synced and their ids are known. A record is unique per
- * `(account, platform, externalId)` because the inbound webhook looks it up that
- * way, so two stages cannot both claim one Slack channel, and trying is
- * an error rather than a silent last-writer-wins.
- */
 export async function syncChannelRecordResources(
   ctx: MutationCtx,
   options: {
@@ -165,11 +154,6 @@ export async function syncChannelRecordResources(
   return ids;
 }
 
-/**
- * A manifest channel record with its names resolved to ids and its config
- * checked, without reading the database. The sync stores it; the manifest
- * pre-check runs it with placeholder ids.
- */
 export function normalizeChannelRecordResource(
   resource: CliResource,
   ids: {
@@ -191,12 +175,12 @@ export function normalizeChannelRecordResource(
     platform: requireChannelRecordString(input.platform, "platform"),
     externalId: requireChannelRecordString(input.externalId, "externalId"),
     workspaceRef: input.workspaceRef,
-    // Same validation the CRUD route runs: a malformed manifest record must
-    // fail the deploy, not reach the webhook resolver at runtime.
+    // A malformed record must fail the deploy, not reach the webhook resolver at runtime.
     config: normalizeChannelRecordConfig(input.config),
   };
 }
 
+// The inbound webhook finds a record by (account, platform, externalId), so a place has one owner.
 async function assertChannelRecordPlaceIsFree(
   ctx: MutationCtx,
   options: {
@@ -237,7 +221,6 @@ function requireChannelRecordString(value: unknown, field: string): string {
   return value;
 }
 
-/** A record's agents, workspaces and policies are written as resource names. */
 function resolveChannelRecordRefs(
   raw: unknown,
   ids: {
@@ -251,9 +234,6 @@ function resolveChannelRecordRefs(
   workspaceRef: unknown;
   config: unknown;
 } {
-  if (!isPlainObject(raw)) {
-    throw new ClientError("channelRecord config must be an object");
-  }
   const {
     platform,
     externalId,
@@ -262,7 +242,7 @@ function resolveChannelRecordRefs(
     policies,
     workspaces,
     ...rest
-  } = raw as Record<string, unknown>;
+  } = parseInput(configObject, raw, "channelRecord config");
   const agentBindings = (Array.isArray(agents) ? agents : []).map(
     (entry, index) => {
       const agentName = typeof entry === "string" ? entry : "";
@@ -290,15 +270,17 @@ function resolveChannelRecordRefs(
         : {}),
       ...(Array.isArray(workspaces)
         ? {
-            workspaces: workspaces.map((entry) =>
-              isPlainObject(entry) && typeof entry.workspaceId === "string"
+            workspaces: workspaces.map((entry) => {
+              const ref = parseOr(storedWorkspaceRef, entry);
+
+              return ref
                 ? {
-                    ...entry,
+                    ...ref,
                     workspaceId:
-                      ids.workspaceIds[entry.workspaceId] ?? entry.workspaceId,
+                      ids.workspaceIds[ref.workspaceId] ?? ref.workspaceId,
                   }
-                : entry,
-            ),
+                : entry;
+            }),
           }
         : {}),
     },

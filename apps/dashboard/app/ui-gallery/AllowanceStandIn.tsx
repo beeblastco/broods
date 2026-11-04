@@ -2,17 +2,14 @@
 
 import {
   AllowanceView,
-  type AllowanceScope,
+  type UsageScope,
 } from "@/app/(main)/[projectId]/dashboard/components/AllowanceUsage";
 import type { BudgetUsage, UsageAmounts } from "@/app/lib/allowance";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { useState } from "react";
 
 const MONTH = "2026-10";
 const DAYS_SO_FAR = 16;
 
-// Four projects of one Pro org, each busy on its own resources, plus usage no
-// project made (an account-wide workspace, chat attachments).
 const PROJECTS: Array<{
   id: string;
   name: string;
@@ -79,20 +76,16 @@ const CAPS = {
   egressGb: 10,
 };
 
-/**
- * The Usage tab's Allowance on fixed data: one org's month across four
- * projects, seen from "Support bot", with the scope switch working.
- */
-export function AllowanceStandIn(): React.JSX.Element {
-  const [scope, setScope] = useState<AllowanceScope>("project");
-
+export function AllowanceStandIn({
+  view,
+}: {
+  view: UsageScope;
+}): React.JSX.Element {
   return (
-    <div className="w-full max-w-5xl">
+    <div className="w-full max-w-6xl">
       <AllowanceView
         budget={BUDGET}
-        projectId="support-bot"
-        scope={scope}
-        onScopeChange={setScope}
+        view={view}
         month={undefined}
         onMonthChange={() => {}}
       />
@@ -100,7 +93,6 @@ export function AllowanceStandIn(): React.JSX.Element {
   );
 }
 
-// A day's amount for the day-th day: a weekly rhythm so the bars move.
 function dayAmounts(perDay: UsageAmounts, day: number): UsageAmounts {
   const wave = 0.55 + ((day * 37) % 9) / 10;
 
@@ -163,8 +155,7 @@ const ORG_SHARES = {
   storageGb: percent(ORG_TOTALS.storageGb ?? 0, CAPS.storageGb),
   egressGb: percent(ORG_TOTALS.egressGb, CAPS.egressGb),
 };
-// The owner's other org on the same pool, busy on egress: the pool sits
-// above this org on every cap and has used egress up.
+// The owner's other org shares the pool and has used its egress up.
 const POOL_TOTALS: UsageAmounts = {
   sandboxHours: ORG_TOTALS.sandboxHours + 37.1,
   hostedMcpHours: ORG_TOTALS.hostedMcpHours + 0.8,

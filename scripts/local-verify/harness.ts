@@ -4,16 +4,39 @@ import type { BroodsAccountClient } from "../../packages/broods/src/account.ts";
 import { runMachineDaemon } from "../../packages/broods/src/cli/machine.ts";
 import type { BroodsClient } from "../../packages/broods/src/client.ts";
 import type { AsyncStatus } from "../../packages/broods/src/types.ts";
+import type { internal } from "../../packages/convex/_generated/api.js";
+import {
+  SELF_HOST_ADMIN,
+  SELF_HOST_ISSUER,
+} from "../../packages/convex/model/selfHostAuth.ts";
 
 const ANTHROPIC_SMOKE_MODEL = "claude-haiku-5-5";
 const MACHINE_CONNECT_TIMEOUT_MS = 15_000;
 const RUN_POLL_INTERVAL_MS = 200;
 const RUN_POLL_TIMEOUT_MS = 120_000;
 
+/** The fake GitHub App the local stack's Convex is configured with. */
+export const LOCAL_GITHUB_APP = {
+  appId: "1",
+  slug: "broods-local",
+  clientId: "local-github-client",
+  clientSecret: "local-github-client-secret",
+} as const;
+
 /** The prompt for a case that only needs the run to answer. */
 export const OK_AGENT = { system: "Reply with the single word OK." } as const;
 
 export const MODEL_KEY_HINT = "set ANTHROPIC_API_KEY for the full run";
+
+// Ends the `acct:<account>:agent:<agent>` scope every runtime key carries.
+export const API_SCOPE_MARKER = ":api:";
+
+export const SELF_HOST_IDENTITY = JSON.stringify({
+  subject: SELF_HOST_ADMIN.subject,
+  issuer: SELF_HOST_ISSUER,
+  tokenIdentifier: `${SELF_HOST_ISSUER}|${SELF_HOST_ADMIN.subject}`,
+  email: SELF_HOST_ADMIN.email,
+});
 
 export interface SmokeModel {
   model: { modelId: string; provider: "anthropic"; reasoning: "medium" };
@@ -28,28 +51,57 @@ export interface MachineConnection {
 
 export type VerifyCase = (context: VerifyContext) => Promise<void>;
 
+/** What a Convex function reference returns, read off the generated API. */
+type ConvexReturn<F> = F extends { _returnType: infer R } ? R : never;
+
+/** A run's polling row, as `runtime:getAsyncAgentResult` returns it. */
+export type AsyncAgentRow = ConvexReturn<
+  typeof internal.runtime.getAsyncAgentResult
+>;
+
+/** A conversation's stored events, as `runtime:listConversationEvents` returns them. */
+export type ConversationEvents = ConvexReturn<
+  typeof internal.runtime.listConversationEvents
+>;
+
+/** Core's log line for a subagent turn it starts. */
+export interface SubagentStartedLog {
+  agentId: string;
+  conversationKey: string;
+  message: string;
+  parentEventId: string;
+  resuming: boolean;
+  taskId: string;
+}
+
 export interface VerifyContext {
   account: BroodsAccountClient;
   accountSecret: string;
   client: BroodsClient;
-  /** The Convex site directly, as an in-cluster caller reaches it. */
   configPlaneUrl: string;
-  /** Runs the Convex CLI against the stack's backend with its admin key; never throws. */
   convex: (args: readonly string[]) => { ok: boolean; output: string };
+  /** `convex` without blocking, for a case that serves a fake the backend calls. */
+  convexAsync: (
+    args: readonly string[],
+  ) => Promise<{ ok: boolean; output: string }>;
   coreLogPath: string;
-  /** The public URL: Traefik, in front of core, the config plane and the gateway. */
   edgeUrl: string;
+  /** The fake GitHub's port and the App credentials Convex holds for it. */
+  github: typeof LOCAL_GITHUB_APP & {
+    port: number;
+    /** PKCS#1 PEM; the fake checks the App's JWTs against its public half. */
+    privateKey: string;
+    webhookSecret: string;
+  };
   hasModelKey: boolean;
   measure: <T>(step: string, fn: () => Promise<T>) => Promise<T>;
   model: SmokeModel;
   runId: string;
-  /** The in-cluster service token; valid only on requests that skip the edge. */
+  // Valid only on requests that skip the edge.
   serviceSecret: string;
-  /** The stack's STAGE_TICKET_SECRET, which core derives its run-token key from. */
   stageTicketSecret: string;
 }
 
-/** Thrown by assertStep; verify records the step as the failure. */
 export class VerifyFailure extends Error {
   constructor(
     readonly step: string,
@@ -59,7 +111,6 @@ export class VerifyFailure extends Error {
   }
 }
 
-/** Logs a passed check, or throws VerifyFailure. */
 export function assertStep(
   step: string,
   ok: boolean,
@@ -69,10 +120,7 @@ export function assertStep(
   console.log(`  ok  ${step}`);
 }
 
-/**
- * Creates a machine sandbox and runs its daemon in-process on the account
- * key until `stop`, because the `broods machine` CLI needs a dashboard login.
- */
+// The daemon runs in process on the account key: the `broods machine` CLI needs a login.
 export async function connectMachine(
   context: VerifyContext,
   options: {
@@ -138,7 +186,6 @@ export async function connectMachine(
   };
 }
 
-/** The last JSON line of an append-only log that matches, or null. */
 export function lastJsonLine<T>(
   path: string,
   matches: (record: T) => boolean,
@@ -159,7 +206,6 @@ export function lastJsonLine<T>(
   return null;
 }
 
-/** Repeats attempt with doubling backoff until non-null; null on timeout. */
 export async function pollUntil<T>(
   options: {
     initialIntervalMs: number;
@@ -180,7 +226,6 @@ export async function pollUntil<T>(
   return null;
 }
 
-/** HTTP status of a GET, or null when unreachable. */
 export async function probeHttp(url: string): Promise<number | null> {
   try {
     const response = await fetch(url, {
@@ -193,12 +238,6 @@ export async function probeHttp(url: string): Promise<number | null> {
   }
 }
 
-/**
- * An agent on `sandboxId` writes a marker in one turn and reads it back in
- * the next, so a persistent sandbox is shown to keep a file across calls.
- * The read answers the marker reversed, which no prompt contains, so the
- * model cannot pass it from the conversation without the file.
- */
 export async function persistentSandboxKeepsFile(
   context: VerifyContext,
   input: { key: string; label: string; path: string; sandboxId: string },
@@ -224,6 +263,7 @@ export async function persistentSandboxKeepsFile(
       }),
     );
   const marker = `${input.label}-${context.runId}`;
+  // No prompt holds the reversed marker, so the model cannot pass without reading the file.
   const reversed = marker.split("").reverse().join("");
   const wrote = await turn(
     `Run: echo ${marker} > ${input.path}`,
@@ -239,7 +279,6 @@ export async function persistentSandboxKeepsFile(
   );
 }
 
-/** Starts a background run through the gateway and waits for its final status. */
 export async function runToTerminal(
   context: VerifyContext,
   run: {
@@ -262,7 +301,6 @@ export async function runToTerminal(
   });
 }
 
-/** Claude Haiku 5.5 at medium effort on ANTHROPIC_API_KEY, or on a dummy key that fails at the provider call. */
 export function smokeModel(): { hasModelKey: boolean; model: SmokeModel } {
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
@@ -279,19 +317,105 @@ export function smokeModel(): { hasModelKey: boolean; model: SmokeModel } {
   };
 }
 
-/** Runs an internal Convex function with the stack's admin key and parses its result. */
-export function convexResult(
+export function convexResult<T = unknown>(
   context: VerifyContext,
   fn: string,
   args: Record<string, unknown>,
   step: string,
-): unknown {
-  const cli = context.convex(["run", fn, JSON.stringify(args)]);
+  identity?: string,
+): T {
+  const cli = context.convex([
+    "run",
+    ...(identity ? ["--identity", identity] : []),
+    fn,
+    JSON.stringify(args),
+  ]);
   assertStep(step, cli.ok, cli.output.slice(-300));
 
-  // `convex run` prints the result as JSON after any log lines, and nothing
-  // for a function that returns null.
-  const start = cli.output.search(/^[[{"\dn]/m);
+  return convexOutputJson(cli.output) as T;
+}
 
-  return start < 0 ? null : JSON.parse(cli.output.slice(start));
+/** The result `convex run` printed: JSON after any log lines, nothing for null. */
+export function convexOutputJson(output: string): unknown {
+  const start = output.search(/^[[{"\dn]/m);
+
+  return start < 0 ? null : JSON.parse(output.slice(start));
+}
+
+/**
+ * A child's result reached its parent exactly once: the child's row is in
+ * `status` and stored with its parent, and the parent's conversation holds one
+ * injected message for the task, so no late resume or sweep repeats it.
+ */
+export function assertHandedBackOnce(
+  context: VerifyContext,
+  child: SubagentStartedLog,
+  parentKey: string,
+  status: "completed" | "awaiting_input",
+): void {
+  const row = childResultRow(context, child);
+  assertStep(
+    `the child's ${status} row is stored with its parent`,
+    row?.status === status && row.handback === "stored",
+    JSON.stringify(row),
+  );
+  const history = convexResult<ConversationEvents>(
+    context,
+    "runtime:listConversationEvents",
+    {
+      conversationKey: `${scopeOf(child.parentEventId)}${API_SCOPE_MARKER}${parentKey}`,
+    },
+    "read the parent's conversation",
+  );
+  const injected = history.page.filter((entry): boolean => {
+    const text = JSON.stringify(entry.event);
+
+    return (
+      text.includes(`taskId: ${child.taskId}`) &&
+      text.includes(`status: ${status}`)
+    );
+  });
+  assertStep(
+    `the parent's conversation holds the child's ${status} once`,
+    injected.length === 1,
+    JSON.stringify(injected),
+  );
+}
+
+/** A child turn's polling row, read by its task id. */
+export function childResultRow(
+  context: VerifyContext,
+  child: SubagentStartedLog,
+): AsyncAgentRow {
+  return convexResult<AsyncAgentRow>(
+    context,
+    "runtime:getAsyncAgentResult",
+    {
+      eventId: `${scopeOf(child.conversationKey)}${API_SCOPE_MARKER}${child.taskId}`,
+    },
+    "read the child's result row",
+  );
+}
+
+/** `acct:<account>:agent:<agent>`, the scope a scoped key or event id carries. */
+export function scopeOf(scopedKey: string): string {
+  return scopedKey.slice(0, scopedKey.indexOf(API_SCOPE_MARKER));
+}
+
+/**
+ * The last child core started for the parent turn whose event id ends in
+ * `:<eventKey>`, among those `matches` keeps.
+ */
+export function startedChildLog(
+  context: VerifyContext,
+  eventKey: string,
+  matches: (record: SubagentStartedLog) => boolean = (): boolean => true,
+): SubagentStartedLog | null {
+  return lastJsonLine<SubagentStartedLog>(
+    context.coreLogPath,
+    (record: SubagentStartedLog): boolean =>
+      record.message === "Subagent task started" &&
+      record.parentEventId.endsWith(`:${eventKey}`) &&
+      matches(record),
+  );
 }

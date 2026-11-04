@@ -1,12 +1,8 @@
-// Every `broods mcp` tool is generated from one registry table, so a single
-// wrong entry ships dozens of wrong tools. These tests drive the server
-// through a real MCP client over an in-memory transport: the tool list is the
-// drift check, and the guards must reject before any network call happens.
-
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { MCP_PROTOCOL_VERSION } from "../../../apps/core/src/shared/mcp-protocol.ts";
 import type { BroodsMcpServerOptions } from "../src/mcp.ts";
-import { createBroodsMcpServer } from "../src/mcp.ts";
+import { createBroodsMcpServer, serveBroodsMcp } from "../src/mcp.ts";
 import { BroodsSyncClient } from "../src/sync.ts";
 
 const CREDENTIAL_ENV_KEYS = [
@@ -88,25 +84,39 @@ const GUARD_CASES = [
   },
 ] as const;
 
-for (const { tool, args, refusal } of GUARD_CASES) {
-  test(`${tool} refuses without its guard satisfied`, async () => {
+test("a client on a 2025-era revision is refused with -32022", async () => {
+  process.env.BROODS_ACCOUNT_SECRET = "bask_test";
+
+  await expect(connect({}, false)).rejects.toMatchObject({ code: -32022 });
+});
+
+test.each(GUARD_CASES)(
+  "$tool refuses without its guard satisfied",
+  async ({ tool, args, refusal }) => {
     const client = await connectWithSecret({});
 
     const result = await client.callTool({ name: tool, arguments: args });
     expect(result.isError).toBe(true);
     expect(resultText(result)).toContain(refusal);
-  });
-}
+  },
+);
 
-/** Serve a fresh server over a linked in-memory pair and hand back the connected client. */
-async function connect(options: BroodsMcpServerOptions): Promise<Client> {
+async function connect(
+  options: BroodsMcpServerOptions,
+  pinned = true,
+): Promise<Client> {
   const server = createBroodsMcpServer(options);
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: "mcp-test", version: "1" });
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+  serveBroodsMcp(server, serverTransport);
+  const client = new Client(
+    { name: "mcp-test", version: "1" },
+    pinned
+      ? { versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } } }
+      : {},
+  );
   openClient = client;
+  await client.connect(clientTransport);
 
   return client;
 }
@@ -125,7 +135,6 @@ function resultText(result: { content?: unknown }): string {
   return content.map((block) => block.text ?? "").join("\n");
 }
 
-/** Refuses in-process; no CLI-scope tool is ever called in these tests. */
 function syncClient(): BroodsSyncClient {
   return new BroodsSyncClient({
     baseUrl: "http://stub.invalid",

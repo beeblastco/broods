@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import type { ObservabilitySpanRow } from "../app/hooks/useObservabilityStream";
 import {
+  axisTicks,
   failureCause,
-  foldSteps,
   groupSpans,
   matchesTaskQuery,
+  runIssues,
+  spanIssue,
   TASK_QUERY_FIELDS,
   taskChannel,
+  taskCosts,
   type TaskQuery,
 } from "../app/(main)/[projectId]/dashboard/components/TracingPanel";
 import { parseQuery } from "../app/lib/queryTokens";
@@ -34,7 +37,6 @@ describe("groupSpans", () => {
     expect(rest).toHaveLength(0);
     expect(group.root.spanId).toBe("asked");
     expect(group.status).toBe("ok");
-    expect(group.issueCount).toBe(1);
     const nested = group.childrenByParent.get("asked") ?? [];
     expect(nested.map((span) => span.spanId)).toEqual([
       "asked-bash",
@@ -159,96 +161,6 @@ describe("groupSpans", () => {
   });
 });
 
-describe("foldSteps", () => {
-  test("folds consecutive steps that each call the same one tool", () => {
-    const steps = [3, 4, 5].map((number) =>
-      step("run", number, number * 1_000, number * 1_000 + 400),
-    );
-    const other = step("run", 6, 7_000, 7_500);
-    const children = new Map([
-      ...steps.map((s): [string, ObservabilitySpanRow[]] => [
-        s.spanId,
-        [toolOf(s, "get_subagent_status")],
-      ]),
-      [other.spanId, [toolOf(other, "bash")]],
-    ]);
-
-    const items = foldSteps([...steps, other], children);
-
-    expect(items).toHaveLength(2);
-    const [fold, rest] = items;
-    if (fold.type !== "fold") throw new Error("expected a fold");
-    expect(fold.fold.label).toBe("step 4-6 get_subagent_status ×3");
-    expect(fold.fold.steps).toEqual(steps);
-    expect(fold.fold.span).toMatchObject({
-      startTimeMs: 3_000,
-      endTimeMs: 5_400,
-      durationMs: 1_200,
-      status: "ok",
-    });
-    expect(rest).toEqual({ type: "span", span: other });
-  });
-
-  test("marks a fold failed when one of its tool calls failed", () => {
-    const steps = [0, 1].map((number) =>
-      step("run", number, number * 1_000, number * 1_000 + 100),
-    );
-    const children = new Map(
-      steps.map((s, index): [string, ObservabilitySpanRow[]] => [
-        s.spanId,
-        [
-          {
-            ...toolOf(s, "bash"),
-            status: index === 1 ? "error" : "ok",
-          },
-        ],
-      ]),
-    );
-
-    const [fold] = foldSteps(steps, children);
-    if (fold.type !== "fold") throw new Error("expected a fold");
-    expect(fold.fold.span.status).toBe("error");
-  });
-
-  test("does not fold steps whose tool calls carry no tool name", () => {
-    const steps = [0, 1].map((number) =>
-      step("run", number, number * 1_000, number * 1_000 + 100),
-    );
-    const children = new Map(
-      steps.map((s): [string, ObservabilitySpanRow[]] => [
-        s.spanId,
-        [{ ...toolOf(s, "unnamed"), attributes: {} }],
-      ]),
-    );
-
-    expect(foldSteps(steps, children).map((item) => item.type)).toEqual([
-      "span",
-      "span",
-    ]);
-  });
-
-  test("leaves a lone step, mixed tools and interleaved spans unfolded", () => {
-    const first = step("run", 0, 1_000, 1_100);
-    const mixed = step("run", 1, 2_000, 2_100);
-    const phase = { ...step("run", 2, 3_000, 3_100), kind: "phase" as const };
-    const last = step("run", 3, 4_000, 4_100);
-    const children = new Map<string, ObservabilitySpanRow[]>([
-      [first.spanId, [toolOf(first, "bash")]],
-      [mixed.spanId, [toolOf(mixed, "bash"), toolOf(mixed, "read")]],
-      [last.spanId, [toolOf(last, "bash")]],
-    ]);
-
-    const items = foldSteps([first, mixed, phase, last], children);
-
-    expect(items.map((item) => item.type)).toEqual([
-      "span",
-      "span",
-      "span",
-      "span",
-    ]);
-  });
-});
-
 describe("task search", () => {
   test("splits field tokens from free words, ignoring unknown and empty fields", () => {
     expect(
@@ -270,15 +182,15 @@ describe("task search", () => {
     failed.conversationKey = "tg:42";
     failed.agentId = "support-bot";
     failed.error = "Provider returned 429 Too Many Requests";
-    const tool = child("run", "get_subagent_status", 1_200, "ok");
+    const tool = child("run", "stop_subagent", 1_200, "ok");
     const [group] = groupSpans([failed, tool]);
     const matches = (input: string): boolean =>
       matchesTaskQuery(group, parseTaskQuery(input));
 
     expect(matches("status:failed channel:telegram")).toBe(true);
     expect(matches("status:done")).toBe(false);
-    expect(matches("tool:get_subagent_status")).toBe(true);
-    expect(matches("tool:get_subagent")).toBe(false);
+    expect(matches("tool:stop_subagent")).toBe(true);
+    expect(matches("tool:stop_sub")).toBe(false);
     expect(matches("error:rate_limit")).toBe(true);
     expect(matches("error:timeout")).toBe(false);
     expect(matches("error:too")).toBe(true);
@@ -315,7 +227,6 @@ describe("task list line", () => {
       taskChannel({ ...task, conversationKey: key });
 
     expect(channelOf("tg:1")).toBe("Telegram");
-    // Stored keys are scoped to the account and agent.
     expect(channelOf("acct:a:agent:b:tg:7495331456")).toBe("Telegram");
     expect(channelOf("gh:owner/repo:pr:1")).toBe("GitHub");
     expect(channelOf("slack:T1:C1")).toBe("Slack");
@@ -337,6 +248,242 @@ describe("task list line", () => {
     );
   });
 });
+
+describe("waterfall issues", () => {
+  test("reads a failure and a retried model call off their spans", () => {
+    const failed = { ...child("run", "bash", 2_000, "error"), error: "boom" };
+    const retried = {
+      ...step("run", 0, 1_000, 5_000),
+      attributes: {
+        "model.attempts": 3,
+        "model.retry_wait_ms": 1_500,
+        "model.attempt_errors": '["429 rate limited"]',
+      },
+    };
+
+    expect(spanIssue(failed)).toEqual({
+      atMs: 2_100,
+      level: "error",
+      label: "Failed",
+      text: "boom",
+    });
+    expect(spanIssue(retried)).toEqual({
+      atMs: 2_500,
+      level: "warn",
+      label: "Retried 2×",
+      text: "429 rate limited",
+    });
+    expect(spanIssue(step("run", 1, 0, 1))).toBe(null);
+  });
+
+  test("counts a rate limited tool's retries", () => {
+    const tool = {
+      ...child("run", "search", 1_000, "ok"),
+      attributes: { "tool.retry.count": 2, "tool.retry.wait_ms": 400 },
+    };
+
+    expect(spanIssue(tool)).toMatchObject({
+      atMs: 1_000,
+      level: "warn",
+      label: "Retried 2×",
+    });
+  });
+
+  test("lists a run's issues in time order and what sits under each span", () => {
+    const task = root("run", 0, 10_000, "ok", {});
+    const first = step("run", 0, 1_000, 4_000);
+    const late = { ...toolOf(first, "bash"), status: "error" as const };
+    const early = {
+      ...child("run", "search", 500, "ok"),
+      attributes: { "tool.retry.count": 1, "tool.retry.wait_ms": 100 },
+    };
+
+    const [group] = groupSpans([task, first, late, early]);
+    const issues = runIssues(group);
+
+    expect(issues.all.map(({ span }) => span.spanId)).toEqual([
+      "run-search",
+      "run-step-0-bash",
+    ]);
+    // path lists the spans a click must open to reach the issue.
+    expect(
+      issues.all.map(({ path }) => path.map((span) => span.spanId)),
+    ).toEqual([[], ["run-step-0"]]);
+    expect(issues.below.get("run")).toHaveLength(2);
+    expect(issues.below.get("run-step-0")).toHaveLength(1);
+    expect(issues.below.get("run-step-0-bash")).toEqual([]);
+  });
+
+  test("a first pass that failed is not an issue once a continued pass went through", () => {
+    const failed = {
+      ...root("first", 0, 1_000, "error", { "task.id": TASK_ID }),
+      error: "rate limited",
+    };
+    const continued = root("again", 5_000, 6_000, "ok", {
+      "task.id": `${TASK_ID}:continue`,
+      "task.root_id": TASK_ID,
+    });
+
+    const [recovered] = groupSpans([failed, continued]);
+    const [stillFailed] = groupSpans([failed]);
+
+    expect(runIssues(recovered).all).toEqual([]);
+    expect(runIssues(stillFailed).own.get("first")?.label).toBe("Failed");
+  });
+
+  test("a run that failed mid tool call is one failure, at the tool", () => {
+    // Core closes the open step and tool with the run's error when it fails.
+    const failed = (span: ObservabilitySpanRow): ObservabilitySpanRow => ({
+      ...span,
+      status: "error",
+      error: "invalid x-api-key",
+    });
+    const task = failed(root("run", 0, 5_000, "error", {}));
+    const open = failed(step("run", 0, 1_000, 5_000));
+    const tool = failed(toolOf(open, "bash"));
+
+    const issues = runIssues(groupSpans([task, open, tool])[0]);
+
+    expect(issues.all.map(({ span }) => span.spanId)).toEqual([
+      "run-step-0-bash",
+    ]);
+    expect(issues.own.has("run")).toBe(false);
+    expect(issues.below.get("run")).toHaveLength(1);
+
+    // A tool that failed on its own, earlier, leaves the run's later failure standing.
+    const earlier = { ...tool, error: "file not found" };
+    const both = runIssues(groupSpans([task, open, earlier])[0]);
+    expect(both.all.map(({ span }) => span.spanId)).toEqual([
+      "run-step-0-bash",
+      "run-step-0",
+    ]);
+  });
+
+  test("steps the time axis so it shows at most four ticks", () => {
+    expect(axisTicks(12_000)).toEqual([0, 5_000, 10_000]);
+    expect(axisTicks(82_000)).toEqual([0, 30_000, 60_000]);
+    expect(axisTicks(400)).toEqual([0, 200, 400]);
+    expect(axisTicks(72 * 3_600_000)).toEqual(
+      [0, 24, 48, 72].map((hours) => hours * 3_600_000),
+    );
+  });
+});
+
+describe("taskCosts", () => {
+  const sonnet = {
+    "model.provider": "anthropic",
+    "model.id": "claude-sonnet-5-5",
+  };
+  const rates = [
+    {
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-5-5",
+      input: 2,
+      output: 10,
+      cacheRead: 0.1,
+      cacheWrite: 2.5,
+    },
+  ];
+
+  test("prices a request with its subagents, and each subagent on its own", () => {
+    const parent = root("parent", 1_000, 9_000, "ok", {
+      ...sonnet,
+      "task.id": TASK_ID,
+    });
+    const sub = {
+      ...root("sub", 2_000, 3_000, "ok", {
+        ...sonnet,
+        "parent.trace_id": "trace-parent",
+      }),
+      kind: "subtask" as const,
+    };
+    const groups = groupSpans([
+      parent,
+      sub,
+      modelStep("parent", 1_000_000, 100_000),
+      modelStep("sub", 500_000, 0),
+    ]);
+
+    const costs = taskCosts(groups, rates);
+
+    // parent: $2 in + $1 out; subagent: $1 in.
+    expect(costs.get("trace-parent:parent")?.usd).toBeCloseTo(4);
+    expect(costs.get("trace-parent:parent")?.partial).toBe(false);
+    expect(costs.get("trace-sub:sub")?.usd).toBeCloseTo(1);
+    expect(costs.get("trace-parent:parent-model")?.usd).toBeCloseTo(3);
+  });
+
+  test("keeps a request's priced spend as a floor when a subagent has no price", () => {
+    const parent = root("parent", 1_000, 9_000, "ok", {
+      ...sonnet,
+      "task.id": TASK_ID,
+    });
+    const sub = {
+      ...root("sub", 2_000, 3_000, "ok", {
+        "model.provider": "custom",
+        "model.id": "mine",
+        "parent.trace_id": "trace-parent",
+      }),
+      kind: "subtask" as const,
+    };
+    const groups = groupSpans([
+      parent,
+      sub,
+      modelStep("parent", 1_000_000, 0),
+      modelStep("sub", 500_000, 0),
+    ]);
+
+    const costs = taskCosts(groups, rates);
+
+    expect(costs.get("trace-parent:parent")).toEqual({ usd: 2, partial: true });
+    expect(costs.get("trace-sub:sub")).toBeNull();
+  });
+
+  test("reads not priced for an unknown model, nothing before a step or while rates load", () => {
+    const unknown = root("unknown", 1_000, 2_000, "ok", {
+      "model.provider": "custom",
+      "model.id": "mine",
+      "task.id": "acct:a:agent:b:tg:1:msg-1",
+    });
+    const idle = root("idle", 1_000, 2_000, "running", {
+      ...sonnet,
+      "task.id": "acct:a:agent:b:tg:1:msg-2",
+    });
+    const groups = groupSpans([unknown, idle, modelStep("unknown", 10, 10)]);
+
+    const costs = taskCosts(groups, rates);
+
+    expect(costs.get("trace-unknown:unknown")).toBeNull();
+    expect(costs.has("trace-idle:idle")).toBe(false);
+    expect(taskCosts(groups, undefined).size).toBe(0);
+    // A rate still loading leaves the step pending, not unpriced.
+    expect(taskCosts(groups, rates, true).has("trace-unknown:unknown")).toBe(
+      false,
+    );
+  });
+});
+
+function modelStep(
+  runId: string,
+  inputTokens: number,
+  outputTokens: number,
+): ObservabilitySpanRow {
+  return {
+    traceId: `trace-${runId}`,
+    spanId: `${runId}-model`,
+    parentSpanId: runId,
+    name: "model.step",
+    kind: "model.step",
+    startTimeMs: 1_500,
+    endTimeMs: 1_600,
+    durationMs: 100,
+    status: "ok",
+    attributes: {
+      "model.input_tokens": inputTokens,
+      "model.output_tokens": outputTokens,
+    },
+  };
+}
 
 function child(
   runId: string,

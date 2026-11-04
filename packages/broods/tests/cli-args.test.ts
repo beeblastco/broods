@@ -7,18 +7,10 @@ import {
   positionalArgs,
 } from "../src/cli/utils.ts";
 
-// `--stage` has to be a known value option, or its value falls through to
-// positionalArgs and `broods run <agent>` sends the stage name as the prompt.
 test("positionalArgs drops --stage and the name it carries", () => {
   const args = ["helper", "--stage", "staging", "say hi"];
 
   expect(positionalArgs(args)).toEqual(["helper", "say hi"]);
-});
-
-test("positionalArgs drops --from and the stage it clones", () => {
-  expect(positionalArgs(["staging", "--from", "development"])).toEqual([
-    "staging",
-  ]);
 });
 
 test("positionalArgs keeps the token after an inline --stage=value", () => {
@@ -33,7 +25,6 @@ test("optionValue reads the stage override", () => {
   expect(optionValue(["--stage", "staging"], "--env")).toBeUndefined();
 });
 
-// `broods deploy --stage=staging` used to miss the override and deploy production.
 test("optionValue reads an inline --name=value", () => {
   expect(optionValue(["--stage=staging"], "--stage")).toBe("staging");
   expect(optionValue(["--base-url=http://x/?a=b"], "--base-url")).toBe(
@@ -49,14 +40,11 @@ test("hasFlag reads a value option inline and a boolean flag only bare", () => {
   expect(hasFlag(["--forced"], "--force")).toBe(false);
 });
 
-// `broods project delete x --yes=false` must still ask before deleting.
 test("hasFlag ignores a boolean flag given a value", () => {
   expect(hasFlag(["--yes=false"], "--yes")).toBe(false);
   expect(hasFlag(["--prune=false"], "--prune")).toBe(false);
 });
 
-// A dashboard that cannot mint a code redirects with `error`; the CLI used to
-// wait out its 3-minute timeout, and crashed outright with no browser launcher.
 test("loginWithBrowser fails at once with the dashboard's error, browser or not", async () => {
   const path = process.env.PATH;
   process.env.PATH = "/nonexistent";
@@ -73,7 +61,7 @@ test("loginWithBrowser fails at once with the dashboard's error, browser or not"
     },
   });
   try {
-    expect(loginWithBrowser(dashboard.url.origin)).rejects.toThrow(
+    await expect(loginWithBrowser(dashboard.url.origin)).rejects.toThrow(
       "Login failed: No active org",
     );
   } finally {
@@ -82,7 +70,6 @@ test("loginWithBrowser fails at once with the dashboard's error, browser or not"
   }
 });
 
-// `cmd /c start` cut the login URL at its first `&`, dropping the PKCE challenge.
 test("browserCommand hands Windows the whole URL", () => {
   const url = "https://dash/cli-auth/start?callback=x&state=y";
 

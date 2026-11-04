@@ -1,8 +1,3 @@
-/**
- * Durable FIFO ingress, fenced conversation ownership, and pollable status.
- * Transport parsing stays in core; this module owns atomic admission and state transitions.
- */
-
 import { v, type Infer } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -12,74 +7,71 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
-import { isPlainObject } from "./model/objects";
 import {
   asyncAgentOutcomeValidator,
   asyncAgentResultRow,
   asyncToolResultRow,
   conversationEventsValidator,
+  deleteHarnessSessionEntries,
+  harnessSessionEntryValidator,
   insertConversationEvents,
-  handbackPatch,
-  markAsyncAgentResultSeen,
-  markAsyncToolResultSeen,
+  markResultStored,
   writeAsyncAgentResult,
 } from "./runtime";
 import {
   channelTargetRefsFields,
   ingressConfigRefValidator,
+  ingressDeliveryValidator,
   ingressModeValidator,
   ingressStatusValidator,
+  publicDeploymentIngressValidator,
   runtimeHarnessSessionsFields,
+  systemModelMessageValidator,
 } from "./schema";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
+import {
+  findHarnessEntry,
+  HARNESS_ENTRY_BATCH_BYTES,
+  HARNESS_ENTRY_BATCH_ROWS,
+  harnessEntryBytes,
+  MAX_HARNESS_SESSION_ENTRY_BYTES,
+} from "./model/harnessSessionEntries";
 import {
   asyncToolResultDedupeKey,
   subagentResultDedupeKey,
 } from "./model/subagentResults";
 
 const CLEAR_BATCH_SIZE = 100;
-// AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
-// coordinates, never chat history. Keep adapter regressions out of Convex rows.
+// Harness checkpoints hold session ids, never chat history: a bigger one is an adapter bug.
 const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
 
-// Statuses maintenance may still expire. Terminal rows (completed/failed/
-// expired) are excluded at the index, not filtered after the read: they retain
-// their stale expiresAt for the whole status retention window, and scanning
-// them every sweep re-reads every retained payload.
-// `accepted` and `applied` exist only in the public status type; no envelope
-// row is ever written with them.
+// Terminal rows keep a stale expiresAt through retention; scanning them rereads every payload.
 const EXPIRABLE_STATUSES = ["queued", "processing"] as const;
 
 const MAX_DRAIN_ENVELOPES = 100;
 
-// `renewOwner` skips the write while more than this fraction of the TTL remains.
 const RENEW_AFTER_TTL_FRACTION = 0.9;
 
-// Statuses whose rows only await retention deletion; scanned by their own
-// index so the sweep never touches a row it is not about to delete.
 const TERMINAL_STATUSES = ["completed", "failed", "expired"] as const;
 
-// Spread into every terminal patch. Nothing reads a settled row's payload
-// (duplicate replay compares `payloadDigest`), so it should not sit in the
-// table for the whole status retention window.
+// Duplicate replay compares only payloadDigest, so a settled row need not keep its payload.
 const RELEASED_PAYLOAD = {
   events: [],
   configRef: undefined,
   ephemeralSystem: undefined,
 };
 
-// appliedEnvelopeValidator stays ahead of admissionResultValidator, which embeds it.
 const appliedEnvelopeValidator = v.object({
   eventId: v.string(),
   events: v.array(v.any()),
-  delivery: v.any(),
+  delivery: ingressDeliveryValidator,
   requestedMode: ingressModeValidator,
   appliedMode: ingressModeValidator,
   appliedToEventId: v.string(),
   contributingEventIds: v.array(v.string()),
   ownerGeneration: v.number(),
   configRef: v.optional(ingressConfigRefValidator),
-  ephemeralSystem: v.optional(v.array(v.any())),
+  ephemeralSystem: v.optional(v.array(systemModelMessageValidator)),
 });
 
 const admissionResultValidator = v.object({
@@ -93,14 +85,12 @@ const admissionResultValidator = v.object({
     v.literal("not_running"),
   ),
   eventId: v.optional(v.string()),
-  // The run's own id. On a duplicate this is the first admission's, not the
-  // one the retry minted, so an idempotent POST keeps one run id.
+  // On a duplicate, the first admission's run id, so an idempotent POST keeps one run id.
   runId: v.optional(v.string()),
   status: v.optional(ingressStatusValidator),
   ownerGeneration: v.optional(v.number()),
   sequence: v.optional(v.number()),
-  // Present when admission recovered an expired owner by promoting the oldest
-  // queued envelope; the caller must schedule this recovered application.
+  // Queued work promoted off an expired owner; the caller must schedule it.
   recovered: v.optional(appliedEnvelopeValidator),
 });
 
@@ -111,9 +101,7 @@ const recoveredIngressValidator = v.object({
   applied: appliedEnvelopeValidator,
 });
 
-// What a channel session keeps so a cron, background job or inter-session
-// message can reach it again: the place, and the rows core rebuilds the run's
-// config from. Never the config itself, which holds decrypted secrets.
+// Only the refs core rebuilds a run's config from: the config itself holds decrypted secrets.
 const channelTargetFields = {
   channelName: v.string(),
   source: v.record(v.string(), v.any()),
@@ -137,14 +125,7 @@ const ingressStatusResultValidator = v.object({
   error: v.optional(v.string()),
   stoppedByUser: v.optional(v.boolean()),
   result: v.optional(v.any()),
-  publicDeploymentIngress: v.optional(
-    v.object({
-      accountId: v.string(),
-      endpointId: v.string(),
-      stageSlug: v.string(),
-      projectSlug: v.string(),
-    }),
-  ),
+  publicDeploymentIngress: v.optional(publicDeploymentIngressValidator),
 });
 
 const ownerRenewalResultValidator = v.union(
@@ -158,20 +139,14 @@ const stepBoundaryResultValidator = v.object({
   steering: v.union(appliedEnvelopeValidator, v.null()),
 });
 
-// The part of a channel delivery that names who sent the message.
-type DeliverySender = { identity?: { userId?: string } } | null | undefined;
+type PublicDeploymentIngress = Infer<typeof publicDeploymentIngressValidator>;
 
-type PublicDeploymentIngress = {
-  accountId: string;
-  endpointId: string;
-  stageSlug: string;
-  projectSlug: string;
-};
+interface EntryPosition {
+  contextStart: number;
+  sequence: number;
+}
 
-/**
- * Atomically admits an ingress candidate, binds idempotency, and either owns or queues it.
- * Rejected busy candidates create neither an envelope nor an identity tombstone.
- */
+/** Rejected busy candidates create neither an envelope nor an identity tombstone. */
 export const accept = internalMutation({
   args: {
     activeOwnerOnly: v.optional(v.boolean()),
@@ -185,21 +160,19 @@ export const accept = internalMutation({
     idempotencyKey: v.string(),
     payloadDigest: v.string(),
     events: v.array(v.any()),
-    delivery: v.any(),
+    delivery: ingressDeliveryValidator,
     requestedMode: ingressModeValidator,
     configRef: v.optional(ingressConfigRefValidator),
     channelTarget: v.optional(channelTargetValidator),
-    ephemeralSystem: v.optional(v.array(v.any())),
+    ephemeralSystem: v.optional(v.array(systemModelMessageValidator)),
     sizeBytes: v.number(),
     leaseTtlMs: v.number(),
     envelopeTtlMs: v.number(),
     statusTtlMs: v.number(),
     maxQueuedCount: v.number(),
     maxQueuedBytes: v.number(),
-    // The subagent result row a late-result continuation delivers. It is
-    // admitted only while the parent has not seen that result, and marks it seen.
+    // Result rows a late-result resume delivers: admitted only until stored, stored once run.
     resultEventId: v.optional(v.string()),
-    // The async tool result row a continuation delivers, fenced the same way.
     toolResultId: v.optional(v.string()),
   },
   returns: admissionResultValidator,
@@ -220,12 +193,10 @@ export const accept = internalMutation({
     const prepared = await prepareAdmissionCoordinator(ctx, args, now);
     let coordinator = prepared.coordinator;
     const queue = prepared.queue;
-    // Fenced before recovery: a late control must not claim the owner slot
-    // that recovery is about to hand to already-queued work.
+    // Before recovery: a late control must not take the owner slot recovery hands to queued work.
     const lateControl = isLateControl(args, coordinator, now);
 
-    // Durable FIFO recovery: when the owner lease expired with work still
-    // queued, the oldest queued group must run before this new arrival.
+    // FIFO: work queued behind an expired owner runs before this arrival.
     let recovered: Awaited<ReturnType<typeof promoteQueuedGroup>> = null;
     if (!hasActiveOwner(coordinator, now) && queue.queuedCount > 0) {
       recovered = await promoteQueuedGroup(ctx, {
@@ -266,8 +237,6 @@ export const accept = internalMutation({
       };
     }
 
-    await markAsyncAgentResultSeen(ctx, args.accountId, args.resultEventId);
-    await markAsyncToolResultSeen(ctx, args.accountId, args.toolResultId);
     const sequence = coordinator.nextSequence;
     const baseEnvelope = buildAdmissionEnvelope(args, identity, sequence, now);
     if (busy) {
@@ -323,7 +292,6 @@ export const accept = internalMutation({
   },
 });
 
-/** Acquires a fenced clear lease only when no run or queued ingress exists. */
 export const acquireClear = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -346,7 +314,11 @@ export const acquireClear = internalMutation({
         now: now,
       }));
     const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
-    if (hasActiveOwner(coordinator, now) || queue.queuedCount > 0) return null;
+    if (hasActiveOwner(coordinator, now) || queue.queuedCount > 0) {
+      await patchQueueCounters(ctx, coordinator, queue, now);
+
+      return null;
+    }
     const generation = coordinator.ownerGeneration + 1;
     await ctx.db.patch(coordinator._id, {
       ownerGeneration: generation,
@@ -362,7 +334,6 @@ export const acquireClear = internalMutation({
   },
 });
 
-/** Appends history events only for the current fenced owner, all or none. */
 export const appendConversationEvent = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -379,19 +350,13 @@ export const appendConversationEvent = internalMutation({
   },
 });
 
-/**
- * Applies the contiguous FIFO steer prefix at one step boundary. Claims nothing
- * once a stop is requested for this generation, so a stop that lands after
- * core's renew leaves the steer queued for the next turn.
- */
 export const applySteering = internalMutation({
   args: {
     conversationKey: v.string(),
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
     leaseTtlMs: v.number(),
-    // A harness turn takes a steer only as text: claim the plain-text prefix
-    // and leave the rest queued for the next turn.
+    // A harness turn takes a steer only as text; the rest stays queued for the next turn.
     textOnly: v.optional(v.boolean()),
   },
   returns: v.union(appliedEnvelopeValidator, v.null()),
@@ -406,7 +371,6 @@ export const applySteering = internalMutation({
   },
 });
 
-/** Clears one bounded history batch while the caller holds the clear lease. */
 export const clearConversation = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -435,19 +399,47 @@ export const clearConversation = internalMutation({
       )
       .unique();
     if (harnessSession) await ctx.db.delete(harnessSession._id);
+    const entriesLeft = await deleteHarnessSessionEntries(
+      ctx,
+      args.conversationKey,
+    );
 
     return {
       deleted: batch.length,
-      hasMore: rows.length > CLEAR_BATCH_SIZE,
+      hasMore: rows.length > CLEAR_BATCH_SIZE || entriesLeft,
     };
   },
 });
 
-/**
- * Stores the native harness checkpoint for the current fenced owner, in the same
- * transaction as the owner check: a run whose lease lapsed and was reassigned
- * cannot overwrite the newer owner's resume state.
- */
+// Stages one batch of a turn's entries before its checkpoint; returns the last sequence.
+export const appendHarnessSessionEntries = internalMutation({
+  args: {
+    conversationKey: v.string(),
+    ownerEventId: v.string(),
+    ownerGeneration: v.number(),
+    sessionId: v.string(),
+    afterSequence: v.optional(v.number()),
+    entries: v.array(harnessSessionEntryValidator),
+  },
+  returns: v.number(),
+  handler: async (ctx, args): Promise<number> => {
+    const coordinator = await requireOwner(ctx, args);
+    await requireActiveAccount(ctx, coordinator.accountId);
+    const existing = await harnessSessionRow(ctx, args.conversationKey);
+    const lastSequence = await appendHarnessEntries(ctx, {
+      accountId: coordinator.accountId,
+      existing: existing,
+      ...args,
+    });
+    // The counter moves now, so a later save never reuses a staged sequence.
+    if (existing?.sessionId === args.sessionId) {
+      await ctx.db.patch(existing._id, { lastSequence: lastSequence });
+    }
+
+    return lastSequence;
+  },
+});
+
 export const saveHarnessSession = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -457,6 +449,9 @@ export const saveHarnessSession = internalMutation({
     sessionId: v.string(),
     resumeState: v.any(),
     reservationKey: v.optional(v.string()),
+    // Pi's entries for this checkpoint, after any staged with `appendHarnessSessionEntries`.
+    afterSequence: v.optional(v.number()),
+    entries: v.optional(v.array(harnessSessionEntryValidator)),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -474,12 +469,7 @@ export const saveHarnessSession = internalMutation({
         `Harness resume state is ${resumeStateBytes} bytes; the maximum is ${MAX_HARNESS_RESUME_STATE_BYTES}`,
       );
     }
-    const existing = await ctx.db
-      .query("runtimeHarnessSessions")
-      .withIndex("by_conversationKey", (q) =>
-        q.eq("conversationKey", args.conversationKey),
-      )
-      .unique();
+    const existing = await harnessSessionRow(ctx, args.conversationKey);
     const value = {
       accountId: coordinator.accountId,
       conversationKey: args.conversationKey,
@@ -487,6 +477,14 @@ export const saveHarnessSession = internalMutation({
       sessionId: args.sessionId,
       resumeState: args.resumeState,
       reservationKey: args.reservationKey,
+      lastSequence: await appendHarnessEntries(ctx, {
+        accountId: coordinator.accountId,
+        existing: existing,
+        conversationKey: args.conversationKey,
+        sessionId: args.sessionId,
+        afterSequence: args.afterSequence,
+        entries: args.entries ?? [],
+      }),
       updatedAt: Date.now(),
     };
     if (existing) {
@@ -494,12 +492,19 @@ export const saveHarnessSession = internalMutation({
     } else {
       await ctx.db.insert("runtimeHarnessSessions", value);
     }
+    // A replaced session, or one a partial clear left behind, has nothing pointing at it.
+    if (existing?.sessionId !== args.sessionId) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.runtime.pruneHarnessSessionEntries,
+        { conversationKey: args.conversationKey },
+      );
+    }
 
     return null;
   },
 });
 
-/** Returns the durable channel destination for one existing agent session. */
 export const getConversationTarget = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -526,7 +531,6 @@ export const getConversationTarget = internalQuery({
   },
 });
 
-/** Reads one status only when account and agent authorization match its envelope. */
 export const getStatus = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -537,8 +541,7 @@ export const getStatus = internalQuery({
     ctx,
     args,
   ): Promise<Infer<typeof ingressStatusResultValidator> | null> => {
-    // Account-scoped at the index, so a guessed run id cannot read across
-    // accounts and the agent comes off the row rather than the query string.
+    // Account-scoped at the index: a guessed run id cannot read across accounts.
     const row = await ctx.db
       .query("runtimeIngressEnvelopes")
       .withIndex("by_accountId_and_runId", (q) =>
@@ -551,11 +554,7 @@ export const getStatus = internalQuery({
   },
 });
 
-/**
- * Reads one run's status by its scoped event id, re-checking the account and
- * agent the caller named. Only the subagent-parent authorization check uses
- * this: it knows the parent's scoped id but not the parent's run id.
- */
+/** For the subagent-parent auth check: it knows the parent's event id, not its run id. */
 export const getStatusByEventId = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -583,7 +582,6 @@ export const getStatusByEventId = internalQuery({
   },
 });
 
-/** Checks whether the supplied owner generation is still current and unexpired. */
 export const isCurrentOwner = internalQuery({
   args: {
     conversationKey: v.string(),
@@ -602,7 +600,6 @@ export const isCurrentOwner = internalQuery({
   },
 });
 
-/** Expires abandoned work and removes status/idempotency rows after retention. */
 export const maintain = internalMutation({
   args: {},
   returns: v.object({ expired: v.number(), deleted: v.number() }),
@@ -628,8 +625,7 @@ export const maintain = internalMutation({
         hasActiveOwner(coordinator, now) &&
         row.ownerGeneration === coordinator.ownerGeneration
       ) {
-        // The owner is alive. Move the row off the head of the due range, or
-        // 100 long runs would fill every batch and starve real expiries.
+        // Off the due range, or long live runs fill every batch and starve real expiries.
         await ctx.db.patch(row._id, { expiresAt: coordinator.leaseExpiresAt });
         continue;
       }
@@ -683,8 +679,6 @@ export const maintain = internalMutation({
       .take(MAX_DRAIN_ENVELOPES);
     for (const row of applications) await ctx.db.delete(row._id);
 
-    // A full batch means a backlog the fixed cadence cannot drain; keep
-    // sweeping immediately until every range comes back short.
     if (
       dueBatches.some((batch) => batch.length === MAX_DRAIN_ENVELOPES) ||
       retainedBatches.some((batch) => batch.length === MAX_DRAIN_ENVELOPES) ||
@@ -698,17 +692,8 @@ export const maintain = internalMutation({
 });
 
 /**
- * Promotes the oldest queued group of each conversation that has queued work
- * but no live owner. Admission already recovers a conversation when its next
- * message arrives; this is for the ones nobody writes to again, such as the
- * queue behind a run that core handed back at shutdown. Core calls it on boot
- * and on a timer, then dispatches every returned application, whose lease it
- * now holds.
- *
- * Steps through queued conversations in key order, one index read each, so a
- * conversation with a long queue behind a live owner costs no more than any
- * other. Bounded like maintain: `continueAfter` is the last conversation this
- * page looked at, for the caller's next page, or null when none remain.
+ * For queues nobody writes to again, e.g. behind a run core handed back at shutdown.
+ * The caller holds each returned lease and must dispatch it.
  */
 export const recoverQueued = internalMutation({
   args: {
@@ -745,9 +730,7 @@ export const recoverQueued = internalMutation({
       const account = await ctx.db.get(coordinator.accountId);
       if (account?.status !== "active") continue;
       await expireStaleOwner(ctx, coordinator, now);
-      // Recovery is the self-heal, so it reads the page without trusting the
-      // counter, and a page short of a full batch is the whole queue: the
-      // counters follow it.
+      // The self-heal: reads past the counter, and a short page is the whole queue.
       const rows = await queuedEnvelopes(ctx, coordinator.conversationKey);
       const swept = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
       const live = rows.filter((row) => row.expiresAt > now);
@@ -785,7 +768,6 @@ export const recoverQueued = internalMutation({
   },
 });
 
-/** Releases ownership only when the caller still holds the current generation. */
 export const releaseOwner = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -813,7 +795,6 @@ export const releaseOwner = internalMutation({
   },
 });
 
-/** Renews the current owner or reports its generation-scoped stop request. */
 export const renewOwner = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -842,13 +823,6 @@ export const renewOwner = internalMutation({
   },
 });
 
-/**
- * Settles every envelope whose work was applied to the current owner event.
- * An async run passes its polling rows as `asyncResult`; they are written in
- * the same transaction, and only by the settle that finishes the owner's own
- * envelope, so they can never disagree with it. `events` are the owner's
- * history rows still unwritten, stored under the same fence first.
- */
 export const settle = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -867,11 +841,12 @@ export const settle = internalMutation({
   },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
-    const coordinator = await requireOwner(ctx, args);
+    let coordinator = await requireOwner(ctx, args);
     if (args.events && args.events.length > 0) {
-      await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
+    // Only with the owner's own envelope, so polling rows never disagree with it.
     if (args.asyncResult && settled.ownerFinished) {
       for (const eventId of args.asyncResult.eventIds) {
         await writeAsyncAgentResult(ctx, eventId, args.asyncResult.outcome);
@@ -882,13 +857,6 @@ export const settle = internalMutation({
   },
 });
 
-/**
- * One model step boundary in one transaction: the fenced append of the step's
- * rows, the stop check, the lease renewal, and the steer claim. A stale owner
- * writes nothing. A stop keeps the rows, as `renewOwner` beside a fenced append
- * did, and claims no steer. `claimSteering: false` leaves steers queued for the
- * next run, as a run winding down before its deadline asks.
- */
 export const stepBoundary = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -911,7 +879,7 @@ export const stepBoundary = internalMutation({
       return { renewal: "stale" as const, steering: null };
     }
     if (args.events && args.events.length > 0) {
-      await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
       return { renewal: "stopped" as const, steering: null };
@@ -927,7 +895,6 @@ export const stepBoundary = internalMutation({
   },
 });
 
-/** Requests a boundary stop for the current generation; queued work is untouched. */
 export const stopOwner = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -963,11 +930,6 @@ export const stopOwner = internalMutation({
   },
 });
 
-/**
- * Applies the oldest runnable group, or releases ownership when none remains.
- * With `settle`, first settles the owner's envelopes in the same transaction,
- * after storing any `events` the owner still had to write.
- */
 export const takeNext = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -989,9 +951,9 @@ export const takeNext = internalMutation({
     args,
   ): Promise<Infer<typeof appliedEnvelopeValidator> | null> => {
     const now = Date.now();
-    const coordinator = await requireOwner(ctx, { ...args, now: now });
+    let coordinator = await requireOwner(ctx, { ...args, now: now });
     if (args.events && args.events.length > 0) {
-      await insertOwnedEvents(ctx, coordinator, args.events);
+      coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     if (args.settle) {
       await settleAppliedEnvelopes(ctx, coordinator, {
@@ -1026,7 +988,92 @@ export const takeNext = internalMutation({
   },
 });
 
-/** Verifies that server-derived account and agent scope match the conversation key. */
+// A retried entry id is skipped, as Pi's session storage contract allows.
+async function appendHarnessEntries(
+  ctx: MutationCtx,
+  options: {
+    accountId: Id<"accounts">;
+    existing: Doc<"runtimeHarnessSessions"> | null;
+    conversationKey: string;
+    sessionId: string;
+    afterSequence?: number;
+    entries: Infer<typeof harnessSessionEntryValidator>[];
+  },
+): Promise<number> {
+  // Rows staged before a first checkpoint, or by a retried batch, are counted only here.
+  const last = await ctx.db
+    .query("runtimeHarnessSessionEntries")
+    .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
+      q
+        .eq("conversationKey", options.conversationKey)
+        .eq("sessionId", options.sessionId),
+    )
+    .order("desc")
+    .first();
+  let sequence = Math.max(
+    options.afterSequence ?? 0,
+    options.existing?.sessionId === options.sessionId
+      ? (options.existing.lastSequence ?? 0)
+      : 0,
+    last?.sequence ?? 0,
+  );
+  const bytes = options.entries.map((entry): number =>
+    harnessEntryBytes(entry.entry),
+  );
+  if (
+    options.entries.length > HARNESS_ENTRY_BATCH_ROWS ||
+    bytes.reduce((total, size): number => total + size, 0) >
+      HARNESS_ENTRY_BATCH_BYTES
+  ) {
+    throw new Error(
+      `A harness entry batch holds at most ${HARNESS_ENTRY_BATCH_ROWS} entries and ${HARNESS_ENTRY_BATCH_BYTES} bytes`,
+    );
+  }
+  const positions = new Map<string, EntryPosition | null>();
+  const positionOf = async (
+    entryId: string | undefined,
+  ): Promise<EntryPosition | null> => {
+    if (entryId === undefined) return null;
+    if (!positions.has(entryId)) {
+      const row = await findHarnessEntry(ctx.db, options, entryId);
+      positions.set(
+        entryId,
+        row && { sequence: row.sequence, contextStart: row.contextStart ?? 0 },
+      );
+    }
+
+    return positions.get(entryId)!;
+  };
+  for (const [index, entry] of options.entries.entries()) {
+    if (bytes[index]! > MAX_HARNESS_SESSION_ENTRY_BYTES) {
+      throw new Error(
+        `Harness session entry ${entry.entryId} is ${bytes[index]} bytes; the maximum is ${MAX_HARNESS_SESSION_ENTRY_BYTES}`,
+      );
+    }
+    if (await positionOf(entry.entryId)) continue;
+    sequence += 1;
+    // A compaction starts a new window; any other entry stays in its parent's.
+    const contextStart =
+      (await positionOf(entry.firstKeptEntryId))?.sequence ??
+      (await positionOf(entry.parentEntryId))?.contextStart ??
+      0;
+    await ctx.db.insert("runtimeHarnessSessionEntries", {
+      accountId: options.accountId,
+      conversationKey: options.conversationKey,
+      sessionId: options.sessionId,
+      sequence: sequence,
+      contextStart: contextStart,
+      ...entry,
+    });
+    positions.set(entry.entryId, {
+      sequence: sequence,
+      contextStart: contextStart,
+    });
+  }
+
+  return sequence;
+}
+
 function assertConversationScope(
   accountId: string,
   agentId: string,
@@ -1040,7 +1087,6 @@ function assertConversationScope(
   }
 }
 
-/** The envelope fields shared by the queued and owner insert paths of `accept`. */
 function buildAdmissionEnvelope(
   args: {
     accountId: Id<"accounts">;
@@ -1051,11 +1097,13 @@ function buildAdmissionEnvelope(
     idempotencyKey: string;
     payloadDigest: string;
     events: unknown[];
-    delivery: unknown;
+    delivery: Infer<typeof ingressDeliveryValidator>;
     requestedMode: Infer<typeof ingressModeValidator>;
     ownerTaskId?: string;
     configRef?: Infer<typeof ingressConfigRefValidator>;
-    ephemeralSystem?: unknown[];
+    ephemeralSystem?: Infer<typeof systemModelMessageValidator>[];
+    resultEventId?: string;
+    toolResultId?: string;
     sizeBytes: number;
     envelopeTtlMs: number;
     statusTtlMs: number;
@@ -1084,6 +1132,12 @@ function buildAdmissionEnvelope(
     ...(args.ephemeralSystem !== undefined
       ? { ephemeralSystem: args.ephemeralSystem }
       : {}),
+    ...(args.resultEventId !== undefined
+      ? { resultEventId: args.resultEventId }
+      : {}),
+    ...(args.toolResultId !== undefined
+      ? { toolResultId: args.toolResultId }
+      : {}),
     sizeBytes: args.sizeBytes,
     createdAt: now,
     updatedAt: now,
@@ -1092,7 +1146,6 @@ function buildAdmissionEnvelope(
   };
 }
 
-/** Hashes the one canonical tenant/agent/conversation idempotency identity. */
 async function canonicalIdentity(options: {
   accountId: string;
   agentId: string;
@@ -1115,14 +1168,7 @@ async function canonicalIdentity(options: {
     .join("");
 }
 
-/**
- * Idempotency check for `accept`: an identity match replays its prior
- * admission (or conflicts on a different payload digest), and an eventId
- * reused under a different identity is always a conflict. Null means the
- * candidate is new. Rejected busy candidates create neither an envelope nor
- * an identity tombstone. Its one write marks a late subagent or async tool
- * result stored when the conversation already stores it.
- */
+/** Writes only to let a late result through once; null means the candidate is new. */
 async function checkDuplicateAdmission(
   ctx: MutationCtx,
   args: {
@@ -1139,8 +1185,14 @@ async function checkDuplicateAdmission(
     .query("runtimeIngressEnvelopes")
     .withIndex("by_identity", (q) => q.eq("identity", identity))
     .unique();
-  if (existing) {
-    if (existing.payloadDigest !== args.payloadDigest) {
+  if (existing && (await undeliveredResume(ctx, existing))) {
+    await ctx.db.delete(existing._id);
+  } else if (existing) {
+    // A sweep retry of a queued resume can drift (hook rewrite, model redeploy): same result.
+    if (
+      existing.payloadDigest !== args.payloadDigest &&
+      !resumesSameResult(existing, args)
+    ) {
       return { outcome: "conflict" as const, eventId: existing.eventId };
     }
 
@@ -1162,9 +1214,7 @@ async function checkDuplicateAdmission(
   if (existingEvent) {
     return { outcome: "conflict" as const, eventId: existingEvent.eventId };
   }
-  // A status tool read and a late resume race to deliver one result; whichever
-  // marks it stored first wins, so the conversation is told it once. Only the
-  // caller's own account's row counts.
+  // A status read and a late resume race to deliver one result; the first to mark it stored wins.
   const result = await asyncAgentResultRow(ctx, args.resultEventId);
   if (result?.accountId === args.accountId) {
     return await storedResultAdmission(ctx, args, result, (status): string =>
@@ -1184,25 +1234,22 @@ async function checkDuplicateAdmission(
   return null;
 }
 
-/**
- * The duplicate `checkDuplicateAdmission` answers for a continuation whose
- * result the conversation already has, or null when it does not. `observed`
- * is the flag the release before `handback` wrote. A write that stored the
- * result but lost its reply has it in the conversation already, under the key
- * core wrote it with (`dedupeKeyFor`). Both finished keys are tried: the row
- * can still read `processing` while the conversation holds the result its run
- * saw. The conversation has it, so it is marked stored and the recovery sweep
- * stops retrying it.
- */
 async function storedResultAdmission(
   ctx: MutationCtx,
-  args: { conversationKey: string; eventId: string },
+  args: {
+    conversationKey: string;
+    eventId: string;
+    resultEventId?: string;
+    toolResultId?: string;
+  },
   result: Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults">,
   dedupeKeyFor: (status: "completed" | "failed") => string,
 ): Promise<Infer<typeof admissionResultValidator> | null> {
-  if (result.handback === "stored" || result.observed === true) {
+  if (result.handback === "stored" || (await liveResumeOf(ctx, args))) {
     return { outcome: "duplicate" as const, eventId: args.eventId };
   }
+  // A write that stored the result but lost its reply left it here. Both keys: the row can
+  // still read `processing` while the conversation holds the result its run saw.
   for (const status of ["completed", "failed"] as const) {
     const stored = await ctx.db
       .query("runtimeConversationEvents")
@@ -1213,13 +1260,79 @@ async function storedResultAdmission(
       )
       .first();
     if (stored) {
-      await ctx.db.patch(result._id, handbackPatch("stored"));
+      await markResultStored(
+        ctx,
+        result.accountId,
+        args.conversationKey,
+        result,
+      );
 
       return { outcome: "duplicate" as const, eventId: args.eventId };
     }
   }
 
   return null;
+}
+
+/**
+ * Whether `envelope` is a resume that ended, expired, failed or settled,
+ * without its owner saving it. That save marks its result stored, so a result
+ * row of its account still not stored is one the conversation never got.
+ */
+async function undeliveredResume(
+  ctx: QueryCtx,
+  envelope: Doc<"runtimeIngressEnvelopes">,
+): Promise<boolean> {
+  if (envelope.status === "queued" || envelope.status === "processing") {
+    return false;
+  }
+  const rows = [
+    await asyncAgentResultRow(ctx, envelope.resultEventId),
+    await asyncToolResultRow(ctx, envelope.toolResultId),
+  ];
+
+  return rows.some(
+    (row): boolean =>
+      row?.accountId === envelope.accountId && row.handback !== "stored",
+  );
+}
+
+/**
+ * A resume of the same late result still queued or applied in the
+ * conversation, under any identity: it tells the result, and its owner's save
+ * stores it, so a second resume would tell it again.
+ */
+async function liveResumeOf(
+  ctx: QueryCtx,
+  args: {
+    conversationKey: string;
+    resultEventId?: string;
+    toolResultId?: string;
+  },
+): Promise<boolean> {
+  for (const status of EXPIRABLE_STATUSES) {
+    const live =
+      args.resultEventId !== undefined
+        ? await ctx.db
+            .query("runtimeIngressEnvelopes")
+            .withIndex("by_resultEventId_and_status", (q) =>
+              q.eq("resultEventId", args.resultEventId).eq("status", status),
+            )
+            .take(MAX_DRAIN_ENVELOPES)
+        : await ctx.db
+            .query("runtimeIngressEnvelopes")
+            .withIndex("by_toolResultId_and_status", (q) =>
+              q.eq("toolResultId", args.toolResultId).eq("status", status),
+            )
+            .take(MAX_DRAIN_ENVELOPES);
+    if (
+      live.some((row): boolean => row.conversationKey === args.conversationKey)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -1238,6 +1351,7 @@ async function claimSteering(
   },
   now: number,
 ): Promise<Infer<typeof appliedEnvelopeValidator> | null> {
+  // A stop landing after core's renew leaves the steer queued for the next turn.
   if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
     return null;
   }
@@ -1310,7 +1424,6 @@ async function claimSteering(
   };
 }
 
-/** One envelope row as the status shape the public status route answers with. */
 function ingressStatusResult(
   row: Doc<"runtimeIngressEnvelopes">,
 ): Infer<typeof ingressStatusResultValidator> {
@@ -1341,25 +1454,41 @@ function ingressStatusResult(
   };
 }
 
-/** Inserts history rows for an owner the fence just accepted, all or none. */
 async function insertOwnedEvents(
   ctx: MutationCtx,
   coordinator: Doc<"runtimeConversationCoordinators">,
   events: Infer<typeof conversationEventsValidator>,
-): Promise<void> {
+): Promise<Doc<"runtimeConversationCoordinators">> {
   await requireActiveAccount(ctx, coordinator.accountId);
-  await insertConversationEvents(
+  const stored = await insertConversationEvents(
     ctx,
     coordinator.accountId,
     coordinator.conversationKey,
     events,
   );
+  if (stored.length === 0) return coordinator;
+  const now = Date.now();
+  const queue = {
+    queuedCount: coordinator.queuedCount,
+    queuedBytes: coordinator.queuedBytes,
+  };
+  for (const row of await queuedPage(ctx, coordinator)) {
+    if (!stored.some((fence): boolean => resumesSameResult(row, fence))) {
+      continue;
+    }
+    await ctx.db.patch(row._id, {
+      ...RELEASED_PAYLOAD,
+      status: "completed",
+      updatedAt: now,
+    });
+    queue.queuedCount = Math.max(0, queue.queuedCount - 1);
+    queue.queuedBytes = Math.max(0, queue.queuedBytes - row.sizeBytes);
+  }
+
+  return await patchQueueCounters(ctx, coordinator, queue, now);
 }
 
-/**
- * Whether a stored ingress event is a user message made only of text. Events
- * are stored as `v.any()`, so this reads the model message shape at run time.
- */
+// Events are stored as `v.any()`, so the model message shape is read at run time.
 function isPlainUserText(event: unknown): boolean {
   if (
     typeof event !== "object" ||
@@ -1385,28 +1514,29 @@ function isPlainUserText(event: unknown): boolean {
   );
 }
 
-/**
- * The leading run of rows that share the first row's requestedMode and the
- * sender's userId, so one turn never runs two people's messages.
- */
+// Also split on the sender, so one turn never runs two people's messages.
 function contiguousModePrefix(
   rows: Doc<"runtimeIngressEnvelopes">[],
-  sender: DeliverySender = rows[0]?.delivery,
+  sender: Infer<typeof ingressDeliveryValidator> | undefined = rows[0]
+    ?.delivery,
 ): Doc<"runtimeIngressEnvelopes">[] {
   if (rows.length === 0) return [];
-  const end = rows.findIndex((row): boolean => {
-    const delivery: DeliverySender = row.delivery;
-
-    return (
+  const senderUserId = deliverySenderUserId(sender);
+  const end = rows.findIndex(
+    (row): boolean =>
       row.requestedMode !== rows[0]!.requestedMode ||
-      delivery?.identity?.userId !== sender?.identity?.userId
-    );
-  });
+      deliverySenderUserId(row.delivery) !== senderUserId,
+  );
 
   return end === -1 ? rows : rows.slice(0, end);
 }
 
-/** Inserts a new zeroed coordinator when the conversation has no state yet. */
+function deliverySenderUserId(
+  delivery: Infer<typeof ingressDeliveryValidator> | undefined,
+): string | undefined {
+  return delivery?.kind === "channel" ? delivery.identity?.userId : undefined;
+}
+
 async function createCoordinator(
   ctx: MutationCtx,
   options: {
@@ -1430,11 +1560,6 @@ async function createCoordinator(
   return (await ctx.db.get(id))!;
 }
 
-/**
- * Marks expired queued work terminal and returns adjusted queue counters.
- * `rows` is the queued page when the caller already read it (`queuedPage`),
- * so one mutation reads the queue once.
- */
 async function expireQueuedEnvelopes(
   ctx: MutationCtx,
   coordinator: Doc<"runtimeConversationCoordinators">,
@@ -1462,7 +1587,6 @@ async function expireQueuedEnvelopes(
   };
 }
 
-/** Marks a crashed owner's nonterminal envelope expired before ownership recovery. */
 async function expireStaleOwner(
   ctx: MutationCtx,
   coordinator: Doc<"runtimeConversationCoordinators">,
@@ -1499,10 +1623,19 @@ async function getCoordinator(
     .unique();
 }
 
-/**
- * Whether the coordinator has an owner whose lease has not ended. A lease that
- * ends this millisecond is still live; the fence and every expiry agree on it.
- */
+// A lease ending this millisecond is still live; the fence and every expiry agree on it.
+async function harnessSessionRow(
+  ctx: MutationCtx,
+  conversationKey: string,
+): Promise<Doc<"runtimeHarnessSessions"> | null> {
+  return await ctx.db
+    .query("runtimeHarnessSessions")
+    .withIndex("by_conversationKey", (q) =>
+      q.eq("conversationKey", conversationKey),
+    )
+    .unique();
+}
+
 function hasActiveOwner(
   coordinator: Doc<"runtimeConversationCoordinators">,
   now: number,
@@ -1517,10 +1650,6 @@ function hasActiveOwner(
   );
 }
 
-/**
- * An `activeOwnerOnly` admission is late when the conversation has no live
- * owner, or the live owner is not the task the control was aimed at.
- */
 function isLateControl(
   args: { activeOwnerOnly?: boolean; expectedOwnerTaskId?: string },
   coordinator: Doc<"runtimeConversationCoordinators">,
@@ -1536,12 +1665,25 @@ function isLateControl(
 }
 
 /**
- * Coordinator stage of `accept`: loads or creates the conversation
- * coordinator, verifies its scope, pins the latest channel target, and
- * reconciles queue counters after expiring stale queued work and a stale
- * owner's envelope. The returned coordinator reflects every patch applied;
- * `rows` is the queued page that sweep read, for recovery to promote from.
+ * Whether `envelope` and the admission `args` resume the same late result;
+ * `checkDuplicateAdmission` answers such a retry as a duplicate even when its
+ * payload drifted.
  */
+function resumesSameResult(
+  envelope: Pick<
+    Doc<"runtimeIngressEnvelopes">,
+    "resultEventId" | "toolResultId"
+  >,
+  args: { resultEventId?: string; toolResultId?: string },
+): boolean {
+  return (
+    (args.resultEventId !== undefined &&
+      envelope.resultEventId === args.resultEventId) ||
+    (args.toolResultId !== undefined &&
+      envelope.toolResultId === args.toolResultId)
+  );
+}
+
 async function prepareAdmissionCoordinator(
   ctx: MutationCtx,
   args: {
@@ -1589,11 +1731,6 @@ async function prepareAdmissionCoordinator(
   return { coordinator: coordinator, queue: queue, rows: rows };
 }
 
-/**
- * Promotes the oldest runnable queued group (one follow-up, or a contiguous
- * collect/steer prefix) to processing under the supplied owner generation.
- * `rows` is the queued page when the caller already read it (`queuedPage`).
- */
 async function promoteQueuedGroup(
   ctx: MutationCtx,
   options: {
@@ -1604,25 +1741,13 @@ async function promoteQueuedGroup(
     leaseTtlMs: number;
     ownerGeneration: number;
   },
-): Promise<{
-  eventId: string;
-  events: unknown[];
-  delivery: unknown;
-  requestedMode: Doc<"runtimeIngressEnvelopes">["requestedMode"];
-  appliedMode: "collect" | "followup";
-  appliedToEventId: string;
-  contributingEventIds: string[];
-  ownerGeneration: number;
-  configRef?: Infer<typeof ingressConfigRefValidator>;
-  ephemeralSystem?: unknown[];
-} | null> {
+): Promise<Infer<typeof appliedEnvelopeValidator> | null> {
   const { coordinator, queue, now } = options;
   const rows = options.rows ?? (await queuedPage(ctx, coordinator));
   const active = rows.filter((row) => row.expiresAt > now);
   const first = active[0];
   if (!first) return null;
-  // Collect batches by design; steer batches too. Every queued steer aimed at
-  // the same dead run, so a contiguous prefix runs as one merged follow-up.
+  // Every queued steer aimed at the same dead run, so their prefix runs as one follow-up.
   const batchable =
     first.requestedMode === "collect" || first.requestedMode === "steer";
   const selected = batchable ? contiguousModePrefix(active) : [first];
@@ -1684,42 +1809,13 @@ async function promoteQueuedGroup(
 }
 
 function publicDeploymentIngressFromDelivery(
-  delivery: unknown,
+  delivery: Infer<typeof ingressDeliveryValidator>,
 ): PublicDeploymentIngress | undefined {
-  if (!isPlainObject(delivery)) return undefined;
-  const record = delivery;
-  if (
-    record.kind !== "http" &&
-    record.kind !== "async" &&
-    record.kind !== "websocket"
-  ) {
-    return undefined;
-  }
-  const marker = record.publicDeploymentIngress;
-  if (!isPlainObject(marker)) return undefined;
-  const value = marker;
-  if (
-    typeof value.accountId !== "string" ||
-    typeof value.endpointId !== "string" ||
-    typeof value.stageSlug !== "string" ||
-    typeof value.projectSlug !== "string"
-  ) {
-    return undefined;
-  }
+  if (delivery.kind === "channel") return undefined;
 
-  return {
-    accountId: value.accountId,
-    endpointId: value.endpointId,
-    stageSlug: value.stageSlug,
-    projectSlug: value.projectSlug,
-  };
+  return delivery.publicDeploymentIngress;
 }
 
-/**
- * Writes queue counters a sweep lowered onto the coordinator, only when they
- * changed, with the lease end when the caller extends it in the same write.
- * Returns the coordinator as it is now stored.
- */
 async function patchQueueCounters(
   ctx: MutationCtx,
   coordinator: Doc<"runtimeConversationCoordinators">,
@@ -1739,7 +1835,6 @@ async function patchQueueCounters(
   return { ...coordinator, ...patch };
 }
 
-/** The oldest drain batch of a conversation's queued envelopes, payloads included. */
 async function queuedEnvelopes(
   ctx: MutationCtx,
   conversationKey: string,
@@ -1752,12 +1847,7 @@ async function queuedEnvelopes(
     .take(MAX_DRAIN_ENVELOPES);
 }
 
-/**
- * `queuedEnvelopes` for the fenced per-step paths, which read nothing when the
- * coordinator counts none: every queued insert and every move out of `queued`
- * adjusts `queuedCount` in its own transaction, so zero means an empty queue.
- * Recovery reads the page unguarded, since it is what heals the counter.
- */
+// Every move into or out of `queued` adjusts queuedCount in its transaction: 0 is empty.
 async function queuedPage(
   ctx: MutationCtx,
   coordinator: Doc<"runtimeConversationCoordinators">,
@@ -1767,11 +1857,7 @@ async function queuedPage(
   return await queuedEnvelopes(ctx, coordinator.conversationKey);
 }
 
-/**
- * Extends a lease the fence just accepted, once a tenth of the TTL has passed.
- * Core renews every second while a harness turn runs, so most renewals stay
- * read-only and do not invalidate `isCurrentOwner` readers.
- */
+// Core renews every second; a no-op on a fresh lease does not invalidate `isCurrentOwner`.
 async function renewHeldLease(
   ctx: MutationCtx,
   coordinator: Doc<"runtimeConversationCoordinators">,
@@ -1786,9 +1872,6 @@ async function renewHeldLease(
   });
 }
 
-/** Requires the account to exist and remain active in the write transaction. */
-
-/** Requires the exact owner event and fencing generation for a mutation. */
 async function requireOwner(
   ctx: QueryCtx | MutationCtx,
   options: {
@@ -1812,12 +1895,6 @@ async function requireOwner(
   return coordinator;
 }
 
-/**
- * Marks the owner event and every envelope applied to it terminal; used by
- * `settle` and `takeNext`.
- * @returns how many envelopes it covered, and whether the owner's own envelope
- * finished in this call
- */
 async function settleAppliedEnvelopes(
   ctx: MutationCtx,
   coordinator: Doc<"runtimeConversationCoordinators">,
@@ -1831,16 +1908,11 @@ async function settleAppliedEnvelopes(
   },
 ): Promise<{ count: number; ownerFinished: boolean }> {
   const now = Date.now();
-  // A failed settle that was preceded by /stop for this generation is a
-  // deliberate stop, not a fault, so mark it and pollers can tell them apart.
-  // A subagent its parent stopped was not stopped by the user.
   const stoppedByUser =
     args.status === "failed" &&
     coordinator.stopRequestedGeneration === args.ownerGeneration &&
     coordinator.stopRequestedByParent !== true;
   const ids = new Set<Id<"runtimeIngressEnvelopes">>();
-  // Page by sequence so more than one drain batch of contributors still
-  // settles; a fixed take() would leave the tail stuck in processing.
   let afterSequence = -1;
   for (;;) {
     const rows = await ctx.db
@@ -1864,8 +1936,6 @@ async function settleAppliedEnvelopes(
   let ownerFinished = false;
   for (const id of ids) {
     const row = await ctx.db.get(id);
-    // Only running rows settle: a finished run stays finished, and a queued row
-    // never ran, so it waits for its own owner or expiry.
     if (row?.status !== "processing") continue;
     await ctx.db.patch(id, {
       ...RELEASED_PAYLOAD,

@@ -1,8 +1,3 @@
-/**
- * Parent-dispatched subagent tool.
- * Keep model-facing input validation here; execution orchestration lives in the harness.
- */
-
 import {
   jsonSchema,
   tool,
@@ -24,7 +19,6 @@ export interface RunSubagentTaskInput {
   agentId?: string;
   prompt: string;
   conversationKey?: string;
-  /** Run a harness subagent on a machine of its own instead of its agent's shared one. */
   isolated?: boolean;
 }
 
@@ -33,7 +27,7 @@ export type RunSubagentTaskDispatch = {
   agentId: string;
   description?: string;
   conversationKey: string;
-  /** The child's run id; what an `attach` names and `statusPath` resolves. */
+  address?: string;
   runId: string;
   statusPath: string;
   status: "running";
@@ -105,7 +99,8 @@ export default function runSubagentTool(context: {
     run_subagent: tool({
       description: [
         "Dispatch one or more subagents for independent parallel work.",
-        "Returns task ids immediately so you can continue working while results are injected into the parent conversation later.",
+        "Returns task ids immediately, and each result arrives in this conversation on its own when the subagent finishes, even after your turn ends.",
+        "Keep going with your other steps while subagents run; end your turn only when you have nothing else to do.",
         "Use an available predefined agentId when a listed subagent matches the task; omit agentId only for a virtual subagent, which runs on your own config.",
         ...(context.mode === "persistent"
           ? [
@@ -153,8 +148,7 @@ function normalizeInput(
   return tasks.map((task, index) => normalizeTask(task, index, mode));
 }
 
-// Models often send null for an optional field they mean to leave out, so null
-// reads as omitted here and in normalizeTask.
+// Models send null for an optional field they mean to omit.
 function normalizeOptionalString(
   value: unknown,
   name: string,

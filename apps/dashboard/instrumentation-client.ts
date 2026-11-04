@@ -1,17 +1,86 @@
-import posthog from "posthog-js";
+import { analytics } from "@/app/lib/analytics";
+import type { CaptureResult, Properties } from "posthog-js";
 
-// Browser analytics, error tracking and user identification. A no-op when the
-// key or host is unset, same contract as the OTLP exporters: no config, no export.
+// Anonymous behaviour only, never what users type or see.
 const posthogKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 const posthogHost = process.env.NEXT_PUBLIC_POSTHOG_HOST;
+// Behind a reverse proxy posthog-js cannot derive the app's URL from the host.
+const posthogUiHost = process.env.NEXT_PUBLIC_POSTHOG_UI_HOST;
 
-if (posthogKey && posthogHost) {
+// Search boxes write what users type into the URL (`?q=`): keep only these opaque params.
+const URL_PARAMS_KEPT = new Set(["node", "stage", "tab"]);
+const URL_PROPERTIES = [
+  "$current_url",
+  "$initial_current_url",
+  "$initial_referrer",
+  "$referrer",
+];
+
+// posthog-js exports no type for its `$exception_list` entries.
+interface CapturedException {
+  type?: string;
+  value?: string;
+}
+
+void analytics.then((posthog): void => {
+  if (!posthogKey || !posthogHost) return;
+
   posthog.init(posthogKey, {
     api_host: posthogHost,
+    before_send: anonymized,
+    disable_session_recording: true,
+    mask_all_element_attributes: true,
+    mask_all_text: true,
+    mask_personal_data_properties: true,
+    person_profiles: "identified_only",
+    ui_host: posthogUiHost,
     capture_exceptions: {
       capture_unhandled_errors: true,
       capture_unhandled_rejections: true,
       capture_console_errors: false,
     },
   });
+  // Browsers identified before analytics went anonymous still hold email and name.
+  posthog.resetPersonPropertiesForFlags();
+});
+
+// Per event, so it holds after posthog.reset(); a message becomes its type, which still
+// groups errors by type and stack.
+function anonymized(capture: CaptureResult | null): CaptureResult | null {
+  if (!capture) return capture;
+  capture.properties.$geoip_disable = true;
+  for (const properties of [
+    capture.properties,
+    capture.$set,
+    capture.$set_once,
+  ]) {
+    if (properties) withKnownUrlParams(properties);
+  }
+  if (capture.event === "$exception") {
+    const exceptions: CapturedException[] =
+      capture.properties.$exception_list ?? [];
+    capture.properties.$exception_list = exceptions.map(
+      (exception): CapturedException => ({
+        ...exception,
+        value: exception.type ?? "Error",
+      }),
+    );
+  }
+
+  return capture;
+}
+
+function withKnownUrlParams(properties: Properties): void {
+  for (const key of URL_PROPERTIES) {
+    const url: unknown = properties[key];
+    if (typeof url !== "string" || !URL.canParse(url)) continue;
+    const parsed = new URL(url);
+    parsed.search = new URLSearchParams(
+      Array.from(parsed.searchParams).filter(([name]): boolean =>
+        URL_PARAMS_KEPT.has(name),
+      ),
+    ).toString();
+    parsed.hash = "";
+    properties[key] = parsed.toString();
+  }
 }

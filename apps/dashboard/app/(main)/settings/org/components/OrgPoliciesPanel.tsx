@@ -1,15 +1,5 @@
 "use client";
 
-/**
- * Organization › Policies: a policy is named rules, each one permission in
- * one scope, optionally narrowed by a condition. Policies are the org's, so
- * one serves any agent, role or key in it.
- *
- * Laid out like Monitoring: a toolbar, a flush table whose headers sort on
- * click, and a detail panel with Edit on its title line, the rules in the
- * body, and the danger zone at the end.
- */
-
 import {
   DataTable,
   DataTableBody,
@@ -75,7 +65,6 @@ type Column =
 type Field = (typeof QUERY_FIELDS)[number];
 type Mode = Policy["mode"];
 
-/** One choice in the scope Select: the org, a project, or a stage of the picked project. */
 interface ScopeItem {
   value: string;
   label: string;
@@ -83,13 +72,10 @@ interface ScopeItem {
   stageId?: Id<"stages">;
 }
 
-// The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["scope", "mode"] as const;
 
-// Seven columns of short text; below this the detail panel would wrap them.
 const TABLE_MIN_WIDTH = 640;
 
-// The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
 const POLICY_ID = parseAsId<"agentPolicies">();
 
 const NO_ROWS: Policy[] = [];
@@ -248,10 +234,6 @@ export function OrgPoliciesPanel(): React.JSX.Element {
   );
 }
 
-/**
- * The selected policy. Edit sits on the title line; the body holds its
- * facts, its rules with add and remove, and the danger zone.
- */
 function PolicyPanel({
   policy,
   canChange,
@@ -392,7 +374,6 @@ function PolicyPanel({
   );
 }
 
-/** New or edit: name, description and mode. */
 function PolicyDialog({
   policy,
   onClose,
@@ -515,7 +496,6 @@ function PolicyDialog({
   );
 }
 
-/** One permission in one scope, with an optional condition. */
 function AddRuleDialog({
   policyId,
   onClose,

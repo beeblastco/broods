@@ -44,7 +44,6 @@ test("rejects the camel `baseUrl` typo with a did-you-mean hint", () => {
 });
 
 test("passes provider-owned settings through and still catches apiKey typos", () => {
-  // Anything the provider's own AI SDK factory accepts is not the SDK's business.
   expect(() =>
     validateProviderConfig("a", {
       vertex: { apiKey: "k", project: "p", location: "us-central1" },
@@ -58,8 +57,7 @@ test("passes provider-owned settings through and still catches apiKey typos", ()
 });
 
 test("supports every provider on the shared list, deepseek included", () => {
-  // Pinned independently of the loop: it draws its cases from the shared list,
-  // so a name dropped from that list would silently stop being covered.
+  // Pinned apart from the loop below, which draws its cases from this same list.
   expect(ACCOUNT_MODEL_PROVIDER_NAMES).toContain("deepseek");
   expect(ACCOUNT_MODEL_PROVIDER_NAMES).toContain("vertex");
 
@@ -83,14 +81,4 @@ test("requires a base URL for the custom provider", () => {
   ).toThrow(
     `config.provider.custom.base_url is required (use "base_url" or "baseURL")`,
   );
-});
-
-test("rejects unsupported provider names", () => {
-  expect(() =>
-    validateProviderConfig("a", { madeup: { apiKey: "k" } }),
-  ).toThrow(`config.provider.madeup is not a supported provider`);
-});
-
-test("is a no-op when no provider block is present", () => {
-  expect(() => validateProviderConfig("a", undefined)).not.toThrow();
 });

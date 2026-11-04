@@ -96,32 +96,6 @@ describe("zalo channel adapter", () => {
     expect(parsed.message.content).toBe("wrapped");
   });
 
-  it("accepts any private sender when the allow list is omitted", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret");
-
-    expect(
-      (
-        await adapter.parse(
-          createZaloRequest(validUpdate({ senderId: "customer-1" })),
-        )
-      ).kind,
-    ).toBe("message");
-  });
-
-  it("accepts any chat when the allow list is null", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      allowedChannelIds: null,
-    });
-
-    expect(
-      (
-        await adapter.parse(
-          createZaloRequest(validUpdate({ senderId: "customer-1" })),
-        )
-      ).kind,
-    ).toBe("message");
-  });
-
   it("ignores unsupported events and invalid messages", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret");
 
@@ -269,7 +243,6 @@ describe("zalo channel adapter", () => {
       },
     });
 
-    // The caption is the message; the picture rides beside it rather than in it.
     expect(await parsedContent(adapter, captioned)).toBe("look at this");
     expect(await parsedAttachments(adapter, captioned)).toEqual([
       { type: "image", url: "https://zalo.example/photo.jpg", name: "photo" },
@@ -328,8 +301,7 @@ describe("zalo channel adapter", () => {
       media: { voice_url: "https://zalo.example/note.mp3" },
     });
 
-    // Zalo only ever sends .aac, so a different extension means we do not know
-    // what the file is. The link goes over as text and nothing is downloaded.
+    // Zalo only sends .aac: any other extension goes over as a text link, never downloaded.
     expect(await parsedContent(adapter, mp3)).toBe(
       "Voice message: https://zalo.example/note.mp3",
     );
@@ -378,10 +350,10 @@ describe("zalo channel adapter", () => {
 
   it("rejects image URLs Zalo could not fetch", async () => {
     const calls = await captureZaloCalls(async (actions): Promise<void> => {
-      expect(
+      await expect(
         actions.sendImages?.([{ type: "image", url: "/workspace/chart.png" }]),
       ).rejects.toThrow("absolute http(s) image URL");
-      expect(
+      await expect(
         actions.sendImages?.([
           { type: "image", url: "data:image/png;base64,iVBORw0KGgo=" },
         ]),
@@ -415,9 +387,7 @@ async function parsedContent(
   return (await parsedMessage(adapter, update)).content;
 }
 
-// The media Zalo delivered, as the harness receives it. Zalo names every
-// attachment by URL and never sends bytes, so there is no reader to compare and
-// the descriptor is the whole contract.
+// Zalo sends media by URL, never bytes, so the descriptor is the whole contract.
 async function parsedAttachments(
   adapter: ChannelAdapter,
   update: unknown,

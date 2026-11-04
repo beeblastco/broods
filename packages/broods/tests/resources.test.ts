@@ -8,8 +8,6 @@ import { collectEnvRefNames, compileProject } from "../src/manifest.ts";
 import { defineSandbox, env } from "../src/resources.ts";
 import { diffManifests } from "../src/sync.ts";
 
-// Resolve the SDK entrypoint relative to this test file so generated fixtures
-// import it regardless of the cwd the suite runs from (repo root or package dir).
 const RESOURCES_MODULE = join(import.meta.dir, "..", "src", "resources.ts");
 
 let tempDirs: string[] = [];
@@ -57,7 +55,7 @@ test("compileProject says how to scaffold a missing broods/ folder", async () =>
   const cwd = await mkdtemp(join(tmpdir(), "broods-no-project-"));
   tempDirs.push(cwd);
 
-  expect(compileProject({ cwd: cwd, command: "deploy" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "deploy" })).rejects.toThrow(
     `No broods/ folder in ${cwd}. Run \`broods dev\` to scaffold one.`,
   );
 });
@@ -180,7 +178,7 @@ export const coding = defineAgent({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "coding" harness sandbox was removed; list it first in the agent\'s sandboxes',
   );
 });
@@ -199,7 +197,7 @@ export const coding = defineAgent({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "coding" runs a harness, so it needs sandboxes; the first runs the harness',
   );
 });
@@ -219,7 +217,7 @@ export const coding = defineAgent({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "coding" runs a harness, so it needs sandboxes; the first runs the harness',
   );
 });
@@ -241,10 +239,47 @@ export const support = defineAgent({
 `,
   );
 
-  // The resource and the bare name map to the same record, so the repeat only
-  // shows after mapping.
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  // A resource and its bare name map to one record, so the repeat shows only after mapping.
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" sandboxes[2] "runner" is listed more than once',
+  );
+});
+
+test("compileProject refuses a needsApproval function on a tool", async (): Promise<void> => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent } from "${RESOURCES_MODULE}";
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  tools: { shell: { enabled: true, needsApproval: async () => true } },
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" config.tools.shell.needsApproval is a function; only true is kept on sync',
+  );
+});
+
+test("compileProject refuses a tool that only runs its own execute", async (): Promise<void> => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent } from "${RESOURCES_MODULE}";
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  tools: { lookup: { type: "function", inputSchema: {}, execute: async () => "x" } },
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" config.tools.lookup runs your own execute, which sync drops; put it behind an MCP server',
   );
 });
 
@@ -262,7 +297,7 @@ export const support = defineAgent({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" config.skills.allowed must list at most 32 skills',
   );
 });
@@ -292,8 +327,7 @@ export const support = defineAgent({
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
-  // A resource and a bare name both land as the record name; order is kept
-  // because the first entry is the default.
+  // Both land as the record name, in order: the first entry is the default.
   expect(
     manifest.resources.find(
       (resource) => resource.kind === "agent" && resource.name === "support",
@@ -337,7 +371,7 @@ export const support = defineAgent({
 `,
     );
 
-    expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
       entry.message,
     );
   }
@@ -359,7 +393,7 @@ export const support = defineAgent({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" sandboxes references sandbox "browser", but that sandbox is not exported from broods/',
   );
 });
@@ -380,7 +414,7 @@ export const support = defineAgent({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" config.sandbox was removed; use sandboxes, the first is the default',
   );
 });
@@ -404,7 +438,7 @@ export const support = defineAgent({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" sandboxes[1] "browser" also backs workspace "repo"; only the first sandbox can back a workspace',
   );
 });
@@ -524,12 +558,64 @@ export const repo = defineWorkspace({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Workspace "repo" uses storage.provider "vercel", but Vercel Drive workspace storage is not supported yet',
   );
 });
 
 test("compileProject rejects S3 workspaces on an incompatible default sandbox", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSandbox, defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const repo = defineWorkspace({
+  name: "repo",
+  storage: { provider: "s3" },
+});
+
+export const runner = defineSandbox({
+  name: "runner",
+  provider: "e2b", network: { mode: "allow-all" }, persistent: true,
+});
+
+export const support = defineAgent({
+  name: "support",
+  sandboxes: [runner],
+  workspaces: [repo],
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" workspace "repo" uses sandbox "runner" (e2b) which does not support S3 workspace mounts',
+  );
+});
+
+test("compileProject puts a disk workspace only on a persistent worker sandbox", async () => {
+  const project = (persistent: boolean) =>
+    fixtureProject(
+      "",
+      `
+import { defineAgent, defineSandbox, defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const project = defineWorkspace({ name: "project", storage: { provider: "disk" } });
+
+export const disk = defineSandbox({ name: "disk", provider: "worker", persistent: ${persistent} });
+
+export const coder = defineAgent({ name: "coder", sandboxes: [disk], workspaces: [project] });
+`,
+    );
+
+  await expect(
+    compileProject({ cwd: await project(true), command: "dev" }),
+  ).resolves.toBeDefined();
+  await expect(
+    compileProject({ cwd: await project(false), command: "dev" }),
+  ).rejects.toThrow('a "disk" workspace lives on its sandbox\'s own disk');
+});
+
+test("compileProject accepts S3 workspaces on a vercel sandbox", async () => {
   const cwd = await fixtureProject(
     "",
     `
@@ -553,8 +639,10 @@ export const support = defineAgent({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    'Agent "support" workspace "repo" uses sandbox "runner" (vercel) which does not support S3 workspace mounts',
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(manifest.resources.map((resource) => resource.name)).toContain(
+    "support",
   );
 });
 
@@ -587,7 +675,7 @@ export const support = defineAgent({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" workspace "repo" uses sandbox "e2b-runner" (e2b) which does not support S3 workspace mounts',
   );
 });
@@ -698,7 +786,6 @@ import {
   defineDiscordConnection,
   defineGoogleChatConnection,
   defineLinearConnection,
-  defineMatrixConnection,
   definePancakeConnection,
   defineTeamsConnection,
   defineTwilioConnection,
@@ -735,13 +822,6 @@ export const discord = defineDiscordConnection({
   publicKey: env("DISCORD_PUBLIC_KEY"),
   allowedChannelIds: ["D123"],
   apiUrl: "https://discord.example/api/v10",
-});
-export const matrix = defineMatrixConnection({
-  apiUrl: "https://matrix.example",
-  botToken: env("MATRIX_ACCESS_TOKEN"),
-  allowedChannelIds: ["!room:matrix.example"],
-  botName: "Support AI",
-  mentionText: "@support-ai",
 });
 export const pancake = definePancakeConnection({
   allowedChannelIds: ["*"],
@@ -813,7 +893,6 @@ export const support = defineAgent({
     linear,
     slack,
     discord,
-    matrix,
     pancake,
     teams,
     twilio,
@@ -853,12 +932,6 @@ export const support = defineAgent({
       discord: {
         allowedChannelIds: ["D123"],
         apiUrl: "https://discord.example/api/v10",
-      },
-      matrix: {
-        allowedChannelIds: ["!room:matrix.example"],
-        apiUrl: "https://matrix.example",
-        botName: "Support AI",
-        mentionText: "@support-ai",
       },
       linear: { userName: "support-ai", allowedChannelIds: ["ENG"] },
       pancake: { senderId: "staff-1", allowedChannelIds: ["*"] },
@@ -900,7 +973,6 @@ export const support = defineAgent({
     { alias: "github", type: "github", agentName: "support" },
     { alias: "instagram", type: "instagram", agentName: "support" },
     { alias: "linear", type: "linear", agentName: "support" },
-    { alias: "matrix", type: "matrix", agentName: "support" },
     { alias: "messenger", type: "messenger", agentName: "support" },
     { alias: "pancake", type: "pancake", agentName: "support" },
     { alias: "slack", type: "slack", agentName: "support" },
@@ -929,7 +1001,7 @@ export const second = defineAgent({ name: "second", connections: [github] });
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Channel github is already attached to agent "first" and cannot also attach to "second"',
   );
 });
@@ -945,7 +1017,7 @@ export const support = defineAgent({ name: "support", connections: [one, two] })
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" cannot configure more than one github channel',
   );
 });
@@ -1202,7 +1274,7 @@ export const platform = defineGitHubChannel({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Channel "platform" repo must be "owner/name", not "platform"',
   );
 });
@@ -1224,7 +1296,7 @@ export const support = defineAgent({ name: "support", connections: [slack], work
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" connection "slack" partition.alias must use only letters, numbers, dots, underscores, or hyphens',
   );
 });
@@ -1252,7 +1324,7 @@ export const escape = defineSlackChannel({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Channel "escape" partition.alias must not be "." or ".."',
   );
 });
@@ -1274,7 +1346,7 @@ export const support = defineAgent({ name: "support", connections: [slack], work
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" connection "slack" partition.by must be one of: shared, conversation',
   );
 });
@@ -1296,7 +1368,7 @@ export const support = defineAgent({ name: "support", connections: [slack], work
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" connection "slack" defines partition, but no attached workspace has partitioned: "conversation".',
   );
 });
@@ -1324,7 +1396,7 @@ export const support = defineAgent({ name: "support", connections: [slack, githu
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" attaches partitioned workspace "repo", but connection "github" does not define partition.',
   );
 });
@@ -1355,7 +1427,7 @@ export const support = defineAgent({ name: "support", connections: [slack, githu
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     "Duplicate channel id: support-channel",
   );
 });
@@ -1372,7 +1444,7 @@ export const support = defineAgent({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" has an unknown config key "channels". Did you mean "connections"?',
   );
 });
@@ -1454,8 +1526,7 @@ export const support = defineAgent({
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const hook = manifest.resources.find((resource) => resource.kind === "hook");
   const bundle = (hook?.config as { bundle: string }).bundle;
-  // Shorthand `onStart(ctx) {}` toString is not a valid expression on its own;
-  // the manifest must emit it as a function expression or the bundle won't parse.
+  // A shorthand method's toString is no expression; the bundle needs `function onStart`.
   expect(bundle).toContain('"agent.started": function onStart');
   expect(bundle).toContain('"agent.finished": async function onFinish');
 });
@@ -1562,7 +1633,6 @@ export const reader = defineAgent({
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const agent = manifest.resources.find((entry) => entry.kind === "agent");
 
-  // `broods dev` pushes the agent's own ref too, or the sync refuses it.
   expect(collectEnvRefNames(manifest)).toEqual([
     "READER_TEAM",
     "SEARCH_TOKEN",
@@ -1820,13 +1890,11 @@ export const oneMinuteCron = defineCron({
     "utf8",
   );
 
-  // Renamed namespace + export-name keys pointing at the unchanged ids contract.
   expect(api).toContain("crons: {");
   expect(api).toContain('oneMinuteCron: ids.crons["one-minute-cron-test"],');
   expect(api).toContain('myRepo: ids.workspaces["my-repo"],');
   expect(api).not.toContain("crons: ids.crons");
   expect(api).not.toContain('"one-minute-cron-test":');
-  // Kinds with no local resources stay as an empty literal.
   expect(api).toContain("sandboxes: {}");
 });
 
@@ -2082,8 +2150,7 @@ export const support = defineAgent({
 `,
   );
 
-  // The wrapper is gone: naming it must point at the list, not be dropped.
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" has an unknown config key "policy". Did you mean "policies"?',
   );
 });
@@ -2101,7 +2168,7 @@ export const escapedSkill = defineSkill({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     "must stay inside broods/",
   );
 });
@@ -2319,14 +2386,18 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
     "utf8",
   );
 
-  expect(api).toContain("export const api = {");
+  expect(api).toContain('import type { ResourceApi } from "broods";');
+  expect(api).toContain("export const api = resourceApi({");
+  expect(api).toContain(
+    "function resourceApi<T extends ResourceApi>(resources: T): T {",
+  );
   expect(api).toContain(
     'support: { kind: "agent", name: "support", id: ids.agents["support"], project: "typed-app", stage: "development" }',
   );
   expect(ids).toContain('"support": "agent_123"');
   expect(dataModel).toContain("AgentReference");
   expect(api).not.toContain("new BroodsClient");
-  expect(
+  await expect(
     readFile(join(cwd, "broods", "_generated", "client.ts"), "utf8"),
   ).rejects.toThrow();
 });
@@ -2476,8 +2547,7 @@ test("runtime config loads .env.local without manual client wiring", async () =>
     join(cwd, ".env.local"),
     [
       "BROODS_DASHBOARD_URL=https://dashboard.dev.broods.app",
-      // Pin baseUrl too: without it the field falls back to ~/.broods/config.json
-      // stored auth, which exists on logged-in dev machines but not in CI.
+      // Pin baseUrl too, or it falls back to stored auth only logged-in dev machines have.
       "BROODS_BASE_URL=https://gateway.dev.broods.app",
       "BROODS_TOKEN=bcli_test",
       "BROODS_PROJECT=sandbox-stateless",
@@ -2593,8 +2663,7 @@ export const internal = defineZaloChannel({
     { platform: "zalo", externalId: "7789", denyTools: ["web_search"] },
     { platform: "zalo", externalId: "7790", denyTools: ["web_search"] },
   ]);
-  // Every declared id has to reach the gate. Miss this and the bot answers in
-  // one room of three, with no error anywhere.
+  // Miss one id and the bot answers in one room of three, with no error anywhere.
   const agent = manifest.resources.find(
     (resource) => resource.kind === "agent" && resource.name === "staff",
   );
@@ -2617,7 +2686,7 @@ test("compileProject leaves a single chat id as one record under its own name", 
 
 test("compileProject rejects an unusable channel id list", async () => {
   const empty = await fixtureProject("", zaloChannelSource("chatId: []"));
-  expect(compileProject({ cwd: empty, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: empty, command: "dev" })).rejects.toThrow(
     'Channel "lamy-internal" externalId must not be an empty array',
   );
 
@@ -2625,17 +2694,15 @@ test("compileProject rejects an unusable channel id list", async () => {
     "",
     zaloChannelSource(`chatId: ["7788", "7788"]`),
   );
-  expect(compileProject({ cwd: repeated, command: "dev" })).rejects.toThrow(
-    'Channel "lamy-internal" externalId lists 7788 twice',
-  );
+  await expect(
+    compileProject({ cwd: repeated, command: "dev" }),
+  ).rejects.toThrow('Channel "lamy-internal" externalId lists 7788 twice');
 });
 
 test("compileProject rejects a wildcard as a channel id", async () => {
-  // Deploys clean today and binds nothing: the record never matches a room,
-  // while the id still opens the connection's reach so the bot answers
-  // everywhere with none of the channel's rules.
+  // "*" never matches a room yet opens the connection's reach: the bot answers everywhere.
   const bare = await fixtureProject("", zaloChannelSource(`chatId: "*"`));
-  expect(compileProject({ cwd: bare, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: bare, command: "dev" })).rejects.toThrow(
     'Channel "lamy-internal" cannot use "*" as its id',
   );
 
@@ -2643,7 +2710,7 @@ test("compileProject rejects a wildcard as a channel id", async () => {
     "",
     zaloChannelSource(`chatId: ["7788", "*"]`),
   );
-  expect(compileProject({ cwd: inList, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: inList, command: "dev" })).rejects.toThrow(
     'Channel "lamy-internal" cannot use "*" as its id',
   );
 });
@@ -2675,7 +2742,7 @@ export const clash = defineZaloChannel({
 `,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     "Duplicate resource: channelRecord:lamy-internal-7788",
   );
 });

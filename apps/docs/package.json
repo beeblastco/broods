@@ -7,26 +7,28 @@
   "scripts": {
     "start": "DOCUSAURUS_BROWSER=none NODE_OPTIONS=--openssl-legacy-provider docusaurus start",
     "build": "NODE_OPTIONS=--openssl-legacy-provider docusaurus build",
+    "check": "tsc --noEmit",
     "serve": "DOCUSAURUS_BROWSER=none docusaurus serve",
     "deploy": "NODE_OPTIONS=--openssl-legacy-provider docusaurus deploy",
-    "clear": "docusaurus clear"
+    "clear": "docusaurus clear",
+    "test": "bun test tests"
   },
   "dependencies": {
     "@docusaurus/core": "^3.10.2",
     "@docusaurus/plugin-client-redirects": "3.10.2",
     "@docusaurus/preset-classic": "^3.10.2",
-    "@docusaurus/theme-mermaid": "3.10.2",
     "@mdx-js/react": "^3.1.1",
-    "@mermaid-js/layout-elk": "^0.2.3",
-    "@scalar/docusaurus": "^0.8.35",
-    "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "@scalar/docusaurus": "^0.8.55",
+    "pele": "1.13.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
     "@docusaurus/tsconfig": "^3.10.2",
     "@docusaurus/types": "3.10.2",
-    "@types/node": "^26.2.0",
-    "webpack": "5.111.1"
+    "@types/node": "^26.6.6",
+    "@types/react": "19.3.0",
+    "webpack": "5.112.2"
   },
   "peerDependencies": {
     "typescript": "^7.0.2"

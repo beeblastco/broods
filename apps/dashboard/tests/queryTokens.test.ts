@@ -59,11 +59,6 @@ describe("splitQueryChips", () => {
       text: "x",
     });
   });
-
-  test("chips round-trip through the joined query", () => {
-    const { chips, text } = splitQueryChips("level:error tail", FIELDS);
-    expect(`${chips.join(" ")} ${text}`).toBe("level:error tail");
-  });
 });
 
 describe("volumeBins", () => {

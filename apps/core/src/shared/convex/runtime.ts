@@ -1,10 +1,6 @@
-/** Runtime-persistence calls shared by the harness and account cleanup. */
-
 import type { FunctionReturnType } from "convex/server";
 import { adminMutation, adminQuery, internal } from "./client.ts";
 
-// Exported so tests can verify each reference against the actual registered
-// Convex module export as well as the exact function path sent to Convex.
 export const runtimeQueries = {
   getAsyncAgentResult: internal.runtime.getAsyncAgentResult,
   getAsyncToolResult: internal.runtime.getAsyncToolResult,
@@ -22,10 +18,9 @@ export const runtimeQueries = {
     internal.runtime.listExpiredSandboxReservations,
   listOrphanedSandboxInstances: internal.runtime.listOrphanedSandboxInstances,
   listPendingAsyncToolResults: internal.runtime.listPendingAsyncToolResults,
-  listUnobservedAsyncAgentResults:
-    internal.runtime.listUnobservedAsyncAgentResults,
-  listUnobservedAsyncToolResults:
-    internal.runtime.listUnobservedAsyncToolResults,
+  readHarnessSessionEntries: internal.runtime.readHarnessSessionEntries,
+  listOwedAsyncAgentResults: internal.runtime.listOwedAsyncAgentResults,
+  listOwedAsyncToolResults: internal.runtime.listOwedAsyncToolResults,
   getIngressStatus: internal.runtimeIngress.getStatus,
   getIngressStatusByEventId: internal.runtimeIngress.getStatusByEventId,
   isCurrentIngressOwner: internal.runtimeIngress.isCurrentOwner,
@@ -43,7 +38,7 @@ export const runtimeMutations = {
   deleteAccountRuntimeData: internal.runtime.deleteAccountRuntimeData,
   deleteSandboxReservation: internal.runtime.deleteSandboxReservation,
   markAsyncAgentHandback: internal.runtime.markAsyncAgentHandback,
-  observeAsyncToolResult: internal.runtime.observeAsyncToolResult,
+  markAsyncToolHandback: internal.runtime.markAsyncToolHandback,
   releaseClaim: internal.runtime.releaseClaim,
   saveSandboxReservation: internal.runtime.saveSandboxReservation,
   updateAsyncAgentResult: internal.runtime.updateAsyncAgentResult,
@@ -52,6 +47,8 @@ export const runtimeMutations = {
   acquireIngressClear: internal.runtimeIngress.acquireClear,
   appendFencedConversationEvent:
     internal.runtimeIngress.appendConversationEvent,
+  appendHarnessSessionEntries:
+    internal.runtimeIngress.appendHarnessSessionEntries,
   applyIngressSteering: internal.runtimeIngress.applySteering,
   clearFencedConversation: internal.runtimeIngress.clearConversation,
   recoverQueuedIngress: internal.runtimeIngress.recoverQueued,
@@ -67,11 +64,11 @@ export const runtimeMutations = {
 type RuntimeQueries = typeof runtimeQueries;
 type RuntimeMutations = typeof runtimeMutations;
 
-/**
- * Mutable call boundary used by focused core tests without a live deployment.
- * Mutations skip the client's process-wide FIFO queue, so concurrent runs never
- * wait on each other; a caller that needs an order awaits it.
- */
+export type HarnessSessionEntry = FunctionReturnType<
+  RuntimeQueries["readHarnessSessionEntries"]
+>["entries"][number];
+
+// Mutations skip the client's FIFO so runs never wait on each other; await to keep an order.
 export const runtime = {
   query: function <Name extends keyof RuntimeQueries>(
     name: Name,

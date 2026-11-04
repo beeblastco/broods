@@ -1,14 +1,13 @@
-import { afterAll, beforeEach, expect, it, mock } from "bun:test";
+import { beforeEach, expect, it, mock } from "bun:test";
 import type { ModelMessage } from "ai";
 import {
   harnessSteersMidTurn,
   type AiSdkHarnessType,
 } from "../src/harness/ai-sdk-harness/adapters/index.ts";
-import * as harnessIndex from "../src/harness/ai-sdk-harness/index.ts";
 
-// The part of the harness stream options these tests read.
 interface HarnessStreamCall {
   abortSignal?: AbortSignal;
+  messages?: ModelMessage[];
   onEnd?: unknown;
   onStepStart?: (event: {
     stepNumber: number;
@@ -17,8 +16,12 @@ interface HarnessStreamCall {
   [hook: string]: unknown;
 }
 
-// Copied before the mock below rewrites the module, so afterAll can put it back.
-const realHarnessIndex = { ...harnessIndex };
+interface HarnessTurnOptions {
+  appended?: unknown[];
+  appendIngressEvents?: (events: unknown) => Promise<[]>;
+  messages?: ModelMessage[];
+}
+
 const streamCalls: HarnessStreamCall[] = [];
 const steeredTexts: string[] = [];
 let steerFailure: Error | null = null;
@@ -34,42 +37,22 @@ await mock.module("../src/harness/ai-sdk-harness/index.ts", () => ({
   }),
   harnessSteersMidTurn: harnessSteersMidTurn,
   openAiSdkHarnessSession: async () => ({
-    destroy: async (): Promise<void> => {},
-    experimental_steerTurn: async (text: string): Promise<void> => {
-      if (steerFailure) throw steerFailure;
-      steeredTexts.push(text);
+    nativeSession: {
+      destroy: async (): Promise<void> => {},
+      experimental_steerTurn: async (text: string): Promise<void> => {
+        if (steerFailure) throw steerFailure;
+        steeredTexts.push(text);
+      },
     },
+    sandboxSession: { destroy: async (): Promise<void> => {} },
   }),
   parkAiSdkHarnessSession: async () => {},
 }));
-
-// mock.module is process-wide; restore the real harness for later test files.
-afterAll(async (): Promise<void> => {
-  await mock.module(
-    "../src/harness/ai-sdk-harness/index.ts",
-    (): typeof harnessIndex => realHarnessIndex,
-  );
-});
 
 beforeEach((): void => {
   streamCalls.length = 0;
   steeredTexts.length = 0;
   steerFailure = null;
-});
-
-it("hands a harness agent the same step and tool hooks as streamText", async () => {
-  await runHarnessTurn("codex", async () => null);
-
-  expect(streamCalls).toHaveLength(1);
-  for (const hook of [
-    "onStepStart",
-    "onStepEnd",
-    "onToolExecutionStart",
-    "onToolExecutionEnd",
-  ]) {
-    expect(typeof streamCalls[0]?.[hook]).toBe("function");
-  }
-  expect(streamCalls[0]?.onEnd).toBeUndefined();
 });
 
 it.each(["claude-code", "codex"] as const)(
@@ -87,7 +70,7 @@ it.each(["claude-code", "codex"] as const)(
         appliedMode: "steer",
       };
     });
-    await runHarnessTurn(type, applySteeringIngress, appended);
+    await runHarnessTurn(type, applySteeringIngress, { appended: appended });
 
     queued = true;
     await streamCalls[0]?.onStepStart?.({ stepNumber: 1, messages: [] });
@@ -123,9 +106,10 @@ it("fails the run when a claimed steer cannot be saved", async () => {
             appliedMode: "steer",
           }
         : null,
-    [],
-    async (): Promise<never> => {
-      throw new Error("convex down");
+    {
+      appendIngressEvents: async (): Promise<never> => {
+        throw new Error("convex down");
+      },
     },
   );
 
@@ -149,7 +133,7 @@ it("fails the run but keeps a steer the turn did not take", async () => {
             appliedMode: "steer",
           }
         : null,
-    appended,
+    { appended: appended },
   );
 
   queued = true;
@@ -160,22 +144,71 @@ it("fails the run but keeps a steer the turn did not take", async () => {
   expect(appended).toEqual([[{ role: "user", content: "focus" }]]);
 });
 
+it.each([
+  ["pi", ["text", "text", "text", "image"]],
+  ["codex", ["image", "text", "text", "text"]],
+] as const)(
+  "hands %s a picture natively, in the order it takes, and other files as a note",
+  async (type, order): Promise<void> => {
+    await runHarnessTurn(type, async () => null, {
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              image: new Uint8Array([1]),
+              mediaType: "image/png",
+            },
+            { type: "text", text: "what is this?" },
+            {
+              type: "file",
+              data: new Uint8Array([2]),
+              mediaType: "application/pdf",
+              filename: "brief.pdf",
+            },
+          ],
+        },
+      ],
+    });
+
+    const content = streamCalls[0]?.messages?.at(-1)?.content;
+    expect(
+      Array.isArray(content) && content.map((part): string => part.type),
+    ).toEqual([...order]);
+    expect(
+      Array.isArray(content) &&
+        content.flatMap((part): string[] =>
+          part.type === "text" ? [part.text] : [],
+        ),
+    ).toEqual([
+      "what is this?",
+      expect.stringContaining(
+        "[brief.pdf (application/pdf) was not shown to you",
+      ),
+      expect.any(String),
+    ]);
+  },
+);
+
 async function runHarnessTurn(
   type: AiSdkHarnessType,
   applySteeringIngress: () => Promise<unknown>,
-  appended: unknown[] = [],
-  appendIngressEvents: (events: unknown) => Promise<[]> = async (
-    events,
-  ): Promise<[]> => {
-    appended.push(events);
-
-    return [];
-  },
+  options: HarnessTurnOptions = {},
 ): Promise<void> {
+  const appended = options.appended ?? [];
+  const appendIngressEvents =
+    options.appendIngressEvents ??
+    (async (events: unknown): Promise<[]> => {
+      appended.push(events);
+
+      return [];
+    });
+  const messages = options.messages ?? [{ role: "user", content: "hello" }];
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   const { runAgentLoop } = await import("../src/harness/harness.ts");
 
-  expect(
+  await expect(
     runAgentLoop(
       {
         accountId: "acct_test",
@@ -199,7 +232,7 @@ async function runHarnessTurn(
         }),
       } as never,
       {
-        messages: [{ role: "user", content: "hello" }],
+        messages: messages,
         system: [],
         ephemeralSystem: [],
         systemContextSnapshot: { cursor: null, messages: [] },

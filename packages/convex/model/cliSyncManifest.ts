@@ -1,10 +1,3 @@
-/**
- * Manifest read-back for CLI sync: projects the stage's stored rows (agents,
- * policies, channel records, external resources, sandboxes, workspaces, crons)
- * back into manifest resources and name→id maps, with ids rewritten to the
- * resource names the local manifest declares.
- */
-
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { GeneratedIds } from "../cli/types";
@@ -225,9 +218,7 @@ export async function resourcesForStage(
       .map((entry) => [entry._id, entry.name]),
   );
 
-  // sandboxConfigs is stored encrypted (broods contract); decrypt back
-  // into the manifest shape the CLI expects. Without the secret the manifest
-  // still lists the sandbox, with an empty config, as it always has.
+  // Without the encryption secret the manifest still lists each sandbox, with an empty config.
   const cipher = hasEncryptionSecret()
     ? await accountCipher(ctx, accountId)
     : null;
@@ -251,41 +242,15 @@ export async function resourcesForStage(
         kind: "agent",
         name: agent.name,
         description: agent.description,
-        config: rewriteIdsToNames(
-          toNestedAgentConfig({
-            name: agent.name,
-            description: agent.description,
-            provider: agent.provider,
-            modelId: agent.modelId,
-            systemPrompt: agent.systemPrompt,
-            maxTurns: agent.maxTurns,
-            outputFormat: agent.outputFormat as
-              | Record<string, unknown>
-              | undefined,
-            providerOptions: agent.providerOptions as
-              | Record<string, unknown>
-              | undefined,
-            temperature: agent.temperature,
-            maxTokens: agent.maxTokens,
-            memoryToolEnabled: agent.memoryToolEnabled,
-            searchToolEnabled: agent.searchToolEnabled,
-            searchToolConfig: agent.searchToolConfig as
-              | Record<string, unknown>
-              | undefined,
-            extraConfig: agent.extraConfig as
-              | Record<string, unknown>
-              | undefined,
-          }),
-          {
-            workspaces: workspaceNames,
-            sandboxes: sandboxNames,
-            agents: agentNames,
-            skills: skillNames,
-            hooks: hookNames,
-            mcp: mcpNames,
-            policies: policyNames,
-          },
-        ),
+        config: rewriteIdsToNames(toNestedAgentConfig(agent), {
+          workspaces: workspaceNames,
+          sandboxes: sandboxNames,
+          agents: agentNames,
+          skills: skillNames,
+          hooks: hookNames,
+          mcp: mcpNames,
+          policies: policyNames,
+        }),
       })),
     ...policies
       .filter(
@@ -326,9 +291,10 @@ export async function resourcesForStage(
         description: workspace.description,
         config: workspace.config,
       })),
+    // Only crons code declared: an agent's or the dashboard's own schedules are not code's to diff.
     ...crons.flatMap((cron): CliResource[] => {
       const agentName = agentNames[cron.agentId];
-      if (!agentName) return [];
+      if (!agentName || cron.managedBy !== "cli") return [];
 
       return [
         {

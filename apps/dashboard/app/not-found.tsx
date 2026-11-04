@@ -2,8 +2,7 @@ import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
 import Link from "next/link";
 
-// Any unknown route, a malformed project id included. A well-formed project id
-// the caller cannot read gets its own copy in `[projectId]/layout.tsx`.
+// A well-formed project id the caller cannot read gets its own copy in `[projectId]/layout.tsx`.
 export default function NotFound(): React.JSX.Element {
   return (
     <StatusPage

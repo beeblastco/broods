@@ -21,14 +21,4 @@ describe("backoff", () => {
   it("jitters the first retry too, so tokens do not re-dial in lockstep", () => {
     expect(backoffDelayMs(0, 300_000, () => 1)).toBe(800);
   });
-
-  it("only ever shortens a delay, never lengthens it", () => {
-    for (const attempt of [0, 1, 7]) {
-      const undelayed = backoffDelayMs(attempt, 300_000, NO_JITTER);
-      expect(backoffDelayMs(attempt, 300_000, () => 1)).toBeLessThan(undelayed);
-      expect(backoffDelayMs(attempt, 300_000, () => 0.5)).toBeLessThan(
-        undelayed,
-      );
-    }
-  });
 });

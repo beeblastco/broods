@@ -1,46 +1,34 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
-// SST provisions the AWS data plane and the container runtime IAM user.
-// The runtime itself is the Bun container deployed from the infra repo.
-// AWS account + project identity for resource names, IAM role ARNs, and tags.
-// No in-source defaults. Repo vars or local env provide them (see .env.example).
-// CI injects them into the validate + deploy jobs; forks must set them to run
-// `sst install` / deploy.
 const AWS_ACCOUNT_ID = requiredEnv("AWS_ACCOUNT_ID");
 const PROJECT_NAME = requiredEnv("PROJECT_NAME");
 const PROJECT_OWNER_EMAIL = requiredEnv("PROJECT_OWNER_EMAIL");
 const AWS_PROFILE = process.env.CI
   ? undefined
   : (process.env.AWS_PROFILE ?? "default");
-// Whether to import (vs first-create) the region-scoped sandbox ECR repo. The 4 image-based
-// sandbox Lambdas this used to gate are gone. The "lambda" provider is now an AWS Lambda
-// MicroVM (MicrovmSandboxExecutor) whose image is built from an S3 zip, not pulled from ECR.
-// The ECR repo is retained transitionally (the lambda-sanbdox container image still publishes
-// there); its teardown belongs to the Phase 4 infra cleanup. See apps/docs/docs/internals/sandboxes.md.
 const SANDBOX_IMAGE_READY = parseBooleanEnv("SANDBOX_IMAGE_READY", false);
-// Convex credentials are required for every stage and back all persistence.
-// Runtime credentials live on the container (infra repo), not here.
 const CONVEX_URL = process.env.CONVEX_URL?.trim();
 const CONVEX_DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY?.trim();
-// The sandbox log forwarder reaches the OTLP collector with the same two
-// variables core uses, so the one `Authorization=Basic …` credential serves both.
 const OTEL_EXPORTER_OTLP_ENDPOINT =
   process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim() || "https://otel.beeblast.co";
 const OTEL_EXPORTER_OTLP_HEADERS =
   process.env.OTEL_EXPORTER_OTLP_HEADERS?.trim();
+// The cluster's public IPs: change it before the cluster's address does, or prod AWS calls fail.
+const RUNTIME_EGRESS_IPS_RAW = process.env.RUNTIME_EGRESS_IPS?.trim() ?? "";
+const RUNTIME_EGRESS_IPS = RUNTIME_EGRESS_IPS_RAW.split(",")
+  .map((ip) => ip.trim())
+  .filter((ip) => ip.length > 0);
+if (RUNTIME_EGRESS_IPS_RAW && RUNTIME_EGRESS_IPS.length === 0) {
+  throw new Error("RUNTIME_EGRESS_IPS is set but lists no IP address");
+}
 
-// How long to let a freshly created IAM role's trust policy propagate before another
-// AWS service is asked to assume it. Measured: the connector create failed 8s after the
-// role appeared and only succeeded ~4.5 min later on the provider's own retry.
+// A new role's trust policy is not assumable at once: the connector create failed 8s after it.
 const IAM_PROPAGATION_SECONDS = 45;
 
-// Resolved `AWS::Lambda::NetworkConnector` Cloud Control properties. `Arn` is the type
-// schema's primaryIdentifier, so it is always present once the resource exists.
 interface NetworkConnectorProperties {
   Arn: string;
 }
 
-// The `policy` entry shape sst.aws.Bucket takes, as denyUnlessProjectPrincipal builds it.
 interface BucketDenyStatement {
   effect: "deny";
   principals: "*";
@@ -114,39 +102,66 @@ function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
   throw new Error(`${name} must be a boolean-like value`);
 }
 
-function ecrRepositoryExists(name: string, region: string): boolean {
-  try {
-    const result = Bun.spawnSync({
-      cmd: [
-        "aws",
-        "ecr",
-        "describe-repositories",
-        "--repository-names",
-        name,
-        "--region",
-        region,
-        "--output",
-        "json",
-      ],
-      stdout: "ignore",
-      stderr: "ignore",
-    });
+// wrangler, since the Cloudflare provider declares no Worker Loader binding or Container image.
+// No delete: a removed stage's Worker (and the bridge's Container app) is deleted by hand.
+async function deployCloudflareWorker(
+  command: typeof import("@pulumi/command"),
+  stage: string,
+  region: string,
+  service: string,
+  sources: string[] = [],
+  vars: Record<string, $util.Input<string>> = {},
+): Promise<string> {
+  const name = resourceName(service, stage, region);
+  const app = `apps/cloudflare-${service}`;
+  new command.local.Command(`CloudflareWorker-${service}`, {
+    dir: `${$cli.paths.root}/../cloudflare-${service}`,
+    create: "bun run deploy",
+    environment: {
+      WORKER_NAME: name,
+      // Read by nothing: a new value is what reruns the deploy.
+      SOURCES_HASH: await sourceFilesHash([app, ...sources]),
+      ...vars,
+    },
+  });
 
-    return result.success;
-  } catch {
-    return false;
-  }
+  return name;
+}
+
+// SST runs this file in Node and allows no top-level imports, hence the lazy ones.
+async function sourceFilesHash(paths: string[]): Promise<string> {
+  const { execFileSync } = await import("node:child_process");
+  const { createHash } = await import("node:crypto");
+  const git = (args: string[]): string =>
+    execFileSync("git", ["-C", `${$cli.paths.root}/../..`, ...args], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  const list = (flags: string[]): string[] =>
+    git(["ls-files", "-z", ...flags, "--", ...paths])
+      .split("\0")
+      .filter(Boolean);
+  const deleted = new Set(list(["--deleted"]));
+  const files = list([
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "--deduplicate",
+  ]).filter((file) => !deleted.has(file));
+
+  return createHash("sha256")
+    .update(files.join("\0"))
+    .update(git(["hash-object", "--", ...files]))
+    .digest("hex");
 }
 
 interface PermissionStatement {
   effect?: "Allow" | "Deny";
   actions: string[];
   resources: $util.Input<string>[];
-  conditions?: Record<string, Record<string, string>>;
+  conditions?: Record<string, Record<string, string | string[]>>;
 }
 
-// SST's `permissions` shorthand -> a raw IAM policy doc, for the container
-// runtime user and the Convex config-plane role. $jsonStringify resolves Outputs.
 function permissionsPolicy(perms: PermissionStatement[]): $util.Output<string> {
   return $jsonStringify({
     Version: "2012-10-17",
@@ -159,13 +174,8 @@ function permissionsPolicy(perms: PermissionStatement[]): $util.Output<string> {
   });
 }
 
-// Bring-your-own buckets: a workspace names a role in the customer's own AWS
-// account, which core (mounts, harness reads) and the Convex config plane
-// (dashboard file browser) assume with a session scoped to bucket/prefix. The
-// grant is any role, but only with an sts:ExternalId, which Broods assigns per
-// account (packages/convex/model/storageTrust.ts) and the customer's trust
-// policy requires; never a role in the platform's own account, which
-// workspace validation refuses too (workspaceStorageOwnAuth).
+// Bring-your-own buckets: any customer role, but only with the per-account sts:ExternalId
+// (packages/convex/model/storageTrust.ts), and never a role in this account.
 const CUSTOMER_STORAGE_ROLE_PERMISSIONS: PermissionStatement[] = [
   {
     actions: ["sts:AssumeRole"],
@@ -193,15 +203,10 @@ function denyUnlessProjectPrincipal(
         test: "StringNotLikeIfExists",
         variable: "aws:PrincipalArn",
         values: [
-          // Scoped role assumed by the harness for provider-sandbox mount-s3 credentials.
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3mount", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("microvm-build", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("microvm-execution", stage, region)}`,
-          // Self-hosted container runtime user (epic #85 phase 9a). Without
-          // this entry every pod S3 call gets an explicit deny.
           `arn:aws:iam::${AWS_ACCOUNT_ID}:user/${resourceName("core-runtime", stage, region)}`,
-          // Convex config-plane role (epic #85 phase 9). Convex node actions own
-          // the skills/tool-bundle/workspace S3 objects directly after assuming it.
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("convex-aws", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-ecr-push`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-aws-infra-deploy`,
@@ -224,7 +229,6 @@ export default $config({
       protect: isProductionStage(stage),
       home: "aws",
       providers: {
-        // Only for the IAM-propagation wait in front of the MicroVM egress connector.
         command: "1.0.1",
         aws: {
           region: region,
@@ -266,7 +270,6 @@ export default $config({
       ),
       microvmBuildRole: resourceName("microvm-build", stage, region),
       microvmExecutionRole: resourceName("microvm-execution", stage, region),
-      // The connector name is createOnly and capped at 64 chars by the type schema.
       microvmEgressConnector: resourceName("microvm-egress", stage, region),
     };
 
@@ -434,12 +437,6 @@ export default $config({
         })
       : null;
 
-    // Sandbox log bridge: every guest line the MicroVMs write to that group is
-    // forwarded to the cluster's OTLP collector, which is the only write path into
-    // Loki. The forwarder is a plain .mjs next to the hosted-MCP runner. It needs
-    // the collector's client header line (a CI secret, kept encrypted in state
-    // via $util.secret), so a deploy without it skips the bridge rather than
-    // shipping a function that fails every invocation. See apps/docs/docs/internals/observability.md.
     if (microvmLogGroup && OTEL_EXPORTER_OTLP_HEADERS) {
       const sandboxLogForwarder = new sst.aws.Function("SandboxLogForwarder", {
         handler: "../lambda/sandbox-log-forwarder.handler",
@@ -505,20 +502,13 @@ export default $config({
       });
     }
 
-    // Sandbox egress network, used only by the MicroVM `deny-all` / `restricted` modes.
-    // `allow-all` never reaches it: that mode runs on the service default INTERNET_EGRESS
-    // with no connector at all. Deliberately NAT-less. The only outbound a restricted
-    // sandbox still needs is the workspace S3 mount, which the free S3 Gateway VPC Endpoint
-    // below serves off the private route tables. A NAT would cost ~$35/mo per AZ (the old
-    // Vpc.v1 billed ~$130/mo per stage for exactly this) and hand back the internet access
-    // these modes exist to remove. The component's public subnets + IGW go unused but free.
+    // Deliberately NAT-less: deny-all / restricted sandboxes keep only the workspace S3 mount,
+    // over the free gateway endpoint. A NAT costs per AZ and gives back the internet they remove.
     const sandboxNetwork = enableMicrovmPrereqs
       ? new sst.aws.Vpc("SandboxNetwork", { az: 2 })
       : null;
 
-    // Scoped to the managed workspace bucket, so a `deny-all` sandbox on a
-    // bring-your-own-bucket workspace cannot reach its mount. Widen this policy before
-    // offering those two together (see the lambda provider docs).
+    // Managed bucket only: a deny-all sandbox on a bring-your-own bucket cannot reach its mount.
     if (sandboxNetwork) {
       new aws.ec2.VpcEndpoint("SandboxS3Endpoint", {
         vpcId: sandboxNetwork.id,
@@ -541,8 +531,6 @@ export default $config({
       });
     }
 
-    // The connector's only egress rule. `deny-all` therefore means "no internet, workspace
-    // S3 only". An empty rule set would break the mount-s3 workspace every sandbox needs.
     const sandboxEgressSecurityGroup = sandboxNetwork
       ? new aws.ec2.SecurityGroup("SandboxEgressSecurityGroup", {
           name: resourceName("microvm-egress-sg", stage, region),
@@ -564,10 +552,8 @@ export default $config({
         })
       : null;
 
-    // Lambda assumes this to manage the connector's ENIs in the sandbox VPC. Network
-    // Connector assume-role calls do not include SourceArn/SourceAccount context, so the
-    // usual confused-deputy conditions would deny every call. What bounds it instead is
-    // the policy below: ENIs only in these subnets, only with this security group.
+    // No confused-deputy conditions: connector assume-role calls carry no SourceArn/SourceAccount.
+    // The policy below bounds it instead: ENIs only in these subnets, with this security group.
     const sandboxConnectorRole = sandboxNetwork
       ? new aws.iam.Role("SandboxConnectorOperatorRole", {
           name: resourceName("microvm-connector", stage, region),
@@ -648,10 +634,6 @@ export default $config({
           })
         : null;
 
-    // IAM is eventually consistent, so a role is not assumable the instant it exists:
-    // creating the connector straight after the role fails with "unable to assume the
-    // provided NetworkConnectorOperatorRole" until the trust policy propagates. Gate the
-    // connector behind a wait that only runs when the role or its policy actually changes.
     const sandboxConnectorRoleReady =
       sandboxConnectorRole && sandboxConnectorRolePolicy
         ? new command.local.Command(
@@ -667,9 +649,6 @@ export default $config({
           )
         : null;
 
-    // No Pulumi/Terraform resource exists for lambda-core network connectors, but the
-    // CloudFormation type does. Cloud Control gives real create/update/delete plus the
-    // PENDING → ACTIVE wait (ENI provisioning takes up to ~10 min on the first deploy).
     const sandboxEgressConnector =
       sandboxNetwork &&
       sandboxEgressSecurityGroup &&
@@ -693,9 +672,7 @@ export default $config({
                 },
               }),
             },
-            // The ENI policy must exist before Lambda assumes the role, or the connector
-            // creates with no permission to build its interfaces. Nothing in desiredState
-            // references the policy, so without this the two race.
+            // desiredState never references the ENI policy, so without this the two race.
             {
               dependsOn: [
                 sandboxConnectorRolePolicy,
@@ -705,8 +682,6 @@ export default $config({
           )
         : null;
 
-    // Core reads this as MICROVM_EGRESS_NETWORK_CONNECTOR_ARN; without it the executor
-    // fails closed rather than launching deny-all on the default internet egress.
     const microvmEgressConnectorArn = sandboxEgressConnector
       ? sandboxEgressConnector.properties.apply((properties) => {
           const arn = (JSON.parse(properties) as NetworkConnectorProperties)
@@ -721,20 +696,11 @@ export default $config({
         })
       : undefined;
 
-    // IAM principal for the self-hosted container runtime (epic #85 phase 9a).
-    // Declared here because the sandbox mount role below trusts it by ARN; its
-    // policies follow further down, next to the permission sets they attach.
     const coreRuntimeUser = new aws.iam.User("CoreRuntimeUser", {
       name: resourceName("core-runtime", stage, region),
     });
 
-    // Scoped credentials for provider sandboxes that mount S3 with mount-s3
-    // (daytona, workdir, and the lambda MicroVM via its /run hook). The harness assumes
-    // this role per sandbox create and hands the short-lived, prefix-scoped session
-    // credentials to the sandbox instead of its own runtime credentials, so sandbox
-    // code can only reach the workspace/skills buckets. Only core's runtime user may
-    // assume it, and every session it mints names who it serves
-    // (sts:SetSourceIdentity + sts:TagSession, see harness/sandbox/s3-mount.ts).
+    // Sandboxes get short-lived, prefix-scoped sessions of this role, never core's own keys.
     const sandboxS3MountRole = new aws.iam.Role("SandboxS3MountRole", {
       name: resourceName("sandbox-s3mount", stage, region),
       assumeRolePolicy: $jsonStringify({
@@ -788,20 +754,7 @@ export default $config({
       }),
     });
 
-    // This app owns the sandbox image ECR repo (moved out of the infra Terraform repo) so
-    // the repo lifecycle stays in sync with the functions that consume it, with no cross-repo
-    // coordination. Lambda pulls only from PRIVATE ECR in its own region (public.ecr.aws is
-    // rejected), so the repo is region-scoped: each deploy region gets its own. The arm64
-    // image is pushed by the lambda-just-bash-rust CI; for a brand-new region that push must
-    // land before the sandbox functions can be created (the first deploy creates the empty
-    // repo, then re-deploy once the image exists). See apps/docs/docs/internals/sandboxes.md.
     const sandboxImageRepoName = `beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${region}`;
-    const sandboxImageRepoExists = ecrRepositoryExists(
-      sandboxImageRepoName,
-      region,
-    );
-    const sandboxImageRepoShouldImport =
-      SANDBOX_IMAGE_READY || sandboxImageRepoExists;
     const sandboxEcr = new aws.ecr.Repository(
       "SandboxImage",
       {
@@ -812,18 +765,12 @@ export default $config({
       },
       {
         retainOnDelete: isProduction,
-        // The repo name is intentionally not PROJECT_NAME-scoped (the external lambda-sanbdox
-        // CI pushes `latest-arm64` to this exact name). When SANDBOX_IMAGE_READY is true,
-        // the deploy workflow has already made the regional repo, so import it
-        // even if the local describe probe cannot run from inside SST config evaluation.
-        ...(sandboxImageRepoShouldImport
-          ? { import: sandboxImageRepoName }
-          : {}),
+        // Not PROJECT_NAME-scoped: lambda-sanbdox CI pushes to this exact name.
+        ...(SANDBOX_IMAGE_READY ? { import: sandboxImageRepoName } : {}),
       },
     );
 
-    // Wide pull mirrors the prior infra policy. Same-account Lambda pulls work without it;
-    // cross-account consumers (daytona sandbox provider) rely on it.
+    // Principal "*": the daytona sandbox provider pulls cross-account.
     new aws.ecr.RepositoryPolicy("SandboxImagePolicy", {
       repository: sandboxEcr.name,
       policy: JSON.stringify({
@@ -843,14 +790,7 @@ export default $config({
       }),
     });
 
-    // Hosted-MCP runner: runs uploaded MCP server bundles in a scrubbed child
-    // process. No VPC gives internet egress; core invokes it via
-    // TOOL_RUNNER_FUNCTION_NAME. MCP_TENANT_ISOLATION=true creates it in
-    // PER_TENANT mode so warm environments never cross accounts. Off until AWS
-    // enables tenancy config for this account (CreateFunction rejects it today);
-    // tracked in #654. The mode is immutable after create,
-    // so each mode owns its logical id and physical name. It also rules out a
-    // function URL, provisioned concurrency and SnapStart.
+    // Tenancy mode is immutable, so each mode owns its id and name. Off until AWS allows it (#654).
     const mcpTenantIsolation = parseBooleanEnv("MCP_TENANT_ISOLATION", false);
     const mcpRunnerFn = new sst.aws.Function(
       mcpTenantIsolation ? "McpRunner" : "ToolRunner",
@@ -859,10 +799,7 @@ export default $config({
         runtime: "nodejs22.x",
         architecture: "arm64",
         timeout: "35 seconds",
-        // 1769 MB is the one-full-vCPU step. Below it Lambda hands out a fraction
-        // of a core, and this function's cost is almost all CPU, Node startup in
-        // the child plus parsing a bundle, so a smaller size bills roughly the
-        // same GB-ms while taking several times longer.
+        // One full vCPU: this is CPU-bound, so a smaller size bills the same GB-ms, only slower.
         memory: "1769 MB",
         copyFiles: [
           {
@@ -885,8 +822,6 @@ export default $config({
       },
     );
 
-    // Harness-side permissions for the container runtime user (CoreRuntimeUser
-    // below); the account-manage set follows further down.
     const harnessPermissions = [
       {
         actions: ["lambda:InvokeFunction"],
@@ -926,8 +861,7 @@ export default $config({
               resources: [
                 `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm-image:*`,
                 `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:microvm:*`,
-                // A sandbox snapshot builds on the Lambda-managed base image its
-                // source image used.
+                // A snapshot builds on the Lambda-managed base image of its source image.
                 `arn:aws:lambda:${region}:aws:microvm-image:*`,
               ],
             },
@@ -997,7 +931,6 @@ export default $config({
         : []),
     ];
 
-    // Also granted to CoreRuntimeUser below, same as harnessPermissions.
     const accountManagePermissions = [
       {
         actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
@@ -1037,13 +970,7 @@ export default $config({
         : []),
     ];
 
-    // Policies of the container runtime user (CoreRuntimeUser above): one pod
-    // runs both handlers, so the user gets the union of the harness and account
-    // permission sets, generated from the same arrays so it cannot drift. The
-    // access key is minted out of band (`aws iam create-access-key`) and
-    // delivered to the cluster as a k8s Secret, never in Pulumi state or git.
-    // Two managed policies instead of one inline: IAM caps inline user policies
-    // at 2048 chars total, which these documents exceed.
+    // Managed, not inline: IAM caps a user's inline policies at 2048 chars in total.
     const coreRuntimeHarnessPolicy = new aws.iam.Policy(
       "CoreRuntimeHarnessPolicy",
       {
@@ -1067,13 +994,6 @@ export default $config({
       policyArn: coreRuntimeAccountPolicy.arn,
     });
 
-    // AWS access for the Convex config plane (epic #85 phase 9, state plane owns
-    // AWS directly, no core proxy). Convex node actions assume ConvexAwsRole with a
-    // minimal bootstrap user's static key (minted out of band, stored in the Convex
-    // deployment env as AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY + CONVEX_AWS_ROLE_ARN)
-    // and get short-lived credentials scoped to the skills/tool-bundle/workspace
-    // S3 buckets. The role ARN is also allow-listed in
-    // denyUnlessProjectPrincipal so its S3 calls are not denied.
     const convexAwsPermissions = [
       {
         actions: [
@@ -1118,9 +1038,6 @@ export default $config({
       role: convexAwsRole.name,
       policyArn: convexAwsPolicy.arn,
     });
-    // Bootstrap identity Convex uses to assume the role above. It can do nothing
-    // except assume that role; the access key is created out of band and never
-    // stored in Pulumi state or git.
     const convexBootstrapUser = new aws.iam.User("ConvexBootstrapUser", {
       name: resourceName("convex-bootstrap", stage, region),
     });
@@ -1135,19 +1052,67 @@ export default $config({
         }),
       ),
     });
+    // Static keys live only on the cluster; sessions of the roles they assume are not affected.
+    if (isProduction && RUNTIME_EGRESS_IPS.length > 0) {
+      const sourceIpLock = permissionsPolicy([
+        {
+          effect: "Deny",
+          actions: ["*"],
+          resources: ["*"],
+          conditions: {
+            NotIpAddress: { "aws:SourceIp": RUNTIME_EGRESS_IPS },
+            Bool: { "aws:ViaAWSService": "false" },
+          },
+        },
+      ]);
+      new aws.iam.UserPolicy("CoreRuntimeSourceIpLock", {
+        user: coreRuntimeUser.name,
+        policy: sourceIpLock,
+      });
+      new aws.iam.UserPolicy("ConvexBootstrapSourceIpLock", {
+        user: convexBootstrapUser.name,
+        policy: sourceIpLock,
+      });
+    }
+
+    const cloudflareWorkers = process.env.CLOUDFLARE_API_TOKEN
+      ? {
+          mcp: await deployCloudflareWorker(
+            command,
+            stage,
+            region,
+            "mcp",
+            ["apps/cloudflare-sandbox/src/bearer.ts", "bun.lock"],
+            {
+              BUNDLE_ORIGIN: $interpolate`https://${toolBundlesBucket.name}.s3.${region}.amazonaws.com`,
+            },
+          ),
+          // No bun.lock: a lockfile-only bump must not redeploy live sandboxes.
+          sandbox: await deployCloudflareWorker(
+            command,
+            stage,
+            region,
+            "sandbox",
+          ),
+          worker: await deployCloudflareWorker(
+            command,
+            stage,
+            region,
+            "worker",
+            ["apps/cloudflare-sandbox/src/bearer.ts", "bun.lock"],
+          ),
+        }
+      : undefined;
 
     return {
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
       toolRunnerFunctionName: mcpRunnerFn.name,
-      // deploy.yaml deploys the Cloudflare MCP runtime Worker under this name.
-      cloudflareMcpWorkerName: resourceName("mcp", stage, region),
+      cloudflareWorkers: cloudflareWorkers,
       microvmArtifactsBucketName: microvmArtifactsBucket?.name,
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,
-      // Set on the core pods as MICROVM_EGRESS_NETWORK_CONNECTOR_ARN (infra repo Helm
-      // values); deny-all / restricted sandboxes cannot launch without it.
       microvmEgressNetworkConnectorArn: microvmEgressConnectorArn,
       coreRuntimeUserName: coreRuntimeUser.name,
       convexAwsRoleArn: convexAwsRole.arn,

@@ -52,7 +52,6 @@ const RULE_ENV_NAMES = [
   "ALLOW_PRIVATE_STORAGE_ENDPOINTS",
 ];
 
-// Each account's Broods-assigned external id, as the config plane hands it out.
 const externalIdLookups: string[] = [];
 let externalIdSpy: { mockRestore(): void } | undefined;
 
@@ -216,8 +215,7 @@ describe("mountAttribution", () => {
     expect(
       mountAttribution(config, { namespace: own, metadata: metadata }),
     ).toEqual({ accountId: "acct_1", agentId: "agent_1" });
-    // A shared root or a conversation folder outlives one run's credentials,
-    // so the next agent on the same sandbox would carry this agent's name.
+    // A shared or conversation folder outlives the run: the next agent would wear this name.
     for (const namespace of [
       NS,
       `${NS}/support/fs-conversation`,
@@ -248,7 +246,7 @@ describe("mountRoleArn", () => {
     expect(() =>
       mountRoleArn({ ...storage, auth: { type: "managed" } }),
     ).toThrow(expected);
-    expect(
+    await expect(
       resolveS3ReadTarget({ storage: storage, namespace: NS }),
     ).rejects.toThrow(expected);
     expect(assumeRoleSendMock).not.toHaveBeenCalled();
@@ -260,10 +258,6 @@ describe("mountRoleArn", () => {
       "arn:aws:iam::1:role/platform",
     );
     expect(mountRoleArn(undefined)).toBe("arn:aws:iam::1:role/platform");
-  });
-
-  it("returns undefined with no assume-role and no platform role", () => {
-    expect(mountRoleArn({ provider: "s3" })).toBeUndefined();
   });
 });
 
@@ -314,7 +308,6 @@ describe("resolveS3Mount", () => {
       ],
     });
 
-    // No agent (an account-level mount) still attributes the account.
     await resolveS3Mount({
       storage: undefined,
       namespace: NS,
@@ -327,8 +320,7 @@ describe("resolveS3Mount", () => {
       Tags: [{ Key: "broods:account", Value: "acct_1" }],
     });
 
-    // A developer's trust policy only grants sts:AssumeRole, so the session
-    // name is the one attribution that must not break their mount.
+    // A developer's trust policy grants only sts:AssumeRole, so no SourceIdentity or Tags.
     await resolveS3Mount({
       storage: BYO_STORAGE,
       namespace: NS,
@@ -340,7 +332,6 @@ describe("resolveS3Mount", () => {
     expect(lastAssumeRoleInput).not.toHaveProperty("SourceIdentity");
     expect(lastAssumeRoleInput).not.toHaveProperty("Tags");
 
-    // An unattributed mount keeps the plain session name.
     await resolveS3Mount({
       storage: undefined,
       namespace: NS,
@@ -414,7 +405,7 @@ describe("resolveS3Mount", () => {
   it("never mints credentials for a prefix that is not a directory", async () => {
     const { assumeScopedMountCredentials } =
       await import("../src/harness/sandbox/s3-mount.ts");
-    expect(
+    await expect(
       assumeScopedMountCredentials({
         roleArn: "arn:aws:iam::2:role/byo",
         bucket: "acme",

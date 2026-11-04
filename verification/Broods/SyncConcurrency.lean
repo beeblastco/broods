@@ -118,7 +118,7 @@ private theorem run_ext_untouched (post : List Step) (s : Server)
     | main => rfl
 
 /-- Whatever the interleaving, the rows `syncManifestBySecretHash` owns converge to
-the session whose main mutation committed last. -/
+the session whose main mutation committed last -/
 theorem last_main_wins (hkey : ∀ r, (store r).key = r.key)
     (hsnap : ∀ r, diff.snapshot (store r) = diff.snapshot r)
     {m : Manifest} (hu : m.unique) (pre post : List Step) (s : Server)

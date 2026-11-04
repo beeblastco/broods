@@ -1,58 +1,110 @@
 "use client";
 
-/**
- * The copilot's state and its hands. Held above the router so the conversation
- * survives navigation, which is the whole point of a dock over a dialog: the
- * copilot moves you to another page and the thread is still there when you land.
- */
 import { useShortcutRegistry } from "@/app/components/ShortcutProvider";
+import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import { useDashboardIndex } from "@/app/hooks/useDashboardIndex";
 import { useStage } from "@/app/hooks/useStage";
+import type { DockFacts, DockSession } from "@/app/lib/agentDock";
+import type { DockFile } from "@/app/lib/dockSource";
 import {
   actionTier,
-  planRunsUnattended,
+  changeKey,
+  dockProposals,
+  openProposal,
+  proposedNodes,
+  settleApplies,
+  settleVerified,
   type CopilotAction,
   type CopilotPlan,
+  type DockApply,
+  type DockProposal,
+  type ProposedNode,
+  type TrackedDeploy,
 } from "@/app/lib/copilotActions";
-import { planFromQuery } from "@/app/lib/copilotIntent";
+import { planFromQuery, type CopilotContext } from "@/app/lib/copilotIntent";
 import { navHref } from "@/app/lib/navigation";
+import { requestCanvasAction } from "@/app/lib/canvasActions";
+import { toErrorMessage } from "@/app/lib/errors";
+import type { SearchItem } from "@/app/lib/paletteSearch";
+import { STREAM_COMMIT_MS } from "@/app/lib/perfReport";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
 import {
   createContext,
   useCallback,
   useContext,
   useMemo,
+  useReducer,
+  useRef,
   useState,
 } from "react";
 
-/** What the copilot says when an ask lands outside the rules it can resolve on its own. */
 const NO_MODEL_REPLY =
-  'I can only run what I can resolve from this project right now. Try a name, "go to <section>", "pause <cron>", "add an agent", or "set KEY to value".';
+  "I can only run what I can resolve from this project right now. Try a name, `go to <section>`, `pause <cron>`, `add an agent`, or `set KEY to value`.";
+
+// A session minted this close to expiry is renewed before the next ask.
+const SESSION_RENEW_MS = 60 * 1000;
 
 export interface CopilotMessage {
   id: string;
+  /** Set while the Broods agent has not answered yet. */
+  pending?: boolean;
   plan?: CopilotPlan;
   role: "user" | "broods";
+  /** The project and stage it was asked on; its writes refuse to run anywhere else. */
+  scope?: string;
+  stale?: boolean;
   text: string;
 }
 
 export interface CopilotState {
+  applyProposal: (messageId: string) => void;
+  /** Out of sync, and why; null while it is in sync or not read yet. */
+  drift: { reason?: string; syncing: boolean } | null;
   ask: (query: string) => void;
   /** Keys of plan steps already run, as `${messageId}:${index}`. */
   completed: ReadonlySet<string>;
+  discardProposal: (messageId: string) => void;
+  /** Leaves one step, or one file of its commit, out of the proposal. */
+  dropChange: (messageId: string, index: number, path?: string) => void;
   isOpen: boolean;
+  /** Empty until `wakeIndex`. */
+  items: readonly SearchItem[];
   messages: readonly CopilotMessage[];
-  /** Carry out one action. The palette selects rows through this. */
+  /** The newest proposal still open on this project and stage: the bar and the canvas draw it. */
+  proposal: DockProposal | null;
+  /** Every answer's proposal by message id: the chat line reads it. */
+  proposals: ReadonlyMap<string, DockProposal>;
   runAction: (action: CopilotAction) => void;
-  runStep: (messageId: string, index: number, action: CopilotAction) => void;
+  /** Puts the stage back on the source the proposal was seeded from. */
+  revertProposal: (messageId: string) => void;
   setOpen: (open: boolean) => void;
+  /** Redeploys the stage's right source: the branch head when linked, else the stored one. */
+  syncStage: () => void;
+  wakeIndex: () => void;
+}
+
+/** The source a dock conversation was seeded with; its draft is diffed against it. */
+interface DockSeed {
+  branch?: string;
+  files: readonly DockFile[];
+  revision: number | null;
+}
+
+interface ProposedNodes {
+  failed: boolean;
+  nodes: readonly ProposedNode[];
 }
 
 const CopilotContext = createContext<CopilotState | null>(null);
+const ProposedNodesContext = createContext<ProposedNodes>({
+  failed: false,
+  nodes: [],
+});
 
+// Mounted above the router, so the thread survives the navigation the copilot does.
 export function CopilotProvider({
   children,
 }: {
@@ -60,65 +112,406 @@ export function CopilotProvider({
 }): React.JSX.Element {
   const params = useParams<{ projectId?: string }>();
   const projectId = (params.projectId ?? null) as Id<"projects"> | null;
-  const { stageId } = useStage();
+  const { stageArgs, stageId } = useStage();
   const router = useRouter();
   const registry = useShortcutRegistry();
 
-  const items = useDashboardIndex(projectId);
+  // Most visits open neither the palette nor the dock, so the index subscribes once wanted.
+  const [indexAwake, wakeIndex] = useReducer(() => true, false);
+  const indexedProject = indexAwake ? projectId : null;
+
+  const items = useDashboardIndex(indexedProject);
   const crons = useQuery(
     api.agent.crons.listForProject,
-    projectId ? { projectId: projectId } : "skip",
+    indexedProject ? { projectId: indexedProject } : "skip",
   );
   const envVars = useQuery(
     api.environmentVariables.list,
-    projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
+    indexedProject && stageId
+      ? { projectId: indexedProject, stageId: stageId }
+      : "skip",
   );
+  // The same arguments as the index, so these share its subscriptions.
+  const canvas = useQuery(
+    api.canvas.getByProject,
+    indexedProject ? stageArgs : "skip",
+  );
+  const projects = useQuery(api.project.list, indexedProject ? {} : "skip");
+  const stages = useQuery(
+    api.stage.list,
+    indexedProject ? { projectId: indexedProject } : "skip",
+  );
+  const facts = useMemo((): DockFacts => {
+    const labels = new Map(
+      (canvas?.nodes ?? []).map((node) => [
+        node.id,
+        typeof node.data.label === "string" ? node.data.label : node.id,
+      ]),
+    );
+    const repo = projects?.find((project) => project._id === projectId)?.repo;
+    const branches = [
+      repo?.productionBranch && `Production from ${repo.productionBranch}`,
+      repo?.developmentBranch && `Development from ${repo.developmentBranch}`,
+    ].filter(Boolean);
+
+    const stage = stages?.find((entry) =>
+      stageId ? entry._id === stageId : entry.isDefault,
+    );
+    const branch =
+      stage?.kind === "production"
+        ? repo?.productionBranch
+        : repo?.developmentBranch;
+
+    return {
+      ...(branch ? { branch: branch } : {}),
+      codeNodes: (canvas?.nodes ?? [])
+        .filter((node) => isCodeManagedOwner(node.data.managedBy))
+        .map((node) => labels.get(node.id) ?? node.id),
+      connections: (canvas?.edges ?? []).map(
+        (edge) =>
+          `${labels.get(edge.source) ?? edge.source} → ${labels.get(edge.target) ?? edge.target}`,
+      ),
+      project: projects?.find((project) => project._id === projectId)?.name,
+      repo: repo ? `${repo.fullName} (${branches.join(", ")})` : undefined,
+      stage: stages?.find((stage) =>
+        stageId ? stage._id === stageId : stage.isDefault,
+      )?.name,
+    };
+  }, [canvas, projectId, projects, stageId, stages]);
   const updateCron = useMutation(api.agent.cronsPublic.update);
   const setEnvVar = useMutation(api.environmentVariables.set);
+  const mintSession = useMutation(api.agentDock.session);
+  const commitChange = useAction(api.agentDock.commitChange);
+  const readRepo = useAction(api.agentDock.repoFiles);
+  const applySource = useAction(api.agentDock.apply);
+  const syncSource = useAction(api.agentDock.sync);
+  const currentStageId =
+    stageId ?? stages?.find((stage) => stage.isDefault)?._id ?? null;
+  const sessionRef = useRef<DockSession | null | undefined>(undefined);
+  const [conversationKey] = useState(() => `dock-${crypto.randomUUID()}`);
 
-  const [isOpen, setOpen] = useState(false);
+  const scope = `${projectId ?? ""}:${stageId ?? ""}`;
+  const [isOpen, setIsOpen] = useState(false);
+  const setOpen = useCallback((open: boolean): void => {
+    if (open) wakeIndex();
+    setIsOpen(open);
+  }, []);
   const [messages, setMessages] = useState<readonly CopilotMessage[]>([]);
   const [completed, setCompleted] = useState<ReadonlySet<string>>(new Set());
+  const [dropped, setDropped] = useState<ReadonlySet<string>>(new Set());
+  const [applies, setApplies] = useState<Readonly<Record<string, DockApply>>>(
+    {},
+  );
+  const [commits, setCommits] = useState<
+    readonly Omit<TrackedDeploy, "runUrl" | "state">[]
+  >([]);
+  // Subscribed only while a commit deploys; the GitHub webhook moves its run along.
+  const following = Object.values(applies).some(
+    (apply) => apply.phase === "applying" && apply.sha !== undefined,
+  );
+  const github = useQuery(
+    api.github.status,
+    projectId && following ? { projectId: projectId } : "skip",
+  );
+  const deploys = useMemo(
+    () =>
+      commits.map((commit): TrackedDeploy => {
+        const run = github?.deploys.find(
+          (deploy) => deploy.branch === commit.branch,
+        );
+        // A newer run on the branch carries this commit too.
+        if (
+          !run ||
+          (run.sha !== commit.sha && run.updatedAt < commit.committedAt)
+        ) {
+          return { ...commit, state: "waiting" };
+        }
+        if (run.status !== "completed") {
+          return { ...commit, runUrl: run.url, state: "deploying" };
+        }
 
-  const run = useCallback(
-    (action: CopilotAction): void => {
+        return {
+          ...commit,
+          conclusion: run.conclusion,
+          error: run.error,
+          finishedAt: run.updatedAt,
+          runUrl: run.url,
+          state: run.conclusion === "success" ? "deployed" : "failed",
+        };
+      }),
+    [commits, github],
+  );
+
+  // Once the dock woke: the cold canvas subscribes to nothing it does not draw.
+  const sourceArgs =
+    indexAwake && currentStageId ? { stageId: currentStageId } : "skip";
+  const source = useQuery(api.stageSources.latest, sourceArgs);
+  const driftState = useQuery(api.stageSources.drift, sourceArgs);
+  const [syncing, setSyncing] = useState(false);
+  const drift = useMemo(
+    () =>
+      driftState?.outOfSync || syncing
+        ? {
+            ...(driftState?.reason ? { reason: driftState.reason } : {}),
+            syncing: syncing,
+          }
+        : null,
+    [driftState, syncing],
+  );
+  // Seeded once per stage in a conversation; null when the agent has no workspace to seed.
+  const seeds = useRef<Record<string, DockSeed | null>>({});
+
+  // Adjusted during render: a finished run is kept, so a later push cannot reopen it.
+  const settled = settleApplies(applies, deploys);
+  if (settled) setApplies(settled);
+  const verified = settleVerified(applies, source, Date.now());
+  if (verified) setApplies(verified);
+
+  const note = useCallback((text: string): void => {
+    setMessages((prev) => [
+      ...prev,
+      { id: `${crypto.randomUUID()}:note`, role: "broods", text: text },
+    ]);
+  }, []);
+
+  // Answers whether the step took effect; throws the reason a write was refused.
+  const perform = useCallback(
+    async (action: CopilotAction): Promise<boolean> => {
       switch (action.type) {
         case "navigate":
           router.push(action.href);
 
-          return;
+          return true;
         case "openNode":
-          if (!projectId) return;
-          // `?node=` is how the canvas is told what to select, so a node opens
-          // the same way from the palette, the copilot and a pasted link.
+          if (!projectId) return false;
           router.push(
             `${navHref(projectId, "", stageId)}${stageId ? "&" : "?"}node=${action.nodeId}`,
           );
 
-          return;
+          return true;
         case "command":
+          if (!registry.activeIds.has(action.commandId)) {
+            note("Open the Architecture canvas first.");
+
+            return false;
+          }
           registry.trigger(action.commandId);
 
-          return;
+          return true;
         case "setCronStatus":
-          void updateCron({ cronId: action.cronId, status: action.status });
+          await updateCron({ cronId: action.cronId, status: action.status });
 
-          return;
+          return true;
         case "setEnvVar":
-          if (!projectId || !stageId) return;
-          void setEnvVar({
+          if (!projectId || !stageId) return false;
+          await setEnvVar({
             name: action.name,
             projectId: projectId,
             stageId: stageId,
             value: action.value,
           });
 
-          return;
+          return true;
         case "blocked":
-          return;
+          return false;
+        case "connectNodes":
+          await requestCanvasAction({
+            kind: "connect",
+            source: action.source,
+            target: action.target,
+          });
+
+          return true;
+        case "addMcp":
+          await requestCanvasAction({
+            ...(action.agent ? { agent: action.agent } : {}),
+            kind: "addMcp",
+            name: action.name,
+            url: action.url,
+          });
+
+          return true;
+        case "addNode":
+          await requestCanvasAction({
+            agent: action.agent,
+            kind: "addNode",
+            nodeType: action.nodeType,
+          });
+
+          return true;
+        case "commitFiles":
+          return false;
       }
     },
-    [projectId, registry, router, setEnvVar, stageId, updateCron],
+    [note, projectId, registry, router, setEnvVar, stageId, updateCron],
+  );
+
+  // A refusal of a step that runs on its own is noted in the thread.
+  const performNoted = useCallback(
+    async (action: CopilotAction): Promise<boolean> => {
+      try {
+        return await perform(action);
+      } catch (error) {
+        note(toErrorMessage(error));
+
+        return false;
+      }
+    },
+    [note, perform],
+  );
+
+  const runSafeSteps = useCallback(
+    (messageId: string, plan: CopilotPlan): void => {
+      plan.actions.forEach((action, index) => {
+        if (actionTier(action) !== "safe") return;
+        void performNoted(action).then((done) => {
+          if (done) {
+            setCompleted((prev) =>
+              new Set(prev).add(changeKey(messageId, index)),
+            );
+          }
+        });
+      });
+    },
+    [performNoted],
+  );
+
+  const dockSession = useCallback(async (): Promise<DockSession | null> => {
+    const cached = sessionRef.current;
+    if (
+      cached === null ||
+      (cached && cached.expiresAt - SESSION_RENEW_MS > Date.now())
+    ) {
+      return cached;
+    }
+    try {
+      sessionRef.current = await mintSession({});
+    } catch {
+      return null;
+    }
+
+    return sessionRef.current;
+  }, [mintSession]);
+
+  const askAgent = useCallback(
+    async (
+      replyId: string,
+      query: string,
+      context: CopilotContext,
+      session: DockSession,
+    ): Promise<void> => {
+      const update = (patch: Partial<CopilotMessage>): void =>
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === replyId ? { ...message, ...patch } : message,
+          ),
+        );
+      let text = "";
+      let plan: CopilotPlan | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        // Lazy: zod and the stream reader load on the first ask, not with every page.
+        const {
+          ASK_TOOL,
+          dockPrompt,
+          PROPOSE_TOOL,
+          proposalPlan,
+          questionText,
+          sourcePlan,
+          streamDockAnswer,
+        } = await import("@/app/lib/agentDock");
+        const { readDraft, readSource, seedConversation } =
+          await import("@/app/lib/dockSource");
+        // The stored source goes in the agent's own folder; an agent with none reads the repo.
+        if (
+          currentStageId &&
+          !(currentStageId in seeds.current) &&
+          source?.url
+        ) {
+          const files = await readSource(source.url);
+          seeds.current[currentStageId] = await seedConversation(
+            session,
+            conversationKey,
+            files,
+          )
+            .then((): DockSeed => ({
+              files: files,
+              revision: source.revision,
+              ...(facts.branch ? { branch: facts.branch } : {}),
+            }))
+            .catch((): null => null);
+        }
+        const seeded =
+          (currentStageId && seeds.current[currentStageId]) || undefined;
+        // A linked repo's broods/ folder is what the agent edits; without it, it only advises.
+        const repo =
+          !seeded && facts.repo && projectId && currentStageId
+            ? await readRepo({
+                projectId: projectId,
+                stageId: currentStageId,
+              }).catch((error: unknown) => {
+                note(`Could not read ${facts.repo}: ${toErrorMessage(error)}`);
+
+                return null;
+              })
+            : null;
+        const stream = streamDockAnswer(
+          session,
+          conversationKey,
+          dockPrompt(query, context, facts, repo ?? undefined),
+        );
+        // Text after a tool call is the next model step: keep it a paragraph apart.
+        let afterTool = false;
+        for await (const part of stream) {
+          if (part.type === "text-delta") {
+            text += afterTool && text ? `\n\n${part.text}` : part.text;
+            afterTool = false;
+          } else if (part.type === "tool-call") {
+            afterTool = true;
+            if (part.toolName === PROPOSE_TOOL) {
+              plan = seeded
+                ? (sourcePlan(
+                    part.input,
+                    context,
+                    seeded,
+                    await readDraft(session, conversationKey),
+                  ) ?? plan)
+                : (proposalPlan(part.input, context, repo ?? undefined) ??
+                  plan);
+            } else if (part.toolName === ASK_TOOL) {
+              text += `${text ? "\n\n" : ""}${questionText(part.input)}`;
+            } else continue;
+          } else continue;
+          timer ??= setTimeout(() => {
+            timer = undefined;
+            update({ plan: plan, text: text });
+          }, STREAM_COMMIT_MS);
+        }
+        clearTimeout(timer);
+        update({
+          pending: false,
+          plan: plan,
+          text: text || plan?.summary || "",
+        });
+        if (plan) runSafeSteps(replyId, plan);
+      } catch (error) {
+        clearTimeout(timer);
+        update({
+          pending: false,
+          text: `The Broods agent could not answer: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+    },
+    [
+      conversationKey,
+      currentStageId,
+      facts,
+      note,
+      projectId,
+      readRepo,
+      runSafeSteps,
+      source,
+    ],
   );
 
   const ask = useCallback(
@@ -127,7 +520,8 @@ export function CopilotProvider({
       if (!trimmed) return;
 
       const askedAt = String(Date.now());
-      const plan = planFromQuery(trimmed, {
+      const replyId = `${askedAt}:broods`;
+      const context: CopilotContext = {
         crons: (crons ?? []).map((cron) => ({
           id: cron._id,
           name: cron.name,
@@ -136,68 +530,321 @@ export function CopilotProvider({
         envNames: (envVars ?? []).map((envVar) => envVar.name),
         items: items,
         liveCommands: registry.activeIds,
-      });
-
-      // Moving you around is not worth a button, so a plan that only navigates
-      // runs on the spot and reports what it did.
-      const unattended = plan !== null && planRunsUnattended(plan);
-      if (unattended) {
-        for (const action of plan.actions) run(action);
-      }
-
+        lockedNodes: new Set(facts.codeNodes),
+      };
       setMessages((prev) => [
         ...prev,
         { id: `${askedAt}:you`, role: "user", text: trimmed },
         {
-          id: `${askedAt}:broods`,
-          plan: plan ?? undefined,
+          id: replyId,
+          pending: true,
           role: "broods",
-          text: plan?.summary ?? NO_MODEL_REPLY,
+          scope: scope,
+          text: "",
         },
       ]);
-      if (unattended) {
-        setCompleted((prev) => {
-          const next = new Set(prev);
-          plan.actions.forEach((_, index) =>
-            next.add(`${askedAt}:broods:${index}`),
-          );
 
-          return next;
-        });
-      }
+      void dockSession().then(async (session) => {
+        if (session) return await askAgent(replyId, trimmed, context, session);
+
+        const plan = planFromQuery(trimmed, context);
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === replyId
+              ? {
+                  ...message,
+                  pending: false,
+                  plan: plan ?? undefined,
+                  text: plan?.summary ?? NO_MODEL_REPLY,
+                }
+              : message,
+          ),
+        );
+        if (plan) runSafeSteps(replyId, plan);
+      });
     },
-    [crons, envVars, items, registry.activeIds, run],
+    [
+      askAgent,
+      crons,
+      dockSession,
+      envVars,
+      facts.codeNodes,
+      items,
+      runSafeSteps,
+      registry.activeIds,
+      scope,
+    ],
   );
 
-  const runStep = useCallback(
-    (messageId: string, index: number, action: CopilotAction): void => {
-      if (actionTier(action) === "blocked") return;
-      run(action);
-      setCompleted((prev) => new Set(prev).add(`${messageId}:${index}`));
+  const proposals = useMemo(
+    () =>
+      dockProposals(
+        messages,
+        dropped,
+        completed,
+        applies,
+        deploys,
+        facts.stage,
+      ),
+    [applies, completed, deploys, dropped, facts.stage, messages],
+  );
+  const proposal = useMemo(
+    () => openProposal(messages, proposals, scope),
+    [messages, proposals, scope],
+  );
+
+  // A retry after the commit landed builds on it, so the deploy runs again.
+  const commitProposal = useCallback(
+    async (
+      messageId: string,
+      action: Extract<CopilotAction, { type: "commitFiles" }>,
+      landed: string | undefined,
+      startedAt: number,
+    ): Promise<DockApply> => {
+      if (!projectId || !currentStageId) {
+        throw new Error("Open the project's stage first.");
+      }
+      const { via } = action;
+      if (via.kind === "source") {
+        const files = draftFiles(via.seed, action.files);
+        const applied = await applySource({
+          baseRevision: via.baseRevision,
+          files: files,
+          message: action.message,
+          projectId: projectId,
+          stageId: currentStageId,
+        });
+        // The next ask builds on what landed, as the agent's folder already does.
+        seeds.current[currentStageId] = {
+          files: files,
+          revision: applied.revision,
+          ...(via.branch ? { branch: via.branch } : {}),
+        };
+
+        return applied.phase === "verifying"
+          ? {
+              phase: "verifying",
+              revision: applied.revision,
+              sha: applied.commitSha,
+              startedAt: startedAt,
+            }
+          : {
+              finishedAt: Date.now(),
+              phase: "deployed",
+              revision: applied.revision,
+              startedAt: startedAt,
+            };
+      }
+      const result = await commitChange({
+        baseSha: landed ?? via.baseSha,
+        branch: via.branch,
+        files: action.files
+          .filter((file) => !landed || file.content !== null)
+          .map((file) => ({ content: file.content, path: file.path })),
+        fullName: via.fullName,
+        message: action.message,
+        projectId: projectId,
+        stageId: currentStageId,
+      });
+      if (result.viaPullRequest) {
+        return {
+          phase: "deployed",
+          runUrl: result.url,
+          sha: result.sha,
+          startedAt: startedAt,
+        };
+      }
+      setCommits((prev) => [
+        ...prev,
+        {
+          branch: via.branch,
+          committedAt: Date.now(),
+          messageId: messageId,
+          sha: result.sha,
+        },
+      ]);
+
+      return { phase: "applying", sha: result.sha, startedAt: startedAt };
     },
-    [run],
+    [applySource, commitChange, currentStageId, projectId],
+  );
+
+  // A proposal being applied ignores a second press and a Discard until it settles.
+  const applying = useRef(new Set<string>());
+  const applyProposal = useCallback(
+    (messageId: string): void => {
+      const target = proposals.get(messageId);
+      const asked = messages.find((message) => message.id === messageId);
+      if (!target || applying.current.has(messageId)) return;
+      if (asked?.scope !== undefined && asked.scope !== scope) return;
+      applying.current.add(messageId);
+      const landed = target.apply.sha;
+      const startedAt = Date.now();
+      const record = (apply: DockApply): void =>
+        setApplies((prev) => ({ ...prev, [messageId]: apply }));
+      record({ phase: "applying", startedAt: startedAt });
+
+      void (async (): Promise<DockApply> => {
+        // A retry skips the steps an earlier press already ran.
+        for (const { action, index } of target.changes) {
+          const key = changeKey(messageId, index);
+          if (action.type === "commitFiles") {
+            return await commitProposal(messageId, action, landed, startedAt);
+          }
+          if (completed.has(key)) continue;
+          if (!(await perform(action))) {
+            throw new Error(`${action.label} cannot run here.`);
+          }
+          setCompleted((prev) => new Set(prev).add(key));
+        }
+
+        return { phase: "deployed", startedAt: startedAt };
+      })()
+        .then(record, (error: unknown) =>
+          record({
+            error: toErrorMessage(error),
+            phase: "failed",
+            sha: landed,
+            startedAt: startedAt,
+          }),
+        )
+        .finally(() => applying.current.delete(messageId));
+    },
+    [commitProposal, completed, messages, perform, proposals, scope],
+  );
+
+  const discardProposal = useCallback(
+    (messageId: string): void => {
+      if (applying.current.has(messageId)) return;
+      setApplies((prev) => ({
+        ...prev,
+        [messageId]: {
+          phase: "discarded",
+          sha: proposals.get(messageId)?.apply.sha,
+        },
+      }));
+    },
+    [proposals],
+  );
+
+  const revertProposal = useCallback(
+    (messageId: string): void => {
+      const commit = proposals
+        .get(messageId)
+        ?.changes.find(({ action }) => action.type === "commitFiles")?.action;
+      if (
+        commit?.type !== "commitFiles" ||
+        commit.via.kind !== "source" ||
+        !projectId ||
+        !currentStageId ||
+        applying.current.has(messageId)
+      )
+        return;
+      applying.current.add(messageId);
+      const startedAt = Date.now();
+      const record = (apply: DockApply): void =>
+        setApplies((prev) => ({ ...prev, [messageId]: apply }));
+      record({ phase: "applying", startedAt: startedAt });
+      void applySource({
+        baseRevision: applies[messageId]?.revision ?? commit.via.baseRevision,
+        files: [...commit.via.seed],
+        message: `Revert: ${commit.message}`,
+        projectId: projectId,
+        stageId: currentStageId,
+      })
+        .then(
+          (): void => record({ phase: "discarded" }),
+          (error: unknown): void =>
+            record({
+              error: toErrorMessage(error),
+              phase: "failed",
+              startedAt: startedAt,
+            }),
+        )
+        .finally(() => applying.current.delete(messageId));
+    },
+    [applies, applySource, currentStageId, projectId, proposals],
+  );
+
+  const syncStage = useCallback((): void => {
+    if (!projectId || !currentStageId || syncing) return;
+    setSyncing(true);
+    void syncSource({ projectId: projectId, stageId: currentStageId })
+      .catch((error: unknown): void =>
+        note(`Sync failed: ${toErrorMessage(error)}`),
+      )
+      .finally(() => setSyncing(false));
+  }, [currentStageId, note, projectId, syncSource, syncing]);
+
+  const dropChange = useCallback(
+    (messageId: string, index: number, path?: string): void => {
+      if (applying.current.has(messageId)) return;
+      setDropped((prev) =>
+        new Set(prev).add(changeKey(messageId, index, path)),
+      );
+    },
+    [],
+  );
+
+  const runAction = useCallback(
+    (action: CopilotAction): void => {
+      void performNoted(action);
+    },
+    [performNoted],
+  );
+
+  const shownMessages = useMemo(
+    () =>
+      messages.map((message) =>
+        message.scope !== undefined && message.scope !== scope
+          ? { ...message, stale: true }
+          : message,
+      ),
+    [messages, scope],
   );
 
   const value = useMemo(
     () => ({
+      applyProposal: applyProposal,
       ask: ask,
       completed: completed,
+      discardProposal: discardProposal,
+      drift: drift,
+      dropChange: dropChange,
       isOpen: isOpen,
-      messages: messages,
-      runAction: run,
-      runStep: runStep,
+      items: items,
+      messages: shownMessages,
+      proposal: proposal,
+      proposals: proposals,
+      revertProposal: revertProposal,
+      runAction: runAction,
       setOpen: setOpen,
+      syncStage: syncStage,
+      wakeIndex: wakeIndex,
     }),
-    [ask, completed, isOpen, messages, run, runStep],
+    [
+      applyProposal,
+      ask,
+      completed,
+      discardProposal,
+      drift,
+      dropChange,
+      isOpen,
+      items,
+      proposal,
+      proposals,
+      revertProposal,
+      runAction,
+      setOpen,
+      shownMessages,
+      syncStage,
+    ],
   );
 
   return <CopilotStateProvider value={value}>{children}</CopilotStateProvider>;
 }
 
-/**
- * The context on its own, for a tree that builds the state itself. The
- * `/ui-gallery` fixture uses it to drive the dock with no Convex or router.
- */
+/** Lets the `/ui-gallery` fixture drive the dock with no Convex or router. */
 export function CopilotStateProvider({
   children,
   value,
@@ -205,9 +852,26 @@ export function CopilotStateProvider({
   children: React.ReactNode;
   value: CopilotState;
 }): React.JSX.Element {
-  return (
-    <CopilotContext.Provider value={value}>{children}</CopilotContext.Provider>
+  // Its own context, so the canvas renders when the drawn nodes change, not on every stream delta.
+  const nodes = proposedNodes(value.proposal);
+  const failed = value.proposal?.apply.phase === "failed";
+  const drawn = useMemo(
+    () => ({ failed: failed, nodes: nodes }),
+    [failed, nodes],
   );
+
+  return (
+    <CopilotContext.Provider value={value}>
+      <ProposedNodesContext.Provider value={drawn}>
+        {children}
+      </ProposedNodesContext.Provider>
+    </CopilotContext.Provider>
+  );
+}
+
+/** The nodes the open proposal draws on the canvas; none outside the provider. */
+export function useProposedNodes(): ProposedNodes {
+  return useContext(ProposedNodesContext);
 }
 
 export function useCopilot(): CopilotState {
@@ -215,4 +879,21 @@ export function useCopilot(): CopilotState {
   if (!state) throw new Error("useCopilot must be used inside CopilotProvider");
 
   return state;
+}
+
+// The seed with the kept changes laid over it: what Apply deploys, every file in full.
+function draftFiles(
+  seed: readonly DockFile[],
+  changes: readonly { content: string | null; path: string }[],
+): DockFile[] {
+  const files = new Map(seed.map((file) => [file.path, file.content]));
+  for (const change of changes) {
+    if (change.content === null) files.delete(change.path);
+    else files.set(change.path, change.content);
+  }
+
+  return [...files].map(([path, content]) => ({
+    content: content,
+    path: path,
+  }));
 }

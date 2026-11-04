@@ -2,7 +2,6 @@ import {
   defineAgent,
   defineGitHubConnection,
   defineSandbox,
-  defineSkill,
   defineSlackChannel,
   defineSlackConnection,
   defineTelegramChannel,
@@ -33,8 +32,7 @@ export const slack = defineSlackConnection({
   reactionEmoji: process.env.SLACK_REACTION_EMOJI ?? "eyes",
 });
 
-// Reach is deny-by-default: these two rooms are the ones this agent answers in.
-// Set the room ids in .env.local; the placeholders match no real room.
+// Reach is deny-by-default: set these room ids in .env.local; the placeholders match no room.
 export const slackGeneral = defineSlackChannel({
   name: "multi-channel-general",
   connection: slack,
@@ -69,8 +67,7 @@ export const telegramSecondary = defineTelegramChannel({
     process.env.TELEGRAM_SECONDARY_CHAT_ID ?? "SET_TELEGRAM_SECONDARY_CHAT_ID",
 });
 
-// A GitHub App's reach is already the repositories it was installed on, so the
-// wildcard defers to that rather than repeating the list here.
+// A GitHub App already reaches only the repos it is installed on, so the wildcard defers to it.
 export const github = defineGitHubConnection({
   allowedChannelIds: ["*"],
   partition: { by: "shared" },
@@ -80,11 +77,6 @@ export const github = defineGitHubConnection({
   botUserName: env("GITHUB_BOT_USERNAME"),
   triggerOnIssueOpen: false,
   triggerOnPROpen: false,
-});
-
-export const hubSpotSkill = defineSkill({
-  name: "hubspot",
-  path: "./skills/hubspot",
 });
 
 export const sandbox = defineSandbox({
@@ -100,8 +92,6 @@ export const sandbox = defineSandbox({
   onCreate: [setupGitDevEnvironment],
   onResume: [setupGitDevEnvironment],
   envVars: {
-    HUBSPOT_API_TOKEN: env("HUBSPOT_API_TOKEN"),
-    HUBSPOT_BASE_URL: "https://api.hubapi.com",
     GITHUB_APP_ID: env("GITHUB_APP_ID"),
     GITHUB_PRIVATE_KEY: env("GITHUB_PRIVATE_KEY"),
     GITHUB_API_URL: "https://api.github.com",
@@ -137,8 +127,7 @@ export const agent = defineAgent({
   },
   agent: {
     system: instructions,
-    // 0 = no step cap. Tracy runs long multi-tool jobs; a cut-off turn can be
-    // resumed from the dashboard Tracing tab, but better not to cut it.
+    // 0 = no step cap, so long multi-tool jobs are not cut off mid-turn.
     maxTurn: 0,
   },
   connections: [slack, telegram, github],
@@ -148,8 +137,4 @@ export const agent = defineAgent({
     enabled: true,
   },
   publicAccess: true,
-  skills: {
-    enabled: true,
-    allowed: [hubSpotSkill],
-  },
 });

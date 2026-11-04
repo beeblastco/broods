@@ -1,23 +1,19 @@
-/**
- * Hosted MCP transport tests (#331 phase 2, micro-batching #397): the fetch
- * adapter serializes one web request into a runner request, the batcher
- * folds the calls that arrive inside one window into one invoke, and every
- * call is rebuilt from the frame tagged with its id. The full chain against a
- * real child-runner + createMcpHandler bundle runs in the local-stack E2E,
- * not here, because the repo has no SDK fixture bundles.
- */
-
 import {
   InvokeWithResponseStreamCommand,
   LambdaClient,
   type InvokeWithResponseStreamResponseEvent,
 } from "@aws-sdk/client-lambda";
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import {
-  resetStorageForTests,
-  setStorageForTests,
-} from "../src/shared/storage.ts";
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  spyOn,
+} from "bun:test";
+import type { McpRecord } from "../src/shared/domain/mcp.ts";
+import { getStorage } from "../src/shared/storage.ts";
 import { FrameQueue, type RunnerFrame } from "../src/harness/frames.ts";
 import { listMcpTools, setMcpForTests } from "../src/harness/mcp/client.ts";
 import {
@@ -38,13 +34,24 @@ interface SentBatch {
 }
 
 const savedEnv = { ...process.env };
+const recorded: { accountId: string; usage: unknown; source: unknown }[] = [];
+// Every invoke meters usage; the real Convex meter retries for 36 s on the shared waitUntil
+// set and stalls any later test file's drain.
+const meter = spyOn(getStorage().budgets, "record");
 beforeEach(() => {
   process.env.MCP_BATCH_WINDOW_MS = "10";
   process.env.MCP_BATCH_MAX = "8";
+  recorded.length = 0;
+  meter.mockImplementation(async (accountId, usage, source): Promise<void> => {
+    recorded.push({ accountId: accountId, usage: usage, source: source });
+  });
 });
 afterEach(() => {
   setHostedMcpSendBatchForTests(null);
   process.env = { ...savedEnv };
+});
+afterAll(() => {
+  meter.mockRestore();
 });
 
 describe("hosted MCP fetch adapter", () => {
@@ -175,29 +182,12 @@ describe("hosted MCP invoke", () => {
 });
 
 describe("hosted MCP metering", () => {
-  const recorded: { accountId: string; usage: unknown; source: unknown }[] = [];
-
   beforeEach(() => {
-    recorded.length = 0;
     delete process.env.AWS_PROFILE;
     process.env.AWS_REGION = "eu-west-1";
     process.env.AWS_ACCESS_KEY_ID = "test";
     process.env.AWS_SECRET_ACCESS_KEY = "test";
     process.env.TOOL_BUNDLES_BUCKET_NAME = "bundles";
-    setStorageForTests({
-      budgets: {
-        record: async (
-          accountId: string,
-          usage: unknown,
-          source: unknown,
-        ): Promise<void> => {
-          recorded.push({ accountId: accountId, usage: usage, source: source });
-        },
-      },
-    } as never);
-  });
-  afterEach(() => {
-    resetStorageForTests();
   });
 
   it("charges one request for an invoke Lambda accepted", async () => {
@@ -225,7 +215,6 @@ describe("hosted MCP metering", () => {
       {
         accountId: "acct_test",
         usage: { hostedMcpGbSeconds: expect.any(Number), hostedMcpRequests: 1 },
-        // Billed to the server's own project.
         source: { projectId: "proj" },
       },
     ]);
@@ -303,7 +292,7 @@ describe("hosted MCP metering", () => {
         new Response(
           `${JSON.stringify({ t: "final", id: "1", result: ok("cut") })}\n`,
         );
-      expect(callWorkersRow()).rejects.toThrow("without an end frame");
+      await expect(callWorkersRow()).rejects.toThrow("without an end frame");
       // Answered 200, so a tool may have run: never retried on Lambda.
       expect(lambda).not.toHaveBeenCalled();
       await Promise.resolve();
@@ -348,14 +337,14 @@ describe("hosted MCP metering", () => {
     const lambda = spyOn(LambdaClient.prototype, "send");
 
     try {
-      expect(callWorkersRow()).rejects.toThrow("HTTP 401: unauthorized");
+      await expect(callWorkersRow()).rejects.toThrow("HTTP 401: unauthorized");
       bridge.mockImplementation(
         workerFetch(
           async (): Promise<Response> =>
             new Response("Service Unavailable", { status: 503 }),
         ),
       );
-      expect(callWorkersRow()).rejects.toThrow("HTTP 503");
+      await expect(callWorkersRow()).rejects.toThrow("HTTP 503");
       expect(lambda).not.toHaveBeenCalled();
     } finally {
       bridge.mockRestore();
@@ -415,7 +404,7 @@ describe("hosted MCP metering", () => {
     delete process.env.TOOL_RUNNER_FUNCTION_NAME;
 
     try {
-      expect(callWorkersRow()).rejects.toThrow(
+      await expect(callWorkersRow()).rejects.toThrow(
         /TOOL_RUNNER_FUNCTION_NAME.*Lambda fallback after: .*HTTP 422: bundle failed to load: sha256/,
       );
     } finally {
@@ -432,7 +421,7 @@ describe("hosted MCP metering", () => {
     const lambda = spyOn(LambdaClient.prototype, "send");
 
     try {
-      expect(callWorkersRow()).rejects.toThrow("socket closed");
+      await expect(callWorkersRow()).rejects.toThrow("socket closed");
       expect(lambda).not.toHaveBeenCalled();
     } finally {
       bridge.mockRestore();
@@ -445,7 +434,7 @@ describe("hosted MCP metering", () => {
     const send = spyOn(LambdaClient.prototype, "send");
 
     try {
-      expect(
+      await expect(
         hostedMcpFetch({ record: hostedRecord() })(URL, {
           method: "POST",
           body: "{}",
@@ -584,6 +573,38 @@ describe("hosted MCP tool listing", () => {
         )
         .map((batch) => batch.tenantId),
     ).toEqual(["acct_test:agent_1", "acct_test:agent_2"]);
+  });
+
+  it("refuses a server on a 2025-era revision without falling back to initialize", async () => {
+    const sent = stubBatches((request) => {
+      const message: { id?: number; method: string } = JSON.parse(
+        request.body ?? "{}",
+      );
+
+      // A 2025-era server knows no server/discover.
+      return {
+        status: 400,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id ?? null,
+          error: { code: -32601, message: "Method not found" },
+        }),
+      };
+    });
+
+    await expect(
+      listMcpTools({
+        record: hostedRecord(),
+        headers: {},
+        agentId: "agent_legacy",
+      }),
+    ).rejects.toThrow(/2026-07-28/);
+    expect(
+      sent.some((batch) =>
+        batch.requests.some((r) => r.mcpRequest.body?.includes("initialize")),
+      ),
+    ).toBe(false);
   });
 });
 
@@ -762,7 +783,6 @@ describe("hosted MCP micro-batching", () => {
   });
 });
 
-/** Stub the invoke with a per-request answer and record every batch as sent. */
 function stubBatches(
   answer: (request: HostedMcpBatchRequest["mcpRequest"]) => HostedMcpResponse,
 ): SentBatch[] {
@@ -783,7 +803,6 @@ function stubBatches(
   return sent;
 }
 
-/** A closed FrameQueue holding the given NDJSON lines. */
 function framesOf(...lines: string[]): AsyncIterable<RunnerFrame> {
   const queue = new FrameQueue();
   queue.push(`${lines.join("\n")}\n`);
@@ -792,7 +811,6 @@ function framesOf(...lines: string[]): AsyncIterable<RunnerFrame> {
   return queue.frames();
 }
 
-/** Outcomes as one readable string per id, so a test asserts the whole map at once. */
 function outcomeSummary(
   outcomes: Map<string, HostedMcpResponse | Error>,
 ): Record<string, string> {
@@ -806,7 +824,6 @@ function outcomeSummary(
   );
 }
 
-/** The message a promise rejects with; fails the test if it resolves. */
 async function rejectionOf(promise: Promise<unknown>): Promise<string> {
   try {
     await promise;
@@ -840,7 +857,6 @@ function hostedRecord(): McpRecord {
   };
 }
 
-/** One call by agent_1 through a Workers-capable row; the response body as text. */
 async function callWorkersRow(): Promise<string> {
   const response = await hostedMcpFetch({
     record: { ...hostedRecord(), workersCompatible: true },
@@ -850,7 +866,6 @@ async function callWorkersRow(): Promise<string> {
   return await response.text();
 }
 
-/** Point core at a stub Worker that answers with `reply`; restore the spy after. */
 function mockBridge(
   reply: () => Promise<Response>,
 ): ReturnType<typeof spyOn<typeof globalThis, "fetch">> {
@@ -860,7 +875,6 @@ function mockBridge(
   return spyOn(globalThis, "fetch").mockImplementation(workerFetch(reply));
 }
 
-/** A Lambda that answers every batch with one final frame carrying `body`. */
 function mockLambda(
   body: string,
 ): ReturnType<typeof spyOn<LambdaClient, "send">> {

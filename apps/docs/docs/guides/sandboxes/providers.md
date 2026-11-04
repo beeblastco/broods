@@ -117,7 +117,7 @@ export const box = defineSandbox({
 
 ## `vercel`
 
-Runs on [Vercel Sandbox](https://vercel.com/docs/sandbox). Use it for compute without a workspace.
+Runs on [Vercel Sandbox](https://vercel.com/docs/sandbox) and mounts any workspace attached to it.
 
 ```ts
 export const box = defineSandbox({
@@ -128,7 +128,9 @@ export const box = defineSandbox({
   permissionMode: "bypass",
   onCreate: ["npm install"],
   onResume: ["test -d node_modules"],
-  snapshot: "vercel/sandbox/universal:latest",
+  // A snapshot with mount-s3 already installed, so a restricted network can
+  // mount a workspace. See the install note below.
+  snapshot: "snap_with_mount_s3",
 });
 ```
 
@@ -144,9 +146,14 @@ export const box = defineSandbox({
 
 - The Snapshot action captures a reserved sandbox as a Vercel snapshot that does not expire. Vercel stops the sandbox to capture it, and its next call resumes it.
 - All three network modes are enforced natively.
+- `options.networkId` attaches the sandbox to a [Secure Compute](https://vercel.com/docs/sandbox/concepts/secure-compute) network, so its public traffic leaves from the network's static IPs and it reaches your AWS VPC over peering. Secure Compute needs a Vercel Enterprise team; the ID is under Settings, Networking. `network.mode` still applies, so a `restricted` sandbox lists the private hosts it calls. A reserved sandbox moves to a changed network once its current session ends.
 - `size` does nothing here. The dashboard shows the vCPU and memory once Vercel reports them, and `?` for disk, which Vercel does not report.
-- Workspaces are not supported, and `storage.provider: "vercel"` is rejected. A persistent sandbox keeps its own filesystem.
-- `onResume` fires only when a stopped sandbox resumes. The idle timeout counts from start, and `maxLifetimeSeconds` is not enforced.
+- A workspace attached to the sandbox is mounted, with no option to set. Each call mounts the workspace's S3 prefix at `/mnt/workspaces/<namespace>` with Mountpoint for S3, on hour-long credentials scoped to that prefix. They stay out of the sandbox env and the agent's commands, but code with `sudo` can read them from the mount process, as on Daytona. The mount is replaced after 45 minutes or when a resumed session lost it. The harness needs `SANDBOX_MOUNT_ROLE_ARN`, or the workspace names its own bucket with `assumeRole` or R2 auth.
+- The images ship without `mount-s3`, so the first mount installs it, which takes about 10 seconds and needs egress to `s3.amazonaws.com` and the Ubuntu mirrors. Under `restricted` or `deny-all`, or to skip the install, install it once in a reserved sandbox, capture it with the Snapshot action, and boot that `snap_` id. The workspace bucket's S3 hosts are always allowed, as on `lambda`.
+- `storage.provider: "vercel"` (Vercel Drives) is rejected.
+- `lifecycle.idleTimeoutSeconds` is at most 24 hours. Vercel holds one session to 24 hours on Pro and Enterprise and to 45 minutes on Hobby, so a longer idle window is refused. Each call extends the session to one idle window past its own end. A session that reaches the plan cap stops, and the next call resumes it.
+- A background job holds the session open only while it is polled. One left unpolled for longer than `idleTimeoutSeconds` stops with the session, so set the idle window above the job's run time.
+- `maxLifetimeSeconds` is checked when a call takes the sandbox. The call that trips it boots a fresh one.
 
 | Symptom                                                | Fix                                                                                                        |
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
@@ -210,7 +217,7 @@ export const box = defineSandbox({
 - Files are the sandbox's whole state. A persistent sandbox restores them into a fresh shell on every call and stores what changed, up to 24 MiB on disk and 16 MiB compressed; an ephemeral one keeps nothing. The shell's own layout (`/bin`, `/dev`, `/proc`) is rebuilt every time and never stored.
 - Each call runs in 128 MB of memory, and a command that never yields is stopped at the timeout by the isolate's CPU limit.
 - The shell itself stops a script at 100,000 commands, 100,000 loop iterations or 100 nested function calls, with an error naming the limit. A job that big belongs on `sandbox` or `lambda`.
-- `size` does nothing, like on `lambda`: every command gets the same 128 MB. `snapshot`, `lifecycle`, `onCreate`, `onResume` and workspaces are rejected. Background jobs, suspend, resume, the Snapshot action and the live terminal are not available.
+- `size` does nothing, like on `lambda`: every command gets the same 128 MB. `snapshot`, `lifecycle`, `onCreate` and `onResume` are rejected. It cannot mount a bucket workspace, but a persistent one backs a `disk` workspace (see [Workspaces](../workspaces.md#disk-workspaces)): each workspace folder, and each user conversation's folder, is its own disk. Background jobs, suspend, resume, the Snapshot action and the live terminal are not available.
 - `config.harness` agents cannot run here. Use `sandbox` or `lambda`.
 - Billing counts only the milliseconds each command took, waits included, plus one request each, inside Sandbox time; nothing idles. A `sleep` costs the same as a busy command, a fraction of a VM's idle time.
 - The provider needs the deployment's V8 Worker. Without it every run fails with an error saying the Worker is not configured. A self-hosted deployment deploys its own, see [Sandbox internals](../../internals/sandboxes.md#worker).

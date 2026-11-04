@@ -261,16 +261,15 @@ describe("telegram bot api", () => {
     });
   });
 
-  // No fetch stub here on purpose: a request that got out would fail on the
-  // network with a different error than the one asserted.
+  // No fetch stub on purpose: an escaped request would fail with a different error.
   it("refuses a plain http endpoint before the token leaves", async () => {
-    expect(
+    await expect(
       telegramActions("http://bot-api.example").sendQuestions!(QUESTION_PROMPT),
     ).rejects.toThrow("config.channels.telegram.apiUrl must use https");
   });
 
   it("refuses a base with a query, which would push the token into it", async () => {
-    expect(
+    await expect(
       telegramActions("https://bot-api.example?route=1").sendQuestions!(
         QUESTION_PROMPT,
       ),
@@ -280,7 +279,7 @@ describe("telegram bot api", () => {
   });
 
   it("fails on a redirect instead of carrying the token to the new host", async () => {
-    expect(
+    await expect(
       withTelegramApi(
         () => telegramActions().sendQuestions!(QUESTION_PROMPT),
         () =>
@@ -314,9 +313,7 @@ function telegramRequest(update: unknown): ChannelRequest {
   };
 }
 
-// Captures every Bot API call made while `run` executes, including the
-// fire-and-forget acknowledgements, which a timer tick lets land. `respond`
-// stands in for Telegram; by default it answers every call with `ok: true`.
+// Every Bot API call during `run`, with the fire-and-forget acks a timer tick lets land.
 async function withTelegramApi(
   run: () => Promise<void>,
   respond: () => Response = () =>

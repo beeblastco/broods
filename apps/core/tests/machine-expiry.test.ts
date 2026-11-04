@@ -1,16 +1,10 @@
-/**
- * A machine socket lives no longer than the credential that opened it: a stage
- * ticket closes it at its expiry, and a bearer that stops resolving loses it at
- * the next heartbeat. The fake daemon only trades frames on loopback and never
- * runs a command.
- */
-
 import { afterEach, beforeEach, expect, jest, test } from "bun:test";
 import {
   sealStageSessionTicket,
   type StageSessionTicket,
 } from "@broods/convex/model/stageSessionTicket";
 import {
+  isMachineConnected,
   MachineSandboxExecutor,
   type MachineSocketData,
 } from "../src/harness/sandbox/machine-executor.ts";
@@ -58,14 +52,17 @@ afterEach(async (): Promise<void> => {
 test("a stage ticket's daemon that sends no fresh one is closed at the ticket's expiry and gets no exec after it", async (): Promise<void> => {
   const writes: MachineConnectionWrite[] = [];
   setStorageForTests(machineStorage(writes));
+  jest.useFakeTimers();
   const expiresAt = Date.now() + 1500;
   const token = await ticket(expiresAt);
   const server = core();
   const received: MachineExecFrame[] = [];
+  const held = Promise.withResolvers<void>();
   // Answers the first exec, holds the second open across the expiry.
   const daemon = await connectDaemon(server, token, (frame, socket): void => {
     received.push(frame);
     if (received.length === 1) socket.send(JSON.stringify(result(frame.id)));
+    else held.resolve();
   });
   const closed = closeOf(daemon);
   const executor = new MachineSandboxExecutor(machineExecutorConfig());
@@ -83,13 +80,16 @@ test("a stage ticket's daemon that sends no fresh one is closed at the ticket's 
       (): string => "resolved",
       (error: Error): string => error.message,
     );
+  // The held exec must reach the daemon before the clock passes the ticket. Awaited, not polled:
+  // only the event loop delivers its frame, and an await leaves the test timeout free to fire.
+  await held.promise;
+  jest.advanceTimersByTime(expiresAt - 1 - Date.now());
+  expect(isMachineConnected(machineExecutorConfig())).toBe(true);
+  jest.advanceTimersByTime(1);
 
   const close = await closed;
-  const closedAt = Date.now();
   expect(close.code).toBe(MACHINE_CLOSE.expired.code);
   expect(close.reason).toBe(MACHINE_CLOSE.expired.reason);
-  expect(closedAt).toBeGreaterThanOrEqual(expiresAt);
-  expect(closedAt).toBeLessThan(expiresAt + 1000);
   expect(await inFlight).toBe(
     'machine sandbox "my-mac" disconnected while the command was running',
   );
@@ -107,7 +107,7 @@ test("a stage ticket's daemon that sends no fresh one is closed at the ticket's 
   refused.onopen = (): void =>
     refused.send(JSON.stringify({ type: "hello", sandbox: "my-mac" }));
   expect((await refusal).code).toBe(MACHINE_CLOSE.unauthorized.code);
-  expect(
+  await expect(
     executor.run({
       code: "fixture-only-never-executed",
       envVars: { FRESH_SECRET: "created-after-expiry" },
@@ -123,6 +123,7 @@ test("a stage ticket's daemon that sends no fresh one is closed at the ticket's 
 
 test("a fresh ticket before the expiry keeps the daemon past it, and frames still flow", async (): Promise<void> => {
   setStorageForTests(machineStorage());
+  jest.useFakeTimers();
   const expiresAt = Date.now() + 1000;
   const daemon = await connectDaemon(
     core(),
@@ -142,7 +143,7 @@ test("a fresh ticket before the expiry keeps the daemon past it, and frames stil
     }),
   );
   expect((await acked).expiresInMs).toBeGreaterThan(55_000);
-  await Bun.sleep(expiresAt + 500 - Date.now());
+  jest.advanceTimersByTime(expiresAt + 500 - Date.now());
 
   const after = await new MachineSandboxExecutor(machineExecutorConfig()).run({
     code: "fixture-only-never-executed",
@@ -156,8 +157,7 @@ test("a fresh ticket before the expiry keeps the daemon past it, and frames stil
 test("a fresh ticket for another stage or account, or one that cannot write sandboxes, closes the daemon as unauthorized", async (): Promise<void> => {
   const storage = machineStorage();
   setStorageForTests(storage);
-  // Any account resolves, so the other account's ticket is refused for the
-  // mismatch rather than for being unknown.
+  // Any account resolves, so the other account's ticket fails on the mismatch, not as unknown.
   const own = await storage.accounts.getById(MACHINE_ACCOUNT_ID);
   storage.accounts.getById = async (accountId: string) =>
     own && { ...own, accountId: accountId };
@@ -204,7 +204,7 @@ test("a frame bound for a daemon past its ticket is refused even before the expi
   const closed = closeOf(daemon);
   jest.setSystemTime(expiresAt);
 
-  expect(
+  await expect(
     new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "fixture-only-never-executed",
       envVars: { FRESH_SECRET: "created-after-expiry" },
@@ -314,7 +314,6 @@ function core(): Bun.Server<MachineSocketData> {
   return server;
 }
 
-/** Claims `my-mac` and resolves once core says ready. */
 function connectDaemon(
   server: Bun.Server<MachineSocketData>,
   token: string,
@@ -375,7 +374,6 @@ function result(id: string): Record<string, unknown> {
   };
 }
 
-/** A `broods login` ticket for the development stage, able to claim a machine. */
 function ticket(
   expiresAt: number,
   overrides: Partial<StageSessionTicket> = {},

@@ -1,7 +1,3 @@
-/**
- * Transactional persistence for the core runtime.
- */
-
 import { getConvexSize, type Infer, v, type Value } from "convex/values";
 import {
   internalMutation,
@@ -13,6 +9,8 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { sha256Hex } from "./model/accountSecrets";
 import {
+  asyncToolDeliveryValidator,
+  harnessSessionEntryFields,
   reservedSandboxValidator,
   runtimeAsyncAgentResultsFields,
   runtimeAsyncToolResultsFields,
@@ -27,47 +25,54 @@ import {
   requireActiveKeyAccount,
 } from "./model/activeAccount";
 import {
+  findHarnessEntry,
+  takeHarnessEntryBatch,
+} from "./model/harnessSessionEntries";
+import {
   handbackMoveValidator,
   parseHandbackDedupeKey,
   sweptHandbackValidator,
-  type Handback,
 } from "./model/subagentResults";
 
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
-// Bytes and not rows bound a page: the per-query read limit counts bytes, and
-// one tool result can weigh as much as a thousand text rows.
+// The per-query read limit counts bytes, and one tool result can outweigh 1000 text rows.
 const CONVERSATION_EVENT_PAGE_BYTES = 4 * 1_024 * 1_024;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
 // One recovery sweep's page of late subagent or async tool results.
-const UNOBSERVED_RESULT_PAGE_SIZE = 100;
+const OWED_RESULT_PAGE_SIZE = 100;
 
 const REPLACED_SANDBOX_ERROR =
   "Background job ran on a sandbox that has since been replaced";
 
 const RUNTIME_DELETE_BATCH_SIZE = 100;
 
-// Idle window a reservation survives, refreshed on every acquire. Only core's sandbox
-// sweeper may act on it: the row holds the sole copy of `externalId`, so deleting it
-// without deleting the sandbox first strands the machine.
+export const harnessSessionEntryValidator = v.object(harnessSessionEntryFields);
+
+// Only core's sandbox sweeper may expire a reservation: the row is the sole copy of
+// `externalId`, so deleting it before the sandbox strands the machine.
 export const SANDBOX_RESERVATION_TTL_SECONDS = 7 * DAY_SECONDS;
 
-/** A whole step's history rows in one write, in cursor order. */
 export const conversationEventsValidator = v.array(
   v.object({
     cursor: v.string(),
     dedupeKey: runtimeConversationEventsFields.dedupeKey,
     event: v.any(),
+    toolResultIds: v.optional(v.array(v.string())),
   }),
 );
+
+/** A late result a history write stored, by the field a resume envelope names it by. */
+export type ResultFence = { resultEventId: string } | { toolResultId: string };
 
 /** How an async run ended, or what it waits on, as its polling row records it. */
 export const asyncAgentOutcomeValidator = v.object({
   status: runtimeAsyncAgentResultsFields.status,
-  response: v.optional(v.any()),
-  error: v.optional(v.string()),
-  approvals: v.optional(v.array(v.any())),
-  questions: v.optional(v.array(v.any())),
+  response: runtimeAsyncAgentResultsFields.response,
+  error: runtimeAsyncAgentResultsFields.error,
+  approvals: runtimeAsyncAgentResultsFields.approvals,
+  questions: runtimeAsyncAgentResultsFields.questions,
+  question: runtimeAsyncAgentResultsFields.question,
 });
 
 const asyncAgentDoc = v.object({
@@ -110,15 +115,12 @@ interface SandboxReservationPage {
   isDone: boolean;
 }
 
-/**
- * Atomically claims a dedupe key until its expiry.
- * @returns whether this invocation acquired the claim
- */
 export const claimEvent = internalMutation({
   args: {
     accountId: v.id("accounts"),
     key: v.string(),
     ttlSeconds: v.number(),
+    limit: v.optional(v.number()),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -133,7 +135,11 @@ export const claimEvent = internalMutation({
     }
     const now = Math.floor(Date.now() / 1000);
     if (existing && existing.expiresAt >= now) {
-      return false;
+      const count = existing.count ?? 1;
+      if (count >= (args.limit ?? 1)) return false;
+      await ctx.db.patch(existing._id, { count: count + 1 });
+
+      return true;
     }
     if (existing) await ctx.db.delete(existing._id);
     await ctx.db.insert("runtimeClaims", {
@@ -147,10 +153,6 @@ export const claimEvent = internalMutation({
   },
 });
 
-/**
- * Releases an event claim when processing must be retried.
- * @returns null after the release attempt
- */
 export const releaseClaim = internalMutation({
   args: { accountId: v.id("accounts"), key: v.string() },
   returns: v.null(),
@@ -164,15 +166,19 @@ export const releaseClaim = internalMutation({
     if (row && row.accountId !== args.accountId) {
       throw new Error("Runtime claim does not belong to accountId");
     }
-    if (row?.kind === "event") await ctx.db.delete(row._id);
+    if (!row) return null;
+    // A claim taken up to a limit gives back one use.
+    const count = row.count ?? 1;
+    if (count > 1) {
+      await ctx.db.patch(row._id, { count: count - 1 });
+    } else {
+      await ctx.db.delete(row._id);
+    }
 
     return null;
   },
 });
 
-/**
- * @returns null after the events are persisted
- */
 export const appendConversationEvent = internalMutation({
   args: { conversationKey: v.string(), events: conversationEventsValidator },
   returns: v.null(),
@@ -189,20 +195,14 @@ export const appendConversationEvent = internalMutation({
   },
 });
 
-/**
- * Inserts history rows in order. A row whose dedupe key this conversation
- * already stores is skipped: its first append committed and only the reply
- * was lost, so the retry must not store it again. A row keyed as a subagent
- * or async tool result marks that result's hand-back stored in the transaction
- * that inserts it, so the row and the flag can never disagree.
- */
 export async function insertConversationEvents(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
   conversationKey: string,
   events: Infer<typeof conversationEventsValidator>,
-): Promise<void> {
-  for (const entry of events) {
+): Promise<ResultFence[]> {
+  const stored: ResultFence[] = [];
+  for (const { toolResultIds, ...entry } of events) {
     if (
       entry.dedupeKey !== undefined &&
       (await ctx.db
@@ -225,28 +225,46 @@ export async function insertConversationEvents(
       entry.dedupeKey === undefined
         ? undefined
         : parseHandbackDedupeKey(entry.dedupeKey);
-    if (handback?.kind === "subagent") {
-      await markAsyncAgentResultSeen(ctx, accountId, handback.eventId);
-    } else if (handback?.kind === "async-tool") {
-      await markAsyncToolResultSeen(ctx, accountId, handback.resultId);
+    const rows = [
+      handback?.kind === "subagent"
+        ? await asyncAgentResultRow(ctx, handback.eventId)
+        : null,
+      await asyncToolResultRow(
+        ctx,
+        handback?.kind === "async-tool" ? handback.resultId : undefined,
+      ),
+      ...(await Promise.all(
+        (toolResultIds ?? []).map((resultId) =>
+          asyncToolResultRow(ctx, resultId),
+        ),
+      )),
+    ];
+    for (const row of rows) {
+      if (
+        row &&
+        (await markResultStored(ctx, accountId, conversationKey, row))
+      ) {
+        stored.push(
+          "resultId" in row
+            ? { toolResultId: row.resultId }
+            : { resultEventId: row.eventId },
+        );
+      }
     }
   }
+
+  return stored;
 }
 
-/**
- * Forward from `afterCursor` by default. With `fromSystemPrefix`, it pages
- * backward instead, newest first from `beforeCursor`, and is done at the
- * latest system row whose text starts with that prefix (core's compaction
- * summary) or at the first row: a turn reads only the rows it projects. Each
- * page is in cursor order; `continueCursor` is the next `beforeCursor` then.
- * @returns page rows plus an exclusive cursor for the next page
- */
 export const listConversationEvents = internalQuery({
   args: {
     conversationKey: v.string(),
     afterCursor: v.optional(v.string()),
     beforeCursor: v.optional(v.string()),
     fromSystemPrefix: v.optional(v.string()),
+    // Backward reads only: also stop at the newest row of this role, or read only that role.
+    stopAtRole: v.optional(v.union(v.literal("assistant"), v.literal("user"))),
+    role: v.optional(v.literal("system")),
   },
   returns: v.object({
     page: v.array(v.object({ cursor: v.string(), event: v.any() })),
@@ -255,20 +273,33 @@ export const listConversationEvents = internalQuery({
   }),
   handler: async (ctx, args) => {
     if (args.fromSystemPrefix !== undefined) {
+      // Backward to the newest system row with the prefix (core's compaction summary);
+      // `continueCursor` is then the next `beforeCursor`.
+      const { beforeCursor, conversationKey, role } = args;
       const prefix = args.fromSystemPrefix;
       const newest: { cursor: string; event: Value }[] = [];
       let newestBytes = 0;
       let isDone = true;
-      for await (const row of ctx.db
-        .query("runtimeConversationEvents")
-        .withIndex("by_conversationKey_and_cursor", (q) =>
-          args.beforeCursor
-            ? q
-                .eq("conversationKey", args.conversationKey)
-                .lt("cursor", args.beforeCursor)
-            : q.eq("conversationKey", args.conversationKey),
-        )
-        .order("desc")) {
+      const rows = role
+        ? ctx.db
+            .query("runtimeConversationEvents")
+            .withIndex("by_conversationKey_and_role_and_cursor", (q) => {
+              const ofRole = q
+                .eq("conversationKey", conversationKey)
+                .eq("event.message.role", role);
+
+              return beforeCursor ? ofRole.lt("cursor", beforeCursor) : ofRole;
+            })
+        : ctx.db
+            .query("runtimeConversationEvents")
+            .withIndex("by_conversationKey_and_cursor", (q) =>
+              beforeCursor
+                ? q
+                    .eq("conversationKey", conversationKey)
+                    .lt("cursor", beforeCursor)
+                : q.eq("conversationKey", conversationKey),
+            );
+      for await (const row of rows.order("desc")) {
         if (
           newest.length >= CONVERSATION_EVENT_PAGE_SIZE ||
           newestBytes >= CONVERSATION_EVENT_PAGE_BYTES
@@ -278,7 +309,7 @@ export const listConversationEvents = internalQuery({
         }
         newest.push({ cursor: row.cursor, event: row.event });
         newestBytes += getConvexSize(row.event);
-        if (isSystemTextWithPrefix(row.event, prefix)) break;
+        if (endsBackwardRead(row.event, prefix, args.stopAtRole)) break;
       }
 
       return {
@@ -300,8 +331,7 @@ export const listConversationEvents = internalQuery({
     let pageBytes = 0;
     let isDone = true;
     for await (const row of query) {
-      // The first row always lands, so a page is never empty and the cursor
-      // always moves, even past one row larger than the budget.
+      // Checked before the push, so a row over budget still lands and the cursor moves.
       if (
         page.length >= CONVERSATION_EVENT_PAGE_SIZE ||
         pageBytes >= CONVERSATION_EVENT_PAGE_BYTES
@@ -321,21 +351,25 @@ export const listConversationEvents = internalQuery({
   },
 });
 
-/** Whether a stored event is a system message whose text starts with `prefix`. */
-function isSystemTextWithPrefix(event: unknown, prefix: string): boolean {
+function endsBackwardRead(
+  event: unknown,
+  prefix: string,
+  stopAtRole: string | undefined,
+): boolean {
   if (typeof event !== "object" || event === null || !("message" in event)) {
     return false;
   }
   const message = event.message;
+  if (typeof message !== "object" || message === null || !("role" in message)) {
+    return false;
+  }
 
   return (
-    typeof message === "object" &&
-    message !== null &&
-    "role" in message &&
-    message.role === "system" &&
-    "content" in message &&
-    typeof message.content === "string" &&
-    message.content.startsWith(prefix)
+    message.role === stopAtRole ||
+    (message.role === "system" &&
+      "content" in message &&
+      typeof message.content === "string" &&
+      message.content.startsWith(prefix))
   );
 }
 
@@ -381,10 +415,109 @@ export const getHarnessSession = internalQuery({
   },
 });
 
-/**
- * Clears one bounded batch of conversation events for the reset command.
- * @returns the deleted event count and whether more events remain
- */
+// Pages through a session in append order, from where the leaf's model context starts to the leaf.
+export const readHarnessSessionEntries = internalQuery({
+  args: {
+    conversationKey: v.string(),
+    sessionId: v.string(),
+    leafEntryId: v.optional(v.string()),
+    afterSequence: v.optional(v.number()),
+  },
+  returns: v.object({
+    entries: v.array(harnessSessionEntryValidator),
+    nextSequence: v.union(v.number(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    const leaf =
+      args.leafEntryId === undefined
+        ? null
+        : await findHarnessEntry(ctx.db, args, args.leafEntryId);
+    const { batch, full } = await takeHarnessEntryBatch(
+      ctx.db
+        .query("runtimeHarnessSessionEntries")
+        .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) => {
+          const session = q
+            .eq("conversationKey", args.conversationKey)
+            .eq("sessionId", args.sessionId);
+
+          const from =
+            args.afterSequence === undefined
+              ? session.gte("sequence", leaf?.contextStart ?? 0)
+              : session.gt("sequence", args.afterSequence);
+
+          return leaf ? from.lte("sequence", leaf.sequence) : from;
+        }),
+      {
+        bytes: CONVERSATION_EVENT_PAGE_BYTES,
+        rows: CONVERSATION_EVENT_PAGE_SIZE,
+      },
+    );
+    if (
+      batch.some(
+        (row): boolean =>
+          row.accountId !== accountIdFromKey(args.conversationKey),
+      )
+    ) {
+      throw new Error(
+        "Harness session entry does not belong to conversation account",
+      );
+    }
+
+    return {
+      entries: batch.map((row): Infer<typeof harnessSessionEntryValidator> => ({
+        entryId: row.entryId,
+        parentEntryId: row.parentEntryId,
+        version: row.version,
+        entry: row.entry,
+      })),
+      nextSequence: full ? batch.at(-1)!.sequence : null,
+    };
+  },
+});
+
+// Deletes entries of every session but the one the checkpoint names when this runs.
+export const pruneHarnessSessionEntries = internalMutation({
+  args: { conversationKey: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const current = await ctx.db
+      .query("runtimeHarnessSessions")
+      .withIndex("by_conversationKey", (q) =>
+        q.eq("conversationKey", args.conversationKey),
+      )
+      .unique();
+    if (!current) return null;
+    let full = false;
+    for (const range of ["before", "after"] as const) {
+      const taken = await takeHarnessEntryBatch(
+        ctx.db
+          .query("runtimeHarnessSessionEntries")
+          .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
+            range === "before"
+              ? q
+                  .eq("conversationKey", args.conversationKey)
+                  .lt("sessionId", current.sessionId)
+              : q
+                  .eq("conversationKey", args.conversationKey)
+                  .gt("sessionId", current.sessionId),
+          ),
+      );
+      for (const row of taken.batch) await ctx.db.delete(row._id);
+      full = taken.full;
+      if (full) break;
+    }
+    if (full) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.runtime.pruneHarnessSessionEntries,
+        args,
+      );
+    }
+
+    return null;
+  },
+});
+
 export const clearConversation = internalMutation({
   args: { conversationKey: v.string() },
   returns: v.object({
@@ -411,21 +544,18 @@ export const clearConversation = internalMutation({
       )
       .unique();
     if (harnessSession) await ctx.db.delete(harnessSession._id);
+    const entriesLeft = await deleteHarnessSessionEntries(
+      ctx,
+      args.conversationKey,
+    );
 
     return {
       deleted: batch.length,
-      hasMore: rows.length > CONVERSATION_CLEAR_BATCH_SIZE,
+      hasMore: rows.length > CONVERSATION_CLEAR_BATCH_SIZE || entriesLeft,
     };
   },
 });
 
-/**
- * Creates an idempotent processing row for async agent polling. A subagent's
- * row starts its hand-back `pending`: the parent owes the result its write
- * from the start, so a child whose parent and pod die before any detach is
- * the recovery sweep's once no live run can hold it, not unseen for 7 days.
- * @returns whether a new result row was created
- */
 export const createAsyncAgentResult = internalMutation({
   args: {
     eventId: v.string(),
@@ -446,6 +576,7 @@ export const createAsyncAgentResult = internalMutation({
     await ctx.db.insert("runtimeAsyncAgentResults", {
       accountId: accountId,
       ...args,
+      // Pending from the start: a child orphaned before any detach still reaches the sweep.
       ...(args.subagent ? { handback: "pending" as const } : {}),
       status: "processing",
       createdAt: now,
@@ -457,10 +588,6 @@ export const createAsyncAgentResult = internalMutation({
   },
 });
 
-/**
- * Looks up an async agent result by its globally scoped event ID.
- * @returns the result document or null when it does not exist
- */
 export const getAsyncAgentResult = internalQuery({
   args: { eventId: v.string() },
   returns: v.union(asyncAgentDoc, v.null()),
@@ -468,19 +595,9 @@ export const getAsyncAgentResult = internalQuery({
     await asyncAgentResultRow(ctx, args.eventId),
 });
 
-/**
- * One page of subagent results in `status` whose hand-back is `handback`
- * (`pending` or `detached`), written inside the window, oldest first. Core's
- * recovery sweep resumes their parents, walking every page each pass so rows
- * it must retry never crowd others out. A row of an inactive account is left
- * out: no resume of it can be admitted. Without `handback` it lists the rows
- * the release before `handback` wrote, by their `observed: false` flag; that
- * path goes away next release, once every such row has aged out.
- * @returns the page and the cursor for the next one
- */
-export const listUnobservedAsyncAgentResults = internalQuery({
+export const listOwedAsyncAgentResults = internalQuery({
   args: {
-    handback: v.optional(sweptHandbackValidator),
+    handback: sweptHandbackValidator,
     status: runtimeAsyncAgentResultsFields.status,
     updatedAfter: v.string(),
     updatedBefore: v.string(),
@@ -499,36 +616,17 @@ export const listUnobservedAsyncAgentResults = internalQuery({
     cursor: string;
     isDone: boolean;
   }> => {
-    const handback = args.handback;
-    const result = await (
-      handback === undefined
-        ? ctx.db
-            .query("runtimeAsyncAgentResults")
-            .withIndex("by_observed_and_status_and_updatedAt", (q) =>
-              q
-                .eq("observed", false)
-                .eq("status", args.status)
-                .gt("updatedAt", args.updatedAfter)
-                .lt("updatedAt", args.updatedBefore),
-            )
-        : ctx.db
-            .query("runtimeAsyncAgentResults")
-            .withIndex("by_handback_and_status_and_updatedAt", (q) =>
-              q
-                .eq("handback", handback)
-                .eq("status", args.status)
-                .gt("updatedAt", args.updatedAfter)
-                .lt("updatedAt", args.updatedBefore),
-            )
-    ).paginate({ cursor: args.cursor, numItems: UNOBSERVED_RESULT_PAGE_SIZE });
-    // The pre-handback list is for rows with no `handback`: a detached row
-    // also reads `observed: false` and has its own window.
-    const page = await activeAccountRows(
-      ctx,
-      result.page.filter(
-        (row): boolean => handback !== undefined || row.handback === undefined,
-      ),
-    );
+    const result = await ctx.db
+      .query("runtimeAsyncAgentResults")
+      .withIndex("by_handback_and_status_and_updatedAt", (q) =>
+        q
+          .eq("handback", args.handback)
+          .eq("status", args.status)
+          .gt("updatedAt", args.updatedAfter)
+          .lt("updatedAt", args.updatedBefore),
+      )
+      .paginate({ cursor: args.cursor, numItems: OWED_RESULT_PAGE_SIZE });
+    const page = await activeAccountRows(ctx, result.page);
 
     return {
       page: page,
@@ -538,15 +636,7 @@ export const listUnobservedAsyncAgentResults = internalQuery({
   },
 });
 
-/**
- * Moves a subagent result's hand-back: `detached` when the parent's run gives
- * up delivering it, `stored` when the parent reads it or is never told. A
- * stored row stays stored, and a running row is never marked stored. The
- * parent's own append and a late result's admission mark `stored` inside
- * their own transactions instead. `observed` is written beside it for one
- * release, for readers of the flag the previous release used.
- * @returns null after the row is marked or skipped
- */
+// True when a queued resume already carries the result: the caller must not hand it over.
 export const markAsyncAgentHandback = internalMutation({
   args: {
     eventId: v.string(),
@@ -558,59 +648,54 @@ export const markAsyncAgentHandback = internalMutation({
     if (
       !row ||
       row.handback === "stored" ||
-      row.observed === true ||
       (args.handback === "stored" && row.status === "processing")
     ) {
       return null;
     }
     await requireActiveAccount(ctx, row.accountId);
-    await ctx.db.patch(row._id, handbackPatch(args.handback));
+    await ctx.db.patch(row._id, { handback: args.handback });
 
     return null;
   },
 });
 
-/**
- * Records an async run's outcome on its polling row. Used by subagents and by
- * async runs without a live ingress owner; `runtimeIngress.settle` writes the
- * same row in the envelope's transaction. With `onlyWhileProcessing` a row
- * that already has its outcome, or is gone, is left alone: the recovery sweep
- * fails a dead child's row that way.
- * @returns null after the result is updated or left alone
- */
 export const updateAsyncAgentResult = internalMutation({
   args: {
     eventId: v.string(),
     ...asyncAgentOutcomeValidator.fields,
     onlyWhileProcessing: v.optional(v.boolean()),
-    // `detached` hands the result to the recovery sweep in the same write,
-    // for a child the sweep fails because its parent run died with it.
     handback: v.optional(v.literal("detached")),
+    // The async tool results a run that saves no history read: its answer holds them.
+    toolResultIds: v.optional(v.array(v.string())),
   },
   returns: v.null(),
   handler: async (
     ctx,
-    { onlyWhileProcessing, handback, ...args },
+    { onlyWhileProcessing, handback, toolResultIds, ...args },
   ): Promise<null> => {
-    if (
-      onlyWhileProcessing &&
-      (await asyncAgentResultRow(ctx, args.eventId))?.status !== "processing"
-    ) {
+    const row = await asyncAgentResultRow(ctx, args.eventId);
+    if (onlyWhileProcessing && row?.status !== "processing") {
       return null;
     }
-    if (!(await writeAsyncAgentResult(ctx, args.eventId, args, handback))) {
+    if (
+      !row ||
+      !(await writeAsyncAgentResult(ctx, args.eventId, args, handback))
+    ) {
       throw new Error("Async agent result not found");
+    }
+    for (const resultId of toolResultIds ?? []) {
+      await markResultStored(
+        ctx,
+        row.accountId,
+        row.conversationKey,
+        await asyncToolResultRow(ctx, resultId),
+      );
     }
 
     return null;
   },
 });
 
-/**
- * The polling row for `eventId`, or null, also when there is no id. A late
- * subagent result whose row is `stored` (or `observed === true`, written by
- * the release before) is one its parent has.
- */
 export async function asyncAgentResultRow(
   ctx: QueryCtx,
   eventId: string | undefined,
@@ -623,39 +708,25 @@ export async function asyncAgentResultRow(
     .unique();
 }
 
-/**
- * The patch for a hand-back move, with the `observed` flag the previous
- * release read kept in step: stored is seen, detached is not.
- */
-export function handbackPatch(handback: Exclude<Handback, "pending">): {
-  handback: Handback;
-  observed: boolean;
-} {
-  return { handback: handback, observed: handback === "stored" };
-}
-
-/**
- * Marks a subagent result's hand-back stored inside the transaction that
- * delivers it: the parent's append of the result row, or the admission of the
- * late resume carrying it (`accept`). Only when the row is `accountId`'s own
- * and not stored already.
- */
-export async function markAsyncAgentResultSeen(
+// Call in the transaction that delivers the result, so row and flag never disagree.
+export async function markResultStored(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
-  eventId: string | undefined,
-): Promise<void> {
-  const row = await asyncAgentResultRow(ctx, eventId);
-  if (row?.accountId === accountId && row.handback !== "stored") {
-    await ctx.db.patch(row._id, handbackPatch("stored"));
+  conversationKey: string,
+  row: Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults"> | null,
+): Promise<boolean> {
+  const told =
+    row !== null && "resultId" in row
+      ? row.conversationKey
+      : row?.subagent?.parentConversationKey;
+  if (row?.accountId !== accountId || told !== conversationKey) return false;
+  if (row.handback !== "stored") {
+    await ctx.db.patch(row._id, { handback: "stored" });
   }
+
+  return true;
 }
 
-/**
- * The async tool row for `resultId`, or null, also when there is no id. A
- * settled row that is `stored` (or `observed === true`, written by the release
- * before) is one its conversation has.
- */
 export async function asyncToolResultRow(
   ctx: QueryCtx,
   resultId: string | undefined,
@@ -668,33 +739,6 @@ export async function asyncToolResultRow(
     .unique();
 }
 
-/**
- * Marks an async tool result's hand-back stored inside the transaction that
- * delivers it: the parent's append of the result row, or the admission of the
- * continuation carrying it (`accept`). Only when the row is `accountId`'s own
- * and not stored already.
- */
-export async function markAsyncToolResultSeen(
-  ctx: MutationCtx,
-  accountId: Id<"accounts">,
-  resultId: string | undefined,
-): Promise<void> {
-  const row = await asyncToolResultRow(ctx, resultId);
-  if (row?.accountId === accountId && row.handback !== "stored") {
-    await ctx.db.patch(row._id, handbackPatch("stored"));
-  }
-}
-
-/**
- * Patches the polling row for `eventId` with a run's outcome. A subagent's
- * row created before hand-backs started at creation has none yet: its finish
- * starts it `pending`, the parent owing it the write until it stores it,
- * unless the release before `handback` already detached it (`observed:
- * false`): that row is the sweep's at once. A hand-back already set keeps its
- * state; the outcome never moves it back, and `handback` moves a row that is
- * not stored to `detached` in the same write.
- * @returns false when the row no longer exists
- */
 export async function writeAsyncAgentResult(
   ctx: MutationCtx,
   eventId: string,
@@ -704,20 +748,16 @@ export async function writeAsyncAgentResult(
   const row = await asyncAgentResultRow(ctx, eventId);
   if (!row) return false;
   await requireActiveAccount(ctx, row.accountId);
-  const finished =
-    outcome.status === "completed" || outcome.status === "failed";
-  const stored = row.handback === "stored" || row.observed === true;
   await ctx.db.patch(row._id, {
     status: outcome.status,
     response: outcome.response,
     error: outcome.error,
     approvals: outcome.approvals,
     questions: outcome.questions,
-    ...(handback === "detached" && !stored
-      ? handbackPatch("detached")
-      : row.subagent && finished && row.handback === undefined
-        ? { handback: row.observed === false ? "detached" : "pending" }
-        : {}),
+    question: outcome.question,
+    ...(handback === "detached" && row.handback !== "stored"
+      ? { handback: handback }
+      : {}),
     updatedAt: new Date().toISOString(),
     expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
   });
@@ -725,10 +765,6 @@ export async function writeAsyncAgentResult(
   return true;
 }
 
-/**
- * Creates an async tool row.
- * @returns whether a new result row was created
- */
 export const createAsyncToolResult = internalMutation({
   args: {
     resultId: v.string(),
@@ -737,7 +773,7 @@ export const createAsyncToolResult = internalMutation({
     toolName: v.string(),
     toolCallId: v.string(),
     input: v.any(),
-    delivery: v.optional(v.any()),
+    delivery: v.optional(asyncToolDeliveryValidator),
     completionToken: v.optional(v.string()),
   },
   returns: v.boolean(),
@@ -768,11 +804,7 @@ export const createAsyncToolResult = internalMutation({
   },
 });
 
-/**
- * Records the sandbox a detached job launched on. A row that already settled
- * did so before its fence existed and keeps that result.
- * @returns null after the patch attempt
- */
+// A row that settled before its sandbox fence existed keeps that result.
 export const bindAsyncToolResultSandbox = internalMutation({
   args: { resultId: v.string(), sandbox: reservedSandboxValidator },
   returns: v.null(),
@@ -789,10 +821,6 @@ export const bindAsyncToolResultSandbox = internalMutation({
   },
 });
 
-/**
- * Looks up an async tool result without exposing callback authorization.
- * @returns the public result document or null when it does not exist
- */
 export const getAsyncToolResult = internalQuery({
   args: { resultId: v.string() },
   returns: v.union(asyncToolDoc, v.null()),
@@ -806,10 +834,6 @@ export const getAsyncToolResult = internalQuery({
   },
 });
 
-/**
- * Verifies a supplied callback token without returning persisted authorization.
- * @returns whether the supplied token matches the persisted digest
- */
 export const getAsyncToolToken = internalQuery({
   args: { resultId: v.string(), completionToken: v.string() },
   returns: v.boolean(),
@@ -829,11 +853,6 @@ export const getAsyncToolToken = internalQuery({
   },
 });
 
-/**
- * Lists the still-processing rows one tool left on a conversation, oldest
- * first. The ask_questions intake reads this to find the prompt a reply answers.
- * @returns the public result documents still waiting to settle
- */
 export const listPendingAsyncToolResults = internalQuery({
   args: { conversationKey: v.string(), toolName: v.string() },
   returns: v.array(asyncToolDoc),
@@ -851,15 +870,7 @@ export const listPendingAsyncToolResults = internalQuery({
     ).map(hideCompletionTokenHash),
 });
 
-/**
- * One page of async tool results in `status` whose hand-back is `handback`
- * (`pending` or `detached`), written inside the window, oldest first. Core's
- * recovery sweep resumes their conversations, walking every page each pass so
- * rows it must retry never crowd others out. A row of an inactive account is
- * left out: no resume of it can be admitted.
- * @returns the page and the cursor for the next one
- */
-export const listUnobservedAsyncToolResults = internalQuery({
+export const listOwedAsyncToolResults = internalQuery({
   args: {
     handback: sweptHandbackValidator,
     status: runtimeAsyncToolResultsFields.status,
@@ -889,7 +900,7 @@ export const listUnobservedAsyncToolResults = internalQuery({
           .gt("updatedAt", args.updatedAfter)
           .lt("updatedAt", args.updatedBefore),
       )
-      .paginate({ cursor: args.cursor, numItems: UNOBSERVED_RESULT_PAGE_SIZE });
+      .paginate({ cursor: args.cursor, numItems: OWED_RESULT_PAGE_SIZE });
     const page = (await activeAccountRows(ctx, result.page)).map(
       hideCompletionTokenHash,
     );
@@ -902,13 +913,6 @@ export const listUnobservedAsyncToolResults = internalQuery({
   },
 });
 
-/**
- * Settles or observes an async tool row with optional processing-only CAS
- * semantics. A row that finishes starts its hand-back `pending`: the
- * conversation that started it owes the result its write until it stores it.
- * A hand-back already `detached` or `stored` keeps that state.
- * @returns the updated public row, or null when the conditional update is rejected
- */
 export const updateAsyncToolResult = internalMutation({
   args: {
     resultId: v.string(),
@@ -924,8 +928,7 @@ export const updateAsyncToolResult = internalMutation({
     if (!row || (args.onlyWhenProcessing && row.status !== "processing")) {
       return null;
     }
-    // A job bound to a machine the reservation no longer names settles failed
-    // whatever it reported: its workspace writes are unowned.
+    // A job whose sandbox was since replaced fails whatever it reported: its writes are unowned.
     const outcome =
       row.status === "processing" &&
       row.sandbox !== undefined &&
@@ -950,16 +953,8 @@ export const updateAsyncToolResult = internalMutation({
   },
 });
 
-/**
- * Moves a finished async tool result's hand-back: `detached` when the run that
- * started it gives up delivering it, `stored` when the model reads it with
- * async_status. A stored row stays stored, and a row still running is left
- * alone. The parent's own append and the continuation's admission mark
- * `stored` inside their own transactions instead. `observed` is written beside
- * it for one release, for readers of the flag the previous release used.
- * @returns null after the row is marked or skipped
- */
-export const observeAsyncToolResult = internalMutation({
+// True when a queued continuation already carries the result: the caller must not hand it over.
+export const markAsyncToolHandback = internalMutation({
   args: {
     resultId: v.string(),
     handback: handbackMoveValidator,
@@ -972,7 +967,7 @@ export const observeAsyncToolResult = internalMutation({
     }
     await requireActiveAccount(ctx, row.accountId);
     await ctx.db.patch(row._id, {
-      ...handbackPatch(args.handback),
+      handback: args.handback,
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     });
@@ -981,9 +976,6 @@ export const observeAsyncToolResult = internalMutation({
   },
 });
 
-/**
- * @returns the provider ID or null when the reservation is absent
- */
 export const getSandboxReservation = internalQuery({
   args: { provider: sandboxProviderValidator, reservationKey: v.string() },
   returns: v.union(v.string(), v.null()),
@@ -1000,14 +992,7 @@ export const getSandboxReservation = internalQuery({
     )?.externalId ?? null,
 });
 
-/**
- * What a release needs to pick credentials: the reserved machine, and the
- * instance row's record of whose credentials it runs on and which config
- * reserved it. The row is a best-effort mirror, so it is returned only while
- * it still names `externalId`, or the reserved machine when none is given.
- * With no reservation, the mirror row's own machine is the target.
- * @returns the reserved provider id, or null, and the matching instance row, or null
- */
+// `sandboxInstances` is a best-effort mirror: its row counts only while it names the target.
 export const getSandboxReleaseTarget = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -1058,16 +1043,6 @@ export const getSandboxReleaseTarget = internalQuery({
   },
 });
 
-/**
- * The reservation's sandbox and when it was claimed, for the executors that enforce
- * `lifecycle.maxLifetimeSeconds` themselves and would otherwise read the same row
- * twice. A reconnect only patches the row, so `claimedAt` stays the creation time of
- * the machine the key points at; replacing the sandbox deletes and re-inserts the
- * row, which restarts the clock. `expiresAt` is the idle deadline the sweeper
- * releases it at.
- * @returns the sandbox id, claim time and idle deadline, or null when the
- * reservation is absent
- */
 export const getSandboxReservationRecord = internalQuery({
   args: { provider: sandboxProviderValidator, reservationKey: v.string() },
   returns: v.union(
@@ -1098,16 +1073,13 @@ export const getSandboxReservationRecord = internalQuery({
 
     return {
       externalId: reservation.externalId,
+      // A reconnect only patches the row and a replacement re-inserts it: this is machine age.
       claimedAt: reservation._creationTime,
       expiresAt: reservation.expiresAt,
     };
   },
 });
 
-/**
- * One page of reservations whose idle window has lapsed, oldest first.
- * @returns the expired reservations, up to `limit`
- */
 export const listExpiredSandboxReservations = internalQuery({
   args: { limit: v.number() },
   returns: v.array(sandboxReservationSummary),
@@ -1131,14 +1103,7 @@ export const listExpiredSandboxReservations = internalQuery({
   },
 });
 
-/**
- * Every snapshot image still building, for core's build watcher to finish once
- * the provider reports the build done. Builds last minutes, so the set stays small,
- * and a capped page would let builds stuck on failing checks starve the rest.
- * A build from before snapshots recorded their stage is left alone: nothing
- * boots it, so it must be taken again.
- * @returns the building snapshots
- */
+// Uncapped: builds last minutes, and a capped page would let stuck builds starve the rest.
 export const listBuildingSandboxSnapshots = internalQuery({
   args: {},
   returns: v.array(
@@ -1190,12 +1155,6 @@ export const listBuildingSandboxSnapshots = internalQuery({
   },
 });
 
-/**
- * Every reservation an account holds, whatever key shape reserved it, so a
- * deletion sweep releases each machine before the cascade drops the rows. Paged
- * because one account can hold more rows than a single query may read.
- * @returns one page of the account's reservations, and the cursor for the next
- */
 export const listAccountSandboxReservations = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -1225,17 +1184,9 @@ export const listAccountSandboxReservations = internalQuery({
   },
 });
 
-/**
- * Mirror rows no reservation names any more (a teardown that failed, or the old
- * prune), still carrying the provider id the sweeper needs to tear them down. Bounded to rows idle longer than a whole
- * reservation TTL so a live sandbox is never mistaken for one. `ephemeral` rows are
- * left out by the index, so they never fill the page: their key is a provider id, not
- * a reconnect key, and the hourly accrual deletes them. Paged oldest first by
- * cursor: a mirror whose reservation the sweeper deferred keeps its age, so
- * reserved rows can fill any fixed prefix. The idle cut is checked per row rather
- * than in the index range, so one pass's cursor still fits the next pass's query.
- * @returns one page's orphaned mirror rows, and the cursor for the next page
- */
+// Paged since deferred reservations keep their age and can fill any prefix; the idle cut is
+// per row so one pass's cursor fits the next. Ephemeral rows are skipped: no reservation
+// names them and the hourly accrual deletes them.
 export const listOrphanedSandboxInstances = internalQuery({
   args: {
     cursor: v.union(v.string(), v.null()),
@@ -1257,7 +1208,6 @@ export const listOrphanedSandboxInstances = internalQuery({
 
     const orphans: Infer<typeof sandboxReservationSummary>[] = [];
     for (const row of result.page) {
-      // Oldest first: the first row still in use ends the idle ones.
       if (row.lastUsedAt >= idleBefore) {
         return { page: orphans, cursor: null, isDone: true };
       }
@@ -1300,8 +1250,7 @@ export const claimSandboxReservation = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
-    // The reservation key is a hashed workspace namespace, so the owning account
-    // can't be parsed from it. Core passes accountId explicitly.
+    // The key is a hashed workspace namespace, so the account can't be parsed from it.
     await requireActiveAccount(ctx, args.accountId);
     const row = await ctx.db
       .query("sandboxReservations")
@@ -1327,12 +1276,6 @@ export const claimSandboxReservation = internalMutation({
   },
 });
 
-/**
- * Refreshes the idle deadline of a reservation that still names this sandbox
- * and belongs to this account. Never inserts or repoints: a released or
- * replaced key is a no-op.
- * @returns null after the patch attempt
- */
 export const saveSandboxReservation = internalMutation({
   args: {
     provider: sandboxProviderValidator,
@@ -1367,13 +1310,8 @@ export const saveSandboxReservation = internalMutation({
   },
 });
 
-/**
- * Pushes the deadline out on reservations the sweeper could not clear, so one it can
- * never clear stops holding the head of the `by_expiresAt` page. Patches only, so a
- * released row stays gone. Bypasses the active-account guard: a suspended account's
- * rows are exactly the ones that would otherwise block the page forever.
- * @returns the number of rows whose deadline moved
- */
+// Unclearable rows must not hold the head of the `by_expiresAt` page. No active-account
+// guard: a suspended account's rows are exactly the ones that would block it forever.
 export const deferSandboxReservations = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -1407,15 +1345,7 @@ export const deferSandboxReservations = internalMutation({
   },
 });
 
-/**
- * Deletes a reservation while it still names `expectedExternalId` (when given)
- * and, with `onlyExpired`, only once its deadline has lapsed: the sweeper takes
- * a row this way before the provider teardown, so a run that refreshed the
- * deadline or replaced the machine in between keeps its row. A key no row names
- * is the caller's to tear down as well, since no run can reach a machine
- * without a reservation naming it.
- * @returns whether the caller now owns the teardown of that machine
- */
+// True hands the caller the machine's teardown; a key no row names is unreachable by any run.
 export const deleteSandboxReservation = internalMutation({
   args: {
     provider: sandboxProviderValidator,
@@ -1451,21 +1381,7 @@ export const deleteSandboxReservation = internalMutation({
   },
 });
 
-/**
- * Deletes one bounded batch of the runtime rows owned by a single agent, so a
- * deleted agent does not leave its conversations, queued work and status rows
- * behind for the account-wide purge that may never run.
- *
- * Every table reached here is keyed by the account-and-agent scoped
- * conversation key, which lets each read be a prefix range over that key rather
- * than a scan of the account's rows. Tables with no conversation key
- * (`runtimeClaims`, sandbox reservations) stay with
- * `deleteAccountRuntimeData`: they carry no agent, so no prefix identifies them.
- *
- * Like the account purge, this accepts an agent that is already gone: the caller
- * deletes the row and drains the rows afterwards.
- * @returns per-table deletion counts and their total
- */
+// Claims and sandbox reservations carry no agent, so only deleteAccountRuntimeData drops them.
 export const deleteAgentRuntimeData = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -1483,8 +1399,6 @@ export const deleteAgentRuntimeData = internalMutation({
   }),
   handler: async (ctx, args) => {
     const prefix = `acct:${args.accountId}:agent:${args.agentId}:`;
-    // Every key under this agent sorts between the prefix and the prefix plus
-    // the highest code point, which is what makes each read a range, not a scan.
     const prefixEnd = `${prefix}\uffff`;
     const conversationRows = await ctx.db
       .query("runtimeConversationEvents")
@@ -1516,6 +1430,14 @@ export const deleteAgentRuntimeData = internalMutation({
         q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
       )
       .take(RUNTIME_DELETE_BATCH_SIZE);
+    const harnessEntries = await takeHarnessEntryBatch(
+      ctx.db
+        .query("runtimeHarnessSessionEntries")
+        .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
+          q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
+        ),
+    );
+    const harnessEntryRows = harnessEntries.batch;
     const asyncAgentRows = await ctx.db
       .query("runtimeAsyncAgentResults")
       .withIndex("by_conversationKey", (q) =>
@@ -1534,12 +1456,11 @@ export const deleteAgentRuntimeData = internalMutation({
       ...ingressRows,
       ...applicationRows,
       ...harnessSessionRows,
+      ...harnessEntryRows,
       ...asyncAgentRows,
       ...asyncToolRows,
     ])
       await ctx.db.delete(row._id);
-    // A full batch means the table had more than one pass can hold, so keep
-    // going. The caller fires this once and never has to loop.
     if (
       [
         conversationRows,
@@ -1549,7 +1470,8 @@ export const deleteAgentRuntimeData = internalMutation({
         harnessSessionRows,
         asyncAgentRows,
         asyncToolRows,
-      ].some((batch) => batch.length === RUNTIME_DELETE_BATCH_SIZE)
+      ].some((batch) => batch.length === RUNTIME_DELETE_BATCH_SIZE) ||
+      harnessEntries.full
     ) {
       await ctx.scheduler.runAfter(
         0,
@@ -1563,7 +1485,8 @@ export const deleteAgentRuntimeData = internalMutation({
       coordinatorDeleted: coordinatorRows.length,
       ingressDeleted: ingressRows.length,
       applicationDeleted: applicationRows.length,
-      harnessSessionDeleted: harnessSessionRows.length,
+      harnessSessionDeleted:
+        harnessSessionRows.length + harnessEntryRows.length,
       asyncAgentResultDeleted: asyncAgentRows.length,
       asyncToolResultDeleted: asyncToolRows.length,
       totalDeleted:
@@ -1572,17 +1495,14 @@ export const deleteAgentRuntimeData = internalMutation({
         ingressRows.length +
         applicationRows.length +
         harnessSessionRows.length +
+        harnessEntryRows.length +
         asyncAgentRows.length +
         asyncToolRows.length,
     };
   },
 });
 
-/**
- * Deletes one bounded batch of every runtime row owned by an account. This
- * cleanup path intentionally accepts disabled or already-removed accounts.
- * @returns per-table deletion counts and their total
- */
+// No active-account guard: disabled and already-removed accounts are purged too.
 export const deleteAccountRuntimeData = internalMutation({
   args: { accountId: v.id("accounts") },
   returns: v.object({
@@ -1625,6 +1545,11 @@ export const deleteAccountRuntimeData = internalMutation({
       .query("runtimeHarnessSessions")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
       .take(100);
+    const { batch: harnessEntryRows } = await takeHarnessEntryBatch(
+      ctx.db
+        .query("runtimeHarnessSessionEntries")
+        .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId)),
+    );
     const toolRows = await ctx.db
       .query("runtimeAsyncToolResults")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
@@ -1640,6 +1565,7 @@ export const deleteAccountRuntimeData = internalMutation({
       ...ingressRows,
       ...applicationRows,
       ...harnessSessionRows,
+      ...harnessEntryRows,
       ...agentRows,
       ...toolRows,
       ...reservationRows,
@@ -1655,7 +1581,8 @@ export const deleteAccountRuntimeData = internalMutation({
         applicationRows.length,
       asyncAgentResultDeleted: agentRows.length,
       asyncToolResultDeleted: toolRows.length,
-      harnessSessionDeleted: harnessSessionRows.length,
+      harnessSessionDeleted:
+        harnessSessionRows.length + harnessEntryRows.length,
       sandboxReservationDeleted: reservationRows.length,
       totalDeleted:
         conversationRows.length +
@@ -1664,6 +1591,7 @@ export const deleteAccountRuntimeData = internalMutation({
         ingressRows.length +
         applicationRows.length +
         harnessSessionRows.length +
+        harnessEntryRows.length +
         agentRows.length +
         toolRows.length +
         reservationRows.length,
@@ -1671,13 +1599,7 @@ export const deleteAccountRuntimeData = internalMutation({
   },
 });
 
-/**
- * Deletes expired operational rows in bounded batches and schedules
- * continuation when needed. This maintenance path intentionally bypasses the
- * active-account guard. `sandboxReservations` is deliberately absent. Core's
- * sandbox sweeper expires that table instead, provider first and row second.
- * @returns the number of rows deleted in this batch
- */
+// No active-account guard. `sandboxReservations` is core's sweeper's: provider first, row second.
 export const pruneExpired = internalMutation({
   args: {},
   returns: v.number(),
@@ -1707,12 +1629,23 @@ export const pruneExpired = internalMutation({
   },
 });
 
-/**
- * @param accountId owning account ID
- * @param key scoped or integration-provided claim key
- * @returns account-scoped claim key
- * @throws when an already-scoped key belongs to another account
- */
+// Deletes one batch of a conversation's harness entries; true when more may remain.
+export async function deleteHarnessSessionEntries(
+  ctx: MutationCtx,
+  conversationKey: string,
+): Promise<boolean> {
+  const { batch, full } = await takeHarnessEntryBatch(
+    ctx.db
+      .query("runtimeHarnessSessionEntries")
+      .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
+        q.eq("conversationKey", conversationKey),
+      ),
+  );
+  for (const row of batch) await ctx.db.delete(row._id);
+
+  return full;
+}
+
 function claimKeyForAccount(accountId: string, key: string): string {
   if (!key.startsWith("acct:")) {
     return `acct:${accountId}:claim:${key}`;
@@ -1724,7 +1657,6 @@ function claimKeyForAccount(accountId: string, key: string): string {
   return key;
 }
 
-/** Compares fixed-length hexadecimal digests without content-dependent exits. */
 function constantTimeDigestEqual(actual: string, expected: string): boolean {
   let difference = actual.length ^ expected.length;
   for (let index = 0; index < expected.length; index += 1) {
@@ -1734,7 +1666,6 @@ function constantTimeDigestEqual(actual: string, expected: string): boolean {
   return difference === 0;
 }
 
-/** Removes callback authorization from general async-tool result reads. */
 function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
   row: T,
 ): Omit<T, "completionTokenHash"> {
@@ -1743,10 +1674,6 @@ function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
   return publicRow;
 }
 
-/**
- * The idle deadline a claim or refresh writes. Core passes a shorter window for a
- * sandbox only one conversation uses; it never extends past the default.
- */
 function reservationExpiresAt(ttlSeconds: number | undefined): number {
   const ttl = Math.min(
     Math.max(ttlSeconds ?? SANDBOX_RESERVATION_TTL_SECONDS, 60),
@@ -1756,12 +1683,6 @@ function reservationExpiresAt(ttlSeconds: number | undefined): number {
   return Math.floor(Date.now() / 1000) + ttl;
 }
 
-/**
- * Requires an account to exist and remain active in the runtime-write transaction.
- * @param ctx Convex mutation context
- * @param accountId account ID embedded in the runtime row or key
- * @throws when the account is missing, disabled, or malformed
- */
 async function sandboxStillReserved(
   ctx: MutationCtx,
   sandbox: Infer<typeof reservedSandboxValidator>,
@@ -1778,10 +1699,7 @@ async function sandboxStillReserved(
   return row?.externalId === sandbox.externalId;
 }
 
-/**
- * The rows of active accounts, in order: a row of an inactive account is left
- * out of a recovery sweep's page, since no resume of it can be admitted.
- */
+// No resume of an inactive account can be admitted, so recovery sweeps skip its rows.
 async function activeAccountRows<T extends { accountId: Id<"accounts"> }>(
   ctx: QueryCtx,
   rows: T[],

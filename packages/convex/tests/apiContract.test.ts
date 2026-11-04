@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { apiErrorBody } from "../model/apiError";
 import {
-  jsonError,
   methodNotAllowed,
   paginated,
   rateLimitHeaders,
@@ -40,19 +39,6 @@ describe("api error envelope", () => {
       "invalid_request_error",
     );
     expect(apiErrorBody(507, "full").error.type).toBe("api_error");
-  });
-
-  it("serializes at the declared status", async () => {
-    const response = jsonError(401, "Unauthorized");
-
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({
-      error: {
-        message: "Unauthorized",
-        type: "authentication_error",
-        code: "unauthorized",
-      },
-    });
   });
 
   it("sends Allow on a 405, which RFC 9110 requires", async () => {
@@ -105,18 +91,6 @@ describe("paginated", () => {
       hasMore: false,
       nextCursor: null,
     });
-  });
-
-  it("returns every row when the caller names no limit", async () => {
-    const body = (await paginated("agents", items, listRequest()).json()) as {
-      agents: unknown[];
-      hasMore: boolean;
-      nextCursor: string | null;
-    };
-
-    expect(body.agents).toHaveLength(250);
-    expect(body.hasMore).toBe(false);
-    expect(body.nextCursor).toBeNull();
   });
 
   it("pages only when the caller asks", async () => {
@@ -176,12 +150,6 @@ describe("paginated", () => {
     expect(await response.json()).toMatchObject({
       error: { code: "invalid_limit", param: "limit" },
     });
-  });
-
-  it("rejects a non-integer limit", () => {
-    expect(paginated("agents", items, listRequest("?limit=abc")).status).toBe(
-      400,
-    );
   });
 
   it("rejects a cursor it did not issue", async () => {

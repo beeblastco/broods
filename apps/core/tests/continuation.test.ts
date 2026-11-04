@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { AsyncToolCoordinator } from "../src/harness/async-tools.ts";
 import {
   AGENT_PROCESSING_FAILED,
   runAgentLoopUntilSubagentsIdle,
@@ -33,7 +32,6 @@ const QUESTION: PendingQuestionSummary = {
   answerBy: "2026-10-19T10:00:00.000Z",
 };
 
-/** A clean, answered turn; each case overrides the one field that changes the outcome. */
 function completedTurn(
   overrides: Partial<ParentContinuationResult> = {},
 ): ParentContinuationResult {
@@ -88,7 +86,7 @@ describe("runAgentLoopUntilSubagentsIdle", () => {
     mock.restore();
   });
 
-  it("writes finished background tool results before it yields the slot", async () => {
+  it("yields the slot after a cut-off pass and carries on in the next one", async () => {
     const order: string[] = [];
     spyOn(runtime, "mutate").mockResolvedValue(null);
     spyOn(runtime, "query").mockResolvedValue(null);
@@ -97,14 +95,6 @@ describe("runAgentLoopUntilSubagentsIdle", () => {
       system: [],
       ephemeralSystem: [],
       systemContextSnapshot: { cursor: null, messages: [] },
-    });
-    spyOn(
-      AsyncToolCoordinator.prototype,
-      "drainCompletionsToParent",
-    ).mockImplementation(async (): Promise<number> => {
-      order.push("drain tool results");
-
-      return 0;
     });
     spyOn(hookDispatcher, "createAgentHookDispatcher").mockResolvedValue({
       hasHooksFor: (): boolean => false,
@@ -147,7 +137,6 @@ describe("runAgentLoopUntilSubagentsIdle", () => {
       },
       { onFinalText: async () => {}, onErrorText: async () => {} },
       {
-        dispatchAppliedIngress: async () => {},
         dispatchSessionMessage: async (): Promise<SessionMessageResult> => ({
           conversationKey: "conversation",
           status: "accepted",
@@ -156,11 +145,6 @@ describe("runAgentLoopUntilSubagentsIdle", () => {
       },
     );
 
-    expect(order.slice(0, 4)).toEqual([
-      "pass 1",
-      "drain tool results",
-      "yield slot",
-      "pass 2",
-    ]);
+    expect(order.slice(0, 3)).toEqual(["pass 1", "yield slot", "pass 2"]);
   });
 });

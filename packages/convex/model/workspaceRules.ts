@@ -1,13 +1,7 @@
-/**
- * Workspace-config validation for the Convex config plane. Ports core's
- * former storage/workspace-config.ts normalizer so the public /v1/workspaces
- * contract is unchanged. Workspace config holds no secrets (a roleArn is not
- * a secret, and R2 keys are `${NAME}` env refs), so it is stored and returned
- * in plaintext. Pure module, safe
- * for the default Convex runtime. The public projection lives in
- * ./responses.ts. Core runs the storage access rule too, so it reads the env
- * names of both sides.
- */
+// Config holds no secrets (R2 keys are `${NAME}` env refs), so it is stored and returned in
+// plaintext. Core runs the same storage access rule, so it needs the same env names.
+
+import { z } from "zod/mini";
 
 import { assertPublicHttpsUrl, isPrivateHostname } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
@@ -15,8 +9,14 @@ import {
   ACCOUNT_ENV_PLACEHOLDER_PATTERN,
   ACCOUNT_ENV_REF_PATTERN,
 } from "./envRefs";
-import { isPlainObject } from "./objects";
 import { ClientError } from "./clientError";
+import {
+  nonEmptyString,
+  parseInput,
+  resourceCreateInput,
+  resourceUpdateInput,
+} from "./inputSchema";
+import { configObject } from "./storedJson";
 import {
   WORKSPACE_ISOLATION_LEVELS,
   type WorkspaceIsolation,
@@ -30,7 +30,6 @@ const PLATFORM_BUCKET_ENV_NAMES = [
   "TOOL_BUNDLES_BUCKET_NAME",
   "MICROVM_ARTIFACTS_BUCKET_NAME",
 ];
-// The account id inside these ARNs is the platform account.
 const PLATFORM_ROLE_ARN_ENV_NAMES = [
   "CONVEX_AWS_ROLE_ARN",
   "SANDBOX_MOUNT_ROLE_ARN",
@@ -38,34 +37,83 @@ const PLATFORM_ROLE_ARN_ENV_NAMES = [
   "MICROVM_BUILD_ROLE_ARN",
 ];
 const ROLE_ARN_PATTERN = /^arn:[a-z-]+:iam::(\d+):role\/.+$/;
-// An account's R2 S3 endpoint, optionally in a jurisdiction; group 1 is the
-// Cloudflare account id.
 const R2_HOSTNAME_PATTERN =
   /^([a-f0-9]{32})(?:\.(?:eu|fedramp))?\.r2\.cloudflarestorage\.com$/;
 
-/** Per-file cap, enforced on the S3 write path and on dashboard uploads. */
 export const MAX_WORKSPACE_FILE_BYTES = 512 * 1024;
-export const WORKSPACE_STORAGE_PROVIDERS = ["s3"] as const;
+export const WORKSPACE_STORAGE_PROVIDERS = ["s3", "disk"] as const;
+
+const optionalString = z.optional(z.string());
+const HARNESS_FEATURE = z.optional(
+  z.looseObject({ enabled: z.optional(z.boolean()) }),
+);
+const STORAGE_AUTH = z.discriminatedUnion(
+  "type",
+  [
+    z.looseObject({ type: z.literal("managed") }),
+    z.looseObject({
+      type: z.literal("r2"),
+      accessKeyId: nonEmptyString,
+      secretAccessKey: nonEmptyString,
+    }),
+    z
+      .looseObject({ type: z.literal("assumeRole"), roleArn: nonEmptyString })
+      .check(
+        z.superRefine((auth, ctx): void => {
+          // Broods assigns it per account: one a customer picked could be replayed elsewhere.
+          if (auth.externalId !== undefined)
+            ctx.addIssue({
+              code: "custom",
+              path: ["externalId"],
+              message:
+                "is no longer accepted: Broods assigns the external id for your account. Remove it from the config (send null in a PATCH) and require the id from GET /v1/account/storage-trust in your role's trust policy",
+            });
+        }),
+      ),
+  ],
+  {
+    error: (issue): string | undefined =>
+      issue.code === "invalid_union"
+        ? "must be one of: managed, assumeRole, r2"
+        : undefined,
+  },
+);
+const WORKSPACE_CONFIG = z.looseObject({
+  storage: z.optional(
+    z.looseObject({
+      provider: z.optional(
+        z.enum(WORKSPACE_STORAGE_PROVIDERS, {
+          error: (issue): string | undefined =>
+            issue.input === "vercel"
+              ? '"vercel" is not supported yet; Vercel Drive workspace storage is not wired. Use "s3" or omit config.storage.'
+              : undefined,
+        }),
+      ),
+      bucket: optionalString,
+      region: optionalString,
+      endpoint: optionalString,
+      prefix: optionalString,
+      auth: z.optional(STORAGE_AUTH),
+    }),
+  ),
+  isolation: z.optional(z.enum(WORKSPACE_ISOLATION_LEVELS)),
+  harness: z.optional(
+    z.looseObject({ workspace: HARNESS_FEATURE, memory: HARNESS_FEATURE }),
+  ),
+});
 
 export type WorkspaceStorageProvider =
   (typeof WORKSPACE_STORAGE_PROVIDERS)[number];
 
 export type WorkspaceStorageAuth =
   | { type: "managed" }
-  /**
-   * The role's trust policy requires the account's Broods-assigned
-   * sts:ExternalId (`storageTrust.ts`); a customer never sets one here.
-   */
   | { type: "assumeRole"; roleArn: string }
   | {
       type: "r2";
-      /** `${NAME}` ref to the parent R2 token's access key id. */
       accessKeyId: string;
-      /** `${NAME}` ref to the parent R2 token's secret access key. */
       secretAccessKey: string;
     };
 
-/** The auth that reaches a bucket the workspace names itself. */
 export type WorkspaceStorageOwnAuth = Extract<
   WorkspaceStorageAuth,
   { type: "assumeRole" | "r2" }
@@ -83,18 +131,13 @@ export interface WorkspaceStorageConfig {
 export interface WorkspaceConfig {
   storage: WorkspaceStorageConfig;
   isolation?: WorkspaceIsolation;
-  // Named harness features, each with its own options (no top-level enabled):
-  // workspace = the <workspace> prompt, memory = structured memory.
+  // workspace = the <workspace> prompt, memory = structured memory; each defaults on.
   harness?: {
     workspace?: { enabled?: boolean };
     memory?: { enabled?: boolean };
   };
 }
 
-/**
- * The platform's own AWS account id: AWS_ACCOUNT_ID, else the account inside
- * any platform role ARN this deployment knows. Undefined on a stack with no AWS.
- */
 export function platformAwsAccountId(): string | undefined {
   if (process.env.AWS_ACCOUNT_ID) return process.env.AWS_ACCOUNT_ID;
   for (const name of PLATFORM_ROLE_ARN_ENV_NAMES) {
@@ -105,11 +148,6 @@ export function platformAwsAccountId(): string | undefined {
   return undefined;
 }
 
-/**
- * A storage endpoint is a public https URL. ALLOW_PRIVATE_STORAGE_ENDPOINTS=true
- * lets a self-host operator also use a private or single-label host, over http
- * or https. A public host stays https only.
- */
 export function assertStorageEndpoint(value: string, label: string): void {
   if (
     process.env.ALLOW_PRIVATE_STORAGE_ENDPOINTS === "true" &&
@@ -119,21 +157,12 @@ export function assertStorageEndpoint(value: string, label: string): void {
   assertPublicHttpsUrl(value, label);
 }
 
-/**
- * A workspace key prefix with no leading slash and one trailing slash, or ""
- * for the bucket root. Shared by the file actions and the R2 credential grant.
- */
 export function normalizeWorkspacePrefix(prefix: string | undefined): string {
   const trimmed = (prefix ?? "").replace(/^\/+/, "").replace(/\/+$/, "");
 
   return trimmed.length > 0 ? `${trimmed}/` : "";
 }
 
-/**
- * The Cloudflare account id of an R2 S3 endpoint
- * (`https://<account>.r2.cloudflarestorage.com`), or undefined when the URL is
- * anything else. The R2 credential grant signs it as its subject.
- */
 export function r2AccountId(endpoint: string): string | undefined {
   let url: URL;
   try {
@@ -155,48 +184,21 @@ export function r2AccountId(endpoint: string): string | undefined {
   return R2_HOSTNAME_PATTERN.exec(url.hostname)?.[1];
 }
 
-/**
- * @param value the raw config value (null/undefined yields the s3 default)
- * @returns the normalized workspace config
- * @throws when a field is malformed or the storage provider is unsupported
- */
 export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
   if (value == null) {
     return { storage: { provider: "s3" } };
   }
-  if (!isPlainObject(value)) {
-    throw new ClientError("config must be an object");
-  }
-
-  const config = value;
+  const config = parseInput(WORKSPACE_CONFIG, value, "config");
   const storage = normalizeWorkspaceStorage(config.storage);
-  assertOptionalEnum(
-    config.isolation,
-    "config.isolation",
-    WORKSPACE_ISOLATION_LEVELS,
-  );
-  let harness:
-    | { workspace?: { enabled?: boolean }; memory?: { enabled?: boolean } }
-    | undefined;
-  if (config.harness !== undefined) {
-    if (!isPlainObject(config.harness)) {
-      throw new ClientError("config.harness must be an object");
-    }
-    const workspacePrompt = normalizeHarnessFeature(
-      config.harness.workspace,
-      "config.harness.workspace",
-    );
-    const memory = normalizeHarnessFeature(
-      config.harness.memory,
-      "config.harness.memory",
-    );
-    if (workspacePrompt || memory) {
-      harness = {
-        ...(workspacePrompt ? { workspace: workspacePrompt } : {}),
-        ...(memory ? { memory: memory } : {}),
-      };
-    }
-  }
+  const workspacePrompt = disabledFeature(config.harness?.workspace);
+  const memory = disabledFeature(config.harness?.memory);
+  const harness =
+    workspacePrompt || memory
+      ? {
+          ...(workspacePrompt ? { workspace: workspacePrompt } : {}),
+          ...(memory ? { memory: memory } : {}),
+        }
+      : undefined;
 
   return {
     storage: storage,
@@ -205,21 +207,15 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
   };
 }
 
-/**
- * @param value the raw request body
- * @returns the normalized name/description/config
- * @throws when a field is missing or malformed
- */
 export function normalizeCreateWorkspaceConfigInput(value: unknown): {
   name: string;
   description?: string;
   config: WorkspaceConfig;
 } {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-  const name = requireString(value.name, "name");
-  const description = optionalString(value.description, "description");
-  const config = normalizeWorkspaceConfig(value.config);
+  const input = parseInput(resourceCreateInput, value, "");
+  const name = input.name.trim();
+  const description = input.description?.trim() || undefined;
+  const config = normalizeWorkspaceConfig(input.config);
 
   return {
     name: name,
@@ -228,48 +224,37 @@ export function normalizeCreateWorkspaceConfigInput(value: unknown): {
   };
 }
 
-/**
- * @param existingConfig the stored workspace config (merge base)
- * @param value the raw request body
- * @returns the normalized patch with the fully merged config
- * @throws when a field is malformed
- */
 export function normalizeUpdateWorkspaceConfigInput(
   existingConfig: WorkspaceConfig,
   value: unknown,
 ): { name?: string; description?: string | null; config: WorkspaceConfig } {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-
+  const input = parseInput(resourceUpdateInput, value, "");
   const config =
-    "config" in value
+    "config" in input
       ? normalizeWorkspaceConfig(
-          mergeConfigObjects(existingConfig, asObject(value.config)),
+          mergeConfigObjects(
+            existingConfig,
+            parseInput(configObject, input.config, "config"),
+          ),
         )
       : existingConfig;
 
   return {
-    ...(value.name !== undefined
-      ? { name: requireString(value.name, "name") }
-      : {}),
-    ...(value.description !== undefined
+    ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+    ...(input.description !== undefined
       ? {
           description:
-            value.description === null
+            input.description === null
               ? null
-              : optionalString(value.description, "description"),
+              : input.description.trim() || undefined,
         }
       : {}),
     config: config,
   };
 }
 
-/**
- * A workspace that names its own bucket brings its own credentials; platform
- * credentials only ever reach the managed bucket. Run on save and on every
- * resolve, so a stored row that breaks the rule fails closed.
- * @returns the bucket's own auth, or undefined for the managed bucket
- */
+// Platform credentials only ever reach the managed bucket: a named bucket brings its own.
+// Runs on save and on every resolve, so a stored row that breaks the rule fails closed.
 export function workspaceStorageOwnAuth(
   storage: WorkspaceStorageConfig,
 ): WorkspaceStorageOwnAuth | undefined {
@@ -339,11 +324,7 @@ export function workspaceStorageOwnAuth(
   return storage.auth;
 }
 
-/**
- * The env var names an R2 workspace's keys reference, stored beside its config
- * on every write so an env var delete finds it by index. Both are undefined for
- * any other storage, which clears them on a patch.
- */
+// Stored beside the config so an env var delete finds it by index; undefined clears on patch.
 export function workspaceEnvRefFields(config: WorkspaceConfig | undefined): {
   r2AccessKeyEnv: string | undefined;
   r2SecretAccessKeyEnv: string | undefined;
@@ -361,15 +342,7 @@ export function workspaceEnvRefFields(config: WorkspaceConfig | undefined): {
   };
 }
 
-/**
- * Derive a workspace's `fs-…` filesystem namespace. Matches core's
- * normalizeFilesystemNamespace byte-for-byte: S3 keys live under this prefix
- * and workspace-bound sandbox reservation keys are the namespace itself or
- * namespace-prefixed. Uses Web Crypto so it bundles for any Convex runtime.
- * @param accountId account owning the workspace
- * @param workspaceId the workspace config id
- * @returns the `fs-…` namespace prefix
- */
+// Byte for byte core's normalizeFilesystemNamespace: S3 and reservation keys live under it.
 export async function workspaceNamespace(
   accountId: string,
   workspaceId: string,
@@ -387,14 +360,7 @@ export async function workspaceNamespace(
   return `${FILESYSTEM_NAMESPACE_PREFIX}${hex.slice(0, HASH_HEX_LENGTH)}`;
 }
 
-/**
- * Validate and normalize a workspace-relative file path. Lives here rather than
- * in model/workspaceFs so the default-runtime HTTP surface can reuse it without
- * pulling the S3 client into a non-node bundle.
- * @param value candidate path
- * @returns the normalized path
- * @throws when the path is empty or contains traversal segments
- */
+// Here, not in workspaceFs, so default-runtime HTTP routes need not bundle the S3 client.
 export function normalizeFilePath(value: unknown): string {
   if (typeof value !== "string") throw new ClientError("path is required");
   const path = value.trim().replace(/^\/+|\/+$/g, "");
@@ -408,32 +374,6 @@ export function normalizeFilePath(value: unknown): string {
   return path;
 }
 
-function asObject(value: unknown): Record<string, unknown> {
-  if (!isPlainObject(value)) throw new ClientError("config must be an object");
-
-  return value;
-}
-
-function assertOptionalBoolean(value: unknown, name: string): void {
-  if (value !== undefined && typeof value !== "boolean") {
-    throw new ClientError(`${name} must be a boolean`);
-  }
-}
-
-function assertOptionalEnum<T extends string>(
-  value: unknown,
-  name: string,
-  allowed: readonly T[],
-): asserts value is T | undefined {
-  if (
-    value !== undefined &&
-    (typeof value !== "string" || !allowed.includes(value as T))
-  ) {
-    throw new ClientError(`${name} must be one of: ${allowed.join(", ")}`);
-  }
-}
-
-/** An http(s) URL whose host is private or a single-label service name. */
 function isClusterEndpoint(value: string): boolean {
   let url: URL;
   try {
@@ -448,51 +388,41 @@ function isClusterEndpoint(value: string): boolean {
   );
 }
 
-function normalizeHarnessFeature(
-  value: unknown,
-  name: string,
-): { enabled?: boolean } | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!isPlainObject(value)) {
-    throw new ClientError(`${name} must be an object`);
-  }
-  assertOptionalBoolean(value.enabled, `${name}.enabled`);
-
-  // Features default to on: `enabled: true` normalizes away to the omitted form.
-  return value.enabled === false ? { enabled: false } : undefined;
+function disabledFeature(
+  feature: { enabled?: boolean } | undefined,
+): { enabled: false } | undefined {
+  return feature?.enabled === false ? { enabled: false } : undefined;
 }
 
-function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
+function normalizeWorkspaceStorage(
+  value: z.output<typeof WORKSPACE_CONFIG>["storage"],
+): WorkspaceStorageConfig {
   if (value === undefined) {
     return { provider: "s3" };
   }
-  if (!isPlainObject(value)) {
-    throw new ClientError("config.storage must be an object");
-  }
-  if (value.provider === "vercel") {
-    throw new ClientError(
-      'config.storage.provider "vercel" is not supported yet; Vercel Drive workspace storage is not wired. Use "s3" or omit config.storage.',
+  if (value.provider === "disk") {
+    const extra = ["bucket", "region", "endpoint", "prefix", "auth"].find(
+      (key): boolean => value[key] !== undefined,
     );
-  }
-  assertOptionalEnum(
-    value.provider,
-    "config.storage.provider",
-    WORKSPACE_STORAGE_PROVIDERS,
-  );
+    if (extra)
+      throw new ClientError(
+        `config.storage.${extra} does not apply to "disk": its files live on the sandbox's own disk`,
+      );
 
-  const bucket = optionalString(value.bucket, "config.storage.bucket");
-  const region = optionalString(value.region, "config.storage.region");
-  const endpoint = optionalString(value.endpoint, "config.storage.endpoint");
-  const prefix = optionalString(value.prefix, "config.storage.prefix");
+    return { provider: "disk" };
+  }
+  const [bucket, region, endpoint, prefix] = [
+    value.bucket,
+    value.region,
+    value.endpoint,
+    value.prefix,
+  ].map((field): string | undefined => field?.trim() || undefined);
   if (bucket && !prefix?.replace(/^\/+|\/+$/g, "")) {
     throw new ClientError(
       "config.storage.prefix is required when config.storage.bucket is set; the sandbox mount is scoped to that prefix",
     );
   }
   const auth = normalizeWorkspaceStorageAuth(value.auth);
-  // Only R2 keys are resolved; a ref anywhere else would be kept as literal text.
   const literals = {
     "config.storage.bucket": bucket,
     "config.storage.region": region,
@@ -510,7 +440,7 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
     }
   }
   const storage: WorkspaceStorageConfig = {
-    provider: (value.provider as WorkspaceStorageProvider | undefined) ?? "s3",
+    provider: value.provider ?? "s3",
     ...(bucket ? { bucket: bucket } : {}),
     ...(region ? { region: region } : {}),
     ...(endpoint ? { endpoint: endpoint } : {}),
@@ -523,26 +453,11 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
 }
 
 function normalizeWorkspaceStorageAuth(
-  value: unknown,
+  value: z.output<typeof STORAGE_AUTH> | undefined,
 ): WorkspaceStorageAuth | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!isPlainObject(value)) {
-    throw new ClientError("config.storage.auth must be an object");
-  }
-  if (value.type === "managed") {
-    return { type: "managed" };
-  }
-  if (value.type === "r2") {
-    const accessKeyId = requireString(
-      value.accessKeyId,
-      "config.storage.auth.accessKeyId",
-    );
-    const secretAccessKey = requireString(
-      value.secretAccessKey,
-      "config.storage.auth.secretAccessKey",
-    );
+  if (value?.type === "r2") {
+    const accessKeyId = value.accessKeyId.trim();
+    const secretAccessKey = value.secretAccessKey.trim();
     if (
       !ACCOUNT_ENV_REF_PATTERN.test(accessKeyId) ||
       !ACCOUNT_ENV_REF_PATTERN.test(secretAccessKey)
@@ -558,38 +473,9 @@ function normalizeWorkspaceStorageAuth(
       secretAccessKey: secretAccessKey,
     };
   }
-  if (value.type === "assumeRole") {
-    // Broods assigns the external id per account. One a customer picked could
-    // be learned and replayed by another account naming the same role.
-    if (value.externalId !== undefined) {
-      throw new ClientError(
-        "config.storage.auth.externalId is no longer accepted: Broods assigns the external id for your account. Remove it from the config (send null in a PATCH) and require the id from GET /v1/account/storage-trust in your role's trust policy",
-      );
-    }
-
-    return {
-      type: "assumeRole",
-      roleArn: requireString(value.roleArn, "config.storage.auth.roleArn"),
-    };
-  }
-  throw new ClientError(
-    "config.storage.auth.type must be one of: managed, assumeRole, r2",
-  );
-}
-
-function optionalString(value: unknown, name: string): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string")
-    throw new ClientError(`${name} must be a string`);
-  const trimmed = value.trim();
-
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new ClientError(`${name} must be a non-empty string`);
+  if (value?.type === "assumeRole") {
+    return { type: "assumeRole", roleArn: value.roleArn.trim() };
   }
 
-  return value.trim();
+  return value ? { type: "managed" } : undefined;
 }

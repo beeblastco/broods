@@ -1,8 +1,3 @@
-/**
- * Runtime key helpers shared by account-management and harness-processing:
- * account scoping, public direct API validation, leases, filesystem namespaces.
- */
-
 import { USER_CONVERSATION_PREFIX } from "@broods/convex/model/userToken";
 import { createHash } from "node:crypto";
 
@@ -12,8 +7,7 @@ const RUN_ID_PREFIX = "run_";
 const SUBAGENT_TASK_ID_PREFIX = "subagent~";
 const UUID_PATTERN =
   "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
-// Built once: both sit on the status/attach path, and the patterns are composed
-// from the constants above, never from caller input.
+// Composed from the constants above, never from caller input.
 const UUID_EXACT = new RegExp(`^${UUID_PATTERN}$`);
 const SUBAGENT_TASK_ID = new RegExp(
   `^${SUBAGENT_TASK_ID_PREFIX}([A-Za-z0-9_-]+)~(${UUID_PATTERN})$`,
@@ -24,12 +18,6 @@ export const INTERNAL_EVENT_ID_PREFIX = "conversation-lease:";
 export const DIRECT_API_EVENT_ID_PREFIX = "api:";
 export const DIRECT_API_CONVERSATION_PREFIX = "api:";
 export const ACCOUNT_NAMESPACE_PREFIX = "acct:";
-/**
- * Separates a channel's own conversation from the thread inside it, for
- * channels whose ids carry colons and so cannot be split on them. No provider
- * id contains it, and it is only read under a channel prefix.
- */
-export const CHANNEL_THREAD_SEPARATOR = "|";
 export const GCHAT_INTEGRATION_PREFIX = "gchat:";
 export const GITHUB_INTEGRATION_PREFIX = "gh:";
 export const LINEAR_INTEGRATION_PREFIX = "linear:";
@@ -41,7 +29,6 @@ export const TWILIO_INTEGRATION_PREFIX = "twilio:";
 export const DISCORD_INTEGRATION_PREFIX = "discord:";
 export const PANCAKE_INTEGRATION_PREFIX = "pancake:";
 export const ZALO_INTEGRATION_PREFIX = "zalo:";
-export const MATRIX_INTEGRATION_PREFIX = "matrix:";
 export const INSTAGRAM_INTEGRATION_PREFIX = "instagram:";
 export const MESSENGER_INTEGRATION_PREFIX = "messenger:";
 export const WHATSAPP_INTEGRATION_PREFIX = "whatsapp:";
@@ -63,14 +50,12 @@ const RESERVED_EVENT_ID_PREFIXES = [
   PANCAKE_INTEGRATION_PREFIX,
   SUBAGENT_TASK_ID_PREFIX,
   ZALO_INTEGRATION_PREFIX,
-  MATRIX_INTEGRATION_PREFIX,
   INSTAGRAM_INTEGRATION_PREFIX,
   MESSENGER_INTEGRATION_PREFIX,
   WHATSAPP_INTEGRATION_PREFIX,
 ] as const;
 
 const RESERVED_CONVERSATION_PREFIXES = [
-  // A signed user's namespace: only a request carrying their token reaches it.
   USER_CONVERSATION_PREFIX,
   INTERNAL_EVENT_ID_PREFIX,
   ACCOUNT_NAMESPACE_PREFIX,
@@ -85,7 +70,6 @@ const RESERVED_CONVERSATION_PREFIXES = [
   DISCORD_INTEGRATION_PREFIX,
   PANCAKE_INTEGRATION_PREFIX,
   ZALO_INTEGRATION_PREFIX,
-  MATRIX_INTEGRATION_PREFIX,
   INSTAGRAM_INTEGRATION_PREFIX,
   MESSENGER_INTEGRATION_PREFIX,
   WHATSAPP_INTEGRATION_PREFIX,
@@ -102,7 +86,6 @@ const CHANNEL_CONVERSATION_PREFIXES = [
   DISCORD_INTEGRATION_PREFIX,
   PANCAKE_INTEGRATION_PREFIX,
   ZALO_INTEGRATION_PREFIX,
-  MATRIX_INTEGRATION_PREFIX,
   INSTAGRAM_INTEGRATION_PREFIX,
   MESSENGER_INTEGRATION_PREFIX,
   WHATSAPP_INTEGRATION_PREFIX,
@@ -123,10 +106,6 @@ export function agentNamespaceFolder(agentId: string): string {
   return `agent/${normalizeFilesystemNamespace(agentId)}`;
 }
 
-export function conversationLeaseKey(conversationKey: string): string {
-  return `${INTERNAL_EVENT_ID_PREFIX}${hashScopedValue("conversation-lease", conversationKey)}`;
-}
-
 export function channelScopeKeyFromConversation(
   conversationKey: string,
   scope: "channel" | "conversation" = "channel",
@@ -136,15 +115,6 @@ export function channelScopeKeyFromConversation(
     return unscopedKey;
   }
 
-  // Matrix marks the boundary itself rather than letting the colon counting
-  // below guess at it, because its room ids carry colons. Only a key under the
-  // Matrix prefix is split this way: a public conversation key is free to
-  // contain the separator, and `customer|a` must not scope to `customer`.
-  if (unscopedKey.startsWith(MATRIX_INTEGRATION_PREFIX)) {
-    const boundary = unscopedKey.indexOf(CHANNEL_THREAD_SEPARATOR);
-
-    return boundary === -1 ? unscopedKey : unscopedKey.slice(0, boundary);
-  }
   if (unscopedKey.startsWith(SLACK_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");
 
@@ -160,8 +130,7 @@ export function channelScopeKeyFromConversation(
 
     return parts.length >= 3 ? parts.slice(0, 2).join(":") : unscopedKey;
   }
-  // A Google Chat thread is `spaces/X/threads/Y` (or `spaces/X/messages/Y`)
-  // inside its space `spaces/X`.
+  // A Google Chat thread is `spaces/X/threads/Y` (or `/messages/Y`) in space `spaces/X`.
   if (unscopedKey.startsWith(GCHAT_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split("/");
 
@@ -260,10 +229,6 @@ export function accountScopedKey(accountId: string, key: string): string {
   return `${ACCOUNT_NAMESPACE_PREFIX}${accountId}:${key}`;
 }
 
-/**
- * The caller-supplied part of a scoped direct event id, or `fallback` when the
- * value is absent or not scoped the way this account and agent scope it.
- */
 export function publicEventIdForScope(
   value: string | undefined,
   accountId: string,
@@ -284,20 +249,10 @@ export function accountAgentScopedKey(
   return accountScopedKey(accountId, `agent:${agentId}:${key}`);
 }
 
-export function accountScopedPrefix(accountId: string): string {
-  return `${ACCOUNT_NAMESPACE_PREFIX}${accountId}:`;
-}
-
-/**
- * Mint the public id for one run. Account-unique by construction, unlike the
- * caller-supplied `eventId`, which is only unique per agent because the stored
- * key scopes it by agent. This is what `GET /v1/runs/{runId}` resolves on.
- */
 export function createRunId(): string {
   return `${RUN_ID_PREFIX}${crypto.randomUUID().replaceAll("-", "")}`;
 }
 
-/** Whether a path segment looks like a run id we issued. */
 export function isRunId(value: string): boolean {
   return RUN_ID.test(value);
 }
@@ -332,7 +287,15 @@ export function parseAccountAgentScopedKey(
   };
 }
 
-/** The nonce that makes a subagent task id unique, or null for a malformed id. */
+// `bsu:` is reserved, so only a run with a user token reaches such a key.
+export function isUserConversationKey(conversationKey: string): boolean {
+  return (
+    parseAccountAgentScopedKey(conversationKey)?.key.startsWith(
+      `${DIRECT_API_CONVERSATION_PREFIX}${USER_CONVERSATION_PREFIX}`,
+    ) === true
+  );
+}
+
 export function subagentTaskNonce(taskId: string): string | null {
   return SUBAGENT_TASK_ID.exec(taskId)?.[2] ?? null;
 }

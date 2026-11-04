@@ -1,11 +1,3 @@
-/**
- * Pancake channel adapter.
- *
- * Per-conversation policy (e.g. skipping human-owned conversations by tag) is
- * not baked in: the parsed source carries `tagIds` so a user `onMessageReceived`
- * hook can decide to drop the message.
- */
-
 import { createHash } from "node:crypto";
 import { timingSafeStringEqual } from "./auth.ts";
 import type { Attachment } from "chat";
@@ -29,11 +21,6 @@ import { PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const PANCAKE_API_BASE = "https://pages.fm/api/public_api/v1/";
 
-/**
- * What a Pancake endpoint answers with: the id of whatever it just created, and
- * a message worth quoting back when it did not. Only the fields this adapter
- * reads are modelled; `parseJsonBody` is the one place they are checked.
- */
 interface PancakeApiResponse {
   id?: string;
   success?: boolean;
@@ -50,11 +37,6 @@ interface PancakeConversation {
   };
 }
 
-/**
- * One item in a Pancake message's `attachments` array. A photo names its URL
- * directly; a video hides it one level down in `video_data`. Anything else,
- * a share card or a fallback link preview, has no file behind it.
- */
 interface PancakeAttachment {
   id?: string;
   type?: string;
@@ -95,6 +77,7 @@ export interface PancakeSource {
   fromId?: string;
   fromName?: string;
   pageCustomerId?: string;
+  // No tag policy is baked in: an onMessageReceived hook drops by tag.
   tagIds?: string[];
 }
 
@@ -128,8 +111,6 @@ export function createPancakeActions(
   return {
     sendText: (text) =>
       sendPancakeMessage(pageAccessToken, source, text, senderId),
-    // Pancake uploads both the same way and lets the recipient's client decide
-    // what to preview, so one body serves each.
     sendFiles: sendAttachments,
     sendImages: sendAttachments,
     sendTyping: async function () {
@@ -156,8 +137,7 @@ export function createPancakeChannel(
       return req.method === "POST";
     },
 
-    // Pancake sends no signature header; the webhook URL carries the secret as
-    // a ?secret= query parameter instead.
+    // Pancake signs nothing: the webhook URL carries the secret as ?secret=.
     authenticate: function (req) {
       const provided = new URLSearchParams(req.rawQueryString).get("secret");
 
@@ -205,13 +185,7 @@ async function sendPancakeMessage(
   });
 }
 
-/**
- * Sends pictures or documents on Pancake, which takes neither directly. Every file
- * goes up to `upload_contents` first and comes back as a content id the message
- * references. Pancake accepts one content id per message, so a batch becomes a
- * batch of messages, the caption on the first: repeating it once per file reads as
- * the same message sent over again.
- */
+// Pancake takes one uploaded content id per message, so each file is its own message.
 async function sendPancakeAttachments(
   pageAccessToken: string,
   source: PancakeSource,
@@ -256,8 +230,6 @@ async function uploadPancakeContent(
   );
   const bodyText = await response.text();
   const body = parseJsonBody(bodyText);
-  // The upload answers with a top-level id; anything else is a failed upload
-  // whatever the status code says.
   const contentId = body?.id;
   if (!response.ok || !contentId) {
     throw new Error(
@@ -268,9 +240,6 @@ async function uploadPancakeContent(
   return contentId;
 }
 
-// The one POST both a text reply and an attachment reply go through. `action`
-// is not the caller's to choose: a comment must be answered as a comment and an
-// inbox message as an inbox message, and that is decided by where it came from.
 async function postPancakeMessage(
   pageAccessToken: string,
   source: PancakeSource,
@@ -310,7 +279,7 @@ async function postPancakeMessage(
     );
   }
 
-  logInfo("Pancake send message succeeded", {
+  logDebug("Pancake send message succeeded", {
     pageId: source.pageId,
     conversationId: source.conversationId,
     status: response.status,
@@ -332,10 +301,8 @@ function formatPancakeError(
   return body?.message ?? (bodyText || "unknown_error");
 }
 
-// Pancake reuses a message id across edits, so the event id folds in what the
-// message actually said. Attachment identity belongs in it for the same reason:
-// two captionless photos would otherwise hash identically and the second would
-// dedupe away as a replay of the first.
+// Pancake reuses a message id across edits, so the event id folds in the text and the
+// attachment URLs, or two captionless photos would dedupe as one.
 function hashEventContent(
   text: string | undefined,
   attachments: Attachment[],
@@ -348,14 +315,6 @@ function hashEventContent(
   return createHash("sha256").update(identity).digest("hex").slice(0, 12);
 }
 
-/**
- * The photos and videos on a Pancake message, as Chat SDK attachments.
- *
- * Pancake hosts every upload and names it by URL, so there is no token to attach
- * and nothing to resolve first: the link in the webhook is the file. A share card
- * or link preview arrives in the same array with no file behind it, and is dropped
- * rather than turned into a broken download.
- */
 function pancakeAttachments(
   value: PancakeAttachment[] | undefined,
 ): Attachment[] {
@@ -400,9 +359,6 @@ function normalizePancakeTagIds(value: unknown): string[] {
   });
 }
 
-// Narrowed at the boundary rather than at each call site, so a Pancake reply
-// with a numeric `id`, or an `id` the upload never actually minted, reads as
-// "no id" everywhere instead of once here and differently there.
 function parseJsonBody(text: string): PancakeApiResponse | null {
   if (!text) {
     return null;
@@ -439,22 +395,6 @@ function parsePancakeWebhook(
     return body;
   }
   const payload = body.payload;
-  logDebug("Pancake webhook received", {
-    configuredPageId: pageId,
-    payloadPageId: payload.page_id,
-    eventType: payload.event_type,
-    conversationId: payload.data?.conversation?.id,
-    messageId: payload.data?.message?.id,
-    messageType: payload.data?.message?.type,
-    fromId:
-      payload.data?.message?.from?.id ?? payload.data?.conversation?.from?.id,
-    fromName:
-      payload.data?.message?.from?.name ??
-      payload.data?.conversation?.from?.name,
-    pageCustomerId: payload.data?.message?.from?.page_customer_id,
-    tagIds: normalizePancakeTagIds(payload.data?.conversation?.tags),
-  });
-
   if (payload.event_type !== "messaging") {
     logDebug("Pancake webhook ignored", {
       reason: "unsupported_event_type",
@@ -475,7 +415,6 @@ function parsePancakeWebhook(
   const message = payload.data?.message;
   const text = message?.message?.trim();
   const attachments = pancakeAttachments(message?.attachments);
-  // A customer who sends only a photo is still a customer asking something.
   if (
     !conversation?.id ||
     !message?.id ||
@@ -495,20 +434,10 @@ function parsePancakeWebhook(
     return { kind: "ignore" };
   }
 
-  if (
-    message.is_hidden ||
-    message.is_removed ||
-    message.from?.id === pageId ||
-    !message.from?.page_customer_id
-  ) {
+  const dropReason = pancakeDropReason(message, pageId);
+  if (dropReason) {
     logDebug("Pancake webhook ignored", {
-      reason: message.is_hidden
-        ? "hidden_message"
-        : message.is_removed
-          ? "removed_message"
-          : message.from?.id === pageId
-            ? "page_originated_message"
-            : "missing_page_customer_id",
+      reason: dropReason,
       pageId: payload.page_id,
       conversationId: conversation.id,
       messageId: message.id,
@@ -534,6 +463,8 @@ function parsePancakeWebhook(
     return { kind: "ignore" };
   }
 
+  const fromName = message.from?.name ?? conversation.from?.name;
+  const tagIds = normalizePancakeTagIds(conversation.tags);
   logInfo("Pancake webhook accepted", {
     pageId: pageId,
     conversationId: conversation.id,
@@ -541,7 +472,7 @@ function parsePancakeWebhook(
     messageType: message.type,
     textLength: text?.length ?? 0,
     attachmentCount: attachments.length,
-    tagIds: normalizePancakeTagIds(conversation.tags),
+    tagIds: tagIds,
   });
 
   const source: PancakeSource = {
@@ -550,10 +481,10 @@ function parsePancakeWebhook(
     messageId: message.id,
     messageType: message.type,
     postId: payload.data?.post?.id,
-    fromId: message.from?.id ?? conversation.from?.id,
-    fromName: message.from?.name ?? conversation.from?.name,
+    fromId: fromId,
+    fromName: fromName,
     pageCustomerId: message.from?.page_customer_id,
-    tagIds: normalizePancakeTagIds(conversation.tags),
+    tagIds: tagIds,
   };
 
   return {
@@ -568,17 +499,33 @@ function parsePancakeWebhook(
       identity: {
         workspaceRef: pageId,
         channelId: conversation.id,
-        ...((message.from?.id ?? conversation.from?.id)
-          ? { userId: message.from?.id ?? conversation.from?.id }
-          : {}),
-        ...((message.from?.name ?? conversation.from?.name)
-          ? { userName: message.from?.name ?? conversation.from?.name }
-          : {}),
+        ...(fromId ? { userId: fromId } : {}),
+        ...(fromName ? { userName: fromName } : {}),
       },
-      // Spread so the typed source reaches a Record<string, unknown> field.
+      // Spread: an interface is not assignable to Record<string, unknown>.
       source: { ...source },
     },
   };
+}
+
+function pancakeDropReason(
+  message: PancakeMessage,
+  pageId: string,
+): string | undefined {
+  if (message.is_hidden) {
+    return "hidden_message";
+  }
+  if (message.is_removed) {
+    return "removed_message";
+  }
+  if (message.from?.id === pageId) {
+    return "page_originated_message";
+  }
+  if (!message.from?.page_customer_id) {
+    return "missing_page_customer_id";
+  }
+
+  return undefined;
 }
 
 function toPancakeSource(source: Record<string, unknown>): PancakeSource {

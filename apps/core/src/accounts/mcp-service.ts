@@ -1,10 +1,3 @@
-/**
- * Dashboard-facing MCP runtime verbs (#331): tools/list and tools/call
- * through the same client the agent harness uses, driven by the Convex
- * mcpService actions over the service-auth bridge. A `probe` body verifies an
- * uploaded bundle or external url before its row exists.
- */
-
 import {
   callMcpToolResult,
   listMcpTools,
@@ -28,23 +21,23 @@ import {
   parseJsonBody,
   type CoreRequest,
 } from "../shared/http.ts";
-import { isPlainObject, isStringRecord } from "../shared/object.ts";
+import {
+  configObject,
+  parseOr,
+  stringValues,
+} from "@broods/convex/model/storedJson";
 import { getStorage } from "../shared/storage.ts";
 import { resolveAgentRuntime } from "../shared/workspaces.ts";
 
 const RPC_TIMEOUT_MS = 30_000;
-// The agent id the explorer reserves a lambda sandbox's VM under when no agent
-// of the stage uses the server on that sandbox.
 const MCP_EXPLORER_AGENT_ID = "mcp-explorer";
 
-/** The VM an agent that uses a sandbox-hosted row reaches it on. */
 interface AgentSandboxCandidate {
   target: SandboxMcpTarget;
-  /** When its reservation was claimed; undefined unless it is inside its idle deadline. */
   liveSince: number | undefined;
 }
 
-/** An unsaved row to verify: the minimal record fields a connection needs. */
+// A row checked at save time, before it exists.
 interface McpProbe {
   name: string;
   transport: "http" | "hosted";
@@ -55,17 +48,12 @@ interface McpProbe {
   workersCompatible?: boolean;
 }
 
-/**
- * Runs tools/list or tools/call against a saved server (dashboard MCP explorer)
- * or an unsaved probe (save-time check). Called from the account handler's
- * /v1/mcp-service/rpc route.
- */
 export async function handleMcpServiceRpc(
   accountId: string,
   request: CoreRequest,
 ): Promise<Response> {
-  const body = parseJsonBody(request);
-  if (!isPlainObject(body)) {
+  const body = parseOr(configObject, parseJsonBody(request));
+  if (!body) {
     return errorResponse(400, "Request body must be a JSON object");
   }
   const method = body.method;
@@ -101,7 +89,7 @@ export async function handleMcpServiceRpc(
   if (typeof body.toolName !== "string" || !body.toolName) {
     return errorResponse(400, "tools/call needs a toolName");
   }
-  const args = isPlainObject(body.args) ? body.args : {};
+  const args = parseOr(configObject, body.args, {});
   const started = Date.now();
   const result = await callMcpToolResult(connection, body.toolName, args, {
     abortSignal: AbortSignal.timeout(RPC_TIMEOUT_MS),
@@ -113,15 +101,6 @@ export async function handleMcpServiceRpc(
   });
 }
 
-/**
- * The VM `agent` reaches `record` on, and when its reservation was claimed if
- * it is live: inside its idle deadline, which is unix seconds like the
- * sweeper's clock. Resolves only what reaches `host`: the host, and the
- * workspaces that can mount it when it is the agent's first sandbox. Undefined
- * when that no longer resolves (the agent's own runs fail on it), or when the
- * VM is a conversation-isolated workspace's: each conversation reserves its
- * own there, and the explorer has no conversation.
- */
 async function agentSandboxCandidate(
   accountId: string,
   record: McpRecord,
@@ -142,6 +121,7 @@ async function agentSandboxCandidate(
     { accountId: accountId, agentId: agent.agentId },
   ).catch((): undefined => undefined);
   if (!runtime) return undefined;
+  // Each conversation reserves its own VM there, and the explorer has no conversation.
   if (agentOwnWorkspace(runtime)?.config.isolation === "conversation") {
     return undefined;
   }
@@ -162,15 +142,6 @@ async function agentSandboxCandidate(
   };
 }
 
-/**
- * Where the explorer reaches a row on a lambda sandbox of the row's stage: the
- * VM of an agent that uses this server there, resolved the way that agent's
- * run resolves it, so the explorer never boots a second VM beside the agent's.
- * In order: the live VM with the oldest claim (so repeated calls stay on one
- * VM), else the first such agent by id, so its next run lands on the VM the
- * explorer started, else a VM of the explorer's own. Agents that do not use
- * the server are never candidates. Undefined for any other row.
- */
 async function explorerSandboxTarget(
   accountId: string,
   record: McpRecord,
@@ -206,7 +177,8 @@ async function explorerSandboxTarget(
   ).filter(
     (candidate): candidate is AgentSandboxCandidate => candidate !== undefined,
   );
-  // Live first, oldest claim first; the stable sort keeps the id order after.
+  // Reuse an agent's VM so the explorer never boots a second: the live one claimed first
+  // keeps calls on one VM, else the first agent by id so its next run lands on this VM.
   const [chosen] = candidates.toSorted(
     (left, right): number =>
       (left.liveSince ?? Infinity) - (right.liveSince ?? Infinity),
@@ -220,28 +192,22 @@ async function explorerSandboxTarget(
   return sandboxMcpTarget(record, runtime);
 }
 
-/**
- * Validates the rpc body's probe object into an McpProbe, or returns the 400
- * error message.
- */
 function parseProbe(value: unknown): McpProbe | string {
-  if (!isPlainObject(value)) return "rpc needs a serverId or a probe object";
-  const {
-    name,
-    transport,
-    url,
-    headers,
-    bundleStorageKey,
-    sha256,
-    workersCompatible,
-  } = value;
+  const probe = parseOr(configObject, value);
+  if (!probe) return "rpc needs a serverId or a probe object";
+  const { name, transport, url, bundleStorageKey, sha256, workersCompatible } =
+    probe;
   if (typeof name !== "string" || !name) return "probe needs a name";
-  if (headers !== undefined && !isStringRecord(headers)) {
+  const headers =
+    probe.headers === undefined
+      ? undefined
+      : parseOr(stringValues, probe.headers);
+  if (probe.headers !== undefined && !headers) {
     return "probe headers must be a string record";
   }
   const shared = {
     name: name,
-    ...(headers !== undefined ? { headers: headers } : {}),
+    ...(headers ? { headers: headers } : {}),
   };
   if (transport === "http") {
     if (typeof url !== "string" || !url) return "an http probe needs a url";
@@ -273,10 +239,6 @@ function parseProbe(value: unknown): McpProbe | string {
   return "probe transport must be http or hosted";
 }
 
-/**
- * A synthetic one-shot record for verification. Its connection is marked
- * uncached, so a probe neither reads nor fills the MCP client caches.
- */
 function probeRecord(accountId: string, probe: McpProbe): McpRecord {
   const now = new Date().toISOString();
 

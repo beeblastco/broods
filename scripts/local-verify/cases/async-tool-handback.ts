@@ -1,5 +1,6 @@
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
+  API_SCOPE_MARKER,
   MODEL_KEY_HINT,
   assertStep,
   convexResult,
@@ -8,7 +9,6 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-const API_SCOPE_MARKER = ":api:";
 const CONTINUATION_TIMEOUT_MS = 120_000;
 const QUESTION_ID = "color";
 const ANSWER = "Blue";
@@ -19,13 +19,6 @@ interface AsyncToolRow {
   handback?: string;
 }
 
-/**
- * An async tool result (an `ask_questions` prompt, the detached row a
- * background job leaves too) is handed back to its conversation once: the
- * answer's continuation is admitted under the row, which marks it `stored`, the
- * conversation holds the injected result one time, and the resumed turn
- * answers from it.
- */
 export async function asyncToolHandback(context: VerifyContext): Promise<void> {
   if (!context.hasModelKey) {
     console.log(`  skip async tool hand-back (${MODEL_KEY_HINT})`);
@@ -37,7 +30,7 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
     config: {
       ...context.model,
       agent: {
-        system: `On the first user message call ask_questions exactly once, with blocking true and one question: id "${QUESTION_ID}", header "Color", question "Which color?", options "Red" and "Blue". Then end your turn with no other tool call. When the answer arrives, reply with exactly the chosen color and nothing else.`,
+        system: `On the first user message call ask_questions exactly once, with blocking true and one question: id "${QUESTION_ID}", header "Color", question "Which color?", options "Red" and "Blue". Then end your turn with no other tool call. Never call ask_questions again in this conversation: once the answer arrives, call no tool and reply with exactly the chosen color and nothing else.`,
       },
     },
   });
@@ -52,12 +45,11 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
       }),
   );
   const statusId = asked.questions?.[0]?.statusId;
-  if (asked.status !== "awaiting_input" || statusId === undefined) {
-    console.log(
-      `  skip async tool hand-back (the agent asked nothing: ${JSON.stringify(asked)})`,
-    );
-    return;
-  }
+  assertStep(
+    "the plain HTTP run asked with ask_questions",
+    asked.status === "awaiting_input" && statusId !== undefined,
+    JSON.stringify(asked),
+  );
 
   const answered = await fetch(`${context.edgeUrl}/v1/runs`, {
     method: "POST",
@@ -80,8 +72,7 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
     `status ${answered.status} ${JSON.stringify(accepted)}`,
   );
 
-  // Admission stored the row in its own transaction, so no sweep or second
-  // continuation delivers it again.
+  // Admission stores the row in its own transaction, so no sweep delivers it twice.
   const row = convexResult(
     context,
     "runtime:getAsyncToolResult",
@@ -94,12 +85,12 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
     JSON.stringify(row),
   );
 
-  // The resumed turn runs under the event that asked, once per result: the
-  // question row's parent is the asking turn's scoped event id.
+  // The resumed turn runs under the event that asked, once per result.
   const scope = row.parentEventId.slice(
     0,
     row.parentEventId.indexOf(API_SCOPE_MARKER),
   );
+  const askEventId = `${scope}${API_SCOPE_MARKER}${key}-ask`;
   const resumed = await pollUntil(
     {
       initialIntervalMs: 500,
@@ -110,7 +101,7 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
       const continuation = convexResult(
         context,
         "runtime:getAsyncAgentResult",
-        { eventId: `${row.parentEventId}:async-tools:${statusId}` },
+        { eventId: `${askEventId}:async-tools:${statusId}` },
         "read the resumed turn's row",
       ) as { status: string; response?: unknown } | null;
 

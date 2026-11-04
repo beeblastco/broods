@@ -1,21 +1,3 @@
-/**
- * Persistent-sandbox instance registry scoped to an account. Mirrors broods's
- * sandbox reconnection state so the SaaS dashboard can show live instances and
- * drive suspend/resume/terminate through Convex live queries. broods owns the
- * provider lifecycle and writes each transition here through the internal
- * mutations; the dashboard reads via `listForActiveOrg` and writes through
- * `sandboxPublic` actions that proxy back to broods.
- *
- * `upsert` is the create-time populate keyed by reservationKey (carrying the size
- * `specs`), called when broods reserves a persistent sandbox; `setStatus`/`remove`
- * mirror later transitions; `listForActiveOrg` is the dashboard read.
- *
- * Every write here also bills the running time since the last one onto the
- * account's usage meter (`model/usageMeter.ts`); `accrueRecent` does the same
- * hourly for sandboxes nothing wrote to. `recordBurst` bills what a MicroVM
- * used above its baseline, from the totals its guest reports.
- */
-
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { pruneReleasedDashboardSandbox } from "../canvas";
@@ -39,13 +21,14 @@ import { SANDBOX_RESERVATION_TTL_SECONDS } from "../runtime";
 import { sandboxInstancesFields } from "../schema";
 import { recordRuntimeAction } from "./auditEvents";
 
-// Every sandbox the sweeper has not released yet, suspended ones included
-// since their snapshot is still stored, plus two missed hourly accruals.
+// Every unreleased sandbox (suspended ones still store a snapshot) plus two missed hourly runs.
 const ACCRUE_LOOKBACK_MS =
   SANDBOX_RESERVATION_TTL_SECONDS * 1000 + 2 * 60 * 60 * 1000;
-// Each instance also reads and writes its account's meter row; 100 keeps a
-// page far under Convex's per-transaction read limits.
+// Each instance also reads and writes its meter row: stay far under Convex's read limits.
 const ACCRUE_PAGE_SIZE = 100;
+// Executors refresh a row on every command, and each bill writes the owner's usage rows, which an
+// owner's concurrent tasks then fight over: a running machine's refreshes bill once a minute.
+const REFRESH_BILL_EVERY_MS = 60_000;
 
 const sandboxInstanceDoc = v.object({
   ...sandboxInstancesFields,
@@ -53,12 +36,8 @@ const sandboxInstanceDoc = v.object({
   _creationTime: v.number(),
 });
 
-/**
- * Internal action helper: verifies a dashboard lifecycle request targets an
- * instance owned by the active account and created from the supplied sandbox row.
- * An ephemeral instance is never controllable: its call owns it, and a suspend or
- * exec from outside would stop its billing mid-call or boot an unmetered machine.
- */
+// An ephemeral instance belongs to its call: an outside suspend or exec would stop
+// its billing mid-call or boot an unmetered machine.
 export const isControllable = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -83,14 +62,7 @@ export const isControllable = internalQuery({
   },
 });
 
-/**
- * Internal list of mirrored sandbox instances for one account. Rows are
- * deleted on termination and live counts are bounded by the per-workspace
- * sandbox concurrency limits, so the 1000-row take is a generous ceiling,
- * not a pagination seam.
- * @param accountId the owning account
- * @returns the account's instance rows
- */
+// Rows go on termination and concurrency limits cap the live ones: 1000 is a ceiling.
 export const listForAccount = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(sandboxInstanceDoc),
@@ -104,11 +76,6 @@ export const listForAccount = internalQuery({
   },
 });
 
-/**
- * Public query: lists persistent sandbox instances for the caller's active org.
- * Used by the dashboard Sandbox tab for live status.
- * @returns the account's instance rows, or `[]` when no org/account resolves.
- */
 export const listForActiveOrg = query({
   args: {
     projectId: v.id("projects"),
@@ -131,15 +98,6 @@ export const listForActiveOrg = query({
   },
 });
 
-/**
- * Drops an instance row when broods terminates the sandbox or releases the
- * reservation. No-op when the key is unknown, belongs to another account, or
- * (when `externalId` is given) has since been repointed at another machine.
- * A dashboard sandbox config the canvas kept only for this instance goes with it.
- * @param accountId the owning account.
- * @param reservationKey the broods reconnection key.
- * @param externalId the provider id the caller tore down, when the row must still name it.
- */
 export const remove = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -173,13 +131,7 @@ export const remove = internalMutation({
   },
 });
 
-/**
- * Bill a machine's burst. Core forwards the running totals of vCPU and memory
- * above the baseline its guest reports, after an exec that grew them, and the
- * meter gets the growth since the last report. No-op for an unknown machine or
- * another account's; a machine on the account's own credentials is tracked
- * but never billed.
- */
+// The args are the guest's running totals above baseline; the meter gets the growth.
 export const recordBurst = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -213,15 +165,6 @@ export const recordBurst = internalMutation({
   },
 });
 
-/**
- * Records a lifecycle transition (suspend/resume) for an instance, stamping the
- * matching timestamp. No-op when the key is unknown or belongs to another
- * account. Called by broods after the provider lifecycle call succeeds.
- * @param accountId the owning account.
- * @param reservationKey the broods reconnection key.
- * @param status the new lifecycle status.
- * @param errorMessage the provider's reason when `status` is `error`.
- */
 export const setStatus = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -257,11 +200,8 @@ export const setStatus = internalMutation({
     await ctx.db.patch(instance._id, {
       meteredUntil: now,
       status: status,
-      // `undefined` unsets the field, so a reason never outlives its error.
       errorMessage: status === "error" ? errorMessage : undefined,
-      // Only a use moves "last used". Stamping every transition let a suspend --
-      // or a status read that merely observed one -- rewrite it to now, so a row
-      // untouched for a day still read as seconds old.
+      // Only a use moves lastUsedAt, never a suspend or a read that observed one.
       ...(status === "running" && !observed ? { lastUsedAt: now } : {}),
       ...(status === "suspended" ? { suspendedAt: now } : {}),
     });
@@ -270,26 +210,6 @@ export const setStatus = internalMutation({
   },
 });
 
-/**
- * Create-or-refresh the registry row for a reserved sandbox, keyed by
- * reservationKey. Called by broods when it reserves a persistent instance so the
- * dashboard sees it live. Idempotent: refreshes the existing row (back to
- * `running`) on reconnect/re-reserve. No-op when the key belongs to another account.
- * Writes the `reserve` audit row on insert and when a replacement machine takes
- * over the key, and `resume` when a reconnect brings a suspended one back; a
- * plain reconnect adds nothing.
- * @param accountId the owning account.
- * @param provider the sandbox compute backend.
- * @param reservationKey the broods reconnection key (globally unique).
- * @param externalId the provider-side instance id.
- * @param name the display name (the sandbox config's name).
- * @param specs the instance's vcpu/memory/disk footprint.
- * @param sandboxConfigId the sandbox config row this instance was reserved from.
- * @param snapshotId the snapshot/image the instance launched from, when pinned.
- * @param logStream the provider-side guest log stream, known only at launch.
- * @param ephemeral marks a per-call instance the dashboard must not try to control.
- * @param idleTimeoutSeconds how long it idles before the provider suspends it.
- */
 export const upsert = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -331,39 +251,33 @@ export const upsert = internalMutation({
     const now = Date.now();
     const fields = upsertRefreshFields(args, now);
     if (existing) {
-      // A new externalId under the same key is a replacement: the executor
-      // found the old machine gone at the provider and launched another, so
-      // this is a fresh reservation with its own creating trace.
+      // The executor found the old machine gone and launched another under the same key.
       const replaced = existing.externalId !== args.externalId;
-      await accrue(ctx, existing, now);
-      // A new machine, a suspended one resumed, or one that idled past its
-      // timeout (so the provider suspended it) loads its snapshot again.
-      if (
+      // Past its idle timeout the provider suspended it, so it loads its snapshot again.
+      const relaunched =
         replaced ||
         existing.status === "suspended" ||
-        now > existing.lastUsedAt + sandboxIdleMs(existing)
-      ) {
-        await addUsage(
-          ctx,
-          args.accountId,
-          sandboxLaunchUsage(args),
-          now,
-          // The refreshed sandbox's project, which the patch below sets.
-          args.projectId ?? existing.projectId,
-        );
-      }
-      const patch = {
+        now > existing.lastUsedAt + sandboxIdleMs(existing);
+      const refreshed = {
         ...fields,
-        meteredUntil: now,
+        ...keptVerifiedSize(existing, args.specsVerified, replaced),
+      };
+      const meteredUntil = await billRefresh(ctx, {
+        existing: existing,
+        refreshed: refreshed,
+        launch: relaunched ? sandboxLaunchUsage(args) : undefined,
+        now: now,
+      });
+      const patch = {
+        ...refreshed,
+        meteredUntil: meteredUntil,
         ...(replaced || !existing.createdByTraceId
           ? { createdByTraceId: args.createdByTraceId }
           : {}),
         ...(replaced || !existing.createdByTaskId
           ? { createdByTaskId: args.createdByTaskId }
           : {}),
-        // A new machine's burst totals start again at zero.
         ...(replaced ? { burstBilled: undefined } : {}),
-        ...keptVerifiedSize(existing, args.specsVerified, replaced),
       };
       await ctx.db.patch(existing._id, patch);
       const action = replaced
@@ -407,13 +321,7 @@ export const upsert = internalMutation({
   },
 });
 
-/**
- * Records the real size of a machine whose row already exists, once its provider
- * reports it after the row was written (an e2b size read). Bills the time so far
- * at the old size first. No-op when the row is gone, belongs to another account,
- * or has since been repointed at another machine, so a late report can never
- * bring a removed row back.
- */
+// A late size report (an e2b read) must never revive a removed or repointed row.
 export const setSpecs = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -448,13 +356,7 @@ export const setSpecs = internalMutation({
   },
 });
 
-/**
- * Bill the running time of every sandbox used recently enough to still have
- * some unbilled, so the meter stays current for one nothing writes to.
- * Hourly cron. One bounded page per transaction; the rest is scheduled with
- * the same `now`, so every page bills up to the same instant. The first page
- * also starts `sweepStaleEphemeral`.
- */
+// Hourly, for sandboxes nothing wrote to; every page bills up to the same `now`.
 export const accrueRecent = internalMutation({
   args: {
     now: v.optional(v.number()),
@@ -493,11 +395,7 @@ export const accrueRecent = internalMutation({
   },
 });
 
-/**
- * Bill and delete ephemeral rows whose call must have ended, so a lost teardown
- * cannot leave one billing or crowding the dashboard. Started by `accrueRecent`;
- * a full page schedules the next one until the backlog is gone.
- */
+// A lost teardown must not leave an ephemeral row billing or crowding the dashboard.
 export const sweepStaleEphemeral = internalMutation({
   args: { now: v.number() },
   returns: v.null(),
@@ -534,7 +432,6 @@ export const sweepStaleEphemeral = internalMutation({
   },
 });
 
-// Add a sandbox's unbilled running time to its account's meter.
 async function accrue(
   ctx: MutationCtx,
   instance: Doc<"sandboxInstances">,
@@ -552,8 +449,46 @@ async function accrue(
   return accrual.meteredUntil;
 }
 
-// A write that knows no size (a workdir or e2b reconnect) keeps the size this
-// same machine already has verified; a new machine starts unverified.
+// Bills the stretch a refresh ends and returns the row's new `meteredUntil`. A machine still
+// running at the size, credentials and project it was last billed at leaves the stretch to a
+// later bill for up to a minute; `meteredUntil` keeps saying where it starts. A relaunch also
+// bills its launch.
+async function billRefresh(
+  ctx: MutationCtx,
+  refresh: {
+    existing: Doc<"sandboxInstances">;
+    refreshed: Pick<
+      Doc<"sandboxInstances">,
+      "specs" | "ownCredentials" | "projectId"
+    >;
+    launch: ReturnType<typeof sandboxLaunchUsage> | undefined;
+    now: number;
+  },
+): Promise<number> {
+  const { existing, refreshed, launch, now } = refresh;
+  const projectId = refreshed.projectId ?? existing.projectId;
+  if (
+    !launch &&
+    existing.status === "running" &&
+    existing.meteredUntil !== undefined &&
+    now - existing.meteredUntil < REFRESH_BILL_EVERY_MS &&
+    refreshed.specs.vcpu === existing.specs.vcpu &&
+    refreshed.specs.memoryMb === existing.specs.memoryMb &&
+    (refreshed.ownCredentials === true) ===
+      (existing.ownCredentials === true) &&
+    projectId === existing.projectId
+  ) {
+    return existing.meteredUntil;
+  }
+  await accrue(ctx, existing, now);
+  if (launch) {
+    await addUsage(ctx, existing.accountId, launch, now, projectId);
+  }
+
+  return now;
+}
+
+// A size-less write (a workdir or e2b reconnect) must not unverify the same machine.
 function keptVerifiedSize(
   existing: Doc<"sandboxInstances">,
   specsVerified: boolean | undefined,
@@ -564,10 +499,6 @@ function keptVerifiedSize(
     : {};
 }
 
-/**
- * The refreshed registry columns `upsert` writes on both the patch and the
- * insert path: identity/size plus every optional column the caller supplied.
- */
 function upsertRefreshFields(
   args: Pick<Doc<"sandboxInstances">, "externalId" | "name" | "specs"> &
     Partial<
@@ -626,9 +557,7 @@ function upsertRefreshFields(
     specs: args.specs,
     specsVerified: args.specsVerified,
     status: "running" as const,
-    // A reconnect only mirrors once the provider handed back a usable sandbox,
-    // so the reason goes with the status: `undefined` unsets it on patch and is
-    // dropped on insert.
+    // Mirrored only once the provider handed back a usable sandbox, so any old error goes.
     errorMessage: undefined,
     lastUsedAt: now,
     ...(args.projectId ? { projectId: args.projectId } : {}),
@@ -645,8 +574,7 @@ function upsertRefreshFields(
     ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
     ...(args.logStream ? { logStream: args.logStream } : {}),
     ...(args.ephemeral ? { ephemeral: true } : {}),
-    // Unset rather than kept: a config moved back to platform credentials is
-    // metered again from its next write.
+    // Unset, not kept: a config moved back to platform credentials is metered again.
     ownCredentials: args.ownCredentials === true ? true : undefined,
     ...(args.idleTimeoutSeconds !== undefined
       ? { idleTimeoutSeconds: args.idleTimeoutSeconds }

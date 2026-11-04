@@ -1,18 +1,55 @@
-/**
- * Shared model-provider resolution for AI SDK Harness adapters.
- */
-
 import type { HarnessV1AuthenticationEnvironment } from "@ai-sdk/harness";
 import type {
   AgentConfig,
   AgentProviderSettings,
 } from "../../shared/domain/agent-config.ts";
+import { logWarn } from "../../shared/log.ts";
+
+// Claude models without effort, per the AI SDK Anthropic model table; every later model has it.
+const CLAUDE_WITHOUT_EFFORT =
+  /claude-(?:3|(?:haiku|sonnet)-4[.-]5|opus-4[.-]1|(?:opus|sonnet)-4(?:[.-]0|-20\d{6}|$))/;
 
 type HarnessProviderName = NonNullable<
   NonNullable<AgentConfig["model"]>["provider"]
 >;
+type HarnessReasoning = NonNullable<AgentConfig["model"]>["reasoning"];
+type HarnessEffort = "low" | "medium" | "high" | "xhigh";
 
-/** Returns `config.model.modelId` or throws; `createConfiguredHarnessAgent` passes it to the agent. */
+interface AnthropicHarnessReasoning {
+  effort?: Exclude<HarnessEffort, "xhigh">;
+}
+
+// Claude Code and Deep Agents take Anthropic effort. Current Claude models refuse thinking off
+// and older ones refuse xhigh, so those run as low and high, which every effort model takes.
+export function anthropicHarnessReasoning(
+  agentConfig: AgentConfig,
+): AnthropicHarnessReasoning {
+  const reasoning = agentConfig.model?.reasoning;
+  const level = reasoning === "none" ? "low" : harnessEffort(reasoning);
+  const effort = CLAUDE_WITHOUT_EFFORT.test(agentConfig.model?.modelId ?? "")
+    ? undefined
+    : level === "xhigh"
+      ? "high"
+      : level;
+  warnReasoningChanged(agentConfig, effort);
+
+  return effort ? { effort: effort } : {};
+}
+
+// The effort levels Claude Code, Deep Agents and Codex share; `minimal` is below their lowest.
+export function harnessEffort(
+  reasoning: HarnessReasoning,
+): HarnessEffort | undefined {
+  if (reasoning === "minimal") return "low";
+
+  return reasoning === "low" ||
+    reasoning === "medium" ||
+    reasoning === "high" ||
+    reasoning === "xhigh"
+    ? reasoning
+    : undefined;
+}
+
 export function requireHarnessModelId(agentConfig: AgentConfig): string {
   const modelId = agentConfig.model?.modelId;
   if (!modelId) {
@@ -22,7 +59,6 @@ export function requireHarnessModelId(agentConfig: AgentConfig): string {
   return modelId;
 }
 
-/** Returns `config.model.provider` or throws; every configured adapter calls it first. */
 export function requireHarnessProviderName(
   agentConfig: AgentConfig,
 ): HarnessProviderName {
@@ -34,7 +70,6 @@ export function requireHarnessProviderName(
   return providerName;
 }
 
-/** Returns the chosen provider's settings with an API key, or throws; every configured adapter calls it before building auth. */
 export function requireHarnessProviderSettings(
   agentConfig: AgentConfig,
   providerName: HarnessProviderName,
@@ -54,11 +89,7 @@ export function requireHarnessProviderSettings(
   return settings;
 }
 
-/**
- * Anthropic credentials for the `auth` option. Every adapter here passes an
- * isolated env, which replaces the host env for credential discovery, so
- * nothing leaks in from the core container.
- */
+// Adapters pass an isolated env that replaces the host env, so no core credential leaks in.
 export function resolveAnthropicAuthEnv(
   provider: AgentProviderSettings,
 ): HarnessV1AuthenticationEnvironment {
@@ -70,7 +101,6 @@ export function resolveAnthropicAuthEnv(
   };
 }
 
-/** Picks Anthropic or Vercel AI Gateway credentials; the Claude Code and Deep Agents adapters use it. */
 export function resolveAnthropicOrVercelAuthEnv(
   providerName: "anthropic" | "vercel",
   provider: AgentProviderSettings,
@@ -80,11 +110,7 @@ export function resolveAnthropicOrVercelAuthEnv(
     : resolveGatewayAuthEnv(provider);
 }
 
-/**
- * Vercel AI Gateway credentials. Adapters pick the gateway route whenever
- * `AI_GATEWAY_API_KEY` is present in the supplied environment, so this record
- * needs no accompanying mode string.
- */
+// Adapters take the gateway route whenever AI_GATEWAY_API_KEY is set; no mode flag needed.
 export function resolveGatewayAuthEnv(
   provider: AgentProviderSettings,
 ): HarnessV1AuthenticationEnvironment {
@@ -96,17 +122,12 @@ export function resolveGatewayAuthEnv(
   };
 }
 
-/** The provider's base URL under either config spelling, used by every auth env builder. */
 export function resolveHarnessProviderBaseUrl(
   provider: AgentProviderSettings,
 ): string | undefined {
   return provider.base_url ?? provider.baseURL;
 }
 
-/**
- * OpenAI and OpenAI-compatible credentials. `codex` copies `OPENAI_API_KEY`
- * into the `CODEX_API_KEY` its bridge reads; `opencode` reads it directly.
- */
 export function resolveOpenAiAuthEnv(
   provider: AgentProviderSettings,
 ): HarnessV1AuthenticationEnvironment {
@@ -120,4 +141,28 @@ export function resolveOpenAiAuthEnv(
       : {}),
     ...(provider.project ? { OPENAI_PROJECT: provider.project } : {}),
   };
+}
+
+// Tells the account's logs when the harness runs a different level than `model.reasoning` asks.
+export function warnReasoningChanged(
+  agentConfig: AgentConfig,
+  sent: string | undefined,
+): void {
+  const configured = agentConfig.model?.reasoning;
+  if (!configured || configured === "provider-default" || configured === sent) {
+    return;
+  }
+  const runsAs = sent ? `"${sent}"` : "the model's default";
+  logWarn(
+    `model.reasoning "${configured}" runs as ${runsAs} on harness ` +
+      `${agentConfig.harness?.type} with model ${agentConfig.model?.modelId}, ` +
+      `the nearest level it takes`,
+    {
+      eventType: "harness.reasoning_changed",
+      configured: configured,
+      harness: agentConfig.harness?.type,
+      modelId: agentConfig.model?.modelId,
+      sent: sent ?? null,
+    },
+  );
 }

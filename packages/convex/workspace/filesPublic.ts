@@ -1,9 +1,5 @@
 "use node";
-/**
- * Authenticated dashboard actions for mounted workspace files. S3 is the
- * single source of truth for runtime workspace contents; the shared ops live
- * in model/workspaceFs (also used by the config HTTP surface).
- */
+// S3 is the single source of truth for runtime workspace contents.
 
 import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
@@ -13,9 +9,11 @@ import { authKit, type AuthUser } from "../auth";
 import {
   deleteWorkspacePath,
   listWorkspaceFiles,
+  readWorkspaceFile,
   renameWorkspacePath,
   uploadWorkspaceFile,
   withStorageAccess,
+  workspaceFileDownloadUrl,
   type WorkspaceFileEntry,
   type WorkspaceFsRef,
 } from "../model/workspaceFs";
@@ -33,7 +31,20 @@ type RuntimeWorkspace = WorkspaceFsRef & {
   workspaceId: Id<"workspaceConfigs">;
 };
 
-/** Lists files from the S3 namespace mounted by the selected runtime workspace. */
+export const downloadUrl = action({
+  args: {
+    projectId: v.id("projects"),
+    workspaceId: v.string(),
+    path: v.string(),
+  },
+  returns: v.string(),
+  handler: async (ctx, args): Promise<string> => {
+    const workspace = await resolveWorkspace(ctx, args);
+
+    return await workspaceFileDownloadUrl(workspace, args.path);
+  },
+});
+
 export const list = action({
   args: { projectId: v.id("projects"), workspaceId: v.string() },
   returns: v.array(fileEntry),
@@ -44,7 +55,20 @@ export const list = action({
   },
 });
 
-/** Deletes a file or folder prefix from the mounted S3 workspace. */
+export const read = action({
+  args: {
+    projectId: v.id("projects"),
+    workspaceId: v.string(),
+    path: v.string(),
+  },
+  returns: v.string(),
+  handler: async (ctx, args): Promise<string> => {
+    const workspace = await resolveWorkspace(ctx, args);
+
+    return await readWorkspaceFile(workspace, args.path);
+  },
+});
+
 export const remove = action({
   args: {
     projectId: v.id("projects"),
@@ -60,7 +84,6 @@ export const remove = action({
   },
 });
 
-/** Renames a file or folder prefix inside the mounted S3 workspace. */
 export const rename = action({
   args: {
     projectId: v.id("projects"),
@@ -77,7 +100,6 @@ export const rename = action({
   },
 });
 
-/** Uploads or replaces one file in the mounted S3 workspace. */
 export const upload = action({
   args: {
     projectId: v.id("projects"),

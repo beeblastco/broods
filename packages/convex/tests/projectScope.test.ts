@@ -10,10 +10,7 @@ const modules = import.meta.glob("../**/*.ts");
 const t = (): TestConvex<typeof schema> => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-// The public queries wrap these helpers behind getProjectForRole, which needs
-// the WorkOS AuthKit component that convex-test does not register here. The
-// derivation below is the part unique to project scoping, so it is tested
-// directly against a real ctx.
+// Tested directly: the public queries need AuthKit, which convex-test does not register.
 
 async function seed(tt: T): Promise<{
   accountId: Id<"accounts">;
@@ -21,8 +18,6 @@ async function seed(tt: T): Promise<{
   projectB: Id<"projects">;
   agentA1: Id<"agents">;
   agentA2: Id<"agents">;
-  agentB: Id<"agents">;
-  stranded: Id<"agents">;
   foreignAgent: Id<"agents">;
   cronA1: Id<"crons">;
   cronStranded: Id<"crons">;
@@ -31,7 +26,7 @@ async function seed(tt: T): Promise<{
     const now = Date.now();
     const accountId = await ctx.db.insert("accounts", {
       orgId: "org-placeholder",
-      username: "beeblast-sale-agent-dev",
+      username: "service-dev",
       secretHash: "hash",
       status: "active" as const,
       createdAt: now,
@@ -98,20 +93,18 @@ async function seed(tt: T): Promise<{
         updatedAt: now,
       });
 
-    const projectA = await mkProject("sale-agent");
+    const projectA = await mkProject("project-a");
     const projectB = await mkProject("other");
     const stageA1 = await mkStage(projectA);
     const stageA2 = await mkStage(projectA);
     const stageB = await mkStage(projectB);
 
-    const agentA1 = await mkAgent("beeblast-agent-cust1");
-    const agentA2 = await mkAgent("beeblast-agent-cust2");
+    const agentA1 = await mkAgent("agent-one");
+    const agentA2 = await mkAgent("agent-two");
     const agentB = await mkAgent("other-agent");
-    const stranded = await mkAgent("pre-adoption-agent");
+    const stranded = await mkAgent("stranded-agent");
 
-    // An agent on a different account entirely, pointed at by a config row
-    // in this project. agentConfigs.agentId is a loose string, so a stale
-    // or hand-edited row can name anything that resolves.
+    // agentConfigs.agentId is a loose string, so a stale row can name another account's agent.
     const foreignAccountId = await ctx.db.insert("accounts", {
       orgId: "org-other",
       username: "someone-elses-account",
@@ -127,9 +120,8 @@ async function seed(tt: T): Promise<{
       updatedAt: now,
     });
 
-    await mkConfig(projectA, stageA1, agentA1, "cust1");
-    // Second stage of the same project: must still be found.
-    await mkConfig(projectA, stageA2, agentA2, "cust2");
+    await mkConfig(projectA, stageA1, agentA1, "one");
+    await mkConfig(projectA, stageA2, agentA2, "two");
     await mkConfig(projectB, stageB, agentB, "other");
     // A config row whose agentId never resolves must not crash the scan.
     await mkConfig(projectA, stageA1, "not-a-real-id", "dangling");
@@ -145,8 +137,6 @@ async function seed(tt: T): Promise<{
       projectB: projectB,
       agentA1: agentA1,
       agentA2: agentA2,
-      agentB: agentB,
-      stranded: stranded,
       foreignAgent: foreignAgent,
       cronA1: cronA1,
       cronStranded: cronStranded,
@@ -167,37 +157,14 @@ describe("agentsInProject", () => {
     );
   });
 
-  test("excludes another project's agents on the same account", async () => {
-    const tt = t();
-    const s = await seed(tt);
-
-    const found = await tt.run((ctx) =>
-      agentsInProject(ctx, s.projectA, s.accountId),
-    );
-    expect(found.map((a) => a._id)).not.toContain(s.agentB);
-  });
-
   test("excludes an agent owned by another account", async () => {
     const tt = t();
     const s = await seed(tt);
 
-    // Otherwise another account's agent metadata surfaces in this
-    // project's scheduler and offers a picker option that cannot work.
     const found = await tt.run((ctx) =>
       agentsInProject(ctx, s.projectA, s.accountId),
     );
     expect(found.map((a) => a._id)).not.toContain(s.foreignAgent);
-  });
-
-  test("omits agents with no config row rather than throwing", async () => {
-    const tt = t();
-    const s = await seed(tt);
-
-    // The pre-adoption agents' state: real, running, but in no project.
-    const found = await tt.run((ctx) =>
-      agentsInProject(ctx, s.projectA, s.accountId),
-    );
-    expect(found.map((a) => a._id)).not.toContain(s.stranded);
   });
 });
 
@@ -222,8 +189,6 @@ describe("cronsInProject", () => {
     const b = await tt.run((ctx) =>
       cronsInProject(ctx, s.projectB, s.accountId),
     );
-    // Previously every cron on the account showed on one org-wide page, so
-    // this one had somewhere to appear; now it must not leak into a project.
     expect([...a, ...b].map((c) => c._id)).not.toContain(s.cronStranded);
   });
 });

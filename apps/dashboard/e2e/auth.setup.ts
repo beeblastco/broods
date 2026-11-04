@@ -1,7 +1,3 @@
-/**
- * Signs in the probe account once and saves the browser state and the
- * project id for the `app` and `perf` suites. Skips without the account.
- */
 import { test as setup } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import {
@@ -15,8 +11,7 @@ import {
 } from "./lib/session";
 
 setup.skip(!hasProbe(), MISSING_PROBE);
-// A fresh stack compiles each route on its first visit and provisions the
-// account, which together outrun the default 30 s.
+// A fresh stack compiles each route and provisions the account: past the default 30 s.
 setup.setTimeout(120_000);
 
 setup("sign in as the probe account", async ({ page }) => {

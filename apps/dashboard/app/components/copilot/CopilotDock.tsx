@@ -1,12 +1,8 @@
 "use client";
 
-/**
- * The copilot dock. Takes its width from the page rather than floating over it,
- * so what it is about to change stays on screen while you read the plan.
- */
+import { BroodsMark } from "@/app/components/BroodsMark";
 import { CopilotPlanCard } from "@/app/components/copilot/CopilotPlanCard";
 import { useCopilot } from "@/app/components/copilot/CopilotProvider";
-import { ShortcutKeys } from "@/app/components/ShortcutKeys";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -15,8 +11,16 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/app/components/ui/input-group";
-import { ArrowUp, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useStickToBottom } from "@/app/hooks/useStickToBottom";
+import { ArrowUp } from "lucide-react";
+import dynamic from "next/dynamic";
+import { useState } from "react";
+
+// Heavy (Shiki), so it loads with the first answer, not with the page.
+const Streamdown = dynamic(
+  () => import("streamdown").then((m) => m.Streamdown),
+  { ssr: false },
+);
 
 const EXAMPLES = [
   "go to scheduler",
@@ -24,22 +28,14 @@ const EXAMPLES = [
   "pause nightly-digest",
 ] as const;
 
+// Takes its width from the page, not floating, so what the plan changes stays on screen.
 export function CopilotDock(): React.JSX.Element | null {
-  const { ask, completed, isOpen, messages, runStep, setOpen } = useCopilot();
+  const { ask, completed, isOpen, messages, proposals, setOpen } = useCopilot();
 
   const [input, setInput] = useState("");
-  const composer = useRef<HTMLTextAreaElement>(null);
-  const thread = useRef<HTMLDivElement>(null);
+  const thread = useStickToBottom<HTMLDivElement>([messages]);
 
   useShortcut("copilot.open", () => setOpen(!isOpen));
-
-  useEffect(() => {
-    if (isOpen) composer.current?.focus();
-  }, [isOpen]);
-
-  useEffect(() => {
-    thread.current?.scrollTo({ top: thread.current.scrollHeight });
-  }, [messages]);
 
   if (!isOpen) return null;
 
@@ -51,22 +47,6 @@ export function CopilotDock(): React.JSX.Element | null {
 
   return (
     <aside className="flex w-80 shrink-0 flex-col border-l border-border">
-      <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
-        <span className="text-xs font-medium">Broods</span>
-        <span className="ml-auto flex items-center gap-1">
-          <ShortcutKeys id="copilot.open" bordered />
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            tone="muted"
-            onClick={() => setOpen(false)}
-            aria-label="Close Broods"
-          >
-            <X />
-          </Button>
-        </span>
-      </header>
-
       <div ref={thread} className="flex-1 overflow-y-auto px-3 py-3">
         {messages.length === 0 ? (
           <div className="flex flex-col gap-2">
@@ -90,32 +70,49 @@ export function CopilotDock(): React.JSX.Element | null {
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            {messages.map((message) => (
-              <div key={message.id} className="flex flex-col gap-1">
-                <span className="text-3xs uppercase tracking-wide text-muted-foreground">
-                  {message.role === "user" ? "you" : "broods"}
-                </span>
-                <p className="text-xs text-foreground">{message.text}</p>
-                {message.plan && (
-                  <CopilotPlanCard
-                    completed={completed}
-                    messageId={message.id}
-                    onRun={(index, action) =>
-                      runStep(message.id, index, action)
-                    }
-                    plan={message.plan}
-                  />
-                )}
-              </div>
-            ))}
+            {messages.map((message) =>
+              message.role === "user" ? (
+                <p
+                  key={message.id}
+                  className="ml-8 self-end whitespace-pre-wrap rounded-lg bg-muted px-2.5 py-1.5 text-xs text-foreground"
+                >
+                  {message.text}
+                </p>
+              ) : (
+                <div key={message.id} className="flex items-start gap-2">
+                  <BroodsMark className="mt-0.5 size-3.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    {message.pending && !message.text ? (
+                      <p className="text-xs text-muted-foreground">
+                        Thinking...
+                      </p>
+                    ) : (
+                      <Streamdown className="min-w-0 wrap-break-word text-xs text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_code]:whitespace-pre-wrap [&_code]:wrap-break-word [&_code]:text-xs [&_pre]:max-w-full [&_pre]:overflow-x-auto">
+                        {message.text}
+                      </Streamdown>
+                    )}
+                    {message.plan && (
+                      <CopilotPlanCard
+                        completed={completed}
+                        messageId={message.id}
+                        plan={message.plan}
+                        proposal={proposals.get(message.id)}
+                        stale={message.stale}
+                      />
+                    )}
+                  </div>
+                </div>
+              ),
+            )}
           </div>
         )}
       </div>
 
       <div className="px-3 pb-3">
-        <InputGroup className="rounded-lg">
+        <InputGroup variant="plain" className="rounded-lg">
           <InputGroupTextarea
-            ref={composer}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- the user just opened the dock
+            autoFocus
             aria-label="Message"
             value={input}
             onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) =>

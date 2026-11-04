@@ -57,6 +57,11 @@ jobs:
         # promises, awaiting a non-promise) fails here, not only the plain rules.
         run: bun run check
 
+      - name: Set up Node for isolated-vm 7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "26"
+
       - name: Read the Node version
         id: node
         run: echo "version=$(node -v)" >> "$GITHUB_OUTPUT"
@@ -84,8 +89,19 @@ jobs:
           fi
           echo "BROODS_TEST_ISOLATE_RUNNER_PATH=/tmp/broods-ivm/runner.mjs" >> "$GITHUB_ENV"
 
+      - name: Allow unprivileged user namespaces
+        # Ubuntu 24.04 blocks them; the hosted-MCP reaper test needs one (`unshare --user`).
+        run: |
+          key=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [[ -e "$key" ]]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+
       - name: Run unit tests
         run: bun run test
+
+      - name: Report core coverage
+        # Report only: lists the least-covered files so untested state paths show before they are modelled.
+        if: always()
+        run: bun scripts/coverage-summary.ts core apps/core/coverage/lcov.info
 
       - name: Build Lambda binaries
         run: bun run build
@@ -149,8 +165,10 @@ jobs:
         with:
           bun-version-file: .bun-version
 
-      - name: Test the gate
-        run: bun test scripts/audit-gate.test.ts
+      # The gate and the dependency watch. No install here, so only the tests that
+      # need no package; the rest of scripts/ runs in `validate`.
+      - name: Test the audit gate
+        run: bun test ./scripts/audit-gate.test.ts ./scripts/dependency-watch.test.ts
 
       - name: Check dependency advisories
         run: bun run deps:audit
@@ -174,6 +192,11 @@ jobs:
         # The gate's own grading rules. A gate that silently stops failing is
         # worse than no gate, so it is tested before it is trusted.
         run: bun run bench:test
+
+      - name: Set up Node for isolated-vm 7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "26"
 
       - name: Read the Node version
         id: node
@@ -263,6 +286,53 @@ jobs:
           bun run local:up -- --perf
           bun run local:perf
 
+      - name: Harness turn perf
+        # No harness runs on the local stack, so this drives real Pi turns in
+        # process on convex-test. Fails when history stops surviving a resume
+        # or the checkpoint grows; the table goes to the job summary.
+        run: |
+          set -o pipefail
+          bun run harness:perf | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Cache Chromium
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: playwright-${{ runner.os }}-
+
+      - name: Cache the dashboard build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: apps/dashboard/.next/cache
+          key: dashboard-next-${{ hashFiles('bun.lock') }}-${{ github.sha }}
+          restore-keys: dashboard-next-${{ hashFiles('bun.lock') }}-
+
+      - name: Dashboard perf against the baseline
+        # A production build on the stack's fixed fixture, graded against
+        # apps/dashboard/e2e/perf/baseline.json: a blocking number over its
+        # allowance fails the job, a timing one only warns. The table is in
+        # the job summary; the run's numbers are uploaded for a re-baseline.
+        # The @rollout specs run here too: this stack has the PR's own Convex.
+        run: |
+          set -o pipefail
+          (cd apps/dashboard && bunx playwright install chromium)
+          url=$(bun run local:up -- --perf --dashboard | tee /dev/stderr | sed -n 's/.*E2E_BASE_URL=//p')
+          test -n "$url"
+          cd apps/dashboard
+          export E2E_ADMIN_KEY=$(bun ../../scripts/local-stack.ts status --key | tail -1) E2E_BASE_URL=$url
+          # Each run clears test-results, so perf runs last and its numbers survive for the upload.
+          bunx playwright test --project=app --grep @rollout
+          bunx playwright test --project=perf
+
+      - name: Upload dashboard perf numbers
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: dashboard-perf-${{ github.run_id }}
+          path: apps/dashboard/test-results/perf-baseline.json
+          if-no-files-found: ignore
+
       - name: Upload stack logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -302,29 +372,8 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/bun-install
 
-      # Types and lint for every workspace run once, in validate's `bun run
-      # check`, and the convex tests in its `bun run test`.
-      - name: Test gateway
-        run: bun run --filter @broods/gateway test
-
-      - name: Test edge routes
-        run: bun run --filter @broods/edge test
-
-      - name: Test discord forwarder
-        run: bun run --filter @broods/discord-forwarder test
-
-      - name: Test matrix forwarder
-        run: bun run --filter @broods/matrix-forwarder test
-
-      - name: Test Cloudflare MCP runtime
-        run: bun run --filter @broods/cloudflare-mcp test
-
-      - name: Test the Cloudflare V8 Worker sandbox
-        run: bun run --filter @broods/cloudflare-worker test
-
-      - name: Test dashboard
-        run: bun run --filter @broods/dashboard test
-
+      # validate runs every workspace's types, lint and unit tests. This job
+      # builds the dashboard and runs its browser suites.
       - name: Require the dashboard probe account
         # Pull requests from this repo only: a fork gets no secrets, and a
         # Dependabot pull request gets only Dependabot's own. A silent
@@ -384,6 +433,9 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}
         env:
           E2E_SERVER_COMMAND: bun .next/standalone/apps/dashboard/server.js
+          # A failure's page snapshot records form values, the typed probe
+          # password included, and the uploaded artifact is public.
+          PLAYWRIGHT_NO_COPY_PROMPT: "1"
           WORKOS_API_KEY: ${{ secrets.WORKOS_API_KEY }}
           WORKOS_CLIENT_ID: ${{ secrets.WORKOS_CLIENT_ID }}
           WORKOS_COOKIE_PASSWORD: ${{ secrets.WORKOS_COOKIE_PASSWORD }}
@@ -395,9 +447,12 @@ jobs:
           cp -r .next/static .next/standalone/apps/dashboard/.next/static
           cp -r public .next/standalone/apps/dashboard/public
           # @rollout tests need Convex functions this build calls that the dev
-          # backend only has after the merge; e2e-dashboard.yaml runs them
+          # backend only has after the merge, and the perf project is graded
+          # against its baseline on the stack: local-stack runs both.
+          # @post-rollout tests time the shared dev backend or a CSS
+          # transition and flaked here. e2e-dashboard.yaml runs all of them
           # after the rollout.
-          bunx playwright test --project=app --project=perf --grep-invert @rollout
+          bunx playwright test --project=app --grep-invert "@rollout|@post-rollout"
 
       - name: Upload traces of a failed signed-in run
         if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}

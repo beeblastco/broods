@@ -1,13 +1,3 @@
-/**
- * User code hook execution.
- * Loads an uploaded accountHooks bundle, runs the handler for a fired event in
- * the V8 isolate pool, and returns the validated, field-scoped mutation the
- * caller folds into harness state. Hooks are non-fatal: a throw or timeout logs
- * and yields no mutation, so the agent run is never broken. Dispatch across
- * hooks lives in hook-dispatcher.ts; this file owns only "run one hook,
- * sanitize its return".
- */
-
 import type { JSONValue } from "ai";
 import { createHash } from "node:crypto";
 import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
@@ -16,39 +6,38 @@ import type {
   HookAgentConfig,
 } from "../shared/domain/agent-config.ts";
 import { logError } from "../shared/log.ts";
-import { isPlainObject } from "../shared/object.ts";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { readS3Bytes } from "../shared/s3.ts";
 import { streamIsolatePayload } from "./isolate/executor.ts";
 import { toolBundlesBucket } from "./frames.ts";
 
-// A hook may return at most this many bytes more than the event it was handed,
-// so a runaway hook cannot balloon the conversation or a channel payload while
-// an agent.started hook that rewrites a long conversation in place still fits.
+// Over the size of the event the hook got, so rewriting a long conversation in place still fits.
 const MAX_HOOK_RESULT_BYTES = 128 * 1024;
-
-// ctx.state round-trips through the isolate on every hook call, so cap it too; a
-// hook that grows state past this keeps the prior state instead.
 const MAX_HOOK_STATE_BYTES = 128 * 1024;
 
-// The only fields a hook may mutate at each event. Anything else in the return
-// is dropped; events not listed here are observe-only (return ignored).
-const HOOK_MUTABLE_FIELDS = {
+// Events not listed are observe-only; any other field a hook returns is dropped.
+const HOOK_MUTABLE_FIELDS: Pick<
+  Record<AgentHookEventName, readonly string[]>,
+  | "agent.started"
+  | "agent.finished"
+  | "agent.approval.required"
+  | "tool.call.started"
+  | "tool.result"
+  | "subagent.task.finished"
+  | "channel.message.received"
+  | "channel.message.sending"
+> = {
   "agent.started": ["system", "messages"],
   "agent.finished": ["output"],
   "agent.approval.required": ["approve"],
   "tool.call.started": ["decision", "args", "denyReason"],
   "tool.result": ["output"],
   "subagent.task.finished": ["visibleResult"],
-  // `metadata` is opaque per-message data (persisted on the stored-event
-  // envelope, projected back onto agent.started payload messages).
   "channel.message.received": ["drop", "text", "metadata"],
   "channel.message.sending": ["drop", "text"],
-} as const satisfies Partial<Record<AgentHookEventName, readonly string[]>>;
+};
 
-// A hook bundle never changes under its sha256 and hooks fire several times a
-// turn, so the encoded source is kept instead of read from S3 at every fire.
-// Past this many base64 characters (one byte each) the least recently used
-// goes first: at most six 1 MB bundles, the upload cap, stay resident.
+// Keyed by sha256, so an entry never goes stale; LRU-evicted past ~six 1 MB bundles.
 const HOOK_BUNDLE_CACHE_BYTES = 8 * 1024 * 1024;
 const hookBundles = new Map<
   string,
@@ -62,33 +51,23 @@ export interface RunCodeHookParams {
   accountId: string;
   record: AccountHookRecord;
   event: AgentHookEventName;
-  /** Event data handed to the hook as its second argument (JSON-serializable). */
   payload: Record<string, JSONValue | undefined>;
-  /** The allow-listed agent config, exposed to the hook as ctx.config. */
   config: HookAgentConfig;
-  /** Mutable per-run scratchpad exposed to the hook as ctx.state. */
   state: Record<string, unknown>;
 }
 
 export interface CodeHookOutcome {
-  /** The sanitized, field-scoped mutation, or undefined when there is none. */
   mutation: Record<string, unknown> | undefined;
-  /** The run state after the hook ran (unchanged on decline/error/timeout). */
   state: Record<string, unknown>;
 }
 
-/** Whether a hook's return is folded back at this event, rather than ignored. */
 export function isHookMutableEvent(
   event: AgentHookEventName,
 ): event is HookMutableEvent {
   return event in HOOK_MUTABLE_FIELDS;
 }
 
-/**
- * Run one hook bundle for one event and return its sanitized mutation plus the
- * (possibly hook-mutated) run state. Never throws: on decline/error/timeout the
- * mutation is undefined and the incoming state is echoed back unchanged.
- */
+/** Never throws: a failing hook logs and yields no mutation, so it cannot break the run. */
 export async function runCodeHook(
   params: RunCodeHookParams,
 ): Promise<CodeHookOutcome> {
@@ -96,8 +75,6 @@ export async function runCodeHook(
   const incomingState = params.state;
   try {
     const payload = await createHookRunnerPayload(params);
-    // Hook mode always yields { result, state }. The runner reads ctx.state
-    // back out so the host can thread it into the next fire-point.
     const raw = (await runForResult(accountId, payload)) as
       | { result?: unknown; state?: unknown }
       | undefined;
@@ -123,21 +100,16 @@ export async function runCodeHook(
   }
 }
 
-/**
- * Keep only the fields a hook is allowed to mutate at this event, after a size
- * cap of `inputBytes` (the serialized event the hook received) plus
- * MAX_HOOK_RESULT_BYTES. Returns undefined when the event is observe-only, the
- * return is not an object, or no mutable field is present.
- */
 export function sanitizeHookResult(
   event: AgentHookEventName,
   raw: unknown,
   inputBytes = 0,
 ): Record<string, unknown> | undefined {
   if (!isHookMutableEvent(event)) return undefined;
-  if (!isPlainObject(raw)) return undefined;
+  const returned = parseOr(configObject, raw);
+  if (!returned) return undefined;
 
-  const serialized = safeStringify(raw);
+  const serialized = safeStringify(returned);
   if (serialized === undefined) return undefined;
   const limit = inputBytes + MAX_HOOK_RESULT_BYTES;
   if (Buffer.byteLength(serialized, "utf8") > limit) {
@@ -147,16 +119,12 @@ export function sanitizeHookResult(
   const allowed = HOOK_MUTABLE_FIELDS[event];
   const result: Record<string, unknown> = {};
   for (const key of allowed) {
-    if (raw[key] !== undefined) result[key] = raw[key];
+    if (returned[key] !== undefined) result[key] = returned[key];
   }
 
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-/**
- * Builds the isolate runner payload around the hook bundle, read from S3 once
- * per account, storage key and sha256 while it stays in the cache.
- */
 async function createHookRunnerPayload(
   params: RunCodeHookParams,
 ): Promise<Record<string, unknown>> {
@@ -179,8 +147,7 @@ async function createHookRunnerPayload(
   };
   hookBundles.set(key, entry);
   if (!cached) {
-    // Concurrent fires share this one read. A failed read is dropped so the
-    // next fire reads again; a finished one counts against the budget.
+    // Concurrent fires share this read; a failed one leaves the cache so the next fire retries.
     entry.source.then(
       (source) => {
         if (hookBundles.get(key) !== entry) return;
@@ -209,13 +176,11 @@ async function createHookRunnerPayload(
   };
 }
 
-/** Drains one isolate hook run for `runCodeHook` and keeps the last value it yielded. */
 async function runForResult(
   accountId: string,
   payload: Record<string, unknown>,
 ): Promise<unknown> {
-  // A hook returns a single value; the isolate yields chunks only for the
-  // async-iterable tool path, so the last yielded value is the handler's return.
+  // Only async-iterable tools yield chunks, so a hook's last yielded value is its return.
   let result: unknown;
   for await (const value of streamIsolatePayload(accountId, payload)) {
     result = value;
@@ -224,7 +189,6 @@ async function runForResult(
   return result;
 }
 
-/** JSON.stringify that returns undefined instead of throwing on cycles or BigInt. */
 function safeStringify(value: unknown): string | undefined {
   try {
     return JSON.stringify(value);
@@ -233,19 +197,16 @@ function safeStringify(value: unknown): string | undefined {
   }
 }
 
-/**
- * Keep the hook's mutated run state when it is a valid, size-bounded plain
- * object; otherwise fall back to the state the hook was given (a bad/oversized
- * state must not silently replace what earlier hooks accumulated).
- */
+// A bad or oversized state must not replace what earlier hooks accumulated.
 function sanitizeHookState(
   state: unknown,
   fallback: Record<string, unknown>,
 ): Record<string, unknown> {
-  if (!isPlainObject(state)) return fallback;
-  if (Object.keys(state).length === 0) return state;
+  const parsed = parseOr(configObject, state);
+  if (!parsed) return fallback;
+  if (Object.keys(parsed).length === 0) return parsed;
 
-  const serialized = safeStringify(state);
+  const serialized = safeStringify(parsed);
   if (
     serialized === undefined ||
     Buffer.byteLength(serialized, "utf8") > MAX_HOOK_STATE_BYTES
@@ -253,5 +214,5 @@ function sanitizeHookState(
     return fallback;
   }
 
-  return state;
+  return parsed;
 }

@@ -1,14 +1,17 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
     environment: "edge-runtime",
-    // Recursive, not a hand-listed file and not root-only: either narrower form
-    // silently skips test files, which is indistinguishable from them passing.
+    // Each file loads the full backend; more workers push cold imports past the test timeout.
+    maxWorkers: 2,
     include: ["**/*.test.ts"],
-    // convex-test loads every module in the deployment, so any test that reaches
-    // a module importing ./auth constructs AuthKit, which validates these at
-    // import time. Dummy values only, nothing here authenticates.
+    // Lean oracle tests need `lake build` first: only `verification:test` sets ORACLE_TESTS.
+    exclude:
+      process.env.ORACLE_TESTS === "1"
+        ? configDefaults.exclude
+        : [...configDefaults.exclude, "tests/*Oracle.test.ts"],
+    // convex-test loads every module, and ./auth builds AuthKit, which checks these at import.
     env: {
       BROODS_AUTH_PROVIDER: "workos",
       WORKOS_CLIENT_ID: "client_test",

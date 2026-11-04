@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * The schedule expression is validated client-side, then cronPublic.create or
- * .update writes the crons row and its registered schedule in one transaction.
- */
-
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -27,7 +22,7 @@ import { Textarea } from "@/app/components/ui/textarea";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
-import posthog from "posthog-js";
+import { analytics } from "@/app/lib/analytics";
 import { useRef, useState } from "react";
 import { toErrorMessage } from "@/app/lib/errors";
 
@@ -49,7 +44,6 @@ type Mode = "create" | "edit";
 
 interface Props {
   mode: Mode;
-  /** Required when mode is "edit". */
   cron?: Doc<"crons">;
   agents: Array<Pick<Doc<"agents">, "_id" | "name">>;
   onClose: () => void;
@@ -96,47 +90,38 @@ export function CronDialog({
 
   async function handleSubmit(): Promise<void> {
     if (!canSubmit) return;
-    // `pending` only blocks the next render, so two fast clicks can both
-    // pass canSubmit and double-create the job. This ref closes in the
-    // same tick.
+    // `pending` lands a render late; the ref stops a fast double click double-creating.
     if (submittingRef.current) return;
 
     submittingRef.current = true;
     setPending(true);
     setError(null);
     try {
+      const payload = {
+        name: name.trim(),
+        agentId: agentId as Id<"agents">,
+        input: prompt.trim(),
+        conversationKey: conversationKey.trim() || undefined,
+        scheduleExpression: scheduleExpression.trim(),
+        timezone: timezoneToSave(cron?.timezone, timezone),
+        status: status,
+        description: description.trim() || undefined,
+      };
       if (mode === "create") {
-        await create({
-          name: name.trim(),
-          agentId: agentId as Id<"agents">,
-          input: prompt.trim(),
-          conversationKey: conversationKey.trim() || undefined,
-          scheduleExpression: scheduleExpression.trim(),
-          timezone: timezoneToSave(cron?.timezone, timezone),
-          status: status,
-          description: description.trim() || undefined,
-        });
+        await create(payload);
       } else if (cron) {
-        await update({
-          cronId: cron._id,
-          name: name.trim(),
-          agentId: agentId as Id<"agents">,
-          input: prompt.trim(),
-          conversationKey: conversationKey.trim() || undefined,
-          scheduleExpression: scheduleExpression.trim(),
-          timezone: timezoneToSave(cron?.timezone, timezone),
-          status: status,
-          description: description.trim() || undefined,
-        });
+        await update({ cronId: cron._id, ...payload });
       }
-      posthog.capture(
-        mode === "create" ? "scheduler_created" : "scheduler_updated",
-        {
-          schedule_type: scheduleExpression.trim().split("(", 1)[0],
-          status: status,
-          has_conversation_key: Boolean(conversationKey.trim()),
-        },
-      );
+      void analytics.then((posthog): void => {
+        posthog.capture(
+          mode === "create" ? "scheduler_created" : "scheduler_updated",
+          {
+            schedule_type: scheduleExpression.trim().split("(", 1)[0],
+            status: status,
+            has_conversation_key: Boolean(conversationKey.trim()),
+          },
+        );
+      });
       onClose();
     } catch (err) {
       setError(toErrorMessage(err));
@@ -344,8 +329,6 @@ export function CronDialog({
   );
 }
 
-/** The first user text message, which is the part the dialog lets you edit. */
-/** The user text of the stored events: the prompt the job sends each fire. */
 export function eventsToText(
   events: Doc<"crons">["events"] | undefined,
 ): string {
@@ -366,11 +349,8 @@ export function eventsToText(
   return "";
 }
 
-/**
- * The zone to store. A job saved without one runs in UTC and shows "UTC";
- * leaving that untouched keeps the stored value, so an edit to another field
- * does not re-register the schedule.
- */
+// A job saved with no zone shows "UTC"; leaving it so keeps the stored value, so editing
+// another field does not re-register the schedule.
 function timezoneToSave(
   stored: string | undefined,
   typed: string,

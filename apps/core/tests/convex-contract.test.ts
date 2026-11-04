@@ -1,9 +1,4 @@
-/**
- * Compile-time contract of core's Convex calls: each operation takes its own
- * function's args and returns its own result, with no caller-chosen type. The
- * bodies never run, so nothing reaches Convex; `bun run check` fails when a
- * call that should be refused compiles (`@ts-expect-error` then goes unused).
- */
+// Type-only, never run: `bun run check` fails when an @ts-expect-error below goes unused.
 
 import { expect, it } from "bun:test";
 import { adminQuery, internal } from "../src/shared/convex/client.ts";

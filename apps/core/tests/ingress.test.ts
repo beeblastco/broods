@@ -24,6 +24,10 @@ import {
   type ConversationDispatchTarget,
   type IngressCandidate,
 } from "../src/harness/ingress.ts";
+import {
+  CompactionError,
+  type CompactionResult,
+} from "../src/harness/compaction.ts";
 import * as harness from "../src/harness/harness.ts";
 import type { AgentReplyHooks } from "../src/harness/harness.ts";
 import * as ingress from "../src/harness/ingress.ts";
@@ -58,6 +62,23 @@ function agentRecord(config: AgentConfig): AgentRecord {
     config: config,
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
+  };
+}
+
+function compaction(messageCount: number): CompactionResult {
+  return {
+    messageCount: messageCount,
+    modelCalls: 1,
+    modelProvider: "google",
+    modelId: "gemini-test",
+    usage: {
+      inputTokens: 100,
+      outputTokens: 20,
+      reasoningTokens: 0,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 120,
+    },
   };
 }
 
@@ -128,8 +149,7 @@ describe("ingress admission payloads", () => {
       channel: { channelName: "telegram", channelRecordId: "rec_1" },
     });
     expect(call).not.toHaveProperty("agentConfig");
-    // The sender rides on the envelope so a queued turn is policed as its own
-    // author, not as whoever owned the run when it was queued.
+    // A queued turn is policed as its own sender, not whoever owned the run when it queued.
     expect(call?.delivery).toEqual(
       expect.objectContaining({
         identity: { userId: "U2", userRoles: ["dev"] },
@@ -161,11 +181,8 @@ describe("ingress admission payloads", () => {
     expect(first!.ephemeralSystem).toEqual([
       { role: "system", content: "one-turn override" },
     ]);
-    // Different model/system overrides must never collapse into the same
-    // idempotent payload identity.
     expect(first!.payloadDigest).not.toBe(second!.payloadDigest);
     expect(second!.payloadDigest).not.toBe(third!.payloadDigest);
-    // Queue byte accounting includes the persisted execution context.
     expect(first!.sizeBytes as number).toBeGreaterThan(
       third!.sizeBytes as number,
     );
@@ -306,6 +323,182 @@ describe("step boundary", (): void => {
     });
   });
 
+  it("saves a resume's message under its result's key, and keeps the key out of the message", async (): Promise<void> => {
+    const calls: [string, Record<string, unknown>][] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push([name, args]);
+
+      return { renewal: "renewed", steering: null };
+    }) as typeof runtime.mutate;
+    runtime.query = (async (name: string): Promise<unknown> =>
+      name === "listConversationEvents"
+        ? { page: [], isDone: true, continueCursor: null }
+        : null) as typeof runtime.query;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      accountId: "acct_1",
+      agentId: "agent_1",
+      agentConfig: { skills: { enabled: false } },
+      ownerGeneration: 1,
+    });
+
+    const turnContext = await session.createTurnContext(
+      [],
+      [
+        {
+          role: "user",
+          content: "the result",
+          dedupeKey: "async-tool:result-1:completed",
+        },
+      ],
+    );
+    await session.stepBoundary([]);
+
+    expect(turnContext.messages).toMatchObject([
+      { role: "user", content: "the result" },
+    ]);
+    expect(turnContext.messages[0]).not.toHaveProperty("dedupeKey");
+    expect(calls[0]?.[1]).toMatchObject({
+      events: [
+        {
+          dedupeKey: "async-tool:result-1:completed",
+          event: { message: { role: "user", content: "the result" } },
+        },
+      ],
+    });
+    expect(calls[0]?.[1]).not.toHaveProperty([
+      "events",
+      0,
+      "event",
+      "message",
+      "dedupeKey",
+    ]);
+  });
+
+  it("carries a status read's result id on the row of its tool result, unless the call failed", async (): Promise<void> => {
+    const calls: [string, Record<string, unknown>][] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push([name, args]);
+
+      return { renewal: "renewed", steering: null };
+    }) as typeof runtime.mutate;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      agentConfig: {},
+      ownerGeneration: 1,
+    });
+    session.recordToolResultRead("call-read", "async_tool_1");
+    // A tool.result hook threw after this read, so the model got an error.
+    session.recordToolResultRead("call-failed", "async_tool_2");
+
+    await session.stepBoundary([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-read",
+            toolName: "async_status",
+            input: { statusId: "async_tool_1" },
+          },
+          {
+            type: "tool-call",
+            toolCallId: "call-other",
+            toolName: "bash",
+            input: {},
+          },
+          {
+            type: "tool-call",
+            toolCallId: "call-failed",
+            toolName: "async_status",
+            input: { statusId: "async_tool_2" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-read",
+            toolName: "async_status",
+            output: { type: "json", value: { status: "completed" } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-other",
+            toolName: "bash",
+            output: { type: "text", value: "ok" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-failed",
+            toolName: "async_status",
+            output: { type: "error-text", value: "hook unavailable" },
+          },
+        ],
+      },
+    ]);
+
+    expect(calls[0]?.[1].events).toEqual([
+      expect.not.objectContaining({ toolResultIds: expect.anything() }),
+      expect.objectContaining({ toolResultIds: ["async_tool_1"] }),
+    ]);
+  });
+
+  it("stores nothing at a status read on a session that saves no step, and keeps only delivered reads for its answer", async (): Promise<void> => {
+    const calls: [string, Record<string, unknown>][] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push([name, args]);
+
+      return null;
+    }) as typeof runtime.mutate;
+    const session = new Session({
+      eventId: "event-1",
+      conversationKey: candidate().conversationKey,
+      agentConfig: {},
+      persist: false,
+    });
+
+    session.recordToolResultRead("call-read", "async_tool_1");
+    expect(calls).toEqual([]);
+    // A tool.result hook threw after this read, so the model got an error.
+    session.recordToolResultRead("call-failed", "async_tool_2");
+    await session.stepBoundary([
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-read",
+            toolName: "async_status",
+            output: { type: "json", value: { status: "completed" } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-failed",
+            toolName: "async_status",
+            output: { type: "error-text", value: "hook unavailable" },
+          },
+        ],
+      },
+    ]);
+
+    expect(calls).toEqual([]);
+    expect([...session.unsavedToolResults]).toEqual(["async_tool_1"]);
+  });
+
   it("keeps the rows of a boundary that threw for the next one, keyed by cursor", async (): Promise<void> => {
     const calls: [string, Record<string, unknown>][] = [];
     runtime.mutate = (async (
@@ -397,7 +590,6 @@ describe("step boundary", (): void => {
         },
       ],
     });
-    // The renewed boundary answered the owner check: no read.
     expect(reads).not.toHaveBeenCalled();
   });
 
@@ -425,7 +617,7 @@ describe("step boundary", (): void => {
       steering: null,
     });
     expect(calls[0]).not.toHaveProperty("events");
-    expect(session.assertRecentOwner()).rejects.toThrow(
+    await expect(session.assertRecentOwner()).rejects.toThrow(
       "Stale conversation owner generation",
     );
     expect(reads).toHaveBeenCalledTimes(1);
@@ -454,7 +646,7 @@ describe("async turn without model input", (): void => {
       ownerGeneration: 1,
     };
 
-    expect(
+    await expect(
       handler({ kind: "direct-api-async-worker", event: event }),
     ).rejects.toThrow("ArgumentValidationError");
 
@@ -716,7 +908,6 @@ describe("async turn that throws after it settles", (): void => {
     ).toEqual([]);
   });
 
-  /** An async event whose run ends with the final text "answer". */
   function completedEvent(): DirectInboundEvent {
     return {
       ...candidate(),
@@ -728,7 +919,6 @@ describe("async turn that throws after it settles", (): void => {
     };
   }
 
-  /** Stubs a turn that ends with the final text "answer"; returns the settle spy. */
   function stubCompletedTurn(
     writes: Array<{ name: string; status?: unknown }>,
   ): ReturnType<typeof spyOn<typeof ingress, "settleIngress">> {
@@ -742,10 +932,6 @@ describe("async turn that throws after it settles", (): void => {
     );
   }
 
-  /**
-   * Stubs one model turn that `end` finishes through the loop's reply
-   * callbacks, returning the questions it leaves open; returns the settle spy.
-   */
   function stubTurn(
     writes: Array<{ name: string; status?: unknown }>,
     end: (reply: AgentReplyHooks) => Promise<PendingQuestionSummary[]>,
@@ -810,7 +996,6 @@ describe("channel senders", (): void => {
 
   beforeEach((): void => {
     senders = [];
-    // The queued envelope's ref rebuilds its config from this row.
     setStorageForTests({
       agents: { getById: async (): Promise<AgentRecord> => agentRecord({}) },
     } as never);
@@ -917,7 +1102,6 @@ describe("channel senders", (): void => {
       attachments: [{ type: "image", url: "https://files.test/a.png" }],
     });
 
-    // No admission and no ingestion: the first delivery already did both.
     expect(mutations).toEqual([]);
     expect(senders).toEqual([]);
   });
@@ -940,11 +1124,13 @@ describe("channel senders", (): void => {
     const compact = spyOn(
       Session.prototype,
       "compactConversation",
-    ).mockImplementation(async (instructions: string): Promise<number> => {
-      compacted.push(instructions);
+    ).mockImplementation(
+      async (instructions: string): Promise<CompactionResult> => {
+        compacted.push(instructions);
 
-      return 4;
-    });
+        return compaction(4);
+      },
+    );
     const replies: string[] = [];
     const message = aliceMessage();
 
@@ -963,7 +1149,6 @@ describe("channel senders", (): void => {
       compact.mockRestore();
     }
 
-    // Only alice's turn reached the history; the command never did.
     expect(senders).toEqual([{ userId: "U1", userRoles: ["admin"] }]);
     expect(compacted).toEqual(["keep the deploy"]);
     expect(replies.at(-1)).toBe("Context compacted. 4 message(s) summarized.");
@@ -1070,7 +1255,7 @@ describe("channel commands", (): void => {
     const compact = spyOn(
       Session.prototype,
       "compactConversation",
-    ).mockResolvedValue(7);
+    ).mockResolvedValue(compaction(7));
     const replies: string[] = [];
 
     try {
@@ -1285,11 +1470,22 @@ describe("queued /compact on an async run", (): void => {
     const compact = spyOn(
       Session.prototype,
       "compactConversation",
-    ).mockResolvedValue(5);
+    ).mockResolvedValue(compaction(5));
+    const usage = spyOn(getStorage().taskUsage, "record").mockResolvedValue();
 
     await handler({ kind: "direct-api-async-worker", event: compactEvent() });
 
     expect(compact).toHaveBeenCalledWith("keep the deploy");
+    expect(usage).toHaveBeenCalledTimes(1);
+    expect(usage.mock.calls[0]?.[0]).toMatchObject({
+      status: "completed",
+      modelProvider: "google",
+      modelId: "gemini-test",
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 120,
+      stepCount: 0,
+    });
     expect(turn).not.toHaveBeenCalled();
     expect(settle.mock.calls[0]?.[0]).toMatchObject({
       status: "completed",
@@ -1301,17 +1497,41 @@ describe("queued /compact on an async run", (): void => {
         },
       },
     });
-    // The queue drains on behind it.
     expect(takeNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the agent's secrets from a direct /compact's usage row", async (): Promise<void> => {
+    spyOn(runtime, "mutate").mockResolvedValue(null);
+    spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    spyOn(Session.prototype, "compactConversation").mockResolvedValue(
+      compaction(2),
+    );
+    const usage = spyOn(getStorage().taskUsage, "record").mockResolvedValue();
+
+    await handler({
+      kind: "direct-api-async-worker",
+      event: compactEvent({
+        events: [{ role: "user", content: "/compact keep google-key-4821" }],
+        agentConfig: { provider: { google: { apiKey: "google-key-4821" } } },
+      }),
+    });
+
+    expect(usage.mock.calls[0]?.[0]?.inputPreview).toContain("/compact keep");
+    expect(usage.mock.calls[0]?.[0]?.inputPreview).not.toContain(
+      "google-key-4821",
+    );
   });
 
   it("fails the run with the summary's own error", async (): Promise<void> => {
     spyOn(runtime, "mutate").mockResolvedValue(null);
     const settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
     spyOn(ingress, "takeNextIngress").mockResolvedValue(null);
+    // The merge failed after one half summary was billed.
     spyOn(Session.prototype, "compactConversation").mockRejectedValue(
-      new Error("summary model down"),
+      new CompactionError(new Error("summary model down"), compaction(0)),
     );
+    const usage = spyOn(getStorage().taskUsage, "record").mockResolvedValue();
 
     await handler({ kind: "direct-api-async-worker", event: compactEvent() });
 
@@ -1321,6 +1541,10 @@ describe("queued /compact on an async run", (): void => {
       asyncResult: {
         outcome: { status: "failed", error: "summary model down" },
       },
+    });
+    expect(usage.mock.calls[0]?.[0]).toMatchObject({
+      status: "failed",
+      totalTokens: 120,
     });
   });
 
@@ -1399,8 +1623,7 @@ describe("live owners at shutdown", (): void => {
     calls.length = 0;
 
     expect(await interruptLiveOwners("restarting")).toBe(2);
-    // The released lease is gone; the transferred one is interrupted at its
-    // new generation, never the one it moved on from.
+    // The transferred lease is interrupted at its new generation, never the one it moved on from.
     expect(calls).toEqual(
       expect.arrayContaining([
         [
@@ -1495,7 +1718,7 @@ describe("applied ingress config", (): void => {
       agents: { getById: async (): Promise<null> => null },
     } as never);
 
-    expect(
+    await expect(
       loadAppliedIngressConfig({
         accountId: "acct_test",
         agentId: "agent_test",
@@ -1504,30 +1727,8 @@ describe("applied ingress config", (): void => {
     ).rejects.toThrow("Agent not found: agent_test");
   });
 
-  it("runs a subagent's ref-less envelope on its scope's config without a read", async (): Promise<void> => {
-    setStorageForTests({
-      agents: {
-        getById: async (): Promise<never> => {
-          throw new Error("must not read");
-        },
-      },
-    } as never);
-    const subagentConfig: AgentConfig = {
-      model: { provider: "openai", modelId: "gpt-5" },
-    };
-
-    expect(
-      loadAppliedIngressConfig({
-        accountId: "acct_test",
-        agentId: "agent_test",
-        configRef: undefined,
-        subagentConfig: subagentConfig,
-      }),
-    ).resolves.toBe(subagentConfig);
-  });
-
-  it("fails any other ref-less envelope instead of running it on a guessed config", async (): Promise<void> => {
-    expect(
+  it("fails a ref-less envelope instead of running it on a guessed config", async (): Promise<void> => {
+    await expect(
       loadAppliedIngressConfig({
         accountId: "acct_test",
         agentId: "agent_test",
@@ -1600,51 +1801,48 @@ describe("session messages", (): void => {
     expect(prepared.publicConversationKey).toBe("tg:target-chat");
   });
 
-  // The record a session ran through is gone, or now binds another agent.
-  for (const [name, refs, record] of [
-    [
-      "a cross-agent session whose record is gone",
-      { credentialAgentId: "agent_holder", channelRecordId: "rec_1" },
-      null,
-    ],
-    [
-      "a session whose pinned record is gone",
-      { channelRecordId: "rec_1" },
-      null,
-    ],
-    [
-      "a session whose record now binds another agent",
-      { channelRecordId: "rec_1" },
-      channelRecord("agent_other"),
-    ],
-  ] as const) {
-    it(`refuses ${name}`, async (): Promise<void> => {
-      runtime.query = (async (): Promise<ConversationDispatchTarget> => ({
-        channelName: "telegram",
-        source: { chatId: "target-chat" },
-        ...refs,
-      })) as never;
-      setStorageForTests({
-        agents: {
-          getById: async (): Promise<AgentRecord> => agentRecord({}),
-        },
-        channelRecords: {
-          getById: async (): Promise<ChannelRecord | null> => record,
-        },
-      } as never);
+  it.each([
+    {
+      name: "a cross-agent session whose record is gone",
+      refs: { credentialAgentId: "agent_holder", channelRecordId: "rec_1" },
+      record: null,
+    },
+    {
+      name: "a session whose pinned record is gone",
+      refs: { channelRecordId: "rec_1" },
+      record: null,
+    },
+    {
+      name: "a session whose record now binds another agent",
+      refs: { channelRecordId: "rec_1" },
+      record: channelRecord("agent_other"),
+    },
+  ])("refuses $name", async ({ refs, record }): Promise<void> => {
+    runtime.query = (async (): Promise<ConversationDispatchTarget> => ({
+      channelName: "telegram",
+      source: { chatId: "target-chat" },
+      ...refs,
+    })) as never;
+    setStorageForTests({
+      agents: {
+        getById: async (): Promise<AgentRecord> => agentRecord({}),
+      },
+      channelRecords: {
+        getById: async (): Promise<ChannelRecord | null> => record,
+      },
+    } as never);
 
-      const refusal = await prepareSessionMessage({
-        accountId: "acct_test",
-        agentId: "agent_test",
-        sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
-        input: { conversationKey: "tg:target-chat", message: "hi" },
-      }).catch((err: unknown): unknown => err);
+    const refusal = await prepareSessionMessage({
+      accountId: "acct_test",
+      agentId: "agent_test",
+      sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
+      input: { conversationKey: "tg:target-chat", message: "hi" },
+    }).catch((err: unknown): unknown => err);
 
-      expect(refusal).toEqual(
-        new Error("Channel session is no longer bound to this agent"),
-      );
-    });
-  }
+    expect(refusal).toEqual(
+      new Error("Channel session is no longer bound to this agent"),
+    );
+  });
 
   it("rejects the current conversation and another agent's conversation", async (): Promise<void> => {
     const options = {
@@ -1653,13 +1851,13 @@ describe("session messages", (): void => {
       sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
     };
 
-    expect(
+    await expect(
       prepareSessionMessage({
         ...options,
         input: { conversationKey: "tg:source-chat", message: "loop" },
       }),
     ).rejects.toThrow("cannot target the current conversation");
-    expect(
+    await expect(
       prepareSessionMessage({
         ...options,
         input: {
@@ -1672,13 +1870,12 @@ describe("session messages", (): void => {
   });
 
   it("refuses a chat that has never messaged the bot, naming the key format and this conversation's key", async (): Promise<void> => {
-    // No coordinator row means no stored channel target, which is every group
-    // the bot was added to but that has not spoken yet.
+    // No coordinator row means no stored channel target: a group the bot joined that never spoke.
     runtime.query = async function <T>(): Promise<T> {
       return null as T;
     };
 
-    expect(
+    await expect(
       prepareSessionMessage({
         accountId: "acct_test",
         agentId: "agent_test",

@@ -7,13 +7,13 @@ WORKDIR /app
 # The lockfile spans every workspace, so each workspace package.json must be
 # present for --frozen-lockfile to resolve.
 COPY package.json bun.lock ./
+COPY patches ./patches
 COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/discord-forwarder/package.json ./apps/discord-forwarder/
 COPY apps/docs/package.json ./apps/docs/
 COPY apps/edge/package.json ./apps/edge/
 COPY apps/gateway/package.json ./apps/gateway/
-COPY apps/matrix-forwarder/package.json ./apps/matrix-forwarder/
 COPY packages/ai-sdk-sandbox/package.json ./packages/ai-sdk-sandbox/
 COPY packages/convex/package.json ./packages/convex/
 COPY packages/broods/package.json ./packages/broods/
@@ -22,15 +22,19 @@ RUN bun install --frozen-lockfile --ignore-scripts
 FROM ${BUN_IMAGE} AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+ARG DASHBOARD_ASSET_ORIGIN
 ARG NEXT_PUBLIC_BROODS_BASE_URL
 ARG NEXT_PUBLIC_CONVEX_URL
 ARG NEXT_PUBLIC_POSTHOG_HOST
 ARG NEXT_PUBLIC_POSTHOG_KEY
+ARG NEXT_PUBLIC_POSTHOG_UI_HOST
 ARG NEXT_PUBLIC_WORKOS_REDIRECT_URI
+ENV DASHBOARD_ASSET_ORIGIN=$DASHBOARD_ASSET_ORIGIN
 ENV NEXT_PUBLIC_BROODS_BASE_URL=$NEXT_PUBLIC_BROODS_BASE_URL
 ENV NEXT_PUBLIC_CONVEX_URL=$NEXT_PUBLIC_CONVEX_URL
 ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
 ENV NEXT_PUBLIC_POSTHOG_KEY=$NEXT_PUBLIC_POSTHOG_KEY
+ENV NEXT_PUBLIC_POSTHOG_UI_HOST=$NEXT_PUBLIC_POSTHOG_UI_HOST
 ENV NEXT_PUBLIC_WORKOS_REDIRECT_URI=$NEXT_PUBLIC_WORKOS_REDIRECT_URI
 # Installs are isolated per workspace, so every source tree the app compiles
 # needs its own node_modules: the SDK contracts resolve `ai` from packages/broods.

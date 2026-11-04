@@ -125,13 +125,11 @@ test("removeEnv DELETEs the named env var", async () => {
 test("removeEnv throws on a non-ok response", async () => {
   const { client } = clientWith(() => new Response("nope", { status: 500 }));
 
-  expect(client.removeEnv("demo-app", "development", "X")).rejects.toThrow(
-    "Remove environment variable failed",
-  );
+  await expect(
+    client.removeEnv("demo-app", "development", "X"),
+  ).rejects.toThrow("Remove environment variable failed");
 });
 
-// The backend keys the manifest route off the stage segment and rejects a
-// manifest body carrying the pre-rename `environment` field.
 test("putManifest PUTs to the stage manifest route and sends manifest.stage", async () => {
   const manifest = {
     version: 1 as const,

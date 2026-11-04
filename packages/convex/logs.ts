@@ -1,15 +1,10 @@
-/**
- * Reactive reads for the dashboard usage panel. Queries the pre-aggregated
- * `usageRollups` table (written by `usage.recordTaskUsage`) so the panel streams
- * live token/compute totals via Convex subscriptions. Durable/raw logs now
- * live in Loki and are streamed via the gateway (NATS + Loki backfill).
- */
-
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { authKit } from "./auth";
+import { priceLookupIds } from "./model/modelPricing";
 import { projectEndpointIds } from "./model/usageEndpoints";
+import { modelPricesFields } from "./schema";
 import { taskIdParts, type UsageGrain } from "./usage";
 
 const usageRange = v.union(
@@ -21,7 +16,6 @@ const usageRange = v.union(
   v.literal("1y"),
 );
 
-/** Time-bucketed token usage point grouped by model/provider. */
 const usageBucket = v.object({
   bucketStart: v.number(),
   modelProvider: v.string(),
@@ -39,12 +33,20 @@ const usageBucket = v.object({
   toolSandboxCpuUsec: v.number(),
 });
 
+const modelRef = v.object({ modelProvider: v.string(), modelId: v.string() });
+
+const usageModelRates = v.object({
+  ...modelPricesFields.models.element.fields,
+  modelProvider: v.string(),
+});
+
 const usageStats = v.object({
   range: usageRange,
   binSeconds: v.number(),
   startTimeMs: v.number(),
   endTimeMs: v.number(),
   buckets: v.array(usageBucket),
+  rates: v.array(usageModelRates),
   totals: v.object({
     inputTokens: v.number(),
     outputTokens: v.number(),
@@ -72,14 +74,10 @@ const RANGE_CONFIG: Record<
   "1y": { lookbackMs: 365 * 24 * 60 * 60 * 1000, binSeconds: 7 * 24 * 60 * 60 },
 };
 
-// Bounds the drill-down: rows read across all endpoints (far under Convex's
-// per-query read limits), and tasks returned.
 const USAGE_TASK_SCAN_TOTAL = 2000;
 const USAGE_TASK_RETURN_LIMIT = 100;
 
-/** One finished task behind a usage bin, linked to its trace. */
 const usageTask = v.object({
-  /** Null for rows written without a trace suffix on `taskId`. */
   traceId: v.union(v.string(), v.null()),
   agentId: v.string(),
   modelProvider: v.string(),
@@ -94,11 +92,9 @@ const usageTask = v.object({
   cacheWriteTokens: v.number(),
   totalTokens: v.number(),
   stepCount: v.number(),
-  /** Start of the prompt, as the trace labels it; null on older rows. */
   inputPreview: v.union(v.string(), v.null()),
 });
 
-/** One aggregated usage point: bin start, model identity, and the 11 metric counters. */
 type UsageBucketRow = {
   bucketStart: number;
   modelProvider: string;
@@ -116,19 +112,25 @@ type UsageBucketRow = {
   toolSandboxCpuUsec: number;
 };
 
-/** The metric counters summed across every bucket in range. */
 type UsageTotals = Omit<
   UsageBucketRow,
   "bucketStart" | "modelProvider" | "modelId"
 >;
 
-/**
- * Reactive token-usage aggregates for the dashboard usage panel, scoped to the
- * caller's project/stage. Reads the coarsest rollup grain that fits the
- * range's display bins and re-groups it into the requested range. Subscribed
- * via `useQuery`, so totals update live.
- * @returns time-bucketed usage grouped by (modelProvider, modelId) plus totals
- */
+// For models the Usage tab sees running live, which have no usage row yet.
+export const fetchModelRates = query({
+  args: { models: v.array(modelRef) },
+  returns: v.array(usageModelRates),
+  handler: async (ctx, args) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    return await modelRates(ctx, args.models);
+  },
+});
+
 export const fetchUsageStats = query({
   args: {
     projectId: v.id("projects"),
@@ -139,7 +141,6 @@ export const fetchUsageStats = query({
   handler: async (ctx, args) => {
     const { projectId, stageId, range } = args;
 
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -165,6 +166,7 @@ export const fetchUsageStats = query({
       return {
         ...base,
         buckets: [],
+        rates: [],
         totals: {
           inputTokens: 0,
           outputTokens: 0,
@@ -189,26 +191,19 @@ export const fetchUsageStats = query({
     );
 
     const { buckets, totals } = aggregateUsage(batches.flat(), cfg.binSeconds);
+    const rates = await modelRates(ctx, buckets);
 
-    return { ...base, buckets: buckets, totals: totals };
+    return { ...base, buckets: buckets, rates: rates, totals: totals };
   },
 });
 
-/**
- * Finished tasks inside one usage chart bin, heaviest first, so the dashboard
- * can show which traces a bin's tokens came from. `models` narrows to the
- * dashboard's model filter through the index, before any row is read. Reads
- * at most `USAGE_TASK_SCAN_TOTAL` rows across the project's endpoints; `truncated`
- * says some tasks in the bin are not listed. `taskUsage` is pruned after 90
- * days, so older bins return no tasks.
- */
+// `taskUsage` is pruned after 90 days, so older bins list no tasks.
 export const fetchUsageTasks = query({
   args: {
     projectId: v.id("projects"),
     stageId: v.optional(v.id("stages")),
     startMs: v.number(),
     endMs: v.number(),
-    /** `provider::model` keys to keep; omitted keeps every model. */
     models: v.optional(v.array(v.string())),
   },
   returns: v.object({
@@ -216,7 +211,6 @@ export const fetchUsageTasks = query({
     truncated: v.boolean(),
   }),
   handler: async (ctx, args) => {
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -229,10 +223,8 @@ export const fetchUsageTasks = query({
       args.stageId,
     );
     const models = args.models ? parseModelKeys(args.models) : undefined;
-    // One index range per endpoint, or per endpoint and model when filtered,
-    // so excluded models never use up the read budget. The budget is split
-    // across ranges to stay inside Convex's per-query read limits; one extra
-    // row tells a full range apart.
+    // A range per endpoint and model keeps filtered-out models off Convex's read budget,
+    // which is split across ranges; the one extra row read marks a range cut short.
     const scans = endpointIds.flatMap((endpointId) =>
       (models ?? [undefined]).map((model) => ({
         endpointId: endpointId,
@@ -284,10 +276,6 @@ export const fetchUsageTasks = query({
   },
 });
 
-/**
- * Rollup rows for one endpoint at one grain since `startMs`. Exported for
- * `fetchUsageStats` and its test; not a registered Convex function.
- */
 export async function collectUsageRollups(
   ctx: QueryCtx,
   endpointId: string,
@@ -305,11 +293,6 @@ export async function collectUsageRollups(
     .collect();
 }
 
-/**
- * Up to `limit` task usage rows for one endpoint, and one model when given,
- * that finished in `[startMs, endMs)`, oldest first. Exported for
- * `fetchUsageTasks` and its test; not a registered Convex function.
- */
 export async function collectUsageTasks(
   ctx: QueryCtx,
   endpointId: string,
@@ -345,11 +328,68 @@ export async function collectUsageTasks(
     .take(limit);
 }
 
-/**
- * The dashboard's `provider::model` filter keys as one index scan each:
- * repeats collapse, so no range is read twice, and a key without the
- * separator matches no model. Exported for `fetchUsageTasks` and its test.
- */
+export async function modelRates(
+  ctx: QueryCtx,
+  models: Array<Pick<UsageBucketRow, "modelProvider" | "modelId">>,
+): Promise<Array<Infer<typeof usageModelRates>>> {
+  const modelIds = new Map<string, Set<string>>();
+  for (const { modelProvider, modelId } of models) {
+    modelIds.set(
+      modelProvider,
+      (modelIds.get(modelProvider) ?? new Set()).add(modelId),
+    );
+  }
+  const priced = await Promise.all(
+    [...modelIds].map(async ([provider, ids]) => {
+      const [catalogue, overrides] = await Promise.all([
+        ctx.db
+          .query("modelPrices")
+          .withIndex("by_provider", (q) => q.eq("provider", provider))
+          .unique(),
+        ctx.db
+          .query("modelPriceOverrides")
+          .withIndex("by_provider", (q) => q.eq("provider", provider))
+          .unique(),
+      ]);
+      const listed = new Map(
+        catalogue?.models.map((row) => [row.modelId, row]),
+      );
+      const own = new Map(overrides?.models.map((row) => [row.modelId, row]));
+
+      return [...ids].flatMap((modelId) => {
+        const lookup = priceLookupIds(modelId);
+        const base = firstMatch(lookup, listed);
+        const override = firstMatch(lookup, own);
+        const rates = override
+          ? {
+              input: override.input,
+              output: override.output,
+              cacheRead:
+                override.cacheRead ?? base?.cacheRead ?? override.input,
+              cacheWrite:
+                override.cacheWrite ?? base?.cacheWrite ?? override.input,
+            }
+          : base;
+
+        return rates
+          ? [
+              {
+                modelId: modelId,
+                input: rates.input,
+                output: rates.output,
+                cacheRead: rates.cacheRead,
+                cacheWrite: rates.cacheWrite,
+                modelProvider: provider,
+              },
+            ]
+          : [];
+      });
+    }),
+  );
+
+  return priced.flat();
+}
+
 export function parseModelKeys(
   keys: string[],
 ): Array<{ modelProvider: string; modelId: string }> {
@@ -362,11 +402,6 @@ export function parseModelKeys(
   });
 }
 
-/**
- * Rollup grain to read for a display bin: bins under an hour need "5m" rows,
- * under a day "hour" rows, and a day or wider "day" rows. Keeps long ranges
- * from collecting every 5-minute bucket.
- */
 export function usageGrainForBinSeconds(binSeconds: number): UsageGrain {
   if (binSeconds < 60 * 60) {
     return "5m";
@@ -455,4 +490,11 @@ function aggregateUsage(
   );
 
   return { buckets: buckets, totals: totals };
+}
+
+function firstMatch<Row>(
+  ids: string[],
+  rows: Map<string, Row>,
+): Row | undefined {
+  return ids.map((id) => rows.get(id)).find((row) => row !== undefined);
 }

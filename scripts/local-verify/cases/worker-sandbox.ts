@@ -6,15 +6,9 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-/**
- * The worker provider through the config plane: on/off networking, a 60 s
- * timeout and no workspace. With CLOUDFLARE_WORKER_URL on core (a deployed
- * Worker, or `wrangler dev` in apps/cloudflare-worker) and a model key, an
- * agent writes a file in one turn and reads it back in the next, so the
- * stored files are the same across calls.
- */
+// CLOUDFLARE_WORKER_URL on core: a deployed Worker, or `wrangler dev` in apps/cloudflare-worker.
 export async function workerSandbox(context: VerifyContext): Promise<void> {
-  const key = `worker-`;
+  const key = `worker-${context.runId}`;
   const refused: SandboxConfig[] = [
     {
       provider: "worker",
@@ -55,7 +49,7 @@ export async function workerSandbox(context: VerifyContext): Promise<void> {
 
   if (!process.env.CLOUDFLARE_WORKER_URL || !context.hasModelKey) {
     console.log(
-      `  skip agent on an isolate (set CLOUDFLARE_WORKER_URL and ${MODEL_KEY_HINT})`,
+      `  skip agent on a V8 Worker (set CLOUDFLARE_WORKER_URL and ${MODEL_KEY_HINT})`,
     );
     return;
   }

@@ -68,7 +68,7 @@ Use the narrowest credential that works. The three you meet first:
 | Account key | `bask_` | Your backend, kept secret      | The whole config plane, to create agents, crons and files at runtime |
 | CLI login   | `bcli_` | `broods login` on your machine | Everything the CLI does, for org owners and admins                   |
 
-`broods dev` and `broods deploy` write the runtime key to `.env.local` as `BROODS_API_KEY`. The account key is shown once, when your organization is provisioned. Rotate it under Org Settings, API Access. Project keys, role sessions and stage tickets are in [Security](guides/security.md).
+`broods dev` and `broods deploy` write the runtime key to `.env.local` as `BROODS_API_KEY`. The account key is shown once, when your organization is provisioned. Rotate it under Org Settings, API Access. Project keys, scoped account keys, role sessions and stage tickets are in [Security](guides/security.md).
 
 ## Config plane and runtime
 

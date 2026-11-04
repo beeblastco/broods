@@ -1,9 +1,3 @@
-/**
- * Public mutation wrappers for cron CRUD used by the dashboard. These run the
- * transactional cron mutations in agent/crons in the same transaction, so the
- * crons table and the registered schedules can never drift apart.
- */
-
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { mutation } from "../_generated/server";
@@ -11,8 +5,7 @@ import { requireActiveAccount } from "../model/activeAccount";
 import { getActiveAccountForUser, getActiveCaller } from "../org/orgs";
 
 const STATUS_VALIDATOR = v.union(v.literal("active"), v.literal("paused"));
-// A cron runs stored instructions as any agent of the org, on a schedule, and
-// can answer into a live channel session: that is an org admin operation.
+// Runs stored instructions as any org agent, into live channels: an org admin operation.
 const CRON_ADMIN_REQUIRED =
   "Scheduled jobs can only be changed by an org admin.";
 
@@ -33,11 +26,11 @@ export const create = mutation({
     if (!caller) throw new Error(CRON_ADMIN_REQUIRED);
     await requireActiveAccount(ctx, caller.account._id);
 
-    const cron = (await ctx.runMutation(internal.agent.crons.create, {
+    const cron = await ctx.runMutation(internal.agent.crons.create, {
       accountId: caller.account._id,
       input: args,
       createdBy: caller.user._id,
-    })) as { cronId: string };
+    });
 
     return { cronId: cron.cronId };
   },

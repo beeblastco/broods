@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import {
-  snapshotImage,
-  snapshotOptions,
-  snapshotStage,
-} from "../app/lib/sandboxSnapshots";
+import { snapshotImage, snapshotOptions } from "../app/lib/sandboxSnapshots";
 
 const DEV = "stage_dev" as Id<"stages">;
 const PROD = "stage_prod" as Id<"stages">;
@@ -89,20 +85,6 @@ describe("snapshotOptions", () => {
     expect(snapshotOptions(ROWS, "sandbox", "img-crawler", DEV)).toHaveLength(
       2,
     );
-  });
-
-  test("offers only None when the account has no snapshots", () => {
-    expect(snapshotOptions([], "lambda", undefined, DEV)).toEqual([
-      { value: "none", label: "None" },
-    ]);
-  });
-});
-
-describe("snapshotStage", () => {
-  test("names the stage, the account, or a snapshot to take again", () => {
-    expect(snapshotStage(ROWS[0]!)).toBe("development");
-    expect(snapshotStage({ scope: "account" })).toBe("account");
-    expect(snapshotStage({})).toBe("no stage, take again");
   });
 });
 

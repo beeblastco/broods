@@ -5,8 +5,6 @@ const SIDEBAR_WIDTH = 256;
 
 test.use({ viewport: { width: 1280, height: 800 } });
 
-// Tracing fills the page beside the collapsed rail, edge to edge with no card
-// frame around it.
 test("tracing fills the page beside the collapsed icon rail", async ({
   page,
 }) => {
@@ -17,15 +15,13 @@ test("tracing fills the page beside the collapsed icon rail", async ({
     .poll(() => container.boundingBox())
     .toMatchObject({ width: RAIL_WIDTH });
 
-  const split = page.locator('[data-slot="resizable-panel-group"]');
-  const splitBox = await split.boundingBox();
-  expect(splitBox?.x).toBe(RAIL_WIDTH);
-  expect((splitBox?.x ?? 0) + (splitBox?.width ?? 0)).toBe(1280);
-  expect((splitBox?.y ?? 0) + (splitBox?.height ?? 0)).toBe(800);
+  const body = page.locator("[data-scroll-pane]").first().locator("..");
+  const bodyBox = await body.boundingBox();
+  expect(bodyBox?.x).toBe(RAIL_WIDTH);
+  expect((bodyBox?.x ?? 0) + (bodyBox?.width ?? 0)).toBe(1280);
+  expect((bodyBox?.y ?? 0) + (bodyBox?.height ?? 0)).toBe(800);
 });
 
-// The open rail once let the toolbar's search icon and the sticky table head
-// paint over its labels: both sit at z-10 later in the page.
 test("the rail opens over the page on hover, nothing showing through", async ({
   page,
 }) => {
@@ -66,9 +62,6 @@ test("the rail opens over the page on hover, nothing showing through", async ({
     .toMatchObject({ width: RAIL_WIDTH });
 });
 
-// The rail grows open over 200ms, and a pointer that outran the growing edge
-// once counted as leaving and closed it. One open and close first, so React
-// owns the rail; then a slowed transition keeps the second move inside it.
 test("a fast move into the opening rail keeps it open", async ({ page }) => {
   await page.goto("/ui-gallery?tab=monitoring");
   const container = page.locator('[data-slot="sidebar-container"]');
@@ -81,6 +74,7 @@ test("a fast move into the opening rail keeps it open", async ({ page }) => {
   await expect
     .poll(() => container.boundingBox())
     .toMatchObject({ width: RAIL_WIDTH });
+  // One open and close first, so React owns the rail; then slow the growing edge.
   await page.addStyleTag({
     content:
       '[data-slot="sidebar-container"] { transition-duration: 1000ms !important; }',
@@ -94,11 +88,6 @@ test("a fast move into the opening rail keeps it open", async ({ page }) => {
     .toMatchObject({ width: SIDEBAR_WIDTH });
 });
 
-// When the node under a resting pointer goes away (a panel swapping its
-// loading state for data), Chrome's next move sends the rail a pointerover
-// with no pointerout before it. React builds pointerenter from that pointerout,
-// so the rail once stayed shut. One open and close first, so React owns the
-// rail and the pointer rests on the page.
 test("the rail opens after the page under the pointer re-rendered", async ({
   page,
 }) => {
@@ -113,7 +102,8 @@ test("the rail opens after the page under the pointer re-rendered", async ({
   await expect
     .poll(() => container.boundingBox())
     .toMatchObject({ width: RAIL_WIDTH });
-  // A move once the rail has closed, so the node under the pointer is current.
+  // When the node under a resting pointer goes away, Chrome's next move sends pointerover
+  // with no pointerout, and React builds pointerenter from pointerout.
   await page.mouse.move(800, 410);
   await page.evaluate(() => document.elementFromPoint(800, 410)?.remove());
 
@@ -123,8 +113,6 @@ test("the rail opens after the page under the pointer re-rendered", async ({
     .toMatchObject({ width: SIDEBAR_WIDTH });
 });
 
-// The sidebar collapsed from the keyboard under a resting pointer, then a
-// nudge onto the next item, still inside the rail, once opened it again.
 test("collapsing under the pointer keeps the rail shut", async ({ page }) => {
   await page.goto("/ui-gallery?tab=monitoring");
   const container = page.locator('[data-slot="sidebar-container"]');
@@ -160,8 +148,6 @@ test("collapsing under the pointer keeps the rail shut", async ({ page }) => {
   expect((await container.boundingBox())?.width).toBe(RAIL_WIDTH);
 });
 
-// A pointer that left the window straight from the open rail sent no further
-// move, so nothing closed it.
 test("leaving the window from the open rail closes it", async ({ page }) => {
   await page.goto("/ui-gallery?tab=monitoring");
   const container = page.locator('[data-slot="sidebar-container"]');
@@ -177,8 +163,6 @@ test("leaving the window from the open rail closes it", async ({ page }) => {
     .toMatchObject({ width: RAIL_WIDTH });
 });
 
-// A tap fires pointerover but no pointer ever moves away, so a peek opened by
-// touch stayed over the page.
 test.describe("on a touch screen", () => {
   test.use({ hasTouch: true, viewport: { width: 1024, height: 768 } });
 

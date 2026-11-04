@@ -1,19 +1,9 @@
-/**
- * Daytona-backed sandbox executor.
- * Keep Daytona SDK adaptation here. A real VM: mount the workspace, then run the
- * bash `code` as-is. Persistent mode reserves one sandbox per workspace,
- * reconnecting by stored id (Daytona auto-stops it on idle; the harness restarts it).
- * `config.snapshot` names the Daytona snapshot it boots, and the Snapshot action
- * captures a reserved sandbox into a new one.
- */
-
 import { randomUUID } from "node:crypto";
 import { Daytona, type Sandbox } from "@daytona/sdk";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { logWarn } from "../../shared/log.ts";
-import { isPlainObject } from "../../shared/object.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   DEFAULT_RELEASE_GRACE_SECONDS,
@@ -37,9 +27,8 @@ import {
   stopScript,
 } from "./jobs.ts";
 import {
-  type S3MountContext,
   type S3MountIdentity,
-  mountAttribution,
+  executorS3Context,
   resolveS3Mount,
   resolveS3MountIdentity,
 } from "./s3-mount.ts";
@@ -70,7 +59,6 @@ import {
   workspacePath,
 } from "./utils.ts";
 
-// How long the Snapshot action waits for Daytona to finish capturing a sandbox.
 const SNAPSHOT_TIMEOUT_SECONDS = 300;
 
 export class DaytonaSandboxExecutor implements SandboxExecutor {
@@ -105,14 +93,12 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       const response = await sandbox.process.executeCommand(
         request.code,
         workspacePath(request),
-        // Per exec, not only at create: `daytonaCreateOptions` never runs on
-        // the reconnect path, so without this an edited env never reaches an
-        // existing persistent sandbox. Every other provider applies them here.
+        // Per exec too: create options never reach a reconnected sandbox, nor would an edited env.
         this.#execEnvVars(request),
         request.timeoutSeconds,
       );
       const stdout = truncateText(
-        response.result ?? artifactStdout(response.artifacts),
+        response.result ?? response.artifacts?.stdout ?? "",
         request.outputLimitBytes,
       );
 
@@ -158,7 +144,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     if ((response.exitCode ?? 0) !== 0) {
       throw new Error(
         response.result ??
-          artifactStdout(response.artifacts) ??
+          response.artifacts?.stdout ??
           "failed to launch background job",
       );
     }
@@ -194,8 +180,6 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     const { sandbox, jobsDir } = await this.#reserved(request);
     await this.#shell(sandbox, stopScript(jobsDir, request.jobId));
 
-    // Report the real terminal state: a job that had already finished keeps its
-    // own exit code instead of being recorded as killed.
     return parseJobStatus(
       request.jobId,
       await this.#shell(sandbox, statusScript(jobsDir, request.jobId)),
@@ -215,8 +199,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       );
       await sandbox.delete();
     } catch (err) {
-      // Already gone => safe to forget. Wrong creds / transient => propagate so a
-      // caller iterating multiple configs can try the next one.
+      // Only a gone sandbox is forgotten; wrong creds throw so the caller tries its next config.
       if (!isSandboxGoneError(err)) throw err;
     }
     await deleteSandboxInstance(
@@ -227,15 +210,10 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     ).catch(() => {});
   }
 
-  /**
-   * Captures the reserved sandbox's filesystem as a Daytona snapshot, which any
-   * daytona sandbox of the account can then boot through `config.snapshot`.
-   */
   async snapshot(
     request: SandboxReservationRef,
   ): Promise<SandboxSnapshotResult> {
-    // Daytona snapshot names are unique per organization, so the account's own
-    // name for it stays in the snapshot row.
+    // Names are unique per Daytona org; the account's own name for it stays in the snapshot row.
     const name = `broods-${randomUUID()}`;
     const { sandbox } = await this.#reserved(request);
     await sandbox.createSnapshot(name, SNAPSHOT_TIMEOUT_SECONDS);
@@ -264,9 +242,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   }
 
   #workspaceRoot(): string {
-    const options = isPlainObject(this.#config.options)
-      ? this.#config.options
-      : {};
+    const options = this.#config.options ?? {};
 
     return (configString(options.workspaceRoot) ?? "/mnt/workspaces").replace(
       /\/+$/,
@@ -278,8 +254,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     return `${this.#workspaceRoot()}/${namespace}`;
   }
 
-  // Markers live beside the workspace mount (not under the S3 mount) so the tiny
-  // files stay on the sandbox's native, stop-persistent disk.
+  // Beside the S3 mount, not under it, so the markers stay on the native, stop-persistent disk.
   #jobsDir(reservationKey: string): string {
     return `${this.#workspaceRoot()}/.fp-jobs/${reservationKey}`;
   }
@@ -314,9 +289,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
 
         return sandbox;
       } catch (error) {
-        // Recreate only when the sandbox is really gone; a transient error must
-        // propagate or the still-live sandbox is orphaned at the provider. The
-        // conditional delete keeps a row a concurrent call already re-claimed.
+        // Recreate only when really gone: a transient error would orphan the live sandbox.
         if (!isSandboxGoneError(error)) throw error;
         await deleteSandboxInstance(
           "daytona",
@@ -351,9 +324,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         return sandbox;
       }
     } catch (error) {
-      // The claim may already have committed even when its caller rejects. Tear
-      // down both sides conditionally so a failed acquisition cannot leak the
-      // newly created sandbox or erase a concurrent winner's reservation.
+      // The claim may have committed though it rejected: undo both sides, conditionally.
       await Promise.allSettled([
         sandbox.delete(),
         deleteSandboxInstance(
@@ -365,7 +336,6 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       ]);
       throw error;
     }
-    // Lost a concurrent create race: the winner's sandbox is the one to use.
     const winner = await getSandboxExternalId("daytona", ns);
     await sandbox.delete().catch(() => {});
     if (!winner)
@@ -384,8 +354,6 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     return Object.keys(env).length > 0 ? env : undefined;
   }
 
-  // The reserved sandbox, started if it auto-stopped on idle, for background
-  // jobs and the Snapshot action, which both need it running.
   async #reserved(
     request: SandboxReservationRef,
   ): Promise<{ sandbox: Sandbox; jobsDir: string }> {
@@ -435,7 +403,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   async #shell(sandbox: Sandbox, code: string): Promise<string> {
     const response = await sandbox.process.executeCommand(code);
 
-    return response.result ?? artifactStdout(response.artifacts);
+    return response.result ?? response.artifacts?.stdout ?? "";
   }
 
   async #runLifecycle(sandbox: Sandbox, workDir: string): Promise<void> {
@@ -449,23 +417,17 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     if ((response.exitCode ?? 0) !== 0) {
       throw new Error(
         response.result ??
-          artifactStdout(response.artifacts) ??
+          response.artifacts?.stdout ??
           "daytona lifecycle hook failed",
       );
     }
   }
 }
 
-function artifactStdout(artifacts: unknown): string {
-  return isPlainObject(artifacts) && typeof artifacts.stdout === "string"
-    ? artifacts.stdout
-    : "";
-}
-
 function daytonaClientOptions(
   config: SandboxExecutorConfig,
 ): Record<string, unknown> {
-  const options = isPlainObject(config.options) ? config.options : {};
+  const options = config.options ?? {};
   const customApiUrl = configString(options.apiUrl);
   if (customApiUrl) {
     assertPublicHttpsUrl(customApiUrl, "config.options.apiUrl");
@@ -496,14 +458,11 @@ async function daytonaCreateOptions(
   request: Pick<SandboxRunRequest, "namespace" | "envVars" | "metadata">,
   persistent: boolean,
 ): Promise<Record<string, unknown>> {
-  const options = isPlainObject(config.options) ? config.options : {};
+  const options = config.options ?? {};
   await assertSnapshotBootable(config.controlPlane, config.snapshot);
-  // No run identity here: a sandbox outlives the run that created it, and
-  // every exec lays its own over this env.
+  // No run identity: the sandbox outlives this run, and each exec lays its own over this env.
   const baseEnv = mergeSandboxEnv(config.envVars, request.envVars);
   const envVars = await daytonaEnvVars(config, request, baseEnv);
-  // Persistent: auto-stop on idle (filesystem persists, harness restarts on next
-  // call); auto-delete after the grace if it stays stopped (leak backstop).
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
   const autoStopMinutes = Math.max(
     1,
@@ -533,20 +492,18 @@ async function daytonaCreateOptions(
   };
 }
 
-// Creds go into the sandbox env at create time because Daytona's mount-s3 runs via
-// `sudo -E` and reads them from the process env. The resolver hands back short-lived,
-// prefix-scoped assume-role creds; the harness's own broad runtime creds must never
-// land here, since agent code can read the env.
+// mount-s3 runs under `sudo -E` and reads creds from the env, which agent code reads too: only
+// the resolver's short-lived, prefix-scoped creds go here, never the harness's own.
 async function daytonaEnvVars(
   config: SandboxExecutorConfig,
   request: Pick<SandboxRunRequest, "namespace" | "metadata">,
   baseEnv: Record<string, string>,
 ): Promise<Record<string, string>> {
-  const options = isPlainObject(config.options) ? config.options : {};
+  const options = config.options ?? {};
   if (options.mountAwsS3Buckets !== true) {
     return baseEnv;
   }
-  const mount = await resolveS3Mount(daytonaS3Context(config, request));
+  const mount = await resolveS3Mount(executorS3Context(config, request));
 
   return {
     ...baseEnv,
@@ -584,34 +541,7 @@ function daytonaNetworkOptions(
   };
 }
 
-// Throws on a missing namespace before any STS call (the create path hits this first).
-function daytonaS3Context(
-  config: SandboxExecutorConfig,
-  request: Pick<SandboxRunRequest, "namespace" | "metadata">,
-): S3MountContext {
-  const options = isPlainObject(config.options) ? config.options : {};
-  if (!request.namespace) {
-    throw new Error("Daytona AWS S3 mounts require a workspace namespace.");
-  }
-
-  return {
-    storage: config.storage,
-    namespace: request.namespace,
-    managedBucket:
-      configString(options.workspaceBucketName) ??
-      optionalEnv("FILESYSTEM_BUCKET_NAME"),
-    region:
-      configString(options.awsRegion) ??
-      optionalEnv("AWS_REGION") ??
-      optionalEnv("AWS_DEFAULT_REGION"),
-    ...(configString(options.s3Endpoint)
-      ? { endpoint: configString(options.s3Endpoint) }
-      : {}),
-    attribution: mountAttribution(config, request),
-  };
-}
-
-// The size Daytona gave the sandbox; it reports memory and disk in GiB.
+// Daytona reports memory and disk in GiB.
 function daytonaSpecs(sandbox: Sandbox): SandboxSpecs {
   return {
     vcpu: sandbox.cpu,
@@ -637,12 +567,12 @@ async function mountAwsS3Buckets(
   request: { workspaceRoot?: string; namespace?: string },
   config: SandboxExecutorConfig,
 ): Promise<void> {
-  const options = isPlainObject(config.options) ? config.options : {};
+  const options = config.options ?? {};
   if (options.mountAwsS3Buckets !== true) {
     return;
   }
-  // Identity only (no STS): the create path already assumed the role into the env.
-  const identity = resolveS3MountIdentity(daytonaS3Context(config, request));
+  // Identity only, no STS: the create path already put the assumed role's creds in the env.
+  const identity = resolveS3MountIdentity(executorS3Context(config, request));
   const workspaceRoot = (request.workspaceRoot ?? "/mnt/workspaces").replace(
     /\/+$/,
     "",
@@ -663,11 +593,7 @@ async function mountAwsS3Buckets(
   }
 }
 
-/**
- * Reads creds from the process env (set at create time, preserved through `sudo -E`).
- * Idempotent: skips the mount when the path is already a mountpoint (a restarted
- * persistent sandbox keeps its filesystem but loses FUSE mounts).
- */
+// Every call: a restarted sandbox keeps its disk but loses its FUSE mounts.
 async function mountS3Bucket(
   sandbox: Sandbox,
   mount: S3MountIdentity,
@@ -699,7 +625,6 @@ async function mountS3Bucket(
   );
 }
 
-// Fallback for a store with no mount role: whatever static keys the account supplied.
 function staticAwsKeys(env: Record<string, string>): Record<string, string> {
   const accessKeyId = env.AWS_ACCESS_KEY_ID;
   const secretAccessKey = env.AWS_SECRET_ACCESS_KEY;

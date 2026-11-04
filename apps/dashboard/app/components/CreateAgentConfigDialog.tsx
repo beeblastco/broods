@@ -27,8 +27,8 @@ import {
   type AccountModelProviderName,
 } from "@broods/convex/model/modelProviders";
 import { useMutation } from "convex/react";
-import posthog from "posthog-js";
-import { useState } from "react";
+import { analytics } from "@/app/lib/analytics";
+import { useRef, useState } from "react";
 
 type AgentProvider = AccountModelProviderName;
 
@@ -65,6 +65,7 @@ export function CreateAgentConfigDialog({
   const [systemPrompt, setSystemPrompt] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const keyVariable = providerApiKeyEnvName(provider);
+  const nameInput = useRef<HTMLInputElement>(null);
 
   function resetForm(): void {
     setName("");
@@ -98,11 +99,13 @@ export function CreateAgentConfigDialog({
         position: initialCanvasPosition ?? undefined,
       });
 
-      posthog.capture("agent_config_created", {
-        provider: provider,
-        has_custom_base_url: provider === "custom",
-        has_description: Boolean(description.trim()),
-        has_system_prompt: Boolean(systemPrompt.trim()),
+      void analytics.then((posthog): void => {
+        posthog.capture("agent_config_created", {
+          provider: provider,
+          has_custom_base_url: provider === "custom",
+          has_description: Boolean(description.trim()),
+          has_system_prompt: Boolean(systemPrompt.trim()),
+        });
       });
       handleClose();
     } finally {
@@ -120,7 +123,7 @@ export function CreateAgentConfigDialog({
         onOpenChange(nextOpen);
       }}
     >
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" initialFocus={nameInput}>
         <DialogHeader>
           <DialogTitle>Create agent config</DialogTitle>
           <DialogDescription>
@@ -137,11 +140,11 @@ export function CreateAgentConfigDialog({
             <div className="grid gap-2">
               <Label htmlFor="agent-name">Name</Label>
               <Input
+                ref={nameInput}
                 id="agent-name"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="My Agent"
-                autoFocus
               />
             </div>
             <div className="grid gap-2">

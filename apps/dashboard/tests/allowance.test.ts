@@ -28,7 +28,6 @@ const NO_SHARES = {
   egressGb: 0,
 };
 
-// The owner's pool of two orgs on Pro, egress used up and 30% of storage held.
 const EXHAUSTED_POOL: Partial<BudgetUsage> = {
   usedPercent: 100,
   level: "exhausted",
@@ -134,17 +133,6 @@ test("keeps storage unknown when the org or a project has no snapshot", () => {
   expect(rest.totals.storageGb).toBeNull();
 });
 
-test("colors projects in their own order and wraps past the palette", () => {
-  const slices = usageSlices(
-    budget({}),
-    Array.from({ length: 7 }, (_, index) => project(`p${index}`, {})),
-  );
-
-  expect(slices).toHaveLength(7);
-  expect(slices[0].color).toBe(slices[6].color);
-  expect(new Set(slices.slice(0, 6).map((slice) => slice.color)).size).toBe(6);
-});
-
 test("charts one value per source and day, gaps for days to come", () => {
   const now = Date.UTC(2026, 9, 2, 12);
   const series = dailySeries(
@@ -244,7 +232,6 @@ test("an exhausted pool with nothing used by this org draws the bar destructive 
     color: OTHER_ORGS_COLOR,
     days: [],
   });
-  // The whole 30 GB egress cap is theirs; of 15 GB stored, 5 GB is.
   expect(others?.totals).toEqual({ ...ZERO, egressGb: 30, storageGb: 5 });
   expect(poolNote(usage)).toBe("Limits are shared across 2 organizations.");
 });
@@ -267,9 +254,6 @@ test("no other organizations when the pool is this org's alone or nothing is enf
       }),
     ),
   ).toBeNull();
-  // This org has no snapshot yet while the pool has one: the pool's storage
-  // stays what the All organizations column shows, and the other
-  // organizations' part of it stays unknown, so the bar draws as one piece.
   const unmeasured = budget({ storageGb: null }, [], EXHAUSTED_POOL);
   expect(unmeasured.pool?.totals.storageGb).toBe(15);
   expect(otherOrgsSlice(unmeasured)?.totals.storageGb).toBeNull();

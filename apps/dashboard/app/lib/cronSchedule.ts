@@ -1,9 +1,3 @@
-/**
- * What a cron job's schedule means to a reader: when it fires next, and the
- * expression in words. Built on the same translation the Convex scheduler
- * registers with, so the dashboard never disagrees with the fire itself.
- */
-
 import { translateScheduleExpression } from "@broods/convex/model/cronRules";
 import { parseExpression } from "cron-parser";
 
@@ -39,12 +33,6 @@ interface Scheduled {
   createdAt: number;
 }
 
-/**
- * The schedule in plain words: "Every hour", "Every day 09:00",
- * "Mondays 09:00", "Once at Oct 9, 09:00". The zone is its own fact beside
- * it, so the words never carry one. Anything the words cannot carry falls
- * back to the expression itself.
- */
 export function describeSchedule(
   expression: string,
   timezone: string | undefined,
@@ -56,7 +44,6 @@ export function describeSchedule(
     return expression;
   }
   if (schedule.kind === "interval") {
-    // Largest unit that divides the interval: 60 minutes reads as an hour.
     const unit = Object.entries(UNIT_WORD)
       .reverse()
       .find(([ms]) => schedule.ms % Number(ms) === 0);
@@ -67,7 +54,6 @@ export function describeSchedule(
   }
   const zone = timezone ?? "UTC";
   if (schedule.kind === "at") {
-    // In the job's own zone, so the words match the expression as written.
     // Date and time are formatted apart: the joined form varies by ICU version.
     const at = new Date(schedule.timestamp);
     const day = at.toLocaleDateString([], {
@@ -99,21 +85,10 @@ export function describeSchedule(
   return expression;
 }
 
-/**
- * When the job fires next, or null while paused, after a one-time fire, or
- * for an expression the scheduler would reject.
- */
 export function nextRunAt(cron: Scheduled, now: number): number | null {
   return cron.status === "active" ? nextFireAt(cron, now) : null;
 }
 
-/**
- * When the schedule would fire next if the job were active, so a paused job
- * can still say when it would run. An interval counts from the last fire, as
- * the scheduler does, or from creation before the first. A one-time job
- * whose time passed unfired dispatches on resume, so it reads as due now;
- * once fired it has no next time.
- */
 export function nextFireAt(cron: Scheduled, now: number): number | null {
   let schedule: ReturnType<typeof translateScheduleExpression>;
   try {
@@ -130,6 +105,7 @@ export function nextFireAt(cron: Scheduled, now: number): number | null {
       cron.lastInvokedAt !== undefined &&
       cron.lastInvokedAt >= schedule.timestamp;
 
+    // A past time that never fired dispatches on resume, so it reads as due now.
     return fired ? null : now;
   }
   if (schedule.kind === "interval") {
@@ -151,7 +127,6 @@ export function nextFireAt(cron: Scheduled, now: number): number | null {
   }
 }
 
-/** "in 2h 14m", "in 40s"; "now" once due. */
 export function untilLabel(ts: number, now: number): string {
   const seconds = Math.floor((ts - now) / 1000);
   if (seconds <= 0) return "now";

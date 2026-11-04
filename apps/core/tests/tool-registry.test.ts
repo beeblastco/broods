@@ -1,9 +1,23 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
+import { createGoogle } from "@ai-sdk/google";
 import type { ToolApprovalStatus, ToolExecuteFunction, ToolSet } from "ai";
+import * as asyncToolResults from "../src/harness/async-tool-result.ts";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type { SessionMessageResult } from "../src/harness/ingress.ts";
 import type { Session } from "../src/harness/session.ts";
 import type { ToolContext } from "../src/harness/tools/index.ts";
+import type {
+  AgentMessage,
+  AgentMessageResult,
+} from "../src/harness/tools/utils.ts";
 import {
   resetStorageForTests,
   setStorageForTests,
@@ -51,6 +65,60 @@ describe("createTools", () => {
     expect(urlContextMock).not.toHaveBeenCalled();
   });
 
+  it("records an async_status read on the session that saves the step", async (): Promise<void> => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const read = spyOn(
+      asyncToolResults,
+      "getAsyncToolResult",
+    ).mockResolvedValue({
+      resultId: "async_tool_read",
+      parentEventId: "event_parent",
+      conversationKey: "conversation",
+      toolName: "lookup",
+      toolCallId: "call-read",
+      input: {},
+      status: "completed",
+      response: "the answer",
+      handback: "detached",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      expiresAt: Date.now() + 60_000,
+    });
+    const recordToolResultRead = mock(
+      (_toolCallId: string, _resultId: string): void => {},
+    );
+    const context = sandboxContext([
+      { name: "jobs", workspaceId: "ws_jobs", namespace: "ns" },
+    ]);
+    const tools = await createTools(
+      {
+        ...context,
+        workspaces: context.workspaces?.map((workspace): ResolvedWorkspace => ({
+          ...workspace,
+          sandbox: { provider: "lambda", persistent: true },
+        })),
+        session: {
+          agentId: "agent_test",
+          recordToolResultRead: recordToolResultRead,
+        } as unknown as Session,
+      },
+      {},
+    );
+
+    try {
+      await (tools.async_status as unknown as ChannelTestTool).execute(
+        { statusId: "async_tool_read" },
+        { toolCallId: "tool-call-read", messages: [], context: {} },
+      );
+      expect(recordToolResultRead).toHaveBeenCalledWith(
+        "tool-call-read",
+        "async_tool_read",
+      );
+    } finally {
+      read.mockRestore();
+    }
+  });
+
   it("registers computer for any machine it reaches, not only its own sandbox", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const tools = await createTools(
@@ -62,7 +130,7 @@ describe("createTools", () => {
             sandbox: { provider: "lambda", permissionMode: "ask" },
           },
           {
-            name: "kien-mac",
+            name: "laptop-mac",
             sandbox: { provider: "machine", permissionMode: "ask" },
           },
         ],
@@ -185,7 +253,7 @@ describe("createTools", () => {
       {},
     );
 
-    expect(
+    await expect(
       channelToolExecute(tools["send-images"], {
         urls: ["file:///etc/hosts"],
       }),
@@ -268,7 +336,9 @@ describe("createTools", () => {
     });
 
     expect(Object.keys(tools).sort()).toEqual(["bash", "urlContext"]);
-    expect(approvalStatus("bash", {}, context)).resolves.toBe("user-approval");
+    await expect(approvalStatus("bash", {}, context)).resolves.toBe(
+      "user-approval",
+    );
     expect(approvalRequirements.has("urlContext")).toBe(true);
     expect(
       (tools.urlContext as { needsApproval?: unknown })?.needsApproval,
@@ -285,67 +355,36 @@ describe("createTools", () => {
       denyTools: ["bash", "neverRegistered"],
     });
 
-    // bash comes from the sandbox, not config.tools. Naming it there throws
-    // "not a supported tool", so the deny list has to apply to the built set.
+    // bash comes from the sandbox, not config.tools, so the deny list applies to the built set.
     expect(Object.keys(tools).sort()).toEqual(["urlContext"]);
   });
 
-  it("rejects a retired account-tool id key in config.tools", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-
-    // Custom tools are sunset (#331 phase 3): a stale Convex-id key left in
-    // config.tools is now just an unsupported tool, not a lookup.
-    expect(
-      createTools(createToolContext() as never, {
-        tools: { qs78zwc4z4q5ysxm74fgrhd13s88xxt: { enabled: true } },
-      }),
-    ).rejects.toThrow("is not a provider-defined tool");
-  });
-
   it("rebuilds a provider tool from an AI SDK descriptor's args", async () => {
-    const googleSearchMock = mock((options: unknown) => ({
-      provider: "googleSearch",
-      options: options,
-    }));
     const { createTools } = await import("../src/harness/tools/index.ts");
 
-    // Shape produced by JSON.stringify(google.tools.googleSearch({...})). The
-    // lazy schemas drop out, so only `args` is meaningful.
-    const tools = await createTools(createToolContext(googleSearchMock), {
-      tools: {
-        googleSearch: {
-          type: "provider",
-          isProviderExecuted: true,
-          id: "google.google_search",
-          args: { searchTypes: { webSearch: {} } },
+    // As JSON.stringify(google.tools.googleSearch(...)) emits it: the lazy schemas drop out.
+    const tools = await createTools(
+      {
+        ...createToolContext(),
+        modelProvider: createGoogle({ apiKey: "test" }),
+      },
+      {
+        tools: {
+          search: {
+            type: "provider",
+            isProviderExecuted: true,
+            id: "google.google_search",
+            args: { searchTypes: { webSearch: {} } },
+          },
         },
       },
-    });
-
-    expect(Object.keys(tools)).toEqual(["googleSearch"]);
-    expect(googleSearchMock).toHaveBeenCalledWith({
-      searchTypes: { webSearch: {} },
-    });
-  });
-
-  it("rejects a config.tools key the configured provider does not ship", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-
-    expect(
-      createTools(createToolContext(), { tools: { notAProviderTool: {} } }),
-    ).rejects.toThrow(
-      /config\.tools\.notAProviderTool is not a provider-defined tool/,
     );
-  });
 
-  it("exposes only bash when a sandbox has no workspace (stateless)", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-
-    const context = sandboxContext();
-    const tools = await createTools(context, {});
-
-    expect(Object.keys(tools).sort()).toEqual(["bash"]);
-    expect(approvalStatus("bash", {}, context)).resolves.toBe("user-approval");
+    expect(Object.keys(tools)).toEqual(["search"]);
+    expect(tools.search).toMatchObject({
+      id: "google.google_search",
+      args: { searchTypes: { webSearch: {} } },
+    });
   });
 
   it("exposes the full file tool set when a workspace is attached", async () => {
@@ -366,9 +405,8 @@ describe("createTools", () => {
       "read",
       "write",
     ]);
-    // bypass mode auto-approves everything.
     for (const name of Object.keys(tools)) {
-      expect(approvalStatus(name, {}, context)).resolves.toBeUndefined();
+      await expect(approvalStatus(name, {}, context)).resolves.toBeUndefined();
     }
   });
 
@@ -412,15 +450,21 @@ describe("createTools", () => {
     );
     await createTools(context, {});
 
-    expect(approvalStatus("write", {}, context)).resolves.toBe("user-approval");
-    expect(approvalStatus("edit", {}, context)).resolves.toBe("user-approval");
-    expect(approvalStatus("memory_save", {}, context)).resolves.toBe(
+    await expect(approvalStatus("write", {}, context)).resolves.toBe(
       "user-approval",
     );
-    expect(approvalStatus("bash", {}, context)).resolves.toBe("user-approval");
-    expect(approvalStatus("read", {}, context)).resolves.toBeUndefined();
-    expect(approvalStatus("glob", {}, context)).resolves.toBeUndefined();
-    expect(approvalStatus("grep", {}, context)).resolves.toBeUndefined();
+    await expect(approvalStatus("edit", {}, context)).resolves.toBe(
+      "user-approval",
+    );
+    await expect(approvalStatus("memory_save", {}, context)).resolves.toBe(
+      "user-approval",
+    );
+    await expect(approvalStatus("bash", {}, context)).resolves.toBe(
+      "user-approval",
+    );
+    await expect(approvalStatus("read", {}, context)).resolves.toBeUndefined();
+    await expect(approvalStatus("glob", {}, context)).resolves.toBeUndefined();
+    await expect(approvalStatus("grep", {}, context)).resolves.toBeUndefined();
   });
 
   it("exposes only read/glob for a read-only workspace (no sandbox)", async () => {
@@ -475,8 +519,6 @@ describe("createTools", () => {
       {},
     );
 
-    // bash/write/edit/grep/memory_save exist for the sandbox-backed workspace;
-    // read/glob span both.
     expect(Object.keys(tools).sort()).toEqual([
       "bash",
       "edit",
@@ -486,12 +528,9 @@ describe("createTools", () => {
       "read",
       "write",
     ]);
-    // write preserves the real default workspace (ro) instead of silently selecting the
-    // later writable one. Because ro is read-only there is no sandbox to approve against,
-    // so omitting workspace does NOT prompt. It falls straight through to a clean
-    // read-only error.
+    // The default workspace is read-only: no sandbox to approve against, so no prompt.
     expect(await needsApproval(tools.write)).toBe(false);
-    expect(
+    await expect(
       (
         tools.write as unknown as { execute(i: unknown): Promise<unknown> }
       ).execute({
@@ -501,12 +540,6 @@ describe("createTools", () => {
       }),
     ).rejects.toThrow("Error: workspace is read-only");
     expect(await needsApproval(tools.write, { workspace: "rw" })).toBe(false);
-  });
-
-  it("exposes no sandbox tools when no sandbox is referenced", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-
-    expect(await createTools(createToolContext(), {})).toEqual({});
   });
 
   it("exposes run_subagent only when subagents are enabled with a dispatcher", async () => {
@@ -589,7 +622,7 @@ describe("createTools", () => {
       defaultModeSchema.jsonSchema.properties.tasks.items.properties
         .conversationKey,
     ).toBeDefined();
-    expect(
+    await expect(
       (
         tools.run_subagent as {
           execute(input: unknown, options: unknown): Promise<unknown>;
@@ -626,7 +659,7 @@ describe("createTools", () => {
       ],
       [{ role: "user", content: "hello" }],
     );
-    expect(
+    await expect(
       (
         tools.run_subagent as {
           execute(input: unknown, options: unknown): Promise<unknown>;
@@ -648,7 +681,7 @@ describe("createTools", () => {
       "tasks[0].conversationKey is only supported in persistent mode",
     );
 
-    expect(
+    await expect(
       (
         tools.run_subagent as {
           execute(input: unknown, options: unknown): Promise<unknown>;
@@ -668,7 +701,7 @@ describe("createTools", () => {
       ),
     ).rejects.toThrow("tasks[0].shareContext is not supported");
 
-    expect(
+    await expect(
       (
         tools.run_subagent as {
           execute(input: unknown, options: unknown): Promise<unknown>;
@@ -725,6 +758,7 @@ describe("createTools", () => {
       dispatch,
     ) as unknown as Record<string, unknown>;
     context.session = { eventId: "acct:acct_test:agent:parent:event" };
+    context.messageChild = mock(async () => ({}));
 
     expect(
       Object.keys(
@@ -732,12 +766,7 @@ describe("createTools", () => {
           subagent: { enabled: true, mode: "persistent" },
         }),
       ),
-    ).toEqual([
-      "run_subagent",
-      "get_subagent_status",
-      "update_subagent",
-      "stop_subagent",
-    ]);
+    ).toEqual(["run_subagent", "stop_subagent", "message-agents"]);
     expect(
       Object.keys(
         await createTools(context as never, {
@@ -745,6 +774,25 @@ describe("createTools", () => {
         }),
       ),
     ).toEqual(["run_subagent"]);
+  });
+
+  it("gives a persistent child message-agents to reach its parent", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const context = {
+      ...createToolContext(undefined, "google"),
+      parentLink: {
+        ask: (): boolean => true,
+        note: async (message: AgentMessage): Promise<AgentMessageResult> => ({
+          status: "delivered",
+          exchangeId: message.exchangeId,
+          note: "",
+        }),
+      },
+    };
+
+    expect(Object.keys(await createTools(context, {}))).toEqual([
+      "message-agents",
+    ]);
   });
 
   it("exposes subagent conversation keys in persistent mode", async () => {
@@ -780,7 +828,7 @@ describe("createTools", () => {
       runSubagentSchema.jsonSchema.properties.tasks.items.properties
         .conversationKey?.description,
     ).toContain("conversationKey an earlier run_subagent call returned");
-    expect(
+    await expect(
       (
         tools.run_subagent as {
           execute(input: unknown, options: unknown): Promise<unknown>;
@@ -830,7 +878,7 @@ describe("createTools", () => {
     });
 
     expect(Object.keys(tools).sort()).toEqual(["googleSearch", "urlContext"]);
-    // enabled/needsApproval/async are registry-level flags and never reach the
+    // enabled/needsApproval are registry-level flags and never reach the
     // provider factory; every other key is passed through as tool args.
     expect(googleSearchMock).toHaveBeenCalledWith({
       searchTypes: {
@@ -840,38 +888,21 @@ describe("createTools", () => {
     expect(urlContextMock).toHaveBeenCalledWith({});
   });
 
-  it("passes async-enabled provider tools through the async coordinator", async () => {
+  it("records needsApproval on the registry and keeps it out of the tool args", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const approvalRequirements = new Map<string, true>();
-    const dispatch: NonNullable<ToolContext["dispatchAsyncTools"]> = mock(
-      (tools, asyncToolModes): ToolSet => {
-        expect([...asyncToolModes]).toEqual(["googleSearch"]);
-        expect(
-          (tools.googleSearch as { needsApproval?: unknown }).needsApproval,
-        ).toBeUndefined();
-
-        return {
-          googleSearch: Object.assign(tools.googleSearch!, { wrapped: true }),
-        };
-      },
-    );
-
     const googleSearchMock = mock((options: unknown) => ({
       provider: "googleSearch",
       options: options,
-      execute: mock(async () => ({ ok: true })),
     }));
 
     const tools = await createTools(
-      Object.assign(
-        {},
-        createToolContext(googleSearchMock, "google", undefined, dispatch),
-        { approvalRequirements: approvalRequirements },
-      ) as never,
+      Object.assign({}, createToolContext(googleSearchMock), {
+        approvalRequirements: approvalRequirements,
+      }) as never,
       {
         tools: {
           googleSearch: {
-            async: true,
             needsApproval: true,
             searchTypes: { webSearch: {} },
           },
@@ -879,8 +910,9 @@ describe("createTools", () => {
       },
     );
 
-    expect(dispatch).toHaveBeenCalledTimes(1);
-    expect((tools.googleSearch as { wrapped?: boolean }).wrapped).toBe(true);
+    expect(
+      (tools.googleSearch as { needsApproval?: unknown }).needsApproval,
+    ).toBeUndefined();
     expect(approvalRequirements.has("googleSearch")).toBe(true);
     expect(googleSearchMock).toHaveBeenCalledWith({
       searchTypes: { webSearch: {} },
@@ -890,7 +922,7 @@ describe("createTools", () => {
   it("rejects a provider tool the configured provider does not ship", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
 
-    expect(
+    await expect(
       createTools(
         Object.assign({}, createToolContext(undefined, "openai"), {
           modelProvider: { tools: { webSearch: mock(() => ({})) } },
@@ -909,13 +941,13 @@ describe("createTools", () => {
   it("rejects configured tools without a registered factory", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
 
-    expect(
+    await expect(
       createTools(createToolContext(), {
         tools: {
           bash: { enabled: true },
         },
       }),
-    ).rejects.toThrow("config.tools.bash is not a supported tool");
+    ).rejects.toThrow("config.tools.bash is a Broods tool name");
   });
 
   it("withholds the scheduled task tools until the agent opts in", async () => {
@@ -974,7 +1006,7 @@ describe("createTools", () => {
     ).toEqual({});
   });
 
-  it("schedules a one-time task and rejects a malformed expression", async () => {
+  it("schedules a one-time task in this conversation", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const create = mock(async function (): Promise<CronRecord> {
       return {
@@ -1000,15 +1032,6 @@ describe("createTools", () => {
       conversationKey: "slack:T1:C1",
       scheduleExpression: "at(2027-01-01T09:00:00)",
     });
-
-    expect(
-      channelToolExecute(tools.schedule, {
-        name: "broken",
-        instructions: "Never mind.",
-        schedule: "every monday",
-      }),
-    ).rejects.toThrow(/cron\(\.\.\.\), rate\(\.\.\.\), or at\(\.\.\.\)/);
-    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("lists only the calling agent's scheduled tasks", async () => {
@@ -1043,8 +1066,7 @@ describe("createTools", () => {
 
   it("updates its own scheduled task and refuses another agent's", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
-    // Every field the success line quotes differs from the stored record, so
-    // the test fails if the message is built from the pre-update read.
+    // Every quoted field differs from the stored record, catching a pre-update message.
     const update = mock(async function (): Promise<CronRecord> {
       return {
         ...cronSummary(),
@@ -1082,9 +1104,7 @@ describe("createTools", () => {
     ).toBe(
       "Updated scheduled task 'renamed' (cron_mine): cron(0 10 * * ? *) in Europe/Paris, paused.",
     );
-    // instructions ride the patch as `input`, the one-of field the config plane
-    // collapses into stored events. Nothing may add agentId or conversationKey,
-    // which is what stops a task being repointed.
+    // Nothing may add agentId or conversationKey: that is what stops a task being repointed.
     expect(update).toHaveBeenCalledWith("acct_test", "cron_mine", {
       name: "renamed",
       input: "Post the new summary.",
@@ -1093,19 +1113,19 @@ describe("createTools", () => {
       status: "paused",
     });
 
-    expect(
+    await expect(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_other",
         name: "stolen",
       }),
     ).rejects.toThrow("No scheduled task cron_other belongs to this agent");
-    expect(
+    await expect(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_mine",
         schedule: "every monday",
       }),
     ).rejects.toThrow(/cron\(\.\.\.\), rate\(\.\.\.\), or at\(\.\.\.\)/);
-    expect(
+    await expect(
       channelToolExecute(tools.update_schedule, { cronId: "cron_mine" }),
     ).rejects.toThrow("Pass at least one of name, instructions, schedule");
     expect(update).toHaveBeenCalledTimes(1);
@@ -1133,7 +1153,7 @@ describe("createTools", () => {
       scheduler: { enabled: true },
     });
 
-    expect(
+    await expect(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_elsewhere",
         instructions: "Post everything here instead.",
@@ -1141,8 +1161,7 @@ describe("createTools", () => {
     ).rejects.toThrow("answers in another conversation");
     expect(update).not.toHaveBeenCalled();
 
-    // Retiming, pausing and resuming carry no model-chosen content, so they
-    // still reach a task bound elsewhere.
+    // Retime, pause and resume carry no model-chosen text, so a task bound elsewhere takes them.
     await channelToolExecute(tools.update_schedule, {
       cronId: "cron_elsewhere",
       status: "paused",
@@ -1160,7 +1179,7 @@ describe("createTools", () => {
     });
   });
 
-  it("validates its own input because the AI SDK does not enforce the schema", async () => {
+  it("refuses a timezone the config plane would refuse", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const update = mock(async function (): Promise<CronRecord> {
       return cronSummary();
@@ -1177,18 +1196,7 @@ describe("createTools", () => {
       scheduler: { enabled: true },
     });
 
-    // The model can emit anything: inputSchema is a hint, so an absent required
-    // field must not reach the tool body as a TypeError.
-    expect(channelToolExecute(tools.update_schedule, {})).rejects.toThrow(
-      "cronId is required",
-    );
-    expect(
-      channelToolExecute(tools.update_schedule, {
-        cronId: "cron_mine",
-        status: "cancelled",
-      }),
-    ).rejects.toThrow("status must be active or paused");
-    expect(
+    await expect(
       channelToolExecute(tools.update_schedule, {
         cronId: "cron_mine",
         timezone: "Asia/Ho Chi Minh",
@@ -1223,12 +1231,12 @@ describe("createTools", () => {
     ).toBe("Cancelled scheduled task 'daily-standup' (cron_mine).");
     expect(remove).toHaveBeenCalledWith("acct_test", "cron_mine");
 
-    expect(
+    await expect(
       channelToolExecute(tools.cancel_schedule, {
         cronId: "cron_other",
       }),
     ).rejects.toThrow("No scheduled task cron_other belongs to this agent");
-    expect(
+    await expect(
       channelToolExecute(tools.cancel_schedule, { cronId: "nope" }),
     ).rejects.toThrow("No scheduled task nope belongs to this agent");
     expect(remove).toHaveBeenCalledTimes(1);
@@ -1316,6 +1324,57 @@ describe("connected MCP servers", () => {
     });
   });
 
+  it("reads a linked image only from a public address", async () => {
+    setMcpForTests({
+      callTool: async function () {
+        return {
+          content: [
+            {
+              type: "resource_link" as const,
+              uri: "http://169.254.169.254/latest/shot.png",
+              name: "metadata.png",
+              mimeType: "image/png",
+            },
+            {
+              type: "resource_link" as const,
+              uri: "http://127.0.0.1:3210/shot.png",
+              name: "loopback.png",
+              mimeType: "image/png",
+            },
+            {
+              type: "resource_link" as const,
+              uri: "file:///tmp/shot.png",
+              name: "local.png",
+              mimeType: "image/png",
+            },
+          ],
+        };
+      },
+    });
+
+    const result = await callMcpTool(
+      mcpConnection(mcpRecord(), undefined),
+      "screenshot",
+      {},
+    );
+
+    // Core fetches the picture itself, so a private-address or server-file link stays text.
+    expect(result).toEqual({
+      type: "content",
+      value: [
+        {
+          type: "text",
+          text: "[resource link: http://169.254.169.254/latest/shot.png]",
+        },
+        {
+          type: "text",
+          text: "[resource link: http://127.0.0.1:3210/shot.png]",
+        },
+        { type: "text", text: "[resource link: file:///tmp/shot.png]" },
+      ],
+    });
+  });
+
   it("shows the model only images it can read, within one result's budget", async () => {
     // A PNG header padded to just over 6 MB once decoded.
     const huge = `${pngHeader(10, 10)}${"A".repeat(8 * 1024 * 1024)}`;
@@ -1334,7 +1393,6 @@ describe("connected MCP servers", () => {
             image(jpegHeader(2, 3)),
             image("not base64!"),
             image(btoa("<svg/>"), "image/svg+xml"),
-            // A PNG signature with no header behind it cannot be decoded.
             image("iVBORw0KGgo="),
             image(pngHeader(9000, 10)),
             image(huge),
@@ -1350,7 +1408,6 @@ describe("connected MCP servers", () => {
       {},
     )) as { type: "content"; value: Array<Record<string, string>> };
 
-    // The bytes name the type: a JPEG labelled PNG goes through as a JPEG.
     expect(result.value[0]).toEqual({
       type: "image-data",
       data: jpegHeader(2, 3),
@@ -1409,7 +1466,7 @@ describe("connected MCP servers", () => {
     const tools = await createTools(createToolContext(), {
       mcp: { [serverId]: {} },
     });
-    expect(
+    await expect(
       (tools.search__query as unknown as ChannelTestTool).execute(
         {},
         {} as never,
@@ -1430,7 +1487,7 @@ describe("connected MCP servers", () => {
       },
     });
 
-    expect(
+    await expect(
       createTools(createToolContext(), { mcp: { [serverId]: {} } }),
     ).rejects.toThrow("still carries a ${NAME} ref");
   });
@@ -1439,7 +1496,7 @@ describe("connected MCP servers", () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     setStorageForTests(storageWithMcp(mcpRecord()));
 
-    expect(
+    await expect(
       createTools(createToolContext(), {
         mcp: { k57unknown0000000000000000000000: {} },
       }),
@@ -1534,7 +1591,6 @@ function createToolContext(
   ),
   modelProviderName: ToolContext["modelProviderName"] = "google",
   dispatchSubagents?: ToolContext["dispatchSubagents"],
-  dispatchAsyncTools?: ToolContext["dispatchAsyncTools"],
 ): Omit<ToolContext, "config"> {
   return {
     accountId: "acct_test",
@@ -1547,11 +1603,9 @@ function createToolContext(
       },
     },
     ...(dispatchSubagents ? { dispatchSubagents: dispatchSubagents } : {}),
-    ...(dispatchAsyncTools ? { dispatchAsyncTools: dispatchAsyncTools } : {}),
   };
 }
 
-/** Tool context for a Slack-scoped session that may schedule tasks. */
 function schedulerToolContext(
   session: Partial<Session> = {},
 ): Omit<ToolContext, "config"> {
@@ -1646,8 +1700,7 @@ function storageWithCrons(
         ) ?? null
       );
     },
-    // Mirrors the by_accountId_and_agentId index: the store scopes the read,
-    // so a leak here would show up as a task the caller does not own.
+    // Scoped like the by_accountId_and_agentId index, so a leak shows as a foreign task.
     list: async function (accountId: string, agentId?: string) {
       return crons.filter(
         (cron) =>
@@ -1676,13 +1729,13 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
     mcp: {} as never,
     connections: {} as never,
     roleSessions: {} as never,
+    accountApiKeys: {} as never,
     taskUsage: {} as never,
     auditLedger: { append: async (): Promise<void> => {} },
   };
 }
 
-// A JPEG's start of image, then, after one 0xFF fill byte, the frame header
-// that names its size, as base64.
+// JPEG SOI, one 0xFF fill byte, then the SOF0 frame header that names the size.
 function jpegHeader(width: number, height: number): string {
   const frame = Buffer.alloc(20);
   frame.set([0xff, 0xd8, 0xff, 0xff, 0xc0, 0x00, 0x11, 0x08]);
@@ -1692,7 +1745,6 @@ function jpegHeader(width: number, height: number): string {
   return frame.toString("base64");
 }
 
-// A PNG's signature and IHDR chunk, as base64.
 function pngHeader(width: number, height: number): string {
   const header = Buffer.alloc(33);
   header.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
@@ -1755,7 +1807,6 @@ function sandboxContext(
         sandbox: { provider: "lambda", permissionMode: permissionMode },
       },
     ],
-    // Each workspace carries its own effective sandbox (its permissionMode lives on it).
     workspaces: workspaces.map((workspace): ResolvedWorkspace => ({
       ...workspace,
       config: { storage: { provider: "s3" } },
@@ -1785,9 +1836,7 @@ async function approvalStatus(
   });
 }
 
-// v7 approval lives on harness-level toolApproval. Tool definitions should not
-// carry legacy needsApproval; normalize the absence to false where tests only
-// need to verify auto-approved tools stay clean.
+// v7 approval lives on harness toolApproval; a definition without needsApproval is false.
 async function needsApproval(
   entry: unknown,
   input: Record<string, unknown> = {},

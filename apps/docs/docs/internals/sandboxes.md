@@ -80,9 +80,9 @@ flowchart TD
 | `sandbox`    | `workdir-executor.ts`    | `mount-s3` per run                  | native pause, resume, standby      | yes             | yes      | yes, logs and stop                 |
 | `daytona`    | `daytona-executor.ts`    | `mount-s3` with `mountAwsS3Buckets` | native `autoStopInterval`          | no              | yes      | yes, logs and stop                 |
 | `e2b`        | `e2b-executor.ts`        | rejected                            | native pause on timeout            | no              | yes      | launch and callback, no logs, stop |
-| `vercel`     | `vercel-executor.ts`     | rejected                            | named sandbox                      | no              | yes      | yes, logs and stop                 |
+| `vercel`     | `vercel-executor.ts`     | `mount-s3` per run                  | named sandbox                      | no              | yes      | yes, logs and stop                 |
 | `cloudflare` | `cloudflare-executor.ts` | rejected                            | same Container while warm, no disk | no              | no       | no                                 |
-| `worker`     | `isolate-executor.ts`    | rejected                            | files stored in R2 between calls   | no              | no       | no                                 |
+| `worker`     | `worker-executor.ts`     | rejected                            | files stored in R2 between calls   | no              | no       | no                                 |
 | `machine`    | `machine-executor.ts`    | rejected                            | no                                 | no              | no       | no                                 |
 | `custom`     | `http-executor.ts`       | rejected                            | no                                 | no              | no       | no                                 |
 
@@ -230,6 +230,7 @@ stateDiagram-v2
 
 - Refresh removes the row when the provider reports nothing or `terminating`, so `terminating` is never stored by core.
 - `specs` is what the meter bills. `specsVerified` is set only when the size is real: a provider report, or the size Broods sets on workdir, MicroVM and Cloudflare. Without it the dashboard shows `?`.
+- Executors refresh the row on every command. A refresh of a machine still running at the size, credentials and project it was last billed at bills at most once a minute (`REFRESH_BILL_EVERY_MS` in `packages/convex/sandbox/instances.ts`), so an owner's concurrent tasks write the shared usage rows about once a minute each, not on every command. The next bill, status change or removal covers the stretch, so nothing is lost; like the idle tail, it lands on the day and month of the bill that covers it, and live usage can trail by up to a minute.
 
 ## Lifecycle actions and terminal
 
@@ -286,7 +287,7 @@ sequenceDiagram
   S->>S: job writes .log and .exit
   S->>Core: POST /v1/sandbox-jobs/:resultId/complete, x-job-token
   Core->>CVX: verify token, settle completed or failed
-  alt model already observed it through async_status
+  alt row already stored: a saved async_status read or the turn wrote it
     Note over Core: skip the continuation
   else
     Core->>CVX: admit continuation as a followup
@@ -295,7 +296,8 @@ sequenceDiagram
   opt model polls
     M->>Core: async_status status, logs or stop
     Core->>S: jobStatus, jobLogs or stopJob
-    Core->>CVX: settle if terminal, mark observed
+    Core->>CVX: settle if terminal
+    Note over Core,CVX: the step save that carries the read stores the row
   end
 ```
 
@@ -319,8 +321,8 @@ stateDiagram-v2
   [*] --> processing: created before launch
   processing --> completed: callback or poll reads exit 0
   processing --> failed: callback, poll, or launch error
-  completed --> observed: async_status read it
-  failed --> observed: async_status read it
+  completed --> stored: saved history holds it, or a run that saves none read it
+  failed --> stored: saved history holds it, or a run that saves none read it
 ```
 
 - `lambda`, workdir, Daytona and Vercel keep markers under `<workspace root>/.fp-jobs/<reservation key>`, at most 10 running (`MAX_CONCURRENT_BACKGROUND_JOBS`). E2B uses its native `background: true` command, so it has callback delivery but no logs or stop.
@@ -461,13 +463,13 @@ A workspace's `isolation` picks the namespace a run mounts (`isolatedWorkspaceNa
 
 Credentials fall back to deployment env: `DAYTONA_API_KEY`, `DAYTONA_ORGANIZATION_ID`, `DAYTONA_API_URL`, `DAYTONA_TARGET`; `E2B_API_KEY`; `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`.
 
-| Topic             | Daytona                                                | E2B                                       | Vercel                                                 |
-| ----------------- | ------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------ |
-| Idle              | `idleTimeoutSeconds` to `autoStopInterval`             | sandbox timeout with `onTimeout: "pause"` | timeout counts from start, reset each wake             |
-| Max lifetime      | `maxLifetimeSeconds` or 7 days to `autoDeleteInterval` | not mapped                                | not enforced                                           |
-| `config.snapshot` | `snapshot`                                             | `template`                                | `source` snapshot for `snap_`, else image              |
-| Snapshot verb     | `sandbox.createSnapshot`, `broods-<uuid>` name         | `Sandbox.createSnapshot`                  | `sandbox.snapshot({ expiration: 0 })`                  |
-| Network           | `networkBlockAll`, domain lists ignored with a warning | `allow-all` only                          | `allow-all`, `deny-all`, or domain and CIDR allowlists |
+| Topic             | Daytona                                                | E2B                                       | Vercel                                                              |
+| ----------------- | ------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------------------- |
+| Idle              | `idleTimeoutSeconds` to `autoStopInterval`             | sandbox timeout with `onTimeout: "pause"` | session extended to idle past each call, 24 h cap (45 min on Hobby) |
+| Max lifetime      | `maxLifetimeSeconds` or 7 days to `autoDeleteInterval` | not mapped                                | checked at acquire, retires and recreates                           |
+| `config.snapshot` | `snapshot`                                             | `template`                                | `source` snapshot for `snap_`, else image                           |
+| Snapshot verb     | `sandbox.createSnapshot`, `broods-<uuid>` name         | `Sandbox.createSnapshot`                  | `sandbox.snapshot({ expiration: 0 })`                               |
+| Network           | `networkBlockAll`, domain lists ignored with a warning | `allow-all` only                          | `allow-all`, `deny-all`, or domain and CIDR allowlists              |
 
 - Daytona needs a snapshot with `mount-s3`, built by `bun run daytona:s3-snapshot` (`apps/core/scripts/daytona-s3-snapshot.ts`). It assumes the `sandbox-s3mount` role (`SANDBOX_MOUNT_ROLE_ARN`) for prefix-scoped credentials.
 - Each snapshot verb finishes before it answers, so the row is `active` at once.
@@ -540,7 +542,7 @@ stateDiagram-v2
 - `network.mode: "allow-all"` starts with `enableInternet: true`, anything else without; `restricted` is rejected. `size` maps to the nearest instance type, `standard-1` to `standard-4` (`CLOUDFLARE_INSTANCE_TYPES` in `apps/core/src/shared/sandbox-sizes.ts`).
 - Limits are in `apps/cloudflare-sandbox/src/limits.ts`, which core imports to clamp: 1 MiB output per stream, 15 minute timeout, 6 hour idle (the `setInactivityTimeout` ceiling). An ephemeral Container idles only a minute past its command, so one whose `DELETE` failed stops soon.
 - Exit 124 or 137 counts as a timeout only once the deadline passed; earlier it is the command's own exit or an OOM kill.
-- `deploy.yaml` does not deploy the bridge. A deployment that offers the provider runs `wrangler deploy` and sets `SANDBOX_API_KEY` on the Worker equal to core's `CLOUDFLARE_SANDBOX_API_KEY`, with `CLOUDFLARE_SANDBOX_URL` pointing at it.
+- `sst deploy` ships the bridge per stage with wrangler, as `cloudflareWorkers.sandbox`, when the deploy has `CLOUDFLARE_API_TOKEN`. Its Container image is built only when the registry lacks `broods-sandbox:<Dockerfile hash>` (the first deploy to an account, or a `Dockerfile` change), shared by every stage, so only that deploy needs Docker. The infra repo generates `SANDBOX_API_KEY`, puts it on the Worker and in core's `CLOUDFLARE_SANDBOX_API_KEY`, and points `CLOUDFLARE_SANDBOX_URL` at it. Each stage's bridge has its own Containers.
 
 ## Worker
 
@@ -548,7 +550,7 @@ Bash in a V8 isolate, no container and no Durable Object. `isolate-executor.ts` 
 
 ```mermaid
 sequenceDiagram
-  participant E as isolate-executor
+  participant E as worker-executor
   participant W as V8 Worker
   participant R2 as R2 sandboxes/:id
   participant I as isolate (just-bash)
@@ -578,7 +580,8 @@ sequenceDiagram
 - The isolate is keyed by sandbox id plus what is fixed at load: its network (`globalOutbound: null` without internet, so `curl` is not even registered) and its CPU limit, `limits.cpuMs` from the call's timeout. That limit is the real guard for a busy command, because inside an isolate the clock moves only while the shell waits; just-bash's own deadline (exit 124) catches a `sleep` or a slow `curl`.
 - The isolate runs with `nodejs_compat` for `node:zlib` (gzip and file sniffing, and the stored disk) and the `Buffer` global; nothing else from Node is in the build. `bun run build` in the workspace writes `.generated/runtime.txt` from `src/runtime.ts`, and the host ships it as a text module.
 - Limits are in `apps/cloudflare-worker/src/limits.ts`, which core imports to clamp: 1 MiB output per stream, 60 s timeout, 16 MiB stored disk compressed. A disk past the cap stays as it was and the call fails with what to clean up.
-- `deploy.yaml` does not deploy the Worker. A deployment that offers the provider runs `wrangler deploy` and sets `WORKER_API_KEY` on the Worker equal to core's `CLOUDFLARE_WORKER_API_KEY`, with `CLOUDFLARE_WORKER_URL` pointing at it. `bun test` there runs the Worker in Miniflare with a real Worker Loader and R2.
+- `sst deploy` ships the Worker per stage with wrangler, as `cloudflareWorkers.worker`, when the deploy has `CLOUDFLARE_API_TOKEN`. The infra repo generates `WORKER_API_KEY`, puts it on the Worker and in core's `CLOUDFLARE_WORKER_API_KEY`, and points `CLOUDFLARE_WORKER_URL` at it. `bun test` there runs the Worker in Miniflare with a real Worker Loader and R2.
+- A `disk` workspace (`storage.provider: "disk"`, `sandboxHoldsWorkspace` in `packages/convex/model/sandboxProviders.ts`) is this disk: the workspace sandbox carries no `storage`, so the executor reserves on the workspace namespace and each folder, partition and user conversation is its own R2 object. `SHELL_ONLY_SANDBOX_PROVIDERS` marks the shell with no `node` and no `sync`: `edit` reads the file with `base64`, replaces in core and writes it back; `glob` lists with `find` and matches with `Bun.Glob`; `write` skips `sync`. `harness/conversation-files.ts` reads a folder as one gzipped listing (the answer is capped at 1 MiB) and replaces it in one command.
 
 ## Machine
 
@@ -629,6 +632,8 @@ flowchart TD
 ```
 
 - The key is stored on `runtimeHarnessSessions`, so a conversation resumes on the machine it started on. A session ending on a shared machine neither suspends nor deletes it.
+- Claude Code, Codex, Deep Agents and OpenCode keep the conversation on the machine (each CLI's own session store), and the checkpoint holds only its id. When the machine is released, or an adapter version bump moves the conversation to a new one, the next turn starts a fresh session.
+- Pi keeps its conversation in Convex: Pi appends each session entry through `sessionStorage` (`adapters/pi.ts`), the Broods `Session` holds the entries until `saveHarnessSession`, and the checkpoint holds only the leaf entry id and the last entry sequence. A turn usually costs one save and one paged read whatever the history length; a turn over one transaction's budget (4 MiB or 100 entries) stages the rest in `appendHarnessSessionEntries` first. When Pi's machine is released, `openAiSdkHarnessSession` resumes the same session on a fresh machine and logs it; the other adapters start a fresh session. An entry over 512 KiB is stored with every image swapped for `[attachment not retained]` and every long string truncated, in one pass.
 - Neither provider streams processes, so `harness-shell-process.ts` runs the adapter detached and file-spooled; short shell calls poll its output in 180 KiB chunks every 25 ms.
 - On `lambda`, WebSocket ingress needs the AWS token and port as subprotocols, so `microvm-websocket-proxy.ts` hands the adapter a loopback URL and adds them upstream. The token stays in core and the upstream header, never a URL or log.
 

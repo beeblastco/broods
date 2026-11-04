@@ -1,11 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * The stage's user-token signing secret: an admin mints it from the
- * dashboard, sees it once, and core receives it sealed with the runtime key's
- * deployment. The per-agent requirement is a dashboard switch on the agent
- * row that config syncs never touch.
- */
-
 import workosTest from "@convex-dev/workos-authkit/test";
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
@@ -239,11 +232,9 @@ async function setup(): Promise<{
   };
 }
 
-/** Seed AuthKit's verified user projection without replacing its getAuthUser implementation. */
 async function seedAuthUser(t: T): Promise<void> {
   const now = new Date().toISOString();
   await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {
-    apiKey: "sk_test_fixture",
     event: {
       id: "evt_user_token_signup",
       event: "user.created",

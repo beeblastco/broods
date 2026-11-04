@@ -18,18 +18,27 @@ import {
 import { CONVEX_ID_SHAPE } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
 import { useSession } from "@/app/lib/session";
-import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
+import {
+  useAction,
+  useConvex,
+  useConvexAuth,
+  useMutation,
+  useQuery,
+} from "convex/react";
 import dynamic from "next/dynamic";
-import posthog from "posthog-js";
+import { analytics } from "@/app/lib/analytics";
 import { notFound, useParams, useRouter } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
+import {
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 const SYNC_RETRY_MS = 5_000;
 
-// Shown once, on the first login of an account's life. It has no business
-// riding along in the layout chunk every other session loads. `loading` is
-// what buys it a Suspense boundary of its own; without one its download
-// suspends the whole signed-in tree, header included.
+// `loading` gives it a Suspense boundary; without one its download suspends the whole shell.
 const OnboardingDialog = dynamic(
   () =>
     import("@/app/components/OnboardingDialog").then(
@@ -38,7 +47,6 @@ const OnboardingDialog = dynamic(
   { loading: (): null => null },
 );
 
-/** The signed-in shell: auth gates, header, sidebar, page and copilot dock. */
 export function MainShell({
   children,
   defaultSidebarOpen,
@@ -46,10 +54,7 @@ export function MainShell({
   children: React.ReactNode;
   defaultSidebarOpen: boolean;
 }>): React.JSX.Element | null {
-  // A segment that cannot be a project id is a 404 before anything queries
-  // with it: the header, copilot and page all cast it to `Id<"projects">`, and
-  // the first query validator to reject it would win over a notFound() thrown
-  // further down.
+  // 404 before anything casts the segment to Id<"projects">: a query validator would throw first.
   const { projectId } = useParams<{ projectId?: string }>();
   if (projectId !== undefined && !CONVEX_ID_SHAPE.test(projectId)) notFound();
   const { isLoading, isAuthenticated } = useConvexAuth();
@@ -59,32 +64,28 @@ export function MainShell({
   const syncProfile = useMutation(api.user.syncProfile);
   const signedIn = useSignedIn();
   const currentUser = useQuery(api.user.getCurrent, signedIn ? {} : "skip");
+  const convex = useConvex();
   const profileSynced = useRef(false);
-  const [onboardingSecret, setOnboardingSecret] = useState<string | null>(null);
+  const onboardingSecret = useSyncExternalStore(
+    subscribeOnboardingSecret,
+    readOnboardingSecret,
+    () => null,
+  );
   const [syncRetry, setSyncRetry] = useState(0);
 
-  // Surface the one-time account key produced by first-login auto-provision
-  // in the onboarding dialog, even after the home route navigates away.
-  useEffect(() => {
-    const sync = (): void => setOnboardingSecret(readOnboardingSecret());
-    sync();
-
-    return subscribeOnboardingSecret(sync);
-  }, []);
-
-  // An expired session signs in again and lands back where it was; the
-  // sign-in route validates `returnTo`.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- router: sign-in redirect
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
+      void analytics.then((posthog): void => {
+        posthog.reset();
+      });
       const returnTo = window.location.pathname + window.location.search;
       router.replace(`/auth/sign-in?returnTo=${encodeURIComponent(returnTo)}`);
     }
   }, [isLoading, isAuthenticated, router]);
 
-  // A signed-in caller with no user row is a signup whose WorkOS webhook has
-  // not landed yet. Create the rows directly; `currentUser` then flips and the
-  // routes below proceed as usual. Nothing else re-renders while the row is
-  // missing, so a failed attempt schedules its own retry.
+  // No row yet: the WorkOS webhook is late. Nothing re-renders meanwhile, so retry on a timer.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- Convex user row, retry timer
   useEffect(() => {
     if (currentUser !== null) return;
     let cancelled = false;
@@ -101,6 +102,7 @@ export function MainShell({
     };
   }, [currentUser, ensureSynced, syncRetry]);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- Convex profile from WorkOS
   useEffect(() => {
     const avatarUrl = user?.profilePictureUrl;
     if (profileSynced.current || !isAuthenticated || !avatarUrl || !currentUser)
@@ -111,24 +113,26 @@ export function MainShell({
     });
   }, [currentUser, isAuthenticated, user, syncProfile]);
 
-  // The Convex user row exists only after authentication and its `_id` is the
-  // app's stable user primary key, including for self-hosted accounts. Runs on
-  // every row change so a renamed user or plan change reaches the person; the
-  // SDK sends no second $identify for an unchanged distinct id.
+  // PostHog gets a keyed id, never who the user is. A one-off query, so a backend
+  // without it (a deploy in flight) costs the id, never the page.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- PostHog identify and plan
   useEffect(() => {
     if (!currentUser) return;
-
-    posthog.identify(currentUser._id, {
-      email: currentUser.email,
-      name: currentUser.name,
-      plan: currentUser.plan,
+    void analytics.then((posthog): void => {
+      posthog.register({ plan: currentUser.plan });
     });
-  }, [currentUser]);
+    convex
+      .query(api.user.analyticsId, {})
+      .then((id): void => {
+        if (id)
+          void analytics.then((posthog): void => {
+            posthog.identify(id);
+          });
+      })
+      .catch((): void => {});
+  }, [convex, currentUser]);
 
-  // The reporter is the first child of both fragments, one tree position, so
-  // it survives the auth flip instead of registering every observer twice.
-  // Mounted before the gates: LCP usually lands while this is still loading.
-  // Not held for Convex to confirm the token, which costs a round trip; see useSignedIn.
+  // Same position in both branches: it survives the auth flip, and LCP lands while loading.
   if (!signedIn) {
     return isLoading ? (
       <>
@@ -161,11 +165,9 @@ export function MainShell({
                     }}
                   />
                 )}
-                {/* The dock is a column beside the page, not a sheet over it: what
-                    it is about to change has to stay on screen. */}
                 <div className="flex min-h-0 flex-1">
                   <AppSidebar />
-                  <SidebarInset className="min-w-0 overflow-hidden">
+                  <SidebarInset className="relative min-w-0 overflow-hidden">
                     {children}
                   </SidebarInset>
                   <CopilotDock />

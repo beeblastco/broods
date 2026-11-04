@@ -1,4 +1,4 @@
-import { afterAll, afterEach, expect, it, mock, spyOn } from "bun:test";
+import { afterEach, expect, it, mock, spyOn } from "bun:test";
 import { MicrovmSandboxExecutor } from "../src/harness/sandbox/microvm-executor.ts";
 import * as runtimeModule from "../src/shared/convex/runtime.ts";
 import * as snapshots from "../src/shared/convex/sandbox-snapshots.ts";
@@ -30,15 +30,13 @@ const BUILDING = [
   },
 ];
 const restores: Array<() => void> = [];
-// Copied before the mock below rewrites the module, so afterAll can put it back.
-const realRuntime = { ...runtimeModule };
 const queries: unknown[][] = [];
 let building: unknown[] = [];
 
 await mock.module("../src/shared/convex/runtime.ts", () => ({
-  ...realRuntime,
+  ...runtimeModule,
   runtime: {
-    ...realRuntime.runtime,
+    ...runtimeModule.runtime,
     query: async (...args: unknown[]): Promise<unknown[]> => {
       queries.push(args);
 
@@ -46,14 +44,6 @@ await mock.module("../src/shared/convex/runtime.ts", () => ({
     },
   },
 }));
-
-// mock.module is process-wide; restore the real runtime for later test files.
-afterAll(async (): Promise<void> => {
-  await mock.module(
-    "../src/shared/convex/runtime.ts",
-    (): typeof runtimeModule => realRuntime,
-  );
-});
 
 afterEach((): void => {
   for (const restore of restores.splice(0)) restore();

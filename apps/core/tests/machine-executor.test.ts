@@ -76,7 +76,6 @@ import {
 const servers: Bun.Server<MachineSocketData>[] = [];
 const sockets: WebSocket[] = [];
 
-/** What a fake daemon says in its hello, and how it answers. */
 interface FakeDaemon {
   force?: boolean;
   /** The bearer it connects with; the account key when unset. */
@@ -134,7 +133,7 @@ test("a run round-trips through the daemon socket that claimed the record", asyn
 test("a run with no daemon connected names the command to fix it", async () => {
   core();
 
-  expect(
+  await expect(
     new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "true",
       timeoutSeconds: 5,
@@ -206,20 +205,19 @@ test("a daemon that hangs up while its claim is looked up leaves the record free
 test("another daemon is refused naming the holder, even on the same host, and --force takes over", async () => {
   const server = core();
   const holder = await connectDaemon(server, "my-mac", () => {}, {
-    hostname: "phicks-mac",
+    hostname: "office-mac",
   });
   const hello = (extra: Record<string, unknown>): string =>
     JSON.stringify({ type: "hello", sandbox: "my-mac", ...extra });
 
-  // A second daemon on the holder's own computer is the case a hostname check
-  // would have let through.
+  // A second daemon on the holder's own computer: a hostname check would let it through.
   const local = openSocket(server);
   local.onopen = (): void =>
-    local.send(hello({ hostname: "phicks-mac", instance: "second-daemon" }));
+    local.send(hello({ hostname: "office-mac", instance: "second-daemon" }));
   const refused = await closeOf(local);
 
   expect(refused.code).toBe(MACHINE_CLOSE.occupied.code);
-  expect(refused.reason).toBe(occupiedReason("phicks-mac"));
+  expect(refused.reason).toBe(occupiedReason("office-mac"));
 
   // No instance is not the same daemon.
   const anonymous = openSocket(server);
@@ -230,7 +228,7 @@ test("another daemon is refused naming the holder, even on the same host, and --
   const holderClosed = closeOf(holder.socket);
   await connectDaemon(server, "my-mac", () => {}, {
     force: true,
-    hostname: "kien-mac",
+    hostname: "laptop-mac",
     instance: "second-daemon",
   });
 
@@ -254,8 +252,7 @@ test("a role session without sandboxes:write cannot claim a machine", async () =
 test("the refusal reason fits a close frame however long the holder's host is", () => {
   const reason = occupiedReason("ü".repeat(80));
 
-  // 123 bytes is the WebSocket cap; over it, or cut mid-character, the daemon
-  // sees 1007 instead of 4423.
+  // Close reasons cap at 123 bytes; past that or cut mid-character the daemon gets 1007, not 4423.
   expect(new TextEncoder().encode(reason).length).toBeLessThanOrEqual(123);
   expect(reason).toEndWith("pass --force to take it over");
 });
@@ -372,7 +369,7 @@ test("a result with missing fields is a bad frame, and so is a second hello", as
   });
   const firstClosed = closeOf(first.socket);
 
-  expect(
+  await expect(
     new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "true",
       timeoutSeconds: 5,
@@ -391,7 +388,7 @@ test("a result with missing fields is a bad frame, and so is a second hello", as
 test("the computer tool reaches a daemon started with --computer, and names the flag otherwise", async () => {
   const server = core();
   await connectDaemon(server, "my-mac", () => {});
-  expect(
+  await expect(
     runMachineComputerAction(machineExecutorConfig(), { action: "screenshot" }),
   ).rejects.toThrow("broods machine my-mac --computer");
 
@@ -457,7 +454,7 @@ test("with two computers attached, a call reaches the one it names", async () =>
     await execute({ action: "cursor_position", sandbox: "my-mac" }, options),
   ).toEqual({ type: "text", value: "mine on my-mac" });
   // Two screens and no name is ambiguous, so it is refused rather than guessed.
-  expect(execute({ action: "cursor_position" }, options)).rejects.toThrow(
+  await expect(execute({ action: "cursor_position" }, options)).rejects.toThrow(
     "pass sandbox with the computer to act on: my-mac, other-mac",
   );
 });
@@ -475,9 +472,8 @@ test("a name from a longer list is refused once one computer is left", async () 
   >;
   const options = { toolCallId: "call-1", messages: [], context: {} };
 
-  // An approval replayed after the agent lost a machine still carries the name it
-  // was granted for. That must not land on the machine that is left.
-  expect(
+  // A replayed approval names the machine it was granted for, never the one that is left.
+  await expect(
     execute({ action: "cursor_position", sandbox: "other-mac" }, options),
   ).rejects.toThrow("pass sandbox with the computer to act on: my-mac");
   expect(await execute({ action: "cursor_position" }, options)).toEqual({
@@ -516,9 +512,7 @@ test("one step's computer actions reach the daemon one at a time, in the model's
     model: computerStepModel(actions),
     prompt: "type hello into the field",
     tools: tools,
-    // Like the harness: reserve first, then await. The click's start (a
-    // lifecycle webhook) resolves last, as in the trace where the text was
-    // typed before the click that focused the field.
+    // Like the harness: reserve first, then await; the click's start (a webhook) resolves last.
     onToolExecutionStart: async ({ toolCall }): Promise<void> => {
       reserve(toolCall);
       if (toolCall.toolCallId === "call-0") await Bun.sleep(50);
@@ -659,9 +653,9 @@ test("an MCP row lists and calls through the daemon that serves that server", as
   const server = core();
   const connection = mcpConnection(machineMcpRecord(), undefined);
 
-  expect(listMcpTools(connection)).rejects.toThrow("is not connected");
+  await expect(listMcpTools(connection)).rejects.toThrow("is not connected");
   await connectDaemon(server, "my-mac", () => {}, { mcp: ["other"] });
-  expect(listMcpTools(connection)).rejects.toThrow(
+  await expect(listMcpTools(connection)).rejects.toThrow(
     'does not serve MCP server "echo"',
   );
 
@@ -813,8 +807,7 @@ test("approval follows the computer a call names, not the agent's own", () => {
 
   expect(approval("my-mac")).toBe("user-approval");
   expect(approval("other-mac")).toBeUndefined();
-  // Naming none, or naming one that is not attached, cannot silently land on the
-  // machine that happens to be `bypass`.
+  // Naming none, or one not attached, must never land on the machine that is `bypass`.
   expect(approval()).toBe("user-approval");
   expect(approval("nope")).toBe("user-approval");
 });
@@ -891,7 +884,6 @@ test("each side's parser drops a frame whose fields do not match its type", () =
   });
 });
 
-/** A fake daemon that answers every computer frame with one fixed text. */
 function answersWith(text: string): NonNullable<FakeDaemon["onComputer"]> {
   return (frame, socket): void => {
     socket.send(
@@ -900,7 +892,6 @@ function answersWith(text: string): NonNullable<FakeDaemon["onComputer"]> {
   };
 }
 
-// One ask-mode pass where the model clicks, then takes a screenshot.
 async function askedClickThenScreenshot(ran: string[]): Promise<{
   messages: ModelMessage[];
   requests: ToolApprovalRequestOutput<ToolSet>[];
@@ -925,8 +916,6 @@ async function askedClickThenScreenshot(ran: string[]): Promise<{
   };
 }
 
-// One streamText pass over a recording computer on an `ask` machine, wired
-// like the harness. A click lasts until `clicked` settles.
 function askModeStream(
   ran: string[],
   clicked: Promise<void>,
@@ -955,7 +944,6 @@ function askModeStream(
   });
 }
 
-// One model step that calls the computer tool with each input, in order.
 function computerStepModel(
   inputs: Record<string, unknown>[],
 ): MockLanguageModelV4 {
@@ -1036,7 +1024,6 @@ function core(): Bun.Server<MachineSocketData> {
   return server;
 }
 
-/** One of the two machine records, as the computer tool sees it. */
 function machine(
   name: "my-mac" | "other-mac" = "my-mac",
   permissionMode: SandboxPermissionMode = "ask",
@@ -1063,8 +1050,7 @@ function openSocket(
   return socket;
 }
 
-// A computer tool that records each action as it starts. A click lasts until
-// `clicked` settles.
+// A click lasts until `clicked` settles.
 function recordingComputer(ran: string[], clicked: Promise<void>): ToolSet {
   return {
     computer: tool({
@@ -1096,9 +1082,7 @@ function result(
   };
 }
 
-// The next pass after a person answers each request of `asked`, in order, where
-// the model then calls `next`. The click lasts until `stop` aborts when one is
-// given.
+// The pass after a person answers `asked`; the click lasts until `stop` aborts, if given.
 function resumed(
   ran: string[],
   asked: Awaited<ReturnType<typeof askedClickThenScreenshot>>,

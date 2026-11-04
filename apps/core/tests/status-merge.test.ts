@@ -1,9 +1,3 @@
-/**
- * Status route compatibility tests: the durable ingress record merges with the
- * async agent result so approval-required and still-running async runs keep the
- * pre-ingress top-level polling contract.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   hashAccountSecret,
@@ -119,9 +113,11 @@ describe("status route ingress/async merge", () => {
     const response = await statusRequest();
     expect(response.status).toBe(200);
     const payload = await responseJson(response);
-    expect(payload.status).toBe("awaiting_approval");
-    expect(payload.approvals).toEqual(APPROVALS);
-    expect(payload.conversationKey).toBe("conversation-1");
+    expect(payload).toMatchObject({
+      status: "awaiting_approval",
+      approvals: APPROVALS,
+      conversationKey: "conversation-1",
+    });
   });
 
   it("keeps polling alive while detached async tools are still running", async () => {
@@ -138,7 +134,7 @@ describe("status route ingress/async merge", () => {
     };
 
     const payload = await responseJson(await statusRequest());
-    expect(payload.status).toBe("processing");
+    expect(payload).toMatchObject({ status: "processing" });
   });
 
   it("returns the completed response once the async record settles", async () => {
@@ -154,8 +150,10 @@ describe("status route ingress/async merge", () => {
     };
 
     const payload = await responseJson(await statusRequest());
-    expect(payload.status).toBe("completed");
-    expect(payload.response).toEqual({ answer: "done" });
+    expect(payload).toMatchObject({
+      status: "completed",
+      response: { answer: "done" },
+    });
   });
 
   it("serves pure ingress statuses unchanged when no async record exists", async () => {
@@ -163,8 +161,10 @@ describe("status route ingress/async merge", () => {
     asyncRow = null;
 
     const payload = await responseJson(await statusRequest());
-    expect(payload.status).toBe("queued");
-    expect(payload.requestedMode).toBe("reject");
+    expect(payload).toMatchObject({
+      status: "queued",
+      requestedMode: "reject",
+    });
   });
 
   it("names the agent the stored run belongs to", async () => {
@@ -172,7 +172,7 @@ describe("status route ingress/async merge", () => {
     asyncRow = null;
 
     const payload = await responseJson(await statusRequest());
-    expect(payload.agentId).toBe("agent_child");
+    expect(payload).toMatchObject({ agentId: "agent_child" });
   });
 
   it("returns 404 when the run id resolves to nothing", async () => {

@@ -1,9 +1,3 @@
-/**
- * Resource definition helpers for the code-first `broods/` project folder.
- *
- * Every runtime function here is synchronous.
- */
-
 import type {
   AgentConfig,
   HookAgentConfig,
@@ -12,7 +6,6 @@ import type {
   AgentGoogleChatChannelConfig,
   AgentInstagramChannelConfig,
   AgentLinearChannelConfig,
-  AgentMatrixChannelConfig,
   AgentMessengerChannelConfig,
   AgentSlackChannelConfig,
   AgentTeamsChannelConfig,
@@ -33,7 +26,6 @@ import type {
   LinearSource,
   SlackSource,
   DiscordSource,
-  MatrixSource,
   PancakeSource,
   TeamsSource,
   TwilioSource,
@@ -42,6 +34,7 @@ import type {
   MessengerSource,
   WhatsAppSource,
 } from "./contracts.ts";
+import type { Tool } from "ai";
 import type { McpRuntime } from "./account.ts";
 
 export type { ChannelPartition };
@@ -56,7 +49,6 @@ export interface EnvRef<Name extends string = string> {
   readonly name: Name;
 }
 
-/** Callable accessor for {@link env}. */
 export interface EnvAccessor {
   <const Name extends string>(name: Name): EnvRef<Name>;
 }
@@ -79,7 +71,6 @@ export interface BroodsProjectConfig {
     [name: string]: string | undefined;
   };
   dashboardUrl?: string;
-  /** Convex control-plane base URL for sync/env calls; defaults to the URL discovered at login. */
   baseUrl?: string;
 }
 
@@ -110,37 +101,22 @@ export interface ResourceDefinition<
   readonly config: Config;
 }
 
-/**
- * Authoring shape for every resource helper: the resource's own `name` (plus an
- * optional human `description`) sits inline with that resource's config keys.
- */
 export type ResourceInput<Name extends string, Config> = {
   name: Name;
   description?: string;
 } & Config;
 
-/**
- * Provider-specific sandbox knobs. `reservationKey` names the reserved machine a
- * `persistent` sandbox reconnects to when no workspace is mounted; unset, each
- * agent gets its own, and pinning one string on two sandboxes shares a machine.
- * Keys are scoped to the account, so they cannot reach another account's machine.
- * A `custom` sandbox names its server with `endpoint` (https, required), an
- * optional bearer `token` and extra static `headers`; a credential header's
- * value is an `env("NAME")` ref.
- */
 export type SandboxDefinitionOptions = Record<string, unknown> & {
+  /** The machine a `persistent` sandbox reconnects to; one key on two sandboxes shares it. */
   reservationKey?: string;
+  /** daytona: mount workspaces (snapshot needs mount-s3); sandbox: mount even without one. */
+  mountAwsS3Buckets?: boolean;
+  /** `custom` sandbox: its https server, with a bearer `token` and `env()` credential headers. */
   endpoint?: string;
   token?: string | EnvRef;
   headers?: Record<string, string | EnvRef>;
 };
 
-/**
- * Code-first sandbox config input. Mirrors core's `SandboxConfig` but lets
- * `envVars` values be `env("NAME")` references (compiled to `${NAME}` placeholders
- * at sync time, exactly like provider `apiKey`). Add overrides here if more
- * sandbox fields should accept env refs.
- */
 export type SandboxDefinitionConfig = Omit<
   SandboxConfig,
   "envVars" | "options"
@@ -151,14 +127,10 @@ export type SandboxDefinitionConfig = Omit<
 
 export type HarnessType = NonNullable<AgentConfig["harness"]>["type"];
 
-/** Harness settings. The harness runs on the agent's first sandbox. */
 export type HarnessDefinition = NonNullable<AgentConfig["harness"]>;
 
 export interface SkillDefinitionConfig {
-  /**
-   * Folder containing SKILL.md plus optional scripts/assets. Relative paths are
-   * resolved from the `broods/` project directory.
-   */
+  /** Folder holding SKILL.md, relative to the `broods/` project directory. */
   path: string;
 }
 
@@ -166,74 +138,29 @@ export type PolicyDefinitionConfig = Omit<PolicyDocument, "version"> & {
   version?: PolicyDocument["version"];
 };
 
-/**
- * Fetch-style MCP handler for a hosted server: what
- * `createMcpHandler(...)` from @modelcontextprotocol/server returns: either
- * the request function itself or an object exposing it as `fetch`.
- */
 export type McpHandler =
   | ((request: Request) => Response | Promise<Response>)
   | { fetch(request: Request): Response | Promise<Response> };
 
-/**
- * MCP server registration (#331): external (`url`), hosted (`handler`), or on
- * a sandbox (`sandbox`). Either way the server's tools are offered as
- * `<name>__<tool>`; an external row is dialed over the stateless HTTP
- * transport (spec 2026-07-28) at agent registration time. The name namespaces
- * those tools, so it must be 1-32 lowercase letters, digits, or hyphens,
- * starting with a letter.
- */
+/** Tools are offered as `<name>__<tool>`: the name is 1-32 of a-z, 0-9, "-", letter first. */
 export interface McpDefinitionConfig {
-  /** External server's MCP endpoint; http(s), no embedded credentials. */
   url?: string;
-  /**
-   * Instead of `url` or `handler`: the sandbox that runs this server. On a
-   * machine sandbox its daemon runs the entry with the same name in its
-   * `--mcp` file; on a lambda sandbox the VM runs `command`.
-   */
+  /** A machine sandbox runs its `--mcp` file's entry of this name; a lambda one runs `command`. */
   sandbox?: SandboxResource | string;
-  /**
-   * Argv of the stdio server, required when `sandbox` is a lambda sandbox,
-   * e.g. `["obscura", "mcp"]`. A machine sandbox's daemon ignores it.
-   */
   command?: string[];
-  /**
-   * Hosted alternative to `url`: declare the server inline as
-   * `handler: createMcpHandler(...)` from @modelcontextprotocol/server,
-   * right next to the `defineMcp` call. The CLI bundles the defining module
-   * and the platform hosts it, one invocation per batch of requests: with
-   * `runtime` "auto" on Cloudflare Workers when the bundle builds for them,
-   * on Lambda otherwise.
-   */
+  /** Hosted: `createMcpHandler(factory, { legacy: "reject" })`; MCP 2026-07-28 only. */
   handler?: McpHandler;
-  /**
-   * Hosted servers only. "auto" (the default) runs the handler on Cloudflare
-   * Workers when it builds for them; "lambda" always ships the Node build to
-   * Lambda, for a server that needs Node APIs Workers lack.
-   */
+  /** "auto" runs on Workers when the bundle builds for them; "lambda" ships the Node build. */
   runtime?: McpRuntime;
-  /**
-   * Extra request headers. Credential-bearing headers (Authorization,
-   * X-Api-Key, ...) must reference an account env var by name inside a plain
-   * string, e.g. `"Bearer ${TOKEN}"`. `env()` returns an object, so a template
-   * literal around it sends `[object Object]`. Never carry an inline secret.
-   */
+  /** A credential header names an env var in a plain string, `"Bearer ${TOKEN}"`, never `env()`. */
   headers?: Record<string, string>;
-  /**
-   * OAuth 2.0 refresh-token grant for an external server whose access tokens
-   * expire (Google's Workspace MCP endpoints). The runtime mints, caches and
-   * refreshes access tokens and sends `Authorization: Bearer <token>` itself,
-   * so do not also set an Authorization header. `clientSecret` and
-   * `refreshToken` must be `env("NAME")` refs; `tokenUrl` defaults to
-   * https://oauth2.googleapis.com/token.
-   */
+  /** The runtime sends the bearer itself: set no Authorization header. Secrets are `env()`. */
   oauth?: {
     clientId: string | EnvRef;
     clientSecret: string | EnvRef;
     refreshToken: string | EnvRef;
     tokenUrl?: string;
   };
-  /** Tool names agents may use from this server; omit to allow all. */
   allowedTools?: string[];
 }
 
@@ -244,7 +171,6 @@ export type ChannelType =
   | "linear"
   | "slack"
   | "discord"
-  | "matrix"
   | "pancake"
   | "teams"
   | "twilio"
@@ -253,25 +179,16 @@ export type ChannelType =
   | "instagram"
   | "messenger";
 
-/**
- * A connection is one app install: the credentials an agent needs before a
- * provider can reach it at all. Channels point at a connection; a connection
- * never points back, which is what keeps the reference graph acyclic.
- */
+/** One app install. Channels point at it and it never points back, so references stay acyclic. */
 export interface ConnectionDefinition<Type extends ChannelType, Config> {
   readonly [CONNECTION_MARKER]: true;
   readonly kind: "connection";
   readonly type: Type;
   readonly partition?: ChannelPartition;
-  /** `partition` is lifted out of the authored input, so it is not in here. */
   readonly config: Omit<Config, "partition">;
 }
 
-/**
- * An agent bound to a channel. Every bound agent runs when a message arrives;
- * `reply: false` runs it with a silenced channel, so it can work without
- * speaking in the room.
- */
+/** Every bound agent runs; `reply: false` runs it without speaking in the room. */
 export type ChannelAgentInput =
   | AgentResource
   | { agent: AgentResource; reply?: boolean };
@@ -282,16 +199,10 @@ type RequiredChannelKeys<Config, Keys extends keyof Config> = Required<
   Omit<Config, Keys>;
 type ChannelSecret = string | EnvRef | undefined;
 type ConnectionIdentityInput = {
-  /** Include the dashboard trace link in channel replies. Off by default. */
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
-  /**
-   * Rooms this connection answers in, on top of every channel declared against
-   * it. Use `["*"]` to answer everywhere instead, which is the only reason to
-   * name rooms here at all: a room with rules belongs in a channel resource.
-   */
+  /** Rooms beyond its channels'; `["*"]` answers everywhere. A room with rules is a channel. */
   allowedChannelIds?: readonly string[];
-  /** Provider user ids allowed to trigger the agent. `["*"]` or omitted is everyone. */
   allowedUserIds?: readonly string[];
 };
 
@@ -368,17 +279,6 @@ export type DiscordConnectionInput = EnvRefString<
       "apiUrl" | "botToken" | "publicKey" | "botUserId" | "mentionRoleIds"
     >,
     "botToken" | "publicKey"
-  >
-> &
-  ConnectionIdentityInput;
-
-export type MatrixConnectionInput = EnvRefString<
-  RequiredChannelKeys<
-    Pick<
-      AgentMatrixChannelConfig,
-      "apiUrl" | "botToken" | "botName" | "mentionText"
-    >,
-    "apiUrl" | "botToken"
   >
 > &
   ConnectionIdentityInput;
@@ -501,10 +401,6 @@ export type DiscordConnectionDefinition = ConnectionDefinition<
   "discord",
   DiscordConnectionInput
 >;
-export type MatrixConnectionDefinition = ConnectionDefinition<
-  "matrix",
-  MatrixConnectionInput
->;
 export type PancakeConnectionDefinition = ConnectionDefinition<
   "pancake",
   PancakeConnectionInput
@@ -540,7 +436,6 @@ export type AnyConnectionDefinition =
   | LinearConnectionDefinition
   | SlackConnectionDefinition
   | DiscordConnectionDefinition
-  | MatrixConnectionDefinition
   | PancakeConnectionDefinition
   | TeamsConnectionDefinition
   | TwilioConnectionDefinition
@@ -549,38 +444,23 @@ export type AnyConnectionDefinition =
   | InstagramConnectionDefinition
   | MessengerConnectionDefinition;
 
-/**
- * One real place a team talks: a Slack channel, a Discord channel, a repo. It
- * narrows and adds, and never grants what a bound agent lacks: instructions
- * append, policies union, tools and workspaces only narrow. It names the
- * connection it belongs to, so `platform` is never written by hand.
- */
+/** Never grants what a bound agent lacks: instructions append, policies union, the rest narrows. */
 export type ChannelDefinitionConfig = {
   connection: AnyConnectionDefinition;
-  /**
-   * Provider id of the place, from the per-platform field on the input. A list
-   * fans out to one record per id at deploy time.
-   */
   externalId: string | readonly string[];
-  /** Team, guild or repo owner the place sits in, when the provider has one. */
   workspaceRef?: string;
-  /** Every one of these runs. Omit and the connection's own agent answers. */
+  /** Omit and the connection's own agent answers. */
   agents?: readonly ChannelAgentInput[];
-  /** Appended after each agent's own system prompt, never replacing it. */
   instructions?: string;
-  /** Selects from what the agent already attaches; anything else is dropped. */
   workspaces?: readonly AgentWorkspaceInput[];
-  /** Added to whatever the agent already carries. Each policy holds its own mode. */
   policies?: readonly (PolicyResource | string)[];
   denyTools?: readonly string[];
-  /** Where the reply lands. Slack only. */
   replyIn?: ChannelReplyIn;
   partition?: ChannelPartition;
   sandboxImages?: readonly string[];
   tagRoles?: readonly { roleId: string; userIds: readonly string[] }[];
 };
 
-/** Rules shared by every channel, whatever the provider calls its rooms. */
 type ChannelRulesInput = Omit<
   ChannelDefinitionConfig,
   "connection" | "externalId" | "workspaceRef" | "replyIn"
@@ -588,114 +468,88 @@ type ChannelRulesInput = Omit<
 
 export type SlackChannelInput = ChannelRulesInput & {
   connection: SlackConnectionDefinition;
-  /** Slack channel id, e.g. "C0123ABCD". */
+  /** e.g. "C0123ABCD". */
   channelId: string;
-  /** Slack team id the channel sits in. */
   teamId?: string;
-  /** Where the reply lands. Slack is the only provider with a choice. */
   replyIn?: ChannelReplyIn;
 };
 
 export type DiscordChannelInput = ChannelRulesInput & {
   connection: DiscordConnectionDefinition;
-  /** Discord channel id (a snowflake). */
   channelId: string;
-  /** Guild the channel sits in. */
   guildId?: string;
-};
-
-export type MatrixChannelInput = ChannelRulesInput & {
-  connection: MatrixConnectionDefinition;
-  /** Matrix room id, e.g. "!abc123:matrix.org". */
-  channelId: string;
 };
 
 export type GoogleChatChannelInput = ChannelRulesInput & {
   connection: GoogleChatConnectionDefinition;
-  /** Google Chat space name, e.g. "spaces/AAAAxxxx". */
+  /** e.g. "spaces/AAAAxxxx". */
   spaceName: string;
 };
 
 export type GitHubChannelInput = ChannelRulesInput & {
   connection: GitHubConnectionDefinition;
-  /** Repository full name, e.g. "beeblast/api". */
+  /** "owner/name". */
   repo: string;
 };
 
 export type LinearChannelInput = ChannelRulesInput & {
   connection: LinearConnectionDefinition;
-  /** Team key, e.g. "ENG", or several that share one set of rules. */
+  /** Team key, e.g. "ENG". */
   team: string | readonly string[];
 };
 
 export type TeamsChannelInput = ChannelRulesInput & {
   connection: TeamsConnectionDefinition;
-  /** Teams channel id, or a chat's conversation id, e.g. "19:abc@thread.tacv2". */
+  /** Channel or chat conversation id, e.g. "19:abc@thread.tacv2". */
   channelId: string;
-  /** Team the channel sits in. */
   teamId?: string;
 };
 
 export type TelegramChannelInput = ChannelRulesInput & {
   connection: TelegramConnectionDefinition;
-  /** Telegram chat id, e.g. "-1001234567". */
   chatId: string;
 };
 
 export type TwilioChannelInput = ChannelRulesInput & {
   connection: TwilioConnectionDefinition;
-  /** Sender's number in E.164, e.g. "+15551234567", or several. */
+  /** Sender's number in E.164, e.g. "+15551234567". */
   from: string | readonly string[];
 };
 
 export type ZaloChannelInput = ChannelRulesInput & {
   connection: ZaloConnectionDefinition;
-  /** Zalo user or group chat id, or several that share one set of rules. */
   chatId: string | readonly string[];
 };
 
 export type InstagramChannelInput = ChannelRulesInput & {
   connection: InstagramConnectionDefinition;
-  /** Instagram-scoped id (IGSID) of the person, or several. */
   igsid: string | readonly string[];
 };
 
 export type MessengerChannelInput = ChannelRulesInput & {
   connection: MessengerConnectionDefinition;
-  /** Page-scoped id (PSID) of the person, or several. */
   psid: string | readonly string[];
 };
 
 export type WhatsAppChannelInput = ChannelRulesInput & {
   connection: WhatsAppConnectionDefinition;
-  /** Customer's WhatsApp id, their number with country code and no "+", or several. */
+  /** The number with country code and no "+". */
   waId: string | readonly string[];
 };
 
 export type PancakeChannelInput = ChannelRulesInput & {
   connection: PancakeConnectionDefinition;
-  /** Pancake conversation id. */
   conversationId: string;
 };
 
-/**
- * Per-agent workspace mount with an optional sandbox override. A bare
- * `defineWorkspace(...)` inherits the agent's first sandbox; the object form lets
- * a single workspace pin its own sandbox, or set `sandbox: null` to force the
- * workspace read-only (no compute attached).
- */
 export interface AgentWorkspaceRefInput {
   workspace: WorkspaceResource | string;
+  /** Omit for the agent's first sandbox; `null` mounts it read-only, with no compute. */
   sandbox?: SandboxResource | string | null;
 }
 
 export type AgentWorkspaceInput = WorkspaceResource | AgentWorkspaceRefInput;
 
-/**
- * `subagent` block where `allowed` may reference other `defineAgent(...)`
- * resources directly; the compiler rewrites them to agent names and the backend
- * resolves those to deploy-time agent ids.
- */
 export type AgentSubagentDefinitionConfig = Omit<
   NonNullable<AgentConfig["subagent"]>,
   "allowed"
@@ -712,14 +566,11 @@ export type AgentSkillsDefinitionConfig = Omit<
 
 export interface HookContext {
   fetch: typeof fetch;
-  /** The model and the names of the agent's tools, MCP servers, channels, skills and subagents. Never credentials. */
+  /** The model and the agent's tool, server, channel, skill and subagent names; no credentials. */
   config: HookAgentConfig;
   /**
-   * Mutable per-request scratchpad shared across this agent request's hooks.
-   * Seed it in an early hook (e.g. `onStart`) and read or modify it later.
-   * Every loop hook, `onSubagentFinish`, and the reply's `onMessageSending`
-   * see the same state. Keep it JSON-serializable. `onMessageReceived`,
-   * delayed background replies, and each subagent's own run get fresh state.
+   * Shared by one request's hooks; keep it JSON-serializable. `onMessageReceived`, delayed
+   * replies and each subagent's own run start fresh.
    */
   state: Record<string, unknown>;
 }
@@ -729,19 +580,12 @@ type Handler<Event, Result> = (
   event: Event,
 ) => Result | void | Promise<Result | void>;
 
-/**
- * Channel-specific routing data attached to an inbound message. Inherited from
- * the core channel adapters (via contracts.ts) so an `onMessageReceived` hook
- * that narrows on `event.channel` always sees exactly what core emits (e.g.
- * Pancake `tagIds`).
- */
 export type TelegramMessageSource = TelegramSource;
 export type GoogleChatMessageSource = GoogleChatSource;
 export type GitHubMessageSource = GitHubSource;
 export type LinearMessageSource = LinearSource;
 export type SlackMessageSource = SlackSource;
 export type DiscordMessageSource = DiscordSource;
-export type MatrixMessageSource = MatrixSource;
 export type PancakeMessageSource = PancakeSource;
 export type TeamsMessageSource = TeamsSource;
 export type TwilioMessageSource = TwilioSource;
@@ -750,10 +594,6 @@ export type InstagramMessageSource = InstagramSource;
 export type MessengerMessageSource = MessengerSource;
 export type WhatsAppMessageSource = WhatsAppSource;
 
-/**
- * Inbound channel message passed to `onMessageReceived`, discriminated on
- * `channel` so each variant exposes its channel's strongly-typed `source`.
- */
 export type ChannelMessageReceived =
   | { channel: "telegram"; text: string; source: TelegramMessageSource }
   | { channel: "gchat"; text: string; source: GoogleChatMessageSource }
@@ -761,7 +601,6 @@ export type ChannelMessageReceived =
   | { channel: "linear"; text: string; source: LinearMessageSource }
   | { channel: "slack"; text: string; source: SlackMessageSource }
   | { channel: "discord"; text: string; source: DiscordMessageSource }
-  | { channel: "matrix"; text: string; source: MatrixMessageSource }
   | { channel: "pancake"; text: string; source: PancakeMessageSource }
   | { channel: "teams"; text: string; source: TeamsMessageSource }
   | { channel: "twilio"; text: string; source: TwilioMessageSource }
@@ -771,19 +610,11 @@ export type ChannelMessageReceived =
   | { channel: "messenger"; text: string; source: MessengerMessageSource };
 
 /**
- * Inline agent hook callbacks. Handlers are serialized with `.toString()`,
- * bundled into one account hook, and run in a fresh V8 isolate. Keep them
- * self-contained: use only `ctx`, `event`, and JavaScript globals. Do not rely
- * on imports or closure variables. Arrow functions and function expressions are
- * preferred so the serialized source is valid as an object-literal value.
- *
- * Subagent runs fire hooks too: a registered subagent runs its own hooks, a
- * prompt-only (virtual) subagent inherits this bundle, always with fresh
- * `ctx.state`. `onSubagentFinish` fires on the parent with the parent's state.
+ * Serialized with `.toString()` into a fresh V8 isolate: use only `ctx`, `event` and JS globals,
+ * no imports or closures, and prefer arrow functions. A registered subagent runs its own hooks,
+ * a prompt-only one inherits these; `onSubagentFinish` fires on the parent with its state.
  */
 export interface AgentHooks {
-  // User messages in `messages` carry `createdAt` plus any `metadata` an
-  // onMessageReceived hook returned, for reading identity without text parsing.
   onStart?: Handler<
     { system: string; messages: unknown[] },
     { system?: string; messages?: unknown[] }
@@ -792,8 +623,13 @@ export interface AgentHooks {
     { stepNumber: number; finishReason: string; toolCallCount: number },
     void
   >;
+  /** `runsAs` is the Broods call a provider tool makes, e.g. `shell` running as `bash`. */
   onToolCall?: Handler<
-    { toolName: string; input: unknown },
+    {
+      toolName: string;
+      input: unknown;
+      runsAs?: { toolName: string; input: Record<string, unknown> };
+    },
     {
       decision?: "allow" | "deny";
       args?: Record<string, unknown>;
@@ -814,9 +650,7 @@ export interface AgentHooks {
     { taskId: string; result: unknown },
     { visibleResult?: unknown }
   >;
-  // Returned `metadata` (opaque JSON) persists with the stored message and
-  // resurfaces on onStart's messages. It is the receive→run channel ctx.state
-  // lacks.
+  /** Returned `metadata` (opaque JSON) is stored and resurfaces on `onStart`'s messages. */
   onMessageReceived?: Handler<
     ChannelMessageReceived,
     { drop?: boolean; text?: string; metadata?: unknown }
@@ -827,69 +661,53 @@ export interface AgentHooks {
   >;
 }
 
-/**
- * Code-first agent config input. Built from an explicit `Pick` of `AgentConfig`
- * (not `Omit`) so the SDK input type does NOT inherit `AgentConfig`'s
- * `[key: string]: unknown` index signature, which would otherwise disable
- * TypeScript's excess-property checks and silently accept typos like
- * `workspace:` instead of `workspaces:`. Add a key here when core's `AgentConfig`
- * gains a new top-level field that should be code-definable.
- */
-/**
- * SDK-facing model-provider constructor settings. Open by design: everything a
- * provider's Vercel AI SDK factory accepts is forwarded verbatim, so there is no
- * key list to keep in sync. Only the keys broods reads itself are named (and so
- * typo-checked at run time by `validateProviderConfig`); every string field also
- * accepts an `env("NAME")` reference.
- */
+/** Forwarded verbatim to the provider's AI SDK factory; only the named keys are checked. */
 export interface ProviderSettingsInput {
   apiKey?: string | EnvRef;
   base_url?: string | EnvRef;
   baseURL?: string | EnvRef;
-  /** `cloudflare` only: the AI Gateway every request goes through. */
   gatewayId?: string;
   headers?: Record<string, string | EnvRef>;
   [key: string]: unknown;
 }
 
-/** Per-provider settings; provider names stay synced with core's `AgentConfig`. */
 export type ProviderConfigInput = Partial<
   Record<keyof NonNullable<AgentConfig["provider"]>, ProviderSettingsInput>
 >;
 
+/**
+ * An AI SDK provider tool as its factory returns it, under any key; found by its `id`.
+ * A tool the caller would run (bash, text editor, shell, apply patch) runs on the agent's sandbox.
+ * `command` is the sandbox command an OpenAI custom tool's text goes to on stdin.
+ * Only `needsApproval: true` survives sync. A function there, or a tool that is only your
+ * `execute`, is refused.
+ */
+export type AgentToolInput =
+  | NonNullable<AgentConfig["tools"]>[string]
+  | (Tool & { enabled?: boolean; command?: string });
+
+// `Pick`, not `Omit`: AgentConfig's index signature would turn off excess-property checks.
 export type AgentDefinitionConfig = EnvRefString<
   Pick<
     AgentConfig,
-    "agent" | "model" | "scheduler" | "browser" | "session" | "tools" | "mcp"
+    "agent" | "model" | "scheduler" | "browser" | "session" | "mcp"
   >
 > & { provider?: ProviderConfigInput } & {
+  tools?: Record<string, AgentToolInput>;
   harness?: HarnessDefinition;
   hooks?: AgentHooks & {
     webhooks?: readonly EnvRefString<AgentWebhookHookConfig>[];
   };
   connections?: readonly AnyConnectionDefinition[];
-  /**
-   * Sandboxes this agent runs on. The first is the default: bash with no
-   * workspace runs there, workspaces without their own sandbox mount it, and a
-   * harness runs on it. The model reaches the others by name.
-   */
+  /** The first runs the harness, bash and any workspace without its own sandbox. */
   sandboxes?: readonly (SandboxResource | string)[];
   workspaces?: readonly AgentWorkspaceInput[];
   subagent?: AgentSubagentDefinitionConfig;
   skills?: AgentSkillsDefinitionConfig;
-  /** Policies that gate this agent. Each one carries its own enforcement mode. */
   policies?: readonly (PolicyResource | string)[];
-  /**
-   * Opt the agent into the public runtime endpoint (SSE/WebSocket via the
-   * runtime key). Off by default: when unset the public endpoint
-   * refuses requests for this agent. Reach a private agent through an
-   * internal endpoint or a channel webhook. See issue #65.
-   */
+  /** Serve this agent on the public runtime endpoint. Off by default. */
   publicAccess?: boolean;
-  /**
-   * Let a runtime-key caller send `system` and `model` overrides on a run. Off
-   * by default: such a run is refused with `403 run_overrides_disabled`.
-   */
+  /** Accept `system` and `model` run overrides; off answers `403 run_overrides_disabled`. */
   allowRunOverrides?: boolean;
 };
 
@@ -902,18 +720,12 @@ export type AgentResource<Name extends string = string> = ResourceDefinition<
   Name,
   AgentDefinitionConfig
 >;
-/**
- * Code-first workspace config. Says `partitioned` where storage says
- * `isolation`. "conversation" permits a per-conversation split that a
- * channel's `partition` performs; "agent" splits the workspace per attached
- * agent on its own, with no partition needed. R2 keys take `env("NAME")`.
- */
 export type WorkspaceDefinitionConfig = Omit<
   WorkspaceConfig,
   "isolation" | "storage"
 > & {
   storage?: WorkspaceStorageDefinition;
-  /** How to split this workspace: per conversation or per agent. */
+  /** "conversation" lets a channel's `partition` split it; "agent" splits it per agent. */
   partitioned?: WorkspaceIsolation;
 };
 
@@ -922,7 +734,6 @@ type WorkspaceStorageAuthConfig = NonNullable<
 >;
 type WorkspaceR2Auth = Extract<WorkspaceStorageAuthConfig, { type: "r2" }>;
 
-/** Workspace storage as authored: only the R2 keys take `env()`. */
 export type WorkspaceStorageDefinition = Omit<
   WorkspaceConfig["storage"],
   "auth"
@@ -980,21 +791,9 @@ export type AnyResource =
   | ChannelResource;
 
 /**
- * References an account/environment variable resolved on the SERVER at runtime.
- * Set it with `broods env set <NAME>` or in the dashboard (the Convex-style
- * `convex env set` model). It is a deferred reference, never read from your local
- * environment and never baked into the deployed config:
- *
- *   apiKey: env("OPENAI_API_KEY")
- *
- * It compiles to a `${NAME}` placeholder the harness fills in at run time. This is
- * NOT `process.env`: agent configs are compiled locally, so `process.env.NAME` would
- * bake the literal local value into the deployed config instead of deferring it.
- *
- * The reference must resolve: syncing a manifest whose `env("NAME")` has no value
- * stored for the stage is rejected outright, so an unset or misspelled name fails
- * the sync instead of reaching the runtime as a literal `${NAME}`. `broods dev`
- * pushes matching `.env.local` values first, so a local value is enough there.
+ * A stage env var (`broods env set NAME`) the server fills in at run time, e.g.
+ * `apiKey: env("OPENAI_API_KEY")`. Not `process.env`, which bakes the local value into the config.
+ * A sync is refused while a referenced name has no stored value; `broods dev` pushes `.env.local`.
  */
 export const env: EnvAccessor = new Proxy(
   <const Name extends string>(name: Name): EnvRef<Name> => {
@@ -1019,12 +818,6 @@ export const env: EnvAccessor = new Proxy(
   },
 );
 
-/**
- * Shared builder behind every `define*` helper below. The public helpers are
- * thin, per-kind typed front doors: each pins its `kind` (the discriminant the
- * sync/codegen pipeline switches on) and splits the flat authoring input back
- * into the `{ name, description?, config }` shape the manifest wire format uses.
- */
 export function defineAgent<const Name extends string>(
   input: ResourceInput<Name, AgentDefinitionConfig>,
 ): AgentResource<Name> {
@@ -1158,12 +951,6 @@ export function defineLinearConnection(
   return defineConnection("linear", config);
 }
 
-export function defineMatrixConnection(
-  config: MatrixConnectionInput,
-): MatrixConnectionDefinition {
-  return defineConnection("matrix", config);
-}
-
 export function defineMessengerConnection(
   config: MessengerConnectionInput,
 ): MessengerConnectionDefinition {
@@ -1224,8 +1011,6 @@ export function defineGitHubChannel<const Name extends string>(
   input: ResourceInput<Name, GitHubChannelInput>,
 ): ChannelResource<Name> {
   const { name, description, repo, ...rules } = input;
-  // The owner half becomes the workspace ref, so a repo missing it would store
-  // the whole string as an owner that does not exist.
   const [owner, ...rest] = repo.split("/");
   if (!owner || rest.length !== 1 || !rest[0]) {
     throw new Error(
@@ -1258,14 +1043,6 @@ export function defineLinearChannel<const Name extends string>(
   const { name, description, team, ...rules } = input;
 
   return defineChannelResource(name, description, team, undefined, rules);
-}
-
-export function defineMatrixChannel<const Name extends string>(
-  input: ResourceInput<Name, MatrixChannelInput>,
-): ChannelResource<Name> {
-  const { name, description, channelId, ...rules } = input;
-
-  return defineChannelResource(name, description, channelId, undefined, rules);
 }
 
 export function defineMessengerChannel<const Name extends string>(
@@ -1366,10 +1143,6 @@ export function isResource(value: unknown): value is AnyResource {
   );
 }
 
-// The per-platform id field is named for what the provider calls it, so the
-// value you paste is the value the field asks for. All of them normalize to the
-// `externalId` the backend stores, one row per id, and `platform` comes off the
-// connection.
 function defineChannelResource<const Name extends string>(
   name: Name,
   description: string | undefined,

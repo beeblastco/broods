@@ -4,7 +4,7 @@ title: Channels
 
 # Channels
 
-A channel puts your agent in Slack, Telegram, Discord, GitHub, Linear, Matrix, Pancake, Zalo, WhatsApp, Microsoft Teams, Google Chat, Twilio SMS, Messenger or Instagram. Messages that arrive there become agent turns, and the answer goes back to the same place.
+A channel puts your agent in Slack, Telegram, Discord, GitHub, Linear, Pancake, Zalo, WhatsApp, Microsoft Teams, Google Chat, Twilio SMS, Messenger or Instagram. Messages that arrive there become agent turns, and the answer goes back to the same place.
 
 - A connection is one app install and holds its credentials, such as a Slack bot token.
 - A channel names one room the connection answers in, such as `#product-eng`.
@@ -53,7 +53,6 @@ An agent can hold several connections of different providers. One connection bel
 | [Discord](discord.md)     | guild channels and threads             | `botToken`, `publicKey`                                    | yes      |
 | [GitHub](github.md)       | issues, pull requests, comment threads | `webhookSecret`, `appId`, `privateKey`                     | no       |
 | [Linear](linear.md)       | issue comments that mention the agent  | `apiKey`, `webhookSecret`, `userName`                      | no       |
-| [Matrix](matrix.md)       | rooms, including encrypted ones        | `apiUrl`, `botToken`                                       | yes      |
 | [Pancake](pancake.md)     | Pancake inbox messages and comments    | `pageId`, `pageAccessToken`, `webhookSecret`               | no       |
 | [Zalo](zalo.md)           | private chats and groups               | `botToken`, `webhookSecret`                                | yes      |
 | [WhatsApp](whatsapp.md)   | customer chats with a business number  | `accessToken`, `appSecret`, `phoneNumberId`, `verifyToken` | yes      |
@@ -97,7 +96,7 @@ A connection that declares no channel and no `allowedChannelIds` fails `broods d
 
 ## Chat commands
 
-Telegram, Slack, Discord, Matrix, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram route these commands to Broods instead of the agent. GitHub, Linear and Pancake pass slash text to the agent as normal input.
+Telegram, Slack, Discord, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram route these commands to Broods instead of the agent. GitHub, Linear and Pancake pass slash text to the agent as normal input.
 
 | Command                                   | Effect                                                                               |
 | ----------------------------------------- | ------------------------------------------------------------------------------------ |
@@ -118,7 +117,6 @@ When every worker slot is busy and the run queue behind them is full, a new mess
 | Provider                                                                                     | A message the full queue turns away           |
 | -------------------------------------------------------------------------------------------- | --------------------------------------------- |
 | Telegram, Slack messages, WhatsApp, Messenger, Instagram, Linear                             | `503`, the provider sends it again            |
-| Matrix                                                                                       | `503`, the forwarder sends it again           |
 | Discord, Slack slash commands and buttons, GitHub, Pancake, Zalo, Teams, Google Chat, Twilio | acked, and the chat is told the agent is busy |
 
 An account out of budget hears its plan refusal instead, full queue or not.
@@ -145,7 +143,6 @@ Tools other than `send-update` appear only where the provider supports them. The
 | Telegram    | provider fetches URL              | provider fetches URL              | albums of 2 to 10       |
 | Slack       | image blocks                      | uploaded                          | one message, one upload |
 | Discord     | uploaded                          | uploaded                          | one multipart message   |
-| Matrix      | uploaded                          | uploaded                          | one per message         |
 | Pancake     | uploaded                          | uploaded                          | one per message         |
 | Zalo        | provider fetches URL              | sent as links                     | one per message         |
 | WhatsApp    | uploaded or linked                | uploaded or linked                | one per message         |
@@ -168,7 +165,6 @@ Media sent to the agent is read while the turn runs.
 | Telegram    | photos, video, audio, voice notes, documents, video notes, static stickers |
 | Slack       | every file on a message, including voice clips                             |
 | Discord     | uploads, voice messages, stickers                                          |
-| Matrix      | images, video, audio, files, including encrypted ones                      |
 | Pancake     | photos and videos                                                          |
 | Zalo        | photos, stickers, voice notes                                              |
 | WhatsApp    | pictures, documents, audio, voice notes, video, stickers                   |

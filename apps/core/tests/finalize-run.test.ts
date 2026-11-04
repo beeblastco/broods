@@ -1,10 +1,3 @@
-/**
- * The run finalizer: a run settles once however many paths reach it, its usage
- * row and root span read the task totals and the sandbox CPU ledger, spans
- * still open close through the tracker with the run's status, and the
- * observability context the run set is restored only after everything else.
- */
-
 import { afterEach, beforeEach, expect, it } from "bun:test";
 import { context as otelContextApi, trace } from "@opentelemetry/api";
 import {
@@ -39,16 +32,12 @@ const STARTED_AT = 1_000_000;
 const CONVERSATION_KEY = "acct:acct_1:agent:agent_1:telegram:chat";
 const exporter = new InMemorySpanExporter();
 
-/** What one finalizer under test did, in the order it did it. */
 interface Recorded {
   events: string[];
   published: ObservabilitySpanRow[];
   usage: TaskUsageInput[];
-  /** The trace id the usage write saw as its observability context. */
   usageTraceIds: (string | undefined)[];
-  /** OTel spans already finished when the root row was published. */
   finishedAtPublish: number[];
-  /** What the loop's root attributes read when the finalizer asks. */
   rootAttributes: Record<string, string>;
 }
 
@@ -118,7 +107,8 @@ it("a second finalize waits for the first to finish instead of returning early",
 });
 
 it("only the first finalize sees a failed finalization", async (): Promise<void> => {
-  const { finalizer, inputs } = runFinalizer(emptyRecorded());
+  const recorded = emptyRecorded();
+  const { finalizer, inputs } = runFinalizer(recorded);
   inputs.openWork = (): Promise<RunOpenWork> =>
     Promise.reject(new Error("open work unreadable"));
 
@@ -128,6 +118,7 @@ it("only the first finalize sees a failed finalization", async (): Promise<void>
 
   expect(failure).toEqual(new Error("open work unreadable"));
   expect(await second).toBeUndefined();
+  expect(recorded.events).toEqual(["release", "restore"]);
 });
 
 it("counts as finalized before its synchronous part runs", async (): Promise<void> => {
@@ -221,7 +212,7 @@ it("ends the root span, publishes it and writes usage in the run's context, then
   const { finalizer } = runFinalizer(recorded);
   setObservabilityContext({
     accountId: "acct_1",
-    project: "tracy",
+    project: "support",
     stage: "development",
     endpointId: "ep_1",
     agentId: "agent_1",
@@ -239,7 +230,6 @@ it("ends the root span, publishes it and writes usage in the run's context, then
   expect(getObservabilityContext()).toBeNull();
 });
 
-/** A blank record for one finalizer. */
 function emptyRecorded(): Recorded {
   return {
     events: [],
@@ -251,7 +241,6 @@ function emptyRecorded(): Recorded {
   };
 }
 
-/** A finalizer over real trackers whose side effects land in `recorded`. */
 function runFinalizer(recorded: Recorded): {
   finalizer: RunFinalizer;
   inputs: RunFinalizerInputs;
@@ -278,7 +267,7 @@ function runFinalizer(recorded: Recorded): {
     tracer: trace.getTracer("test"),
     scope: {
       accountId: "acct_1",
-      project: "tracy",
+      project: "support",
       stage: "development",
       endpointId: "ep_1",
       agentId: "agent_1",
@@ -335,7 +324,6 @@ function runFinalizer(recorded: Recorded): {
   };
 }
 
-/** One finished step's flattened usage. */
 function tokens(
   input: number,
   output: number,

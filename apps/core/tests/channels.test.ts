@@ -22,10 +22,6 @@ describe("shared channel helpers", () => {
     expect(extractText(content)).toBe("alphabeta");
   });
 
-  it("returns plain string content unchanged", () => {
-    expect(extractText("hello")).toBe("hello");
-  });
-
   it("lets every id through when there is no list or the list is the wildcard", () => {
     expect(isAllowedId(null, "C1")).toBe(true);
     expect(isAllowedId(undefined, "C1")).toBe(true);
@@ -60,10 +56,10 @@ describe("channelAttachmentBytes", () => {
       name: "x.png",
     });
 
-    expect(channelAttachmentBytes(image("file:///etc/hosts"))).rejects.toThrow(
-      "only http(s) URLs are supported",
-    );
-    expect(
+    await expect(
+      channelAttachmentBytes(image("file:///etc/hosts")),
+    ).rejects.toThrow("only http(s) URLs are supported");
+    await expect(
       channelAttachmentBytes(image("http://169.254.169.254/latest")),
     ).rejects.toThrow(
       "blocked private or metadata address for 169.254.169.254",

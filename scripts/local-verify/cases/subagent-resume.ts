@@ -1,25 +1,17 @@
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
+  API_SCOPE_MARKER,
   MODEL_KEY_HINT,
+  assertHandedBackOnce,
   assertStep,
-  convexResult,
   lastJsonLine,
   runToTerminal,
+  startedChildLog,
+  type SubagentStartedLog,
   type VerifyContext,
 } from "../harness.ts";
 
 const CODE = "ALPHA-47";
-// The scope every runtime key carries, `acct:<account>:agent:<agent>`, ends here.
-const API_SCOPE_MARKER = ":api:";
-
-interface SubagentStartedLog {
-  agentId: string;
-  conversationKey: string;
-  message: string;
-  parentEventId: string;
-  resuming: boolean;
-  taskId: string;
-}
 
 interface ContextPreparedLog {
   eventId: string;
@@ -27,11 +19,6 @@ interface ContextPreparedLog {
   historyRows: number;
 }
 
-/**
- * A persistent virtual subagent resumed with the conversationKey it returned
- * is the same child on the same stored conversation, so it still knows what
- * the first task told it.
- */
 export async function subagentResume(context: VerifyContext): Promise<void> {
   if (!context.hasModelKey) {
     console.log(`  skip subagent resume (${MODEL_KEY_HINT})`);
@@ -57,10 +44,8 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
     console.log("  skip subagent resume (the parent answered without one)");
     return;
   }
-  assertHandedBackOnce(context, first, key);
-  // The model gets the exact key, so the check does not hang on it recalling
-  // the key from history: it once started a fresh child and resumed that one.
-  // Matching the resume on this key still catches it reaching another child.
+  assertHandedBackOnce(context, first, key, "completed");
+  // The prompt carries the exact key, so the check never hinges on the model's recall.
   const childKey = publicKey(first.conversationKey);
   const resumed = await startedChild(context, agentId, key, {
     eventId: `${key}-resume`,
@@ -77,8 +62,7 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
       resumed.conversationKey === first.conversationKey,
     JSON.stringify([first, resumed]),
   );
-  // The child's own context, not the parent's answer: the parent's history
-  // holds the code too, so only this shows the child kept its first task.
+  // The parent's history holds the code too, so only the child's own context proves it kept it.
   const prepared = lastJsonLine<ContextPreparedLog>(
     context.coreLogPath,
     (record: ContextPreparedLog): boolean =>
@@ -92,54 +76,6 @@ export async function subagentResume(context: VerifyContext): Promise<void> {
   );
 }
 
-/**
- * The child's result reached the parent exactly once: the parent's
- * conversation holds one result row for the task, and the child's result row
- * records the hand-back as stored, so no late resume or sweep repeats it.
- */
-function assertHandedBackOnce(
-  context: VerifyContext,
-  child: SubagentStartedLog,
-  parentKey: string,
-): void {
-  const scopeOf = (scopedKey: string): string =>
-    scopedKey.slice(0, scopedKey.indexOf(API_SCOPE_MARKER));
-  const row = convexResult(
-    context,
-    "runtime:getAsyncAgentResult",
-    { eventId: `${scopeOf(child.conversationKey)}:api:${child.taskId}` },
-    "read the child's result row",
-  ) as { status: string; handback?: string } | null;
-  assertStep(
-    "the child's result row is stored with its parent",
-    row?.status === "completed" && row.handback === "stored",
-    JSON.stringify(row),
-  );
-  const history = convexResult(
-    context,
-    "runtime:listConversationEvents",
-    { conversationKey: `${scopeOf(child.parentEventId)}:api:${parentKey}` },
-    "read the parent's conversation",
-  ) as { page: Array<{ event: unknown }> };
-  const results = history.page.filter((entry): boolean => {
-    const text = JSON.stringify(entry.event);
-
-    return (
-      text.includes(`taskId: ${child.taskId}`) &&
-      text.includes("status: completed")
-    );
-  });
-  assertStep(
-    "the parent's conversation holds the child's result once",
-    results.length === 1,
-    JSON.stringify(results),
-  );
-}
-
-/**
- * Runs one parent turn to completion and returns the child it started, or,
- * with `resumes`, the child it resumed under that key.
- */
 async function startedChild(
   context: VerifyContext,
   agentId: string,
@@ -162,20 +98,17 @@ async function startedChild(
     JSON.stringify(answer),
   );
 
-  return lastJsonLine<SubagentStartedLog>(
-    context.coreLogPath,
+  return startedChildLog(
+    context,
+    turn.eventId,
     (record: SubagentStartedLog): boolean =>
-      record.message === "Subagent task started" &&
-      record.parentEventId.endsWith(`:${turn.eventId}`) &&
-      (turn.resumes === undefined ||
-        (record.resuming &&
-          publicKey(record.conversationKey) === turn.resumes)),
+      turn.resumes === undefined ||
+      (record.resuming && publicKey(record.conversationKey) === turn.resumes),
   );
 }
 
-/** The key run_subagent returned, read from the child's scoped conversation key. */
 function publicKey(conversationKey: string): string {
   return conversationKey.slice(
-    conversationKey.indexOf(":api:") + ":api:".length,
+    conversationKey.indexOf(API_SCOPE_MARKER) + API_SCOPE_MARKER.length,
   );
 }

@@ -61,6 +61,15 @@ describe("normalizeChannelRecordConfig", () => {
       }),
     ).toThrow("config.partition.alias must be a non-empty string");
 
+    for (const alias of ["../other", "a/b", "a\\b", "..", " . "]) {
+      expect(() =>
+        normalizeChannelRecordConfig({
+          agentBindings: bindings,
+          partition: { by: "conversation", alias: alias },
+        }),
+      ).toThrow("config.partition.alias must be one path segment");
+    }
+
     expect(() =>
       normalizeChannelRecordConfig({
         agentBindings: bindings,
@@ -78,8 +87,7 @@ describe("normalizeChannelRecordConfig", () => {
     ).toThrow("config.replyIn must be one of: thread, source");
   });
 
-  // Mode moved onto the policy, so a record still naming these must not be
-  // accepted and quietly ignored.
+  // Mode moved onto the policy: a record still naming these must not be quietly ignored.
   it("rejects the retired policy fields", () => {
     expect(() =>
       normalizeChannelRecordConfig({
@@ -160,10 +168,6 @@ describe("normalizeCreateChannelRecordInput", () => {
 });
 
 describe("normalizeUpdateChannelRecordInput", () => {
-  it("returns an empty patch when nothing was supplied", () => {
-    expect(normalizeUpdateChannelRecordInput({})).toEqual({});
-  });
-
   it("maps an explicit null to a cleared field", () => {
     expect(
       normalizeUpdateChannelRecordInput({
@@ -180,7 +184,6 @@ describe("normalizeUpdateChannelRecordInput", () => {
   });
 
   it("rejects an unknown key instead of silently patching nothing", () => {
-    // `{descripton: "x"}` normalized to {} and PATCH answered 200 unchanged.
     expect(() =>
       normalizeUpdateChannelRecordInput({ descripton: "typo" }),
     ).toThrow("descripton is not supported");

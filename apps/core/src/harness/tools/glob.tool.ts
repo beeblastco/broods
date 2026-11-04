@@ -1,12 +1,4 @@
-/**
- * Glob tool. Fast file pattern matching in the workspace (supports `**`),
- * returning paths sorted by modification time (newest first), Claude-Code-style.
- * Sandbox-backed workspaces match through the mount; a read-only workspace lists
- * through a service-managed read-only mount by default (readMount), or directly
- * from S3 when the ref opts out with `sandbox: null` or the workspace brings its
- * own bucket.
- */
-
+import { SHELL_ONLY_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
@@ -18,6 +10,7 @@ import {
   workspaceParamSchema,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
+import { shellQuote } from "../sandbox/utils.ts";
 import { toolError, toolText } from "./utils.ts";
 
 interface GlobInput {
@@ -51,6 +44,35 @@ Usage notes:
             return await s3Glob(ws, pattern, path);
           }
           const root = path ? toWorkspaceRelative(path) : ".";
+          if (SHELL_ONLY_SANDBOX_PROVIDERS.has(runner.provider)) {
+            const listed = await runSandbox(
+              runner,
+              ws.namespace,
+              `cd ${shellQuote(`./${root}`)} && find . -type f`,
+              { metadata: sandboxRunMetadata(context, ws) },
+            );
+            if (!listed.ok)
+              return toolError(
+                `${listed.stderr}${listed.stdout}`.trim() ||
+                  "Error: glob failed",
+              );
+            const matcher = new Bun.Glob(pattern);
+            const matches = listed.stdout
+              .split("\n")
+              .map((line) => line.replace(/^\.\//, ""))
+              .filter((rel) => rel.length > 0 && matcher.match(rel))
+              .sort();
+
+            const cut = listed.truncated
+              ? "(listing cut at the sandbox's output limit; narrow the path)\n"
+              : "";
+
+            return toolText(
+              matches.length > 0
+                ? `${matches.join("\n")}\n${cut}`
+                : `No files found\n${cut}`,
+            );
+          }
           const code = globScript(toBase64(pattern), toBase64(root));
           const result = await runSandbox(runner, ws.namespace, code, {
             metadata: sandboxRunMetadata(context, ws),
@@ -63,8 +85,7 @@ Usage notes:
 
           return toolText(result.stdout);
         } catch (cause) {
-          // toolError throws, so an in-try call already landed here. Feeding its
-          // message back through would prefix a fatal setup error a second time.
+          // toolError throws; rethrow as is so a fatal setup error is not prefixed twice.
           throw cause instanceof Error ? cause : new Error(String(cause));
         }
       },

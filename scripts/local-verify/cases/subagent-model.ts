@@ -6,17 +6,13 @@ import {
   lastJsonLine,
   pollUntil,
   runToTerminal,
+  startedChildLog,
+  type SubagentStartedLog,
   type VerifyContext,
 } from "../harness.ts";
 
-// A second model the stack's Anthropic key serves, unlike the parent's.
+// Differs from the parent's model; the stack's Anthropic key serves both.
 const SUBAGENT_MODEL_ID = "claude-sonnet-5-5";
-
-interface SubagentStartedLog {
-  agentId: string;
-  message: string;
-  parentEventId: string;
-}
 
 interface ModelStepLog {
   agentId?: string;
@@ -25,11 +21,6 @@ interface ModelStepLog {
   toolCalls?: { toolName: string }[];
 }
 
-/**
- * A virtual subagent runs on `subagent.model` and still calls the parent's
- * tools: its bash step runs on the parent's sandbox, on the configured model,
- * while the parent stays on its own.
- */
 export async function subagentModel(context: VerifyContext): Promise<void> {
   if (!context.hasModelKey) {
     console.log(`  skip subagent model (${MODEL_KEY_HINT})`);
@@ -87,12 +78,7 @@ export async function subagentModel(context: VerifyContext): Promise<void> {
     const started = await pollUntil(
       { initialIntervalMs: 200, maxIntervalMs: 1_000, timeoutMs: 10_000 },
       async (): Promise<SubagentStartedLog | null> =>
-        lastJsonLine<SubagentStartedLog>(
-          context.coreLogPath,
-          (record: SubagentStartedLog): boolean =>
-            record.message === "Subagent task started" &&
-            record.parentEventId.endsWith(`:${key}`),
-        ),
+        startedChildLog(context, key),
     );
     assertStep(
       "the parent started a virtual subagent",

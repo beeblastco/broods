@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * The usage meter split by project: what lands on a project's day from the
- * sandbox mirror, core's writes and the storage snapshot, and the Usage
- * tab's read of each project's month.
- */
 
 import cronsComponent from "@convex-dev/crons/test";
 import workosTest from "@convex-dev/workos-authkit/test";
@@ -37,10 +32,12 @@ afterEach(() => {
 
 describe("usage lands on its project's day", () => {
   test("a sandbox in a project bills the project and the account; an account-wide one only the account", async () => {
-    vi.useFakeTimers({ now: NOW });
+    // Seed before NOW: each commit advances the clock, so the machines would start late.
+    vi.useFakeTimers({ now: NOW - 1000 });
     const t = meterTest();
     const org = await seedOrg(t, "beeblast", ["Support bot"]);
     const [projectId] = org.projects;
+    vi.setSystemTime(NOW);
 
     for (const [key, scope] of [
       ["fs-project", { projectId: projectId }],
@@ -207,30 +204,6 @@ describe("usage lands on its project's day", () => {
 
     expect((await projectDays(t)).get(org.projects[0])?.egressGb).toBe(1);
   });
-
-  test("the storage snapshot sets each project's size without adding to the account's", async () => {
-    vi.useFakeTimers({ now: NOW });
-    const t = meterTest();
-    const org = await seedOrg(t, "beeblast", ["Support bot", "Sales"]);
-    const [support, sales] = org.projects;
-
-    await t.mutation(internal.account.budget.record, {
-      accountId: org.accountId,
-      usage: { storageGbMonths: 10 / 30 },
-      projectStorage: [
-        { projectId: support, storageGbMonths: 4 / 30 },
-        { projectId: sales, storageGbMonths: 0 },
-      ],
-    });
-
-    const meter = await t.run(async (ctx) =>
-      ctx.db.query("usageMeters").unique(),
-    );
-    expect(meter?.storageGb).toBeCloseTo(10, 9);
-    const days = await projectDays(t);
-    expect(days.get(support)?.storageGb).toBeCloseTo(4, 9);
-    expect(days.get(sales)?.storageGb).toBe(0);
-  });
 });
 
 describe("projectUsage", () => {
@@ -311,8 +284,7 @@ describe("projectUsage", () => {
         })),
       });
     };
-    // Sales held 3 GB yesterday; today its workspaces are gone, so the
-    // snapshot sends no share for it.
+    // Sales held 3 GB yesterday and has no workspaces today, so it gets no share.
     await snapshot(NOW - DAY_MS, 8, [
       [support, 4],
       [sales, 3],
@@ -508,11 +480,10 @@ async function readProjects(t: T, org: Org, month: string) {
   });
 }
 
-/** Seed AuthKit's verified user projection without replacing its getAuthUser implementation. */
+// Seeds through AuthKit's webhook so its real getAuthUser finds the user.
 async function seedAuthUser(t: T): Promise<void> {
   const now = new Date().toISOString();
   await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {
-    apiKey: "sk_test_fixture",
     event: {
       id: "evt_project_usage_signup",
       event: "user.created",

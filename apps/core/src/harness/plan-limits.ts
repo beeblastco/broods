@@ -1,14 +1,3 @@
-/**
- * Plan enforcement in core: the monthly resource caps and burst protection.
- * Every new run (API, channel message, cron fire) asks `admitRun` before it
- * touches a model or a sandbox; every sandbox launch asks
- * `assertSandboxBudget`. Usage only core sees (hosted-MCP invokes, V8 Worker
- * commands, media egress, attachment ingress) goes to the meter through
- * `recordUsage`.
- * Nothing is enforced unless
- * the Convex deployment is the managed service (`BROODS_MANAGED_SERVICE`).
- */
-
 import { rateLimitHeaders } from "@broods/convex/model/httpJson";
 import {
   BUDGET_EXHAUSTED,
@@ -28,31 +17,24 @@ import {
 } from "../shared/storage.ts";
 
 const WINDOW_MS = 60_000;
-// How stale a budget read may be. Usage that lands inside it can take an
-// account a little past its budget, never far.
+// Usage landing inside this TTL can take an account a little past its budget, never far.
 const BUDGET_TTL_MS = 30_000;
 
-/** Why a run was refused, and what the HTTP caller gets for it. */
 export interface PlanRefusal {
   kind: "budget" | "rate";
   message: string;
-  /** Rate refusals only: the per-minute limit and when the window turns over. */
   limit?: number;
   retryAfterSeconds?: number;
 }
 
 export interface Admission {
   refusal: PlanRefusal | null;
-  /** This month's 80% notice, for the one channel run that claimed it. */
   warning: string | null;
-  /** When the run was counted: the start of the window it was counted in. */
   countedIn?: number;
 }
 
-/** A sandbox launch refused because a monthly cap or the storage limit is used up. */
 export class BudgetExhaustedError extends Error {}
 
-/** One account's fixed one-minute window of admitted runs. */
 interface AccountWindow {
   startedAt: number;
   runs: number;
@@ -63,18 +45,10 @@ interface CachedBudget {
   expiresAt: number;
 }
 
-// Core runs a single replica (apps/core AGENTS.md), so this process sees every
-// run and an in-memory window is the whole count. A restart forgets at most
-// one window. A second replica would split it and double the burst limit.
+// Exact only while core is a single replica (apps/core AGENTS.md); two would double the burst.
 const windows = new Map<string, AccountWindow>();
 const budgets = new Map<string, CachedBudget>();
 
-/**
- * Admit one run for the account and count it.
- * @param options.claimWarning claim the 80% notice for this run (channel intake)
- * @param options.count false reads the refusal only: nothing is counted and no
- *   notice claimed, for a request the full run queue turns away
- */
 export async function admitRun(
   accountId: string,
   options: { claimWarning?: boolean; count?: boolean } = {},
@@ -111,11 +85,6 @@ export async function admitRun(
   };
 }
 
-/**
- * Give back a run `admitRun` counted when the intake started nothing after all:
- * a provider redelivery deduplicated by ingress, or a refused admission. Only
- * the window it was counted in gives it back; a later one is left alone.
- */
 export function refundRun(admission: Admission, accountId: string): void {
   const window = windows.get(accountId);
   if (window && window.startedAt === admission.countedIn && window.runs > 0) {
@@ -123,7 +92,6 @@ export function refundRun(admission: Admission, accountId: string): void {
   }
 }
 
-/** Throws `BudgetExhaustedError` when the account may not start compute. */
 export async function assertSandboxBudget(accountId: string): Promise<void> {
   const status = await budgetFor(accountId);
   if (status?.enforced && status.usedPercent >= 100) {
@@ -131,11 +99,7 @@ export async function assertSandboxBudget(accountId: string): Promise<void> {
   }
 }
 
-/**
- * 402 `budget_exhausted`, or 429 `plan_limit_exceeded` with `Retry-After`.
- * 402, not 429 or 403: waiting a minute does not help and the key is fine;
- * the account has to upgrade, wait for next month, or delete files.
- */
+// 402, not 429 or 403, for a budget: waiting a minute will not help and the key is fine.
 export function planRefusalResponse(refusal: PlanRefusal): Response {
   if (refusal.kind === "budget") {
     return errorResponse(402, refusal.message, { code: BUDGET_EXHAUSTED });
@@ -149,17 +113,12 @@ export function planRefusalResponse(refusal: PlanRefusal): Response {
   );
 }
 
-/** The refusal as a channel says it, with the wait a rate refusal has. */
 export function planRefusalText(refusal: PlanRefusal): string {
   return refusal.retryAfterSeconds === undefined
     ? refusal.message
     : `${refusal.message} Try again in ${refusal.retryAfterSeconds} seconds.`;
 }
 
-/**
- * Add usage core measured to the account's meter, in the background. The write
- * is registered with `waitUntil`, so shutdown drains it before the process exits.
- */
 export function recordUsage(
   accountId: string,
   usage: Parameters<Storage["budgets"]["record"]>[1],
@@ -173,8 +132,7 @@ export function resetPlanLimitsForTests(): void {
   budgets.clear();
 }
 
-// A failed lookup admits: enforcement is a cost ceiling, not an auth check,
-// and a run cannot get far while Convex is unreachable anyway.
+// Fails open: a cost ceiling, not an auth check, and a run stalls without Convex anyway.
 async function budgetFor(accountId: string): Promise<BudgetStatus | null> {
   const cached = budgets.get(accountId);
   if (cached && cached.expiresAt > Date.now()) return cached.status;
@@ -212,7 +170,6 @@ function budgetRefusal(status: BudgetStatus): PlanRefusal {
   };
 }
 
-// Storage is a size, not a monthly amount: a new month does not free it.
 function storageLimit(status: BudgetStatus): string {
   return `${PLAN_LIMITS[status.plan].caps.storageGb} GB of workspaces and files`;
 }
@@ -223,9 +180,7 @@ async function claimWarning(
 ): Promise<string | null> {
   if (status.warned || status.usedPercent < BUDGET_WARNING_RATIO * 100)
     return null;
-  // Whoever loses the race sees `warned` on its next read.
   status.warned = true;
-  // The notice is optional: a failed claim skips it and never fails the run.
   const claimed = await getStorage()
     .budgets.claimWarning(accountId)
     .catch((err: unknown): boolean => {
@@ -245,7 +200,6 @@ async function claimWarning(
     : `This account has used ${percent}% of one of its monthly resource caps on the ${status.plan} plan. Runs stop when a cap is reached.`;
 }
 
-/** @param open start the fresh window when there is none; a read never does */
 function currentWindow(
   accountId: string,
   now: number,

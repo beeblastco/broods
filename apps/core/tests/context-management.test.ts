@@ -9,22 +9,35 @@ import {
   setSystemTime,
 } from "bun:test";
 import * as actualAi from "ai";
+import type { ModelMessage, ToolCallPart, UserContent } from "ai";
 import type {
   Session,
   StoredConversationEventPage,
+  TurnContextSnapshot,
 } from "../src/harness/session.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
-import * as realS3 from "../src/shared/s3.ts";
+import * as actualS3 from "../src/shared/s3.ts";
 
 const ORIGINAL_ENV = { ...process.env };
+
+type StoredRow = StoredConversationEventPage["page"][number];
+
+interface ConversationReadArgs {
+  beforeCursor?: string;
+  fromSystemPrefix?: string;
+  role?: string;
+  stopAtRole?: string;
+}
 const googleModelMock = mock((modelId: string) => ({
   provider: "google",
   modelId: modelId,
 }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
+const SUMMARY_USAGE = { inputTokens: 30, outputTokens: 6, totalTokens: 36 };
 const generateTextMock = mock(
   async (_options: { messages: Array<{ content: string }> }) => ({
     text: "Earlier context summary.",
+    usage: SUMMARY_USAGE,
   }),
 );
 const readS3TextMock = mock(
@@ -59,10 +72,8 @@ await mock.module("ai", () => ({
   generateText: generateTextMock,
 }));
 
-// Spread the real module first: mock.module is process-global, so any export
-// omitted here disappears for every test file that loads after this one.
 await mock.module("../src/shared/s3.ts", () => ({
-  ...realS3,
+  ...actualS3,
   isMissingS3Error: (error: unknown) =>
     typeof error === "object" &&
     error !== null &&
@@ -238,8 +249,7 @@ describe("session system context", () => {
     )?.content;
     const environment = session.environmentText();
 
-    // A timestamp in the system prompt would invalidate the prompt cache for
-    // everything after it; the environment block goes last instead.
+    // A timestamp in the system prompt would break the prompt cache; it goes in <environment>.
     expect(schedulerPrompt).toContain("The current time is in <environment>");
     expect(schedulerPrompt).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
     expect(environment).toMatch(
@@ -294,18 +304,15 @@ describe("session system context", () => {
       message.content.includes("<workspace>"),
     )?.content;
     expect(memoryPrompt).toContain("Remember stable project facts.");
-    // No sandbox in this test mock => read-only workspace: only read/glob are advertised.
+    // No sandbox in this mock: a read-only workspace, so no memory_save and no <memory> block.
     expect(workspacePrompt).toContain("read, glob");
     expect(workspacePrompt).toContain("[read-only");
     expect(workspacePrompt).not.toContain("write");
-    // The memory index is loaded as a separate system message, not wired into the workspace guidance.
     expect(workspacePrompt).not.toContain("MEMORY.md");
-    // The index lives inside the memory/ folder, not at the workspace root.
     expect(readS3TextMock).toHaveBeenCalledWith(
       "filesystem",
       expect.stringContaining("/memory/MEMORY.md"),
     );
-    // Read-only workspace => no memory_save => no <memory> guidance block.
     expect(
       enabledContext.system.some((message) =>
         message.content.startsWith("<memory>"),
@@ -341,7 +348,6 @@ describe("session system context", () => {
         },
       }) as never;
 
-    // Sandbox-backed workspace: the block names this conversation's scope as originSessionId.
     setStorageForTests(storageWithSandbox({ storage: { provider: "s3" } }));
     const writable = await newSession(
       {
@@ -366,8 +372,7 @@ describe("session system context", () => {
     )?.content;
     expect(workspacePrompt).toContain("memory_save");
 
-    // harness.memory opt-out is total: no tool guidance, no index in context even
-    // when the file exists, and the workspace guidance stops recommending memory.
+    // harness.memory opt-out drops the guidance and the index, even when the file exists.
     setStorageForTests(
       storageWithSandbox({
         storage: { provider: "s3" },
@@ -465,18 +470,61 @@ describe("session system context", () => {
 });
 
 describe("session pruning", () => {
-  it("keeps non-reasoning messages unchanged when pruning is disabled", async () => {
+  it("keeps an earlier tool's image when its call is pruned", async () => {
     const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
-    const messages = [
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "hi" },
-    ] as actualAi.ModelMessage[];
+    const screenshot = {
+      type: "file" as const,
+      mediaType: "image/png",
+      data: { type: "data" as const, data: new Uint8Array([1]) },
+    };
+    const messages: actualAi.ModelMessage[] = [
+      { role: "user", content: "take a screenshot" },
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "c1", toolName: "shot", input: {} },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "c1",
+            toolName: "shot",
+            output: {
+              type: "content",
+              value: [
+                screenshot,
+                { type: "file-data", data: "AQ==", mediaType: "image/jpeg" },
+                // A link may expire, so it goes with its pruned call.
+                { type: "image-url", url: "https://cdn.example.com/a.png" },
+              ],
+            },
+          },
+        ],
+      },
+      { role: "assistant", content: "OK" },
+      { role: "user", content: "what number was on the button?" },
+    ];
 
-    expect(
-      pruneSessionMessages(messages, {
-        session: { pruning: { enabled: false } },
-      }),
-    ).toEqual(messages);
+    expect(pruneSessionMessages(messages, {})).toEqual([
+      { role: "user", content: "take a screenshot" },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Images a tool returned earlier:" },
+          {
+            type: "image",
+            image: new Uint8Array([1]),
+            mediaType: "image/png",
+          },
+          { type: "image", image: "AQ==", mediaType: "image/jpeg" },
+        ],
+      },
+      { role: "assistant", content: "OK" },
+      { role: "user", content: "what number was on the button?" },
+    ]);
   });
 
   it("strips completed assistant reasoning even when pruning is disabled", async () => {
@@ -720,7 +768,6 @@ describe("stored item persistence", () => {
         agentConfig: {},
         ownerGeneration: 3,
       });
-      // The AI SDK harness path hands over a whole run at once.
       const answer = "x".repeat(2 * 1_024 * 1_024);
       const cursors = await session.persistModelMessages(
         Array.from({ length: 6 }, () => ({
@@ -763,14 +810,16 @@ describe("stored item persistence", () => {
       const answer = "x".repeat(2 * 1_024 * 1_024);
       const saved: number[] = [];
 
-      expect(
+      await expect(
         session.persistModelMessages(
           Array.from({ length: 6 }, () => ({
             role: "user" as const,
             content: [{ type: "text" as const, text: answer }],
           })),
-          (count): void => {
-            saved.push(count);
+          {
+            onSaved: (count): void => {
+              saved.push(count);
+            },
           },
         ),
       ).rejects.toThrow("convex down");
@@ -826,8 +875,6 @@ describe("stored item projection", () => {
     content: assistantContent,
   };
 
-  // One stored assistant row, so the assertion is purely on how projection
-  // treats its recorded producer.
   async function projectedMessages(
     model: string | undefined,
   ): Promise<actualAi.ModelMessage[]> {
@@ -1027,12 +1074,10 @@ describe("context prepare", () => {
 
       expect(turnContext.messages).toHaveLength(3);
       expect(turnContext.timings?.phases.historyRows).toBe(3);
-      // One S3 read for the memory index, one for the skill, before the
-      // system prompt was built.
+      // One S3 read for the memory index, one for the skill.
       expect(readS3TextMock).toHaveBeenCalledTimes(2);
 
-      // prepareStep rebuilds the prompt before every step: same reads, no S3.
-      // The run's ephemeral system comes after the stored parts.
+      // prepareStep rebuilds the prompt before every step from the same reads, without S3.
       const refreshed = await session.loadRefreshedSystemPromptParts({
         systemContextSnapshot: turnContext.systemContextSnapshot,
         ephemeralSystem: [{ role: "system", content: "Reply in Dutch." }],
@@ -1152,8 +1197,7 @@ describe("context prepare", () => {
     const { runtime } = await import("../src/shared/convex/runtime.ts");
     const originalQuery = runtime.query.bind(runtime);
     const originalMutate = runtime.mutate.bind(runtime);
-    // A context-only channel message, written without the lease after the
-    // input's cursor was minted but before the input's write landed.
+    // Written without the lease after the input's cursor was minted, before its write landed.
     const newer: StoredConversationEventPage["page"][number] = {
       cursor: "9999-12-31T00:00:00.000Z#context#0000",
       event: {
@@ -1188,6 +1232,44 @@ describe("context prepare", () => {
     }
   });
 
+  // Context is rebuilt from rows, so the turn's own image bytes are put back by cursor.
+  it("shows the turn's own base64 image while its row drops it", async (): Promise<void> => {
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalMutate = runtime.mutate.bind(runtime);
+    const page = userRows(1);
+    const history = await stubHistory(page);
+    runtime.mutate = (async (
+      _name: string,
+      args: { events: [] },
+    ): Promise<null> => {
+      page.push(...args.events);
+
+      return null;
+    }) as typeof runtime.mutate;
+    const content: UserContent = [
+      { type: "text", text: "what does the button say?" },
+      { type: "image", image: "aGVsbG8=", mediaType: "image/jpeg" },
+    ];
+    try {
+      const session = await newSession({ skills: { enabled: false } });
+      const turnContext = await session.createTurnContext(
+        [],
+        [{ role: "user", content: content }],
+      );
+
+      expect(page.slice(1).map((row) => row.event.message.content)).toEqual([
+        [{ type: "text", text: "what does the button say?" }],
+      ]);
+      expect(turnContext.messages.map((message) => message.content)).toEqual([
+        "message 0",
+        content,
+      ]);
+    } finally {
+      history.restore();
+      runtime.mutate = originalMutate;
+    }
+  });
+
   it("never compacts while preparing a turn, however long the history", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     const history = await stubHistory(userRows(50));
@@ -1204,6 +1286,96 @@ describe("context prepare", () => {
     } finally {
       history.restore();
     }
+  });
+});
+
+describe("harness turn history", () => {
+  const cases: Array<[string, StoredConversationEventPage["page"]]> = [
+    [
+      "a new message after a reply cut off at its tool call",
+      [
+        ...longHarnessConversation(),
+        row({ role: "user", content: "the ask the cut reply never answered" }),
+        row({ role: "assistant", content: [toolCall("cut")] }),
+        row({ role: "user", content: "new question" }),
+      ],
+    ],
+    [
+      "an approval answer",
+      [
+        ...longHarnessConversation(),
+        row({ role: "user", content: "delete the branch" }),
+        row({
+          role: "assistant",
+          content: [
+            toolCall("pending"),
+            {
+              type: "tool-approval-request",
+              approvalId: "approval",
+              toolCallId: "pending",
+            },
+          ],
+        }),
+        row({
+          role: "tool",
+          content: [
+            {
+              type: "tool-approval-response",
+              approvalId: "approval",
+              approved: true,
+            },
+          ],
+        }),
+      ],
+    ],
+  ];
+
+  it.each(cases)(
+    "reads a bounded tail of a long conversation for %s",
+    async (_name, rows): Promise<void> => {
+      const { latestUserText } = await import("../src/harness/harness.ts");
+      const config: AgentConfig = {
+        harness: { type: "pi" },
+        skills: { enabled: false },
+      };
+      const full = await turnFromStore(rows, config, true);
+      const bounded = await turnFromStore(rows, config, false);
+
+      expect(full.served).toBe(rows.length);
+      expect(bounded.served).toBeLessThan(40);
+      expect(bounded.turn.system).toEqual(full.turn.system);
+      expect(bounded.turn.systemContextSnapshot).toEqual(
+        full.turn.systemContextSnapshot,
+      );
+      expect(harnessInput(bounded.turn.messages)).toEqual(
+        harnessInput(full.turn.messages),
+      );
+      expect(latestUserText(bounded.turn.messages)).toBe(
+        latestUserText(full.turn.messages),
+      );
+    },
+  );
+
+  it("keeps a context note that only the system read saw", async (): Promise<void> => {
+    const config: AgentConfig = {
+      harness: { type: "pi" },
+      skills: { enabled: false },
+    };
+    const rows = [
+      ...longHarnessConversation(),
+      row({ role: "user", content: "new question" }),
+    ];
+    const late = row({
+      role: "system",
+      content: "context note written mid-read",
+    });
+    const full = await turnFromStore([...rows, late], config, true);
+    const bounded = await turnFromStore(rows, config, false, [late]);
+
+    expect(bounded.turn.system).toEqual(full.turn.system);
+    expect(bounded.turn.systemContextSnapshot).toEqual(
+      full.turn.systemContextSnapshot,
+    );
   });
 });
 
@@ -1261,7 +1433,18 @@ describe("auto-compaction after a turn", () => {
     try {
       const session = await newSession(compactingAgentConfig);
 
-      expect(await session.compactConversation("")).toBe(3);
+      expect(await session.compactConversation("")).toEqual({
+        messageCount: 3,
+        modelCalls: 1,
+        modelProvider: "google",
+        modelId: "gemini-test",
+        usage: {
+          ...SUMMARY_USAGE,
+          reasoningTokens: 0,
+          cachedInputTokens: 0,
+          cacheWriteTokens: 0,
+        },
+      });
       expect(generateTextMock).toHaveBeenCalledTimes(1);
       expect(writes).toContain("appendConversationEvent");
     } finally {
@@ -1281,7 +1464,7 @@ describe("auto-compaction after a turn", () => {
       persist: false,
     });
 
-    expect(await ephemeral.compactConversation("")).toBe(0);
+    expect(await ephemeral.compactConversation("")).toBeNull();
     expect(generateTextMock).not.toHaveBeenCalled();
   });
 
@@ -1304,7 +1487,7 @@ describe("auto-compaction after a turn", () => {
     try {
       const session = await newSession(compactingAgentConfig);
 
-      expect(await session.compactConversation("")).toBe(0);
+      expect(await session.compactConversation("")).toBeNull();
       expect(generateTextMock).not.toHaveBeenCalled();
     } finally {
       history.restore();
@@ -1366,7 +1549,7 @@ describe("auto-compaction after a turn", () => {
     try {
       const session = await newSession(compactingAgentConfig);
 
-      expect(await session.compactConversation("")).toBe(0);
+      expect(await session.compactConversation("")).toBeNull();
       expect(generateTextMock).not.toHaveBeenCalled();
     } finally {
       history.restore();
@@ -1389,7 +1572,7 @@ describe("conversation summary", () => {
       agentConfig: compactingAgentConfig,
     });
 
-    expect(isCompactionSummaryMessage(result!)).toBe(true);
+    expect(isCompactionSummaryMessage(result!.message)).toBe(true);
     expect(createGoogleMock).toHaveBeenCalledWith({
       apiKey: "google-key",
       fetch: expect.any(Function),
@@ -1418,7 +1601,7 @@ describe("conversation summary", () => {
     });
 
     expect(result).toBeDefined();
-    expect(isCompactionSummaryMessage(result!)).toBe(true);
+    expect(isCompactionSummaryMessage(result!.message)).toBe(true);
     const options = generateTextMock.mock.calls[0]?.[0] as
       | { messages: Array<{ content: string }> }
       | undefined;
@@ -1474,7 +1657,10 @@ describe("conversation summary", () => {
           content.includes("newest-context") ? "[newest]" : "",
         ].join("");
 
-        return { text: `summary of ${content.length} characters ${covers}` };
+        return {
+          text: `summary of ${content.length} characters ${covers}`,
+          usage: SUMMARY_USAGE,
+        };
       },
     );
 
@@ -1497,7 +1683,6 @@ describe("conversation summary", () => {
         instructions: "keep the deploy decisions",
       });
 
-      // Every message reached a summary call: nothing was dropped to fit.
       for (const marker of [
         "Earlier summary.",
         "oldest-",
@@ -1511,8 +1696,15 @@ describe("conversation summary", () => {
           request.endsWith("keep the deploy decisions"),
         ),
       ).toBe(true);
-      expect(summary?.content).toContain("summary of");
-      // The older half's summary is labelled older, the newer half's newer.
+      expect(summary?.message.content).toContain("summary of");
+      // Every answered summary call is metered; a refused one is not.
+      const answered = requests.filter(
+        (request) => request.length <= 25_000,
+      ).length;
+      expect(summary?.modelCalls).toBe(answered);
+      expect(summary?.usage.totalTokens).toBe(
+        answered * SUMMARY_USAGE.totalTokens,
+      );
       const merge = requests.find((request) =>
         request.startsWith("Older part:"),
       );
@@ -1523,6 +1715,7 @@ describe("conversation summary", () => {
       generateTextMock.mockReset();
       generateTextMock.mockImplementation(async () => ({
         text: "Earlier context summary.",
+        usage: SUMMARY_USAGE,
       }));
     }
   });
@@ -1544,26 +1737,33 @@ describe("conversation summary", () => {
           });
         }
 
-        return { text: "half" };
+        return { text: "half", usage: SUMMARY_USAGE };
       },
     );
 
     try {
-      expect(
-        summarizeConversation({
-          conversationKey: "conversation",
-          priorSummaries: [],
-          messages: [
-            { role: "user", content: "first" },
-            { role: "assistant", content: "second" },
-          ],
-          agentConfig: compactingAgentConfig,
-        }),
-      ).rejects.toThrow("prompt is too long");
+      const failure: unknown = await summarizeConversation({
+        conversationKey: "conversation",
+        priorSummaries: [],
+        messages: [
+          { role: "user", content: "first" },
+          { role: "assistant", content: "second" },
+        ],
+        agentConfig: compactingAgentConfig,
+      }).catch((error: unknown): unknown => error);
+
+      expect(failure).toMatchObject({
+        message: expect.stringContaining("prompt is too long"),
+        spent: {
+          modelCalls: 2,
+          usage: { totalTokens: 2 * SUMMARY_USAGE.totalTokens },
+        },
+      });
     } finally {
       generateTextMock.mockReset();
       generateTextMock.mockImplementation(async () => ({
         text: "Earlier context summary.",
+        usage: SUMMARY_USAGE,
       }));
     }
   });
@@ -1582,7 +1782,7 @@ describe("conversation summary", () => {
     });
 
     try {
-      expect(
+      await expect(
         summarizeConversation({
           conversationKey: "conversation",
           priorSummaries: [],
@@ -1598,6 +1798,7 @@ describe("conversation summary", () => {
       generateTextMock.mockReset();
       generateTextMock.mockImplementation(async () => ({
         text: "Earlier context summary.",
+        usage: SUMMARY_USAGE,
       }));
     }
   });
@@ -1645,10 +1846,7 @@ describe("conversation summary", () => {
   });
 });
 
-/**
- * A session whose identity fields none of these tests assert on. Imported per
- * call rather than at module scope so the mocks above are installed first.
- */
+// Imported per call so the module mocks above are installed first.
 async function newSession(
   agentConfig: AgentConfig,
   conversationKey: string = "conversation",
@@ -1664,8 +1862,6 @@ async function newSession(
   });
 }
 
-// Replaces the Convex page load with the given rows until restored, so a test
-// controls the history a turn starts from.
 async function stubHistory(
   page: StoredConversationEventPage["page"],
 ): Promise<{ reads: unknown[]; restore: () => void }> {
@@ -1684,6 +1880,143 @@ async function stubHistory(
     restore: (): void => {
       runtime.query = originalQuery;
     },
+  };
+}
+
+// What a harness turn sends: the users since the last reply, or the reply a tool message answers.
+function harnessInput(messages: ModelMessage[]): ModelMessage[] {
+  const last = messages.at(-1);
+  if (last?.role === "tool") {
+    return [
+      messages.findLast(
+        (message, index): boolean =>
+          index < messages.length - 1 && message.role === "assistant",
+      ),
+      last,
+    ].filter((message): message is ModelMessage => message !== undefined);
+  }
+  const lastReply = messages.findLastIndex(
+    (message): boolean => message.role === "assistant",
+  );
+
+  return messages.slice(lastReply + 1);
+}
+
+// About 2,000 rows of tool-using turns with a context note now and then, never compacted.
+function longHarnessConversation(): StoredConversationEventPage["page"] {
+  return Array.from({ length: 495 }, (_, turn) => [
+    ...(turn % 50 === 0
+      ? [row({ role: "system", content: `context note ${turn}` })]
+      : []),
+    row({ role: "user", content: `ask ${turn}` }),
+    row({ role: "assistant", content: [toolCall(`call-${turn}`)] }),
+    row({
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: `call-${turn}`,
+          toolName: "bash",
+          output: { type: "text", value: `output ${turn}` },
+        },
+      ],
+    }),
+    row({ role: "assistant", content: `answer ${turn}` }),
+  ]).flat();
+}
+
+let rowSequence = 0;
+function row(message: ModelMessage): StoredRow {
+  rowSequence += 1;
+
+  return {
+    cursor: String(rowSequence).padStart(6, "0"),
+    event: {
+      version: 1,
+      sourceEventId: "event",
+      message: message,
+    } as StoredRow["event"],
+  };
+}
+
+// `listConversationEvents` over rows in memory; `ignoreBounds` serves the one full read of before.
+// `systemReadOnly` rows land between the two bounded reads, so only the system read sees them.
+async function turnFromStore(
+  rows: StoredConversationEventPage["page"],
+  config: AgentConfig,
+  ignoreBounds: boolean,
+  systemReadOnly: StoredConversationEventPage["page"] = [],
+): Promise<{ served: number; turn: TurnContextSnapshot }> {
+  const { runtime } = await import("../src/shared/convex/runtime.ts");
+  const originalQuery = runtime.query.bind(runtime);
+  let served = 0;
+  runtime.query = (async (
+    name: string,
+    args: ConversationReadArgs,
+  ): Promise<StoredConversationEventPage | null> => {
+    if (name !== "listConversationEvents") return null;
+    const page = !ignoreBounds
+      ? backwardPage(
+          args.role === "system" ? [...rows, ...systemReadOnly] : rows,
+          args,
+        )
+      : args.role === undefined
+        ? backwardPage(rows, { ...args, stopAtRole: undefined })
+        : { page: [], isDone: true, continueCursor: null };
+    served += page.page.length;
+
+    return page;
+  }) as typeof runtime.query;
+  try {
+    const session = await newSession(config);
+    const turn = await session.createTurnContext();
+
+    return { served: served, turn: turn };
+  } finally {
+    runtime.query = originalQuery;
+  }
+}
+
+function backwardPage(
+  rows: StoredConversationEventPage["page"],
+  args: ConversationReadArgs,
+): StoredConversationEventPage {
+  const page: StoredConversationEventPage["page"] = [];
+  const newestFirst = rows
+    .filter(
+      ({ cursor, event }): boolean =>
+        (args.beforeCursor === undefined || cursor < args.beforeCursor) &&
+        (args.role === undefined || event.message.role === args.role),
+    )
+    .reverse();
+  for (const candidate of newestFirst) {
+    if (page.length === 512) {
+      return {
+        page: page.reverse(),
+        isDone: false,
+        continueCursor: page[0]?.cursor ?? null,
+      };
+    }
+    page.push(candidate);
+    const { message } = candidate.event;
+    if (
+      message.role === args.stopAtRole ||
+      (message.role === "system" &&
+        message.content.startsWith(args.fromSystemPrefix ?? "\u0000"))
+    ) {
+      break;
+    }
+  }
+
+  return { page: page.reverse(), isDone: true, continueCursor: null };
+}
+
+function toolCall(toolCallId: string): ToolCallPart {
+  return {
+    type: "tool-call",
+    toolCallId: toolCallId,
+    toolName: "bash",
+    input: { command: "ls" },
   };
 }
 

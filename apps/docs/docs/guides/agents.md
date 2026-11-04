@@ -96,7 +96,11 @@ model: { provider: "chatgpt", modelId: "gpt-5.5" },
 
 One level in `model.reasoning` works across providers. The levels are `provider-default`, `none`, `minimal`, `low`, `medium`, `high` and `xhigh`.
 
-Provider-specific settings in `model.providerOptions` win over `reasoning` when both are set, for example `providerOptions.openai.reasoningEffort` or `providerOptions.anthropic.thinking`. If a model does not support the level you asked for, the run logs a `model.step.warnings` event and continues.
+Provider-specific settings in `model.providerOptions` win over `reasoning` when both are set (not with `config.harness`, which refuses them), for example `providerOptions.openai.reasoningEffort` or `providerOptions.anthropic.thinking`. If a model does not support the level you asked for, the run logs a `model.step.warnings` event and continues.
+
+## Timeouts
+
+`model.timeout` is the AI SDK's [`timeout`](https://ai-sdk.dev/docs/ai-sdk-core/settings#timeout) setting and reaches `streamText` as you set it. A number is the whole call in milliseconds. The object form takes `totalMs` (the whole call), `stepMs` (each step, with its retries and tools), `firstChunkMs` (from a step's response starting to its first output), `chunkMs` (between output chunks), `toolMs` (each tool) and `tools` for one tool, like `{ bashMs: 300_000 }`. `totalMs`, `stepMs`, `firstChunkMs` and `chunkMs` end the call when they pass and fail the run, they do not retry it. `firstChunkMs` starts only once the provider answers, so `stepMs` is what bounds a request that never gets a response. A tool past its limit is aborted and the model sees the error. Apart from these, Broods fails a run whose model is silent for `MODEL_FIRST_CHUNK_TIMEOUT_MS` before a call's first output or `MODEL_CHUNK_TIMEOUT_MS` between outputs (300 s each, set per deployment in [operations](../internals/operations.md#core-runtime-limits)). Output is text, reasoning, tool input or a file; a stream of keep-alives or errors is silent. That clock includes the wait for a response and pauses while a tool runs, so set the SDK limits below it for them to act first. `config.harness` ignores `model.timeout`.
 
 ## Structured output
 
@@ -120,7 +124,7 @@ model: {
 
 ## System prompt and turn limit
 
-`agent.system` is the base prompt. Broods appends a block for each feature that is on, such as workspace guidance, the memory index, available skills, subagents and the scheduler clock. The Tracing tab in the dashboard shows the full assembled prompt for every run.
+`agent.system` is the base prompt. Broods appends a block for each feature that is on, such as workspace guidance, the memory index, available skills, subagents and the scheduler. Every run also gets an `<environment>` block with the current time. The Tracing tab in the dashboard shows the full assembled prompt for every run.
 
 `agent.maxTurn` caps model steps per run. The default is 30, and `0` removes the cap. A run that hits the cap ends as `failed` with its history intact, and `continue` resumes it. See [Conversations](conversations.md).
 
@@ -178,7 +182,10 @@ export const codingAgent = defineAgent({
 - The harness ships its own file tools, so the Broods workspace prompt is off. `memory_save` still works.
 - Broods MCP servers and account skills still reach the harness. Filter tools with `activeTools` or `inactiveTools` on `defineHarness`.
 - The harness's own "ask the user" tool is off. The agent asks through [`ask_questions`](tools.md#asking-the-user).
-- Steering sent before a turn starts is folded into its prompt. Steering sent during a turn runs as the next turn.
+- Steering sent before a turn starts is folded into its prompt. Claude Code, Codex, OpenCode and Pi take steering sent during a turn at its next step. Deep Agents reads it when the next turn starts.
+- Images reach the harness as images, so send them only to a model that reads images. Any other attachment arrives as a note pointing at its copy in the workspace.
+- `model.reasoning` reaches every harness, and a change applies from the next turn. Pi takes it as its thinking level; `provider-default` or unset is Pi's `medium`, also on a session that saved another level. Codex takes it as effort, with `minimal` as `low`, and needs a reasoning model; `none` leaves Codex at its default. Claude Code and Deep Agents take it as effort, with `minimal` and `none` as `low` and `xhigh` as `high`, because current Claude models refuse thinking off and older ones refuse `xhigh`. Claude models without effort (3.x, Sonnet and Haiku 4.5, Opus 4.1, 4.0) get none. OpenCode takes it as the nearest variant for the model and provider route, preferring the higher level on a tie. Direct Anthropic and gateway routes can expose different variants, as can direct OpenAI and gateway routes. `none` sends `none` where the model has it and no variant elsewhere; `provider-default` or unset sends no variant. Whenever a harness runs a level other than the one you set, the run logs a `harness.reasoning_changed` warning (in `broods logs` and the dashboard) naming both levels.
+- `model.providerOptions` and `subagent.model.providerOptions` are refused with `config.harness`, in the config and as a per-run override: no harness reads them. Set `model.reasoning` instead.
 - Policies and structured output are not supported yet.
 
 Each harness supports different model providers, tool approval and tool filtering. The table is in [Configuration](../reference/configuration.md).

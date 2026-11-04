@@ -1,11 +1,12 @@
-/**
- * Generic model-result helpers plus shared persistent-subagent tool plumbing.
- * Keep tool-specific schemas, inputs, and actions in their own tool files.
- */
-
 import type { JSONValue } from "@ai-sdk/provider";
 import { detectMediaType, type ToolResultOutput } from "@ai-sdk/provider-utils";
-import type { JSONSchema7, UserContent, UserModelMessage } from "ai";
+import {
+  toolModelMessageSchema,
+  type JSONSchema7,
+  type ToolModelMessage,
+  type UserContent,
+} from "ai";
+import { z } from "zod";
 import {
   applyRunOverrides,
   type AgentConfig,
@@ -21,6 +22,7 @@ import {
   type AsyncAgentResultRecord,
 } from "../async-agent-result.ts";
 import { getIngressStatusByEventId } from "../ingress.ts";
+import type { IngressUserMessage } from "../session.ts";
 
 export const SUBAGENT_TOOL_PROPERTIES: Record<string, JSONSchema7> = {
   taskId: {
@@ -35,11 +37,8 @@ export const SUBAGENT_TOOL_PROPERTIES: Record<string, JSONSchema7> = {
 
 export const VIRTUAL_AGENT_PREFIX = "virtual_subagent_";
 
-// Images one tool result may show the model; together they share MAX_IMAGE_BYTES.
-const MAX_RESULT_IMAGES = 8;
-// The longest side a model provider takes for an inline image.
+export const MAX_RESULT_IMAGES = 8;
 const MAX_IMAGE_SIDE = 8000;
-// What every model provider reads inline.
 const MODEL_IMAGE_TYPES: ReadonlySet<string> = new Set([
   "image/gif",
   "image/jpeg",
@@ -48,7 +47,16 @@ const MODEL_IMAGE_TYPES: ReadonlySet<string> = new Set([
 ]);
 const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
 
-/** One part of a `content` tool result. */
+const toolResultOutputTypeSchema = z.object({
+  type: z.enum([
+    "text",
+    "error-text",
+    "json",
+    "error-json",
+    "execution-denied",
+    "content",
+  ]),
+});
 export type ToolContentPart = Extract<
   ToolResultOutput,
   { type: "content" }
@@ -60,23 +68,44 @@ export interface SubagentToolContext {
   conversationKey: string;
 }
 
-/** A persistent subagent's question to its parent; null when no answer comes. */
-export type AskParent = (
-  question: string,
-  abortSignal?: AbortSignal,
-) => Promise<string | null>;
+/** The longest a `message-agents` sender waits for the reply. */
+export const MAX_AGENT_WAIT_SECONDS = 60 * 60;
 
-/** This turn's live subagents, as the parent's loop and subagent tools see them. */
+/** A `message-agents` send: `exchangeId` labels the exchange, and a follow-up reuses it. */
+export interface AgentMessage {
+  text: string;
+  exchangeId: string;
+  followUp: boolean;
+  /** Set when the sender waits for the reply, up to this long. */
+  waitSeconds?: number;
+}
+
+/** What a `message-agents` send did; a turn it started has run_subagent's handles. */
+export interface AgentMessageResult {
+  status: "delivered" | "resumed" | "not_delivered";
+  exchangeId: string;
+  note: string;
+  taskId?: string;
+  runId?: string;
+  statusPath?: string;
+}
+
+/** A persistent subagent's line to its parent, behind its `message-agents` tool. */
+export interface ParentLink {
+  /** Ends the turn on a question; false when one is already asked this turn. */
+  ask(message: AgentMessage): boolean;
+  /** Hands the parent a note while the child keeps working. */
+  note(message: AgentMessage): Promise<AgentMessageResult>;
+}
+
+/** A parent's message to one of its persistent children, named by its address. */
+export type MessageChild = (
+  to: string,
+  message: AgentMessage,
+) => Promise<AgentMessageResult>;
+
 export interface SubagentWatch {
-  waitForSettled(
-    taskId: string,
-    timeoutMs: number,
-    abortSignal?: AbortSignal,
-  ): Promise<void>;
-  markDelivered(eventId: string): void;
-  answerQuestion(taskId: string, answer: string): boolean;
-  takeParentMessages(): Promise<UserModelMessage[]>;
-  confirmDelivered(): Promise<void>;
+  takeParentMessages(): Promise<IngressUserMessage[]>;
 }
 
 export interface SubagentToolInput {
@@ -86,11 +115,7 @@ export interface SubagentToolInput {
 
 export type UserContentPart = Exclude<UserContent, string>[number];
 
-/**
- * The subagent tools' ownership check: the task's status row, when a run of
- * this conversation started it. A child can outlive the run that started it,
- * so a later turn of the same conversation can still read, steer or stop it.
- */
+// A child can outlive the run that started it, so any run of its conversation owns it.
 export async function getOwnedSubagent(
   context: SubagentToolContext,
   input: SubagentToolInput,
@@ -128,10 +153,6 @@ export function isFatalSandboxSetupError(value: string): boolean {
   );
 }
 
-/**
- * Adapt a retained JSON result to the richest user-message parts supported by
- * the AI SDK. JSON has no native user part, so only that case becomes text.
- */
 export function modelValueToUserParts(value: JSONValue): UserContentPart[] {
   const output = parseToolResultOutput(value);
   if (!output) {
@@ -159,17 +180,17 @@ export function modelValueToUserParts(value: JSONValue): UserContentPart[] {
   }
 }
 
-/**
- * Convert an erased execute result at the AI SDK model-output boundary. Static
- * tools return string or JSON and take the SDK's own default; only uploaded
- * tools need this, because the SDK default never validates what it wraps.
- */
+// For uploaded tools: the SDK's default output conversion never validates what it wraps.
 export function normalizeToolResultOutput(output: unknown): ToolResultOutput {
-  if (isToolResultOutput(output)) {
-    return output;
+  const parsed = parseToolResultOutput(output);
+  if (parsed) {
+    return parsed;
   }
-  if (hasToolResultOutputDiscriminant(output)) {
-    throw new TypeError(`Invalid ToolResultOutput for type "${output.type}"`);
+  const typed = toolResultOutputTypeSchema.safeParse(output);
+  if (typed.success) {
+    throw new TypeError(
+      `Invalid ToolResultOutput for type "${typed.data.type}"`,
+    );
   }
   if (typeof output === "string") {
     return { type: "text", value: output };
@@ -194,9 +215,7 @@ export function prependTextToUserParts(
     : [{ type: "text", text: prefix }, ...parts];
 }
 
-// A child carries the parent's effective policies and withheld tools (a channel
-// record's included), and never spawns subagents of its own. Workspaces are the
-// exception: a predefined child keeps its own, whatever a record narrowed.
+// Workspaces are not inherited: a predefined child keeps its own, whatever a record narrowed.
 export function subagentConfig(
   config: AgentConfig,
   parent: AgentConfig,
@@ -223,17 +242,22 @@ export function subagentNotFound(taskId: string): string {
   return `Error: no subagent task found for ${taskId}`;
 }
 
-/** Throw native errors from execute so the AI SDK selects its error result path. */
+export function toolContentItems(message: ToolModelMessage): ToolContentPart[] {
+  return message.content.flatMap((part): ToolContentPart[] =>
+    part.type === "tool-result" && part.output.type === "content"
+      ? part.output.value
+      : [],
+  );
+}
+
 export const toolError = (value: string): never => {
   throw new Error(
     isFatalSandboxSetupError(value) ? `Sandbox setup failed: ${value}` : value,
   );
 };
 
-/** Return native text from execute so the AI SDK selects ToolResultOutput.text. */
 export const toolText = (value: string): string => value;
 
-// A virtual child (no agentId) is the parent itself, on `subagent.model` when set.
 export function virtualSubagentConfig(parent: AgentConfig): AgentConfig {
   return subagentConfig(
     applyRunOverrides(parent, { model: parent.subagent?.model }),
@@ -241,12 +265,7 @@ export function virtualSubagentConfig(parent: AgentConfig): AgentConfig {
   );
 }
 
-/**
- * A tool result's content parts with every image the model cannot read, or past
- * the result's budget (MAX_RESULT_IMAGES images sharing MAX_IMAGE_BYTES), swapped
- * for a text note. A bad image would fail the next model call, and big ones stay
- * in the conversation for every later turn. browse and MCP results go through it.
- */
+// A bad image fails the next model call, and a big one rides along on every later turn.
 export function withImageLimits(parts: ToolContentPart[]): ToolContentPart[] {
   let images = 0;
   let bytes = 0;
@@ -258,7 +277,6 @@ export function withImageLimits(parts: ToolContentPart[]): ToolContentPart[] {
       text: `[An image (${part.mediaType}, ${part.data.length} base64 characters) was not shown to you: ${problem}.]`,
     });
     const size = base64Bytes(part.data);
-    // The bytes name the type; a label alone is often wrong.
     const mediaType =
       size === undefined
         ? undefined
@@ -295,7 +313,6 @@ export function withImageLimits(parts: ToolContentPart[]): ToolContentPart[] {
   });
 }
 
-/** Decoded size of a base64 string, or undefined when it is not valid base64. */
 function base64Bytes(data: string): number | undefined {
   if (data.length % 4 !== 0 || !BASE64_PATTERN.test(data)) return undefined;
   const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
@@ -307,34 +324,6 @@ function formatJSONValue(value: JSONValue): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
-function hasToolResultOutputDiscriminant(
-  value: unknown,
-): value is Record<string, unknown> & { type: string } {
-  return (
-    isRecord(value) &&
-    typeof value.type === "string" &&
-    [
-      "text",
-      "json",
-      "execution-denied",
-      "error-text",
-      "error-json",
-      "content",
-    ].includes(value.type)
-  );
-}
-
-function hasValidProviderOptions(value: Record<string, unknown>): boolean {
-  return (
-    value.providerOptions === undefined || isJSONValue(value.providerOptions)
-  );
-}
-
-/**
- * An image's pixel size, read from the header its type defines, or undefined
- * when that header is not all there: a signature alone is not an image. Only
- * the header is read, so a body cut short past it still passes.
- */
 function imageSize(
   bytes: Buffer,
   mediaType: string,
@@ -354,29 +343,6 @@ function imageSize(
   }
 
   return jpegSize(bytes);
-}
-
-function isFileData(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.type !== "string") {
-    return false;
-  }
-
-  switch (value.type) {
-    case "data":
-      return (
-        typeof value.data === "string" ||
-        value.data instanceof Uint8Array ||
-        value.data instanceof ArrayBuffer
-      );
-    case "url":
-      return value.url instanceof URL;
-    case "reference":
-      return isStringRecord(value.reference);
-    case "text":
-      return typeof value.text === "string";
-    default:
-      return false;
-  }
 }
 
 function isJSONValue(
@@ -408,104 +374,13 @@ function isJSONValue(
   return valid;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object";
-}
-
-function isStringRecord(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    Object.values(value).every((item) => typeof item === "string")
-  );
-}
-
-function isToolResultContentPart(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.type !== "string") {
-    return false;
-  }
-
-  switch (value.type) {
-    case "text":
-      return typeof value.text === "string" && hasValidProviderOptions(value);
-    case "file":
-      return (
-        typeof value.mediaType === "string" &&
-        isFileData(value.data) &&
-        (value.filename === undefined || typeof value.filename === "string") &&
-        hasValidProviderOptions(value)
-      );
-    case "file-data":
-    case "image-data":
-      return (
-        typeof value.data === "string" &&
-        typeof value.mediaType === "string" &&
-        (value.filename === undefined || typeof value.filename === "string") &&
-        hasValidProviderOptions(value)
-      );
-    case "file-url":
-      return (
-        typeof value.url === "string" &&
-        (value.mediaType === undefined ||
-          typeof value.mediaType === "string") &&
-        hasValidProviderOptions(value)
-      );
-    case "image-url":
-      return typeof value.url === "string" && hasValidProviderOptions(value);
-    case "file-id":
-    case "image-file-id":
-      return (
-        (typeof value.fileId === "string" || isStringRecord(value.fileId)) &&
-        hasValidProviderOptions(value)
-      );
-    case "file-reference":
-    case "image-file-reference":
-      return (
-        isStringRecord(value.providerReference) &&
-        hasValidProviderOptions(value)
-      );
-    case "custom":
-      return hasValidProviderOptions(value);
-    default:
-      return false;
-  }
-}
-
-function isToolResultOutput(value: unknown): value is ToolResultOutput {
-  if (!isRecord(value) || typeof value.type !== "string") {
-    return false;
-  }
-
-  switch (value.type) {
-    case "text":
-    case "error-text":
-      return typeof value.value === "string" && hasValidProviderOptions(value);
-    case "json":
-    case "error-json":
-      return isJSONValue(value.value) && hasValidProviderOptions(value);
-    case "execution-denied":
-      return (
-        (value.reason === undefined || typeof value.reason === "string") &&
-        hasValidProviderOptions(value)
-      );
-    case "content":
-      return (
-        Array.isArray(value.value) &&
-        value.value.every(isToolResultContentPart) &&
-        hasValidProviderOptions(value)
-      );
-    default:
-      return false;
-  }
-}
-
-/** A JPEG's size from its first start-of-frame segment. */
 function jpegSize(
   bytes: Buffer,
 ): { width: number; height: number } | undefined {
   let offset = 2;
   while (offset + 9 <= bytes.length && bytes[offset] === 0xff) {
     const marker = bytes.readUInt8(offset + 1);
-    // A marker may be preceded by any number of 0xFF fill bytes.
+    // Any number of 0xFF fill bytes may precede a marker.
     if (marker === 0xff) {
       offset += 1;
       continue;
@@ -532,11 +407,20 @@ function jpegSize(
 export function parseToolResultOutput(
   value: unknown,
 ): ToolResultOutput | undefined {
-  return isToolResultOutput(value) ? value : undefined;
+  // The SDK's own schema, reached through the tool message a result sits in. The input, not
+  // zod's copy, which would drop the keys the schema does not name.
+  const message = {
+    role: "tool",
+    content: [
+      { type: "tool-result", toolCallId: "", toolName: "", output: value },
+    ],
+  };
+
+  return toolModelMessageSchema.safeParse(message).success
+    ? (value as ToolResultOutput)
+    : undefined;
 }
 
-// The task id names the run that started the child; a run other than this one
-// counts when its envelope belongs to this conversation.
 async function startedInConversation(
   context: SubagentToolContext,
   taskId: string,
@@ -666,7 +550,6 @@ function urlToolContentPartToUserPart(
   }
 }
 
-/** A WebP's size from its VP8, VP8L or VP8X chunk. */
 function webpSize(
   bytes: Buffer,
 ): { width: number; height: number } | undefined {

@@ -1,6 +1,5 @@
 import { formatNumber } from "./formatNumber";
 
-/** Colors for a chart's series in order, such as models or projects. */
 export const SERIES_COLORS = [
   "var(--color-usage-model-1)",
   "var(--color-usage-model-2)",
@@ -10,7 +9,6 @@ export const SERIES_COLORS = [
   "var(--color-usage-model-6)",
 ];
 
-/** Token counts as the AI SDK reports them: input and output are totals. */
 export interface TokenCounts {
   inputTokens: number;
   outputTokens: number;
@@ -19,11 +17,8 @@ export interface TokenCounts {
   cacheWriteTokens: number;
 }
 
-/**
- * Non-overlapping token parts that add up to input + output. The SDK's
- * `inputTokens` already includes cache reads and writes, and `outputTokens`
- * already includes reasoning, so stacking the raw counts double counts them.
- */
+// The AI SDK's `inputTokens` includes cache reads and writes and `outputTokens` includes
+// reasoning, so stacking the raw counts double counts them.
 export interface TokenParts {
   uncachedInput: number;
   cacheRead: number;
@@ -32,11 +27,13 @@ export interface TokenParts {
   reasoning: number;
 }
 
-/**
- * Start of every bin in the range ending at `now`, floored to whole bins the
- * way the server floors `bucketStart`, so filled bins meet the data bins even
- * when the range is not a whole number of bins (a year of weeks).
- */
+export interface PerTaskAverages {
+  cost: Array<number | null>;
+  calls: Array<number | null>;
+  tokens: Array<number | null>;
+}
+
+// Floored the way the server floors `bucketStart`, so filled bins meet the data bins.
 export function bucketStartsAcrossRange(
   binSeconds: number,
   rangeSeconds: number,
@@ -49,15 +46,42 @@ export function bucketStartsAcrossRange(
   return Array.from({ length: count }, (_, i) => endMs - (count - i) * binMs);
 }
 
-/** Axis label for a round tick: formatNumber without the trailing ".0". */
+export function perTaskAverages(
+  bins: Array<{ invocations: number; modelCalls: number; totalTokens: number }>,
+  binCosts: number[],
+): PerTaskAverages {
+  const per = (bin: (typeof bins)[number], total: number): number | null =>
+    bin.invocations > 0 ? total / bin.invocations : null;
+
+  return {
+    cost: bins.map((bin, i) => per(bin, binCosts[i] ?? 0)),
+    calls: bins.map((bin) => per(bin, bin.modelCalls)),
+    tokens: bins.map((bin) => per(bin, bin.totalTokens)),
+  };
+}
+
 export function formatAxisNumber(n: number): string {
   return formatNumber(n).replace(".0", "");
 }
 
-/**
- * SVG path through `points` with monotone cubic interpolation, so a smooth
- * curve never overshoots below zero or above a peak.
- */
+export function knownRuns(
+  values: Array<number | null>,
+): Array<Array<[number, number]>> {
+  const runs: Array<Array<[number, number]>> = [];
+  let run: Array<[number, number]> = [];
+  values.forEach((value, i) => {
+    if (value === null) {
+      if (run.length > 0) runs.push(run);
+      run = [];
+    } else {
+      run.push([i, value]);
+    }
+  });
+  if (run.length > 0) runs.push(run);
+
+  return runs;
+}
+
 export function monotonePath(points: Array<[number, number]>): string {
   const n = points.length;
   if (n === 0) return "";
@@ -91,7 +115,6 @@ export function monotonePath(points: Array<[number, number]>): string {
   return d;
 }
 
-/** Evenly spaced round ticks from 0 to at least `max`, about `count` steps. */
 export function niceTicks(max: number, count: number): number[] {
   if (max <= 0) return [0, 1];
   const raw = max / count;
@@ -115,10 +138,6 @@ export function niceTicks(max: number, count: number): number[] {
   return ticks;
 }
 
-/**
- * Stretches `rows` to `n` rows by linear interpolation, so a chart can morph
- * from one range's bins into another range's bin count.
- */
 export function resampleRows(rows: number[][], n: number): number[][] {
   if (rows.length === n || rows.length === 0) return rows;
   const out: number[][] = [];
@@ -133,7 +152,6 @@ export function resampleRows(rows: number[][], n: number): number[][] {
   return out;
 }
 
-/** Splits SDK token totals into parts that stack to exactly input + output. */
 export function tokenParts(counts: TokenCounts): TokenParts {
   return {
     uncachedInput: Math.max(

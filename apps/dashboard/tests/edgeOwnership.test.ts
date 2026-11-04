@@ -5,14 +5,10 @@ import {
   isCodeManagedEdge,
 } from "../app/components/canvas/edgeOwnership";
 
-/**
- * Tracy's CLI nodes, an agent the account REST API owns, and resources made on
- * the dashboard.
- */
 const NODES: Record<string, LayoutNode> = {
   "agent-dash": node("agent-dash", "agent", "dashboard"),
   "api-agent-ops": node("api-agent-ops", "agent", "api"),
-  "cli-agent-tracy": node("cli-agent-tracy", "agent", "cli"),
+  "cli-agent-support": node("cli-agent-support", "agent", "cli"),
   "cli-sandbox-mac": node("cli-sandbox-mac", "sandbox", "cli"),
   "cli-workspace-notes": node("cli-workspace-notes", "workspace", "cli"),
   "sandbox-dash": node("sandbox-dash", "sandbox", "dashboard"),
@@ -22,8 +18,8 @@ const NODES: Record<string, LayoutNode> = {
 describe("isCodeManagedEdge", () => {
   test("owns an edge a person draws from a code-managed agent, so it can't be drawn", () => {
     for (const [source, target] of [
-      ["cli-agent-tracy", "cli-sandbox-mac"],
-      ["cli-agent-tracy", "sandbox-dash"],
+      ["cli-agent-support", "cli-sandbox-mac"],
+      ["cli-agent-support", "sandbox-dash"],
     ]) {
       expect(owned(source, null, target, "top", true), target).toBe(true);
     }
@@ -55,8 +51,8 @@ describe("isCodeManagedEdge", () => {
     expect(
       isCodeManagedEdge(
         {
-          id: "xy-edge__cli-agent-tracy-cli-sandbox-mac",
-          source: "cli-agent-tracy",
+          id: "xy-edge__cli-agent-support-cli-sandbox-mac",
+          source: "cli-agent-support",
           target: "cli-sandbox-mac",
         },
         () => undefined,
@@ -73,7 +69,6 @@ describe("isCodeManagedEdge", () => {
       owned("sandbox-dash", "right", "cli-workspace-notes", "left", false),
       "sandbox dragged onto workspace",
     ).toBe(true);
-    // The sandbox end does not decide it: this workspace is editable here.
     expect(
       owned("cli-sandbox-mac", "right", "workspace-dash", "left", false),
     ).toBe(false);

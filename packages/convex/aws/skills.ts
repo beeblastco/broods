@@ -1,14 +1,13 @@
 "use node";
 
-/**
- * Node-runtime internal actions for S3 skill storage. Callers in the default
- * runtime (cli/http, config/http) reach S3 through these; Node actions
- * (skillsPublic) import model/skills directly instead.
- */
+// Default-runtime callers reach S3 through these; Node actions use model/skills directly.
 
 import { v } from "convex/values";
+import { z } from "zod/mini";
+
 import { internalAction } from "../_generated/server";
-import { isPlainObject } from "../model/objects";
+import { parseInput } from "../model/inputSchema";
+import { configObject, parseOr } from "../model/storedJson";
 import {
   createJsonSkillFiles,
   createOrReplaceSkill,
@@ -23,6 +22,24 @@ import {
 } from "../model/skills";
 import { ClientError } from "../model/clientError";
 
+const SKILL_INPUT = z.looseObject(
+  {
+    source: z.optional(z.unknown()),
+    files: z.optional(z.unknown()),
+    url: z.optional(z.unknown()),
+  },
+  { error: "Request body must be an object" },
+);
+const JSON_SKILL = z.looseObject({
+  name: z.string(),
+  description: z.string(),
+  content: z.string(),
+});
+const SKILL_FILE = z.looseObject({
+  path: z.string(),
+  contentBase64: z.string(),
+});
+
 const skillMetadata = v.object({
   name: v.string(),
   description: v.string(),
@@ -35,14 +52,6 @@ const storedSkill = v.object({
   files: v.array(v.object({ path: v.string(), size: v.optional(v.number()) })),
 });
 
-/**
- * Validate and store a skill bundle from any supported source (files, json,
- * or github), replacing an existing skill of the same name.
- * @param accountId account id owning the skill
- * @param input the create-skill request body (source discriminated)
- * @param expectedName when set, the SKILL.md name must match before writing
- * @returns the stored skill's metadata and manifest
- */
 export const createSkill = internalAction({
   args: {
     accountId: v.id("accounts"),
@@ -57,10 +66,6 @@ export const createSkill = internalAction({
   },
 });
 
-/**
- * Checks CLI skill bundles the way `createSkill` does, without storing them,
- * so a manifest sync can refuse a bad one before it uploads anything.
- */
 export const validateSkills = internalAction({
   args: { skills: v.array(v.object({ name: v.string(), files: v.any() })) },
   returns: v.null(),
@@ -76,10 +81,6 @@ export const validateSkills = internalAction({
   },
 });
 
-/**
- * @param accountId account id owning the skills
- * @returns skill metadata entries
- */
 export const list = internalAction({
   args: { accountId: v.id("accounts") },
   returns: v.array(skillMetadata),
@@ -88,11 +89,6 @@ export const list = internalAction({
   },
 });
 
-/**
- * @param accountId account id owning the skill
- * @param skillName the skill name
- * @returns the stored skill, or null when it does not exist
- */
 export const get = internalAction({
   args: { accountId: v.id("accounts"), skillName: v.string() },
   returns: v.union(storedSkill, v.null()),
@@ -101,11 +97,6 @@ export const get = internalAction({
   },
 });
 
-/**
- * @param accountId account id owning the skill
- * @param skillName the skill name
- * @returns true when any objects were deleted
- */
 export const remove = internalAction({
   args: { accountId: v.id("accounts"), skillName: v.string() },
   returns: v.boolean(),
@@ -114,53 +105,32 @@ export const remove = internalAction({
   },
 });
 
-/**
- * Resolve a create-skill request body into bundle files, mirroring core's
- * former `resolveSkillBundleFiles` contract (sources: json, files, github).
- * @param input the request body
- * @returns the bundle files to validate and store
- * @throws when the body or source is invalid
- */
 async function resolveSkillBundleFiles(
   input: unknown,
 ): Promise<SkillBundleFile[]> {
-  if (!isPlainObject(input)) {
-    throw new ClientError("Request body must be an object");
-  }
-
-  const record = input;
+  const record = parseInput(SKILL_INPUT, input, "");
   switch (record.source) {
     case "json": {
-      if (
-        typeof record.name !== "string" ||
-        typeof record.description !== "string" ||
-        typeof record.content !== "string"
-      ) {
+      const skill = parseOr(JSON_SKILL, record);
+      if (!skill) {
         throw new ClientError(
           "JSON skills require name, description, and content strings",
         );
       }
 
-      return createJsonSkillFiles(
-        record.name,
-        record.description,
-        record.content,
-      );
+      return createJsonSkillFiles(skill.name, skill.description, skill.content);
     }
     case "files": {
       if (!Array.isArray(record.files) || record.files.length === 0) {
         throw new ClientError("files must be a non-empty array");
       }
 
-      return record.files.map((item) => {
-        if (!isPlainObject(item)) {
+      return record.files.map((item: unknown) => {
+        if (!parseOr(configObject, item)) {
           throw new ClientError("Each file must be an object");
         }
-        const candidate = item;
-        if (
-          typeof candidate.path !== "string" ||
-          typeof candidate.contentBase64 !== "string"
-        ) {
+        const candidate = parseOr(SKILL_FILE, item);
+        if (!candidate) {
           throw new ClientError("Each file requires path and contentBase64");
         }
 
@@ -180,7 +150,6 @@ async function resolveSkillBundleFiles(
   }
 }
 
-/** Resolves a bundle and applies `createSkill`'s rules, name match included. */
 async function validatedSkillFiles(
   input: unknown,
   expectedName: string | undefined,

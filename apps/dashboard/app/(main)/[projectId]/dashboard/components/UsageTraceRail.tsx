@@ -1,10 +1,18 @@
 "use client";
 
 import { Input } from "@/app/components/ui/input";
+import { useNow } from "@/app/hooks/useNow";
+import { TRACE_RETENTION_DAYS } from "@/app/hooks/useObservabilityStream";
 import { formatNumber } from "@/app/lib/formatNumber";
+import { formatUsd, modelKey } from "@/app/lib/modelCost";
 import { tabHref } from "@/app/lib/navigation";
+import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import {
+  estimateModelTokenCost,
+  type ModelTokenRates,
+} from "@broods/convex/model/modelPricing";
 import { useQuery } from "convex/react";
 import { Search, X } from "lucide-react";
 import Link from "next/link";
@@ -12,37 +20,31 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { formatBucketLabel } from "./UsageChart";
 
+const TRACE_RETENTION_MS = TRACE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
 interface Props {
   projectId: Id<"projects">;
   stageId: Id<"stages"> | null;
-  /** The clicked bin. */
   bin: { startMs: number; binSeconds: number };
-  /** Tokens the selected bin shows for the filtered models, for each trace's share. */
   binTokens: number;
-  /** The model filter as `provider::model` keys, or null for every model. */
+  /** `provider::model` keys, or null for every model. */
   models: string[] | null;
+  rates: ReadonlyMap<string, ModelTokenRates>;
   onClose: () => void;
 }
 
-/**
- * The trace list that opens beside the token chart when a bin is clicked:
- * links to the traces behind that bin, heaviest first, with a search over
- * their prompts and trace ids. Each row carries the start of its prompt, as
- * Tracing labels it, wrapped to two lines and cut with an ellipsis, and the
- * tokens it contributed; the trace itself opens in the Tracing tab. It keeps
- * the chart's height and scrolls inside, so opening it never moves the
- * content below.
- */
 export function UsageTraceRail({
   projectId,
   stageId,
   bin,
   binTokens,
   models,
+  rates,
   onClose,
 }: Props): React.JSX.Element {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const now = useNow();
   const [query, setQuery] = useState("");
   const result = useQuery(api.logs.fetchUsageTasks, {
     projectId: projectId,
@@ -52,7 +54,7 @@ export function UsageTraceRail({
     models: models ?? undefined,
   });
 
-  // Rows written before trace ids joined the task id have nothing to link to.
+  // Older rows have no trace id in their task id, so nothing to link to.
   const traced = (result?.tasks ?? []).flatMap((task) =>
     task.traceId
       ? [
@@ -60,6 +62,10 @@ export function UsageTraceRail({
             traceId: task.traceId,
             totalTokens: task.totalTokens,
             inputPreview: task.inputPreview,
+            cost:
+              estimateModelTokenCost(rates.get(modelKey(task)), task)?.total ??
+              null,
+            expired: task.finishedAt < now - TRACE_RETENTION_MS,
           },
         ]
       : [],
@@ -72,7 +78,6 @@ export function UsageTraceRail({
           (t.inputPreview ?? "").toLowerCase().includes(needle),
       )
     : traced;
-  // Only the stage and the trace travel; the usage range and bin stay here.
   const traceHref = (traceId: string): string =>
     tabHref(pathname, "tracing", searchParams.toString(), { trace: traceId });
 
@@ -119,32 +124,16 @@ export function UsageTraceRail({
           {needle ? "No traces match." : "No traces listed for this time."}
         </p>
       )}
-      {shown.map(({ traceId, totalTokens, inputPreview }, i) => (
-        <Link
-          key={`${traceId}-${i}`}
-          href={traceHref(traceId)}
-          title={inputPreview ?? "Open in Tracing"}
-          className="grid min-w-0 cursor-pointer gap-0.5 border-b border-border px-3 py-2 text-xs hover:bg-accent/40"
-        >
-          <span className="flex min-w-0 items-start justify-between gap-3">
-            <span className="line-clamp-2 min-w-0 break-words">
-              {inputPreview ?? "No prompt text"}
-            </span>
-            <span className="shrink-0 font-medium tabular-nums">
-              {formatNumber(totalTokens)}
-            </span>
-          </span>
-          <span className="flex min-w-0 items-baseline justify-between gap-3 text-2xs text-muted-foreground">
-            <span className="min-w-0 truncate font-mono text-info">
-              {traceId}
-            </span>
-            <span className="shrink-0 tabular-nums">
-              {binTokens > 0
-                ? `${Math.round((totalTokens / binTokens) * 100)}% of tokens`
-                : ""}
-            </span>
-          </span>
-        </Link>
+      {shown.map((row) => (
+        <UsageTraceRow
+          key={row.traceId}
+          traceId={row.traceId}
+          totalTokens={row.totalTokens}
+          inputPreview={row.inputPreview}
+          cost={row.cost}
+          href={row.expired ? null : traceHref(row.traceId)}
+          share={binTokens > 0 ? row.totalTokens / binTokens : null}
+        />
       ))}
       {result?.truncated && (
         <p className="px-3 py-2 text-2xs text-muted-foreground">
@@ -155,7 +144,65 @@ export function UsageTraceRail({
   );
 }
 
-/** The rail's frame: the chart's height beside it, up to that height when stacked. */
+function UsageTraceRow({
+  traceId,
+  totalTokens,
+  inputPreview,
+  cost,
+  href,
+  share,
+}: {
+  traceId: string;
+  totalTokens: number;
+  inputPreview: string | null;
+  cost: number | null;
+  href: string | null;
+  share: number | null;
+}): React.JSX.Element {
+  const body = (
+    <>
+      <span className="flex min-w-0 items-start justify-between gap-3">
+        <span className="line-clamp-2 min-w-0 break-words">
+          {inputPreview ?? "No prompt text"}
+        </span>
+        <span className="shrink-0 font-mono tabular-nums">
+          <span className="text-muted-foreground">
+            {cost === null ? "not priced" : formatUsd(cost)}
+          </span>{" "}
+          <span className="font-medium">{formatNumber(totalTokens)}</span>
+        </span>
+      </span>
+      <span className="flex min-w-0 items-baseline justify-between gap-3 text-2xs text-muted-foreground">
+        <span className={cn("min-w-0 truncate font-mono", href && "text-info")}>
+          {traceId}
+        </span>
+        <span className="shrink-0 tabular-nums">
+          {share === null ? "" : `${Math.round(share * 100)}% of tokens`}
+        </span>
+      </span>
+    </>
+  );
+  const rowClass =
+    "grid min-w-0 gap-0.5 border-b border-border px-3 py-2 text-xs";
+
+  return href ? (
+    <Link
+      href={href}
+      title={inputPreview ?? "Open in Tracing"}
+      className={cn(rowClass, "cursor-pointer hover:bg-accent/40")}
+    >
+      {body}
+    </Link>
+  ) : (
+    <div
+      title={`Traces are kept ${TRACE_RETENTION_DAYS} days`}
+      className={cn(rowClass, "cursor-help")}
+    >
+      {body}
+    </div>
+  );
+}
+
 function Rail({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="max-h-112.5 overflow-y-auto overscroll-contain border-t border-border lg:h-112.5 lg:border-t-0 lg:border-l">

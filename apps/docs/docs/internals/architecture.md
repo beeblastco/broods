@@ -127,7 +127,7 @@ sequenceDiagram
 ```
 
 - Stage URL: `/v1/webhooks/:accountId/dev/:endpointId/:channel`. One that resolves to no agent is `404`.
-- Discord messages and all Matrix traffic come from the two forwarders, posting to the same URL. Matrix replies go back through the matrix-forwarder's `/v1/send`, since only it holds the room keys.
+- Discord messages come from the discord-forwarder, posting to the same URL.
 - Unsigned requests are answered from an agent listing cached up to 10 seconds; a request that verifies lists again uncached. Detail: [channels](channels.md).
 
 ### Cron fire
@@ -207,7 +207,8 @@ sequenceDiagram
     V->>V: run manifest rules, before any write
     V->>V: cliSync: resolve env refs,<br/>encrypt config, write rows
     V->>S: skill and bundle bytes
-    V-->>CLI: ids, deployment, runtime key
+    V->>V: hash the manifest read back,<br/>store the source when it changed
+    V-->>CLI: ids, deployment, runtime key, manifestHash
     CLI->>CLI: write broods/_generated/, BROODS_API_KEY
   end
 ```
@@ -215,6 +216,24 @@ sequenceDiagram
 - `broods dev` sends the revision it read; `broods deploy` sends none and replaces the last completed sync.
 - The claim is released in `finally`; an abandoned claim expires after 45 minutes.
 - `verification/Broods/Sync*.lean` proves the next diff after a sync is deletes only and that overlapping PUTs are refused.
+- The body's optional `source` (`{ files: [{ path, content }], commitSha? }`, `model/stageSource.ts`) is checked before any write. `recordStageSync` hashes the read-back manifest (`manifestHash` in `model/manifestSnapshot.ts`, the same snapshot `diffManifests` compares, so an empty diff means an equal hash) onto `stageSyncs`, and stores the source as a new `stageSources` revision only when its content hash moved. `GET /manifest` answers the live hash.
+
+### Dock Apply and drift
+
+The dashboard's agent edits a per-conversation copy of the stage's stored source; Apply (`agentDock.apply`) deploys the approved files from a compile sandbox (`/v1/apply-runs`, see [security](security.md#apply-tickets)) and stores them as the next source revision.
+
+```mermaid
+stateDiagram-v2
+  [*] --> deployed: no repo, the sync read back Apply's hash
+  [*] --> verifying: linked, pushed to the branch
+  verifying --> deployed: CI succeeded and left the stage on Apply's hash
+  verifying --> failed: CI failed, did not sync, or synced another hash
+```
+
+- The phase lives on the revision (`stageSources.verification`); `verifyRun` settles it from the `workflow_run` webhook. A successful run on a sha no Apply made snapshots the branch at that sha as the source (`snapshotRepo`), so a push needs no button.
+- Production applies the same way, to its own branch. A branch that refuses the push gets a pull request; that revision stays verifying until the merge is snapshotted, so drift offers no Sync that would undo it.
+- The commit is the diff from the stored revision made from the branch head. With none (the branch moved, or the stage was deployed from a laptop), Apply refuses: Sync first. A retry of a draft that already deployed is not a conflict.
+- `stageSources.drift` is the change bar's one state: out of sync when the stage's manifest hash moved away from its newest source (a deploy from elsewhere), or the branch's last finished run is not the newest source's commit. Quiet while an Apply is verifying. `agentDock.sync` redeploys the branch head when linked, else the newest stored source.
 
 ## Run lifecycle
 
@@ -264,7 +283,6 @@ flowchart LR
   Core["core"]
   CVX["Convex functions"]
   GW["gateway"]
-  MF["matrix-forwarder"]
 
   subgraph Tables["Convex tables"]
     Cfg[("config:<br/>agents, mcp, crons, policies")]
@@ -284,7 +302,6 @@ flowchart LR
   end
 
   LT[("Loki, Tempo")]
-  Vol[("crypto store volume")]
 
   CVX --> Tables
   CVX --> Buckets
@@ -296,19 +313,17 @@ flowchart LR
   GW --> WSR
   GW --> OBS
   GW --> LT
-  MF --> Vol
 ```
 
-| Store                   | Holds                                                                    | Lifetime                            |
-| ----------------------- | ------------------------------------------------------------------------ | ----------------------------------- |
-| Convex tables           | Config, runtime state, audit, usage. `packages/convex/schema.ts`         | Durable; run status 7 days          |
-| S3 `Filesystem`         | Workspace files under `<namespace>/`, staged skills, channel attachments | Durable                             |
-| S3 `Skills`             | Skill bundles under `<accountId>/<skill-name>`                           | Durable                             |
-| S3 `ToolBundles`        | Code hook and hosted MCP bundles under `account-mcp/`                    | Durable; R2 copy expires in 30 days |
-| NATS `WS_RESPONSES`     | Agent stream parts per conversation, for WebSocket replay                | 3 minutes, 2,000 per subject        |
-| NATS `OBSERVABILITY`    | Live logs and spans per stage, for dashboard replay                      | 2 hours                             |
-| Loki, Tempo             | Long-term logs and traces, via the OTel collector                        | Per collector config                |
-| Matrix forwarder volume | Each Matrix account's crypto store, sync token and outbox                | Durable; an outbox event 12 hours   |
+| Store                | Holds                                                                    | Lifetime                            |
+| -------------------- | ------------------------------------------------------------------------ | ----------------------------------- |
+| Convex tables        | Config, runtime state, audit, usage. `packages/convex/schema.ts`         | Durable; run status 7 days          |
+| S3 `Filesystem`      | Workspace files under `<namespace>/`, staged skills, channel attachments | Durable                             |
+| S3 `Skills`          | Skill bundles under `<accountId>/<skill-name>`                           | Durable                             |
+| S3 `ToolBundles`     | Code hook and hosted MCP bundles under `account-mcp/`                    | Durable; R2 copy expires in 30 days |
+| NATS `WS_RESPONSES`  | Agent stream parts per conversation, for WebSocket replay                | 3 minutes, 2,000 per subject        |
+| NATS `OBSERVABILITY` | Live logs and spans per stage, for dashboard replay                      | 2 hours                             |
+| Loki, Tempo          | Long-term logs and traces, via the OTel collector                        | Per collector config                |
 
 Core reaches Convex with `ConvexHttpClient` and the deploy key (`apps/core/src/shared/convex/client.ts`). Byte layout: [storage](storage.md).
 
@@ -320,11 +335,11 @@ On the managed service Pro belongs to the owner, not to one org (`packages/conve
 
 Usage caps are pooled per paying user: every org a Pro owner owns draws on one set of Pro caps (`usagePools`, keyed by the owner, written with each account's meter), so one €20 subscription carries one org's worth of Pro usage however many orgs it covers. Orgs stay free to create on Pro, up to 10 per owner.
 
-The caps are the org's, shared by all its projects, and the meter also splits each day by project (`usageProjectDays`) so the dashboard can show who used what. Each write names its project as far as the writer knows it: the sandbox mirror from the instance's `projectId`, core's hosted MCP write from the server's project, egress from the workspace a media link points into, ingress from the agent the message was for (`account/budget.ts` `record`, `source`), and the daily storage snapshot from what each project's own workspaces hold. Account-wide sandboxes and workspaces, chat attachments, skills and bundles belong to no project, and neither does anything metered before the split existed; the Usage tab shows that as "Other usage", the org's total less its projects. The Usage tab's Allowance opens on This project, its amount against the caps with its part of each bar, and All projects colors each bar and day by project and lists every project's month (`api.account.budget.getForActiveOrg` with `withProjects`). Each bar is the owner's pool, the number that stops runs: this org's slices, then a faded part for the owner's other organizations, with an All organizations column and one note line saying the limits are shared. Core's admission check still reads one row, the owner's monthly pool, so the split costs a run nothing.
+The caps are the org's, shared by all its projects, and the meter also splits each day by project (`usageProjectDays`) so the dashboard can show who used what. Each write names its project as far as the writer knows it: the sandbox mirror from the instance's `projectId`, core's hosted MCP write from the server's project, egress from the workspace a media link points into, ingress from the agent the message was for (`account/budget.ts` `record`, `source`), and the daily storage snapshot from what each project's own workspaces hold. Account-wide sandboxes and workspaces, chat attachments, skills and bundles belong to no project, and neither does anything metered before the split existed; the organization's Usage page shows that as "Other usage", the org's total less its projects. A project's Usage tab shows Resources from that project: its amount against the caps, its part of each bar and day solid and the rest of the organization grey. The organization's Usage page (Settings → Organization → Usage) shows the same month from every project: each bar and day colored by project, and a table of every project's month (`api.account.budget.getForActiveOrg` with `withProjects`). Each bar is the owner's pool, the number that stops runs: this org's slices, then a faded part for the owner's other organizations, with an All organizations column and one note line saying the limits are shared. Core's admission check still reads one row, the owner's monthly pool, so the split costs a run nothing.
 
-Moving to the pool, run `npx convex run seatMigration:resyncAllSeats '{"dryRun":true}'` and then with `false` once per stage after the deploy that brought it. For each owner it runs the same seat sync and plan sync the webhook runs: their subscription drops to what their developers need across their orgs (it never raises a quantity) and every org they own takes their plan. An owner who pays for more than one subscription (one per org under the older per-org billing) keeps the one with the most units, the oldest on a tie, so no seat they paid for is lost; billing reads the same one. The other paid ones are listed under `duplicates`, never canceled, for someone to refund and cancel by hand. Owners Stripe refused are listed under `failed` and the run carries on; a second run retries only those.
+An owner who pays for more than one subscription (one per org under the older per-org billing) is billed on the paid one with the most units, the oldest on a tie, so no seat they paid for is lost (`currentOf` in `model/orgBilling.ts`). The other paid ones count for nothing; refund and cancel them by hand.
 
-In the dashboard the Billing tab keeps the plan, the seats and the bill apart. Your plan shows the owner's plan, its price, that its limits are shared across the orgs they own, and the pool's usage bar; Developer seats shows how many of the owner's seats are used across their orgs, and lists each developer with the orgs they are in; What you pay each month adds Pro and its extra seats up. Only the owner gets Upgrade, Add seat, Manage subscription and the bill, and only the owner sees their seat count and billing period; anyone else sees whose plan the org runs on, its status and their own seat, and is never charged. When every seat is taken, the invite dialog asks the owner to pay for one more seat, to upgrade from Hobby, or to fix a failed payment in Manage billing, before the invite goes out; anyone else is told to ask the owner. New organization explains that it needs Pro and links to Upgrade. Account settings lists the orgs you own, each with its plan.
+In the dashboard the Billing tab keeps the plan, the seats and the bill apart. Your plan shows the owner's plan, its price, that its limits are shared across the orgs they own, a table of every plan's limits (the monthly caps, runs per minute, orgs owned, developer seats) with the current plan marked, stacked one plan after the other on a phone, and how close the pool is to its closest cap; Developer seats, once the owner has a subscription or developers kept from before seats counted, shows how many of the owner's seats are used across their orgs, and lists each developer with the orgs they are in; What you pay each month adds Pro and its extra seats up. Only the owner gets Upgrade, Add seat, Manage subscription and the bill, and only the owner sees their seat count and billing period; anyone else sees whose plan the org runs on, its status and their own seat, and is never charged. When every seat is taken, the invite dialog asks the owner to pay for one more seat, to upgrade from Hobby, or to fix a failed payment in Manage billing, before the invite goes out; anyone else is told to ask the owner. New organization explains that it needs Pro and links to Upgrade. Account settings lists the orgs you own, each with its plan.
 
 ```mermaid
 classDiagram
@@ -372,18 +387,18 @@ Config rows such as `mcp`, `sandboxConfigs` and `workspaceConfigs` also carry `p
 
 ### Convex tables
 
-| Group                 | Tables                                                                                                                                                                                                                      |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Identity and tenancy  | `users`, `orgs`, `orgMembers`, `orgRoles`, `accounts`, `accountKeys`                                                                                                                                                        |
-| Projects and access   | `projects`, `stages`, `stageSyncs`, `agentDeployments`, `deployKeys`, `cliAuthCodes`, `cliTokens`, `accountRoles`, `roleSessions`, `permissions`                                                                            |
-| Resource config       | `agents`, `agentConfigs`, `canvasLayouts`, `agentRuntimeSecrets`, `sandboxConfigs`, `workspaceConfigs`, `mcp`, `accountHooks`, `agentPolicies`, `channelRecords`, `channelEndpoints`, `connections`, `cliExternalResources` |
-| Environment variables | `environmentVariables`, `accountEnvVars`, `environmentVariableReveals`                                                                                                                                                      |
-| Schedules             | `crons`, `cronRuns`, plus the crons component's own tables                                                                                                                                                                  |
-| Runtime               | `runtimeConversationEvents`, `runtimeHarnessSessions`, `runtimeClaims`, `runtimeConversationCoordinators`, `runtimeIngressEnvelopes`, `runtimeIngressApplications`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults`   |
-| Sandboxes             | `sandboxReservations`, `sandboxInstances`, `sandboxSnapshots`, `sandboxAuditEvents`, `machineConnections`                                                                                                                   |
-| Workspace files       | `workspaceFiles`, `workspaceDownloadTokens`, `uploadGrants`                                                                                                                                                                 |
-| Billing               | `stripeSubscriptionSyncs`, plus the Stripe component's own tables                                                                                                                                                           |
-| Audit and usage       | `auditEvents`, `auditChainHeads`, `auditSinks`, `configHttpAuthFailures`, `taskUsage`, `usageRollups`, `usageMeters`, `usageDays`, `usageProjectDays`, `usageWrites`                                                        |
+| Group                 | Tables                                                                                                                                                                                                                                                    |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity and tenancy  | `users`, `orgs`, `orgMembers`, `orgRoles`, `accounts`, `accountKeys`                                                                                                                                                                                      |
+| Projects and access   | `projects`, `stages`, `stageSyncs`, `agentDeployments`, `deployKeys`, `cliAuthCodes`, `cliTokens`, `accountRoles`, `roleSessions`, `permissions`                                                                                                          |
+| Resource config       | `agents`, `agentConfigs`, `canvasLayouts`, `agentRuntimeSecrets`, `sandboxConfigs`, `workspaceConfigs`, `mcp`, `accountHooks`, `agentPolicies`, `channelRecords`, `channelEndpoints`, `connections`, `cliExternalResources`                               |
+| Environment variables | `environmentVariables`, `accountEnvVars`, `environmentVariableReveals`                                                                                                                                                                                    |
+| Schedules             | `crons`, `cronRuns`, plus the crons component's own tables                                                                                                                                                                                                |
+| Runtime               | `runtimeConversationEvents`, `runtimeHarnessSessions`, `runtimeHarnessSessionEntries`, `runtimeClaims`, `runtimeConversationCoordinators`, `runtimeIngressEnvelopes`, `runtimeIngressApplications`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults` |
+| Sandboxes             | `sandboxReservations`, `sandboxInstances`, `sandboxSnapshots`, `sandboxAuditEvents`, `machineConnections`                                                                                                                                                 |
+| Workspace files       | `workspaceFiles`, `workspaceDownloadTokens`, `uploadGrants`                                                                                                                                                                                               |
+| Billing               | `stripeSubscriptionSyncs`, plus the Stripe component's own tables                                                                                                                                                                                         |
+| Audit and usage       | `auditEvents`, `auditChainHeads`, `auditSinks`, `configHttpAuthFailures`, `taskUsage`, `usageRollups`, `usageMeters`, `usageDays`, `usageProjectDays`, `usageWrites`                                                                                      |
 
 ## Async and deferred work
 

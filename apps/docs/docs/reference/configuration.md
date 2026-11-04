@@ -58,7 +58,7 @@ The agent's model, instructions, tools, and what it can reach. See [Agents](../g
 | `name`              | Unique per stage. Required                                                                               |
 | `description`       | Shown to parent agents choosing a subagent                                                               |
 | `provider`          | Credentials per model provider. See [providers](#model-providers)                                        |
-| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`, transcription settings   |
+| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`, `transcriptionModelId`   |
 | `agent`             | `system` prompt and `maxTurn`, the steps per turn. Default 30, `0` for no cap                            |
 | `harness`           | A `defineHarness()` value to replace the built-in loop                                                   |
 | `tools`             | Provider-executed tools, keyed by the provider's tool name                                               |
@@ -92,16 +92,17 @@ export const myAgent = defineAgent({
 
 ### model
 
-| Field                                                                                | Description                                                                                                                               |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `provider`, `modelId`                                                                | Which model to call                                                                                                                       |
-| `temperature`, `topP`, `topK`, `maxOutputTokens`, `seed`, `stopSequences`, `timeout` | AI SDK call settings                                                                                                                      |
-| `maxRetries`                                                                         | AI SDK retries, default `5`. A 429 waits as long as the provider asks, read from its headers or its error text, up to about 60s per retry |
-| `reasoning`                                                                          | `provider-default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`                                                                   |
-| `providerOptions`                                                                    | Provider-specific options. They win over `reasoning` when both set thinking                                                               |
-| `output`                                                                             | Structured output as `{ type: "object", schema }`, `array`, `choice`, `json` or `text`, with optional `name` and `description`            |
-| `transcriptionModelId`                                                               | Speech-to-text model for inbound audio, on `transcriptionProvider`                                                                        |
-| `transcriptionProvider`                                                              | Provider that reads inbound audio, keyed in `provider`. Defaults to `model.provider`                                                      |
+| Field                                                                                                            | Description                                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `provider`, `modelId`                                                                                            | Which model to call                                                                                                                              |
+| `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `maxOutputTokens`, `seed`, `stopSequences` | AI SDK call settings                                                                                                                             |
+| `timeout`                                                                                                        | AI SDK timeout: milliseconds, or `totalMs`, `stepMs`, `firstChunkMs`, `chunkMs`, `toolMs`, `tools`. See [Timeouts](../guides/agents.md#timeouts) |
+| `maxRetries`                                                                                                     | AI SDK retries, default `5`. A 429 waits as long as the provider asks, read from its headers or its error text, up to about 60s per retry        |
+| `reasoning`                                                                                                      | `provider-default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`                                                                          |
+| `providerOptions`                                                                                                | Provider-specific options. They win over `reasoning` when both set thinking. Refused with `config.harness`                                       |
+| `output`                                                                                                         | Structured output as `{ type: "object", schema }`, `array`, `choice`, `json` or `text`, with optional `name` and `description`                   |
+| `transcriptionModelId`                                                                                           | Speech-to-text model for inbound audio, on `transcriptionProvider`                                                                               |
+| `transcriptionProvider`                                                                                          | Provider that reads inbound audio, keyed in `provider`. Defaults to `model.provider`                                                             |
 
 The provider-specific thinking keys are OpenAI `providerOptions.openai.reasoningEffort`, Anthropic `providerOptions.anthropic.thinking`, Google `providerOptions.google.thinkingConfig`, MiniMax `providerOptions.anthropic.thinking`. When a model does not support a level, the run logs a `model.step.warnings` event.
 
@@ -387,7 +388,6 @@ A connection holds one app's credentials. A channel names one room on that conne
 | Discord     | `defineDiscordConnection`    | `defineDiscordChannel`    | `channelId`      |
 | GitHub      | `defineGitHubConnection`     | `defineGitHubChannel`     | `repo`           |
 | Linear      | `defineLinearConnection`     | `defineLinearChannel`     | `team`           |
-| Matrix      | `defineMatrixConnection`     | `defineMatrixChannel`     | `channelId`      |
 | Pancake     | `definePancakeConnection`    | `definePancakeChannel`    | `conversationId` |
 | Zalo        | `defineZaloConnection`       | `defineZaloChannel`       | `chatId`         |
 | WhatsApp    | `defineWhatsAppConnection`   | `defineWhatsAppChannel`   | `waId`           |

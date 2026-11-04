@@ -1,7 +1,3 @@
-/**
- * Codex adapter construction and Broods provider mapping.
- */
-
 import {
   VERSION,
   createCodex,
@@ -10,22 +6,22 @@ import {
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type { AgentConfig } from "../../../shared/domain/agent-config.ts";
 import {
+  harnessEffort,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
   resolveGatewayAuthEnv,
   resolveOpenAiAuthEnv,
+  warnReasoningChanged,
 } from "../provider.ts";
 
 export const CODEX_HARNESS_VERSION = VERSION;
 
-/** Builds the Codex adapter from raw settings; `createAiSdkHarnessAdapter` calls it. */
 export function createCodexAdapter(
   settings?: CodexHarnessSettings,
 ): HarnessAgentAdapter {
   return createCodex(settings);
 }
 
-/** Builds the Codex adapter from an agent config; the adapter registry calls it for `harness.type` codex. */
 export function createConfiguredCodexAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {
@@ -41,18 +37,13 @@ export function createConfiguredCodexAdapter(
     );
   }
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
-  // `custom` and `openai` are the same wire contract to codex: an API key and
-  // an optional base URL. The endpoint label a custom provider carries has no
-  // env equivalent, so codex names the route "Agent Bridge OpenAI" itself.
+  // To codex, `custom` is `openai` (key + optional base URL); the custom label has no env to ride.
   const auth =
     providerName === "vercel"
       ? resolveGatewayAuthEnv(provider)
       : resolveOpenAiAuthEnv(provider);
-  const reasoning = agentConfig.model?.reasoning;
-  const reasoningEffort =
-    reasoning === "low" || reasoning === "medium" || reasoning === "high"
-      ? reasoning
-      : undefined;
+  const reasoningEffort = harnessEffort(agentConfig.model?.reasoning);
+  warnReasoningChanged(agentConfig, reasoningEffort);
 
   return createCodex({
     auth: auth,

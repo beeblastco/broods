@@ -60,8 +60,7 @@ test("client streams directly from core with apiKey auth", async () => {
 });
 
 test("run reads every pass of a run, past a mid-stream finish, until the stream closes", async (): Promise<void> => {
-  // A run that hands its worker slot on, or resumes after subagent results,
-  // streams a second pass after the first one's `finish`.
+  // A handed-on or resumed run streams a second pass after the first `finish`.
   const pass = (id: string, text: string): string[] => [
     `data: {"type":"text-start","id":"${id}"}`,
     `data: {"type":"text-delta","id":"${id}","text":"${text}"}`,
@@ -107,7 +106,7 @@ test("stream reports a busy accepted ingress without treating JSON as SSE", asyn
       ),
   });
 
-  expect(
+  await expect(
     client.run({
       agentId: "agent_1",
       eventId: "steer-2",
@@ -139,20 +138,6 @@ test("client accepts host as a shorthand for https baseUrl", async () => {
   });
 
   expect(urls).toEqual(["https://core.example/v1/runs"]);
-});
-
-test("client resolves generated channel webhook paths against its configured host", () => {
-  const client = new BroodsClient({ host: "hooks.example.com" });
-  expect(
-    client.channelWebhookUrl({
-      kind: "channel",
-      type: "github",
-      agentName: "support",
-      agentId: "agent_1",
-      accountId: "account_1",
-      webhookPath: "/v1/webhooks/account_1/github",
-    }),
-  ).toBe("https://hooks.example.com/v1/webhooks/account_1/github");
 });
 
 test("stageWebhookUrl marks the stage so a sibling cannot receive its traffic", () => {
@@ -344,7 +329,7 @@ test("runAsync rejects an accepted answer without a runId", async () => {
       ),
   });
 
-  expect(
+  await expect(
     client.runAsync({ agentId: "agent_1", input: "hello" }),
   ).rejects.toThrow("Async response missing runId");
 });
@@ -457,13 +442,13 @@ test("client rejects misrouted async SSE responses without dumping stream intern
       ),
   });
 
-  expect(
+  await expect(
     client.runAsync({
       agentId: "agent_1",
       input: "hello",
     }),
   ).rejects.toThrow("server returned an SSE stream");
-  expect(
+  await expect(
     client.runAsync({
       agentId: "agent_1",
       input: "hello",

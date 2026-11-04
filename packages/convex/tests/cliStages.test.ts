@@ -218,20 +218,4 @@ describe("stage names are slugs", () => {
       create(t, accountId, { project: "demo-app", name: "-staging" }),
     ).rejects.toThrow(/lowercase letters/);
   });
-
-  test("accepts a slug and still canonicalizes the reserved names", async () => {
-    const t = stageTest();
-    const { accountId } = await seedProject(t);
-
-    const created = await create(t, accountId, {
-      project: "demo-app",
-      name: "qa-2",
-    });
-    expect(created?.stage.name).toBe("qa-2");
-    const production = await create(t, accountId, {
-      project: "demo-app",
-      name: "PRODUCTION",
-    });
-    expect(production?.stage.name).toBe("Production");
-  });
 });

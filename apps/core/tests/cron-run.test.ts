@@ -116,8 +116,7 @@ beforeEach(() => {
   runtime.query = async function (name: string) {
     return name === "getConversationTarget" ? channelTarget : null;
   } as never;
-  // Admitting as "queued" stops before the async worker: the envelope the cron
-  // hands to the coordinator is what these tests assert.
+  // Admitting as "queued" stops before the async worker, leaving the envelope to assert on.
   runtime.mutate = async function (name: string, args: unknown) {
     if (name === "acceptIngress") {
       admitted.push(args as Record<string, unknown>);
@@ -138,7 +137,7 @@ describe("handleScheduledCron", () => {
     channelTarget = CHANNEL_TARGET;
     conversationKey = "slack:T1:C1";
 
-    expect(invokeCron()).rejects.toThrow(
+    await expect(invokeCron()).rejects.toThrow(
       "Cron conversation is already processing another turn",
     );
     expect(admitted).toHaveLength(1);
@@ -150,7 +149,6 @@ describe("handleScheduledCron", () => {
       channel: "slack",
       source: CHANNEL_TARGET.source,
     });
-    // The envelope carries the rows to rebuild from, never the config itself.
     expect(admitted[0]?.configRef).toEqual({
       channel: { channelName: "slack" },
     });
@@ -163,7 +161,7 @@ describe("handleScheduledCron", () => {
   it("admits a run under the same id its own status URL names", async () => {
     conversationKey = "nightly-maintenance";
 
-    expect(invokeCron()).rejects.toThrow(
+    await expect(invokeCron()).rejects.toThrow(
       "Cron conversation is already processing another turn",
     );
 
@@ -173,9 +171,6 @@ describe("handleScheduledCron", () => {
       statusUrl?: string;
     };
     expect(delivery.kind).toBe("async");
-    // The envelope was once stored under an id minted at admission while its
-    // own statusUrl still named the one built before it, so a client following
-    // that URL resolved nothing.
     expect(candidate?.runId).toMatch(/^run_[0-9a-f]{32}$/);
     expect(delivery.statusUrl).toBe(`/v1/runs/${String(candidate?.runId)}`);
   });
@@ -183,7 +178,7 @@ describe("handleScheduledCron", () => {
   it("keeps a cron with no live session on its own direct conversation", async () => {
     conversationKey = "nightly-maintenance";
 
-    expect(invokeCron()).rejects.toThrow(
+    await expect(invokeCron()).rejects.toThrow(
       "Cron conversation is already processing another turn",
     );
     expect(admitted[0]?.conversationKey).toBe(
@@ -196,14 +191,14 @@ describe("handleScheduledCron", () => {
   it("retires a one-time job whose run could not even start", async () => {
     scheduleExpression = "at(2027-01-01T09:00:00)";
 
-    expect(invokeCron()).rejects.toThrow(
+    await expect(invokeCron()).rejects.toThrow(
       "Cron conversation is already processing another turn",
     );
     expect(removed).toEqual(["cron_1"]);
   });
 
   it("frames the stored instructions with the schedule that fired", async () => {
-    expect(
+    await expect(
       invokeCron({ scheduledTime: "2026-08-14T09:00:00Z" }),
     ).rejects.toThrow("Cron conversation is already processing another turn");
 
@@ -375,7 +370,7 @@ describe("queued envelope without a config ref", () => {
       return null;
     } as never;
 
-    expect(
+    await expect(
       dispatchAppliedIngress(
         {
           accountId: "acct_1",

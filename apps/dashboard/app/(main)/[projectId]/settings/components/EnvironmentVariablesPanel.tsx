@@ -12,19 +12,15 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import posthog from "posthog-js";
+import { analytics } from "@/app/lib/analytics";
 import { Check, Eye, EyeOff, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 
-// A single masked variable as returned by the `list` query (no encrypted fields).
 type EnvironmentVariable = FunctionReturnType<
   typeof api.environmentVariables.list
 >[number];
 
-// Shared sizing so read-only value chips and the add inputs match height, font,
-// and shrink behaviour exactly. `md:text-xs` overrides the Input's `md:text-sm`
-// so typed text stays the same size as the chips; `min-w-0` lets long values
-// truncate instead of widening the row.
+// The add inputs also need `md:text-xs`: the Input's own `md:text-sm` beats `text-xs`.
 const FIELD_CLASS = "h-8 min-w-0 flex-1 font-mono text-xs";
 
 interface Props {
@@ -50,7 +46,6 @@ export function EnvironmentVariablesPanel({
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Keyed by variable id. Every reveal is audited server-side.
   const [revealedState, setRevealedState] = useState<{
     stageId: Id<"stages"> | null;
     values: Record<string, string>;
@@ -104,8 +99,10 @@ export function EnvironmentVariablesPanel({
         name: name.trim(),
         value: value,
       });
-      posthog.capture("environment_variable_added", {
-        has_value: Boolean(value),
+      void analytics.then((posthog): void => {
+        posthog.capture("environment_variable_added", {
+          has_value: Boolean(value),
+        });
       });
       setName("");
       setValue("");
@@ -122,7 +119,9 @@ export function EnvironmentVariablesPanel({
     setIsDeletingVar(true);
     try {
       await removeVariable({ variableId: deletingVar._id });
-      posthog.capture("environment_variable_removed");
+      void analytics.then((posthog): void => {
+        posthog.capture("environment_variable_removed");
+      });
       setDeletingVar(null);
     } finally {
       setIsDeletingVar(false);
@@ -223,6 +222,7 @@ export function EnvironmentVariablesPanel({
               placeholder="KEY_NAME"
               aria-label="Variable name"
               className={cn(FIELD_CLASS, "md:text-xs")}
+              // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the user's Add click
               autoFocus
             />
             <Input

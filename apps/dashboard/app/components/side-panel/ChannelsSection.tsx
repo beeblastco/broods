@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Agent Details-tab channels editor. Channels are inbound webhook triggers the agent replies
- * to; this renders a schema-driven form for the broods channel kinds so adding a
- * field/kind is a data change, not new UI. Secrets accept `${ENV}` placeholders.
- */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Button } from "@/app/components/ui/button";
@@ -17,7 +12,6 @@ import type { Doc } from "@broods/convex/_generated/dataModel";
 import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
-/** How a single channel field is entered and serialized. */
 type FieldType = "text" | "secret" | "stringList";
 
 type ChannelField = {
@@ -34,7 +28,7 @@ type ChannelKind = { kind: string; label: string; fields: ChannelField[] };
 
 type ChannelConfig = Record<string, unknown>;
 
-/** The broods channel kinds and their config fields (source of truth: agent-config.ts). */
+// Mirrors the channel schemas in agent-config.ts, which are the source of truth.
 const CHANNELS: ChannelKind[] = [
   {
     kind: "telegram",
@@ -232,49 +226,6 @@ const CHANNELS: ChannelKind[] = [
         label: "API URL",
         type: "text",
         placeholder: "https://discord.com/api/v10",
-      },
-    ],
-  },
-  {
-    kind: "matrix",
-    label: "Matrix",
-    fields: [
-      {
-        key: "apiUrl",
-        label: "Homeserver URL",
-        type: "text",
-        required: true,
-        placeholder: "https://matrix.org",
-      },
-      {
-        key: "botToken",
-        label: "Access token",
-        type: "secret",
-        required: true,
-      },
-      {
-        key: "botName",
-        label: "Reply name",
-        type: "text",
-        placeholder: "Shown on the agent's replies",
-      },
-      {
-        key: "mentionText",
-        label: "Mention text (answer only when addressed)",
-        type: "text",
-        placeholder: "@my-agent",
-      },
-      {
-        key: "allowedChannelIds",
-        label: "Allowed room IDs",
-        type: "stringList",
-        placeholder: "!abc:matrix.org, *",
-      },
-      {
-        key: "allowedUserIds",
-        label: "Allowed user IDs",
-        type: "stringList",
-        placeholder: "@alice:matrix.org, …",
       },
     ],
   },
@@ -673,7 +624,6 @@ export function ChannelsSection({
   );
 }
 
-/** Render a stored value as the field's input text; values of another type render empty. */
 function formatFieldValue(type: FieldType, value: unknown): string {
   if (type === "stringList" && Array.isArray(value)) {
     return value
@@ -686,7 +636,6 @@ function formatFieldValue(type: FieldType, value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-/** Serialize a raw input string to the field's stored type, or `undefined` when empty. */
 function parseFieldValue(type: FieldType, raw: string): unknown {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
@@ -707,7 +656,7 @@ function readAt(config: ChannelConfig, path: string[]): unknown {
   );
 }
 
-/** Immutably set or delete a (possibly nested) value, pruning empty branches on delete. */
+/** `undefined` deletes the value and prunes the branches it leaves empty. */
 function writeAt(
   config: ChannelConfig,
   path: string[],

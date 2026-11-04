@@ -303,6 +303,92 @@ export declare const api: {
       >;
     };
   };
+  accountApiKeys: {
+    create: FunctionReference<
+      "mutation",
+      "public",
+      {
+        actions: Array<
+          | "account:read"
+          | "account:write"
+          | "agents:read"
+          | "agents:write"
+          | "audit:read"
+          | "audit:write"
+          | "channels:read"
+          | "channels:write"
+          | "crons:read"
+          | "crons:write"
+          | "env:read"
+          | "env:write"
+          | "hooks:read"
+          | "hooks:write"
+          | "mcp:read"
+          | "mcp:write"
+          | "policies:read"
+          | "policies:write"
+          | "sandboxes:read"
+          | "sandboxes:write"
+          | "skills:read"
+          | "skills:write"
+          | "workspaces:read"
+          | "workspaces:write"
+        >;
+        description?: string;
+        expiresAt?: number;
+        name: string;
+        orgId: Id<"orgs">;
+        projectId?: Id<"projects">;
+        stageId?: Id<"stages">;
+      },
+      { _id: Id<"accountApiKeys">; keyHint: string; token: string }
+    >;
+    remove: FunctionReference<
+      "mutation",
+      "public",
+      { keyId: Id<"accountApiKeys">; orgId: Id<"orgs"> },
+      Id<"accountApiKeys">
+    >;
+    update: FunctionReference<
+      "mutation",
+      "public",
+      {
+        actions?: Array<
+          | "account:read"
+          | "account:write"
+          | "agents:read"
+          | "agents:write"
+          | "audit:read"
+          | "audit:write"
+          | "channels:read"
+          | "channels:write"
+          | "crons:read"
+          | "crons:write"
+          | "env:read"
+          | "env:write"
+          | "hooks:read"
+          | "hooks:write"
+          | "mcp:read"
+          | "mcp:write"
+          | "policies:read"
+          | "policies:write"
+          | "sandboxes:read"
+          | "sandboxes:write"
+          | "skills:read"
+          | "skills:write"
+          | "workspaces:read"
+          | "workspaces:write"
+        >;
+        description?: string;
+        expiresAt?: number | null;
+        keyId: Id<"accountApiKeys">;
+        name?: string;
+        orgId: Id<"orgs">;
+        scope?: { projectId?: Id<"projects">; stageId?: Id<"stages"> };
+      },
+      Id<"accountApiKeys">
+    >;
+  };
   agent: {
     agents: {
       listForProject: FunctionReference<
@@ -313,6 +399,19 @@ export declare const api: {
       >;
     };
     config: {
+      canvasBadges: FunctionReference<
+        "query",
+        "public",
+        { projectId: Id<"projects">; stageId?: Id<"stages"> },
+        Record<
+          Id<"agentConfigs">,
+          {
+            publicAccess: boolean;
+            skills: Array<string>;
+            structuredOutput: boolean;
+          }
+        >
+      >;
       create: FunctionReference<
         "mutation",
         "public",
@@ -370,14 +469,77 @@ export declare const api: {
           allowedTools?: Array<string>;
           authId: string;
           description?: string;
-          extraConfig?: any;
+          extraConfig?: {
+            agent?: Record<string, any> | null;
+            allowRunOverrides?: boolean;
+            browser?: Record<string, any> | null;
+            channels?: Record<string, any> | null;
+            denyTools?: Array<string>;
+            harness?: {
+              activeTools?: Array<string>;
+              debug?: {
+                enabled?: boolean;
+                level?: string;
+                subsystems?: Array<string>;
+              };
+              inactiveTools?: Array<string>;
+              permissionMode?: string;
+              startupTimeoutMs?: number;
+              type: string;
+              webSearch?: boolean;
+            } | null;
+            hooks?: Record<string, any> | null;
+            mcp?: Record<string, Record<string, any>> | null;
+            model?: Record<string, any> | null;
+            policies?: Array<string> | null;
+            provider?: {
+              alibaba?: Record<string, any>;
+              anthropic?: Record<string, any>;
+              azure?: Record<string, any>;
+              baseten?: Record<string, any>;
+              bedrock?: Record<string, any>;
+              cerebras?: Record<string, any>;
+              chatgpt?: Record<string, any>;
+              cloudflare?: Record<string, any>;
+              cohere?: Record<string, any>;
+              custom?: Record<string, any>;
+              deepinfra?: Record<string, any>;
+              deepseek?: Record<string, any>;
+              fireworks?: Record<string, any>;
+              google?: Record<string, any>;
+              groq?: Record<string, any>;
+              huggingface?: Record<string, any>;
+              llmgateway?: Record<string, any>;
+              minimax?: Record<string, any>;
+              mistral?: Record<string, any>;
+              moonshotai?: Record<string, any>;
+              ollama?: Record<string, any>;
+              openai?: Record<string, any>;
+              openrouter?: Record<string, any>;
+              perplexity?: Record<string, any>;
+              togetherai?: Record<string, any>;
+              v0?: Record<string, any>;
+              vercel?: Record<string, any>;
+              vertex?: Record<string, any>;
+              xai?: Record<string, any>;
+              zai?: Record<string, any>;
+            } | null;
+            publicAccess?: boolean;
+            sandboxes?: Array<string>;
+            scheduler?: Record<string, any> | null;
+            session?: Record<string, any> | null;
+            skills?: Record<string, any> | null;
+            subagent?: Record<string, any> | null;
+            tools?: Record<string, Record<string, any>> | null;
+            workspaces?: Array<Record<string, any>> | null;
+          };
           managedBy?: "cli" | "dashboard" | "api";
           maxTokens?: number;
           maxTurns?: number;
           memoryToolEnabled?: boolean;
           modelId?: string;
           name: string;
-          outputFormat?: any;
+          outputFormat?: Record<string, any>;
           permissionMode?: string;
           projectId: Id<"projects">;
           provider?: string;
@@ -410,13 +572,76 @@ export declare const api: {
           allowedTools?: Array<string>;
           configId: Id<"agentConfigs">;
           description?: string;
-          extraConfig?: any;
+          extraConfig?: {
+            agent?: Record<string, any> | null;
+            allowRunOverrides?: boolean;
+            browser?: Record<string, any> | null;
+            channels?: Record<string, any> | null;
+            denyTools?: Array<string>;
+            harness?: {
+              activeTools?: Array<string>;
+              debug?: {
+                enabled?: boolean;
+                level?: string;
+                subsystems?: Array<string>;
+              };
+              inactiveTools?: Array<string>;
+              permissionMode?: string;
+              startupTimeoutMs?: number;
+              type: string;
+              webSearch?: boolean;
+            } | null;
+            hooks?: Record<string, any> | null;
+            mcp?: Record<string, Record<string, any>> | null;
+            model?: Record<string, any> | null;
+            policies?: Array<string> | null;
+            provider?: {
+              alibaba?: Record<string, any>;
+              anthropic?: Record<string, any>;
+              azure?: Record<string, any>;
+              baseten?: Record<string, any>;
+              bedrock?: Record<string, any>;
+              cerebras?: Record<string, any>;
+              chatgpt?: Record<string, any>;
+              cloudflare?: Record<string, any>;
+              cohere?: Record<string, any>;
+              custom?: Record<string, any>;
+              deepinfra?: Record<string, any>;
+              deepseek?: Record<string, any>;
+              fireworks?: Record<string, any>;
+              google?: Record<string, any>;
+              groq?: Record<string, any>;
+              huggingface?: Record<string, any>;
+              llmgateway?: Record<string, any>;
+              minimax?: Record<string, any>;
+              mistral?: Record<string, any>;
+              moonshotai?: Record<string, any>;
+              ollama?: Record<string, any>;
+              openai?: Record<string, any>;
+              openrouter?: Record<string, any>;
+              perplexity?: Record<string, any>;
+              togetherai?: Record<string, any>;
+              v0?: Record<string, any>;
+              vercel?: Record<string, any>;
+              vertex?: Record<string, any>;
+              xai?: Record<string, any>;
+              zai?: Record<string, any>;
+            } | null;
+            publicAccess?: boolean;
+            sandboxes?: Array<string>;
+            scheduler?: Record<string, any> | null;
+            session?: Record<string, any> | null;
+            skills?: Record<string, any> | null;
+            subagent?: Record<string, any> | null;
+            tools?: Record<string, Record<string, any>> | null;
+            workspaces?: Array<Record<string, any>> | null;
+          };
           maxTokens?: number;
           maxTurns?: number;
           memoryToolEnabled?: boolean;
           modelId?: string;
           name?: string;
-          outputFormat?: any;
+          outputFormat?: Record<string, any> | null;
           permissionMode?: string;
           provider?:
             | "alibaba"
@@ -507,6 +732,7 @@ export declare const api: {
           lastError?: string;
           lastInvokedAt?: number;
           lastStatus?: "started" | "completed" | "failed";
+          managedBy?: "cli";
           name: string;
           scheduleExpression: string;
           scheduledRunId?: Id<"_scheduled_functions">;
@@ -731,18 +957,129 @@ export declare const api: {
       >;
     };
   };
+  agentDock: {
+    apply: FunctionReference<
+      "action",
+      "public",
+      {
+        baseRevision: number | null;
+        files: Array<{ content: string; path: string }>;
+        message: string;
+        projectId: Id<"projects">;
+        stageId: Id<"stages">;
+      },
+      {
+        commitSha?: string;
+        durationMs: number;
+        manifestHash: string;
+        phase: "verifying" | "deployed";
+        phases: Record<string, number>;
+        revision: number;
+      }
+    >;
+    commitChange: FunctionReference<
+      "action",
+      "public",
+      {
+        baseSha: string;
+        branch: string;
+        files: Array<{ content: string | null; path: string }>;
+        fullName: string;
+        message: string;
+        projectId: Id<"projects">;
+        stageId: Id<"stages">;
+      },
+      { sha: string; url: string; viaPullRequest: boolean }
+    >;
+    repoFiles: FunctionReference<
+      "action",
+      "public",
+      { projectId: Id<"projects">; stageId: Id<"stages"> },
+      {
+        baseSha: string;
+        branch: string;
+        files: Array<{ content: string; path: string }>;
+        fullName: string;
+        omitted: number;
+      } | null
+    >;
+    session: FunctionReference<
+      "mutation",
+      "public",
+      {},
+      {
+        agentId: string;
+        expiresAt: number;
+        runtimeKey: string;
+        url: string;
+        userToken: string;
+      } | null
+    >;
+    sync: FunctionReference<
+      "action",
+      "public",
+      { projectId: Id<"projects">; stageId: Id<"stages"> },
+      {
+        commitSha?: string;
+        durationMs: number;
+        manifestHash: string;
+        phase: "verifying" | "deployed";
+        phases: Record<string, number>;
+        revision: number;
+      }
+    >;
+  };
   apiKeys: {
     listForOrg: FunctionReference<
       "query",
       "public",
       {},
-      Array<{
-        createdAt: number;
-        createdBy?: { avatarUrl?: string; name: string };
-        description: string;
-        keyHint?: string;
-        name: string;
-      }> | null
+      {
+        keys: Array<{
+          _id?: Id<"accountApiKeys">;
+          actions?: Array<
+            | "account:read"
+            | "account:write"
+            | "agents:read"
+            | "agents:write"
+            | "audit:read"
+            | "audit:write"
+            | "channels:read"
+            | "channels:write"
+            | "crons:read"
+            | "crons:write"
+            | "env:read"
+            | "env:write"
+            | "hooks:read"
+            | "hooks:write"
+            | "mcp:read"
+            | "mcp:write"
+            | "policies:read"
+            | "policies:write"
+            | "sandboxes:read"
+            | "sandboxes:write"
+            | "skills:read"
+            | "skills:write"
+            | "workspaces:read"
+            | "workspaces:write"
+          >;
+          createdAt: number;
+          createdBy?: { avatarUrl?: string; name: string };
+          description?: string;
+          expiresAt?: number;
+          keyHint?: string;
+          lastUsedAt?: number;
+          name: string;
+          projectId?: Id<"projects">;
+          stageId?: Id<"stages">;
+        }>;
+        stages: Array<{
+          projectId: Id<"projects">;
+          projectName: string;
+          stageId: Id<"stages">;
+          stageName: string;
+        }>;
+      } | null
     >;
     listForProject: FunctionReference<
       "query",
@@ -932,7 +1269,144 @@ export declare const api: {
       Id<"environmentVariables">
     >;
   };
+  github: {
+    begin: FunctionReference<
+      "mutation",
+      "public",
+      {
+        createRepo?: {
+          baseUrl: string;
+          name: string;
+          owner: string;
+          private: boolean;
+          projectId: Id<"projects">;
+        };
+        returnTo?: string;
+      },
+      { url: string }
+    >;
+    finish: FunctionReference<
+      "action",
+      "public",
+      { code: string; installationId?: number; state: string },
+      { projectId?: Id<"projects">; returnTo?: string }
+    >;
+    inspectRepo: FunctionReference<
+      "action",
+      "public",
+      { installationId: number; projectId?: Id<"projects">; repoId: number },
+      {
+        branches: Array<string>;
+        repo: {
+          defaultBranch: string;
+          fullName: string;
+          installationId: number;
+          private: boolean;
+          repoId: number;
+        };
+        roots: Array<{
+          installDirectory: string;
+          manager: "bun" | "npm" | "pnpm" | "yarn";
+          rootDirectory: string;
+        }>;
+      }
+    >;
+    linkRepo: FunctionReference<
+      "action",
+      "public",
+      {
+        projectId: Id<"projects">;
+        target: {
+          baseUrl: string;
+          developmentBranch?: string | null;
+          installationId: number;
+          productionBranch?: string | null;
+          repoId: number;
+          rootDirectory: string;
+        };
+      },
+      {
+        deployKeyIds: Array<Id<"deployKeys">>;
+        developmentBranch?: string;
+        fullName: string;
+        installationId: number;
+        productionBranch?: string;
+        protectedSecrets: boolean;
+        repoId: number;
+        rootDirectory: string;
+        setupPullRequestUrl?: string;
+      }
+    >;
+    listRepos: FunctionReference<
+      "action",
+      "public",
+      { projectId?: Id<"projects"> },
+      Array<{
+        defaultBranch: string;
+        fullName: string;
+        installationId: number;
+        private: boolean;
+        repoId: number;
+      }>
+    >;
+    status: FunctionReference<
+      "query",
+      "public",
+      { projectId?: Id<"projects"> },
+      {
+        canConnect: boolean;
+        canLink: boolean;
+        configured: boolean;
+        deploys: Array<{
+          branch: string;
+          conclusion?: string;
+          error?: string;
+          sha: string;
+          status: string;
+          updatedAt: number;
+          url: string;
+        }>;
+        hasProduction: boolean;
+        installations: Array<{
+          accountType: "User" | "Organization";
+          installationId: number;
+          login: string;
+        }>;
+        repo?: {
+          deployKeyIds: Array<Id<"deployKeys">>;
+          developmentBranch?: string;
+          fullName: string;
+          installationId: number;
+          productionBranch?: string;
+          protectedSecrets: boolean;
+          repoId: number;
+          rootDirectory: string;
+          setupPullRequestUrl?: string;
+        };
+        webUrl?: string;
+      }
+    >;
+    unlinkRepo: FunctionReference<
+      "mutation",
+      "public",
+      { projectId: Id<"projects"> },
+      null
+    >;
+  };
   logs: {
+    fetchModelRates: FunctionReference<
+      "query",
+      "public",
+      { models: Array<{ modelId: string; modelProvider: string }> },
+      Array<{
+        cacheRead: number;
+        cacheWrite: number;
+        input: number;
+        modelId: string;
+        modelProvider: string;
+        output: number;
+      }>
+    >;
     fetchUsageStats: FunctionReference<
       "query",
       "public",
@@ -961,6 +1435,14 @@ export declare const api: {
         }>;
         endTimeMs: number;
         range: "1h" | "3h" | "1d" | "7d" | "30d" | "1y";
+        rates: Array<{
+          cacheRead: number;
+          cacheWrite: number;
+          input: number;
+          modelId: string;
+          modelProvider: string;
+          output: number;
+        }>;
         startTimeMs: number;
         totals: {
           agentSandboxCpuUsec: number;
@@ -1253,8 +1735,20 @@ export declare const api: {
         _id: Id<"projects">;
         authId: string;
         description?: string;
+        linkClaim?: { expiresAt: number; repoId: number };
         name: string;
         orgId: Id<"orgs">;
+        repo?: {
+          deployKeyIds: Array<Id<"deployKeys">>;
+          developmentBranch?: string;
+          fullName: string;
+          installationId: number;
+          productionBranch?: string;
+          protectedSecrets: boolean;
+          repoId: number;
+          rootDirectory: string;
+          setupPullRequestUrl?: string;
+        };
         slug: string;
         updatedAt: number;
       }
@@ -1268,8 +1762,20 @@ export declare const api: {
         _id: Id<"projects">;
         authId: string;
         description?: string;
+        linkClaim?: { expiresAt: number; repoId: number };
         name: string;
         orgId: Id<"orgs">;
+        repo?: {
+          deployKeyIds: Array<Id<"deployKeys">>;
+          developmentBranch?: string;
+          fullName: string;
+          installationId: number;
+          productionBranch?: string;
+          protectedSecrets: boolean;
+          repoId: number;
+          rootDirectory: string;
+          setupPullRequestUrl?: string;
+        };
         slug: string;
         updatedAt: number;
       }>
@@ -1602,6 +2108,35 @@ export declare const api: {
       Id<"stages">
     >;
   };
+  stageSources: {
+    drift: FunctionReference<
+      "query",
+      "public",
+      { stageId: Id<"stages"> },
+      { outOfSync: boolean; reason?: string }
+    >;
+    latest: FunctionReference<
+      "query",
+      "public",
+      { stageId: Id<"stages"> },
+      {
+        bytes: number;
+        commitSha?: string;
+        createdAt: number;
+        fileCount: number;
+        hash: string;
+        manifestHash?: string;
+        origin: "cli" | "apply" | "github";
+        revision: number;
+        url: string | null;
+        verification?: {
+          error?: string;
+          phase: "verifying" | "deployed" | "failed";
+          runUrl?: string;
+        };
+      } | null
+    >;
+  };
   stripe: {
     addSeat: FunctionReference<"action", "public", {}, { seats: number }>;
     createCheckoutSession: FunctionReference<
@@ -1647,6 +2182,7 @@ export declare const api: {
     >;
   };
   user: {
+    analyticsId: FunctionReference<"query", "public", {}, null | string>;
     ensureSynced: FunctionReference<"action", "public", {}, null>;
     getCurrent: FunctionReference<
       "query",
@@ -1792,6 +2328,12 @@ export declare const api: {
       >;
     };
     filesPublic: {
+      downloadUrl: FunctionReference<
+        "action",
+        "public",
+        { path: string; projectId: Id<"projects">; workspaceId: string },
+        string
+      >;
       list: FunctionReference<
         "action",
         "public",
@@ -1803,6 +2345,12 @@ export declare const api: {
           sizeBytes?: number;
           updatedAt?: string;
         }>
+      >;
+      read: FunctionReference<
+        "action",
+        "public",
+        { path: string; projectId: Id<"projects">; workspaceId: string },
+        string
       >;
       remove: FunctionReference<
         "action",
@@ -2008,6 +2556,81 @@ export declare const internal: {
           updatedAt: number;
           username: string;
         } | null
+      >;
+    };
+    apiKeys: {
+      resolve: FunctionReference<
+        "query",
+        "internal",
+        { keyHash: string; now: number },
+        {
+          account: {
+            _creationTime: number;
+            _id: Id<"accounts">;
+            auditRetentionDays?: number;
+            createdAt: number;
+            description?: string;
+            orgId: string;
+            secretHash: string;
+            secretHint?: string;
+            secretRotatedAt?: number;
+            secretRotatedBy?: Id<"users">;
+            status: "active" | "disabled";
+            storageExternalId?: string;
+            updatedAt: number;
+            username: string;
+          };
+          keyId: Id<"accountApiKeys">;
+          principal: {
+            accountId: Id<"accounts">;
+            policy: {
+              mode?: "enforce" | "audit";
+              rules: Array<{
+                actions: Array<string>;
+                conditions?: Array<{
+                  attribute: string;
+                  operator:
+                    | "equals"
+                    | "notEquals"
+                    | "in"
+                    | "notIn"
+                    | "prefix"
+                    | "contains";
+                  value:
+                    | string
+                    | number
+                    | boolean
+                    | Array<string>
+                    | Array<number>
+                    | Array<boolean>;
+                }>;
+                effect: "allow" | "deny";
+                id: string;
+                resources?: {
+                  filePaths?: Array<string>;
+                  mcpIds?: Array<string>;
+                  resourceIds?: Array<string>;
+                  skillPaths?: Array<string>;
+                  subagentIds?: Array<string>;
+                  toolNames?: Array<string>;
+                  workspaceIds?: Array<string>;
+                  workspaceNames?: Array<string>;
+                };
+              }>;
+              version: 1;
+            };
+            projectId?: Id<"projects">;
+            roleId: string;
+            stageId?: Id<"stages">;
+          };
+          stampDue: boolean;
+        } | null
+      >;
+      touchLastUsed: FunctionReference<
+        "mutation",
+        "internal",
+        { keyId: Id<"accountApiKeys">; usedAt: number },
+        null
       >;
     };
     budget: {
@@ -3468,8 +4091,25 @@ export declare const internal: {
           accountId: Id<"accounts">;
           createdBy?: Id<"users">;
           input: Record<string, any>;
+          managedBy?: "cli";
         },
-        any
+        {
+          accountId: Id<"accounts">;
+          agentId: Id<"agents">;
+          conversationKey?: string;
+          createdAt: string;
+          cronId: Id<"crons">;
+          description?: string;
+          events: Array<any>;
+          lastError?: string;
+          lastInvokedAt?: string;
+          lastStatus?: "started" | "completed" | "failed";
+          name: string;
+          scheduleExpression: string;
+          status: "active" | "paused";
+          timezone?: string;
+          updatedAt: string;
+        }
       >;
       createRun: FunctionReference<
         "mutation",
@@ -3518,6 +4158,7 @@ export declare const internal: {
           lastInvokedAt?: number;
           lastRunId?: Id<"cronRuns">;
           lastStatus?: "started" | "completed" | "failed";
+          managedBy?: "cli";
           name: string;
           scheduleExpression: string;
           scheduledRunId?: Id<"_scheduled_functions">;
@@ -3550,6 +4191,7 @@ export declare const internal: {
           lastInvokedAt?: number;
           lastRunId?: Id<"cronRuns">;
           lastStatus?: "started" | "completed" | "failed";
+          managedBy?: "cli";
           name: string;
           scheduleExpression: string;
           scheduledRunId?: Id<"_scheduled_functions">;
@@ -3590,6 +4232,7 @@ export declare const internal: {
             lastInvokedAt?: number;
             lastRunId?: Id<"cronRuns">;
             lastStatus?: "started" | "completed" | "failed";
+            managedBy?: "cli";
             name: string;
             scheduleExpression: string;
             scheduledRunId?: Id<"_scheduled_functions">;
@@ -3684,10 +4327,27 @@ export declare const internal: {
         {
           accountId: Id<"accounts">;
           cronId: string;
+          managedBy?: "cli";
           patch: Record<string, any>;
           pin?: { projectId: string; stageId: string };
         },
-        any
+        {
+          accountId: Id<"accounts">;
+          agentId: Id<"agents">;
+          conversationKey?: string;
+          createdAt: string;
+          cronId: Id<"crons">;
+          description?: string;
+          events: Array<any>;
+          lastError?: string;
+          lastInvokedAt?: string;
+          lastStatus?: "started" | "completed" | "failed";
+          name: string;
+          scheduleExpression: string;
+          status: "active" | "paused";
+          timezone?: string;
+          updatedAt: string;
+        } | null
       >;
     };
     deployments: {
@@ -3961,6 +4621,65 @@ export declare const internal: {
       >;
     };
   };
+  agentDock: {
+    applyTarget: FunctionReference<
+      "query",
+      "internal",
+      { authId: string; projectId: Id<"projects">; stageId: Id<"stages"> },
+      {
+        accountId: string;
+        hash?: string;
+        project: string;
+        revision: number | null;
+        stage: string;
+      } | null
+    >;
+    linkedBranch: FunctionReference<
+      "query",
+      "internal",
+      {
+        authId: string;
+        projectId: Id<"projects">;
+        stageId: Id<"stages">;
+        write: boolean;
+      },
+      {
+        branch: string;
+        fullName: string;
+        installationId: number;
+        rootDirectory: string;
+      } | null
+    >;
+    snapshotRepo: FunctionReference<
+      "action",
+      "internal",
+      { sha: string; since: number; stageId: Id<"stages"> },
+      null
+    >;
+    sourceUrl: FunctionReference<
+      "query",
+      "internal",
+      { commitSha?: string; stageId: Id<"stages"> },
+      string | null
+    >;
+    stageRepo: FunctionReference<
+      "query",
+      "internal",
+      { stageId: Id<"stages"> },
+      {
+        branch: string;
+        fullName: string;
+        installationId: number;
+        rootDirectory: string;
+      } | null
+    >;
+    storedSource: FunctionReference<
+      "action",
+      "internal",
+      { commitSha?: string; stageId: Id<"stages"> },
+      { files: Array<{ content: string; path: string }>; sha?: string } | null
+    >;
+  };
   audit: {
     ledger: {
       head: FunctionReference<
@@ -3990,6 +4709,7 @@ export declare const internal: {
             kind:
               | "dashboardUser"
               | "apiAccountSecret"
+              | "accountApiKey"
               | "admin"
               | "service"
               | "cli"
@@ -4007,6 +4727,7 @@ export declare const internal: {
             id?: string;
             kind:
               | "account"
+              | "accountApiKey"
               | "agent"
               | "skill"
               | "hook"
@@ -4058,6 +4779,7 @@ export declare const internal: {
             kind:
               | "dashboardUser"
               | "apiAccountSecret"
+              | "accountApiKey"
               | "admin"
               | "service"
               | "cli"
@@ -4072,6 +4794,7 @@ export declare const internal: {
             id?: string;
             kind:
               | "account"
+              | "accountApiKey"
               | "agent"
               | "skill"
               | "hook"
@@ -4299,7 +5022,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -4319,7 +5042,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -4345,7 +5068,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -4366,7 +5089,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -4388,7 +5111,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -4411,7 +5134,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -4435,7 +5158,6 @@ export declare const internal: {
         Array<{
           agentId: string;
           agentName: string;
-          apiUrl?: string;
           botToken: string;
           webhookPath: string;
         }>
@@ -5035,6 +5757,25 @@ export declare const internal: {
         },
         null
       >;
+      resolveApplyTicketAuth: FunctionReference<
+        "query",
+        "internal",
+        {
+          accountId: string;
+          authId: string;
+          expiresAt: number;
+          project: string;
+          projectId: string;
+          stage: string;
+          stageId: string;
+        },
+        null | {
+          accountId: Id<"accounts">;
+          applyAuthId: string;
+          scoped: true;
+          secretHash: string;
+        }
+      >;
       resolveCliAuth: FunctionReference<
         "query",
         "internal",
@@ -5174,6 +5915,186 @@ export declare const internal: {
       >;
     };
   };
+  github: {
+    beginFor: FunctionReference<
+      "mutation",
+      "internal",
+      { authId: string; orgId: Id<"orgs"> },
+      { url: string }
+    >;
+    cliProject: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"orgs">; slug: string },
+      Id<"projects"> | null
+    >;
+    linkAccess: FunctionReference<
+      "query",
+      "internal",
+      { authId: string; projectId?: Id<"projects"> },
+      Array<{
+        accountType: "User" | "Organization";
+        installationId: number;
+        login: string;
+      }>
+    >;
+    mintLinkKeys: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        authId: string;
+        developmentBranch?: string | null;
+        productionBranch?: string | null;
+        projectId: Id<"projects">;
+        repoId?: number;
+      },
+      {
+        development?: string;
+        keyIds: Array<Id<"deployKeys">>;
+        previousBranches: Array<string>;
+        production?: string;
+        projectId: Id<"projects">;
+        projectSlug: string;
+        stageIds: Array<Id<"stages">>;
+      }
+    >;
+    recordDeploy: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        branch: string;
+        conclusion?: string;
+        error?: string;
+        repoId: number;
+        runAttempt?: number;
+        runId: number;
+        sha: string;
+        status: string;
+        url: string;
+      },
+      null
+    >;
+    removeInstallation: FunctionReference<
+      "mutation",
+      "internal",
+      { installationId: number },
+      null
+    >;
+    renameRepo: FunctionReference<
+      "mutation",
+      "internal",
+      { fullName: string; repoId: number },
+      null
+    >;
+    revokeKeys: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        keyIds: Array<Id<"deployKeys">>;
+        projectId: Id<"projects">;
+        stageIds: Array<Id<"stages">>;
+      },
+      null
+    >;
+    saveLink: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        authId: string;
+        projectId: Id<"projects">;
+        repo: {
+          deployKeyIds: Array<Id<"deployKeys">>;
+          developmentBranch?: string;
+          fullName: string;
+          installationId: number;
+          productionBranch?: string;
+          protectedSecrets: boolean;
+          repoId: number;
+          rootDirectory: string;
+          setupPullRequestUrl?: string;
+        };
+      },
+      null
+    >;
+    statusFor: FunctionReference<
+      "query",
+      "internal",
+      { authId: string; orgId: Id<"orgs">; projectId?: Id<"projects"> },
+      {
+        canConnect: boolean;
+        canLink: boolean;
+        configured: boolean;
+        deploys: Array<{
+          branch: string;
+          conclusion?: string;
+          error?: string;
+          sha: string;
+          status: string;
+          updatedAt: number;
+          url: string;
+        }>;
+        hasProduction: boolean;
+        installations: Array<{
+          accountType: "User" | "Organization";
+          installationId: number;
+          login: string;
+        }>;
+        repo?: {
+          deployKeyIds: Array<Id<"deployKeys">>;
+          developmentBranch?: string;
+          fullName: string;
+          installationId: number;
+          productionBranch?: string;
+          protectedSecrets: boolean;
+          repoId: number;
+          rootDirectory: string;
+          setupPullRequestUrl?: string;
+        };
+        webUrl?: string;
+      }
+    >;
+    storeInstallations: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        installations: Array<{
+          accountType: "User" | "Organization";
+          installationId: number;
+          login: string;
+        }>;
+        orgId: Id<"orgs">;
+      },
+      null
+    >;
+    takeSignIn: FunctionReference<
+      "mutation",
+      "internal",
+      { authId: string; state: string },
+      {
+        createRepo?: {
+          baseUrl: string;
+          name: string;
+          owner: string;
+          private: boolean;
+          projectId: Id<"projects">;
+        };
+        orgId: Id<"orgs">;
+        returnTo?: string;
+      }
+    >;
+    unlinkFor: FunctionReference<
+      "mutation",
+      "internal",
+      { authId: string; projectId: Id<"projects"> },
+      null
+    >;
+    unlinkRepos: FunctionReference<
+      "mutation",
+      "internal",
+      { repoIds: Array<number> },
+      null
+    >;
+  };
   mcp: {
     nodeContext: FunctionReference<
       "query",
@@ -5221,14 +6142,50 @@ export declare const internal: {
       }
     >;
   };
-  org: {
-    orgs: {
-      adoptExternalAccount: FunctionReference<
+  modelPrices: {
+    crawl: {
+      run: FunctionReference<"action", "internal", {}, null>;
+    };
+    store: {
+      storeCatalogue: FunctionReference<
         "mutation",
         "internal",
-        { accountId: Id<"accounts">; orgName: string; ownerEmail: string },
-        { membershipId: Id<"orgMembers">; orgId: Id<"orgs">; slug: string }
+        {
+          mirror: boolean;
+          providers: Array<{
+            models: Array<{
+              cacheRead: number;
+              cacheWrite: number;
+              input: number;
+              modelId: string;
+              output: number;
+            }>;
+            provider: string;
+          }>;
+        },
+        null
       >;
+      storeOverrides: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          providers: Array<{
+            models: Array<{
+              cacheRead?: number;
+              cacheWrite?: number;
+              input: number;
+              modelId: string;
+              output: number;
+            }>;
+            provider: string;
+          }>;
+        },
+        null
+      >;
+    };
+  };
+  org: {
+    orgs: {
       getByIdForKeyWriter: FunctionReference<
         "query",
         "internal",
@@ -5281,7 +6238,12 @@ export declare const internal: {
       "internal",
       {
         conversationKey: string;
-        events: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
       },
       null
     >;
@@ -5310,7 +6272,12 @@ export declare const internal: {
     claimEvent: FunctionReference<
       "mutation",
       "internal",
-      { accountId: Id<"accounts">; key: string; ttlSeconds: number },
+      {
+        accountId: Id<"accounts">;
+        key: string;
+        limit?: number;
+        ttlSeconds: number;
+      },
       boolean
     >;
     claimSandboxReservation: FunctionReference<
@@ -5380,7 +6347,27 @@ export declare const internal: {
       {
         completionToken?: string;
         conversationKey: string;
-        delivery?: any;
+        delivery?:
+          | { kind: "async" }
+          | {
+              connectionId: string;
+              kind: "nats";
+              publicConversationKey: string;
+              publicEventId: string;
+            }
+          | {
+              channelName: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source: Record<string, any>;
+            };
         input: any;
         parentEventId: string;
         resultId: string;
@@ -5468,15 +6455,29 @@ export declare const internal: {
         _creationTime: number;
         _id: Id<"runtimeAsyncAgentResults">;
         accountId: Id<"accounts">;
-        approvals?: Array<any>;
+        approvals?: Array<{
+          approvalId: string;
+          input: any;
+          toolCallId: string;
+          toolName: string;
+        }>;
         conversationKey: string;
         createdAt: string;
         error?: string;
         eventId: string;
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
-        observed?: boolean;
-        questions?: Array<any>;
+        question?: string;
+        questions?: Array<{
+          answerBy: string;
+          questions: Array<{
+            header: string;
+            id: string;
+            options: Array<{ description?: string; label: string }>;
+            question: string;
+          }>;
+          statusId: string;
+        }>;
         response?: any;
         status:
           | "processing"
@@ -5522,12 +6523,31 @@ export declare const internal: {
         accountId: Id<"accounts">;
         conversationKey: string;
         createdAt: string;
-        delivery?: any;
+        delivery?:
+          | { kind: "async" }
+          | {
+              connectionId: string;
+              kind: "nats";
+              publicConversationKey: string;
+              publicEventId: string;
+            }
+          | {
+              channelName: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source: Record<string, any>;
+            };
         error?: string;
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
         input: any;
-        observed?: boolean;
         parentEventId: string;
         response?: any;
         resultId: string;
@@ -5685,6 +6705,8 @@ export declare const internal: {
         beforeCursor?: string;
         conversationKey: string;
         fromSystemPrefix?: string;
+        role?: "system";
+        stopAtRole?: "assistant" | "user";
       },
       {
         continueCursor: string | null;
@@ -5738,51 +6760,12 @@ export declare const internal: {
         }>;
       }
     >;
-    listPendingAsyncToolResults: FunctionReference<
-      "query",
-      "internal",
-      { conversationKey: string; toolName: string },
-      Array<{
-        _creationTime: number;
-        _id: Id<"runtimeAsyncToolResults">;
-        accountId: Id<"accounts">;
-        conversationKey: string;
-        createdAt: string;
-        delivery?: any;
-        error?: string;
-        expiresAt: number;
-        handback?: "pending" | "detached" | "stored";
-        input: any;
-        observed?: boolean;
-        parentEventId: string;
-        response?: any;
-        resultId: string;
-        sandbox?: {
-          externalId: string;
-          provider:
-            | "sandbox"
-            | "lambda"
-            | "e2b"
-            | "daytona"
-            | "vercel"
-            | "cloudflare"
-            | "worker"
-            | "machine"
-            | "custom";
-          reservationKey: string;
-        };
-        status: "processing" | "completed" | "failed";
-        toolCallId: string;
-        toolName: string;
-        updatedAt: string;
-      }>
-    >;
-    listUnobservedAsyncAgentResults: FunctionReference<
+    listOwedAsyncAgentResults: FunctionReference<
       "query",
       "internal",
       {
         cursor: string | null;
-        handback?: "pending" | "detached";
+        handback: "detached" | "pending";
         status:
           | "processing"
           | "awaiting_approval"
@@ -5799,15 +6782,29 @@ export declare const internal: {
           _creationTime: number;
           _id: Id<"runtimeAsyncAgentResults">;
           accountId: Id<"accounts">;
-          approvals?: Array<any>;
+          approvals?: Array<{
+            approvalId: string;
+            input: any;
+            toolCallId: string;
+            toolName: string;
+          }>;
           conversationKey: string;
           createdAt: string;
           error?: string;
           eventId: string;
           expiresAt: number;
           handback?: "pending" | "detached" | "stored";
-          observed?: boolean;
-          questions?: Array<any>;
+          question?: string;
+          questions?: Array<{
+            answerBy: string;
+            questions: Array<{
+              header: string;
+              id: string;
+              options: Array<{ description?: string; label: string }>;
+              question: string;
+            }>;
+            statusId: string;
+          }>;
           response?: any;
           status:
             | "processing"
@@ -5844,12 +6841,12 @@ export declare const internal: {
         }>;
       }
     >;
-    listUnobservedAsyncToolResults: FunctionReference<
+    listOwedAsyncToolResults: FunctionReference<
       "query",
       "internal",
       {
         cursor: string | null;
-        handback: "pending" | "detached";
+        handback: "detached" | "pending";
         status: "processing" | "completed" | "failed";
         updatedAfter: string;
         updatedBefore: string;
@@ -5863,12 +6860,31 @@ export declare const internal: {
           accountId: Id<"accounts">;
           conversationKey: string;
           createdAt: string;
-          delivery?: any;
+          delivery?:
+            | { kind: "async" }
+            | {
+                connectionId: string;
+                kind: "nats";
+                publicConversationKey: string;
+                publicEventId: string;
+              }
+            | {
+                channelName: string;
+                identity?: {
+                  channelId?: string;
+                  threadId?: string;
+                  userId?: string;
+                  userName?: string;
+                  userRoles?: Array<string>;
+                  workspaceRef?: string;
+                };
+                kind: "channel";
+                source: Record<string, any>;
+              };
           error?: string;
           expiresAt: number;
           handback?: "pending" | "detached" | "stored";
           input: any;
-          observed?: boolean;
           parentEventId: string;
           response?: any;
           resultId: string;
@@ -5893,19 +6909,103 @@ export declare const internal: {
         }>;
       }
     >;
+    listPendingAsyncToolResults: FunctionReference<
+      "query",
+      "internal",
+      { conversationKey: string; toolName: string },
+      Array<{
+        _creationTime: number;
+        _id: Id<"runtimeAsyncToolResults">;
+        accountId: Id<"accounts">;
+        conversationKey: string;
+        createdAt: string;
+        delivery?:
+          | { kind: "async" }
+          | {
+              connectionId: string;
+              kind: "nats";
+              publicConversationKey: string;
+              publicEventId: string;
+            }
+          | {
+              channelName: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source: Record<string, any>;
+            };
+        error?: string;
+        expiresAt: number;
+        handback?: "pending" | "detached" | "stored";
+        input: any;
+        parentEventId: string;
+        response?: any;
+        resultId: string;
+        sandbox?: {
+          externalId: string;
+          provider:
+            | "sandbox"
+            | "lambda"
+            | "e2b"
+            | "daytona"
+            | "vercel"
+            | "cloudflare"
+            | "worker"
+            | "machine"
+            | "custom";
+          reservationKey: string;
+        };
+        status: "processing" | "completed" | "failed";
+        toolCallId: string;
+        toolName: string;
+        updatedAt: string;
+      }>
+    >;
     markAsyncAgentHandback: FunctionReference<
       "mutation",
       "internal",
       { eventId: string; handback: "detached" | "stored" },
       null
     >;
-    observeAsyncToolResult: FunctionReference<
+    markAsyncToolHandback: FunctionReference<
       "mutation",
       "internal",
       { handback: "detached" | "stored"; resultId: string },
       null
     >;
     pruneExpired: FunctionReference<"mutation", "internal", {}, number>;
+    pruneHarnessSessionEntries: FunctionReference<
+      "mutation",
+      "internal",
+      { conversationKey: string },
+      null
+    >;
+    readHarnessSessionEntries: FunctionReference<
+      "query",
+      "internal",
+      {
+        afterSequence?: number;
+        conversationKey: string;
+        leafEntryId?: string;
+        sessionId: string;
+      },
+      {
+        entries: Array<{
+          entry: string;
+          entryId: string;
+          firstKeptEntryId?: string;
+          parentEntryId?: string;
+          version: number;
+        }>;
+        nextSequence: number | null;
+      }
+    >;
     releaseClaim: FunctionReference<
       "mutation",
       "internal",
@@ -5937,12 +7037,27 @@ export declare const internal: {
       "mutation",
       "internal",
       {
-        approvals?: Array<any>;
+        approvals?: Array<{
+          approvalId: string;
+          input: any;
+          toolCallId: string;
+          toolName: string;
+        }>;
         error?: string;
         eventId: string;
         handback?: "detached";
         onlyWhileProcessing?: boolean;
-        questions?: Array<any>;
+        question?: string;
+        questions?: Array<{
+          answerBy: string;
+          questions: Array<{
+            header: string;
+            id: string;
+            options: Array<{ description?: string; label: string }>;
+            question: string;
+          }>;
+          statusId: string;
+        }>;
         response?: any;
         status:
           | "processing"
@@ -5950,6 +7065,7 @@ export declare const internal: {
           | "awaiting_input"
           | "completed"
           | "failed";
+        toolResultIds?: Array<string>;
       },
       null
     >;
@@ -5969,12 +7085,31 @@ export declare const internal: {
         accountId: Id<"accounts">;
         conversationKey: string;
         createdAt: string;
-        delivery?: any;
+        delivery?:
+          | { kind: "async" }
+          | {
+              connectionId: string;
+              kind: "nats";
+              publicConversationKey: string;
+              publicEventId: string;
+            }
+          | {
+              channelName: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source: Record<string, any>;
+            };
         error?: string;
         expiresAt: number;
         handback?: "pending" | "detached" | "stored";
         input: any;
-        observed?: boolean;
         parentEventId: string;
         response?: any;
         resultId: string;
@@ -6022,9 +7157,63 @@ export declare const internal: {
           model?: Record<string, any>;
         };
         conversationKey: string;
-        delivery: any;
+        delivery:
+          | {
+              kind: "http";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl?: string;
+            }
+          | {
+              kind: "async";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl: string;
+            }
+          | {
+              connectionId: string;
+              kind: "websocket";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl?: string;
+            }
+          | {
+              channel: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source?: Record<string, any>;
+            };
         envelopeTtlMs: number;
-        ephemeralSystem?: Array<any>;
+        ephemeralSystem?: Array<{
+          content: string;
+          providerOptions?: Record<string, Record<string, any>>;
+          role: "system";
+        }>;
         eventId: string;
         events: Array<any>;
         expectedOwnerTaskId?: string;
@@ -6064,8 +7253,62 @@ export declare const internal: {
             model?: Record<string, any>;
           };
           contributingEventIds: Array<string>;
-          delivery: any;
-          ephemeralSystem?: Array<any>;
+          delivery:
+            | {
+                kind: "http";
+                publicConversationKey: string;
+                publicDeploymentIngress?: {
+                  accountId: string;
+                  endpointId: string;
+                  projectSlug: string;
+                  stageSlug: string;
+                };
+                publicEventId: string;
+                statusUrl?: string;
+              }
+            | {
+                kind: "async";
+                publicConversationKey: string;
+                publicDeploymentIngress?: {
+                  accountId: string;
+                  endpointId: string;
+                  projectSlug: string;
+                  stageSlug: string;
+                };
+                publicEventId: string;
+                statusUrl: string;
+              }
+            | {
+                connectionId: string;
+                kind: "websocket";
+                publicConversationKey: string;
+                publicDeploymentIngress?: {
+                  accountId: string;
+                  endpointId: string;
+                  projectSlug: string;
+                  stageSlug: string;
+                };
+                publicEventId: string;
+                statusUrl?: string;
+              }
+            | {
+                channel: string;
+                identity?: {
+                  channelId?: string;
+                  threadId?: string;
+                  userId?: string;
+                  userName?: string;
+                  userRoles?: Array<string>;
+                  workspaceRef?: string;
+                };
+                kind: "channel";
+                source?: Record<string, any>;
+              };
+          ephemeralSystem?: Array<{
+            content: string;
+            providerOptions?: Record<string, Record<string, any>>;
+            role: "system";
+          }>;
           eventId: string;
           events: Array<any>;
           ownerGeneration: number;
@@ -6100,11 +7343,35 @@ export declare const internal: {
       "internal",
       {
         conversationKey: string;
-        events: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
         ownerEventId: string;
         ownerGeneration: number;
       },
       null
+    >;
+    appendHarnessSessionEntries: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        afterSequence?: number;
+        conversationKey: string;
+        entries: Array<{
+          entry: string;
+          entryId: string;
+          firstKeptEntryId?: string;
+          parentEntryId?: string;
+          version: number;
+        }>;
+        ownerEventId: string;
+        ownerGeneration: number;
+        sessionId: string;
+      },
+      number
     >;
     applySteering: FunctionReference<
       "mutation",
@@ -6128,8 +7395,62 @@ export declare const internal: {
           model?: Record<string, any>;
         };
         contributingEventIds: Array<string>;
-        delivery: any;
-        ephemeralSystem?: Array<any>;
+        delivery:
+          | {
+              kind: "http";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl?: string;
+            }
+          | {
+              kind: "async";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl: string;
+            }
+          | {
+              connectionId: string;
+              kind: "websocket";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl?: string;
+            }
+          | {
+              channel: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source?: Record<string, any>;
+            };
+        ephemeralSystem?: Array<{
+          content: string;
+          providerOptions?: Record<string, Record<string, any>>;
+          role: "system";
+        }>;
         eventId: string;
         events: Array<any>;
         ownerGeneration: number;
@@ -6262,8 +7583,62 @@ export declare const internal: {
               model?: Record<string, any>;
             };
             contributingEventIds: Array<string>;
-            delivery: any;
-            ephemeralSystem?: Array<any>;
+            delivery:
+              | {
+                  kind: "http";
+                  publicConversationKey: string;
+                  publicDeploymentIngress?: {
+                    accountId: string;
+                    endpointId: string;
+                    projectSlug: string;
+                    stageSlug: string;
+                  };
+                  publicEventId: string;
+                  statusUrl?: string;
+                }
+              | {
+                  kind: "async";
+                  publicConversationKey: string;
+                  publicDeploymentIngress?: {
+                    accountId: string;
+                    endpointId: string;
+                    projectSlug: string;
+                    stageSlug: string;
+                  };
+                  publicEventId: string;
+                  statusUrl: string;
+                }
+              | {
+                  connectionId: string;
+                  kind: "websocket";
+                  publicConversationKey: string;
+                  publicDeploymentIngress?: {
+                    accountId: string;
+                    endpointId: string;
+                    projectSlug: string;
+                    stageSlug: string;
+                  };
+                  publicEventId: string;
+                  statusUrl?: string;
+                }
+              | {
+                  channel: string;
+                  identity?: {
+                    channelId?: string;
+                    threadId?: string;
+                    userId?: string;
+                    userName?: string;
+                    userRoles?: Array<string>;
+                    workspaceRef?: string;
+                  };
+                  kind: "channel";
+                  source?: Record<string, any>;
+                };
+            ephemeralSystem?: Array<{
+              content: string;
+              providerOptions?: Record<string, Record<string, any>>;
+              role: "system";
+            }>;
             eventId: string;
             events: Array<any>;
             ownerGeneration: number;
@@ -6298,7 +7673,15 @@ export declare const internal: {
       "mutation",
       "internal",
       {
+        afterSequence?: number;
         conversationKey: string;
+        entries?: Array<{
+          entry: string;
+          entryId: string;
+          firstKeptEntryId?: string;
+          parentEntryId?: string;
+          version: number;
+        }>;
         harnessType: "claude-code" | "codex" | "deepagents" | "opencode" | "pi";
         ownerEventId: string;
         ownerGeneration: number;
@@ -6315,9 +7698,24 @@ export declare const internal: {
         asyncResult?: {
           eventIds: Array<string>;
           outcome: {
-            approvals?: Array<any>;
+            approvals?: Array<{
+              approvalId: string;
+              input: any;
+              toolCallId: string;
+              toolName: string;
+            }>;
             error?: string;
-            questions?: Array<any>;
+            question?: string;
+            questions?: Array<{
+              answerBy: string;
+              questions: Array<{
+                header: string;
+                id: string;
+                options: Array<{ description?: string; label: string }>;
+                question: string;
+              }>;
+              statusId: string;
+            }>;
             response?: any;
             status:
               | "processing"
@@ -6329,7 +7727,12 @@ export declare const internal: {
         };
         conversationKey: string;
         error?: string;
-        events?: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events?: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
         ownerEventId: string;
         ownerGeneration: number;
         result?: any;
@@ -6343,7 +7746,12 @@ export declare const internal: {
       {
         claimSteering?: boolean;
         conversationKey: string;
-        events?: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events?: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
         leaseTtlMs: number;
         ownerEventId: string;
         ownerGeneration: number;
@@ -6362,8 +7770,62 @@ export declare const internal: {
             model?: Record<string, any>;
           };
           contributingEventIds: Array<string>;
-          delivery: any;
-          ephemeralSystem?: Array<any>;
+          delivery:
+            | {
+                kind: "http";
+                publicConversationKey: string;
+                publicDeploymentIngress?: {
+                  accountId: string;
+                  endpointId: string;
+                  projectSlug: string;
+                  stageSlug: string;
+                };
+                publicEventId: string;
+                statusUrl?: string;
+              }
+            | {
+                kind: "async";
+                publicConversationKey: string;
+                publicDeploymentIngress?: {
+                  accountId: string;
+                  endpointId: string;
+                  projectSlug: string;
+                  stageSlug: string;
+                };
+                publicEventId: string;
+                statusUrl: string;
+              }
+            | {
+                connectionId: string;
+                kind: "websocket";
+                publicConversationKey: string;
+                publicDeploymentIngress?: {
+                  accountId: string;
+                  endpointId: string;
+                  projectSlug: string;
+                  stageSlug: string;
+                };
+                publicEventId: string;
+                statusUrl?: string;
+              }
+            | {
+                channel: string;
+                identity?: {
+                  channelId?: string;
+                  threadId?: string;
+                  userId?: string;
+                  userName?: string;
+                  userRoles?: Array<string>;
+                  workspaceRef?: string;
+                };
+                kind: "channel";
+                source?: Record<string, any>;
+              };
+          ephemeralSystem?: Array<{
+            content: string;
+            providerOptions?: Record<string, Record<string, any>>;
+            role: "system";
+          }>;
           eventId: string;
           events: Array<any>;
           ownerGeneration: number;
@@ -6387,7 +7849,12 @@ export declare const internal: {
       "internal",
       {
         conversationKey: string;
-        events?: Array<{ cursor: string; dedupeKey?: string; event: any }>;
+        events?: Array<{
+          cursor: string;
+          dedupeKey?: string;
+          event: any;
+          toolResultIds?: Array<string>;
+        }>;
         leaseTtlMs: number;
         ownerEventId: string;
         ownerGeneration: number;
@@ -6409,8 +7876,62 @@ export declare const internal: {
           model?: Record<string, any>;
         };
         contributingEventIds: Array<string>;
-        delivery: any;
-        ephemeralSystem?: Array<any>;
+        delivery:
+          | {
+              kind: "http";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl?: string;
+            }
+          | {
+              kind: "async";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl: string;
+            }
+          | {
+              connectionId: string;
+              kind: "websocket";
+              publicConversationKey: string;
+              publicDeploymentIngress?: {
+                accountId: string;
+                endpointId: string;
+                projectSlug: string;
+                stageSlug: string;
+              };
+              publicEventId: string;
+              statusUrl?: string;
+            }
+          | {
+              channel: string;
+              identity?: {
+                channelId?: string;
+                threadId?: string;
+                userId?: string;
+                userName?: string;
+                userRoles?: Array<string>;
+                workspaceRef?: string;
+              };
+              kind: "channel";
+              source?: Record<string, any>;
+            };
+        ephemeralSystem?: Array<{
+          content: string;
+          providerOptions?: Record<string, Record<string, any>>;
+          role: "system";
+        }>;
         eventId: string;
         events: Array<any>;
         ownerGeneration: number;
@@ -6851,42 +8372,62 @@ export declare const internal: {
       >;
     };
   };
-  seatMigration: {
-    resyncAllSeats: FunctionReference<
-      "action",
-      "internal",
-      { dryRun: boolean },
-      {
-        done: Array<{
-          authId: string;
-          newQuantity: number;
-          oldQuantity: number;
-          stripeSubscriptionId: string;
-        }>;
-        duplicates: Array<{ authId: string; stripeSubscriptionId: string }>;
-        failed: Array<{ authId: string; error: string }>;
-      }
-    >;
-    resyncPageInternal: FunctionReference<
+  stageSources: {
+    latestHash: FunctionReference<
       "query",
       "internal",
-      { cursor: string | null },
-      {
-        continueCursor: string;
-        duplicates: Array<{ authId: string; stripeSubscriptionId: string }>;
-        isDone: boolean;
-        resyncs: Array<{
-          authId: string;
-          newQuantity: number;
-          oldQuantity: number;
-          stripeSubscriptionId: string;
-        }>;
-      }
+      { stageId: Id<"stages"> },
+      string | null
     >;
-    syncPlanInternal: FunctionReference<
+    recordSync: FunctionReference<
       "mutation",
       "internal",
-      { authId: string },
+      {
+        manifestHash: string;
+        source?: {
+          bytes: number;
+          commitSha?: string;
+          fileCount: number;
+          hash: string;
+          origin: "cli" | "apply" | "github";
+          storageId?: Id<"_storage">;
+        };
+        stageId: Id<"stages">;
+      },
+      number | null
+    >;
+    setVerification: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        commitSha?: string;
+        revision: number;
+        stageId: Id<"stages">;
+        verification: {
+          error?: string;
+          phase: "verifying" | "deployed" | "failed";
+          runUrl?: string;
+        };
+      },
+      null
+    >;
+    syncedSince: FunctionReference<
+      "query",
+      "internal",
+      { since: number; stageId: Id<"stages"> },
+      string | null
+    >;
+    verifyRun: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        branch: string;
+        conclusion?: string;
+        repoId: number;
+        sha: string;
+        startedAt: number;
+        url: string;
+      },
       null
     >;
   };
@@ -7176,7 +8717,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;

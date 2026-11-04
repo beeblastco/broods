@@ -1,22 +1,34 @@
-/**
- * Hosted-MCP runner handler regressions, driven under real Node (handler.mjs
- * spawns process.execPath). Containment: a warm execution environment is reused
- * across calls (and across accounts when tenant isolation is off), so a run
- * must leave nothing on disk and no live process behind. Delivery: the terminal
- * frame must arrive even under backpressure or a leaked grandchild pipe.
- */
-
 import { describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const handlerPath = fileURLToPath(
   new URL("../../lambda/handler.mjs", import.meta.url),
 );
+
+// The handler reaps every same-UID process when LAMBDA_TASK_ROOT is set. Only a driver in its
+// own PID namespace gets it; an exported one must not arm the reaper against the host.
+const { LAMBDA_TASK_ROOT: _taskRoot, ...hostEnv } = process.env;
+const LAMBDA_ENV = { LAMBDA_TASK_ROOT: dirname(handlerPath) };
+
+const pidNamespace = ((): string[] | null => {
+  for (const prefix of [
+    ["unshare", "--user", "--map-root-user", "--pid", "--fork", "--mount-proc"],
+    ["unshare", "--pid", "--fork", "--mount-proc"],
+  ]) {
+    try {
+      if (Bun.spawnSync([...prefix, "true"]).exitCode === 0) return prefix;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+})();
 
 interface HostedResponse {
   status: number;
@@ -24,8 +36,7 @@ interface HostedResponse {
   body: string;
 }
 
-// cpuUsec rides the terminal frame for usage metering and is inherently
-// variable, so it is dropped here and the frame bodies stay exactly assertable.
+// cpuUsec varies run to run, so it is dropped to keep frame bodies exactly assertable.
 function parseFrames(
   stdout: string | undefined,
 ): Array<Record<string, unknown> & { t: string }> {
@@ -43,7 +54,6 @@ function parseFrames(
     });
 }
 
-// The single request's tagged final frame; the batch then closes on `end`.
 function finalBody(stdout: string | undefined): unknown {
   const frames = parseFrames(stdout) as Array<{
     t: string;
@@ -56,17 +66,36 @@ function finalBody(stdout: string | undefined): unknown {
   return JSON.parse(finals[0]!.result!.body);
 }
 
-// A bundle the runner will accept: sha256 must match what the child recomputes.
+// Signal 0 only checks the pid exists; an unreaped zombie (stat `Z`) passes, so it counts as gone.
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  const stat = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)]).stdout;
+
+  return !stat.toString().trim().startsWith("Z");
+}
+
 async function invokeHandler(
   bundle: string,
   parentEnv: Record<string, string> = {},
-  // Read the response slowly against a small buffer to force the handler's
-  // backpressure path, where a paused stdout can outlive the child's exit.
+  // Slow reads against a small buffer force the handler's backpressure path.
   throttleMs = 0,
-  // Address the bundle the way core does in production, a presigned GET the
-  // handler resolves, instead of inlining the bytes in the invoke event.
+  // As core does in production: a presigned GET the handler resolves, not inline bytes.
   bundleAddress?: "served" | { url: string },
-): Promise<{ stdout?: string; arrivalsMs?: number[] }> {
+  options: {
+    // A second invoke in the same warm process; its frames come back as followUpStdout.
+    followUp?: string;
+    command?: (driver: string) => string[];
+  } = {},
+): Promise<{
+  stdout?: string;
+  followUpStdout?: string;
+  arrivalsMs?: number[];
+  exitCode: number | null;
+}> {
   const dir = await mkdtemp(join(tmpdir(), "broods-handler-drv-"));
   const server =
     bundleAddress === "served"
@@ -89,9 +118,7 @@ async function invokeHandler(
     await writeFile(
       driver,
       [
-        // The handler streams NDJSON into a response stream instead of returning
-        // it, so the driver collects the stream and re-emits it as { stdout },
-        // timestamping each write so a test can tell streaming from buffering.
+        // The driver collects the handler's NDJSON stream, timestamping each write.
         `import { createHash } from "node:crypto";`,
         `import { PassThrough } from "node:stream";`,
         `import { handler } from ${JSON.stringify(handlerPath)};`,
@@ -117,23 +144,40 @@ async function invokeHandler(
         `  expectedSha256: createHash("sha256").update(bundle).digest("hex"),`,
         `}, responseStream);`,
         `await consumed;`,
-        `process.stdout.write(JSON.stringify({ stdout, arrivalsMs }));`,
+        `let followUpStdout;`,
+        `const followUp = ${JSON.stringify(options.followUp ?? null)};`,
+        `if (followUp !== null) {`,
+        `  const next = Buffer.from(followUp, "utf8");`,
+        `  const stream = new PassThrough();`,
+        `  followUpStdout = "";`,
+        `  const read = (async () => {`,
+        `    for await (const chunk of stream) followUpStdout += chunk;`,
+        `  })();`,
+        `  await handler({`,
+        `    ...${JSON.stringify(event)},`,
+        `    bundleSourceB64: next.toString("base64"),`,
+        `    expectedSha256: createHash("sha256").update(next).digest("hex"),`,
+        `  }, stream);`,
+        `  await read;`,
+        `}`,
+        `process.stdout.write(JSON.stringify({ stdout, followUpStdout, arrivalsMs }));`,
       ].join("\n"),
     );
 
     return await new Promise((resolve, reject) => {
-      const child = spawn("node", [driver], {
+      const [file, ...args] = options.command?.(driver) ?? ["node", driver];
+      const child = spawn(file!, args, {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, ...parentEnv },
+        env: { ...hostEnv, ...parentEnv },
       });
       let out = "";
       let err = "";
       child.stdout.on("data", (chunk) => (out += chunk));
       child.stderr.on("data", (chunk) => (err += chunk));
       child.once("error", reject);
-      child.once("exit", () => {
+      child.once("exit", (exitCode) => {
         try {
-          resolve(JSON.parse(out));
+          resolve({ ...JSON.parse(out), exitCode: exitCode });
         } catch {
           reject(new Error(`driver produced no JSON: ${out}${err}`));
         }
@@ -147,8 +191,7 @@ async function invokeHandler(
 
 describe("mcp-runner containment", () => {
   it("never writes the tenant bundle to disk", async () => {
-    // The bundle hunts its own source through TMPDIR/HOME. Nothing should match:
-    // /tmp survives in a warm sandbox, so a bundle on disk outlives its run.
+    // /tmp survives in a warm sandbox, so a bundle on disk would outlive its run.
     const marker = "b7f2b1e4c0a94f8e_bundle_marker";
     const bundle = [
       `import { readdirSync, readFileSync } from "node:fs";`,
@@ -199,8 +242,7 @@ describe("mcp-runner containment", () => {
   }, 30_000);
 
   it("reaps a process the tenant bundle leaves running", async () => {
-    // A survivor in a warm sandbox outlives the invocation and sees the next
-    // tenant's run. handler.mjs kills the child's whole process group.
+    // A survivor in a warm sandbox would see the next tenant's run: the whole group is killed.
     const dir = await mkdtemp(join(tmpdir(), "broods-survivor-"));
     try {
       const marker = join(dir, "survived.txt");
@@ -209,26 +251,114 @@ describe("mcp-runner containment", () => {
         `export default () => {`,
         `  const code = "setTimeout(() => require('fs').writeFileSync(" +`,
         `    ${JSON.stringify(JSON.stringify(marker))} + ", 'survived'), 1500)";`,
-        `  spawn(process.execPath, ["-e", code], { stdio: "ignore" });`,
-        `  return new Response(JSON.stringify({ spawned: true }));`,
+        `  const survivor = spawn(process.execPath, ["-e", code], { stdio: "ignore" });`,
+        `  return new Response(JSON.stringify({ spawned: true, pid: survivor.pid }));`,
         `};`,
       ].join("\n");
 
       const result = await invokeHandler(bundle);
-      expect(finalBody(result.stdout)).toEqual({ spawned: true });
+      const body = finalBody(result.stdout) as {
+        spawned: boolean;
+        pid: number;
+      };
+      expect(body).toEqual({ spawned: true, pid: expect.any(Number) });
 
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      // Gone well before its 1.5 s timer, so it never writes the marker.
+      const deadline = performance.now() + 1_000;
+      while (isAlive(body.pid)) {
+        if (performance.now() > deadline)
+          throw new Error("survivor still running");
+        await Bun.sleep(10);
+      }
       expect(existsSync(marker)).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  // skip: needs `unshare` for a PID namespace; CI lifts the userns restriction, so it runs there.
+  it.skipIf(pidNamespace === null && !process.env.CI)(
+    "reaps a survivor that left the child's process group before the next spawn",
+    async () => {
+      if (pidNamespace === null) {
+        throw new Error(
+          "CI needs a PID namespace (unshare) to test reapStrays",
+        );
+      }
+      // setsid() escapes killGroup; only the reap before the second spawn can stop the write.
+      const dir = await mkdtemp(join(tmpdir(), "broods-escapee-"));
+      try {
+        const marker = join(dir, "survived.txt");
+        const bundle = [
+          `import { spawn } from "node:child_process";`,
+          `export default () => {`,
+          `  const code = "setTimeout(() => require('fs').writeFileSync(" +`,
+          `    ${JSON.stringify(JSON.stringify(marker))} + ", 'survived'), 1500)";`,
+          `  spawn(process.execPath, ["-e", code], { stdio: "ignore", detached: true }).unref();`,
+          `  return new Response(JSON.stringify({ spawned: true }));`,
+          `};`,
+        ].join("\n");
+
+        // The namespace dies with its pid 1, so the shell outlives the survivor's timer.
+        const result = await invokeHandler(bundle, LAMBDA_ENV, 0, undefined, {
+          followUp: `export default () => new Response(JSON.stringify({ next: true }));`,
+          command: (driver) => [
+            ...pidNamespace,
+            "sh",
+            "-c",
+            'node "$0"; sleep 3',
+            driver,
+          ],
+        });
+        expect(finalBody(result.stdout)).toEqual({ spawned: true });
+        expect(finalBody(result.followUpStdout)).toEqual({ next: true });
+        expect(existsSync(marker)).toBe(false);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+});
+
+describe("mcp-runner outside Lambda", () => {
+  it("leaves the host's other processes alone", async () => {
+    // The stray reap is for Lambda's own UID. On a dev box or CI runner the
+    // same UID runs the shell, the editor and Docker.
+    const bystander = spawn(
+      process.execPath,
+      ["-e", "setTimeout(() => {}, 30000)"],
+      {
+        detached: true,
+        stdio: "ignore",
+      },
+    );
+    try {
+      const bundle = `export default () => new Response("ok");`;
+      // In a namespace with its own bystander, a broken gate fails here, not the host.
+      const result = await invokeHandler(bundle, {}, 0, undefined, {
+        followUp: bundle,
+        ...(pidNamespace && {
+          command: (driver: string) => [
+            ...pidNamespace,
+            "sh",
+            "-c",
+            'sleep 30 & b=$!; node "$0"; s=$(cut -d" " -f3 /proc/$b/stat); kill $b; [ "$s" = S ]',
+            driver,
+          ],
+        }),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(isAlive(bystander.pid!)).toBe(true);
+    } finally {
+      bystander.kill("SIGKILL");
     }
   }, 30_000);
 });
 
 describe("mcp-runner bundle addressing", () => {
   it("resolves a bundle the event only addresses by URL", async () => {
-    // Core spends its 6 MB invoke quota on a presigned GET rather than the
-    // bytes; the handler fetches so the per-invocation child does not.
+    // Core spends its 6 MB invoke quota on a presigned GET rather than the bytes.
     const bundle = `export default () => new Response(JSON.stringify({ ok: true }));`;
 
     const result = await invokeHandler(bundle, {}, 0, "served");
@@ -237,8 +367,7 @@ describe("mcp-runner bundle addressing", () => {
   }, 30_000);
 
   it("fails loudly when the bundle URL is refused", async () => {
-    // What an expired presigned URL looks like: the run has to end on an error
-    // frame rather than hang or report an empty result.
+    // An expired presigned URL must end on an error frame, not hang or report an empty result.
     const result = await invokeHandler("export default {};", {}, 0, {
       url: "https://example.invalid/expired-bundle.mjs",
     });
@@ -254,8 +383,7 @@ describe("mcp-runner bundle addressing", () => {
 
 describe("mcp-runner response delivery", () => {
   it("loses nothing when the reader is slower than the response", async () => {
-    // Backpressure pauses child stdout, and a paused pipe still holds data when
-    // the child exits, so finalizing on "exit" silently truncates the run.
+    // A paused pipe still holds data when the child exits, so finalizing on "exit" truncates.
     const bundle = [
       `export default () => new Response(JSON.stringify({`,
       `  pad: "x".repeat(600_000),`,
@@ -269,13 +397,11 @@ describe("mcp-runner response delivery", () => {
   }, 30_000);
 
   it("settles promptly when a grandchild inherits the stdout pipe", async () => {
-    // The grandchild holds the pipe's write end open, so stdout never ends on
-    // its own. Waiting for it without reaping the group first would stall the
-    // run until the 30s kill, turning a fast request into a timeout.
+    // The grandchild holds the stdout write end open: unless the group is reaped first, the run
+    // waits for the 30s kill.
     const bundle = [
       `import { spawn } from "node:child_process";`,
       `export default () => {`,
-      // inherit: the grandchild gets this process's stdout, not a fresh pipe.
       `  spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)"], {`,
       `    stdio: "inherit",`,
       `  });`,

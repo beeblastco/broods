@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Side-panel editors for standalone workspaceConfig and sandboxConfig canvas
- * nodes. Agent config stores references to these ids; node data stores the
- * editable resource snapshot shown in the dashboard.
- */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import {
@@ -39,7 +34,7 @@ import {
   machineState,
 } from "@/app/lib/machineConnection";
 import { snapshotImage, snapshotOptions } from "@/app/lib/sandboxSnapshots";
-import { isPlainObject } from "@/app/lib/utils";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { api } from "@broods/convex/_generated/api";
 import type { StorageTrust } from "@broods/convex/model/storageTrust";
 import { CopyRow } from "@/app/components/CopyButton";
@@ -50,7 +45,6 @@ import { useEffect, useState } from "react";
 
 type UpdateNodeData = (patch: Partial<BaseNodeData>) => void;
 
-// What the Image select shows for each platform image variant.
 const SANDBOX_IMAGE_LABEL: Record<SandboxImage, string> = {
   browser: "Chromium browser",
   obscura: "Obscura browser",
@@ -65,13 +59,10 @@ const SANDBOX_DEFAULT_CONFIG = {
   permissionMode: "ask",
 };
 
-// Every field that only means anything on a bring-your-own bucket. The toggle is
-// derived from all of them, not just `bucket`: a workspace carrying only a prefix
-// would otherwise show the switch off and hide the value it already has.
+// The switch derives from all of these, so a prefix-only workspace still shows it on.
 const OWN_BUCKET_FIELDS = ["bucket", "region", "endpoint", "prefix"] as const;
 
-// What the default harness gives every workspace. Always on; turning one off is a
-// deliberate code-only choice, so these are reported here and never edited here.
+// Always on: switching one off is code-only, so the panel reports it and never edits it.
 const HARNESS_FEATURES = [
   { key: "workspace", label: "Guidance" },
   { key: "memory", label: "Memory" },
@@ -98,7 +89,7 @@ export function ResourceConfigTab({
         value={data.config ?? fallback}
         onSave={(config) =>
           onUpdateNodeData({
-            config: isPlainObject(config) ? config : fallback,
+            config: parseOr(configObject, config, fallback),
           })
         }
       />
@@ -122,14 +113,9 @@ export function SandboxResourceDetailsTab({
   /** Code owns this row, so the canvas save discards config edits: show them read-only. */
   managedByCode?: boolean;
 }): React.JSX.Element {
-  const config: Record<string, unknown> = isPlainObject(data.config)
-    ? data.config
-    : SANDBOX_DEFAULT_CONFIG;
-  // Egress policy. Core models this as `network.mode` (allow-all/deny-all/restricted),
-  // which is what code-synced sandboxes carry, not a flat `internet` boolean.
-  const network: { mode?: string } = isPlainObject(config.network)
-    ? (config.network as { mode?: string })
-    : {};
+  const config = parseOr(configObject, data.config, SANDBOX_DEFAULT_CONFIG);
+  // Core's egress is `network.mode` (allow-all, deny-all, restricted), not an `internet` flag.
+  const network = parseOr(configObject, config.network, {});
   // Convex rejects sizing, persistence and egress rules on a machine record.
   const machine = config.provider === "machine";
   const provider =
@@ -240,8 +226,7 @@ export function SandboxResourceDetailsTab({
             onValueChange={(next) =>
               setConfig({
                 snapshot: next === "none" ? undefined : next,
-                // A lambda snapshot boots its own image, built from a variant the
-                // browser tools look for, so Image follows it.
+                // A lambda snapshot boots its own image variant, so Image follows it.
                 ...(provider === "lambda" && next !== "none"
                   ? { image: snapshotImage(snapshots ?? [], next) }
                   : {}),
@@ -282,8 +267,6 @@ export function SandboxResourceDetailsTab({
                 setConfig({
                   network: {
                     ...network,
-                    // Preserve an existing `restricted` policy when toggling on;
-                    // otherwise map the binary switch onto core's egress modes.
                     mode: internet
                       ? network.mode === "restricted"
                         ? "restricted"
@@ -322,20 +305,15 @@ export function WorkspaceResourceDetailsTab({
   onSaveName: () => void;
   onUpdateNodeData: UpdateNodeData;
 }): React.JSX.Element {
-  const config: Record<string, unknown> = isPlainObject(data.config)
-    ? data.config
-    : WORKSPACE_DEFAULT_CONFIG;
-  const harness = isPlainObject(config.harness) ? config.harness : {};
+  const config = parseOr(configObject, data.config, WORKSPACE_DEFAULT_CONFIG);
+  const harness = parseOr(configObject, config.harness, {});
   const isolation = isWorkspaceIsolation(config.isolation)
     ? config.isolation
     : undefined;
-  const storage: Record<string, unknown> = isPlainObject(config.storage)
-    ? config.storage
-    : { provider: "s3" };
-  const auth = isPlainObject(storage.auth) ? storage.auth : {};
-  // Local toggle: switching it on reveals empty fields and persists nothing until a
-  // bucket is typed, so a purely derived switch would snap straight back off and the
-  // fields could never be reached. Resync when the saved config changes elsewhere.
+  const storage = parseOr(configObject, config.storage, { provider: "s3" });
+  const auth = parseOr(configObject, storage.auth, {});
+  // Local: switching on saves nothing until a bucket is typed, so a derived switch would snap
+  // back off. It re-adopts the saved value when that changes elsewhere.
   const savedOwnBucket =
     auth.type === "assumeRole" ||
     OWN_BUCKET_FIELDS.some((field) => typeof storage[field] === "string");
@@ -345,13 +323,8 @@ export function WorkspaceResourceDetailsTab({
     setLastSavedOwnBucket(savedOwnBucket);
     setOwnBucket(savedOwnBucket);
   }
-  // Guidance and memory are part of what the default harness IS, so they are on and
-  // stay on. There is no switch here. The opt-out is a code-only escape hatch; the
-  // dashboard only reports it, so an agent configured in code never looks untouched.
   const disabledFeatures = HARNESS_FEATURES.filter((feature) => {
-    const value = isPlainObject(harness[feature.key])
-      ? (harness[feature.key] as Record<string, unknown>)
-      : {};
+    const value = parseOr(configObject, harness[feature.key], {});
 
     return value.enabled === false;
   });
@@ -360,8 +333,7 @@ export function WorkspaceResourceDetailsTab({
     onUpdateNodeData({ config: mergeDropping(config, patch) });
   }
 
-  // Storage merges rather than replaces: a bring-your-own bucket lives here, and
-  // rewriting it as { provider: "s3" } on every unrelated edit silently dropped it.
+  // Merges, not replaces: a bring-your-own bucket lives in `storage`.
   function setStorage(patch: Record<string, unknown>): void {
     setConfig({
       storage: mergeDropping({ ...storage, provider: "s3" }, patch),
@@ -421,8 +393,6 @@ export function WorkspaceResourceDetailsTab({
           checked={ownBucket}
           onCheckedChange={(own) => {
             setOwnBucket(own);
-            // Only switching off writes: it clears the bucket back to managed.
-            // Switching on just reveals the fields. Each one saves as it is typed.
             if (!own) {
               setConfig({ storage: { provider: "s3" } });
             }
@@ -494,8 +464,7 @@ export function WorkspaceResourceDetailsTab({
                   label="Role ARN"
                   value={typeof auth.roleArn === "string" ? auth.roleArn : ""}
                   placeholder="arn:aws:iam::123456789012:role/BroodsWorkspace"
-                  // Rebuilt, not spread: a stored customer externalId is now
-                  // refused, so editing the role drops it.
+                  // Rebuilt, not spread: a stored customer externalId is refused now.
                   onCommit={(roleArn) =>
                     setStorage({
                       auth: { type: "assumeRole", roleArn: roleArn },
@@ -549,21 +518,16 @@ export function WorkspaceResourceDetailsTab({
   );
 }
 
-/**
- * The account's Broods-assigned external id and the principal its role must
- * trust, read-only, with the trust policy to paste. Read through a mutation
- * because the id is minted the first time anyone needs it.
- */
 function StorageTrustFields({
   staleExternalId,
   onDropExternalId,
 }: {
-  /** The config still carries a customer-chosen externalId, now refused. */
   staleExternalId: boolean;
   onDropExternalId: () => void;
 }): React.JSX.Element {
   const loadTrust = useMutation(api.account.storageTrust.getForActiveOrg);
   const [trust, setTrust] = useState<StorageTrust | null | undefined>();
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- Convex mutation mints the id
   useEffect(() => {
     let live = true;
     loadTrust({}).then(
@@ -653,7 +617,6 @@ function TrustValue({
   );
 }
 
-/** A machine sandbox has no network or persistence to set, only a daemon to start. */
 function MachineConnectionStatus({
   name,
 }: {
@@ -685,8 +648,7 @@ function MachineConnectionStatus({
   );
 }
 
-// Merge a patch, treating undefined as "remove this key". These objects are
-// persisted, so an `undefined` value would otherwise ride along as a real key.
+// `undefined` removes the key: these objects are persisted, where it would stay as a real key.
 function mergeDropping(
   base: Record<string, unknown>,
   patch: Record<string, unknown>,

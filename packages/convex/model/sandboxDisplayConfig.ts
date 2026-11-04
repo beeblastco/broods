@@ -1,16 +1,7 @@
-/**
- * Display-safe projection of a sandbox config for the canvas layout.
- *
- * Layouts are UI state the dashboard reads back verbatim, so they must never
- * carry `envVars` or provider `options`, which hold credentials. These keys
- * are exactly what the sandbox node and its side panel render: the globe reads
- * `network.mode`, the feature row reads `persistent`, and the config tab edits
- * `provider`, `image`, `snapshot` and `permissionMode`. A key the tab edits but
- * this drops would be wiped from the stored config on the next canvas save.
- */
+import { configObject, parseOr } from "./storedJson";
 
-import { isPlainObject } from "./objects";
-
+// Layouts are read back verbatim: never envVars or options, which hold credentials. A key
+// the config tab edits but this list drops is wiped from the stored config on canvas save.
 const DISPLAY_KEYS = [
   "image",
   "network",
@@ -20,8 +11,9 @@ const DISPLAY_KEYS = [
   "snapshot",
 ] as const;
 
-export function sandboxDisplayConfig(config: unknown): Record<string, unknown> {
-  if (!isPlainObject(config)) {
+export function sandboxDisplayConfig(value: unknown): Record<string, unknown> {
+  const config = parseOr(configObject, value);
+  if (!config) {
     return {};
   }
 

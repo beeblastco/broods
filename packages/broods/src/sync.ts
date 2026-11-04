@@ -1,7 +1,3 @@
-/**
- * HTTP client for the SaaS CLI API exposed by the dashboard/Convex backend.
- */
-
 import type {
   CliManifest,
   DeploymentRegion,
@@ -9,29 +5,14 @@ import type {
 } from "./contracts.ts";
 import { stripTrailingSlash } from "./config.ts";
 import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
+import { snapshotResource } from "../../convex/model/manifestSnapshot.ts";
+import type { StageSource } from "../../convex/model/stageSource.ts";
+import { stableJson } from "../../convex/model/objects.ts";
 import { StageSessionRefusedError } from "./observability-client.ts";
 
-/**
- * Keys the local and remote configs never agree on: artifact bytes, which the
- * server snapshot drops, and the upload handle a large MCP bundle is swapped
- * for after the diff, which only the remote has. Each artifact's sha256 stays,
- * so a content change still shows as an update.
- */
-const ARTIFACT_KEYS: ReadonlySet<string> = new Set([
-  "bundle",
-  "bundleStorageId",
-  "contentBase64",
-]);
-/** Resource kinds whose config carries artifact bytes the server keeps apart. */
-const ARTIFACT_KINDS: ReadonlySet<string> = new Set(["hook", "mcp", "skill"]);
-/** How long a CLI request waits for the server to answer. */
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export interface SyncClientOptions {
-  /**
-   * Base URL serving the /v1/account/* control-plane routes: the Convex
-   * deployment directly, or the gateway's unified domain in front of it.
-   */
   baseUrl: string;
   token: string;
   fetch?: typeof fetch;
@@ -40,33 +21,20 @@ export interface SyncClientOptions {
 export interface RemoteManifestResponse {
   manifest: CliManifest;
   ids: GeneratedIds;
-  /**
-   * The stage's manifest revision, which a later PUT sends back to be refused
-   * if another sync landed in between. Absent on backends that predate it.
-   */
   revision?: number;
-  /**
-   * Non-fatal deploy advisories: policy refs that resolve to nothing, and
-   * resources a prune kept because a reserved sandbox instance is still live.
-   */
+  /** sha256 of the stage's manifest as `broods diff` compares it. */
+  manifestHash?: string;
+  /** The stored source revision the stage now runs, when the sync carried source. */
+  sourceRevision?: number;
   warnings?: { missingPolicies?: string[]; reservedResources?: string[] };
-  /**
-   * The stage's runtime key context. Deployments include the plaintext
-   * `apiKey` so the CLI can write `BROODS_API_KEY` locally.
-   */
   deployment?: {
     accountId: string;
     endpointId: string;
     projectSlug: string;
     stageSlug: string;
-    /** Decides the webhook URL shape; only production keeps the bare one. */
     stageKind?: "development" | "production" | "custom";
     keyHint: string;
     apiKey: string;
-    /**
-     * The masked hint (`bsig_…abcd`) of the stage's user-token signing
-     * secret; absent while the stage has none.
-     */
     userTokenSecretHint?: string;
   } | null;
 }
@@ -76,7 +44,6 @@ export interface CliOnboardingOrg {
   name: string;
   slug: string;
   role: "owner" | "admin" | "member";
-  /** Absent on backends that predate plan reporting. */
   plan?: "free" | "pro";
   accountStatus: "active" | "missing" | "disabled";
 }
@@ -103,12 +70,10 @@ export interface CliOnboardingContext {
   currentOrgId: string;
   orgs: CliOnboardingOrg[];
   projects: CliOnboardingProject[];
-  /** The API account backing the current org; absent on older backends. */
   account?: CliOnboardingAccount | null;
   user?: CliOnboardingUser;
 }
 
-/** A 15-minute stage ticket and the slugs the gateway paths use. */
 export interface CliStageSession {
   token: string;
   expiresAt: number;
@@ -116,7 +81,6 @@ export interface CliStageSession {
   stageSlug: string;
 }
 
-/** One stage of a project, as listed by `broods stage list`. */
 export interface CliStage {
   id: string;
   name: string;
@@ -128,12 +92,10 @@ export interface CliStage {
   updatedAt: number;
 }
 
-/** A project of the logged-in account's org, with the counts `broods project` prints. */
 export interface CliProject {
   id: string;
   name: string;
   slug: string;
-  /** No stage, agent, variable, deployment or workspace file left in it. */
   empty: boolean;
   stageCount: number;
   agentCount: number;
@@ -143,11 +105,72 @@ export interface CliProject {
   updatedAt: number;
 }
 
+/** A project's link to a GitHub repo; each stage with a branch deploys on push to it. */
+export interface CliGitHubLink {
+  fullName: string;
+  /** The folder holding `broods/`; "" is the repo root. */
+  rootDirectory: string;
+  productionBranch?: string;
+  developmentBranch?: string;
+  /** False on a plan without environments: the keys are repo secrets any branch can read. */
+  protectedSecrets: boolean;
+  /** The PR carrying the workflow, when a protected branch refused a direct commit. */
+  setupPullRequestUrl?: string;
+}
+
+/** What `broods github` shows: the org's GitHub accounts, the project's link and latest runs. */
+export interface CliGitHubStatus {
+  /** False when the server has no GitHub App. */
+  configured: boolean;
+  /** Whether the caller may connect accounts (an org admin). */
+  canConnect: boolean;
+  /** Whether the caller may link or unlink this project (`keys:write`). */
+  canLink: boolean;
+  webUrl?: string;
+  installations: Array<{
+    installationId: number;
+    login: string;
+    accountType: "User" | "Organization";
+  }>;
+  repo?: CliGitHubLink;
+  deploys: Array<{
+    branch: string;
+    sha: string;
+    status: string;
+    conclusion?: string;
+    url: string;
+    updatedAt: number;
+  }>;
+}
+
+/** A repo a connected GitHub account lets this org link. */
+export interface CliGitHubRepo {
+  installationId: number;
+  repoId: number;
+  fullName: string;
+  private: boolean;
+  defaultBranch: string;
+}
+
+/**
+ * A link request. A branch left out takes its default (the repo's default
+ * branch for Production, `dev` for Development); `null` deploys no such stage.
+ */
+export interface CliGitHubLinkInput {
+  /** `owner/name`. */
+  repo: string;
+  /** The folder holding `broods/`, needed when the repo has several. */
+  folder?: string;
+  /** The Broods API the workflow deploys to. */
+  baseUrl: string;
+  productionBranch?: string | null;
+  developmentBranch?: string | null;
+}
+
 /** A stored environment variable as listed by the CLI (name only; value is write-only). */
 export interface CliEnvVar {
   name: string;
   updatedAt: number;
-  /** SHA-256 hex of the stored value. */
   valueDigest: string;
 }
 
@@ -160,10 +183,8 @@ export interface DiffEntry {
   previousName?: string;
 }
 
-/** A sync is already running or the stage revision changed: read it again and retry. */
 export class ManifestConflictError extends Error {}
 
-/** The server predates a route the CLI calls. */
 export class RouteNotMountedError extends Error {}
 
 export class BroodsSyncClient {
@@ -190,17 +211,12 @@ export class BroodsSyncClient {
     return (await response.json()) as RemoteManifestResponse;
   }
 
-  /**
-   * Syncs the manifest. With `revision`, the revision this client last read,
-   * the server refuses the write with a `ManifestConflictError` when another
-   * sync landed since. An overlapping sync is refused with the same error,
-   * including a write without a revision.
-   */
   async putManifest(
     manifest: CliManifest,
     prune: boolean,
     rotateRuntimeKey = false,
     revision?: number,
+    source?: StageSource,
   ): Promise<RemoteManifestResponse> {
     const uploaded = await this.externalizeLargeMcpBundles(manifest);
     const response = await this.request(
@@ -215,6 +231,7 @@ export class BroodsSyncClient {
           prune: prune,
           rotateRuntimeKey: rotateRuntimeKey,
           ...(revision !== undefined ? { revision: revision } : {}),
+          ...(source ? { source: source } : {}),
         }),
       },
       // A sync deploys MCP bundles and can hold the connection for minutes.
@@ -225,11 +242,7 @@ export class BroodsSyncClient {
     return (await response.json()) as RemoteManifestResponse;
   }
 
-  /**
-   * An MCP bundle past the inline threshold cannot ride the manifest JSON
-   * (the config plane caps bodies ~20 MB): upload it to a minted URL and swap
-   * `bundle` for the storage id plus sha256 (#190). Small bundles stay inline.
-   */
+  // The config plane caps request bodies near 20 MB.
   private async externalizeLargeMcpBundles(
     manifest: CliManifest,
   ): Promise<CliManifest> {
@@ -267,7 +280,6 @@ export class BroodsSyncClient {
     return { ...manifest, resources: resources };
   }
 
-  /** POST one bundle's module source to a minted upload URL; returns the storage id. */
   private async uploadMcpBundle(
     project: string,
     stage: string,
@@ -300,11 +312,6 @@ export class BroodsSyncClient {
     return storageId;
   }
 
-  /**
-   * Recovers the stage's runtime key so the CLI can reconnect to a
-   * dashboard-created project without redeploying. Returns null when the project/
-   * stage is unknown.
-   */
   async getRuntimeKey(
     project: string,
     stage: string,
@@ -340,12 +347,6 @@ export class BroodsSyncClient {
     };
   }
 
-  /**
-   * Rotates the stage's user-token signing secret (`bsig_…`) and returns it
-   * this once; tokens the previous secret signed stop opening. Needs
-   * `keys:write` on the stage. Returns null when the project or stage is
-   * unknown or has no runtime key yet.
-   */
   async rotateUserTokenSecret(
     project: string,
     stage: string,
@@ -387,10 +388,6 @@ export class BroodsSyncClient {
     await assertOk(response, "Set environment variable failed");
   }
 
-  /**
-   * Lists the names of the stage's stored variables (values stay
-   * server-side and encrypted, so only names and last-updated times return).
-   */
   async listEnv(project: string, stage: string): Promise<CliEnvVar[]> {
     const response = await this.request(project, stage, "/env", {
       method: "GET",
@@ -401,7 +398,6 @@ export class BroodsSyncClient {
     return payload.variables ?? [];
   }
 
-  /** Reveals a single env var's plaintext value, or null when it is not set. The reveal is audited server-side. */
   async getEnv(
     project: string,
     stage: string,
@@ -502,7 +498,6 @@ export class BroodsSyncClient {
     };
   }
 
-  /** Trade the login token for a stage ticket (logs, stream, machine). */
   async mintStageSession(
     project: string,
     stage: string,
@@ -534,7 +529,6 @@ export class BroodsSyncClient {
     return (await response.json()) as CliStageSession;
   }
 
-  /** Every project in the logged-in account's org, empty ones sorted last. */
   async listProjects(): Promise<CliProject[]> {
     const response = await this.send(`${this.baseUrl}/v1/account/projects`, {
       method: "GET",
@@ -549,12 +543,6 @@ export class BroodsSyncClient {
     return payload.projects ?? [];
   }
 
-  /**
-   * Deletes a project and everything under it: stages, agents, canvas, env
-   * vars, crons and workspace files. Takes the project id from `listProjects`
-   * (names are not unique). Returns what the project held, or null when the id
-   * matches nothing.
-   */
   async deleteProject(projectId: string): Promise<CliProject | null> {
     const response = await this.send(
       `${this.baseUrl}/v1/account/projects?projectId=${encodeURIComponent(projectId)}`,
@@ -573,6 +561,47 @@ export class BroodsSyncClient {
     return payload.deleted ?? null;
   }
 
+  /** The project's GitHub link and the org's connected accounts. */
+  async githubStatus(project: string): Promise<CliGitHubStatus> {
+    return await this.github<CliGitHubStatus>("GET", "", project);
+  }
+
+  /** The repos the project may link, across the org's connected accounts. */
+  async githubRepos(project: string): Promise<CliGitHubRepo[]> {
+    const payload = await this.github<{ repos: CliGitHubRepo[] }>(
+      "GET",
+      "/repos",
+      project,
+    );
+
+    return payload.repos;
+  }
+
+  /** Links a repo: seals a key per mapped stage into it and commits the deploy workflow. */
+  async githubLink(
+    project: string,
+    input: CliGitHubLinkInput,
+  ): Promise<CliGitHubLink> {
+    const payload = await this.github<{ repo: CliGitHubLink }>(
+      "POST",
+      "/link",
+      project,
+      input,
+    );
+
+    return payload.repo;
+  }
+
+  /** Unlinks the project's repo and revokes its keys; the repo keeps its workflow. */
+  async githubUnlink(project: string): Promise<void> {
+    await this.github("DELETE", "/link", project);
+  }
+
+  /** Page that installs the Broods GitHub App on another account; it returns to the dashboard. */
+  async githubConnect(): Promise<{ url: string }> {
+    return await this.github<{ url: string }>("POST", "/connect");
+  }
+
   async createOnboardingOrg(name: string): Promise<CliOnboardingContext> {
     const response = await this.send(`${this.baseUrl}/v1/account/onboarding`, {
       method: "POST",
@@ -585,6 +614,33 @@ export class BroodsSyncClient {
     await assertOk(response, "Create CLI org failed");
 
     return (await response.json()) as CliOnboardingContext;
+  }
+
+  // A `broods github` call: `/v1/account/github{suffix}?project=`, with a `broods login` token.
+  private async github<T = unknown>(
+    method: string,
+    suffix: string,
+    project?: string,
+    body?: unknown,
+  ): Promise<T> {
+    const query = project ? `?project=${encodeURIComponent(project)}` : "";
+    const response = await this.send(
+      `${this.baseUrl}/v1/account/github${suffix}${query}`,
+      {
+        method: method,
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      },
+      // Linking writes the repo's secrets, branch and workflow on GitHub.
+      method === "POST" ? 120_000 : undefined,
+    );
+    assertRouteMounted(response, "/v1/account/github", "broods github");
+    await assertOk(response, `GitHub ${method} ${suffix || "status"} failed`);
+
+    return (await response.json()) as T;
   }
 
   private async request(
@@ -611,7 +667,6 @@ export class BroodsSyncClient {
     );
   }
 
-  /** Every request goes through `cliFetch` with the injected fetch. */
   private async send(
     url: string,
     init: RequestInit,
@@ -624,11 +679,6 @@ export class BroodsSyncClient {
   }
 }
 
-/**
- * `fetch` for every CLI call to a broods server. Gives up after 30 s, or never
- * with `timeoutMs: null`, and turns a network failure into "Cannot reach
- * <origin>: <cause>" instead of a bare "fetch failed".
- */
 export async function cliFetch(
   url: string,
   init: RequestInit,
@@ -762,25 +812,6 @@ function isRenamableKind(kind: string): boolean {
   );
 }
 
-function normalizeEnvRefs(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalizeEnvRefs);
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    if (record.__beeblastEnv === true && typeof record.name === "string") {
-      return `\${${record.name}}`;
-    }
-
-    return Object.fromEntries(
-      Object.entries(record).map(([key, entry]) => [
-        key,
-        normalizeEnvRefs(entry),
-      ]),
-    );
-  }
-
-  return value;
-}
-
 function renameSnapshot(
   resource: { kind: string; config: unknown } & Record<string, unknown>,
 ): unknown {
@@ -790,67 +821,17 @@ function renameSnapshot(
   return rest;
 }
 
-function snapshotResource(
-  resource: { kind: string; config: unknown } & Record<string, unknown>,
-): unknown {
-  const normalized = normalizeEnvRefs(resource) as typeof resource;
-  if (!ARTIFACT_KINDS.has(resource.kind)) return normalized;
-
-  return { ...normalized, config: stripArtifactContent(normalized.config) };
-}
-
-function sortValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortValue);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, entry]) => [key, sortValue(entry)]),
-    );
-  }
-
-  return value;
-}
-
-function stableJson(value: unknown): string {
-  return JSON.stringify(sortValue(value));
-}
-
-function stripArtifactContent(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripArtifactContent);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).flatMap(([key, entry]) => {
-        if (ARTIFACT_KEYS.has(key)) return [];
-
-        return [[key, stripArtifactContent(entry)]];
-      }),
-    );
-  }
-
-  return value;
-}
-
-/**
- * Turns a failed response into an error carrying the server's own reason. The
- * config plane answers with the error envelope, whose `message` is where
- * manifest validation failures (an unset `env()` ref, an unsupported mount)
- * explain themselves. Printing the raw JSON instead buries them.
- */
 async function assertOk(response: Response, message: string): Promise<void> {
   if (response.ok) return;
   const body = await response.text();
-  // Without an envelope, the raw body is the best reason available.
   const { message: reason = body, code } = errorEnvelope(body);
   if (code === "manifest_conflict") throw new ManifestConflictError(reason);
-  // CLI tokens expire, and a 401 is how the control plane says so.
   const hint =
     response.status === 401 ? "\nRun `broods login` to sign in again." : "";
 
   throw new Error(`${message}: ${response.status} ${reason}${hint}`);
 }
 
-/** The `message` and `code` of an error envelope body, or neither. */
 function errorEnvelope(body: string): { message?: string; code?: string } {
   let parsed: unknown;
   try {
@@ -874,10 +855,7 @@ function errorEnvelope(body: string): { message?: string; code?: string } {
   };
 }
 
-/**
- * A 404 that is not JSON came from the router, not the handler: the server
- * predates the route. Says so, rather than letting it read as "not found".
- */
+// A 404 that is not JSON came from the router, not a handler: the server predates the route.
 function assertRouteMounted(
   response: Response,
   route: string,
@@ -892,7 +870,6 @@ function assertRouteMounted(
   );
 }
 
-/** Why a request got no answer, in the runtime's own words. */
 function networkFailureReason(
   error: unknown,
   timeoutMs: number | null,
@@ -911,7 +888,6 @@ function networkFailureReason(
     : error.message;
 }
 
-/** The bundle source when the MCP resource must be externalized, else null. */
 function largeBundleOf(
   resource: CliManifest["resources"][number],
 ): string | null {

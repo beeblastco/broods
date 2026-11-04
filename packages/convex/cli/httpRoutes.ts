@@ -1,9 +1,3 @@
-/**
- * Route handlers for the CLI HTTP surface (`cli/http.ts` is the router).
- * One exported handler per route kind, plus the external-resource sync helpers
- * (skills/hooks/mcp bundles, cron reconciliation) the manifest PUT drives.
- */
-
 import type { FunctionArgs } from "convex/server";
 import { type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
@@ -39,8 +33,14 @@ import type { ProjectStageScope } from "../model/projectScope";
 import { uploadQuotaResponse } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { ClientError } from "../model/clientError";
+import { manifestHash } from "../model/manifestSnapshot";
+import {
+  stageSourceProblem,
+  stageSourceSchema,
+  type StageSource,
+} from "../model/stageSource";
+import { storeStageSync } from "../model/stageSourceStore";
 
-/** Resolved CLI auth: an account key, a scoped project key, or a CLI token. */
 export type CliAuth =
   | {
       accountId: Id<"accounts">;
@@ -54,6 +54,12 @@ export type CliAuth =
       scoped: true;
       cliTokenId: Id<"cliTokens">;
       cliAuthId: string;
+    }
+  | {
+      accountId: Id<"accounts">;
+      secretHash: string;
+      scoped: true;
+      applyAuthId: string;
     };
 
 export type RouteParts =
@@ -86,42 +92,27 @@ type CronResponse = {
 
 type DesiredCron = Omit<CronResponse, "cronId">;
 
-/** What a prune or single delete is about to remove, as the query names it. */
 type DeleteTarget = FunctionArgs<
   typeof internal.cli.sync.deleteTargetsBySecretHash
 >["target"];
 
 type ExternalIds = Pick<GeneratedIds, "skills" | "hooks" | "mcp">;
 
-/**
- * `kind:name` of every external resource another stage of the account
- * manages. Skills and hooks are account-wide rows keyed by name, so this set
- * is what keeps a stage-scoped project key from replacing them.
- */
+// `kind:name` another stage manages: skills and hooks are account-wide rows keyed by name.
 type ForeignExternalResources = ReadonlySet<string>;
 
-/** A manifest's skills, hooks and MCP servers, checked before any is stored. */
 type PreparedExternal = {
   skills: Array<{ name: string; files: unknown[] }>;
   hooks: Array<{ name: string; upload: RequiredAccountHookUpload }>;
   mcp: Array<{ name: string; input: McpInput }>;
 };
 
-/**
- * Who manages the account's external resources. `owned` maps, per kind, each
- * name this stage records and no other stage does to the row it recorded: the
- * only rows a prune removes. MCP servers are stage rows, so another stage's
- * record never disowns one.
- */
+// owned: names only this stage records, to the row it recorded; the only rows a prune removes.
 type ExternalOwnership = {
   foreign: ForeignExternalResources;
   owned: Record<ExternalResourceKind, ReadonlyMap<string, string>>;
 };
 
-/**
- * Refuse to create or replace an account-wide resource whose name is
- * recorded as managed by a different stage.
- */
 export function assertNotForeign(
   foreign: ForeignExternalResources,
   kind: "skill" | "hook",
@@ -134,7 +125,6 @@ export function assertNotForeign(
   );
 }
 
-/** GET the stage's env names/digests; values never leave the store. */
 export async function handleEnvListRoute(
   ctx: ActionCtx,
   req: Request,
@@ -151,7 +141,6 @@ export async function handleEnvListRoute(
   return json({ variables: variables });
 }
 
-/** One env variable: GET reveals (audited), PUT sets, DELETE removes. */
 export async function handleEnvRoute(
   ctx: ActionCtx,
   req: Request,
@@ -159,8 +148,6 @@ export async function handleEnvRoute(
   auth: CliAuth,
 ): Promise<Response> {
   if (req.method === "GET") {
-    // A project key deploys; it does not carry the stage's secrets out. Reveal
-    // stays with a person (`broods login`) or the account key.
     if ("deployKeyId" in auth) {
       return jsonError(
         403,
@@ -219,8 +206,6 @@ export async function handleEnvRoute(
 export function handleLogsRoute(req: Request): Response {
   if (req.method !== "GET") return methodNotAllowed(["GET"]);
 
-  // Logs now stream via the gateway (NATS live tail + Loki backfill).
-  // Use wss://gateway.broods.app/v1/projects/<project>/stages/<stage>/observability/ws instead.
   return jsonError(
     410,
     "Log streaming has moved to the gateway observability WebSocket",
@@ -243,7 +228,12 @@ export async function handleManifestRoute(
       },
     );
 
-    return result ? json(result) : jsonError(404, "Manifest not found");
+    return result
+      ? json({
+          ...result,
+          manifestHash: await manifestHash(result.manifest.resources),
+        })
+      : jsonError(404, "Manifest not found");
   }
   if (req.method === "PUT")
     return await handleManifestSync(ctx, req, route, auth);
@@ -251,11 +241,7 @@ export async function handleManifestRoute(
   return methodNotAllowed(["GET", "PUT"]);
 }
 
-/**
- * Mint a storage upload URL for a large hosted-MCP bundle (#190); the CLI
- * passes the returned storage id as `bundleStorageId` in the manifest.
- * Minting counts against the account's hourly upload quota.
- */
+// The CLI passes the uploaded storage id as `bundleStorageId` in the manifest.
 export async function handleMcpBundleUploadRoute(
   ctx: ActionCtx,
   req: Request,
@@ -320,9 +306,6 @@ export async function handleRuntimeKeyRoute(
 ): Promise<Response> {
   if (req.method !== "GET") return methodNotAllowed(["GET"]);
 
-  // Reconnect path: recover the existing runtime key (minting one if the
-  // stage has none yet) so the CLI can write BROODS_API_KEY
-  // without a redeploy.
   const deployment = await ctx.runMutation(
     internal.cli.sync.ensureRuntimeKeyBySecretHash,
     {
@@ -344,11 +327,7 @@ export async function handleRuntimeKeyRoute(
     : jsonError(404, "Project or stage not found");
 }
 
-/**
- * POST rotates the stage's user-token signing secret and returns it this
- * once, so `broods dev` / `deploy` can write it beside the runtime key.
- * Tokens the previous secret signed stop opening.
- */
+// Returns the new secret this once; tokens the previous secret signed stop opening.
 export async function handleUserTokenSecretRoute(
   ctx: ActionCtx,
   req: Request,
@@ -382,11 +361,7 @@ export async function handleUserTokenSecretRoute(
       );
 }
 
-/**
- * Crons are account-wide rows but a job belongs to the stage of the agent it
- * targets, so a name is matched only among this stage's agents. A same-named
- * job of another stage is neither touched nor a conflict; null means create.
- */
+// Crons are account-wide but belong to their agent's stage; another stage's namesake is untouched.
 export function stageCronByName<T extends { name: string; agentId: string }>(
   existing: T[],
   stageAgentIds: Set<string>,
@@ -413,9 +388,7 @@ function asRecord(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-/**
- * Decodes base64 without Node Buffer because Convex HTTP actions run in the web runtime.
- */
+// No Buffer: Convex HTTP actions run in the web runtime.
 function base64ArrayBuffer(value: string): ArrayBuffer {
   const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
@@ -442,8 +415,6 @@ function cronStatus(value: unknown): "active" | "paused" {
   throw new ClientError("Cron job status must be active or paused");
 }
 
-// Matches only this stage's crons: a project key pinned to dev must not delete
-// production's job of the same name.
 async function deleteCronByName(
   ctx: ActionCtx,
   auth: CliAuth,
@@ -467,7 +438,6 @@ async function deleteCronByName(
   });
 }
 
-/** The manifest's crons, keyed by resource name. */
 function desiredCrons(
   manifest: CliManifest,
   agentIds: Record<string, string>,
@@ -486,8 +456,7 @@ function desiredCrons(
           `Cron job ${resource.name} references unknown deployed agent: ${localAgentName}`,
         );
 
-      // A cron is keyed by its resource name, the key the diff and the
-      // generated ids use, whatever `config.name` says.
+      // Keyed by resource name, as the diff and generated ids are, whatever config.name says.
       return stripUndefined({
         name: resource.name,
         description: optionalStringField(
@@ -536,7 +505,6 @@ async function externalOwnership(
   return { foreign: foreign, owned: owned };
 }
 
-/** PUT `/manifest`: sync external resources, the manifest, skills files, crons. */
 async function handleManifestSync(
   ctx: ActionCtx,
   req: Request,
@@ -550,7 +518,19 @@ async function handleManifestSync(
     prune?: boolean;
     rotateRuntimeKey?: boolean;
     revision?: unknown;
+    source?: unknown;
   };
+  const source =
+    body.source === undefined
+      ? undefined
+      : stageSourceSchema.safeParse(body.source);
+  const sourceProblem =
+    source && !source.success
+      ? "source must be { files: [{ path, content }], commitSha? }"
+      : source?.data
+        ? stageSourceProblem(source.data.files)
+        : null;
+  if (sourceProblem) return jsonError(400, `Invalid source: ${sourceProblem}`);
   const manifest = body.manifest;
   if (!manifest || typeof manifest !== "object") {
     return jsonError(400, "Request body must include manifest");
@@ -585,11 +565,9 @@ async function handleManifestSync(
     },
   );
   try {
-    // Skills and hooks are account-wide, so the account key and a login token
-    // may move a name between stages (dev then deploy). Only a stage-scoped
-    // project key is fenced to the names another stage recorded, read before this
-    // sync records anything.
-    const fenced = "deployKeyId" in auth;
+    // The account key and a login token may move an account-wide name between stages
+    // (dev, then deploy); only a stage-scoped project key is fenced.
+    const fenced = "deployKeyId" in auth || "applyAuthId" in auth;
     const foreign =
       fenced &&
       originalManifest.resources.some((entry) =>
@@ -597,8 +575,7 @@ async function handleManifestSync(
       )
         ? (await externalOwnership(ctx, accountId, scope.stageId)).foreign
         : new Set<string>();
-    // The manifest's rules run before the first write, so a manifest they
-    // refuse leaves the stage's skills, hooks and MCP servers as they were.
+    // Every rule runs before the first write, so a refused manifest changes nothing.
     const external = await prepareExternalResources(
       ctx,
       originalManifest,
@@ -635,9 +612,7 @@ async function handleManifestSync(
     );
     let reservedResources: string[] = [];
     if (prune) {
-      // Only once the manifest synced, so pre-sync rejection removes nothing, and
-      // with ownership read now, so a name another stage recorded meanwhile is
-      // not this stage's to remove.
+      // Ownership re-read now: a name another stage recorded meanwhile is not ours to remove.
       const { owned } = await externalOwnership(ctx, accountId, scope.stageId);
       await pruneExternalResources(ctx, {
         accountId: accountId,
@@ -681,8 +656,13 @@ async function handleManifestSync(
       },
     );
 
-    // Mint or reuse the stage's recoverable runtime key so the CLI
-    // can write BROODS_API_KEY locally on first or later deploys.
+    const synced = await recordStageSync(
+      ctx,
+      scope.stageId,
+      refreshed?.manifest.resources ?? syncManifest.resources,
+      source?.data,
+    );
+
     const deployment = await ctx.runMutation(
       internal.cli.sync.ensureRuntimeKeyBySecretHash,
       {
@@ -694,19 +674,20 @@ async function handleManifestSync(
         auditSync: {
           resourceCount: originalManifest.resources.length,
           prune: prune,
-          actorKind: fenced ? "deployKey" : "cli",
+          actorKind: "deployKeyId" in auth ? "deployKey" : "cli",
           actorId:
             "deployKeyId" in auth
               ? auth.deployKeyId
               : "cliTokenId" in auth
                 ? auth.cliTokenId
-                : accountId,
+                : "applyAuthId" in auth
+                  ? auth.applyAuthId
+                  : accountId,
         },
       },
     );
 
-    // `refreshed` is re-read from the DB and carries no warnings, so merge
-    // the sync mutation's warnings back in either way.
+    // `refreshed` carries no warnings, so the sync's are merged back in either way.
     return json({
       ...(refreshed ?? {
         ...result,
@@ -714,8 +695,11 @@ async function handleManifestSync(
       }),
       warnings: { ...result.warnings, reservedResources: reservedResources },
       deployment: deployment,
-      // The claim stays held until the response is built.
       revision: scope.revision,
+      manifestHash: synced.manifestHash,
+      ...(synced.sourceRevision !== null
+        ? { sourceRevision: synced.sourceRevision }
+        : {}),
     });
   } finally {
     await ctx.runMutation(internal.cli.sync.finishManifestSync, {
@@ -739,12 +723,7 @@ function optionalStringField(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-/**
- * Removes the skills, hooks and MCP servers this stage recorded and the
- * manifest no longer declares. Runs after the manifest synced. Hooks and MCP
- * servers go by the row the stage recorded, so a row another stage or the
- * dashboard made, even under the same name, is never removed.
- */
+// By recorded row id: a same-named row another stage or the dashboard made is never removed.
 async function pruneExternalResources(
   ctx: ActionCtx,
   options: {
@@ -774,7 +753,6 @@ async function pruneExternalResources(
       accountId: accountId,
       skillName: name,
     });
-    // An empty replace drops the files `syncSkillNodeFiles` mirrored.
     await ctx.runMutation(internal.cli.sync.replaceSkillNodeFilesBySecretHash, {
       secretHash: secretHash,
       project: manifest.project,
@@ -880,7 +858,6 @@ function stringField(value: unknown, label: string): string {
   return value;
 }
 
-/** One CLI skill file, decoded the way the workspace mirror stores it. */
 function skillNodeFile(
   entry: unknown,
   skillName: string,
@@ -923,19 +900,23 @@ async function syncCrons(
         accountId: accountId,
         cronId: existingJob._id,
         patch: job,
+        managedBy: "cli",
       });
       cronIds[job.name] = existingJob._id;
     } else {
       const created = (await ctx.runMutation(internal.agent.crons.create, {
         accountId: accountId,
         input: job,
+        managedBy: "cli",
       })) as { cronId: string };
       cronIds[job.name] = created.cronId;
     }
   }
 
+  // Only jobs code declared: an agent's own schedules survive the prune.
   if (prune === true) {
     for (const job of existing) {
+      if (job.managedBy !== "cli") continue;
       if (!stageAgentIds.has(job.agentId) || kept.has(job._id)) continue;
       await ctx.runMutation(internal.agent.crons.remove, {
         accountId: accountId,
@@ -1013,11 +994,6 @@ async function syncHookResources(
   return ids;
 }
 
-/**
- * Checks and normalizes the manifest's skills, hooks and MCP servers, all of
- * them before the first upload, so one bad entry cannot leave the others
- * written.
- */
 async function prepareExternalResources(
   ctx: ActionCtx,
   manifest: CliManifest,
@@ -1091,11 +1067,6 @@ async function prepareExternalResources(
   return { skills: skills, hooks: hooks, mcp: mcp };
 }
 
-/**
- * Upsert the manifest's MCP server registrations by name within the stage. A
- * hosted server's bundle is content-addressed and re-uploads only when its
- * sha256 changed.
- */
 async function syncMcpResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
@@ -1137,18 +1108,16 @@ async function syncMcpResources(
       ...(input.allowedTools !== undefined
         ? { allowedTools: input.allowedTools }
         : {}),
-      // The manifest is the whole truth: dropping `runtime` from it means "auto".
+      // The manifest is the whole server: a dropped `runtime` means "auto".
       ...(input.transport === "hosted"
         ? { runtime: input.runtime ?? "auto" }
         : {}),
     };
     if (current) {
-      // The manifest is the whole server, so a field it dropped is cleared.
       const clear = MCP_CLEARABLE_FIELDS.filter(
         (field) => input[field] === undefined && current[field] !== undefined,
       );
-      // An identical patch is skipped: a write would bump updatedAt, which is
-      // core's MCP cache identity, and re-probe every server on the next run.
+      // Skip identical patches: updatedAt is core's MCP cache identity, a bump re-probes all.
       const row = current as unknown as Record<string, unknown>;
       const unchanged =
         clear.length === 0 &&
@@ -1178,9 +1147,6 @@ async function syncMcpResources(
   return ids;
 }
 
-/**
- * Stores CLI-bundled skill files in Convex storage and mirrors them into workspaceFiles.
- */
 async function syncSkillNodeFiles(
   ctx: ActionCtx,
   options: {
@@ -1240,13 +1206,7 @@ async function syncSkillResources(
   return ids;
 }
 
-/**
- * Terminate, through core, the reserved instances of the sandbox configs and
- * workspaces a prune or delete is about to drop. Must run while the rows still
- * exist: core's lifecycle route loads the sandbox config by id, and a
- * workspace's namespace is found through its row. A sandbox config whose
- * instance core did not remove is kept; a workspace is deleted regardless.
- */
+// Before the rows go: core loads the sandbox config by id and finds a workspace via its row.
 async function terminateDoomedInstances(
   ctx: ActionCtx,
   auth: CliAuth,
@@ -1268,10 +1228,6 @@ async function terminateDoomedInstances(
   );
 }
 
-/**
- * Runs the manifest sync's and the cron sync's rules without writing. Rows the
- * sync would create get placeholder ids.
- */
 async function validateManifest(
   ctx: ActionCtx,
   scope: ProjectStageScope,
@@ -1294,4 +1250,19 @@ async function validateManifest(
   for (const job of desiredCrons(manifest, placeholderIds(agentNames))) {
     normalizeCreateCronInput(job);
   }
+}
+
+// The hash is of the manifest read back, so a rerun on the same source lands on the same one.
+async function recordStageSync(
+  ctx: ActionCtx,
+  stageId: Id<"stages">,
+  resources: CliManifest["resources"],
+  source: StageSource | undefined,
+): Promise<{ manifestHash: string; sourceRevision: number | null }> {
+  const hash = await manifestHash(resources);
+
+  return {
+    manifestHash: hash,
+    sourceRevision: await storeStageSync(ctx, stageId, hash, source, "cli"),
+  };
 }

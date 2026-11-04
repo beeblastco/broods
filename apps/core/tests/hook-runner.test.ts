@@ -1,13 +1,6 @@
-/**
- * Code hook tests: per-event mutation sanitization (always) and real isolate
- * hook-mode dispatch (when BROODS_TEST_ISOLATE_RUNNER_PATH points at a runner
- * whose directory has node_modules/isolated-vm installed).
- */
-
 import { describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { dirname } from "node:path";
 import {
   sanitizeHookResult,
   isHookMutableEvent,
@@ -83,24 +76,11 @@ describe("sanitizeHookResult", () => {
   });
 });
 
-describe("hook bundle reuse", () => {
-  it("reads each immutable bundle once across fire points, within a byte budget", () => {
-    // Its shared/s3.ts stand-in would reach every test file in this process.
-    const run = Bun.spawnSync(
-      [process.execPath, "test", "./tests/isolated/hook-bundle-cache.ts"],
-      { cwd: dirname(import.meta.dir) },
-    );
-
-    expect(run.exitCode, run.stderr.toString()).toBe(0);
-  }, 30_000);
-});
-
 const runnerPath = process.env.BROODS_TEST_ISOLATE_RUNNER_PATH;
+// skip: needs BROODS_TEST_ISOLATE_RUNNER_PATH, a runner with isolated-vm installed beside it
 const realRunnerIt = runnerPath ? it : it.skip;
 
 describe("isolate runner hook mode", () => {
-  // Hook mode returns { result, state }: the handler's value plus ctx.state read
-  // back out. state is {} here since these handlers do not touch it.
   realRunnerIt(
     "invokes the handler for the fired event and returns its value",
     async () => {

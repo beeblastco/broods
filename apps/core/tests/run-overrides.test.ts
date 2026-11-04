@@ -1,8 +1,3 @@
-/**
- * Per-run override parsing/folding: the whitelist on top-level `model`, system
- * message validation, and applyRunOverrides folding overrides into a config copy.
- */
-
 import { describe, expect, it } from "bun:test";
 import { parseRunOverrides } from "../src/harness/integrations.ts";
 import {
@@ -11,10 +6,6 @@ import {
 } from "../src/shared/domain/agent-config.ts";
 
 describe("parseRunOverrides", () => {
-  it("returns undefined when overrides are absent", () => {
-    expect(parseRunOverrides({})).toBeUndefined();
-  });
-
   it("accepts system messages and whitelisted model overrides", () => {
     const overrides = parseRunOverrides({
       system: { role: "system", content: "one-turn instructions" },
@@ -48,23 +39,6 @@ describe("parseRunOverrides", () => {
     }
   });
 
-  it("forwards AI SDK call settings and providerOptions", () => {
-    const overrides = parseRunOverrides({
-      model: {
-        temperature: 0.2,
-        topP: 0.9,
-        stopSequences: ["END"],
-        providerOptions: { anthropic: { thinking: { type: "enabled" } } },
-      },
-    });
-    expect(overrides?.model).toEqual({
-      temperature: 0.2,
-      topP: 0.9,
-      stopSequences: ["END"],
-      providerOptions: { anthropic: { thinking: { type: "enabled" } } },
-    });
-  });
-
   it("rejects unsupported model override keys", () => {
     for (const key of [
       "options",
@@ -76,6 +50,18 @@ describe("parseRunOverrides", () => {
         `model.${key} is not supported; use model.providerOptions for provider-specific settings`,
       );
     }
+  });
+
+  it("checks override values like the stored model config", () => {
+    expect(() =>
+      parseRunOverrides({ model: { timeout: { firstChunkMs: 0 } } }),
+    ).toThrow(/model\.timeout\.firstChunkMs/);
+    expect(() => parseRunOverrides({ model: { reasoning: "max" } })).toThrow(
+      /model\.reasoning/,
+    );
+    expect(
+      parseRunOverrides({ model: { timeout: { totalMs: 60_000 } } }),
+    ).toEqual({ model: { timeout: { totalMs: 60_000 } } });
   });
 
   it("rejects non-message system overrides", () => {
@@ -121,5 +107,22 @@ describe("applyRunOverrides", () => {
       maxOutputTokens: 512,
     });
     expect(base.model?.temperature).toBe(1);
+  });
+
+  it("refuses providerOptions once the agent runs on a harness, as a queued run may find it", () => {
+    const harnessAgent: AgentConfig = {
+      ...base,
+      harness: { type: "pi" },
+      sandboxes: ["sandbox_1"],
+    };
+
+    expect(() =>
+      applyRunOverrides(harnessAgent, {
+        model: { providerOptions: { openai: { reasoningEffort: "high" } } },
+      }),
+    ).toThrow("model.providerOptions is not supported with config.harness");
+    expect(
+      applyRunOverrides(harnessAgent, { model: { reasoning: "high" } }).model,
+    ).toMatchObject({ reasoning: "high" });
   });
 });

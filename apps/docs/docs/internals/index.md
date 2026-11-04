@@ -19,12 +19,12 @@ flowchart TB
     direction LR
     Clients["SDK, CLI, dashboard,<br/>broods machine daemon"]
     Hooks["Chat webhooks<br/>Slack, Telegram, GitHub, ..."]
-    Socks["Discord Gateway,<br/>Matrix homeservers"]
+    Socks["Discord Gateway"]
   end
   subgraph Door["Front door"]
     direction LR
     Edge["Traefik<br/>apps/edge"]
-    Fwd["discord-forwarder,<br/>matrix-forwarder"]
+    Fwd["discord-forwarder"]
   end
   subgraph Services
     direction LR
@@ -68,7 +68,6 @@ flowchart TB
 | `apps/dashboard`          | `@broods/dashboard`          | Next.js UI on Convex, as a WorkOS user                                                |
 | `packages/broods`         | `broods`                     | Published CLI and TypeScript SDK                                                      |
 | `apps/discord-forwarder`  | `@broods/discord-forwarder`  | One Discord Gateway socket per bot token, single replica                              |
-| `apps/matrix-forwarder`   | `@broods/matrix-forwarder`   | Matrix `/sync` long-polls and E2EE keys, single replica, persistent volume            |
 | `apps/lambda`             | none, plain `.mjs`           | Hosted MCP runner and the sandbox log forwarder                                       |
 | `apps/cloudflare-mcp`     | `@broods/cloudflare-mcp`     | Hosted MCP runtime on Workers, same contract as the Lambda runner                     |
 | `apps/cloudflare-sandbox` | `@broods/cloudflare-sandbox` | Bridge Worker behind the `cloudflare` sandbox provider                                |
@@ -86,7 +85,7 @@ flowchart LR
   Actions["GitHub Actions"]
   subgraph K3s["Hetzner k3s cluster"]
     direction TB
-    K1["Traefik, gateway, core,<br/>dashboard, forwarders, OPA"]
+    K1["Traefik, gateway, core,<br/>dashboard, discord-forwarder, OPA"]
     K2[("Convex backends,<br/>NATS JetStream,<br/>OTel, Loki, Tempo")]
   end
   subgraph AWS["AWS, one SST stage each"]
@@ -110,17 +109,17 @@ flowchart LR
   K1 -->|"tool calls, sandboxes"| CF
 ```
 
-| Where              | What runs there                                                                 | Shipped by                                                |
-| ------------------ | ------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| Hetzner k3s        | Traefik, core, gateway, dashboard, forwarders, OPA, Convex, NATS, observability | Image build, then `rollout.yaml` into `../infra` Helm     |
-| Convex backends    | Schema and functions, prod and dev                                              | `deploy-convex.yaml` on push to `main` or `dev`           |
-| AWS, per SST stage | Buckets, mcp-runner, MicroVM roles and log forwarder, sandbox VPC, IAM          | `deploy.yaml`, `sst deploy`                               |
-| Cloudflare         | Hosted MCP Worker per stage, production included                                | `deploy.yaml`, `wrangler deploy`                          |
-| Cloudflare         | Sandbox bridge Worker                                                           | No workflow; `wrangler` from `apps/cloudflare-sandbox`    |
-| Cloudflare         | V8 Worker sandbox and its R2 bucket                                             | No workflow; `bun run deploy` in `apps/cloudflare-worker` |
-| S3 + CloudFront    | This docs site                                                                  | `deploy-docs.yaml`                                        |
+| Where              | What runs there                                                                        | Shipped by                                            |
+| ------------------ | -------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Hetzner k3s        | Traefik, core, gateway, dashboard, discord-forwarder, OPA, Convex, NATS, observability | Image build, then `rollout.yaml` into `../infra` Helm |
+| Convex backends    | Schema and functions, prod and dev                                                     | `deploy-convex.yaml` on push to `main` or `dev`       |
+| AWS, per SST stage | Buckets, mcp-runner, MicroVM roles and log forwarder, sandbox VPC, IAM                 | `deploy.yaml`, `sst deploy`                           |
+| Cloudflare         | Hosted MCP Worker per stage, production included                                       | `deploy.yaml`, `sst deploy` runs `wrangler`           |
+| Cloudflare         | Sandbox bridge Worker per stage and its Container image                                | `deploy.yaml`, `sst deploy` runs `wrangler`           |
+| Cloudflare         | V8 Worker sandbox per stage and its R2 bucket                                          | `deploy.yaml`, `sst deploy` runs `wrangler`           |
+| S3 + CloudFront    | This docs site                                                                         | `deploy-docs.yaml`                                    |
 
-- Dev and production share the cluster as separate releases (`core-dev` next to `core`). The forwarders are one release each for both planes, because one bot token holds one socket.
+- Dev and production share the cluster as separate releases (`core-dev` next to `core`). The discord-forwarder is one release for both planes, because one bot token holds one socket.
 - Every stage, production included, gets the hosted MCP Workers runtime. Core sends a Workers-safe bundle there once infra sets that stage's `CLOUDFLARE_MCP_URL` and `CLOUDFLARE_MCP_API_KEY`; other bundles stay on Lambda.
 - MicroVM images are built by `../lambda-sanbdox` CI, not SST.
 

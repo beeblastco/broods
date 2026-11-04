@@ -44,7 +44,7 @@ The WhatsApp channel answers customers who message your business number, through
 
 8. Run `broods dev` or `broods deploy`. Under **WhatsApp > Configuration**, set the **Callback URL** to the printed URL, `/v1/webhooks/{accountId}/whatsapp`, and the **Verify token** to your verify token. Click **Verify and save**, then subscribe to the `messages` webhook field.
 
-Meta stores one callback URL per app. Registering a stage URL moves all of the app's numbers to that stage. Several agents can share one app, each with its own `phoneNumberId`: each gets only its own number's messages. Messages for a number no agent owns are ignored.
+Meta stores one callback URL per app. Registering a stage URL moves all of the app's numbers to that stage. Several agents can share one app, each with its own `phoneNumberId`: each gets only its own number's messages. Messages for a number no agent owns are ignored, and so are messages from a sender who shares only a WhatsApp username, with no phone number.
 
 ## Configuration
 
@@ -52,7 +52,7 @@ Meta stores one callback URL per app. Registering a stage URL moves all of the a
 | ------------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
 | `accessToken`       | yes      | system user token with `whatsapp_business_messaging`                                                       |
 | `appSecret`         | yes      | checks the `X-Hub-Signature-256` header on every delivery                                                  |
-| `phoneNumberId`     | yes      | the number the agent answers on                                                                            |
+| `phoneNumberId`     | yes      | the digits-only ID of the number the agent answers on                                                      |
 | `verifyToken`       | yes      | answers Meta's `hub.challenge` handshake when you register the webhook                                     |
 | `apiVersion`        | no       | Graph API version, such as `v25.0`                                                                         |
 | `apiUrl`            | no       | Graph API base URL. Public `https` only. Defaults to `graph.facebook.com`                                  |

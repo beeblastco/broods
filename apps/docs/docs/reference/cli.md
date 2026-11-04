@@ -168,7 +168,7 @@ broods dev [--once] [--level <lvl>] [--all] [--region <region>]
 | `--all`             | Tail `INFO` and up. DEBUG lines are only in the dashboard              |
 | `--region <region>` | Region preference used when `dev` onboards a new project               |
 
-The first run in an empty folder does the setup. It opens the browser like `login`, asks for an organization, project, stage and service region, creates `broods/` like `init`, pushes referenced secrets from `.env.local`, syncs, and writes `BROODS_API_KEY` and `BROODS_USER_TOKEN_SECRET` to `.env.local`.
+The first run in an empty folder does the setup. It opens the browser like `login`, asks for an organization, project, stage and service region, creates `broods/` like `init`, asks for each `env("NAME")` value that neither `.env.local` nor the stage holds yet (the starter's `OPENAI_API_KEY`, typed hidden and saved to `.env.local`), pushes referenced secrets from `.env.local`, syncs, and writes `BROODS_API_KEY` and `BROODS_USER_TOKEN_SECRET` to `.env.local`. Only a terminal is asked; a piped or CI run fails the sync and names the missing variables.
 
 On every sync `dev`:
 
@@ -201,6 +201,8 @@ Markers are `[+]` create, `[~]` rename, `[*]` update and `[-]` delete. It also w
 
 Syncs the `production` stage once, or the `stages.deploy` stage set with `defineBroods`, and writes its runtime key to `.env.local`.
 
+It also stores the stage's source (`broods/` text files, `package.json`, `bun.lock`); see [Stored source](../guides/deploying.md#stored-source). In GitHub Actions it records `GITHUB_SHA` with it.
+
 ```bash
 broods deploy [--prune] [--rotate-key] [--region <region>] [--stage <name>]
 ```
@@ -215,9 +217,9 @@ broods deploy [--prune] [--rotate-key] [--region <region>] [--stage <name>]
 
 The first deploy to `production` that syncs its manifest pins its region, so data stays where you chose for GDPR. It takes `--region`, else `eu-west-1`, the only region live today; `BROODS_REGION` in `.env.local` is not read. A region Initialize Production set in the dashboard counts the same. A later deploy that names another region is refused with 409 and Production stays put; one that names none keeps the pinned region. `--region` on any other stage is an error. SDK callers set `region` on the manifest they pass to `BroodsSyncClient.putManifest`. A Production stage made this way opens directly in the dashboard, with no Initialize Production step.
 
-Like `dev`, it writes the stage's user token signing secret as `BROODS_USER_TOKEN_SECRET` when the stage has none yet, and never rotates an existing one. See [Signing secret](#signing-secret).
+Like `dev`, it writes the stage's user token signing secret as `BROODS_USER_TOKEN_SECRET` when the stage has none yet, and never rotates an existing one. See [Signing secret](#signing-secret). With `CI` set, as in GitHub Actions, it writes neither the runtime key nor the signing secret, since the checkout is thrown away; the next local `dev` or `deploy` mints the secret where you can read it.
 
-`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a manifest rejected before synchronization removes nothing. A later failure can leave committed changes; the deploy is not rolled back. A removed agent takes its cron jobs with it. `deploy` sends no stage revision, so it can replace the last completed sync. An overlapping manifest PUT receives 409 `manifest_conflict`; retry after the active sync finishes.
+`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a manifest rejected before synchronization removes nothing. A later failure can leave committed changes; the deploy is not rolled back. A removed agent takes its cron jobs with it. A cron job is removed only when code declared it: one an agent scheduled at runtime, or you made on the dashboard, survives every prune. `deploy` sends no stage revision, so it can replace the last completed sync. An overlapping manifest PUT receives 409 `manifest_conflict`; retry after the active sync finishes.
 
 ### Signing secret
 
@@ -279,9 +281,9 @@ broods run my-agent "ping" > answer.txt   # plain text, no UI
 ```
 
 - The session streams reasoning, shows tool calls as cards with input and output, and stops for `y`/`n` on tools that need approval. It stays open for follow-ups.
-- Enter sends, arrows or PgUp and PgDn scroll, Ctrl+L repaints, and Esc or Ctrl+C leaves.
+- Enter sends, arrows or PgUp and PgDn scroll, and Ctrl+L repaints. Esc while the agent answers stops that answer on screen and keeps the chat open (the run already sent still finishes on the server); Esc when idle, or Ctrl+C, leaves.
 - When stdin or stdout is not a terminal, `run` prints the answer as plain text. A prompt is then required.
-- `run` uses the runtime key over the public endpoint, so the agent needs `publicAccess: true`. Without it you get `403 public_access_disabled`.
+- `run` reaches the agent with your 15-minute stage session ticket, the credential `logs` uses, not the runtime key. So it runs private agents and agents that require a user token, and a long chat gets a fresh ticket before the old one ends.
 - Each turn is a normal run on one conversation. Tools, sandboxes and policies behave as in production.
 
 ## agent
@@ -323,7 +325,7 @@ broods trace <trace-id> [--json]
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--json` | Print every span as a JSON array, with its full attributes: system prompt, model input, reasoning, response, tool input and output, and the error |
 
-The trace id is the 32-character id on the run in the dashboard Tracing tab. Its **Copy prompt for agent** button copies the ids plus this command, so a coding agent can read the run and fix or audit it. Traces older than the seven-day search window still open by id.
+The trace id is the 32-character id on the run in the dashboard Tracing tab. Its **Copy prompt for agent** button copies the ids plus this command, so a coding agent can read the run and fix or audit it. Traces are kept 30 days, so one older than the seven-day search window still opens by id until then.
 
 ## stream
 
@@ -358,11 +360,33 @@ broods project delete abandoned-e2e [--yes]
 
 ```text
 Projects:
-  tracy: 1 stage(s), 1 agent(s), 7 env var(s), 1 deployment(s), 0 workspace file(s)
+  support: 1 stage(s), 1 agent(s), 7 env var(s), 1 deployment(s), 0 workspace file(s)
   abandoned-e2e: empty
 ```
 
 `delete` removes the project on every stage, including agent configs, canvas, environment variables, project keys, cron schedules, and workspace files with their stored blobs. It needs the org admin role. There is no undo. The prompt shows the counts first. `--yes` skips it. Without a TTY the prompt answers no, so a CI run without `--yes` deletes nothing.
+
+## github
+
+Links the project to a GitHub repo, so a push deploys its stage from your own GitHub Actions. See [GitHub](../guides/github.md).
+
+```bash
+broods github status                     # the link, latest deploy per branch, connected accounts
+broods github repos                      # repos the org's connected accounts let you link
+broods github link acme/web              # main deploys Development, or Production when the project has it
+broods github link acme/web --production-branch main --development-branch dev
+broods github unlink [--yes]
+broods github connect                    # install the Broods GitHub App on another account
+```
+
+| Flag                                | Description                                                                                                           |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `--folder <path>`                   | The folder holding `broods/`, when the repo has several                                                               |
+| `--production-branch <name\|none>`  | Branch Production deploys from. Default: the repo's default branch when the project has a Production stage, else none |
+| `--development-branch <name\|none>` | Branch Development deploys from, created when missing. Default: `dev` beside Production, else the default branch      |
+| `--json`                            | Print the result as JSON                                                                                              |
+
+`none` leaves that stage out: no key for it, and no push deploys it. Linking the project's repo again changes its branches in place: new keys, the old ones revoked. Naming a Production branch adds the Production stage when the project has none. The two branches must differ. Linking and unlinking need `keys:write` on the project, `connect` an org admin. The commands use your `broods login` and act in its organization.
 
 ## stage
 
@@ -406,7 +430,7 @@ broods machine --doctor [--request]
 
 ## mcp
 
-Serves the account config plane to a coding agent over MCP on stdio. Start it from an MCP client, not a terminal.
+Serves the account config plane to a coding agent over MCP on stdio. Start it from an MCP client, not a terminal. It speaks MCP 2026-07-28 only, so the client must too: a 2025-era `initialize` gets error -32022.
 
 ```bash
 claude mcp add broods -- broods mcp

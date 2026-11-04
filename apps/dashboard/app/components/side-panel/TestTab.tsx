@@ -16,6 +16,8 @@ import {
 import { QuestionCard } from "@/app/components/side-panel/QuestionCard";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import { useAgentChat } from "@/app/hooks/useAgentChat";
+import { useNow } from "@/app/hooks/useNow";
+import { useStickToBottom } from "@/app/hooks/useStickToBottom";
 import type { UIMessage } from "ai";
 import {
   ArrowUp,
@@ -24,11 +26,11 @@ import {
   Terminal,
   Wrench,
 } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import * as z from "zod/mini";
 
-// A content tool result and its image part, as the AI SDK's ToolResultOutput.
+// AI SDK ToolResultOutput: a "content" result and its image part.
 const contentToolOutput = z.looseObject({
   type: z.literal("content"),
   value: z.array(z.unknown()),
@@ -106,28 +108,19 @@ export function TestTab({
   );
 }
 
-/**
- * Tracks elapsed time in ms while isActive is true.
- * Freezes the value once isActive becomes false.
- */
+// Time since `isActive` last turned on, held once it turns off.
 function useElapsedTime(isActive: boolean): number {
-  const [elapsed, setElapsed] = useState(0);
-  const startRef = useRef(0);
+  const now = useNow(isActive ? 100 : null);
+  const [start, setStart] = useState(() => (isActive ? Date.now() : null));
+  const [wasActive, setWasActive] = useState(isActive);
+  if (isActive !== wasActive) {
+    setWasActive(isActive);
+    if (isActive) setStart(Date.now());
+  }
 
-  useEffect(() => {
-    if (!isActive) return;
-    startRef.current = Date.now();
-    const id = setInterval(() => {
-      setElapsed(Date.now() - startRef.current);
-    }, 100);
-
-    return () => clearInterval(id);
-  }, [isActive]);
-
-  return elapsed;
+  return start === null ? 0 : Math.max(0, now - start);
 }
 
-/** Formats milliseconds as a compact duration string (e.g. "1.2s"). */
 function formatElapsed(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
@@ -254,17 +247,15 @@ function ChatWindow({
     webSocketEnabled: true,
   });
   const [input, setInput] = useState("");
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const followRef = useRef(true);
   const hasAssistantMessage = messages.some((m) => m.role === "assistant");
-  // A run that stopped on a blocking question ends ready with its prompts open.
   const awaitingAnswer = status === "ready" && pendingQuestions.length > 0;
-  // The composer is closed while streaming and while a question waits: a typed
-  // message would steer the run but leave the question open.
+  // A message typed while a question waits would steer the run and leave it open.
   const composerLocked = status === "streaming" || awaitingAnswer;
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, awaitingAnswer]);
+  const listRef = useStickToBottom<HTMLDivElement>(
+    [messages, awaitingAnswer],
+    () => followRef.current,
+  );
 
   useShortcut("panel.send", send);
 
@@ -281,8 +272,15 @@ function ChatWindow({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* Message list */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div
+        ref={listRef}
+        onScroll={(e) => {
+          const list = e.currentTarget;
+          followRef.current =
+            list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+        }}
+        className="flex-1 overflow-y-auto p-4 space-y-4"
+      >
         {messages.length === 0 && (
           <p className="text-center text-xs text-muted-foreground pt-8">
             Send a message to test the agent.
@@ -302,10 +300,8 @@ function ChatWindow({
           <QuestionCard prompts={pendingQuestions} onAnswer={answerQuestions} />
         )}
         {error && <p className="text-xs text-destructive">{error.message}</p>}
-        <div ref={bottomRef} />
       </div>
 
-      {/* Input bar */}
       <form onSubmit={handleSubmit} className="shrink-0 p-3">
         <InputGroup className="rounded-lg">
           <InputGroupTextarea
@@ -339,7 +335,11 @@ function ChatWindow({
                   size="icon-xs"
                   variant="ghost"
                   className="cursor-pointer"
-                  onClick={resetChat}
+                  onClick={() => {
+                    // An emptied list fires no scroll event, so follow must be re-armed here.
+                    followRef.current = true;
+                    resetChat();
+                  }}
                 >
                   <RotateCcw className="size-3.5" />
                 </InputGroupButton>
@@ -363,7 +363,6 @@ function ChatWindow({
   );
 }
 
-/** Colored circle avatar matching the agent node on the canvas. */
 function AgentAvatar({
   color,
   className,
@@ -387,10 +386,6 @@ function AgentAvatar({
   );
 }
 
-/**
- * Pulls the images out of a content tool result (browse, computer, MCP
- * screenshots) as data URLs, so the card shows the picture and not its base64.
- */
 function splitToolImages(output: unknown): { images: string[]; rest: unknown } {
   const content = contentToolOutput.safeParse(output);
   if (!content.success) {
@@ -422,10 +417,6 @@ function formatToolValue(value: unknown): string {
   }
 }
 
-/**
- * Extracts the tool name from a UI message part.
- * Handles both dynamic-tool (has toolName) and typed tool-* parts.
- */
 function getToolName(part: Record<string, unknown>): string {
   if (typeof part.toolName === "string" && part.toolName.trim().length > 0) {
     return part.toolName;
@@ -507,6 +498,7 @@ const MessageBubble = memo(function MessageBubble({
 
             return (
               <ReasoningBlock
+                // oxlint-disable-next-line react/no-array-index-key -- append-only parts, no id
                 key={`reasoning-${index}`}
                 text={text}
                 isStreaming={state === "streaming"}
@@ -514,10 +506,7 @@ const MessageBubble = memo(function MessageBubble({
             );
           }
 
-          if (
-            type === "dynamic-tool" ||
-            (type.startsWith("tool-") && type !== "text")
-          ) {
+          if (type === "dynamic-tool" || type.startsWith("tool-")) {
             const state = typeof p.state === "string" ? p.state : "";
             const toolName = getToolName(p);
             const hasOutput = isToolOutputState(state);
@@ -568,6 +557,7 @@ const MessageBubble = memo(function MessageBubble({
 
             return (
               <Streamdown
+                // oxlint-disable-next-line react/no-array-index-key -- append-only parts, no id
                 key={`text-${index}`}
                 className="min-w-0 text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_code]:whitespace-pre-wrap [&_code]:wrap-break-word [&_pre]:max-w-full [&_pre]:overflow-x-auto"
               >
@@ -576,7 +566,6 @@ const MessageBubble = memo(function MessageBubble({
             );
           }
 
-          // Skip step-start and other non-visual parts
           return null;
         })}
       </div>
@@ -597,15 +586,12 @@ function SubagentPanelBlock({
 }): React.JSX.Element {
   const isStreaming = status === "running";
   const elapsed = useElapsedTime(isStreaming);
-  const contentRef = useRef<HTMLDivElement>(null);
+  const contentRef = useStickToBottom<HTMLDivElement>([
+    events,
+    text,
+    isStreaming,
+  ]);
 
-  useEffect(() => {
-    if (contentRef.current) {
-      contentRef.current.scrollTop = contentRef.current.scrollHeight;
-    }
-  }, [events, text, isStreaming]);
-
-  // null = user hasn't interacted, follow derived state. Non-null = user override.
   const [userOverride, setUserOverride] = useState<boolean | null>(null);
   const open = userOverride ?? isStreaming;
 
@@ -631,6 +617,7 @@ function SubagentPanelBlock({
             <div className="flex flex-col gap-1">
               {events.map((event, index) => (
                 <p
+                  // oxlint-disable-next-line react/no-array-index-key -- append-only events, no id
                   key={`subagent-event-${index}`}
                   className="text-2xs text-run-subagent wrap-break-word"
                 >
@@ -658,15 +645,11 @@ function ReasoningBlock({
   isStreaming: boolean;
 }): React.JSX.Element {
   const elapsed = useElapsedTime(isStreaming);
-  const preRef = useRef<HTMLPreElement>(null);
+  const preRef = useStickToBottom<HTMLPreElement>(
+    [text, isStreaming],
+    () => isStreaming,
+  );
 
-  useEffect(() => {
-    if (isStreaming && preRef.current) {
-      preRef.current.scrollTop = preRef.current.scrollHeight;
-    }
-  }, [text, isStreaming]);
-
-  // null = user hasn't interacted, follow derived state. Non-null = user override.
   const [userOverride, setUserOverride] = useState<boolean | null>(null);
   const open = userOverride ?? isStreaming;
 
@@ -693,7 +676,6 @@ function ReasoningBlock({
   );
 }
 
-/** Collapsible block that preserves both tool call request and result. */
 function ToolInvocationBlock({
   toolName,
   input,
@@ -708,13 +690,11 @@ function ToolInvocationBlock({
   isError: boolean;
 }): React.JSX.Element {
   const hasOutput = output !== undefined;
-  // Memoized: a streaming message re-renders every finished tool block per
-  // chunk, and a screenshot's data URL is hundreds of KB.
+  // Re-rendered per streamed chunk, and a screenshot's data URL is hundreds of KB.
   const result = useMemo(() => splitToolImages(output), [output]);
   const isRunning = state === "input-available" || state === "input-streaming";
   const elapsed = useElapsedTime(isRunning);
 
-  // null = user hasn't interacted, follow derived state. Non-null = user override.
   const [userOverride, setUserOverride] = useState<boolean | null>(null);
   const open = userOverride ?? !hasOutput;
 
@@ -742,7 +722,6 @@ function ToolInvocationBlock({
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="ml-5 mt-1 flex flex-col gap-1.5">
-          {/* Tool call request */}
           <div className="rounded-md border border-info/20 bg-info/5 px-2.5 py-2">
             <p className="mb-1 flex items-center gap-1 text-3xs font-medium uppercase tracking-wider text-info">
               <Terminal className="size-2.5" />
@@ -753,7 +732,6 @@ function ToolInvocationBlock({
             </pre>
           </div>
 
-          {/* Tool call result (shown once available) */}
           {hasOutput && (
             <div
               className={`rounded-md border px-2.5 py-2 ${
@@ -771,9 +749,9 @@ function ToolInvocationBlock({
                 {isError ? "Error" : "Result"}
               </p>
               {result.images.map((src, index) => (
-                // A data URL from the tool result: next/image has nothing to optimize.
-                // oxlint-disable-next-line nextjs/no-img-element
+                // oxlint-disable-next-line nextjs/no-img-element -- a data URL: nothing to optimize
                 <img
+                  // oxlint-disable-next-line react/no-array-index-key -- fixed result images
                   key={index}
                   src={src}
                   alt={`${toolName} result ${index + 1}`}
@@ -791,11 +769,6 @@ function ToolInvocationBlock({
   );
 }
 
-/**
- * Shown while waiting for the first assistant chunk. Deliberately static: this
- * sits on screen for as long as the model runs, and five elements pulsing in
- * step repaint the whole turn on a high-refresh display.
- */
 function ThinkingIndicator({
   nodeColor,
 }: {

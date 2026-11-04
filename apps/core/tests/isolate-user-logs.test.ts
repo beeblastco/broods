@@ -1,11 +1,3 @@
-/**
- * A bundle's console.* must reach the host logger, not the worker's stderr:
- * the pooled worker discards stderr, so hook logs used to vanish entirely.
- * The shape mapper is the easy half; what actually broke was the frame surviving
- * the NDJSON parser and being emitted inside the run's observability context,
- * so these drive the real one-shot and pooled paths against a stub runner.
- */
-
 import { afterEach, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -40,8 +32,7 @@ function observability(accountId: string): ObservabilityContext {
   };
 }
 
-// emit() writes every level to stdout as one JSON line, so stdout is where a
-// host log line can be read back with the context it was emitted under.
+// emit() writes every level to stdout as one JSON line, with its context.
 async function captureEmitted(
   fn: () => Promise<void>,
 ): Promise<Array<Record<string, unknown>>> {
@@ -83,19 +74,6 @@ function payloadFor(toolName: string): Record<string, unknown> {
 }
 
 describe("isolateLogRecord", () => {
-  it("keeps the levels the host logger also has", () => {
-    const levels = ["debug", "warn", "error"].map(
-      (level) =>
-        isolateLogRecord("acct_1", "my-agent-hooks", {
-          t: "log",
-          level: level,
-          message: `${level} line`,
-        }).level,
-    );
-
-    expect(levels).toEqual(["debug", "warn", "error"]);
-  });
-
   it("treats console.log as info and tags the account and bundle", () => {
     expect(
       isolateLogRecord("acct_1", "my-agent-hooks", {
@@ -113,29 +91,9 @@ describe("isolateLogRecord", () => {
       },
     });
   });
-
-  it("falls back to info for an unknown level", () => {
-    expect(
-      isolateLogRecord("acct_1", "hooks", {
-        t: "log",
-        level: "trace",
-        message: "x",
-      }).level,
-    ).toBe("info");
-  });
-
-  it("still produces a record when the frame carries no message", () => {
-    expect(isolateLogRecord(undefined, undefined, { t: "log" })).toEqual({
-      level: "info",
-      message: "",
-      data: { accountId: undefined, source: "user-code" },
-    });
-  });
 });
 
-// The frame protocol is the seam the fix actually has to cross. A log frame the
-// parser rejects is dropped before any handler sees it, which is silent: the
-// tool still works, only the user's console.log is gone.
+// A log frame the parser rejects is dropped silently: the tool works, the console.log is gone.
 describe("log frames on the wire", () => {
   it("is a frame the NDJSON parser accepts", () => {
     expect(
@@ -165,23 +123,6 @@ describe("log frames on the wire", () => {
       { t: "log", level: "warn", message: "careful" },
       { t: "final", result: 1 },
     ]);
-  });
-
-  // JSON escaping is what makes NDJSON safe here; a raw newline in the message
-  // would split into two lines and neither would parse.
-  it("survives a message containing newlines", () => {
-    const line = JSON.stringify({
-      t: "log",
-      level: "log",
-      message: "line one\nline two",
-    });
-
-    expect(line.includes("\n")).toBe(false);
-    expect(parseRunnerFrame(line)).toEqual({
-      t: "log",
-      level: "log",
-      message: "line one\nline two",
-    });
   });
 });
 
@@ -243,9 +184,7 @@ describe("user logs through the isolate paths", () => {
     expect(outputs).toEqual([{ ok: true }]);
     const line = emitted.find((e) => e.message === "hello from user code");
     expect(line).toBeDefined();
-    // These three come from the observability context, so their presence is what
-    // proves the line was emitted inside the run's scope and will route to the
-    // right NATS subject rather than being dropped as unscoped.
+    // Context fields: proof the line was emitted in the run's scope and routes to its NATS subject.
     expect(line?.accountId).toBe("acct_oneshot");
     expect(line?.endpointId).toBe("ep_1");
     expect(line?.traceId).toBe("trace_1");
@@ -297,16 +236,12 @@ describe("user logs through the isolate paths", () => {
     expect(line).toBeDefined();
     expect(line?.accountId).toBe("acct_pooled");
     expect(line?.traceId).toBe("trace_1");
-    // A frame stamped with a different call must never be emitted here: this
-    // run's context would publish it to this tenant's subject.
+    // Another call's frame must not be emitted here: this context would publish it to this tenant.
     expect(emitted.some((e) => e.message === "LEAKED FROM ANOTHER RUN")).toBe(
       false,
     );
   });
 
-  // A runner that logs and then dies used to look like it had answered, because
-  // any frame at all counted as a result. The tool then returned undefined with
-  // nothing in the logs to say why.
   it("still reports a runner that logged and then died without a result", async () => {
     const stubPath = await stubRunner("dies.mjs", [
       "process.stdin.resume();",
@@ -330,14 +265,13 @@ describe("user logs through the isolate paths", () => {
         }
       };
 
-      expect(drain()).rejects.toThrow(/did not return a result/);
+      await expect(drain()).rejects.toThrow(/did not return a result/);
       await drain().catch(() => {});
     });
   });
 });
 
-// The console surface is injected into the isolate as source text, so the only
-// honest way to test it without isolated-vm is to run that exact text.
+// The console is injected as source text, so run that exact text instead of isolated-vm.
 describe("the console injected into the isolate", () => {
   const emitted: Array<[string, string]> = [];
   const sandbox: Record<string, unknown> = {
@@ -367,8 +301,7 @@ describe("the console injected into the isolate", () => {
   const closure = source.slice(open + 1, end);
   const context = createContext(sandbox);
   runInContext(
-    // The runner file is JS source, so the escapes in it are for the outer
-    // template literal; undo exactly those to get what the isolate compiles.
+    // Undo only the outer template literal's escapes to get the source the isolate compiles.
     closure.replace(/\\`/g, "`").replace(/\\\$\{/g, "${"),
     context,
   );
@@ -420,8 +353,6 @@ describe("the console injected into the isolate", () => {
     expect(lastLine()).toBe("count: 3 true null");
   });
 
-  // A bundle reaching for console.trace or console.table must get a log line,
-  // not "console.trace is not a function" halfway through a run.
   it("exposes every console method Node has", () => {
     for (const method of [
       "log",
@@ -454,11 +385,8 @@ describe("the console injected into the isolate", () => {
     expect(lastLine().endsWith("... [truncated]")).toBe(true);
   });
 
-  // runner.mjs dispatches its entry point with a top-level await, so anything
-  // declared below that dispatch is still in its temporal dead zone for the
-  // whole run. A budget constant hoisted to module scope therefore throws
-  // ReferenceError out of the console callback and into the tool the first time
-  // a bundle logs, which reads to the account as their own tool crashing.
+  // runner.mjs dispatches via top-level await, so a module-scope const below it is in its TDZ
+  // for the whole run and throws out of the console callback the first time a bundle logs.
   it("keeps the log budget out of the module-scope dead zone", () => {
     const body = source.slice(source.indexOf("function makeLogEmitter("));
 

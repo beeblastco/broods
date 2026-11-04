@@ -7,7 +7,7 @@ The polling row of an async run (`runtimeAsyncAgentResults`) as
 `handleAsyncWorkerRequest` (`apps/core/src/harness/handler.ts`) and
 `SubagentCoordinator.recordOutcome` (`apps/core/src/harness/subagents.ts`) write it next
 to the run's envelope, and the detached tool row (`runtimeAsyncToolResults`) under
-`updateAsyncToolResult`, `observeAsyncToolResult` and `bindAsyncToolResultSandbox`
+`updateAsyncToolResult`, `markAsyncToolHandback` and `bindAsyncToolResultSandbox`
 (`packages/convex/runtime.ts`).
 
 An async run settles its envelope and its polling rows in one `runtimeIngress.settle`
@@ -16,17 +16,25 @@ two change together or not at all. A handler is a list of `Act`s; any await may 
 so a run is the program plus the index of the await that throws, if any, and the catch
 block then runs as `recover`.
 
-A subagent's row also carries `handback`: whether its parent has the result (`stored`),
-with `observed` kept in step for one release. The parent's `get_subagent_status` read
-(`markAsyncAgentHandback`, once the step that carries it is saved), its own append of
-the result (`insertConversationEvents`) and a late result's resume
-(`runtimeIngress.accept` with `resultEventId`) all store it, and the resume is admitted
-only while it is not stored, so the parent is told a result once. `pending`, which the
-row carries from its creation, admits like unset: only the sweep reads it, past the
-parent's hold. A tool row's `handback` moves the same way: its
-settle writes `pending`, the parent's append, `async_status` and the continuation's
-admission (`accept` with `toolResultId`) store it, and `observe` here stands for either
-move of `observeAsyncToolResult`, which never touches the status the proofs are about.
+A subagent's row also carries `handback`: whether its parent has the result (`stored`).
+`stored` means the parent's saved history holds the result, so only the writes that save
+it store it: the parent's own append of the result (`insertConversationEvents`), the save
+of a step whose `async_status` read handed the result over (the row's `toolResultIds`),
+and the owner's first write after a late result's resume reached it (`insertOwnedEvents`,
+for `runtimeIngress.accept` with `resultEventId` as owner, or the apply of the envelope it
+queued). A session that saves no history (a non-persistent subagent) has one such write, its
+answer (`updateAsyncAgentResult` with `toolResultIds`); a failed child's has none, so the
+sweep tells its reads. A status read and a resume's hand-over write nothing; the save that
+carries a read also completes a resume of the result still queued in that conversation. A resume is
+admitted only while the row is not stored and no resume of it is queued or applied, so the
+parent is told a result once, and a turn that dies before its save leaves the result to the
+next resume. A `stored` mark (`markAsyncAgentHandback`) is for a result the parent is never
+told. A resume that ends unsaved, expired or failed, leaves the row as it was, for the sweep
+to resume again. Only the sweep reads `pending`, which the row carries from its creation,
+past the parent's hold. A tool row's `handback` moves the same way: its settle writes `pending`, the
+parent's append, a saved `async_status` read and the save of a continuation (`accept` with
+`toolResultId`) store it, and `markHandback` here stands for `markAsyncToolHandback`, which
+never touches the status the proofs are about.
 -/
 
 namespace Broods.AsyncResults
@@ -97,9 +105,9 @@ inductive ToolCall where
   /-- `markAsyncToolResultCompleted` / `Failed` / `settleAsyncToolResultFromCallback`,
   all with `onlyWhenProcessing: true`. -/
   | settle (s : ToolStatus) (reserved : Bool)
-  /-- `observeAsyncToolResult`: moves a finished row's `handback` (`stored` or
-  `detached`), status untouched. -/
-  | observe
+  /-- `markAsyncToolHandback`: marks a finished row's `handback` `stored`, status
+  untouched. -/
+  | markHandback
   /-- `bindAsyncToolResultSandbox`. -/
   | bind
   deriving DecidableEq, Repr
@@ -193,13 +201,19 @@ def start : State := ⟨.processing, .processing, false, none⟩
 def worker (catchSettles catchRecords : Bool) (e : Ending) (throwAt : Option Nat) : State :=
   exec (recover catchSettles catchRecords) (program e) throwAt start
 
-/-- `SubagentCoordinator.recordOutcome` for a completed child: the atomic settle, or,
-when it throws, the polling row alone; everything after it handles its own errors, and
-the failure paths skip a child whose outcome is recorded. `settleFails` is whether the
-settle throws. -/
-def subagent (settleFails : Bool) : State :=
-  let s := if settleFails then record .completed start else settle .completed start
-  { s with recorded := true, outcome := some .completed }
+/-- The outcomes a child's turn records: an answer, or a message to its parent it waits on
+(`completeRun`). -/
+def ChildFinish : Finish → Bool
+  | .completed | .awaitingInput => true
+  | _ => false
+
+/-- `SubagentCoordinator.recordOutcome` for a child that answered or asked its parent
+(`f`): the atomic settle, or, when it throws, the polling row alone; everything after
+it handles its own errors, and the failure paths skip a child whose outcome is
+recorded. `settleFails` is whether the settle throws. -/
+def subagent (f : Finish) (settleFails : Bool) : State :=
+  let s := if settleFails then record f start else settle f start
+  { s with recorded := true, outcome := some f }
 
 /-- The two rows agree: a completed envelope never sits next to a failed or still
 running result, and a failed envelope always has a failed result. -/
@@ -207,7 +221,7 @@ def State.consistent (s : State) : Bool :=
   (s.envelope != .completed || (s.result != .failed && s.result != .processing)) &&
     (s.envelope != .failed || s.result == .failed)
 
-/-- `updateAsyncToolResult` / `observeAsyncToolResult` / `bindAsyncToolResultSandbox`
+/-- `updateAsyncToolResult` / `markAsyncToolHandback` / `bindAsyncToolResultSandbox`
 on one row. A running job whose sandbox reservation is gone settles failed whatever
 it reported. -/
 def ToolRow.update (row : ToolRow) : ToolCall → ToolRow
@@ -215,7 +229,7 @@ def ToolRow.update (row : ToolRow) : ToolCall → ToolRow
     if row.status != .processing then row
     else if row.sandboxBound && !reserved then { row with status := .failed }
     else { row with status := s }
-  | .observe => row
+  | .markHandback => row
   | .bind => if row.status == .processing then { row with sandboxBound := true } else row
 
 /-- How many calls in `cs` change the row's status. -/
@@ -224,46 +238,96 @@ def ToolRow.changes (row : ToolRow) : List ToolCall → Nat
   | c :: cs =>
     (if (row.update c).status == row.status then 0 else 1) + (row.update c).changes cs
 
-/-- `runtimeAsyncAgentResults.handback` on a subagent's row (`observed` beside it):
-`pending` from the row's creation (unset on a row the release before wrote), `detached`
-(`observed: false`) once the parent stopped waiting on the child, `stored`
-(`observed: true`) once the parent has its result. -/
-inductive Observed where
-  | unset | waiting | seen
+/-- `runtimeAsyncAgentResults.handback` on a subagent's row: `pending` from the row's
+creation, `detached` once the parent stopped waiting on the child, `stored` once the
+parent has its result. -/
+inductive HandbackState where
+  | pending | detached | stored
   deriving DecidableEq, Repr
 
 /-- The calls that touch `handback`, in any order a race gives them. -/
-inductive ObserveCall where
+inductive HandbackCall where
   /-- `markAsyncAgentHandback` with `detached`, when the parent stops waiting, or when
   a pass's last write fails, for each result it did not save and each child still
   working; those then resume. -/
   | detach
-  /-- `markAsyncAgentHandback` with `stored`: the save of the step that carries a
-  `get_subagent_status` read (`confirmDelivered`), or that read itself of a detached
-  row, a result the parent is never told, or the parent's own append of the result
-  (`insertConversationEvents`). `finished` is whether the row has its outcome yet. -/
+  /-- `markAsyncAgentHandback` with `stored`, for a result the parent is never told
+  (its finish hook hid it, or the sweep gives it up). `finished` is whether the row has
+  its outcome yet. It tells the parent nothing. -/
+  | store (finished : Bool)
+  /-- A status read (`async_status`) in the parent's live turn: it hands the model the
+  result when the row is `finished` and writes nothing, only the turn's read ledger
+  (`Session.recordToolResultRead`). -/
   | read (finished : Bool)
-  /-- `runtimeIngress.accept` with `resultEventId`, the late resume; `room` is whether
-  the conversation's queue has room for it, and `stored` whether the conversation
-  already stores the result under its dedupe key (`checkDuplicateAdmission`), a write
-  that committed but lost its reply. -/
-  | resume (room stored : Bool)
+  /-- The owner's history write that saves the result (`insertOwnedEvents`): when
+  it carries the read (`toolResultIds`) or the row of an applied resume's message,
+  keyed by the result, it stores the row and completes a resume of it still
+  queued, in one transaction. A write that commits but loses its reply saves the
+  row once: its retry is keyed the same. Also the answer of a session that saves no
+  history (`updateAsyncAgentResult`), which only stores the row: such a session holds
+  no coordinator, so nothing is ever queued behind it. -/
+  | save
+  /-- The owning turn ends without that save: it dies, so its read ledger is gone,
+  or a boundary claimed the resume but lost its reply, so the owner never saw it.
+  The applied envelope settles or expires, writing nothing to the row. -/
+  | crash
+  /-- The parent's own append of the result (`insertConversationEvents`), which
+  stores the row and completes a resume of it still queued, in the same
+  transaction (`insertOwnedEvents`). -/
+  | append
+  /-- `runtimeIngress.accept` with `resultEventId`, the late resume, under any key;
+  `room` is whether the conversation's queue has room for it, `stored` whether the
+  conversation already stores the result under its dedupe key
+  (`checkDuplicateAdmission`), a write that committed but lost its reply, and `busy`
+  whether another run owns the conversation, so the resume queues. Admitted as owner,
+  it hands the result to its turn, whose save tells the parent. -/
+  | resume (room stored busy : Bool)
+  /-- The owner takes the queued resume (`promoteQueuedGroup` or `claimSteering`) and
+  writes nothing to the row: its save tells the parent. -/
+  | apply
+  /-- The queued resume expires (`maintain`, `expireQueuedEnvelopes`), writing nothing
+  to the row; a later resume under its key replaces it (`expiredUndeliveredResume`). -/
+  | expire
   deriving DecidableEq, Repr
 
-/-- One call in its own transaction: the new flag, and whether it admitted a resume.
-A seen row stays seen, and a resume is admitted only while the row is not seen. A
-resume of a result the conversation already stores is refused and marks the row seen. -/
-def Observed.step : Observed → ObserveCall → Observed × Bool
-  | .seen, _ => (.seen, false)
-  | _, .detach => (.waiting, false)
-  | o, .read finished => (if finished then .seen else o, false)
-  | o, .resume room stored =>
-    if stored then (.seen, false) else if room then (.seen, true) else (o, false)
+/-- The row's state, whether a resume of it waits in the conversation's queue, whether
+the parent's live turn holds a read of it that no save has carried yet, and whether a
+resume of it is applied to an owner that has not saved it yet. -/
+structure Handback where
+  state : HandbackState
+  queued : Bool
+  read : Bool
+  live : Bool
+  deriving DecidableEq, Repr
 
-/-- How many resumes `cs` admits from flag `o`. -/
-def Observed.admitted : Observed → List ObserveCall → Nat
+/-- One call in its own transaction: the new state, and whether it told the parent the
+result, which only a history write does: the parent's append, or a save of a read or of
+an applied resume. A save of a stored
+row tells nothing new. A resume is admitted only while the row is not stored and none
+of it is queued or applied (`liveResumeOf`). A resume of a result the conversation
+already stores is refused and marks the row stored. -/
+def Handback.step (h : Handback) : HandbackCall → Handback × Bool
+  | .detach => (if h.state == .stored then h else { h with state := .detached }, false)
+  | .store finished => (if finished then { h with state := .stored } else h, false)
+  | .read finished => (if finished then { h with read := true } else h, false)
+  | .save =>
+    if h.read || h.live then (⟨.stored, false, false, false⟩, h.state != .stored)
+    else (h, false)
+  | .crash => ({ h with read := false, live := false }, false)
+  | .append => ({ h with state := .stored, queued := false }, h.state != .stored)
+  | .resume room stored busy =>
+    if h.state == .stored || h.queued || h.live then (h, false)
+    else if stored then ({ h with state := .stored }, false)
+    else if !busy then ({ h with live := true }, false)
+    else if room then ({ h with queued := true }, false)
+    else (h, false)
+  | .apply => if h.queued then ({ h with queued := false, live := true }, false) else (h, false)
+  | .expire => ({ h with queued := false }, false)
+
+/-- How many times `cs` tells the parent the result from state `h`. -/
+def Handback.told : Handback → List HandbackCall → Nat
   | _, [] => 0
-  | o, c :: cs => (if (o.step c).2 then 1 else 0) + (o.step c).1.admitted cs
+  | h, c :: cs => (if (h.step c).2 then 1 else 0) + (h.step c).1.told cs
 
 /-! ## Properties -/
 
@@ -316,9 +380,11 @@ theorem worker_keeps_produced (e : Ending) (catchSettles : Bool) :
       | _ => .failed := by
   cases e <;> cases catchSettles <;> decide
 
-/-- A subagent's settle and its fallback row write leave the rows agreeing. -/
-theorem subagent_consistent (settleFails : Bool) : (subagent settleFails).consistent = true := by
-  cases settleFails <;> decide
+/-- A subagent's settle and its fallback row write leave the rows agreeing, whether it
+answered or asked its parent. -/
+theorem subagent_consistent (f : Finish) (settleFails : Bool) (h : ChildFinish f = true) :
+    (subagent f settleFails).consistent = true := by
+  cases f <;> cases settleFails <;> first | decide | simp [ChildFinish] at h
 
 /-- A finished tool row never changes status again. -/
 theorem tool_terminal_absorbing {row : ToolRow} (c : ToolCall)
@@ -348,43 +414,158 @@ theorem tool_settles_once (row : ToolRow) (cs : List ToolCall) : row.changes cs 
       have hdone : (row.update c).status ≠ .processing := fun h => hc (h.trans hp.symm)
       simp [hc, tool_no_changes hdone]
 
-/-- An admitted resume leaves the row seen. -/
-theorem step_admits_seen (o : Observed) (c : ObserveCall) (h : (o.step c).2 = true) :
-    (o.step c).1 = .seen := by
-  cases o <;> cases c <;> simp_all [Observed.step] <;> split at h <;> (try split at h) <;>
-    simp_all
+/-- Telling the parent leaves the row stored with nothing queued. -/
+theorem step_tells_stored (h : Handback) (c : HandbackCall) (ht : (h.step c).2 = true) :
+    (h.step c).1.state = .stored ∧ (h.step c).1.queued = false := by
+  rcases h with ⟨o, q, r, l⟩
+  cases o <;> cases q <;> cases r <;> cases l <;> cases c <;> simp_all [Handback.step] <;>
+    (repeat' split at ht) <;> simp_all
 
-/-- Nothing admits a resume for a row the parent has seen. -/
-theorem seen_admits_none : ∀ cs : List ObserveCall, Observed.seen.admitted cs = 0
-  | [] => rfl
-  | c :: cs => by
-    simp only [Observed.admitted, Observed.step]
-    simp [seen_admits_none cs]
+/-- A stored row with nothing queued stays so, and tells the parent nothing. -/
+theorem stored_step (r l : Bool) (c : HandbackCall) :
+    ((Handback.mk .stored false r l).step c).2 = false ∧
+      ((Handback.mk .stored false r l).step c).1.state = .stored ∧
+      ((Handback.mk .stored false r l).step c).1.queued = false := by
+  cases r <;> cases l <;> cases c <;> simp [Handback.step] <;> (repeat' split) <;> simp
 
-/-- However the status reads, detaches and resumes interleave, the parent is resumed
-with a late result at most once. -/
-theorem resume_at_most_once (o : Observed) (cs : List ObserveCall) : o.admitted cs ≤ 1 := by
-  induction cs generalizing o with
-  | nil => simp [Observed.admitted]
+/-- Nothing tells the parent a result its row marks stored, once no resume is queued. -/
+theorem stored_unqueued_told (cs : List HandbackCall) :
+    ∀ h : Handback, h.state = .stored → h.queued = false → h.told cs = 0 := by
+  induction cs with
+  | nil => intro _ _ _; rfl
   | cons c cs ih =>
-    simp only [Observed.admitted]
-    by_cases h : (o.step c).2 = true
-    · simp [h, step_admits_seen o c h, seen_admits_none]
-    · simp [h, ih]
+    intro h hs hq
+    rcases h with ⟨o, q, r, l⟩
+    simp only at hs hq
+    subst hs hq
+    obtain ⟨h2, hs', hq'⟩ := stored_step r l c
+    simp only [Handback.told, h2, Bool.false_eq_true, ite_false, Nat.zero_add]
+    exact ih _ hs' hq'
 
-/-- A status read of a finished result shuts out every later resume: a child finishing
-after the read but before the read's step saved tells the parent nothing more. -/
-theorem read_shuts_out_resume (o : Observed) (cs : List ObserveCall) :
-    (o.step (.read true)).1.admitted cs = 0 := by
-  cases o <;> simp [Observed.step, seen_admits_none]
+/-- `stored_unqueued_told` for a row built stored with nothing queued. -/
+theorem stored_tells_none (r l : Bool) (cs : List HandbackCall) :
+    (Handback.mk .stored false r l).told cs = 0 :=
+  stored_unqueued_told cs _ rfl rfl
+
+/-- However the reads, saves, crashes, stored marks, appends, detaches, resumes,
+applies and expiries interleave, the parent is told a late result at most once, by a
+saved read or by a saved resume. -/
+theorem told_at_most_once (h : Handback) (cs : List HandbackCall) : h.told cs ≤ 1 := by
+  induction cs generalizing h with
+  | nil => simp [Handback.told]
+  | cons c cs ih =>
+    simp only [Handback.told]
+    by_cases ht : (h.step c).2 = true
+    · obtain ⟨hs, hq⟩ := step_tells_stored h c ht
+      simp [ht, stored_unqueued_told cs _ hs hq]
+    · simp [ht, ih]
+
+/-- A status read writes nothing: a turn that dies before the read's step is saved
+leaves the row exactly as it found it. -/
+theorem read_crash_writes_nothing (h : Handback) (f : Bool) (hr : h.read = false)
+    (hl : h.live = false) :
+    ((h.step (.read f)).1.step .crash).1 = h ∧ (h.step (.read f)).2 = false := by
+  rcases h with ⟨o, q, r, l⟩
+  simp at hr hl
+  subst hr hl
+  cases f <;> simp [Handback.step]
+
+/-- #1183: the parent's turn reads a finished result that no one has told it, and dies
+before the step is saved. The sweep's resume then tells the parent exactly once, whether
+it runs at once or queues behind another run and is applied. -/
+theorem read_crash_resume_tells_once (o : HandbackState) (room : Bool) (ho : o ≠ .stored) :
+    (Handback.mk o false false false).told
+        [.read true, .crash, .resume room false false, .save] = 1 ∧
+      (Handback.mk o false false false).told
+        [.read true, .crash, .resume true false true, .apply, .save] = 1 := by
+  cases o <;> cases room <;> simp_all [Handback.told, Handback.step]
+
+/-- A session that saves no history reads a finished result: its answer stores the read, so
+no resume tells it again; a run that dies or fails first leaves it to the sweep's resume. -/
+theorem unsaved_session_read_tells_once (o : HandbackState) (room : Bool) (ho : o ≠ .stored) :
+    (Handback.mk o false false false).told
+        [.read true, .save, .resume room false false, .save] = 1 ∧
+      (Handback.mk o false false false).told
+        [.read true, .crash, .resume room false false, .save] = 1 := by
+  cases o <;> cases room <;> simp_all [Handback.told, Handback.step]
+
+/-- A read whose step is saved while a resume of the result waits in the queue tells the
+parent once: the save completes the queued resume, so its apply tells nothing, and a
+later resume is refused as the row is stored. -/
+theorem saved_read_completes_queued_resume (o : HandbackState) (room : Bool)
+    (ho : o ≠ .stored) :
+    (Handback.mk o true false false).told [.read true, .save, .apply, .save] = 1 ∧
+      (Handback.mk o true false false).told
+        [.read true, .save, .expire, .resume room false false, .save] = 1 := by
+  cases o <;> cases room <;> simp_all [Handback.told, Handback.step]
+
+/-- A stored mark of a finished result with no resume queued shuts out every later
+resume. -/
+theorem store_shuts_out_resume (o : HandbackState) (r : Bool) (cs : List HandbackCall) :
+    ((Handback.mk o false r false).step (.store true)).1.told cs = 0 := by
+  simp [Handback.step, stored_tells_none]
 
 /-- A resume refused because the conversation already stores its result shuts out every
 later resume too, so the recovery sweep stops retrying it. -/
-theorem stored_shuts_out_resume (o : Observed) (room : Bool) (cs : List ObserveCall) :
-    (o.step (.resume room true)).1.admitted cs = 0 := by
-  cases o <;> simp [Observed.step, seen_admits_none]
+theorem stored_shuts_out_resume (o : HandbackState) (r room busy : Bool)
+    (cs : List HandbackCall) :
+    ((Handback.mk o false r false).step (.resume room true busy)).1.told cs = 0 := by
+  cases o <;> simp [Handback.step, stored_tells_none]
+
+/-- A queued resume that expires writes nothing to the row, so a row the parent never
+got stays the sweep's, and the sweep's next resume tells the parent. -/
+theorem expired_resume_told_again (o : HandbackState) (room : Bool) (ho : o ≠ .stored) :
+    (Handback.mk o true false false).step .expire = (⟨o, false, false, false⟩, false) ∧
+      (Handback.mk o true false false).told [.expire, .resume room false false, .save] =
+        1 := by
+  cases o <;> simp_all [Handback.told, Handback.step]
+
+/-- A resume handed to an owner that dies before saving it writes nothing to the row,
+so the sweep's next resume tells the parent exactly once, whether the first ran at once
+or was applied from the queue. -/
+theorem resume_crash_told_again (o : HandbackState) (room : Bool) (ho : o ≠ .stored) :
+    (Handback.mk o false false false).told
+        [.resume room false false, .crash, .resume room false false, .save] = 1 ∧
+      (Handback.mk o false false false).told
+        [.resume true false true, .apply, .crash, .resume room false false, .save] = 1 := by
+  cases o <;> cases room <;> simp_all [Handback.told, Handback.step]
 
 /-! ## Witnesses -/
+
+/-- A status read while a resume of the result waits behind the turn: the saved step
+completes the resume, so the parent sees the result once. -/
+example :
+    (Handback.mk .detached false false false).told
+        [.resume true false true, .read true, .save, .apply, .save] = 1 := by
+  decide
+
+/-- The turn reads the result and dies before the save: nothing is lost, the sweep's
+resume tells the parent. -/
+example :
+    (Handback.mk .detached false false false).told
+        [.read true, .crash, .resume true false false, .save] = 1 := by
+  decide
+
+/-- Why a read stores nothing: marking the row stored at the read, then dying before the
+answer's write, would shut out every resume, so the result is never told. -/
+example :
+    (Handback.mk .pending false false false).told
+        [.read true, .store true, .crash, .resume true false false, .save] = 0 := by
+  decide
+
+/-- The sweep's resume runs as owner and its turn dies before saving: the row is not
+stored, so the next resume tells the parent. -/
+example :
+    (Handback.mk .detached false false false).told
+        [.resume true false false, .crash, .resume true false false, .save] = 1 := by
+  decide
+
+/-- The parent appends the result while a resume of it waits in the queue: the append
+completes the resume, so the parent is told once. -/
+example :
+    (Handback.mk .detached false false false).told
+        [.resume true false true, .append, .apply, .save] = 1 := by
+  decide
 
 /-- The run completes and its cron settle throws: both rows stay completed. -/
 example : worker true true .final (some 3) = ⟨.completed, .completed, true, some .completed⟩ := by

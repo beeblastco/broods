@@ -5,3 +5,21 @@ defaultTargets = ["Broods"]
 name = "Broods"
 # A `sorry` is only a warning; this makes it, and any other warning, fail the build.
 leanOptions = { warningAsError = true }
+
+# Differential oracle: `tests/gateway-oracle.test.ts` runs it against `resolveRouter`.
+[[lean_exe]]
+name = "gateway-oracle"
+root = "GatewayOracle"
+leanOptions = { warningAsError = true }
+
+# Differential oracle: `tests/sync-oracle.test.ts` runs it against `diffManifests`.
+[[lean_exe]]
+name = "sync-oracle"
+root = "SyncOracle"
+leanOptions = { warningAsError = true }
+
+# Differential oracle: `packages/convex/tests/cronOracle.test.ts` runs it against the cron mutations.
+[[lean_exe]]
+name = "cron-oracle"
+root = "CronOracle"
+leanOptions = { warningAsError = true }

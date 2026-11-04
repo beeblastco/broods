@@ -1,5 +1,4 @@
 /// <reference types="vite/client" />
-/** The canvas projection of a sandbox config: display keys in, secrets out. */
 
 import { describe, expect, test } from "vitest";
 import { sandboxDisplayConfig } from "../model/sandboxDisplayConfig";
@@ -35,8 +34,6 @@ describe("sandboxDisplayConfig", () => {
     });
 
     expect(display).toEqual({ network: { mode: "allow-all" } });
-    expect(display.envVars).toBeUndefined();
-    expect(display.options).toBeUndefined();
   });
 
   test("absent and non-object configs collapse to an empty projection", () => {

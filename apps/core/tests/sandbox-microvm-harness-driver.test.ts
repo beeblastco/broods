@@ -1,8 +1,3 @@
-/**
- * These use an in-memory executor and loopback proxy only; no AWS or shared
- * control plane is touched.
- */
-
 import { describe, expect, test } from "bun:test";
 import {
   MicrovmHarnessDriver,
@@ -43,6 +38,9 @@ describe("MicrovmHarnessDriver", () => {
     expect(executor.launchEnvs).toEqual([
       { CONFIGURED: "base", OVERRIDDEN: "configured" },
     ]);
+    expect([...executor.commandReservationKeys]).toEqual([
+      "acct:agent:harness",
+    ]);
 
     await created.session.writeFile({
       path: "/workspace/data.bin",
@@ -63,7 +61,7 @@ describe("MicrovmHarnessDriver", () => {
     expect(portUrl).not.toContain("microvm-1");
     expect(portUrl).not.toContain("secret-token");
     expect(executor.authRequests).toHaveLength(0);
-    expect(
+    await expect(
       created.session.getPortUrl!({ port: 4_321, protocol: "http" }),
     ).rejects.toThrow("supports WebSocket ports only");
 
@@ -124,9 +122,9 @@ describe("MicrovmHarnessDriver", () => {
       executor.files.set("/workspace/shot.png", new Uint8Array(300_000)),
     );
 
-    expect(session.readFile({ path: "/workspace/shot.png" })).rejects.toThrow(
-      "changed while it was being read",
-    );
+    await expect(
+      session.readFile({ path: "/workspace/shot.png" }),
+    ).rejects.toThrow("changed while it was being read");
   });
 
   test("resumes the same reservation and validates bootstrap identity", async () => {
@@ -136,7 +134,7 @@ describe("MicrovmHarnessDriver", () => {
       executor.value as never,
     );
 
-    expect(
+    await expect(
       driver.createSession({ identity: "other-bootstrap" }),
     ).rejects.toThrow("bootstrap identity does not match");
 
@@ -160,7 +158,7 @@ describe("MicrovmHarnessDriver", () => {
       executor.value as never,
     );
 
-    expect(
+    await expect(
       driver.createSession({
         identity: "bootstrap-v1",
         abortSignal: controller.signal,
@@ -197,6 +195,7 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
   const releases: unknown[] = [];
   const authRequests: unknown[] = [];
   const launchEnvs: Array<Record<string, string> | undefined> = [];
+  const commandReservationKeys = new Set<string>();
   const chunkReads: string[] = [];
   const files = new Map<string, Uint8Array>();
   // Bumped on every write, standing in for the inode and change time in a stamp.
@@ -214,6 +213,7 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
     releases: releases,
     authRequests: authRequests,
     launchEnvs: launchEnvs,
+    commandReservationKeys: commandReservationKeys,
     chunkReads: chunkReads,
     files: files,
     onChunkRead: function (callback: () => void): void {
@@ -239,9 +239,11 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
         };
       },
       runHarnessCommand: async function (request: {
+        reservationKey: string;
         code: string;
         env?: Record<string, string>;
       }) {
+        commandReservationKeys.add(request.reservationKey);
         const processRoot = request.code.match(
           /(\/tmp\/broods-harness-process-[0-9a-f-]+)/,
         )?.[1];

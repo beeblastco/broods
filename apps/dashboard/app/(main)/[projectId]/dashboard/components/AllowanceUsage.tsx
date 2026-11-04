@@ -8,7 +8,7 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { HelpMark } from "@/app/components/HelpMark";
-import { SegmentedControl } from "@/app/components/SegmentedControl";
+import { Button } from "@/app/components/ui/button";
 import { Separator } from "@/app/components/ui/separator";
 import { Skeleton } from "@/app/components/ui/skeleton";
 import {
@@ -20,8 +20,10 @@ import {
   TableRow,
 } from "@/app/components/ui/table";
 import {
+  ALLOWANCE_ROWS,
+  type AllowanceRow,
+  BUDGET_LEVEL_TEXT,
   billingReset,
-  type AmountUnit,
   type BudgetUsage,
   dailySeries,
   formatAmount,
@@ -30,117 +32,46 @@ import {
   otherOrgsSlice,
   poolNote,
   projectSlices,
-  type UsageAmounts,
   type UsageSlice,
   usageSlices,
 } from "@/app/lib/allowance";
+import { tabHref } from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { budgetLevel } from "@broods/convex/model/planLimits";
 import { useQuery } from "convex/react";
+import { ArrowRight } from "lucide-react";
 import Link from "next/link";
-import { parseAsStringLiteral, useQueryState } from "nuqs";
 import { useMemo, useState } from "react";
 import { UsageChart, UsageLegend } from "./UsageChart";
 
 const DAY_SECONDS = 24 * 60 * 60;
 
-export type AllowanceScope = "project" | "all";
-
-const SCOPES: Array<{ id: AllowanceScope; label: string }> = [
-  { id: "project", label: "This project" },
-  { id: "all", label: "All projects" },
-];
-
-// The scope in the URL, so a link opens the same view.
-const SCOPE_PARAM = parseAsStringLiteral(SCOPES.map((scope) => scope.id))
-  .withDefault("project")
-  .withOptions({ clearOnDefault: true });
-
-// One row per resource. `share` names the cap it counts toward; ingress is
-// free, so it has none. `help` says what the amount is counted from, where
-// the label alone does not.
-const ROWS: AllowanceRow[] = [
-  {
-    key: "sandboxHours",
-    label: "Sandbox time",
-    unit: "hours",
-    share: "sandboxHours",
-    color: "var(--color-usage-agent-sandbox)",
-    help: "Hours your sandboxes spent running, idle time until they stop included, at the default 1 vCPU / 2 GB size. A bigger sandbox, a resume or a kept snapshot uses hours faster. An isolate counts only the seconds its commands ran. Sandboxes on your own provider account are free.",
-  },
-  {
-    key: "hostedMcpHours",
-    label: "Hosted MCP time",
-    unit: "hours",
-    share: "hostedMcpHours",
-    color: "var(--color-usage-mcp-sandbox)",
-    help: "Time your hosted MCP servers spent answering tool calls, at the runner's memory size, plus a small share per request. Idle servers cost nothing.",
-  },
-  {
-    key: "storageGb",
-    label: "Workspaces and files",
-    unit: "gb",
-    share: "storageGb",
-    color: "var(--color-usage-storage)",
-    help: "What the latest daily snapshot found stored in your workspaces, chat attachments, skills and bundles. A size, not a monthly total. A project counts its own workspaces; the rest is the organization's.",
-  },
-  {
-    key: "egressGb",
-    label: "Egress",
-    unit: "gb",
-    share: "egressGb",
-    color: "var(--color-usage-egress)",
-    help: "Data served out of Broods storage, such as media your agents sent to channels. Files on your own bucket are not counted.",
-  },
-  {
-    key: "ingressGb",
-    label: "Ingress",
-    unit: "gb",
-    share: null,
-    color: "var(--color-usage-ingress)",
-  },
-];
+export type UsageScope =
+  | { scope: "project"; projectId: string }
+  | { scope: "all" };
 
 const OTHER_USAGE_HELP =
   "Usage no single project made: account-wide sandboxes and workspaces, chat attachments, skills and bundles, deleted projects, and anything metered before usage was split by project.";
 
-interface AllowanceRow {
-  key: keyof UsageAmounts;
-  label: string;
-  unit: AmountUnit;
-  share: keyof BudgetUsage["shares"] | null;
-  color: string;
-  help?: string;
-}
-
-/**
- * The Usage tab's Allowance: the org's month per resource against its caps,
- * with a month picker, seen from this project (its part of each cap) or from
- * all projects (each project's part, and a table of them). Clicking a row
- * charts that resource per day under the table. Holds the last month while
- * another loads, so the table and chart ease to it instead of dropping to a
- * skeleton first.
- */
 export function AllowanceUsage({
-  projectId,
+  view,
 }: {
-  projectId: string;
+  view: UsageScope;
 }): React.JSX.Element {
   const [month, setMonth] = useState<string | undefined>(undefined);
-  const [scope, setScope] = useQueryState("allowance", SCOPE_PARAM);
   const usage = useQuery(api.account.budget.getForActiveOrg, {
     month: month,
     withProjects: true,
   });
+  // The last month stays up while another loads, so the chart eases instead of blanking.
   const [held, setHeld] = useState<BudgetUsage | null | undefined>(usage);
   if (usage !== undefined && usage !== held) {
     setHeld(usage);
   }
   const budget = usage === undefined ? held : usage;
 
-  // The current month leads `months`: leave `month` unset for it, so the
-  // query keeps one set of args while the picker returns to it.
+  // Unset for the current month (months[0]), so the query keeps one set of args for it.
   function handleMonthChange(value: string): void {
     setMonth(value === budget?.months[0] ? undefined : value);
   }
@@ -148,42 +79,29 @@ export function AllowanceUsage({
   return (
     <AllowanceView
       budget={budget}
-      projectId={projectId}
-      scope={scope}
-      onScopeChange={(next) => void setScope(next)}
+      view={view}
       month={month}
       onMonthChange={handleMonthChange}
     />
   );
 }
 
-/**
- * The Allowance as drawn, from data: the live tab feeds it from Convex, the
- * gallery from fixtures. `budget` undefined is still loading.
- */
 export function AllowanceView({
   budget,
-  projectId,
-  scope,
-  onScopeChange,
+  view,
   month,
   onMonthChange,
 }: {
   budget: BudgetUsage | null | undefined;
-  projectId: string;
-  scope: AllowanceScope;
-  onScopeChange: (scope: AllowanceScope) => void;
+  view: UsageScope;
   month: string | undefined;
   onMonthChange: (month: string) => void;
 }): React.JSX.Element {
   return (
-    <section
-      className="grid min-w-0 gap-3 *:min-w-0"
-      data-allowance-scope={scope}
-    >
+    <section className="grid min-w-0 gap-3 *:min-w-0">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="flex items-baseline gap-2">
-          <h2 className="text-sm font-semibold text-foreground">Allowance</h2>
+          <h2 className="text-sm font-semibold text-foreground">Resources</h2>
           {budget && (
             <span className="text-xs text-muted-foreground">
               {resetLabel(budget)}
@@ -191,12 +109,18 @@ export function AllowanceView({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <SegmentedControl
-            options={SCOPES}
-            value={scope}
-            onChange={onScopeChange}
-            ariaLabel="Usage of"
-          />
+          {view.scope === "project" && (budget?.projects?.length ?? 0) > 1 && (
+            <Button
+              nativeButton={false}
+              render={<Link href={tabHref("/settings/org", "usage", "")} />}
+              size="xs"
+              variant="ghost"
+              className="cursor-pointer"
+            >
+              All projects
+              <ArrowRight data-icon="inline-end" />
+            </Button>
+          )}
           {budget && (
             <Select
               items={budget.months.map((option) => ({
@@ -229,43 +153,36 @@ export function AllowanceView({
           No account in this organization yet.
         </p>
       ) : (
-        <ScopedAllowance budget={budget} projectId={projectId} scope={scope} />
+        <ResourcesTable budget={budget} view={view} />
       )}
     </section>
   );
 }
 
-/**
- * The caps per resource and a daily chart of the picked one. Each bar is the
- * owner's pool, what stops runs: this org's slices, then the faded part the
- * owner's other organizations used. From this project: its amount leads, and
- * the solid part of the bar is it and the grey part the other projects. From
- * all projects: the bar is split by project, and a table of the projects
- * follows. The chart and the table stay this org's own.
- */
-function ScopedAllowance({
+function ResourcesTable({
   budget,
-  projectId,
-  scope,
+  view,
 }: {
   budget: BudgetUsage;
-  projectId: string;
-  scope: AllowanceScope;
+  view: UsageScope;
 }): React.JSX.Element {
-  const [picked, setPicked] = useState<AllowanceRow>(ROWS[0]);
+  const [picked, setPicked] = useState<AllowanceRow>(ALLOWANCE_ROWS[0]);
   const projectCount = budget.projects?.length ?? 0;
+  // Primitives, since callers pass a fresh `view` object every render.
+  const projectId = view.scope === "project" ? view.projectId : null;
   const slices = useMemo(
     () =>
-      scope === "all" ? usageSlices(budget) : projectSlices(budget, projectId),
-    [budget, projectId, scope],
+      projectId === null
+        ? usageSlices(budget)
+        : projectSlices(budget, projectId),
+    [budget, projectId],
   );
   const pool = useMemo(() => otherOrgsSlice(budget), [budget]);
-  // What each bar is cut into: this org's slices, then the other organizations'.
   const bars = useMemo(
     () => (pool ? [...slices, pool] : slices),
     [slices, pool],
   );
-  const own = scope === "project" ? slices[0] : null;
+  const own = view.scope === "project" ? slices[0] : null;
   const legend = useMemo(
     () =>
       bars.map((slice) => ({
@@ -275,7 +192,6 @@ function ScopedAllowance({
       })),
     [bars],
   );
-  // One plain line: whose limits these are, then how to read a split bar.
   const notes = [
     poolNote(budget) ??
       (own
@@ -316,7 +232,7 @@ function ScopedAllowance({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {ROWS.map((row) => (
+              {ALLOWANCE_ROWS.map((row) => (
                 <AllowanceTableRow
                   key={row.key}
                   budget={budget}
@@ -336,19 +252,12 @@ function ScopedAllowance({
         </div>
       </div>
       {!own && (
-        <ProjectsTable
-          budget={budget}
-          slices={slices}
-          picked={picked}
-          projectId={projectId}
-        />
+        <ProjectsTable budget={budget} slices={slices} picked={picked} />
       )}
     </div>
   );
 }
 
-// One resource: used, its cap, and how close the pool is to it, the bar cut
-// into `bars`. With `own`, its amount leads. Ingress reads Free.
 function AllowanceTableRow({
   budget,
   row,
@@ -382,7 +291,7 @@ function AllowanceTableRow({
       className="cursor-pointer"
       onClick={onPick}
       onKeyDown={(event) => {
-        // A press on a control inside the row, like its help mark, is that control's.
+        // A key press on a control inside the row, like its help mark, is that control's.
         if (event.target !== event.currentTarget) return;
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
@@ -391,14 +300,7 @@ function AllowanceTableRow({
       }}
     >
       <TableCell>
-        <span className="flex items-center gap-2">
-          <span
-            className="size-2 rounded-sm bg-(--series-color)"
-            style={{ "--series-color": row.color }}
-          />
-          {row.label}
-          {row.help && <HelpMark text={row.help} />}
-        </span>
+        <ResourceLabel row={row} />
       </TableCell>
       {own && (
         <TableCell className="text-right">
@@ -444,12 +346,7 @@ function AllowanceTableRow({
       <TableCell className="text-right">
         {share !== null && (
           <span
-            className={cn(
-              "tabular-nums",
-              level === "ok" && "text-muted-foreground",
-              level === "warning" && "text-warning",
-              level === "exhausted" && "text-destructive",
-            )}
+            className={cn("tabular-nums", level && BUDGET_LEVEL_TEXT[level])}
           >
             {formatPercent(share)}
           </span>
@@ -459,11 +356,25 @@ function AllowanceTableRow({
   );
 }
 
-/**
- * A cap's bar, `share` percent long, cut into each part's piece of `total`.
- * An unknown amount (a storage day no snapshot measured), in the total or in
- * any part, draws the bar as one piece.
- */
+export function ResourceLabel({
+  row,
+}: {
+  row: Pick<AllowanceRow, "label" | "help"> & { color?: string };
+}): React.JSX.Element {
+  return (
+    <span className="flex items-center gap-2">
+      {row.color && (
+        <span
+          className="size-2 rounded-sm bg-(--series-color)"
+          style={{ "--series-color": row.color }}
+        />
+      )}
+      {row.label}
+      {row.help && <HelpMark text={row.help} />}
+    </span>
+  );
+}
+
 function SplitBar({
   share,
   total,
@@ -473,8 +384,7 @@ function SplitBar({
   total: number | null;
   parts: Array<{ key: string; amount: number | null; color: string }>;
 }): React.JSX.Element {
-  // The split is unknown as soon as one part is: this org before its first
-  // storage snapshot on a pool another org has measured.
+  // One unknown part (a storage day no snapshot measured) leaves the split unknown.
   const known =
     total !== null && total > 0 && parts.every((part) => part.amount !== null);
 
@@ -505,8 +415,6 @@ function SplitBar({
   );
 }
 
-// The picked resource per day of the month, one stacked part per slice, in
-// one unit from the tallest day.
 function DailyChart({
   budget,
   row,
@@ -516,7 +424,6 @@ function DailyChart({
   row: AllowanceRow;
   slices: UsageSlice[];
 }): React.JSX.Element {
-  // UsageChart eases to each new rows array, so only rebuild on real change.
   const daily = useMemo(
     () => dailySeries(budget.month, slices, row.key),
     [budget.month, slices, row.key],
@@ -564,25 +471,17 @@ function DailyChart({
   );
 }
 
-/**
- * Each project's month side by side, busiest first on the picked resource,
- * with its part of the org's total of it. A project's name opens its own
- * Usage tab.
- */
 function ProjectsTable({
   budget,
   slices,
   picked,
-  projectId,
 }: {
   budget: BudgetUsage;
   slices: UsageSlice[];
   picked: AllowanceRow;
-  projectId: string;
 }): React.JSX.Element {
   const total = budget.totals[picked.key];
   const sorted = [...slices].sort((a, b) => {
-    // "Other usage" closes the list whatever it holds.
     if (a.projectId === null || b.projectId === null) {
       return a.projectId === null ? 1 : -1;
     }
@@ -598,7 +497,7 @@ function ProjectsTable({
           <TableHeader>
             <TableRow>
               <TableHead>Project</TableHead>
-              {ROWS.map((row) => (
+              {ALLOWANCE_ROWS.map((row) => (
                 <TableHead key={row.key} className="text-right">
                   {row.label}
                 </TableHead>
@@ -609,7 +508,6 @@ function ProjectsTable({
           <TableBody>
             {sorted.map((slice) => {
               const amount = slice.totals[picked.key];
-              // Null while storage has no snapshot this month: no share yet.
               const part =
                 amount === null || total === null
                   ? null
@@ -640,14 +538,9 @@ function ProjectsTable({
                           {slice.name}
                         </Link>
                       )}
-                      {slice.projectId === projectId && (
-                        <span className="text-2xs text-muted-foreground">
-                          This project
-                        </span>
-                      )}
                     </span>
                   </TableCell>
-                  {ROWS.map((row) => (
+                  {ALLOWANCE_ROWS.map((row) => (
                     <TableCell key={row.key} className="text-right">
                       <span
                         className={cn(
@@ -685,7 +578,6 @@ function ProjectsTable({
   );
 }
 
-// "Resets Oct 1" for the current month, nothing for a past one or no limits.
 function resetLabel(budget: BudgetUsage): string {
   if (!budget.enforced) return "No limits";
 

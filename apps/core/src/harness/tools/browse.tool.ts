@@ -1,12 +1,3 @@
-/**
- * The `browse` tool: reads a public web page through Obscura, a headless browser
- * on the agent's first sandbox, and hands the model markdown, text, links, a
- * JavaScript result or a screenshot. Only agents with `config.browser.enabled`
- * get it, and only on a sandbox that has Obscura (the `obscura` lambda image or
- * the user's own computer). Screenshots go through the workspace mount, since a
- * sandbox exec returns text only.
- */
-
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
@@ -26,10 +17,8 @@ import {
 import { toolError, withImageLimits } from "./utils.ts";
 
 const MODES = ["markdown", "text", "links", "eval", "screenshot"] as const;
-// Workspace-relative, so the agent can send the file on with send-images.
 const SCREENSHOT_DIR = ".broods/browse";
-// Seconds left for the sandbox to return Obscura's own timeout error. A short
-// exec timeout keeps half of itself instead.
+// Exec seconds left for Obscura's own timeout error to come back; a short exec keeps half.
 const TIMEOUT_MARGIN_SECONDS = 5;
 
 const DESCRIPTION = `Open a public web page in a headless browser and read it.
@@ -56,23 +45,6 @@ const browseInput = z.object({
 
 type BrowseInput = z.infer<typeof browseInput>;
 
-/** Throws when `browser` is on but the agent's first sandbox cannot run Obscura. */
-export function assertBrowseSandbox(
-  sandbox: SandboxExecutorConfig | undefined,
-): void {
-  if (sandbox?.provider === "machine") return;
-  if (sandbox?.provider !== "lambda" || sandbox.image !== "obscura") {
-    throw new Error(
-      'config.browser needs the agent\'s first sandbox on provider lambda with image: "obscura", or a machine sandbox with obscura installed',
-    );
-  }
-  if (sandbox.network?.mode !== "allow-all") {
-    throw new Error(
-      "config.browser needs the agent's first sandbox to set network.mode to allow-all",
-    );
-  }
-}
-
 export default function browseTool(context: SandboxToolContext): ToolSet {
   return {
     browse: tool({
@@ -88,8 +60,6 @@ export default function browseTool(context: SandboxToolContext): ToolSet {
         if (!agentSandbox) {
           return toolError("Error: no sandbox available for browse");
         }
-        // The workspace on the agent's own sandbox, when one mounts it: runs land
-        // there so a screenshot is a workspace file.
         const workspace = agentOwnWorkspace(context);
         if (mode === "screenshot" && !workspace) {
           return toolError(
@@ -122,7 +92,6 @@ export default function browseTool(context: SandboxToolContext): ToolSet {
           return { type: "text", value: result.stdout.trim() || "(empty)" };
         }
         const saved = `Screenshot of ${url}, saved to ${path} in workspace ${workspace.name}`;
-        // Read only a screenshot the model may be shown; a larger one stays a file.
         const image = await workspaceMediaBytes(
           workspace,
           path,
@@ -152,7 +121,6 @@ export default function browseTool(context: SandboxToolContext): ToolSet {
   };
 }
 
-/** The shell command `browse` runs on `sandbox`, kept inside its exec timeout. */
 export function obscuraCommand(
   sandbox: SandboxExecutorConfig,
   call: {
@@ -164,8 +132,7 @@ export function obscuraCommand(
 ): string {
   const exec = sandboxTimeoutSeconds(sandbox);
   const timeout = Math.max(Math.ceil(exec / 2), exec - TIMEOUT_MARGIN_SECONDS);
-  // An inherited OBSCURA_ALLOW_PRIVATE_NETWORK would turn off Obscura's own
-  // private-address guard, which is what keeps browse on the public internet.
+  // An inherited OBSCURA_ALLOW_PRIVATE_NETWORK would disable Obscura's private-address guard.
   const fetch = `env -u OBSCURA_ALLOW_PRIVATE_NETWORK obscura fetch ${shellQuote(call.url)} --quiet --timeout ${timeout}`;
   switch (call.mode) {
     case "eval":

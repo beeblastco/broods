@@ -1,11 +1,11 @@
-import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
-import { describe, expect, it, mock, spyOn } from "bun:test";
+import { describe, expect, it, jest, mock, spyOn } from "bun:test";
 import type { AiSdkHarnessRuntime } from "../src/harness/ai-sdk-harness/runtime.ts";
 import {
   harnessReservationKey,
   openAiSdkHarnessSession,
   parkAiSdkHarnessSession,
   prepareHarnessTurn,
+  type OpenedHarnessSession,
   type PrepareHarnessTurnOptions,
 } from "../src/harness/ai-sdk-harness/session.ts";
 import { sandboxNeighbours } from "../src/harness/sandbox/live-status.ts";
@@ -19,13 +19,16 @@ const CHECKPOINT = {
 } as const;
 
 describe("openAiSdkHarnessSession", () => {
-  it("resumes the native session from the Broods checkpoint", async () => {
+  it("resumes the native session from the Broods checkpoint on the resumed machine", async () => {
+    const machine = { stop: mock(async (): Promise<void> => {}) };
     const createSession = mock(async () => ({ sessionId: "native-session" }));
+    const resumeSandbox = mock(async () => machine);
     const abortController = new AbortController();
 
-    await openAiSdkHarnessSession({
+    const opened = await openAiSdkHarnessSession({
       abortSignal: abortController.signal,
       agent: { createSession: createSession } as never,
+      sandbox: { resumeSession: resumeSandbox } as never,
       stored: {
         harnessType: "codex",
         sessionId: "native-session",
@@ -34,25 +37,35 @@ describe("openAiSdkHarnessSession", () => {
       type: "codex",
     });
 
+    expect(resumeSandbox).toHaveBeenCalledWith({
+      sessionId: "native-session",
+      abortSignal: abortController.signal,
+    });
     expect(createSession).toHaveBeenCalledWith({
       sessionId: "native-session",
       resumeFrom: CHECKPOINT,
+      sandboxSession: machine,
       abortSignal: abortController.signal,
     });
+    expect(opened.sandboxSession).toBe(machine as never);
+    expect(machine.stop).not.toHaveBeenCalled();
   });
 
-  it("starts fresh when the stored session's machine was released", async () => {
-    const createSession = mock(async (options: { resumeFrom?: unknown }) => {
-      if (options.resumeFrom) {
-        throw new SandboxGoneError("no reserved workdir sandbox");
-      }
+  it("starts fresh on a new machine when the stored session's machine was released", async () => {
+    const fresh = { id: "fresh-machine" };
+    const createSession = mock(async () => ({ sessionId: "fresh" }));
+    const createSandbox = mock(async () => fresh);
+    const abortController = new AbortController();
 
-      return { sessionId: "fresh" };
-    });
-
-    const session = await openAiSdkHarnessSession({
-      abortSignal: new AbortController().signal,
+    const opened = await openAiSdkHarnessSession({
+      abortSignal: abortController.signal,
       agent: { createSession: createSession } as never,
+      sandbox: {
+        createSession: createSandbox,
+        resumeSession: async (): Promise<never> => {
+          throw new SandboxGoneError("no reserved workdir sandbox");
+        },
+      } as never,
       stored: {
         harnessType: "codex",
         sessionId: "native-session",
@@ -61,16 +74,70 @@ describe("openAiSdkHarnessSession", () => {
       type: "codex",
     });
 
-    expect(session).toMatchObject({ sessionId: "fresh" });
-    expect(createSession).toHaveBeenCalledTimes(2);
+    expect(opened.nativeSession).toMatchObject({ sessionId: "fresh" });
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession).toHaveBeenCalledWith({
+      sessionId: expect.any(String),
+      sandboxSession: fresh,
+      abortSignal: abortController.signal,
+    });
+    expect(createSandbox).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops the resumed machine when the native session fails to resume on it", async () => {
+    const machine = { stop: mock(async (): Promise<void> => {}) };
+    const createSandbox = mock(async () => machine);
+
+    await expect(
+      openAiSdkHarnessSession({
+        abortSignal: new AbortController().signal,
+        agent: {
+          createSession: async (): Promise<never> => {
+            throw new Error("resume state rejected");
+          },
+        } as never,
+        sandbox: {
+          createSession: createSandbox,
+          resumeSession: async () => machine,
+        } as never,
+        stored: {
+          harnessType: "codex",
+          sessionId: "native-session",
+          resumeState: CHECKPOINT,
+        },
+        type: "codex",
+      }),
+    ).rejects.toThrow("resume state rejected");
+    expect(machine.stop).toHaveBeenCalledTimes(1);
+    expect(createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("stops the machine it opened when the native session fails to start", async () => {
+    const machine = { stop: mock(async (): Promise<void> => {}) };
+
+    await expect(
+      openAiSdkHarnessSession({
+        abortSignal: new AbortController().signal,
+        agent: {
+          createSession: async (): Promise<never> => {
+            throw new Error("bootstrap failed");
+          },
+        } as never,
+        sandbox: { createSession: async () => machine } as never,
+        stored: null,
+        type: "codex",
+      }),
+    ).rejects.toThrow("bootstrap failed");
+    expect(machine.stop).toHaveBeenCalledTimes(1);
   });
 
   it("refuses to bind a conversation to another adapter", async () => {
     const createSession = mock(async () => ({ sessionId: "unused" }));
-    expect(
+    await expect(
       openAiSdkHarnessSession({
         abortSignal: new AbortController().signal,
         agent: { createSession: createSession } as never,
+        sandbox: {} as never,
         stored: {
           harnessType: "pi",
           sessionId: "native-session",
@@ -141,21 +208,26 @@ describe("prepareHarnessTurn", () => {
     expect(calls).toEqual(["flush", "steering", "load", "createAgent"]);
   });
 
-  it("stops its own lease monitor and destroys the session", async () => {
+  it("stops its own lease monitor and destroys the session and its machine", async () => {
     const destroy = mock(async (): Promise<void> => {});
+    const destroyMachine = mock(async (): Promise<void> => {});
     const setTimer = spyOn(globalThis, "setInterval");
     const clearTimer = spyOn(globalThis, "clearInterval");
     try {
       const turn = await prepareHarnessTurn(
         turnOptions({
-          openSession: async (): Promise<HarnessAgentSession> =>
-            ({ destroy: destroy }) as never,
+          openSession: async (): Promise<OpenedHarnessSession> =>
+            ({
+              nativeSession: { destroy: destroy },
+              sandboxSession: { destroy: destroyMachine },
+            }) as never,
         }),
       );
       const monitor = setTimer.mock.results.at(-1)?.value;
       await turn.dispose();
 
       expect(destroy).toHaveBeenCalledTimes(1);
+      expect(destroyMachine).toHaveBeenCalledTimes(1);
       expect(clearTimer).toHaveBeenCalledWith(monitor);
     } finally {
       setTimer.mockRestore();
@@ -163,7 +235,91 @@ describe("prepareHarnessTurn", () => {
     }
   });
 
-  it("leaves the occupancy release to the caller when the session fails to open", async () => {
+  it("renews the lease while the session is still opening", async () => {
+    const calls: string[] = [];
+    let callsAtOpen: string[] = [];
+    jest.useFakeTimers();
+    try {
+      const turn = await prepareHarnessTurn(
+        turnOptions({
+          calls: calls,
+          openSession: async (): Promise<OpenedHarnessSession> => {
+            jest.advanceTimersByTime(1_500);
+            callsAtOpen = [...calls];
+
+            return openedSession();
+          },
+        }),
+      );
+      await turn.dispose();
+
+      expect(callsAtOpen).toContain("renew");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("holds a stop reported during the open until the session exists", async () => {
+    const abortController = new AbortController();
+    let abortedDuringOpen = true;
+    jest.useFakeTimers();
+    try {
+      const turn = await prepareHarnessTurn(
+        turnOptions({
+          abortController: abortController,
+          openSession: async (): Promise<OpenedHarnessSession> => {
+            jest.advanceTimersByTime(1_500);
+            await Promise.resolve();
+            abortedDuringOpen = abortController.signal.aborted;
+
+            return openedSession();
+          },
+          renew: async (): Promise<"stopped"> => "stopped",
+        }),
+      );
+      await turn.dispose();
+
+      expect(abortedDuringOpen).toBe(false);
+      expect(abortController.signal.aborted).toBe(true);
+      expect(abortController.signal.reason).toHaveProperty(
+        "message",
+        "stopped",
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("ignores a renewal that settles after the monitor stopped", async () => {
+    const abortController = new AbortController();
+    let settle: (renewal: "stale") => void = (): void => {};
+    jest.useFakeTimers();
+    try {
+      const turn = await prepareHarnessTurn(
+        turnOptions({
+          abortController: abortController,
+          renew: (): Promise<"stale"> =>
+            new Promise((resolve): void => {
+              settle = resolve;
+            }),
+        }),
+      );
+      jest.advanceTimersByTime(1_500);
+      turn.stopLeaseMonitor();
+      settle("stale");
+      await Promise.resolve();
+      await Promise.resolve();
+      await turn.dispose();
+
+      expect(abortController.signal.aborted).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("stops the lease monitor and leaves the occupancy release to the caller when the session fails to open", async () => {
+    const setTimer = spyOn(globalThis, "setInterval");
+    const clearTimer = spyOn(globalThis, "clearInterval");
     let release: (() => void) | undefined;
     try {
       const failed = prepareHarnessTurn(
@@ -177,20 +333,41 @@ describe("prepareHarnessTurn", () => {
         }),
       );
 
-      expect(failed).rejects.toThrow("machine down");
+      await expect(failed).rejects.toThrow("machine down");
       await failed.catch((): void => {});
+      const monitor = setTimer.mock.results.at(-1)?.value;
+      expect(monitor).toBeDefined();
+      expect(clearTimer).toHaveBeenCalledWith(monitor);
       expect(sandboxNeighbours("machine-key", "other-event")).toHaveLength(1);
       release?.();
       expect(sandboxNeighbours("machine-key", "other-event")).toEqual([]);
     } finally {
+      setTimer.mockRestore();
+      clearTimer.mockRestore();
       release?.();
     }
   });
 
+  function openedSession(): OpenedHarnessSession {
+    const destroy = async (): Promise<void> => {};
+
+    return {
+      nativeSession: { destroy: destroy },
+      sandboxSession: { destroy: destroy },
+    } as never;
+  }
+
   function turnOptions(
-    overrides: Partial<PrepareHarnessTurnOptions> & { calls?: string[] },
+    overrides: Partial<PrepareHarnessTurnOptions> & {
+      calls?: string[];
+      renew?: () => Promise<"renewed" | "stopped" | "stale">;
+    },
   ): PrepareHarnessTurnOptions {
-    const { calls = [], ...options } = overrides;
+    const {
+      calls = [],
+      renew = async (): Promise<"renewed"> => "renewed",
+      ...options
+    } = overrides;
 
     return {
       abortController: new AbortController(),
@@ -208,8 +385,7 @@ describe("prepareHarnessTurn", () => {
       isolated: false,
       metadata: { traceId: "trace", taskId: "event" },
       onOccupied: (release): void => release(),
-      openSession: async (): Promise<HarnessAgentSession> =>
-        ({ destroy: async (): Promise<void> => {} }) as never,
+      openSession: async (): Promise<OpenedHarnessSession> => openedSession(),
       sandbox: { name: "default", sandbox: { provider: "lambda" } } as never,
       session: {
         agentId: "agent",
@@ -225,6 +401,13 @@ describe("prepareHarnessTurn", () => {
           return null;
         },
         loadHarnessSkills: async (): Promise<never[]> => [],
+        renewConversationLease: (): Promise<
+          "renewed" | "stopped" | "stale"
+        > => {
+          calls.push("renew");
+
+          return renew();
+        },
       } as never,
       stopMessage: "stopped",
       tools: {},
@@ -235,29 +418,47 @@ describe("prepareHarnessTurn", () => {
 });
 
 describe("parkAiSdkHarnessSession", () => {
-  it("detaches successful Deep Agents sessions before saving", async () => {
-    const detach = mock(async () => CHECKPOINT);
-    const stop = mock(async () => CHECKPOINT);
-    const saveHarnessSession = mock(async () => {});
-    const broodsSession = {
-      saveHarnessSession: saveHarnessSession,
+  function parked(overrides: {
+    detach?: () => Promise<unknown>;
+    save?: () => Promise<void>;
+    stop?: () => Promise<unknown>;
+  }) {
+    const native = {
+      sessionId: "native-session",
+      destroy: mock(async (): Promise<void> => {}),
+      detach: mock(overrides.detach ?? (async () => CHECKPOINT)),
+      stop: mock(overrides.stop ?? (async () => CHECKPOINT)),
     };
+    const machine = {
+      destroy: mock(async (): Promise<void> => {}),
+      stop: mock(async (): Promise<void> => {}),
+    };
+    const save = mock(overrides.save ?? (async (): Promise<void> => {}));
 
-    await parkAiSdkHarnessSession({
-      broodsSession: broodsSession as never,
-      nativeSession: {
-        sessionId: "native-session",
-        detach: detach,
-        stop: stop,
-      } as never,
-      reservationKey: "acct:a:agent:b:sandbox",
-      successful: true,
-      type: "deepagents",
-    });
+    return {
+      native: native,
+      machine: machine,
+      save: save,
+      park: (turn: { successful: boolean; type: "codex" | "deepagents" }) =>
+        parkAiSdkHarnessSession({
+          broodsSession: { saveHarnessSession: save } as never,
+          nativeSession: native as never,
+          sandboxSession: machine as never,
+          reservationKey: "acct:a:agent:b:sandbox",
+          ...turn,
+        }),
+    };
+  }
 
-    expect(detach).toHaveBeenCalledTimes(1);
-    expect(stop).not.toHaveBeenCalled();
-    expect(saveHarnessSession).toHaveBeenCalledWith({
+  it("detaches successful Deep Agents sessions before saving and leaves the machine running", async () => {
+    const { native, machine, save, park } = parked({});
+    await park({ successful: true, type: "deepagents" });
+
+    expect(native.detach).toHaveBeenCalledTimes(1);
+    expect(native.stop).not.toHaveBeenCalled();
+    expect(machine.stop).not.toHaveBeenCalled();
+    expect(machine.destroy).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledWith({
       harnessType: "deepagents",
       sessionId: "native-session",
       resumeState: CHECKPOINT,
@@ -265,48 +466,65 @@ describe("parkAiSdkHarnessSession", () => {
     });
   });
 
-  it("stops snapshot-backed adapters after successful turns", async () => {
-    const detach = mock(async () => CHECKPOINT);
-    const stop = mock(async () => CHECKPOINT);
+  it("stops snapshot-backed adapters and their machine after successful turns", async () => {
+    const { native, machine, park } = parked({});
+    await park({ successful: true, type: "codex" });
 
-    await parkAiSdkHarnessSession({
-      broodsSession: {
-        saveHarnessSession: async () => {},
-      } as never,
-      nativeSession: {
-        sessionId: "native-session",
-        detach: detach,
-        stop: stop,
-      } as never,
-      reservationKey: "acct:a:agent:b:sandbox",
-      successful: true,
-      type: "codex",
-    });
-
-    expect(detach).not.toHaveBeenCalled();
-    expect(stop).toHaveBeenCalledTimes(1);
+    expect(native.detach).not.toHaveBeenCalled();
+    expect(native.stop).toHaveBeenCalledTimes(1);
+    expect(machine.stop).toHaveBeenCalledTimes(1);
+    expect(machine.destroy).not.toHaveBeenCalled();
   });
 
   it("stops failed sessions instead of leaving live compute", async () => {
-    const detach = mock(async () => CHECKPOINT);
-    const stop = mock(async () => CHECKPOINT);
+    const { native, machine, park } = parked({});
+    await park({ successful: false, type: "deepagents" });
 
-    await parkAiSdkHarnessSession({
-      broodsSession: {
-        saveHarnessSession: async () => {},
-      } as never,
-      nativeSession: {
-        sessionId: "native-session",
-        detach: detach,
-        stop: stop,
-      } as never,
-      reservationKey: "acct:a:agent:b:sandbox",
-      successful: false,
-      type: "deepagents",
+    expect(native.detach).not.toHaveBeenCalled();
+    expect(native.stop).toHaveBeenCalledTimes(1);
+    expect(machine.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops the machine even when the native stop fails", async () => {
+    const { machine, save, park } = parked({
+      stop: async (): Promise<never> => {
+        throw new Error("stop failed");
+      },
     });
 
-    expect(detach).not.toHaveBeenCalled();
-    expect(stop).toHaveBeenCalledTimes(1);
+    await expect(park({ successful: true, type: "codex" })).rejects.toThrow(
+      "stop failed",
+    );
+    expect(machine.stop).toHaveBeenCalledTimes(1);
+    expect(machine.destroy).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("destroys the session and its machine when the detach fails", async () => {
+    const { native, machine, park } = parked({
+      detach: async (): Promise<never> => {
+        throw new Error("detach failed");
+      },
+    });
+
+    await expect(
+      park({ successful: true, type: "deepagents" }),
+    ).rejects.toThrow("detach failed");
+    expect(native.destroy).toHaveBeenCalledTimes(1);
+    expect(machine.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a parked machine when the owner-fenced save is refused", async () => {
+    const { machine, park } = parked({
+      save: async (): Promise<never> => {
+        throw new Error("stale owner");
+      },
+    });
+
+    await expect(
+      park({ successful: true, type: "deepagents" }),
+    ).rejects.toThrow("stale owner");
+    expect(machine.destroy).not.toHaveBeenCalled();
   });
 });
 
@@ -349,6 +567,7 @@ describe("Session.saveHarnessSession", () => {
           ownerEventId: "event",
           ownerGeneration: 3,
           ...state,
+          entries: [],
         },
       ],
     ]);

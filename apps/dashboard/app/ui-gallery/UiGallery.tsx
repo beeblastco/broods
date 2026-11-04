@@ -102,11 +102,14 @@ import type { RangePreset, TimeWindow } from "@/app/lib/queryTokens";
 import { ObservabilityPageStandIn } from "./ObservabilityPageStandIn";
 import { SandboxInstancesStandIn } from "./SandboxInstancesStandIn";
 import { DataTableStandIn } from "./DataTableStandIn";
+import { MotionStandIn } from "./MotionStandIn";
 import { ShortcutsStandIn } from "./ShortcutsStandIn";
+import { DockApplyStandIn } from "./DockApplyStandIn";
+import { InlineEditStandIn } from "./InlineEditStandIn";
 import { UsageChartStandIn } from "./UsageChartStandIn";
 import { AllowanceStandIn } from "./AllowanceStandIn";
+import { WorkspaceFilesStandIn } from "./WorkspaceFilesStandIn";
 
-// The press-and-drag fixture's select, a level list like the side panel's.
 const LEVEL_OPTIONS = [
   { value: "all", label: "All levels" },
   { value: "ERROR", label: "ERROR" },
@@ -115,13 +118,10 @@ const LEVEL_OPTIONS = [
   { value: "DEBUG", label: "DEBUG" },
 ];
 
-// The toolbar fixture's search fields, the log panel's.
 const LOG_FIELDS = ["level", "source", "agent", "trace", "event"] as const;
 
-// A fixed clock, so the strip's bins land in the same place on every run.
 const FIXTURE_NOW = Date.UTC(2026, 8, 14, 12, 0, 0);
 
-// Entries across the last hour, one failure in the newest quarter.
 const VOLUME_POINTS: VolumePoint[] = Array.from({ length: 40 }, (_, i) => ({
   ts: FIXTURE_NOW - 60 * 60 * 1000 + i * 90 * 1000,
   severity: i === 36 ? "error" : i % 7 === 0 ? "warn" : "none",
@@ -129,20 +129,14 @@ const VOLUME_POINTS: VolumePoint[] = Array.from({ length: 40 }, (_, i) => ({
 
 const SAVE_STATES: CanvasSaveState[] = ["idle", "saving", "saved", "error"];
 
-/** No frame starts collapsed in the connection fixture. */
 const EMPTY_COLLAPSED: ReadonlySet<string> = new Set();
 
-// Enough rows for the stand-in table to scroll, so its head really sticks.
+// Enough rows to scroll, or the sticky head is never tested.
 const STAND_IN_ROWS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
-/** Side-panel tab labels, the row a press most often wanders off. */
 const PRESS_TABS = ["Details", "Config", "Settings"];
 
-/**
- * Six cards in two rows, the shape a small stage lands in after a tidy. Sized
- * explicitly so the bounds the canvas fits are the same on every machine, and
- * chosen so the fit zoom lands between ReactFlow's 0.5 floor and our 1.5 cap.
- */
+// Sized so the fit zoom lands between ReactFlow's 0.5 floor and our 1.5 cap on every machine.
 const FIT_NODES: Node[] = [0, 250, 500].flatMap((x) =>
   [0, 260].map((y) => ({
     id: `fit-${x}-${y}`,
@@ -153,27 +147,18 @@ const FIT_NODES: Node[] = [0, 250, 500].flatMap((x) =>
   })),
 );
 
-/**
- * Tracy's stage as the frames canvas draws it: a cloud sandbox alone as a
- * card and two computers framed, one connected and one offline; a mounted and
- * an inherited workspace framed, and two read-only ones shared with a coder
- * sub-agent; MCP servers on each transport, the url ones disabled;
- * a code-managed sub-agent link and a user-owned one after it. Laid out by
- * the same tidy layout the canvas button runs, so everything lands where a
- * real stage puts it.
- */
 const FRAME_MCP_SERVERS: StageMcpServer[] = [
   fixtureServer("github", "http", null, true),
   fixtureServer("linear", "http", null, true),
   fixtureServer("search", "hosted", null, false),
-  fixtureServer("blender", "machine", "kien-mac", false),
+  fixtureServer("blender", "machine", "laptop-mac", false),
 ];
 
 const FRAME_EDGES: Edge[] = [
   ...[
     "internal-sandbox",
-    "kien-mac",
-    "phicks-mac",
+    "laptop-mac",
+    "office-mac",
     "notes",
     "repos",
     "handbook",
@@ -182,7 +167,7 @@ const FRAME_EDGES: Edge[] = [
     "linear",
     "search",
     "blender",
-  ].map((target) => fixtureEdge("tracy", target)),
+  ].map((target) => fixtureEdge("support", target)),
   fixtureEdge("coder", "handbook"),
   fixtureEdge("coder", "playbook"),
   {
@@ -193,12 +178,11 @@ const FRAME_EDGES: Edge[] = [
     targetHandle: "left",
     type: "mount",
   },
-  // Code-managed: the canvas marks it undeletable when it loads it.
   {
     deletable: false,
-    id: "subagent:tracy-right-coder-left",
+    id: "subagent:support-right-coder-left",
     reconnectable: false,
-    source: "tracy",
+    source: "support",
     sourceHandle: "right",
     target: "coder",
     targetHandle: "left",
@@ -216,16 +200,16 @@ const FRAME_EDGES: Edge[] = [
 
 const FRAME_NODES: Node[] = applyTidyLayout(
   [
-    fixtureNode("tracy", "agent", {
-      sandboxOrder: ["internal-sandbox", "kien-mac", "phicks-mac"],
+    fixtureNode("support", "agent", {
+      sandboxOrder: ["internal-sandbox", "laptop-mac", "office-mac"],
     }),
     fixtureNode("coder", "agent"),
     fixtureNode("reviewer", "agent"),
     fixtureNode("internal-sandbox", "sandbox", {
       config: { provider: "sandbox" },
     }),
-    fixtureNode("kien-mac", "sandbox", { config: { provider: "machine" } }),
-    fixtureNode("phicks-mac", "sandbox", { config: { provider: "machine" } }),
+    fixtureNode("laptop-mac", "sandbox", { config: { provider: "machine" } }),
+    fixtureNode("office-mac", "sandbox", { config: { provider: "machine" } }),
     fixtureNode("notes", "workspace"),
     fixtureNode("repos", "workspace"),
     fixtureNode("handbook", "workspace", { readOnly: true }),
@@ -241,12 +225,6 @@ const FRAME_NODES: Node[] = applyTidyLayout(
 
 const FRAME_ANALYSIS = analyzeCanvasInfra(FRAME_NODES, FRAME_EDGES);
 
-/**
- * The connection fixture: `alpha` owns a two-chip computer frame, `beta` owns
- * nothing in it, and `fresh-box` is a sandbox nobody wired yet. Between them
- * they cover the two drags that were reported broken, an agent onto a brand
- * new card and a second agent onto a chip inside someone else's frame.
- */
 const CONNECT_EDGES: Edge[] = [
   fixtureEdge("alpha", "box-one"),
   fixtureEdge("alpha", "box-two"),
@@ -266,23 +244,16 @@ const CONNECT_NODES: Node[] = applyTidyLayout(
 
 const CONNECT_ANALYSIS = analyzeCanvasInfra(CONNECT_NODES, CONNECT_EDGES);
 
-/**
- * The drag-to-group fixture: `tracy` owns a two-chip cloud frame, `notes` is a
- * workspace of its own, `other` owns the single sandbox `solo`, and `spare` is a
- * cloud sandbox nobody wired. Dragging `spare` onto the frame joins it at the
- * slot it is dropped on, and onto `solo` forms a new group from the two cards.
- * Dragging `notes` onto the frame is refused: no group holds both kinds.
- */
 const DROP_EDGES: Edge[] = [
-  fixtureEdge("tracy", "box-one"),
-  fixtureEdge("tracy", "box-two"),
-  fixtureEdge("tracy", "notes"),
+  fixtureEdge("support", "box-one"),
+  fixtureEdge("support", "box-two"),
+  fixtureEdge("support", "notes"),
   fixtureEdge("other", "solo"),
 ];
 
 const DROP_NODES: Node[] = applyTidyLayout(
   [
-    fixtureNode("tracy", "agent", { sandboxOrder: ["box-one", "box-two"] }),
+    fixtureNode("support", "agent", { sandboxOrder: ["box-one", "box-two"] }),
     fixtureNode("box-one", "sandbox"),
     fixtureNode("box-two", "sandbox"),
     fixtureNode("notes", "workspace"),
@@ -294,19 +265,12 @@ const DROP_NODES: Node[] = applyTidyLayout(
   serversByNode([]),
 );
 
-/** The url MCP frame starts collapsed, so the fixture shows both frame states. */
-const COLLAPSED_FIXTURE_FRAME = "frame:tracy:mcp:http";
+const COLLAPSED_FIXTURE_FRAME = "frame:support:mcp:http";
 
-// What a production client receives when a Convex action throws a plain Error.
 const CONVEX_SERVER_ERROR = new Error(
   "[CONVEX A(org/lifecycle:provision)] [Request ID: 4f1c9a2e7b3d0a51] Server Error\n  Called by client",
 );
 
-/**
- * Size cells: fully reported, reported without a disk, a row written before
- * sizes were verified (its specs are only the config's guess), and a computer
- * whose daemon reported none.
- */
 const SIZE_ROWS: Array<{
   provider: string;
   specs: Doc<"sandboxInstances">["specs"] | undefined;
@@ -326,7 +290,6 @@ const SIZE_ROWS: Array<{
   { provider: "machine", specs: undefined, verified: true },
 ];
 
-/** The account's ChatGPT plan, signed in; the gallery also renders none. */
 const CONNECTION_FIXTURES: Connection[] = [
   {
     type: "chatgpt",
@@ -380,21 +343,44 @@ export function UiGallery(): React.JSX.Element {
     );
   }
 
-  // The sandbox list with its panel and dock, with no provider behind it.
+  if (dashboardTab === "workspace-files") {
+    return (
+      <main
+        className="flex gap-10 p-8"
+        data-hydrated={hydrated ? "true" : undefined}
+      >
+        <section data-fixture="files-writer">
+          <WorkspaceFilesStandIn canWrite={true} />
+        </section>
+        <section data-fixture="files-member">
+          <WorkspaceFilesStandIn canWrite={false} />
+        </section>
+      </main>
+    );
+  }
+
   if (dashboardTab === "sandbox") {
     return <SandboxInstancesStandIn />;
   }
 
-  // A trace link keeps the path and swaps ?tab=, so the dashboard stand-in
-  // answers the same parameter the dashboard page does.
   if (dashboardTab === "monitoring" || dashboardTab === "tracing") {
     return <ObservabilityPageStandIn tab={dashboardTab} />;
   }
 
-  // The keyboard surfaces own the whole viewport (the dock is a column beside
-  // the page), so they get their own stand-in rather than a section here.
   if (dashboardTab === "shortcuts") {
     return <ShortcutsStandIn />;
+  }
+
+  if (dashboardTab === "dock-apply") {
+    return <DockApplyStandIn />;
+  }
+
+  if (dashboardTab === "inline-edit") {
+    return <InlineEditStandIn />;
+  }
+
+  if (dashboardTab === "motion") {
+    return <MotionStandIn />;
   }
 
   return (
@@ -448,21 +434,26 @@ export function UiGallery(): React.JSX.Element {
       </section>
 
       <section data-fixture="allowance" className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium">Allowance by project</h2>
-        <AllowanceStandIn />
+        <h2 className="text-sm font-medium">Resources, one project</h2>
+        <AllowanceStandIn
+          view={{ scope: "project", projectId: "support-bot" }}
+        />
+      </section>
+
+      <section data-fixture="allowance-org" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Resources, the organization</h2>
+        <AllowanceStandIn view={{ scope: "all" }} />
       </section>
 
       <section data-fixture="canvas-controls" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Canvas controls</h2>
-        {/* Wide enough for a notice to centre without reaching the controls,
-            as the real canvas is. */}
+        {/* Wide enough that a centred notice clears the controls, as on the canvas. */}
         <div className="relative h-40 w-full max-w-md rounded-lg border border-border">
           <ReactFlowProvider>
             <div className="absolute top-2 left-2">
               <CanvasControls onTidy={() => {}} />
             </div>
           </ReactFlowProvider>
-          {/* The canvas's notice strip: top centre, clear of the controls. */}
           <div className="pointer-events-none absolute top-2 right-0 left-0 flex justify-center">
             <CanvasSaveStatus state={saveState} onRetry={() => {}} />
           </div>
@@ -485,8 +476,6 @@ export function UiGallery(): React.JSX.Element {
 
       <section data-fixture="canvas-fit" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Canvas fit on open</h2>
-        {/* The real ReactFlow, fitted the way the Architecture page fits on its
-            first paint, so a spec can measure what the frame actually shows. */}
         <div className="h-80 w-[36rem] rounded-lg border border-border">
           <ReactFlow
             nodes={FIT_NODES}
@@ -515,8 +504,6 @@ export function UiGallery(): React.JSX.Element {
 
       <section data-fixture="canvas-node-menu" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Canvas card menu</h2>
-        {/* The frames stage above, read by the real menu builders: coder has a
-            code-managed link, handbook sits in a group. */}
         <div className="flex gap-2">
           <CanvasNodeMenuFixture nodeId="coder" />
           <CanvasNodeMenuFixture nodeId="handbook" />
@@ -525,9 +512,6 @@ export function UiGallery(): React.JSX.Element {
 
       <section data-fixture="press-drag" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Press that wanders</h2>
-        {/* One of each control a press lands on, with the state it changes
-            rendered next to it, so a spec can press with a few pixels of
-            travel and assert the press still counted. */}
         <nav
           aria-label="Press row"
           className="flex flex-wrap items-center gap-3"
@@ -581,8 +565,6 @@ export function UiGallery(): React.JSX.Element {
 
       <section data-fixture="detail-split" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Detail split</h2>
-        {/* The split every observability table sits in, at a fixed frame so a
-            spec can measure the panel's width and where the handle drags to. */}
         <Button
           size="sm"
           variant="outline"
@@ -616,8 +598,6 @@ export function UiGallery(): React.JSX.Element {
 
       <section data-fixture="status-page" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Status page under the header</h2>
-        {/* The home route's setup failure and the project guard render it
-            below the header, so it has to fill that box, not the viewport. */}
         <div className="flex h-64 w-160 flex-col border border-border">
           <div className="h-10 shrink-0 border-b border-border" />
           <div data-status-frame className="min-h-0 flex-1">
@@ -633,7 +613,6 @@ export function UiGallery(): React.JSX.Element {
 
       <section data-fixture="sandbox-size" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Sandbox size</h2>
-        {/* The instances table's Size cell, one row per SIZE_ROWS case. */}
         <table className="w-fit text-xs whitespace-nowrap">
           <tbody>
             {SIZE_ROWS.map((row) => (
@@ -677,16 +656,6 @@ export function UiGallery(): React.JSX.Element {
   );
 }
 
-/**
- * The real node and edge components on a static graph. Stage data comes from
- * the frames context instead of Convex, one machine connected and one offline.
- */
-/**
- * A connectable canvas: the same nodes, handles and validator the real one
- * uses, so a spec can drag an edge and find out whether it lands. Every edge
- * it accepts is listed under the canvas, since a refused drop leaves nothing
- * on screen to assert.
- */
 function CanvasConnectFixture(): React.JSX.Element {
   const [edges, setEdges] = useState<Edge[]>(CONNECT_EDGES);
   const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
@@ -704,6 +673,7 @@ function CanvasConnectFixture(): React.JSX.Element {
   );
   const frames = useMemo(
     (): CanvasFramesValue => ({
+      agentBadges: {},
       canWrite: true,
       expandedMemberId: expandedMemberId,
       machineConnections: [],
@@ -746,8 +716,7 @@ function CanvasConnectFixture(): React.JSX.Element {
             fitViewOptions={FIT_VIEW_OPTIONS}
             maxZoom={FIT_VIEW_OPTIONS.maxZoom}
             nodesDraggable={false}
-            // Fit once the nodes are measured. Fitting on mount reads them as
-            // zero-sized here and parks the graph outside the box.
+            // fitView on mount reads the nodes as zero-sized here; fit once they are measured.
             onInit={(instance) => {
               void instance.fitView(FIT_VIEW_OPTIONS);
             }}
@@ -796,7 +765,6 @@ function CanvasConnectFixture(): React.JSX.Element {
   );
 }
 
-/** A right-click target that opens the card menu the canvas would, for one fixture node. */
 function CanvasNodeMenuFixture({
   nodeId,
 }: {
@@ -816,7 +784,6 @@ function CanvasNodeMenuFixture({
       <ContextMenuContent className="w-60">
         <CanvasNodeMenu
           nodeId={nodeId}
-          label={nodeId}
           links={nodeLinkActions(FRAME_NODES, FRAME_EDGES, nodeId)}
           groups={frameGroupActions(
             {
@@ -832,7 +799,7 @@ function CanvasNodeMenuFixture({
           onDelete={() => setLast("delete")}
           onMakeDefault={() => setLast("make-default")}
           onRemoveEdge={(edgeId) => setLast(`unlink ${edgeId}`)}
-          onRename={(_id, label) => setLast(`rename ${label}`)}
+          onRename={(id) => setLast(`rename ${id}`)}
           onSetMount={(_id, target) => setLast(`mount ${target.kind}`)}
           onSetUngrouped={(nodeIds) => setLast(`group ${nodeIds.join(",")}`)}
         />
@@ -841,17 +808,12 @@ function CanvasNodeMenuFixture({
   );
 }
 
-/**
- * The real drop rules under a real drag: `canvasDropTarget` while the card moves,
- * `applyCanvasDrop` when it lands, and the frame growing a slot in between. The
- * log names the group it joined and the slot it took, so a spec can read both.
- */
 function CanvasDropFixture(): React.JSX.Element {
   const [nodes, setNodes] = useState<Node[]>(DROP_NODES);
   const [edges, setEdges] = useState<Edge[]>(DROP_EDGES);
   const [drop, setDrop] = useState<CanvasDrop | null>(null);
   const [last, setLast] = useState("");
-  // Read on release, when the state the preview renders from is a render behind.
+  // Read on release, when the `drop` state is still a render behind.
   const dropRef = useRef<CanvasDrop | null>(null);
   const graph = useMemo(
     () =>
@@ -868,6 +830,7 @@ function CanvasDropFixture(): React.JSX.Element {
   );
   const frames = useMemo(
     (): CanvasFramesValue => ({
+      agentBadges: {},
       canWrite: true,
       expandedMemberId: null,
       machineConnections: [],
@@ -898,7 +861,6 @@ function CanvasDropFixture(): React.JSX.Element {
             connectionMode={ConnectionMode.Loose}
             fitViewOptions={FIT_VIEW_OPTIONS}
             maxZoom={FIT_VIEW_OPTIONS.maxZoom}
-            // Fit once the nodes are measured, as the connect fixture does.
             onInit={(instance) => {
               void instance.fitView(FIT_VIEW_OPTIONS);
             }}
@@ -975,8 +937,6 @@ function CanvasFramesFixture(): React.JSX.Element {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(
     () => new Set([COLLAPSED_FIXTURE_FRAME]),
   );
-  // The canvas reads this off its selection; the fixture has no side panel, so
-  // it keeps the clicked chip itself.
   const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
   const graph = useMemo(
     () =>
@@ -992,11 +952,12 @@ function CanvasFramesFixture(): React.JSX.Element {
   );
   const frames = useMemo(
     (): CanvasFramesValue => ({
+      agentBadges: {},
       canWrite: true,
       expandedMemberId: expandedMemberId,
       machineConnections: [
-        fixtureConnection("kien-mac", Date.now(), undefined),
-        fixtureConnection("phicks-mac", Date.now() - 3_600_000, Date.now()),
+        fixtureConnection("laptop-mac", Date.now(), undefined),
+        fixtureConnection("office-mac", Date.now() - 3_600_000, Date.now()),
       ],
       mcpServers: serversByNode(FRAME_MCP_SERVERS),
       mountTargetsOf: (workspaceId) =>
@@ -1028,7 +989,6 @@ function CanvasFramesFixture(): React.JSX.Element {
             nodeTypes={CANVAS_NODE_TYPES}
             edgeTypes={CANVAS_EDGE_TYPES}
             colorMode="dark"
-            // Mount and runs-on edges end on source-type side handles, as on the canvas.
             connectionMode={ConnectionMode.Loose}
             fitView
             fitViewOptions={FIT_VIEW_OPTIONS}
@@ -1053,7 +1013,6 @@ function CanvasFramesFixture(): React.JSX.Element {
   );
 }
 
-/** A machine daemon's connection row; offline when `disconnectedAt` is set. */
 function fixtureConnection(
   name: string,
   lastSeenAt: number,
@@ -1106,11 +1065,7 @@ function fixtureServer(
   };
 }
 
-/**
- * The piece of MonitoringPanel that broke the level select: a sticky, raised
- * table head right under the toolbar. Without page chrome like this below it,
- * a popup that fails to stack above the page still looks perfectly fine.
- */
+// A raised sticky head under the toolbar: without it, a popup that fails to stack looks fine.
 function LogTableStandIn(): React.JSX.Element {
   return (
     <div className="flex h-50 overflow-hidden rounded-lg border border-border bg-card">
@@ -1121,7 +1076,6 @@ function LogTableStandIn(): React.JSX.Element {
   );
 }
 
-/** The log table's shape, sticky head included, for any fixture that needs rows. */
 function StandInTable(): React.JSX.Element {
   return (
     <table className="w-full table-fixed font-mono text-xs">

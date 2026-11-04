@@ -166,6 +166,16 @@ describe("pancake channel adapter", () => {
         ),
       ),
     ).toEqual({ kind: "ignore" });
+    expect(
+      await adapter.parse(
+        createPancakeRequest(validPayload({ message: { is_hidden: true } })),
+      ),
+    ).toEqual({ kind: "ignore" });
+    expect(
+      await adapter.parse(
+        createPancakeRequest(validPayload({ message: { is_removed: true } })),
+      ),
+    ).toEqual({ kind: "ignore" });
   });
 
   it("surfaces conversation tag ids on the parsed source so hooks can filter", async () => {
@@ -255,7 +265,6 @@ describe("pancake channel adapter", () => {
           type: "video",
           video_data: { url: "https://content.pancake.vn/1/clip.mp4" },
         },
-        // A share card arrives in the same array with nothing behind it.
         { id: "att-3", type: "share", url: "https://example.com/article" },
       ],
     });
@@ -266,8 +275,7 @@ describe("pancake channel adapter", () => {
   });
 
   it("gives two captionless photos different event ids", async () => {
-    // The message id repeats across edits, so the event id folds in the content.
-    // Without the attachments in it the second photo dedupes away as a replay.
+    // Message ids repeat across edits, so the event id must fold in the attachments.
     const first = await parsePancakeMedia({
       message: "",
       attachments: [
@@ -282,21 +290,6 @@ describe("pancake channel adapter", () => {
     });
 
     expect(first.eventId).not.toBe(second.eventId);
-  });
-
-  it("still ignores a message with neither text nor attachments", async () => {
-    const adapter = createPancakeChannel(
-      "page-1",
-      "page-token",
-      "secret",
-      null,
-      null,
-    );
-    const parsed = await adapter.parse(
-      createPancakeRequest(validPayload({ message: { message: "" } })),
-    );
-
-    expect(parsed.kind).toBe("ignore");
   });
 });
 

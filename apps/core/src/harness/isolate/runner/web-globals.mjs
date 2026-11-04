@@ -1,13 +1,5 @@
-/**
- * Web globals a bare V8 isolate lacks but ordinary bundles assume: text codecs,
- * base64, URL/URLSearchParams and crypto. Exported as source because it has to
- * be evaluated inside the isolate; runner.mjs installs it before the tool module
- * evaluates. Web Streams are deliberately absent. A bundle that needs them
- * runs on the sandbox tier instead of getting a half-built one here.
- */
-
-// $0 parses/mutates a URL on the host so the isolate inherits Node's WHATWG
-// parser rather than a hand-rolled one; $1 is host entropy for crypto.
+// Web globals a bare V8 isolate lacks, as source runner.mjs evaluates inside it. No Web Streams:
+// a bundle that needs them runs on the sandbox tier. $0 is the host's URL parser, $1 host entropy.
 export const WEB_GLOBALS_SOURCE = `
 const __asBytes = (input) => {
   if (input == null) return new Uint8Array(0);
@@ -47,8 +39,6 @@ globalThis.TextEncoder = class TextEncoder {
     }
     return new Uint8Array(bytes);
   }
-  // Stops at the last code point that fits whole. read counts the UTF-16 units
-  // actually consumed, which is the entire point of chunked encodeInto.
   encodeInto(source, destination) {
     const text = source === undefined ? "" : String(source);
     let read = 0;
@@ -67,8 +57,6 @@ globalThis.TextEncoder = class TextEncoder {
   }
 };
 
-// Only utf-8: it is what every bundle in this position asks for, and a label
-// registry is not worth carrying into an isolate.
 globalThis.TextDecoder = class TextDecoder {
   constructor(label, options) {
     const encoding = String(label === undefined ? "utf-8" : label).toLowerCase();
@@ -116,8 +104,6 @@ globalThis.TextDecoder = class TextDecoder {
         index += 1;
         continue;
       }
-      // A sequence split across chunk boundaries is held back rather than
-      // replaced, which is the whole point of { stream: true }.
       if (index + needed >= bytes.length) {
         if (stream) {
           this.__pending = bytes.slice(index);
@@ -318,8 +304,6 @@ globalThis.URL = class URL {
     this.__parts = parts;
     this.__searchParams = null;
   }
-  // Every mutation round-trips through the host parser, so a setter behaves the
-  // way Node's does instead of the way a string splice would.
   __set(key, value) {
     this.__apply($0(this.__parts.href, null, key, String(value)));
   }
@@ -335,8 +319,6 @@ for (const part of __URL_PARTS) {
 }
 
 const __RANDOM_QUOTA_BYTES = 65536;
-// Integer views only, per spec: raw bytes poured into a float array are not
-// uniformly distributed values, so the spec rejects those rather than mislead.
 const __RANDOM_VIEWS = [
   Int8Array, Uint8Array, Uint8ClampedArray,
   Int16Array, Uint16Array,
@@ -351,8 +333,7 @@ globalThis.crypto = {
       error.name = "TypeMismatchError";
       throw error;
     }
-    // The host bridge caps its reply at the same quota. Throwing is what the
-    // spec says; filling the tail with zeros would be silently weak randomness.
+    // Matches the host bridge's cap: past it the reply is short and the tail would stay zero.
     if (view.byteLength > __RANDOM_QUOTA_BYTES) {
       const error = new Error("getRandomValues byteLength exceeds the 65536 byte quota");
       error.name = "QuotaExceededError";

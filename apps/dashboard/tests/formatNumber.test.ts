@@ -8,3 +8,8 @@ test("a count rounds into the next unit instead of reading 1000.0K", () => {
   expect(formatNumber(999.5)).toBe("1.0K");
   expect(formatNumber(48_800)).toBe("48.8K");
 });
+
+test("a count below 1K reads whole, not 840.107", () => {
+  expect(formatNumber(840.107)).toBe("840");
+  expect(formatNumber(22.731)).toBe("23");
+});

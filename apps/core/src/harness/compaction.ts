@@ -1,13 +1,6 @@
-/**
- * Session compaction for persisted conversation context.
- * Keep the auto-compaction threshold and summary generation here; storage
- * stays in session.ts.
- */
-
 import { generateText, type ModelMessage, type SystemModelMessage } from "ai";
 import { DEFAULT_COMPACTION_PROMPT } from "../shared/.generated/compaction-prompt.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
-import { aiSessionId } from "../shared/otel.ts";
 import { isContextLengthError, toErrorMessage } from "../shared/errors.ts";
 import { logInfo } from "../shared/log.ts";
 import {
@@ -16,15 +9,44 @@ import {
   resolveConfiguredModel,
 } from "./provider.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
+import {
+  addUsageTokenTotals,
+  extractCacheWriteTokens,
+  modelTokenAttributes,
+  usageTokenTotals,
+  type UsageTokenTotals,
+} from "./usage-metering.ts";
 
-// Input tokens of a turn's last model call that start an auto-compaction.
 const DEFAULT_AUTO_COMPACTION_MAX_CONTEXT_LENGTH = 500_000;
-// A single message the summary model still refuses at this size is not cut
-// further; the refusal surfaces instead.
 const MIN_SPLIT_MESSAGE_LENGTH = 1_000;
 export const COMPACTION_MARKER = "<session-compaction-summary>";
 const COMPACTION_MARKER_END = "</session-compaction-summary>";
 const COMPACTION_MESSAGE_SEPARATOR = "\n\n";
+
+export interface CompactionUsage {
+  usage: UsageTokenTotals;
+  modelCalls: number;
+  modelProvider: string;
+  modelId: string;
+}
+
+export interface ConversationSummary extends CompactionUsage {
+  message: SystemModelMessage;
+}
+
+export interface CompactionResult extends CompactionUsage {
+  messageCount: number;
+}
+
+/** `spent` is what the finished summary calls cost, so a failed split is still metered. */
+export class CompactionError extends Error {
+  readonly spent: CompactionUsage;
+
+  constructor(cause: unknown, spent: CompactionUsage) {
+    super(toErrorMessage(cause), { cause: cause });
+    this.spent = spent;
+  }
+}
 
 export interface SummarizeConversationInput {
   accountId?: string;
@@ -32,15 +54,9 @@ export interface SummarizeConversationInput {
   priorSummaries: SystemModelMessage[];
   messages: ModelMessage[];
   agentConfig: AgentConfig;
-  // Extra focus for the summary model, from /compact <instructions>.
   instructions?: string;
 }
 
-/**
- * Whether a turn auto-compacts: on unless the agent turns it off, once the
- * turn's last model call read `maxContextLength` input tokens or more, or when
- * the provider refused the turn for context length.
- */
 export function shouldAutoCompact(
   agentConfig: AgentConfig,
   lastInputTokens: number | undefined,
@@ -56,6 +72,16 @@ export function shouldAutoCompact(
   return lastInputTokens >= configuredMax;
 }
 
+export function compactionSpanAttributes(
+  result: CompactionResult,
+): Record<string, number> {
+  return {
+    "compaction.message_count": result.messageCount,
+    "compaction.model_calls": result.modelCalls,
+    ...modelTokenAttributes(result.usage),
+  };
+}
+
 export function isCompactionSummaryMessage(
   message: SystemModelMessage,
 ): boolean {
@@ -65,13 +91,9 @@ export function isCompactionSummaryMessage(
   );
 }
 
-/**
- * Unconditional summary generation. Callers decide when to compact and which
- * messages fold in; this produces the summary row from them.
- */
 export async function summarizeConversation(
   input: SummarizeConversationInput,
-): Promise<SystemModelMessage | null> {
+): Promise<ConversationSummary | null> {
   const messages = stripReasoningFromMessages(input.messages);
   const compactableContext = [...input.priorSummaries, ...messages];
   if (compactableContext.length === 0) {
@@ -85,13 +107,14 @@ export async function summarizeConversation(
   const providerOptions = providerOptionsFromModelConfig(input.agentConfig);
   const startedAt = Date.now();
   const suffix = formatInstructions(input.instructions);
+  let usage = usageTokenTotals(undefined);
+  let modelCalls = 0;
   const requestSummary = async (blocks: string[]): Promise<string> => {
     const result = await generateText({
       ...modelSettingsFromModelConfig(input.agentConfig),
       model: configuredModel.model,
       instructions: DEFAULT_COMPACTION_PROMPT,
       runtimeContext: {
-        sessionId: aiSessionId(input.conversationKey),
         traceName: "harness.compaction",
         properties: process.env.DEPLOYMENT_ENVIRONMENT
           ? { environment: process.env.DEPLOYMENT_ENVIRONMENT }
@@ -100,13 +123,13 @@ export async function summarizeConversation(
       telemetry: {
         functionId: "harness.compaction",
         includeRuntimeContext: {
-          sessionId: true,
           traceName: true,
           properties: true,
         },
         recordInputs: false,
         recordOutputs: false,
       },
+      // Per-call data rides the user message so the static system prompt stays cacheable.
       messages: [
         {
           role: "user",
@@ -115,23 +138,50 @@ export async function summarizeConversation(
       ],
       ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
     });
+    const callUsage = usageTokenTotals(result.usage);
+    usage = addUsageTokenTotals(usage, {
+      ...callUsage,
+      cacheWriteTokens:
+        callUsage.cacheWriteTokens ||
+        extractCacheWriteTokens(
+          configuredModel.providerName,
+          result.providerMetadata,
+        ),
+    });
+    modelCalls += 1;
 
     return result.text;
   };
-  const text = await summarizeBlocks(
-    formatMessagesForCompaction(compactableContext),
-    requestSummary,
+  const spent = (): CompactionUsage => ({
+    usage: usage,
+    modelCalls: modelCalls,
+    modelProvider: configuredModel.providerName,
+    modelId: configuredModel.model.modelId,
+  });
+  let text: string;
+  try {
+    text = await summarizeBlocks(
+      formatMessagesForCompaction(compactableContext),
+      requestSummary,
+    );
+  } catch (error) {
+    throw new CompactionError(error, spent());
+  }
+
+  const durationMs = Date.now() - startedAt;
+  logInfo(
+    `Session context compacted: ${input.messages.length} message(s), ${modelCalls} model call(s), ${usage.inputTokens} in / ${usage.outputTokens} out / ${usage.totalTokens} total token(s), ${durationMs}ms`,
+    {
+      eventType: "session.compacted",
+      conversationKey: input.conversationKey,
+      ...spent(),
+      messageCount: input.messages.length,
+      compactedMessageCount: compactableContext.length,
+      durationMs: durationMs,
+    },
   );
 
-  const summary = createCompactionSummaryMessage(text);
-  logInfo("Session context compacted", {
-    conversationKey: input.conversationKey,
-    messageCount: input.messages.length,
-    compactedMessageCount: compactableContext.length,
-    durationMs: Date.now() - startedAt,
-  });
-
-  return summary;
+  return { ...spent(), message: createCompactionSummaryMessage(text) };
 }
 
 function createCompactionSummaryMessage(summary: string): SystemModelMessage {
@@ -159,13 +209,8 @@ function stringifyMessageContent(content: ModelMessage["content"]): string {
   return typeof content === "string" ? content : JSON.stringify(content);
 }
 
-// Summarizes every block. The whole history goes first; only when the summary
-// model refuses it for length are the older and newer halves summarized apart
-// and merged, labelled so the merge keeps their order. No whole message is
-// dropped: a single message too long on its own keeps as much of its beginning
-// as the model accepts, and a refused merge fails the compaction and leaves the
-// stored history as it was. Per-call data rides the user message so the static
-// system prompt stays cacheable.
+// Splits only on a length refusal, never dropping a whole message: a lone message keeps its
+// start, and a refused merge fails the compaction so the stored history stays as it was.
 async function summarizeBlocks(
   blocks: string[],
   requestSummary: (blocks: string[]) => Promise<string>,

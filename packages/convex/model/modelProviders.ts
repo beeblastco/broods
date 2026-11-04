@@ -1,33 +1,52 @@
-/**
- * The model providers an agent may name in `config.model.provider`.
- * One plain-data list the Convex runtime, the dashboard and core all read; core
- * pairs each name with its Vercel AI SDK factory in `harness/provider.ts` and a
- * `satisfies` there fails the build if the two ever drift.
- */
-
-/**
- * Provider settings that name an endpoint the factory will call, like
- * `baseURL`, OpenRouter's `baseUrl` or its `decisionsBaseURL`. Convex holds
- * each to a public https URL and core sends that provider's requests through
- * its private-address guard.
- */
+// Settings naming an endpoint (`baseURL`, `baseUrl`, ...): held to a public https URL.
 export const PROVIDER_ENDPOINT_SETTING = /url$/i;
 
-/** Display metadata for the dashboard's provider pickers. */
+// No image-, speech- or transcription-only providers: they can not back `config.model`.
+export const ACCOUNT_MODEL_PROVIDER_NAMES = [
+  "alibaba",
+  "anthropic",
+  "azure",
+  "baseten",
+  "bedrock",
+  "cerebras",
+  "chatgpt",
+  "cloudflare",
+  "cohere",
+  "custom",
+  "deepinfra",
+  "deepseek",
+  "fireworks",
+  "google",
+  "groq",
+  "huggingface",
+  "llmgateway",
+  "minimax",
+  "mistral",
+  "moonshotai",
+  "ollama",
+  "openai",
+  "openrouter",
+  "perplexity",
+  "togetherai",
+  "v0",
+  "vercel",
+  "vertex",
+  "xai",
+  "zai",
+] as const;
+
+export type AccountModelProviderName =
+  (typeof ACCOUNT_MODEL_PROVIDER_NAMES)[number];
+
 export interface ModelProviderMeta {
   label: string;
   modelPlaceholder: string;
 }
 
-/**
- * Every Vercel AI SDK provider that ships language models, the community
- * providers on the same spec that take an API key (`cloudflare`, `llmgateway`,
- * `ollama`, `openrouter`), `custom` (any OpenAI-compatible endpoint), and
- * `chatgpt` (OpenAI on a Sign in with ChatGPT login instead of an API key).
- * Image-, speech- and transcription-only providers are deliberately absent:
- * they cannot back `config.model`.
- */
-export const MODEL_PROVIDERS = {
+export const MODEL_PROVIDERS: Record<
+  AccountModelProviderName,
+  ModelProviderMeta
+> = {
   alibaba: { label: "Alibaba Qwen", modelPlaceholder: "qwen3-max" },
   anthropic: {
     label: "Anthropic",
@@ -88,28 +107,15 @@ export const MODEL_PROVIDERS = {
   vertex: { label: "Google Vertex AI", modelPlaceholder: "gemini-2.5-flash" },
   xai: { label: "xAI Grok", modelPlaceholder: "grok-4" },
   zai: { label: "Z.ai GLM", modelPlaceholder: "glm-4.7" },
-} as const satisfies Record<string, ModelProviderMeta>;
+};
 
-export type AccountModelProviderName = keyof typeof MODEL_PROVIDERS;
-
-export const ACCOUNT_MODEL_PROVIDER_NAMES = Object.keys(
-  MODEL_PROVIDERS,
-) as AccountModelProviderName[];
-
-// Own properties only: `in` would accept "constructor"/"__proto__"/"toString"
-// as provider names, which then reach a registry lookup that has no factory.
+// Not `in`: it would accept "constructor" or "__proto__", which have no factory.
 export function isAccountModelProviderName(
   value: string,
 ): value is AccountModelProviderName {
   return Object.hasOwn(MODEL_PROVIDERS, value);
 }
 
-/**
- * The stage variable a provider's `apiKey` reads by default, `OPENAI_API_KEY`
- * as in the CLI starter's `env("OPENAI_API_KEY")`. A dashboard-created agent
- * stores the same `${NAME}` ref, and the dashboard names it in its hints.
- * Null for `chatgpt`, which runs on the account's ChatGPT login instead.
- */
 export function providerApiKeyEnvName(
   provider: AccountModelProviderName,
 ): string | null {

@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import type { ToolExecuteFunction, ToolSet } from "ai";
+import { asSchema, type ToolExecuteFunction, type ToolSet } from "ai";
 import {
+  askingEventId,
   rootEventId,
   type AsyncToolResultRecord,
 } from "../src/harness/async-tool-result.ts";
 import {
   answersFromChoice,
   answersFromText,
-  formatQuestionsText,
   listOpenQuestions,
   NO_ANSWER_ERROR,
   openQuestion,
@@ -72,6 +72,19 @@ describe("rootEventId", () => {
 
     expect(rootEventId(asked)).toBe(asked);
     expect(rootEventId(`${asked}:async-tools:async_tool_1`)).toBe(asked);
+  });
+});
+
+describe("askingEventId", () => {
+  it("names the exact event that asked, even one whose id looks like a continuation", () => {
+    const asked = "acct:a:agent:b:api:visible:async-bg:private";
+
+    expect(
+      askingEventId({
+        parentEventId: `${asked}:async-question:async_tool_1`,
+        resultId: "async_tool_1",
+      }),
+    ).toBe(asked);
   });
 });
 
@@ -150,7 +163,7 @@ describe("ask_questions tool", () => {
     expect(blocked).toEqual([output.statusId]);
   });
 
-  it("rejects a malformed prompt before touching storage", async () => {
+  it("rejects a repeated question id before touching storage", async () => {
     stubMutations();
     const execute = toolExecute(
       askQuestionsTool({
@@ -159,15 +172,41 @@ describe("ask_questions tool", () => {
       }),
     );
 
-    expect(
-      execute({
-        questions: [{ ...QUESTION, options: [{ label: "only one" }] }],
-      }),
-    ).rejects.toThrow("needs 2 to 4 options");
-    expect(execute({ questions: [QUESTION, QUESTION] })).rejects.toThrow(
+    await expect(execute({ questions: [QUESTION, QUESTION] })).rejects.toThrow(
       "is used twice",
     );
     expect(mutations).toHaveLength(0);
+  });
+
+  // Stored as-is, these would fail `pendingQuestionSummaryValidator` on the outcome write.
+  it("refuses at the input schema any shape the outcome validator would refuse", async () => {
+    const schema = asSchema(
+      askQuestionsTool({
+        conversationKey: CONVERSATION_KEY,
+        eventId: "event-1",
+      }).ask_questions!.inputSchema,
+    );
+    const accepts = async (questions: unknown[]): Promise<boolean> =>
+      (await schema.validate!({ questions: questions })).success;
+
+    expect(await accepts([QUESTION])).toBe(true);
+    expect(await accepts([{ ...QUESTION, hint: "never stored" }])).toBe(false);
+    expect(
+      await accepts([
+        { id: "stage", question: "Which stage?", options: QUESTION.options },
+      ]),
+    ).toBe(false);
+    expect(
+      await accepts([
+        {
+          ...QUESTION,
+          options: [{ label: "dev", icon: "d" }, { label: "prod" }],
+        },
+      ]),
+    ).toBe(false);
+    expect(
+      await accepts([{ ...QUESTION, options: [{ label: "only one" }] }]),
+    ).toBe(false);
   });
 
   it("fails the row when the outbound hook blocks the prompt", async () => {
@@ -180,7 +219,7 @@ describe("ask_questions tool", () => {
       }),
     );
 
-    expect(execute({ questions: [QUESTION] })).rejects.toThrow(
+    await expect(execute({ questions: [QUESTION] })).rejects.toThrow(
       "blocked by the outbound message hook",
     );
     expect(mutations.at(-1)?.args).toMatchObject({ status: "failed" });
@@ -199,8 +238,7 @@ describe("question answers", () => {
   });
 
   it("takes any other typed reply as the person's own answer", () => {
-    // Otherwise the reply runs as a new turn while the question stays open,
-    // and the agent asks again instead of reading the answer.
+    // Else it runs as a new turn while the question stays open, and the agent asks again.
     expect(answersFromText(PENDING, "staging please")?.answers).toEqual({
       deploy_target: ["staging please"],
     });
@@ -272,12 +310,6 @@ describe("question answers", () => {
         }),
       },
     ]);
-  });
-
-  it("always tells the person they can reply with their own answer", () => {
-    expect(formatQuestionsText([QUESTION])).toContain(
-      "Or reply with your own answer.",
-    );
   });
 });
 

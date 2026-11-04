@@ -3,6 +3,7 @@ import {
   type AuditEvent,
   type AuditPage,
 } from "../../../packages/broods/src/account.ts";
+import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
   OK_AGENT,
   assertStep,
@@ -11,11 +12,7 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-/**
- * The audit ledger records a config write and a finished run, verifies, and
- * refuses a non-public sink. A run that fails at the provider call (no model
- * key) still finishes through the usage write, so its row lands either way.
- */
+// A run failing at the provider call (no model key) still writes usage, so its row lands.
 export async function auditLedger(context: VerifyContext): Promise<void> {
   const name = `audit-${context.runId}`;
   const { agentId } = await context.account.createAgent({
@@ -25,27 +22,39 @@ export async function auditLedger(context: VerifyContext): Promise<void> {
       agent: OK_AGENT,
     },
   });
-  await context.measure("audit run", () =>
-    runToTerminal(context, {
-      agentId: agentId,
-      conversationKey: name,
-      eventId: name,
-      text: "Say OK.",
-    }),
+  const eventIds = [0, 1, 2].map((index): string => `${name}-${index}`);
+  await context.measure("concurrent audit runs", (): Promise<AsyncStatus[]> =>
+    Promise.all(
+      eventIds.map((eventId): Promise<AsyncStatus> =>
+        runToTerminal(context, {
+          agentId: agentId,
+          conversationKey: eventId,
+          eventId: eventId,
+          text: "Say OK.",
+        }),
+      ),
+    ),
   );
 
-  // The usage write that appends the row lands just after the run's status.
   const page = await context.measure("audit list", () =>
     pollUntil(
       { initialIntervalMs: 50, maxIntervalMs: 400, timeoutMs: 5_000 },
       async (): Promise<AuditPage | null> => {
         const listed = await context.account.audit.list({ limit: 500 });
 
-        return listed.events.some(finishedRunOf(agentId)) ? listed : null;
+        return listed.events.filter(finishedRunOf(agentId)).length ===
+          eventIds.length
+          ? listed
+          : null;
       },
     ),
   );
   const events = page?.events ?? [];
+  assertStep(
+    "the audit ledger retains every concurrent run",
+    events.filter(finishedRunOf(agentId)).length === eventIds.length,
+    `${events.filter(finishedRunOf(agentId)).length}/${eventIds.length} run rows`,
+  );
   const run = events.find(finishedRunOf(agentId));
   const details: { startedAt?: number; durationMs?: number } = JSON.parse(
     run?.detailsJson ?? "{}",
@@ -94,7 +103,6 @@ export async function auditLedger(context: VerifyContext): Promise<void> {
   );
 }
 
-/** Matches the `run.completed` row one agent's run appended. */
 function finishedRunOf(agentId: string): (event: AuditEvent) => boolean {
   return (event: AuditEvent): boolean =>
     event.action === "run.completed" && event.actor.agentId === agentId;

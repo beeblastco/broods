@@ -39,7 +39,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -84,6 +84,8 @@ jobs:
             NEXT_PUBLIC_BROODS_BASE_URL=${{ vars.NEXT_PUBLIC_BROODS_BASE_URL || 'https://gateway.broods.app' }}
             NEXT_PUBLIC_POSTHOG_KEY=${{ vars.NEXT_PUBLIC_POSTHOG_KEY }}
             NEXT_PUBLIC_POSTHOG_HOST=${{ vars.NEXT_PUBLIC_POSTHOG_HOST }}
+            NEXT_PUBLIC_POSTHOG_UI_HOST=${{ vars.NEXT_PUBLIC_POSTHOG_UI_HOST }}
+            DASHBOARD_ASSET_ORIGIN=${{ vars.DASHBOARD_ASSET_ORIGIN }}
           cache-from: type=gha,scope=broods-dashboard
           cache-to: type=gha,mode=max,scope=broods-dashboard
 

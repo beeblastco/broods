@@ -1,7 +1,3 @@
-/**
- * An attachment nobody can read must still leave the message legible.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ImagePart, ModelMessage, UserContent } from "ai";
 import type { Attachment } from "chat";
@@ -56,8 +52,6 @@ const writeS3ObjectMock = mock(
     typeof body === "string" ? body.length : body.byteLength,
 );
 
-// A bring-your-own bucket is reached on a role core assumes; the session it
-// hands back is what the workspace write must carry.
 void mock.module("@aws-sdk/client-sts", () => ({
   STSClient: class {
     send = async (): Promise<{
@@ -80,7 +74,7 @@ void mock.module("@aws-sdk/client-sts", () => ({
 await mock.module("../src/shared/s3.ts", () => ({
   writeS3Object: writeS3ObjectMock,
   headS3Object: headS3ObjectMock,
-  // Full surface so transitive importers keep working (mock.module replaces the module).
+  // mock.module replaces the whole module, so transitive importers need the full surface.
   readS3Bytes: readS3BytesMock,
   readS3Text: mock(async () => ""),
   s3ObjectExists: mock(async () => true),
@@ -94,16 +88,12 @@ await mock.module("../src/shared/s3.ts", () => ({
   isMissingS3Error: () => false,
 }));
 
-// Transcription is one API call behind a provider's credentials; what the media
-// path owes it is the decision to call at all and what it does with the answer.
 const transcribeAudioMock = mock(async (): Promise<TranscriptOutcome> => ({
   status: "transcribed",
   text: "check the deploy status",
 }));
 
-// Only the call is stubbed. The retry budget and the advice wording are the
-// real ones, so a mock factory that named just `transcribeAudio` would leave
-// them to whatever Bun happens to leave reachable.
+// The real retry budget and advice: a factory naming only `transcribeAudio` would lose them.
 const { TRANSCRIPTION_RETRIES, transcriptAdvice } =
   await import("../src/harness/transcribe.ts");
 
@@ -119,12 +109,12 @@ const {
   readAttachmentBytes,
   rehydrateStoredMedia,
   resolveMediaType,
+  sealConversationMedia,
 } = await import("../src/harness/channel-media.ts");
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_FETCH = globalThis.fetch;
 const ACCOUNT = "acct_1";
-// A one-pixel PNG, so the sniffer has a real signature to read.
 const PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
@@ -134,6 +124,7 @@ beforeEach(() => {
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.MEDIA_TICKET_SECRET = "media-ticket-secret";
+  delete process.env.MEDIA_TICKET_TTL_SECONDS;
   process.env.PUBLIC_BASE_URL = "https://core.example";
   headS3ObjectMock.mockReset();
   readS3BytesMock.mockReset();
@@ -170,7 +161,6 @@ describe("resolveMediaType", () => {
   });
 
   it("keeps a specific claim over a sniff that only names the container", () => {
-    // A .docx really is a zip, and "zip" is the worse of the two answers.
     const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]);
     expect(
       resolveMediaType(
@@ -208,16 +198,14 @@ describe("ingestInboundAttachments", () => {
     const image = parts.stored.find((part) => part.type === "image");
     expect(image).toBeDefined();
     if (image?.type !== "image") throw new Error("expected an image part");
-    // A sealed media link, never a base64 payload: the conversation is stored
-    // as JSON and re-read on every later turn.
+    // Never base64: the conversation is stored as JSON and re-read on every later turn.
     if (typeof image.image !== "string") {
       throw new Error("expected a string image URL");
     }
     expect(image.image).toStartWith("https://core.example/v1/media/");
     expect(image.mediaType).toBe("image/png");
 
-    // One copy for the agent, inside its mount; one for the conversation, in
-    // the attachment store, where a workspace clean-up cannot reach it.
+    // One copy in the agent's mount, one in the attachment store a workspace clean-up can't reach.
     expect(writeS3ObjectMock).toHaveBeenCalledTimes(2);
     const [, workspaceKey, workspaceBody, workspaceOptions] =
       writeS3ObjectMock.mock.calls[0]!;
@@ -228,8 +216,6 @@ describe("ingestInboundAttachments", () => {
     expect(workspaceOptions).toEqual({ contentType: "image/png" });
     expect(storeKey).toStartWith(`attachments/${ACCOUNT}/media/`);
     expect(storeKey).toEndWith("-photo.png");
-    // Received once, metered once, however many copies are stored, and
-    // billed to the agent's project.
     expect(meterWrites).toEqual([
       {
         accountId: ACCOUNT,
@@ -343,7 +329,6 @@ describe("ingestInboundAttachments", () => {
       [...parts.stored, ...parts.turn].filter((part) => part.type !== "text"),
     ).toEqual([]);
     expect(noteText(parts)).toContain("voice.aac");
-    // Workspace copy plus attachment store copy.
     expect(writeS3ObjectMock).toHaveBeenCalledTimes(2);
   });
 
@@ -395,8 +380,6 @@ describe("ingestInboundAttachments", () => {
       },
     );
 
-    // Silently dropping it would leave the model answering a message it can
-    // only see half of.
     expect(noteText(parts)).toContain("photo.png");
     expect(noteText(parts)).toContain("Slack answered 403");
     expect(writeS3ObjectMock).not.toHaveBeenCalled();
@@ -433,8 +416,7 @@ describe("ingestInboundAttachments", () => {
       eventId: "evt-6",
     });
 
-    // The picture still reaches the model as bytes, and the row keeps none
-    // of them: this attachment names no file the channel could serve again.
+    // The row keeps no bytes: this attachment names no file the channel could serve again.
     const image = parts.turn.find((part) => part.type === "image");
     if (image?.type !== "image") throw new Error("expected an image part");
     expect(image.image).toEqual(PNG_BYTES);
@@ -457,8 +439,7 @@ describe("ingestInboundAttachments", () => {
         accountId: ACCOUNT,
         channelName: "zalo",
         eventId: "evt-9",
-        // Anthropic will not take audio, and with no workspace there is no
-        // stored file to send the agent to instead.
+        // No audio on Anthropic, and no workspace to store the file in instead.
         agentConfig: modelConfig("anthropic"),
       },
     );
@@ -481,7 +462,6 @@ describe("ingestInboundAttachments", () => {
       },
     );
 
-    // Ten accepted attachments, two copies each, metered in one write.
     expect(writeS3ObjectMock).toHaveBeenCalledTimes(20);
     expect(meterWrites).toEqual([
       {
@@ -506,8 +486,6 @@ describe("ingestInboundAttachments", () => {
 
 describe("acceptsNativeMedia", () => {
   it("refuses a subtype the provider does not read", () => {
-    // The bug this replaced matched on the top-level segment, so a table entry
-    // of "audio" claimed audio/ogg on a provider that accepts no audio at all.
     expect(acceptsNativeMedia("openai", "audio/ogg")).toBe(false);
     expect(acceptsNativeMedia("openai", "application/pdf")).toBe(true);
   });
@@ -548,7 +526,6 @@ describe("inbound audio", () => {
 
     expect(transcribeAudioMock).toHaveBeenCalledTimes(1);
     expect(noteText(parts)).toContain("Transcript: check the deploy status");
-    // The file is still stored, and still not sent as a part OpenAI refuses.
     expect(noteText(parts)).toContain("saved to media/");
     expect(
       [...parts.stored, ...parts.turn].filter((part) => part.type !== "text"),
@@ -573,8 +550,6 @@ describe("inbound audio", () => {
     );
   });
 
-  // The turn is not over when no model will take the container: the agent still
-  // has the file, and the provider's own message names what it would accept.
   it("hands a refused recording to the agent with the file", async () => {
     transcribeAudioMock.mockResolvedValueOnce({
       status: "failed",
@@ -589,8 +564,6 @@ describe("inbound audio", () => {
     expect(note).not.toContain("Read the file to try again");
   });
 
-  // A provider with no speech-to-text will not grow one on a retry, so telling
-  // the agent to try again would only cost it a turn before it asks anyway.
   it("tells the agent not to retry what cannot work", async () => {
     transcribeAudioMock.mockResolvedValueOnce({
       status: "failed",
@@ -615,8 +588,6 @@ describe("rehydrateStoredMedia", () => {
       },
     );
 
-    // The turn reads the bytes that just arrived; the row keeps the file id,
-    // which is a few dozen bytes rather than a megabyte of base64.
     const turn = parts.turn.find((part) => part.type === "image");
     if (turn?.type !== "image") throw new Error("expected an image part");
     expect(turn.image).toEqual(PNG_BYTES);
@@ -629,8 +600,6 @@ describe("rehydrateStoredMedia", () => {
     expect(noteText(parts)).toContain("read from telegram");
   });
 
-  // Re-caching the same picture used to add its size again without taking the
-  // old copy's off, so the counter outgrew the cache and evicted everything.
   it("keeps one copy's worth of bytes for a picture that arrives again", async () => {
     const large = Buffer.concat([PNG_BYTES, Buffer.alloc(5 * 1024 * 1024)]);
     let stored: ModelMessage | undefined;
@@ -668,8 +637,7 @@ describe("rehydrateStoredMedia", () => {
 
   it("reads the bytes back through the channel that delivered them", async () => {
     const fetchMock = telegramFetch();
-    // The configured apiUrl is the tenant's host, so the download is pinned to
-    // where it resolves.
+    // The configured apiUrl is the tenant's host, so the download is pinned to where it resolves.
     const restoreDns = stubPublicDns();
     const messages = await rehydrateStoredMedia(
       [storedMessage("file-77")],
@@ -682,15 +650,13 @@ describe("rehydrateStoredMedia", () => {
     const image = content.find((part) => part.type === "image");
     if (image?.type !== "image") throw new Error("expected an image part");
     expect(image.image).toEqual(PNG_BYTES);
-    // The bot token is what makes the file readable, so the download has to go
-    // through Telegram rather than straight at a URL.
+    // Only the bot token makes the file readable, so the download goes through getFile.
     expect(
       fetchMock.mock.calls.some(([url]) => String(url).includes("getFile")),
     ).toBe(true);
   });
 
-  // Without this the conversation stays broken: the part is replayed on every
-  // later turn, and a provider switch breaks messages that worked when stored.
+  // The part replays on every later turn, so a provider switch would break messages that worked.
   it("demotes a stored part the model running now cannot read", async () => {
     const messages = await rehydrateStoredMedia(
       [
@@ -720,9 +686,7 @@ describe("rehydrateStoredMedia", () => {
     ]);
   });
 
-  // Tool results and subagent output are file parts too, with media types no
-  // provider table lists. Re-gating those would rewrite results this module
-  // never produced, on every turn.
+  // Tool results and subagent output are file parts too; re-gating would rewrite them every turn.
   it("leaves a file part it did not store alone", async () => {
     const messages: ModelMessage[] = [
       {
@@ -763,8 +727,7 @@ describe("rehydrateStoredMedia", () => {
     ]);
   });
 
-  // The provider fetches the link itself, so a file the agent deleted from its
-  // workspace would 404 there and fail every later turn of the conversation.
+  // The provider fetches the link itself: a deleted file would 404 and fail every later turn.
   it("says a workspace file that is gone is gone instead of failing the turn", async (): Promise<void> => {
     setStorageForTests(storageWithWorkspace());
 
@@ -779,8 +742,38 @@ describe("rehydrateStoredMedia", () => {
     ]);
   });
 
-  // A link left in the prompt is fetched by the provider again on every model
-  // step, so the turn reads it once and the model is handed bytes.
+  it("says an expired link is gone instead of failing the turn", async (): Promise<void> => {
+    setStorageForTests(storageWithWorkspace());
+    const sealedAt = Date.now() - 31 * 24 * 60 * 60 * 1000;
+    const token = sealMediaTicket(
+      workspaceTicket(),
+      "media-ticket-secret",
+      sealedAt,
+    );
+
+    const messages = await rehydrateStoredMedia(
+      [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              image: `https://core.example/v1/media/${token}`,
+              mediaType: "image/jpeg",
+            },
+          ],
+        },
+      ],
+      modelConfig("openai"),
+      ACCOUNT,
+    );
+
+    expect(messages[0]?.content).toEqual([
+      { type: "text", text: "[a linked file is no longer available]" },
+    ]);
+  });
+
+  // The provider refetches a prompt link on every model step, so the turn reads it once.
   it("hands the model a sealed link's bytes, read once per link", async (): Promise<void> => {
     setStorageForTests(storageWithWorkspace());
     headS3ObjectMock.mockImplementation(async (): Promise<S3ObjectHead> => ({
@@ -822,11 +815,8 @@ describe("rehydrateStoredMedia", () => {
       { role: "user", content: [image] },
     ]);
     expect(replay).toEqual(first);
-    // Both links are read once; the replay comes from the media cache. Bytes
-    // out of the managed bucket are metered as egress, as the media route did.
+    // The replay comes from the media cache; managed-bucket bytes are metered as egress.
     expect(readS3BytesMock).toHaveBeenCalledTimes(2);
-    // A workspace link is billed to that workspace's project; the
-    // attachment store belongs to no project.
     const egress = { accountId: ACCOUNT, usage: { egressGb: 3 / 1e9 } };
     // The two links are read side by side, so in either order.
     expect(meterWrites).toHaveLength(2);
@@ -838,8 +828,7 @@ describe("rehydrateStoredMedia", () => {
     );
   });
 
-  // The read runs on core's credentials and meters the ticket's account, so a
-  // link sealed for another account is left as the link it was, never opened.
+  // The read runs on core's credentials and meters the ticket's account: a foreign one stays shut.
   it("never opens a sealed link that belongs to another account or was forged", async (): Promise<void> => {
     setStorageForTests(storageWithWorkspace());
     headS3ObjectMock.mockImplementation(async (): Promise<S3ObjectHead> => ({
@@ -861,32 +850,50 @@ describe("rehydrateStoredMedia", () => {
     expect(
       await rehydrateStoredMedia(stored, modelConfig("openai"), undefined),
     ).toEqual(stored);
-    // A link sealed under a key core does not hold opens to nothing.
-    const forged: ModelMessage[] = [
+    // A foreign-key link is left for another deployment's host; on this core's host it is gone.
+    const foreignKey = sealMediaTicket(
+      { accountId: ACCOUNT, path: "media/ff01/0-image-1.jpeg" },
+      "not-the-media-ticket-secret",
+    );
+    const elsewhere: ModelMessage[] = [
       {
         role: "user",
         content: [
           {
             type: "image",
-            image: `https://core.example/v1/media/${sealMediaTicket(
-              { accountId: ACCOUNT, path: "media/ff01/0-image-1.jpeg" },
-              "not-the-media-ticket-secret",
-            )}`,
+            image: `https://other.example/v1/media/${foreignKey}`,
             mediaType: "image/jpeg",
           },
         ],
       },
     ];
     expect(
-      await rehydrateStoredMedia(forged, modelConfig("openai"), ACCOUNT),
-    ).toEqual(forged);
+      await rehydrateStoredMedia(elsewhere, modelConfig("openai"), ACCOUNT),
+    ).toEqual(elsewhere);
+    const forged: ModelMessage[] = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            image: `https://core.example/v1/media/${foreignKey}`,
+            mediaType: "image/jpeg",
+          },
+        ],
+      },
+    ];
+    expect(
+      (await rehydrateStoredMedia(forged, modelConfig("openai"), ACCOUNT))[0]
+        ?.content,
+    ).toEqual([
+      { type: "text", text: "[a linked file is no longer available]" },
+    ]);
     expect(headS3ObjectMock).not.toHaveBeenCalled();
     expect(readS3BytesMock).not.toHaveBeenCalled();
     expect(meterWrites).toEqual([]);
   });
 
-  // Every inlined file rides each model request, so a turn inlines a bounded
-  // amount, one file at most a picture's cap, and leaves the rest as links.
+  // Every inlined file rides each model request, so a turn inlines a bounded amount.
   it("leaves big files and links past the turn's byte budget for the provider", async (): Promise<void> => {
     setStorageForTests(storageWithWorkspace());
     const sizeOf = (key: string): number =>
@@ -983,17 +990,179 @@ function workspaceTicket(): MediaTicket {
   };
 }
 
-// Every test past the first runs against a real server on the loopback: the
-// transport seam maps the public names to 127.0.0.1 and exempts only that
-// address from the denylist, so the sockets, redirects, and TLS handshake are
-// the ones production opens, not an injected connection. The guard's own
-// behavior is covered in isolate-pinned-fetch.test.ts; these tests prove the
-// attachment path threads it correctly.
+// Real loopback servers: public names map to 127.0.0.1, the only address exempt from the
+// denylist, so sockets, redirects and TLS are production's. Guard: isolate-pinned-fetch.test.ts.
+describe("sealConversationMedia", () => {
+  const base64 = PNG_BYTES.toString("base64");
+  const conversation: ModelMessage[] = [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "what does it say?" },
+        { type: "image", image: base64, mediaType: "image/png" },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "c1",
+          toolName: "screenshot",
+          output: {
+            type: "content",
+            value: [
+              { type: "text", text: "Screenshot taken." },
+              { type: "image-data", data: base64, mediaType: "image/png" },
+            ],
+          },
+        },
+      ],
+    },
+  ];
+
+  it("stores a picture once and replays it on later turns", async (): Promise<void> => {
+    const sealed = await sealConversationMedia(conversation, ACCOUNT);
+
+    expect(JSON.stringify(sealed)).not.toContain(base64);
+    // The same screenshot twice is one object, keyed by its hash.
+    expect(writeS3ObjectMock).toHaveBeenCalledTimes(2);
+    const keys = writeS3ObjectMock.mock.calls.map(([, key]) => key);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[0]).toMatch(/^attachments\/acct_1\/media\/[0-9a-f]{32}\.png$/);
+
+    const replay = await rehydrateStoredMedia(
+      sealed,
+      modelConfig("custom"),
+      ACCOUNT,
+    );
+
+    expect(replay).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "what does it say?" },
+          { type: "image", image: PNG_BYTES, mediaType: "image/png" },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "c1",
+            toolName: "screenshot",
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text: "Screenshot taken." },
+                {
+                  type: "file",
+                  mediaType: "image/png",
+                  data: { type: "data", data: PNG_BYTES },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("replays only the newest pictures of a long conversation", async (): Promise<void> => {
+    const sealed = await sealConversationMedia(conversation, ACCOUNT);
+    const long = Array.from(
+      { length: 11 },
+      (): ModelMessage[] => sealed,
+    ).flat();
+
+    const replay = JSON.stringify(
+      await rehydrateStoredMedia(long, modelConfig("custom"), ACCOUNT),
+    );
+
+    // 22 pictures: a batch of the ten oldest become a line, the rest are bytes.
+    expect(replay.split("[an earlier image is not shown here]")).toHaveLength(
+      11,
+    );
+    expect(replay).not.toContain("/v1/media/");
+  });
+
+  it("spends the replay budget on the newest pictures", async (): Promise<void> => {
+    // Just over 4 MB each: the 20 MB budget holds four of the five.
+    const big = Buffer.concat([PNG_BYTES, Buffer.alloc(4 * 1024 * 1024)]);
+    const shot = (id: string): ModelMessage => ({
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: id,
+          toolName: "screenshot",
+          output: {
+            type: "content",
+            value: [
+              {
+                type: "image-data",
+                data: big.toString("base64"),
+                mediaType: "image/png",
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const sealed = await sealConversationMedia(
+      ["c1", "c2", "c3", "c4", "c5"].map(shot),
+      ACCOUNT,
+    );
+
+    const replay = await rehydrateStoredMedia(
+      sealed,
+      modelConfig("custom"),
+      ACCOUNT,
+    );
+
+    expect(JSON.stringify(replay[0])).toContain(
+      "[an earlier image is not shown here]",
+    );
+    expect(JSON.stringify(replay.slice(1))).not.toContain(
+      "[an earlier image is not shown here]",
+    );
+  });
+
+  // Bedrock refuses a URL inside a tool result before sending the request.
+  it("never leaves a tool result's link for the provider", async (): Promise<void> => {
+    const sealed = await sealConversationMedia(conversation, ACCOUNT);
+
+    const replay = await rehydrateStoredMedia(
+      sealed.slice(1),
+      modelConfig("custom"),
+      "acct_2",
+    );
+
+    expect(JSON.stringify(replay)).not.toContain("/v1/media/");
+    expect(JSON.stringify(replay)).toContain(
+      "[an earlier image is not shown here]",
+    );
+  });
+
+  it("leaves a picture it could not store as it was", async (): Promise<void> => {
+    writeS3ObjectMock.mockImplementationOnce(async (): Promise<never> => {
+      throw new Error("bucket down");
+    });
+
+    const sealed = await sealConversationMedia(
+      conversation.slice(0, 1),
+      ACCOUNT,
+    );
+
+    expect(sealed).toEqual(conversation.slice(0, 1));
+  });
+});
+
 describe("readAttachmentBytes URL guard", () => {
   it("refuses a host that resolves to a private address", async (): Promise<void> => {
-    // The URL comes out of the webhook body, so the sender picks the host. A
-    // literal here, but a public name pointed at 127.0.0.1 fails the same check.
-    expect(
+    // The URL comes from the webhook body, so the sender picks the host.
+    await expect(
       readAttachmentBytes({ type: "file", url: "http://127.0.0.1/secret" }),
     ).rejects.toThrow(/private or metadata address/);
   });
@@ -1016,20 +1185,15 @@ describe("readAttachmentBytes URL guard", () => {
         loopbackTransport({ "public.test": "127.0.0.1" }, lookups),
       );
 
-      // Byte-for-byte: the transport must never decode the body as text.
       expect(bytes.equals(payload)).toBe(true);
-      // One lookup, one request carrying the original Host: nothing re-resolves
-      // the name after validation, which is the DNS-rebind window this
-      // transport exists to close.
+      // One lookup and the original Host: no re-resolve after validation, the DNS-rebind window.
       expect(lookups).toEqual(["public.test"]);
       expect(hostHeaders).toEqual([`public.test:${port}`]);
     });
   });
 
   it("speaks TLS to the pinned address under the original name", async (): Promise<void> => {
-    // Connecting to an IP while verifying the certificate for `public.test`
-    // only works if the hostname still rides along as the SNI servername,
-    // the half of pinning that is easy to break without noticing.
+    // Verifying `public.test` on a pinned IP needs the hostname as the SNI servername.
     const server = createHttpsServer(
       { cert: TLS_CERT, key: TLS_KEY },
       (_request, response) => {
@@ -1081,9 +1245,7 @@ describe("readAttachmentBytes URL guard", () => {
   });
 
   it("refuses a redirect into the metadata endpoint", async (): Promise<void> => {
-    // The first hop passes because only the loopback is exempted; the second
-    // has to fail on the production denylist the transport threads through
-    // every hop.
+    // Only the loopback is exempt, so the second hop fails on the production denylist.
     const server = createHttpServer((_request, response) => {
       response.writeHead(302, {
         location: "http://metadata.test/latest/meta-data/",
@@ -1092,7 +1254,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      expect(
+      await expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/a.png` },
           loopbackTransport({
@@ -1111,7 +1273,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      expect(
+      await expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/a.png` },
           loopbackTransport({ "public.test": "127.0.0.1" }),
@@ -1131,7 +1293,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      expect(
+      await expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/big.bin` },
           loopbackTransport({ "public.test": "127.0.0.1" }),
@@ -1141,9 +1303,8 @@ describe("readAttachmentBytes URL guard", () => {
   });
 
   it("stops reading a body that outgrows the cap instead of buffering it whole", async (): Promise<void> => {
-    // Chunked, so the size is knowable only from the bytes: the read has to be
-    // the thing that stops, not a header check before it. The server offers at
-    // most 30 MB, so the test failing open would still terminate.
+    // Chunked, so only the read can stop it, not a header check. The server offers at most
+    // 30 MB, so a test failing open still terminates.
     const chunk = Buffer.alloc(1024 * 1024);
     const server = createHttpServer((_request, response) => {
       response.on("error", () => {});
@@ -1166,7 +1327,7 @@ describe("readAttachmentBytes URL guard", () => {
     });
 
     await withServer(server, async (port): Promise<void> => {
-      expect(
+      await expect(
         readAttachmentBytes(
           { type: "file", url: `http://public.test:${port}/endless.bin` },
           loopbackTransport({ "public.test": "127.0.0.1" }),
@@ -1176,9 +1337,6 @@ describe("readAttachmentBytes URL guard", () => {
   });
 });
 
-// Only the loopback exemption is granted; every other address still faces the
-// real denylist, so the metadata redirect above fails on the same check
-// production runs.
 function loopbackTransport(
   hosts: Record<string, string>,
   lookups?: string[],
@@ -1250,8 +1408,6 @@ function storedMessage(fileId: string): ModelMessage {
   };
 }
 
-// The only part of a config the media path reads: which provider is running,
-// which decides both what goes over natively and what audio is transcribed with.
 function modelConfig(provider: AccountModelProviderName): AgentConfig {
   return { model: { provider: provider, modelId: "test-model" } };
 }
@@ -1268,7 +1424,6 @@ function telegramConfig(): AgentConfig {
   };
 }
 
-// Stands in for Telegram: `getFile` names the path, the next call serves it.
 function telegramFetch(
   options: { ok?: boolean } = {},
 ): ReturnType<typeof mock> {

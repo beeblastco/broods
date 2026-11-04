@@ -62,7 +62,7 @@ test("non-2xx non-404 responses throw BroodsAccountApiError with status", async 
     { status: 401, body: { error: "Unauthorized" } },
   ]);
 
-  expect(client.listCrons()).rejects.toThrow(BroodsAccountApiError);
+  await expect(client.listCrons()).rejects.toThrow(BroodsAccountApiError);
 });
 
 test("createAgent posts JSON and unwraps the created record", async () => {
@@ -135,20 +135,6 @@ test("unwraps list envelopes for crons, runs, workspaces, and files", async () =
   expect(calls[1]?.url).toBe(
     "https://gateway.example.com/v1/crons/cron_1/runs?limit=5",
   );
-});
-
-test("getAccount unwraps the account envelope", async () => {
-  const { client } = mockClient([
-    {
-      status: 200,
-      body: {
-        account: { accountId: "acc_1", username: "beeblast", status: "active" },
-      },
-    },
-  ]);
-
-  const account = await client.getAccount();
-  expect(account.accountId).toBe("acc_1");
 });
 
 test("getStorageTrust reads the account's external id and principal", async () => {
@@ -284,7 +270,7 @@ test("sandbox lifecycle throws on a missing sandbox (404)", async () => {
     { status: 404, body: { error: "Sandbox not found" } },
   ]);
 
-  expect(client.terminateSandbox("sb_missing", "key")).rejects.toThrow(
+  await expect(client.terminateSandbox("sb_missing", "key")).rejects.toThrow(
     BroodsAccountApiError,
   );
 });

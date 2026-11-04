@@ -1,15 +1,10 @@
-/**
- * Harness tool registry.
- * Keep static tool imports and agent-configured tool selection here.
- *
- * Sandbox tools (bash/read/write/edit/glob/grep) come from a referenced sandbox
- * + workspaces, with approval produced as AI SDK v7 toolApproval in the harness.
- * Core ships no built-in external tools: config.tools names provider-defined
- * tools (see provider-tool.ts), and remote tools come from config.mcp.
- */
-
 import type { ToolSet } from "ai";
-import { isProviderToolName } from "@broods/convex/model/agentRules";
+import {
+  harnessToolNameProblem,
+  isHarnessToolName,
+  isProviderToolName,
+} from "@broods/convex/model/agentRules";
+import { browserSandboxRefusal } from "@broods/convex/model/sandboxRules";
 import {
   resolveSubagentMode,
   type AccountModelProviderName,
@@ -28,9 +23,7 @@ import type {
   ResolvedAgentSandbox,
   ResolvedWorkspace,
 } from "../../shared/workspaces.ts";
-import type { AsyncToolNames, RunAsyncToolDispatch } from "../async-tools.ts";
 import type { RunSessionMessageDispatch } from "../ingress.ts";
-import type { DispatchAppliedIngress } from "../integrations.ts";
 import type { PendingQuestionSummary } from "../questions.ts";
 import type {
   SandboxCpuSample,
@@ -44,11 +37,10 @@ import {
 } from "../mcp/client.ts";
 import { mcpTools } from "../mcp/mcp.tool.ts";
 import { sandboxMcpTarget } from "../mcp/sandbox.ts";
-import askParentTool from "./ask-parent.tool.ts";
 import askQuestionsTool from "./ask-questions.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
-import browseTool, { assertBrowseSandbox } from "./browse.tool.ts";
+import browseTool from "./browse.tool.ts";
 import computerTool from "./computer.tool.ts";
 import {
   sendFilesTool,
@@ -65,19 +57,24 @@ import {
   machineSandboxes,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
+  statelessReservationKeyFor,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import globTool from "./glob.tool.ts";
-import getSubagentStatusTool from "./get-subagent-status.tool.ts";
 import grepTool from "./grep.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
 import memoryTool from "./memory.tool.ts";
-import { providerDefinedTool } from "./provider-tool.ts";
+import { providerToolBuild } from "./provider-tool.ts";
 import readTool from "./read.tool.ts";
+import {
+  runsOnProvider,
+  sandboxStandIn,
+  type SandboxStandIn,
+} from "./sandbox-stand-in.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
-import type { AskParent, SubagentWatch } from "./utils.ts";
+import type { MessageChild, ParentLink, SubagentWatch } from "./utils.ts";
 import {
   cancelScheduleTool,
   listSchedulesTool,
@@ -85,8 +82,8 @@ import {
   updateScheduleTool,
   type ScheduleContext,
 } from "./schedule.tool.ts";
+import messageAgentsTool from "./message-agents.tool.ts";
 import stopSubagentTool from "./stop-subagent.tool.ts";
-import updateSubagentTool from "./update-subagent.tool.ts";
 import writeTool from "./write.tool.ts";
 
 interface ResolvedMcpServer {
@@ -97,15 +94,10 @@ interface ResolvedMcpServer {
   remoteTools: RemoteMcpTool[];
 }
 
-// Runtime dependencies shared by tool factories. Model-facing input schemas
-// stay inside each individual tool file.
 export interface ToolContext {
   accountId?: string;
   conversationKey: string;
-  // Each workspace carries its own effective sandbox + permissionMode (or no
-  // sandbox => read-only). See resolveAgentRuntime.
   workspaces?: ResolvedWorkspace[];
-  // Resolved config.sandboxes; the first is the default.
   sandboxes?: ResolvedAgentSandbox[];
   config: AgentToolConfig;
   modelProviderName: AccountModelProviderName;
@@ -113,25 +105,16 @@ export interface ToolContext {
   session?: Session;
   dispatchSubagents?: RunSubagentDispatch;
   subagentWatch?: SubagentWatch;
-  // Set on a persistent subagent's run: asks the parent and waits for its answer.
-  askParent?: AskParent;
-  dispatchAppliedIngress?: DispatchAppliedIngress;
-  dispatchAsyncTools?: RunAsyncToolDispatch;
+  parentLink?: ParentLink;
+  messageChild?: MessageChild;
   dispatchSessionMessage?: RunSessionMessageDispatch;
-  // Reports each sandbox exec's CPU so the harness attributes usage per sandbox
-  // (agent bash/fs => role "agent"; hosted MCP servers => role "tool").
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
-  // Reports each wait a tool sat out before it retried (a rate-limited MCP
-  // call), so the harness can put it on that call's tool.call span.
   onToolRetry?: (toolCallId: string, waitMs: number) => void;
-  // A blocking ask_questions call, so the loop ends the turn after this step.
   onBlockingQuestion?: (question: PendingQuestionSummary) => void;
-  // Every row a tool leaves to settle later (an open question, a background
-  // job), so the run's trace can close as waiting on it.
   onDetachedResult?: (resultId: string) => void;
   sandboxMetadata?: SandboxRunMetadata;
   approvalRequirements?: Map<string, true>;
-  /** Model-facing tool name → MCP server row id, for per-server policy rules. */
+  sandboxStandIns?: Map<string, SandboxStandIn>;
   policyMcpIdsByName?: Map<string, string>;
   channel?: ChannelToolContext;
 }
@@ -146,7 +129,6 @@ export async function createTools(
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
   const sandboxes = context.sandboxes ?? [];
   const defaultSandbox = sandboxes[0]?.sandbox;
-  // bash and browse: every sandbox the agent reaches, metered per exec.
   const sandboxContext: SandboxToolContext = {
     workspaces: workspaces,
     sandboxes: sandboxes,
@@ -154,16 +136,9 @@ export async function createTools(
     principal: (): SandboxRunPrincipal | undefined =>
       context.session?.sandboxPrincipal(),
   };
-  const sandboxOptions =
-    typeof defaultSandbox?.options === "object" &&
-    defaultSandbox.options !== null
-      ? (defaultSandbox.options as Record<string, unknown>)
-      : {};
   const hasSandboxReservation =
-    typeof sandboxOptions.reservationKey === "string" &&
-    sandboxOptions.reservationKey.trim().length > 0;
-  // Persistence keys on the workspace namespace, or without one on the key
-  // resolveAgentRuntime derives per agent; no agent identity leaves runs ephemeral.
+    defaultSandbox !== undefined &&
+    statelessReservationKeyFor(defaultSandbox) !== undefined;
   const runsWithoutNamespace = hasStandaloneSandbox(sandboxContext);
   if (
     defaultSandbox?.persistent === true &&
@@ -179,14 +154,9 @@ export async function createTools(
   }
   const sandboxTools: ToolSet = {};
 
-  // Reserved (persistent) workspaces can run detached background jobs; bash then
-  // exposes a `background` flag and records each job under the parent session.
   const hasBackgroundWorkspace = workspaces.some((workspace) =>
     sandboxSupportsBackgroundJobs(workspace.sandbox),
   );
-  // eventId is stored as the async-tool-result parentEventId; conversationKey is
-  // what a future continuation worker resumes; delivery carries the originating
-  // channel/WebSocket so the result is pushed back there, not just polled.
   const backgroundContext =
     hasBackgroundWorkspace && context.session
       ? {
@@ -201,11 +171,7 @@ export async function createTools(
         }
       : undefined;
 
-  // bash: the agent's own sandbox, or any sandbox-backed workspace.
-  // Pass the full workspace list so omitting `workspace` preserves the configured
-  // default; if that default is read-only, the tool returns a clear error instead
-  // of silently selecting the first writable workspace. Background jobs are
-  // bash's alone.
+  // The full list, so an omitted workspace keeps the configured default even when read-only.
   if (sandboxes.length > 0 || sandboxWorkspaces.length > 0) {
     Object.assign(
       sandboxTools,
@@ -215,19 +181,15 @@ export async function createTools(
       }),
     );
   }
-  // computer: every machine in `sandboxes` is a computer target, and an agent that
-  // reaches several names which per call.
   const machines = machineSandboxes(sandboxes);
   if (machines.length > 0) {
     Object.assign(sandboxTools, computerTool(machines));
   }
-  // browse: opt-in, on the agent's first sandbox. A sandbox without Obscura fails
-  // the run here rather than handing the model a tool that cannot work.
   if (agentConfig.browser?.enabled === true) {
-    assertBrowseSandbox(defaultSandbox);
+    const problem = browserSandboxRefusal(defaultSandbox);
+    if (problem) throw new Error(problem);
     Object.assign(sandboxTools, browseTool(sandboxContext));
   }
-  // read/glob: every workspace (sandbox-backed via the mount, read-only via S3).
   if (workspaces.length > 0) {
     Object.assign(
       sandboxTools,
@@ -235,8 +197,6 @@ export async function createTools(
       globTool({ workspaces: workspaces }),
     );
   }
-  // write/edit/grep: require a sandbox at execution time. Pass the full workspace
-  // list to preserve default-workspace semantics; read-only selections fail clearly.
   if (sandboxWorkspaces.length > 0) {
     const fsContext = {
       workspaces: workspaces,
@@ -248,9 +208,6 @@ export async function createTools(
       editTool(fsContext),
       grepTool(fsContext),
     );
-    // memory_save: structured memory on the same sandbox write path. It ships
-    // with the workspace harness (config.harness.memory, default on) rather
-    // than config.tools, and only touches the memory/ folder and its index.
     if (
       sandboxWorkspaces.some((workspace) =>
         workspaceMemoryHarnessEnabled(workspace.config),
@@ -263,13 +220,10 @@ export async function createTools(
     }
   }
   Object.assign(tools, sandboxTools);
-  const asyncToolNames: AsyncToolNames = new Set();
 
   if (context.channel) {
     Object.assign(
       tools,
-      // Both deliver a workspace file, so they take the same workspace list the
-      // sandbox tools read from, plus the account that seals the link.
       sendFilesTool({
         ...context.channel,
         workspaces: workspaces,
@@ -282,8 +236,6 @@ export async function createTools(
       }),
       sendReactionsTool(context.channel),
       sendStickerTool(context.channel),
-      // Every channel can post text, so the progress note is the one channel
-      // tool that is always registered.
       sendUpdateTool(context.channel),
     );
   }
@@ -294,8 +246,6 @@ export async function createTools(
     Object.assign(tools, sendMessageTool(context.dispatchSessionMessage));
   }
 
-  // Subagent execution is orchestrated by the handler/coordinator. The registry
-  // exposes only the model-facing tool when config and runtime dispatcher agree.
   if (agentConfig.subagent?.enabled === true && context.dispatchSubagents) {
     Object.assign(
       tools,
@@ -311,21 +261,6 @@ export async function createTools(
     ) {
       Object.assign(
         tools,
-        getSubagentStatusTool({
-          accountId: context.accountId,
-          eventId: context.session.eventId,
-          conversationKey: context.session.conversationKey,
-          ...(context.subagentWatch ? { watch: context.subagentWatch } : {}),
-        }),
-        updateSubagentTool({
-          accountId: context.accountId,
-          agentConfig: agentConfig,
-          dispatchAppliedIngress: context.dispatchAppliedIngress,
-          eventId: context.session.eventId,
-          conversationKey: context.session.conversationKey,
-          session: context.session,
-          ...(context.subagentWatch ? { watch: context.subagentWatch } : {}),
-        }),
         stopSubagentTool({
           accountId: context.accountId,
           eventId: context.session.eventId,
@@ -335,8 +270,21 @@ export async function createTools(
     }
   }
 
-  if (context.askParent) {
-    Object.assign(tools, askParentTool(context.askParent));
+  // message-agents: a persistent-mode parent reaches its children, and a
+  // persistent child its parent.
+  const messageChild =
+    agentConfig.subagent?.enabled === true &&
+    resolveSubagentMode(agentConfig) === "persistent"
+      ? context.messageChild
+      : undefined;
+  if (messageChild || context.parentLink) {
+    Object.assign(
+      tools,
+      messageAgentsTool({
+        ...(messageChild ? { messageChild: messageChild } : {}),
+        ...(context.parentLink ? { parent: context.parentLink } : {}),
+      }),
+    );
   }
 
   const allowedSkillPaths = agentConfig.skills?.allowed ?? [];
@@ -357,11 +305,7 @@ export async function createTools(
     );
   }
 
-  // schedule writes a cron bound to this conversation, so a scheduled run
-  // resumes the same session and replies wherever this one does.
-  // list/update/cancel reach every task of this agent, whichever conversation
-  // created it. A run the scheduler started gets none of them: it reads its own
-  // stored instructions as a fresh request, so each one acts on its own schedule.
+  // None on a cron run: it reads its instructions as a fresh request and would schedule again.
   if (
     agentConfig.scheduler?.enabled === true &&
     context.accountId &&
@@ -388,32 +332,14 @@ export async function createTools(
     );
   }
 
-  // Provider-defined tools: every config.tools key names a tool the configured
-  // provider executes itself, resolved off its `tools` namespace.
-  for (const [toolName, toolConfig] of Object.entries(
-    agentConfig.tools ?? {},
-  )) {
-    if (!isProviderToolName(toolName)) {
-      throw new Error(`config.tools.${toolName} is not a supported tool`);
-    }
-    if (!isToolEnabled(toolConfig)) {
-      continue;
-    }
+  const standIns = context.sandboxStandIns ?? new Map<string, SandboxStandIn>();
+  registerProviderTools(tools, agentConfig, context, {
+    sandboxTools: sandboxTools,
+    fileContext: sandboxContext,
+    standIns: standIns,
+  });
 
-    if (toolConfig.needsApproval === true)
-      context.approvalRequirements?.set(toolName, true);
-    Object.assign(
-      tools,
-      providerDefinedTool(toolName, {
-        ...context,
-        config: externalToolRuntimeConfig(toolConfig),
-      }),
-    );
-    if (toolConfig.async === true) asyncToolNames.add(toolName);
-  }
-
-  // ask_questions needs a delivery to resume on: a channel or a WebSocket turn.
-  // A subagent session carries none, and a cron-fired run has nobody typing.
+  // Needs a delivery to resume on; a subagent has none and a cron-fired run has nobody to answer.
   const session = context.session;
   if (session?.delivery !== undefined && session.trigger !== "cron") {
     Object.assign(
@@ -435,55 +361,53 @@ export async function createTools(
 
   await registerMcpTools(tools, agentConfig, context);
 
-  if (asyncToolNames.size > 0 || hasBackgroundWorkspace) {
+  if (hasBackgroundWorkspace) {
     Object.assign(
       tools,
       asyncStatusTool({
         conversationKey: context.conversationKey,
         workspaces: workspaces,
-        // logs/stop only apply when the background provider exposes live controls.
         supportsJobs: workspaces.some((workspace) =>
           sandboxSupportsJobControls(workspace.sandbox),
         ),
+        ...(session
+          ? {
+              onResultRead: (toolCallId: string, resultId: string): void => {
+                session.recordToolResultRead(toolCallId, resultId);
+              },
+            }
+          : {}),
       }),
     );
   }
 
-  // Withhold last, so a channel's deny list covers sandbox and MCP tools too.
-  // Those are derived from workspaces and server rows, never from config.tools.
-  withholdTools(tools, agentConfig.denyTools);
+  // Withhold last, so a channel's deny list also covers sandbox and MCP tools.
+  withholdTools(tools, agentConfig.denyTools, standIns, sandboxTools);
 
-  return context.dispatchAsyncTools
-    ? context.dispatchAsyncTools(tools, asyncToolNames)
-    : tools;
+  return tools;
 }
 
 function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
   const {
+    command: _command,
     enabled: _enabled,
     needsApproval: _needsApproval,
-    async: _async,
     ...runtimeConfig
   } = config;
 
   return runtimeConfig;
 }
 
-/**
- * Whether a `config.tools` or `config.mcp` entry is on: present and not
- * `enabled: false`. The MCP explorer asks it which agents use a server.
- */
+function harnessNameError(toolName: string): string {
+  return `config.tools.${toolName} ${harnessToolNameProblem(toolName)}`;
+}
+
 export function isToolEnabled<Entry extends { enabled?: boolean }>(
   config: Entry | undefined,
 ): config is Entry {
   return config !== undefined && config.enabled !== false;
 }
 
-/**
- * Register every enabled connected MCP server's tools (#331). Listings come
- * from the per-server TTL cache in mcp/client.ts, so steady-state runs skip
- * the discovery round-trip.
- */
 async function registerMcpTools(
   tools: ToolSet,
   agentConfig: AgentConfig,
@@ -500,8 +424,7 @@ async function registerMcpTools(
     );
   }
 
-  // Resolve rows and listings in parallel; the merge below stays sequential
-  // in config order so name-conflict detection is deterministic.
+  // Resolved in parallel, merged in config order so name conflicts resolve deterministically.
   const resolved = await Promise.all(
     entries.map(
       async ([serverId, serverConfig]): Promise<ResolvedMcpServer | null> => {
@@ -518,12 +441,8 @@ async function registerMcpTools(
           serverConfig.oauth,
           context.session?.principal,
         );
-        // A machine row on a lambda sandbox runs in that VM; on a machine
-        // sandbox the daemon serves it from its own --mcp file.
         connection.sandbox = sandboxMcpTarget(record, context);
-        // An unreachable server degrades to zero tools for this run instead
-        // of killing every agent run that references it; config errors above
-        // (unknown id, unresolved header) still throw.
+        // Unreachable degrades to zero tools for this run; the config errors above still throw.
         let listing: RemoteMcpTool[];
         try {
           listing = await listMcpTools(
@@ -570,8 +489,6 @@ async function registerMcpTools(
       context.onSandboxCpu,
       context.onToolRetry,
     );
-    // Sanitized names collapsing within one server surface here too: the map
-    // then has fewer keys than the listing had tools.
     if (Object.keys(serverTools).length !== server.remoteTools.length) {
       throw new Error(
         `config.mcp.${server.serverId} has remote tools whose sanitized model-facing names collide`,
@@ -591,10 +508,92 @@ async function registerMcpTools(
   }
 }
 
-function withholdTools(tools: ToolSet, denyTools: string[] | undefined): void {
-  for (const toolName of denyTools ?? []) {
-    if (toolName in tools) {
-      delete tools[toolName];
+// A client-executed provider tool runs as the sandbox tool it stands for, in that tool's place.
+function registerProviderTools(
+  tools: ToolSet,
+  agentConfig: AgentConfig,
+  context: Omit<ToolContext, "config">,
+  sandbox: {
+    sandboxTools: ToolSet;
+    fileContext: SandboxToolContext;
+    standIns: Map<string, SandboxStandIn>;
+  },
+): void {
+  for (const [toolName, toolConfig] of Object.entries(
+    agentConfig.tools ?? {},
+  )) {
+    if (!isProviderToolName(toolName)) {
+      throw new Error(`config.tools.${toolName} is not a supported tool`);
+    }
+    const harnessName = isHarnessToolName(toolName);
+    if (harnessName && toolConfig.type !== "provider") {
+      throw new Error(harnessNameError(toolName));
+    }
+    if (!isToolEnabled(toolConfig)) {
+      continue;
+    }
+
+    if (toolConfig.needsApproval === true)
+      context.approvalRequirements?.set(toolName, true);
+    const { args, factory } = providerToolBuild(toolName, {
+      ...context,
+      config: externalToolRuntimeConfig(toolConfig),
+    });
+    const built = factory(args);
+    // Also replaces a default execute: Anthropic bash runs on the AI SDK's experimental_sandbox.
+    const standIn =
+      built.type === "provider" &&
+      built.isProviderExecuted !== true &&
+      !runsOnProvider(built.id, args)
+        ? sandboxStandIn(built.id, {
+            toolName: toolName,
+            command: toolConfig.command,
+            sandboxTools: sandbox.sandboxTools,
+            fileContext: sandbox.fileContext,
+          })
+        : undefined;
+    const taken = harnessName || Object.hasOwn(tools, toolName);
+    if (
+      taken &&
+      !standIn?.replaces.some((name): boolean => name === toolName)
+    ) {
+      throw new Error(harnessNameError(toolName));
+    }
+    if (!standIn) {
+      tools[toolName] = built;
+      continue;
+    }
+    for (const replaced of standIn.replaces) delete tools[replaced];
+    tools[toolName] = factory({
+      ...args,
+      execute: standIn.execute.bind(standIn),
+    });
+    sandbox.standIns.set(toolName, standIn);
+  }
+}
+
+// A withheld stand-in gives back the Broods tools it replaced that denyTools still allows.
+function withholdTools(
+  tools: ToolSet,
+  denyTools: string[] | undefined,
+  standIns: Map<string, SandboxStandIn>,
+  sandboxTools: ToolSet,
+): void {
+  const denied = new Set(denyTools ?? []);
+  for (const toolName of Object.keys(tools)) {
+    const standIn = standIns.get(toolName);
+    const runsAs = standIn?.runsAs ?? [];
+    if (
+      !denied.has(toolName) &&
+      !runsAs.some((name): boolean => denied.has(name))
+    ) {
+      continue;
+    }
+    delete tools[toolName];
+    standIns.delete(toolName);
+    for (const name of standIn?.replaces ?? []) {
+      const replaced = sandboxTools[name];
+      if (replaced && !denied.has(name)) tools[name] = replaced;
     }
   }
 }

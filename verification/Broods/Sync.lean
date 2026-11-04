@@ -6,9 +6,11 @@ manifest with a `prune` flag (`packages/broods/src/sync.ts` `putManifest`). The
 server upserts every resource by name, claims an undeclared CLI row with the same
 content as a rename, and with prune drops the CLI-managed rows the manifest no
 longer declares (`packages/convex/model/cliSyncResources.ts`, and
-`recordExternalResourcesBySecretHash` for skills, hooks and MCP servers).
-`GET /manifest` reads the CLI-managed rows back, and `diffManifests` compares them
-with the local manifest.
+`recordExternalResourcesBySecretHash` for skills, hooks and MCP servers; `syncCrons`
+prunes only `managedBy: "cli"` crons). `GET /manifest` (`resourcesForStage` in
+`packages/convex/model/cliSyncManifest.ts`) reads the CLI-managed rows back, plus
+every cron of a stage agent whatever its `managedBy`, and `diffManifests` compares
+them with the local manifest.
 
 Simplifications: names are `Nat`, a config is its settings plus artifact bytes,
 env refs are already normalized, and the diff is unsorted (sorting is a
@@ -64,6 +66,10 @@ structure Row where
 /-- The stage's rows the server reconciles, across every resource family. -/
 abbrev State := List Row
 
+/-- `resourcesForStage` lists only CLI-managed rows: an agent's or the dashboard's
+own cron is not code's to diff. -/
+def Row.listed (row : Row) : Bool := row.cli
+
 /-- Skills, hooks and MCP servers: account-service resources whose bytes the
 server does not keep in the manifest snapshot. -/
 def Kind.external : Kind → Bool
@@ -108,7 +114,8 @@ def diff (localM remote : Manifest) : List Entry :=
     (ul.filter fun x => !pairs.any (·.1.key == x.key)).map (fun x => ⟨.create, x.kind, x.name⟩) ++
     (ur.filter fun y => !pairs.any (·.2.key == y.key)).map (fun y => ⟨.delete, y.kind, y.name⟩)
 where
-  /-- `snapshotResource`: the artifact bytes and upload handle of skills, hooks
+  /-- `snapshotResource` (`packages/convex/model/manifestSnapshot.ts`, which
+  `manifestHash` hashes): the artifact bytes and upload handle of skills, hooks
   and MCP servers are not compared; their `sha256` is. -/
   snapshot (r : Resource) : Resource :=
     if r.kind.external then { r with config := { r.config with bundle := none, storage := none } }
@@ -129,8 +136,8 @@ where
   /-- Resources in `a` with no same-key resource in `b`. -/
   unmatched (a b : Manifest) : Manifest := a.filter fun x => (lookup b x.key).isNone
 
-/-- `GET /manifest`: the CLI-managed rows. -/
-def read (s : State) : Manifest := (s.filter (·.cli)).map (·.res)
+/-- `GET /manifest`: the listed rows. -/
+def read (s : State) : Manifest := (s.filter Row.listed).map (·.res)
 
 /-- `PUT /manifest`. `store` is what the server keeps and reads back for a resource. -/
 def sync (store : Resource → Resource) (m : Manifest) (prune : Bool) (s : State) : State :=
@@ -161,9 +168,9 @@ def storeReal (large : Nat → Bool) (normalize : Resource → Resource) (r : Re
 section
 variable {store : Resource → Resource}
 
-/-- The CLI-managed row with key `k`, as `read` sees it. -/
+/-- The listed row with key `k`, as `read` sees it. -/
 private def lookupRow (s : State) (k : Kind × Nat) : Option Row :=
-  s.find? (fun row => row.cli && row.res.key == k)
+  s.find? (fun row => row.listed && row.res.key == k)
 
 private theorem lookup_read (s : State) (k : Kind × Nat) :
     lookup (read s) k = (lookupRow s k).map (·.res) := by
@@ -171,7 +178,7 @@ private theorem lookup_read (s : State) (k : Kind × Nat) :
   | nil => rfl
   | cons row rest ih =>
     simp only [read, lookupRow, lookup] at ih ⊢
-    cases hc : row.cli <;> by_cases hk : row.res.key = k <;>
+    cases hc : row.listed <;> by_cases hk : row.res.key = k <;>
       simp_all
 
 private theorem find?_filter_same {p q : Row → Bool} (s : State)
@@ -197,10 +204,10 @@ private theorem lookupRow_upsert (hkey : ∀ r, (store r).key = r.key)
     lookupRow (upsert store m s r) k =
       if r.key = k then some ⟨store r, true⟩ else lookupRow s k := by
   by_cases hrk : r.key = k
-  · simp [lookupRow, upsert, hkey, hrk]
+  · simp [lookupRow, upsert, Row.listed, hkey, hrk]
   · have hrk' : (r.key == k) = false := by simpa using hrk
     simp only [hrk, ite_false]
-    simp only [lookupRow, upsert, List.find?_cons, hkey, Bool.true_and, hrk']
+    simp only [lookupRow, upsert, List.find?_cons, hkey, Bool.and_false, hrk']
     refine find?_filter_same s (fun row hp => ?_)
     simp only [Bool.and_eq_true, beq_iff_eq] at hp
     obtain ⟨x, hx, hxk⟩ := hk
@@ -305,10 +312,10 @@ theorem sync_converges (hkey : ∀ r, (store r).key = r.key)
     rw [hd, List.map_eq_nil_iff, diff.unmatched, List.filter_eq_nil_iff]
     intro y hy
     simp only [read, sync, ite_true, List.mem_map, List.mem_filter] at hy
-    obtain ⟨row, ⟨⟨_, hkeep⟩, _⟩, rfl⟩ := hy
+    obtain ⟨row, ⟨⟨hrow, hkeep⟩, hlisted⟩, rfl⟩ := hy
     simp only [Bool.or_eq_true, Bool.not_eq_true', List.any_eq_true, beq_iff_eq] at hkeep
     rcases hkeep with hc | ⟨x, hx, hk⟩
-    · simp_all
+    · simp_all [Row.listed]
     · have hs := lookup_self hx
       rw [hk] at hs
       cases hl : lookup m row.res.key <;> simp_all
@@ -343,7 +350,8 @@ theorem sync_converges_real (large : Nat → Bool) (normalize : Resource → Res
     (hround : ∀ r, r.kind.external = false → diff.snapshot (normalize r) = diff.snapshot r)
     {m : Manifest} (hu : m.unique) (prune : Bool) (s : State) :
     (∀ e ∈ diff m (read (sync (storeReal large normalize) m prune s)), e.op = .delete) ∧
-      (prune = true → diff m (read (sync (storeReal large normalize) m prune s)) = []) := by
+      (prune = true →
+        diff m (read (sync (storeReal large normalize) m prune s)) = []) := by
   refine sync_converges (fun r => ?_) (fun r => ?_) hu prune s
   · unfold storeReal
     split
@@ -379,6 +387,19 @@ example :
     let m : Manifest := [⟨.agent, 2, ⟨7, none, none⟩⟩]
     let s := sync id m false [⟨old, true⟩]
     read s = m ∧ diff m (read s) = [] := by
+  decide
+
+/-- A cron an agent scheduled on its CLI agent survives `deploy --prune`, as
+91798774f intends, and `GET /manifest` no longer lists it, so the next diff is
+empty. Listing every cron, as `resourcesForStage` did before, shows a delete no
+prune performs, and `broods dev` asked to delete it after every sync. -/
+example :
+    let agent : Resource := ⟨.agent, 1, ⟨7, none, none⟩⟩
+    let own : Resource := ⟨.cron, 5, ⟨0, none, none⟩⟩
+    let after := sync id [agent] true [⟨agent, true⟩, ⟨own, false⟩]
+    diff [agent] (read after) = [] ∧
+      diff [agent] ((after.filter (fun row => row.cli || row.res.kind == .cron)).map (·.res)) =
+        [⟨.delete, .cron, 5⟩] := by
   decide
 
 end Broods.Sync

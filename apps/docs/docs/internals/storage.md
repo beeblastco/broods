@@ -33,7 +33,8 @@ flowchart LR
   Resolve["resolveS3Mount()"] --> VM["lambda MicroVM<br/>mounts in /run hook,<br/>credentials refreshed every 30 min"]
   Resolve --> Wd["workdir sandbox<br/>mounts per run"]
   Resolve --> Dt["Daytona<br/>mounts per run"]
-  Resolve -.->|"not wired, fails fast"| EV["E2B, Vercel"]
+  Resolve --> Vc["Vercel<br/>mounts per run,<br/>remounted after 45 min or a resume"]
+  Resolve -.->|"not wired, fails fast"| EV["E2B"]
 ```
 
 Mountpoint supports whole-file create and overwrite only. `>>`, in-place edits and `rename()` fail with `EPERM`, so `write`, `edit` and `memory_save` rewrite whole files in one `>` pass and `sync` after writing.

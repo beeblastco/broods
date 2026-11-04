@@ -1,9 +1,4 @@
-/**
- * The custom provider against a real TLS server on loopback rather than a
- * stubbed `fetch`: `HttpSandboxExecutor` connects through the pinned guard,
- * which resolves the name itself and opens the socket to the address it
- * validated, so there is no global for a stub to replace.
- */
+// A real TLS server: the pinned guard opens its own socket, so no fetch stub can stand in.
 
 import { describe, expect, it } from "bun:test";
 import {
@@ -120,8 +115,9 @@ describe("HttpSandboxExecutor", () => {
         graceMs: 50,
       });
 
-      // A TimeoutError, which runSandbox answers as a timed-out run.
-      expect(executor.run(run({ timeoutSeconds: 0.1 }))).rejects.toMatchObject({
+      await expect(
+        executor.run(run({ timeoutSeconds: 0.1 })),
+      ).rejects.toMatchObject({
         name: "TimeoutError",
         message: "timed out",
       });
@@ -132,7 +128,7 @@ describe("HttpSandboxExecutor", () => {
     await withExecServer(OK_RESPONSE, async (endpoint) => {
       const executor = new HttpSandboxExecutor(config(endpoint), seams());
 
-      expect(executor.run(run({ code: "fail" }))).rejects.toThrow(
+      await expect(executor.run(run({ code: "fail" }))).rejects.toThrow(
         "custom sandbox exec failed (401): bad token",
       );
     });
@@ -157,7 +153,7 @@ describe("HttpSandboxExecutor", () => {
     await withExecServer([], async (endpoint) => {
       const executor = new HttpSandboxExecutor(config(endpoint), seams());
 
-      expect(executor.run(run())).rejects.toThrow(
+      await expect(executor.run(run())).rejects.toThrow(
         "custom sandbox exec response must be a JSON object",
       );
     });
@@ -169,7 +165,7 @@ describe("HttpSandboxExecutor", () => {
       await withExecServer(answer, async (endpoint) => {
         const executor = new HttpSandboxExecutor(config(endpoint), seams());
 
-        expect(executor.run(run())).rejects.toThrow(
+        await expect(executor.run(run())).rejects.toThrow(
           "custom sandbox exec response is not a sandbox exec response",
         );
       });
@@ -185,7 +181,7 @@ describe("HttpSandboxExecutor", () => {
       },
     });
 
-    expect(executor.run(run())).rejects.toThrow(
+    await expect(executor.run(run())).rejects.toThrow(
       /blocked private or metadata address/,
     );
   });
@@ -202,7 +198,7 @@ describe("HttpSandboxExecutor", () => {
           seams(),
         );
 
-        expect(executor.run(run())).rejects.toThrow(
+        await expect(executor.run(run())).rejects.toThrow(
           "still carries a ${NAME} ref",
         );
       }
@@ -213,7 +209,7 @@ describe("HttpSandboxExecutor", () => {
   it("refuses a literal private endpoint before resolving anything", async () => {
     const executor = new HttpSandboxExecutor(config("https://10.0.0.8"));
 
-    expect(executor.run(run())).rejects.toThrow(
+    await expect(executor.run(run())).rejects.toThrow(
       "custom sandbox endpoint must not point to a private or internal address",
     );
   });
@@ -243,9 +239,8 @@ function seams(): HttpSandboxExecutorSeams {
   return { transport: loopbackTransport() };
 }
 
-// A null answer never responds, so the client deadline is what ends the call.
-// A request whose code is "fail" is answered 401, like a server refusing a token,
-// and "big-fail" 502 with a page-sized body, like a proxy in front of it.
+// A null answer never responds, so the client deadline ends the call. Code "fail" is
+// answered 401 and "big-fail" 502 with a page-sized body, like a proxy in front.
 async function withExecServer(
   answer: SandboxExecResponse | Record<string, unknown> | unknown[] | null,
   test: (endpoint: string, received: Received[]) => Promise<void>,

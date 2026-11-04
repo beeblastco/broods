@@ -1,13 +1,7 @@
-/**
- * Skills CRUD (`/v1/skills*`): list/create on the collection,
- * get/replace/delete by name. Storage lives behind the aws.skills actions.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { type AuditActor } from "../../model/auditEvents";
-import { isPlainObject } from "../../model/objects";
 import {
   json,
   jsonError,
@@ -16,7 +10,6 @@ import {
   writeAudit,
 } from "./shared";
 
-/** Mirrors core's former handleSkillRoute contract. */
 export async function handleSkillRoute(
   ctx: ActionCtx,
   req: Request,
@@ -37,25 +30,11 @@ export async function handleSkillRoute(
         accountId: accountId,
         input: await req.json(),
       });
-      const skillRecord: Record<string, unknown> = isPlainObject(skill)
-        ? skill
-        : {};
-      const skillName =
-        typeof skillRecord.name === "string"
-          ? skillRecord.name
-          : typeof skillRecord.path === "string"
-            ? skillRecord.path
-            : "skill";
       await writeAudit(ctx, {
         accountId: accountId,
         actor: actor,
         action: "created",
-        resource: {
-          kind: "skill",
-          id:
-            typeof skillRecord.path === "string" ? skillRecord.path : undefined,
-          name: skillName,
-        },
+        resource: { kind: "skill", id: skill.path, name: skill.name },
         summary: "Skill created",
       });
 
