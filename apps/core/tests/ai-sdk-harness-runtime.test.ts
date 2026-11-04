@@ -130,7 +130,10 @@ describe("createConfiguredHarnessAgent", () => {
       level: "trace",
       subsystems: ["bridge"],
     });
-    expect(JSON.stringify(runtime.builtinToolFiltering)).not.toContain("bash");
+    expect(runtime.builtinToolFiltering).toEqual({
+      mode: "allow",
+      toolNames: [],
+    });
   });
 
   // The harness `askUserQuestions` builtin waits for an answer core never supplies.
