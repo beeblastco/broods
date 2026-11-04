@@ -4753,7 +4753,7 @@ components:
                 | `run_token_scope` | 403 | A run token called something other than reading its own agent's runs. |
                 | `sandbox_instance_reserved` | 409 | The sandbox still has a reserved instance that could not be terminated. |
                 | `scope_mismatch` | 403 | The WebSocket credential is scoped to a different project, stage or endpoint. |
-                | `read_only_after_logs` | 403 | This dock conversation read logs, so its login may only read. Propose the change, or start a new conversation. |
+                | `read_only_after_logs` | 403 | This dock conversation read logs, so its login may only read. Propose the change. Reloading the page starts a new conversation. |
                 | `service_unavailable` | 503 | Default for a 503: the service is overloaded or starting. Retry. |
                 | `slack_error` | 502 | Slack returned another error or did not answer in time (channel directory). |
                 | `status_access_denied` | 403 | The run status belongs to another deployment than this credential's. |

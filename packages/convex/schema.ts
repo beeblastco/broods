@@ -273,6 +273,7 @@ export const cliTokensFields = {
 export const observedConversationsFields = {
   authId: v.string(),
   conversationKey: v.string(),
+  stageId: v.id("stages"),
   observedAt: v.number(),
 };
 

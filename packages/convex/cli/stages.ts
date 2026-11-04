@@ -255,37 +255,43 @@ export const mintObservabilityByLogin = internalMutation({
       ? await activeDeployment(ctx, projectDoc._id, stage._id)
       : null;
     if (!deployment) return null;
-    if (token.lentToAgent === true && conversation !== undefined) {
-      const mark = await ctx.db
-        .query("observedConversations")
-        .withIndex("by_authId_and_conversationKey", (q) =>
-          q.eq("authId", token.authId).eq("conversationKey", conversation),
-        )
-        .first();
-      if (!mark)
-        await ctx.db.insert("observedConversations", {
-          authId: token.authId,
-          conversationKey: conversation,
-          observedAt: now,
-        });
-    }
+    // Each read mints a ticket, so a conversation audits its first opening of a stage, not every
+    // read: an agent debugging would otherwise push real events out of the audit log.
+    const marks =
+      token.lentToAgent === true && conversation !== undefined
+        ? await ctx.db
+            .query("observedConversations")
+            .withIndex("by_authId_and_conversationKey", (q) =>
+              q.eq("authId", token.authId).eq("conversationKey", conversation),
+            )
+            .collect()
+        : [];
+    const opened = marks.some((mark) => mark.stageId === deployment.stageId);
+    if (token.lentToAgent === true && conversation !== undefined && !opened)
+      await ctx.db.insert("observedConversations", {
+        authId: token.authId,
+        conversationKey: conversation,
+        stageId: deployment.stageId,
+        observedAt: now,
+      });
     const expiresAt = observabilityTicketExpiry(now, token.expiresAt);
-    await appendAuditEvent(ctx.db, {
-      accountId: account._id,
-      projectId: projectDoc._id,
-      stageId: deployment.stageId,
-      actor: { kind: "cli", id: token.authId },
-      action: "observability.opened",
-      resource: {
-        kind: "deployment",
-        id: deployment.endpointId,
-        name: `${deployment.projectSlug}/${deployment.stageSlug}`,
-      },
-      summary:
-        token.lentToAgent === true
-          ? "The dock agent opened this stage's logs"
-          : "A login opened this stage's logs",
-    });
+    if (!opened)
+      await appendAuditEvent(ctx.db, {
+        accountId: account._id,
+        projectId: projectDoc._id,
+        stageId: deployment.stageId,
+        actor: { kind: "cli", id: token.authId },
+        action: "observability.opened",
+        resource: {
+          kind: "deployment",
+          id: deployment.endpointId,
+          name: `${deployment.projectSlug}/${deployment.stageSlug}`,
+        },
+        summary:
+          token.lentToAgent === true
+            ? "The dock agent opened this stage's logs"
+            : "A login opened this stage's logs",
+      });
 
     return {
       token: await sealObservabilityTicket(
@@ -309,10 +315,8 @@ export const observabilitySessionHttpHandle = httpAction(
   async (ctx, req): Promise<Response> => {
     try {
       const tokenHash = await cliLoginTokenHash(req);
-      const body = (await req.json()) as {
-        project?: unknown;
-        stage?: unknown;
-      } | null;
+      const body: { project?: unknown; stage?: unknown } | null =
+        await req.json();
       if (typeof body?.project !== "string" || !body.project.trim())
         return jsonError(400, "Request body must include a project");
       if (typeof body.stage !== "string" || !body.stage.trim())

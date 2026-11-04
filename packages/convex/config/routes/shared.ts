@@ -289,7 +289,7 @@ export async function observedLoginRefusal(
   return login?.observed
     ? jsonError(
         403,
-        "This conversation read logs, so it is read-only. Propose the change for the user to apply, or start a new conversation.",
+        "This conversation read logs, so it is read-only. Propose the change for the user to apply. Reloading the page starts a new conversation.",
         { code: "read_only_after_logs" },
       )
     : null;
