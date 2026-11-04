@@ -70,6 +70,15 @@
       "takeNext": "281ea22c0bdddcaa"
     }
   },
+  "ProviderTools": {
+    "apps/core/src/harness/tools/index.ts": {
+      "registerProviderTools": "430663b352686362",
+      "withholdTools": "6e67d8582c6cdb26"
+    },
+    "apps/core/src/harness/tools/sandbox-stand-in.ts": {
+      "customTool": "604e2aa8ade9a18e"
+    }
+  },
   "StageTicket": {
     "packages/broods/src/cli/index.ts": {
       "run": "522b9b79d1ad504d"
@@ -93,11 +102,14 @@
     },
     "packages/convex/model/manifestSnapshot.ts": {
       "snapshotResource": "b0dd40b1a87b6ddd"
+    },
+    "packages/convex/model/cliSyncManifest.ts": {
+      "resourcesForStage": "8b080375b990bd58"
     }
   },
   "SyncConcurrency": {
     "packages/convex/cli/httpRoutes.ts": {
-      "handleManifestSync": "6bd3018d606a78c6"
+      "handleManifestSync": "74a757f0b9a1e767"
     },
     "packages/convex/cli/sync.ts": {
       "recordExternalResourcesBySecretHash": "217070cdd14c4f09",

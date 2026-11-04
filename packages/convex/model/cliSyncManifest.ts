@@ -291,9 +291,10 @@ export async function resourcesForStage(
         description: workspace.description,
         config: workspace.config,
       })),
+    // Only crons code declared: an agent's or the dashboard's own schedules are not code's to diff.
     ...crons.flatMap((cron): CliResource[] => {
       const agentName = agentNames[cron.agentId];
-      if (!agentName) return [];
+      if (!agentName || cron.managedBy !== "cli") return [];
 
       return [
         {

@@ -1219,6 +1219,7 @@ export class Session {
   private async loadMemoryFile(
     workspace: ResolvedWorkspace,
   ): Promise<string | null> {
+    if (workspace.config.storage.provider === "disk") return null;
     // S3 API, not the mount, so a workspace with no sandbox still serves its memory.
     const target = await resolveS3ReadTarget(
       workspaceReadContext(workspace.config.storage, workspace.namespace),

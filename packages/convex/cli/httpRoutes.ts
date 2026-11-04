@@ -35,12 +35,11 @@ import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { ClientError } from "../model/clientError";
 import { manifestHash } from "../model/manifestSnapshot";
 import {
-  stageSourceHash,
   stageSourceProblem,
   stageSourceSchema,
   type StageSource,
-  type StageSourceFile,
 } from "../model/stageSource";
+import { storeStageSync } from "../model/stageSourceStore";
 
 export type CliAuth =
   | {
@@ -55,6 +54,12 @@ export type CliAuth =
       scoped: true;
       cliTokenId: Id<"cliTokens">;
       cliAuthId: string;
+    }
+  | {
+      accountId: Id<"accounts">;
+      secretHash: string;
+      scoped: true;
+      applyAuthId: string;
     };
 
 export type RouteParts =
@@ -562,7 +567,7 @@ async function handleManifestSync(
   try {
     // The account key and a login token may move an account-wide name between stages
     // (dev, then deploy); only a stage-scoped project key is fenced.
-    const fenced = "deployKeyId" in auth;
+    const fenced = "deployKeyId" in auth || "applyAuthId" in auth;
     const foreign =
       fenced &&
       originalManifest.resources.some((entry) =>
@@ -669,13 +674,15 @@ async function handleManifestSync(
         auditSync: {
           resourceCount: originalManifest.resources.length,
           prune: prune,
-          actorKind: fenced ? "deployKey" : "cli",
+          actorKind: "deployKeyId" in auth ? "deployKey" : "cli",
           actorId:
             "deployKeyId" in auth
               ? auth.deployKeyId
               : "cliTokenId" in auth
                 ? auth.cliTokenId
-                : accountId,
+                : "applyAuthId" in auth
+                  ? auth.applyAuthId
+                  : accountId,
         },
       },
     );
@@ -1253,57 +1260,9 @@ async function recordStageSync(
   source: StageSource | undefined,
 ): Promise<{ manifestHash: string; sourceRevision: number | null }> {
   const hash = await manifestHash(resources);
-  const stored = source
-    ? await storedSource(ctx, stageId, source.files)
-    : undefined;
-  const sourceRevision = await ctx.runMutation(
-    internal.stageSources.recordSync,
-    {
-      stageId: stageId,
-      manifestHash: hash,
-      ...(source && stored
-        ? {
-            source: {
-              ...stored,
-              origin: "cli" as const,
-              ...(source.commitSha ? { commitSha: source.commitSha } : {}),
-            },
-          }
-        : {}),
-    },
-  );
-
-  return { manifestHash: hash, sourceRevision: sourceRevision };
-}
-
-// Unchanged source is not stored again: the newest revision already holds it.
-async function storedSource(
-  ctx: ActionCtx,
-  stageId: Id<"stages">,
-  files: StageSourceFile[],
-): Promise<{
-  hash: string;
-  storageId?: Id<"_storage">;
-  fileCount: number;
-  bytes: number;
-}> {
-  const hash = await stageSourceHash(files);
-  const body = JSON.stringify({ files: files });
-  const unchanged =
-    (await ctx.runQuery(internal.stageSources.latestHash, {
-      stageId: stageId,
-    })) === hash;
 
   return {
-    hash: hash,
-    ...(unchanged
-      ? {}
-      : {
-          storageId: await ctx.storage.store(
-            new Blob([body], { type: "application/json" }),
-          ),
-        }),
-    fileCount: files.length,
-    bytes: new TextEncoder().encode(body).length,
+    manifestHash: hash,
+    sourceRevision: await storeStageSync(ctx, stageId, hash, source, "cli"),
   };
 }
