@@ -116,7 +116,7 @@ test("core's MCP client lists and calls a stdio server on this machine through t
 test("a bad key reaches the daemon as core's 4401 and stops it", async () => {
   setStorageForTests(machineStorage());
 
-  expect(
+  await expect(
     runMachineDaemon({
       credential: async (): Promise<string> => "wrong-key",
       baseUrl: startDoor(coreUrl()),
@@ -135,7 +135,7 @@ test("the daemon exits when another daemon holds the record, and --force takes i
   const holder = await holdRecord(core, "another-desk");
   const lines: string[] = [];
 
-  expect(
+  await expect(
     runMachineDaemon({
       credential: async (): Promise<string> => MACHINE_ACCOUNT_SECRET,
       baseUrl: door,

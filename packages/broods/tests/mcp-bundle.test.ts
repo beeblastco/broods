@@ -46,7 +46,7 @@ test("compileProject hashes a hosted MCP server the same from any cwd", async ()
 test("compileProject rejects a handler that is not fetch-style", async () => {
   const cwd = await mcpFixture(`handler: 42,`);
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     "default export must be a fetch handler",
   );
 });
@@ -57,7 +57,7 @@ test("compileProject rejects a server that crashes on import", async () => {
     `throw new Error("boom at import");\n`,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     "boom at import",
   );
 });
@@ -76,7 +76,7 @@ test("compileProject forwards a sandbox server's command", async () => {
 test("compileProject rejects a server with neither url nor handler", async () => {
   const cwd = await mcpFixture("");
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     "needs url (external), handler (hosted) or sandbox (on a machine)",
   );
 });

@@ -244,7 +244,8 @@
         "broods/no-inline-schema-compile": "off",
         "no-unsafe-optional-chaining": "off",
         "typescript/no-extraneous-class": "off",
-        "require-yield": "off"
+        "require-yield": "off",
+        "typescript/await-thenable": "off"
       }
     },
     {

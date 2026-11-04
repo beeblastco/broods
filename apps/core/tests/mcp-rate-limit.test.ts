@@ -100,7 +100,7 @@ it("fails the call once the retries are spent", async () => {
     },
   });
 
-  expect(
+  await expect(
     callMcpTool(mcpConnection(record, undefined), "search", { q: "x" }),
   ).rejects.toThrow("Rate limit exceeded");
   expect(calls).toBe(4);
@@ -116,7 +116,7 @@ it("hands any other failure straight to the model", async () => {
     },
   });
 
-  expect(
+  await expect(
     callMcpTool(mcpConnection(record, undefined), "search", { q: "x" }),
   ).rejects.toThrow("boom");
   expect(calls).toBe(1);

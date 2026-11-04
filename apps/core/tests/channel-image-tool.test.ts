@@ -202,7 +202,7 @@ describe("sendImagesTool", () => {
 
     const sent = execute(tools["send-images"], { file_paths: ["missing.png"] });
 
-    expect(sent).rejects.toThrow("Error: file not found: missing.png");
+    await expect(sent).rejects.toThrow("Error: file not found: missing.png");
     expect(sendImages).not.toHaveBeenCalled();
   });
 
@@ -217,7 +217,7 @@ describe("sendImagesTool", () => {
       urls: ["https://example.com/other.png"],
     });
 
-    expect(sent).rejects.toThrow("takes file_paths or urls, not both");
+    await expect(sent).rejects.toThrow("takes file_paths or urls, not both");
     expect(sendImages).not.toHaveBeenCalled();
   });
 
@@ -229,7 +229,7 @@ describe("sendImagesTool", () => {
 
     const sent = execute(tools["send-images"], { caption: "no image" });
 
-    expect(sent).rejects.toThrow("send-images needs either file_paths");
+    await expect(sent).rejects.toThrow("send-images needs either file_paths");
     expect(sendImages).not.toHaveBeenCalled();
   });
 
@@ -393,7 +393,7 @@ describe("sendFilesTool", () => {
 
     const sent = execute(tools["send-files"], { file_paths: ["missing.pdf"] });
 
-    expect(sent).rejects.toThrow("Error: file not found: missing.pdf");
+    await expect(sent).rejects.toThrow("Error: file not found: missing.pdf");
     expect(sendText).not.toHaveBeenCalled();
   });
 

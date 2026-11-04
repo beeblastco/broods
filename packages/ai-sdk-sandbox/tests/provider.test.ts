@@ -106,13 +106,13 @@ describe("BroodsSandboxProvider", () => {
     }) as typeof networkSession;
     expect(leasedSession.defaultWorkingDirectory).toBe("/workspace");
     expect(leasedSession.ports).toEqual([4_322]);
-    expect(leasedSession.restricted().run({ command: "pwd" })).resolves.toEqual(
-      {
-        exitCode: 0,
-        stdout: "/workspace\n",
-        stderr: "",
-      },
-    );
+    await expect(
+      leasedSession.restricted().run({ command: "pwd" }),
+    ).resolves.toEqual({
+      exitCode: 0,
+      stdout: "/workspace\n",
+      stderr: "",
+    });
 
     expect(calls[0]).toEqual({
       operation: "createSession",
@@ -136,7 +136,7 @@ describe("BroodsSandboxProvider", () => {
     expect(
       await networkSession.getPortUrl({ port: 4_321, protocol: "ws" }),
     ).toBe("wss://sandbox.example.test:4321");
-    expect(
+    await expect(
       networkSession.getPortEndpoint({ port: 4_321, protocol: "ws" }),
     ).resolves.toEqual({ url: "wss://sandbox.example.test:4321" });
     const policy: HarnessV1NetworkPolicy = {
@@ -216,7 +216,7 @@ describe("BroodsSandboxProvider", () => {
     expect(decoder.decode(writes[1]!.content)).toBe("hello world");
     expect(decoder.decode(writes[2]!.content)).toBe("héllo");
 
-    expect(sandbox.run({ command: "fail" })).rejects.toBe(runFailure);
+    await expect(sandbox.run({ command: "fail" })).rejects.toBe(runFailure);
   });
 
   test("aborts a stalled stream write and cancels its reader", async () => {
@@ -251,7 +251,7 @@ describe("BroodsSandboxProvider", () => {
     await Promise.resolve();
     controller.abort(failure);
 
-    expect(write).rejects.toBe(failure);
+    await expect(write).rejects.toBe(failure);
     expect(cancelReason).toBe(failure);
     expect(content.locked).toBe(false);
     expect(writes).toBe(0);
@@ -360,7 +360,7 @@ describe("BroodsSandboxProvider", () => {
       },
     });
 
-    expect(
+    await expect(
       provider.createSession({
         onFirstCreate: async () => {
           throw setupFailure;
@@ -420,12 +420,12 @@ describe("BroodsSandboxProvider", () => {
     });
     const sandbox = await provider.createSession();
 
-    expect(sandbox.getPortUrl({ port: 3_000 })).rejects.toBeInstanceOf(
+    await expect(sandbox.getPortUrl({ port: 3_000 })).rejects.toBeInstanceOf(
       HarnessCapabilityUnsupportedError,
     );
-    expect(sandbox.getPortEndpoint({ port: 3_000 })).rejects.toBeInstanceOf(
-      HarnessCapabilityUnsupportedError,
-    );
+    await expect(
+      sandbox.getPortEndpoint({ port: 3_000 }),
+    ).rejects.toBeInstanceOf(HarnessCapabilityUnsupportedError);
     await Promise.all([
       sandbox.destroy?.(),
       sandbox.destroy?.(),
@@ -463,10 +463,10 @@ describe("BroodsSandboxProvider", () => {
         { name: "two\nlines", type: "file" },
       ]);
       expect(await sandbox.listDirectory({ path: "nope" })).toBeNull();
-      expect(sandbox.listDirectory({ path: "dir/a.txt" })).rejects.toThrow(
-        "not a directory",
-      );
-      expect(sandbox.deleteFile({ path: "dir" })).rejects.toThrow(
+      await expect(
+        sandbox.listDirectory({ path: "dir/a.txt" }),
+      ).rejects.toThrow("not a directory");
+      await expect(sandbox.deleteFile({ path: "dir" })).rejects.toThrow(
         "is a directory",
       );
       expect(await sandbox.deleteFile({ path: "dir/link" })).toBe(true);
@@ -502,7 +502,7 @@ describe("BroodsSandboxProvider", () => {
           }),
         },
       }).createSession();
-      expect(failing.stat({ path: "x" })).rejects.toThrow("stat");
+      await expect(failing.stat({ path: "x" })).rejects.toThrow("stat");
     } finally {
       await chmod(join(root, "locked.txt"), 0o600).catch(() => {});
       await rm(root, { recursive: true, force: true });
@@ -527,7 +527,7 @@ describe("BroodsSandboxProvider", () => {
     });
     const sandbox = await provider.createSession();
 
-    expect(
+    await expect(
       sandbox.spawn({ command: "cat", stdin: true }),
     ).rejects.toBeInstanceOf(HarnessCapabilityUnsupportedError);
     await sandbox.spawn({ command: "cat", stdin: false });
