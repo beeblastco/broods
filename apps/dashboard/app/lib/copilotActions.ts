@@ -122,6 +122,14 @@ export interface DockProposal {
   title: string;
 }
 
+const NO_NODES: readonly ProposedNode[] = [];
+
+const DRAWN: ReadonlySet<DockApply["phase"]> = new Set([
+  "applying",
+  "failed",
+  "proposed",
+]);
+
 const OPEN_PHASES: ReadonlySet<DockApply["phase"]> = new Set([
   "applying",
   "failed",
@@ -222,6 +230,15 @@ export function dockProposals(
   }
 
   return proposals;
+}
+
+/** The architecture change a proposal makes: the one source the canvas draws it from. */
+export function proposedNodes(
+  proposal: DockProposal | null,
+): readonly ProposedNode[] {
+  if (!proposal || !DRAWN.has(proposal.apply.phase)) return NO_NODES;
+
+  return proposal.nodes.length > 0 ? proposal.nodes : NO_NODES;
 }
 
 /** Keys a dropped change: a whole step, or one file of its commit. */

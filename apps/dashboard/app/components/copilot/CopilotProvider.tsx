@@ -10,6 +10,7 @@ import {
   changeKey,
   dockProposals,
   openProposal,
+  proposedNodes,
   type CopilotAction,
   type CopilotPlan,
   type DockApply,
@@ -19,7 +20,6 @@ import {
 } from "@/app/lib/copilotActions";
 import { planFromQuery, type CopilotContext } from "@/app/lib/copilotIntent";
 import { navHref } from "@/app/lib/navigation";
-import { proposedNodes } from "@/app/lib/proposedNodes";
 import { requestCanvasAction } from "@/app/lib/canvasActions";
 import { toErrorMessage } from "@/app/lib/errors";
 import type { SearchItem } from "@/app/lib/paletteSearch";

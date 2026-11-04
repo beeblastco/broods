@@ -6,8 +6,9 @@ import {
   changeKey,
   dockProposals,
   openProposal,
+  proposedNodes,
 } from "../app/lib/copilotActions";
-import { proposedNodes, withProposal } from "../app/lib/proposedNodes";
+import { withProposal } from "../app/lib/proposedNodes";
 import { planFromQuery } from "../app/lib/copilotIntent";
 import type { CopilotContext } from "../app/lib/copilotIntent";
 

@@ -1,29 +1,14 @@
-import type { DockProposal, ProposedNode } from "@/app/lib/copilotActions";
+import type { ProposedNode } from "@/app/lib/copilotActions";
 import { NODE_HEIGHT } from "@broods/convex/model/canvasLayout";
 import type { Edge, Node } from "@xyflow/react";
 
-const NONE: readonly ProposedNode[] = [];
 const COLUMN_GAP = 240;
 const ROW_GAP = NODE_HEIGHT + 40;
-const DRAWN: ReadonlySet<DockProposal["apply"]["phase"]> = new Set([
-  "applying",
-  "failed",
-  "proposed",
-]);
 
 export interface ProposedNodeData extends Record<string, unknown> {
   failed: boolean;
   kind: ProposedNode["kind"];
   label: string;
-}
-
-/** The architecture change a proposal makes: the one source the canvas draws it from. */
-export function proposedNodes(
-  proposal: DockProposal | null,
-): readonly ProposedNode[] {
-  if (!proposal || !DRAWN.has(proposal.apply.phase)) return NONE;
-
-  return proposal.nodes.length > 0 ? proposal.nodes : NONE;
 }
 
 /** The canvas with a proposal drawn on: added nodes dashed, removed ones dimmed. */
