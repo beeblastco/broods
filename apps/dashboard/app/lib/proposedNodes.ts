@@ -41,52 +41,57 @@ export function withProposal(
   const top = Math.min(0, ...[...byName.values()].map((at) => at.y));
   const stacked = new Map<string, number>();
   const ghosts: Node[] = [];
-  const ghostEdges: Edge[] = [];
   for (const node of proposed) {
     if (node.change !== "add" || byName.has(node.name)) continue;
     const anchor = node.connectTo ?? "";
     const row = stacked.get(anchor) ?? 0;
     stacked.set(anchor, row + 1);
     const at = byName.get(anchor) ?? { x: right, y: top };
-    const id = `proposed:${node.name}`;
     const position = { x: at.x + COLUMN_GAP, y: at.y + row * ROW_GAP };
+    byName.set(node.name, position);
     ghosts.push({
       connectable: false,
       data: { failed: failed, kind: node.kind, label: node.name },
       deletable: false,
       draggable: false,
       focusable: false,
-      id: id,
+      id: `proposed:${node.name}`,
       position: position,
       selectable: false,
       type: "proposed",
     });
-    byName.set(node.name, position);
-    const target = nodes.find((other) => other.data.label === node.connectTo);
-    if (
-      !target &&
-      !ghosts.some((ghost) => ghost.data.label === node.connectTo)
-    ) {
-      continue;
-    }
-    const targetId = target?.id ?? `proposed:${node.connectTo}`;
-    const fromTarget = node.kind !== "agent" && target?.type === "agent";
-    ghostEdges.push({
-      deletable: false,
-      focusable: false,
-      id: `${id}:edge`,
-      selectable: false,
-      source: fromTarget ? targetId : id,
-      style: {
-        stroke: failed
-          ? "var(--color-destructive)"
-          : "var(--color-canvas-mount)",
-        strokeDasharray: "4 3",
-      },
-      target: fromTarget ? id : targetId,
-      type: "simplebezier",
-    });
   }
+
+  // Edges once every ghost is placed, so one may connect to a ghost listed after it.
+  const all = [...nodes, ...ghosts];
+  const ghostEdges = ghosts.flatMap((ghost): Edge[] => {
+    const connectTo = proposed.find(
+      (node) => node.name === ghost.data.label,
+    )?.connectTo;
+    const target = all.find((other) => other.data.label === connectTo);
+    if (!target) return [];
+    const targetKind =
+      target.type === "proposed" ? target.data.kind : target.type;
+    const fromTarget = ghost.data.kind !== "agent" && targetKind === "agent";
+
+    return [
+      {
+        deletable: false,
+        focusable: false,
+        id: `${ghost.id}:edge`,
+        selectable: false,
+        source: fromTarget ? target.id : ghost.id,
+        style: {
+          stroke: failed
+            ? "var(--color-destructive)"
+            : "var(--color-canvas-mount)",
+          strokeDasharray: "4 3",
+        },
+        target: fromTarget ? ghost.id : target.id,
+        type: "simplebezier",
+      },
+    ];
+  });
 
   return { edges: [...edges, ...ghostEdges], nodes: [...shown, ...ghosts] };
 }

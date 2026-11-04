@@ -81,9 +81,11 @@ export function DockApplyBar(): React.JSX.Element | null {
             >
               Discard
             </Button>
-            <Button size="xs" onClick={() => applyProposal(messageId)}>
-              Retry
-            </Button>
+            {canRetry(proposal) && (
+              <Button size="xs" onClick={() => applyProposal(messageId)}>
+                Retry
+              </Button>
+            )}
           </>
         )}
       </div>
@@ -161,6 +163,18 @@ function StepDetail({
         </div>
       ))}
     </>
+  );
+}
+
+// A retry after the commit landed resends only its writes: a deletion-only commit has none.
+function canRetry({ apply, changes }: DockProposal): boolean {
+  return (
+    !apply.sha ||
+    changes.some(
+      ({ action }) =>
+        action.type === "commitFiles" &&
+        action.files.some((file) => file.content !== null),
+    )
   );
 }
 

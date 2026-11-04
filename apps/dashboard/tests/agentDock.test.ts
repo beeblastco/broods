@@ -421,6 +421,22 @@ describe("agent dock", () => {
     expect(nodesFor("deployed")).toEqual([]);
   });
 
+  test("a proposed node can connect to a proposed agent listed after it", () => {
+    const drawn = withProposal(
+      [],
+      [],
+      [
+        { change: "add", connectTo: "helper", kind: "mcp", name: "search" },
+        { change: "add", kind: "agent", name: "helper" },
+      ],
+      false,
+    );
+
+    expect(drawn.edges).toMatchObject([
+      { source: "proposed:helper", target: "proposed:search" },
+    ]);
+  });
+
   test("a malformed node list drops the nodes, not the proposal", () => {
     const plan = proposalPlan(
       { nodes: [{ kind: "cron", name: "x" }], summary: "Hi." },
