@@ -207,7 +207,8 @@ sequenceDiagram
     V->>V: run manifest rules, before any write
     V->>V: cliSync: resolve env refs,<br/>encrypt config, write rows
     V->>S: skill and bundle bytes
-    V-->>CLI: ids, deployment, runtime key
+    V->>V: hash the manifest read back,<br/>store the source when it changed
+    V-->>CLI: ids, deployment, runtime key, manifestHash
     CLI->>CLI: write broods/_generated/, BROODS_API_KEY
   end
 ```
@@ -215,6 +216,24 @@ sequenceDiagram
 - `broods dev` sends the revision it read; `broods deploy` sends none and replaces the last completed sync.
 - The claim is released in `finally`; an abandoned claim expires after 45 minutes.
 - `verification/Broods/Sync*.lean` proves the next diff after a sync is deletes only and that overlapping PUTs are refused.
+- The body's optional `source` (`{ files: [{ path, content }], commitSha? }`, `model/stageSource.ts`) is checked before any write. `recordStageSync` hashes the read-back manifest (`manifestHash` in `model/manifestSnapshot.ts`, the same snapshot `diffManifests` compares, so an empty diff means an equal hash) onto `stageSyncs`, and stores the source as a new `stageSources` revision only when its content hash moved. `GET /manifest` answers the live hash.
+
+### Dock Apply and drift
+
+The dashboard's agent edits a per-conversation copy of the stage's stored source; Apply (`agentDock.apply`) deploys the approved files from a compile sandbox (`/v1/apply-runs`, see [security](security.md#apply-tickets)) and stores them as the next source revision.
+
+```mermaid
+stateDiagram-v2
+  [*] --> deployed: no repo, the sync read back Apply's hash
+  [*] --> verifying: linked, pushed to the branch
+  verifying --> deployed: CI succeeded and left the stage on Apply's hash
+  verifying --> failed: CI failed, did not sync, or synced another hash
+```
+
+- The phase lives on the revision (`stageSources.verification`); `verifyRun` settles it from the `workflow_run` webhook. A successful run on a sha no Apply made snapshots the branch at that sha as the source (`snapshotRepo`), so a push needs no button.
+- Production applies the same way, to its own branch. A branch that refuses the push gets a pull request; that revision stays verifying until the merge is snapshotted, so drift offers no Sync that would undo it.
+- The commit is the diff from the stored revision made from the branch head. With none (the branch moved, or the stage was deployed from a laptop), Apply refuses: Sync first. A retry of a draft that already deployed is not a conflict.
+- `stageSources.drift` is the change bar's one state: out of sync when the stage's manifest hash moved away from its newest source (a deploy from elsewhere), or the branch's last finished run is not the newest source's commit. Quiet while an Apply is verifying. `agentDock.sync` redeploys the branch head when linked, else the newest stored source.
 
 ## Run lifecycle
 

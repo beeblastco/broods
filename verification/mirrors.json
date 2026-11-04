@@ -31,13 +31,16 @@
     }
   },
   "DevWatch": {
-    "packages/broods/src/cli/index.ts": {
-      "dev": "9d462b979758d0ef"
+    "packages/broods/src/cli/dev-watch.ts": {
+      "watchSource": "5f2fbe6d48ce4f1e",
+      "sourceSignature": "de8e594d7a2b34c5",
+      "collectSourceFiles": "1046ffdd914acecd"
     }
   },
   "EscFilter": {
     "packages/broods/src/cli/tui.ts": {
-      "stopTurnOnEscape": "8d794f3dc64079e9"
+      "stopTurnOnEscape": "8601d090ec386507",
+      "ESCAPE_SEQUENCE_TAIL": "7d76f8319c45f778"
     }
   },
   "Gateway": {
@@ -79,7 +82,7 @@
   },
   "Sync": {
     "packages/broods/src/sync.ts": {
-      "BroodsSyncClient.putManifest": "e87601325c4a0ebd",
+      "BroodsSyncClient.putManifest": "9c9e0e219abf2b9d",
       "diffManifests": "f52851adcea4ca72"
     },
     "packages/convex/cli/types.ts": {
@@ -91,7 +94,7 @@
   },
   "SyncConcurrency": {
     "packages/convex/cli/httpRoutes.ts": {
-      "handleManifestSync": "df80fc8a87edbad6"
+      "handleManifestSync": "74a757f0b9a1e767"
     },
     "packages/convex/cli/sync.ts": {
       "recordExternalResourcesBySecretHash": "217070cdd14c4f09",

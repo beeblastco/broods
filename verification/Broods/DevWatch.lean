@@ -1,10 +1,11 @@
 /-!
 # `broods dev` watch loop
 
-`dev()` in `packages/broods/src/cli/index.ts`. A save arms a debounce timer; one sync runs at
-a time with one queued rerun, and a child may fail midway. The source (`α`) is the `.ts` and
-`.md` files under `broods/`, the ones `sourceSignature` hashes. `watch()` is armed before the
-first `runSync()`, so every save reaches the timer. Any number of saves.
+`watchSource` in `packages/broods/src/cli/dev-watch.ts`, which `dev()` runs. A watcher event
+arms a debounce timer; one sync runs at a time with one queued rerun, and a child may fail
+midway. The source (`α`) is the `.ts` and `.md` files under `broods/`, the ones
+`sourceSignature` hashes. `watch()` is armed before the first `runSync()`, so every change
+reaches the timer. Any number of changes.
 -/
 
 namespace Broods.DevWatch
@@ -39,7 +40,8 @@ def Init (s : State α) : Prop :=
     s.read = none ∧ s.dirty = false ∧ s.printed = false ∧ s.pc = .sig
 
 inductive Step : State α → State α → Prop where
-  /-- A save, possibly of identical bytes (an editor touch). -/
+  /-- Any watcher event outside the generated folders: a save (possibly of identical bytes),
+  a folder rename, a non-source file. Each sets `savedSinceSignature`, whatever its filename. -/
   | edit (s : State α) (x : α) : Step s { s with src := x, timer := true, dirty := true }
   /-- `runSync` from the debounce timer: queue a rerun, or start. -/
   | timerFires (s : State α) (h : s.timer = true) :
@@ -129,5 +131,34 @@ retries. -/
 theorem stage_matches_source (s : State α) (hs : Reachable s) (hq : Quiescent s) :
     s.stage = some s.src ∨ s.failed = true ∨ s.printed = true :=
   (inv s hs).settled (.inr hq.2) hq.1 ((inv s hs).idle_pending hq.2)
+
+/-- The code before the fix: only a `.ts`/`.md` filename set `savedSinceSignature`, so a folder
+rename armed the timer and left `dirty` alone. -/
+inductive StepBefore : State α → State α → Prop where
+  | step (s t : State α) (h : Step s t) : StepBefore s t
+  | rename (s : State α) (x : α) : StepBefore s { s with src := x, timer := true }
+
+inductive ReachableBefore : State α → Prop where
+  | init (s : State α) : Init s → ReachableBefore s
+  | step (s t : State α) : ReachableBefore s → StepBefore s t → ReachableBefore t
+
+/-- Finding, fixed: a folder renamed after the signature and back before the child's sync
+landed left the stage on the renamed folder, quiescent, with no error. -/
+example : ∃ s : State Nat, ReachableBefore s ∧ Quiescent s ∧ s.stage ≠ some s.src ∧
+    s.failed = false ∧ s.printed = false := by
+  let s0 : State Nat :=
+    { src := 0, stage := none, last := none, failed := false, pending := false, timer := false,
+      pc := .sig, sig := none, read := none, dirty := false, printed := false }
+  have r0 : ReachableBefore s0 := .init _ ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  have r1 := ReachableBefore.step _ _ r0 (.step _ _ (Step.signature _ rfl))
+  have r2 := ReachableBefore.step _ _ r1 (.rename _ 1)
+  have r3 := ReachableBefore.step _ _ r2 (.step _ _ (Step.childRead _ rfl))
+  have r4 := ReachableBefore.step _ _ r3 (.rename _ 0)
+  have r5 := ReachableBefore.step _ _ r4 (.step _ _ (Step.childSucceeds _ rfl))
+  have r6 := ReachableBefore.step _ _ r5 (.step _ _ (Step.done _ rfl))
+  have r7 := ReachableBefore.step _ _ r6 (.step _ _ (Step.timerFires _ rfl))
+  have r8 := ReachableBefore.step _ _ r7 (.step _ _ (Step.signature _ rfl))
+  have r9 := ReachableBefore.step _ _ r8 (.step _ _ (Step.done _ rfl))
+  exact ⟨_, r9, ⟨rfl, rfl⟩, by decide, rfl, rfl⟩
 
 end Broods.DevWatch
