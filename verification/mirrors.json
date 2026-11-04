@@ -23,7 +23,8 @@
       "completeRun": "f79dd7eff7929367",
       "failRun": "50aa145f59830fd3",
       "settleRun": "237bfc0b9d0a7067",
-      "recordFailedFire": "36bb2309504c6e4c"
+      "recordFailedFire": "36bb2309504c6e4c",
+      "isLatestFire": "da7aadfec5f179bf"
     },
     "apps/core/src/harness/handler.ts": {
       "settleCronRun": "e42d96ab0ca4c897",
@@ -92,10 +93,15 @@
   "Sync": {
     "packages/broods/src/sync.ts": {
       "BroodsSyncClient.putManifest": "9c9e0e219abf2b9d",
-      "diffManifests": "f52851adcea4ca72"
+      "diffManifests": "f52851adcea4ca72",
+      "renameSnapshot": "2f385a52543abc07",
+      "isRenamableKind": "382365924c44b5aa"
     },
     "packages/convex/cli/types.ts": {
       "CliManifestResource": "7eba710fdfac1529"
+    },
+    "packages/convex/model/manifestSnapshot.ts": {
+      "snapshotResource": "b0dd40b1a87b6ddd"
     },
     "packages/convex/model/cliSyncManifest.ts": {
       "resourcesForStage": "8b080375b990bd58"
