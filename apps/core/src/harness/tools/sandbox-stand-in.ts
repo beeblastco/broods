@@ -6,15 +6,21 @@ import type { OpenAIProvider } from "@ai-sdk/openai";
 import type { InferToolInput, ToolSet } from "ai";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { configString, shellQuote } from "../sandbox/utils.ts";
-import { applyPatchScript } from "./apply-patch.ts";
+import { fileOperationScript, type FileOperation } from "./file-operation.ts";
 import {
   resolveWorkspace,
   runSandbox,
+  sandboxParamChoices,
   sandboxRunMetadata,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 
-const TEXT_EDITOR_COMMANDS = new Set(["create", "str_replace", "view"]);
+const TEXT_EDITOR_COMMANDS = new Set([
+  "create",
+  "insert",
+  "str_replace",
+  "view",
+]);
 
 type SandboxToolName = "bash" | "edit" | "read" | "write";
 
@@ -93,6 +99,12 @@ export function sandboxStandIn(
             : "a writable workspace in config.workspaces"),
       );
     }
+    if (offersTargetChoice(name, context.fileContext)) {
+      throw new Error(
+        `config.tools.${context.toolName} (${id}) has no input to pick a workspace or sandbox, ` +
+          `and this agent has more than one for ${name}. Keep one, or use the Broods tools.`,
+      );
+    }
   }
 
   return standIn;
@@ -124,26 +136,9 @@ function applyPatch(context: StandInContext): SandboxStandIn<ApplyPatchInput> {
       input: { file_path: input.operation.path },
     }),
     execute: async (input): Promise<unknown> => {
-      const ws = resolveWorkspace(context.fileContext.workspaces);
-      if (!ws?.sandbox) {
-        return { status: "failed", output: "Error: workspace is read-only" };
-      }
-      const result = await runSandbox(
-        ws.sandbox,
-        ws.namespace,
-        applyPatchScript(input.operation),
-        {
-          onSandboxCpu: context.fileContext.onSandboxCpu,
-          metadata: sandboxRunMetadata(context.fileContext, ws),
-        },
-      );
+      const { ok, output } = await runFileOperation(context, input.operation);
 
-      return result.ok && result.exitCode === 0
-        ? { status: "completed", output: result.stdout.trim() }
-        : {
-            status: "failed",
-            output: `${result.stderr}${result.stdout}`.trim(),
-          };
+      return { status: ok ? "completed" : "failed", output: output };
     },
   };
 }
@@ -189,6 +184,11 @@ function exitCodeOf(output: string): number {
   return Number(/\[exit code (\d+)\]$/.exec(output)?.[1] ?? 0);
 }
 
+// Older editors send the inserted text as new_str.
+function insertText(editor: TextEditorInput): string {
+  return editor.insert_text ?? editor.new_str ?? "";
+}
+
 function isLocalShell(args: Record<string, unknown>): boolean {
   const type = (args as ShellArgs).environment?.type;
 
@@ -217,6 +217,16 @@ function localShell(context: StandInContext): SandboxStandIn<LocalShellInput> {
       output: String(await run(input, options)),
     }),
   };
+}
+
+// Broods bash and the file tools take a target only when the agent has more than one.
+function offersTargetChoice(
+  name: SandboxToolName,
+  context: SandboxToolContext,
+): boolean {
+  if (context.workspaces.length > 1) return true;
+
+  return name === "bash" && sandboxParamChoices(context).length > 0;
 }
 
 function openaiShell(context: StandInContext): SandboxStandIn<ShellInput> {
@@ -262,6 +272,30 @@ function runCall<Input>(
     await callTool(context, toSandboxCall(input), options);
 }
 
+async function runFileOperation(
+  context: StandInContext,
+  operation: FileOperation,
+): Promise<{ ok: boolean; output: string }> {
+  const ws = resolveWorkspace(context.fileContext.workspaces);
+  if (!ws?.sandbox)
+    return { ok: false, output: "Error: workspace is read-only" };
+  const result = await runSandbox(
+    ws.sandbox,
+    ws.namespace,
+    fileOperationScript(operation),
+    {
+      onSandboxCpu: context.fileContext.onSandboxCpu,
+      metadata: sandboxRunMetadata(context.fileContext, ws),
+    },
+  );
+  const ok = result.ok && result.exitCode === 0;
+
+  return {
+    ok: ok,
+    output: (ok ? result.stdout : `${result.stderr}${result.stdout}`).trim(),
+  };
+}
+
 function standInFor(
   id: string,
   context: StandInContext,
@@ -300,6 +334,16 @@ function textEditor(context: StandInContext): SandboxStandIn<TextEditorInput> {
         input: { file_path: path, content: editor.file_text ?? "" },
       };
     }
+    if (editor.command === "insert") {
+      return {
+        toolName: "edit",
+        input: {
+          file_path: path,
+          insert_line: editor.insert_line ?? 0,
+          new_string: insertText(editor),
+        },
+      };
+    }
 
     return {
       toolName: "edit",
@@ -320,11 +364,19 @@ function textEditor(context: StandInContext): SandboxStandIn<TextEditorInput> {
       const { command } = input;
       if (!TEXT_EDITOR_COMMANDS.has(command)) {
         throw new Error(
-          `Error: ${command} is not supported here; use str_replace or create`,
+          `Error: ${command} is not supported here; use view, create, str_replace or insert`,
         );
       }
+      if (command !== "insert") return await run(input, options);
+      const { ok, output } = await runFileOperation(context, {
+        type: "insert",
+        path: input.path,
+        line: input.insert_line ?? 0,
+        text: insertText(input),
+      });
+      if (!ok) throw new Error(output);
 
-      return await run(input, options);
+      return output;
     },
   };
 }

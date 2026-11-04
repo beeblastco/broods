@@ -552,7 +552,10 @@ export async function runAgentLoop(
   };
   // Computer actions in one step share a screen, so they run in the model's order.
   const { tools, reserve: reserveComputerTurn } = serializeToolCalls(
-    wrapToolsWithOwnerFence(wrapToolsWithHooks(builtTools, hooks), session),
+    wrapToolsWithOwnerFence(
+      wrapToolsWithHooks(builtTools, hooks, sandboxStandIns),
+      session,
+    ),
     COMPUTER_TOOL_NAME,
   );
   const policyToolApproval = await createPolicyToolApproval(

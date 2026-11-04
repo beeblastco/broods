@@ -2,7 +2,8 @@ import type { OpenAIProvider } from "@ai-sdk/openai";
 import type { InferToolInput } from "ai";
 import { toBase64, toWorkspaceRelative } from "./filesystem-utils.ts";
 
-// Applies one OpenAI apply_patch operation (V4A diff) in the workspace root; runs under node.
+// Applies one file operation in the workspace root: an OpenAI apply_patch operation (V4A diff)
+// or an Anthropic text editor insert. Runs under node.
 const APPLY_SCRIPT = String.raw`
 const fs = require('node:fs');
 const nodePath = require('node:path');
@@ -56,6 +57,20 @@ function update(text, diff) {
 if (op.type === 'delete_file') {
   try { fs.unlinkSync(op.path); } catch (error) { fail('Error: ' + error.message); }
   process.stdout.write('Deleted ' + op.path + '\n');
+} else if (op.type === 'insert') {
+  let text;
+  try { text = fs.readFileSync(op.path, 'utf8'); } catch { fail('Error: file not found: ' + op.path); }
+  const lines = text.split('\n');
+  const endsWithNewline = lines.at(-1) === '';
+  if (endsWithNewline) lines.pop();
+  if (!Number.isInteger(op.line) || op.line < 0 || op.line > lines.length) {
+    fail('Error: insert_line ' + op.line + ' is outside 0..' + lines.length + ' in ' + op.path);
+  }
+  const added = op.text.split('\n');
+  if (added.at(-1) === '') added.pop();
+  lines.splice(op.line, 0, ...added);
+  save(op.path, lines.join('\n') + (endsWithNewline ? '\n' : ''));
+  process.stdout.write('Inserted after line ' + op.line + ' of ' + op.path + '\n');
 } else if (op.type === 'create_file') {
   if (fs.existsSync(op.path)) fail('Error: ' + op.path + ' already exists');
   const lines = diffLines(op.diff).map((line) => (line.startsWith('+') ? line.slice(1) : line));
@@ -70,11 +85,14 @@ if (op.type === 'delete_file') {
 `;
 const APPLY_SCRIPT_BASE64 = toBase64(APPLY_SCRIPT);
 
-export type ApplyPatchOperation = InferToolInput<
-  ReturnType<OpenAIProvider["tools"]["applyPatch"]>
->["operation"];
+// insert_line is the line the text goes after; 0 is the top of the file.
+export type FileOperation =
+  | InferToolInput<
+      ReturnType<OpenAIProvider["tools"]["applyPatch"]>
+    >["operation"]
+  | { type: "insert"; path: string; line: number; text: string };
 
-export function applyPatchScript(operation: ApplyPatchOperation): string {
+export function fileOperationScript(operation: FileOperation): string {
   const path = toWorkspaceRelative(operation.path);
   if (path === ".") throw new Error("Error: path must reference a file");
   const payload = toBase64(JSON.stringify({ ...operation, path: path }));

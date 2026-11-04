@@ -623,8 +623,13 @@ export interface AgentHooks {
     { stepNumber: number; finishReason: string; toolCallCount: number },
     void
   >;
+  /** `runsAs` is the Broods call a provider tool makes, e.g. `shell` running as `bash`. */
   onToolCall?: Handler<
-    { toolName: string; input: unknown },
+    {
+      toolName: string;
+      input: unknown;
+      runsAs?: { toolName: string; input: Record<string, unknown> };
+    },
     {
       decision?: "allow" | "deny";
       args?: Record<string, unknown>;

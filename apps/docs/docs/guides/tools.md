@@ -58,7 +58,10 @@ tools: {
 
 - The provider tool replaces the Broods tool it stands for, so the model sees one tool per job. A key may be a Broods tool name, such as `bash`, only for the provider tool that runs as it.
 - `denyTools: ["bash"]` withholds every tool that runs as `bash`.
-- Each call starts a fresh shell, as Broods `bash` does, so the bash tool's `restart` does nothing. The text editor's `insert` and `undo_edit` commands are refused; the model falls back to `str_replace`.
+- Each call starts a fresh shell, as Broods `bash` does, so the bash tool's `restart` does nothing.
+- The text editor's `view`, `create` and `str_replace` run as `read`, `write` and `edit`. `insert` adds text after a line (`0` is the top) and is judged as `edit`. `undo_edit` is refused.
+- These tools have no input to pick a workspace or sandbox, so an agent where Broods tools would offer that choice (two workspaces, or a workspace and a separate sandbox) refuses them. Keep one, or use the Broods tools.
+- A hook sees the provider tool's own name and input, plus `runsAs`, the Broods call it makes. See [hooks](hooks.md).
 - An OpenAI custom tool needs `command`, the sandbox command that reads the model's text on stdin:
 
 ```ts

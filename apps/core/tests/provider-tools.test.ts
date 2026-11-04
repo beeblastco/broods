@@ -251,7 +251,35 @@ describe("client-executed provider tools on the sandbox", () => {
       toolName: "write",
       input: { file_path: "b.ts", content: "x" },
     });
+    expect(
+      standIns.get("str_replace_based_edit_tool").toSandboxCall({
+        command: "insert",
+        path: "a.ts",
+        insert_line: 2,
+        insert_text: "y",
+      }),
+    ).toEqual({
+      toolName: "edit",
+      input: { file_path: "a.ts", insert_line: 2, new_string: "y" },
+    });
     expect(tools.read).toBeUndefined();
+  });
+
+  it("refuses a stand-in on an agent with a workspace to pick", async () => {
+    await expect(
+      build(
+        "anthropic",
+        anthropic,
+        {
+          str_replace_based_edit_tool: descriptor(
+            anthropic.tools.textEditor_20250728({}),
+          ),
+        },
+        new Map(),
+        undefined,
+        ["docs"],
+      ),
+    ).rejects.toThrow(/has no input to pick a workspace or sandbox/);
   });
 
   it("pipes an OpenAI custom tool's text to its command", async () => {
@@ -328,14 +356,16 @@ describe("client-executed provider tools on the sandbox", () => {
   });
 });
 
-describe("applyPatchScript", () => {
-  it("creates, updates and deletes files from V4A diffs", async () => {
-    const { applyPatchScript } =
-      await import("../src/harness/tools/apply-patch.ts");
+describe("fileOperationScript", () => {
+  it("creates, updates, inserts into and deletes files", async () => {
+    const { fileOperationScript } =
+      await import("../src/harness/tools/file-operation.ts");
     const dir = mkdtempSync(join(tmpdir(), "apply-patch-"));
-    const apply = (operation: Parameters<typeof applyPatchScript>[0]): void => {
+    const apply = (
+      operation: Parameters<typeof fileOperationScript>[0],
+    ): void => {
       const result = Bun.spawnSync(
-        ["bash", "-c", applyPatchScript(operation)],
+        ["bash", "-c", fileOperationScript(operation)],
         {
           cwd: dir,
         },
@@ -363,10 +393,18 @@ describe("applyPatchScript", () => {
       expect(() =>
         apply({ type: "update_file", path: "b.txt", diff: "-four\n+4\n" }),
       ).toThrow(/patch does not match/);
+      apply({ type: "insert", path: "b.txt", line: 0, text: "zero" });
+      apply({ type: "insert", path: "b.txt", line: 2, text: "1.5\n" });
+      expect(readFileSync(join(dir, "b.txt"), "utf8")).toBe(
+        "zero\none\n1.5\ntwo\nthree\n",
+      );
+      expect(() =>
+        apply({ type: "insert", path: "b.txt", line: 9, text: "x" }),
+      ).toThrow(/insert_line 9 is outside 0\.\.5/);
       apply({ type: "delete_file", path: "b.txt" });
       expect(() => readFileSync(join(dir, "b.txt"))).toThrow();
       expect(() =>
-        applyPatchScript({ type: "delete_file", path: "../x" }),
+        fileOperationScript({ type: "delete_file", path: "../x" }),
       ).toThrow(/traversal/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -385,17 +423,12 @@ async function build(
   tools: Record<string, Record<string, unknown>>,
   sandboxStandIns: ToolContext["sandboxStandIns"] = new Map(),
   denyTools?: string[],
+  extraWorkspaces: string[] = [],
 ): Promise<ToolSet> {
   calls.length = 0;
   const { createTools } = await import("../src/harness/tools/index.ts");
-  const sandbox = { provider: "lambda", permissionMode: "bypass" } as const;
-  const workspace: ResolvedWorkspace = {
-    name: "repo",
-    workspaceId: "ws_repo",
-    namespace: "ns",
-    config: { storage: { provider: "s3" } },
-    sandbox: sandbox,
-  };
+  const workspace = workspaceNamed("repo");
+  const sandboxes = [{ name: "box", sandbox: workspace.sandbox! }];
 
   return await createTools(
     {
@@ -403,12 +436,32 @@ async function build(
       conversationKey: "conversation",
       modelProviderName: modelProviderName,
       modelProvider: modelProvider,
-      sandboxes: [{ name: "box", sandbox: sandbox }],
-      workspaces: [workspace],
+      sandboxes: sandboxes,
+      workspaces: [workspace, ...extraWorkspaces.map(workspaceNamed)],
       sandboxStandIns: sandboxStandIns,
     },
     { tools: tools, ...(denyTools ? { denyTools: denyTools } : {}) },
   );
+}
+
+// Inherits the agent's sandbox, so Broods tools offer no workspace or sandbox choice.
+function workspaceNamed(name: string): ResolvedWorkspace {
+  return {
+    name: name,
+    workspaceId: `ws_${name}`,
+    namespace: "ns",
+    config: { storage: { provider: "s3" } },
+    sandbox: {
+      provider: "lambda",
+      permissionMode: "bypass",
+      controlPlane: {
+        accountId: "acct_test",
+        name: "box",
+        sandboxConfigId: "sbx_box",
+        specs: { vcpu: 1, memoryMb: 512, storageGb: 1 },
+      },
+    },
+  };
 }
 
 async function run(
