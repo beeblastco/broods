@@ -114,7 +114,7 @@ sequenceDiagram
   end
 ```
 
-- Every write for one sandbox id goes through `queueMirrorWrite`, so a removal never lands before the upsert.
+- Every write for an ephemeral row goes through `queueMirrorWrite`, so a removal never lands before the upsert. The queue is per account (see [Instance row](#instance-row)).
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
 - An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.
@@ -231,6 +231,9 @@ stateDiagram-v2
 - Refresh removes the row when the provider reports nothing or `terminating`, so `terminating` is never stored by core.
 - `specs` is what the meter bills. `specsVerified` is set only when the size is real: a provider report, or the size Broods sets on workdir, MicroVM and Cloudflare. Without it the dashboard shows `?`.
 - Executors refresh the row on every command. A refresh of a machine still running at the size, credentials and project it was last billed at bills at most once a minute (`REFRESH_BILL_EVERY_MS` in `packages/convex/sandbox/instances.ts`), so an owner's concurrent tasks write the shared usage rows about once a minute each, not on every command. The next bill, status change or removal covers the stretch, so nothing is lost; like the idle tail, it lands on the day and month of the bill that covers it, and live usage can trail by up to a minute.
+- Core sends row writes through `queueMirrorWrite` (`src/harness/sandbox/utils.ts`): one queue per account, or per sandbox id when there is none, so an account's concurrent tasks reach Convex one write at a time. Every executor queues its per-command refresh and does not wait for it. Terminate, suspend, resume, a platform (`cloudflare`, `worker`) release, the sweeper and conversation or account cleanup wait for the writes already queued, so a refresh queued before them never lands after and writes the row back.
+- A first row write the executor waits for (Daytona, E2B, Vercel and workdir, right after the claim) and the `exec`, `refresh` and `terminal` status writes skip the queue, so a new machine and a dashboard call never wait behind other tasks' refreshes.
+- The trade-off: suspend, resume and terminate wait behind every write the account queued, which in a burst of concurrent tasks can take seconds. Two orgs of one owner share one usage pool (`addPoolUsage`) but each has its own queue, so their writes still run side by side.
 
 ## Lifecycle actions and terminal
 

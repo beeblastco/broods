@@ -13,6 +13,7 @@ import type {
   ReservedSandbox,
   SandboxReleaseTarget,
 } from "../harness/sandbox/types.ts";
+import { queueMirrorWrite } from "../harness/sandbox/utils.ts";
 import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
 import { toErrorMessage } from "./errors.ts";
 import type {
@@ -77,7 +78,9 @@ export async function releaseExpiredSandboxes(
       continue;
     }
     released.push(reservation);
-    await removeSandboxInstance(accountId, key, reservation.externalId);
+    await queueMirrorWrite(accountId, reservation.externalId, () =>
+      removeSandboxInstance(accountId, key, reservation.externalId),
+    );
   }
 
   return released;
@@ -102,7 +105,9 @@ export async function releaseReservedSandboxes(
         () => {},
       );
     }
-    await removeSandboxInstance(accountId, namespace);
+    await queueMirrorWrite(accountId, namespace, () =>
+      removeSandboxInstance(accountId, namespace),
+    );
   }
 
   return released;

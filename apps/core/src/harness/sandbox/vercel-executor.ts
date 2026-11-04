@@ -57,6 +57,7 @@ import {
   isSandboxGoneError,
   mergeSandboxEnv,
   meterEphemeralSandbox,
+  queueMirrorWrite,
   sandboxNamePrefix,
   sandboxReservationKey,
   shellQuote,
@@ -406,13 +407,18 @@ export class VercelSandboxExecutor implements SandboxExecutor {
             storedName,
             this.#config.controlPlane?.accountId,
           ).catch(() => {});
-          await upsertSandboxInstance(
-            this.#config.controlPlane,
-            "vercel",
-            key,
+          void queueMirrorWrite(
+            this.#config.controlPlane?.accountId,
             storedName,
-            request.metadata,
-            { specs: vercelSpecs(sandbox) },
+            (): Promise<void> =>
+              upsertSandboxInstance(
+                this.#config.controlPlane,
+                "vercel",
+                key,
+                storedName,
+                request.metadata,
+                { specs: vercelSpecs(sandbox) },
+              ),
           );
 
           return sandbox;

@@ -30,6 +30,7 @@ import {
   isSandboxGoneError,
   mergeSandboxEnv,
   meterEphemeralSandbox,
+  queueMirrorWrite,
   sandboxReservationKey,
   shellQuote,
   truncateText,
@@ -194,12 +195,17 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           externalId,
           this.#config.controlPlane?.accountId,
         ).catch(() => {});
-        await upsertSandboxInstance(
-          this.#config.controlPlane,
-          "e2b",
-          ns,
+        void queueMirrorWrite(
+          this.#config.controlPlane?.accountId,
           externalId,
-          request.metadata,
+          (): Promise<void> =>
+            upsertSandboxInstance(
+              this.#config.controlPlane,
+              "e2b",
+              ns,
+              externalId,
+              request.metadata,
+            ),
         );
 
         return sandbox;
@@ -240,11 +246,16 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         if (accountId) {
           void e2bSpecs(created).then((specs): void => {
             if (specs) {
-              void setSandboxInstanceSpecs(
+              void queueMirrorWrite(
                 accountId,
-                ns,
                 created.sandboxId,
-                specs,
+                (): Promise<void> =>
+                  setSandboxInstanceSpecs(
+                    accountId,
+                    ns,
+                    created.sandboxId,
+                    specs,
+                  ),
               );
             }
           });

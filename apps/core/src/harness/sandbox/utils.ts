@@ -235,8 +235,9 @@ export function meterEphemeralSandbox(
     );
 }
 
-// Every row write goes here, so neither a burst nor a removal beats its upsert. One queue per
-// account: each write also updates the account's usage row, and parallel writes there conflict.
+// One queue per account, as a write can bill the account's usage rows; a burst or removal queued
+// here never beats the upsert before it. Awaited create writes stay off it, so a sandbox start
+// never waits behind other tasks' refreshes.
 export function queueMirrorWrite(
   accountId: string | undefined,
   sandboxId: string,

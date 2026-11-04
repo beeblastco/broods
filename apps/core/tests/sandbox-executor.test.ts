@@ -352,6 +352,9 @@ await mock.module("@daytona/sdk", () => ({
 
     create = daytonaCreateMock;
     get = mock(async (id: string) => ({
+      id: id,
+      ...DAYTONA_SIZE,
+      process: { executeCommand: daytonaExecuteCommandMock },
       state: daytonaState,
       start: daytonaStartMock,
       delete: () => daytonaDeleteMock(id),
@@ -3876,6 +3879,102 @@ describe("classifyVercelError", () => {
     expect(classifyVercelError(new Error("connection reset")).message).toBe(
       "connection reset",
     );
+  });
+});
+
+describe("account mirror queue", () => {
+  // Off the command's clock, behind whatever the account already queued.
+  it.each([
+    ["daytona", "daytona-1", {}],
+    ["e2b", "e2b-1", {}],
+    [
+      "vercel",
+      "vercel-1",
+      { token: "tok", teamId: "team_1", projectId: "prj_1" },
+    ],
+  ] as const)(
+    "queues a reconnected %s sandbox's row refresh on its account",
+    async (provider, externalId, options) => {
+      const { queueMirrorWrite } =
+        await import("../src/harness/sandbox/utils.ts");
+      const {
+        createSandboxExecutor,
+      } = require("../src/harness/sandbox/index.ts");
+      let release = (): void => {};
+      const pending = queueMirrorWrite(
+        "acct-refresh",
+        "other-sandbox",
+        (): Promise<void> =>
+          new Promise((resolve): void => {
+            release = resolve;
+          }),
+      );
+      storedSandboxExternalId = externalId;
+
+      const result = await createSandboxExecutor({
+        provider: provider,
+        persistent: true,
+        network: { mode: "allow-all" },
+        options: options,
+        controlPlane: { accountId: "acct-refresh", name: "box" },
+      }).run({
+        code: "echo ok",
+        namespace: NS,
+        workspaceRoot: "/mnt/workspaces",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(upsertSandboxInstanceMock).not.toHaveBeenCalled();
+      release();
+      await pending;
+      await Bun.sleep(0);
+      expect(
+        upsertSandboxInstanceMock.mock.calls.map((call) => [call[1], call[3]]),
+      ).toEqual([[provider, externalId]]);
+    },
+  );
+
+  it("writes a new reserved sandbox's row at once and queues its size patch", async () => {
+    const { queueMirrorWrite } =
+      await import("../src/harness/sandbox/utils.ts");
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    let release = (): void => {};
+    const pending = queueMirrorWrite(
+      "acct-create",
+      "other-sandbox",
+      (): Promise<void> =>
+        new Promise((resolve): void => {
+          release = resolve;
+        }),
+    );
+
+    await createSandboxExecutor({
+      provider: "e2b",
+      persistent: true,
+      network: { mode: "allow-all" },
+      controlPlane: { accountId: "acct-create", name: "box" },
+    }).run({
+      code: "echo ok",
+      namespace: NS,
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+    await Bun.sleep(5);
+
+    expect(
+      upsertSandboxInstanceMock.mock.calls.map((call) => [call[1], call[3]]),
+    ).toEqual([["e2b", "e2b-sandbox"]]);
+    expect(setSandboxInstanceSpecsMock).not.toHaveBeenCalled();
+    release();
+    await pending;
+    await Bun.sleep(0);
+    expect(setSandboxInstanceSpecsMock.mock.calls).toEqual([
+      ["acct-create", NS, "e2b-sandbox", { vcpu: 2, memoryMb: 2048 }],
+    ]);
   });
 });
 

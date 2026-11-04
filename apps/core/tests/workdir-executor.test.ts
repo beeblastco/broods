@@ -148,7 +148,9 @@ const deleteSandboxInstanceMock = mock(
     storedSandboxExternalId = null;
   },
 );
-const upsertSandboxInstanceMock = mock(async () => {});
+const upsertSandboxInstanceMock = mock(
+  async (..._args: unknown[]): Promise<void> => {},
+);
 const removeSandboxInstanceMock = mock(
   async (
     _accountId: string,
@@ -1134,6 +1136,47 @@ describe("WorkdirSandboxExecutor.run", () => {
     ).toBe(false);
     expect(fetchCalls.some((c) => c.path.endsWith("/resume"))).toBe(true);
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
+  });
+
+  it("queues a reconnected sandbox's row refresh on its account, off the run's clock", async (): Promise<void> => {
+    const { queueMirrorWrite } =
+      await import("../src/harness/sandbox/utils.ts");
+    let release = (): void => {};
+    const pending = queueMirrorWrite(
+      "acct_q",
+      "sbx_other",
+      (): Promise<void> =>
+        new Promise((resolve): void => {
+          release = resolve;
+        }),
+    );
+    storedSandboxExternalId = "sbx_stored";
+    const plane = { accountId: "acct_q", name: "box" };
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      options: { workdirUrl: BASE },
+      controlPlane: plane,
+    });
+
+    await executor.run({
+      code: "echo hi",
+      reservationKey: "tool:acct_q",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+    await executor.resumeHarnessReservation({
+      reservationKey: "harness:session-q",
+    });
+
+    expect(upsertSandboxInstanceMock).not.toHaveBeenCalled();
+    release();
+    await pending;
+    await tick();
+    expect(upsertSandboxInstanceMock.mock.calls).toEqual([
+      [plane, "sandbox", "tool:acct_q", "sbx_stored", undefined],
+      [plane, "sandbox", "harness:session-q", "sbx_stored", undefined],
+    ]);
   });
 
   it("retires a reserved sandbox workdir reports as failed and creates a fresh one", async (): Promise<void> => {

@@ -52,6 +52,7 @@ import {
   isSandboxGoneError,
   mergeSandboxEnv,
   meterEphemeralSandbox,
+  queueMirrorWrite,
   SandboxCapacityError,
   sandboxReservationKey,
   shellQuote,
@@ -278,13 +279,18 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
           externalId,
           this.#config.controlPlane?.accountId,
         ).catch(() => {});
-        await upsertSandboxInstance(
-          this.#config.controlPlane,
-          "daytona",
-          ns,
+        void queueMirrorWrite(
+          this.#config.controlPlane?.accountId,
           externalId,
-          request.metadata,
-          { specs: daytonaSpecs(sandbox) },
+          (): Promise<void> =>
+            upsertSandboxInstance(
+              this.#config.controlPlane,
+              "daytona",
+              ns,
+              externalId,
+              request.metadata,
+              { specs: daytonaSpecs(sandbox) },
+            ),
         );
 
         return sandbox;
