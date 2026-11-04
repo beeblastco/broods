@@ -121,6 +121,7 @@ Reads redact secret-like field names (`token`, `secret`, `privateKey`, `apiKey`,
 | `brole_` | Role                 | Never used directly. Exchanged for a session                                                                    |
 | `bsts_`  | Role session         | The role's policy. Default 1 hour, max 12. Only the hash is stored                                              |
 | `bdts_`  | Stage session ticket | 15 minutes, signed by Convex with `STAGE_TICKET_SECRET`                                                         |
+| `bdob_`  | Logs ticket          | 5 minutes at most, never past its login. Reads one stage's logs and traces, nothing else                        |
 | `brt_`   | Run token            | Reads its own agent's runs. Signed by core, never stored                                                        |
 
 Every credential starts with `b`, and the `broods-credential` rule in `.gitleaks.toml` matches each full shape (`brole_` ids are not secrets). Core resolves a bearer in `resolveBearerAuth()` (`apps/core/src/shared/auth.ts`):
@@ -182,6 +183,18 @@ The dashboard's Apply deploys approved files without handing a deploy key to any
 - The config plane takes a `bdap_` only on its own stage's `manifest` and `mcp-bundle-uploads` routes, and re-checks the member's write access at each use (`resolveApplyTicketAuth`). It syncs fenced like a project key, and the audit row names the member.
 - Core runs no user code: the files run only in that sandbox, reserved per stage and `bun.lock` hash so two stages never share one. The dock agent's own sandbox never sees the ticket.
 - The ticket is a bearer for its 5 minutes: it reaches one stage's manifest, which the member could already deploy.
+
+### The dock agent reading logs
+
+Logs carry end users' chats, and the runtime key cannot open them. The dock agent reads them with a login lent by the signed-in owner or admin, under rules enforced in code, not in its prompt. `verification/Broods/LentObservability.lean` proves them over any sequence of steps.
+
+- **A separate ticket.** `POST /v1/account/observability-session` trades a login for a `bdob_` ticket (`model/observabilityTicket.ts`) under its own key context, for one stage. Core's auth resolves it to nothing, so every route refuses it except the log socket's scope check. It cannot start a run, reach a sandbox or touch the account.
+- **It dies with the login.** Its expiry is 5 minutes or the login's, whichever comes first, and the socket closes then.
+- **Reading makes the conversation read-only.** Text in logs may try to steer the agent, so the mint marks the login's conversation in the same mutation, before any ticket exists. From then on the config plane refuses every non-`GET` from any lent login of that conversation (`observedLoginRefusal`, code `read_only_after_logs`), including one re-minted later. A lent login with no conversation cannot open logs at all. `dock__propose_changes` still works, since the signed-in user reviews and applies those.
+- **No way out for what it read.** The dock agent has no web tools, and its sandbox has no network and no credential.
+- **Audited.** Each mint writes an `observability.opened` event.
+
+Not covered: the agent's answer text and links. A crafted log line can still try to mislead what it tells the user, which is why it must say what it read and treat logs as data.
 
 ## Hosted MCP servers
 

@@ -265,6 +265,9 @@ export const cliTokensFields = {
   lastUsedAt: v.optional(v.number()),
   // Minted by the dashboard dock for its agent: the account API only, never a credential route.
   lentToAgent: v.optional(v.literal(true)),
+  // The dock conversation a lent login belongs to, and when it first opened logs.
+  lentConversation: v.optional(v.string()),
+  observedAt: v.optional(v.number()),
 };
 
 export const cliExternalResourcesFields = {
@@ -1471,7 +1474,8 @@ export default defineSchema({
     .index("by_tokenHash", ["tokenHash"])
     .index("by_accountId", ["accountId"])
     .index("by_authId", ["authId"])
-    .index("by_expiresAt", ["expiresAt"]),
+    .index("by_expiresAt", ["expiresAt"])
+    .index("by_lentConversation", ["lentConversation"]),
   cliExternalResources: defineTable(cliExternalResourcesFields)
     .index("by_projectId_and_stageId", ["projectId", "stageId"])
     .index("by_accountId", ["accountId"]),

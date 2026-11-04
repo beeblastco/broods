@@ -274,6 +274,27 @@ export async function lentLoginRefusal(
     : null;
 }
 
+// Text from end users' chats may now sit in the agent's context, so its login may only read.
+export async function observedLoginRefusal(
+  ctx: ActionCtx,
+  req: Request,
+): Promise<Response | null> {
+  const token = bearerToken(req);
+  if (req.method === "GET" || !token?.startsWith(CLI_TOKEN_PREFIX)) return null;
+  const login: AccountLogin | null = await ctx.runMutation(
+    internal.cli.auth.resolveAccountLogin,
+    { tokenHash: await sha256Hex(token) },
+  );
+
+  return login?.observed
+    ? jsonError(
+        403,
+        "This conversation read logs, so it is read-only. Propose the change for the user to apply, or start a new conversation.",
+        { code: "read_only_after_logs" },
+      )
+    : null;
+}
+
 /** A run token (`brt_`) is core's credential for one run: refused on its prefix alone. */
 export function runTokenRefusal(req: Request): Response | null {
   return bearerToken(req)?.startsWith(RUN_TOKEN_PREFIX)

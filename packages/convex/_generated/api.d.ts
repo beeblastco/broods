@@ -1006,7 +1006,7 @@ export declare const api: {
     session: FunctionReference<
       "mutation",
       "public",
-      { projectId?: Id<"projects"> },
+      { conversationKey?: string; projectId?: Id<"projects"> },
       {
         agentId: string;
         expiresAt: number;
@@ -5447,6 +5447,7 @@ export declare const internal: {
           };
           authId: string;
           lentToAgent: boolean;
+          observed: boolean;
         }
       >;
       resolveCliToken: FunctionReference<
@@ -5561,6 +5562,17 @@ export declare const internal: {
           updatedAt: number;
           variableCount: number;
         }>
+      >;
+      mintObservabilityByLogin: FunctionReference<
+        "mutation",
+        "internal",
+        { project: string; stage: string; tokenHash: string },
+        null | {
+          expiresAt: number;
+          projectSlug: string;
+          stageSlug: string;
+          token: string;
+        }
       >;
       mintSessionByAccount: FunctionReference<
         "mutation",

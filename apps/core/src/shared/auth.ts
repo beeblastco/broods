@@ -6,6 +6,7 @@ import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import { RUN_TOKEN_PREFIX } from "@broods/convex/model/principal";
 import { ROLE_SESSION_TOKEN_PREFIX } from "@broods/convex/model/roleRules";
 import { VIA_GATEWAY_HEADER } from "@broods/convex/model/serviceBridge";
+import { OBSERVABILITY_TICKET_PREFIX } from "@broods/convex/model/observabilityTicket";
 import {
   openStageSessionTicket,
   STAGE_SESSION_TICKET_PREFIX,
@@ -122,6 +123,8 @@ export async function resolveBearerAuth(
   if (token.startsWith(STAGE_SESSION_TICKET_PREFIX)) {
     return await resolveStageSessionAuth(token);
   }
+  // Opens the log socket's scope and nothing else: that check reads the ticket itself.
+  if (token.startsWith(OBSERVABILITY_TICKET_PREFIX)) return null;
   if (token.startsWith(RUN_TOKEN_PREFIX)) {
     return await resolveRunTokenAuth(token);
   }

@@ -44,6 +44,7 @@ import {
   auditActorForAuth,
   jsonError,
   lentLoginRefusal,
+  observedLoginRefusal,
   requireAccount,
   runTokenRefusal,
 } from "./routes/shared";
@@ -95,7 +96,8 @@ async function handleConfigRequest(
       runTokenRefusal(req) ??
       (managesCredentials(req.method, pathname)
         ? await lentLoginRefusal(ctx, req)
-        : null);
+        : null) ??
+      (await observedLoginRefusal(ctx, req));
     if (refusal) return refusal;
 
     // Authenticates its own caller kinds, so it runs before the shared bearer funnel.

@@ -10,16 +10,23 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { assertStageName } from "../lib/slug";
-import { cliLoginTokenHash } from "./auth";
+import { cliLoginTokenHash, resolveActiveCliToken } from "./auth";
 import { duplicateStageContents, kindForStageName } from "../stage";
 import { stageNameEquals, resolveProject } from "../model/projectScope";
 import { byDefaultThenName } from "../model/defaultStage";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import {
+  activeDeployment,
   mintStageSessionTicket,
   stageSessionValidator,
+  stageTicketSecret,
   type StageSession,
 } from "../agent/deployments";
+import { appendAuditEvent } from "../model/auditEvents";
+import {
+  observabilityTicketExpiry,
+  sealObservabilityTicket,
+} from "../model/observabilityTicket";
 import { ClientError, clientErrorResponse } from "../model/clientError";
 import { deploymentRegionValidator } from "../schema";
 
@@ -220,6 +227,99 @@ export const mintSessionByAccount = internalMutation({
     return await mintStageSessionTicket(ctx, projectDoc._id, stage._id, true);
   },
 });
+
+// A lent login must name its conversation, or reading logs could not make that conversation
+// read-only. Marked in the mint, so no ticket exists before the login stops writing.
+export const mintObservabilityByLogin = internalMutation({
+  args: { tokenHash: v.string(), project: v.string(), stage: v.string() },
+  returns: v.union(v.null(), stageSessionValidator),
+  handler: async (ctx, args): Promise<StageSession | null> => {
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, true);
+    if (!resolved) return null;
+    const { account, token } = resolved;
+    if (token.lentToAgent === true && token.lentConversation === undefined)
+      return null;
+    const projectDoc = await projectForAccount(ctx, account._id, args.project);
+    if (!projectDoc) return null;
+    const stages = await ctx.db
+      .query("stages")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
+      .collect();
+    const stage = stages.find((entry) =>
+      stageNameEquals(entry.name, args.stage),
+    );
+    const deployment = stage
+      ? await activeDeployment(ctx, projectDoc._id, stage._id)
+      : null;
+    if (!deployment) return null;
+    const now = Date.now();
+    if (token.lentToAgent === true && token.observedAt === undefined)
+      await ctx.db.patch(token._id, { observedAt: now });
+    const expiresAt = observabilityTicketExpiry(now, token.expiresAt);
+    await appendAuditEvent(ctx.db, {
+      accountId: account._id,
+      projectId: projectDoc._id,
+      stageId: deployment.stageId,
+      actor: { kind: "cli", id: token.authId },
+      action: "observability.opened",
+      resource: {
+        kind: "deployment",
+        id: deployment.endpointId,
+        name: `${deployment.projectSlug}/${deployment.stageSlug}`,
+      },
+      summary:
+        token.lentToAgent === true
+          ? "The dock agent opened this stage's logs"
+          : "A login opened this stage's logs",
+    });
+
+    return {
+      token: await sealObservabilityTicket(
+        {
+          accountId: deployment.accountId,
+          endpointId: deployment.endpointId,
+          projectSlug: deployment.projectSlug,
+          stageSlug: deployment.stageSlug,
+          expiresAt: expiresAt,
+        },
+        stageTicketSecret(),
+      ),
+      expiresAt: expiresAt,
+      projectSlug: deployment.projectSlug,
+      stageSlug: deployment.stageSlug,
+    };
+  },
+});
+
+export const observabilitySessionHttpHandle = httpAction(
+  async (ctx, req): Promise<Response> => {
+    try {
+      const tokenHash = await cliLoginTokenHash(req);
+      const body = (await req.json()) as { project?: unknown; stage?: unknown };
+      if (typeof body.project !== "string" || !body.project.trim())
+        return jsonError(400, "Request body must include a project");
+      if (typeof body.stage !== "string" || !body.stage.trim())
+        return jsonError(400, "Request body must include a stage");
+      const session = tokenHash
+        ? await ctx.runMutation(internal.cli.stages.mintObservabilityByLogin, {
+            tokenHash: tokenHash,
+            project: body.project,
+            stage: body.stage,
+          })
+        : null;
+
+      return session
+        ? json(session)
+        : jsonError(403, "This login cannot read that stage's logs");
+    } catch (error) {
+      if (error instanceof SyntaxError)
+        return jsonError(400, "Request body must be valid JSON");
+      console.error("Observability session failed", error);
+
+      return jsonError(500, "Observability session failed");
+    }
+  },
+);
 
 // Logs, stream and machine trade the login token for a stage ticket, not the frontend key.
 export const sessionHttpHandle = httpAction(

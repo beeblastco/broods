@@ -138,5 +138,22 @@
       "pruneExternalResources": "22b7d9e1d8ada2e8",
       "syncExternalResources": "38672e2bb5106f66"
     }
+  },
+  "LentObservability": {
+    "packages/convex/cli/stages.ts": {
+      "mintObservabilityByLogin": "d22f458cbd76f5a7"
+    },
+    "packages/convex/config/routes/shared.ts": {
+      "observedLoginRefusal": "3c5d7d482e4a9cd3"
+    },
+    "packages/convex/cli/auth.ts": {
+      "conversationObserved": "17104e950c518f68"
+    },
+    "packages/convex/model/observabilityTicket.ts": {
+      "observabilityTicketExpiry": "e75a2daab25d7038"
+    },
+    "apps/core/src/harness/integrations.ts": {
+      "observabilityTicketScope": "3eac80fc162f9f97"
+    }
   }
 }

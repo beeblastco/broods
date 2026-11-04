@@ -92,9 +92,15 @@ type RepoTarget = Infer<typeof repoTargetValidator>;
 
 // The dock talks to one Broods agent per deployment, as the signed-in user; null keeps its planner.
 export const session = mutation({
-  args: { projectId: v.optional(v.id("projects")) },
+  args: {
+    conversationKey: v.optional(v.string()),
+    projectId: v.optional(v.id("projects")),
+  },
   returns: v.union(sessionValidator, v.null()),
-  handler: async (ctx, { projectId }): Promise<DockSession | null> => {
+  handler: async (
+    ctx,
+    { conversationKey, projectId },
+  ): Promise<DockSession | null> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
     const agent = dockAgent();
@@ -113,7 +119,12 @@ export const session = mutation({
         ? undefined
         : await insertCliToken(
             ctx,
-            { authId: authUser.id, ...target, lentToAgent: true },
+            {
+              authId: authUser.id,
+              ...target,
+              lentToAgent: true,
+              ...(conversationKey ? { lentConversation: conversationKey } : {}),
+            },
             expiresAt,
           );
     const userToken = await sealUserToken(
