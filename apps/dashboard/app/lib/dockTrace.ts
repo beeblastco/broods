@@ -7,6 +7,7 @@ import {
 import type { TextStreamPart, ToolSet } from "ai";
 import { z } from "zod";
 
+export const ASK_TOOL = "ask_questions";
 export const NAVIGATE_TOOL = "dock__navigate";
 
 const DOCK_PREFIX = "dock__";
@@ -38,6 +39,45 @@ export type DockTracePart =
     };
 
 export type DockToolStep = Extract<DockTracePart, { kind: "tool" }>;
+
+export interface DockAnswer {
+  /** The last text that went on to a tool call: the answer if no other follows. */
+  interim?: string;
+  text: string;
+  trace: readonly DockTracePart[];
+}
+
+/** Folds one stream part into the answer; text that goes on to a tool call joins the trace. */
+export function answerStep(
+  answer: DockAnswer,
+  part: TextStreamPart<ToolSet>,
+  now: number,
+): DockAnswer {
+  const working =
+    (part.type === "tool-input-start" || part.type === "tool-call") &&
+    part.toolName !== ASK_TOOL &&
+    answer.text.trim().length > 0;
+  const settled: DockAnswer = working
+    ? {
+        interim: answer.text,
+        text: "",
+        trace: [
+          ...answer.trace,
+          {
+            id: `interim-${answer.trace.length}`,
+            kind: "reasoning",
+            text: answer.text,
+          },
+        ],
+      }
+    : answer;
+
+  return {
+    ...settled,
+    text: part.type === "text-delta" ? settled.text + part.text : settled.text,
+    trace: traceStep(settled.trace, part, now),
+  };
+}
 
 /** Folds one stream part into the answer's trace; parts it does not draw return the same array. */
 export function traceStep(

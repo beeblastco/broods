@@ -7,7 +7,7 @@ import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { useStage } from "@/app/hooks/useStage";
 import type { DockFacts, DockSession } from "@/app/lib/agentDock";
 import type { DockFile } from "@/app/lib/dockSource";
-import type { DockTracePart } from "@/app/lib/dockTrace";
+import type { DockAnswer, DockTracePart } from "@/app/lib/dockTrace";
 import {
   actionTier,
   changeKey,
@@ -31,7 +31,7 @@ import type { SearchItem } from "@/app/lib/paletteSearch";
 import { STREAM_COMMIT_MS } from "@/app/lib/perfReport";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import { useParams, useRouter } from "next/navigation";
 import {
   createContext,
@@ -192,6 +192,7 @@ export function CopilotProvider({
   const mintSession = useMutation(api.agentDock.session);
   const commitChange = useAction(api.agentDock.commitChange);
   const readRepo = useAction(api.agentDock.repoFiles);
+  const convex = useConvex();
   const applySource = useAction(api.agentDock.apply);
   const syncSource = useAction(api.agentDock.sync);
   const currentStageId =
@@ -430,9 +431,8 @@ export function CopilotProvider({
             message.id === replyId ? { ...message, ...patch } : message,
           ),
         );
-      let text = "";
+      let answer: DockAnswer = { text: "", trace: [] };
       let plan: CopilotPlan | undefined;
-      let trace: readonly DockTracePart[] = [];
       let answeredAt: number | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
       // Set before seeding and the repo read, so Stop also ends an answer still being set up.
@@ -441,35 +441,41 @@ export function CopilotProvider({
       try {
         // Lazy: zod and the stream reader load on the first ask, not with every page.
         const {
-          ASK_TOOL,
           dockPrompt,
           PROPOSE_TOOL,
           proposalPlan,
           questionText,
           sourcePlan,
+          stageProgress,
           streamDockAnswer,
         } = await import("@/app/lib/agentDock");
-        const { NAVIGATE_TOOL, navigatePath, traceStep } =
+        const { answerStep, ASK_TOOL, NAVIGATE_TOOL, navigatePath } =
           await import("@/app/lib/dockTrace");
         const { readDraft, readSource, seedConversation } =
           await import("@/app/lib/dockSource");
         // The stored source goes in the agent's own folder; an agent with none reads the repo.
+        // An ask right after the dock opens beats the subscription: read it instead of skipping.
+        const stored =
+          source === undefined && currentStageId
+            ? await convex
+                .query(api.stageSources.latest, { stageId: currentStageId })
+                .catch((): null => null)
+            : source;
         if (
           currentStageId &&
           !(currentStageId in seeds.current) &&
-          source?.url
+          stored?.url
         ) {
-          const files = await readSource(source.url);
-          seeds.current[currentStageId] = await seedConversation(
-            session,
-            conversationKey,
-            files,
-          )
-            .then((): DockSeed => ({
-              files: files,
-              revision: source.revision,
-              ...(facts.branch ? { branch: facts.branch } : {}),
-            }))
+          seeds.current[currentStageId] = await readSource(stored.url)
+            .then(async (files): Promise<DockSeed> => {
+              await seedConversation(session, conversationKey, files);
+
+              return {
+                files: files,
+                revision: stored.revision,
+                ...(facts.branch ? { branch: facts.branch } : {}),
+              };
+            })
             .catch((): null => null);
         }
         const seeded =
@@ -497,37 +503,31 @@ export function CopilotProvider({
             {
               ...facts,
               page: `${window.location.pathname}${window.location.search}`,
+              progress: stageProgress(stored, driftState?.reason),
             },
             repo ?? undefined,
           ),
         );
-        // Text after a tool call is the next model step: keep it a paragraph apart.
-        let afterTool = false;
+        // The agent may edit and propose in one step, so its draft is read once the turn ends.
+        let drafted: { input: unknown; seed: DockSeed } | undefined;
         for await (const part of stream) {
-          const next = traceStep(trace, part, Date.now());
-          const traced = next !== trace;
-          if (traced) {
-            trace = next;
-            answeredAt = undefined;
-          }
+          const next = answerStep(answer, part, Date.now());
+          const traced = next.trace !== answer.trace;
+          answer = next;
+          if (traced) answeredAt = undefined;
           if (part.type === "text-delta") {
-            text += afterTool && text ? `\n\n${part.text}` : part.text;
-            afterTool = false;
-            if (trace.length > 0) answeredAt ??= Date.now();
+            if (answer.trace.length > 0) answeredAt ??= Date.now();
           } else if (part.type === "tool-call") {
-            afterTool = true;
             if (part.toolName === PROPOSE_TOOL) {
-              plan = seeded
-                ? (sourcePlan(
-                    part.input,
-                    context,
-                    seeded,
-                    await readDraft(session, conversationKey),
-                  ) ?? plan)
-                : (proposalPlan(part.input, context, repo ?? undefined) ??
-                  plan);
+              if (seeded) drafted = { input: part.input, seed: seeded };
+              else
+                plan =
+                  proposalPlan(part.input, context, repo ?? undefined) ?? plan;
             } else if (part.toolName === ASK_TOOL) {
-              text += `${text ? "\n\n" : ""}${questionText(part.input)}`;
+              answer = {
+                ...answer,
+                text: `${answer.text}${answer.text ? "\n\n" : ""}${questionText(part.input)}`,
+              };
             } else if (part.toolName === NAVIGATE_TOOL) {
               const path = navigatePath(part.input);
               if (path) router.push(path);
@@ -538,18 +538,28 @@ export function CopilotProvider({
             update({
               answeredAt: answeredAt,
               plan: plan,
-              text: text,
-              trace: trace,
+              text: answer.text,
+              trace: answer.trace,
             });
           }, STREAM_COMMIT_MS);
         }
         clearTimeout(timer);
+        if (drafted)
+          plan =
+            sourcePlan(
+              drafted.input,
+              context,
+              drafted.seed,
+              await readDraft(session, conversationKey, controller.signal),
+            ) ?? plan;
         update({
           answeredAt: answeredAt ?? Date.now(),
           pending: false,
           plan: plan,
-          text: text || plan?.summary || "",
-          trace: trace,
+          text: answer.text.trim()
+            ? answer.text
+            : plan?.summary || answer.interim || "",
+          trace: answer.trace,
         });
         if (plan) runSafeSteps(replyId, plan);
       } catch (error) {
@@ -558,9 +568,9 @@ export function CopilotProvider({
         update({
           answeredAt: Date.now(),
           pending: false,
-          trace: trace,
+          trace: answer.trace,
           text: stopped
-            ? `${text}${text ? "\n\n" : ""}Stopped.`
+            ? `${answer.text}${answer.text ? "\n\n" : ""}Stopped.`
             : `The Broods agent could not answer: ${error instanceof Error ? error.message : String(error)}`,
         });
       } finally {
@@ -569,7 +579,9 @@ export function CopilotProvider({
     },
     [
       conversationKey,
+      convex,
       currentStageId,
+      driftState,
       facts,
       note,
       projectId,

@@ -2,9 +2,12 @@ import { describe, expect, test } from "bun:test";
 import type { TextStreamPart, ToolSet } from "ai";
 import { sameOriginPath } from "@/app/lib/navigation";
 import {
+  answerStep,
+  ASK_TOOL,
   navigatePath,
   pageLabel,
   traceStep,
+  type DockAnswer,
   type DockTracePart,
 } from "../app/lib/dockTrace";
 
@@ -16,6 +19,55 @@ function fold(
     [],
   );
 }
+
+describe("the dock's answer", () => {
+  const answerOf = (parts: readonly TextStreamPart<ToolSet>[]): DockAnswer =>
+    parts.reduce<DockAnswer>((answer, part) => answerStep(answer, part, 1), {
+      text: "",
+      trace: [],
+    });
+  const text = (value: string): TextStreamPart<ToolSet> => ({
+    id: "t",
+    text: value,
+    type: "text-delta",
+  });
+  const call: TextStreamPart<ToolSet> = {
+    id: "c1",
+    toolName: "dock__broods_api",
+    type: "tool-input-start",
+  };
+
+  test("text that goes on to a tool call is work in the trace, not the answer", () => {
+    const answer = answerOf([
+      text("I'll pull the audit log."),
+      call,
+      text("Done."),
+    ]);
+
+    expect(answer.text).toBe("Done.");
+    expect(answer.trace[0]).toMatchObject({
+      kind: "reasoning",
+      text: "I'll pull the audit log.",
+    });
+    expect(answer.trace[1]).toMatchObject({ kind: "tool" });
+  });
+
+  test("an agent that ends on a tool call still leaves its last words to fall back on", () => {
+    const answer = answerOf([text("Added it."), call]);
+
+    expect(answer.text).toBe("");
+    expect(answer.interim).toBe("Added it.");
+  });
+
+  test("a question stays in the answer", () => {
+    const answer = answerOf([
+      text("Which agent?"),
+      { id: "q", toolName: ASK_TOOL, type: "tool-input-start" },
+    ]);
+
+    expect(answer.text).toBe("Which agent?");
+  });
+});
 
 describe("dock trace", () => {
   test("reasoning and tool steps keep stream order, each tool settling where it started", () => {

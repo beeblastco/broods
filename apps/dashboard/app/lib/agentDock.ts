@@ -33,13 +33,13 @@ export interface DockFacts {
   page?: string;
   project?: string;
   projectId?: string;
+  /** One line on what the stage runs: its source revision, how its deploy went, any drift. */
+  progress?: string;
   /** `owner/name`, with the branch each stage deploys from. */
   repo?: string;
   stage?: string;
   stageId?: string;
 }
-
-export const ASK_TOOL = "ask_questions";
 
 // The dock has no question card yet: a question reads as text the user answers by typing.
 const questionsSchema = z.object({
@@ -87,6 +87,7 @@ export function dockPrompt(
       ? [`Ids: project ${facts.projectId}, stage ${facts.stageId ?? "default"}`]
       : []),
     pagesLine(facts),
+    ...(facts.progress ? [facts.progress] : []),
     facts.repo
       ? `Deploys from GitHub ${facts.repo}: resources defined in its broods/ folder change in code, not on the canvas.`
       : facts.codeNodes.length > 0
@@ -179,6 +180,35 @@ export function proposalPlan(
     nodes: nodes,
     summary: parsed.data.summary,
   };
+}
+
+/** What the agent reads of the stage's state: the same facts the change bar shows the user. */
+export function stageProgress(
+  source:
+    | {
+        commitSha?: string;
+        origin: string;
+        revision: number;
+        verification?: { error?: string; phase: string };
+      }
+    | null
+    | undefined,
+  driftReason: string | undefined,
+): string | undefined {
+  if (!source) return undefined;
+  const { commitSha, origin, revision, verification } = source;
+  const parts = [
+    `Stored source: revision ${revision}, from ${origin}`,
+    ...(commitSha ? [`commit ${commitSha.slice(0, 7)}`] : []),
+    ...(verification
+      ? [
+          `deploy ${verification.phase}${verification.error ? `: ${verification.error}` : ""}`,
+        ]
+      : []),
+    ...(driftReason ? [`out of sync: ${driftReason}`] : []),
+  ];
+
+  return parts.join(", ");
 }
 
 /**
