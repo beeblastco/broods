@@ -722,7 +722,7 @@ async function resolveStageContext(
 }
 
 /** Same value as core's `STAGE_TICKET_SECRET`, which verifies what this signs. */
-function stageTicketSecret(): string {
+export function stageTicketSecret(): string {
   const secret = process.env.STAGE_TICKET_SECRET;
   if (!secret) {
     throw new Error(

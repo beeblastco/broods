@@ -1,4 +1,5 @@
 import { v, type Infer } from "convex/values";
+import { z } from "zod/mini";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import {
@@ -7,7 +8,10 @@ import {
   mutation,
   type ActionCtx,
 } from "./_generated/server";
+import { stageTicketSecret } from "./agent/deployments";
 import { authKit } from "./auth";
+import { sealApplyTicket } from "./model/applyTicket";
+import { accountIdForProject } from "./model/auditEvents";
 import { ClientError } from "./model/clientError";
 import {
   broodsFolder,
@@ -18,6 +22,9 @@ import {
   requireGitHubApp,
 } from "./model/github";
 import { getOwnedStage, getStageForWrite } from "./model/ownership/stage";
+import { serviceEnv, serviceHeaders } from "./model/serviceBridge";
+import { stageSourceHash, stageSourceProblem } from "./model/stageSource";
+import { storeStageSync } from "./model/stageSourceStore";
 import { sealUserToken, USER_TOKEN_MAX_TTL_MS } from "./model/userToken";
 
 const AGENT_PATH =
@@ -41,6 +48,20 @@ const repoTargetValidator = v.object({
   viaPullRequest: v.boolean(),
 });
 
+const applyResultValidator = v.object({
+  revision: v.number(),
+  manifestHash: v.string(),
+  durationMs: v.number(),
+  phases: v.record(v.string(), v.number()),
+});
+
+const applyRunAnswer = z.object({
+  ok: z.boolean(),
+  output: z.string(),
+  phases: z.record(z.string(), z.number()),
+});
+
+type ApplyResult = Infer<typeof applyResultValidator>;
 type DockSession = Infer<typeof sessionValidator>;
 type RepoTarget = Infer<typeof repoTargetValidator>;
 
@@ -163,6 +184,132 @@ export const commitChange = action({
       target.viaPullRequest,
       baseSha,
     );
+  },
+});
+
+// The fast path: the approved files deploy from a compile sandbox with a ticket only this mints,
+// then become the stage's source. The caller pushes them to a linked repo after.
+export const apply = action({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+    baseRevision: v.union(v.number(), v.null()),
+    files: v.array(repoFileValidator),
+  },
+  returns: applyResultValidator,
+  handler: async (ctx, args): Promise<ApplyResult> => {
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) throw new Error("User not found or not authenticated");
+    const target = await ctx.runQuery(internal.agentDock.applyTarget, {
+      authId: user.id,
+      projectId: args.projectId,
+      stageId: args.stageId,
+    });
+    if (!target) throw new ClientError("You cannot deploy this stage.");
+    if (target.revision !== args.baseRevision)
+      throw new ClientError(
+        `The stage's source is now revision ${target.revision ?? "none"}. Review the new diff and apply again.`,
+        "conflict",
+      );
+    const problem = stageSourceProblem(args.files);
+    if (problem) throw new ClientError(`Cannot apply: ${problem}.`);
+    const lock = args.files.find((file) => file.path === "bun.lock");
+    const startedAt = Date.now();
+    const service = serviceEnv();
+    const response = await fetch(`${service.url}/v1/apply-runs`, {
+      method: "POST",
+      headers: serviceHeaders(target.accountId, service.secret),
+      body: JSON.stringify({
+        accountId: target.accountId,
+        projectId: args.projectId,
+        stageId: args.stageId,
+        project: target.project,
+        stage: target.stage,
+        ticket: await sealApplyTicket(
+          {
+            accountId: target.accountId,
+            projectId: args.projectId,
+            stageId: args.stageId,
+            authId: user.id,
+          },
+          stageTicketSecret(),
+        ),
+        lockHash: await stageSourceHash(lock ? [lock] : []),
+        files: args.files,
+      }),
+    });
+    const run = applyRunAnswer.safeParse(await response.json());
+    if (!response.ok || !run.success)
+      throw new Error(`Apply run failed with status ${response.status}`);
+    if (!run.data.ok)
+      throw new ClientError(`The deploy failed:\n${run.data.output}`);
+    const manifestHash = await ctx.runQuery(internal.stageSources.syncedSince, {
+      stageId: args.stageId,
+      since: startedAt,
+    });
+    if (!manifestHash)
+      throw new ClientError("The deploy finished without syncing the stage.");
+    const revision = await storeStageSync(
+      ctx,
+      args.stageId,
+      manifestHash,
+      { files: args.files },
+      "apply",
+    );
+
+    return {
+      revision: revision ?? 0,
+      manifestHash: manifestHash,
+      durationMs: Date.now() - startedAt,
+      phases: run.data.phases,
+    };
+  },
+});
+
+export const applyTarget = internalQuery({
+  args: {
+    authId: v.string(),
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+  },
+  returns: v.union(
+    v.object({
+      accountId: v.string(),
+      project: v.string(),
+      stage: v.string(),
+      revision: v.union(v.number(), v.null()),
+    }),
+    v.null(),
+  ),
+  handler: async (
+    ctx,
+    { authId, projectId, stageId },
+  ): Promise<{
+    accountId: string;
+    project: string;
+    stage: string;
+    revision: number | null;
+  } | null> => {
+    const stage = await getStageForWrite(ctx, authId, stageId);
+    if (stage?.projectId !== projectId) return null;
+    const project = await ctx.db.get(projectId);
+    const accountId = project
+      ? await accountIdForProject(ctx, projectId)
+      : null;
+    if (!project || !accountId) return null;
+    const newest = await ctx.db
+      .query("stageSources")
+      .withIndex("by_stageId_and_revision", (q) => q.eq("stageId", stageId))
+      .order("desc")
+      .first();
+
+    return {
+      accountId: accountId,
+      project: project.slug,
+      // The CLI's spelling: the dashboard shows `Development`, `broods` takes `development`.
+      stage: stage.name.toLowerCase(),
+      revision: newest?.revision ?? null,
+    };
   },
 });
 

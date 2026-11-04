@@ -958,6 +958,22 @@ export declare const api: {
     };
   };
   agentDock: {
+    apply: FunctionReference<
+      "action",
+      "public",
+      {
+        baseRevision: number | null;
+        files: Array<{ content: string; path: string }>;
+        projectId: Id<"projects">;
+        stageId: Id<"stages">;
+      },
+      {
+        durationMs: number;
+        manifestHash: string;
+        phases: Record<string, number>;
+        revision: number;
+      }
+    >;
     commitChange: FunctionReference<
       "action",
       "public",
@@ -4579,6 +4595,17 @@ export declare const internal: {
     };
   };
   agentDock: {
+    applyTarget: FunctionReference<
+      "query",
+      "internal",
+      { authId: string; projectId: Id<"projects">; stageId: Id<"stages"> },
+      {
+        accountId: string;
+        project: string;
+        revision: number | null;
+        stage: string;
+      } | null
+    >;
     linkedBranch: FunctionReference<
       "query",
       "internal",
@@ -5673,6 +5700,25 @@ export declare const internal: {
           stage: string;
         },
         null
+      >;
+      resolveApplyTicketAuth: FunctionReference<
+        "query",
+        "internal",
+        {
+          accountId: string;
+          authId: string;
+          expiresAt: number;
+          project: string;
+          projectId: string;
+          stage: string;
+          stageId: string;
+        },
+        null | {
+          accountId: Id<"accounts">;
+          applyAuthId: string;
+          scoped: true;
+          secretHash: string;
+        }
       >;
       resolveCliAuth: FunctionReference<
         "query",
@@ -8291,6 +8337,12 @@ export declare const internal: {
         stageId: Id<"stages">;
       },
       number | null
+    >;
+    syncedSince: FunctionReference<
+      "query",
+      "internal",
+      { since: number; stageId: Id<"stages"> },
+      string | null
     >;
   };
   stripe: {

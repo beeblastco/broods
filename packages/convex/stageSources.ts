@@ -53,6 +53,22 @@ export const latestHash = internalQuery({
     (await latestRow(ctx, stageId))?.hash ?? null,
 });
 
+/** The stage's manifest hash when a sync finished at or after `since`, else null. */
+export const syncedSince = internalQuery({
+  args: { stageId: v.id("stages"), since: v.number() },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, { stageId, since }): Promise<string | null> => {
+    const sync = await ctx.db
+      .query("stageSyncs")
+      .withIndex("by_stageId", (q) => q.eq("stageId", stageId))
+      .unique();
+
+    return sync?.manifestHash && (sync.syncedAt ?? 0) >= since
+      ? sync.manifestHash
+      : null;
+  },
+});
+
 /**
  * Records a sync: the manifest hash it read back, and the source it came from when one rode it.
  * A source equal to the newest revision only moves that revision's hashes; `storageId` is then
