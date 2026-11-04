@@ -347,8 +347,8 @@ export async function handleUserTokenSecretRoute(
       actorId:
         "deployKeyId" in auth && auth.deployKeyId
           ? auth.deployKeyId
-          : "cliTokenId" in auth
-            ? auth.cliTokenId
+          : "cliAuthId" in auth
+            ? auth.cliAuthId
             : auth.accountId,
     },
   );
@@ -678,8 +678,8 @@ async function handleManifestSync(
           actorId:
             "deployKeyId" in auth
               ? auth.deployKeyId
-              : "cliTokenId" in auth
-                ? auth.cliTokenId
+              : "cliAuthId" in auth
+                ? auth.cliAuthId
                 : "applyAuthId" in auth
                   ? auth.applyAuthId
                   : accountId,

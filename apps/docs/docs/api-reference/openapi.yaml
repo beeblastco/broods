@@ -3912,6 +3912,11 @@ components:
         permissions, project/stage scope and expiry, 401 on `/v1/runs` and
         every run URL, and it cannot assume roles, manage roles or rotate the
         account key.
+        A CLI login token (`bcli_...`, from `broods login`) works on every
+        account route like the account key, for its owner or admin while they
+        keep that role, except rotating the account key (403). The login the
+        dashboard lends its agent also gets 403 on role writes, assume-role
+        and connection writes, and 401 on the CLI routes.
         A runtime key (`bsk_...`) works only on `/v1/runs`,
         `GET /v1/runs/{runId}`, the endpoint-addressed run URLs and
         `POST /v1/account/assume-role` (roles pinned to its own stage); every
@@ -3934,8 +3939,11 @@ components:
       description: >-
         A short-lived end-user token (`buat_...`) your backend signs with the
         stage's signing secret (`bsig_...`, `signUserToken` in the SDK),
-        naming the user, optionally the conversation keys they may use, and an
-        expiry at most 60 minutes out. Sent only beside the runtime key. Keep
+        naming the user, optionally the conversation keys they may use and a
+        credential, and an expiry at most 60 minutes out. The credential is
+        encrypted in the token and reaches only the agent's hosted MCP
+        servers, as
+        `X-Broods-User-Credential`. Sent only beside the runtime key. Keep
         the signing secret on your server: whoever holds it can speak as any
         user of the stage. Rotating it voids every token it signed.
     AdminAuth:

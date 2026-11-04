@@ -92,7 +92,7 @@ export async function openSignedTicket(
   }
 }
 
-function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
+export function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
   const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
   const binary = atob(padded);

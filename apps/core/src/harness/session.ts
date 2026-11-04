@@ -261,6 +261,8 @@ export interface SessionOptions {
   principal?: Principal;
   /** A subagent mounts the folder of the user conversation that started it. */
   userConversationKey?: string | undefined;
+  /** From the live request's user token only; never stored, so a rebuilt run has none. */
+  userCredential?: string | undefined;
 }
 
 export interface IngestedChannelEvents {
@@ -284,6 +286,8 @@ export class Session {
   readonly trigger: RunTrigger | undefined;
   readonly principal: Principal | undefined;
   readonly userConversationKey: string | undefined;
+  // A # field, so no JSON.stringify or log of the session carries it.
+  readonly #userCredential: string | undefined;
   private readonly agentConfig: AgentConfig;
   private readonly persist: boolean;
   private messageSequence = 0;
@@ -324,12 +328,17 @@ export class Session {
     this.channelActions = options.channelActions;
     this.trigger = options.trigger;
     this.principal = options.principal;
+    this.#userCredential = options.userCredential;
     this.persist = options.persist ?? true;
     this.userConversationKey =
       options.userConversationKey ??
       (isUserConversationKey(this.conversationKey)
         ? this.conversationKey
         : undefined);
+  }
+
+  get userCredential(): string | undefined {
+    return this.#userCredential;
   }
 
   // Called per exec, so no `brt_` token ages in the queue while the run waits for a slot.
@@ -889,11 +898,13 @@ export class Session {
 
   /** The agent's own secret values, which every log line and span of its runs drops. */
   secretValues(): string[] {
-    return collectSecretValues([
+    const secrets = collectSecretValues([
       this.agentConfig,
       this.sandboxes(),
       this.resolvedWorkspaces(),
     ]);
+
+    return this.#userCredential ? [...secrets, this.#userCredential] : secrets;
   }
 
   private async appendConversationEvents(

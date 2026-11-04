@@ -2121,6 +2121,7 @@ function directSession(event: DirectInboundEvent): Session {
       : undefined,
     trigger: event.cronRun ? "cron" : undefined,
     principal: runPrincipal(event, directPrincipalChain(event)),
+    userCredential: event.userCredential,
   });
 }
 

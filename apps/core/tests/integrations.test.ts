@@ -2792,7 +2792,7 @@ describe("run token (auth kind agent)", () => {
     ]);
   });
 
-  it("puts a user token's user ahead of the key, so MCP servers learn who asked", async () => {
+  it("puts a user token's user ahead of the key and holds its credential in memory", async () => {
     const handled: DirectInboundEvent[] = [];
     await routeIncomingEvent(
       createEvent(USER_TURN, { authorization: "Bearer token" }),
@@ -2810,7 +2810,11 @@ describe("run token (auth kind agent)", () => {
           endpointId: "env-endpoint",
           projectSlug: "demo",
           stageSlug: "development",
-          user: { userId: "user_42", expiresAt: Date.now() + 60_000 },
+          user: {
+            userId: "user_42",
+            credential: "bcli_user",
+            expiresAt: Date.now() + 60_000,
+          },
         }),
         deploymentLoader: async () => ({
           accountId: TEST_ACCOUNT.accountId,
@@ -2826,6 +2830,7 @@ describe("run token (auth kind agent)", () => {
         { kind: "api", keyKind: "deployment" },
       ],
     ]);
+    expect(handled.map((event) => event.userCredential)).toEqual(["bcli_user"]);
   });
 
   it("reads its own agent's runs and nothing else", async () => {

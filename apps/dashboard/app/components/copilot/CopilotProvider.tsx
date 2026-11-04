@@ -3,9 +3,11 @@
 import { useShortcutRegistry } from "@/app/components/ShortcutProvider";
 import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import { useDashboardIndex } from "@/app/hooks/useDashboardIndex";
+import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { useStage } from "@/app/hooks/useStage";
 import type { DockFacts, DockSession } from "@/app/lib/agentDock";
 import type { DockFile } from "@/app/lib/dockSource";
+import type { DockTracePart } from "@/app/lib/dockTrace";
 import {
   actionTier,
   changeKey,
@@ -48,6 +50,8 @@ const NO_MODEL_REPLY =
 const SESSION_RENEW_MS = 60 * 1000;
 
 export interface CopilotMessage {
+  /** When the final text began after the last trace step; unset while it still works. */
+  answeredAt?: number;
   id: string;
   /** Set while the Broods agent has not answered yet. */
   pending?: boolean;
@@ -56,7 +60,10 @@ export interface CopilotMessage {
   /** The project and stage it was asked on; its writes refuse to run anywhere else. */
   scope?: string;
   stale?: boolean;
+  startedAt?: number;
   text: string;
+  /** Reasoning and tool steps, in stream order. */
+  trace?: readonly DockTracePart[];
 }
 
 export interface CopilotState {
@@ -81,6 +88,8 @@ export interface CopilotState {
   /** Puts the stage back on the source the proposal was seeded from. */
   revertProposal: (messageId: string) => void;
   setOpen: (open: boolean) => void;
+  /** Ends the answer being streamed; what arrived stays in the thread. */
+  stop: () => void;
   /** Redeploys the stage's right source: the branch head when linked, else the stored one. */
   syncStage: () => void;
   wakeIndex: () => void;
@@ -173,9 +182,9 @@ export function CopilotProvider({
       ),
       project: projects?.find((project) => project._id === projectId)?.name,
       repo: repo ? `${repo.fullName} (${branches.join(", ")})` : undefined,
-      stage: stages?.find((stage) =>
-        stageId ? stage._id === stageId : stage.isDefault,
-      )?.name,
+      ...(projectId ? { projectId: projectId } : {}),
+      stage: stage?.name,
+      ...(stage ? { stageId: stage._id } : {}),
     };
   }, [canvas, projectId, projects, stageId, stages]);
   const updateCron = useMutation(api.agent.cronsPublic.update);
@@ -187,7 +196,18 @@ export function CopilotProvider({
   const syncSource = useAction(api.agentDock.sync);
   const currentStageId =
     stageId ?? stages?.find((stage) => stage.isDefault)?._id ?? null;
-  const sessionRef = useRef<DockSession | null | undefined>(undefined);
+  // The user menu's subscription. A session lends the open project's org, else the active one.
+  const activeOrg = useQuery(
+    api.org.orgs.getActive,
+    useSignedIn() ? {} : "skip",
+  );
+  const orgId = activeOrg?._id;
+  const sessionKey = `${projectId ?? ""}:${orgId ?? ""}`;
+  const sessionRef = useRef<{
+    key: string;
+    session: DockSession | null;
+  } | null>(null);
+  const streamRef = useRef<AbortController | null>(null);
   const [conversationKey] = useState(() => `dock-${crypto.randomUUID()}`);
 
   const scope = `${projectId ?? ""}:${stageId ?? ""}`;
@@ -377,7 +397,8 @@ export function CopilotProvider({
   );
 
   const dockSession = useCallback(async (): Promise<DockSession | null> => {
-    const cached = sessionRef.current;
+    const held = sessionRef.current;
+    const cached = held && held.key === sessionKey ? held.session : undefined;
     if (
       cached === null ||
       (cached && cached.expiresAt - SESSION_RENEW_MS > Date.now())
@@ -385,13 +406,16 @@ export function CopilotProvider({
       return cached;
     }
     try {
-      sessionRef.current = await mintSession({});
+      const session = await mintSession(
+        projectId ? { projectId: projectId } : {},
+      );
+      sessionRef.current = { key: sessionKey, session: session };
+
+      return session;
     } catch {
       return null;
     }
-
-    return sessionRef.current;
-  }, [mintSession]);
+  }, [mintSession, projectId, sessionKey]);
 
   const askAgent = useCallback(
     async (
@@ -408,7 +432,12 @@ export function CopilotProvider({
         );
       let text = "";
       let plan: CopilotPlan | undefined;
+      let trace: readonly DockTracePart[] = [];
+      let answeredAt: number | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      // Set before seeding and the repo read, so Stop also ends an answer still being set up.
+      const controller = new AbortController();
+      streamRef.current = controller;
       try {
         // Lazy: zod and the stream reader load on the first ask, not with every page.
         const {
@@ -420,6 +449,8 @@ export function CopilotProvider({
           sourcePlan,
           streamDockAnswer,
         } = await import("@/app/lib/agentDock");
+        const { NAVIGATE_TOOL, navigatePath, traceStep } =
+          await import("@/app/lib/dockTrace");
         const { readDraft, readSource, seedConversation } =
           await import("@/app/lib/dockSource");
         // The stored source goes in the agent's own folder; an agent with none reads the repo.
@@ -455,17 +486,34 @@ export function CopilotProvider({
                 return null;
               })
             : null;
+        controller.signal.throwIfAborted();
         const stream = streamDockAnswer(
           session,
           conversationKey,
-          dockPrompt(query, context, facts, repo ?? undefined),
+          controller.signal,
+          dockPrompt(
+            query,
+            context,
+            {
+              ...facts,
+              page: `${window.location.pathname}${window.location.search}`,
+            },
+            repo ?? undefined,
+          ),
         );
         // Text after a tool call is the next model step: keep it a paragraph apart.
         let afterTool = false;
         for await (const part of stream) {
+          const next = traceStep(trace, part, Date.now());
+          const traced = next !== trace;
+          if (traced) {
+            trace = next;
+            answeredAt = undefined;
+          }
           if (part.type === "text-delta") {
             text += afterTool && text ? `\n\n${part.text}` : part.text;
             afterTool = false;
+            if (trace.length > 0) answeredAt ??= Date.now();
           } else if (part.type === "tool-call") {
             afterTool = true;
             if (part.toolName === PROPOSE_TOOL) {
@@ -480,26 +528,43 @@ export function CopilotProvider({
                   plan);
             } else if (part.toolName === ASK_TOOL) {
               text += `${text ? "\n\n" : ""}${questionText(part.input)}`;
-            } else continue;
-          } else continue;
+            } else if (part.toolName === NAVIGATE_TOOL) {
+              const path = navigatePath(part.input);
+              if (path) router.push(path);
+            }
+          } else if (!traced) continue;
           timer ??= setTimeout(() => {
             timer = undefined;
-            update({ plan: plan, text: text });
+            update({
+              answeredAt: answeredAt,
+              plan: plan,
+              text: text,
+              trace: trace,
+            });
           }, STREAM_COMMIT_MS);
         }
         clearTimeout(timer);
         update({
+          answeredAt: answeredAt ?? Date.now(),
           pending: false,
           plan: plan,
           text: text || plan?.summary || "",
+          trace: trace,
         });
         if (plan) runSafeSteps(replyId, plan);
       } catch (error) {
         clearTimeout(timer);
+        const stopped = controller.signal.aborted;
         update({
+          answeredAt: Date.now(),
           pending: false,
-          text: `The Broods agent could not answer: ${error instanceof Error ? error.message : String(error)}`,
+          trace: trace,
+          text: stopped
+            ? `${text}${text ? "\n\n" : ""}Stopped.`
+            : `The Broods agent could not answer: ${error instanceof Error ? error.message : String(error)}`,
         });
+      } finally {
+        streamRef.current = null;
       }
     },
     [
@@ -509,15 +574,25 @@ export function CopilotProvider({
       note,
       projectId,
       readRepo,
+      router,
       runSafeSteps,
       source,
     ],
   );
 
+  const answering = messages.some((message) => message.pending === true);
+  const stop = useCallback((): void => streamRef.current?.abort(), []);
+
   const ask = useCallback(
     (query: string): void => {
       const trimmed = query.trim();
       if (!trimmed) return;
+      // A turn queued behind a running one would reach the agent without the user's login.
+      if (answering) {
+        note("Wait for the current answer, or stop it.");
+
+        return;
+      }
 
       const askedAt = String(Date.now());
       const replyId = `${askedAt}:broods`;
@@ -540,6 +615,7 @@ export function CopilotProvider({
           pending: true,
           role: "broods",
           scope: scope,
+          startedAt: Number(askedAt),
           text: "",
         },
       ]);
@@ -564,12 +640,14 @@ export function CopilotProvider({
       });
     },
     [
+      answering,
       askAgent,
       crons,
       dockSession,
       envVars,
       facts.codeNodes,
       items,
+      note,
       runSafeSteps,
       registry.activeIds,
       scope,
@@ -819,6 +897,7 @@ export function CopilotProvider({
       revertProposal: revertProposal,
       runAction: runAction,
       setOpen: setOpen,
+      stop: stop,
       syncStage: syncStage,
       wakeIndex: wakeIndex,
     }),
@@ -837,6 +916,7 @@ export function CopilotProvider({
       runAction,
       setOpen,
       shownMessages,
+      stop,
       syncStage,
     ],
   );

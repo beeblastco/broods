@@ -1,5 +1,6 @@
 // Every Broods credential starts with `b`, so people and secret scanners can tell it apart.
 export const ACCOUNT_KEY_PREFIX = "bask_";
+export const CLI_TOKEN_PREFIX = "bcli_";
 export const PROJECT_KEY_PREFIX = "bpdk_";
 export const RUNTIME_KEY_PREFIX = "bsk_";
 

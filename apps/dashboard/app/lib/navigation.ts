@@ -166,6 +166,15 @@ export function pickTab<T extends readonly NavTab[]>(
   return tabs.find((tab) => tab.id === value) ?? tabs[0];
 }
 
+/** `href` as a path on `base`'s origin, resolved as a browser would; null when it leaves. */
+export function sameOriginPath(href: string, base: string): string | null {
+  const url = new URL(href, base);
+
+  return url.origin === new URL(base).origin
+    ? `${url.pathname}${url.search}${url.hash}`
+    : null;
+}
+
 export function stepNavItem(
   items: readonly NavItem[],
   current: NavItem,

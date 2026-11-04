@@ -11,6 +11,7 @@ import { authKit } from "../auth";
 import { slugifyName } from "../lib/slug";
 import { bearerToken } from "../config/routes/shared";
 import {
+  CLI_TOKEN_PREFIX,
   createAccountSecret,
   randomToken,
   sha256Hex,
@@ -21,6 +22,7 @@ import {
   orgRoleMeets,
   userByAuthId,
 } from "../model/ownership/org";
+import { accountDoc } from "../model/accountDoc";
 import { ClientError } from "../model/clientError";
 import { assertCanCreateOrg } from "../model/orgBilling";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
@@ -28,12 +30,20 @@ import { planValidator } from "../schema";
 
 const CLI_CODE_PREFIX = "bcode_";
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
-export const CLI_TOKEN_PREFIX = "bcli_";
 const CODE_TTL_MS = 5 * 60 * 1000;
+const PRUNE_BATCH_SIZE = 100;
 
 // RFC 7636: 43..128 unreserved characters, base64url without padding.
 const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+const accountLoginValidator = v.object({
+  account: accountDoc,
+  authId: v.string(),
+  lentToAgent: v.boolean(),
+});
+
+export type AccountLogin = Infer<typeof accountLoginValidator>;
 
 const onboardingAccountValidator = v.object({
   id: v.id("accounts"),
@@ -98,33 +108,9 @@ export const createLoginCode = mutation({
     if (!authUser) {
       throw new Error("User not found or not authenticated");
     }
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
-      .unique();
-    if (!user) throw new ClientError("User not found", "not_found");
-
+    const target = await cliLoginTarget(ctx, authUser.id);
     // ClientError: a plain Error reaches a production caller only as "Server Error".
-    const org = await getActiveOrgForUser(ctx, user._id);
-    if (!org) throw new ClientError("No active organization", "not_found");
-    const membership = await getOrgMembership(ctx, org._id, user._id);
-    if (!membership || !orgRoleMeets(membership.role, "admin")) {
-      throw new ClientError(
-        `broods login needs the owner or admin role in ${org.name}. Switch organizations in the dashboard, then try again.`,
-        "unauthorized",
-      );
-    }
-
-    const account = await ctx.db
-      .query("accounts")
-      .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
-      .unique();
-    if (!account || account.status !== "active") {
-      throw new ClientError(
-        `${org.name} has no active API account. Set it up under Organization > API Access in the dashboard.`,
-      );
-    }
+    if (target instanceof ClientError) throw target;
 
     const now = Date.now();
     const code = randomToken(CLI_CODE_PREFIX);
@@ -132,8 +118,8 @@ export const createLoginCode = mutation({
     await ctx.db.insert("cliAuthCodes", {
       codeHash: await sha256Hex(code),
       authId: authUser.id,
-      orgId: org._id,
-      accountId: account._id,
+      orgId: target.orgId,
+      accountId: target.accountId,
       codeChallenge: codeChallenge,
       expiresAt: expiresAt,
       createdAt: now,
@@ -153,7 +139,7 @@ export const createOnboardingOrg = internalMutation({
     ctx,
     args,
   ): Promise<Infer<typeof onboardingContextValidator> | null> => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, false);
     if (!resolved) return null;
     const { token } = resolved;
     const user = await userByAuthId(ctx, token.authId);
@@ -286,18 +272,8 @@ export const exchangeLoginCode = internalMutation({
       .withIndex("by_authId", (q) => q.eq("authId", row.authId))
       .unique();
 
-    const token = randomToken(CLI_TOKEN_PREFIX);
     const expiresAt = now + TOKEN_TTL_MS;
-    await ctx.db.insert("cliTokens", {
-      tokenHash: await sha256Hex(token),
-      authId: row.authId,
-      orgId: row.orgId,
-      accountId: row.accountId,
-      status: "active",
-      expiresAt: expiresAt,
-      createdAt: now,
-      lastUsedAt: now,
-    });
+    const token = await insertCliToken(ctx, row, expiresAt);
     await ctx.db.patch(row._id, { usedAt: now });
 
     return {
@@ -328,7 +304,7 @@ export const getOnboardingContext = internalMutation({
     ctx,
     args,
   ): Promise<Infer<typeof onboardingContextValidator> | null> => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, false);
     if (!resolved) return null;
 
     return await onboardingContext(
@@ -345,6 +321,108 @@ export async function cliLoginTokenHash(req: Request): Promise<string | null> {
   return token?.startsWith(CLI_TOKEN_PREFIX) ? await sha256Hex(token) : null;
 }
 
+// Where a `bcli_` login for this user lands: the active org's account, owner or admin only.
+export async function cliLoginTarget(
+  ctx: MutationCtx,
+  authId: string,
+  orgId?: Id<"orgs">,
+): Promise<{ orgId: Id<"orgs">; accountId: Id<"accounts"> } | ClientError> {
+  const user = await userByAuthId(ctx, authId);
+  if (!user) return new ClientError("User not found", "not_found");
+  const org = orgId
+    ? await ctx.db.get(orgId)
+    : await getActiveOrgForUser(ctx, user._id);
+  if (!org) return new ClientError("No active organization", "not_found");
+  const membership = await getOrgMembership(ctx, org._id, user._id);
+  if (!membership || !orgRoleMeets(membership.role, "admin")) {
+    return new ClientError(
+      `broods login needs the owner or admin role in ${org.name}. Switch organizations in the dashboard, then try again.`,
+      "unauthorized",
+    );
+  }
+  const account = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
+    .unique();
+  if (!account || account.status !== "active") {
+    return new ClientError(
+      `${org.name} has no active API account. Set it up under Organization > API Access in the dashboard.`,
+    );
+  }
+
+  return { orgId: org._id, accountId: account._id };
+}
+
+// Only the hash is stored: the plaintext returned here is the one copy.
+export async function insertCliToken(
+  ctx: MutationCtx,
+  owner: {
+    authId: string;
+    orgId: Id<"orgs">;
+    accountId: Id<"accounts">;
+    lentToAgent?: true;
+  },
+  expiresAt: number,
+): Promise<string> {
+  const now = Date.now();
+  const token = randomToken(CLI_TOKEN_PREFIX);
+  await ctx.db.insert("cliTokens", {
+    tokenHash: await sha256Hex(token),
+    authId: owner.authId,
+    orgId: owner.orgId,
+    accountId: owner.accountId,
+    status: "active",
+    expiresAt: expiresAt,
+    createdAt: now,
+    lastUsedAt: now,
+    ...(owner.lentToAgent ? { lentToAgent: true as const } : {}),
+  });
+
+  return token;
+}
+
+// Expiry is checked inline on every resolve; this only bounds growth.
+export const pruneExpiredTokens = internalMutation({
+  args: { now: v.optional(v.number()) },
+  returns: v.object({ tokensDeleted: v.number() }),
+  handler: async (ctx, args): Promise<{ tokensDeleted: number }> => {
+    const now = args.now ?? Date.now();
+    // A token minted with no expiresAt never expires, so the range starts above zero.
+    const expired = await ctx.db
+      .query("cliTokens")
+      .withIndex("by_expiresAt", (q) =>
+        q.gt("expiresAt", 0).lt("expiresAt", now),
+      )
+      .take(PRUNE_BATCH_SIZE);
+    for (const token of expired) {
+      await ctx.db.delete(token._id);
+    }
+    if (expired.length === PRUNE_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.cli.auth.pruneExpiredTokens, {
+        now: now,
+      });
+    }
+
+    return { tokensDeleted: expired.length };
+  },
+});
+
+// The account API's view of a login, lent ones included: one round trip, account and all.
+export const resolveAccountLogin = internalMutation({
+  args: { tokenHash: v.string() },
+  returns: v.union(v.null(), accountLoginValidator),
+  handler: async (ctx, args): Promise<AccountLogin | null> => {
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, true);
+    if (!resolved) return null;
+
+    return {
+      account: resolved.account,
+      authId: resolved.token.authId,
+      lentToAgent: resolved.token.lentToAgent === true,
+    };
+  },
+});
+
 export const resolveCliToken = internalMutation({
   args: {
     tokenHash: v.string(),
@@ -360,7 +438,7 @@ export const resolveCliToken = internalMutation({
     }),
   ),
   handler: async (ctx, args) => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, false);
     if (!resolved) return null;
     const { token, account } = resolved;
 
@@ -384,7 +462,7 @@ export const selectOnboardingOrg = internalMutation({
     ctx,
     args,
   ): Promise<Infer<typeof onboardingContextValidator> | null> => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, false);
     if (!resolved) return null;
     const { token } = resolved;
     const user = await userByAuthId(ctx, token.authId);
@@ -501,9 +579,11 @@ async function onboardingContext(
   };
 }
 
+// A login lent to the agent is unknown to the CLI plane: it cannot mint keys or sessions there.
 async function resolveActiveCliToken(
   ctx: MutationCtx,
   tokenHash: string,
+  acceptsLent: boolean,
 ): Promise<{ token: Doc<"cliTokens">; account: Doc<"accounts"> } | null> {
   const token = await ctx.db
     .query("cliTokens")
@@ -513,7 +593,8 @@ async function resolveActiveCliToken(
   if (
     !token ||
     token.status !== "active" ||
-    (token.expiresAt !== undefined && token.expiresAt < now)
+    (token.expiresAt !== undefined && token.expiresAt < now) ||
+    (token.lentToAgent === true && !acceptsLent)
   ) {
     return null;
   }

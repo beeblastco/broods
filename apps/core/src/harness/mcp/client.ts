@@ -51,10 +51,12 @@ import { sandboxMcpRequest, type SandboxMcpTarget } from "./sandbox.ts";
 
 export const MCP_AGENT_ID_HEADER = "X-Broods-Agent-Id";
 export const MCP_PRINCIPAL_HEADER = "X-Broods-Principal";
+export const MCP_USER_CREDENTIAL_HEADER = "X-Broods-User-Credential";
 // Core alone names the caller; a tenant's copy in any letter case would join the real one.
 const PRINCIPAL_HEADER_NAMES: ReadonlySet<string> = new Set([
   MCP_AGENT_ID_HEADER.toLowerCase(),
   MCP_PRINCIPAL_HEADER.toLowerCase(),
+  MCP_USER_CREDENTIAL_HEADER.toLowerCase(),
 ]);
 
 const CLIENT_INFO = { name: "broods-core", version: "1.0.0" };
@@ -266,6 +268,7 @@ export function mcpConnection(
   configHeaders: Record<string, string> | undefined,
   configOauth?: AgentMcpEntry["oauth"],
   principal?: Principal,
+  userCredential?: string,
 ): McpConnection {
   const overridden = new Set(
     Object.keys(configHeaders ?? {}).map((name) => name.toLowerCase()),
@@ -295,12 +298,25 @@ export function mcpConnection(
     }
   }
 
+  // Only the account's own bundle gets the user's credential, never a remote host.
+  const credential =
+    record.transport === "hosted" && userCredential !== undefined
+      ? { [MCP_USER_CREDENTIAL_HEADER]: userCredential }
+      : undefined;
+
   return {
     record: record,
     headers: headers,
     agentId: principal?.agentId,
     ...(oauth !== undefined ? { oauth: oauth } : {}),
-    ...(principal ? { principalHeaders: principalHeaders(principal) } : {}),
+    ...(principal || credential
+      ? {
+          principalHeaders: {
+            ...(principal ? principalHeaders(principal) : {}),
+            ...credential,
+          },
+        }
+      : {}),
   };
 }
 
@@ -326,7 +342,7 @@ export function setMcpForTests(overrides: McpTestOverrides | null): void {
 }
 
 // Digested: a key lives up to an hour and must not hold secrets in clear. A hosted row adds the
-// agent, since its answers come from that agent's own child.
+// agent, since its answers come from that agent's own child. Principal headers stay out.
 export function cacheKeyFor(connection: McpConnection): string {
   const headers = Object.entries(connection.headers).sort(([a], [b]) =>
     a < b ? -1 : 1,

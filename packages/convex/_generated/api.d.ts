@@ -1006,7 +1006,7 @@ export declare const api: {
     session: FunctionReference<
       "mutation",
       "public",
-      {},
+      { projectId?: Id<"projects"> },
       {
         agentId: string;
         expiresAt: number;
@@ -5416,6 +5416,37 @@ export declare const internal: {
           }>;
           projects: Array<{ id: Id<"projects">; name: string; slug: string }>;
           user: { authId: string; email: string; name: string };
+        }
+      >;
+      pruneExpiredTokens: FunctionReference<
+        "mutation",
+        "internal",
+        { now?: number },
+        { tokensDeleted: number }
+      >;
+      resolveAccountLogin: FunctionReference<
+        "mutation",
+        "internal",
+        { tokenHash: string },
+        null | {
+          account: {
+            _creationTime: number;
+            _id: Id<"accounts">;
+            auditRetentionDays?: number;
+            createdAt: number;
+            description?: string;
+            orgId: string;
+            secretHash: string;
+            secretHint?: string;
+            secretRotatedAt?: number;
+            secretRotatedBy?: Id<"users">;
+            status: "active" | "disabled";
+            storageExternalId?: string;
+            updatedAt: number;
+            username: string;
+          };
+          authId: string;
+          lentToAgent: boolean;
         }
       >;
       resolveCliToken: FunctionReference<

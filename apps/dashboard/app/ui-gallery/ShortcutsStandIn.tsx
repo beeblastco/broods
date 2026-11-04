@@ -215,6 +215,7 @@ function Surfaces(): React.JSX.Element {
     revertProposal: () => {},
     runAction: run,
     setOpen: setOpen,
+    stop: () => {},
     syncStage: () => {},
     wakeIndex: () => {},
   };

@@ -14,6 +14,15 @@ const REASONING_PROVIDER_KEYS: Record<string, string[]> = {
   anthropic: ["thinking", "effort"],
   google: ["thinkingConfig"],
 };
+// The AI SDK's provider-neutral `model.reasoning`, which `defineAgent` writes; other efforts
+// (Anthropic `max`) have no portable form and stay in providerOptions.
+const PORTABLE_EFFORTS: ReadonlySet<string> = new Set([
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]);
 
 export function applyModelReasoning(
   model: Record<string, unknown>,
@@ -21,6 +30,9 @@ export function applyModelReasoning(
   next: { budgetTokens?: number; effort?: string },
 ): Record<string, unknown> {
   const result: Record<string, unknown> = { ...model };
+  delete result.reasoning;
+  const portable = next.effort && PORTABLE_EFFORTS.has(next.effort);
+  if (portable) result.reasoning = next.effort;
   const providerOptions: Record<string, unknown> = {
     ...parseOr(configObject, result.providerOptions),
   };
@@ -33,7 +45,12 @@ export function applyModelReasoning(
   }
 
   const slot = reasoningSlot(provider);
-  const slice = slot ? reasoningSlice(slot, next) : undefined;
+  const slice = slot
+    ? reasoningSlice(
+        slot,
+        portable ? { budgetTokens: next.budgetTokens } : next,
+      )
+    : undefined;
   if (slot && slice) {
     providerOptions[slot] = {
       ...parseOr(configObject, providerOptions[slot]),
@@ -87,7 +104,10 @@ export function readModelReasoning(modelBranch: Record<string, unknown>): {
       ? openai.reasoningEffort
       : typeof anthropic.effort === "string"
         ? anthropic.effort
-        : undefined;
+        : typeof modelBranch.reasoning === "string" &&
+            PORTABLE_EFFORTS.has(modelBranch.reasoning)
+          ? modelBranch.reasoning
+          : undefined;
 
   return {
     ...(budgetTokens !== undefined ? { budgetTokens: budgetTokens } : {}),

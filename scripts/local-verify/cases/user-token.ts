@@ -171,11 +171,12 @@ export async function userToken(context: VerifyContext): Promise<void> {
   const signed = await run({
     [USER_TOKEN_HEADER]: await signUserToken({
       userId: "alice",
+      credential: `bcli_local-verify-${context.runId}`,
       secret: rotated.secret,
     }),
   });
   assertStep(
-    "a user token signed with the rotated secret runs the agent under its user",
+    "a user token signed with the rotated secret, carrying a credential, runs the agent under its user",
     signed.status === 202 &&
       signed.conversationKey === `bsu:alice:${turn.conversationKey}`,
     JSON.stringify(signed),

@@ -251,6 +251,8 @@ export interface DirectInboundEvent {
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
   // Absent on a rebuilt envelope: nothing is guessed.
   principalChain?: PrincipalLink[];
+  // The user token's credential: in memory only, never on an envelope, ledger row or log.
+  userCredential?: string;
   // Settles open ask_questions prompts and resumes; it runs no turn of its own.
   answers?: QuestionAnswer[];
 }
@@ -819,6 +821,9 @@ async function handleHttpRequest(
           : []),
         { kind: "api", keyKind: auth.kind } as const,
       ],
+      ...(deployment?.user?.credential !== undefined
+        ? { userCredential: deployment.user.credential }
+        : {}),
       ...(deployment
         ? {
             endpointId: deployment.endpointId,

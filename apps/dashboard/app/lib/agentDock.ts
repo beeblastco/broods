@@ -7,6 +7,7 @@ import type { FunctionReturnType } from "convex/server";
 import { structuredPatch } from "diff";
 import { z } from "zod";
 import { draftChanges, type DockFile } from "@/app/lib/dockSource";
+import { ACCOUNT_NAV_ITEMS, NAV_ITEMS, navHref } from "@/app/lib/navigation";
 import { readSseStream } from "../../../../packages/broods/src/stream";
 
 export const PROPOSE_TOOL = "dock__propose_changes";
@@ -28,10 +29,14 @@ export interface DockFacts {
   codeNodes: readonly string[];
   /** `source → target` labels of the canvas edges. */
   connections: readonly string[];
+  /** The dashboard path and search the user is on. */
+  page?: string;
   project?: string;
+  projectId?: string;
   /** `owner/name`, with the branch each stage deploys from. */
   repo?: string;
   stage?: string;
+  stageId?: string;
 }
 
 export const ASK_TOOL = "ask_questions";
@@ -77,6 +82,11 @@ export function dockPrompt(
 ): string {
   const lines = [
     `Project: ${facts.project ?? "none open"}, stage: ${facts.stage ?? "unknown"}`,
+    ...(facts.page ? [`On page: ${facts.page}`] : []),
+    ...(facts.projectId
+      ? [`Ids: project ${facts.projectId}, stage ${facts.stageId ?? "default"}`]
+      : []),
+    pagesLine(facts),
     facts.repo
       ? `Deploys from GitHub ${facts.repo}: resources defined in its broods/ folder change in code, not on the canvas.`
       : facts.codeNodes.length > 0
@@ -235,9 +245,11 @@ export function questionText(input: unknown): string {
 export async function* streamDockAnswer(
   session: DockSession,
   conversationKey: string,
+  signal: AbortSignal,
   text: string,
 ): AsyncGenerator<TextStreamPart<ToolSet>> {
   const response = await fetch(session.url, {
+    signal: signal,
     body: JSON.stringify({
       agentId: session.agentId,
       conversationKey: conversationKey,
@@ -264,6 +276,28 @@ export async function* streamDockAnswer(
     if (part.type === "error") throw new Error(String(part.error));
     yield part;
   }
+}
+
+// The sections dock__navigate can open, from the sidebar's own items.
+function pagesLine(facts: DockFacts): string {
+  const { projectId } = facts;
+  const pages = [
+    ...(projectId
+      ? NAV_ITEMS.map((item) => ({
+          path: navHref(projectId, item.segment, facts.stageId ?? null),
+          tabs: item.tabs,
+          label: item.label,
+        }))
+      : []),
+    ...ACCOUNT_NAV_ITEMS.map((item) => ({ ...item, path: item.segment })),
+  ];
+
+  return `Pages: ${pages
+    .map(
+      (page) =>
+        `${page.label} ${page.path}${page.tabs.length > 0 ? ` (tab=${page.tabs.map((tab) => tab.id).join("|")})` : ""}`,
+    )
+    .join("; ")}`;
 }
 
 function commitAction(
