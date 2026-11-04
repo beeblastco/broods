@@ -98,6 +98,7 @@ With a valid token, every conversation key and event id of that request lives un
 | --------------- | -------------------------------------------------------------------------------------------- |
 | `userId`        | Your id for the user. Letters, digits and `._@+=-`, at most 128 characters                   |
 | `conversations` | Optional. The only conversation keys this user may use. Omit to allow any key under the user |
+| `credential`    | Optional. The user's own bearer for your hosted MCP servers. See below                       |
 | `ttlMs`         | Lifetime. Default 10 minutes, at most 60                                                     |
 
 - `broods dev` and `broods deploy` write the signing secret to `.env.local` when the stage has none yet. They never rotate a secret the stage already has; they warn when your checkout does not hold it. You can also generate or rotate it on the dashboard's Runtime key tab. It is shown once. Rotating it voids every token it signed at once.
@@ -107,6 +108,22 @@ With a valid token, every conversation key and event id of that request lives un
 - The account key and the dashboard's stage session ticket speak for the whole stage and take no user token.
 - Keys starting with `bsu:` are reserved for user namespaces.
 - The token's `userId` reaches your agent's remote and hosted MCP servers as the first link of `X-Broods-Principal`, so a tool can act for that user. A machine server gets no principal, and a turn that queued behind a running one arrives without it, so a tool must refuse when the header is missing. Broods verified the token, so the id is yours to trust, but check the server's own credential header too: anyone can send a header to a public URL.
+
+### Acting with the user's own credential
+
+When a tool must call another API as the user, put that user's credential in the token:
+
+```ts
+const token = await signUserToken({
+  userId: user.id,
+  credential: user.apiToken,
+});
+```
+
+- Every tool listing and call the run makes to one of your account's **hosted** MCP servers carries it as `X-Broods-User-Credential`. Remote URL servers, machine and sandbox servers never get it, and neither do bash, the model, logs or stored runs.
+- It lives only in memory for that request's run and the subagents it starts. A run resumed later (after an approval, a restart, or a turn that queued behind another) has none, so a tool must refuse when the header is missing.
+- At most 512 printable ASCII characters, no spaces. It is encrypted inside the token under the signing secret, so the browser holding the token cannot read it. The token is still a bearer until it expires, so keep the credential short-lived.
+- The name is reserved: a configured header of that name, in any case, is dropped.
 
 The account key is shown once when your organization's API account is provisioned. Rotate it under Organization settings, API access; that takes `keys:write` for the organization, which admins hold and a role can be granted. The account key is the whole account API, so give organization-wide `keys:write` as you would admin. Rotation breaks everything holding the old one.
 

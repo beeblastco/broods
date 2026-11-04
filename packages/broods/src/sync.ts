@@ -6,15 +6,11 @@ import type {
 } from "./contracts.ts";
 import { stripTrailingSlash } from "./config.ts";
 import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
+import { snapshotResource } from "../../convex/model/manifestSnapshot.ts";
+import type { StageSource } from "../../convex/model/stageSource.ts";
+import { stableJson } from "../../convex/model/objects.ts";
 import { StageSessionRefusedError } from "./observability-client.ts";
 
-// Bytes the server snapshot drops, and an upload handle only it has; sha256 still diffs content.
-const ARTIFACT_KEYS: ReadonlySet<string> = new Set([
-  "bundle",
-  "bundleStorageId",
-  "contentBase64",
-]);
-const ARTIFACT_KINDS: ReadonlySet<string> = new Set(["hook", "mcp", "skill"]);
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export interface SyncClientOptions {
@@ -27,6 +23,10 @@ export interface RemoteManifestResponse {
   manifest: CliManifest;
   ids: GeneratedIds;
   revision?: number;
+  /** sha256 of the stage's manifest as `broods diff` compares it. */
+  manifestHash?: string;
+  /** The stored source revision the stage now runs, when the sync carried source. */
+  sourceRevision?: number;
   warnings?: { missingPolicies?: string[]; reservedResources?: string[] };
   deployment?: {
     accountId: string;
@@ -217,6 +217,7 @@ export class BroodsSyncClient {
     prune: boolean,
     rotateRuntimeKey = false,
     revision?: number,
+    source?: StageSource,
   ): Promise<RemoteManifestResponse> {
     const uploaded = await this.externalizeLargeMcpBundles(manifest);
     const response = await this.request(
@@ -231,6 +232,7 @@ export class BroodsSyncClient {
           prune: prune,
           rotateRuntimeKey: rotateRuntimeKey,
           ...(revision !== undefined ? { revision: revision } : {}),
+          ...(source ? { source: source } : {}),
         }),
       },
       // A sync deploys MCP bundles and can hold the connection for minutes.
@@ -818,25 +820,6 @@ function isRenamableKind(kind: string): boolean {
   );
 }
 
-function normalizeEnvRefs(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalizeEnvRefs);
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    if (record.__beeblastEnv === true && typeof record.name === "string") {
-      return `\${${record.name}}`;
-    }
-
-    return Object.fromEntries(
-      Object.entries(record).map(([key, entry]): [string, unknown] => [
-        key,
-        normalizeEnvRefs(entry),
-      ]),
-    );
-  }
-
-  return value;
-}
-
 function renameSnapshot(
   resource: { kind: string; config: unknown } & Record<string, unknown>,
 ): unknown {
@@ -844,49 +827,6 @@ function renameSnapshot(
   const { name: _name, ...rest } = normalized;
 
   return rest;
-}
-
-function snapshotResource(
-  resource: { kind: string; config: unknown } & Record<string, unknown>,
-): unknown {
-  const normalized = normalizeEnvRefs(resource) as typeof resource;
-  if (!ARTIFACT_KINDS.has(resource.kind)) return normalized;
-
-  return { ...normalized, config: stripArtifactContent(normalized.config) };
-}
-
-function sortValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortValue);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([a], [b]): number => a.localeCompare(b))
-        .map(([key, entry]): [string, unknown] => [key, sortValue(entry)]),
-    );
-  }
-
-  return value;
-}
-
-function stableJson(value: unknown): string {
-  return JSON.stringify(sortValue(value));
-}
-
-function stripArtifactContent(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripArtifactContent);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).flatMap(
-        ([key, entry]): Array<[string, unknown]> => {
-          if (ARTIFACT_KEYS.has(key)) return [];
-
-          return [[key, stripArtifactContent(entry)]];
-        },
-      ),
-    );
-  }
-
-  return value;
 }
 
 async function assertOk(response: Response, message: string): Promise<void> {

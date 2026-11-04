@@ -111,13 +111,21 @@ describe("model reasoning codec", () => {
     });
   });
 
-  test("maps OpenAI effort to reasoningEffort", () => {
+  test("writes a portable effort to model.reasoning, as defineAgent does", () => {
     const model = applyModelReasoning({}, "openai", { effort: "high" });
 
-    expect(model).toEqual({
-      providerOptions: { openai: { reasoningEffort: "high" } },
-    });
+    expect(model).toEqual({ reasoning: "high" });
     expect(readModelReasoning(model)).toEqual({ effort: "high" });
+    expect(readModelReasoning({ reasoning: "low" })).toEqual({ effort: "low" });
+    expect(readModelReasoning({ reasoning: "none" })).toEqual({});
+  });
+
+  test("keeps Anthropic max effort in providerOptions", () => {
+    const model = applyModelReasoning({}, "anthropic", { effort: "max" });
+
+    expect(model).toEqual({
+      providerOptions: { anthropic: { effort: "max" } },
+    });
   });
 
   test("maps Google budget to thinkingConfig.thinkingBudget", () => {
@@ -180,6 +188,7 @@ describe("model reasoning codec", () => {
   test("toggling reasoning off clears every reasoning key", () => {
     const model = applyModelReasoning(
       {
+        reasoning: "low",
         providerOptions: {
           anthropic: { thinking: { type: "enabled", budgetTokens: 4096 } },
         },

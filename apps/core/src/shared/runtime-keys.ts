@@ -287,6 +287,15 @@ export function parseAccountAgentScopedKey(
   };
 }
 
+// `bsu:` is reserved, so only a run with a user token reaches such a key.
+export function isUserConversationKey(conversationKey: string): boolean {
+  return (
+    parseAccountAgentScopedKey(conversationKey)?.key.startsWith(
+      `${DIRECT_API_CONVERSATION_PREFIX}${USER_CONVERSATION_PREFIX}`,
+    ) === true
+  );
+}
+
 export function subagentTaskNonce(taskId: string): string | null {
   return SUBAGENT_TASK_ID.exec(taskId)?.[2] ?? null;
 }

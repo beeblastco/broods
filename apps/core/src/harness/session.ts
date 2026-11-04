@@ -28,7 +28,10 @@ import {
 } from "../shared/domain/workspace-config.ts";
 import { collectSecretValues, logDebug, logError } from "../shared/log.ts";
 import { sealRunToken } from "../shared/run-token.ts";
-import { channelScopeKeyFromConversation } from "../shared/runtime-keys.ts";
+import {
+  channelScopeKeyFromConversation,
+  isUserConversationKey,
+} from "../shared/runtime-keys.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
@@ -256,6 +259,10 @@ export interface SessionOptions {
   trigger?: RunTrigger;
   persist?: boolean;
   principal?: Principal;
+  /** A subagent mounts the folder of the user conversation that started it. */
+  userConversationKey?: string | undefined;
+  /** From the live request's user token only; never stored, so a rebuilt run has none. */
+  userCredential?: string | undefined;
 }
 
 export interface IngestedChannelEvents {
@@ -278,6 +285,9 @@ export class Session {
   readonly channelActions: ChannelActions | undefined;
   readonly trigger: RunTrigger | undefined;
   readonly principal: Principal | undefined;
+  readonly userConversationKey: string | undefined;
+  // A # field, so no JSON.stringify or log of the session carries it.
+  readonly #userCredential: string | undefined;
   private readonly agentConfig: AgentConfig;
   private readonly persist: boolean;
   private messageSequence = 0;
@@ -318,7 +328,17 @@ export class Session {
     this.channelActions = options.channelActions;
     this.trigger = options.trigger;
     this.principal = options.principal;
+    this.#userCredential = options.userCredential;
     this.persist = options.persist ?? true;
+    this.userConversationKey =
+      options.userConversationKey ??
+      (isUserConversationKey(this.conversationKey)
+        ? this.conversationKey
+        : undefined);
+  }
+
+  get userCredential(): string | undefined {
+    return this.#userCredential;
   }
 
   // Called per exec, so no `brt_` token ages in the queue while the run waits for a slot.
@@ -878,11 +898,13 @@ export class Session {
 
   /** The agent's own secret values, which every log line and span of its runs drops. */
   secretValues(): string[] {
-    return collectSecretValues([
+    const secrets = collectSecretValues([
       this.agentConfig,
       this.sandboxes(),
       this.resolvedWorkspaces(),
     ]);
+
+    return this.#userCredential ? [...secrets, this.#userCredential] : secrets;
   }
 
   private async appendConversationEvents(
@@ -1100,6 +1122,9 @@ export class Session {
         channelScopeKey: channelScopeKey,
         conversationKey: conversationScopeKey,
         partition: this.channelPartition(),
+        ...(this.userConversationKey
+          ? { userConversationKey: this.userConversationKey }
+          : {}),
       },
     ).then((resolved) => {
       this.resolvedRuntime = resolved;
@@ -1205,6 +1230,7 @@ export class Session {
   private async loadMemoryFile(
     workspace: ResolvedWorkspace,
   ): Promise<string | null> {
+    if (workspace.config.storage.provider === "disk") return null;
     // S3 API, not the mount, so a workspace with no sandbox still serves its memory.
     const target = await resolveS3ReadTarget(
       workspaceReadContext(workspace.config.storage, workspace.namespace),

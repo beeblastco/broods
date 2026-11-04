@@ -1224,6 +1224,8 @@ export class SubagentCoordinator {
       trigger: this.parentSession.trigger,
       persist: task.persistent,
       policyDelivery: this.parentSession.policyDelivery,
+      userConversationKey: this.parentSession.userConversationKey,
+      userCredential: this.parentSession.userCredential,
       principal: this.parentSession.principal
         ? runPrincipal(
             {

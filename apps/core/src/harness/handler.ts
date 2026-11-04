@@ -1,3 +1,4 @@
+import { APPLY_RUN_PATH, handleApplyRunRequest } from "./apply-runs.ts";
 import type {
   JSONValue,
   SystemModelMessage,
@@ -339,6 +340,9 @@ async function handleRequest(
 
   if (event.path === "/v1/cron-runs") {
     return handleCronHttpRequest(event);
+  }
+  if (event.path === APPLY_RUN_PATH) {
+    return handleApplyRunRequest(event);
   }
   if (normalizePath(event.path) === MCP_PATH) {
     return handleMcpRequest(event, (replayed): Promise<Response> =>
@@ -2117,6 +2121,7 @@ function directSession(event: DirectInboundEvent): Session {
       : undefined,
     trigger: event.cronRun ? "cron" : undefined,
     principal: runPrincipal(event, directPrincipalChain(event)),
+    userCredential: event.userCredential,
   });
 }
 

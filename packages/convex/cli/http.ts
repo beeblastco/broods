@@ -3,10 +3,10 @@ import { internal } from "../_generated/api";
 import { bearerToken, runTokenRefusal } from "../config/routes/shared";
 import {
   ACCOUNT_KEY_PREFIX,
+  CLI_TOKEN_PREFIX,
   PROJECT_KEY_PREFIX,
   sha256Hex,
 } from "../model/accountSecrets";
-import { CLI_TOKEN_PREFIX } from "./auth";
 import {
   handleEnvListRoute,
   handleEnvRoute,
@@ -21,6 +21,8 @@ import {
 } from "./httpRoutes";
 import { clientErrorResponse } from "../model/clientError";
 import { jsonError } from "../model/httpJson";
+import { APPLY_TICKET_PREFIX, openApplyTicket } from "../model/applyTicket";
+import { stageTicketSecret } from "../agent/deployments";
 
 export const handle = httpAction(async (ctx, req): Promise<Response> => {
   try {
@@ -125,6 +127,19 @@ async function resolveCliRequestAuth(
   token: string,
   route: RouteParts,
 ): Promise<CliAuth | null> {
+  if (token.startsWith(APPLY_TICKET_PREFIX)) {
+    if (route.kind !== "manifest" && route.kind !== "mcpBundleUpload")
+      return null;
+    const ticket = await openApplyTicket(token, stageTicketSecret());
+
+    return ticket
+      ? await ctx.runQuery(internal.cli.sync.resolveApplyTicketAuth, {
+          ...ticket,
+          project: route.project,
+          stage: route.stage,
+        })
+      : null;
+  }
   const tokenHash = await sha256Hex(token);
 
   if (token.startsWith(CLI_TOKEN_PREFIX)) {

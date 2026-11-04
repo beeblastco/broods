@@ -958,13 +958,32 @@ export declare const api: {
     };
   };
   agentDock: {
+    apply: FunctionReference<
+      "action",
+      "public",
+      {
+        baseRevision: number | null;
+        files: Array<{ content: string; path: string }>;
+        message: string;
+        projectId: Id<"projects">;
+        stageId: Id<"stages">;
+      },
+      {
+        commitSha?: string;
+        durationMs: number;
+        manifestHash: string;
+        phase: "verifying" | "deployed";
+        phases: Record<string, number>;
+        revision: number;
+      }
+    >;
     commitChange: FunctionReference<
       "action",
       "public",
       {
         baseSha: string;
         branch: string;
-        files: Array<{ content: string; path: string }>;
+        files: Array<{ content: string | null; path: string }>;
         fullName: string;
         message: string;
         projectId: Id<"projects">;
@@ -982,13 +1001,12 @@ export declare const api: {
         files: Array<{ content: string; path: string }>;
         fullName: string;
         omitted: number;
-        viaPullRequest: boolean;
       } | null
     >;
     session: FunctionReference<
       "mutation",
       "public",
-      {},
+      { projectId?: Id<"projects"> },
       {
         agentId: string;
         expiresAt: number;
@@ -996,6 +1014,19 @@ export declare const api: {
         url: string;
         userToken: string;
       } | null
+    >;
+    sync: FunctionReference<
+      "action",
+      "public",
+      { projectId: Id<"projects">; stageId: Id<"stages"> },
+      {
+        commitSha?: string;
+        durationMs: number;
+        manifestHash: string;
+        phase: "verifying" | "deployed";
+        phases: Record<string, number>;
+        revision: number;
+      }
     >;
   };
   apiKeys: {
@@ -1329,6 +1360,7 @@ export declare const api: {
         deploys: Array<{
           branch: string;
           conclusion?: string;
+          error?: string;
           sha: string;
           status: string;
           updatedAt: number;
@@ -1464,13 +1496,13 @@ export declare const api: {
       "action",
       "public",
       {
-        input?: any;
+        inputJson?: string;
         nodeId: string;
         projectId: Id<"projects">;
         stageId: Id<"stages">;
         toolName: string;
       },
-      { durationMs: number; result: any }
+      { durationMs: number; isError: boolean; text: string }
     >;
     getByNode: FunctionReference<
       "query",
@@ -1525,7 +1557,7 @@ export declare const api: {
       "action",
       "public",
       { nodeId: string; projectId: Id<"projects">; stageId: Id<"stages"> },
-      Array<any>
+      Array<{ description?: string; inputSchemaJson: string; name: string }>
     >;
     removeForNode: FunctionReference<
       "action",
@@ -1549,7 +1581,15 @@ export declare const api: {
         stageId: Id<"stages">;
         url?: string;
       },
-      { serverId: Id<"mcp">; tools: Array<any>; verified: boolean }
+      {
+        serverId: Id<"mcp">;
+        tools: Array<{
+          description?: string;
+          inputSchemaJson: string;
+          name: string;
+        }>;
+        verified: boolean;
+      }
     >;
   };
   org: {
@@ -2074,6 +2114,35 @@ export declare const api: {
       "public",
       { stageId: Id<"stages"> },
       Id<"stages">
+    >;
+  };
+  stageSources: {
+    drift: FunctionReference<
+      "query",
+      "public",
+      { stageId: Id<"stages"> },
+      { outOfSync: boolean; reason?: string }
+    >;
+    latest: FunctionReference<
+      "query",
+      "public",
+      { stageId: Id<"stages"> },
+      {
+        bytes: number;
+        commitSha?: string;
+        createdAt: number;
+        fileCount: number;
+        hash: string;
+        manifestHash?: string;
+        origin: "cli" | "apply" | "github";
+        revision: number;
+        url: string | null;
+        verification?: {
+          error?: string;
+          phase: "verifying" | "deployed" | "failed";
+          runUrl?: string;
+        };
+      } | null
     >;
   };
   stripe: {
@@ -4561,6 +4630,18 @@ export declare const internal: {
     };
   };
   agentDock: {
+    applyTarget: FunctionReference<
+      "query",
+      "internal",
+      { authId: string; projectId: Id<"projects">; stageId: Id<"stages"> },
+      {
+        accountId: string;
+        hash?: string;
+        project: string;
+        revision: number | null;
+        stage: string;
+      } | null
+    >;
     linkedBranch: FunctionReference<
       "query",
       "internal",
@@ -4575,8 +4656,36 @@ export declare const internal: {
         fullName: string;
         installationId: number;
         rootDirectory: string;
-        viaPullRequest: boolean;
       } | null
+    >;
+    snapshotRepo: FunctionReference<
+      "action",
+      "internal",
+      { sha: string; since: number; stageId: Id<"stages"> },
+      null
+    >;
+    sourceUrl: FunctionReference<
+      "query",
+      "internal",
+      { commitSha?: string; stageId: Id<"stages"> },
+      string | null
+    >;
+    stageRepo: FunctionReference<
+      "query",
+      "internal",
+      { stageId: Id<"stages"> },
+      {
+        branch: string;
+        fullName: string;
+        installationId: number;
+        rootDirectory: string;
+      } | null
+    >;
+    storedSource: FunctionReference<
+      "action",
+      "internal",
+      { commitSha?: string; stageId: Id<"stages"> },
+      { files: Array<{ content: string; path: string }>; sha?: string } | null
     >;
   };
   audit: {
@@ -4921,7 +5030,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -4941,7 +5050,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -4967,7 +5076,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -4988,7 +5097,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -5010,7 +5119,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -5033,7 +5142,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -5307,6 +5416,37 @@ export declare const internal: {
           }>;
           projects: Array<{ id: Id<"projects">; name: string; slug: string }>;
           user: { authId: string; email: string; name: string };
+        }
+      >;
+      pruneExpiredTokens: FunctionReference<
+        "mutation",
+        "internal",
+        { now?: number },
+        { tokensDeleted: number }
+      >;
+      resolveAccountLogin: FunctionReference<
+        "mutation",
+        "internal",
+        { tokenHash: string },
+        null | {
+          account: {
+            _creationTime: number;
+            _id: Id<"accounts">;
+            auditRetentionDays?: number;
+            createdAt: number;
+            description?: string;
+            orgId: string;
+            secretHash: string;
+            secretHint?: string;
+            secretRotatedAt?: number;
+            secretRotatedBy?: Id<"users">;
+            status: "active" | "disabled";
+            storageExternalId?: string;
+            updatedAt: number;
+            username: string;
+          };
+          authId: string;
+          lentToAgent: boolean;
         }
       >;
       resolveCliToken: FunctionReference<
@@ -5656,6 +5796,25 @@ export declare const internal: {
         },
         null
       >;
+      resolveApplyTicketAuth: FunctionReference<
+        "query",
+        "internal",
+        {
+          accountId: string;
+          authId: string;
+          expiresAt: number;
+          project: string;
+          projectId: string;
+          stage: string;
+          stageId: string;
+        },
+        null | {
+          accountId: Id<"accounts">;
+          applyAuthId: string;
+          scoped: true;
+          secretHash: string;
+        }
+      >;
       resolveCliAuth: FunctionReference<
         "query",
         "internal",
@@ -5844,6 +6003,7 @@ export declare const internal: {
       {
         branch: string;
         conclusion?: string;
+        error?: string;
         repoId: number;
         runAttempt?: number;
         runId: number;
@@ -5906,6 +6066,7 @@ export declare const internal: {
         deploys: Array<{
           branch: string;
           conclusion?: string;
+          error?: string;
           sha: string;
           status: string;
           updatedAt: number;
@@ -8250,6 +8411,65 @@ export declare const internal: {
       >;
     };
   };
+  stageSources: {
+    latestHash: FunctionReference<
+      "query",
+      "internal",
+      { stageId: Id<"stages"> },
+      string | null
+    >;
+    recordSync: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        manifestHash: string;
+        source?: {
+          bytes: number;
+          commitSha?: string;
+          fileCount: number;
+          hash: string;
+          origin: "cli" | "apply" | "github";
+          storageId?: Id<"_storage">;
+        };
+        stageId: Id<"stages">;
+      },
+      number | null
+    >;
+    setVerification: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        commitSha?: string;
+        revision: number;
+        stageId: Id<"stages">;
+        verification: {
+          error?: string;
+          phase: "verifying" | "deployed" | "failed";
+          runUrl?: string;
+        };
+      },
+      null
+    >;
+    syncedSince: FunctionReference<
+      "query",
+      "internal",
+      { since: number; stageId: Id<"stages"> },
+      string | null
+    >;
+    verifyRun: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        branch: string;
+        conclusion?: string;
+        repoId: number;
+        sha: string;
+        startedAt: number;
+        url: string;
+      },
+      null
+    >;
+  };
   stripe: {
     applySubscriptionInternal: FunctionReference<
       "mutation",
@@ -8536,7 +8756,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;

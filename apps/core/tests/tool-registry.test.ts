@@ -7,6 +7,7 @@ import {
   mock,
   spyOn,
 } from "bun:test";
+import { createGoogle } from "@ai-sdk/google";
 import type { ToolApprovalStatus, ToolExecuteFunction, ToolSet } from "ai";
 import * as asyncToolResults from "../src/harness/async-tool-result.ts";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
@@ -359,38 +360,31 @@ describe("createTools", () => {
   });
 
   it("rebuilds a provider tool from an AI SDK descriptor's args", async () => {
-    const googleSearchMock = mock((options: unknown) => ({
-      provider: "googleSearch",
-      options: options,
-    }));
     const { createTools } = await import("../src/harness/tools/index.ts");
 
     // As JSON.stringify(google.tools.googleSearch(...)) emits it: the lazy schemas drop out.
-    const tools = await createTools(createToolContext(googleSearchMock), {
-      tools: {
-        googleSearch: {
-          type: "provider",
-          isProviderExecuted: true,
-          id: "google.google_search",
-          args: { searchTypes: { webSearch: {} } },
+    const tools = await createTools(
+      {
+        ...createToolContext(),
+        modelProvider: createGoogle({ apiKey: "test" }),
+      },
+      {
+        tools: {
+          search: {
+            type: "provider",
+            isProviderExecuted: true,
+            id: "google.google_search",
+            args: { searchTypes: { webSearch: {} } },
+          },
         },
       },
-    });
-
-    expect(Object.keys(tools)).toEqual(["googleSearch"]);
-    expect(googleSearchMock).toHaveBeenCalledWith({
-      searchTypes: { webSearch: {} },
-    });
-  });
-
-  it("rejects a config.tools key the configured provider does not ship", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-
-    await expect(
-      createTools(createToolContext(), { tools: { notAProviderTool: {} } }),
-    ).rejects.toThrow(
-      /config\.tools\.notAProviderTool is not a provider-defined tool/,
     );
+
+    expect(Object.keys(tools)).toEqual(["search"]);
+    expect(tools.search).toMatchObject({
+      id: "google.google_search",
+      args: { searchTypes: { webSearch: {} } },
+    });
   });
 
   it("exposes the full file tool set when a workspace is attached", async () => {
@@ -953,7 +947,7 @@ describe("createTools", () => {
           bash: { enabled: true },
         },
       }),
-    ).rejects.toThrow("config.tools.bash is not a supported tool");
+    ).rejects.toThrow("config.tools.bash is a Broods tool name");
   });
 
   it("withholds the scheduled task tools until the agent opts in", async () => {

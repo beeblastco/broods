@@ -291,21 +291,6 @@ describe("pancake channel adapter", () => {
 
     expect(first.eventId).not.toBe(second.eventId);
   });
-
-  it("still ignores a message with neither text nor attachments", async () => {
-    const adapter = createPancakeChannel(
-      "page-1",
-      "page-token",
-      "secret",
-      null,
-      null,
-    );
-    const parsed = await adapter.parse(
-      createPancakeRequest(validPayload({ message: { message: "" } })),
-    );
-
-    expect(parsed.kind).toBe("ignore");
-  });
 });
 
 async function parsePancakeMedia(

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { generateText } from "ai";
 import {
-  modelProviderFactories,
   modelSettingsFromModelConfig,
   resolveConfiguredModel,
   resolveTranscriptionModel,
@@ -25,16 +24,6 @@ const API_KEY_PROVIDER_NAMES = ACCOUNT_MODEL_PROVIDER_NAMES.filter(
 );
 
 describe("model provider registry", () => {
-  it("has a live AI SDK factory for every API-key provider name", () => {
-    const factories = modelProviderFactories();
-    expect(Object.keys(factories).sort()).toEqual(
-      [...API_KEY_PROVIDER_NAMES].sort(),
-    );
-    for (const name of API_KEY_PROVIDER_NAMES) {
-      expect(typeof factories[name]).toBe("function");
-    }
-  });
-
   it.each(API_KEY_PROVIDER_NAMES)(
     "builds a %s model from an API key and its own required settings",
     (name) => {

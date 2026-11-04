@@ -66,6 +66,7 @@
     "typescript/ban-ts-comment": "error",
     "typescript/explicit-module-boundary-types": "error",
     "typescript/no-confusing-non-null-assertion": "error",
+    "typescript/no-explicit-any": "error",
     "typescript/no-extraneous-class": "error",
     "typescript/no-generated-empty-object-type": "error",
     "typescript/no-mixed-enums": "error",

@@ -115,6 +115,7 @@ import { createTelegramChannel } from "../shared/telegram-channel.ts";
 import { createTwilioChannel } from "../shared/twilio-channel.ts";
 import {
   isolatedWorkspaceNamespace,
+  resolveAgentRuntime,
   workspaceNamespace,
 } from "../shared/workspaces.ts";
 import { createWhatsAppChannel } from "../shared/whatsapp-channel.ts";
@@ -150,6 +151,12 @@ import {
 import { channelPolicyIdentity, evaluateChannelInvoke } from "./policy.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 import { WORKER_QUEUE_FULL } from "./worker-queue.ts";
+import {
+  conversationFilesSchema,
+  MAX_CONVERSATION_FILES_BODY_BYTES,
+  readConversationFiles,
+  writeConversationFiles,
+} from "./conversation-files.ts";
 
 // Under Slack's and Discord's 3s, so a slow hook or a large file never earns a retry.
 const QUESTION_ANSWER = z.looseObject({
@@ -165,6 +172,7 @@ const CHANNEL_AGENT_LIST_RELOAD_AFTER_MS = 1_000;
 const CHANNEL_AGENT_LIST_CACHE_LIMIT = 256;
 const RUN_PATH = "/v1/runs";
 const RUN_PATH_PREFIX = `${RUN_PATH}/`;
+const FILES_SUFFIX = "/files";
 
 type ChannelReceipt =
   | { kind: "response"; response: ChannelResponse }
@@ -243,6 +251,8 @@ export interface DirectInboundEvent {
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
   // Absent on a rebuilt envelope: nothing is guessed.
   principalChain?: PrincipalLink[];
+  // The user token's credential: in memory only, never on an envelope, ledger row or log.
+  userCredential?: string;
   // Settles open ask_questions prompts and resumes; it runs no turn of its own.
   answers?: QuestionAnswer[];
 }
@@ -523,6 +533,17 @@ async function handleHttpRequest(
   const method = request.method;
   const headers = request.headers;
 
+  const filesEndpoint = request.path.endsWith(FILES_SUFFIX)
+    ? parsePublicEndpointPath(request.path.slice(0, -FILES_SUFFIX.length))
+    : null;
+  if (filesEndpoint) {
+    return await handleConversationFilesRequest(
+      request,
+      filesEndpoint,
+      context,
+    );
+  }
+
   if (method === "GET" && request.path.startsWith(RUN_PATH_PREFIX)) {
     const auth = await context.authResolver(headers);
     const account =
@@ -800,6 +821,9 @@ async function handleHttpRequest(
           : []),
         { kind: "api", keyKind: auth.kind } as const,
       ],
+      ...(deployment?.user?.credential !== undefined
+        ? { userCredential: deployment.user.credential }
+        : {}),
       ...(deployment
         ? {
             endpointId: deployment.endpointId,
@@ -2041,6 +2065,75 @@ function runTokenScopeResponse(agentId: string): Response {
     `A run token may only GET /v1/runs/{runId} for agent ${agentId}'s runs. Starting runs with a run token is not enabled yet.`,
     { code: "run_token_scope" },
   );
+}
+
+// An end user's own conversation folder, read or replaced with the runtime key plus their token.
+// Without a token there is no folder of theirs: the root is the owner's, never a visitor's.
+async function handleConversationFilesRequest(
+  request: CoreRequest,
+  endpoint: PublicEndpointPath,
+  context: HttpRoutingContext,
+): Promise<Response> {
+  if (request.method !== "GET" && request.method !== "PUT")
+    return methodNotAllowed(["GET", "PUT"]);
+  if (!context.directApiEnabled) return directApiDisabledResponse();
+  const auth = await context.authResolver(request.headers);
+  if (auth?.kind !== "deployment" || !deploymentMatchesPath(auth, endpoint))
+    return unauthorizedResponse();
+  try {
+    const agentId = normalizeDirectIdentifier(
+      "agentId",
+      request.query.get("agentId") ?? "",
+    );
+    const [agent, deployment] = await Promise.all([
+      context.agentLoader(auth.account.accountId, agentId),
+      context.deploymentLoader(auth.account.accountId, agentId),
+    ]);
+    if (!agent) throw new DirectNotFoundError("Agent not found");
+    const user = admitStageCredential(auth, agent, deployment)
+      ? auth.user
+      : undefined;
+    if (!user)
+      throw new DirectForbiddenError(
+        "Conversation files need the runtime key with a user token: they are that user's folder.",
+        { code: "user_token_required" },
+      );
+    const { conversationKey } = directConversationKeys(
+      request.query.get("conversationKey") ?? "",
+      false,
+      auth.account.accountId,
+      agent.agentId,
+      { user: user },
+    );
+    const runtime = await resolveAgentRuntime(
+      toRuntimeAgentConfig(agent.config),
+      { accountId: auth.account.accountId, agentId: agent.agentId },
+      { userConversationKey: conversationKey },
+    );
+    const name = request.query.get("workspace");
+    const ws = runtime.workspaces.find((entry) =>
+      name ? entry.name === name : true,
+    );
+    if (!ws?.sandbox)
+      throw new DirectNotFoundError(
+        name
+          ? `No workspace ${name} with a sandbox on this agent`
+          : "This agent has no workspace with a sandbox",
+      );
+    const target = { ...ws, sandbox: ws.sandbox };
+    if (request.method === "GET")
+      return jsonResponse(200, { files: await readConversationFiles(target) });
+    if (request.body.length > MAX_CONVERSATION_FILES_BODY_BYTES)
+      return errorResponse(413, "A conversation files body is capped at 6 MiB");
+    const body = conversationFilesSchema.safeParse(JSON.parse(request.body));
+    if (!body.success)
+      throw new Error("Body must be { files: [{ path, contentBase64 }] }");
+    await writeConversationFiles(target, body.data.files);
+
+    return jsonResponse(200, { files: body.data.files.length });
+  } catch (err) {
+    return badRequestResponse(err);
+  }
 }
 
 function parsePublicEndpointPath(rawPath: string): PublicEndpointPath | null {

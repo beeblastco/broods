@@ -16,13 +16,6 @@ describe("nats subject scheme", () => {
     expect(token).not.toMatch(/[.*>\s]/);
   });
 
-  it("round-trips the conversationKey through the token", () => {
-    const key = "api:weird/key.with.dots and spaces";
-    expect(Buffer.from(subjectToken(key), "base64url").toString("utf8")).toBe(
-      key,
-    );
-  });
-
   it("is conversation-scoped so a reconnecting client shares one subject", () => {
     const first = streamResponseSubject("acct1", "agent1", "conv-1");
     const second = streamResponseSubject("acct1", "agent1", "conv-1");

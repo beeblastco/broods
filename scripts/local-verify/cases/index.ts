@@ -8,12 +8,15 @@ import { bashTimeout } from "./bash-timeout.ts";
 import { browserSandbox } from "./browser-sandbox.ts";
 import { cloudflareSandbox } from "./cloudflare-sandbox.ts";
 import { connections } from "./connections.ts";
+import { conversationFiles } from "./conversation-files.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
 import { devWatch } from "./dev-watch.ts";
 import { edgeHeaders } from "./edge-headers.ts";
 import { githubRepo } from "./github-repo.ts";
 import { workerSandbox } from "./worker-sandbox.ts";
 import { manifestSync } from "./manifest-sync.ts";
+import { stageSource } from "./stage-source.ts";
+import { applyTicket } from "./apply-ticket.ts";
 import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
 import { mcpTasks } from "./mcp-tasks.ts";
@@ -24,6 +27,7 @@ import { orgSeatBilling } from "./org-seat-billing.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { productionRegion } from "./production-region.ts";
 import { projectUsage } from "./project-usage.ts";
+import { providerTools } from "./provider-tools.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
 import { runToken } from "./run-token.ts";
@@ -70,18 +74,22 @@ export const verifyCases: readonly VerifyCase[] = [
   autoCompaction,
   machineSandbox,
   bashTimeout,
+  providerTools,
   ownBucketSandbox,
   snapshotStage,
   browserSandbox,
   mcpCommand,
   cloudflareSandbox,
   workerSandbox,
+  conversationFiles,
   vercelSandbox,
   trailingSlash,
   edgeHeaders,
   credentialPrefixes,
   scopedAccountKey,
   manifestSync,
+  stageSource,
+  applyTicket,
   devWatch,
   githubRepo,
   productionRegion,

@@ -246,6 +246,44 @@ export const support = defineAgent({
   );
 });
 
+test("compileProject refuses a needsApproval function on a tool", async (): Promise<void> => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent } from "${RESOURCES_MODULE}";
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  tools: { shell: { enabled: true, needsApproval: async () => true } },
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" config.tools.shell.needsApproval is a function; only true is kept on sync',
+  );
+});
+
+test("compileProject refuses a tool that only runs its own execute", async (): Promise<void> => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent } from "${RESOURCES_MODULE}";
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  tools: { lookup: { type: "function", inputSchema: {}, execute: async () => "x" } },
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" config.tools.lookup runs your own execute, which sync drops; put it behind an MCP server',
+  );
+});
+
 test("compileProject caps an agent at 32 distinct skills", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
@@ -555,6 +593,29 @@ export const support = defineAgent({
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" workspace "repo" uses sandbox "runner" (e2b) which does not support S3 workspace mounts',
   );
+});
+
+test("compileProject puts a disk workspace only on a persistent worker sandbox", async (): Promise<void> => {
+  const project = (persistent: boolean): Promise<string> =>
+    fixtureProject(
+      "",
+      `
+import { defineAgent, defineSandbox, defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const project = defineWorkspace({ name: "project", storage: { provider: "disk" } });
+
+export const disk = defineSandbox({ name: "disk", provider: "worker", persistent: ${persistent} });
+
+export const coder = defineAgent({ name: "coder", sandboxes: [disk], workspaces: [project] });
+`,
+    );
+
+  await expect(
+    compileProject({ cwd: await project(true), command: "dev" }),
+  ).resolves.toBeDefined();
+  await expect(
+    compileProject({ cwd: await project(false), command: "dev" }),
+  ).rejects.toThrow('a "disk" workspace lives on its sandbox\'s own disk');
 });
 
 test("compileProject accepts S3 workspaces on a vercel sandbox", async (): Promise<void> => {
