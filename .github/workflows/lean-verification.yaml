@@ -6,6 +6,10 @@ on:
   pull_request:
   push:
     branches: [dev]
+  # Nightly: the oracles on a random seed and 25x the cases, since a fixed seed finds
+  # nothing new after the first day. The log prints the seed to replay a failure.
+  schedule:
+    - cron: "23 3 * * *"
   workflow_dispatch:
 
 permissions: {}
@@ -61,7 +65,7 @@ jobs:
       # Broods.lean fails the build when a proof rests on `sorry`,
       # `native_decide` or an axiom past the three standard ones.
       - name: Build and check every proof
-        run: lake build && lake build gateway-oracle
+        run: lake build && lake build gateway-oracle sync-oracle cron-oracle
 
       - name: Check theorem statements against statements.txt
         run: lake env lean Statements.lean
@@ -70,7 +74,15 @@ jobs:
         working-directory: .
         run: bun verification/drift.ts
 
-      # Includes the differential test that runs the Lean gateway model as an oracle.
+      - name: Pick a random oracle seed
+        if: github.event_name == 'schedule'
+        run: |
+          seed=$(( (RANDOM << 15 | RANDOM) + 1 ))
+          echo "ORACLE_SEED=$seed" >> "$GITHUB_ENV"
+          echo "ORACLE_RUNS=50000" >> "$GITHUB_ENV"
+          echo "oracle seed $seed: replay with ORACLE_SEED=$seed ORACLE_RUNS=50000 bun run verification:test"
+
+      # Includes the differential tests that run the Lean gateway, sync and cron models as oracles.
       - name: Check the TypeScript contracts
         working-directory: .
         run: bun run verification:test
