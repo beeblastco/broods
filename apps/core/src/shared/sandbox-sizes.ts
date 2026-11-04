@@ -145,7 +145,7 @@ export function workdirResources(input: {
   };
 }
 
-export function workdirSizeResources(size: SandboxSize): {
+function workdirSizeResources(size: SandboxSize): {
   cpu: number;
   memoryMb: number;
   diskGb: number;
