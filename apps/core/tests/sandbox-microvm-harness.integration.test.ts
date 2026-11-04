@@ -38,7 +38,7 @@ describe.skipIf(!ENABLED)(
 
       try {
         session = await sandbox.createSession({ identity: identity });
-        expect(
+        await expect(
           session.run({
             command:
               "printf 'hello-microvm:%s' \"$BROODS_LIVE_DEFAULT\" && printf 'to-stderr' >&2",
@@ -54,13 +54,13 @@ describe.skipIf(!ENABLED)(
           path: path,
           content: "live-file-content",
         });
-        expect(session.readTextFile({ path: path })).resolves.toBe(
+        await expect(session.readTextFile({ path: path })).resolves.toBe(
           "live-file-content",
         );
 
         await session.stop();
         session = await sandbox.resumeSession!({ sessionId: session.id });
-        expect(
+        await expect(
           session.run({ command: "printf 'resumed' && exit 7" }),
         ).resolves.toEqual({ exitCode: 7, stdout: "resumed", stderr: "" });
       } finally {

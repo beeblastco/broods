@@ -53,7 +53,7 @@ describe("telegram channel actions", () => {
     );
     await actions.sendSticker?.("telegram-file-id");
     // A workspace path is refused here, before Telegram answers "wrong HTTP URL".
-    expect(actions.sendSticker?.("stickers/party.webp")).rejects.toThrow(
+    await expect(actions.sendSticker?.("stickers/party.webp")).rejects.toThrow(
       "Telegram sendSticker needs a sticker file_id",
     );
 
@@ -463,7 +463,7 @@ describe("discord channel actions", () => {
     );
 
     fetchMock.responses.push(new Response("boom", { status: 500 }));
-    expect(actions.sendText("hello")).rejects.toThrow(
+    await expect(actions.sendText("hello")).rejects.toThrow(
       "Discord interaction API error: 500 boom",
     );
     expect(fetchMock.calls).toHaveLength(1);
@@ -524,7 +524,7 @@ describe("discord channel actions", () => {
 
     fetchMock.responses.push(new Response("Unknown Webhook", { status: 404 }));
     fetchMock.responses.push(new Response("missing access", { status: 403 }));
-    expect(actions.sendText("hello")).rejects.toThrow(
+    await expect(actions.sendText("hello")).rejects.toThrow(
       "Discord API error: 403 missing access",
     );
   });
@@ -546,7 +546,9 @@ describe("discord channel actions", () => {
     );
 
     fetchMock.responses.push(new Response("nope", { status: 403 }));
-    expect(actions.sendTyping()).rejects.toThrow("Discord API error: 403 nope");
+    await expect(actions.sendTyping()).rejects.toThrow(
+      "Discord API error: 403 nope",
+    );
   });
 
   it("skips typing without a channel id and rejects invalid source payloads", async () => {
@@ -930,7 +932,7 @@ describe("slack channel actions", () => {
       }),
     );
     fetchMock.responses.push(new Response("", { status: 500 }));
-    expect(responseUrlActions.sendText("hello")).rejects.toThrow(
+    await expect(responseUrlActions.sendText("hello")).rejects.toThrow(
       "Slack response_url failed (500)",
     );
 
@@ -944,14 +946,14 @@ describe("slack channel actions", () => {
     fetchMock.responses.push(
       jsonResponse({ ok: false, error: "channel_not_found" }, 200),
     );
-    expect(apiActions.sendText("hello")).rejects.toThrow(
+    await expect(apiActions.sendText("hello")).rejects.toThrow(
       "Slack chat.postMessage failed: channel_not_found",
     );
 
     fetchMock.responses.push(
       jsonResponse({ ok: false, error: "missing_scope" }, 403),
     );
-    expect(apiActions.reactToMessage()).rejects.toThrow(
+    await expect(apiActions.reactToMessage()).rejects.toThrow(
       "Slack reactions.add returned HTTP 403",
     );
   });
@@ -1051,7 +1053,7 @@ describe("pancake channel actions", () => {
     fetchMock.responses.push(
       jsonResponse({ success: false, message: "permission denied" }, 200),
     );
-    expect(actions.sendText("hello")).rejects.toThrow(
+    await expect(actions.sendText("hello")).rejects.toThrow(
       "Pancake send message failed (200): permission denied",
     );
 
@@ -1176,7 +1178,7 @@ describe("zalo channel actions", () => {
     fetchMock.responses.push(
       jsonResponse({ ok: false, description: "permission denied" }, 200),
     );
-    expect(actions.sendText("hello")).rejects.toThrow(
+    await expect(actions.sendText("hello")).rejects.toThrow(
       "Zalo sendMessage failed (200): permission denied",
     );
 

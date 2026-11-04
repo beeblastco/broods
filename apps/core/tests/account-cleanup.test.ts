@@ -32,7 +32,7 @@ it("propagates workspace listing failures before destructive cleanup", async () 
     },
   } as never);
 
-  expect(
+  await expect(
     deleteAccountRuntimeData({
       accountId: "acct_test",
       username: "test",
@@ -82,7 +82,7 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
     };
   }) as never;
 
-  expect(
+  await expect(
     deleteAccountRuntimeData({
       accountId: "acct_test",
       username: "test",

@@ -62,7 +62,7 @@ test("non-2xx non-404 responses throw BroodsAccountApiError with status", async 
     { status: 401, body: { error: "Unauthorized" } },
   ]);
 
-  expect(client.listCrons()).rejects.toThrow(BroodsAccountApiError);
+  await expect(client.listCrons()).rejects.toThrow(BroodsAccountApiError);
 });
 
 test("createAgent posts JSON and unwraps the created record", async () => {
@@ -270,7 +270,7 @@ test("sandbox lifecycle throws on a missing sandbox (404)", async () => {
     { status: 404, body: { error: "Sandbox not found" } },
   ]);
 
-  expect(client.terminateSandbox("sb_missing", "key")).rejects.toThrow(
+  await expect(client.terminateSandbox("sb_missing", "key")).rejects.toThrow(
     BroodsAccountApiError,
   );
 });

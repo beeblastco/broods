@@ -191,7 +191,7 @@ describe("createAgentLifecycleEmitter", () => {
     // payload off TLS to a host the operator never configured.
     await withWebhookServer(
       async (url) => {
-        expect(
+        await expect(
           fireWebhook(
             { url: url("/hook"), secret: "secret" },
             { type: "agent.started" },
@@ -205,7 +205,7 @@ describe("createAgentLifecycleEmitter", () => {
 
   it("refuses a webhook whose name resolves to a private address", async () => {
     // Only resolution reveals the metadata address behind this public name; a string check cannot.
-    expect(
+    await expect(
       fireWebhook(
         { url: "https://public.test/hook", secret: "secret" },
         { type: "agent.started" },

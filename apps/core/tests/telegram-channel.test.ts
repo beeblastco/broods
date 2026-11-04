@@ -701,7 +701,7 @@ describe("telegram channel adapter", () => {
     it("refuses a declared length past the cap before reading it", async () => {
       const restoreDns = stubPublicDns();
       try {
-        expect(
+        await expect(
           readTenantPhoto(
             () =>
               new Response("x", {
@@ -719,7 +719,7 @@ describe("telegram channel adapter", () => {
       const chunk = new Uint8Array(1024 * 1024);
       let sent = 0;
       try {
-        expect(
+        await expect(
           readTenantPhoto(
             () =>
               new Response(

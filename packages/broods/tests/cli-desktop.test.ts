@@ -67,7 +67,7 @@ macOnly(
     );
     servers.push(core.server);
 
-    expect(
+    await expect(
       runMachineDaemon({
         credential: async (): Promise<string> => "key",
         baseUrl: core.url,

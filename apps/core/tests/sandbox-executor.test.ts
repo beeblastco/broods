@@ -938,7 +938,7 @@ describe("createSandboxExecutor", () => {
       "arn:aws:lambda:eu-west-1:123456789012:microvm-image:curated",
       "img_curated_python",
     ]) {
-      expect(
+      await expect(
         createSandboxExecutor({
           provider: "lambda",
           snapshot: snapshot,
@@ -1011,7 +1011,7 @@ describe("createSandboxExecutor", () => {
     });
     microvmExecPayload = { ...microvmExecPayload, truncated: true };
 
-    expect(
+    await expect(
       executor.runHarnessCommand({
         microvmId: created.microvmId,
         endpoint: created.endpoint,
@@ -2266,7 +2266,7 @@ describe("createSandboxExecutor", () => {
       throw new DOMException("", "TimeoutError");
     }) as unknown as typeof fetch;
 
-    expect(executor.run(request)).rejects.toThrow(DOMException);
+    await expect(executor.run(request)).rejects.toThrow(DOMException);
     expect(
       posted.filter((body): boolean => body.includes("sleep infinity")),
     ).toHaveLength(1);
@@ -2301,7 +2301,9 @@ describe("createSandboxExecutor", () => {
       return new Response("", { status: 504 });
     }) as unknown as typeof fetch;
 
-    expect(executor.run(request)).rejects.toThrow("MicroVM /exec failed (504)");
+    await expect(executor.run(request)).rejects.toThrow(
+      "MicroVM /exec failed (504)",
+    );
     expect(
       posted.filter((body): boolean => body.includes("sleep 900")),
     ).toHaveLength(1);
@@ -2464,7 +2466,7 @@ describe("createSandboxExecutor", () => {
       persistent: true,
     });
 
-    expect(
+    await expect(
       executor.run({
         code: "echo ok",
         namespace: ns,
@@ -2496,7 +2498,9 @@ describe("createSandboxExecutor", () => {
       persistent: true,
     });
 
-    expect(executor.getInstanceInfo({ namespace: NS })).resolves.toBeNull();
+    await expect(
+      executor.getInstanceInfo({ namespace: NS }),
+    ).resolves.toBeNull();
   });
 
   it("fails persistent MicroVM runs when a lifecycle hook exits nonzero", async () => {
@@ -2517,7 +2521,7 @@ describe("createSandboxExecutor", () => {
       onCreate: "exit 22",
     });
 
-    expect(
+    await expect(
       executor.run({
         code: "echo ok",
         namespace: ns,
@@ -2658,7 +2662,7 @@ describe("createSandboxExecutor", () => {
       },
     });
 
-    expect(
+    await expect(
       executor.run({
         code: "echo ok",
         timeoutSeconds: 30,
@@ -2680,7 +2684,7 @@ describe("createSandboxExecutor", () => {
       network: { mode: "restricted" },
     });
 
-    expect(
+    await expect(
       executor.run({
         code: "echo ok",
         timeoutSeconds: 30,
@@ -2846,7 +2850,7 @@ describe("createSandboxExecutor", () => {
       options: { apiUrl: "https://tenant-daytona.example.com" },
     });
 
-    expect(
+    await expect(
       executor.run({
         code: "echo ok",
         timeoutSeconds: 30,
@@ -2865,7 +2869,7 @@ describe("createSandboxExecutor", () => {
       options: { apiUrl: "https://169.254.169.254", apiKey: "tenant-key" },
     });
 
-    expect(
+    await expect(
       executor.run({
         code: "echo ok",
         timeoutSeconds: 30,
@@ -2914,7 +2918,7 @@ describe("createSandboxExecutor", () => {
       },
     });
 
-    expect(
+    await expect(
       executor.run({
         code: "echo hi",
         workspaceRoot: "/mnt/workspaces",
@@ -3271,7 +3275,7 @@ describe("createSandboxExecutor", () => {
       status: "failed",
     }));
 
-    expect(
+    await expect(
       createSandboxExecutor({
         provider: "vercel",
         persistent: true,
@@ -3284,7 +3288,7 @@ describe("createSandboxExecutor", () => {
     const {
       createSandboxExecutor,
     } = require("../src/harness/sandbox/index.ts");
-    expect(
+    await expect(
       createSandboxExecutor({ provider: "e2b", persistent: true }).snapshot({
         reservationKey: "missing",
       }),
@@ -3676,7 +3680,7 @@ describe("MicroVM capacity refusal", () => {
       });
     });
 
-    expect(
+    await expect(
       createSandboxExecutor({ provider: "lambda" }).run({
         code: "echo ok",
         timeoutSeconds: 30,
@@ -3697,7 +3701,7 @@ describe("MicroVM capacity refusal", () => {
       });
     });
 
-    expect(
+    await expect(
       createSandboxExecutor({ provider: "lambda" }).run({
         code: "echo ok",
         timeoutSeconds: 30,
@@ -3801,7 +3805,7 @@ describe("MicroVM capacity refusal", () => {
 
     try {
       // Own Daytona key skips the budget; the MicroVM fallback runs on the platform's AWS.
-      expect(
+      await expect(
         runSandbox(
           {
             provider: "daytona",
@@ -3911,7 +3915,7 @@ describe("persistent acquire teardown", () => {
         options: options,
       });
 
-      expect(
+      await expect(
         executor.run({
           code: "echo ok",
           namespace: NS,
@@ -3999,7 +4003,7 @@ describe("conditional release", () => {
       persistent: true,
     });
 
-    expect(
+    await expect(
       executor.release({ namespace: NS, expectedExternalId: "sbx-old" }),
     ).rejects.toThrow("failed to terminate MicroVM sbx-old");
     expect(deleteSandboxInstanceMock).not.toHaveBeenCalled();
