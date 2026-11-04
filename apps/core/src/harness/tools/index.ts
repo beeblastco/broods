@@ -129,16 +129,10 @@ export async function createTools(
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
   const sandboxes = context.sandboxes ?? [];
   const defaultSandbox = sandboxes[0]?.sandbox;
-  const fileContext: SandboxToolContext = {
-    workspaces: workspaces,
-    ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
-    ...(context.sandboxMetadata
-      ? { sandboxMetadata: context.sandboxMetadata }
-      : {}),
-  };
   const sandboxContext: SandboxToolContext = {
-    ...fileContext,
+    workspaces: workspaces,
     sandboxes: sandboxes,
+    ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
     principal: (): SandboxRunPrincipal | undefined =>
       context.session?.sandboxPrincipal(),
   };
@@ -199,16 +193,20 @@ export async function createTools(
   if (workspaces.length > 0) {
     Object.assign(
       sandboxTools,
-      readTool({ ...fileContext, agentConfig: agentConfig }),
-      globTool(fileContext),
+      readTool({ workspaces: workspaces, agentConfig: agentConfig }),
+      globTool({ workspaces: workspaces }),
     );
   }
   if (sandboxWorkspaces.length > 0) {
+    const fsContext = {
+      workspaces: workspaces,
+      ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
+    };
     Object.assign(
       sandboxTools,
-      writeTool(fileContext),
-      editTool(fileContext),
-      grepTool(fileContext),
+      writeTool(fsContext),
+      editTool(fsContext),
+      grepTool(fsContext),
     );
     if (
       sandboxWorkspaces.some((workspace) =>
@@ -217,10 +215,7 @@ export async function createTools(
     ) {
       Object.assign(
         sandboxTools,
-        memoryTool({
-          ...fileContext,
-          conversationKey: context.conversationKey,
-        }),
+        memoryTool({ ...fsContext, conversationKey: context.conversationKey }),
       );
     }
   }

@@ -105,28 +105,18 @@ await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxExternalId: getSandboxExternalIdMock,
   getSandboxReservationRecord: getSandboxReservationRecordMock,
   claimSandboxInstance: claimSandboxInstanceMock,
-  reserveSandboxInstance: mock(
-    async (_provider: string, _key: string, id: string): Promise<string> => id,
-  ),
   saveSandboxInstance: saveSandboxInstanceMock,
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
 
 let registryOwnsReservation = true;
 let budgetUsedPercent = 0;
-const removeSandboxInstanceMock = mock(
-  async (
-    _accountId: string,
-    _key: string,
-    _externalId?: string,
-  ): Promise<void> => {},
-);
 await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   setSandboxInstanceSpecs: mock(async (): Promise<void> => {}),
   sandboxInstanceIsControllable: mock(async () => registryOwnsReservation),
   setSandboxInstanceStatus: mock(async () => {}),
   recordSandboxBurst: mock(async (): Promise<boolean> => true),
-  removeSandboxInstance: removeSandboxInstanceMock,
+  removeSandboxInstance: mock(async () => {}),
   upsertSandboxInstance: mock(async () => {}),
 }));
 
@@ -202,7 +192,6 @@ afterEach(() => {
   claimSandboxInstanceMock.mockClear();
   saveSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
-  removeSandboxInstanceMock.mockClear();
   microvmSendMock.mockClear();
   microvmShellTokenError = null;
   registryOwnsReservation = true;
@@ -346,52 +335,6 @@ describe("account-manage sandbox endpoints", () => {
         code: "bad_gateway",
       },
     });
-  });
-
-  // A refresh still queued for the account would otherwise write the dropped row back.
-  it("drops a gone sandbox's row, for the machine it read, after the account's queued writes", async () => {
-    process.env.SERVICE_AUTH_SECRET = "service-secret";
-    process.env.WORKDIR_URL = "https://workdir.example.com";
-    process.env.WORKDIR_API_KEY = "tenant-key";
-    globalThis.fetch = (async (): Promise<Response> =>
-      fetchResponse(
-        { error: { code: "not_found", message: "sandbox not found" } },
-        404,
-      )) as unknown as typeof fetch;
-    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
-    const created = await seedSandbox({
-      provider: "sandbox",
-      persistent: true,
-      options: { reservationKey: reservationKey },
-    });
-    const { queueMirrorWrite } =
-      await import("../src/harness/sandbox/utils.ts");
-    const held = Promise.withResolvers<void>();
-    const pending = queueMirrorWrite(
-      ACCOUNT_ID,
-      "sbx_other",
-      (): Promise<void> => held.promise,
-    );
-
-    const response = handler(
-      createEvent(
-        "POST",
-        `/v1/sandboxes/${created.sandboxId}/refresh`,
-        { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
-        { reservationKey: reservationKey },
-      ),
-    );
-    await Bun.sleep(5);
-    expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
-
-    held.resolve();
-    await pending;
-    expect(await responseJson(await response)).toEqual({
-      status: "terminated",
-    });
-    expect(removeSandboxInstanceMock.mock.calls).toEqual([
-      [ACCOUNT_ID, reservationKey, "sbx_handler"],
-    ]);
   });
 
   it("terminate drops the reservation row the config-built executor cannot", async () => {

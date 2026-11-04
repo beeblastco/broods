@@ -82,15 +82,10 @@ export const listForInstance = query({
 
 // Same transaction as the registry write, so a reconnect never finds the instance without it.
 // Not for ephemeral instances: a row per bash call would drown the sandbox's own history.
-// The write's run is the actor, not the row's, which a run-less write (dashboard exec) keeps.
 export async function recordRuntimeAction(
   ctx: MutationCtx,
   instance: SandboxInstanceRow,
   action: "reserve" | "resume",
-  run: Pick<
-    SandboxInstanceRow,
-    "agentId" | "lastUsedTraceId" | "lastUsedTaskId"
-  >,
 ): Promise<void> {
   if (instance.ephemeral) return;
 
@@ -107,12 +102,16 @@ export async function recordRuntimeAction(
     ),
     ...auditEventTailFields(
       {
-        actorSource: run.agentId ? "agent" : "service",
-        actorId: run.agentId,
-        traceId: run.lastUsedTraceId,
-        taskId: run.lastUsedTaskId,
+        actorSource: instance.agentId ? "agent" : "service",
+        actorId: instance.agentId,
+        ...(action === "reserve"
+          ? {
+              traceId: instance.createdByTraceId,
+              taskId: instance.createdByTaskId,
+            }
+          : {}),
       },
-      null,
+      instance,
     ),
     createdAt: Date.now(),
   });

@@ -1,6 +1,9 @@
 import type { Sandbox } from "e2b";
 import { Buffer } from "node:buffer";
-import { setSandboxInstanceSpecs } from "../../shared/convex/sandbox-instances.ts";
+import {
+  setSandboxInstanceSpecs,
+  upsertSandboxInstance,
+} from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
@@ -27,8 +30,6 @@ import {
   isSandboxGoneError,
   mergeSandboxEnv,
   meterEphemeralSandbox,
-  queueMirrorUpsert,
-  queueMirrorWrite,
   sandboxReservationKey,
   shellQuote,
   truncateText,
@@ -193,7 +194,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           externalId,
           this.#config.controlPlane?.accountId,
         ).catch(() => {});
-        void queueMirrorUpsert(
+        await upsertSandboxInstance(
           this.#config.controlPlane,
           "e2b",
           ns,
@@ -227,7 +228,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
         )
       ) {
-        void queueMirrorUpsert(
+        await upsertSandboxInstance(
           this.#config.controlPlane,
           "e2b",
           ns,
@@ -239,16 +240,11 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         if (accountId) {
           void e2bSpecs(created).then((specs): void => {
             if (specs) {
-              void queueMirrorWrite(
+              void setSandboxInstanceSpecs(
                 accountId,
+                ns,
                 created.sandboxId,
-                (): Promise<void> =>
-                  setSandboxInstanceSpecs(
-                    accountId,
-                    ns,
-                    created.sandboxId,
-                    specs,
-                  ),
+                specs,
               );
             }
           });
