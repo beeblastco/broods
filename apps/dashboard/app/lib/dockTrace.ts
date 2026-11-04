@@ -2,6 +2,7 @@ import {
   ACCOUNT_NAV_ITEMS,
   activeNavItem,
   NAV_ITEMS,
+  sameOriginPath,
 } from "@/app/lib/navigation";
 import type { TextStreamPart, ToolSet } from "ai";
 import { z } from "zod";
@@ -95,12 +96,9 @@ export function navigatePath(input: unknown): string | null {
   const parsed = navigateSchema.safeParse(input);
   if (!parsed.success) return null;
   const { path } = parsed.data;
-  if (!path.startsWith("/") || path.startsWith("//")) return null;
-  const url = new URL(path, ORIGIN);
+  if (!path.startsWith("/")) return null;
 
-  return url.origin === ORIGIN
-    ? `${url.pathname}${url.search}${url.hash}`
-    : null;
+  return sameOriginPath(path, ORIGIN);
 }
 
 /** The section a dashboard path opens, as the sidebar names it, with its tab when it has one. */

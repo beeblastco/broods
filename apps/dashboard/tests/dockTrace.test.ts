@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { TextStreamPart, ToolSet } from "ai";
+import { sameOriginPath } from "@/app/lib/navigation";
 import {
   navigatePath,
   pageLabel,
@@ -120,5 +121,27 @@ describe("dock trace", () => {
     expect(pageLabel("/settings/org?tab=members")).toBe(
       "Organization / Members",
     );
+  });
+});
+
+describe("sameOriginPath", () => {
+  const base = "https://app.broods.test/p1/canvas?stage=s1";
+
+  test("keeps dashboard links on the page, resolved as a browser would", () => {
+    expect(sameOriginPath("/p1/scheduler", base)).toBe("/p1/scheduler");
+    expect(sameOriginPath("#runs", base)).toBe("/p1/canvas?stage=s1#runs");
+    expect(sameOriginPath("tracing", base)).toBe("/p1/tracing");
+  });
+
+  test("refuses anything that leaves the origin", () => {
+    for (const href of [
+      "//evil.test",
+      "/\\evil.test",
+      "/\t/evil.test",
+      "https://evil.test/p1",
+      "javascript:alert(1)",
+    ]) {
+      expect(sameOriginPath(href, base), href).toBeNull();
+    }
   });
 });

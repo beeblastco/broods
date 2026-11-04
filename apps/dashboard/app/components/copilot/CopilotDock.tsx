@@ -13,6 +13,7 @@ import {
   InputGroupTextarea,
 } from "@/app/components/ui/input-group";
 import { useStickToBottom } from "@/app/hooks/useStickToBottom";
+import { sameOriginPath } from "@/app/lib/navigation";
 import { ArrowUp } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -31,10 +32,6 @@ const EXAMPLES = [
   "pause nightly-digest",
 ] as const;
 
-// A dashboard path, never `//host` or `/\\host`, which a browser reads as another origin.
-// A scheme or a protocol-relative start leaves the dashboard; `/\\host` reads as `//host`.
-const EXTERNAL_LINK = /^([a-z][a-z0-9+.-]*:|[/\\]{2})/i;
-
 const MARKDOWN_COMPONENTS: Components = { a: AnswerLink };
 
 // Takes its width from the page, not floating, so what the plan changes stays on screen.
@@ -48,8 +45,10 @@ export function CopilotDock(): React.JSX.Element | null {
 
   if (!isOpen) return null;
 
+  // One turn at a time: a turn queued behind a running one loses the user's login.
+  const answering = messages.some((message) => message.pending);
   const send = (): void => {
-    if (!input.trim()) return;
+    if (!input.trim() || answering) return;
     ask(input);
     setInput("");
   };
@@ -94,6 +93,7 @@ export function CopilotDock(): React.JSX.Element | null {
                     {message.trace && (
                       <CopilotTrace
                         answeredAt={message.answeredAt}
+                        pending={message.pending === true}
                         startedAt={message.startedAt}
                         trace={message.trace}
                       />
@@ -154,7 +154,7 @@ export function CopilotDock(): React.JSX.Element | null {
             <InputGroupButton
               size="icon-xs"
               variant="default"
-              disabled={!input.trim()}
+              disabled={!input.trim() || answering}
               onClick={send}
               className="ml-auto rounded-sm"
               aria-label="Send"
@@ -173,10 +173,12 @@ function AnswerLink({
   children,
   href,
 }: React.ComponentProps<"a"> & ExtraProps): React.JSX.Element {
-  const className = "wrap-anywhere font-medium text-primary underline";
-  if (href && !EXTERNAL_LINK.test(href)) {
+  const className =
+    "wrap-anywhere cursor-pointer font-medium text-primary underline";
+  const path = href ? sameOriginPath(href, window.location.href) : null;
+  if (path) {
     return (
-      <Link href={href} className={className}>
+      <Link href={path} className={className}>
         {children}
       </Link>
     );

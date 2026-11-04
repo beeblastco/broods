@@ -16,7 +16,8 @@ import { useState } from "react";
 
 const MAX_PAYLOAD_CHARS = 4096;
 
-const STEP_LABEL: Record<"error" | "ok" | "running", string> = {
+const STEP_LABEL: Record<"ended" | "error" | "ok" | "running", string> = {
+  ended: "Stopped",
   error: "Failed",
   ok: "Done",
   running: "Running",
@@ -25,10 +26,12 @@ const STEP_LABEL: Record<"error" | "ok" | "running", string> = {
 /** An answer's reasoning and tool steps in one row, open while it works and folded after. */
 export function CopilotTrace({
   answeredAt,
+  pending,
   startedAt,
   trace,
 }: {
   answeredAt?: number;
+  pending: boolean;
   startedAt?: number;
   trace: readonly DockTracePart[];
 }): React.JSX.Element | null {
@@ -57,19 +60,23 @@ export function CopilotTrace({
         onOpenChange={(open) => setToggled(open)}
       >
         <TraceCollapsibleTrigger>
-          <TraceLine size="xs">
+          <TraceLine size="sm">
             <TraceTitle>{summary}</TraceTitle>
           </TraceLine>
         </TraceCollapsibleTrigger>
-        <TraceCollapsibleContent size="xs">
+        <TraceCollapsibleContent size="sm">
           <Trace>
             {trace.map((part) =>
               part.kind === "reasoning" ? (
-                <p key={part.id} className="whitespace-pre-wrap">
+                <p
+                  key={part.id}
+                  data-dock-reasoning
+                  className="border-l-2 border-border pl-2 whitespace-pre-wrap text-muted-foreground"
+                >
                   {part.text}
                 </p>
               ) : (
-                <ToolStep key={part.id} step={part} />
+                <ToolStep key={part.id} pending={pending} step={part} />
               ),
             )}
           </Trace>
@@ -92,12 +99,12 @@ function Payload({
 
   return (
     <div className="flex min-w-0 flex-col gap-1">
-      <span className="text-2xs">{label}</span>
-      <pre className="max-h-60 overflow-auto rounded-md bg-muted p-2 font-mono text-2xs whitespace-pre-wrap wrap-break-word text-foreground">
+      <span className="text-xs">{label}</span>
+      <pre className="max-h-60 overflow-auto rounded-md bg-muted p-2 font-mono text-xs whitespace-pre-wrap wrap-break-word text-foreground">
         {cut ? text.slice(0, MAX_PAYLOAD_CHARS) : text}
       </pre>
       {cut && (
-        <span className="text-2xs">
+        <span className="text-xs">
           First 4 KB of {Math.ceil(text.length / 1024)} KB shown.
         </span>
       )}
@@ -105,17 +112,27 @@ function Payload({
   );
 }
 
-function ToolStep({ step }: { step: DockToolStep }): React.JSX.Element {
-  const tone: Extract<StatusTone, "error" | "ok" | "running"> = step.error
-    ? "error"
-    : step.endedAt === undefined
-      ? "running"
-      : "ok";
+// A step the stream never closed (a question, an approval, a dropped stream) stops with its answer.
+function ToolStep({
+  pending,
+  step,
+}: {
+  pending: boolean;
+  step: DockToolStep;
+}): React.JSX.Element {
+  const tone: Extract<StatusTone, "ended" | "error" | "ok" | "running"> =
+    step.error
+      ? "error"
+      : step.endedAt !== undefined
+        ? "ok"
+        : pending
+          ? "running"
+          : "ended";
 
   return (
     <TraceCollapsible data-dock-step={tone}>
       <TraceCollapsibleTrigger>
-        <TraceLine size="xs" status={tone === "error" ? "error" : undefined}>
+        <TraceLine size="sm" status={tone === "error" ? "error" : undefined}>
           <StatusDot tone={tone} label={STEP_LABEL[tone]} />
           <TraceTitle>{step.title}</TraceTitle>
           {step.endedAt !== undefined && (
@@ -125,7 +142,7 @@ function ToolStep({ step }: { step: DockToolStep }): React.JSX.Element {
           )}
         </TraceLine>
       </TraceCollapsibleTrigger>
-      <TraceCollapsibleContent size="xs">
+      <TraceCollapsibleContent size="sm">
         <div className="flex flex-col gap-2">
           {step.input !== undefined && (
             <Payload label="Input" value={step.input} />

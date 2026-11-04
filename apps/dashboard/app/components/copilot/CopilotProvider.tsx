@@ -3,6 +3,7 @@
 import { useShortcutRegistry } from "@/app/components/ShortcutProvider";
 import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import { useDashboardIndex } from "@/app/hooks/useDashboardIndex";
+import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { useStage } from "@/app/hooks/useStage";
 import type { DockFacts, DockSession } from "@/app/lib/agentDock";
 import type { DockFile } from "@/app/lib/dockSource";
@@ -193,9 +194,14 @@ export function CopilotProvider({
   const syncSource = useAction(api.agentDock.sync);
   const currentStageId =
     stageId ?? stages?.find((stage) => stage.isDefault)?._id ?? null;
-  // Keyed by project: switching orgs lands on another project, and the old login is that org's.
+  // The user menu's subscription; a session's login belongs to the org it was minted in.
+  const activeOrg = useQuery(
+    api.org.orgs.getActive,
+    useSignedIn() ? {} : "skip",
+  );
+  const orgId = activeOrg?._id;
   const sessionRef = useRef<{
-    projectId: Id<"projects"> | null;
+    orgId: Id<"orgs"> | undefined;
     session: DockSession | null;
   } | null>(null);
   const [conversationKey] = useState(() => `dock-${crypto.randomUUID()}`);
@@ -387,10 +393,8 @@ export function CopilotProvider({
   );
 
   const dockSession = useCallback(async (): Promise<DockSession | null> => {
-    const cached =
-      sessionRef.current?.projectId === projectId
-        ? sessionRef.current.session
-        : undefined;
+    const held = sessionRef.current;
+    const cached = held && held.orgId === orgId ? held.session : undefined;
     if (
       cached === null ||
       (cached && cached.expiresAt - SESSION_RENEW_MS > Date.now())
@@ -399,13 +403,13 @@ export function CopilotProvider({
     }
     try {
       const session = await mintSession({});
-      sessionRef.current = { projectId: projectId, session: session };
+      sessionRef.current = { orgId: orgId, session: session };
 
       return session;
     } catch {
       return null;
     }
-  }, [mintSession, projectId]);
+  }, [mintSession, orgId]);
 
   const askAgent = useCallback(
     async (
