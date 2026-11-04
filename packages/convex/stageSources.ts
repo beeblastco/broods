@@ -10,10 +10,9 @@ import {
 } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedStage } from "./model/ownership/stage";
-import { STAGE_SOURCE_ORIGINS } from "./model/stageSource";
+import { STAGE_SOURCE_LIMITS, STAGE_SOURCE_ORIGINS } from "./model/stageSource";
 
 // Revert needs the one before; the rest is history nobody reads.
-const KEPT_REVISIONS = 20;
 
 const originValidator = v.union(
   ...STAGE_SOURCE_ORIGINS.map((origin) => v.literal(origin)),
@@ -173,6 +172,7 @@ export const recordSync = internalMutation({
       if (source.storageId) await ctx.storage.delete(source.storageId);
       await ctx.db.patch(newest._id, {
         manifestHash: manifestHash,
+        origin: source.origin,
         ...(source.commitSha ? { commitSha: source.commitSha } : {}),
       });
 
@@ -192,7 +192,11 @@ export const recordSync = internalMutation({
       ...(source.commitSha ? { commitSha: source.commitSha } : {}),
       createdAt: now,
     });
-    await pruneRevisions(ctx, stageId, revision - KEPT_REVISIONS);
+    await pruneRevisions(
+      ctx,
+      stageId,
+      revision - STAGE_SOURCE_LIMITS.revisions,
+    );
 
     return revision;
   },
@@ -323,9 +327,10 @@ async function settleRun(
     .query("stageSources")
     .withIndex("by_stageId_and_revision", (q) => q.eq("stageId", stageId))
     .order("desc")
-    .take(KEPT_REVISIONS);
-  const applied = recent.find((row) => row.commitSha === run.sha);
-  if (!applied) {
+    .take(STAGE_SOURCE_LIMITS.revisions);
+  const rows = recent.filter((row) => row.commitSha === run.sha);
+  const applied = rows.find((row) => row.verification?.phase === "verifying");
+  if (rows.length === 0) {
     if (run.conclusion === "success" && recent[0]?.commitSha !== run.sha)
       await ctx.scheduler.runAfter(0, internal.agentDock.snapshotRepo, {
         stageId: stageId,
@@ -333,7 +338,7 @@ async function settleRun(
       });
     return;
   }
-  if (applied.verification?.phase !== "verifying") return;
+  if (!applied) return;
   const sync = await ctx.db
     .query("stageSyncs")
     .withIndex("by_stageId", (q) => q.eq("stageId", stageId))
@@ -346,13 +351,15 @@ async function settleRun(
         : sync?.manifestHash !== applied.manifestHash
           ? "CI deployed a different manifest than Apply synced."
           : undefined;
-  await ctx.db.patch(applied._id, {
-    verification: {
-      phase: error ? "failed" : "deployed",
-      runUrl: run.url,
-      ...(error ? { error: error } : {}),
-    },
-  });
+  // CI's own deploy of the commit may store a newer row; the dashboard reads the newest.
+  for (const row of rows.filter((entry) => entry.revision >= applied.revision))
+    await ctx.db.patch(row._id, {
+      verification: {
+        phase: error ? "failed" : "deployed",
+        runUrl: run.url,
+        ...(error ? { error: error } : {}),
+      },
+    });
 }
 
 // The branch a stage deploys from, the rule `agentDock.linkedBranch` applies.

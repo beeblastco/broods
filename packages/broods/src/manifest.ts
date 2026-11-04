@@ -754,21 +754,11 @@ function workspaceStorageOf(
   entry: unknown,
   workspaces: Map<string, AnyResource>,
 ): unknown {
-  const named = isResource(entry)
-    ? entry
-    : entry && typeof entry === "object" && "workspace" in entry
-      ? (entry as { workspace: unknown }).workspace
-      : undefined;
-  const resource = isResource(named)
-    ? named
-    : typeof named === "string"
-      ? workspaces.get(named)
-      : undefined;
-  const config = resource?.config as
-    | { storage?: { provider?: unknown } }
-    | undefined;
+  const resource = workspaces.get(workspaceNameFor(entry));
 
-  return config?.storage?.provider;
+  return resource?.kind === "workspace"
+    ? resource.config.storage?.provider
+    : undefined;
 }
 
 function workspaceNameFor(entry: unknown): string {

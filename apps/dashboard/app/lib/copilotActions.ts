@@ -119,6 +119,8 @@ export interface DockApply {
     | "failed"
     | "proposed"
     | "verifying";
+  /** The stored source revision this Apply deployed; Revert builds on it. */
+  revision?: number;
   runUrl?: string;
   sha?: string;
   startedAt?: number;

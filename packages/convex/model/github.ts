@@ -42,6 +42,7 @@ const DEVELOPMENT_BRANCHES = ["dev", "development"] as const;
 export const STAGES = ["production", "development"] as const;
 
 const GITHUB_TIMEOUT_MS = 15_000;
+const GITHUB_READ_BATCH = 20;
 
 const INSTALL: Record<PackageManager, string> = {
   bun: "bun install --frozen-lockfile",
@@ -469,14 +470,18 @@ export async function readStageSourceAt(
     .map((path) => path.slice(root.length))
     .filter(isStageSourcePath)
     .slice(0, STAGE_SOURCE_LIMITS.files + 1);
-  const files = await Promise.all(
-    paths.map(async (path): Promise<StageSourceFile> => ({
-      path: path,
-      content:
-        (await getFile(app, token, fullName, sha, `${root}${path}`))?.content ??
-        "",
-    })),
-  );
+  const files: StageSourceFile[] = [];
+  // Batched: one burst per source would trip GitHub's secondary rate limit.
+  for (let start = 0; start < paths.length; start += GITHUB_READ_BATCH) {
+    const batch = paths.slice(start, start + GITHUB_READ_BATCH);
+    const read = await Promise.all(
+      batch.map((path) => getFile(app, token, fullName, sha, `${root}${path}`)),
+    );
+    read.forEach((file, index) => {
+      const path = batch[index];
+      if (file && path) files.push({ path: path, content: file.content });
+    });
+  }
 
   return { sha: sha, files: files };
 }
@@ -1174,12 +1179,21 @@ async function getFile(
   path: string,
 ): Promise<{ sha: string; content: string } | null> {
   try {
-    const file = await githubRequest<{ sha: string; content: string }>(
+    const file = await githubRequest<{
+      sha: string;
+      content: string;
+      encoding: string;
+    }>(
       app,
       token,
       "GET",
       `/repos/${fullName}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(branch)}`,
     );
+    // GitHub sends no body for a file over 1 MB; an empty one would be stored as the file.
+    if (file.encoding === "none")
+      throw new ClientError(
+        `${path} is over the 1 MB GitHub lets Broods read.`,
+      );
 
     return {
       sha: file.sha,

@@ -27,6 +27,7 @@ import {
 import { getOwnedStage, getStageForWrite } from "./model/ownership/stage";
 import { serviceEnv, serviceHeaders } from "./model/serviceBridge";
 import {
+  STAGE_SOURCE_LIMITS,
   stageSourceHash,
   stageSourceProblem,
   stageSourceSchema,
@@ -74,7 +75,7 @@ const applyTargetValidator = v.object({
   project: v.string(),
   stage: v.string(),
   revision: v.union(v.number(), v.null()),
-  commitSha: v.optional(v.string()),
+  hash: v.optional(v.string()),
 });
 
 const applyRunAnswer = z.object({
@@ -219,7 +220,9 @@ export const apply = action({
   returns: applyResultValidator,
   handler: async (ctx, args): Promise<ApplyResult> => {
     const { authId, target } = await writableTarget(ctx, args);
-    if (target.revision !== args.baseRevision)
+    // A retry of a draft that already deployed finds its own revision on top: not a conflict.
+    const retry = target.hash === (await stageSourceHash(args.files));
+    if (target.revision !== args.baseRevision && !retry)
       throw new ClientError(
         `The stage's source is now revision ${target.revision ?? "none"}. Review the new diff and apply again.`,
         "conflict",
@@ -237,16 +240,18 @@ export const apply = action({
       repo && app
         ? await branchHead(app, token, repo.fullName, repo.branch)
         : undefined;
-    if (head && target.commitSha && head !== target.commitSha)
+    // The commit carries the diff from the stored revision the branch head holds.
+    const base = head
+      ? await ctx.runAction(internal.agentDock.storedSource, {
+          stageId: args.stageId,
+          commitSha: head,
+        })
+      : null;
+    if (head && !base)
       throw new ClientError(
         `${repo?.branch} has commits the stage does not run. Sync first, then apply.`,
         "conflict",
       );
-    const base = repo
-      ? await ctx.runAction(internal.agentDock.storedSource, {
-          stageId: args.stageId,
-        })
-      : null;
     const deployed = await deployFiles(
       ctx,
       authId,
@@ -276,16 +281,15 @@ export const apply = action({
       args.message.trim() || "Update broods/ from the dashboard",
       head,
     );
-    // A protected branch took a pull request: the stage already runs the change, CI runs on merge.
-    const phase = committed.viaPullRequest ? "deployed" : "verifying";
+    // A pull request (protected branch) stays verifying, so drift offers no Sync that undoes it.
     await ctx.runMutation(internal.stageSources.setVerification, {
       stageId: args.stageId,
       revision: deployed.revision,
-      verification: { phase: phase, runUrl: committed.url },
+      verification: { phase: "verifying", runUrl: committed.url },
       commitSha: committed.sha,
     });
 
-    return { ...deployed, phase: phase, commitSha: committed.sha };
+    return { ...deployed, phase: "verifying", commitSha: committed.sha };
   },
 });
 
@@ -368,8 +372,9 @@ export const snapshotRepo = internalAction({
   },
 });
 
+/** The newest stored source, or the newest one made from `commitSha`. */
 export const storedSource = internalAction({
-  args: { stageId: v.id("stages") },
+  args: { stageId: v.id("stages"), commitSha: v.optional(v.string()) },
   returns: v.union(
     v.object({
       files: v.array(repoFileValidator),
@@ -379,13 +384,14 @@ export const storedSource = internalAction({
   ),
   handler: async (
     ctx,
-    { stageId },
+    { stageId, commitSha },
   ): Promise<{
     files: Infer<typeof repoFileValidator>[];
     sha?: string;
   } | null> => {
     const url = await ctx.runQuery(internal.agentDock.sourceUrl, {
       stageId: stageId,
+      ...(commitSha ? { commitSha: commitSha } : {}),
     });
     if (!url) return null;
     const parsed = stageSourceSchema.safeParse(await (await fetch(url)).json());
@@ -395,16 +401,19 @@ export const storedSource = internalAction({
 });
 
 export const sourceUrl = internalQuery({
-  args: { stageId: v.id("stages") },
+  args: { stageId: v.id("stages"), commitSha: v.optional(v.string()) },
   returns: v.union(v.string(), v.null()),
-  handler: async (ctx, { stageId }): Promise<string | null> => {
-    const newest = await ctx.db
+  handler: async (ctx, { stageId, commitSha }): Promise<string | null> => {
+    const recent = await ctx.db
       .query("stageSources")
       .withIndex("by_stageId_and_revision", (q) => q.eq("stageId", stageId))
       .order("desc")
-      .first();
+      .take(STAGE_SOURCE_LIMITS.revisions);
+    const row = commitSha
+      ? recent.find((entry) => entry.commitSha === commitSha)
+      : recent[0];
 
-    return newest ? await ctx.storage.getUrl(newest.storageId) : null;
+    return row ? await ctx.storage.getUrl(row.storageId) : null;
   },
 });
 
@@ -461,7 +470,7 @@ export const applyTarget = internalQuery({
       // The CLI's spelling: the dashboard shows `Development`, `broods` takes `development`.
       stage: stage.name.toLowerCase(),
       revision: newest?.revision ?? null,
-      ...(newest?.commitSha ? { commitSha: newest.commitSha } : {}),
+      ...(newest ? { hash: newest.hash } : {}),
     };
   },
 });

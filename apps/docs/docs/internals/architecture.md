@@ -231,7 +231,8 @@ stateDiagram-v2
 ```
 
 - The phase lives on the revision (`stageSources.verification`); `verifyRun` settles it from the `workflow_run` webhook. A successful run on a sha no Apply made snapshots the branch at that sha as the source (`snapshotRepo`), so a push needs no button.
-- Production applies the same way, to its own branch. A branch that refuses the push gets a pull request; the stage already runs the change, so that Apply counts as deployed.
+- Production applies the same way, to its own branch. A branch that refuses the push gets a pull request; that revision stays verifying until the merge is snapshotted, so drift offers no Sync that would undo it.
+- The commit is the diff from the stored revision made from the branch head. With none (the branch moved, or the stage was deployed from a laptop), Apply refuses: Sync first. A retry of a draft that already deployed is not a conflict.
 - `stageSources.drift` is the change bar's one state: out of sync when the stage's manifest hash moved away from its newest source (a deploy from elsewhere), or the branch's last finished run is not the newest source's commit. Quiet while an Apply is verifying. `agentDock.sync` redeploys the branch head when linked, else the newest stored source.
 
 ## Run lifecycle

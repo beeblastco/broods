@@ -23,6 +23,8 @@ import {
 export const APPLY_RUN_PATH = "/v1/apply-runs";
 
 const OUTPUT_TAIL = 4000;
+// Under Linux's 128 KiB cap on one argv string: providers pass the script as `bash -c`.
+const SCRIPT_BYTES = 96_000;
 const PHASE_LINE = /^::phase (\w+) (\d+)$/;
 
 const applyRunSchema = z.object({
@@ -58,39 +60,36 @@ export async function handleApplyRunRequest(
   const run = parsed.data;
   const sandbox = normalizeSandboxConfig(JSON.parse(sandboxJson));
   const startedAt = Date.now();
-  const result = await runSandbox(
-    {
-      ...sandbox,
-      // One warm sandbox per stage and lockfile: its node_modules are the install cache.
-      options: {
-        ...sandbox.options,
-        reservationKey: normalizeFilesystemNamespace(
-          `apply:${run.accountId}:${run.stageId}:${run.lockHash}`,
-        ),
-      },
-      envVars: {
-        ...sandbox.envVars,
-        BROODS_TOKEN: run.ticket,
-        // BROODS_BASE_URL is a reserved sandbox name, dropped from env; the script sets it.
-        APPLY_BASE_URL: baseUrl,
-        BROODS_PROJECT: run.project,
-        BROODS_STAGE: run.stage,
-        CI: "true",
-      },
-      controlPlane: {
-        accountId: run.accountId,
-        projectId: run.projectId,
-        stageId: run.stageId,
-        name: "apply",
-        specs: resolveSandboxSpecs({
-          provider: sandbox.provider,
-          size: sandbox.size,
-        }),
-      },
+  const config = {
+    ...sandbox,
+    // One warm sandbox per stage and lockfile: its node_modules are the install cache.
+    options: {
+      ...sandbox.options,
+      reservationKey: normalizeFilesystemNamespace(
+        `apply:${run.accountId}:${run.stageId}:${run.lockHash}`,
+      ),
     },
-    undefined,
-    applyScript(run),
-  );
+    envVars: {
+      ...sandbox.envVars,
+      BROODS_TOKEN: run.ticket,
+      // BROODS_BASE_URL is a reserved sandbox name, dropped from env; the script sets it.
+      APPLY_BASE_URL: baseUrl,
+      BROODS_PROJECT: run.project,
+      BROODS_STAGE: run.stage,
+      CI: "true",
+    },
+    controlPlane: {
+      accountId: run.accountId,
+      projectId: run.projectId,
+      stageId: run.stageId,
+      name: "apply",
+      specs: resolveSandboxSpecs({
+        provider: sandbox.provider,
+        size: sandbox.size,
+      }),
+    },
+  };
+  const result = await runScripts(config, applyScripts(run));
   const lines = `${result.stdout}\n${result.stderr}`.split("\n");
   const phases = Object.fromEntries(
     lines.flatMap((line): [string, number][] => {
@@ -113,22 +112,38 @@ export async function handleApplyRunRequest(
   });
 }
 
+async function runScripts(
+  config: Parameters<typeof runSandbox>[0],
+  scripts: readonly string[],
+): ReturnType<typeof runSandbox> {
+  for (const script of scripts.slice(0, -1)) {
+    const written = await runSandbox(config, undefined, script);
+    if (!written.ok) return written;
+  }
+
+  return await runSandbox(config, undefined, scripts.at(-1) ?? "");
+}
+
 // Only what the files replace is removed, so node_modules survives as the next install's cache.
-function applyScript(run: ApplyRun): string {
-  const writes = run.files.map((file) => {
-    const q = shellQuote(`./${toWorkspaceRelative(file.path)}`);
-
-    return `mkdir -p "$(dirname ${q})" && printf '%s' ${shellQuote(toBase64(file.content))} | base64 -d > ${q}`;
-  });
-  const phase = (name: string): string =>
-    `echo "::phase ${name} $(( $(date +%s%3N) - T0 ))"`;
-
-  return [
+// The sandbox is reserved, so writes split across scripts land on one disk; the last deploys.
+function applyScripts(run: ApplyRun): string[] {
+  const head = [
     "set -e",
     "T0=$(date +%s%3N)",
     'mkdir -p "$HOME/broods-apply" && cd "$HOME/broods-apply"',
-    "rm -rf broods package.json bun.lock",
-    ...writes,
+  ];
+  const batches: string[][] = [
+    [...head, "rm -rf broods package.json bun.lock"],
+  ];
+  for (const write of run.files.flatMap(fileWrites)) {
+    const batch = batches.at(-1) ?? [];
+    if (batch.join("\n").length + write.length > SCRIPT_BYTES)
+      batches.push([...head, write]);
+    else batch.push(write);
+  }
+  const phase = (name: string): string =>
+    `echo "::phase ${name} $(( $(date +%s%3N) - T0 ))"`;
+  const deploy = [
     'export PATH="$HOME/.bun/bin:$PATH" BROODS_BASE_URL="$APPLY_BASE_URL"',
     "command -v bun >/dev/null 2>&1 || curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1",
     phase("files"),
@@ -136,5 +151,24 @@ function applyScript(run: ApplyRun): string {
     phase("install"),
     'bunx broods deploy --base-url "$BROODS_BASE_URL" --project "$BROODS_PROJECT" --stage "$BROODS_STAGE" --prune',
     phase("deploy"),
-  ].join("\n");
+  ];
+
+  return batches.map((batch, index) =>
+    [...batch, ...(index === batches.length - 1 ? deploy : [])].join("\n"),
+  );
+}
+
+// A file too big for one script is appended in base64 chunks, each decoding on its own.
+function fileWrites(file: { path: string; content: string }): string[] {
+  const q = shellQuote(`./${toWorkspaceRelative(file.path)}`);
+  const encoded = toBase64(file.content);
+  const size = SCRIPT_BYTES - 1000 - (SCRIPT_BYTES % 4);
+  const chunks: string[] = [];
+  for (let at = 0; at < encoded.length || at === 0; at += size)
+    chunks.push(encoded.slice(at, at + size));
+
+  return chunks.map(
+    (chunk, index) =>
+      `${index === 0 ? `mkdir -p "$(dirname ${q})" && ` : ""}printf '%s' ${shellQuote(chunk)} | base64 -d ${index === 0 ? ">" : ">>"} ${q}`,
+  );
 }

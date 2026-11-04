@@ -47,8 +47,8 @@ afterAll((): void => {
   process.env = ORIGINAL_ENV;
 });
 
-const call = (headers: Record<string, string>) =>
-  handleApplyRunRequest(coreRequest("POST", "/v1/apply-runs", headers, RUN));
+const call = (headers: Record<string, string>, run = RUN) =>
+  handleApplyRunRequest(coreRequest("POST", "/v1/apply-runs", headers, run));
 
 describe("apply runs", () => {
   it("runs only for the in-cluster service token and a configured sandbox", async () => {
@@ -75,5 +75,30 @@ describe("apply runs", () => {
     });
     expect(sent[0]?.script).toContain("bunx broods deploy");
     expect(sent[0]?.script).toContain("> './broods/index.ts'");
+  });
+
+  it("splits files over one script's argument cap into several, deploying in the last", async () => {
+    process.env.APPLY_SANDBOX = JSON.stringify({ provider: "worker" });
+    const lock = "x".repeat(300_000);
+    sent.length = 0;
+
+    await call(
+      { Authorization: "Bearer service" },
+      { ...RUN, files: [...RUN.files, { path: "bun.lock", content: lock }] },
+    );
+
+    expect(sent.length).toBeGreaterThan(2);
+    expect(sent.every(({ script }) => script.length < 128 * 1024)).toBe(true);
+    expect(
+      sent.map(({ script }) => script.includes("bunx broods deploy")),
+    ).toEqual(sent.map((_, index) => index === sent.length - 1));
+    const chunks = sent
+      .flatMap(({ script }) => [
+        ...script.matchAll(
+          /printf '%s' '([^']*)' \| base64 -d >>? '\.\/bun\.lock'/g,
+        ),
+      ])
+      .map((match) => match[1] ?? "");
+    expect(Buffer.from(chunks.join(""), "base64").toString()).toBe(lock);
   });
 });

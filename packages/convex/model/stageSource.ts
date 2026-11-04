@@ -4,6 +4,7 @@ import { z } from "zod/mini";
 export const STAGE_SOURCE_LIMITS = {
   files: 400,
   bytes: 2_000_000,
+  revisions: 20,
 } as const;
 export const STAGE_SOURCE_ROOT_FILES: readonly string[] = [
   "package.json",

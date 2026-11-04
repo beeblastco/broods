@@ -257,8 +257,8 @@ export function CopilotProvider({
         : null,
     [driftState, syncing],
   );
-  // Seeded once per conversation; null when the agent has no workspace to seed.
-  const seed = useRef<DockSeed | null | undefined>(undefined);
+  // Seeded once per stage in a conversation; null when the agent has no workspace to seed.
+  const seeds = useRef<Record<string, DockSeed | null>>({});
 
   // Adjusted during render: a finished run is kept, so a later push cannot reopen it.
   const settled = settleApplies(applies, deploys);
@@ -422,9 +422,17 @@ export function CopilotProvider({
         const { readDraft, readSource, seedConversation } =
           await import("@/app/lib/dockSource");
         // The stored source goes in the agent's own folder; an agent with none reads the repo.
-        if (seed.current === undefined && source?.url) {
+        if (
+          currentStageId &&
+          !(currentStageId in seeds.current) &&
+          source?.url
+        ) {
           const files = await readSource(source.url);
-          seed.current = await seedConversation(session, conversationKey, files)
+          seeds.current[currentStageId] = await seedConversation(
+            session,
+            conversationKey,
+            files,
+          )
             .then((): DockSeed => ({
               files: files,
               revision: source.revision,
@@ -432,7 +440,8 @@ export function CopilotProvider({
             }))
             .catch((): null => null);
         }
-        const seeded = seed.current ?? undefined;
+        const seeded =
+          (currentStageId && seeds.current[currentStageId]) || undefined;
         // A linked repo's broods/ folder is what the agent edits; without it, it only advises.
         const repo =
           !seeded && facts.repo && projectId && currentStageId
@@ -596,18 +605,34 @@ export function CopilotProvider({
       }
       const { via } = action;
       if (via.kind === "source") {
-        // A retry runs on the revision the failed attempt stored, so it is not a conflict.
+        const files = draftFiles(via.seed, action.files);
         const applied = await applySource({
-          baseRevision: landed ? (source?.revision ?? null) : via.baseRevision,
-          files: draftFiles(via.seed, action.files),
+          baseRevision: via.baseRevision,
+          files: files,
           message: action.message,
           projectId: projectId,
           stageId: currentStageId,
         });
+        // The next ask builds on what landed, as the agent's folder already does.
+        seeds.current[currentStageId] = {
+          files: files,
+          revision: applied.revision,
+          ...(via.branch ? { branch: via.branch } : {}),
+        };
 
         return applied.phase === "verifying"
-          ? { phase: "verifying", sha: applied.commitSha, startedAt: startedAt }
-          : { finishedAt: Date.now(), phase: "deployed", startedAt: startedAt };
+          ? {
+              phase: "verifying",
+              revision: applied.revision,
+              sha: applied.commitSha,
+              startedAt: startedAt,
+            }
+          : {
+              finishedAt: Date.now(),
+              phase: "deployed",
+              revision: applied.revision,
+              startedAt: startedAt,
+            };
       }
       const result = await commitChange({
         baseSha: landed ?? via.baseSha,
@@ -640,7 +665,7 @@ export function CopilotProvider({
 
       return { phase: "applying", sha: result.sha, startedAt: startedAt };
     },
-    [applySource, commitChange, currentStageId, projectId, source],
+    [applySource, commitChange, currentStageId, projectId],
   );
 
   // A proposal being applied ignores a second press and a Discard until it settles.
@@ -720,7 +745,7 @@ export function CopilotProvider({
         setApplies((prev) => ({ ...prev, [messageId]: apply }));
       record({ phase: "applying", startedAt: startedAt });
       void applySource({
-        baseRevision: source?.revision ?? null,
+        baseRevision: applies[messageId]?.revision ?? commit.via.baseRevision,
         files: [...commit.via.seed],
         message: `Revert: ${commit.message}`,
         projectId: projectId,
@@ -737,7 +762,7 @@ export function CopilotProvider({
         )
         .finally(() => applying.current.delete(messageId));
     },
-    [applySource, currentStageId, projectId, proposals, source],
+    [applies, applySource, currentStageId, projectId, proposals],
   );
 
   const syncStage = useCallback((): void => {

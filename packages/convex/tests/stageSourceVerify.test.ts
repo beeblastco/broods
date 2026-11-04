@@ -71,8 +71,27 @@ async function seed(
   return { t: t, stageId: stageId };
 }
 
-async function settle(stageHash: string, conclusion: string): Promise<unknown> {
+async function settle(
+  stageHash: string,
+  conclusion: string,
+  ciStoredRow = false,
+): Promise<unknown> {
   const { t, stageId } = await seed(stageHash, 200);
+  if (ciStoredRow)
+    await t.run(async (ctx) => {
+      await ctx.db.insert("stageSources", {
+        stageId: stageId,
+        revision: 2,
+        hash: "ci",
+        storageId: await ctx.storage.store(new Blob(["{}"])),
+        fileCount: 1,
+        bytes: 2,
+        manifestHash: stageHash,
+        origin: "cli",
+        commitSha: SHA,
+        createdAt: 1,
+      });
+    });
   await t.mutation(internal.stageSources.verifyRun, {
     repoId: 7,
     branch: "dev",
@@ -88,6 +107,7 @@ async function settle(stageHash: string, conclusion: string): Promise<unknown> {
         await ctx.db
           .query("stageSources")
           .withIndex("by_stageId_and_revision", (q) => q.eq("stageId", stageId))
+          .order("desc")
           .first()
       )?.verification,
   );
@@ -105,6 +125,12 @@ describe("verifying an Apply on CI", () => {
     expect(await settle("applied", "failure")).toMatchObject({
       phase: "failed",
       error: "CI failure.",
+    });
+  });
+
+  test("a newer row CI stored for the same commit settles with the Apply", async () => {
+    expect(await settle("applied", "success", true)).toMatchObject({
+      phase: "deployed",
     });
   });
 });

@@ -4627,7 +4627,7 @@ export declare const internal: {
       { authId: string; projectId: Id<"projects">; stageId: Id<"stages"> },
       {
         accountId: string;
-        commitSha?: string;
+        hash?: string;
         project: string;
         revision: number | null;
         stage: string;
@@ -4658,7 +4658,7 @@ export declare const internal: {
     sourceUrl: FunctionReference<
       "query",
       "internal",
-      { stageId: Id<"stages"> },
+      { commitSha?: string; stageId: Id<"stages"> },
       string | null
     >;
     stageRepo: FunctionReference<
@@ -4675,7 +4675,7 @@ export declare const internal: {
     storedSource: FunctionReference<
       "action",
       "internal",
-      { stageId: Id<"stages"> },
+      { commitSha?: string; stageId: Id<"stages"> },
       { files: Array<{ content: string; path: string }>; sha?: string } | null
     >;
   };
