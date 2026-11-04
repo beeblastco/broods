@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { drainInFlight } from "../src/shared/in-flight.ts";
 import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
+import { resetHeldReservationsForTests } from "../src/harness/sandbox/platform-worker.ts";
 import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
 import {
   CloudflareSandboxExecutor,
@@ -47,10 +48,14 @@ interface BridgeCall {
 const calls: BridgeCall[] = [];
 const mirrored: string[] = [];
 const restores: (() => void)[] = [];
+// The reservation calls that reach Convex, in order.
+const convex: string[] = [];
 let stored: string | null = null;
 let claimWins = true;
 
 beforeEach((): void => {
+  resetHeldReservationsForTests();
+  convex.length = 0;
   process.env.CLOUDFLARE_SANDBOX_URL = "https://bridge.example.com/";
   process.env.CLOUDFLARE_SANDBOX_API_KEY = "bridge-key";
   stored = null;
@@ -79,22 +84,20 @@ beforeEach((): void => {
   const getSpy = spyOn(
     instanceStore,
     "getSandboxExternalId",
-  ).mockImplementation(async (): Promise<string | null> => stored);
-  const claimSpy = spyOn(
-    instanceStore,
-    "claimSandboxInstance",
-  ).mockImplementation(
-    async (_provider, _key, externalId): Promise<boolean> => {
-      if (claimWins) stored = externalId;
-      else stored = "winner-id";
+  ).mockImplementation(async (): Promise<string | null> => {
+    convex.push("get");
 
-      return claimWins;
-    },
-  );
-  const saveSpy = spyOn(
+    return stored;
+  });
+  const reserveSpy = spyOn(
     instanceStore,
-    "saveSandboxInstance",
-  ).mockImplementation(async (): Promise<void> => {});
+    "reserveSandboxInstance",
+  ).mockImplementation(async (_provider, _key, externalId): Promise<string> => {
+    convex.push("reserve");
+    stored ??= claimWins ? externalId : "winner-id";
+
+    return stored;
+  });
   const upsertSpy = spyOn(
     sandboxInstances,
     "upsertSandboxInstance",
@@ -112,8 +115,7 @@ beforeEach((): void => {
   restores.push(
     (): void => fetchSpy.mockRestore(),
     (): void => getSpy.mockRestore(),
-    (): void => claimSpy.mockRestore(),
-    (): void => saveSpy.mockRestore(),
+    (): void => reserveSpy.mockRestore(),
     (): void => upsertSpy.mockRestore(),
     (): void => removeSpy.mockRestore(),
   );
@@ -178,6 +180,33 @@ it("reserves one persistent container, keeps it across runs and mirrors it", asy
     "upsert acct:workspace false",
     "upsert acct:workspace false",
   ]);
+  expect(convex).toEqual(["reserve"]);
+});
+
+it("books a prewarmed container's first command from the hold, and books again on release", async (): Promise<void> => {
+  const deleteSpy = spyOn(
+    instanceStore,
+    "deleteSandboxInstance",
+  ).mockImplementation(async (): Promise<boolean> => true);
+  restores.unshift((): void => deleteSpy.mockRestore());
+  const executor = new CloudflareSandboxExecutor({
+    ...config,
+    persistent: true,
+  });
+  await executor.prewarm(request);
+  await executor.run(request);
+  await executor.release(request);
+  stored = null;
+  await executor.run(request);
+
+  expect(convex).toEqual(["reserve", "get", "reserve"]);
+  expect(calls.map((call): string => call.method)).toEqual([
+    "POST",
+    "POST",
+    "DELETE",
+    "POST",
+  ]);
+  expect(calls[3]?.url).not.toBe(calls[1]?.url);
 });
 
 it("never mirrors a reservation whose first start failed, so it is not billed", async (): Promise<void> => {
@@ -222,6 +251,7 @@ it("reuses an existing reservation without an account, as the dashboard console 
 
   expect(calls.map((call): string => call.method)).toEqual(["POST"]);
   expect(calls[0]?.url).toContain("/v1/sandboxes/fp-p-existing/exec");
+  expect(convex).toEqual(["get"]);
 });
 
 it("runs a persistent config with no account and no reservation as ephemeral", async (): Promise<void> => {

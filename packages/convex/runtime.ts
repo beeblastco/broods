@@ -1276,6 +1276,47 @@ export const claimSandboxReservation = internalMutation({
   },
 });
 
+// Claim-or-reuse in one trip: the id under the key, its deadline refreshed only when the row is
+// this account's, else `externalId` claimed. A racing claim retries and returns the winner's id.
+export const reserveSandboxReservation = internalMutation({
+  args: {
+    provider: sandboxProviderValidator,
+    reservationKey: v.string(),
+    externalId: v.string(),
+    accountId: v.id("accounts"),
+  },
+  returns: v.string(),
+  handler: async (ctx, args): Promise<string> => {
+    await requireActiveAccount(ctx, args.accountId);
+    const row = await ctx.db
+      .query("sandboxReservations")
+      .withIndex("by_provider_and_reservationKey", (q) =>
+        q
+          .eq("provider", args.provider)
+          .eq("reservationKey", args.reservationKey),
+      )
+      .unique();
+    if (row) {
+      if (row.accountId === args.accountId) {
+        await ctx.db.patch(row._id, {
+          expiresAt: reservationExpiresAt(row.ttlSeconds),
+        });
+      }
+
+      return row.externalId;
+    }
+    await ctx.db.insert("sandboxReservations", {
+      accountId: args.accountId,
+      provider: args.provider,
+      reservationKey: args.reservationKey,
+      externalId: args.externalId,
+      expiresAt: reservationExpiresAt(undefined),
+    });
+
+    return args.externalId;
+  },
+});
+
 export const saveSandboxReservation = internalMutation({
   args: {
     provider: sandboxProviderValidator,

@@ -1012,6 +1012,71 @@ describe("runtime persistence", () => {
     ).toBeNull();
   });
 
+  test("reserves a sandbox in one trip: claims, then reuses and refreshes only its own row", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const other = await createActiveAccount(t);
+    const key = {
+      provider: "worker" as const,
+      reservationKey: `acct:${accountId}:workspace:one`,
+    };
+    const reserve = (externalId: string, account: Id<"accounts">) =>
+      t.mutation(internal.runtime.reserveSandboxReservation, {
+        ...key,
+        externalId: externalId,
+        accountId: account,
+      });
+    const lapse = () =>
+      t.run(async (ctx) => {
+        const row = await ctx.db.query("sandboxReservations").first();
+        if (row) await ctx.db.patch(row._id, { expiresAt: 1 });
+      });
+    const rows = () =>
+      t.run((ctx) => ctx.db.query("sandboxReservations").collect());
+
+    expect(await reserve("sandbox-1", accountId)).toBe("sandbox-1");
+    await lapse();
+    expect(await reserve("sandbox-2", accountId)).toBe("sandbox-1");
+    const [refreshed] = await rows();
+    const now = Math.floor(Date.now() / 1000);
+    expect(refreshed?.expiresAt).toBeGreaterThanOrEqual(now + 7 * 86_400 - 1);
+    expect(refreshed?.externalId).toBe("sandbox-1");
+
+    await lapse();
+    expect(await reserve("sandbox-3", other)).toBe("sandbox-1");
+    expect(await rows()).toEqual([
+      expect.objectContaining({
+        accountId: accountId,
+        externalId: "sandbox-1",
+        expiresAt: 1,
+      }),
+    ]);
+  });
+
+  test("two reservations racing on one key both get the winner's id", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const reserve = (externalId: string) =>
+      t.mutation(internal.runtime.reserveSandboxReservation, {
+        provider: "cloudflare",
+        reservationKey: `acct:${accountId}:workspace:one`,
+        externalId: externalId,
+        accountId: accountId,
+      });
+
+    const [first, second] = await Promise.all([
+      reserve("sandbox-a"),
+      reserve("sandbox-b"),
+    ]);
+
+    expect(second).toBe(first);
+    expect(
+      (await t.run((ctx) => ctx.db.query("sandboxReservations").collect())).map(
+        (row) => row.externalId,
+      ),
+    ).toEqual([first]);
+  });
+
   test("a shorter reservation window lapses on its own deadline", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -1043,6 +1108,23 @@ describe("runtime persistence", () => {
     );
 
     expect(deferred?.expiresAt).toBeLessThanOrEqual(
+      Math.floor(Date.now() / 1000) + 61,
+    );
+
+    // So does a one-trip booking that reuses it.
+    expect(
+      await t.mutation(internal.runtime.reserveSandboxReservation, {
+        provider: reservation.provider,
+        reservationKey: reservation.reservationKey,
+        externalId: "sandbox-2",
+        accountId: accountId,
+      }),
+    ).toBe("sandbox-1");
+    const booked = await t.run((ctx) =>
+      ctx.db.query("sandboxReservations").first(),
+    );
+
+    expect(booked?.expiresAt).toBeLessThanOrEqual(
       Math.floor(Date.now() / 1000) + 61,
     );
   });
@@ -1280,6 +1362,20 @@ describe("runtime persistence", () => {
           provider: "sandbox",
           reservationKey: reservationKey,
           externalId: "sandbox-late",
+          accountId: accountId,
+        }),
+      () =>
+        t.mutation(internal.runtime.reserveSandboxReservation, {
+          provider: "sandbox",
+          reservationKey: reservationKey,
+          externalId: "sandbox-late",
+          accountId: accountId,
+        }),
+      () =>
+        t.mutation(internal.runtime.reserveSandboxReservation, {
+          provider: "worker",
+          reservationKey: `acct:${accountId}:workspace:new`,
+          externalId: "worker-new",
           accountId: accountId,
         }),
       () =>
