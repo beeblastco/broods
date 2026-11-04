@@ -24,6 +24,7 @@ import {
   type DockApply,
 } from "@/app/lib/copilotActions";
 import { analyzeCanvasInfra } from "@/app/lib/canvasRuntimeRefs";
+import type { DockTracePart } from "@/app/lib/dockTrace";
 import { withProposal } from "@/app/lib/proposedNodes";
 import { Background, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import { useMemo, useState } from "react";
@@ -98,13 +99,74 @@ export const deepwiki = defineMcp({
   },
 );
 
+const TRACE: readonly DockTracePart[] = [
+  {
+    id: "r1",
+    kind: "reasoning",
+    text: "The user wants DeepWiki on broods. Check what broods has, then find DeepWiki's server.",
+  },
+  {
+    endedAt: 1_420,
+    id: "t1",
+    input: { method: "GET", path: "/v1/agents/broods" },
+    kind: "tool",
+    name: "dock__broods_api",
+    output: { mcps: ["dock"], name: "broods", workspaces: ["notes"] },
+    startedAt: 1_100,
+    title: "GET /v1/agents/broods",
+  },
+  {
+    endedAt: 4_900,
+    id: "t2",
+    input: { query: "connect an MCP server" },
+    kind: "tool",
+    name: "dock__read_docs",
+    output: "## MCP servers\n".padEnd(6_000, " defineMcp({ name, url })"),
+    startedAt: 1_600,
+    title: "read_docs",
+  },
+  {
+    endedAt: 5_300,
+    error: "fetch failed: 503",
+    id: "t3",
+    input: { url: "https://deepwiki.com/mcp" },
+    kind: "tool",
+    name: "web_fetch",
+    startedAt: 5_000,
+    title: "web_fetch",
+  },
+  {
+    endedAt: 5_500,
+    id: "t4",
+    input: { path: "/p/scheduler" },
+    kind: "tool",
+    name: "dock__navigate",
+    output: "ok",
+    startedAt: 5_450,
+    title: "Opened Scheduler",
+  },
+  {
+    endedAt: 9_100,
+    id: "t5",
+    input: { summary: "Connects DeepWiki and drops the notes workspace." },
+    kind: "tool",
+    name: "dock__propose_changes",
+    output: "ok",
+    startedAt: 8_200,
+    title: "Proposed changes",
+  },
+];
+
 const MESSAGES: readonly CopilotMessage[] = [
   { id: "ask:you", role: "user", text: "connect deepwiki to broods" },
   {
+    answeredAt: 9_400,
     id: "ask:broods",
     plan: PLAN ?? undefined,
     role: "broods",
-    text: "DeepWiki's official server is `https://mcp.deepwiki.com/mcp`. Apply adds it to broods and removes notes.",
+    startedAt: 0,
+    text: "DeepWiki's official server is `https://mcp.deepwiki.com/mcp`. Apply adds it to broods and removes notes. Its runs show on the [Scheduler](/ui-gallery?tab=dock-apply) and in the [DeepWiki docs](https://docs.devin.ai/work-with-devin/deepwiki-mcp).",
+    trace: TRACE,
   },
 ];
 

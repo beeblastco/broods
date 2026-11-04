@@ -6,6 +6,7 @@ import { useDashboardIndex } from "@/app/hooks/useDashboardIndex";
 import { useStage } from "@/app/hooks/useStage";
 import type { DockFacts, DockSession } from "@/app/lib/agentDock";
 import type { DockFile } from "@/app/lib/dockSource";
+import type { DockTracePart } from "@/app/lib/dockTrace";
 import {
   actionTier,
   changeKey,
@@ -48,6 +49,8 @@ const NO_MODEL_REPLY =
 const SESSION_RENEW_MS = 60 * 1000;
 
 export interface CopilotMessage {
+  /** When the final text began after the last trace step; unset while it still works. */
+  answeredAt?: number;
   id: string;
   /** Set while the Broods agent has not answered yet. */
   pending?: boolean;
@@ -56,7 +59,10 @@ export interface CopilotMessage {
   /** The project and stage it was asked on; its writes refuse to run anywhere else. */
   scope?: string;
   stale?: boolean;
+  startedAt?: number;
   text: string;
+  /** Reasoning and tool steps, in stream order. */
+  trace?: readonly DockTracePart[];
 }
 
 export interface CopilotState {
@@ -173,9 +179,9 @@ export function CopilotProvider({
       ),
       project: projects?.find((project) => project._id === projectId)?.name,
       repo: repo ? `${repo.fullName} (${branches.join(", ")})` : undefined,
-      stage: stages?.find((stage) =>
-        stageId ? stage._id === stageId : stage.isDefault,
-      )?.name,
+      ...(projectId ? { projectId: projectId } : {}),
+      stage: stage?.name,
+      ...(stage ? { stageId: stage._id } : {}),
     };
   }, [canvas, projectId, projects, stageId, stages]);
   const updateCron = useMutation(api.agent.cronsPublic.update);
@@ -408,6 +414,8 @@ export function CopilotProvider({
         );
       let text = "";
       let plan: CopilotPlan | undefined;
+      let trace: readonly DockTracePart[] = [];
+      let answeredAt: number | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         // Lazy: zod and the stream reader load on the first ask, not with every page.
@@ -420,6 +428,8 @@ export function CopilotProvider({
           sourcePlan,
           streamDockAnswer,
         } = await import("@/app/lib/agentDock");
+        const { NAVIGATE_TOOL, navigatePath, traceStep } =
+          await import("@/app/lib/dockTrace");
         const { readDraft, readSource, seedConversation } =
           await import("@/app/lib/dockSource");
         // The stored source goes in the agent's own folder; an agent with none reads the repo.
@@ -458,14 +468,29 @@ export function CopilotProvider({
         const stream = streamDockAnswer(
           session,
           conversationKey,
-          dockPrompt(query, context, facts, repo ?? undefined),
+          dockPrompt(
+            query,
+            context,
+            {
+              ...facts,
+              page: `${window.location.pathname}${window.location.search}`,
+            },
+            repo ?? undefined,
+          ),
         );
         // Text after a tool call is the next model step: keep it a paragraph apart.
         let afterTool = false;
         for await (const part of stream) {
+          const next = traceStep(trace, part, Date.now());
+          const traced = next !== trace;
+          if (traced) {
+            trace = next;
+            answeredAt = undefined;
+          }
           if (part.type === "text-delta") {
             text += afterTool && text ? `\n\n${part.text}` : part.text;
             afterTool = false;
+            if (trace.length > 0) answeredAt ??= Date.now();
           } else if (part.type === "tool-call") {
             afterTool = true;
             if (part.toolName === PROPOSE_TOOL) {
@@ -480,24 +505,36 @@ export function CopilotProvider({
                   plan);
             } else if (part.toolName === ASK_TOOL) {
               text += `${text ? "\n\n" : ""}${questionText(part.input)}`;
-            } else continue;
-          } else continue;
+            } else if (part.toolName === NAVIGATE_TOOL) {
+              const path = navigatePath(part.input);
+              if (path) router.push(path);
+            }
+          } else if (!traced) continue;
           timer ??= setTimeout(() => {
             timer = undefined;
-            update({ plan: plan, text: text });
+            update({
+              answeredAt: answeredAt,
+              plan: plan,
+              text: text,
+              trace: trace,
+            });
           }, STREAM_COMMIT_MS);
         }
         clearTimeout(timer);
         update({
+          answeredAt: answeredAt ?? Date.now(),
           pending: false,
           plan: plan,
           text: text || plan?.summary || "",
+          trace: trace,
         });
         if (plan) runSafeSteps(replyId, plan);
       } catch (error) {
         clearTimeout(timer);
         update({
+          answeredAt: Date.now(),
           pending: false,
+          trace: trace,
           text: `The Broods agent could not answer: ${error instanceof Error ? error.message : String(error)}`,
         });
       }
@@ -509,6 +546,7 @@ export function CopilotProvider({
       note,
       projectId,
       readRepo,
+      router,
       runSafeSteps,
       source,
     ],
@@ -540,6 +578,7 @@ export function CopilotProvider({
           pending: true,
           role: "broods",
           scope: scope,
+          startedAt: Number(askedAt),
           text: "",
         },
       ]);
