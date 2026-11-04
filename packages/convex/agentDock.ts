@@ -36,7 +36,11 @@ import {
   type StageSourceOrigin,
 } from "./model/stageSource";
 import { storeStageSync } from "./model/stageSourceStore";
-import { sealUserToken, USER_TOKEN_MAX_TTL_MS } from "./model/userToken";
+import {
+  sealUserToken,
+  USER_TOKEN_MAX_TTL_MS,
+  userConversationPrefix,
+} from "./model/userToken";
 
 const AGENT_PATH =
   /^\/v1\/projects\/([^/]+)\/stages\/([^/]+)\/agents\/([^/]+)\/?$/;
@@ -107,6 +111,12 @@ export const session = mutation({
     if (!agent) return null;
 
     const expiresAt = Date.now() + USER_TOKEN_MAX_TTL_MS;
+    // Both spellings of a key name one conversation, so only the bare one is stored or listed.
+    const conversation = conversationKey?.startsWith(
+      userConversationPrefix(authUser.id),
+    )
+      ? conversationKey.slice(userConversationPrefix(authUser.id).length)
+      : conversationKey;
     // Only an owner or admin holds the whole account, so only they lend the agent a login: for
     // the open project's org, which need not be the active one.
     const project = projectId ? await ctx.db.get(projectId) : null;
@@ -123,13 +133,16 @@ export const session = mutation({
               authId: authUser.id,
               ...target,
               lentToAgent: true,
-              ...(conversationKey ? { lentConversation: conversationKey } : {}),
+              ...(conversation ? { lentConversation: conversation } : {}),
             },
             expiresAt,
           );
     const userToken = await sealUserToken(
       {
         userId: authUser.id,
+        // Core runs this token on its one conversation, so a login cannot write from another
+        // conversation that has read logs.
+        ...(conversation ? { conversations: [conversation] } : {}),
         ...(credential !== undefined ? { credential: credential } : {}),
         expiresAt: expiresAt,
       },

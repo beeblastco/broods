@@ -141,14 +141,16 @@
   },
   "LentObservability": {
     "packages/convex/cli/stages.ts": {
-      "mintObservabilityByLogin": "3fde45569f2928e7"
+      "mintObservabilityByLogin": "c11304fa7efcc615"
     },
     "packages/convex/config/routes/shared.ts": {
       "observedLoginRefusal": "3c5d7d482e4a9cd3"
     },
     "packages/convex/cli/auth.ts": {
       "conversationObserved": "df40dbc1c695f914",
-      "resolveAccountLogin": "81ae8bcc17500297"
+      "resolveAccountLogin": "81ae8bcc17500297",
+      "resolveActiveCliToken": "bd3acc88c1e71b3d",
+      "pruneExpiredTokens": "dea9f8aff4830f05"
     },
     "packages/convex/model/observabilityTicket.ts": {
       "observabilityTicketExpiry": "e75a2daab25d7038"
@@ -161,6 +163,9 @@
     },
     "apps/core/src/shared/auth.ts": {
       "resolveBearerAuth": "511e000d58faf2cc"
+    },
+    "packages/convex/agentDock.ts": {
+      "session": "b9d6dcbabf0cb7a8"
     }
   }
 }

@@ -424,6 +424,14 @@ export async function purgeUser(
     .collect();
   for (const token of cliTokens) await ctx.db.delete(token._id);
 
+  const observedConversations = await ctx.db
+    .query("observedConversations")
+    .withIndex("by_authId_and_conversationKey", (q) =>
+      q.eq("authId", user.authId),
+    )
+    .collect();
+  for (const mark of observedConversations) await ctx.db.delete(mark._id);
+
   // Shared orgs keep their audit records; strip this user's identity from them.
   const dashboardReveals = await ctx.db
     .query("environmentVariableReveals")
