@@ -435,6 +435,9 @@ export function CopilotProvider({
       let trace: readonly DockTracePart[] = [];
       let answeredAt: number | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      // Set before seeding and the repo read, so Stop also ends an answer still being set up.
+      const controller = new AbortController();
+      streamRef.current = controller;
       try {
         // Lazy: zod and the stream reader load on the first ask, not with every page.
         const {
@@ -483,8 +486,7 @@ export function CopilotProvider({
                 return null;
               })
             : null;
-        const controller = new AbortController();
-        streamRef.current = controller;
+        controller.signal.throwIfAborted();
         const stream = streamDockAnswer(
           session,
           conversationKey,
@@ -552,7 +554,7 @@ export function CopilotProvider({
         if (plan) runSafeSteps(replyId, plan);
       } catch (error) {
         clearTimeout(timer);
-        const stopped = streamRef.current?.signal.aborted === true;
+        const stopped = controller.signal.aborted;
         update({
           answeredAt: Date.now(),
           pending: false,
