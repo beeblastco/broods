@@ -108,6 +108,18 @@ export const stageSourcesFields = {
   manifestHash: v.optional(v.string()),
   origin: v.union(...STAGE_SOURCE_ORIGINS.map((origin) => v.literal(origin))),
   commitSha: v.optional(v.string()),
+  // An Apply's outcome: live after its sync, done only once CI deployed the same manifest hash.
+  verification: v.optional(
+    v.object({
+      phase: v.union(
+        v.literal("verifying"),
+        v.literal("deployed"),
+        v.literal("failed"),
+      ),
+      error: v.optional(v.string()),
+      runUrl: v.optional(v.string()),
+    }),
+  ),
   createdAt: v.number(),
 };
 

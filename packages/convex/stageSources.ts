@@ -1,4 +1,5 @@
 import { v, type Infer } from "convex/values";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
@@ -18,6 +19,16 @@ const originValidator = v.union(
   ...STAGE_SOURCE_ORIGINS.map((origin) => v.literal(origin)),
 );
 
+export const verificationValidator = v.object({
+  phase: v.union(
+    v.literal("verifying"),
+    v.literal("deployed"),
+    v.literal("failed"),
+  ),
+  error: v.optional(v.string()),
+  runUrl: v.optional(v.string()),
+});
+
 const sourceValidator = v.object({
   revision: v.number(),
   hash: v.string(),
@@ -26,8 +37,14 @@ const sourceValidator = v.object({
   manifestHash: v.optional(v.string()),
   origin: originValidator,
   commitSha: v.optional(v.string()),
+  verification: v.optional(verificationValidator),
   createdAt: v.number(),
   url: v.union(v.string(), v.null()),
+});
+
+const driftValidator = v.object({
+  outOfSync: v.boolean(),
+  reason: v.optional(v.string()),
 });
 
 type StageSourceSummary = Infer<typeof sourceValidator>;
@@ -43,6 +60,52 @@ export const latest = query({
     const row = await latestRow(ctx, stageId);
 
     return row ? await summary(ctx, row) : null;
+  },
+});
+
+/**
+ * One state for the change bar: the stage no longer runs its newest source, so Sync redeploys
+ * the right one. Quiet while an Apply waits for CI, which settles it either way.
+ */
+export const drift = query({
+  args: { stageId: v.id("stages") },
+  returns: driftValidator,
+  handler: async (ctx, { stageId }): Promise<Infer<typeof driftValidator>> => {
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) throw new Error("User not found or not authenticated");
+    const stage = await getOwnedStage(ctx, user.id, stageId);
+    const newest = stage ? await latestRow(ctx, stageId) : null;
+    if (!stage || !newest || newest.verification?.phase === "verifying")
+      return { outOfSync: false };
+    const sync = await ctx.db
+      .query("stageSyncs")
+      .withIndex("by_stageId", (q) => q.eq("stageId", stageId))
+      .unique();
+    if (sync?.manifestHash && newest.manifestHash !== sync.manifestHash)
+      return {
+        outOfSync: true,
+        reason:
+          "The stage was deployed from somewhere else since its last stored source.",
+      };
+    const branch = await stageBranch(ctx, stage);
+    const run = branch
+      ? await ctx.db
+          .query("githubDeploys")
+          .withIndex("by_projectId_and_branch", (q) =>
+            q.eq("projectId", stage.projectId).eq("branch", branch),
+          )
+          .unique()
+      : null;
+    if (run?.status === "completed" && run.sha !== newest.commitSha)
+      return {
+        outOfSync: true,
+        reason:
+          run.conclusion === "success"
+            ? `${branch} has commits the stored source does not.`
+            : `The last deploy from ${branch} failed.`,
+      };
+
+    return { outOfSync: false };
   },
 });
 
@@ -135,6 +198,68 @@ export const recordSync = internalMutation({
   },
 });
 
+export const setVerification = internalMutation({
+  args: {
+    stageId: v.id("stages"),
+    revision: v.number(),
+    verification: verificationValidator,
+    commitSha: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (
+    ctx,
+    { stageId, revision, verification, commitSha },
+  ): Promise<null> => {
+    const row = await ctx.db
+      .query("stageSources")
+      .withIndex("by_stageId_and_revision", (q) =>
+        q.eq("stageId", stageId).eq("revision", revision),
+      )
+      .unique();
+    if (row)
+      await ctx.db.patch(row._id, {
+        verification: verification,
+        ...(commitSha ? { commitSha: commitSha } : {}),
+      });
+
+    return null;
+  },
+});
+
+/**
+ * A finished CI run on a linked branch. An Apply waiting on its sha is done when CI succeeded and
+ * left the stage on the hash Apply synced; a push nobody applied is snapshotted as the source.
+ */
+export const verifyRun = internalMutation({
+  args: {
+    repoId: v.number(),
+    branch: v.string(),
+    sha: v.string(),
+    conclusion: v.optional(v.string()),
+    url: v.string(),
+    startedAt: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, run): Promise<null> => {
+    const projects = await ctx.db
+      .query("projects")
+      .withIndex("by_repoId", (q) => q.eq("repo.repoId", run.repoId))
+      .collect();
+    for (const project of projects) {
+      const stages = await ctx.db
+        .query("stages")
+        .withIndex("by_projectId", (q) => q.eq("projectId", project._id))
+        .collect();
+      for (const stage of stages) {
+        if ((await stageBranch(ctx, stage)) !== run.branch) continue;
+        await settleRun(ctx, stage._id, run);
+      }
+    }
+
+    return null;
+  },
+});
+
 /** Every stored revision of a stage and its files go with the stage. */
 export async function deleteStageSources(
   ctx: MutationCtx,
@@ -183,7 +308,61 @@ async function summary(
     ...(row.manifestHash ? { manifestHash: row.manifestHash } : {}),
     origin: row.origin,
     ...(row.commitSha ? { commitSha: row.commitSha } : {}),
+    ...(row.verification ? { verification: row.verification } : {}),
     createdAt: row.createdAt,
     url: await ctx.storage.getUrl(row.storageId),
   };
+}
+
+async function settleRun(
+  ctx: MutationCtx,
+  stageId: Id<"stages">,
+  run: { sha: string; conclusion?: string; url: string; startedAt: number },
+): Promise<void> {
+  const recent = await ctx.db
+    .query("stageSources")
+    .withIndex("by_stageId_and_revision", (q) => q.eq("stageId", stageId))
+    .order("desc")
+    .take(KEPT_REVISIONS);
+  const applied = recent.find((row) => row.commitSha === run.sha);
+  if (!applied) {
+    if (run.conclusion === "success" && recent[0]?.commitSha !== run.sha)
+      await ctx.scheduler.runAfter(0, internal.agentDock.snapshotRepo, {
+        stageId: stageId,
+        sha: run.sha,
+      });
+    return;
+  }
+  if (applied.verification?.phase !== "verifying") return;
+  const sync = await ctx.db
+    .query("stageSyncs")
+    .withIndex("by_stageId", (q) => q.eq("stageId", stageId))
+    .unique();
+  const error =
+    run.conclusion !== "success"
+      ? `CI ${run.conclusion ?? "did not finish"}.`
+      : (sync?.syncedAt ?? 0) < run.startedAt
+        ? "CI finished without syncing the stage."
+        : sync?.manifestHash !== applied.manifestHash
+          ? "CI deployed a different manifest than Apply synced."
+          : undefined;
+  await ctx.db.patch(applied._id, {
+    verification: {
+      phase: error ? "failed" : "deployed",
+      runUrl: run.url,
+      ...(error ? { error: error } : {}),
+    },
+  });
+}
+
+// The branch a stage deploys from, the rule `agentDock.linkedBranch` applies.
+async function stageBranch(
+  ctx: QueryCtx,
+  stage: Doc<"stages">,
+): Promise<string | undefined> {
+  const repo = (await ctx.db.get(stage.projectId))?.repo;
+
+  return stage.kind === "production"
+    ? repo?.productionBranch
+    : repo?.developmentBranch;
 }

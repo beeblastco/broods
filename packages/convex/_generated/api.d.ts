@@ -964,12 +964,15 @@ export declare const api: {
       {
         baseRevision: number | null;
         files: Array<{ content: string; path: string }>;
+        message: string;
         projectId: Id<"projects">;
         stageId: Id<"stages">;
       },
       {
+        commitSha?: string;
         durationMs: number;
         manifestHash: string;
+        phase: "verifying" | "deployed";
         phases: Record<string, number>;
         revision: number;
       }
@@ -1012,6 +1015,19 @@ export declare const api: {
         url: string;
         userToken: string;
       } | null
+    >;
+    sync: FunctionReference<
+      "action",
+      "public",
+      { projectId: Id<"projects">; stageId: Id<"stages"> },
+      {
+        commitSha?: string;
+        durationMs: number;
+        manifestHash: string;
+        phase: "verifying" | "deployed";
+        phases: Record<string, number>;
+        revision: number;
+      }
     >;
   };
   apiKeys: {
@@ -2093,6 +2109,12 @@ export declare const api: {
     >;
   };
   stageSources: {
+    drift: FunctionReference<
+      "query",
+      "public",
+      { stageId: Id<"stages"> },
+      { outOfSync: boolean; reason?: string }
+    >;
     latest: FunctionReference<
       "query",
       "public",
@@ -2107,6 +2129,11 @@ export declare const api: {
         origin: "cli" | "apply" | "github";
         revision: number;
         url: string | null;
+        verification?: {
+          error?: string;
+          phase: "verifying" | "deployed" | "failed";
+          runUrl?: string;
+        };
       } | null
     >;
   };
@@ -4601,6 +4628,8 @@ export declare const internal: {
       { authId: string; projectId: Id<"projects">; stageId: Id<"stages"> },
       {
         accountId: string;
+        commitSha?: string;
+        production: boolean;
         project: string;
         revision: number | null;
         stage: string;
@@ -4622,6 +4651,36 @@ export declare const internal: {
         rootDirectory: string;
         viaPullRequest: boolean;
       } | null
+    >;
+    snapshotRepo: FunctionReference<
+      "action",
+      "internal",
+      { sha: string; stageId: Id<"stages"> },
+      null
+    >;
+    sourceUrl: FunctionReference<
+      "query",
+      "internal",
+      { stageId: Id<"stages"> },
+      string | null
+    >;
+    stageRepo: FunctionReference<
+      "query",
+      "internal",
+      { stageId: Id<"stages"> },
+      {
+        branch: string;
+        fullName: string;
+        installationId: number;
+        rootDirectory: string;
+        viaPullRequest: boolean;
+      } | null
+    >;
+    storedSource: FunctionReference<
+      "action",
+      "internal",
+      { stageId: Id<"stages"> },
+      { files: Array<{ content: string; path: string }>; sha?: string } | null
     >;
   };
   audit: {
@@ -8338,11 +8397,39 @@ export declare const internal: {
       },
       number | null
     >;
+    setVerification: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        commitSha?: string;
+        revision: number;
+        stageId: Id<"stages">;
+        verification: {
+          error?: string;
+          phase: "verifying" | "deployed" | "failed";
+          runUrl?: string;
+        };
+      },
+      null
+    >;
     syncedSince: FunctionReference<
       "query",
       "internal",
       { since: number; stageId: Id<"stages"> },
       string | null
+    >;
+    verifyRun: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        branch: string;
+        conclusion?: string;
+        repoId: number;
+        sha: string;
+        startedAt: number;
+        url: string;
+      },
+      null
     >;
   };
   stripe: {

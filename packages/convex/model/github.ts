@@ -9,7 +9,12 @@ import nacl from "tweetnacl";
 
 import { ClientError } from "./clientError";
 import { bytesToBase64Url } from "./stageSessionTicket";
-import { isSourceFile } from "./stageSource";
+import {
+  isSourceFile,
+  isStageSourcePath,
+  STAGE_SOURCE_LIMITS,
+  type StageSourceFile,
+} from "./stageSource";
 
 export const WORKFLOW_PATH = ".github/workflows/broods.yml";
 const WORKFLOW_NAME = "Broods deploy";
@@ -439,6 +444,35 @@ export async function readBroodsFolder(
     files: files,
     omitted: paths.length - files.length,
   };
+}
+
+/** The stage source at `ref`: `broods/` plus the root manifests, paths relative to the root. */
+export async function readStageSourceAt(
+  app: GitHubApp,
+  token: string,
+  fullName: string,
+  ref: string,
+  rootDirectory: string,
+): Promise<{ sha: string; files: StageSourceFile[] }> {
+  const sha = /^[0-9a-f]{40}$/.test(ref)
+    ? ref
+    : await branchHead(app, token, fullName, ref);
+  const root = rootDirectory ? `${rootDirectory}/` : "";
+  const paths = (await listFiles(app, token, fullName, sha))
+    .filter((path) => path.startsWith(root))
+    .map((path) => path.slice(root.length))
+    .filter(isStageSourcePath)
+    .slice(0, STAGE_SOURCE_LIMITS.files + 1);
+  const files = await Promise.all(
+    paths.map(async (path): Promise<StageSourceFile> => ({
+      path: path,
+      content:
+        (await getFile(app, token, fullName, sha, `${root}${path}`))?.content ??
+        "",
+    })),
+  );
+
+  return { sha: sha, files: files };
 }
 
 /**
@@ -1082,7 +1116,7 @@ async function commitOn(
   return { sha: commit.sha, url: commit.html_url };
 }
 
-async function branchHead(
+export async function branchHead(
   app: GitHubApp,
   token: string,
   fullName: string,

@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import {
   action,
+  internalAction,
   internalQuery,
   mutation,
   type ActionCtx,
@@ -18,12 +19,20 @@ import {
   commitFiles,
   installationToken,
   isAgentEditable,
+  branchHead,
   readBroodsFolder,
+  readStageSourceAt,
   requireGitHubApp,
 } from "./model/github";
 import { getOwnedStage, getStageForWrite } from "./model/ownership/stage";
 import { serviceEnv, serviceHeaders } from "./model/serviceBridge";
-import { stageSourceHash, stageSourceProblem } from "./model/stageSource";
+import {
+  stageSourceHash,
+  stageSourceProblem,
+  stageSourceSchema,
+  type StageSource,
+  type StageSourceOrigin,
+} from "./model/stageSource";
 import { storeStageSync } from "./model/stageSourceStore";
 import { sealUserToken, USER_TOKEN_MAX_TTL_MS } from "./model/userToken";
 
@@ -53,6 +62,17 @@ const applyResultValidator = v.object({
   manifestHash: v.string(),
   durationMs: v.number(),
   phases: v.record(v.string(), v.number()),
+  phase: v.union(v.literal("verifying"), v.literal("deployed")),
+  commitSha: v.optional(v.string()),
+});
+
+const applyTargetValidator = v.object({
+  accountId: v.string(),
+  project: v.string(),
+  stage: v.string(),
+  production: v.boolean(),
+  revision: v.union(v.number(), v.null()),
+  commitSha: v.optional(v.string()),
 });
 
 const applyRunAnswer = z.object({
@@ -62,6 +82,7 @@ const applyRunAnswer = z.object({
 });
 
 type ApplyResult = Infer<typeof applyResultValidator>;
+type ApplyTarget = Infer<typeof applyTargetValidator>;
 type DockSession = Infer<typeof sessionValidator>;
 type RepoTarget = Infer<typeof repoTargetValidator>;
 
@@ -188,81 +209,225 @@ export const commitChange = action({
 });
 
 // The fast path: the approved files deploy from a compile sandbox with a ticket only this mints,
-// then become the stage's source. The caller pushes them to a linked repo after.
+// become the stage's source, then go to a linked branch, whose CI must land on the same hash.
+// Production keeps its pull request: a fast deploy there would skip review.
 export const apply = action({
   args: {
     projectId: v.id("projects"),
     stageId: v.id("stages"),
     baseRevision: v.union(v.number(), v.null()),
     files: v.array(repoFileValidator),
+    message: v.string(),
   },
   returns: applyResultValidator,
   handler: async (ctx, args): Promise<ApplyResult> => {
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) throw new Error("User not found or not authenticated");
-    const target = await ctx.runQuery(internal.agentDock.applyTarget, {
-      authId: user.id,
-      projectId: args.projectId,
-      stageId: args.stageId,
-    });
-    if (!target) throw new ClientError("You cannot deploy this stage.");
+    const { authId, target } = await writableTarget(ctx, args);
+    if (target.production)
+      throw new ClientError(
+        "Production deploys through a pull request. Apply to a development stage.",
+      );
     if (target.revision !== args.baseRevision)
       throw new ClientError(
         `The stage's source is now revision ${target.revision ?? "none"}. Review the new diff and apply again.`,
         "conflict",
       );
-    const problem = stageSourceProblem(args.files);
-    if (problem) throw new ClientError(`Cannot apply: ${problem}.`);
-    const lock = args.files.find((file) => file.path === "bun.lock");
-    const startedAt = Date.now();
-    const service = serviceEnv();
-    const response = await fetch(`${service.url}/v1/apply-runs`, {
-      method: "POST",
-      headers: serviceHeaders(target.accountId, service.secret),
-      body: JSON.stringify({
-        accountId: target.accountId,
-        projectId: args.projectId,
-        stageId: args.stageId,
-        project: target.project,
-        stage: target.stage,
-        ticket: await sealApplyTicket(
-          {
-            accountId: target.accountId,
-            projectId: args.projectId,
-            stageId: args.stageId,
-            authId: user.id,
-          },
-          stageTicketSecret(),
-        ),
-        lockHash: await stageSourceHash(lock ? [lock] : []),
-        files: args.files,
-      }),
-    });
-    const run = applyRunAnswer.safeParse(await response.json());
-    if (!response.ok || !run.success)
-      throw new Error(`Apply run failed with status ${response.status}`);
-    if (!run.data.ok)
-      throw new ClientError(`The deploy failed:\n${run.data.output}`);
-    const manifestHash = await ctx.runQuery(internal.stageSources.syncedSince, {
+    const repo = await ctx.runQuery(internal.agentDock.linkedBranch, {
+      authId: authId,
+      projectId: args.projectId,
       stageId: args.stageId,
-      since: startedAt,
+      write: true,
     });
-    if (!manifestHash)
-      throw new ClientError("The deploy finished without syncing the stage.");
-    const revision = await storeStageSync(
+    const app = repo ? requireGitHubApp() : undefined;
+    const token =
+      repo && app ? await installationToken(app, repo.installationId) : "";
+    const head =
+      repo && app
+        ? await branchHead(app, token, repo.fullName, repo.branch)
+        : undefined;
+    if (head && target.commitSha && head !== target.commitSha)
+      throw new ClientError(
+        `${repo?.branch} has commits the stage does not run. Sync first, then apply.`,
+        "conflict",
+      );
+    const deployed = await deployFiles(
       ctx,
-      args.stageId,
-      manifestHash,
+      authId,
+      args,
+      target,
       { files: args.files },
       "apply",
     );
+    if (!repo || !app || !head) {
+      await ctx.runMutation(internal.stageSources.setVerification, {
+        stageId: args.stageId,
+        revision: deployed.revision,
+        verification: { phase: "deployed" },
+      });
 
-    return {
-      revision: revision ?? 0,
-      manifestHash: manifestHash,
-      durationMs: Date.now() - startedAt,
-      phases: run.data.phases,
-    };
+      return { ...deployed, phase: "deployed" };
+    }
+    const committed = await commitFiles(
+      app,
+      token,
+      repo.fullName,
+      repo.branch,
+      args.files.map((file) => ({
+        path: `${repo.rootDirectory ? `${repo.rootDirectory}/` : ""}${file.path}`,
+        content: file.content,
+      })),
+      args.message.trim() || "Update broods/ from the dashboard",
+      false,
+      head,
+    );
+    await ctx.runMutation(internal.stageSources.setVerification, {
+      stageId: args.stageId,
+      revision: deployed.revision,
+      verification: { phase: "verifying", runUrl: committed.url },
+      commitSha: committed.sha,
+    });
+
+    return { ...deployed, phase: "verifying", commitSha: committed.sha };
+  },
+});
+
+/** The one button behind "out of sync": redeploys the branch head when linked, else the source. */
+export const sync = action({
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
+  returns: applyResultValidator,
+  handler: async (ctx, args): Promise<ApplyResult> => {
+    const { authId, target } = await writableTarget(ctx, args);
+    const repo = await ctx.runQuery(internal.agentDock.linkedBranch, {
+      authId: authId,
+      projectId: args.projectId,
+      stageId: args.stageId,
+      write: true,
+    });
+    const app = repo ? requireGitHubApp() : undefined;
+    const source =
+      repo && app
+        ? await readStageSourceAt(
+            app,
+            await installationToken(app, repo.installationId),
+            repo.fullName,
+            repo.branch,
+            repo.rootDirectory,
+          )
+        : await ctx.runAction(internal.agentDock.storedSource, {
+            stageId: args.stageId,
+          });
+    if (!source)
+      throw new ClientError("This stage has no stored source to sync.");
+    const deployed = await deployFiles(
+      ctx,
+      authId,
+      args,
+      target,
+      { files: source.files, ...(source.sha ? { commitSha: source.sha } : {}) },
+      repo ? "github" : "apply",
+    );
+    await ctx.runMutation(internal.stageSources.setVerification, {
+      stageId: args.stageId,
+      revision: deployed.revision,
+      verification: { phase: "deployed" },
+    });
+
+    return { ...deployed, phase: "deployed" };
+  },
+});
+
+/** A push CI deployed that no Apply made: its files become the source, at the hash CI left. */
+export const snapshotRepo = internalAction({
+  args: { stageId: v.id("stages"), sha: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { stageId, sha }): Promise<null> => {
+    const repo = await ctx.runQuery(internal.agentDock.stageRepo, {
+      stageId: stageId,
+    });
+    const manifestHash = await ctx.runQuery(internal.stageSources.syncedSince, {
+      stageId: stageId,
+      since: 0,
+    });
+    if (!repo || !manifestHash) return null;
+    const app = requireGitHubApp();
+    const source = await readStageSourceAt(
+      app,
+      await installationToken(app, repo.installationId),
+      repo.fullName,
+      sha,
+      repo.rootDirectory,
+    );
+    if (stageSourceProblem(source.files)) return null;
+    await storeStageSync(
+      ctx,
+      stageId,
+      manifestHash,
+      { files: source.files, commitSha: sha },
+      "github",
+    );
+
+    return null;
+  },
+});
+
+export const storedSource = internalAction({
+  args: { stageId: v.id("stages") },
+  returns: v.union(
+    v.object({
+      files: v.array(repoFileValidator),
+      sha: v.optional(v.string()),
+    }),
+    v.null(),
+  ),
+  handler: async (
+    ctx,
+    { stageId },
+  ): Promise<{
+    files: Infer<typeof repoFileValidator>[];
+    sha?: string;
+  } | null> => {
+    const url = await ctx.runQuery(internal.agentDock.sourceUrl, {
+      stageId: stageId,
+    });
+    if (!url) return null;
+    const parsed = stageSourceSchema.safeParse(await (await fetch(url)).json());
+
+    return parsed.success ? { files: parsed.data.files } : null;
+  },
+});
+
+export const sourceUrl = internalQuery({
+  args: { stageId: v.id("stages") },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, { stageId }): Promise<string | null> => {
+    const newest = await ctx.db
+      .query("stageSources")
+      .withIndex("by_stageId_and_revision", (q) => q.eq("stageId", stageId))
+      .order("desc")
+      .first();
+
+    return newest ? await ctx.storage.getUrl(newest.storageId) : null;
+  },
+});
+
+export const stageRepo = internalQuery({
+  args: { stageId: v.id("stages") },
+  returns: v.union(repoTargetValidator, v.null()),
+  handler: async (ctx, { stageId }): Promise<RepoTarget | null> => {
+    const stage = await ctx.db.get(stageId);
+    const repo = stage ? (await ctx.db.get(stage.projectId))?.repo : undefined;
+    if (!stage || !repo) return null;
+    const production = stage.kind === "production";
+    const branch = production ? repo.productionBranch : repo.developmentBranch;
+
+    return branch
+      ? {
+          branch: branch,
+          fullName: repo.fullName,
+          installationId: repo.installationId,
+          rootDirectory: repo.rootDirectory,
+          viaPullRequest: production,
+        }
+      : null;
   },
 });
 
@@ -272,24 +437,11 @@ export const applyTarget = internalQuery({
     projectId: v.id("projects"),
     stageId: v.id("stages"),
   },
-  returns: v.union(
-    v.object({
-      accountId: v.string(),
-      project: v.string(),
-      stage: v.string(),
-      revision: v.union(v.number(), v.null()),
-    }),
-    v.null(),
-  ),
+  returns: v.union(applyTargetValidator, v.null()),
   handler: async (
     ctx,
     { authId, projectId, stageId },
-  ): Promise<{
-    accountId: string;
-    project: string;
-    stage: string;
-    revision: number | null;
-  } | null> => {
+  ): Promise<ApplyTarget | null> => {
     const stage = await getStageForWrite(ctx, authId, stageId);
     if (stage?.projectId !== projectId) return null;
     const project = await ctx.db.get(projectId);
@@ -308,7 +460,9 @@ export const applyTarget = internalQuery({
       project: project.slug,
       // The CLI's spelling: the dashboard shows `Development`, `broods` takes `development`.
       stage: stage.name.toLowerCase(),
+      production: stage.kind === "production",
       revision: newest?.revision ?? null,
+      ...(newest?.commitSha ? { commitSha: newest.commitSha } : {}),
     };
   },
 });
@@ -381,4 +535,83 @@ function dockAgent(): {
     url: url.replace(/\/+$/, ""),
     userTokenSecret: userTokenSecret,
   };
+}
+
+// Deploys `source` from the compile sandbox as `authId`, then stores it as the next revision.
+async function deployFiles(
+  ctx: ActionCtx,
+  authId: string,
+  ids: { projectId: Id<"projects">; stageId: Id<"stages"> },
+  target: ApplyTarget,
+  source: StageSource,
+  origin: StageSourceOrigin,
+): Promise<Omit<ApplyResult, "phase" | "commitSha">> {
+  const problem = stageSourceProblem(source.files);
+  if (problem) throw new ClientError(`Cannot deploy: ${problem}.`);
+  const lock = source.files.find((file) => file.path === "bun.lock");
+  const startedAt = Date.now();
+  const service = serviceEnv();
+  const response = await fetch(`${service.url}/v1/apply-runs`, {
+    method: "POST",
+    headers: serviceHeaders(target.accountId, service.secret),
+    body: JSON.stringify({
+      accountId: target.accountId,
+      projectId: ids.projectId,
+      stageId: ids.stageId,
+      project: target.project,
+      stage: target.stage,
+      ticket: await sealApplyTicket(
+        {
+          accountId: target.accountId,
+          projectId: ids.projectId,
+          stageId: ids.stageId,
+          authId: authId,
+        },
+        stageTicketSecret(),
+      ),
+      lockHash: await stageSourceHash(lock ? [lock] : []),
+      files: source.files,
+    }),
+  });
+  const run = applyRunAnswer.safeParse(await response.json());
+  if (!response.ok || !run.success)
+    throw new Error(`Apply run failed with status ${response.status}`);
+  if (!run.data.ok)
+    throw new ClientError(`The deploy failed:\n${run.data.output}`);
+  const manifestHash = await ctx.runQuery(internal.stageSources.syncedSince, {
+    stageId: ids.stageId,
+    since: startedAt,
+  });
+  if (!manifestHash)
+    throw new ClientError("The deploy finished without syncing the stage.");
+  const revision = await storeStageSync(
+    ctx,
+    ids.stageId,
+    manifestHash,
+    source,
+    origin,
+  );
+
+  return {
+    revision: revision ?? 0,
+    manifestHash: manifestHash,
+    durationMs: Date.now() - startedAt,
+    phases: run.data.phases,
+  };
+}
+
+async function writableTarget(
+  ctx: ActionCtx,
+  args: { projectId: Id<"projects">; stageId: Id<"stages"> },
+): Promise<{ authId: string; target: ApplyTarget }> {
+  const user = await authKit.getAuthUser(ctx);
+  if (!user) throw new Error("User not found or not authenticated");
+  const target = await ctx.runQuery(internal.agentDock.applyTarget, {
+    authId: user.id,
+    projectId: args.projectId,
+    stageId: args.stageId,
+  });
+  if (!target) throw new ClientError("You cannot deploy this stage.");
+
+  return { authId: user.id, target: target };
 }
