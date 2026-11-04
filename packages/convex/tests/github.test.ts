@@ -217,7 +217,7 @@ describe("agent edits", () => {
     const calls = stubGitHub(true);
 
     await expect(
-      commitFiles(app, "t", "o/r", "dev", files, "m", false, "older"),
+      commitFiles(app, "t", "o/r", "dev", files, "m", "older"),
     ).rejects.toThrow("dev changed since the agent read it");
     expect(calls.filter((call) => !call.startsWith("GET"))).toEqual([]);
   });
@@ -248,7 +248,6 @@ describe("agent edits", () => {
       "dev",
       files,
       "m",
-      false,
       "head",
     );
 
@@ -283,7 +282,6 @@ describe("agent edits", () => {
       "dev",
       [...files, { content: null, path: "broods/old.ts" }],
       "m",
-      false,
       "head",
     );
 
@@ -308,7 +306,6 @@ describe("agent edits", () => {
       "dev",
       files,
       "m",
-      false,
       "head",
     );
 

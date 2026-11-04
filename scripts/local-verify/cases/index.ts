@@ -8,6 +8,7 @@ import { bashTimeout } from "./bash-timeout.ts";
 import { browserSandbox } from "./browser-sandbox.ts";
 import { cloudflareSandbox } from "./cloudflare-sandbox.ts";
 import { connections } from "./connections.ts";
+import { conversationFiles } from "./conversation-files.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
 import { devWatch } from "./dev-watch.ts";
 import { edgeHeaders } from "./edge-headers.ts";
@@ -15,6 +16,7 @@ import { githubRepo } from "./github-repo.ts";
 import { workerSandbox } from "./worker-sandbox.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { stageSource } from "./stage-source.ts";
+import { applyTicket } from "./apply-ticket.ts";
 import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
 import { mcpTasks } from "./mcp-tasks.ts";
@@ -77,6 +79,7 @@ export const verifyCases: readonly VerifyCase[] = [
   mcpCommand,
   cloudflareSandbox,
   workerSandbox,
+  conversationFiles,
   vercelSandbox,
   trailingSlash,
   edgeHeaders,
@@ -84,6 +87,7 @@ export const verifyCases: readonly VerifyCase[] = [
   scopedAccountKey,
   manifestSync,
   stageSource,
+  applyTicket,
   devWatch,
   githubRepo,
   productionRegion,

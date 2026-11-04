@@ -5,6 +5,7 @@ import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import { useDashboardIndex } from "@/app/hooks/useDashboardIndex";
 import { useStage } from "@/app/hooks/useStage";
 import type { DockFacts, DockSession } from "@/app/lib/agentDock";
+import type { DockFile } from "@/app/lib/dockSource";
 import {
   actionTier,
   changeKey,
@@ -12,6 +13,7 @@ import {
   openProposal,
   proposedNodes,
   settleApplies,
+  settleVerified,
   type CopilotAction,
   type CopilotPlan,
   type DockApply,
@@ -59,6 +61,8 @@ export interface CopilotMessage {
 
 export interface CopilotState {
   applyProposal: (messageId: string) => void;
+  /** Out of sync, and why; null while it is in sync or not read yet. */
+  drift: { reason?: string; syncing: boolean } | null;
   ask: (query: string) => void;
   /** Keys of plan steps already run, as `${messageId}:${index}`. */
   completed: ReadonlySet<string>;
@@ -74,8 +78,19 @@ export interface CopilotState {
   /** Every answer's proposal by message id: the chat line reads it. */
   proposals: ReadonlyMap<string, DockProposal>;
   runAction: (action: CopilotAction) => void;
+  /** Puts the stage back on the source the proposal was seeded from. */
+  revertProposal: (messageId: string) => void;
   setOpen: (open: boolean) => void;
+  /** Redeploys the stage's right source: the branch head when linked, else the stored one. */
+  syncStage: () => void;
   wakeIndex: () => void;
+}
+
+/** The source a dock conversation was seeded with; its draft is diffed against it. */
+interface DockSeed {
+  branch?: string;
+  files: readonly DockFile[];
+  revision: number | null;
 }
 
 interface ProposedNodes {
@@ -139,7 +154,16 @@ export function CopilotProvider({
       repo?.developmentBranch && `Development from ${repo.developmentBranch}`,
     ].filter(Boolean);
 
+    const stage = stages?.find((entry) =>
+      stageId ? entry._id === stageId : entry.isDefault,
+    );
+    const branch =
+      stage?.kind === "production"
+        ? repo?.productionBranch
+        : repo?.developmentBranch;
+
     return {
+      ...(branch ? { branch: branch } : {}),
       codeNodes: (canvas?.nodes ?? [])
         .filter((node) => isCodeManagedOwner(node.data.managedBy))
         .map((node) => labels.get(node.id) ?? node.id),
@@ -159,6 +183,8 @@ export function CopilotProvider({
   const mintSession = useMutation(api.agentDock.session);
   const commitChange = useAction(api.agentDock.commitChange);
   const readRepo = useAction(api.agentDock.repoFiles);
+  const applySource = useAction(api.agentDock.apply);
+  const syncSource = useAction(api.agentDock.sync);
   const currentStageId =
     stageId ?? stages?.find((stage) => stage.isDefault)?._id ?? null;
   const sessionRef = useRef<DockSession | null | undefined>(undefined);
@@ -216,9 +242,30 @@ export function CopilotProvider({
     [commits, github],
   );
 
+  // Once the dock woke: the cold canvas subscribes to nothing it does not draw.
+  const sourceArgs =
+    indexAwake && currentStageId ? { stageId: currentStageId } : "skip";
+  const source = useQuery(api.stageSources.latest, sourceArgs);
+  const driftState = useQuery(api.stageSources.drift, sourceArgs);
+  const [syncing, setSyncing] = useState(false);
+  const drift = useMemo(
+    () =>
+      driftState?.outOfSync || syncing
+        ? {
+            ...(driftState?.reason ? { reason: driftState.reason } : {}),
+            syncing: syncing,
+          }
+        : null,
+    [driftState, syncing],
+  );
+  // Seeded once per stage in a conversation; null when the agent has no workspace to seed.
+  const seeds = useRef<Record<string, DockSeed | null>>({});
+
   // Adjusted during render: a finished run is kept, so a later push cannot reopen it.
   const settled = settleApplies(applies, deploys);
   if (settled) setApplies(settled);
+  const verified = settleVerified(applies, source, Date.now());
+  if (verified) setApplies(verified);
 
   const note = useCallback((text: string): void => {
     setMessages((prev) => [
@@ -370,11 +417,35 @@ export function CopilotProvider({
           PROPOSE_TOOL,
           proposalPlan,
           questionText,
+          sourcePlan,
           streamDockAnswer,
         } = await import("@/app/lib/agentDock");
+        const { readDraft, readSource, seedConversation } =
+          await import("@/app/lib/dockSource");
+        // The stored source goes in the agent's own folder; an agent with none reads the repo.
+        if (
+          currentStageId &&
+          !(currentStageId in seeds.current) &&
+          source?.url
+        ) {
+          const files = await readSource(source.url);
+          seeds.current[currentStageId] = await seedConversation(
+            session,
+            conversationKey,
+            files,
+          )
+            .then((): DockSeed => ({
+              files: files,
+              revision: source.revision,
+              ...(facts.branch ? { branch: facts.branch } : {}),
+            }))
+            .catch((): null => null);
+        }
+        const seeded =
+          (currentStageId && seeds.current[currentStageId]) || undefined;
         // A linked repo's broods/ folder is what the agent edits; without it, it only advises.
         const repo =
-          facts.repo && projectId && currentStageId
+          !seeded && facts.repo && projectId && currentStageId
             ? await readRepo({
                 projectId: projectId,
                 stageId: currentStageId,
@@ -398,8 +469,15 @@ export function CopilotProvider({
           } else if (part.type === "tool-call") {
             afterTool = true;
             if (part.toolName === PROPOSE_TOOL) {
-              plan =
-                proposalPlan(part.input, context, repo ?? undefined) ?? plan;
+              plan = seeded
+                ? (sourcePlan(
+                    part.input,
+                    context,
+                    seeded,
+                    await readDraft(session, conversationKey),
+                  ) ?? plan)
+                : (proposalPlan(part.input, context, repo ?? undefined) ??
+                  plan);
             } else if (part.toolName === ASK_TOOL) {
               text += `${text ? "\n\n" : ""}${questionText(part.input)}`;
             } else continue;
@@ -432,6 +510,7 @@ export function CopilotProvider({
       projectId,
       readRepo,
       runSafeSteps,
+      source,
     ],
   );
 
@@ -525,13 +604,44 @@ export function CopilotProvider({
       if (!projectId || !currentStageId) {
         throw new Error("Open the project's stage first.");
       }
+      const { via } = action;
+      if (via.kind === "source") {
+        const files = draftFiles(via.seed, action.files);
+        const applied = await applySource({
+          baseRevision: via.baseRevision,
+          files: files,
+          message: action.message,
+          projectId: projectId,
+          stageId: currentStageId,
+        });
+        // The next ask builds on what landed, as the agent's folder already does.
+        seeds.current[currentStageId] = {
+          files: files,
+          revision: applied.revision,
+          ...(via.branch ? { branch: via.branch } : {}),
+        };
+
+        return applied.phase === "verifying"
+          ? {
+              phase: "verifying",
+              revision: applied.revision,
+              sha: applied.commitSha,
+              startedAt: startedAt,
+            }
+          : {
+              finishedAt: Date.now(),
+              phase: "deployed",
+              revision: applied.revision,
+              startedAt: startedAt,
+            };
+      }
       const result = await commitChange({
-        baseSha: landed ?? action.baseSha,
-        branch: action.branch,
+        baseSha: landed ?? via.baseSha,
+        branch: via.branch,
         files: action.files
           .filter((file) => !landed || file.content !== null)
           .map((file) => ({ content: file.content, path: file.path })),
-        fullName: action.fullName,
+        fullName: via.fullName,
         message: action.message,
         projectId: projectId,
         stageId: currentStageId,
@@ -547,7 +657,7 @@ export function CopilotProvider({
       setCommits((prev) => [
         ...prev,
         {
-          branch: action.branch,
+          branch: via.branch,
           committedAt: Date.now(),
           messageId: messageId,
           sha: result.sha,
@@ -556,7 +666,7 @@ export function CopilotProvider({
 
       return { phase: "applying", sha: result.sha, startedAt: startedAt };
     },
-    [commitChange, currentStageId, projectId],
+    [applySource, commitChange, currentStageId, projectId],
   );
 
   // A proposal being applied ignores a second press and a Discard until it settles.
@@ -617,6 +727,55 @@ export function CopilotProvider({
     [proposals],
   );
 
+  const revertProposal = useCallback(
+    (messageId: string): void => {
+      const commit = proposals
+        .get(messageId)
+        ?.changes.find(({ action }) => action.type === "commitFiles")?.action;
+      if (
+        commit?.type !== "commitFiles" ||
+        commit.via.kind !== "source" ||
+        !projectId ||
+        !currentStageId ||
+        applying.current.has(messageId)
+      )
+        return;
+      applying.current.add(messageId);
+      const startedAt = Date.now();
+      const record = (apply: DockApply): void =>
+        setApplies((prev) => ({ ...prev, [messageId]: apply }));
+      record({ phase: "applying", startedAt: startedAt });
+      void applySource({
+        baseRevision: applies[messageId]?.revision ?? commit.via.baseRevision,
+        files: [...commit.via.seed],
+        message: `Revert: ${commit.message}`,
+        projectId: projectId,
+        stageId: currentStageId,
+      })
+        .then(
+          (): void => record({ phase: "discarded" }),
+          (error: unknown): void =>
+            record({
+              error: toErrorMessage(error),
+              phase: "failed",
+              startedAt: startedAt,
+            }),
+        )
+        .finally(() => applying.current.delete(messageId));
+    },
+    [applies, applySource, currentStageId, projectId, proposals],
+  );
+
+  const syncStage = useCallback((): void => {
+    if (!projectId || !currentStageId || syncing) return;
+    setSyncing(true);
+    void syncSource({ projectId: projectId, stageId: currentStageId })
+      .catch((error: unknown): void =>
+        note(`Sync failed: ${toErrorMessage(error)}`),
+      )
+      .finally(() => setSyncing(false));
+  }, [currentStageId, note, projectId, syncSource, syncing]);
+
   const dropChange = useCallback(
     (messageId: string, index: number, path?: string): void => {
       if (applying.current.has(messageId)) return;
@@ -650,14 +809,17 @@ export function CopilotProvider({
       ask: ask,
       completed: completed,
       discardProposal: discardProposal,
+      drift: drift,
       dropChange: dropChange,
       isOpen: isOpen,
       items: items,
       messages: shownMessages,
       proposal: proposal,
       proposals: proposals,
+      revertProposal: revertProposal,
       runAction: runAction,
       setOpen: setOpen,
+      syncStage: syncStage,
       wakeIndex: wakeIndex,
     }),
     [
@@ -665,14 +827,17 @@ export function CopilotProvider({
       ask,
       completed,
       discardProposal,
+      drift,
       dropChange,
       isOpen,
       items,
       proposal,
       proposals,
+      revertProposal,
       runAction,
       setOpen,
       shownMessages,
+      syncStage,
     ],
   );
 
@@ -714,4 +879,21 @@ export function useCopilot(): CopilotState {
   if (!state) throw new Error("useCopilot must be used inside CopilotProvider");
 
   return state;
+}
+
+// The seed with the kept changes laid over it: what Apply deploys, every file in full.
+function draftFiles(
+  seed: readonly DockFile[],
+  changes: readonly { content: string | null; path: string }[],
+): DockFile[] {
+  const files = new Map(seed.map((file) => [file.path, file.content]));
+  for (const change of changes) {
+    if (change.content === null) files.delete(change.path);
+    else files.set(change.path, change.content);
+  }
+
+  return [...files].map(([path, content]) => ({
+    content: content,
+    path: path,
+  }));
 }
