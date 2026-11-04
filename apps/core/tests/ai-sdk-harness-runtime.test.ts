@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "bun:test";
 import type {
   Outcome,
+  OutcomeName,
   RuntimeSummary,
 } from "./helpers/harness-runtime-probe.ts";
 
@@ -12,6 +13,7 @@ const ADAPTERS_PATH = resolve(
   "../src/harness/ai-sdk-harness/adapters/index.ts",
 );
 const BRIDGE_TYPES = ["claude-code", "codex", "deepagents", "opencode"];
+const TYPES = ["claude-code", "codex", "deepagents", "opencode", "pi"] as const;
 
 // The compiled core binary only carries bridge files root `patches/` turn into embedded imports.
 describe("createAiSdkHarnessAdapter", () => {
@@ -50,19 +52,27 @@ describe("createAiSdkHarnessAdapter", () => {
   }, 60_000);
 });
 
-const probe = Bun.spawnSync(
+// Started at load so it runs while the compile test above builds.
+const probe = Bun.spawn(
   [
     process.execPath,
     resolve(import.meta.dir, "helpers/harness-runtime-probe.ts"),
   ],
-  { cwd: resolve(import.meta.dir, "..") },
+  { cwd: resolve(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" },
 );
-if (probe.exitCode !== 0) throw new Error(probe.stderr.toString());
-const OUTCOMES: Record<string, Outcome> = JSON.parse(probe.stdout.toString());
-const TYPES = ["claude-code", "codex", "deepagents", "opencode", "pi"] as const;
+const outcomes: Promise<Partial<Record<OutcomeName, Outcome>>> = (async () => {
+  const [code, stdout, stderr] = await Promise.all([
+    probe.exited,
+    new Response(probe.stdout).text(),
+    new Response(probe.stderr).text(),
+  ]);
+  if (code !== 0) throw new Error(stderr);
 
-function built(name: string): RuntimeSummary {
-  const outcome = OUTCOMES[name];
+  return JSON.parse(stdout);
+})();
+
+async function built(name: OutcomeName): Promise<RuntimeSummary> {
+  const outcome = (await outcomes)[name];
   if (!outcome || "error" in outcome) {
     throw new Error(`${name}: ${outcome?.error ?? "not probed"}`);
   }
@@ -70,8 +80,8 @@ function built(name: string): RuntimeSummary {
   return outcome.runtime;
 }
 
-function refused(name: string): string | undefined {
-  const outcome = OUTCOMES[name];
+async function refused(name: OutcomeName): Promise<string | undefined> {
+  const outcome = (await outcomes)[name];
 
   return outcome && "error" in outcome ? outcome.error : undefined;
 }
@@ -82,8 +92,8 @@ describe.each([
 ] as const)("%s", (_, sandbox) => {
   it.each(TYPES)(
     "constructs the %s bridge on a version-scoped reservation",
-    (type) => {
-      const runtime = built(`${sandbox}:${type}`);
+    async (type) => {
+      const runtime = await built(`${sandbox}:${type}`);
 
       expect(runtime.harnessId).toBe(type);
       expect(runtime.bridgePort).toBe(4_567);
@@ -94,23 +104,23 @@ describe.each([
 });
 
 describe("createWorkdirHarnessAgent", () => {
-  it("rejects Codex permission modes the adapter cannot enforce", () => {
-    expect(refused("codexAllowEdits")).toBe(
+  it("rejects Codex permission modes the adapter cannot enforce", async () => {
+    expect(await refused("codexAllowEdits")).toBe(
       "Codex Harness requires permissionMode allow-all",
     );
   });
 });
 
 describe("createConfiguredHarnessAgent", () => {
-  it("maps a custom OpenAI-compatible model into Codex on Workdir", () => {
-    const runtime = built("customCodex");
+  it("maps a custom OpenAI-compatible model into Codex on Workdir", async () => {
+    const runtime = await built("customCodex");
 
     expect(runtime.harnessId).toBe("codex");
     expect(runtime.reservationKey).toBe(runtime.versionedReservationKey);
   });
 
-  it("maps tool filters and diagnostics into OpenCode", () => {
-    const runtime = built("openCodeFilters");
+  it("maps tool filters and diagnostics into OpenCode", async () => {
+    const runtime = await built("openCodeFilters");
 
     expect(runtime.harnessId).toBe("opencode");
     expect(runtime.reservationKey).toBe(runtime.versionedReservationKey);
@@ -124,30 +134,33 @@ describe("createConfiguredHarnessAgent", () => {
   });
 
   // The harness `askUserQuestions` builtin waits for an answer core never supplies.
-  it("keeps the harness question prompt off where the adapter declares it", () => {
-    const runtime = built("openCodeInactive");
+  it("keeps the harness question prompt off where the adapter declares it", async () => {
+    const runtime = await built("openCodeInactive");
 
     expect(runtime.inactiveTools).toEqual(["bash", "askUserQuestions"]);
     expect(runtime.builtinToolFiltering).toEqual({
       mode: "deny",
       toolNames: ["askUserQuestions", "bash"],
     });
-    expect(built("codexDefault").inactiveTools).toBeUndefined();
-    expect(built("openCodeExplicit").activeTools).toEqual(["bash"]);
+    expect((await built("codexDefault")).inactiveTools).toBeUndefined();
+    expect((await built("openCodeExplicit")).activeTools).toEqual(["bash"]);
   });
 
-  // OpenCode reads a custom endpoint label as Anthropic; Deep Agents takes only Anthropic models.
+  // OpenCode maps a custom endpoint label to Anthropic, so an OpenAI-compatible key never lands.
   it.each([
     ["opencode", "the anthropic, openai, or vercel model provider"],
     ["deepagents", "the anthropic or vercel model provider"],
-  ] as const)("rejects unsupported providers for %s", (type, providers) => {
-    expect(refused(`custom:${type}`)).toBe(
-      `config.harness.type ${type} requires ${providers}`,
-    );
-  });
+  ] as const)(
+    "rejects unsupported providers for %s",
+    async (type, providers) => {
+      expect(await refused(`custom:${type}`)).toBe(
+        `config.harness.type ${type} requires ${providers}`,
+      );
+    },
+  );
 
-  it("rejects ephemeral and unsupported sandbox providers", () => {
-    expect(refused("ephemeral")).toBe(
+  it("rejects ephemeral and unsupported sandbox providers", async () => {
+    expect(await refused("ephemeral")).toBe(
       "config.harness requires a persistent sandbox using the sandbox or lambda provider",
     );
   });

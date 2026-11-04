@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, posix } from "node:path";
+import { dirname, join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
 const oxlintBin = join(repoRoot, "node_modules", ".bin", "oxlint");
@@ -53,21 +53,17 @@ const dedent = (source: string): string => {
 interface Fixture {
   readonly name: string;
   readonly filename: string;
-  readonly source: string;
-  findings?: Array<Finding>;
-}
-
-interface FixtureGroup {
-  readonly rule: string;
   readonly ruleOptions: ReadonlyArray<unknown>;
-  readonly fixtures: Array<Fixture>;
+  readonly source: string;
 }
 
-const groups = new Map<string, FixtureGroup>();
+const fixturesByRule = new Map<string, Array<Fixture>>();
+const outcomes = new Map<Fixture, Array<Finding> | Error>();
 
-// One oxlint spawn costs ~0.35s, so every fixture registered under a config so far shares one.
-const lintPending = (group: FixtureGroup): void => {
-  const pending = group.fixtures.filter((fixture) => !fixture.findings);
+// An oxlint spawn is the slow part, so every fixture of a rule registered so far shares one;
+// each sits in its own folder, which an override gives that fixture's options.
+const lintPending = (rule: string, fixtures: Array<Fixture>): void => {
+  const pending = fixtures.filter((fixture) => !outcomes.has(fixture));
   const dir = mkdtempSync(join(tmpdir(), "broods-oxlint-"));
   try {
     const configPath = join(dir, ".oxlintrc.json");
@@ -77,11 +73,14 @@ const lintPending = (group: FixtureGroup): void => {
         plugins: [],
         categories: { correctness: "off" },
         jsPlugins: [pluginPath],
-        rules: { [group.rule]: ["error", ...group.ruleOptions] },
+        overrides: pending.map((fixture, index) => ({
+          files: [`${index}/**`],
+          rules: { [rule]: ["error", ...fixture.ruleOptions] },
+        })),
       }),
     );
     const paths = pending.map((fixture, index) => {
-      const path = posix.join(String(index), fixture.filename);
+      const path = join(String(index), fixture.filename);
       mkdirSync(dirname(join(dir, path)), { recursive: true });
       writeFileSync(join(dir, path), dedent(fixture.source));
       return path;
@@ -95,23 +94,28 @@ const lintPending = (group: FixtureGroup): void => {
       const cases = pending.map(
         (fixture, index) => `${paths[index]}: ${fixture.name}`,
       );
-      throw new Error(
+      const failure = new Error(
         `oxlint failed on one of:\n${cases.join("\n")}\n${stdout}${result.stderr.toString()}`,
       );
+      for (const fixture of pending) outcomes.set(fixture, failure);
+      return;
     }
     const report = JSON.parse(stdout) as OxlintReport;
-    const [plugin, name] = group.rule.split("/");
+    const [plugin, name] = rule.split("/");
     pending.forEach((fixture, index) => {
-      fixture.findings = report.diagnostics
-        .filter(
-          (diagnostic) =>
-            diagnostic.code === `${plugin}(${name})` &&
-            diagnostic.filename.replaceAll("\\", "/") === paths[index],
-        )
-        .map((diagnostic) => ({
-          line: diagnostic.labels[0]?.span.line ?? 0,
-          message: diagnostic.message,
-        }));
+      outcomes.set(
+        fixture,
+        report.diagnostics
+          .filter(
+            (diagnostic) =>
+              diagnostic.code === `${plugin}(${name})` &&
+              diagnostic.filename === paths[index],
+          )
+          .map((diagnostic) => ({
+            line: diagnostic.labels[0]?.span.line ?? 0,
+            message: diagnostic.message,
+          })),
+      );
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -124,23 +128,20 @@ const register = (
   source: string,
   settings: FixtureSettings,
 ): (() => Array<Finding>) => {
-  const ruleOptions = settings.ruleOptions ?? [];
-  const key = JSON.stringify([rule, ruleOptions]);
-  const group = groups.get(key) ?? {
-    rule: rule,
-    ruleOptions: ruleOptions,
-    fixtures: [],
-  };
-  groups.set(key, group);
+  const fixtures = fixturesByRule.get(rule) ?? [];
+  fixturesByRule.set(rule, fixtures);
   const fixture: Fixture = {
     name: name,
     filename: settings.filename ?? "fixture.ts",
+    ruleOptions: settings.ruleOptions ?? [],
     source: source,
   };
-  group.fixtures.push(fixture);
+  fixtures.push(fixture);
   return () => {
-    if (!fixture.findings) lintPending(group);
-    return fixture.findings ?? [];
+    if (!outcomes.has(fixture)) lintPending(rule, fixtures);
+    const outcome = outcomes.get(fixture);
+    if (outcome instanceof Error) throw outcome;
+    return outcome ?? [];
   };
 };
 

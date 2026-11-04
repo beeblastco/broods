@@ -35,6 +35,7 @@ interface Frame {
 let runtime: Miniflare;
 let runtimeUrl: URL;
 let bundleFetches = 0;
+let slowGate = Promise.withResolvers<void>();
 
 beforeAll(async (): Promise<void> => {
   const build = await Bun.build({
@@ -53,7 +54,7 @@ beforeAll(async (): Promise<void> => {
       bindings: { MCP_API_KEY: API_KEY, BUNDLE_ORIGIN: BUNDLE_ORIGIN },
       outboundService: async (request: Request): Promise<Response> => {
         if (new URL(request.url).host === "slow.example.com") {
-          await Bun.sleep(300);
+          await slowGate.promise;
         }
         if (new URL(request.url).origin !== BUNDLE_ORIGIN) {
           return new Response("public-ok");
@@ -76,6 +77,7 @@ afterAll(async (): Promise<void> => {
 
 beforeEach((): void => {
   bundleFetches = 0;
+  slowGate = Promise.withResolvers<void>();
 });
 
 it("refuses a wrong bearer before it downloads tenant code", async (): Promise<void> => {
@@ -146,9 +148,17 @@ it("answers 422 before running anything when the bundle has no fetch handler", a
 });
 
 it("streams each frame as its request settles", async (): Promise<void> => {
-  const frames = await framesOf(
-    await send(batch("acct-a", ["slow", "fast", "PATCH"])),
-  );
+  const response = await send(batch("acct-a", ["slow", "fast", "PATCH"]));
+  const lines = response.body!.pipeThrough(new TextDecoderStream()).values();
+  const frames: Frame[] = [];
+  let buffered = "";
+  for await (const chunk of lines) {
+    buffered += chunk;
+    const complete = buffered.split("\n");
+    buffered = complete.pop()!;
+    frames.push(...complete.map((line): Frame => JSON.parse(line)));
+    if (frames.length === 2) slowGate.resolve();
+  }
 
   expect(
     frames.map((frame): string => `${frame.t}:${frame.id}`).slice(2),
