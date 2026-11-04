@@ -983,7 +983,7 @@ export declare const api: {
       {
         baseSha: string;
         branch: string;
-        files: Array<{ content: string; path: string }>;
+        files: Array<{ content: string | null; path: string }>;
         fullName: string;
         message: string;
         projectId: Id<"projects">;

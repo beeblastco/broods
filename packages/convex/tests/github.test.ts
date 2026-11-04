@@ -249,6 +249,40 @@ describe("agent edits", () => {
     expect(calls).toContain("PATCH /repos/o/r/git/refs/heads/dev");
   });
 
+  test("a null content deletes the file in the same commit", async () => {
+    stubGitHub(false);
+    const answer = globalThis.fetch;
+    let tree: unknown;
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      if (url.endsWith("/git/trees") && typeof init.body === "string") {
+        tree = JSON.parse(init.body).tree;
+      }
+
+      return await answer(url, init);
+    });
+
+    await commitFiles(
+      app,
+      "t",
+      "o/r",
+      "dev",
+      [...files, { content: null, path: "broods/old.ts" }],
+      "m",
+      false,
+      "head",
+    );
+
+    expect(tree).toEqual([
+      {
+        path: "broods/index.ts",
+        mode: "100644",
+        type: "blob",
+        content: "export {};\n",
+      },
+      { path: "broods/old.ts", mode: "100644", type: "blob", sha: null },
+    ]);
+  });
+
   test("a branch that refuses the write gets a pull request instead", async () => {
     const calls = stubGitHub(true);
 
