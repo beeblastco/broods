@@ -49,12 +49,6 @@ def Chunk.plain : Chunk → Out
   | .arrowTail i => .tail i
   | .key k => .key k
 
-/-- `chunk[0] === 0x5b || chunk[0] === 0x4f`: the key a held Esc and this read make together. -/
-def Chunk.joined : Chunk → Option Out
-  | .arrowTail .csi => some (.arrow .csi)
-  | .arrowTail .ss3 => some (.arrow .ss3)
-  | _ => none
-
 /-- What reading `c` means for its key, once the keys before it took effect (a held Esc that
 stops the turn makes a second Esc an idle one). A split arrow means its key at its last read. -/
 def meaning (s : State) : Chunk → List Out
@@ -66,14 +60,15 @@ def meaning (s : State) : Chunk → List Out
 /-- `settle()`: what a held Esc turns into. -/
 def settleOut (midTurn : Bool) : Out := if midTurn then .stop else .esc
 
-/-- `input.emit("data", chunk)` for the chunk at the head of the wire. -/
+/-- `input.emit("data", chunk)` for the chunk at the head of the wire. A held Esc joins an
+`arrowTail`, the read that `chunk[0] === 0x5b || chunk[0] === 0x4f` matches. -/
 def receive (s : State) : Option State :=
   match s.wire with
   | [] => none
   | c :: rest =>
     let t := { s with wire := rest, expected := s.expected ++ meaning s c }
-    match s.held, c.joined with
-    | true, some k => some { t with out := s.out ++ [k], held := false }
+    match s.held, c with
+    | true, .arrowTail i => some { t with out := s.out ++ [.arrow i], held := false }
     | _, _ =>
       let settled := if s.held then [settleOut s.heldMidTurn] else []
       let still := s.streaming && !(s.held && s.heldMidTurn)
@@ -167,38 +162,22 @@ theorem inv_step (s t : State) (hs : Inv s) (hst : Step s t) : Inv t := by
     obtain ⟨wire, held, mid, streaming, out, expected⟩ := s
     simp only [receive] at h
     rcases hs with ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩ | ⟨h1, h2, i, r, h3, h4⟩ <;> simp only at h1 h2 h3
-    · subst h1 h2
+    rotate_right
+    · subst h1 h2 h3; simp at h; subst h; left; simp_all [meaning]
+    all_goals
+      subst h1 h2
       match wire, h3 with
       | .escKey :: rest, h3 =>
         simp [Chunk.isEsc] at h; subst h; refine .inr (.inl ?_)
-        simp_all [ok, meaning, settleOut]
-      | .escArrow :: .arrowTail i :: rest, h3 =>
-        simp [Chunk.isEsc] at h; subst h; refine .inr (.inr ⟨rfl, ?_, i, rest, rfl, by simpa [ok] using h3⟩)
-        simp [meaning]
-      | .arrow i :: rest, h3 =>
-        simp [Chunk.isEsc] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
-      | .key k :: rest, h3 =>
-        simp [Chunk.isEsc] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
-      | [], _ | .arrowTail _ :: _, h3 | [.escArrow], h3 | .escArrow :: .escKey :: _, h3
-      | .escArrow :: .escArrow :: _, h3 | .escArrow :: .arrow _ :: _, h3
-      | .escArrow :: .key _ :: _, h3 => simp [ok] at h3 h
-    · subst h1 h2
-      match wire, h3 with
-      | .escKey :: rest, h3 =>
-        simp [Chunk.isEsc, Chunk.joined] at h; subst h; refine .inr (.inl ?_)
         cases mid <;> cases streaming <;> simp_all [ok, meaning, settleOut]
       | .escArrow :: .arrowTail i :: rest, h3 =>
-        simp [Chunk.isEsc, Chunk.joined] at h; subst h; refine .inr (.inr ⟨rfl, ?_, i, rest, rfl, by simpa [ok] using h3⟩)
-        simp [meaning]
-      | .arrow i :: rest, h3 =>
-        simp [Chunk.isEsc, Chunk.joined] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
-      | .key k :: rest, h3 =>
-        simp [Chunk.isEsc, Chunk.joined] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
+        simp [Chunk.isEsc] at h; subst h
+        exact .inr (.inr ⟨rfl, by simp [meaning], i, rest, rfl, by simpa [ok] using h3⟩)
+      | .arrow _ :: rest, h3 | .key _ :: rest, h3 =>
+        simp [Chunk.isEsc] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
       | [], _ | .arrowTail _ :: _, h3 | [.escArrow], h3 | .escArrow :: .escKey :: _, h3
       | .escArrow :: .escArrow :: _, h3 | .escArrow :: .arrow _ :: _, h3
       | .escArrow :: .key _ :: _, h3 => simp [ok] at h3 h
-    · subst h1 h2 h3
-      cases i <;> simp [Chunk.joined] at h <;> subst h <;> left <;> simp_all [meaning]
   | timer _ h =>
     obtain ⟨wire, held, mid, streaming, out, expected⟩ := s
     simp only [timerFires] at h
@@ -255,7 +234,7 @@ theorem receive_clears_held {s t : State} (hs : Inv s) (hw : tailNext s = true)
   rcases hs with ⟨_, _, h3⟩ | ⟨_, _, h3⟩ | ⟨h1, _⟩
   · simp [ok] at h3
   · simp [ok] at h3
-  · simp only at h1; subst h1; cases i <;> simp [receive, Chunk.joined] at h <;> subst h <;> rfl
+  · simp only at h1; subst h1; simp [receive] at h; subst h; rfl
 
 /-- A held split-arrow Esc stays one, its tail next, until a read is handled. -/
 theorem tail_held_step {s t : State} (hs : Inv s) (hh : s.held = true)
