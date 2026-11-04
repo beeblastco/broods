@@ -25,6 +25,8 @@ status=$(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_SANDBOX_API
 # Always rebuilt, so the isolates run this checkout's core and writer.
 bun build.ts > /dev/null || exit 1
 SLIM=1 bun build.ts ./entry.ts ./dist-slim > /dev/null || exit 1
+# The mem* configs' ASCII bundle (memAsciiConfig, memHolderConfig, memHolderGcConfig).
+ASCII=1 SLIM=1 bun build.ts ./entry.ts ./dist-slim-ascii > /dev/null || exit 1
 # CORE_FIX=1: today's core queues each account's sandbox mirror writes in its own process
 # (bench/core-account-mirror.patch, applied for this run only), the fair check against the writer.
 if [ "${CORE_FIX:-0}" = 1 ]; then

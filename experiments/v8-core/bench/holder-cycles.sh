@@ -3,7 +3,8 @@
 # has gone idle and again after one more request (a health check), so repeated batches show whether
 # unloaded workers give their memory back. Usage: holder-cycles.sh <out.jsonl> <cycles> <level>
 # [config] (default memHolderGcConfig), with the local stack up and the bench's Bun core running
-# (bench/restart-cores.sh) for its log.
+# (bench/restart-cores.sh) for its log. With CLOUDFLARE_SANDBOX_URL and CLOUDFLARE_SANDBOX_API_KEY in
+# the environment it uses that bridge; without, the local stand-in on 8791.
 set -uo pipefail
 OUT=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 cycles=$2 level=$3 config=${4:-memHolderGcConfig}
@@ -13,12 +14,16 @@ source ./env.sh
 L=$PWD/logs
 export MAX_INPROCESS_WORKERS=64 BENCH_SCRIPTED_MODEL=1 BENCH_MODEL_DELAY_MS=0 MEM_DEBUG=1
 export IDLE_UNLOAD_MS=${IDLE_UNLOAD_MS:-5000}
-export CLOUDFLARE_SANDBOX_URL=http://127.0.0.1:8791
-CLOUDFLARE_SANDBOX_API_KEY=$(cat "$L/worker-sandbox.key")
-export CLOUDFLARE_SANDBOX_API_KEY CLOUDFLARE_WORKER_URL=$CLOUDFLARE_SANDBOX_URL CLOUDFLARE_WORKER_API_KEY=$CLOUDFLARE_SANDBOX_API_KEY
-rm -rf "$L/native-state"
-env -u BUN_OPTIONS nohup bun bench/native-sandbox.ts 8791 "$L/worker-sandbox.key" "$L/native-state" >> "$L/native-sandbox.log" 2>&1 &
+if [ -z "${CLOUDFLARE_SANDBOX_URL:-}" ]; then
+  export CLOUDFLARE_SANDBOX_URL=http://127.0.0.1:8791
+  CLOUDFLARE_SANDBOX_API_KEY=$(cat "$L/worker-sandbox.key")
+  export CLOUDFLARE_SANDBOX_API_KEY CLOUDFLARE_WORKER_URL=$CLOUDFLARE_SANDBOX_URL CLOUDFLARE_WORKER_API_KEY=$CLOUDFLARE_SANDBOX_API_KEY
+  rm -rf "$L/native-state"
+  env -u BUN_OPTIONS nohup bun bench/native-sandbox.ts 8791 "$L/worker-sandbox.key" "$L/native-state" >> "$L/native-sandbox.log" 2>&1 &
+fi
+export CLOUDFLARE_SANDBOX_URL CLOUDFLARE_SANDBOX_API_KEY
 port=$((BENCH_PORT_BASE + 21))
+touch "$L/bun-core-mem.log"
 nohup ./start-per-task.sh $port mem-cycles "$config" >> "$L/isolate-core-mem.log" 2>&1 &
 router=$!
 for _ in $(seq 1 100); do [ "$(curl -s -m 10 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/healthz")" = 200 ] && break; sleep 0.3; done
@@ -38,4 +43,4 @@ for c in $(seq 1 "$cycles"); do
   row "cycle$c-after-request"
 done
 kill $router
-pkill -f "[n]ative-sandbox.ts"
+pkill -f "[n]ative-sandbox.ts" || true
