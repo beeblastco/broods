@@ -33,6 +33,14 @@ import type { ProjectStageScope } from "../model/projectScope";
 import { uploadQuotaResponse } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { ClientError } from "../model/clientError";
+import { manifestHash } from "../model/manifestSnapshot";
+import {
+  stageSourceHash,
+  stageSourceProblem,
+  stageSourceSchema,
+  type StageSource,
+  type StageSourceFile,
+} from "../model/stageSource";
 
 export type CliAuth =
   | {
@@ -215,7 +223,12 @@ export async function handleManifestRoute(
       },
     );
 
-    return result ? json(result) : jsonError(404, "Manifest not found");
+    return result
+      ? json({
+          ...result,
+          manifestHash: await manifestHash(result.manifest.resources),
+        })
+      : jsonError(404, "Manifest not found");
   }
   if (req.method === "PUT")
     return await handleManifestSync(ctx, req, route, auth);
@@ -500,7 +513,19 @@ async function handleManifestSync(
     prune?: boolean;
     rotateRuntimeKey?: boolean;
     revision?: unknown;
+    source?: unknown;
   };
+  const source =
+    body.source === undefined
+      ? undefined
+      : stageSourceSchema.safeParse(body.source);
+  const sourceProblem =
+    source && !source.success
+      ? "source must be { files: [{ path, content }], commitSha? }"
+      : source?.data
+        ? stageSourceProblem(source.data.files)
+        : null;
+  if (sourceProblem) return jsonError(400, `Invalid source: ${sourceProblem}`);
   const manifest = body.manifest;
   if (!manifest || typeof manifest !== "object") {
     return jsonError(400, "Request body must include manifest");
@@ -626,6 +651,13 @@ async function handleManifestSync(
       },
     );
 
+    const synced = await recordStageSync(
+      ctx,
+      scope.stageId,
+      refreshed?.manifest.resources ?? syncManifest.resources,
+      source?.data,
+    );
+
     const deployment = await ctx.runMutation(
       internal.cli.sync.ensureRuntimeKeyBySecretHash,
       {
@@ -657,6 +689,10 @@ async function handleManifestSync(
       warnings: { ...result.warnings, reservedResources: reservedResources },
       deployment: deployment,
       revision: scope.revision,
+      manifestHash: synced.manifestHash,
+      ...(synced.sourceRevision !== null
+        ? { sourceRevision: synced.sourceRevision }
+        : {}),
     });
   } finally {
     await ctx.runMutation(internal.cli.sync.finishManifestSync, {
@@ -1207,4 +1243,67 @@ async function validateManifest(
   for (const job of desiredCrons(manifest, placeholderIds(agentNames))) {
     normalizeCreateCronInput(job);
   }
+}
+
+// The hash is of the manifest read back, so a rerun on the same source lands on the same one.
+async function recordStageSync(
+  ctx: ActionCtx,
+  stageId: Id<"stages">,
+  resources: CliManifest["resources"],
+  source: StageSource | undefined,
+): Promise<{ manifestHash: string; sourceRevision: number | null }> {
+  const hash = await manifestHash(resources);
+  const stored = source
+    ? await storedSource(ctx, stageId, source.files)
+    : undefined;
+  const sourceRevision = await ctx.runMutation(
+    internal.stageSources.recordSync,
+    {
+      stageId: stageId,
+      manifestHash: hash,
+      ...(source && stored
+        ? {
+            source: {
+              ...stored,
+              origin: "cli" as const,
+              ...(source.commitSha ? { commitSha: source.commitSha } : {}),
+            },
+          }
+        : {}),
+    },
+  );
+
+  return { manifestHash: hash, sourceRevision: sourceRevision };
+}
+
+// Unchanged source is not stored again: the newest revision already holds it.
+async function storedSource(
+  ctx: ActionCtx,
+  stageId: Id<"stages">,
+  files: StageSourceFile[],
+): Promise<{
+  hash: string;
+  storageId?: Id<"_storage">;
+  fileCount: number;
+  bytes: number;
+}> {
+  const hash = await stageSourceHash(files);
+  const body = JSON.stringify({ files: files });
+  const unchanged =
+    (await ctx.runQuery(internal.stageSources.latestHash, {
+      stageId: stageId,
+    })) === hash;
+
+  return {
+    hash: hash,
+    ...(unchanged
+      ? {}
+      : {
+          storageId: await ctx.storage.store(
+            new Blob([body], { type: "application/json" }),
+          ),
+        }),
+    fileCount: files.length,
+    bytes: new TextEncoder().encode(body).length,
+  };
 }

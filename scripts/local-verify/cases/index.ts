@@ -15,6 +15,7 @@ import { edgeHeaders } from "./edge-headers.ts";
 import { githubRepo } from "./github-repo.ts";
 import { workerSandbox } from "./worker-sandbox.ts";
 import { manifestSync } from "./manifest-sync.ts";
+import { stageSource } from "./stage-source.ts";
 import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
 import { mcpTasks } from "./mcp-tasks.ts";
@@ -84,6 +85,7 @@ export const verifyCases: readonly VerifyCase[] = [
   credentialPrefixes,
   scopedAccountKey,
   manifestSync,
+  stageSource,
   devWatch,
   githubRepo,
   productionRegion,
