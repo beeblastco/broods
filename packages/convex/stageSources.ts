@@ -49,14 +49,18 @@ const driftValidator = v.object({
 
 type StageSourceSummary = Infer<typeof sourceValidator>;
 
-/** The stage's newest source revision, with a URL its `{ files }` JSON downloads from. */
+/**
+ * The newest source revision the dock edits, with a URL its `{ files }` JSON downloads from.
+ * None on Production, which deploys through a pull request.
+ */
 export const latest = query({
   args: { stageId: v.id("stages") },
   returns: v.union(sourceValidator, v.null()),
   handler: async (ctx, { stageId }): Promise<StageSourceSummary | null> => {
     const user = await authKit.getAuthUser(ctx);
     if (!user) throw new Error("User not found or not authenticated");
-    if (!(await getOwnedStage(ctx, user.id, stageId))) return null;
+    const stage = await getOwnedStage(ctx, user.id, stageId);
+    if (!stage || stage.kind === "production") return null;
     const row = await latestRow(ctx, stageId);
 
     return row ? await summary(ctx, row) : null;
