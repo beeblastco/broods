@@ -96,6 +96,9 @@
     },
     "packages/convex/cli/types.ts": {
       "CliManifestResource": "7eba710fdfac1529"
+    },
+    "packages/convex/model/cliSyncManifest.ts": {
+      "resourcesForStage": "8b080375b990bd58"
     }
   },
   "SyncConcurrency": {
