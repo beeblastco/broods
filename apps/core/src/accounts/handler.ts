@@ -575,7 +575,9 @@ async function refreshSandboxStatus(
     context.executor.getInstanceInfo?.(context.ref),
   );
   if (!info || info.state === "terminating") {
-    await removeSandboxInstance(context.accountId, context.reservationKey);
+    await queueMirrorWrite(context.accountId, context.reservationKey, () =>
+      removeSandboxInstance(context.accountId, context.reservationKey),
+    );
     await context.audit("ok", { status: "terminating" });
 
     return jsonResponse(200, { status: "terminated" });

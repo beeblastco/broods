@@ -233,9 +233,9 @@ export function meterEphemeralSandbox(
     );
 }
 
-// One queue per account, as a write can bill the account's usage rows; a burst or removal queued
-// here never beats the upsert before it. Awaited create writes stay off it, so a sandbox start
-// never waits behind other tasks' refreshes.
+// One queue per account, as a write can bill the account's usage rows. Writes land in the order
+// queued, so a stale refresh never lands after a later create, status or removal of its row. A
+// command or a sandbox start never awaits it.
 export function queueMirrorWrite(
   accountId: string | undefined,
   sandboxId: string,
@@ -255,10 +255,22 @@ export function queueMirrorWrite(
 }
 
 export function queueMirrorUpsert(
-  ...row: Parameters<typeof upsertSandboxInstance>
+  controlPlane: SandboxControlPlane | undefined,
+  provider: SandboxProvider,
+  reservationKey: string,
+  externalId: string,
+  metadata?: SandboxRunMetadata,
+  options?: Parameters<typeof upsertSandboxInstance>[5],
 ): Promise<void> {
-  return queueMirrorWrite(row[0]?.accountId, row[3], () =>
-    upsertSandboxInstance(...row),
+  return queueMirrorWrite(controlPlane?.accountId, externalId, () =>
+    upsertSandboxInstance(
+      controlPlane,
+      provider,
+      reservationKey,
+      externalId,
+      metadata,
+      options,
+    ),
   );
 }
 

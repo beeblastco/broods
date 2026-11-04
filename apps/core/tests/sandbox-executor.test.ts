@@ -3933,7 +3933,48 @@ describe("account mirror queue", () => {
     },
   );
 
-  it("writes a new reserved sandbox's row at once and queues its size patch", async () => {
+  // A refresh still queued for a machine that died since must not repoint the row afterwards.
+  it("lands a stale refresh before the row of the machine that replaced it", async () => {
+    const { queueMirrorWrite } =
+      await import("../src/harness/sandbox/utils.ts");
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const held = Promise.withResolvers<void>();
+    const pending = queueMirrorWrite(
+      "acct-replace",
+      "other-sandbox",
+      (): Promise<void> => held.promise,
+    );
+    const executor = createSandboxExecutor({
+      provider: "e2b",
+      persistent: true,
+      network: { mode: "allow-all" },
+      controlPlane: { accountId: "acct-replace", name: "box" },
+    });
+    const run = {
+      code: "echo ok",
+      namespace: NS,
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    };
+    storedSandboxExternalId = "e2b-old";
+
+    await executor.run(run);
+    e2bConnectMock.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("sandbox not found"), { status: 404 });
+    });
+    await executor.run(run);
+    held.resolve();
+    await pending;
+    await Bun.sleep(5);
+
+    expect(upsertSandboxInstanceMock.mock.calls.map((call) => call[3])).toEqual(
+      ["e2b-old", "e2b-sandbox"],
+    );
+  });
+
+  it("queues a new reserved sandbox's row, then its size patch, without awaiting either", async () => {
     const { queueMirrorWrite } =
       await import("../src/harness/sandbox/utils.ts");
     const {
@@ -3959,16 +4000,20 @@ describe("account mirror queue", () => {
     });
     await Bun.sleep(5);
 
-    expect(
-      upsertSandboxInstanceMock.mock.calls.map((call) => [call[1], call[3]]),
-    ).toEqual([["e2b", "e2b-sandbox"]]);
+    expect(upsertSandboxInstanceMock).not.toHaveBeenCalled();
     expect(setSandboxInstanceSpecsMock).not.toHaveBeenCalled();
     held.resolve();
     await pending;
-    await Bun.sleep(0);
+    await Bun.sleep(5);
+    expect(
+      upsertSandboxInstanceMock.mock.calls.map((call) => [call[1], call[3]]),
+    ).toEqual([["e2b", "e2b-sandbox"]]);
     expect(setSandboxInstanceSpecsMock.mock.calls).toEqual([
       ["acct-create", NS, "e2b-sandbox", { vcpu: 2, memoryMb: 2048 }],
     ]);
+    expect(upsertSandboxInstanceMock.mock.invocationCallOrder[0]).toBeLessThan(
+      setSandboxInstanceSpecsMock.mock.invocationCallOrder[0]!,
+    );
   });
 });
 
@@ -3996,9 +4041,12 @@ describe("persistent acquire teardown", () => {
   it.each(cases)(
     "destroys the $provider sandbox it just created when the claim fails",
     async ({ provider, destroy, options }) => {
-      upsertSandboxInstanceMock.mockImplementationOnce(async () => {
-        throw new Error("post-claim persistence failed");
-      });
+      claimSandboxInstanceMock.mockImplementationOnce(
+        async (_provider, _key, externalId): Promise<boolean> => {
+          storedSandboxExternalId = externalId;
+          throw new Error("claim response lost");
+        },
+      );
       const {
         createSandboxExecutor,
       } = require("../src/harness/sandbox/index.ts");
@@ -4015,7 +4063,7 @@ describe("persistent acquire teardown", () => {
           timeoutSeconds: 30,
           outputLimitBytes: 4096,
         }),
-      ).rejects.toThrow("post-claim persistence failed");
+      ).rejects.toThrow("claim response lost");
 
       expect(destroy).toHaveBeenCalled();
       expect(deleteSandboxInstanceMock.mock.calls[0]?.[0]).toBe(provider);

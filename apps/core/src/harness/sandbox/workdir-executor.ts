@@ -4,7 +4,6 @@ import {
   type Sandbox,
   SandboxError,
 } from "@mv37/workdir";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
@@ -633,7 +632,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.releaseAfterIdleSeconds,
         )
       ) {
-        await upsertSandboxInstance(
+        void queueMirrorUpsert(
           this.#config.controlPlane,
           "sandbox",
           ns,

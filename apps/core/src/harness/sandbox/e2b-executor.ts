@@ -1,9 +1,6 @@
 import type { Sandbox } from "e2b";
 import { Buffer } from "node:buffer";
-import {
-  setSandboxInstanceSpecs,
-  upsertSandboxInstance,
-} from "../../shared/convex/sandbox-instances.ts";
+import { setSandboxInstanceSpecs } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
@@ -230,7 +227,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
         )
       ) {
-        await upsertSandboxInstance(
+        void queueMirrorUpsert(
           this.#config.controlPlane,
           "e2b",
           ns,

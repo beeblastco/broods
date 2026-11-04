@@ -4,7 +4,6 @@ import type {
   NetworkPolicy,
   Sandbox as VercelSandbox,
 } from "@vercel/sandbox";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
@@ -457,7 +456,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
         )
       ) {
-        await upsertSandboxInstance(
+        void queueMirrorUpsert(
           this.#config.controlPlane,
           "vercel",
           key,
@@ -483,7 +482,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const winner = await getSandboxExternalId("vercel", key);
     if (!winner) {
       // The row vanished after the refused claim; the sweeper's orphan adoption reaches it now.
-      await upsertSandboxInstance(
+      void queueMirrorUpsert(
         this.#config.controlPlane,
         "vercel",
         key,
