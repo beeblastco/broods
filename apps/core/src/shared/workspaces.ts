@@ -106,11 +106,16 @@ export function isolatedWorkspaceNamespace(
   isolation: WorkspaceIsolation | undefined,
   scope: WorkspaceIsolationScope = {},
 ): string {
-  const namespace = sharedWorkspaceNamespace(baseNamespace, isolation, scope);
+  if (!scope.userConversationKey)
+    return sharedWorkspaceNamespace(baseNamespace, isolation, scope);
+  // The user folder is already one conversation's, so its subagents share it; only an
+  // agent folder still splits it.
+  const namespace =
+    isolation === "agent"
+      ? sharedWorkspaceNamespace(baseNamespace, isolation, scope)
+      : baseNamespace;
 
-  return scope.userConversationKey
-    ? `${namespace}/${USER_PARTITION_ALIAS}/${normalizeFilesystemNamespace(scope.userConversationKey)}`
-    : namespace;
+  return `${namespace}/${USER_PARTITION_ALIAS}/${normalizeFilesystemNamespace(scope.userConversationKey)}`;
 }
 
 // The registry is keyed by reservation key alone, so unscoped pinned text could

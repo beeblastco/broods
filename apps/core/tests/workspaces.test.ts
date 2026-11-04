@@ -68,6 +68,28 @@ describe("workspaceNamespace", () => {
     );
   });
 
+  it("a user's conversation folder is the same for its subagents under conversation partitions", () => {
+    const base = workspaceNamespace("acct_1", "ws_a");
+    const user = "acct:acct_1:agent:ag_1:api:bsu:alice:chat";
+    const scope = (conversationKey: string) => ({
+      channelName: "api",
+      conversationKey: conversationKey,
+      partition: { alias: "chats", by: "conversation" as const },
+      userConversationKey: user,
+    });
+
+    expect(isolatedWorkspaceNamespace(base, "conversation", scope(user))).toBe(
+      `${base}/users/${normalizeFilesystemNamespace(user)}`,
+    );
+    expect(
+      isolatedWorkspaceNamespace(
+        base,
+        "conversation",
+        scope(`${user}:subagent~1`),
+      ),
+    ).toBe(isolatedWorkspaceNamespace(base, "conversation", scope(user)));
+  });
+
   it("gives each agent its own folder under agent isolation, shared across its conversations", () => {
     const base = workspaceNamespace("acct_1", "ws_a");
     const conversationA = {
