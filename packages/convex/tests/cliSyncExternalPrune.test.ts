@@ -274,7 +274,61 @@ describe("cli prune of external resources", () => {
       ),
     ).toEqual(["agent-made"]);
   });
+  test("the manifest lists only crons code declared, so the next diff stays empty", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    const resources = [
+      {
+        kind: "agent",
+        name: "reporter",
+        config: {
+          model: { provider: "custom", modelId: "Qwen3.6-27B" },
+          agent: { system: "Write the report." },
+        },
+      },
+      {
+        kind: "cron",
+        name: "nightly",
+        config: {
+          agentId: "reporter",
+          events: [{ role: "user", content: "Write the report." }],
+          scheduleExpression: "rate(1 day)",
+        },
+      },
+    ];
+    expect((await pruneAll(tt, resources)).status).toBe(200);
+    const [nightly] = await tt.run(
+      async (ctx) => await ctx.db.query("crons").collect(),
+    );
+    if (!nightly) throw new Error("cron not synced");
+    await tt.mutation(internal.agent.crons.create, {
+      accountId: accountId,
+      input: {
+        name: "agent-made",
+        agentId: nightly.agentId,
+        input: "check in",
+        scheduleExpression: "rate(1 hour)",
+      },
+    });
+
+    expect(await manifestCronNames(tt)).toEqual(["nightly"]);
+  });
 });
+
+/** Cron names `GET /manifest` returns for the test stage, as `broods dev` reads them. */
+async function manifestCronNames(tt: T): Promise<string[]> {
+  const response = await tt.fetch(
+    `/v1/account/projects/${PROJECT}/stages/${STAGE}/manifest`,
+    { headers: { Authorization: `Bearer ${SECRET}` } },
+  );
+  const body = (await response.json()) as {
+    manifest: { resources: Array<{ kind: string; name: string }> };
+  };
+
+  return body.manifest.resources
+    .filter((resource) => resource.kind === "cron")
+    .map((resource) => resource.name);
+}
 
 async function activeNames(
   tt: T,
