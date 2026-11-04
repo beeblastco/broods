@@ -1145,6 +1145,8 @@ export async function runAgentLoop(
           }),
         ),
       );
+      const stepEndMs = Date.now();
+      const timing = stepTiming.closeStep(stepNumber, stepEndMs);
       logInfo(
         `Agent step ${stepNumber} finished: ${finishReason}, ${toolCalls.length} tool call(s), ${formatUsageSummary(usage)}, ${formatDuration(durationMs)}`,
         {
@@ -1154,6 +1156,7 @@ export async function runAgentLoop(
           finishReason: finishReason,
           rawFinishReason: rawFinishReason,
           durationMs: durationMs,
+          timing: timing,
           toolCallCount: toolCalls.length,
           toolCalls: toolCalls.map(({ toolCallId, toolName }) => ({
             toolCallId: toolCallId,
@@ -1171,14 +1174,13 @@ export async function runAgentLoop(
 
       const tracked = spans.get(stepNumber);
       if (tracked) {
-        const stepEndMs = Date.now();
         // The dashboard sums live usage off these spans; there is no separate usage channel.
         spans.close(tracked, stepEndMs, "ok", {
           "agent.step_number": stepNumber,
           "step.state": "completed",
           "model.finish_reason": finishReason,
           "agent.tool_call_count": toolCalls.length,
-          ...stepTiming.closeStep(stepNumber, stepEndMs),
+          ...timing,
           ...modelTokenAttributes({
             ...stepTokens,
             cacheWriteTokens: stepCacheWriteTokens,
