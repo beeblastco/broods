@@ -39,6 +39,10 @@ const sessionValidator = v.object({
 });
 
 const repoFileValidator = v.object({ content: v.string(), path: v.string() });
+const commitFileValidator = v.object({
+  content: v.union(v.string(), v.null()),
+  path: v.string(),
+});
 
 const repoTargetValidator = v.object({
   branch: v.string(),
@@ -141,7 +145,7 @@ export const commitChange = action({
   args: {
     baseSha: v.string(),
     branch: v.string(),
-    files: v.array(repoFileValidator),
+    files: v.array(commitFileValidator),
     fullName: v.string(),
     message: v.string(),
     projectId: v.id("projects"),

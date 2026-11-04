@@ -218,7 +218,7 @@ test("the dock opens on its key and answers an ask it can resolve", async ({
   await expect(ran(page)).toHaveText(["navigate /p/scheduler"]);
 });
 
-test("a write shows its before and after and waits for the press", async ({
+test("a write waits in the canvas bar, shows its before and after there, and applies once", async ({
   page,
 }) => {
   await openSurfaces(page);
@@ -230,19 +230,26 @@ test("a write shows its before and after and waits for the press", async ({
     .fill("pause nightly-digest");
   await page.keyboard.press("Enter");
 
-  await expect(dock.locator("[data-plan-step]")).toHaveText([
-    "Pause nightly-digest",
-  ]);
-  await expect(dock.locator("[data-plan-change]")).toContainText("active");
-  await expect(dock.locator("[data-plan-change]")).toContainText("paused");
+  await expect(dock.locator("[data-apply-status]")).toHaveText(
+    "Proposed. Review it at the top of the canvas.",
+  );
+  await expect(dock.getByRole("button", { name: "Apply" })).toHaveCount(0);
+  await expect(dock.locator("[data-plan-change]")).toHaveCount(0);
+
+  const bar = page.locator("[data-apply-bar]");
+  await expect(bar).toContainText("Pause nightly-digest");
+  await bar.locator("[data-apply-code]").click();
+  await expect(bar.locator("[data-plan-change]")).toContainText("active");
+  await expect(bar.locator("[data-plan-change]")).toContainText("paused");
   await expect(ran(page)).toHaveCount(0);
 
-  await dock.getByRole("button", { name: "Apply" }).click();
+  await bar.getByRole("button", { name: "Apply" }).click();
   await expect(ran(page)).toHaveText(["setCronStatus c1 paused"]);
-  await expect(dock.getByRole("button", { name: "Apply" })).toHaveCount(0);
+  await expect(bar).toHaveCount(0);
+  await expect(dock.locator("[data-apply-status]")).toHaveText("Applied.");
 });
 
-test("a waiting write stays in the page's tray with the dock closed, and applies from there", async ({
+test("a waiting write stays in the bar with the dock closed", async ({
   page,
 }) => {
   await openSurfaces(page);
@@ -252,54 +259,33 @@ test("a waiting write stays in the page's tray with the dock closed, and applies
     .getByPlaceholder("Ask, or describe a change...")
     .fill("pause nightly-digest");
   await page.keyboard.press("Enter");
-  await expect(dock.locator("[data-plan-step]")).toHaveCount(1);
 
   await page.keyboard.press("ControlOrMeta+j");
   await expect(dock).toHaveCount(0);
-  const tray = page.locator("[data-change-tray]");
-  await expect(tray).toContainText("1 change waiting");
-  await expect(tray.locator("[data-plan-change]")).toContainText("paused");
-  await expect(ran(page)).toHaveCount(0);
-
-  await tray.getByRole("button", { name: "Apply" }).click();
+  const bar = page.locator("[data-apply-bar]");
+  await expect(bar).toHaveAttribute("data-apply-bar", "proposed");
+  await bar.getByRole("button", { name: "Apply" }).click();
   await expect(ran(page)).toHaveText(["setCronStatus c1 paused"]);
-  await expect(tray).toHaveCount(0);
 });
 
-test("a discarded write leaves the tray and never runs", async ({ page }) => {
+test("a discarded write leaves the bar, never runs, and the chat says so", async ({
+  page,
+}) => {
   await openSurfaces(page);
   await page.keyboard.press("ControlOrMeta+j");
-  await page
-    .getByRole("complementary")
+  const dock = page.getByRole("complementary");
+  await dock
     .getByPlaceholder("Ask, or describe a change...")
     .fill("pause nightly-digest");
   await page.keyboard.press("Enter");
 
-  const tray = page.locator("[data-change-tray]");
-  await tray.getByRole("button", { name: "Discard" }).click();
-  await expect(tray).toHaveCount(0);
+  const bar = page.locator("[data-apply-bar]");
+  await bar.getByRole("button", { name: "Discard" }).click();
+  await expect(bar).toHaveCount(0);
   await expect(ran(page)).toHaveCount(0);
-});
-
-test("an applied commit stays in the tray until it deploys, then can be dismissed", async ({
-  page,
-}) => {
-  await openSurfaces(page);
-  await page.locator("[data-seed-deploys]").click();
-
-  const tray = page.locator("[data-change-tray]");
-  await expect(tray.locator('[data-tray-deploy="deployed"]')).toContainText(
-    "Deployed",
+  await expect(dock.locator("[data-apply-status]")).toHaveText(
+    "Discarded. Nothing was changed.",
   );
-  await expect(tray.locator('[data-tray-deploy="deploying"]')).toHaveCount(1);
-  await expect(
-    tray
-      .locator('[data-tray-deploy="deploying"]')
-      .getByRole("button", { name: "Dismiss" }),
-  ).toHaveCount(0);
-
-  await tray.getByRole("button", { name: "Dismiss" }).click();
-  await expect(tray.locator("[data-tray-deploy]")).toHaveCount(1);
 });
 
 test("a deploy is refused with a reason and no button to do it anyway", async ({
