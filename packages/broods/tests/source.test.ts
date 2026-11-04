@@ -29,4 +29,20 @@ describe("readStageSource", () => {
       "source" in read && read.source.files.map((file) => file.path).sort(),
     ).toEqual(["broods/index.ts", "broods/tools/a.md", "package.json"]);
   });
+
+  test("a linked root manifest or broods/ folder is not followed out of the project", async () => {
+    root = await mkdtemp(join(tmpdir(), "broods-source-"));
+    const outside = await mkdtemp(join(tmpdir(), "broods-outside-"));
+    await writeFile(join(outside, "secret.ts"), "SECRET=1");
+    await symlink(join(outside, "secret.ts"), join(root, "bun.lock"));
+    await symlink(outside, join(root, "broods"));
+    await writeFile(join(root, "package.json"), "{}");
+
+    const read = await readStageSource(root);
+    await rm(outside, { recursive: true, force: true });
+
+    expect(
+      "source" in read && read.source.files.map((file) => file.path),
+    ).toEqual(["package.json"]);
+  });
 });

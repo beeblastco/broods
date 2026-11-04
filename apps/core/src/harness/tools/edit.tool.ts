@@ -105,6 +105,9 @@ async function editOnShell(
   );
   if (!read.ok)
     toolError(`${read.stderr}${read.stdout}`.trim() || "Error: edit failed");
+  // A cut read written back would drop the rest of the file.
+  if (read.truncated)
+    toolError(`Error: ${rel} is too large to edit here; rewrite it with write`);
   const data = Buffer.from(read.stdout.trim(), "base64").toString("utf8");
   const count = data.split(oldString).length - 1;
   if (count === 0) toolError(`Error: old_string not found in ${rel}`);

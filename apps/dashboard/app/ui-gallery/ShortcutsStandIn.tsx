@@ -202,6 +202,7 @@ function Surfaces(): React.JSX.Element {
     completed: completed,
     discardProposal: (messageId) =>
       setApplies((prev) => ({ ...prev, [messageId]: { phase: "discarded" } })),
+    drift: null,
     dropChange: (messageId, index, path) =>
       setDropped((prev) =>
         new Set(prev).add(changeKey(messageId, index, path)),
@@ -211,8 +212,10 @@ function Surfaces(): React.JSX.Element {
     messages: messages,
     proposal: openProposal(messages, proposals),
     proposals: proposals,
+    revertProposal: () => {},
     runAction: run,
     setOpen: setOpen,
+    syncStage: () => {},
     wakeIndex: () => {},
   };
 

@@ -30,6 +30,10 @@ export async function readConversationFiles(
     throw new Error(
       `${result.stderr}${result.stdout}`.trim() || "listing failed",
     );
+  if (result.truncated)
+    throw new Error(
+      "The folder is over the sandbox's output limit to list in one read.",
+    );
   const listing = gunzipSync(
     Buffer.from(result.stdout.trim(), "base64"),
   ).toString("utf8");
@@ -63,7 +67,7 @@ export async function writeConversationFiles(
   const result = await runSandbox(
     ws.sandbox,
     ws.namespace,
-    ["rm -rf ./* ./.[!.]*", ...writes].join(" && "),
+    ["rm -rf ./* ./.[!.]* ./..?*", ...writes].join(" && "),
   );
   if (!result.ok)
     throw new Error(
