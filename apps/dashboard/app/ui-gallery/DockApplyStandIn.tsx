@@ -144,6 +144,7 @@ export function DockApplyStandIn(): React.JSX.Element {
   const proposals = dockProposals(
     MESSAGES,
     dropped,
+    new Set(),
     apply ? { "ask:broods": apply } : {},
     [],
     "Development",

@@ -7,6 +7,7 @@ import {
   dockProposals,
   openProposal,
   proposedNodes,
+  settleApplies,
 } from "../app/lib/copilotActions";
 import { withProposal } from "../app/lib/proposedNodes";
 import { planFromQuery } from "../app/lib/copilotIntent";
@@ -289,6 +290,7 @@ describe("agent dock", () => {
     const proposals = dockProposals(
       messages,
       new Set([changeKey("c", 0, "broods/a.ts")]),
+      new Set(),
       { a: { phase: "discarded" } },
       [],
     );
@@ -323,6 +325,7 @@ describe("agent dock", () => {
       const proposal = dockProposals(
         messages,
         new Set(),
+        new Set(),
         { m: { phase: "applying", sha: "8d7ea8b41c", startedAt: 1_000 } },
         [
           {
@@ -340,6 +343,78 @@ describe("agent dock", () => {
     expect(status("deploying")).toBe("Committed 8d7ea8b to dev. Deploying.");
     expect(status("deployed")).toBe("Deployed in 42 s.");
     expect(status("failed")).toBe("Deploy failed: the run timed out.");
+  });
+
+  test("a finished deploy stays finished when a later push runs on the branch", () => {
+    const commit = proposalPlan(
+      { files: [{ content: "a", path: "broods/a.ts" }], summary: "" },
+      CONTEXT,
+      REPO,
+    );
+    const messages = [{ id: "m", plan: commit ?? undefined }];
+    const run = {
+      branch: "dev",
+      committedAt: 0,
+      messageId: "m",
+      runUrl: "https://github.test/run/1",
+      sha: "8d7ea8b41c",
+    };
+    const applying = {
+      m: { phase: "applying", sha: "8d7ea8b41c", startedAt: 1_000 } as const,
+    };
+
+    const settled =
+      settleApplies(applying, [
+        { ...run, finishedAt: 43_000, state: "deployed" },
+      ]) ?? applying;
+    const later = dockProposals(messages, new Set(), new Set(), settled, [
+      { ...run, runUrl: "https://github.test/run/2", state: "deploying" },
+    ]).get("m");
+
+    expect(later?.apply).toMatchObject({
+      finishedAt: 43_000,
+      phase: "deployed",
+    });
+    expect(openProposal(messages, new Map(later ? [["m", later]] : []))).toBe(
+      null,
+    );
+  });
+
+  test("a discard after some steps ran says they stay, and edits clear the drawn nodes", () => {
+    const plan = proposalPlan(
+      {
+        files: [
+          { content: "a", path: "broods/a.ts" },
+          { content: "b", path: "broods/b.ts" },
+        ],
+        nodes: [{ change: "add", kind: "mcp", name: "a" }],
+        steps: ["pause nightly-digest"],
+        summary: "",
+      },
+      CONTEXT,
+      REPO,
+    );
+    const messages = [{ id: "m", plan: plan ?? undefined }];
+
+    const discarded = dockProposals(
+      messages,
+      new Set(),
+      new Set([changeKey("m", 0)]),
+      { m: { phase: "discarded" } },
+      [],
+    ).get("m");
+    const edited = dockProposals(
+      messages,
+      new Set([changeKey("m", 1, "broods/a.ts")]),
+      new Set(),
+      {},
+      [],
+    ).get("m");
+
+    expect(discarded ? applyStatus(discarded) : "").toBe(
+      "Discarded. Steps already applied stay.",
+    );
+    expect(proposedNodes(edited ?? null)).toEqual([]);
   });
 
   test("a file with null content is deleted, its whole content shown removed", () => {
@@ -402,6 +477,7 @@ describe("agent dock", () => {
       proposedNodes(
         dockProposals(
           messages,
+          new Set(),
           new Set(),
           phase === "proposed" ? {} : { m: { phase: phase } },
           [],

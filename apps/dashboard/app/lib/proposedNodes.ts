@@ -13,6 +13,8 @@ export interface ProposedNodeData extends Record<string, unknown> {
   label: string;
 }
 
+export type ProposedNodeType = Node<ProposedNodeData, "proposed">;
+
 /** The canvas with a proposal drawn on: added nodes dashed, removed ones dimmed. */
 export function withProposal(
   nodes: Node[],

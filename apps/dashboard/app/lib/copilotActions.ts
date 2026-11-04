@@ -111,6 +111,8 @@ export interface DockApply {
 /** The writes of one answer, applied together with one press. */
 export interface DockProposal {
   apply: DockApply;
+  /** Some of its steps already ran, so a discard cannot say nothing changed. */
+  applied: boolean;
   branch?: string;
   /** Each write still in, with dropped files left out of a commit. */
   changes: readonly PendingChange[];
@@ -167,6 +169,7 @@ export function actionTier(action: CopilotAction): CopilotTier {
 export function dockProposals(
   messages: readonly { id: string; plan?: CopilotPlan }[],
   dropped: ReadonlySet<string>,
+  completed: ReadonlySet<string>,
   applies: Readonly<Record<string, DockApply>>,
   deploys: readonly TrackedDeploy[],
   stage?: string,
@@ -202,12 +205,15 @@ export function dockProposals(
           ),
         )
       : { phase: changes.length > 0 ? "proposed" : "discarded" };
+    // Drawn nodes cannot follow a dropped file yet, so an edited proposal draws none.
+    const edited = [...dropped].some((key) => key.startsWith(`${id}:`));
     proposals.set(id, {
       apply: apply,
+      applied: writes.some(({ index }) => completed.has(changeKey(id, index))),
       branch: commit?.branch,
       changes: changes,
       messageId: id,
-      nodes: plan.nodes ?? NO_NODES,
+      nodes: edited ? NO_NODES : (plan.nodes ?? NO_NODES),
       stage: stage,
       title:
         commit?.message ||
@@ -258,7 +264,7 @@ export function openProposal(
 }
 
 /** The chat's record of a proposal, in the words the bar would use. */
-export function applyStatus({ apply, branch }: DockProposal): string {
+export function applyStatus({ apply, applied, branch }: DockProposal): string {
   const sha = apply.sha?.slice(0, 7);
   switch (apply.phase) {
     case "proposed":
@@ -274,10 +280,30 @@ export function applyStatus({ apply, branch }: DockProposal): string {
     case "failed":
       return `Deploy failed: ${apply.error ?? "unknown error."}`;
     case "discarded":
-      return sha
-        ? `Discarded. ${sha} stays on ${branch}.`
+      if (sha) return `Discarded. ${sha} stays on ${branch}.`;
+
+      return applied
+        ? "Discarded. Steps already applied stay."
         : "Discarded. Nothing was changed.";
   }
+}
+
+/** Applies whose run finished, kept so a later push cannot reopen them; null if none. */
+export function settleApplies(
+  applies: Readonly<Record<string, DockApply>>,
+  deploys: readonly TrackedDeploy[],
+): Readonly<Record<string, DockApply>> | null {
+  let settled: Record<string, DockApply> | null = null;
+  for (const deploy of deploys) {
+    const apply = applies[deploy.messageId];
+    if (apply?.phase !== "applying" || apply.sha !== deploy.sha) continue;
+    const next = withDeploy(apply, deploy);
+    if (next.phase !== "applying") {
+      settled = { ...(settled ?? applies), [deploy.messageId]: next };
+    }
+  }
+
+  return settled;
 }
 
 export function planRunsUnattended(plan: CopilotPlan): boolean {

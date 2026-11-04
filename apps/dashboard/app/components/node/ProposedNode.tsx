@@ -1,7 +1,7 @@
 "use client";
 
 import { NODE_TEMPLATES } from "@/app/components/canvas/nodeTemplates";
-import type { ProposedNodeData } from "@/app/lib/proposedNodes";
+import type { ProposedNodeType } from "@/app/lib/proposedNodes";
 import { cn } from "@/app/lib/utils";
 import { NODE_HEIGHT } from "@broods/convex/model/canvasLayout";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
@@ -9,8 +9,10 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 const HANDLE_CLASS = "bg-transparent! w-2.5! h-2.5! border-transparent!";
 
 /** A node a dock proposal adds: dashed until its deploy lands, red when it failed. */
-export function ProposedNode({ data }: NodeProps): React.JSX.Element {
-  const { failed, kind, label } = data as ProposedNodeData;
+export function ProposedNode({
+  data,
+}: NodeProps<ProposedNodeType>): React.JSX.Element {
+  const { failed, kind, label } = data;
   const template = NODE_TEMPLATES.find((item) => item.type === kind);
   const Icon = template?.icon;
 

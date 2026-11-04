@@ -11,6 +11,7 @@ import {
   dockProposals,
   openProposal,
   proposedNodes,
+  settleApplies,
   type CopilotAction,
   type CopilotPlan,
   type DockApply,
@@ -178,10 +179,13 @@ export function CopilotProvider({
   const [commits, setCommits] = useState<
     readonly Omit<TrackedDeploy, "runUrl" | "state">[]
   >([]);
-  // Subscribed only while a commit is followed; the GitHub webhook moves its deploy along.
+  // Subscribed only while a commit deploys; the GitHub webhook moves its run along.
+  const following = Object.values(applies).some(
+    (apply) => apply.phase === "applying" && apply.sha !== undefined,
+  );
   const github = useQuery(
     api.github.status,
-    projectId && commits.length > 0 ? { projectId: projectId } : "skip",
+    projectId && following ? { projectId: projectId } : "skip",
   );
   const deploys = useMemo(
     () =>
@@ -210,6 +214,10 @@ export function CopilotProvider({
       }),
     [commits, github],
   );
+
+  // Adjusted during render: a finished run is kept, so a later push cannot reopen it.
+  const settled = settleApplies(applies, deploys);
+  if (settled) setApplies(settled);
 
   const note = useCallback((text: string): void => {
     setMessages((prev) => [
@@ -489,8 +497,16 @@ export function CopilotProvider({
   );
 
   const proposals = useMemo(
-    () => dockProposals(messages, dropped, applies, deploys, facts.stage),
-    [applies, deploys, dropped, facts.stage, messages],
+    () =>
+      dockProposals(
+        messages,
+        dropped,
+        completed,
+        applies,
+        deploys,
+        facts.stage,
+      ),
+    [applies, completed, deploys, dropped, facts.stage, messages],
   );
   const proposal = useMemo(
     () => openProposal(messages, proposals, scope),
@@ -555,7 +571,7 @@ export function CopilotProvider({
       const startedAt = Date.now();
       const record = (apply: DockApply): void =>
         setApplies((prev) => ({ ...prev, [messageId]: apply }));
-      record({ phase: "applying", sha: landed, startedAt: startedAt });
+      record({ phase: "applying", startedAt: startedAt });
 
       void (async (): Promise<DockApply> => {
         // A retry skips the steps an earlier press already ran.

@@ -189,7 +189,7 @@ function Surfaces(): React.JSX.Element {
     }
   };
 
-  const proposals = dockProposals(messages, dropped, applies, []);
+  const proposals = dockProposals(messages, dropped, completed, applies, []);
   // Rebuilt every render on purpose: a fixture gains nothing from a stable identity.
   const copilot: CopilotState = {
     applyProposal: (messageId) => {
