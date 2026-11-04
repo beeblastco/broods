@@ -3,6 +3,7 @@ import type {
   AgentConfig,
   AgentProviderSettings,
 } from "../../shared/domain/agent-config.ts";
+import { logWarn } from "../../shared/log.ts";
 
 // Claude models without effort, per the AI SDK Anthropic model table; every later model has it.
 const CLAUDE_WITHOUT_EFFORT =
@@ -23,12 +24,16 @@ interface AnthropicHarnessReasoning {
 export function anthropicHarnessReasoning(
   agentConfig: AgentConfig,
 ): AnthropicHarnessReasoning {
-  if (CLAUDE_WITHOUT_EFFORT.test(agentConfig.model?.modelId ?? "")) return {};
   const reasoning = agentConfig.model?.reasoning;
-  const effort = reasoning === "none" ? "low" : harnessEffort(reasoning);
-  if (!effort) return {};
+  const level = reasoning === "none" ? "low" : harnessEffort(reasoning);
+  const effort = CLAUDE_WITHOUT_EFFORT.test(agentConfig.model?.modelId ?? "")
+    ? undefined
+    : level === "xhigh"
+      ? "high"
+      : level;
+  warnReasoningChanged(agentConfig, effort);
 
-  return { effort: effort === "xhigh" ? "high" : effort };
+  return effort ? { effort: effort } : {};
 }
 
 // The effort levels Claude Code, Deep Agents and Codex share; `minimal` is below their lowest.
@@ -136,4 +141,28 @@ export function resolveOpenAiAuthEnv(
       : {}),
     ...(provider.project ? { OPENAI_PROJECT: provider.project } : {}),
   };
+}
+
+// Tells the account's logs when the harness runs a different level than `model.reasoning` asks.
+export function warnReasoningChanged(
+  agentConfig: AgentConfig,
+  sent: string | undefined,
+): void {
+  const configured = agentConfig.model?.reasoning;
+  if (!configured || configured === "provider-default" || configured === sent) {
+    return;
+  }
+  const runsAs = sent ? `"${sent}"` : "the model's default";
+  logWarn(
+    `model.reasoning "${configured}" runs as ${runsAs} on harness ` +
+      `${agentConfig.harness?.type} with model ${agentConfig.model?.modelId}, ` +
+      `the nearest level it takes`,
+    {
+      eventType: "harness.reasoning_changed",
+      configured: configured,
+      harness: agentConfig.harness?.type,
+      modelId: agentConfig.model?.modelId,
+      sent: sent ?? null,
+    },
+  );
 }
