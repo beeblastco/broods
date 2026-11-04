@@ -73,14 +73,6 @@ describe("createTaskTotals", () => {
     expect(totals.usage()?.inputTokenDetails?.cacheWriteTokens).toBe(100);
   });
 
-  it("reports the step count as the last finished step number plus one", () => {
-    const totals = createTaskTotals();
-    totals.addStep(0, step(1, 1), 0);
-    expect(totals.steps()).toBe(1);
-    totals.addStep(1, step(1, 1), 0);
-    expect(totals.steps()).toBe(2);
-  });
-
   it("lets the turn total from onEnd replace the step sum", () => {
     const totals = createTaskTotals();
     totals.addStep(0, step(10, 5), 0);

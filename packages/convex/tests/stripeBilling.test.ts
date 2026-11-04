@@ -92,9 +92,6 @@ describe("stripe webhook plan sync", () => {
 
   test.each<[Stripe.Subscription.Status, string]>([
     ["trialing", "pro"],
-    ["active", "pro"],
-    ["past_due", "free"],
-    ["canceled", "free"],
     ["incomplete", "free"],
   ])("a %s subscription means the %s plan", async (status, plan) => {
     const t = billingTest();

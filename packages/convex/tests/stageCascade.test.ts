@@ -236,21 +236,15 @@ describe("deleteStageContents", () => {
     vi.useRealTimers();
   });
 
-  test("seeds one row in every stage-scoped table", async () => {
+  test("leaves no row carrying the deleted stage id", async () => {
     const t = cascadeTest();
     const { stageId } = await seedFullStage(t);
-
     for (const table of STAGE_SCOPED_TABLES) {
       expect(
         (await rowsForStage(t, table, stageId)).length,
         `${table} should be seeded`,
       ).toBe(1);
     }
-  });
-
-  test("leaves no row carrying the deleted stage id", async () => {
-    const t = cascadeTest();
-    const { stageId } = await seedFullStage(t);
 
     await t.run(async (ctx) => {
       const stage = await ctx.db.get(stageId);
