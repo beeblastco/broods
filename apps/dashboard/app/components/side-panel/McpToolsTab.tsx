@@ -8,15 +8,11 @@ import { toErrorMessage } from "@/app/lib/errors";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { ChevronRight, Play, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
-interface RemoteTool {
-  name: string;
-  description?: string;
-  inputSchema?: unknown;
-  outputSchema?: unknown;
-}
+type RemoteTool = FunctionReturnType<typeof api.mcp.listTools>[number];
 
 interface RunResult {
   isError: boolean;
@@ -47,7 +43,7 @@ export function McpToolsTab({
     let cancelled = false;
     listTools({ projectId: projectId, stageId: stageId, nodeId: nodeId })
       .then((listing) => {
-        if (!cancelled) setTools(listing as RemoteTool[]);
+        if (!cancelled) setTools(listing);
       })
       .catch((error: unknown) => {
         if (!cancelled) setListError(toErrorMessage(error));
@@ -180,7 +176,7 @@ function ToolRow({
         <div className="flex flex-col gap-2 border-t border-border/70 p-3">
           <SectionHeader>Input Schema</SectionHeader>
           <pre className="max-h-40 overflow-auto rounded-md border border-border bg-muted/40 p-2 font-mono text-2xs text-foreground">
-            {JSON.stringify(tool.inputSchema ?? {}, null, 2)}
+            {JSON.stringify(JSON.parse(tool.inputSchema), null, 2)}
           </pre>
 
           <SectionHeader>Try it (JSON arguments)</SectionHeader>

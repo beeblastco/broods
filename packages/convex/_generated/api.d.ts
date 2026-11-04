@@ -1557,7 +1557,7 @@ export declare const api: {
       "action",
       "public",
       { nodeId: string; projectId: Id<"projects">; stageId: Id<"stages"> },
-      Array<any>
+      Array<{ description?: string; inputSchema: string; name: string }>
     >;
     removeForNode: FunctionReference<
       "action",
@@ -1581,7 +1581,15 @@ export declare const api: {
         stageId: Id<"stages">;
         url?: string;
       },
-      { serverId: Id<"mcp">; tools: Array<any>; verified: boolean }
+      {
+        serverId: Id<"mcp">;
+        tools: Array<{
+          description?: string;
+          inputSchema: string;
+          name: string;
+        }>;
+        verified: boolean;
+      }
     >;
   };
   org: {

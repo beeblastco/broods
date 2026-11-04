@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -24,11 +24,26 @@ import { getOwnedStage, getProjectStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 import { serviceEnv, serviceHeaders } from "./model/serviceBridge";
 
+// Convex rejects `$` field names like JSON Schema's `$schema`, so schemas travel as JSON text.
+const mcpTool = v.object({
+  name: v.string(),
+  description: v.optional(v.string()),
+  inputSchema: v.string(),
+});
+
 const scopeArgs = {
   projectId: v.id("projects"),
   stageId: v.id("stages"),
   nodeId: v.string(),
 };
+
+type McpTool = Infer<typeof mcpTool>;
+
+interface ListedTool {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+}
 
 interface NodeContext {
   accountId: Id<"accounts">;
@@ -184,8 +199,8 @@ export const listByStage = query({
 
 export const listTools = action({
   args: scopeArgs,
-  returns: v.array(v.any()),
-  handler: async (ctx, args): Promise<unknown[]> => {
+  returns: v.array(mcpTool),
+  handler: async (ctx, args): Promise<McpTool[]> => {
     const server = await requireServer(ctx, args);
 
     return await coreMcpListTools(server.accountId, { serverId: server._id });
@@ -277,12 +292,12 @@ export const saveForNode = action({
   returns: v.object({
     serverId: v.id("mcp"),
     verified: v.boolean(),
-    tools: v.array(v.any()),
+    tools: v.array(mcpTool),
   }),
   handler: async (
     ctx,
     args,
-  ): Promise<{ serverId: Id<"mcp">; verified: boolean; tools: unknown[] }> => {
+  ): Promise<{ serverId: Id<"mcp">; verified: boolean; tools: McpTool[] }> => {
     const context: NodeContext = await ctx.runQuery(internal.mcp.nodeContext, {
       projectId: args.projectId,
       stageId: args.stageId,
@@ -347,13 +362,20 @@ async function activeServerByNode(
 async function coreMcpListTools(
   accountId: string,
   target: { serverId?: string; probe?: Record<string, unknown> },
-): Promise<unknown[]> {
+): Promise<McpTool[]> {
   const response = await coreMcpRpc(accountId, {
     ...target,
     method: "tools/list",
   });
+  const tools = (response as { tools?: ListedTool[] }).tools ?? [];
 
-  return Array.isArray(response.tools) ? response.tools : [];
+  return tools.map((tool) =>
+    stripUndefined({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: JSON.stringify(tool.inputSchema ?? {}),
+    }),
+  );
 }
 
 async function coreMcpRpc(
@@ -405,7 +427,7 @@ async function probeServer(
   accountId: Id<"accounts">,
   name: string,
   connection: ResolvedConnection,
-): Promise<{ verified: boolean; tools: unknown[] }> {
+): Promise<{ verified: boolean; tools: McpTool[] }> {
   const probeable = !Object.values(connection.headers ?? {}).some((value) =>
     ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(value),
   );
