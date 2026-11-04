@@ -559,13 +559,17 @@ export function CopilotProvider({
       record({ phase: "applying", sha: landed, startedAt: startedAt });
 
       void (async (): Promise<DockApply> => {
-        for (const { action } of target.changes) {
+        // A retry skips the steps an earlier press already ran.
+        for (const { action, index } of target.changes) {
+          const key = changeKey(messageId, index);
           if (action.type === "commitFiles") {
             return await commitProposal(messageId, action, landed, startedAt);
           }
+          if (completed.has(key)) continue;
           if (!(await perform(action))) {
             throw new Error(`${action.label} cannot run here.`);
           }
+          setCompleted((prev) => new Set(prev).add(key));
         }
 
         return { phase: "deployed", startedAt: startedAt };
@@ -580,7 +584,7 @@ export function CopilotProvider({
         )
         .finally(() => applying.current.delete(messageId));
     },
-    [commitProposal, messages, perform, proposals, scope],
+    [commitProposal, completed, messages, perform, proposals, scope],
   );
 
   const discardProposal = useCallback(
