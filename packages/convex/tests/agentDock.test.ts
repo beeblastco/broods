@@ -59,11 +59,26 @@ describe("agentDock.session", () => {
     const credential = opened?.credential ?? "";
 
     expect(credential.startsWith("bcli_")).toBe(true);
-    const resolved = await t.mutation(internal.cli.auth.resolveCliToken, {
-      tokenHash: await sha256Hex(credential),
+    const tokenHash = await sha256Hex(credential);
+    const login = await t.mutation(internal.cli.auth.resolveAccountLogin, {
+      tokenHash: tokenHash,
     });
-    expect(resolved?.accountId).toBe(accountId);
-    const row = await t.run(async (ctx) => ctx.db.get(resolved!.cliTokenId));
+    expect(login).toMatchObject({
+      account: { _id: accountId },
+      authId: AUTH_ID,
+      lentToAgent: true,
+    });
+    expect(
+      await t.mutation(internal.cli.auth.resolveCliToken, {
+        tokenHash: tokenHash,
+      }),
+    ).toBeNull();
+    const row = await t.run(async (ctx) =>
+      ctx.db
+        .query("cliTokens")
+        .withIndex("by_tokenHash", (q) => q.eq("tokenHash", tokenHash))
+        .unique(),
+    );
     expect(row?.expiresAt).toBe(session?.expiresAt);
     expect(
       await t.mutation(internal.cli.auth.pruneExpiredTokens, {

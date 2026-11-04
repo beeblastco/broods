@@ -122,7 +122,7 @@ const token = await signUserToken({
 
 - Every tool listing and call the run makes to one of your account's **hosted** MCP servers carries it as `X-Broods-User-Credential`. Remote URL servers, machine and sandbox servers never get it, and neither do bash, the model, logs or stored runs.
 - It lives only in memory for that request's run and the subagents it starts. A run resumed later (after an approval, a restart, or a turn that queued behind another) has none, so a tool must refuse when the header is missing.
-- At most 512 printable ASCII characters, no spaces. The token is signed, not encrypted: whoever holds it can read the credential, so hand the token only to that user, and keep the credential short-lived.
+- At most 512 printable ASCII characters, no spaces. It is encrypted inside the token under the signing secret, so the browser holding the token cannot read it. The token is still a bearer until it expires, so keep the credential short-lived.
 - The name is reserved: a configured header of that name, in any case, is dropped.
 
 The account key is shown once when your organization's API account is provisioned. Rotate it under Organization settings, API access; that takes `keys:write` for the organization, which admins hold and a role can be granted. The account key is the whole account API, so give organization-wide `keys:write` as you would admin. Rotation breaks everything holding the old one.

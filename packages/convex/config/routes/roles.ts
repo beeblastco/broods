@@ -1,6 +1,7 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
+import type { AccountLogin } from "../../cli/auth";
 import {
   ACCOUNT_KEY_PREFIX,
   CLI_TOKEN_PREFIX,
@@ -204,13 +205,16 @@ export async function resolveAccountCaller(
   const tokenHash = await sha256Hex(token);
 
   if (token.startsWith(CLI_TOKEN_PREFIX)) {
-    const resolved: { accountId: Id<"accounts"> } | null =
-      await ctx.runMutation(internal.cli.auth.resolveCliToken, {
-        tokenHash: tokenHash,
-      });
-    if (!resolved) return null;
+    const login: AccountLogin | null = await ctx.runMutation(
+      internal.cli.auth.resolveAccountLogin,
+      { tokenHash: tokenHash },
+    );
+    if (!login) return null;
 
-    return { accountId: resolved.accountId, actor: { kind: "cli" } };
+    return {
+      accountId: login.account._id,
+      actor: { kind: "cli", id: login.authId },
+    };
   }
 
   if (token.startsWith(RUNTIME_KEY_PREFIX)) {

@@ -2,6 +2,7 @@ import type { PaginationOptions, PaginationResult } from "convex/server";
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
+import type { AccountLogin } from "../../cli/auth";
 import { cipherFromKeys } from "../../model/accountKeys";
 import {
   ACCOUNT_KEY_PREFIX,
@@ -44,7 +45,7 @@ export type ConfigAuth =
       account: Doc<"accounts">;
       viaServiceToken?: boolean;
       // Set for a `bcli_` login: an owner or admin's own token, refused for key rotation.
-      cliTokenId?: Id<"cliTokens">;
+      cliLogin?: { authId: string; lentToAgent: boolean };
     }
   | { kind: "deployment" }
   | {
@@ -81,7 +82,8 @@ export function auditActorForAuth(auth: ConfigAuth): AuditActor {
       : { kind: "role", id: auth.role.roleId };
   }
   if (auth.viaServiceToken === true) return { kind: "service" };
-  if (auth.cliTokenId) return { kind: "cli", id: auth.cliTokenId };
+  // The user, not the token: expired tokens are pruned, the ledger keeps who acted.
+  if (auth.cliLogin) return { kind: "cli", id: auth.cliLogin.authId };
 
   return { kind: "apiAccountSecret", id: auth.account._id };
 }
@@ -250,6 +252,26 @@ export async function requireSelfAccount(
   }
 
   return auth;
+}
+
+// A login lent to the agent dies with its user token: nothing it mints may outlive it.
+export async function lentLoginRefusal(
+  ctx: ActionCtx,
+  req: Request,
+): Promise<Response | null> {
+  const token = bearerToken(req);
+  if (!token?.startsWith(CLI_TOKEN_PREFIX)) return null;
+  const login: AccountLogin | null = await ctx.runMutation(
+    internal.cli.auth.resolveAccountLogin,
+    { tokenHash: await sha256Hex(token) },
+  );
+
+  return login?.lentToAgent
+    ? jsonError(
+        403,
+        "A login lent to the agent cannot mint or manage credentials; use the dashboard or an account key",
+      )
+    : null;
 }
 
 /** A run token (`brt_`) is core's credential for one run: refused on its prefix alone. */
@@ -489,15 +511,17 @@ async function resolveCliLoginAuth(
   ctx: ActionCtx,
   tokenHash: string,
 ): Promise<ConfigAuth | null> {
-  const resolved = await ctx.runMutation(internal.cli.auth.resolveCliToken, {
-    tokenHash: tokenHash,
-  });
-  const account = resolved
-    ? await getAccountById(ctx, resolved.accountId)
-    : null;
+  const login: AccountLogin | null = await ctx.runMutation(
+    internal.cli.auth.resolveAccountLogin,
+    { tokenHash: tokenHash },
+  );
 
-  return resolved && account?.status === "active"
-    ? { kind: "account", account: account, cliTokenId: resolved.cliTokenId }
+  return login
+    ? {
+        kind: "account",
+        account: login.account,
+        cliLogin: { authId: login.authId, lentToAgent: login.lentToAgent },
+      }
     : null;
 }
 

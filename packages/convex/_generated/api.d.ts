@@ -5424,6 +5424,31 @@ export declare const internal: {
         { now?: number },
         { tokensDeleted: number }
       >;
+      resolveAccountLogin: FunctionReference<
+        "mutation",
+        "internal",
+        { tokenHash: string },
+        null | {
+          account: {
+            _creationTime: number;
+            _id: Id<"accounts">;
+            auditRetentionDays?: number;
+            createdAt: number;
+            description?: string;
+            orgId: string;
+            secretHash: string;
+            secretHint?: string;
+            secretRotatedAt?: number;
+            secretRotatedBy?: Id<"users">;
+            status: "active" | "disabled";
+            storageExternalId?: string;
+            updatedAt: number;
+            username: string;
+          };
+          authId: string;
+          lentToAgent: boolean;
+        }
+      >;
       resolveCliToken: FunctionReference<
         "mutation",
         "internal",

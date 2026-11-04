@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   openStageSessionTicket,
+  sealSignedTicket,
   sealStageSessionTicket,
 } from "../model/stageSessionTicket";
 import {
@@ -29,12 +30,44 @@ describe("user tokens", () => {
     const token = await sealUserToken(withCredential, SECRET, NOW);
 
     expect(await openUserToken(token, SECRET, NOW)).toEqual(withCredential);
+    const [payload = ""] = token.slice(USER_TOKEN_PREFIX.length).split(".");
+    expect(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))).not.toContain(
+      "bcli_",
+    );
     for (const credential of ["", "has space", "x".repeat(513), "caf\u00e9"]) {
       await expect(
         sealUserToken({ ...ALICE, credential: credential }, SECRET, NOW),
         credential,
       ).rejects.toThrow("Invalid user token");
     }
+  });
+
+  test("opens no credential it cannot decrypt, and ignores one in clear", async () => {
+    const signed = (payload: object): Promise<string> =>
+      sealSignedTicket(
+        USER_TOKEN_PREFIX,
+        "broods-user-token:",
+        payload,
+        SECRET,
+      );
+
+    expect(
+      await openUserToken(
+        await signed({
+          ...ALICE,
+          credentialSealed: "AAAAAAAAAAAAAAAAAAAAAAAA",
+        }),
+        SECRET,
+        NOW,
+      ),
+    ).toBeNull();
+    expect(
+      await openUserToken(
+        await signed({ ...ALICE, credential: "bcli_clear" }),
+        SECRET,
+        NOW,
+      ),
+    ).toEqual(ALICE);
   });
 
   test("refuses a token signed with another secret", async () => {

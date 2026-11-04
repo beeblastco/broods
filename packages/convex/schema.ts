@@ -263,6 +263,8 @@ export const cliTokensFields = {
   expiresAt: v.optional(v.number()),
   createdAt: v.number(),
   lastUsedAt: v.optional(v.number()),
+  // Minted by the dashboard dock for its agent: the account API only, never a credential route.
+  lentToAgent: v.optional(v.literal(true)),
 };
 
 export const cliExternalResourcesFields = {

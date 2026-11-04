@@ -17,7 +17,7 @@ export interface SignUserTokenInput {
   /**
    * The end user's own credential, forwarded to the agent's hosted MCP servers as
    * `X-Broods-User-Credential`; never shown to the model. At most 512 printable ASCII
-   * characters, no spaces. Readable by whoever holds the token: hand it only to that user.
+   * characters, no spaces. Encrypted inside the token under the signing secret.
    */
   credential?: string;
   /** Lifetime in ms. Defaults to 10 minutes, at most 60. */

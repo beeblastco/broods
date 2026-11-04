@@ -24,6 +24,10 @@ test("signUserToken signs a token core opens with the same secret", async () => 
     credential: "bcli_user",
   });
   expect(await openUserToken(token, "bsig_other")).toBeNull();
+  const payload = token.slice("buat_".length).split(".")[0] ?? "";
+  expect(Buffer.from(payload, "base64url").toString()).not.toContain(
+    "bcli_user",
+  );
 });
 
 test("signUserToken refuses without a secret, with the runtime key, or past an hour", async () => {

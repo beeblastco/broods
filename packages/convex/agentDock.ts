@@ -101,14 +101,14 @@ export const session = mutation({
     if (!agent) return null;
 
     const expiresAt = Date.now() + USER_TOKEN_MAX_TTL_MS;
-    // An owner or admin lends the agent a login that dies with the token; a member gets advice.
+    // Only an owner or admin holds the whole account, so only they lend the agent a login.
     const target = await cliLoginTarget(ctx, authUser.id);
     const credential =
       target instanceof ClientError
         ? undefined
         : await insertCliToken(
             ctx,
-            { authId: authUser.id, ...target },
+            { authId: authUser.id, ...target, lentToAgent: true },
             expiresAt,
           );
     const userToken = await sealUserToken(

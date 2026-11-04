@@ -43,6 +43,7 @@ import { handleSandboxConfigRoute } from "./routes/sandboxes";
 import {
   auditActorForAuth,
   jsonError,
+  lentLoginRefusal,
   requireAccount,
   runTokenRefusal,
 } from "./routes/shared";
@@ -90,7 +91,11 @@ async function handleConfigRequest(
   try {
     const pathname = new URL(req.url).pathname;
 
-    const refusal = runTokenRefusal(req);
+    const refusal =
+      runTokenRefusal(req) ??
+      (managesCredentials(req.method, pathname)
+        ? await lentLoginRefusal(ctx, req)
+        : null);
     if (refusal) return refusal;
 
     // Authenticates its own caller kinds, so it runs before the shared bearer funnel.
@@ -362,6 +367,20 @@ async function dispatchResourceRoute(
     case "audit":
       return await handleAuditRoute(ctx, req, accountId, actor, route.leaf);
   }
+}
+
+// Mints a credential, changes who holds one, or changes the audit trail. Reads stay open.
+function managesCredentials(method: string, pathname: string): boolean {
+  return (
+    method !== "GET" &&
+    (pathname === "/v1/roles" ||
+      pathname.startsWith("/v1/roles/") ||
+      pathname === "/v1/account/assume-role" ||
+      pathname.startsWith("/v1/account/connections/") ||
+      pathname === "/v1/account" ||
+      pathname.startsWith("/v1/audit/") ||
+      pathname.endsWith("/rotate-secret"))
+  );
 }
 
 function parseAgentRoute(pathname: string): ConfigRoute | null {

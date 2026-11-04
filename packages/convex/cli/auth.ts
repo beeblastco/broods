@@ -22,6 +22,7 @@ import {
   orgRoleMeets,
   userByAuthId,
 } from "../model/ownership/org";
+import { accountDoc } from "../model/accountDoc";
 import { ClientError } from "../model/clientError";
 import { assertCanCreateOrg } from "../model/orgBilling";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
@@ -35,6 +36,14 @@ const PRUNE_BATCH_SIZE = 100;
 // RFC 7636: 43..128 unreserved characters, base64url without padding.
 const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+const accountLoginValidator = v.object({
+  account: accountDoc,
+  authId: v.string(),
+  lentToAgent: v.boolean(),
+});
+
+export type AccountLogin = Infer<typeof accountLoginValidator>;
 
 const onboardingAccountValidator = v.object({
   id: v.id("accounts"),
@@ -130,7 +139,7 @@ export const createOnboardingOrg = internalMutation({
     ctx,
     args,
   ): Promise<Infer<typeof onboardingContextValidator> | null> => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, false);
     if (!resolved) return null;
     const { token } = resolved;
     const user = await userByAuthId(ctx, token.authId);
@@ -295,7 +304,7 @@ export const getOnboardingContext = internalMutation({
     ctx,
     args,
   ): Promise<Infer<typeof onboardingContextValidator> | null> => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, false);
     if (!resolved) return null;
 
     return await onboardingContext(
@@ -344,7 +353,12 @@ export async function cliLoginTarget(
 // Only the hash is stored: the plaintext returned here is the one copy.
 export async function insertCliToken(
   ctx: MutationCtx,
-  owner: { authId: string; orgId: Id<"orgs">; accountId: Id<"accounts"> },
+  owner: {
+    authId: string;
+    orgId: Id<"orgs">;
+    accountId: Id<"accounts">;
+    lentToAgent?: true;
+  },
   expiresAt: number,
 ): Promise<string> {
   const now = Date.now();
@@ -358,6 +372,7 @@ export async function insertCliToken(
     expiresAt: expiresAt,
     createdAt: now,
     lastUsedAt: now,
+    ...(owner.lentToAgent ? { lentToAgent: true as const } : {}),
   });
 
   return token;
@@ -389,6 +404,22 @@ export const pruneExpiredTokens = internalMutation({
   },
 });
 
+// The account API's view of a login, lent ones included: one round trip, account and all.
+export const resolveAccountLogin = internalMutation({
+  args: { tokenHash: v.string() },
+  returns: v.union(v.null(), accountLoginValidator),
+  handler: async (ctx, args): Promise<AccountLogin | null> => {
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, true);
+    if (!resolved) return null;
+
+    return {
+      account: resolved.account,
+      authId: resolved.token.authId,
+      lentToAgent: resolved.token.lentToAgent === true,
+    };
+  },
+});
+
 export const resolveCliToken = internalMutation({
   args: {
     tokenHash: v.string(),
@@ -404,7 +435,7 @@ export const resolveCliToken = internalMutation({
     }),
   ),
   handler: async (ctx, args) => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, false);
     if (!resolved) return null;
     const { token, account } = resolved;
 
@@ -428,7 +459,7 @@ export const selectOnboardingOrg = internalMutation({
     ctx,
     args,
   ): Promise<Infer<typeof onboardingContextValidator> | null> => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, false);
     if (!resolved) return null;
     const { token } = resolved;
     const user = await userByAuthId(ctx, token.authId);
@@ -545,9 +576,11 @@ async function onboardingContext(
   };
 }
 
+// A login lent to the agent is unknown to the CLI plane: it cannot mint keys or sessions there.
 async function resolveActiveCliToken(
   ctx: MutationCtx,
   tokenHash: string,
+  acceptsLent: boolean,
 ): Promise<{ token: Doc<"cliTokens">; account: Doc<"accounts"> } | null> {
   const token = await ctx.db
     .query("cliTokens")
@@ -557,7 +590,8 @@ async function resolveActiveCliToken(
   if (
     !token ||
     token.status !== "active" ||
-    (token.expiresAt !== undefined && token.expiresAt < now)
+    (token.expiresAt !== undefined && token.expiresAt < now) ||
+    (token.lentToAgent === true && !acceptsLent)
   ) {
     return null;
   }

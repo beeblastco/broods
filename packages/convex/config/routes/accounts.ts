@@ -143,7 +143,7 @@ async function handleSelfAccountRoute(
   // Rotating the master secret would be privilege escalation: no role policy can grant it.
   if (
     route.kind === "selfRotate" &&
-    (accountAuth.kind === "role" || accountAuth.cliTokenId !== undefined)
+    (accountAuth.kind === "role" || accountAuth.cliLogin !== undefined)
   ) {
     return jsonError(
       403,

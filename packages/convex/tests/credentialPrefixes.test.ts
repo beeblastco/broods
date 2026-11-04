@@ -93,7 +93,7 @@ describe("a CLI login on the account API", () => {
     );
     expect(events.map((event) => event.actor)).toContainEqual({
       kind: "cli",
-      id: token?._id,
+      id: AUTH_ID,
     });
     const accountId = token?.accountId ?? "";
     for (const path of [
@@ -106,6 +106,95 @@ describe("a CLI login on the account API", () => {
       });
       expect(rotated.status, path).toBe(403);
     }
+  });
+
+  test("stops resolving once its user is only a member", async () => {
+    const t = prefixTest();
+    const cli = `bcli_${BODY}`;
+    await seed(t, {
+      accountKey: `bask_${BODY}`,
+      runtimeKey: `bsk_${BODY}`,
+      projectKey: `bpdk_${BODY}`,
+      cliToken: cli,
+    });
+    await t.run(async (ctx) => {
+      const membership = await ctx.db.query("orgMembers").first();
+      if (membership) await ctx.db.patch(membership._id, { role: "member" });
+    });
+
+    expect((await get(t, "/v1/agents", cli)).status).toBe(401);
+    expect((await assumeRole(t, cli)).status).toBe(401);
+  });
+
+  test("lent to the agent, it reads but never mints or manages a credential", async () => {
+    const t = prefixTest();
+    const cli = `bcli_${BODY}`;
+    const lent = `bcli_lent${BODY}`;
+    await seed(t, {
+      accountKey: `bask_${BODY}`,
+      runtimeKey: `bsk_${BODY}`,
+      projectKey: `bpdk_${BODY}`,
+      cliToken: cli,
+    });
+    await t.run(async (ctx) => {
+      const token = await ctx.db.query("cliTokens").first();
+      if (!token) return;
+      await ctx.db.insert("cliTokens", {
+        tokenHash: await sha256Hex(lent),
+        authId: token.authId,
+        orgId: token.orgId,
+        accountId: token.accountId,
+        status: "active",
+        createdAt: Date.now(),
+        lentToAgent: true,
+      });
+    });
+
+    for (const path of [
+      "/v1/agents",
+      "/v1/roles",
+      "/v1/account",
+      "/v1/account/connections",
+    ]) {
+      expect((await get(t, path, lent)).status, path).toBe(200);
+    }
+    for (const [method, path] of [
+      ["POST", "/v1/roles"],
+      ["PATCH", "/v1/roles/brole_missing"],
+      ["DELETE", "/v1/roles/brole_missing"],
+      ["POST", "/v1/account/assume-role"],
+      ["PUT", "/v1/account/connections/chatgpt"],
+      ["POST", "/v1/account/connections/chatgpt/start"],
+      ["DELETE", "/v1/account/connections/chatgpt"],
+      ["POST", "/v1/account/rotate-secret"],
+      ["PATCH", "/v1/account"],
+      ["PUT", "/v1/audit/sink"],
+    ] as const) {
+      const response = await t.fetch(path, {
+        method: method,
+        headers: { Authorization: `Bearer ${lent}` },
+        body: "{}",
+      });
+      expect(response.status, `${method} ${path}`).toBe(403);
+      expect(await response.text(), `${method} ${path}`).toContain(
+        "lent to the agent",
+      );
+    }
+    // The CLI plane does not know a lent login: no stage session, runtime key or signing secret.
+    expect((await get(t, ENV_PATH, lent)).status).toBe(401);
+    const session = await t.fetch("/v1/account/stage-session", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${lent}` },
+      body: JSON.stringify({ project: "demo-app", stage: "development" }),
+    });
+    expect(session.status).toBe(401);
+    // The user's own `broods login` keeps every route.
+    expect((await assumeRole(t, cli)).status).toBe(404);
+    const removed = await t.fetch("/v1/roles/brole_missing", {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${cli}` },
+    });
+    expect(removed.status).toBe(404);
   });
 });
 
