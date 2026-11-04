@@ -706,6 +706,8 @@ export const githubDeploysFields = {
   status: v.string(),
   /** Set once `status` is `completed`: `success`, `failure`, `cancelled`, ... */
   conclusion: v.optional(v.string()),
+  /** A failed run's last logged error line, else the step that failed. */
+  error: v.optional(v.string()),
   url: v.string(),
   updatedAt: v.number(),
 };
