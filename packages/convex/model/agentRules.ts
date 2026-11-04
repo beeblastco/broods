@@ -63,10 +63,12 @@ const AI_GATEWAY_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const DEPRECATED_TOOL_ID_PREFIX = "tool_";
 
 const RESERVED_HARNESS_TOOL_NAMES = new Set([
+  "ask_questions",
   "async_status",
   "bash",
   "browse",
   "cancel_schedule",
+  "computer",
   "edit",
   "glob",
   "grep",
@@ -733,16 +735,32 @@ const CHANNELS = z.looseObject({
   whatsapp: z.nullish(WHATSAPP),
 });
 
-const TOOLS = z.record(
-  z
-    .string()
-    .check(z.refine(isProviderToolName, { error: "is not a supported tool" })),
-  z.looseObject({
-    enabled: optionalBoolean,
-    needsApproval: optionalBoolean,
-    config: z.optional(z.record(z.string(), z.unknown())),
-  }),
-);
+// A Broods tool name keys only a provider tool, which core then runs as that Broods tool.
+const TOOLS = z
+  .record(
+    z
+      .string()
+      .check(
+        z.refine(isProviderToolName, { error: "is not a supported tool" }),
+      ),
+    z.looseObject({
+      enabled: optionalBoolean,
+      needsApproval: optionalBoolean,
+      config: z.optional(z.record(z.string(), z.unknown())),
+    }),
+  )
+  .check(
+    z.superRefine((tools, ctx): void => {
+      for (const [name, entry] of Object.entries(tools)) {
+        if (isHarnessToolName(name) && entry.type !== "provider")
+          ctx.addIssue({
+            code: "custom",
+            path: [name],
+            message: harnessToolNameProblem(name),
+          });
+      }
+    }),
+  );
 
 /** Keyed by MCP server row id. */
 const MCP = refusingProtoKey(
@@ -994,12 +1012,19 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
   return new URL(value);
 }
 
+export function harnessToolNameProblem(toolName: string): string {
+  return `is a Broods tool name; only a provider tool that runs as ${toolName} may use it`;
+}
+
+export function isHarnessToolName(toolName: string): boolean {
+  return RESERVED_HARNESS_TOOL_NAMES.has(toolName);
+}
+
 // Shape only: core resolves at run time whether the provider ships the tool.
 export function isProviderToolName(toolName: string): boolean {
   return (
     PROVIDER_TOOL_NAME_PATTERN.test(toolName) &&
-    !toolName.startsWith(DEPRECATED_TOOL_ID_PREFIX) &&
-    !RESERVED_HARNESS_TOOL_NAMES.has(toolName)
+    !toolName.startsWith(DEPRECATED_TOOL_ID_PREFIX)
   );
 }
 

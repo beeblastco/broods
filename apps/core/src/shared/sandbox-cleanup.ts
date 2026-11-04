@@ -13,6 +13,7 @@ import type {
   ReservedSandbox,
   SandboxReleaseTarget,
 } from "../harness/sandbox/types.ts";
+import { queueMirrorWrite } from "../harness/sandbox/utils.ts";
 import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
 import { toErrorMessage } from "./errors.ts";
 import type {
@@ -41,6 +42,7 @@ export async function releaseExpiredSandboxes(
   const configs = await sandboxConfigs(accountId);
 
   const released: ReservedSandbox[] = [];
+  let removed = Promise.resolve();
   for (const reservation of reservations) {
     const key = reservation.reservationKey;
     const taken = await deleteSandboxInstance(
@@ -77,8 +79,11 @@ export async function releaseExpiredSandboxes(
       continue;
     }
     released.push(reservation);
-    await removeSandboxInstance(accountId, key, reservation.externalId);
+    removed = queueMirrorWrite(accountId, reservation.externalId, () =>
+      removeSandboxInstance(accountId, key, reservation.externalId),
+    );
   }
+  await removed;
 
   return released;
 }
@@ -93,6 +98,7 @@ export async function releaseReservedSandboxes(
   const configs = await sandboxConfigs(accountId);
 
   let released = 0;
+  let removed = Promise.resolve();
   for (const namespace of namespaces) {
     for (const provider of RELEASABLE_PROVIDERS) {
       if (await releaseOnProvider(accountId, provider, configs, namespace)) {
@@ -102,8 +108,11 @@ export async function releaseReservedSandboxes(
         () => {},
       );
     }
-    await removeSandboxInstance(accountId, namespace);
+    removed = queueMirrorWrite(accountId, namespace, () =>
+      removeSandboxInstance(accountId, namespace),
+    );
   }
+  await removed;
 
   return released;
 }

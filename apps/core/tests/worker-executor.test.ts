@@ -84,7 +84,7 @@ beforeEach((): void => {
   metered.length = 0;
   convex.length = 0;
   resetHeldReservationsForTests();
-  spyOn(planLimits, "recordUsage").mockImplementation(
+  spyOn(planLimits, "recordUsageSoon").mockImplementation(
     (accountId, usage, source): void => {
       metered.push(
         `${accountId} ${JSON.stringify(usage)} ${source?.projectId ?? "-"} ${source?.agentId ?? "-"} ${source?.workspaceId ?? "-"}`,

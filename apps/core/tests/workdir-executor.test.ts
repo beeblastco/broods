@@ -148,7 +148,9 @@ const deleteSandboxInstanceMock = mock(
     storedSandboxExternalId = null;
   },
 );
-const upsertSandboxInstanceMock = mock(async () => {});
+const upsertSandboxInstanceMock = mock(
+  async (..._args: unknown[]): Promise<void> => {},
+);
 const removeSandboxInstanceMock = mock(
   async (
     _accountId: string,
@@ -1139,6 +1141,44 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
   });
 
+  it("queues a reconnected sandbox's row refresh on its account, off the run's clock", async (): Promise<void> => {
+    const { queueMirrorWrite } =
+      await import("../src/harness/sandbox/utils.ts");
+    const held = Promise.withResolvers<void>();
+    const pending = queueMirrorWrite(
+      "acct_q",
+      "sbx_other",
+      (): Promise<void> => held.promise,
+    );
+    storedSandboxExternalId = "sbx_stored";
+    const plane = { accountId: "acct_q", name: "box" };
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      options: { workdirUrl: BASE },
+      controlPlane: plane,
+    });
+
+    await executor.run({
+      code: "echo hi",
+      reservationKey: "tool:acct_q",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+    await executor.resumeHarnessReservation({
+      reservationKey: "harness:session-q",
+    });
+
+    expect(upsertSandboxInstanceMock).not.toHaveBeenCalled();
+    held.resolve();
+    await pending;
+    await tick();
+    expect(upsertSandboxInstanceMock.mock.calls).toEqual([
+      [plane, "sandbox", "tool:acct_q", "sbx_stored", undefined],
+      [plane, "sandbox", "harness:session-q", "sbx_stored", undefined],
+    ]);
+  });
+
   it("retires a reserved sandbox workdir reports as failed and creates a fresh one", async (): Promise<void> => {
     storedSandboxExternalId = "sbx_stored";
     reconnectState = "failed";
@@ -1439,10 +1479,13 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
     ).toBe(false);
   });
 
-  it("cleans up a newly claimed reservation when post-claim persistence fails", async () => {
-    upsertSandboxInstanceMock.mockImplementationOnce(async () => {
-      throw new Error("post-claim persistence failed");
-    });
+  it("cleans up a reservation whose claim committed but rejected", async () => {
+    claimSandboxInstanceMock.mockImplementationOnce(
+      async (_provider, _key, externalId): Promise<boolean> => {
+        storedSandboxExternalId = externalId;
+        throw new Error("claim response lost");
+      },
+    );
     const executor = await newExecutor({
       provider: "sandbox",
       persistent: true,
@@ -1453,7 +1496,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       executor.acquireHarnessReservation({
         reservationKey: "harness:session-1",
       }),
-    ).rejects.toThrow("post-claim persistence failed");
+    ).rejects.toThrow("claim response lost");
 
     expect(
       fetchCalls.some(
