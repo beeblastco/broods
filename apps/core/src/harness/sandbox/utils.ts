@@ -208,7 +208,7 @@ export function meterEphemeralSandbox(
     : controlPlane?.accountId;
   if (!accountId) return (): void => {};
   const specs = readSpecs?.();
-  void queueMirrorWrite(sandboxId, (): Promise<void> =>
+  void queueMirrorWrite(accountId, sandboxId, (): Promise<void> =>
     upsertSandboxInstance(
       controlPlane,
       provider,
@@ -221,7 +221,7 @@ export function meterEphemeralSandbox(
   if (specs instanceof Promise) {
     void specs.then((reported): void => {
       if (!reported) return;
-      void queueMirrorWrite(sandboxId, (): Promise<void> =>
+      void queueMirrorWrite(accountId, sandboxId, (): Promise<void> =>
         setSandboxInstanceSpecs(accountId, sandboxId, sandboxId, reported),
       );
     });
@@ -229,26 +229,27 @@ export function meterEphemeralSandbox(
 
   return (): void =>
     waitUntil(
-      queueMirrorWrite(sandboxId, (): Promise<void> =>
+      queueMirrorWrite(accountId, sandboxId, (): Promise<void> =>
         removeSandboxInstance(accountId, sandboxId, sandboxId),
       ),
     );
 }
 
-// Every row write for a sandbox goes here, so neither a burst nor a removal beats its upsert.
+// Every row write goes here, so neither a burst nor a removal beats its upsert. One queue per
+// account: each write also updates the account's usage row, and parallel writes there conflict.
 export function queueMirrorWrite(
+  accountId: string | undefined,
   sandboxId: string,
   write: () => Promise<unknown>,
 ): Promise<void> {
-  const queued = (mirrorWrites.get(sandboxId) ?? Promise.resolve())
-    .then(write)
-    .then(
-      () => {},
-      () => {},
-    );
-  mirrorWrites.set(sandboxId, queued);
+  const key = accountId ?? sandboxId;
+  const queued = (mirrorWrites.get(key) ?? Promise.resolve()).then(write).then(
+    () => {},
+    () => {},
+  );
+  mirrorWrites.set(key, queued);
   void queued.then(() => {
-    if (mirrorWrites.get(sandboxId) === queued) mirrorWrites.delete(sandboxId);
+    if (mirrorWrites.get(key) === queued) mirrorWrites.delete(key);
   });
 
   return queued;

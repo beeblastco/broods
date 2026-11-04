@@ -191,14 +191,17 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     id: string,
     metadata: SandboxRunRequest["metadata"],
   ): void {
-    void queueMirrorWrite(id, (): Promise<void> =>
-      upsertSandboxInstance(
-        this.#config.controlPlane,
-        "worker",
-        key,
-        id,
-        metadata,
-      ),
+    void queueMirrorWrite(
+      this.#config.controlPlane?.accountId,
+      id,
+      (): Promise<void> =>
+        upsertSandboxInstance(
+          this.#config.controlPlane,
+          "worker",
+          key,
+          id,
+          metadata,
+        ),
     );
   }
 }

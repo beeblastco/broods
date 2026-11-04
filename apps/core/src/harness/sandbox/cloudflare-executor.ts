@@ -219,15 +219,18 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     id: string,
     metadata: SandboxRunRequest["metadata"],
   ): void {
-    void queueMirrorWrite(id, (): Promise<void> =>
-      upsertSandboxInstance(
-        this.#config.controlPlane,
-        "cloudflare",
-        key,
-        id,
-        metadata,
-        { specs: configuredSandboxSpecs(this.#config) },
-      ),
+    void queueMirrorWrite(
+      this.#config.controlPlane?.accountId,
+      id,
+      (): Promise<void> =>
+        upsertSandboxInstance(
+          this.#config.controlPlane,
+          "cloudflare",
+          key,
+          id,
+          metadata,
+          { specs: configuredSandboxSpecs(this.#config) },
+        ),
     );
   }
 }

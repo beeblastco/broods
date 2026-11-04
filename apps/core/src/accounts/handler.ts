@@ -672,8 +672,15 @@ async function suspendOrResumeSandbox(
     context.provider,
     context.reservationKey,
   );
-  await queueMirrorWrite(externalId ?? context.reservationKey, () =>
-    setSandboxInstanceStatus(context.accountId, context.reservationKey, status),
+  await queueMirrorWrite(
+    context.accountId,
+    externalId ?? context.reservationKey,
+    () =>
+      setSandboxInstanceStatus(
+        context.accountId,
+        context.reservationKey,
+        status,
+      ),
   );
   await context.audit("ok", { status: status });
 
@@ -699,8 +706,10 @@ async function terminateSandbox(
     context.reservationKey,
     context.accountId,
   );
-  await queueMirrorWrite(externalId ?? context.reservationKey, () =>
-    removeSandboxInstance(context.accountId, context.reservationKey),
+  await queueMirrorWrite(
+    context.accountId,
+    externalId ?? context.reservationKey,
+    () => removeSandboxInstance(context.accountId, context.reservationKey),
   );
   await context.audit("ok", { status: "terminating" });
 
