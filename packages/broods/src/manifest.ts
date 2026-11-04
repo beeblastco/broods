@@ -1314,15 +1314,26 @@ function validateHarnessStringArray(
   }
 }
 
-// Sync keeps JSON only, so a needsApproval function would vanish and the tool run unasked.
-function assertApprovalIsBoolean(
+// Sync keeps JSON only: a needsApproval function would vanish and the tool run unasked, and a
+// tool with only an execute would arrive with nothing to run.
+function assertToolsSurviveSync(
   resource: Extract<AnyResource, { kind: "agent" }>,
 ): void {
   for (const [key, entry] of Object.entries(resource.config.tools ?? {})) {
-    if (typeof entry.needsApproval !== "function") continue;
-    throw new Error(
-      `Agent "${resource.name}" config.tools.${key}.needsApproval is a function; only true is kept on sync`,
-    );
+    if (typeof entry.needsApproval === "function") {
+      throw new Error(
+        `Agent "${resource.name}" config.tools.${key}.needsApproval is a function; only true is kept on sync`,
+      );
+    }
+    if (
+      "execute" in entry &&
+      typeof entry.execute === "function" &&
+      entry.type !== "provider"
+    ) {
+      throw new Error(
+        `Agent "${resource.name}" config.tools.${key} runs your own execute, which sync drops; put it behind an MCP server`,
+      );
+    }
   }
 }
 
@@ -1362,7 +1373,7 @@ function normalizeAgentConfig(
     );
   });
   assertSkillCap(resource);
-  assertApprovalIsBoolean(resource);
+  assertToolsSurviveSync(resource);
   const inlineHooks = normalizeInlineAgentHooks(resource.name, config.hooks);
   if (inlineHooks) {
     config.hooks = inlineHooks.agentHooksConfig;

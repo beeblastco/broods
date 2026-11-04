@@ -74,7 +74,7 @@ write_sql: {
 },
 ```
 
-Anthropic computer use and memory, and OpenAI computer use and tool search with `execution: "client"`, are refused: they need code Broods does not have. A machine sandbox gives the agent Broods' own `computer` tool. An `execute` you pass to a factory, or any other tool your code runs, does not survive sync. Put it behind an MCP server. `needsApproval` must be `true`: sync refuses a function, which would otherwise vanish and leave the tool unapproved.
+Anthropic computer use and memory, and OpenAI computer use and tool search with `execution: "client"`, are refused: they need code Broods does not have. A machine sandbox gives the agent Broods' own `computer` tool. A tool your own code runs (an AI SDK `tool({ execute })`) is refused at sync, and an `execute` you pass to a provider factory gives way to the sandbox. Put your code behind an MCP server. `needsApproval` must be `true`: sync refuses a function, which would otherwise vanish and leave the tool unapproved.
 
 ## MCP servers
 

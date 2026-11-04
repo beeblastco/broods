@@ -72,10 +72,10 @@
   "ProviderTools": {
     "apps/core/src/harness/tools/index.ts": {
       "registerProviderTools": "430663b352686362",
-      "withholdTools": "ebed38d5541ebef3"
+      "withholdTools": "6e67d8582c6cdb26"
     },
     "apps/core/src/harness/tools/sandbox-stand-in.ts": {
-      "customTool": "dce3ff6f911e0ca9"
+      "customTool": "604e2aa8ade9a18e"
     }
   },
   "StageTicket": {

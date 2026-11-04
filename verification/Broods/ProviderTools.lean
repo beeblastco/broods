@@ -9,6 +9,9 @@ it replaced that `denyTools` still allows.
 
 `customTool` (`tools/sandbox-stand-in.ts`) sends an OpenAI custom tool's text to its `command` in a
 quoted heredoc, ended by `BROODS_INPUT` plus as many `_` as it takes to match no line of the text.
+The command sits in a `{ … }` group, so the heredoc belongs to the group whatever the command ends
+with; bash grammar is not modelled. Before the group, `cat # note <<'M'` commented the heredoc out
+and ran the text as shell (a run, not a Lean `example`).
 -/
 
 namespace Broods.ProviderTools

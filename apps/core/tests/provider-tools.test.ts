@@ -196,6 +196,20 @@ describe("client-executed provider tools on the sandbox", () => {
     );
   });
 
+  it("forgets a withheld stand-in, so a given-back tool is judged as itself", async () => {
+    const standIns = new Map();
+    const tools = await build(
+      "anthropic",
+      anthropic,
+      { edit: descriptor(anthropic.tools.textEditor_20250728({})) },
+      standIns,
+      ["read"],
+    );
+
+    expect(tools.edit).toMatchObject({ description: "edit" });
+    expect(standIns.has("edit")).toBe(false);
+  });
+
   it("judges an apply_patch update as an edit", async () => {
     const standIns = new Map();
     await build(
@@ -337,14 +351,14 @@ describe("client-executed provider tools on the sandbox", () => {
         tool: "bash",
         input: {
           command:
-            "sqlite3 data.db <<'BROODS_INPUT'\nSELECT * FROM f WHERE p LIKE '../%'\nBROODS_INPUT",
+            "{ sqlite3 data.db\n} <<'BROODS_INPUT'\nSELECT * FROM f WHERE p LIKE '../%'\nBROODS_INPUT",
         },
       },
       {
         tool: "bash",
         input: {
           command:
-            "sqlite3 data.db <<'BROODS_INPUT_'\na\nBROODS_INPUT\nb\nBROODS_INPUT_",
+            "{ sqlite3 data.db\n} <<'BROODS_INPUT_'\na\nBROODS_INPUT\nb\nBROODS_INPUT_",
         },
       },
     ]);
@@ -450,6 +464,13 @@ describe("fileOperationScript", () => {
         diff: `+${"x".repeat(200_000)}\n`,
       });
       expect(readFileSync(join(dir, "big.txt"), "utf8").length).toBe(200_001);
+      writeFileSync(join(dir, "c.txt"), "\tkeep  \nold\n");
+      apply({
+        type: "update_file",
+        path: "c.txt",
+        diff: " keep\n-old\n+new\n",
+      });
+      expect(readFileSync(join(dir, "c.txt"), "utf8")).toBe("\tkeep  \nnew\n");
       writeFileSync(join(dir, "b.txt"), "one\ntwo\nthree\n");
       apply({ type: "insert", path: "b.txt", line: 0, text: "zero" });
       apply({ type: "insert", path: "b.txt", line: 2, text: "1.5\n" });

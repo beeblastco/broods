@@ -264,6 +264,25 @@ export const support = defineAgent({
   );
 });
 
+test("compileProject refuses a tool that only runs its own execute", async (): Promise<void> => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent } from "${RESOURCES_MODULE}";
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  tools: { lookup: { type: "function", inputSchema: {}, execute: async () => "x" } },
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" config.tools.lookup runs your own execute, which sync drops; put it behind an MCP server',
+  );
+});
+
 test("compileProject caps an agent at 32 distinct skills", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",

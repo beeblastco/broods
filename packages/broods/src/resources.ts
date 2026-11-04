@@ -679,7 +679,8 @@ export type ProviderConfigInput = Partial<
  * An AI SDK provider tool as its factory returns it, under any key; found by its `id`.
  * A tool the caller would run (bash, text editor, shell, apply patch) runs on the agent's sandbox.
  * `command` is the sandbox command an OpenAI custom tool's text goes to on stdin.
- * Only `needsApproval: true` survives sync; a function is refused.
+ * Only `needsApproval: true` survives sync. A function there, or a tool that is only your
+ * `execute`, is refused.
  */
 export type AgentToolInput =
   | NonNullable<AgentConfig["tools"]>[string]

@@ -159,6 +159,7 @@ async function callTool(
 }
 
 // The model's text goes to the command on stdin as a quoted heredoc, so bash never parses it.
+// The group keeps a command ending in `#`, `&` or a pipe from swallowing the heredoc.
 function customTool(context: StandInContext): SandboxStandIn<string> {
   const command = configString(context.command);
   if (!command) {
@@ -171,7 +172,7 @@ function customTool(context: StandInContext): SandboxStandIn<string> {
     let marker = "BROODS_INPUT";
     while (input.split("\n").includes(marker)) marker += "_";
 
-    return bashCall(`${command} <<'${marker}'\n${input}\n${marker}`);
+    return bashCall(`{ ${command}\n} <<'${marker}'\n${input}\n${marker}`);
   };
 
   return {

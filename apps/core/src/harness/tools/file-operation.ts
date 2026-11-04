@@ -33,15 +33,13 @@ function update(text, diff) {
   const chunks = [];
   let chunk;
   for (const line of diffLines(diff)) {
-    if (line.startsWith('@@')) { chunk = { anchor: line.slice(2).trim(), old: [], new: [] }; chunks.push(chunk); continue; }
-    if (!chunk) { chunk = { anchor: '', old: [], new: [] }; chunks.push(chunk); }
-    const body = line.slice(1);
-    if (line.startsWith('+')) chunk.new.push(body);
-    else if (line.startsWith('-')) chunk.old.push(body);
-    else { chunk.old.push(body); chunk.new.push(body); }
+    if (line.startsWith('@@')) { chunk = { anchor: line.slice(2).trim(), ops: [] }; chunks.push(chunk); continue; }
+    if (!chunk) { chunk = { anchor: '', ops: [] }; chunks.push(chunk); }
+    chunk.ops.push({ kind: line[0] === '+' || line[0] === '-' ? line[0] : ' ', text: line.slice(1) });
   }
   let cursor = 0;
-  for (const { anchor, old, new: added } of chunks) {
+  for (const { anchor, ops } of chunks) {
+    const old = ops.filter((o) => o.kind !== '+').map((o) => o.text);
     if (anchor) {
       const at = lines.findIndex((line, i) => i >= cursor && line.trim() === anchor);
       if (at < 0) fail('Error: context not found: ' + anchor);
@@ -50,6 +48,14 @@ function update(text, diff) {
     const end = lines.at(-1) === '' ? lines.length - 1 : lines.length;
     const at = old.length === 0 ? (anchor ? cursor : end) : find(lines, old, cursor);
     if (at < 0) fail('Error: patch does not match ' + op.path + ' near: ' + old.slice(0, 3).join(' / '));
+    // A context line keeps the file's own spelling: a fuzzy match may differ in whitespace.
+    const added = [];
+    let from = at;
+    for (const o of ops) {
+      if (o.kind === '+') added.push(o.text);
+      else if (o.kind === ' ') added.push(lines[from++]);
+      else from++;
+    }
     lines.splice(at, old.length, ...added);
     cursor = at + added.length;
   }
@@ -98,6 +104,6 @@ export function fileOperationScript(operation: FileOperation): string {
   if (path === ".") throw new Error("Error: path must reference a file");
   const payload = toBase64(JSON.stringify({ ...operation, path: path }));
 
-  // The payload rides stdin: one argv string is capped at 128 KiB.
+  // The payload rides stdin, not node's argv: one argv string is capped at 128 KiB.
   return `node -e "$(printf '%s' '${APPLY_SCRIPT_BASE64}' | base64 -d)" <<'BROODS_OP'\n${payload}\nBROODS_OP`;
 }

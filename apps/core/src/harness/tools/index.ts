@@ -576,7 +576,7 @@ function registerProviderTools(
 function withholdTools(
   tools: ToolSet,
   denyTools: string[] | undefined,
-  standIns: ReadonlyMap<string, SandboxStandIn>,
+  standIns: Map<string, SandboxStandIn>,
   sandboxTools: ToolSet,
 ): void {
   const denied = new Set(denyTools ?? []);
@@ -590,6 +590,7 @@ function withholdTools(
       continue;
     }
     delete tools[toolName];
+    standIns.delete(toolName);
     for (const name of standIn?.replaces ?? []) {
       const replaced = sandboxTools[name];
       if (replaced && !denied.has(name)) tools[name] = replaced;
