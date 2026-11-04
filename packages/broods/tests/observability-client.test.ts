@@ -1,5 +1,6 @@
 import { afterEach, expect, jest, setSystemTime, test } from "bun:test";
 import {
+  fetchObservabilitySpans,
   fetchObservabilityTrace,
   subscribeObservabilityLogs,
 } from "../src/observability-client.ts";
@@ -280,6 +281,45 @@ test("fetches one trace by id and closes its socket", async (): Promise<void> =>
 
   expect(await pending).toEqual([span]);
   expect(socket.readyState).toBe(3);
+});
+
+test("a backfill that fails partway keeps its rows and says why, with no live consumer", async (): Promise<void> => {
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const pending = fetchObservabilitySpans(traceOptions, 5);
+  await Bun.sleep(0);
+  const socket = FakeObservabilitySocket.instances[0]!;
+  expect(JSON.parse(socket.sent[0]!)).toMatchObject({
+    type: "subscribe",
+    stream: "traces",
+    historyOnly: true,
+  });
+  const span: ObservabilitySpanRow = {
+    traceId: TRACE_ID,
+    spanId: "00f067aa0ba902b7",
+    name: "task",
+    kind: "task",
+    startTimeMs: 1,
+    endTimeMs: 2,
+    durationMs: 1,
+    status: "ok",
+  };
+  socket.emit({
+    type: "backfill",
+    stream: "traces",
+    entries: [span],
+    more: true,
+  });
+  socket.emit({
+    type: "backfill",
+    stream: "traces",
+    entries: [],
+    error: "1 trace could not be loaded",
+  });
+
+  expect(await pending).toEqual({
+    rows: [span],
+    error: "1 trace could not be loaded",
+  });
 });
 
 test("rejects with the gateway's reason when the trace is not in the stage", async (): Promise<void> => {

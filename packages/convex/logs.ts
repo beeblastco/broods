@@ -1,8 +1,10 @@
 import { v, type Infer } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { query, type QueryCtx } from "./_generated/server";
+import { internalQuery, query, type QueryCtx } from "./_generated/server";
+import { activeDeployment } from "./agent/deployments";
 import { authKit } from "./auth";
 import { priceLookupIds } from "./model/modelPricing";
+import { resolveProjectStage } from "./model/projectScope";
 import { projectEndpointIds } from "./model/usageEndpoints";
 import { modelPricesFields } from "./schema";
 import { taskIdParts, type UsageGrain } from "./usage";
@@ -146,56 +148,85 @@ export const fetchUsageStats = query({
       throw new Error("User not found or not authenticated");
     }
 
-    const cfg = RANGE_CONFIG[range];
-    const nowMs = Date.now();
-    const startMs = nowMs - cfg.lookbackMs;
-
-    const endpointIds = await projectEndpointIds(
+    return await usageForEndpoints(
       ctx,
-      authUser.id,
-      projectId,
-      stageId,
+      await projectEndpointIds(ctx, authUser.id, projectId, stageId),
+      range,
     );
-    const base = {
-      range: range,
-      binSeconds: cfg.binSeconds,
-      startTimeMs: startMs,
-      endTimeMs: nowMs,
-    };
-    if (endpointIds.length === 0) {
-      return {
-        ...base,
-        buckets: [],
-        rates: [],
-        totals: {
-          inputTokens: 0,
-          outputTokens: 0,
-          reasoningTokens: 0,
-          cachedInputTokens: 0,
-          cacheWriteTokens: 0,
-          totalTokens: 0,
-          invocations: 0,
-          modelCalls: 0,
-          runtimeWallMs: 0,
-          agentSandboxCpuUsec: 0,
-          toolSandboxCpuUsec: 0,
-        },
-      };
-    }
-
-    const grain = usageGrainForBinSeconds(cfg.binSeconds);
-    const batches = await Promise.all(
-      endpointIds.map((endpointId) =>
-        collectUsageRollups(ctx, endpointId, grain, startMs),
-      ),
-    );
-
-    const { buckets, totals } = aggregateUsage(batches.flat(), cfg.binSeconds);
-    const rates = await modelRates(ctx, buckets);
-
-    return { ...base, buckets: buckets, rates: rates, totals: totals };
   },
 });
+
+/** `GET /v1/usage`: the route has already checked the caller against this account. */
+export const usageForAccountStage = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    project: v.string(),
+    stage: v.string(),
+    range: usageRange,
+  },
+  returns: v.union(usageStats, v.null()),
+  handler: async (ctx, { accountId, project, range, stage }) => {
+    const account = await ctx.db.get(accountId);
+    const scope = account
+      ? await resolveProjectStage(ctx, account, project, stage)
+      : null;
+    const deployment = scope
+      ? await activeDeployment(ctx, scope.projectDoc._id, scope.stageDoc._id)
+      : null;
+
+    return deployment
+      ? await usageForEndpoints(ctx, [deployment.endpointId], range)
+      : null;
+  },
+});
+
+async function usageForEndpoints(
+  ctx: QueryCtx,
+  endpointIds: string[],
+  range: Infer<typeof usageRange>,
+): Promise<Infer<typeof usageStats>> {
+  const cfg = RANGE_CONFIG[range];
+  const nowMs = Date.now();
+  const startMs = nowMs - cfg.lookbackMs;
+  const base = {
+    range: range,
+    binSeconds: cfg.binSeconds,
+    startTimeMs: startMs,
+    endTimeMs: nowMs,
+  };
+  if (endpointIds.length === 0) {
+    return {
+      ...base,
+      buckets: [],
+      rates: [],
+      totals: {
+        inputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        cachedInputTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 0,
+        invocations: 0,
+        modelCalls: 0,
+        runtimeWallMs: 0,
+        agentSandboxCpuUsec: 0,
+        toolSandboxCpuUsec: 0,
+      },
+    };
+  }
+
+  const grain = usageGrainForBinSeconds(cfg.binSeconds);
+  const batches = await Promise.all(
+    endpointIds.map((endpointId) =>
+      collectUsageRollups(ctx, endpointId, grain, startMs),
+    ),
+  );
+
+  const { buckets, totals } = aggregateUsage(batches.flat(), cfg.binSeconds);
+  const rates = await modelRates(ctx, buckets);
+
+  return { ...base, buckets: buckets, rates: rates, totals: totals };
+}
 
 // `taskUsage` is pruned after 90 days, so older bins list no tasks.
 export const fetchUsageTasks = query({

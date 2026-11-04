@@ -315,6 +315,7 @@ http.route({ pathPrefix: "/v1/crons/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "PATCH", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "DELETE", handler: configHttp });
 http.route({ path: "/v1/audit", method: "GET", handler: configHttp });
+http.route({ path: "/v1/usage", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/audit/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/audit/", method: "PUT", handler: configHttp });
 http.route({ pathPrefix: "/v1/audit/", method: "DELETE", handler: configHttp });

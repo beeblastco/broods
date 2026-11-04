@@ -1,4 +1,6 @@
 import type { BroodsSyncClient as SyncClient } from "../../../packages/broods/src/sync.ts";
+import { BroodsAccountClient } from "../../../packages/broods/src/account.ts";
+import { fetchObservabilityLogs } from "../../../packages/broods/src/observability-client.ts";
 import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
 import {
   toWebSocketBaseUrl,
@@ -70,6 +72,56 @@ export async function observabilityTicket(
     "a read-only ticket opens its stage's logs, no other stage's, and only when genuine",
     opened === "answered" && otherStage === "refused" && forged === "refused",
     JSON.stringify({ opened: opened, otherStage: otherStage, forged: forged }),
+  );
+
+  const account = new BroodsAccountClient({
+    baseUrl: context.edgeUrl,
+    accountSecret: context.accountSecret,
+  });
+  const audit = await account.readAudit({ limit: 3 });
+  const usage = await account.readUsage(
+    { project: projectSlug, stage: deployment?.stageSlug ?? "development" },
+    "1d",
+  );
+  const logsWithoutLogin = await account
+    .readLogs({
+      project: projectSlug,
+      stage: deployment?.stageSlug ?? "development",
+    })
+    .then(
+      (): string => "read",
+      (error: unknown): string => String(error),
+    );
+  assertStep(
+    "the account reads audit and usage, and logs still need a login",
+    audit.events.length > 0 &&
+      !JSON.stringify(audit).includes("prevHash") &&
+      usage?.totals !== undefined &&
+      logsWithoutLogin.includes("403"),
+    JSON.stringify({
+      events: audit.events.length,
+      usage: usage?.range,
+      logsWithoutLogin: logsWithoutLogin.slice(0, 120),
+    }),
+  );
+
+  const history = await fetchObservabilityLogs(
+    {
+      baseUrl: context.edgeUrl,
+      credential: async (): Promise<string> => ticket,
+      project: projectSlug,
+      stage: deployment?.stageSlug ?? "development",
+    },
+    { limit: 5 },
+  ).then(
+    (): string => "read",
+    (error: unknown): string => String(error),
+  );
+  // The stack has no NATS and no Loki: reaching Loki's error proves no live consumer was needed.
+  assertStep(
+    "a one-shot log read needs no live transport",
+    history.includes("Log history is not configured"),
+    history,
   );
 
   const status = async (path: string, method: string): Promise<number> => {

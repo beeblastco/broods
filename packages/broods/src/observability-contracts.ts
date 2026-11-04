@@ -51,6 +51,8 @@ export type ObservabilitySubscribeMessage = {
   backfill?: number;
   liveOnly?: boolean;
   minLevel?: LogLevel;
+  // Only the backfill: no live consumer, so a read of history needs no live transport.
+  historyOnly?: boolean;
   // "logs" only: the UUID ending the instance's `logStream`; these lines never reach NATS.
   sandboxId?: string;
 };
@@ -157,6 +159,11 @@ function isSubscribeMessage(msg: Record<string, unknown>): boolean {
   )
     return false;
   if (msg["liveOnly"] !== undefined && typeof msg["liveOnly"] !== "boolean")
+    return false;
+  if (
+    msg["historyOnly"] !== undefined &&
+    typeof msg["historyOnly"] !== "boolean"
+  )
     return false;
   const minLevel = msg["minLevel"];
   if (minLevel !== undefined && !isLogLevel(minLevel)) return false;

@@ -155,7 +155,7 @@ const GLOBAL_OPTIONS = `Global options:
 const COMMAND_GROUPS = `Commands
   Develop   dev  diff  run  logs  stream
   Ship      deploy  env  stage  github
-  Inspect   agent  trace  whoami
+  Inspect   agent  runs  trace  audit  usage  whoami
   Account   login  connect  disconnect  org  project
   Tools     init  machine  mcp  update`;
 
@@ -172,9 +172,11 @@ const STAGE_SCOPED_COMMANDS = new Set([
   "logs",
   "machine",
   "run",
+  "runs",
   "stage",
   "stream",
   "trace",
+  "usage",
 ]);
 
 const COMMAND_HELP: Record<string, string> = {
@@ -386,6 +388,38 @@ Options:
   --all                 Stream INFO and up (DEBUG is dashboard-only)
 
 ${GLOBAL_OPTIONS}`,
+  audit: `Usage: broods audit [--limit <n>] [--agent <id>] [--action <name>] [--json]
+
+Prints the account's audit events, newest first: runs, deploys and changes.
+
+Options:
+  --limit <n>           How many to print. Default 30
+  --agent <id>          Only this agent's events
+  --action <name>       Only this action, e.g. run.completed
+  --json                Print them as JSON
+
+${GLOBAL_OPTIONS}`,
+  runs: `Usage: broods runs [--limit <n>] [--agent <id>] [--status <status>] [--json]
+
+Prints the stage's recent runs, newest first, with the trace id \`broods trace\`
+takes. Authenticates with your \`broods login\`.
+
+Options:
+  --limit <n>           How many to print. Default 20
+  --agent <id>          Only this agent's runs
+  --status <status>     waiting, needs_input, ok or error
+  --json                Print them as JSON
+
+${GLOBAL_OPTIONS}`,
+  usage: `Usage: broods usage [--range <range>] [--json]
+
+Prints the stage's tokens, invocations, model calls, run time and sandbox CPU.
+
+Options:
+  --range <range>       1h, 3h, 1d, 7d, 30d or 1y. Default 7d
+  --json                Print it as JSON
+
+${GLOBAL_OPTIONS}`,
   trace: `Usage: broods trace <trace-id> [--json]
 
 Prints one run's trace: every model step and tool call with its status,
@@ -522,6 +556,18 @@ async function main(): Promise<void> {
       return;
     case "trace":
       await trace(args);
+
+      return;
+    case "audit":
+      await audit(args);
+
+      return;
+    case "runs":
+      await runs(args);
+
+      return;
+    case "usage":
+      await usage(args);
 
       return;
     case "machine":
@@ -2780,6 +2826,109 @@ async function logs(args: string[]): Promise<void> {
   }
 }
 
+async function accountClient(args: string[]): Promise<BroodsAccountClient> {
+  const runtime = loadBroodsRuntimeConfig();
+  const auth = await requireAuthOrLogin(
+    optionValue(args, "--dashboard-url") ??
+      runtime.dashboardUrl ??
+      DEFAULT_DASHBOARD_URL,
+    optionValue(args, "--base-url"),
+  );
+
+  return new BroodsAccountClient({
+    baseUrl: auth.baseUrl,
+    sessionToken: auth.token,
+  });
+}
+
+function limitOption(args: string[]): { limit?: number } {
+  const limit = Number(optionValue(args, "--limit"));
+
+  return Number.isInteger(limit) && limit > 0 ? { limit: limit } : {};
+}
+
+async function audit(args: string[]): Promise<void> {
+  const agent = optionValue(args, "--agent");
+  const action = optionValue(args, "--action");
+  const result = await (
+    await accountClient(args)
+  ).readAudit({
+    ...limitOption(args),
+    ...(agent ? { agentId: agent } : {}),
+    ...(action ? { action: action } : {}),
+  });
+  if (hasFlag(args, "--json")) {
+    console.log(JSON.stringify(result, null, 2));
+
+    return;
+  }
+  console.log(`${result.matched} matched, ${result.scanned}`);
+  for (const event of result.events)
+    console.log(
+      stripVTControlCharacters(
+        `${event.at} ${event.action} ${event.resource ?? ""} ${event.summary ?? ""}`.trimEnd(),
+      ),
+    );
+}
+
+async function runs(args: string[]): Promise<void> {
+  const configured = await resolveProjectStage(args);
+  const agent = optionValue(args, "--agent");
+  const status = optionValue(args, "--status");
+  const { incomplete, runs: found } = await (
+    await accountClient(args)
+  ).listRuns(configured, {
+    ...limitOption(args),
+    ...(agent ? { agentId: agent } : {}),
+    ...(status ? { status: status } : {}),
+  });
+  if (hasFlag(args, "--json")) {
+    console.log(
+      JSON.stringify({ runs: found, incomplete: incomplete }, null, 2),
+    );
+
+    return;
+  }
+  if (incomplete) printWarning(`Not every run could be read: ${incomplete}`);
+  for (const run of found)
+    console.log(
+      stripVTControlCharacters(
+        `${run.at} ${run.status.padEnd(11)} ${formatDuration(run.durationMs).padStart(8)} ${run.traceId} ${run.error ?? run.input ?? ""}`
+          .split("\n")[0]
+          ?.trimEnd() ?? "",
+      ),
+    );
+}
+
+async function usage(args: string[]): Promise<void> {
+  const configured = await resolveProjectStage(args);
+  const result = await (
+    await accountClient(args)
+  ).readUsage(configured, optionValue(args, "--range") ?? "7d");
+  if (!result)
+    throw new Error(
+      `No deployed stage ${configured.project}/${configured.stage}.`,
+    );
+  if (hasFlag(args, "--json")) {
+    console.log(JSON.stringify(result.totals, null, 2));
+
+    return;
+  }
+  const { totals } = result;
+  console.log(
+    `Usage for ${configured.project}/${configured.stage}, ${result.range}`,
+  );
+  console.log(`  invocations   ${totals.invocations}`);
+  console.log(`  model calls   ${totals.modelCalls}`);
+  console.log(
+    `  tokens        ${totals.totalTokens} (${totals.inputTokens} in, ${totals.outputTokens} out, ${totals.cachedInputTokens} cached)`,
+  );
+  console.log(`  run time      ${formatDuration(totals.runtimeWallMs)}`);
+  console.log(
+    `  sandbox CPU   ${formatDuration((totals.agentSandboxCpuUsec + totals.toolSandboxCpuUsec) / 1000)}`,
+  );
+}
+
 async function trace(args: string[]): Promise<void> {
   const [traceId] = positionalArgs(args);
   if (!isTraceId(traceId))
@@ -3316,6 +3465,12 @@ async function mcp(): Promise<void> {
       process.env.BROODS_MCP_ALLOW_DESTRUCTIVE === "1" &&
       isShellOwnedEnv("BROODS_MCP_ALLOW_DESTRUCTIVE"),
     cli: cli,
+    login: auth
+      ? new BroodsAccountClient({
+          baseUrl: auth.baseUrl,
+          sessionToken: auth.token,
+        })
+      : null,
     scope: { project: runtime.project, stage: runtime.stage },
   });
   serveBroodsMcp(server);

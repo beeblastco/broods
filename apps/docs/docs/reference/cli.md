@@ -327,6 +327,30 @@ broods trace <trace-id> [--json]
 
 The trace id is the 32-character id on the run in the dashboard Tracing tab. Its **Copy prompt for agent** button copies the ids plus this command, so a coding agent can read the run and fix or audit it. Traces are kept 30 days, so one older than the seven-day search window still opens by id until then.
 
+## runs
+
+Prints the stage's recent runs, newest first, with the trace id `broods trace` takes. Needs a `broods login` token and a deployed stage.
+
+```bash
+broods runs [--limit <n>] [--agent <id>] [--status <status>] [--json]
+```
+
+## audit
+
+Prints the account's audit events, newest first, without the hash chain. It reads the newest 500 and says so when older ones exist.
+
+```bash
+broods audit [--limit <n>] [--agent <id>] [--action <name>] [--json]
+```
+
+## usage
+
+Prints the stage's tokens, invocations, model calls and run time.
+
+```bash
+broods usage [--range <1h|3h|1d|7d|30d|1y>] [--json]
+```
+
 ## stream
 
 Live-tails logs for the whole project and stage until Ctrl+C. No backfill.
@@ -452,6 +476,7 @@ The server enforces these guards itself.
 
 - A delete needs `confirm: true` and takes one id.
 - There is no tool that reads env values.
+- `list-runs`, `read-trace` and `read-logs` need a `broods login`, and open a read-only ticket for that one stage. With a stored login they register even with no account credential in the environment. `read-audit` and `read-usage` use the account credential in the environment when there is one, so a role's policy still bounds them, and the stored login otherwise.
 - A stage-scoped resource refuses a call with no scope.
 - `rotate-secret` and `delete-project` stay unregistered unless `BROODS_MCP_ALLOW_DESTRUCTIVE=1` is exported in the shell that starts the server. A value in `.env` or `.env.local` is ignored, since the agent can write those files.
 
