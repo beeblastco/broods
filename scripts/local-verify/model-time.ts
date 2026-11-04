@@ -4,18 +4,25 @@ import { percentile } from "./percentile.ts";
 interface StepRecord {
   eventType: "model.step.finished";
   durationMs: number;
+  eventId: string;
   time: string;
   timing?: {
     "model.ttft_ms"?: number;
     "model.reasoning_stream_ms"?: number;
     "model.text_stream_ms"?: number;
   };
-  usage?: { outputTokens?: number | null; reasoningTokens?: number | null };
+  usage?: {
+    inputTokens?: number | null;
+    cachedInputTokens?: number | null;
+    outputTokens?: number | null;
+    reasoningTokens?: number | null;
+  };
 }
 
 interface InvocationRecord {
   eventType: "model.invocation.finished";
   durationMs: number;
+  eventId: string;
   time: string;
 }
 
@@ -55,7 +62,13 @@ export function modelTimeReport(
     (record): record is PreparedRecord =>
       record.eventType === "session.context.prepared",
   );
-  const modelMs = sum(steps.map((step) => step.durationMs));
+  // Subagent and compaction steps log no turn of their own: count only steps of a logged turn.
+  const turnIds = new Set(invocations.map((invocation) => invocation.eventId));
+  const modelMs = sum(
+    steps
+      .filter((step) => turnIds.has(step.eventId))
+      .map((step) => step.durationMs),
+  );
   const turnMs = sum(invocations.map((invocation) => invocation.durationMs));
   const rows: Row[] = [
     {
@@ -72,6 +85,14 @@ export function modelTimeReport(
       values: stepValues(steps, "model.text_stream_ms"),
     },
     { name: "model step", values: steps.map((step) => step.durationMs) },
+    {
+      name: "input tokens",
+      values: steps.map((step) => step.usage?.inputTokens ?? 0),
+    },
+    {
+      name: "cached input tokens",
+      values: steps.map((step) => step.usage?.cachedInputTokens ?? 0),
+    },
     {
       name: "reasoning tokens",
       values: steps.map((step) => step.usage?.reasoningTokens ?? 0),
