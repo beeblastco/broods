@@ -1,7 +1,7 @@
 name: Lean verification
 
-# Always reports the uniquely named required check. The models and their
-# TypeScript contract tests run together; neither replaces implementation review.
+# Always reports the uniquely named required check. The models, their pinned
+# statements and mirrored code, and the TypeScript contract tests run together.
 on:
   pull_request:
   push:
@@ -33,10 +33,6 @@ jobs:
         working-directory: apps/core
         run: bun run scripts/compaction-prompt.ts
 
-      - name: Check the TypeScript contracts
-        working-directory: .
-        run: bun run verification:test
-
       - name: Cache the Lean toolchain and build
         # elan with its Lean, and lake's build outputs. A source change saves
         # fresh outputs over the last ones; a manifest change keeps the
@@ -65,4 +61,16 @@ jobs:
       # Broods.lean fails the build when a proof rests on `sorry`,
       # `native_decide` or an axiom past the three standard ones.
       - name: Build and check every proof
-        run: lake build
+        run: lake build && lake build gateway-oracle
+
+      - name: Check theorem statements against statements.txt
+        run: lake env lean Statements.lean
+
+      - name: Check mirrored TypeScript against mirrors.json
+        working-directory: .
+        run: bun verification/drift.ts
+
+      # Includes the differential test that runs the Lean gateway model as an oracle.
+      - name: Check the TypeScript contracts
+        working-directory: .
+        run: bun run verification:test
