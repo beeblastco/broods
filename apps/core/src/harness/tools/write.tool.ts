@@ -1,3 +1,4 @@
+import { SHELL_ONLY_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
@@ -43,7 +44,9 @@ Usage notes:
           // Without `sync` the mount may not upload before the sandbox freezes: the write is lost.
           const code =
             `mkdir -p "$(dirname -- ${q})" && printf '%s' ${shellQuote(b64)} | base64 -d > ${q} && ` +
-            `sync ${q} && ` +
+            (SHELL_ONLY_SANDBOX_PROVIDERS.has(ws.sandbox.provider)
+              ? ""
+              : `sync ${q} && `) +
             `printf 'Wrote %s (%s bytes)\\n' ${q} "$(wc -c < ${q})"`;
           const result = await runSandbox(ws.sandbox, ws.namespace, code, {
             onSandboxCpu: context.onSandboxCpu,

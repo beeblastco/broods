@@ -13,8 +13,9 @@ export const agent = defineAgent({
     // `system` is appended to the prompt. Return only the addition.
     onStart: () => ({ system: "Never reveal internal IDs." }),
 
+    // `runsAs` catches provider tools that run as bash, like OpenAI `shell`.
     onToolCall: (ctx, event) =>
-      event.toolName === "bash"
+      (event.runsAs?.toolName ?? event.toolName) === "bash"
         ? { decision: "deny", denyReason: "shell disabled" }
         : { decision: "allow" },
 
@@ -40,6 +41,8 @@ Each hook gets `(ctx, event)` and returns only the fields it may change. A wrong
 | `onSubagentFinish`  | a subagent finishes              | `visibleResult` replaces what the parent sees                                      |
 | `onMessageReceived` | a chat message arrives           | `drop` discards it, `text` rewrites it, `metadata` is stored with the message      |
 | `onMessageSending`  | a chat reply is about to be sent | `drop` blocks it, `text` rewrites it                                               |
+
+`onToolCall` sees a provider tool under its own name and input. When it runs as a Broods tool (OpenAI `shell` or Anthropic bash as `bash`, a text editor as `read`, `write` or `edit`), `event.runsAs` holds that Broods call, the same one approval and policy judge. `args` edits the provider input, never `runsAs`.
 
 `onMessageReceived` narrows by `event.channel`, so `event.source` is typed per provider. A Pancake message carries `source.tagIds`, for example. It only sees text. An attachment reads as its caption or an empty string, and a `text` rewrite leaves the attachment on the message.
 

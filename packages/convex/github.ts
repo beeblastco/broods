@@ -194,6 +194,7 @@ interface WorkflowRunEvent {
     status: string;
     conclusion: string | null;
     html_url: string;
+    run_started_at?: string;
   };
 }
 
@@ -822,6 +823,15 @@ export const webhook = httpAction(async (ctx, request): Promise<Response> => {
         conclusion: run.conclusion ?? undefined,
         url: run.html_url,
       });
+      if (run.status === "completed")
+        await ctx.runMutation(internal.stageSources.verifyRun, {
+          repoId: payload.repository.id,
+          branch: run.head_branch,
+          sha: run.head_sha,
+          conclusion: run.conclusion ?? undefined,
+          url: run.html_url,
+          startedAt: Date.parse(run.run_started_at ?? "") || 0,
+        });
     }
   } else if (event === "installation") {
     const payload = JSON.parse(body) as InstallationEvent;

@@ -158,6 +158,21 @@ A second request on a conversation that is already running follows `mode`:
 
 A queued request answers `202` with a `statusUrl` instead of a second SSE stream. Steered output appears on the live run's stream. Each conversation queues up to 100 requests or 1 MiB; beyond that you get `429 ingress_capacity` with `Retry-After`. Queued requests expire after 15 minutes. See [Conversations](../guides/conversations.md).
 
+## A user's conversation files
+
+An agent with a workspace on a sandbox gives each user-token conversation its own folder. Your backend can seed it before the first message and read what the agent left there, with the runtime key and the user's token, on the agent's URL plus `/files`:
+
+```bash
+curl -X PUT "$AGENT_URL/files?agentId=$AGENT_ID&conversationKey=chat-1" \
+  -H "Authorization: Bearer $BROODS_API_KEY" -H "X-Broods-User-Token: $USER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"files":[{"path":"notes/todo.md","contentBase64":"LSBzaGlwCg=="}]}'
+curl "$AGENT_URL/files?agentId=$AGENT_ID&conversationKey=chat-1" \
+  -H "Authorization: Bearer $BROODS_API_KEY" -H "X-Broods-User-Token: $USER_TOKEN"
+```
+
+`PUT` replaces the whole folder; `GET` answers `{ files: [{ path, contentBase64 }] }`. `?workspace=<name>` picks a workspace other than the first. Without a user token it answers 403 `user_token_required`: the root folder is yours, not a visitor's.
+
 ## Errors
 
 ```json

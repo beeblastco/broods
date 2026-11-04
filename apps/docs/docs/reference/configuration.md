@@ -101,7 +101,8 @@ export const myAgent = defineAgent({
 | `reasoning`                                                                                                      | `provider-default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`                                                                          |
 | `providerOptions`                                                                                                | Provider-specific options. They win over `reasoning` when both set thinking. Refused with `config.harness`                                       |
 | `output`                                                                                                         | Structured output as `{ type: "object", schema }`, `array`, `choice`, `json` or `text`, with optional `name` and `description`                   |
-| `transcriptionModelId`                                                                                           | Speech-to-text model for inbound audio, on the same provider                                                                                     |
+| `transcriptionModelId`                                                                                           | Speech-to-text model for inbound audio, on `transcriptionProvider`                                                                               |
+| `transcriptionProvider`                                                                                          | Provider that reads inbound audio, keyed in `provider`. Defaults to `model.provider`                                                             |
 
 The provider-specific thinking keys are OpenAI `providerOptions.openai.reasoningEffort`, Anthropic `providerOptions.anthropic.thinking`, Google `providerOptions.google.thinkingConfig`, MiniMax `providerOptions.anthropic.thinking`. When a model does not support a level, the run logs a `model.step.warnings` event.
 

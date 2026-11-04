@@ -51,6 +51,29 @@ export function supportsS3WorkspaceMount(
   );
 }
 
+// The Worker keeps one R2 disk per sandbox id, so a persistent one is a disk per workspace folder.
+export const DISK_WORKSPACE_HINT =
+  'a "disk" workspace lives on its sandbox\'s own disk: give it a worker sandbox with persistent: true';
+
+/** Whether this sandbox can back a workspace on `storage` ("s3" mounts, "disk" is its own disk). */
+export function sandboxHoldsWorkspace(
+  storage: string | undefined,
+  sandbox: {
+    provider: string;
+    persistent?: unknown;
+    options?: Readonly<Record<string, unknown>> | undefined;
+  },
+): boolean {
+  if (storage === "disk")
+    return sandbox.provider === "worker" && sandbox.persistent === true;
+
+  return supportsS3WorkspaceMount(sandbox.provider, sandbox.options);
+}
+
+// just-bash: builtins only, so no `node` and no `sync`; the file tools compute in core there.
+export const SHELL_ONLY_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
+  new Set<SandboxProvider>(["worker"]);
+
 export const SUSPEND_SANDBOX_PROVIDERS: ReadonlySet<SandboxProvider> =
   new Set<SandboxProvider>(["sandbox", "lambda"]);
 

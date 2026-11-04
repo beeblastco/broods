@@ -32,8 +32,12 @@ export function workspaceGuidanceEnabled(
   return config?.harness?.workspace?.enabled !== false;
 }
 
+// Memory loads into each prompt from S3; a disk workspace has none to load it from.
 export function workspaceMemoryHarnessEnabled(
   config: WorkspaceConfig | undefined,
 ): boolean {
-  return config?.harness?.memory?.enabled !== false;
+  return (
+    config?.storage?.provider !== "disk" &&
+    config?.harness?.memory?.enabled !== false
+  );
 }

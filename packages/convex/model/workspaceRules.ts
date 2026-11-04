@@ -41,7 +41,7 @@ const R2_HOSTNAME_PATTERN =
   /^([a-f0-9]{32})(?:\.(?:eu|fedramp))?\.r2\.cloudflarestorage\.com$/;
 
 export const MAX_WORKSPACE_FILE_BYTES = 512 * 1024;
-export const WORKSPACE_STORAGE_PROVIDERS = ["s3"] as const;
+export const WORKSPACE_STORAGE_PROVIDERS = ["s3", "disk"] as const;
 
 const optionalString = z.optional(z.string());
 const HARNESS_FEATURE = z.optional(
@@ -399,6 +399,17 @@ function normalizeWorkspaceStorage(
 ): WorkspaceStorageConfig {
   if (value === undefined) {
     return { provider: "s3" };
+  }
+  if (value.provider === "disk") {
+    const extra = ["bucket", "region", "endpoint", "prefix", "auth"].find(
+      (key): boolean => value[key] !== undefined,
+    );
+    if (extra)
+      throw new ClientError(
+        `config.storage.${extra} does not apply to "disk": its files live on the sandbox's own disk`,
+      );
+
+    return { provider: "disk" };
   }
   const [bucket, region, endpoint, prefix] = [
     value.bucket,

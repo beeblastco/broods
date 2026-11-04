@@ -283,6 +283,10 @@ export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
 export async function resolveS3ReadTarget(
   ctx: S3MountContext,
 ): Promise<S3ReadTarget> {
+  if (ctx.storage?.provider === "disk")
+    throw new Error(
+      "A disk workspace has no bucket; its files live on its sandbox",
+    );
   const identity = resolveS3MountIdentity(ctx);
   if (!ctx.storage?.bucket) {
     return { bucket: identity.bucket, prefix: identity.prefix };
