@@ -76,6 +76,7 @@ def receive (s : State) : Option State :=
           out := s.out ++ settled, held := true, heldMidTurn := still, streaming := still }
       else some { t with out := s.out ++ settled ++ [c.plain], held := false, streaming := still }
 
+/-- The next read is an arrow's tail, the read `chunk[0] === 0x5b || chunk[0] === 0x4f` joins. -/
 def tailNext (s : State) : Bool :=
   match s.wire with
   | .arrowTail _ :: _ => true

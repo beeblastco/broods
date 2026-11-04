@@ -243,6 +243,147 @@ test("a sandbox's launch and running time land on its account's meter", async ()
   });
 });
 
+test("a running sandbox's per-command refreshes bill once a minute, to the same total", async () => {
+  vi.useFakeTimers({ now: NOW });
+  const t = meterTest();
+  const accountId = await seedAccount(t);
+  const refresh = (atSeconds: number) => {
+    vi.setSystemTime(NOW + atSeconds * 1000);
+
+    return t.mutation(internal.sandbox.instances.upsert, {
+      accountId: accountId,
+      provider: "cloudflare",
+      reservationKey: "cf-abc",
+      externalId: "cf-1",
+      name: "default",
+      specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+    });
+  };
+  const billed = () =>
+    t.run(async (ctx) => ({
+      meter: await ctx.db.query("usageMeters").unique(),
+      pools: await ctx.db.query("usagePools").collect(),
+      row: await ctx.db.query("sandboxInstances").unique(),
+    }));
+
+  await refresh(0);
+  const launched = await billed();
+  for (const atSeconds of [10, 20, 30, 59]) await refresh(atSeconds);
+  const refreshed = await billed();
+  expect(refreshed.meter).toEqual(launched.meter);
+  expect(refreshed.pools).toEqual(launched.pools);
+  expect(refreshed.row).toMatchObject({
+    lastUsedAt: NOW + 59_000,
+    meteredUntil: NOW,
+  });
+
+  await refresh(70);
+  expect((await billed()).meter).toMatchObject({ sandboxVcpuSeconds: 70 });
+  vi.setSystemTime(NOW + 100_000);
+  await t.mutation(internal.sandbox.instances.remove, {
+    accountId: accountId,
+    reservationKey: "cf-abc",
+  });
+  expect((await billed()).meter).toMatchObject({
+    sandboxVcpuSeconds: 100,
+    sandboxGbSeconds: 200,
+  });
+});
+
+test.each([
+  ["resumed after a suspend", {}, "suspend"],
+  ["was replaced by a new machine", { externalId: "cf-2" }, undefined],
+  ["switched to its own credentials", { ownCredentials: true }, undefined],
+  ["moved to a project", {}, "project"],
+] as const)(
+  "a refresh inside the minute still bills when the machine %s",
+  async (_case, change, step) => {
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    const sandbox = {
+      accountId: accountId,
+      provider: "cloudflare" as const,
+      reservationKey: "cf-abc",
+      externalId: "cf-1",
+      name: "default",
+      specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+    };
+    await t.mutation(internal.sandbox.instances.upsert, sandbox);
+    vi.setSystemTime(NOW + 10_000);
+    if (step === "suspend") {
+      await t.mutation(internal.sandbox.instances.setStatus, {
+        accountId: accountId,
+        reservationKey: "cf-abc",
+        status: "suspended",
+      });
+    }
+    const projectId =
+      step === "project"
+        ? await t.run(async (ctx) => {
+            const org = await ctx.db.query("orgs").unique();
+            if (!org) throw new Error("no org seeded");
+
+            return await ctx.db.insert("projects", {
+              authId: "auth_owner",
+              orgId: org._id,
+              name: "demo-app",
+              slug: "demo-app",
+              updatedAt: NOW,
+            });
+          })
+        : undefined;
+
+    vi.setSystemTime(NOW + 20_000);
+    await t.mutation(internal.sandbox.instances.upsert, {
+      ...sandbox,
+      ...change,
+      ...(projectId ? { projectId: projectId } : {}),
+    });
+
+    const billed = await t.run(async (ctx) => ({
+      meter: await ctx.db.query("usageMeters").unique(),
+      row: await ctx.db.query("sandboxInstances").unique(),
+    }));
+    expect(billed.row?.meteredUntil).toBe(NOW + 20_000);
+    // Billed on the terms it ran under: a suspended machine stopped running at 10 s.
+    expect(billed.meter).toMatchObject({
+      sandboxVcpuSeconds: step === "suspend" ? 10 : 20,
+    });
+  },
+);
+
+test("a refresh at a new size bills the time before it at the old size", async () => {
+  vi.useFakeTimers({ now: NOW });
+  const t = meterTest();
+  const accountId = await seedAccount(t);
+  const refresh = (atSeconds: number, vcpu: number) => {
+    vi.setSystemTime(NOW + atSeconds * 1000);
+
+    return t.mutation(internal.sandbox.instances.upsert, {
+      accountId: accountId,
+      provider: "cloudflare",
+      reservationKey: "cf-abc",
+      externalId: "cf-1",
+      name: "default",
+      specs: { vcpu: vcpu, memoryMb: 2048, storageGb: 8 },
+    });
+  };
+
+  await refresh(0, 1);
+  await refresh(20, 2);
+  vi.setSystemTime(NOW + 30_000);
+  await t.mutation(internal.sandbox.instances.remove, {
+    accountId: accountId,
+    reservationKey: "cf-abc",
+  });
+
+  const meter = await t.run(async (ctx) =>
+    ctx.db.query("usageMeters").unique(),
+  );
+  expect(meter).toMatchObject({ sandboxVcpuSeconds: 20 + 10 * 2 });
+});
+
 test("burst bills the growth of the guest's totals and nothing for a late report", () => {
   const billed = { vcpuSeconds: 10, gbSeconds: 40 };
 
