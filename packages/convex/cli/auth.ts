@@ -41,6 +41,8 @@ const accountLoginValidator = v.object({
   account: accountDoc,
   authId: v.string(),
   lentToAgent: v.boolean(),
+  /** Its conversation has read logs: what it read may try to steer it, so it may only read. */
+  observed: v.boolean(),
 });
 
 export type AccountLogin = Infer<typeof accountLoginValidator>;
@@ -361,6 +363,7 @@ export async function insertCliToken(
     orgId: Id<"orgs">;
     accountId: Id<"accounts">;
     lentToAgent?: true;
+    lentConversation?: string;
   },
   expiresAt: number,
 ): Promise<string> {
@@ -376,6 +379,9 @@ export async function insertCliToken(
     createdAt: now,
     lastUsedAt: now,
     ...(owner.lentToAgent ? { lentToAgent: true as const } : {}),
+    ...(owner.lentConversation
+      ? { lentConversation: owner.lentConversation }
+      : {}),
   });
 
   return token;
@@ -419,6 +425,7 @@ export const resolveAccountLogin = internalMutation({
       account: resolved.account,
       authId: resolved.token.authId,
       lentToAgent: resolved.token.lentToAgent === true,
+      observed: await conversationObserved(ctx, resolved.token),
     };
   },
 });
@@ -580,7 +587,7 @@ async function onboardingContext(
 }
 
 // A login lent to the agent is unknown to the CLI plane: it cannot mint keys or sessions there.
-async function resolveActiveCliToken(
+export async function resolveActiveCliToken(
   ctx: MutationCtx,
   tokenHash: string,
   acceptsLent: boolean,
@@ -617,6 +624,23 @@ async function resolveActiveCliToken(
   }
 
   return { token: token, account: account };
+}
+
+// By conversation, not token: a login re-minted mid-conversation inherits what the last one read.
+async function conversationObserved(
+  ctx: MutationCtx,
+  token: Doc<"cliTokens">,
+): Promise<boolean> {
+  const conversation = token.lentConversation;
+  if (token.lentToAgent !== true || conversation === undefined) return false;
+  const mark = await ctx.db
+    .query("observedConversations")
+    .withIndex("by_authId_and_conversationKey", (q) =>
+      q.eq("authId", token.authId).eq("conversationKey", conversation),
+    )
+    .first();
+
+  return mark !== null;
 }
 
 async function uniqueOrgSlug(

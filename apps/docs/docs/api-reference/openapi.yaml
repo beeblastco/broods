@@ -1421,6 +1421,54 @@ paths:
           description: Role disabled, or not scoped to the caller's stage
         "404": { description: Role not found }
 
+  /v1/account/observability-session:
+    post:
+      tags:
+        - Accounts
+      summary: Mint a read-only logs ticket
+      description: >-
+        Exchange a CLI login token (`bcli_...`) for a ticket (`bdob_...`) that
+        opens one stage's observability WebSocket and nothing else. It lasts
+        five minutes at most and never outlives the login. A login lent to the
+        agent must belong to a conversation, and its conversation can no longer
+        write once this is called.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project, stage]
+              properties:
+                project:
+                  type: string
+                  description: Project name or slug
+                stage:
+                  type: string
+                  description: Stage name, e.g. `development`
+      responses:
+        "200":
+          description: Ticket minted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  expiresAt:
+                    type: integer
+                    description: Expiry in epoch milliseconds
+                  projectSlug:
+                    type: string
+                  stageSlug:
+                    type: string
+        "400":
+          description: The body is missing a project or stage
+        "403":
+          description: This login cannot read that stage's logs
   /v1/account/stage-session:
     post:
       tags:
@@ -4705,6 +4753,7 @@ components:
                 | `run_token_scope` | 403 | A run token called something other than reading its own agent's runs. |
                 | `sandbox_instance_reserved` | 409 | The sandbox still has a reserved instance that could not be terminated. |
                 | `scope_mismatch` | 403 | The WebSocket credential is scoped to a different project, stage or endpoint. |
+                | `read_only_after_logs` | 403 | This dock conversation read logs, so its login may only read. Propose the change. Reloading the page starts a new conversation. |
                 | `service_unavailable` | 503 | Default for a 503: the service is overloaded or starting. Retry. |
                 | `slack_error` | 502 | Slack returned another error or did not answer in time (channel directory). |
                 | `status_access_denied` | 403 | The run status belongs to another deployment than this credential's. |

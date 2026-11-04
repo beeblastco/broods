@@ -407,16 +407,17 @@ export function CopilotProvider({
       return cached;
     }
     try {
-      const session = await mintSession(
-        projectId ? { projectId: projectId } : {},
-      );
+      const session = await mintSession({
+        conversationKey: conversationKey,
+        ...(projectId ? { projectId: projectId } : {}),
+      });
       sessionRef.current = { key: sessionKey, session: session };
 
       return session;
     } catch {
       return null;
     }
-  }, [mintSession, projectId, sessionKey]);
+  }, [conversationKey, mintSession, projectId, sessionKey]);
 
   const askAgent = useCallback(
     async (

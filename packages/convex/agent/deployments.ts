@@ -644,7 +644,7 @@ async function runtimeKeyFields(
   };
 }
 
-async function activeDeployment(
+export async function activeDeployment(
   ctx: QueryCtx,
   projectId: Id<"projects">,
   stageId: Id<"stages">,

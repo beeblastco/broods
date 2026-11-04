@@ -77,14 +77,14 @@ sequenceDiagram
 
 Traces take the same path with a Tempo search in place of the Loki query.
 
-| Limit               | Value                                                                                               |
-| ------------------- | --------------------------------------------------------------------------------------------------- |
-| Credential          | stage ticket `bdts_` (15 min). The runtime key is refused. Closes `4419` at expiry; reconnect fresh |
-| Revalidation        | core asked again every minute; a refusal closes `4401`, an outage keeps the socket                  |
-| Loki backfill steps | 1 h in 5 s, 1 day in 10 s, 30 days in 15 s. Stops at the first step that fills a page or times out  |
-| Tempo backfill      | 7 day search in 15 s, then 6 trace lookups at a time, 5 s each, sent newest first in chunks of 12   |
-| `fetchTrace`        | one trace by id, filtered to the socket's scope (Tempo's lookup is not tenant-scoped), shared 5 min |
-| Backpressure        | over 512 KiB unsent: live messages dropped, backfill waits up to 5 s                                |
+| Limit               | Value                                                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Credential          | stage ticket `bdts_` (15 min), or a read-only `bdob_` (5 min at most, [the dock agent](security.md#the-dock-agent-reading-logs)). The runtime key is refused. Closes `4419` at expiry; reconnect fresh |
+| Revalidation        | core asked again every minute; a refusal closes `4401`, an outage keeps the socket                                                                                                                     |
+| Loki backfill steps | 1 h in 5 s, 1 day in 10 s, 30 days in 15 s. Stops at the first step that fills a page or times out                                                                                                     |
+| Tempo backfill      | 7 day search in 15 s, then 6 trace lookups at a time, 5 s each, sent newest first in chunks of 12                                                                                                      |
+| `fetchTrace`        | one trace by id, filtered to the socket's scope (Tempo's lookup is not tenant-scoped), shared 5 min                                                                                                    |
+| Backpressure        | over 512 KiB unsent: live messages dropped, backfill waits up to 5 s                                                                                                                                   |
 
 A subscribe with `backfill` always gets a closing `backfill` message, with `error` set when Loki or Tempo failed, so a client can tell an empty stage from a failed query. When the same span arrives from NATS and Tempo, the dashboard keeps the richer or terminal copy, since Tempo truncates large attributes.
 

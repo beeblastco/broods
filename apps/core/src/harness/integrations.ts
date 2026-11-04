@@ -19,7 +19,15 @@ import {
   userModelMessageSchema,
 } from "ai";
 import type { Attachment } from "chat";
-import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
+import {
+  OBSERVABILITY_TICKET_PREFIX,
+  openObservabilityTicket,
+} from "@broods/convex/model/observabilityTicket";
+import {
+  extractBearerToken,
+  resolveBearerAuth,
+  type AuthContext,
+} from "../shared/auth.ts";
 import type {
   ChannelActions,
   ChannelQuestionAnswer,
@@ -58,7 +66,7 @@ import {
   resolveChannelAgentId,
   type ChannelRecord,
 } from "../shared/domain/channel-record.ts";
-import { getHarnessPublicUrl } from "../shared/env.ts";
+import { getHarnessPublicUrl, requireEnv } from "../shared/env.ts";
 import {
   createGoogleChatChannel,
   parseServiceAccountKey,
@@ -754,11 +762,16 @@ async function handleHttpRequest(
 
   const publicEndpoint = parsePublicEndpointPath(request.path);
 
+  const socketScope = socketScopePath(request.path);
+  if (socketScope === "observability") {
+    const readOnly = await observabilityTicketScope(request.headers);
+    if (readOnly) return jsonResponse(200, readOnly);
+  }
+
   const auth = await context.authResolver(request.headers);
 
   // Observability takes only a member's stage ticket: the embeddable key sits in frontends,
   // and logs carry every user's chats and tool payloads.
-  const socketScope = socketScopePath(request.path);
   if (socketScope) {
     if (
       auth?.kind !== "deployment" ||
@@ -2619,6 +2632,30 @@ function parseSandboxJobCompletionPayload(
       ? { response: record.response as JSONValue }
       : {}),
     ...(typeof record.error === "string" ? { error: record.error } : {}),
+  };
+}
+
+// A read-only ticket answers here and is refused by every other route's auth.
+async function observabilityTicketScope(
+  headers: CoreRequest["headers"],
+): Promise<Record<string, unknown> | null> {
+  const token = extractBearerToken(headers.authorization);
+  if (!token?.startsWith(OBSERVABILITY_TICKET_PREFIX)) return null;
+  const ticket = await openObservabilityTicket(
+    token,
+    requireEnv("STAGE_TICKET_SECRET"),
+  );
+  const account = ticket
+    ? await getStorage().accounts.getById(ticket.accountId)
+    : null;
+  if (!ticket || account?.status !== "active") return null;
+
+  return {
+    accountId: ticket.accountId,
+    projectSlug: ticket.projectSlug,
+    stageSlug: ticket.stageSlug,
+    endpointIds: [ticket.endpointId],
+    expiresAt: ticket.expiresAt,
   };
 }
 

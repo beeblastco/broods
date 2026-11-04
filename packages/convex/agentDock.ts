@@ -36,7 +36,11 @@ import {
   type StageSourceOrigin,
 } from "./model/stageSource";
 import { storeStageSync } from "./model/stageSourceStore";
-import { sealUserToken, USER_TOKEN_MAX_TTL_MS } from "./model/userToken";
+import {
+  sealUserToken,
+  USER_TOKEN_MAX_TTL_MS,
+  userConversationPrefix,
+} from "./model/userToken";
 
 const AGENT_PATH =
   /^\/v1\/projects\/([^/]+)\/stages\/([^/]+)\/agents\/([^/]+)\/?$/;
@@ -92,15 +96,27 @@ type RepoTarget = Infer<typeof repoTargetValidator>;
 
 // The dock talks to one Broods agent per deployment, as the signed-in user; null keeps its planner.
 export const session = mutation({
-  args: { projectId: v.optional(v.id("projects")) },
+  args: {
+    conversationKey: v.optional(v.string()),
+    projectId: v.optional(v.id("projects")),
+  },
   returns: v.union(sessionValidator, v.null()),
-  handler: async (ctx, { projectId }): Promise<DockSession | null> => {
+  handler: async (
+    ctx,
+    { conversationKey, projectId },
+  ): Promise<DockSession | null> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
     const agent = dockAgent();
     if (!agent) return null;
 
     const expiresAt = Date.now() + USER_TOKEN_MAX_TTL_MS;
+    // Both spellings of a key name one conversation, so only the bare one is stored or listed.
+    const conversation = conversationKey?.startsWith(
+      userConversationPrefix(authUser.id),
+    )
+      ? conversationKey.slice(userConversationPrefix(authUser.id).length)
+      : conversationKey;
     // Only an owner or admin holds the whole account, so only they lend the agent a login: for
     // the open project's org, which need not be the active one.
     const project = projectId ? await ctx.db.get(projectId) : null;
@@ -113,12 +129,20 @@ export const session = mutation({
         ? undefined
         : await insertCliToken(
             ctx,
-            { authId: authUser.id, ...target, lentToAgent: true },
+            {
+              authId: authUser.id,
+              ...target,
+              lentToAgent: true,
+              ...(conversation ? { lentConversation: conversation } : {}),
+            },
             expiresAt,
           );
     const userToken = await sealUserToken(
       {
         userId: authUser.id,
+        // Core runs this token on its one conversation, so a login cannot write from another
+        // conversation that has read logs.
+        ...(conversation ? { conversations: [conversation] } : {}),
         ...(credential !== undefined ? { credential: credential } : {}),
         expiresAt: expiresAt,
       },

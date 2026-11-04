@@ -12,6 +12,7 @@ import {
 } from "./cli/projects";
 import {
   httpHandle as cliStagesHttp,
+  observabilitySessionHttpHandle as cliObservabilitySessionHttp,
   sessionHttpHandle as cliStageSessionHttp,
 } from "./cli/stages";
 import { handle as configHttp } from "./config/http";
@@ -100,6 +101,12 @@ http.route({
   path: "/v1/account/stage-session",
   method: "POST",
   handler: cliStageSessionHttp,
+});
+
+http.route({
+  path: "/v1/account/observability-session",
+  method: "POST",
+  handler: cliObservabilitySessionHttp,
 });
 
 http.route({
