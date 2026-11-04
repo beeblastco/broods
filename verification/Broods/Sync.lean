@@ -108,7 +108,8 @@ def diff (localM remote : Manifest) : List Entry :=
     (ul.filter fun x => !pairs.any (·.1.key == x.key)).map (fun x => ⟨.create, x.kind, x.name⟩) ++
     (ur.filter fun y => !pairs.any (·.2.key == y.key)).map (fun y => ⟨.delete, y.kind, y.name⟩)
 where
-  /-- `snapshotResource`: the artifact bytes and upload handle of skills, hooks
+  /-- `snapshotResource` (`packages/convex/model/manifestSnapshot.ts`, which
+  `manifestHash` hashes): the artifact bytes and upload handle of skills, hooks
   and MCP servers are not compared; their `sha256` is. -/
   snapshot (r : Resource) : Resource :=
     if r.kind.external then { r with config := { r.config with bundle := none, storage := none } }

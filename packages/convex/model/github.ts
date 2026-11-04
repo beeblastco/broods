@@ -9,6 +9,7 @@ import nacl from "tweetnacl";
 
 import { ClientError } from "./clientError";
 import { bytesToBase64Url } from "./stageSessionTicket";
+import { isSourceFile } from "./stageSource";
 
 export const WORKFLOW_PATH = ".github/workflows/broods.yml";
 const WORKFLOW_NAME = "Broods deploy";
@@ -55,13 +56,6 @@ const RUN: Record<PackageManager, string> = {
 /** Lockfiles in the order a monorepo's own beats a stray one. */
 const AGENT_FILE_LIMIT = 40;
 const AGENT_BYTES_LIMIT = 300_000;
-const BUILD_FOLDERS: ReadonlySet<string> = new Set([
-  "_generated",
-  "build",
-  "dist",
-  "node_modules",
-]);
-const AGENT_FILE_PATTERN = /\.(ts|tsx|js|mjs|json|md|txt|ya?ml)$/;
 
 export interface RepoFile {
   content: string;
@@ -513,16 +507,7 @@ export async function commitFiles(
 
 /** True for a text file inside the `broods/` folder `prefix`, outside build output. */
 export function isAgentEditable(prefix: string, path: string): boolean {
-  return (
-    path.startsWith(prefix) &&
-    !path
-      .split("/")
-      .some(
-        (part) =>
-          part === ".." || part.startsWith(".") || BUILD_FOLDERS.has(part),
-      ) &&
-    AGENT_FILE_PATTERN.test(path)
-  );
+  return path.startsWith(prefix) && isSourceFile(path);
 }
 
 export function broodsFolder(rootDirectory: string): string {

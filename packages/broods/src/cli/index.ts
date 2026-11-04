@@ -53,6 +53,8 @@ import {
   type RemoteManifestResponse,
   RouteNotMountedError,
 } from "../sync.ts";
+import { readStageSource } from "../source.ts";
+import type { StageSource } from "../../../convex/model/stageSource.ts";
 import {
   BroodsClient,
   DEFAULT_CORE_BASE_URL,
@@ -1338,6 +1340,8 @@ async function deploy(args: string[]): Promise<void> {
     region ? { ...manifest, region: region } : manifest,
     hasFlag(args, "--prune"),
     hasFlag(args, "--rotate-key"),
+    undefined,
+    await sourceToStore(),
   );
   await writeGeneratedFiles(
     manifest,
@@ -2175,11 +2179,13 @@ async function syncDevOnce(
 
   // Deletes wait for the prompt below, so an edit in progress never destroys history.
   // A stage that does not exist yet is revision 0, so two first syncs still conflict.
+  const source = await sourceToStore();
   let result = await client.putManifest(
     manifest,
     false,
     false,
     remote === null ? 0 : remote.revision,
+    source,
   );
   await writeGeneratedFiles(
     manifest,
@@ -2205,7 +2211,13 @@ async function syncDevOnce(
         `Delete ${undecided.length} resource(s) from ${manifest.project}/${manifest.stage}?`,
       )
     ) {
-      result = await client.putManifest(manifest, true, false, result.revision);
+      result = await client.putManifest(
+        manifest,
+        true,
+        false,
+        result.revision,
+        source,
+      );
       await writeGeneratedFiles(
         manifest,
         result.ids,
@@ -3239,6 +3251,15 @@ function inferProjectName(cwd: string): string {
       .replace(/[^A-Za-z0-9_-]+/g, "-")
       .replace(/^-+|-+$/g, "") || "broods-app"
   );
+}
+
+// A source over the limit still deploys; the stage just keeps its previous stored source.
+async function sourceToStore(): Promise<StageSource | undefined> {
+  const read = await readStageSource(process.cwd());
+  if ("skipped" in read)
+    printWarning(`Deploying without storing the source: ${read.skipped}.`);
+
+  return "source" in read ? read.source : undefined;
 }
 
 async function sourceSignature(): Promise<string> {
