@@ -1314,6 +1314,18 @@ function validateHarnessStringArray(
   }
 }
 
+// Sync keeps JSON only, so a needsApproval function would vanish and the tool run unasked.
+function assertApprovalIsBoolean(
+  resource: Extract<AnyResource, { kind: "agent" }>,
+): void {
+  for (const [key, entry] of Object.entries(resource.config.tools ?? {})) {
+    if (typeof entry.needsApproval !== "function") continue;
+    throw new Error(
+      `Agent "${resource.name}" config.tools.${key}.needsApproval is a function; only true is kept on sync`,
+    );
+  }
+}
+
 // CLI sync skips the Convex validator, so its checks are mirrored here.
 function assertSkillCap(
   resource: Extract<AnyResource, { kind: "agent" }>,
@@ -1350,6 +1362,7 @@ function normalizeAgentConfig(
     );
   });
   assertSkillCap(resource);
+  assertApprovalIsBoolean(resource);
   const inlineHooks = normalizeInlineAgentHooks(resource.name, config.hooks);
   if (inlineHooks) {
     config.hooks = inlineHooks.agentHooksConfig;

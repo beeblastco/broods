@@ -382,7 +382,7 @@ export async function createTools(
   }
 
   // Withhold last, so a channel's deny list also covers sandbox and MCP tools.
-  withholdTools(tools, agentConfig.denyTools, standIns);
+  withholdTools(tools, agentConfig.denyTools, standIns, sandboxTools);
 
   return tools;
 }
@@ -553,7 +553,10 @@ function registerProviderTools(
           })
         : undefined;
     const taken = harnessName || Object.hasOwn(tools, toolName);
-    if (taken && !standIn?.replaces.some((name) => name === toolName)) {
+    if (
+      taken &&
+      !standIn?.replaces.some((name): boolean => name === toolName)
+    ) {
       throw new Error(harnessNameError(toolName));
     }
     if (!standIn) {
@@ -569,16 +572,27 @@ function registerProviderTools(
   }
 }
 
+// A withheld stand-in gives back the Broods tools it replaced that denyTools still allows.
 function withholdTools(
   tools: ToolSet,
   denyTools: string[] | undefined,
   standIns: ReadonlyMap<string, SandboxStandIn>,
+  sandboxTools: ToolSet,
 ): void {
   const denied = new Set(denyTools ?? []);
   for (const toolName of Object.keys(tools)) {
-    const runsAs = standIns.get(toolName)?.runsAs ?? [];
-    if (denied.has(toolName) || runsAs.some((name) => denied.has(name))) {
-      delete tools[toolName];
+    const standIn = standIns.get(toolName);
+    const runsAs = standIn?.runsAs ?? [];
+    if (
+      !denied.has(toolName) &&
+      !runsAs.some((name): boolean => denied.has(name))
+    ) {
+      continue;
+    }
+    delete tools[toolName];
+    for (const name of standIn?.replaces ?? []) {
+      const replaced = sandboxTools[name];
+      if (replaced && !denied.has(name)) tools[name] = replaced;
     }
   }
 }

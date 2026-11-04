@@ -57,12 +57,12 @@ tools: {
 ```
 
 - The provider tool replaces the Broods tool it stands for, so the model sees one tool per job. A key may be a Broods tool name, such as `bash`, only for the provider tool that runs as it.
-- `denyTools: ["bash"]` withholds every tool that runs as `bash`.
+- `denyTools: ["bash"]` withholds every tool that runs as `bash`. A withheld stand-in gives back the Broods tools it replaced that `denyTools` allows, so `denyTools: ["write"]` with the text editor leaves `read` and `edit`.
 - Each call starts a fresh shell, as Broods `bash` does, so the bash tool's `restart` does nothing.
 - The text editor's `view`, `create` and `str_replace` run as `read`, `write` and `edit`. `insert` adds text after a line (`0` is the top) and is judged as `edit`. `undo_edit` is refused.
 - These tools have no input to pick a workspace or sandbox, so an agent where Broods tools would offer that choice (two workspaces, or a workspace and a separate sandbox) refuses them. Keep one, or use the Broods tools.
 - A hook sees the provider tool's own name and input, plus `runsAs`, the Broods call it makes. See [hooks](hooks.md).
-- An OpenAI custom tool needs `command`, the sandbox command that reads the model's text on stdin:
+- An OpenAI custom tool needs `command`, the sandbox command that reads the model's text on stdin. The text goes in a quoted heredoc, so bash never parses it:
 
 ```ts
 write_sql: {
@@ -74,7 +74,7 @@ write_sql: {
 },
 ```
 
-Anthropic computer use and memory, and OpenAI computer use and tool search with `execution: "client"`, are refused: they need code Broods does not have. A machine sandbox gives the agent Broods' own `computer` tool. An `execute` you pass to a factory, or any other tool your code runs, does not survive sync. Put it behind an MCP server.
+Anthropic computer use and memory, and OpenAI computer use and tool search with `execution: "client"`, are refused: they need code Broods does not have. A machine sandbox gives the agent Broods' own `computer` tool. An `execute` you pass to a factory, or any other tool your code runs, does not survive sync. Put it behind an MCP server. `needsApproval` must be `true`: sync refuses a function, which would otherwise vanish and leave the tool unapproved.
 
 ## MCP servers
 

@@ -63,6 +63,7 @@ const AI_GATEWAY_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const DEPRECATED_TOOL_ID_PREFIX = "tool_";
 
 const RESERVED_HARNESS_TOOL_NAMES = new Set([
+  "ask_questions",
   "async_status",
   "bash",
   "browse",

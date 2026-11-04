@@ -132,7 +132,7 @@ function applyPatch(context: StandInContext): SandboxStandIn<ApplyPatchInput> {
     replaces: ["edit", "write"],
     runsAs: ["edit", "write"],
     toSandboxCall: (input): SandboxToolCall => ({
-      toolName: "write",
+      toolName: input.operation.type === "update_file" ? "edit" : "write",
       input: { file_path: input.operation.path },
     }),
     execute: async (input): Promise<unknown> => {
@@ -158,7 +158,7 @@ async function callTool(
   return await execute(call.input, options);
 }
 
-// The model's text goes to the configured command on stdin, never into the command line.
+// The model's text goes to the command on stdin as a quoted heredoc, so bash never parses it.
 function customTool(context: StandInContext): SandboxStandIn<string> {
   const command = configString(context.command);
   if (!command) {
@@ -167,8 +167,12 @@ function customTool(context: StandInContext): SandboxStandIn<string> {
         `the sandbox command that reads the model's text on stdin`,
     );
   }
-  const toSandboxCall = (input: string): SandboxToolCall =>
-    bashCall(`printf '%s' ${shellQuote(input)} | ${command}`);
+  const toSandboxCall = (input: string): SandboxToolCall => {
+    let marker = "BROODS_INPUT";
+    while (input.split("\n").includes(marker)) marker += "_";
+
+    return bashCall(`${command} <<'${marker}'\n${input}\n${marker}`);
+  };
 
   return {
     replaces: [],

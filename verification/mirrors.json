@@ -71,8 +71,8 @@
   },
   "ProviderTools": {
     "apps/core/src/harness/tools/index.ts": {
-      "registerProviderTools": "fe0c6dcfe7ca0db6",
-      "withholdTools": "e2dd9bf12c791e1f"
+      "registerProviderTools": "430663b352686362",
+      "withholdTools": "ebed38d5541ebef3"
     }
   },
   "StageTicket": {

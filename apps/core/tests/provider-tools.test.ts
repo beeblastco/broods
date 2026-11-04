@@ -176,6 +176,46 @@ describe("client-executed provider tools on the sandbox", () => {
     expect(tools.bash).toBeUndefined();
   });
 
+  it("gives back the Broods tools a withheld stand-in replaced and denyTools allows", async () => {
+    const tools = await build(
+      "anthropic",
+      anthropic,
+      {
+        str_replace_based_edit_tool: descriptor(
+          anthropic.tools.textEditor_20250728({}),
+        ),
+      },
+      new Map(),
+      ["write"],
+    );
+
+    expect(tools.str_replace_based_edit_tool).toBeUndefined();
+    expect(tools.write).toBeUndefined();
+    expect(Object.keys(tools)).toEqual(
+      expect.arrayContaining(["read", "edit"]),
+    );
+  });
+
+  it("judges an apply_patch update as an edit", async () => {
+    const standIns = new Map();
+    await build(
+      "openai",
+      openai,
+      { apply_patch: descriptor(openai.tools.applyPatch({})) },
+      standIns,
+    );
+    const toSandboxCall = standIns.get("apply_patch").toSandboxCall;
+
+    expect(
+      toSandboxCall({
+        operation: { type: "update_file", path: "a.ts", diff: "" },
+      }),
+    ).toEqual({ toolName: "edit", input: { file_path: "a.ts" } });
+    expect(
+      toSandboxCall({ operation: { type: "delete_file", path: "a.ts" } }),
+    ).toEqual({ toolName: "write", input: { file_path: "a.ts" } });
+  });
+
   it("maps OpenAI shell commands to one output each", async () => {
     const tools = await build("openai", openai, {
       shell: descriptor(openai.tools.shell({})),
@@ -290,12 +330,21 @@ describe("client-executed provider tools on the sandbox", () => {
       },
     });
 
-    await run(tools.write_sql, "SELECT 'it''s'");
+    await run(tools.write_sql, "SELECT * FROM f WHERE p LIKE '../%'");
+    await run(tools.write_sql, "a\nBROODS_INPUT\nb");
     expect(calls).toEqual([
       {
         tool: "bash",
         input: {
-          command: `printf '%s' 'SELECT '\\''it'\\'''\\''s'\\''' | sqlite3 data.db`,
+          command:
+            "sqlite3 data.db <<'BROODS_INPUT'\nSELECT * FROM f WHERE p LIKE '../%'\nBROODS_INPUT",
+        },
+      },
+      {
+        tool: "bash",
+        input: {
+          command:
+            "sqlite3 data.db <<'BROODS_INPUT_'\na\nBROODS_INPUT\nb\nBROODS_INPUT_",
         },
       },
     ]);
@@ -364,12 +413,10 @@ describe("fileOperationScript", () => {
     const apply = (
       operation: Parameters<typeof fileOperationScript>[0],
     ): void => {
-      const result = Bun.spawnSync(
-        ["bash", "-c", fileOperationScript(operation)],
-        {
-          cwd: dir,
-        },
-      );
+      const result = Bun.spawnSync(["bash", "-s"], {
+        cwd: dir,
+        stdin: Buffer.from(fileOperationScript(operation)),
+      });
       if (result.exitCode !== 0) throw new Error(result.stderr.toString());
     };
     try {
@@ -393,6 +440,17 @@ describe("fileOperationScript", () => {
       expect(() =>
         apply({ type: "update_file", path: "b.txt", diff: "-four\n+4\n" }),
       ).toThrow(/patch does not match/);
+      apply({ type: "update_file", path: "b.txt", diff: "+four\n" });
+      expect(readFileSync(join(dir, "b.txt"), "utf8")).toBe(
+        "one\ntwo\nthree\nfour\n",
+      );
+      apply({
+        type: "create_file",
+        path: "big.txt",
+        diff: `+${"x".repeat(200_000)}\n`,
+      });
+      expect(readFileSync(join(dir, "big.txt"), "utf8").length).toBe(200_001);
+      writeFileSync(join(dir, "b.txt"), "one\ntwo\nthree\n");
       apply({ type: "insert", path: "b.txt", line: 0, text: "zero" });
       apply({ type: "insert", path: "b.txt", line: 2, text: "1.5\n" });
       expect(readFileSync(join(dir, "b.txt"), "utf8")).toBe(

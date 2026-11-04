@@ -7,7 +7,7 @@ import { toBase64, toWorkspaceRelative } from "./filesystem-utils.ts";
 const APPLY_SCRIPT = String.raw`
 const fs = require('node:fs');
 const nodePath = require('node:path');
-const op = JSON.parse(Buffer.from(process.argv[1], 'base64').toString('utf8'));
+const op = JSON.parse(Buffer.from(fs.readFileSync(0, 'utf8'), 'base64').toString('utf8'));
 function fail(message) { process.stderr.write(message + '\n'); process.exit(1); }
 function diffLines(diff) {
   const lines = diff.split('\n');
@@ -47,7 +47,8 @@ function update(text, diff) {
       if (at < 0) fail('Error: context not found: ' + anchor);
       cursor = at + 1;
     }
-    const at = old.length === 0 ? (anchor ? cursor : lines.length) : find(lines, old, cursor);
+    const end = lines.at(-1) === '' ? lines.length - 1 : lines.length;
+    const at = old.length === 0 ? (anchor ? cursor : end) : find(lines, old, cursor);
     if (at < 0) fail('Error: patch does not match ' + op.path + ' near: ' + old.slice(0, 3).join(' / '));
     lines.splice(at, old.length, ...added);
     cursor = at + added.length;
@@ -97,5 +98,6 @@ export function fileOperationScript(operation: FileOperation): string {
   if (path === ".") throw new Error("Error: path must reference a file");
   const payload = toBase64(JSON.stringify({ ...operation, path: path }));
 
-  return `node -e "$(printf '%s' '${APPLY_SCRIPT_BASE64}' | base64 -d)" '${payload}'`;
+  // The payload rides stdin: one argv string is capped at 128 KiB.
+  return `node -e "$(printf '%s' '${APPLY_SCRIPT_BASE64}' | base64 -d)" <<'BROODS_OP'\n${payload}\nBROODS_OP`;
 }
