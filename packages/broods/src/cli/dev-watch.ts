@@ -63,10 +63,10 @@ export function watchSource(
     }
     syncing = true;
     syncChanged()
-      .catch((error: unknown) =>
+      .catch((error: unknown): void =>
         console.error(error instanceof Error ? error.message : String(error)),
       )
-      .finally(() => {
+      .finally((): void => {
         syncing = false;
         if (pending) {
           pending = false;
@@ -75,7 +75,7 @@ export function watchSource(
       });
   };
 
-  const watcher = watch(root, { recursive: true }, (_event, filename) => {
+  const watcher = watch(root, { recursive: true }, (_event, filename): void => {
     if (filename && isGeneratedPath(filename)) return;
     savedSinceSignature = true;
     clearTimeout(timer);
@@ -90,7 +90,7 @@ function isGeneratedPath(path: string): boolean {
   return path
     .split(/[\\/]/)
     .some(
-      (part) =>
+      (part): boolean =>
         part === GENERATED_DIR || part === "generated" || part === ".cache",
     );
 }

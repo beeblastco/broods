@@ -13,7 +13,7 @@ test("a folder renamed and renamed back during a sync syncs again", async () => 
   await writeFile(join(root, "agents", "index.ts"), "export {};\n");
   let renameDuringSync = false;
   let syncs = 0;
-  const watcher = watchSource(root, async () => {
+  const watcher = watchSource(root, async (): Promise<void> => {
     syncs += 1;
     if (!renameDuringSync) return;
     renameDuringSync = false;

@@ -1535,13 +1535,16 @@ async function dev(args: string[]): Promise<void> {
       logs = outcome === "failed" ? "failed" : "off";
     });
   };
-  const watcher = watchSource(resolve(process.cwd(), PROJECT_DIR), async () => {
-    try {
-      await runSyncChild(args, childEnv);
-    } finally {
-      startLogs();
-    }
-  });
+  const watcher = watchSource(
+    resolve(process.cwd(), PROJECT_DIR),
+    async (): Promise<void> => {
+      try {
+        await runSyncChild(args, childEnv);
+      } finally {
+        startLogs();
+      }
+    },
+  );
 
   process.on("SIGINT", () => {
     logController.abort();

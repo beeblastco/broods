@@ -32,7 +32,7 @@
   },
   "DevWatch": {
     "packages/broods/src/cli/dev-watch.ts": {
-      "watchSource": "c91c2f109fe25de2",
+      "watchSource": "5f2fbe6d48ce4f1e",
       "sourceSignature": "de8e594d7a2b34c5",
       "collectSourceFiles": "1046ffdd914acecd"
     }
