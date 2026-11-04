@@ -6146,6 +6146,61 @@ export declare const internal: {
       null
     >;
   };
+  logs: {
+    usageForAccountStage: FunctionReference<
+      "query",
+      "internal",
+      {
+        accountId: Id<"accounts">;
+        project: string;
+        range: "1h" | "3h" | "1d" | "7d" | "30d" | "1y";
+        stage: string;
+      },
+      {
+        binSeconds: number;
+        buckets: Array<{
+          agentSandboxCpuUsec: number;
+          bucketStart: number;
+          cacheWriteTokens: number;
+          cachedInputTokens: number;
+          inputTokens: number;
+          invocations: number;
+          modelCalls: number;
+          modelId: string;
+          modelProvider: string;
+          outputTokens: number;
+          reasoningTokens: number;
+          runtimeWallMs: number;
+          toolSandboxCpuUsec: number;
+          totalTokens: number;
+        }>;
+        endTimeMs: number;
+        range: "1h" | "3h" | "1d" | "7d" | "30d" | "1y";
+        rates: Array<{
+          cacheRead: number;
+          cacheWrite: number;
+          input: number;
+          modelId: string;
+          modelProvider: string;
+          output: number;
+        }>;
+        startTimeMs: number;
+        totals: {
+          agentSandboxCpuUsec: number;
+          cacheWriteTokens: number;
+          cachedInputTokens: number;
+          inputTokens: number;
+          invocations: number;
+          modelCalls: number;
+          outputTokens: number;
+          reasoningTokens: number;
+          runtimeWallMs: number;
+          toolSandboxCpuUsec: number;
+          totalTokens: number;
+        };
+      } | null
+    >;
+  };
   mcp: {
     nodeContext: FunctionReference<
       "query",

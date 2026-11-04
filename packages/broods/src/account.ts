@@ -11,6 +11,27 @@ import type {
   UpdateCronInput,
   WorkspaceConfig,
 } from "./contracts.ts";
+import {
+  fetchObservabilityLogs,
+  fetchObservabilitySpans,
+  fetchObservabilityTrace,
+  type ObservabilityClientOptions,
+} from "./observability-client.ts";
+import {
+  type LogLevel,
+  MAX_OBSERVABILITY_BACKFILL,
+} from "./observability-contracts.ts";
+import {
+  auditSummaries,
+  type AuditEventSummary,
+  type AuditLedgerRow,
+  logLine,
+  type LogLine,
+  runSummaries,
+  type RunSummary,
+  traceSteps,
+  type TraceStep,
+} from "./observability-read.ts";
 import type { Cron, CronRun, Skill } from "./types.ts";
 import type {
   Connection,
@@ -385,6 +406,29 @@ export function resolveEnvCredential(): string | undefined {
  * Lookups, updates and deletes return `null`/`false` on a 404, so upserts need no try/catch.
  * Any other failure throws {@link BroodsAccountApiError}.
  */
+export interface StageUsage {
+  range: string;
+  startTimeMs: number;
+  endTimeMs: number;
+  totals: {
+    inputTokens: number;
+    outputTokens: number;
+    reasoningTokens: number;
+    cachedInputTokens: number;
+    cacheWriteTokens: number;
+    totalTokens: number;
+    invocations: number;
+    modelCalls: number;
+    runtimeWallMs: number;
+    agentSandboxCpuUsec: number;
+    toolSandboxCpuUsec: number;
+  };
+}
+
+const AUDIT_SCAN = 500;
+// A run is several spans, so a page of spans holds fewer runs than its size.
+const RUN_SPAN_FACTOR = 10;
+
 export class BroodsAccountClient {
   private readonly baseUrl: string;
   private readonly bearerToken: string;
@@ -405,6 +449,103 @@ export class BroodsAccountClient {
     this.baseUrl = baseUrl.slice(0, baseUrlEnd);
     this.bearerToken = bearerToken;
     this.fetchImpl = options.fetch ?? fetch;
+  }
+
+  /** A read-only ticket for one stage's logs and traces. Needs a `broods login` credential. */
+  async openObservabilitySession(
+    project: string,
+    stage: string,
+  ): Promise<ObservabilityClientOptions> {
+    const session = await this.request<{
+      token: string;
+      projectSlug: string;
+      stageSlug: string;
+    }>("POST", "/v1/account/observability-session", {
+      project: project,
+      stage: stage,
+    });
+    if (!session)
+      throw new Error("This Broods server cannot open a logs session.");
+
+    return {
+      baseUrl: this.baseUrl,
+      credential: async (): Promise<string> => session.token,
+      project: session.projectSlug,
+      stage: session.stageSlug,
+    };
+  }
+
+  async readLogs(
+    scope: StageScope,
+    options: { level?: LogLevel; limit?: number; sandboxId?: string } = {},
+  ): Promise<LogLine[]> {
+    const entries = await fetchObservabilityLogs(
+      await this.openObservabilitySession(scope.project, scope.stage),
+      {
+        limit: options.limit ?? 50,
+        minLevel: options.level ?? "INFO",
+        ...(options.sandboxId ? { sandboxId: options.sandboxId } : {}),
+      },
+    );
+
+    return entries.map(logLine);
+  }
+
+  async readTrace(scope: StageScope, traceId: string): Promise<TraceStep[]> {
+    return traceSteps(
+      await fetchObservabilityTrace(
+        await this.openObservabilitySession(scope.project, scope.stage),
+        traceId,
+      ),
+    );
+  }
+
+  async listRuns(
+    scope: StageScope,
+    options: { agentId?: string; limit?: number; status?: string } = {},
+  ): Promise<RunSummary[]> {
+    const limit = options.limit ?? 20;
+    const spans = await fetchObservabilitySpans(
+      await this.openObservabilitySession(scope.project, scope.stage),
+      Math.min(MAX_OBSERVABILITY_BACKFILL, limit * RUN_SPAN_FACTOR),
+    );
+
+    return runSummaries(spans, { ...options, limit: limit });
+  }
+
+  /** Newest first and without the hash chain; says how much of the ledger it looked at. */
+  async readAudit(
+    options: { action?: string; agentId?: string; limit?: number } = {},
+  ): Promise<{
+    scanned: string;
+    matched: number;
+    events: AuditEventSummary[];
+  }> {
+    const page = async (
+      query: string,
+    ): Promise<{
+      events: AuditLedgerRow[];
+      head: { seq: number } | null;
+    }> =>
+      (await this.request("GET", `/v1/audit?${query}`)) ?? {
+        events: [],
+        head: null,
+      };
+    const newest = (await page("limit=1")).head?.seq ?? 0;
+    const since = Math.max(0, newest - AUDIT_SCAN);
+    const { events } = await page(`since=${since}&limit=${AUDIT_SCAN}`);
+
+    return {
+      scanned: `newest ${events.length} of ${newest} events${since > 0 ? "; older ones not checked" : ""}`,
+      ...auditSummaries(events, { ...options, limit: options.limit ?? 30 }),
+    };
+  }
+
+  async readUsage(scope: StageScope, range = "7d"): Promise<StageUsage | null> {
+    return await this.request<StageUsage>(
+      "GET",
+      `/v1/usage${stageScopeQuery(scope)}&range=${encodeURIComponent(range)}`,
+    );
   }
 
   async getAccount(): Promise<BroodsAccount> {

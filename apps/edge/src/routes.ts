@@ -83,6 +83,7 @@ export const ROUTERS: readonly EdgeRouter[] = [
       { path: `/v1/env/${SEGMENT}`, methods: ["PUT", "DELETE"] },
       { path: `/v1/workspaces/${SEGMENT}/download-links`, methods: ["POST"] },
       { path: "/v1/audit(?:/verify)?", methods: ["GET"] },
+      { path: "/v1/usage", methods: ["GET"] },
       { path: "/v1/audit/sink", methods: ["GET", "PUT", "DELETE"] },
       {
         path: `/v1/(?:skills|mcp|hooks|workspaces|sandboxes|policies|roles|channels|crons)(?:/${SEGMENT})?`,

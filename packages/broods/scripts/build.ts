@@ -4,7 +4,12 @@ await rm("dist", { recursive: true, force: true });
 await rm(".dts-temp", { recursive: true, force: true });
 
 const result = await Bun.build({
-  entrypoints: ["src/index.ts", "src/account.ts", "src/cli/index.ts"],
+  entrypoints: [
+    "src/index.ts",
+    "src/account.ts",
+    "src/mcp-tools.ts",
+    "src/cli/index.ts",
+  ],
   outdir: "dist",
   target: "node",
   format: "esm",

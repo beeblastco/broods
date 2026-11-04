@@ -256,13 +256,56 @@ export async function fetchObservabilityTrace(
   options: ObservabilityClientOptions,
   traceId: string,
 ): Promise<ObservabilitySpanRow[]> {
+  return await requestBackfill<ObservabilitySpanRow>(
+    options,
+    { type: "fetchTrace", traceId: traceId },
+    "traces",
+  );
+}
+
+/** One page of history with no live tail: what a tool or a one-shot command wants. */
+export async function fetchObservabilityLogs(
+  options: ObservabilityClientOptions,
+  request: { limit: number; minLevel?: LogLevel; sandboxId?: string },
+): Promise<ObservabilityLogEntry[]> {
+  return await requestBackfill<ObservabilityLogEntry>(
+    options,
+    {
+      type: "subscribe",
+      stream: "logs",
+      backfill: request.limit,
+      ...(request.minLevel ? { minLevel: request.minLevel } : {}),
+      ...(request.sandboxId ? { sandboxId: request.sandboxId } : {}),
+    },
+    "logs",
+  );
+}
+
+/** Recent spans, every run's root among them, with no live tail. */
+export async function fetchObservabilitySpans(
+  options: ObservabilityClientOptions,
+  limit: number,
+): Promise<ObservabilitySpanRow[]> {
+  return await requestBackfill<ObservabilitySpanRow>(
+    options,
+    { type: "subscribe", stream: "traces", backfill: limit },
+    "traces",
+  );
+}
+
+async function requestBackfill<T>(
+  options: ObservabilityClientOptions,
+  message: ObservabilityClientMessage,
+  stream: "logs" | "traces",
+): Promise<T[]> {
   const { socket, url } = openObservabilitySocket(
     options,
     await options.credential(),
   );
 
-  return new Promise<ObservabilitySpanRow[]>((resolve, reject): void => {
+  return new Promise<T[]>((resolve, reject): void => {
     let settled = false;
+    const rows: T[] = [];
     const settle = (outcome: () => void): void => {
       if (settled) return;
       settled = true;
@@ -280,21 +323,15 @@ export async function fetchObservabilityTrace(
       );
     }, READY_TIMEOUT_MS);
 
-    socket.onopen = (): void => {
-      const msg: ObservabilityClientMessage = {
-        type: "fetchTrace",
-        traceId: traceId,
-      };
-      socket.send(JSON.stringify(msg));
-    };
+    socket.onopen = (): void => socket.send(JSON.stringify(message));
     socket.onmessage = (event: MessageEvent): void => {
       const msg = parseServerMessage(event.data);
       if (msg?.type === "error") {
         fail(new Error(`Observability gateway error: ${msg.error}`));
-      } else if (msg?.type === "backfill" && msg.stream === "traces") {
-        const rows = msg.entries as ObservabilitySpanRow[];
+      } else if (msg?.type === "backfill" && msg.stream === stream) {
+        rows.push(...(msg.entries as T[]));
         if (msg.error) fail(new Error(msg.error));
-        else settle((): void => resolve(rows));
+        else if (!msg.more) settle((): void => resolve(rows));
       }
     };
     socket.onerror = (): void => {

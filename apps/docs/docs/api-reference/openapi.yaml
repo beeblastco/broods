@@ -3354,6 +3354,46 @@ paths:
         "200": { description: Deleted }
         "404": { description: Not found }
 
+  /v1/usage:
+    get:
+      tags: [Accounts]
+      summary: Read one stage's usage
+      description: >-
+        The numbers the dashboard's Usage tab shows: tokens, invocations, model
+        calls, run time and sandbox CPU over a range. Account secret, a CLI
+        login, or a role with `account:read`.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: project
+          in: query
+          required: true
+          schema: { type: string }
+        - name: stage
+          in: query
+          required: true
+          schema: { type: string }
+        - name: range
+          in: query
+          required: false
+          description: Defaults to `7d`.
+          schema: { type: string, enum: ["1h", "3h", "1d", "7d", "30d", "1y"] }
+      responses:
+        "200":
+          description: The stage's usage
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  range: { type: string }
+                  startTimeMs: { type: integer }
+                  endTimeMs: { type: integer }
+                  totals:
+                    type: object
+                    additionalProperties: { type: number }
+        "400":
+          { description: A missing `project` or `stage`, or an unknown `range` }
+        "404": { description: No deployed stage by that name }
   /v1/audit:
     get:
       tags: [Audit]

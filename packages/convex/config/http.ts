@@ -24,6 +24,7 @@ import {
   parseAuditRoute,
   type AuditLeaf,
 } from "./routes/audit";
+import { handleUsageRoute } from "./routes/usage";
 import {
   handleAgentChannelDirectoryRoute,
   handleAgentConfigRoute,
@@ -73,6 +74,7 @@ type ConfigRoute =
   | { kind: "agentChannelDirectory"; agentId: string; channelType: string }
   | { kind: "env"; name?: string }
   | { kind: "audit"; leaf: AuditLeaf }
+  | { kind: "usage" }
   | { kind: "roles"; roleId?: string };
 
 type ResourceRoute = Exclude<ConfigRoute, { kind: "roles" }>;
@@ -220,6 +222,8 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
       return apiResource("env", route.name);
     case "audit":
       return apiResource("audit", undefined);
+    case "usage":
+      return apiResource("account", undefined);
   }
 }
 
@@ -368,6 +372,8 @@ async function dispatchResourceRoute(
       );
     case "audit":
       return await handleAuditRoute(ctx, req, accountId, actor, route.leaf);
+    case "usage":
+      return await handleUsageRoute(ctx, req, accountId);
   }
 }
 
@@ -410,6 +416,7 @@ function parseAgentRoute(pathname: string): ConfigRoute | null {
 function parseCollectionRoute(pathname: string): ConfigRoute | null {
   const audit = parseAuditRoute(pathname);
   if (audit) return { kind: "audit", leaf: audit };
+  if (pathname === "/v1/usage") return { kind: "usage" };
 
   const env = pathname.match(/^\/v1\/env(?:\/([^/]+))?$/);
   if (env)
