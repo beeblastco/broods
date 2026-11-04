@@ -24,11 +24,16 @@ import { getOwnedStage, getProjectStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 import { serviceEnv, serviceHeaders } from "./model/serviceBridge";
 
-// Convex rejects `$` field names like JSON Schema's `$schema`, so schemas travel as JSON text.
+// Convex rejects `$` field names like JSON Schema's `$schema`, so tool JSON travels as text.
 const mcpTool = v.object({
   name: v.string(),
   description: v.optional(v.string()),
-  inputSchema: v.string(),
+  inputSchemaJson: v.string(),
+});
+const toolRun = v.object({
+  isError: v.boolean(),
+  text: v.string(),
+  durationMs: v.number(),
 });
 
 const scopeArgs = {
@@ -38,11 +43,21 @@ const scopeArgs = {
 };
 
 type McpTool = Infer<typeof mcpTool>;
+type ToolRun = Infer<typeof toolRun>;
 
 interface ListedTool {
   name: string;
   description?: string;
   inputSchema?: unknown;
+}
+
+interface CalledTool {
+  result?: {
+    isError?: boolean;
+    content?: { type?: string; text?: string }[];
+    structuredContent?: unknown;
+  };
+  durationMs?: number;
 }
 
 interface NodeContext {
@@ -78,13 +93,10 @@ export const callTool = action({
   args: {
     ...scopeArgs,
     toolName: v.string(),
-    input: v.optional(v.any()),
+    inputJson: v.optional(v.string()),
   },
-  returns: v.object({ result: v.any(), durationMs: v.number() }),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ result: unknown; durationMs: number }> => {
+  returns: toolRun,
+  handler: async (ctx, args): Promise<ToolRun> => {
     // Admin only: a tool call has side effects in the tenant's systems.
     await ctx.runQuery(internal.mcp.nodeContext, {
       projectId: args.projectId,
@@ -93,17 +105,24 @@ export const callTool = action({
       requiredRole: "admin",
     });
     const server = await requireServer(ctx, args);
-    const response = await coreMcpRpc(server.accountId, {
+    const response: CalledTool = await coreMcpRpc(server.accountId, {
       serverId: server._id,
       method: "tools/call",
       toolName: args.toolName,
-      args: args.input ?? {},
+      args: JSON.parse(args.inputJson ?? "{}"),
     });
+    const result = response.result ?? {};
+    const text =
+      result.structuredContent !== undefined
+        ? JSON.stringify(result.structuredContent, null, 2)
+        : (result.content ?? [])
+            .map((block) => block.text ?? `[${block.type}]`)
+            .join("\n");
 
     return {
-      result: response.result,
-      durationMs:
-        typeof response.durationMs === "number" ? response.durationMs : 0,
+      isError: result.isError === true,
+      text: text || "(empty result)",
+      durationMs: response.durationMs ?? 0,
     };
   },
 });
@@ -367,13 +386,13 @@ async function coreMcpListTools(
     ...target,
     method: "tools/list",
   });
-  const tools = (response as { tools?: ListedTool[] }).tools ?? [];
+  const { tools = [] }: { tools?: ListedTool[] } = response;
 
-  return tools.map((tool) =>
+  return tools.map((tool): McpTool =>
     stripUndefined({
       name: tool.name,
       description: tool.description,
-      inputSchema: JSON.stringify(tool.inputSchema ?? {}),
+      inputSchemaJson: JSON.stringify(tool.inputSchema ?? {}, null, 2),
     }),
   );
 }

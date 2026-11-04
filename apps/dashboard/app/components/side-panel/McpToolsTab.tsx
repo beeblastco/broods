@@ -13,12 +13,7 @@ import { ChevronRight, Play, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
 type RemoteTool = FunctionReturnType<typeof api.mcp.listTools>[number];
-
-interface RunResult {
-  isError: boolean;
-  text: string;
-  durationMs: number;
-}
+type RunResult = FunctionReturnType<typeof api.mcp.callTool>;
 
 export function McpToolsTab({
   projectId,
@@ -128,9 +123,8 @@ function ToolRow({
   const [result, setResult] = useState<RunResult | null>(null);
 
   async function handleRun(): Promise<void> {
-    let parsedInput: unknown;
     try {
-      parsedInput = JSON.parse(inputJson);
+      JSON.parse(inputJson);
     } catch {
       setRunError("Input must be valid JSON.");
 
@@ -141,14 +135,15 @@ function ToolRow({
     setRunError(null);
     setResult(null);
     try {
-      const response = await callTool({
-        projectId: projectId,
-        stageId: stageId,
-        nodeId: nodeId,
-        toolName: tool.name,
-        input: parsedInput,
-      });
-      setResult(toRunResult(response));
+      setResult(
+        await callTool({
+          projectId: projectId,
+          stageId: stageId,
+          nodeId: nodeId,
+          toolName: tool.name,
+          inputJson: inputJson,
+        }),
+      );
     } catch (error) {
       setRunError(toErrorMessage(error));
     } finally {
@@ -176,7 +171,7 @@ function ToolRow({
         <div className="flex flex-col gap-2 border-t border-border/70 p-3">
           <SectionHeader>Input Schema</SectionHeader>
           <pre className="max-h-40 overflow-auto rounded-md border border-border bg-muted/40 p-2 font-mono text-2xs text-foreground">
-            {JSON.stringify(JSON.parse(tool.inputSchema), null, 2)}
+            {tool.inputSchemaJson}
           </pre>
 
           <SectionHeader>Try it (JSON arguments)</SectionHeader>
@@ -224,29 +219,4 @@ function ToolRow({
       )}
     </div>
   );
-}
-
-function toRunResult(response: {
-  result: unknown;
-  durationMs: number;
-}): RunResult {
-  const raw = response.result as {
-    isError?: boolean;
-    content?: Array<{ type?: string; text?: string }>;
-    structuredContent?: unknown;
-  };
-  const text =
-    raw.structuredContent !== undefined
-      ? JSON.stringify(raw.structuredContent, null, 2)
-      : (raw.content ?? [])
-          .map((block) =>
-            typeof block.text === "string" ? block.text : `[${block.type}]`,
-          )
-          .join("\n");
-
-  return {
-    isError: raw.isError === true,
-    text: text || "(empty result)",
-    durationMs: response.durationMs,
-  };
 }

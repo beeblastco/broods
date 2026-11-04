@@ -1496,13 +1496,13 @@ export declare const api: {
       "action",
       "public",
       {
-        input?: any;
+        inputJson?: string;
         nodeId: string;
         projectId: Id<"projects">;
         stageId: Id<"stages">;
         toolName: string;
       },
-      { durationMs: number; result: any }
+      { durationMs: number; isError: boolean; text: string }
     >;
     getByNode: FunctionReference<
       "query",
@@ -1557,7 +1557,7 @@ export declare const api: {
       "action",
       "public",
       { nodeId: string; projectId: Id<"projects">; stageId: Id<"stages"> },
-      Array<{ description?: string; inputSchema: string; name: string }>
+      Array<{ description?: string; inputSchemaJson: string; name: string }>
     >;
     removeForNode: FunctionReference<
       "action",
@@ -1585,7 +1585,7 @@ export declare const api: {
         serverId: Id<"mcp">;
         tools: Array<{
           description?: string;
-          inputSchema: string;
+          inputSchemaJson: string;
           name: string;
         }>;
         verified: boolean;

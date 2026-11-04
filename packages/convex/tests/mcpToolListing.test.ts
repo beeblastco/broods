@@ -5,6 +5,7 @@ import workosTest from "@convex-dev/workos-authkit/test";
 import { convexTest } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
 import { api, components, internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 
 const AUTH_ID = "user_mcp_tool_listing";
@@ -20,7 +21,7 @@ afterEach((): void => {
   vi.unstubAllGlobals();
 });
 
-test("a tool whose schema has `$` keys lists as JSON text", async (): Promise<void> => {
+test("tools and results with `$` keys travel as JSON text", async (): Promise<void> => {
   vi.stubEnv("BROODS_ACCOUNT_MANAGE_URL", "https://core.example.invalid");
   vi.stubEnv("SERVICE_AUTH_SECRET", "test-service-secret");
   vi.stubGlobal(
@@ -28,6 +29,8 @@ test("a tool whose schema has `$` keys lists as JSON text", async (): Promise<vo
     vi.fn(async (): Promise<Response> =>
       Response.json({
         tools: [{ name: "read_docs", inputSchema: INPUT_SCHEMA }],
+        result: { structuredContent: INPUT_SCHEMA },
+        durationMs: 5,
       }),
     ),
   );
@@ -65,35 +68,53 @@ test("a tool whose schema has `$` keys lists as JSON text", async (): Promise<vo
     username: "mcp-tools",
     secretHash: "hash-mcp-tools",
   });
-  const { projectId, stageId } = await t.run(async (ctx) => {
-    const projectId = await ctx.db.insert("projects", {
-      authId: AUTH_ID,
-      orgId: orgId,
-      name: "tools",
-      slug: "tools",
-      updatedAt: Date.now(),
-    });
-    const stageId = await ctx.db.insert("stages", {
-      authId: AUTH_ID,
-      projectId: projectId,
-      name: "Development",
-      kind: "development" as const,
-      isDefault: true,
-      updatedAt: Date.now(),
-    });
+  const { projectId, stageId } = await t.run(
+    async (
+      ctx,
+    ): Promise<{ projectId: Id<"projects">; stageId: Id<"stages"> }> => {
+      const projectId = await ctx.db.insert("projects", {
+        authId: AUTH_ID,
+        orgId: orgId,
+        name: "tools",
+        slug: "tools",
+        updatedAt: Date.now(),
+      });
+      const stageId = await ctx.db.insert("stages", {
+        authId: AUTH_ID,
+        projectId: projectId,
+        name: "Development",
+        kind: "development" as const,
+        isDefault: true,
+        updatedAt: Date.now(),
+      });
 
-    return { projectId: projectId, stageId: stageId };
-  });
+      return { projectId: projectId, stageId: stageId };
+    },
+  );
+  const node = { projectId: projectId, stageId: stageId, nodeId: "mcp-node" };
+  const listed = [
+    {
+      name: "read_docs",
+      inputSchemaJson: JSON.stringify(INPUT_SCHEMA, null, 2),
+    },
+  ];
 
   const saved = await caller.action(api.mcp.saveForNode, {
-    projectId: projectId,
-    stageId: stageId,
-    nodeId: "mcp-node",
+    ...node,
     nodeLabel: "dock",
     url: "https://mcp.example.com/mcp",
   });
-
-  expect(saved.tools).toEqual([
-    { name: "read_docs", inputSchema: JSON.stringify(INPUT_SCHEMA) },
-  ]);
+  expect(saved.tools).toEqual(listed);
+  expect(await caller.action(api.mcp.listTools, node)).toEqual(listed);
+  expect(
+    await caller.action(api.mcp.callTool, {
+      ...node,
+      toolName: "read_docs",
+      inputJson: '{"$ref": "#/path"}',
+    }),
+  ).toEqual({
+    isError: false,
+    text: JSON.stringify(INPUT_SCHEMA, null, 2),
+    durationMs: 5,
+  });
 });
