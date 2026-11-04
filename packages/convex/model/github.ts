@@ -68,6 +68,12 @@ export interface RepoFile {
   path: string;
 }
 
+/** A file in an agent commit; null `content` deletes it. */
+export interface CommitFile {
+  content: string | null;
+  path: string;
+}
+
 const LOCKFILES: ReadonlyArray<{ file: string; manager: PackageManager }> = [
   { file: "bun.lock", manager: "bun" },
   { file: "bun.lockb", manager: "bun" },
@@ -456,7 +462,7 @@ export async function commitFiles(
   token: string,
   fullName: string,
   branch: string,
-  files: readonly RepoFile[],
+  files: readonly CommitFile[],
   message: string,
   viaPullRequest: boolean,
   baseSha: string,
@@ -1062,7 +1068,7 @@ async function commitOn(
   token: string,
   fullName: string,
   parentSha: string,
-  files: readonly RepoFile[],
+  files: readonly CommitFile[],
   message: string,
 ): Promise<{ sha: string; url: string }> {
   const parent = await githubRequest<{ tree: { sha: string } }>(
@@ -1078,12 +1084,17 @@ async function commitOn(
     `/repos/${fullName}/git/trees`,
     {
       base_tree: parent.tree.sha,
-      tree: files.map((file) => ({
-        path: file.path,
-        mode: "100644",
-        type: "blob",
-        content: file.content,
-      })),
+      // A null blob sha removes the path from the base tree.
+      tree: files.map((file) =>
+        file.content === null
+          ? { path: file.path, mode: "100644", type: "blob", sha: null }
+          : {
+              path: file.path,
+              mode: "100644",
+              type: "blob",
+              content: file.content,
+            },
+      ),
     },
   );
   const commit = await githubRequest<{ sha: string; html_url: string }>(

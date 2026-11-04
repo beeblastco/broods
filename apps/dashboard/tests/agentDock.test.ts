@@ -1,8 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { dockPrompt, proposalPlan } from "../app/lib/agentDock";
-import { actionTier, pendingChanges } from "../app/lib/copilotActions";
+import {
+  actionTier,
+  applyStatus,
+  changeKey,
+  dockProposals,
+  openProposal,
+} from "../app/lib/copilotActions";
+import { proposedNodes, withProposal } from "../app/lib/proposedNodes";
 import { planFromQuery } from "../app/lib/copilotIntent";
 import type { CopilotContext } from "../app/lib/copilotIntent";
+
+const REPO = {
+  baseSha: "abc",
+  branch: "dev",
+  files: [{ content: "a", path: "broods/index.ts" }],
+  fullName: "acme/agents",
+  omitted: 0,
+  viaPullRequest: false,
+};
 
 const CONTEXT: CopilotContext = {
   crons: [{ id: "c1", name: "nightly-digest", status: "active" }],
@@ -248,18 +264,169 @@ describe("agent dock", () => {
     ]);
   });
 
-  test("only writes still waiting reach the tray", () => {
-    const plan = planFromQuery("pause nightly-digest", CONTEXT) ?? undefined;
+  test("each answer with a write is one proposal; dropped files leave its commit", () => {
+    const pause = planFromQuery("pause nightly-digest", CONTEXT) ?? undefined;
     const navigate = planFromQuery("go to scheduler", CONTEXT) ?? undefined;
-    const plans = [
-      { id: "a", plan: plan },
+    const commit = proposalPlan(
+      {
+        files: [
+          { content: "a", path: "broods/a.ts" },
+          { content: "b", path: "broods/b.ts" },
+        ],
+        message: "Add a and b",
+        summary: "",
+      },
+      CONTEXT,
+      REPO,
+    );
+    const messages = [
+      { id: "a", plan: pause },
       { id: "b", plan: navigate },
-      { id: "c", plan: plan },
+      { id: "c", plan: commit ?? undefined },
     ];
 
+    const proposals = dockProposals(
+      messages,
+      new Set([changeKey("c", 0, "broods/a.ts")]),
+      { a: { phase: "discarded" } },
+      [],
+    );
+
+    expect([...proposals.keys()]).toEqual(["a", "c"]);
+    const open = openProposal(messages, proposals);
+    expect(open?.title).toBe("Add a and b");
     expect(
-      pendingChanges(plans, new Set(["c:0"])).map((change) => change.messageId),
-    ).toEqual(["a"]);
+      open?.changes.flatMap(({ action }) =>
+        action.type === "commitFiles"
+          ? action.files.map((file) => file.path)
+          : [],
+      ),
+    ).toEqual(["broods/b.ts"]);
+  });
+
+  test("a commit follows its GitHub run to deployed or failed, in the chat's words", () => {
+    const commit = proposalPlan(
+      { files: [{ content: "a", path: "broods/a.ts" }], summary: "" },
+      CONTEXT,
+      REPO,
+    );
+    const messages = [{ id: "m", plan: commit ?? undefined }];
+    const deploy = {
+      branch: "dev",
+      committedAt: 0,
+      messageId: "m",
+      runUrl: "https://github.test/run/1",
+      sha: "8d7ea8b41c",
+      url: "https://github.test/commit/8d7ea8b41c",
+    };
+    const status = (state: "deployed" | "deploying" | "failed"): string => {
+      const proposal = dockProposals(
+        messages,
+        new Set(),
+        { m: { phase: "applying", sha: "8d7ea8b41c", startedAt: 1_000 } },
+        [
+          {
+            ...deploy,
+            conclusion: "timed_out",
+            finishedAt: 43_000,
+            state: state,
+          },
+        ],
+      ).get("m");
+
+      return proposal ? applyStatus(proposal).text : "";
+    };
+
+    expect(status("deploying")).toBe("Committed 8d7ea8b to dev. Deploying.");
+    expect(status("deployed")).toBe("Deployed in 42 s.");
+    expect(status("failed")).toBe("Deploy failed: the run timed out.");
+  });
+
+  test("a file with null content is deleted, its whole content shown removed", () => {
+    const plan = proposalPlan(
+      {
+        files: [{ content: null, path: "broods/index.ts" }],
+        message: "Remove it",
+        summary: "",
+      },
+      CONTEXT,
+      REPO,
+    );
+
+    const [action] = plan?.actions ?? [];
+    expect(action?.type === "commitFiles" ? action.files[0] : null).toEqual({
+      content: null,
+      patch: ["@@ 1,1 → 1,0", "-a"],
+      path: "broods/index.ts",
+    });
+    expect(
+      proposalPlan(
+        { files: [{ content: null, path: "broods/gone.ts" }], summary: "" },
+        CONTEXT,
+        REPO,
+      )?.actions.map((step) => step.type),
+    ).toEqual(["blocked"]);
+  });
+
+  test("proposed nodes draw dashed beside what they connect to, and leave once deployed", () => {
+    const plan = proposalPlan(
+      {
+        files: [{ content: "a", path: "broods/a.ts" }],
+        nodes: [
+          { change: "add", connectTo: "broods", kind: "mcp", name: "deepwiki" },
+          { change: "remove", kind: "workspace", name: "notes" },
+        ],
+        summary: "",
+      },
+      CONTEXT,
+      REPO,
+    );
+    const messages = [{ id: "m", plan: plan ?? undefined }];
+    const canvas = [
+      {
+        data: { label: "broods" },
+        id: "1",
+        position: { x: 0, y: 0 },
+        type: "agent",
+      },
+      {
+        data: { label: "notes" },
+        id: "2",
+        position: { x: 0, y: 200 },
+        type: "workspace",
+      },
+    ];
+    const nodesFor = (
+      phase: "deployed" | "proposed",
+    ): ReturnType<typeof proposedNodes> =>
+      proposedNodes(
+        dockProposals(
+          messages,
+          new Set(),
+          phase === "proposed" ? {} : { m: { phase: phase } },
+          [],
+        ).get("m") ?? null,
+      );
+
+    const drawn = withProposal(canvas, [], nodesFor("proposed"), false);
+    expect(drawn.nodes.map((node) => [node.id, node.data.proposal])).toEqual([
+      ["1", undefined],
+      ["2", "remove"],
+      ["proposed:deepwiki", undefined],
+    ]);
+    expect(drawn.edges).toMatchObject([
+      { source: "1", target: "proposed:deepwiki" },
+    ]);
+    expect(nodesFor("deployed")).toEqual([]);
+  });
+
+  test("a malformed node list drops the nodes, not the proposal", () => {
+    const plan = proposalPlan(
+      { nodes: [{ kind: "cron", name: "x" }], summary: "Hi." },
+      CONTEXT,
+    );
+
+    expect(plan).toMatchObject({ actions: [], nodes: [], summary: "Hi." });
   });
 
   test("proposed files with no readable repo stay visible as blocked", () => {

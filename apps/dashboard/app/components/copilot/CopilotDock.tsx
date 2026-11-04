@@ -31,8 +31,7 @@ const EXAMPLES = [
 
 // Takes its width from the page, not floating, so what the plan changes stays on screen.
 export function CopilotDock(): React.JSX.Element | null {
-  const { ask, completed, dismissed, isOpen, messages, runStep, setOpen } =
-    useCopilot();
+  const { ask, completed, isOpen, messages, proposals, setOpen } = useCopilot();
 
   const [input, setInput] = useState("");
   const thread = useStickToBottom<HTMLDivElement>([messages]);
@@ -113,12 +112,9 @@ export function CopilotDock(): React.JSX.Element | null {
                     {message.plan && (
                       <CopilotPlanCard
                         completed={completed}
-                        dismissed={dismissed}
                         messageId={message.id}
-                        onRun={(index, action) =>
-                          runStep(message.id, index, action)
-                        }
                         plan={message.plan}
+                        proposal={proposals.get(message.id)}
                         stale={message.stale}
                       />
                     )}

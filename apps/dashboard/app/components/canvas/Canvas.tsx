@@ -31,6 +31,8 @@ import {
 } from "@/app/components/canvas/edgeOwnership";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import { SidePanelSlot } from "@/app/components/canvas/SidePanelSlot";
+import { useProposedNodes } from "@/app/components/copilot/CopilotProvider";
+import { DockApplyBar } from "@/app/components/copilot/DockApplyBar";
 import { useEverTrue } from "@/app/hooks/useEverTrue";
 import { useLatestRef } from "@/app/hooks/useLatestRef";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -48,6 +50,7 @@ import { FrameNode } from "@/app/components/node/FrameNode";
 import { SandboxNode } from "@/app/components/node/Sandbox";
 import { SkillNode } from "@/app/components/node/Skill";
 import { McpNode } from "@/app/components/node/Mcp";
+import { ProposedNode } from "@/app/components/node/ProposedNode";
 import { WorkspaceNode } from "@/app/components/node/Workspace";
 import {
   ContextMenu,
@@ -98,6 +101,7 @@ import { toErrorMessage } from "@/app/lib/errors";
 import { MOTION_MS, prefersReducedMotion } from "@/app/lib/motion";
 import { reportPerf } from "@/app/lib/perfReport";
 import { focusedNodeIds } from "@/app/lib/canvasFocus";
+import { withProposal } from "@/app/lib/proposedNodes";
 import {
   analyzeCanvasInfra,
   defaultRuntimeNodeData,
@@ -204,6 +208,7 @@ export const CANVAS_NODE_TYPES = {
   sandbox: SandboxNode,
   workspace: WorkspaceNode,
   mcp: McpNode,
+  proposed: ProposedNode,
   skill: SkillNode,
 };
 
@@ -1580,10 +1585,17 @@ function CanvasInner({
     });
   }, [framedGraph.edges, litIds]);
 
+  const proposed = useProposedNodes();
+  const drawn = useMemo(
+    () =>
+      withProposal(displayNodes, displayEdges, proposed.nodes, proposed.failed),
+    [displayNodes, displayEdges, proposed],
+  );
+
   const flow = (
     <ReactFlow
-      nodes={displayNodes}
-      edges={displayEdges}
+      nodes={drawn.nodes}
+      edges={drawn.edges}
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
@@ -1626,6 +1638,7 @@ function CanvasInner({
         <CanvasControls onTidy={tidyLayout} />
       </Panel>
       <CanvasNoticeStrip>
+        <DockApplyBar />
         <CanvasKeyReady projectId={projectId} stageId={stageId} />
         <CanvasRefusal ref={refusalRef} getGraph={getConnectionGraph} />
         <CanvasDropPreview drop={drop} />

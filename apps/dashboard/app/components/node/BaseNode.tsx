@@ -33,6 +33,8 @@ export type BaseNodeData = {
   frameSlot?: FrameSlot;
   /** Set by the CLI (a `sandbox: null` ref); analysis prefers it over the inferred state. */
   readOnly?: boolean;
+  /** A dock proposal removes this node; `failed` once its deploy failed. */
+  proposal?: "failed" | "remove";
 };
 
 export const statusConfig = {
@@ -135,9 +137,13 @@ export function BaseNode({
     statusText = config.text;
   }
 
-  const borderClass = !isConnectedToAgent
-    ? "border-destructive/40 hover:border-destructive/60"
-    : "border-border hover:border-foreground/25";
+  const borderClass = data.proposal
+    ? data.proposal === "failed"
+      ? "border-dashed border-destructive"
+      : "border-dashed border-muted-foreground"
+    : !isConnectedToAgent
+      ? "border-destructive/40 hover:border-destructive/60"
+      : "border-border hover:border-foreground/25";
   const stateText = stateLine(workspaceState);
   const details: Array<{ key: string; part: React.ReactNode }> = [
     { key: "subtitle", part: subtitle },

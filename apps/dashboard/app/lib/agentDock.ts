@@ -43,12 +43,24 @@ const questionsSchema = z.object({
   ),
 });
 
+// A malformed node list drops the nodes, never the proposal.
 const proposalSchema = z.object({
   files: z
-    .array(z.object({ content: z.string(), path: z.string() }))
+    .array(z.object({ content: z.string().nullable(), path: z.string() }))
     .max(10)
     .default([]),
   message: z.string().max(200).default(""),
+  nodes: z
+    .array(
+      z.object({
+        change: z.enum(["add", "remove"]),
+        connectTo: z.string().max(100).optional(),
+        kind: z.enum(["agent", "mcp", "sandbox", "skill", "workspace"]),
+        name: z.string().max(100),
+      }),
+    )
+    .max(10)
+    .catch([]),
   steps: z.array(z.string().max(200)).max(8).default([]),
   summary: z.string().max(500),
 });
@@ -100,7 +112,7 @@ export function proposalPlan(
 ): CopilotPlan | null {
   const parsed = proposalSchema.safeParse(input);
   if (!parsed.success) return null;
-  const { files, message } = parsed.data;
+  const { files, message, nodes } = parsed.data;
   const label = `Commit ${files.map((file) => file.path).join(", ")}`;
   const read = new Set(repo?.files.map((file) => file.path));
   // With files left out of the read, an unread path may exist and would be overwritten blind.
@@ -108,6 +120,9 @@ export function proposalPlan(
     repo && repo.omitted > 0
       ? files.find((file) => !read.has(file.path))
       : undefined;
+  const missing = repo
+    ? files.find((file) => file.content === null && !read.has(file.path))
+    : undefined;
   const commit: CopilotAction[] =
     files.length === 0
       ? []
@@ -128,7 +143,15 @@ export function proposalPlan(
                 type: "blocked",
               },
             ]
-          : [commitAction(files, message, repo)];
+          : missing
+            ? [
+                {
+                  label: label,
+                  reason: `${missing.path} is not in the repo, so it cannot be deleted.`,
+                  type: "blocked",
+                },
+              ]
+            : [commitAction(files, message, repo)];
 
   return {
     actions: [
@@ -144,6 +167,7 @@ export function proposalPlan(
       ),
       ...commit,
     ],
+    nodes: nodes,
     summary: parsed.data.summary,
   };
 }
@@ -196,7 +220,7 @@ export async function* streamDockAnswer(
 }
 
 function commitAction(
-  files: readonly { content: string; path: string }[],
+  files: readonly { content: string | null; path: string }[],
   message: string,
   repo: DockRepo,
 ): CopilotAction {
@@ -212,7 +236,7 @@ function commitAction(
         file.path,
         file.path,
         withNewline(before.get(file.path) ?? ""),
-        withNewline(file.content),
+        withNewline(file.content ?? ""),
         undefined,
         undefined,
         { context: 2 },

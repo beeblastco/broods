@@ -7,14 +7,19 @@ import { useStage } from "@/app/hooks/useStage";
 import type { DockFacts, DockSession } from "@/app/lib/agentDock";
 import {
   actionTier,
-  pendingChanges,
+  changeKey,
+  dockProposals,
+  openProposal,
   type CopilotAction,
   type CopilotPlan,
-  type PendingChange,
+  type DockApply,
+  type DockProposal,
+  type ProposedNode,
   type TrackedDeploy,
 } from "@/app/lib/copilotActions";
 import { planFromQuery, type CopilotContext } from "@/app/lib/copilotIntent";
 import { navHref } from "@/app/lib/navigation";
+import { proposedNodes } from "@/app/lib/proposedNodes";
 import { requestCanvasAction } from "@/app/lib/canvasActions";
 import { toErrorMessage } from "@/app/lib/errors";
 import type { SearchItem } from "@/app/lib/paletteSearch";
@@ -52,28 +57,36 @@ export interface CopilotMessage {
 }
 
 export interface CopilotState {
+  applyProposal: (messageId: string) => void;
   ask: (query: string) => void;
   /** Keys of plan steps already run, as `${messageId}:${index}`. */
   completed: ReadonlySet<string>;
-  /** Keys of plan steps the user discarded, in the same form. */
-  dismissed: ReadonlySet<string>;
-  dismissStep: (messageId: string, index: number) => void;
-  /** Commits applied from the dock, until the user clears them. */
-  deploys: readonly TrackedDeploy[];
-  dismissDeploy: (sha: string) => void;
+  discardProposal: (messageId: string) => void;
+  /** Leaves one step, or one file of its commit, out of the proposal. */
+  dropChange: (messageId: string, index: number, path?: string) => void;
   isOpen: boolean;
   /** Empty until `wakeIndex`. */
   items: readonly SearchItem[];
   messages: readonly CopilotMessage[];
-  /** Writes still waiting for Apply, from answers asked on this project and stage. */
-  pending: readonly PendingChange[];
+  /** The newest proposal still open on this project and stage: the bar and the canvas draw it. */
+  proposal: DockProposal | null;
+  /** Every answer's proposal by message id: the chat line reads it. */
+  proposals: ReadonlyMap<string, DockProposal>;
   runAction: (action: CopilotAction) => void;
-  runStep: (messageId: string, index: number, action: CopilotAction) => void;
   setOpen: (open: boolean) => void;
   wakeIndex: () => void;
 }
 
+interface ProposedNodes {
+  failed: boolean;
+  nodes: readonly ProposedNode[];
+}
+
 const CopilotContext = createContext<CopilotState | null>(null);
+const ProposedNodesContext = createContext<ProposedNodes>({
+  failed: false,
+  nodes: [],
+});
 
 // Mounted above the router, so the thread survives the navigation the copilot does.
 export function CopilotProvider({
@@ -158,7 +171,10 @@ export function CopilotProvider({
   }, []);
   const [messages, setMessages] = useState<readonly CopilotMessage[]>([]);
   const [completed, setCompleted] = useState<ReadonlySet<string>>(new Set());
-  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
+  const [dropped, setDropped] = useState<ReadonlySet<string>>(new Set());
+  const [applies, setApplies] = useState<Readonly<Record<string, DockApply>>>(
+    {},
+  );
   const [commits, setCommits] = useState<
     readonly Omit<TrackedDeploy, "runUrl" | "state">[]
   >([]);
@@ -180,14 +196,17 @@ export function CopilotProvider({
         ) {
           return { ...commit, state: "waiting" };
         }
-        const state =
-          run.status !== "completed"
-            ? "deploying"
-            : run.conclusion === "success"
-              ? "deployed"
-              : "failed";
+        if (run.status !== "completed") {
+          return { ...commit, runUrl: run.url, state: "deploying" };
+        }
 
-        return { ...commit, runUrl: run.url, state: state };
+        return {
+          ...commit,
+          conclusion: run.conclusion,
+          finishedAt: run.updatedAt,
+          runUrl: run.url,
+          state: run.conclusion === "success" ? "deployed" : "failed",
+        };
       }),
     [commits, github],
   );
@@ -199,149 +218,106 @@ export function CopilotProvider({
     ]);
   }, []);
 
-  // Answers whether the step took effect; a refusal is noted in the thread and the step stays open.
+  // Answers whether the step took effect; throws the reason a write was refused.
   const perform = useCallback(
     async (action: CopilotAction): Promise<boolean> => {
-      try {
-        switch (action.type) {
-          case "navigate":
-            router.push(action.href);
+      switch (action.type) {
+        case "navigate":
+          router.push(action.href);
 
-            return true;
-          case "openNode":
-            if (!projectId) return false;
-            router.push(
-              `${navHref(projectId, "", stageId)}${stageId ? "&" : "?"}node=${action.nodeId}`,
-            );
+          return true;
+        case "openNode":
+          if (!projectId) return false;
+          router.push(
+            `${navHref(projectId, "", stageId)}${stageId ? "&" : "?"}node=${action.nodeId}`,
+          );
 
-            return true;
-          case "command":
-            if (!registry.activeIds.has(action.commandId)) {
-              note("Open the Architecture canvas first.");
+          return true;
+        case "command":
+          if (!registry.activeIds.has(action.commandId)) {
+            note("Open the Architecture canvas first.");
 
-              return false;
-            }
-            registry.trigger(action.commandId);
-
-            return true;
-          case "setCronStatus":
-            await updateCron({ cronId: action.cronId, status: action.status });
-
-            return true;
-          case "setEnvVar":
-            if (!projectId || !stageId) return false;
-            await setEnvVar({
-              name: action.name,
-              projectId: projectId,
-              stageId: stageId,
-              value: action.value,
-            });
-
-            return true;
-          case "blocked":
             return false;
-          case "connectNodes":
-            await requestCanvasAction({
-              kind: "connect",
-              source: action.source,
-              target: action.target,
-            });
-
-            return true;
-          case "addMcp":
-            await requestCanvasAction({
-              ...(action.agent ? { agent: action.agent } : {}),
-              kind: "addMcp",
-              name: action.name,
-              url: action.url,
-            });
-
-            return true;
-          case "addNode":
-            await requestCanvasAction({
-              agent: action.agent,
-              kind: "addNode",
-              nodeType: action.nodeType,
-            });
-
-            return true;
-          case "commitFiles": {
-            if (!projectId || !currentStageId) return false;
-            const result = await commitChange({
-              baseSha: action.baseSha,
-              branch: action.branch,
-              files: action.files.map((file) => ({
-                content: file.content,
-                path: file.path,
-              })),
-              fullName: action.fullName,
-              message: action.message,
-              projectId: projectId,
-              stageId: currentStageId,
-            });
-            if (result.viaPullRequest) {
-              note(`Opened a pull request: ${result.url}`);
-            } else {
-              setCommits((prev) => [
-                ...prev,
-                {
-                  branch: action.branch,
-                  committedAt: Date.now(),
-                  label: action.message || action.label,
-                  sha: result.sha,
-                  url: result.url,
-                },
-              ]);
-            }
-
-            return true;
           }
-        }
+          registry.trigger(action.commandId);
+
+          return true;
+        case "setCronStatus":
+          await updateCron({ cronId: action.cronId, status: action.status });
+
+          return true;
+        case "setEnvVar":
+          if (!projectId || !stageId) return false;
+          await setEnvVar({
+            name: action.name,
+            projectId: projectId,
+            stageId: stageId,
+            value: action.value,
+          });
+
+          return true;
+        case "blocked":
+          return false;
+        case "connectNodes":
+          await requestCanvasAction({
+            kind: "connect",
+            source: action.source,
+            target: action.target,
+          });
+
+          return true;
+        case "addMcp":
+          await requestCanvasAction({
+            ...(action.agent ? { agent: action.agent } : {}),
+            kind: "addMcp",
+            name: action.name,
+            url: action.url,
+          });
+
+          return true;
+        case "addNode":
+          await requestCanvasAction({
+            agent: action.agent,
+            kind: "addNode",
+            nodeType: action.nodeType,
+          });
+
+          return true;
+        case "commitFiles":
+          return false;
+      }
+    },
+    [note, projectId, registry, router, setEnvVar, stageId, updateCron],
+  );
+
+  // A refusal of a step that runs on its own is noted in the thread.
+  const performNoted = useCallback(
+    async (action: CopilotAction): Promise<boolean> => {
+      try {
+        return await perform(action);
       } catch (error) {
         note(toErrorMessage(error));
 
         return false;
       }
     },
-    [
-      commitChange,
-      currentStageId,
-      note,
-      projectId,
-      registry,
-      router,
-      setEnvVar,
-      stageId,
-      updateCron,
-    ],
-  );
-
-  // A step being applied ignores a second Apply and a Discard until it settles.
-  const applying = useRef(new Set<string>());
-  const settle = useCallback(
-    async (messageId: string, index: number, action: CopilotAction) => {
-      const key = `${messageId}:${index}`;
-      if (applying.current.has(key)) return;
-      applying.current.add(key);
-      try {
-        if (await perform(action)) {
-          setCompleted((prev) => new Set(prev).add(key));
-        }
-      } finally {
-        applying.current.delete(key);
-      }
-    },
-    [perform],
+    [note, perform],
   );
 
   const runSafeSteps = useCallback(
     (messageId: string, plan: CopilotPlan): void => {
       plan.actions.forEach((action, index) => {
-        if (actionTier(action) === "safe")
-          void settle(messageId, index, action);
+        if (actionTier(action) !== "safe") return;
+        void performNoted(action).then((done) => {
+          if (done) {
+            setCompleted((prev) =>
+              new Set(prev).add(changeKey(messageId, index)),
+            );
+          }
+        });
       });
     },
-    [settle],
+    [performNoted],
   );
 
   const dockSession = useCallback(async (): Promise<DockSession | null> => {
@@ -512,42 +488,130 @@ export function CopilotProvider({
     ],
   );
 
-  const runStep = useCallback(
-    (messageId: string, index: number, action: CopilotAction): void => {
-      if (actionTier(action) === "blocked") return;
-      const asked = messages.find((message) => message.id === messageId);
-      if (asked?.scope !== undefined && asked.scope !== scope) return;
-      void settle(messageId, index, action);
+  const proposals = useMemo(
+    () => dockProposals(messages, dropped, applies, deploys, facts.stage),
+    [applies, deploys, dropped, facts.stage, messages],
+  );
+  const proposal = useMemo(
+    () => openProposal(messages, proposals, scope),
+    [messages, proposals, scope],
+  );
+
+  // A retry after the commit landed builds on it, so the deploy runs again.
+  const commitProposal = useCallback(
+    async (
+      messageId: string,
+      action: Extract<CopilotAction, { type: "commitFiles" }>,
+      landed: string | undefined,
+      startedAt: number,
+    ): Promise<DockApply> => {
+      if (!projectId || !currentStageId) {
+        throw new Error("Open the project's stage first.");
+      }
+      const result = await commitChange({
+        baseSha: landed ?? action.baseSha,
+        branch: action.branch,
+        files: action.files
+          .filter((file) => !landed || file.content !== null)
+          .map((file) => ({ content: file.content, path: file.path })),
+        fullName: action.fullName,
+        message: action.message,
+        projectId: projectId,
+        stageId: currentStageId,
+      });
+      if (result.viaPullRequest) {
+        return {
+          phase: "deployed",
+          runUrl: result.url,
+          sha: result.sha,
+          startedAt: startedAt,
+        };
+      }
+      setCommits((prev) => [
+        ...prev,
+        {
+          branch: action.branch,
+          committedAt: Date.now(),
+          messageId: messageId,
+          sha: result.sha,
+          url: result.url,
+        },
+      ]);
+
+      return { phase: "applying", sha: result.sha, startedAt: startedAt };
     },
-    [messages, scope, settle],
+    [commitChange, currentStageId, projectId],
+  );
+
+  // A proposal being applied ignores a second press and a Discard until it settles.
+  const applying = useRef(new Set<string>());
+  const applyProposal = useCallback(
+    (messageId: string): void => {
+      const target = proposals.get(messageId);
+      const asked = messages.find((message) => message.id === messageId);
+      if (!target || applying.current.has(messageId)) return;
+      if (asked?.scope !== undefined && asked.scope !== scope) return;
+      applying.current.add(messageId);
+      const landed = target.apply.sha;
+      const startedAt = Date.now();
+      const record = (apply: DockApply): void =>
+        setApplies((prev) => ({ ...prev, [messageId]: apply }));
+      record({ phase: "applying", sha: landed, startedAt: startedAt });
+
+      void (async (): Promise<DockApply> => {
+        for (const { action } of target.changes) {
+          if (action.type === "commitFiles") {
+            return await commitProposal(messageId, action, landed, startedAt);
+          }
+          if (!(await perform(action))) {
+            throw new Error(`${action.label} cannot run here.`);
+          }
+        }
+
+        return { phase: "deployed", startedAt: startedAt };
+      })()
+        .then(record, (error: unknown) =>
+          record({
+            error: toErrorMessage(error),
+            phase: "failed",
+            sha: landed,
+            startedAt: startedAt,
+          }),
+        )
+        .finally(() => applying.current.delete(messageId));
+    },
+    [commitProposal, messages, perform, proposals, scope],
+  );
+
+  const discardProposal = useCallback(
+    (messageId: string): void => {
+      if (applying.current.has(messageId)) return;
+      setApplies((prev) => ({
+        ...prev,
+        [messageId]: {
+          phase: "discarded",
+          sha: proposals.get(messageId)?.apply.sha,
+        },
+      }));
+    },
+    [proposals],
+  );
+
+  const dropChange = useCallback(
+    (messageId: string, index: number, path?: string): void => {
+      if (applying.current.has(messageId)) return;
+      setDropped((prev) =>
+        new Set(prev).add(changeKey(messageId, index, path)),
+      );
+    },
+    [],
   );
 
   const runAction = useCallback(
     (action: CopilotAction): void => {
-      void perform(action);
+      void performNoted(action);
     },
-    [perform],
-  );
-
-  const dismissStep = useCallback((messageId: string, index: number): void => {
-    const key = `${messageId}:${index}`;
-    if (applying.current.has(key)) return;
-    setDismissed((prev) => new Set(prev).add(key));
-  }, []);
-
-  const dismissDeploy = useCallback((sha: string): void => {
-    setCommits((prev) => prev.filter((commit) => commit.sha !== sha));
-  }, []);
-
-  const pending = useMemo(
-    () =>
-      pendingChanges(
-        messages.filter(
-          (message) => message.scope === undefined || message.scope === scope,
-        ),
-        new Set([...completed, ...dismissed]),
-      ),
-    [completed, dismissed, messages, scope],
+    [performNoted],
   );
 
   const shownMessages = useMemo(
@@ -562,33 +626,31 @@ export function CopilotProvider({
 
   const value = useMemo(
     () => ({
+      applyProposal: applyProposal,
       ask: ask,
       completed: completed,
-      deploys: deploys,
-      dismissDeploy: dismissDeploy,
-      dismissed: dismissed,
-      dismissStep: dismissStep,
+      discardProposal: discardProposal,
+      dropChange: dropChange,
       isOpen: isOpen,
       items: items,
       messages: shownMessages,
-      pending: pending,
+      proposal: proposal,
+      proposals: proposals,
       runAction: runAction,
-      runStep: runStep,
       setOpen: setOpen,
       wakeIndex: wakeIndex,
     }),
     [
+      applyProposal,
       ask,
       completed,
-      deploys,
-      dismissDeploy,
-      dismissed,
-      dismissStep,
+      discardProposal,
+      dropChange,
       isOpen,
       items,
-      pending,
+      proposal,
+      proposals,
       runAction,
-      runStep,
       setOpen,
       shownMessages,
     ],
@@ -605,9 +667,26 @@ export function CopilotStateProvider({
   children: React.ReactNode;
   value: CopilotState;
 }): React.JSX.Element {
-  return (
-    <CopilotContext.Provider value={value}>{children}</CopilotContext.Provider>
+  // Its own context, so the canvas renders when the drawn nodes change, not on every stream delta.
+  const nodes = proposedNodes(value.proposal);
+  const failed = value.proposal?.apply.phase === "failed";
+  const drawn = useMemo(
+    () => ({ failed: failed, nodes: nodes }),
+    [failed, nodes],
   );
+
+  return (
+    <CopilotContext.Provider value={value}>
+      <ProposedNodesContext.Provider value={drawn}>
+        {children}
+      </ProposedNodesContext.Provider>
+    </CopilotContext.Provider>
+  );
+}
+
+/** The nodes the open proposal draws on the canvas; none outside the provider. */
+export function useProposedNodes(): ProposedNodes {
+  return useContext(ProposedNodesContext);
 }
 
 export function useCopilot(): CopilotState {
