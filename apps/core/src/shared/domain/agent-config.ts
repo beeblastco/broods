@@ -38,7 +38,6 @@ export const RUN_OVERRIDE_RESERVED_MODEL_KEYS = [
   "modelId",
   "output",
   "apiKey",
-  "transcriptionProvider",
 ] as const;
 // `sandbox` and `policy` are retired keys, kept so the normalizer refuses them by name.
 const RUNTIME_CONFIG_KEYS = [
@@ -183,8 +182,6 @@ export interface AgentModelConfig
   provider?: AccountModelProviderName;
   modelId?: string;
   transcriptionModelId?: string;
-  // Reads inbound audio with its `config.provider` key; defaults to `provider`.
-  transcriptionProvider?: AccountModelProviderName;
   providerOptions?: AgentModelProviderOptions;
   output?: AgentModelOutputConfig;
 }

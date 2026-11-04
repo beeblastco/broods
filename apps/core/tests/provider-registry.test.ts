@@ -208,39 +208,19 @@ describe("transcription model resolution", () => {
         model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
         provider: { anthropic: { apiKey: "sk-test" } },
       }),
-    ).toEqual({ reason: "anthropic has no transcription model" });
+    ).toBeUndefined();
   });
 
-  it("names the missing provider entry when the provider is configured without credentials", () => {
+  it("has none when the provider is configured without credentials", () => {
     expect(
       resolveTranscriptionModel({
         model: { provider: "openai", modelId: "gpt-5" },
       }),
-    ).toEqual({ reason: "config.provider.openai is required" });
-  });
-
-  it("reads audio on transcriptionProvider when the agent's own provider has none", () => {
-    const resolved = resolveTranscriptionModel({
-      model: {
-        provider: "anthropic",
-        modelId: "claude-haiku-5-5",
-        transcriptionProvider: "openai",
-      },
-      provider: {
-        anthropic: { apiKey: "sk-ant-test" },
-        openai: { apiKey: "sk-test" },
-      },
-    });
-
-    if (!("model" in resolved)) {
-      throw new Error(resolved.reason);
-    }
-    expect(resolved.model.provider).toStartWith("openai");
-    expect(resolved.model.modelId).toBe("whisper-1");
+    ).toBeUndefined();
   });
 });
 
-// A provider errors on an unknown call option, so the transcription id and provider must stay out.
+// A provider errors on an unknown call option, so the transcription id must stay out.
 describe("modelSettingsFromModelConfig", () => {
   it("leaves the transcription model out of the language model's settings", () => {
     expect(
@@ -249,7 +229,6 @@ describe("modelSettingsFromModelConfig", () => {
           provider: "openai",
           modelId: "gpt-5",
           transcriptionModelId: "gpt-4o-mini-transcribe",
-          transcriptionProvider: "groq",
           temperature: 0.2,
         },
       }),
