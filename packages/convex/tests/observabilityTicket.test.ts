@@ -263,6 +263,20 @@ describe("the read-only logs ticket", () => {
     expect((await write(t, await lentLogin(t, "dock-1"))).status).toBe(403);
   });
 
+  test("a conversation audits its first opening of a stage, not every read", async () => {
+    const t = await seed();
+    const login = await lentLogin(t, "dock-1");
+    for (let read = 0; read < 3; read += 1)
+      expect((await open(t, login)).status).toBe(200);
+
+    const opened = await t.run(async (ctx) =>
+      (await ctx.db.query("auditEvents").collect()).filter(
+        (row) => row.action === "observability.opened",
+      ),
+    );
+    expect(opened).toHaveLength(1);
+  });
+
   test("a null body is a 400", async () => {
     const t = await seed();
     const response = await t.fetch("/v1/account/observability-session", {

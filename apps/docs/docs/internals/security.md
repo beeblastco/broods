@@ -192,7 +192,7 @@ Logs carry end users' chats, and the runtime key cannot open them. The dock agen
 - **It dies with the login.** Its expiry is 5 minutes or the login's, whichever comes first, and the socket closes then.
 - **Reading makes the conversation read-only.** Text in logs may try to steer the agent, so the mint marks the login's conversation in the same mutation, before any ticket exists. From then on the config plane refuses every non-`GET` from any lent login of that conversation (`observedLoginRefusal`, code `read_only_after_logs`), including one re-minted later. A write already past that check when logs open can still land: the agent decided on it before it could see a log line. A lent login with no conversation cannot open logs at all. `dock__propose_changes` still works, since the signed-in user reviews and applies those.
 - **No way out for what it read.** The dock agent has no web tools, and its sandbox has no network and no credential.
-- **Audited.** Each mint writes an `observability.opened` event.
+- **Audited.** A conversation's first opening of each stage writes an `observability.opened` event, and so does each mint by a person's own login.
 
 Not covered: the agent's answer text and links. A crafted log line can still try to mislead what it tells the user, which is why it must say what it read and treat logs as data.
 
