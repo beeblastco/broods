@@ -3,15 +3,6 @@ import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
 import { releasePlatformSandbox } from "../src/harness/sandbox/platform-worker.ts";
 import { queueMirrorWrite } from "../src/harness/sandbox/utils.ts";
 
-function gate(): { wait: () => Promise<void>; open: () => void } {
-  let open = (): void => {};
-  const opened = new Promise<void>((resolve): void => {
-    open = resolve;
-  });
-
-  return { wait: (): Promise<void> => opened, open: open };
-}
-
 afterEach((): void => {
   mock.restore();
 });
@@ -19,13 +10,13 @@ afterEach((): void => {
 describe("queueMirrorWrite", () => {
   it("runs one account's writes one at a time, across sandboxes", async () => {
     const order: string[] = [];
-    const held = gate();
+    const held = Promise.withResolvers<void>();
     const first = queueMirrorWrite(
       "acct-a",
       "sbx-1",
       async (): Promise<void> => {
         order.push("start 1");
-        await held.wait();
+        await held.promise;
         order.push("end 1");
       },
     );
@@ -44,7 +35,7 @@ describe("queueMirrorWrite", () => {
       },
     );
     await other;
-    held.open();
+    held.resolve();
     await Promise.all([first, second]);
 
     expect(order).toEqual(["start 1", "other account", "end 1", "start 2"]);
@@ -69,12 +60,12 @@ describe("queueMirrorWrite", () => {
 
   it("queues a write with no account on its sandbox id", async () => {
     const order: string[] = [];
-    const held = gate();
+    const held = Promise.withResolvers<void>();
     const first = queueMirrorWrite(
       undefined,
       "sbx-own-1",
       async (): Promise<void> => {
-        await held.wait();
+        await held.promise;
         order.push("sbx-own-1 first");
       },
     );
@@ -88,7 +79,7 @@ describe("queueMirrorWrite", () => {
     await queueMirrorWrite(undefined, "sbx-own-2", async (): Promise<void> => {
       order.push("sbx-own-2");
     });
-    held.open();
+    held.resolve();
     await Promise.all([first, same]);
 
     expect(order).toEqual(["sbx-own-2", "sbx-own-1 first", "sbx-own-1 second"]);
@@ -105,14 +96,16 @@ describe("releasePlatformSandbox", () => {
         return true;
       },
     );
-    const sameAccount = gate();
-    const otherAccount = gate();
+    const sameAccount = Promise.withResolvers<void>();
+    const otherAccount = Promise.withResolvers<void>();
     void queueMirrorWrite("acct-r", "sbx-other", async (): Promise<void> => {
-      await sameAccount.wait();
+      await sameAccount.promise;
       order.push("acct-r write");
     });
-    void queueMirrorWrite("acct-x", "sbx-x", (): Promise<void> =>
-      otherAccount.wait(),
+    void queueMirrorWrite(
+      "acct-x",
+      "sbx-x",
+      (): Promise<void> => otherAccount.promise,
     );
 
     const released = releasePlatformSandbox(
@@ -126,10 +119,10 @@ describe("releasePlatformSandbox", () => {
     await Bun.sleep(0);
     expect(order).toEqual(["drop sbx-r"]);
 
-    sameAccount.open();
+    sameAccount.resolve();
     await released;
     // Another account's pending write never held the release.
     expect(order).toEqual(["drop sbx-r", "acct-r write", "delete key-r"]);
-    otherAccount.open();
+    otherAccount.resolve();
   });
 });

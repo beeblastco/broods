@@ -668,19 +668,8 @@ async function suspendOrResumeSandbox(
   });
   const status = action === "suspend" ? "suspended" : "running";
   // Queued behind in-flight exec upserts, or one could land after and mark it running.
-  const externalId = await getSandboxExternalId(
-    context.provider,
-    context.reservationKey,
-  );
-  await queueMirrorWrite(
-    context.accountId,
-    externalId ?? context.reservationKey,
-    () =>
-      setSandboxInstanceStatus(
-        context.accountId,
-        context.reservationKey,
-        status,
-      ),
+  await queueMirrorWrite(context.accountId, context.reservationKey, () =>
+    setSandboxInstanceStatus(context.accountId, context.reservationKey, status),
   );
   await context.audit("ok", { status: status });
 
@@ -693,11 +682,6 @@ async function terminateSandbox(
   if (!context.executor.release) {
     return unsupportedSandboxAction(context, "terminate");
   }
-  // Read before the reservation goes, to queue behind exec upserts that could recreate the row.
-  const externalId = await getSandboxExternalId(
-    context.provider,
-    context.reservationKey,
-  );
   await auditedSandboxCall(context, async () => {
     await context.executor.release?.(context.ref);
   });
@@ -706,10 +690,9 @@ async function terminateSandbox(
     context.reservationKey,
     context.accountId,
   );
-  await queueMirrorWrite(
-    context.accountId,
-    externalId ?? context.reservationKey,
-    () => removeSandboxInstance(context.accountId, context.reservationKey),
+  // Queued behind in-flight exec upserts, or one could land after and recreate the row.
+  await queueMirrorWrite(context.accountId, context.reservationKey, () =>
+    removeSandboxInstance(context.accountId, context.reservationKey),
   );
   await context.audit("ok", { status: "terminating" });
 

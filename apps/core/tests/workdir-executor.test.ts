@@ -1141,14 +1141,11 @@ describe("WorkdirSandboxExecutor.run", () => {
   it("queues a reconnected sandbox's row refresh on its account, off the run's clock", async (): Promise<void> => {
     const { queueMirrorWrite } =
       await import("../src/harness/sandbox/utils.ts");
-    let release = (): void => {};
+    const held = Promise.withResolvers<void>();
     const pending = queueMirrorWrite(
       "acct_q",
       "sbx_other",
-      (): Promise<void> =>
-        new Promise((resolve): void => {
-          release = resolve;
-        }),
+      (): Promise<void> => held.promise,
     );
     storedSandboxExternalId = "sbx_stored";
     const plane = { accountId: "acct_q", name: "box" };
@@ -1170,7 +1167,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
 
     expect(upsertSandboxInstanceMock).not.toHaveBeenCalled();
-    release();
+    held.resolve();
     await pending;
     await tick();
     expect(upsertSandboxInstanceMock.mock.calls).toEqual([

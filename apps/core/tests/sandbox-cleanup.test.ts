@@ -304,14 +304,11 @@ it("still drops the rows when the reservation lookup fails", async () => {
 
 // A refresh still queued for the account would otherwise write the dropped row back.
 it("drops the mirror row only after the account's queued writes land", async () => {
-  let release = (): void => {};
+  const held = Promise.withResolvers<void>();
   const pending = queueMirrorWrite(
     "acct-1",
     "sbx-other",
-    (): Promise<void> =>
-      new Promise((resolve): void => {
-        release = resolve;
-      }),
+    (): Promise<void> => held.promise,
   );
 
   const expired = releaseExpiredSandboxes("acct-1", [
@@ -325,7 +322,7 @@ it("drops the mirror row only after the account's queued writes land", async () 
   ]);
   expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
 
-  release();
+  held.resolve();
   await Promise.all([pending, expired, reserved]);
   expect(removeSandboxInstanceMock.mock.calls).toEqual([
     ["acct-1", "key-a", "sbx-a"],

@@ -67,7 +67,7 @@ import {
   isSandboxGoneError,
   mergeSandboxEnv,
   meterEphemeralSandbox,
-  queueMirrorWrite,
+  queueMirrorUpsert,
   SandboxCapacityError,
   SandboxGoneError,
   sandboxReservationKey,
@@ -156,17 +156,12 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
-    void queueMirrorWrite(
-      this.#config.controlPlane?.accountId,
+    void queueMirrorUpsert(
+      this.#config.controlPlane,
+      "sandbox",
+      request.reservationKey,
       externalId,
-      (): Promise<void> =>
-        upsertSandboxInstance(
-          this.#config.controlPlane,
-          "sandbox",
-          request.reservationKey,
-          externalId,
-          request.metadata,
-        ),
+      request.metadata,
     );
     request.abortSignal?.throwIfAborted();
 
@@ -609,17 +604,12 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
           this.#config.controlPlane?.releaseAfterIdleSeconds,
         ).catch(() => {});
-        void queueMirrorWrite(
-          this.#config.controlPlane?.accountId,
+        void queueMirrorUpsert(
+          this.#config.controlPlane,
+          "sandbox",
+          ns,
           externalId,
-          (): Promise<void> =>
-            upsertSandboxInstance(
-              this.#config.controlPlane,
-              "sandbox",
-              ns,
-              externalId,
-              "metadata" in request ? request.metadata : undefined,
-            ),
+          "metadata" in request ? request.metadata : undefined,
         );
 
         return { sandbox: sandbox, isFirstCreate: false };

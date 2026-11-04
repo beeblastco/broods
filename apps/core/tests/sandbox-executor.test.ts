@@ -3900,14 +3900,11 @@ describe("account mirror queue", () => {
       const {
         createSandboxExecutor,
       } = require("../src/harness/sandbox/index.ts");
-      let release = (): void => {};
+      const held = Promise.withResolvers<void>();
       const pending = queueMirrorWrite(
         "acct-refresh",
         "other-sandbox",
-        (): Promise<void> =>
-          new Promise((resolve): void => {
-            release = resolve;
-          }),
+        (): Promise<void> => held.promise,
       );
       storedSandboxExternalId = externalId;
 
@@ -3927,7 +3924,7 @@ describe("account mirror queue", () => {
 
       expect(result.ok).toBe(true);
       expect(upsertSandboxInstanceMock).not.toHaveBeenCalled();
-      release();
+      held.resolve();
       await pending;
       await Bun.sleep(0);
       expect(
@@ -3942,14 +3939,11 @@ describe("account mirror queue", () => {
     const {
       createSandboxExecutor,
     } = require("../src/harness/sandbox/index.ts");
-    let release = (): void => {};
+    const held = Promise.withResolvers<void>();
     const pending = queueMirrorWrite(
       "acct-create",
       "other-sandbox",
-      (): Promise<void> =>
-        new Promise((resolve): void => {
-          release = resolve;
-        }),
+      (): Promise<void> => held.promise,
     );
 
     await createSandboxExecutor({
@@ -3969,7 +3963,7 @@ describe("account mirror queue", () => {
       upsertSandboxInstanceMock.mock.calls.map((call) => [call[1], call[3]]),
     ).toEqual([["e2b", "e2b-sandbox"]]);
     expect(setSandboxInstanceSpecsMock).not.toHaveBeenCalled();
-    release();
+    held.resolve();
     await pending;
     await Bun.sleep(0);
     expect(setSandboxInstanceSpecsMock.mock.calls).toEqual([

@@ -208,15 +208,13 @@ export function meterEphemeralSandbox(
     : controlPlane?.accountId;
   if (!accountId) return (): void => {};
   const specs = readSpecs?.();
-  void queueMirrorWrite(accountId, sandboxId, (): Promise<void> =>
-    upsertSandboxInstance(
-      controlPlane,
-      provider,
-      sandboxId,
-      sandboxId,
-      metadata,
-      { ephemeral: true, specs: specs instanceof Promise ? undefined : specs },
-    ),
+  void queueMirrorUpsert(
+    controlPlane,
+    provider,
+    sandboxId,
+    sandboxId,
+    metadata,
+    { ephemeral: true, specs: specs instanceof Promise ? undefined : specs },
   );
   if (specs instanceof Promise) {
     void specs.then((reported): void => {
@@ -254,6 +252,14 @@ export function queueMirrorWrite(
   });
 
   return queued;
+}
+
+export function queueMirrorUpsert(
+  ...row: Parameters<typeof upsertSandboxInstance>
+): Promise<void> {
+  return queueMirrorWrite(row[0]?.accountId, row[3], () =>
+    upsertSandboxInstance(...row),
+  );
 }
 
 export function requiredWorkspacePath(
