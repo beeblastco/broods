@@ -146,7 +146,9 @@ async function readCachedCheck(): Promise<CachedCheck | null> {
 }
 
 function lockfileManager(root: string): PackageManager {
-  const match = LOCKFILES.find(([file]) => existsSync(join(root, file)));
+  const match = LOCKFILES.find(([file]): boolean =>
+    existsSync(join(root, file)),
+  );
 
   return match?.[1] ?? "npm";
 }
@@ -157,7 +159,7 @@ function releaseTriple(version: string): number[] {
   return (release ?? "")
     .split(".")
     .slice(0, 3)
-    .map((part) => Number.parseInt(part, 10) || 0);
+    .map((part): number => Number.parseInt(part, 10) || 0);
 }
 
 async function writeCachedCheck(check: CachedCheck): Promise<void> {

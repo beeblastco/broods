@@ -7,7 +7,7 @@ import {
   loadBroodsRuntimeConfig,
 } from "../src/runtime-config.ts";
 
-test("loadBroodsRuntimeConfig picks up .env.local edits for vars not in real env", async () => {
+test("loadBroodsRuntimeConfig picks up .env.local edits for vars not in real env", async (): Promise<void> => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-env-cache-"));
   try {
     await writeFile(
@@ -32,7 +32,7 @@ test("loadBroodsRuntimeConfig picks up .env.local edits for vars not in real env
   }
 });
 
-test("loadBroodsRuntimeConfig with BROODS_RELOAD_ENV=1 always overwrites", async () => {
+test("loadBroodsRuntimeConfig with BROODS_RELOAD_ENV=1 always overwrites", async (): Promise<void> => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-env-cache-"));
   const originalReload = process.env.BROODS_RELOAD_ENV;
   try {
@@ -59,7 +59,7 @@ test("loadBroodsRuntimeConfig with BROODS_RELOAD_ENV=1 always overwrites", async
   }
 });
 
-test("loadBroodsRuntimeConfig picks up .env (not just .env.local) edits", async () => {
+test("loadBroodsRuntimeConfig picks up .env (not just .env.local) edits", async (): Promise<void> => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-env-cache-"));
   try {
     await writeFile(
@@ -85,7 +85,7 @@ test("loadBroodsRuntimeConfig picks up .env (not just .env.local) edits", async 
 });
 
 // Bun loads `.env.local` into process.env before user code, so only the file tells them apart.
-test("isShellOwnedEnv separates a shell export from a .env.local value", async () => {
+test("isShellOwnedEnv separates a shell export from a .env.local value", async (): Promise<void> => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-env-owner-"));
   const saved = {
     file: process.env.BROODS_TEST_FROM_FILE,

@@ -15,7 +15,7 @@ const RESOURCES_MODULE = pathToFileURL(
 
 const tempDirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const dir of tempDirs.splice(0))
     await rm(dir, { recursive: true, force: true });
 });
@@ -53,7 +53,7 @@ async function compileWithNode(
   return { exitCode: exitCode, stdout: stdout, stderr: stderr };
 }
 
-test("node compiles a resource file Node's own loader cannot strip", async () => {
+test("node compiles a resource file Node's own loader cannot strip", async (): Promise<void> => {
   const cwd = await fixtureProject(`
 import { defineAgent } from "${RESOURCES_MODULE}";
 
@@ -84,7 +84,7 @@ export const support = defineAgent({
   ]);
 });
 
-test("node keeps a resource file's own module URL", async () => {
+test("node keeps a resource file's own module URL", async (): Promise<void> => {
   const cwd = await fixtureProject(`
 import { defineAgent } from "${RESOURCES_MODULE}";
 
@@ -106,8 +106,10 @@ test.each([
   ["./prompts/support.js", "support.ts"],
   ["./prompts", "index.ts"],
   ["./prompts/support.en", "support.en.ts"],
-])("node resolves %s to the .ts file Bun would", async (specifier, file) => {
-  const cwd = await fixtureProject(`
+])(
+  "node resolves %s to the .ts file Bun would",
+  async (specifier, file): Promise<void> => {
+    const cwd = await fixtureProject(`
 import { defineAgent } from "${RESOURCES_MODULE}";
 import { SYSTEM } from "${specifier}";
 
@@ -117,16 +119,17 @@ export const support = defineAgent({
   agent: { system: SYSTEM },
 });
 `);
-  await mkdir(join(cwd, "broods", "prompts"), { recursive: true });
-  await writeFile(
-    join(cwd, "broods", "prompts", file),
-    'export const SYSTEM: string = "be brief";\n',
-    "utf8",
-  );
+    await mkdir(join(cwd, "broods", "prompts"), { recursive: true });
+    await writeFile(
+      join(cwd, "broods", "prompts", file),
+      'export const SYSTEM: string = "be brief";\n',
+      "utf8",
+    );
 
-  const result = await compileWithNode(cwd);
+    const result = await compileWithNode(cwd);
 
-  expect(result.stderr).not.toContain("ERR_MODULE_NOT_FOUND");
-  expect(result.exitCode).toBe(0);
-  expect(result.stdout).toContain("be brief");
-});
+    expect(result.stderr).not.toContain("ERR_MODULE_NOT_FOUND");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("be brief");
+  },
+);

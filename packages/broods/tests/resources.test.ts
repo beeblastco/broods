@@ -5,14 +5,14 @@ import { tmpdir } from "node:os";
 import { writeGeneratedFiles } from "../src/codegen.ts";
 import { loadBroodsRuntimeConfig } from "../src/runtime-config.ts";
 import { collectEnvRefNames, compileProject } from "../src/manifest.ts";
-import { defineSandbox, env } from "../src/resources.ts";
+import { defineSandbox, env, type ChannelType } from "../src/resources.ts";
 import { diffManifests } from "../src/sync.ts";
 
 const RESOURCES_MODULE = join(import.meta.dir, "..", "src", "resources.ts");
 
 let tempDirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const dir of tempDirs) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -24,12 +24,13 @@ afterEach(async () => {
   delete process.env.BROODS_STAGE;
 });
 
-test("compileProject maps workspace resources and env refs to the SaaS manifest shape", async () => {
+test("compileProject maps workspace resources and env refs to the SaaS manifest shape", async (): Promise<void> => {
   const cwd = await fixtureProject();
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const agent = manifest.resources.find(
-    (resource) => resource.kind === "agent" && resource.name === "support",
+    (resource): boolean =>
+      resource.kind === "agent" && resource.name === "support",
   );
 
   expect(manifest.project).toBe("typed-app");
@@ -51,7 +52,7 @@ test("compileProject maps workspace resources and env refs to the SaaS manifest 
   });
 });
 
-test("compileProject says how to scaffold a missing broods/ folder", async () => {
+test("compileProject says how to scaffold a missing broods/ folder", async (): Promise<void> => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-no-project-"));
   tempDirs.push(cwd);
 
@@ -60,7 +61,7 @@ test("compileProject says how to scaffold a missing broods/ folder", async () =>
   );
 });
 
-test("compileProject accepts object-shaped resource definitions", async () => {
+test("compileProject accepts object-shaped resource definitions", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -100,7 +101,7 @@ export const support = defineAgent({
   );
 });
 
-test("compileProject emits AI SDK Harness selection", async () => {
+test("compileProject emits AI SDK Harness selection", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -161,7 +162,7 @@ export const coding = defineAgent({
   );
 });
 
-test("compileProject rejects a sandbox on defineHarness", async () => {
+test("compileProject rejects a sandbox on defineHarness", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -183,7 +184,7 @@ export const coding = defineAgent({
   );
 });
 
-test("compileProject rejects a harness agent with no sandboxes", async () => {
+test("compileProject rejects a harness agent with no sandboxes", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -264,7 +265,7 @@ export const support = defineAgent({
   );
 });
 
-test("compileProject maps agent sandboxes to their names in order", async () => {
+test("compileProject maps agent sandboxes to their names in order", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -292,7 +293,8 @@ export const support = defineAgent({
   // Both land as the record name, in order: the first entry is the default.
   expect(
     manifest.resources.find(
-      (resource) => resource.kind === "agent" && resource.name === "support",
+      (resource): boolean =>
+        resource.kind === "agent" && resource.name === "support",
     )?.config,
   ).toMatchObject({ sandboxes: ["runner", "browser", "offline"] });
 });
@@ -339,7 +341,7 @@ export const support = defineAgent({
   }
 });
 
-test("compileProject rejects an unexported sandbox", async () => {
+test("compileProject rejects an unexported sandbox", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -360,7 +362,7 @@ export const support = defineAgent({
   );
 });
 
-test("compileProject rejects the removed agent sandbox key", async () => {
+test("compileProject rejects the removed agent sandbox key", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -381,7 +383,7 @@ export const support = defineAgent({
   );
 });
 
-test("compileProject rejects a later sandbox that also backs a workspace", async () => {
+test("compileProject rejects a later sandbox that also backs a workspace", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -405,7 +407,7 @@ export const support = defineAgent({
   );
 });
 
-test("compileProject accepts the first sandbox backing a workspace", async () => {
+test("compileProject accepts the first sandbox backing a workspace", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -427,7 +429,8 @@ export const support = defineAgent({
 
   expect(
     manifest.resources.find(
-      (resource) => resource.kind === "agent" && resource.name === "support",
+      (resource): boolean =>
+        resource.kind === "agent" && resource.name === "support",
     )?.config,
   ).toMatchObject({
     sandboxes: ["runner"],
@@ -435,7 +438,7 @@ export const support = defineAgent({
   });
 });
 
-test("compileProject defaults to the Broods harness when harness is omitted", async () => {
+test("compileProject defaults to the Broods harness when harness is omitted", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -461,7 +464,7 @@ export const assistant = defineAgent({
   );
 });
 
-test("compileProject carries the sandbox size + snapshot knobs into the manifest", async () => {
+test("compileProject carries the sandbox size + snapshot knobs into the manifest", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -490,7 +493,7 @@ export const curated = defineSandbox({
 });
 
 // The validator takes a credential header only as an env ref, so the type has to.
-test("defineSandbox takes env() as a custom server's credential header", () => {
+test("defineSandbox takes env() as a custom server's credential header", (): void => {
   const fleet = defineSandbox({
     name: "fleet",
     provider: "custom",
@@ -507,7 +510,7 @@ test("defineSandbox takes env() as a custom server's credential header", () => {
   });
 });
 
-test("compileProject rejects provider-native workspace storage before upload", async () => {
+test("compileProject rejects provider-native workspace storage before upload", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -525,7 +528,7 @@ export const repo = defineWorkspace({
   );
 });
 
-test("compileProject rejects S3 workspaces on an incompatible default sandbox", async () => {
+test("compileProject rejects S3 workspaces on an incompatible default sandbox", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -554,7 +557,7 @@ export const support = defineAgent({
   );
 });
 
-test("compileProject accepts S3 workspaces on a vercel sandbox", async () => {
+test("compileProject accepts S3 workspaces on a vercel sandbox", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -580,12 +583,12 @@ export const support = defineAgent({
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
-  expect(manifest.resources.map((resource) => resource.name)).toContain(
+  expect(manifest.resources.map((resource): string => resource.name)).toContain(
     "support",
   );
 });
 
-test("compileProject rejects S3 workspaces on an incompatible workspace sandbox override", async () => {
+test("compileProject rejects S3 workspaces on an incompatible workspace sandbox override", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -619,7 +622,7 @@ export const support = defineAgent({
   );
 });
 
-test("compileProject accepts env refs in webhook hook strings", async () => {
+test("compileProject accepts env refs in webhook hook strings", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -643,7 +646,7 @@ export const webhookAgent = defineAgent({
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const agent = manifest.resources.find(
-    (resource) =>
+    (resource): boolean =>
       resource.kind === "agent" && resource.name === "webhook-agent",
   );
 
@@ -659,7 +662,7 @@ export const webhookAgent = defineAgent({
   });
 });
 
-test("compileProject carries the per-agent publicAccess opt-in into the manifest", async () => {
+test("compileProject carries the per-agent publicAccess opt-in into the manifest", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -676,13 +679,14 @@ export const publicAgent = defineAgent({
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const agent = manifest.resources.find(
-    (resource) => resource.kind === "agent" && resource.name === "public-agent",
+    (resource): boolean =>
+      resource.kind === "agent" && resource.name === "public-agent",
   );
 
   expect(agent?.config).toMatchObject({ publicAccess: true });
 });
 
-test("compileProject carries channel trace settings into the manifest", async () => {
+test("compileProject carries channel trace settings into the manifest", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -704,7 +708,7 @@ export const privateReplies = defineAgent({
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const agent = manifest.resources.find(
-    (resource) =>
+    (resource): boolean =>
       resource.kind === "agent" && resource.name === "private-replies",
   );
 
@@ -713,7 +717,7 @@ export const privateReplies = defineAgent({
   });
 });
 
-test("compileProject lowers all typed channel constructors into the existing keyed config", async () => {
+test("compileProject lowers all typed channel constructors into the existing keyed config", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -849,7 +853,7 @@ export const support = defineAgent({
     command: "dev",
   });
   const agent = manifest.resources.find(
-    (resource) => resource.kind === "agent",
+    (resource): boolean => resource.kind === "agent",
   )!;
 
   expect(agent.config).toMatchObject({
@@ -901,11 +905,21 @@ export const support = defineAgent({
     },
   });
   expect(
-    channels.map(({ alias, type, agentName }) => ({
-      alias: alias,
-      type: type,
-      agentName: agentName,
-    })),
+    channels.map(
+      ({
+        alias,
+        type,
+        agentName,
+      }): {
+        alias: string;
+        type: ChannelType;
+        agentName: string;
+      } => ({
+        alias: alias,
+        type: type,
+        agentName: agentName,
+      }),
+    ),
   ).toEqual([
     { alias: "discord", type: "discord", agentName: "support" },
     { alias: "gchat", type: "gchat", agentName: "support" },
@@ -924,7 +938,7 @@ export const support = defineAgent({
   expect(collectEnvRefNames(manifest)).toContain("GITHUB_PRIVATE_KEY");
 });
 
-test("compileProject rejects a channel reused by two agents", async () => {
+test("compileProject rejects a channel reused by two agents", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -945,7 +959,7 @@ export const second = defineAgent({ name: "second", connections: [github] });
   );
 });
 
-test("compileProject rejects duplicate channel types on one agent", async () => {
+test("compileProject rejects duplicate channel types on one agent", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -961,7 +975,7 @@ export const support = defineAgent({ name: "support", connections: [one, two] })
   );
 });
 
-test("compileProject lowers partition into the stored partition", async () => {
+test("compileProject lowers partition into the stored partition", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -999,7 +1013,8 @@ export const support = defineAgent({
     command: "dev",
   });
   const agent = manifest.resources.find(
-    (resource) => resource.kind === "agent" && resource.name === "support",
+    (resource): boolean =>
+      resource.kind === "agent" && resource.name === "support",
   );
 
   expect(agent?.config).toMatchObject({
@@ -1016,12 +1031,24 @@ export const support = defineAgent({
     workspaces: [{ name: "repo", workspaceId: "repo" }],
   });
   expect(
-    channels.map(({ alias, type, id, agentName }) => ({
-      alias: alias,
-      type: type,
-      id: id,
-      agentName: agentName,
-    })),
+    channels.map(
+      ({
+        alias,
+        type,
+        id,
+        agentName,
+      }): {
+        alias: string;
+        type: ChannelType;
+        id: string;
+        agentName: string;
+      } => ({
+        alias: alias,
+        type: type,
+        id: id,
+        agentName: agentName,
+      }),
+    ),
   ).toEqual([
     { alias: "github", type: "github", id: "github", agentName: "support" },
     { alias: "slack", type: "slack", id: "slack", agentName: "support" },
@@ -1030,7 +1057,7 @@ export const support = defineAgent({
 
 test.each(['"channel"', "true"])(
   "compileProject rejects partitioned: %s",
-  async (mode) => {
+  async (mode): Promise<void> => {
     const cwd = await fixtureProject(
       "",
       `
@@ -1044,8 +1071,8 @@ export const repo = defineWorkspace({
     );
 
     const refused = await compileProject({ cwd: cwd, command: "dev" }).then(
-      () => "",
-      (error: unknown) => String(error),
+      (): string => "",
+      (error: unknown): string => String(error),
     );
 
     expect(refused).toContain(
@@ -1054,7 +1081,7 @@ export const repo = defineWorkspace({
   },
 );
 
-test('compileProject stores partitioned: "agent" as agent isolation and needs no channel partition', async () => {
+test('compileProject stores partitioned: "agent" as agent isolation and needs no channel partition', async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1074,7 +1101,8 @@ export const support = defineAgent({ name: "support", connections: [slack], work
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const configOf = (name: string): unknown =>
     manifest.resources.find(
-      (resource) => resource.kind === "workspace" && resource.name === name,
+      (resource): boolean =>
+        resource.kind === "workspace" && resource.name === name,
     )?.config;
 
   expect(configOf("scratch")).toEqual({
@@ -1087,7 +1115,7 @@ export const support = defineAgent({ name: "support", connections: [slack], work
   });
 });
 
-test("compileProject auto-generates the channel id for a partitioned connection", async () => {
+test("compileProject auto-generates the channel id for a partitioned connection", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1109,7 +1137,8 @@ export const support = defineAgent({ name: "support", connections: [slack], work
     command: "dev",
   });
   const agent = manifest.resources.find(
-    (resource) => resource.kind === "agent" && resource.name === "support",
+    (resource): boolean =>
+      resource.kind === "agent" && resource.name === "support",
   );
 
   expect(agent?.config).toMatchObject({
@@ -1121,18 +1150,30 @@ export const support = defineAgent({ name: "support", connections: [slack], work
     },
   });
   expect(
-    channels.map(({ alias, type, id, agentName }) => ({
-      alias: alias,
-      type: type,
-      id: id,
-      agentName: agentName,
-    })),
+    channels.map(
+      ({
+        alias,
+        type,
+        id,
+        agentName,
+      }): {
+        alias: string;
+        type: ChannelType;
+        id: string;
+        agentName: string;
+      } => ({
+        alias: alias,
+        type: type,
+        id: id,
+        agentName: agentName,
+      }),
+    ),
   ).toEqual([
     { alias: "slack", type: "slack", id: "slack", agentName: "support" },
   ]);
 });
 
-test("compileProject derives connection reach from the declared channels", async () => {
+test("compileProject derives connection reach from the declared channels", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1158,7 +1199,7 @@ export const support = defineSlackChannel({
 
   const project = await compileProject({ cwd: cwd, command: "dev" });
   const agent = project.manifest.resources.find(
-    (entry) => entry.kind === "agent",
+    (entry): boolean => entry.kind === "agent",
   );
   const slack = (agent?.config as { channels: { slack: unknown } }).channels
     .slack;
@@ -1168,7 +1209,7 @@ export const support = defineSlackChannel({
   });
 });
 
-test("compileProject emits the wildcard itself for a wildcard connection", async () => {
+test("compileProject emits the wildcard itself for a wildcard connection", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1185,7 +1226,7 @@ export const desk = defineAgent({ name: "desk", connections: [tgBot] });
 
   const project = await compileProject({ cwd: cwd, command: "dev" });
   const agent = project.manifest.resources.find(
-    (entry) => entry.kind === "agent",
+    (entry): boolean => entry.kind === "agent",
   );
   const telegram = (agent?.config as { channels: { telegram: object } })
     .channels.telegram;
@@ -1193,7 +1234,7 @@ export const desk = defineAgent({ name: "desk", connections: [tgBot] });
   expect(telegram).toMatchObject({ allowedChannelIds: ["*"] });
 });
 
-test("compileProject rejects a github channel whose repo names no owner", async () => {
+test("compileProject rejects a github channel whose repo names no owner", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1218,7 +1259,7 @@ export const platform = defineGitHubChannel({
   );
 });
 
-test("compileProject rejects unsafe partition aliases", async () => {
+test("compileProject rejects unsafe partition aliases", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1240,7 +1281,7 @@ export const support = defineAgent({ name: "support", connections: [slack], work
   );
 });
 
-test("compileProject rejects a channel partition alias that walks out of its namespace", async () => {
+test("compileProject rejects a channel partition alias that walks out of its namespace", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1268,7 +1309,7 @@ export const escape = defineSlackChannel({
   );
 });
 
-test("compileProject rejects unknown partition modes", async () => {
+test("compileProject rejects unknown partition modes", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1290,7 +1331,7 @@ export const support = defineAgent({ name: "support", connections: [slack], work
   );
 });
 
-test("compileProject rejects a partitioned connection with no partitioned workspace", async () => {
+test("compileProject rejects a partitioned connection with no partitioned workspace", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1312,7 +1353,7 @@ export const support = defineAgent({ name: "support", connections: [slack], work
   );
 });
 
-test("compileProject rejects a partitioned workspace when a connection lacks partition", async () => {
+test("compileProject rejects a partitioned workspace when a connection lacks partition", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1340,7 +1381,7 @@ export const support = defineAgent({ name: "support", connections: [slack, githu
   );
 });
 
-test("compileProject rejects duplicate channel ids", async () => {
+test("compileProject rejects duplicate channel ids", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1371,7 +1412,7 @@ export const support = defineAgent({ name: "support", connections: [slack, githu
   );
 });
 
-test("compileProject rejects keyed channel configuration", async () => {
+test("compileProject rejects keyed channel configuration", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1388,7 +1429,7 @@ export const support = defineAgent({
   );
 });
 
-test("compileProject emits inline agent hooks as one synthetic hook bundle", async () => {
+test("compileProject emits inline agent hooks as one synthetic hook bundle", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1414,9 +1455,11 @@ export const support = defineAgent({
   );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const hook = manifest.resources.find((resource) => resource.kind === "hook");
+  const hook = manifest.resources.find(
+    (resource): boolean => resource.kind === "hook",
+  );
   const agent = manifest.resources.find(
-    (resource) => resource.kind === "agent",
+    (resource): boolean => resource.kind === "agent",
   );
   const bundle = (hook?.config as { bundle?: unknown }).bundle;
   expect(hook?.name).toBe("support-hooks");
@@ -1443,7 +1486,7 @@ export const support = defineAgent({
   });
 });
 
-test("compileProject serializes method-shorthand hooks into valid function expressions", async () => {
+test("compileProject serializes method-shorthand hooks into valid function expressions", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1463,14 +1506,16 @@ export const support = defineAgent({
   );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const hook = manifest.resources.find((resource) => resource.kind === "hook");
+  const hook = manifest.resources.find(
+    (resource): boolean => resource.kind === "hook",
+  );
   const bundle = (hook?.config as { bundle: string }).bundle;
   // A shorthand method's toString is no expression; the bundle needs `function onStart`.
   expect(bundle).toContain('"agent.started": function onStart');
   expect(bundle).toContain('"agent.finished": async function onFinish');
 });
 
-test('collectEnvRefNames returns sorted, de-duplicated env("NAME") references', async () => {
+test('collectEnvRefNames returns sorted, de-duplicated env("NAME") references', async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1498,7 +1543,7 @@ export const billing = defineAgent({
   ]);
 });
 
-test("collectEnvRefNames includes ${NAME} refs in MCP server headers", async () => {
+test("collectEnvRefNames includes ${NAME} refs in MCP server headers", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1518,7 +1563,7 @@ export const search = defineMcp({
   expect(collectEnvRefNames(manifest)).toEqual(["SEARCH_TOKEN"]);
 });
 
-test("collectEnvRefNames includes ${NAME} refs in R2 workspace keys", async () => {
+test("collectEnvRefNames includes ${NAME} refs in R2 workspace keys", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1549,7 +1594,7 @@ export const files = defineWorkspace({
   ]);
 });
 
-test("compileProject copies a server's headers into each agent that connects it", async () => {
+test("compileProject copies a server's headers into each agent that connects it", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1570,7 +1615,9 @@ export const reader = defineAgent({
   );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const agent = manifest.resources.find((entry) => entry.kind === "agent");
+  const agent = manifest.resources.find(
+    (entry): boolean => entry.kind === "agent",
+  );
 
   expect(collectEnvRefNames(manifest)).toEqual([
     "READER_TEAM",
@@ -1590,7 +1637,7 @@ export const reader = defineAgent({
   });
 });
 
-test("compileProject copies a server's oauth, not its token endpoint", async () => {
+test("compileProject copies a server's oauth, not its token endpoint", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1616,7 +1663,9 @@ export const assistant = defineAgent({
   );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const agent = manifest.resources.find((entry) => entry.kind === "agent");
+  const agent = manifest.resources.find(
+    (entry): boolean => entry.kind === "agent",
+  );
   const oauth = (
     agent?.config as { mcp: { gmail: { oauth: Record<string, unknown> } } }
   ).mcp.gmail.oauth;
@@ -1632,7 +1681,7 @@ export const assistant = defineAgent({
   ]);
 });
 
-test("collectEnvRefNames returns nothing when no env refs are present", async () => {
+test("collectEnvRefNames returns nothing when no env refs are present", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1650,7 +1699,7 @@ export const support = defineAgent({
   expect(collectEnvRefNames(manifest)).toEqual([]);
 });
 
-test("compileProject works without a config file and infers project from cwd", async () => {
+test("compileProject works without a config file and infers project from cwd", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1669,7 +1718,7 @@ export const support = defineAgent({
   expect(manifest.stage).toBe("development");
 });
 
-test("compileProject accepts explicit project override", async () => {
+test("compileProject accepts explicit project override", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1691,7 +1740,7 @@ export const support = defineAgent({
   expect(manifest.project).toBe("docs-demo");
 });
 
-test("compileProject preserves exported resource aliases for generated api handles", async () => {
+test("compileProject preserves exported resource aliases for generated api handles", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1712,7 +1761,7 @@ export const myAgent = defineAgent({
   expect(resourceAliases.agent).toEqual({ "my-agent": "myAgent" });
 });
 
-test("writeGeneratedFiles uses exported resource aliases for api property names", async () => {
+test("writeGeneratedFiles uses exported resource aliases for api property names", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1774,7 +1823,7 @@ export const daily = defineCron({ name: "daily", agent: agent, input: "Triage.",
   },
 );
 
-test("writeGeneratedFiles keys non-agent resources by export alias under api.crons", async () => {
+test("writeGeneratedFiles keys non-agent resources by export alias under api.crons", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1806,7 +1855,8 @@ export const oneMinuteCron = defineCron({
   });
 
   expect(
-    manifest.resources.find((resource) => resource.kind === "cron")?.config,
+    manifest.resources.find((resource): boolean => resource.kind === "cron")
+      ?.config,
   ).toMatchObject({ status: "active" });
 
   await writeGeneratedFiles(
@@ -1837,7 +1887,7 @@ export const oneMinuteCron = defineCron({
   expect(api).toContain("sandboxes: {}");
 });
 
-test("compileProject loads project and stage from .env.local", async () => {
+test("compileProject loads project and stage from .env.local", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1860,7 +1910,7 @@ export const support = defineAgent({
   expect(manifest.stage).toBe("staging");
 });
 
-test("compileProject defaults deploy to production without an override", async () => {
+test("compileProject defaults deploy to production without an override", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1877,7 +1927,7 @@ export const support = defineAgent({
   expect(manifest.stage).toBe("production");
 });
 
-test("compileProject can ignore runtime env when deploy uses command defaults", async () => {
+test("compileProject can ignore runtime env when deploy uses command defaults", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1903,7 +1953,7 @@ export const support = defineAgent({
   expect(manifest.stage).toBe("production");
 });
 
-test("compileProject maps workspace overrides, subagents, and skills", async () => {
+test("compileProject maps workspace overrides, subagents, and skills", async (): Promise<void> => {
   const cwd = await fixtureProject(
     `
 import { defineBroods } from "${RESOURCES_MODULE}";
@@ -1957,10 +2007,11 @@ description: Says hello.
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const support = manifest.resources.find(
-    (resource) => resource.kind === "agent" && resource.name === "support",
+    (resource): boolean =>
+      resource.kind === "agent" && resource.name === "support",
   );
   const skill = manifest.resources.find(
-    (resource) =>
+    (resource): boolean =>
       resource.kind === "skill" && resource.name === "greeting-skill",
   );
 
@@ -1996,7 +2047,7 @@ description: Says hello.
   });
 });
 
-test("compileProject maps policy resources and agent policy refs", async () => {
+test("compileProject maps policy resources and agent policy refs", async (): Promise<void> => {
   const cwd = await fixtureProject(
     `
 import { defineBroods } from "${RESOURCES_MODULE}";
@@ -2030,11 +2081,12 @@ export const support = defineAgent({
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const policy = manifest.resources.find(
-    (resource) =>
+    (resource): boolean =>
       resource.kind === "policy" && resource.name === "filesystem-guard",
   );
   const agent = manifest.resources.find(
-    (resource) => resource.kind === "agent" && resource.name === "support",
+    (resource): boolean =>
+      resource.kind === "agent" && resource.name === "support",
   );
 
   expect(policy?.description).toBe("Restricts workspace writes.");
@@ -2053,7 +2105,7 @@ export const support = defineAgent({
   expect(agent?.config).toMatchObject({ policies: ["filesystem-guard"] });
 });
 
-test("compileProject drops empty agent policy config", async () => {
+test("compileProject drops empty agent policy config", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -2069,13 +2121,14 @@ export const support = defineAgent({
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const agent = manifest.resources.find(
-    (resource) => resource.kind === "agent" && resource.name === "support",
+    (resource): boolean =>
+      resource.kind === "agent" && resource.name === "support",
   );
 
   expect(agent?.config).not.toHaveProperty("policy");
 });
 
-test("compileProject rejects unknown agent policy config keys", async () => {
+test("compileProject rejects unknown agent policy config keys", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -2094,7 +2147,7 @@ export const support = defineAgent({
   );
 });
 
-test("compileProject rejects skill paths outside broods project root", async () => {
+test("compileProject rejects skill paths outside broods project root", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -2112,7 +2165,7 @@ export const escapedSkill = defineSkill({
   );
 });
 
-test("compileProject skips hidden and secret-looking files from skill bundles", async () => {
+test("compileProject skips hidden and secret-looking files from skill bundles", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -2134,16 +2187,17 @@ export const docs = defineSkill({
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const skill = manifest.resources.find(
-    (resource) => resource.kind === "skill" && resource.name === "safe-skill",
+    (resource): boolean =>
+      resource.kind === "skill" && resource.name === "safe-skill",
   );
   const files = (
     (skill?.config as Record<string, unknown>).files as Array<{ path: string }>
-  ).map((file) => file.path);
+  ).map((file): string => file.path);
 
   expect(files.sort()).toEqual(["SKILL.md", "notes.txt"].sort());
 });
 
-test("diffManifests reports create, update, and delete operations", () => {
+test("diffManifests reports create, update, and delete operations", (): void => {
   const local = {
     version: 1 as const,
     project: "app",
@@ -2170,7 +2224,7 @@ test("diffManifests reports create, update, and delete operations", () => {
   ]);
 });
 
-test("diffManifests reports a pure resource rename without delete prompt noise", () => {
+test("diffManifests reports a pure resource rename without delete prompt noise", (): void => {
   const local = {
     version: 1 as const,
     project: "app",
@@ -2206,7 +2260,7 @@ test("diffManifests reports a pure resource rename without delete prompt noise",
   ]);
 });
 
-test("diffManifests treats env refs and remote placeholders as equal", () => {
+test("diffManifests treats env refs and remote placeholders as equal", (): void => {
   const local = {
     version: 1 as const,
     project: "app",
@@ -2247,7 +2301,7 @@ test("diffManifests treats env refs and remote placeholders as equal", () => {
   expect(diffManifests(local, remote)).toEqual([]);
 });
 
-test("diffManifests compares hosted MCP and hook bundles by digest, not bytes", () => {
+test("diffManifests compares hosted MCP and hook bundles by digest, not bytes", (): void => {
   const manifest = (
     kind: "mcp" | "hook",
     config: Record<string, unknown>,
@@ -2294,7 +2348,7 @@ test("diffManifests compares hosted MCP and hook bundles by digest, not bytes", 
   ).toEqual([{ operation: "update", kind: "hook", name: "small" }]);
 });
 
-test("writeGeneratedFiles creates Convex-style typed resource references", async () => {
+test("writeGeneratedFiles creates Convex-style typed resource references", async (): Promise<void> => {
   const cwd = await fixtureProject();
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
@@ -2341,7 +2395,7 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
   ).rejects.toThrow();
 });
 
-test("writeGeneratedFiles emits typed channel references with authoritative webhook paths", async () => {
+test("writeGeneratedFiles emits typed channel references with authoritative webhook paths", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -2386,7 +2440,7 @@ export const support = defineAgent({ name: "support", connections: [github] });
   expect(api).toContain('stageSlug: "development"');
 });
 
-test("writeGeneratedFiles marks the webhook path of a stage that is not production", async () => {
+test("writeGeneratedFiles marks the webhook path of a stage that is not production", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -2431,7 +2485,7 @@ export const support = defineAgent({ name: "support", connections: [github] });
   );
 });
 
-test("writeGeneratedFiles only exposes ids for locally declared resources", async () => {
+test("writeGeneratedFiles only exposes ids for locally declared resources", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -2479,7 +2533,7 @@ export const myAgent = defineAgent({
   expect(ids).not.toContain("remote-workspace");
 });
 
-test("runtime config loads .env.local without manual client wiring", async () => {
+test("runtime config loads .env.local without manual client wiring", async (): Promise<void> => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-env-test-"));
   tempDirs.push(cwd);
   await writeFile(
@@ -2506,7 +2560,7 @@ test("runtime config loads .env.local without manual client wiring", async () =>
   });
 });
 
-test("compileProject lowers a channel onto its connection, agents and policy", async () => {
+test("compileProject lowers a channel onto its connection, agents and policy", async (): Promise<void> => {
   const cwd = await fixtureProject(
     undefined,
     `
@@ -2549,7 +2603,7 @@ export const productEng = defineSlackChannel({
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const record = manifest.resources.find(
-    (resource) => resource.kind === "channelRecord",
+    (resource): boolean => resource.kind === "channelRecord",
   );
 
   expect(record?.name).toBe("product-eng");
@@ -2565,7 +2619,7 @@ export const productEng = defineSlackChannel({
   });
 });
 
-test("compileProject fans a channel id list out to one record per id", async () => {
+test("compileProject fans a channel id list out to one record per id", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -2589,41 +2643,44 @@ export const internal = defineZaloChannel({
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const records = manifest.resources.filter(
-    (resource) => resource.kind === "channelRecord",
+    (resource): boolean => resource.kind === "channelRecord",
   );
 
-  expect(records.map((record) => record.name)).toEqual([
+  expect(records.map((record): string => record.name)).toEqual([
     "lamy-internal-7788",
     "lamy-internal-7789",
     "lamy-internal-7790",
   ]);
-  expect(records.map((record) => record.config)).toEqual([
+  expect(records.map((record): unknown => record.config)).toEqual([
     { platform: "zalo", externalId: "7788", denyTools: ["web_search"] },
     { platform: "zalo", externalId: "7789", denyTools: ["web_search"] },
     { platform: "zalo", externalId: "7790", denyTools: ["web_search"] },
   ]);
   // Miss one id and the bot answers in one room of three, with no error anywhere.
   const agent = manifest.resources.find(
-    (resource) => resource.kind === "agent" && resource.name === "staff",
+    (resource): boolean =>
+      resource.kind === "agent" && resource.name === "staff",
   );
   expect(agent?.config).toMatchObject({
     channels: { zalo: { allowedChannelIds: ["7788", "7789", "7790"] } },
   });
 });
 
-test("compileProject leaves a single chat id as one record under its own name", async () => {
+test("compileProject leaves a single chat id as one record under its own name", async (): Promise<void> => {
   const cwd = await fixtureProject("", zaloChannelSource(`chatId: "7788"`));
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const records = manifest.resources.filter(
-    (resource) => resource.kind === "channelRecord",
+    (resource): boolean => resource.kind === "channelRecord",
   );
 
-  expect(records.map((record) => record.name)).toEqual(["lamy-internal"]);
+  expect(records.map((record): string => record.name)).toEqual([
+    "lamy-internal",
+  ]);
   expect(records[0]?.config).toMatchObject({ externalId: "7788" });
 });
 
-test("compileProject rejects an unusable channel id list", async () => {
+test("compileProject rejects an unusable channel id list", async (): Promise<void> => {
   const empty = await fixtureProject("", zaloChannelSource("chatId: []"));
   await expect(compileProject({ cwd: empty, command: "dev" })).rejects.toThrow(
     'Channel "lamy-internal" externalId must not be an empty array',
@@ -2638,7 +2695,7 @@ test("compileProject rejects an unusable channel id list", async () => {
   ).rejects.toThrow('Channel "lamy-internal" externalId lists 7788 twice');
 });
 
-test("compileProject rejects a wildcard as a channel id", async () => {
+test("compileProject rejects a wildcard as a channel id", async (): Promise<void> => {
   // "*" never matches a room yet opens the connection's reach: the bot answers everywhere.
   const bare = await fixtureProject("", zaloChannelSource(`chatId: "*"`));
   await expect(compileProject({ cwd: bare, command: "dev" })).rejects.toThrow(
@@ -2654,7 +2711,7 @@ test("compileProject rejects a wildcard as a channel id", async () => {
   );
 });
 
-test("compileProject rejects a fanned-out name that collides with another channel", async () => {
+test("compileProject rejects a fanned-out name that collides with another channel", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `

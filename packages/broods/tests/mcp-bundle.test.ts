@@ -7,12 +7,12 @@ import { compileProject } from "../src/manifest.ts";
 const RESOURCES_MODULE = join(import.meta.dir, "..", "src", "resources.ts");
 const tempDirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const dir of tempDirs.splice(0))
     await rm(dir, { recursive: true, force: true });
 });
 
-test("compileProject bundles a servable hosted MCP server", async () => {
+test("compileProject bundles a servable hosted MCP server", async (): Promise<void> => {
   const cwd = await mcpFixture(
     `handler: (request) => new Response("{}", { status: 200 }),`,
   );
@@ -25,7 +25,7 @@ test("compileProject bundles a servable hosted MCP server", async () => {
   expect(typeof bundle).toBe("string");
 });
 
-test("compileProject hashes a hosted MCP server the same from any cwd", async () => {
+test("compileProject hashes a hosted MCP server the same from any cwd", async (): Promise<void> => {
   const cwd = await mcpFixture(
     `handler: (request) => new Response("{}", { status: 200 }),`,
   );
@@ -33,7 +33,8 @@ test("compileProject hashes a hosted MCP server the same from any cwd", async ()
   const compile = async (): Promise<{ bundle: string; sha256: string }> =>
     (
       await compileProject({ cwd: cwd, command: "dev" })
-    ).manifest.resources.find((entry) => entry.kind === "mcp")?.config as {
+    ).manifest.resources.find((entry): boolean => entry.kind === "mcp")
+      ?.config as {
       bundle: string;
       sha256: string;
     };
@@ -43,7 +44,7 @@ test("compileProject hashes a hosted MCP server the same from any cwd", async ()
   expect(first.bundle).toContain("// mcp-handler.mjs\n");
 });
 
-test("compileProject rejects a handler that is not fetch-style", async () => {
+test("compileProject rejects a handler that is not fetch-style", async (): Promise<void> => {
   const cwd = await mcpFixture(`handler: 42,`);
 
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
@@ -51,7 +52,7 @@ test("compileProject rejects a handler that is not fetch-style", async () => {
   );
 });
 
-test("compileProject rejects a server that crashes on import", async () => {
+test("compileProject rejects a server that crashes on import", async (): Promise<void> => {
   const cwd = await mcpFixture(
     `handler: (request) => new Response("{}"),`,
     `throw new Error("boom at import");\n`,
@@ -62,18 +63,20 @@ test("compileProject rejects a server that crashes on import", async () => {
   );
 });
 
-test("compileProject forwards a sandbox server's command", async () => {
+test("compileProject forwards a sandbox server's command", async (): Promise<void> => {
   const cwd = await mcpFixture(`sandbox: "web", command: ["obscura", "mcp"],`);
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const server = manifest.resources.find((entry) => entry.kind === "mcp");
+  const server = manifest.resources.find(
+    (entry): boolean => entry.kind === "mcp",
+  );
   expect(server?.config).toEqual({
     sandbox: "web",
     command: ["obscura", "mcp"],
   });
 });
 
-test("compileProject rejects a server with neither url nor handler", async () => {
+test("compileProject rejects a server with neither url nor handler", async (): Promise<void> => {
   const cwd = await mcpFixture("");
 
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(

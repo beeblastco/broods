@@ -13,21 +13,24 @@ test.each([
     "-----BEGIN-----\nAAAA\n-----END-----\n",
     "-----BEGIN-----\nAAAA\n-----END-----",
   ],
-])("a piped value %s is read whole", async (_name, stdin, value) => {
-  const result = await run(stdin);
+])(
+  "a piped value %s is read whole",
+  async (_name, stdin, value): Promise<void> => {
+    const result = await run(stdin);
 
-  expect(result.code).toBe(0);
-  expect(result.stdout).toContain(`value=${JSON.stringify(value)}`);
-});
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(`value=${JSON.stringify(value)}`);
+  },
+);
 
-test("empty piped stdin fails instead of storing nothing", async () => {
+test("empty piped stdin fails instead of storing nothing", async (): Promise<void> => {
   const result = await run("");
 
   expect(result.code).not.toBe(0);
   expect(result.stderr).toContain("SECRET is required");
 });
 
-test("an optional prompt skips on an empty line but still stops when input ends", async () => {
+test("an optional prompt skips on an empty line but still stops when input ends", async (): Promise<void> => {
   const skipped = await run("\n", ["--optional"]);
   const ended = await run("", ["--optional"]);
 

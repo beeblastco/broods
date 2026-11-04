@@ -144,11 +144,11 @@ export class BroodsWebSocketClient {
     );
     let opened = false;
     let closed = false;
-    const timeout = setTimeout(() => {
+    const timeout = setTimeout((): void => {
       if (!opened) fail(accessError);
     }, this.connectTimeoutMs);
 
-    const close = (code = 1000, reason = "client closed") => {
+    const close = (code = 1000, reason = "client closed"): void => {
       if (closed) return;
       closed = true;
       clearTimeout(timeout);
@@ -161,17 +161,17 @@ export class BroodsWebSocketClient {
       }
     };
 
-    const fail = (error: Error) => {
+    const fail = (error: Error): void => {
       handlers.onError?.(error);
       close(1000, "websocket error");
     };
 
-    const finish = () => {
+    const finish = (): void => {
       handlers.onDone?.();
       close(1000, "done");
     };
 
-    const onAbort = () => {
+    const onAbort = (): void => {
       if (socket.readyState === WS_OPEN) {
         socket.send(JSON.stringify({ type: "cancel" }));
       }
@@ -180,7 +180,7 @@ export class BroodsWebSocketClient {
 
     input.signal?.addEventListener("abort", onAbort, { once: true });
 
-    socket.onopen = () => {
+    socket.onopen = (): void => {
       opened = true;
       clearTimeout(timeout);
       if (input.signal?.aborted) {
@@ -208,7 +208,7 @@ export class BroodsWebSocketClient {
       );
     };
 
-    socket.onmessage = (event) => {
+    socket.onmessage = (event): void => {
       if (typeof event.data !== "string") return;
       const payload = parseServerMessage(event.data);
       if (!payload) return;
@@ -231,11 +231,11 @@ export class BroodsWebSocketClient {
       }
     };
 
-    socket.onerror = () => {
+    socket.onerror = (): void => {
       fail(accessError);
     };
 
-    socket.onclose = (event) => {
+    socket.onclose = (event): void => {
       clearTimeout(timeout);
       input.signal?.removeEventListener("abort", onAbort);
       if (closed || event.code === 1000) return;
@@ -265,7 +265,7 @@ export class BroodsWebSocketClient {
       webSocketSubprotocols(this.apiKey, input.userToken ?? this.userToken),
     );
     let closed = false;
-    const close = (code = 1000, reason = "client closed") => {
+    const close = (code = 1000, reason = "client closed"): void => {
       if (closed) return;
       closed = true;
       input.signal?.removeEventListener("abort", onAbort);
@@ -273,13 +273,13 @@ export class BroodsWebSocketClient {
         socket.close(code, reason);
     };
     // Aborting detaches this view only; the durable run keeps going.
-    const onAbort = () => {
+    const onAbort = (): void => {
       close(1000, "aborted");
       handlers.onError?.(new Error("WebSocket attach aborted."));
     };
     if (input.signal?.aborted) onAbort();
     else input.signal?.addEventListener("abort", onAbort, { once: true });
-    socket.onopen = () => {
+    socket.onopen = (): void => {
       if (closed) return;
       socket.send(
         JSON.stringify({
@@ -291,7 +291,7 @@ export class BroodsWebSocketClient {
         }),
       );
     };
-    socket.onmessage = (event) => {
+    socket.onmessage = (event): void => {
       if (closed || typeof event.data !== "string") return;
       const payload = parseServerMessage(event.data);
       if (!payload) return;
@@ -305,12 +305,12 @@ export class BroodsWebSocketClient {
         handlers.onError?.(new Error(formatWireError(effective.error)));
     };
     // The abnormal close that follows a socket error is reported once, here.
-    socket.onerror = () => {
+    socket.onerror = (): void => {
       if (closed) return;
       close(1000, "websocket error");
       handlers.onError?.(webSocketAccessError(this.baseUrl));
     };
-    socket.onclose = (event) => {
+    socket.onclose = (event): void => {
       input.signal?.removeEventListener("abort", onAbort);
       if (!closed && event.code !== 1000)
         handlers.onError?.(
@@ -337,7 +337,7 @@ export class BroodsWebSocketClient {
     let error: Error | null = null;
     let wake: (() => void) | null = null;
 
-    const wakeReader = () => {
+    const wakeReader = (): void => {
       wake?.();
       wake = null;
     };
@@ -365,7 +365,7 @@ export class BroodsWebSocketClient {
         }
         if (error) throw error;
         if (done) return;
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((resolve): void => {
           wake = resolve;
         });
       }

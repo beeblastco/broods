@@ -255,6 +255,23 @@
       }
     },
     {
+      "files": ["packages/broods/**"],
+      "rules": {
+        "typescript/explicit-function-return-type": [
+          "error",
+          {
+            "allowConciseArrowFunctionExpressionsStartingWithVoid": false,
+            "allowDirectConstAssertionInArrowFunctions": false,
+            "allowExpressions": false,
+            "allowFunctionsWithoutTypeParameters": false,
+            "allowHigherOrderFunctions": false,
+            "allowIIFEs": false,
+            "allowTypedFunctionExpressions": false
+          }
+        ]
+      }
+    },
+    {
       "files": ["apps/core/sst.config.ts"],
       "rules": {
         "eslint/no-new": "off",

@@ -21,7 +21,7 @@ function mockClient(responses: Array<{ status: number; body: unknown }>): {
   const client = new BroodsAccountClient({
     baseUrl: "https://gateway.example.com///",
     accountSecret: "secret-1",
-    fetch: async (input, init) => {
+    fetch: async (input, init): Promise<Response> => {
       calls.push({
         url: requestUrl(input),
         method: init?.method ?? "GET",
@@ -37,7 +37,7 @@ function mockClient(responses: Array<{ status: number; body: unknown }>): {
   return { client: client, calls: calls };
 }
 
-test("sends bearer auth and strips the trailing slash from baseUrl", async () => {
+test("sends bearer auth and strips the trailing slash from baseUrl", async (): Promise<void> => {
   const { client, calls } = mockClient([{ status: 200, body: { agents: [] } }]);
 
   const agents = await client.listAgents();
@@ -47,7 +47,7 @@ test("sends bearer auth and strips the trailing slash from baseUrl", async () =>
   expect(calls[0]?.headers.Authorization).toBe("Bearer secret-1");
 });
 
-test("get/update return null on 404 so callers can upsert", async () => {
+test("get/update return null on 404 so callers can upsert", async (): Promise<void> => {
   const { client } = mockClient([
     { status: 404, body: { error: "Agent not found" } },
     { status: 404, body: { error: "Agent not found" } },
@@ -57,7 +57,7 @@ test("get/update return null on 404 so callers can upsert", async () => {
   expect(await client.updateAgent("agent_missing", { config: {} })).toBeNull();
 });
 
-test("non-2xx non-404 responses throw BroodsAccountApiError with status", async () => {
+test("non-2xx non-404 responses throw BroodsAccountApiError with status", async (): Promise<void> => {
   const { client } = mockClient([
     { status: 401, body: { error: "Unauthorized" } },
   ]);
@@ -65,7 +65,7 @@ test("non-2xx non-404 responses throw BroodsAccountApiError with status", async 
   await expect(client.listCrons()).rejects.toThrow(BroodsAccountApiError);
 });
 
-test("createAgent posts JSON and unwraps the created record", async () => {
+test("createAgent posts JSON and unwraps the created record", async (): Promise<void> => {
   const { client, calls } = mockClient([
     {
       status: 201,
@@ -87,7 +87,7 @@ test("createAgent posts JSON and unwraps the created record", async () => {
   });
 });
 
-test("account env vars: list, set, and delete use write-only config-plane routes", async () => {
+test("account env vars: list, set, and delete use write-only config-plane routes", async (): Promise<void> => {
   const { client, calls } = mockClient([
     { status: 200, body: { env: [{ name: "OVH_API_KEY", updatedAt: 123 }] } },
     { status: 200, body: { name: "OVH_API_KEY" } },
@@ -99,7 +99,7 @@ test("account env vars: list, set, and delete use write-only config-plane routes
   ]);
   await client.setEnvVar("OVH_API_KEY", "secret-value");
   expect(await client.deleteEnvVar("OVH_API_KEY")).toBe(true);
-  expect(calls.map((call) => [call.method, call.url])).toEqual([
+  expect(calls.map((call): string[] => [call.method, call.url])).toEqual([
     ["GET", "https://gateway.example.com/v1/env"],
     ["PUT", "https://gateway.example.com/v1/env/OVH_API_KEY"],
     ["DELETE", "https://gateway.example.com/v1/env/OVH_API_KEY"],
@@ -107,13 +107,13 @@ test("account env vars: list, set, and delete use write-only config-plane routes
   expect(JSON.parse(calls[1]?.body ?? "{}")).toEqual({ value: "secret-value" });
 });
 
-test("envPlaceholder validates account env-var names", () => {
+test("envPlaceholder validates account env-var names", (): void => {
   expect(envPlaceholder("OVH_API_KEY")).toBe("${OVH_API_KEY}");
-  expect(() => envPlaceholder("lowercase")).toThrow();
-  expect(() => envPlaceholder("A".repeat(65))).toThrow();
+  expect((): string => envPlaceholder("lowercase")).toThrow();
+  expect((): string => envPlaceholder("A".repeat(65))).toThrow();
 });
 
-test("unwraps list envelopes for crons, runs, workspaces, and files", async () => {
+test("unwraps list envelopes for crons, runs, workspaces, and files", async (): Promise<void> => {
   const { client, calls } = mockClient([
     { status: 200, body: { crons: [{ cronId: "cron_1" }] } },
     { status: 200, body: { runs: [{ runId: "run_1" }] } },
@@ -137,7 +137,7 @@ test("unwraps list envelopes for crons, runs, workspaces, and files", async () =
   );
 });
 
-test("getStorageTrust reads the account's external id and principal", async () => {
+test("getStorageTrust reads the account's external id and principal", async (): Promise<void> => {
   const trust = {
     externalId: "broods-abc",
     principalArn: "arn:aws:iam::999988887777:root",
@@ -154,7 +154,7 @@ test("getStorageTrust reads the account's external id and principal", async () =
   );
 });
 
-test("webhookUrl builds the per-account channel path", () => {
+test("webhookUrl builds the per-account channel path", (): void => {
   const { client } = mockClient([]);
 
   expect(client.webhookUrl("acc 1", "slack")).toBe(
@@ -162,13 +162,13 @@ test("webhookUrl builds the per-account channel path", () => {
   );
 });
 
-test("constructor requires accountSecret when env vars are absent", () => {
+test("constructor requires accountSecret when env vars are absent", (): void => {
   const savedBaseUrl = process.env.BROODS_BASE_URL;
   const savedSecret = process.env.BROODS_ACCOUNT_SECRET;
   delete process.env.BROODS_BASE_URL;
   delete process.env.BROODS_ACCOUNT_SECRET;
   try {
-    expect(() => new BroodsAccountClient()).toThrow();
+    expect((): BroodsAccountClient => new BroodsAccountClient()).toThrow();
   } finally {
     if (savedBaseUrl !== undefined) process.env.BROODS_BASE_URL = savedBaseUrl;
     if (savedSecret !== undefined)
@@ -176,7 +176,7 @@ test("constructor requires accountSecret when env vars are absent", () => {
   }
 });
 
-test("account metadata: update unwraps, delete returns cleanup, rotate returns the new secret", async () => {
+test("account metadata: update unwraps, delete returns cleanup, rotate returns the new secret", async (): Promise<void> => {
   const { client, calls } = mockClient([
     {
       status: 200,
@@ -212,7 +212,7 @@ test("account metadata: update unwraps, delete returns cleanup, rotate returns t
   );
 });
 
-test("sandboxes: list/create unwrap, get returns null on 404", async () => {
+test("sandboxes: list/create unwrap, get returns null on 404", async (): Promise<void> => {
   const { client, calls } = mockClient([
     {
       status: 200,
@@ -235,7 +235,7 @@ test("sandboxes: list/create unwrap, get returns null on 404", async () => {
   expect(calls[0]?.url).toBe("https://gateway.example.com/v1/sandboxes");
 });
 
-test("sandbox lifecycle: suspend posts the reservationKey and returns status", async () => {
+test("sandbox lifecycle: suspend posts the reservationKey and returns status", async (): Promise<void> => {
   const { client, calls } = mockClient([
     { status: 200, body: { status: "suspended" } },
     {
@@ -265,7 +265,7 @@ test("sandbox lifecycle: suspend posts the reservationKey and returns status", a
   );
 });
 
-test("sandbox lifecycle throws on a missing sandbox (404)", async () => {
+test("sandbox lifecycle throws on a missing sandbox (404)", async (): Promise<void> => {
   const { client } = mockClient([
     { status: 404, body: { error: "Sandbox not found" } },
   ]);
@@ -275,7 +275,7 @@ test("sandbox lifecycle throws on a missing sandbox (404)", async () => {
   );
 });
 
-test("policies: list/create unwrap and get returns null on 404", async () => {
+test("policies: list/create unwrap and get returns null on 404", async (): Promise<void> => {
   const { client } = mockClient([
     { status: 200, body: { policies: [{ policyId: "pol_1", name: "guard" }] } },
     { status: 201, body: { policyId: "pol_2", name: "guard2" } },
@@ -294,7 +294,7 @@ test("policies: list/create unwrap and get returns null on 404", async () => {
   expect(await client.getPolicy("pol_missing")).toBeNull();
 });
 
-test("roles: list/create unwrap, assumeRole posts the exchange body", async () => {
+test("roles: list/create unwrap, assumeRole posts the exchange body", async (): Promise<void> => {
   const { client, calls } = mockClient([
     { status: 200, body: { roles: [{ roleId: "brole_1", name: "reader" }] } },
     { status: 201, body: { roleId: "brole_2", name: "writer" } },
@@ -326,12 +326,12 @@ test("roles: list/create unwrap, assumeRole posts the exchange body", async () =
   });
 });
 
-test("a sessionToken is accepted as the bearer instead of the account key", async () => {
+test("a sessionToken is accepted as the bearer instead of the account key", async (): Promise<void> => {
   const calls: Call[] = [];
   const client = new BroodsAccountClient({
     baseUrl: "https://gateway.example.com",
     sessionToken: "bsts_session-1",
-    fetch: async (input, init) => {
+    fetch: async (input, init): Promise<Response> => {
       calls.push({
         url: requestUrl(input),
         method: init?.method ?? "GET",
@@ -346,7 +346,7 @@ test("a sessionToken is accepted as the bearer instead of the account key", asyn
   expect(calls[0]?.headers.Authorization).toBe("Bearer bsts_session-1");
 });
 
-test("skills: list unwraps, upload uses PUT, delete returns the flag", async () => {
+test("skills: list unwraps, upload uses PUT, delete returns the flag", async (): Promise<void> => {
   const { client, calls } = mockClient([
     {
       status: 200,
@@ -376,7 +376,7 @@ test("skills: list unwraps, upload uses PUT, delete returns the flag", async () 
   expect(await client.deleteSkill("flow")).toBe(true);
 });
 
-test("workspace files: upload unwraps the file, rename and delete return object counts", async () => {
+test("workspace files: upload unwraps the file, rename and delete return object counts", async (): Promise<void> => {
   const { client, calls } = mockClient([
     {
       status: 201,
@@ -416,7 +416,7 @@ test("workspace files: upload unwraps the file, rename and delete return object 
   );
 });
 
-test("baseUrl defaults to the managed gateway when option and env var are absent", () => {
+test("baseUrl defaults to the managed gateway when option and env var are absent", (): void => {
   const savedBaseUrl = process.env.BROODS_BASE_URL;
   delete process.env.BROODS_BASE_URL;
   try {

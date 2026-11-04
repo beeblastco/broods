@@ -10,7 +10,7 @@ import {
 
 const tempDirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const dir of tempDirs.splice(0))
     await rm(dir, { recursive: true, force: true });
 });
@@ -22,18 +22,18 @@ test.each([
   ["0.15.1", "0.15.1", false],
   ["0.15.0", "0.15.1", false],
   ["0.9.0", "0.10.0", false],
-])("isNewerVersion(%s, %s) is %s", (candidate, current, expected) => {
+])("isNewerVersion(%s, %s) is %s", (candidate, current, expected): void => {
   expect(isNewerVersion(candidate, current)).toBe(expected);
 });
 
-test("a stable release beats the prerelease of the same version", () => {
+test("a stable release beats the prerelease of the same version", (): void => {
   expect(isNewerVersion("0.15.1", "0.15.1-rc.1")).toBe(true);
   expect(isNewerVersion("0.15.1-rc.1", "0.15.1")).toBe(false);
   expect(isNewerVersion("v0.16.0-rc.1", "0.15.1")).toBe(true);
 });
 
 // Run from a checkout, this copy is a project dependency.
-test("a copy inside the project upgrades the dependency, not a global", () => {
+test("a copy inside the project upgrades the dependency, not a global", (): void => {
   const target = updateTarget();
 
   expect(target.global).toBe(false);
@@ -41,7 +41,7 @@ test("a copy inside the project upgrades the dependency, not a global", () => {
   expect(target.args.at(-1)).toMatch(/^broods@\d+$/);
 });
 
-test("a workspace still upgrades the root dependency", () => {
+test("a workspace still upgrades the root dependency", (): void => {
   const target = updateTarget(
     join(sep, "repo", "apps", "foo"),
     join(sep, "repo", "node_modules", "broods", "dist", "cli", "index.js"),
@@ -82,7 +82,7 @@ test.each([
     ),
     "npm",
   ],
-])("%s replaces itself in place", (_label, self, manager) => {
+])("%s replaces itself in place", (_label, self, manager): void => {
   const target = updateTarget(join(sep, "somewhere", "else"), self);
 
   expect(target.global).toBe(true);
@@ -90,7 +90,7 @@ test.each([
   expect(target.args).toContain("-g");
 });
 
-test("the install stays on the running major", () => {
+test("the install stays on the running major", (): void => {
   const target = updateTarget(
     join(sep, "somewhere", "else"),
     join(
@@ -114,20 +114,30 @@ test.each([
   ["yarn.lock", "yarn", ["add", "broods@1"]],
   ["bun.lock", "bun", ["add", "broods@1"]],
   ["package-lock.json", "npm", ["install", "broods@1"]],
-])("a project with %s upgrades through %s", async (lockfile, manager, args) => {
-  const root = await mkdtemp(join(tmpdir(), "broods-update-"));
-  tempDirs.push(root);
-  await writeFile(join(root, lockfile), "", "utf8");
-  const self = join(root, "node_modules", "broods", "dist", "cli", "index.js");
+])(
+  "a project with %s upgrades through %s",
+  async (lockfile, manager, args): Promise<void> => {
+    const root = await mkdtemp(join(tmpdir(), "broods-update-"));
+    tempDirs.push(root);
+    await writeFile(join(root, lockfile), "", "utf8");
+    const self = join(
+      root,
+      "node_modules",
+      "broods",
+      "dist",
+      "cli",
+      "index.js",
+    );
 
-  const target = updateTarget(root, self, "1.4.0");
+    const target = updateTarget(root, self, "1.4.0");
 
-  expect(target.manager).toBe(manager);
-  expect(target.args).toEqual(args);
-});
+    expect(target.manager).toBe(manager);
+    expect(target.args).toEqual(args);
+  },
+);
 
 // pnpm and bun's isolated linker run the CLI from a store with its own `node_modules`.
-test("a copy in pnpm's store upgrades the project through pnpm", async () => {
+test("a copy in pnpm's store upgrades the project through pnpm", async (): Promise<void> => {
   const root = await mkdtemp(join(tmpdir(), "broods-update-"));
   tempDirs.push(root);
   await writeFile(join(root, "pnpm-lock.yaml"), "", "utf8");
@@ -150,7 +160,7 @@ test("a copy in pnpm's store upgrades the project through pnpm", async () => {
 });
 
 // pnpm refuses a workspace-root add without `-w`.
-test("a pnpm workspace updates the root dependency from the root", async () => {
+test("a pnpm workspace updates the root dependency from the root", async (): Promise<void> => {
   const root = await mkdtemp(join(tmpdir(), "broods-update-"));
   tempDirs.push(root);
   await writeFile(join(root, "pnpm-lock.yaml"), "", "utf8");
@@ -163,7 +173,7 @@ test("a pnpm workspace updates the root dependency from the root", async () => {
   expect(target.args).toEqual(["add", "-w", "broods@1"]);
 });
 
-test("only an installed copy, not a monorepo build, counts as a release", () => {
+test("only an installed copy, not a monorepo build, counts as a release", (): void => {
   expect(
     isInstalledPackage(
       join(sep, "app", "node_modules", "broods", "dist", "cli", "index.js"),

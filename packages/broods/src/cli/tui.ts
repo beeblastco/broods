@@ -98,7 +98,7 @@ export function stopTurnOnEscape(
     return emit(event, ...args);
   };
 
-  return () => {
+  return (): void => {
     if (held) clearTimeout(held.timer);
     input.emit = emit;
   };
@@ -111,7 +111,7 @@ export async function streamAgentText(
     stream: toReadableStream(
       options.client.stream(options.agent, { input: options.prompt }),
       undefined,
-      () => {},
+      (): void => {},
     ),
   });
   for await (const text of stream) {
@@ -126,7 +126,7 @@ export async function submitPrompt(prompt: string): Promise<void> {
   const deadline = Date.now() + 10_000;
   while (process.stdin.listenerCount("data") <= listeners) {
     if (Date.now() > deadline) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve): NodeJS.Timeout => setTimeout(resolve, 20));
   }
   process.stdin.emit("data", Buffer.from(prompt));
   process.stdin.emit("data", Buffer.from("\r"));
@@ -178,7 +178,7 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
       : turn.controller.signal;
 
     return toUIMessageStream({
-      stream: toReadableStream(stream, signal, pending.commit, () => {
+      stream: toReadableStream(stream, signal, pending.commit, (): void => {
         if (this.activeTurn === turn) this.activeTurn = undefined;
       }),
       originalMessages: options.messages,
@@ -233,7 +233,7 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
 
     return {
       events: events,
-      commit: () => {
+      commit: (): void => {
         this.sentUserTurns = userTurns;
         for (const approval of approvals)
           this.sentApprovals.add(approval.approvalId);
@@ -293,9 +293,9 @@ async function* queuedAnswer(
 function abortedRead(
   signal: AbortSignal | undefined,
 ): Promise<IteratorResult<TextStreamPart<ToolSet>>> {
-  return new Promise((resolve) => {
+  return new Promise((resolve): void => {
     if (!signal) return;
-    const done = () => resolve({ done: true, value: undefined });
+    const done = (): void => resolve({ done: true, value: undefined });
     if (signal.aborted) done();
     else signal.addEventListener("abort", done, { once: true });
   });
@@ -305,19 +305,19 @@ function toReadableStream(
   stream: AsyncGenerator<TextStreamPart<ToolSet>>,
   signal: AbortSignal | undefined,
   onAnswered: () => void,
-  onClosed: () => void = () => {},
+  onClosed: () => void = (): void => {},
 ): ReadableStream<TextStreamPart<ToolSet>> {
   let answered = false;
   // Never awaited: `return()` queues behind a read that may never complete, so awaiting it
   // would hang the abort itself.
-  const release = () => void stream.return(undefined);
+  const release = (): undefined => void stream.return(undefined);
 
   return new ReadableStream({
     pull: async function (controller): Promise<void> {
       const next = await Promise.race([
         stream.next(),
         abortedRead(signal),
-      ]).catch((error: unknown) => {
+      ]).catch((error: unknown): never => {
         onClosed();
         throw error;
       });
@@ -337,7 +337,7 @@ function toReadableStream(
         onClosed();
       } else controller.enqueue(next.value);
     },
-    cancel: () => {
+    cancel: (): void => {
       release();
       onClosed();
     },

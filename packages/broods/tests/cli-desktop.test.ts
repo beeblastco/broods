@@ -2,7 +2,10 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { MachineComputerFrame } from "../../../apps/core/src/shared/machine-socket.ts";
+import type {
+  MachineComputerFrame,
+  MachineCoreFrame,
+} from "../../../apps/core/src/shared/machine-socket.ts";
 import { startDesktop, type DesktopDriver } from "../src/cli/desktop.ts";
 import { runMachineDaemon } from "../src/cli/machine.ts";
 import { startFakeCore } from "./fixtures/fake-core.ts";
@@ -14,14 +17,14 @@ const macOnly = test.skipIf(
 const drivers: DesktopDriver[] = [];
 const servers: Bun.Server<undefined>[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const driver of drivers.splice(0)) driver.stop();
   for (const server of servers.splice(0)) await server.stop(true);
 });
 
 macOnly(
   "the helper screenshots at the reported frame and maps the cursor both ways",
-  async () => {
+  async (): Promise<void> => {
     const { display, driver } = await startDesktop(false);
     drivers.push(driver);
 
@@ -61,8 +64,8 @@ macOnly(
 
 macOnly(
   "a daemon started with --computer says so in hello and answers a computer frame",
-  async () => {
-    const core = startFakeCore((frame) =>
+  async (): Promise<void> => {
+    const core = startFakeCore((frame): MachineCoreFrame | null =>
       frame.type === "hello" ? computer("cursor_position") : null,
     );
     servers.push(core.server);
@@ -73,7 +76,7 @@ macOnly(
         baseUrl: core.url,
         computer: true,
         cwd: process.cwd(),
-        log: () => {},
+        log: (): void => {},
         sandbox: "my-mac",
         signal: new AbortController().signal,
       }),

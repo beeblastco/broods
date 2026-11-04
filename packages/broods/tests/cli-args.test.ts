@@ -7,25 +7,25 @@ import {
   positionalArgs,
 } from "../src/cli/utils.ts";
 
-test("positionalArgs drops --stage and the name it carries", () => {
+test("positionalArgs drops --stage and the name it carries", (): void => {
   const args = ["helper", "--stage", "staging", "say hi"];
 
   expect(positionalArgs(args)).toEqual(["helper", "say hi"]);
 });
 
-test("positionalArgs keeps the token after an inline --stage=value", () => {
+test("positionalArgs keeps the token after an inline --stage=value", (): void => {
   expect(positionalArgs(["helper", "--stage=staging", "say hi"])).toEqual([
     "helper",
     "say hi",
   ]);
 });
 
-test("optionValue reads the stage override", () => {
+test("optionValue reads the stage override", (): void => {
   expect(optionValue(["--stage", "staging"], "--stage")).toBe("staging");
   expect(optionValue(["--stage", "staging"], "--env")).toBeUndefined();
 });
 
-test("optionValue reads an inline --name=value", () => {
+test("optionValue reads an inline --name=value", (): void => {
   expect(optionValue(["--stage=staging"], "--stage")).toBe("staging");
   expect(optionValue(["--base-url=http://x/?a=b"], "--base-url")).toBe(
     "http://x/?a=b",
@@ -34,18 +34,18 @@ test("optionValue reads an inline --name=value", () => {
   expect(optionValue(["--level="], "--level")).toBeUndefined();
 });
 
-test("hasFlag reads a value option inline and a boolean flag only bare", () => {
+test("hasFlag reads a value option inline and a boolean flag only bare", (): void => {
   expect(hasFlag(["--sandbox=abc"], "--sandbox")).toBe(true);
   expect(hasFlag(["--force"], "--force")).toBe(true);
   expect(hasFlag(["--forced"], "--force")).toBe(false);
 });
 
-test("hasFlag ignores a boolean flag given a value", () => {
+test("hasFlag ignores a boolean flag given a value", (): void => {
   expect(hasFlag(["--yes=false"], "--yes")).toBe(false);
   expect(hasFlag(["--prune=false"], "--prune")).toBe(false);
 });
 
-test("loginWithBrowser fails at once with the dashboard's error, browser or not", async () => {
+test("loginWithBrowser fails at once with the dashboard's error, browser or not", async (): Promise<void> => {
   const path = process.env.PATH;
   process.env.PATH = "/nonexistent";
   const dashboard = Bun.serve({
@@ -55,7 +55,7 @@ test("loginWithBrowser fails at once with the dashboard's error, browser or not"
       const callback = new URL(start.searchParams.get("callback")!);
       callback.searchParams.set("state", start.searchParams.get("state")!);
       callback.searchParams.set("error", "No active org");
-      setTimeout(() => void fetch(callback), 50);
+      setTimeout((): undefined => void fetch(callback), 50);
 
       return new Response("ok");
     },
@@ -70,7 +70,7 @@ test("loginWithBrowser fails at once with the dashboard's error, browser or not"
   }
 });
 
-test("browserCommand hands Windows the whole URL", () => {
+test("browserCommand hands Windows the whole URL", (): void => {
   const url = "https://dash/cli-auth/start?callback=x&state=y";
 
   expect(browserCommand(url, "win32")).toEqual({

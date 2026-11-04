@@ -23,7 +23,7 @@ const ONBOARD_PATH = join(
 
 const workdirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const dir of workdirs.splice(0))
     await rm(dir, { recursive: true, force: true });
 });
@@ -51,7 +51,7 @@ async function makeWorkdir(): Promise<string> {
   return cwd;
 }
 
-test("init installs the agent skill when the repo has an agent marker", async () => {
+test("init installs the agent skill when the repo has an agent marker", async (): Promise<void> => {
   const cwd = await makeWorkdir();
   await writeFile(join(cwd, "CLAUDE.md"), "# rules\n");
 
@@ -63,7 +63,7 @@ test("init installs the agent skill when the repo has an agent marker", async ()
   expect(onboard.mode & 0o111).not.toBe(0);
 });
 
-test("init skips the agent skill when no agent marker exists", async () => {
+test("init skips the agent skill when no agent marker exists", async (): Promise<void> => {
   const cwd = await makeWorkdir();
 
   expect(await runInit(cwd)).toBe(0);
@@ -71,7 +71,7 @@ test("init skips the agent skill when no agent marker exists", async () => {
   await expect(stat(join(cwd, SKILL_PATH))).rejects.toThrow();
 });
 
-test("init leaves an existing skill install alone", async () => {
+test("init leaves an existing skill install alone", async (): Promise<void> => {
   const cwd = await makeWorkdir();
   await writeFile(join(cwd, "CLAUDE.md"), "# rules\n");
   expect(await runInit(cwd)).toBe(0);
@@ -82,7 +82,7 @@ test("init leaves an existing skill install alone", async () => {
   expect(await readFile(join(cwd, SKILL_PATH), "utf8")).toBe("local edits\n");
 });
 
-test("init refuses to write the skill through a symlink", async () => {
+test("init refuses to write the skill through a symlink", async (): Promise<void> => {
   const cwd = await makeWorkdir();
   const outside = await makeWorkdir();
   await writeFile(join(cwd, "CLAUDE.md"), "# rules\n");

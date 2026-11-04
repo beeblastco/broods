@@ -7,14 +7,14 @@ const savedEnv = {
   BROODS_BASE_URL: process.env.BROODS_BASE_URL,
 };
 
-afterEach(() => {
+afterEach((): void => {
   for (const [key, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
 });
 
-test("BROODS_BASE_URL with BROODS_TOKEN yields env auth carrying the Convex URL", () => {
+test("BROODS_BASE_URL with BROODS_TOKEN yields env auth carrying the Convex URL", (): void => {
   delete process.env.BROODS_DASHBOARD_URL;
   process.env.BROODS_TOKEN = "tok";
   process.env.BROODS_BASE_URL = "https://convex.example.com/";
@@ -28,7 +28,7 @@ test("BROODS_BASE_URL with BROODS_TOKEN yields env auth carrying the Convex URL"
   expect(auth?.dashboardUrl).toBeUndefined();
 });
 
-test("BROODS_DASHBOARD_URL without BROODS_BASE_URL does not authenticate from env", () => {
+test("BROODS_DASHBOARD_URL without BROODS_BASE_URL does not authenticate from env", (): void => {
   delete process.env.BROODS_BASE_URL;
   process.env.BROODS_TOKEN = "env-only-token-sentinel";
   process.env.BROODS_DASHBOARD_URL = "https://dashboard.example.com";
@@ -39,7 +39,7 @@ test("BROODS_DASHBOARD_URL without BROODS_BASE_URL does not authenticate from en
   expect(auth?.token ?? null).not.toBe("env-only-token-sentinel");
 });
 
-test("gatewayUrlForDashboard pairs a dashboard host with its API host", () => {
+test("gatewayUrlForDashboard pairs a dashboard host with its API host", (): void => {
   expect(gatewayUrlForDashboard("https://dashboard.broods.app/")).toBe(
     "https://gateway.broods.app",
   );
@@ -48,7 +48,7 @@ test("gatewayUrlForDashboard pairs a dashboard host with its API host", () => {
   );
 });
 
-test("gatewayUrlForDashboard never guesses a host we do not own", () => {
+test("gatewayUrlForDashboard never guesses a host we do not own", (): void => {
   expect(gatewayUrlForDashboard("https://dashboard.acme.com")).toBeUndefined();
   expect(
     gatewayUrlForDashboard("https://dashboard.broods.app.evil.com"),

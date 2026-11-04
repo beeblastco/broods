@@ -20,7 +20,7 @@ class FakeWebSocket implements WebSocketLike {
     readonly protocols?: string[],
   ) {
     FakeWebSocket.instances.push(this);
-    queueMicrotask(() => {
+    queueMicrotask((): void => {
       this.readyState = 1;
       this.onopen?.({});
     });
@@ -47,7 +47,7 @@ class FakeWebSocket implements WebSocketLike {
   }
 }
 
-afterEach(() => {
+afterEach((): void => {
   FakeWebSocket.instances = [];
   delete process.env.BROODS_DASHBOARD_URL;
   delete process.env.BROODS_TOKEN;
@@ -58,7 +58,7 @@ afterEach(() => {
   delete process.env.BROODS_API_KEY;
 });
 
-test("websocket client accepts host as a shorthand for the core service URL", () => {
+test("websocket client accepts host as a shorthand for the core service URL", (): void => {
   const client = new BroodsWebSocketClient({
     host: "app.example",
     apiKey: "test-key",
@@ -70,7 +70,7 @@ test("websocket client accepts host as a shorthand for the core service URL", ()
   );
 });
 
-test("websocket client can be constructed without options", () => {
+test("websocket client can be constructed without options", (): void => {
   process.env.BROODS_API_KEY = "env-key";
   const client = new BroodsWebSocketClient();
 
@@ -79,7 +79,7 @@ test("websocket client can be constructed without options", () => {
   );
 });
 
-test("websocket client lets BROODS_BASE_URL override the default service URL", () => {
+test("websocket client lets BROODS_BASE_URL override the default service URL", (): void => {
   process.env.BROODS_BASE_URL = "https://gateway.example";
   const client = new BroodsWebSocketClient({
     apiKey: "test-key",
@@ -91,7 +91,7 @@ test("websocket client lets BROODS_BASE_URL override the default service URL", (
   );
 });
 
-test("websocket client subscribes to the core service and forwards server messages", async () => {
+test("websocket client subscribes to the core service and forwards server messages", async (): Promise<void> => {
   const messages: WebSocketServerMessage[] = [];
   let done = false;
   const client = new BroodsWebSocketClient({
@@ -118,10 +118,10 @@ test("websocket client subscribes to the core service and forwards server messag
       },
     },
     {
-      onMessage: function (message) {
+      onMessage: function (message): void {
         messages.push(message);
       },
-      onDone: function () {
+      onDone: function (): void {
         done = true;
       },
     },
@@ -166,7 +166,7 @@ test("websocket client subscribes to the core service and forwards server messag
   expect(done).toBe(true);
 });
 
-test("websocket client sends answers in place of events", async () => {
+test("websocket client sends answers in place of events", async (): Promise<void> => {
   const client = new BroodsWebSocketClient({
     baseUrl: "https://app.example",
     apiKey: "test-key",
@@ -191,7 +191,7 @@ test("websocket client sends answers in place of events", async () => {
   });
 });
 
-test("websocket client closes with a browser-valid code on a server error", async () => {
+test("websocket client closes with a browser-valid code on a server error", async (): Promise<void> => {
   const client = new BroodsWebSocketClient({
     baseUrl: "https://app.example",
     apiKey: "test-key",
@@ -215,7 +215,7 @@ test("websocket client closes with a browser-valid code on a server error", asyn
   expect(socket.readyState).toBe(3);
 });
 
-test("websocket client unwraps output envelopes for handlers and stream consumers", async () => {
+test("websocket client unwraps output envelopes for handlers and stream consumers", async (): Promise<void> => {
   const messages: WebSocketServerMessage[] = [];
   const outputs: unknown[] = [];
   let done = false;
@@ -233,13 +233,13 @@ test("websocket client unwraps output envelopes for handlers and stream consumer
       input: "start",
     },
     {
-      onMessage: function (message) {
+      onMessage: function (message): void {
         messages.push(message);
       },
-      onOutput: function (output) {
+      onOutput: function (output): void {
         outputs.push(output);
       },
-      onDone: function () {
+      onDone: function (): void {
         done = true;
       },
     },
@@ -285,7 +285,7 @@ test("websocket client unwraps output envelopes for handlers and stream consumer
   expect(done).toBe(true);
 });
 
-test("websocket client sends correlated control and attach frames", async () => {
+test("websocket client sends correlated control and attach frames", async (): Promise<void> => {
   const client = new BroodsWebSocketClient({
     baseUrl: "https://app.example",
     apiKey: "test-key",
@@ -328,7 +328,7 @@ test("websocket client sends correlated control and attach frames", async () => 
   attached.close();
 });
 
-test("websocket client can build scoped URLs from generated agent references", async () => {
+test("websocket client can build scoped URLs from generated agent references", async (): Promise<void> => {
   const client = new BroodsWebSocketClient({
     baseUrl: "https://app.example",
     apiKey: "test-key",
@@ -362,7 +362,7 @@ test("websocket client can build scoped URLs from generated agent references", a
   });
 });
 
-test("websocket attach honors its AbortSignal and stops delivering callbacks", async () => {
+test("websocket attach honors its AbortSignal and stops delivering callbacks", async (): Promise<void> => {
   const sockets = new Set<Bun.ServerWebSocket<undefined>>();
   const frames: string[] = [];
   const server = Bun.serve<undefined>({
@@ -413,10 +413,10 @@ test("websocket attach honors its AbortSignal and stops delivering callbacks", a
   try {
     const abort = new AbortController();
     client.attach({ ...input, signal: abort.signal }, handlers);
-    await until(() => frames.includes("attach"));
+    await until((): boolean => frames.includes("attach"));
     const [socket] = sockets;
     abort.abort();
-    await until(() => sockets.size === 0);
+    await until((): boolean => sockets.size === 0);
     socket?.send(JSON.stringify({ type: "text-delta", id: "0", text: "late" }));
     await Bun.sleep(20);
     expect(seen).toEqual([]);
@@ -438,7 +438,7 @@ test("websocket attach honors its AbortSignal and stops delivering callbacks", a
   }
 });
 
-test("websocket attach delivers nothing after a handler aborts it, and reports a socket failure once", async () => {
+test("websocket attach delivers nothing after a handler aborts it, and reports a socket failure once", async (): Promise<void> => {
   const client = new BroodsWebSocketClient({
     baseUrl: "https://app.example",
     apiKey: "test-key",

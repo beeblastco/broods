@@ -2,6 +2,7 @@ import type {
   CliManifest,
   DeploymentRegion,
   GeneratedIds,
+  CliManifestResource,
 } from "./contracts.ts";
 import { stripTrailingSlash } from "./config.ts";
 import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
@@ -245,13 +246,15 @@ export class BroodsSyncClient {
     manifest: CliManifest,
   ): Promise<CliManifest> {
     if (
-      manifest.resources.every((resource) => largeBundleOf(resource) === null)
+      manifest.resources.every(
+        (resource): boolean => largeBundleOf(resource) === null,
+      )
     ) {
       return manifest;
     }
 
     const resources = await Promise.all(
-      manifest.resources.map(async (resource) => {
+      manifest.resources.map(async (resource): Promise<CliManifestResource> => {
         const bundle = largeBundleOf(resource);
         if (bundle === null) return resource;
         const { bundle: _bundle, ...rest } = resource.config as Record<
@@ -705,13 +708,16 @@ export function diffManifests(
   remote: CliManifest | null,
 ): DiffEntry[] {
   const remoteResources = new Map(
-    (remote?.resources ?? []).map((entry) => [
+    (remote?.resources ?? []).map((entry): [string, CliManifestResource] => [
       `${entry.kind}:${entry.name}`,
       entry,
     ]),
   );
   const localResources = new Map(
-    local.resources.map((entry) => [`${entry.kind}:${entry.name}`, entry]),
+    local.resources.map((entry): [string, CliManifestResource] => [
+      `${entry.kind}:${entry.name}`,
+      entry,
+    ]),
   );
   const entries: DiffEntry[] = [];
   const unmatchedLocal: Array<{
@@ -749,7 +755,7 @@ export function diffManifests(
   const renamedLocalKeys = new Set<string>();
   for (const localEntry of unmatchedLocal) {
     const match = unmatchedRemote.find(
-      (remoteEntry) =>
+      (remoteEntry): boolean =>
         !renamedRemoteKeys.has(remoteEntry.key) &&
         isRenamableKind(localEntry.resource.kind) &&
         localEntry.resource.kind === remoteEntry.resource.kind &&
@@ -787,7 +793,9 @@ export function diffManifests(
     }
   }
 
-  return entries.sort((a, b) => diffSortKey(a).localeCompare(diffSortKey(b)));
+  return entries.sort((a, b): number =>
+    diffSortKey(a).localeCompare(diffSortKey(b)),
+  );
 }
 
 function diffSortKey(entry: DiffEntry): string {
@@ -819,7 +827,7 @@ function normalizeEnvRefs(value: unknown): unknown {
     }
 
     return Object.fromEntries(
-      Object.entries(record).map(([key, entry]) => [
+      Object.entries(record).map(([key, entry]): [string, unknown] => [
         key,
         normalizeEnvRefs(entry),
       ]),
@@ -852,8 +860,8 @@ function sortValue(value: unknown): unknown {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, entry]) => [key, sortValue(entry)]),
+        .sort(([a], [b]): number => a.localeCompare(b))
+        .map(([key, entry]): [string, unknown] => [key, sortValue(entry)]),
     );
   }
 
@@ -868,11 +876,13 @@ function stripArtifactContent(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripArtifactContent);
   if (value && typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value).flatMap(([key, entry]) => {
-        if (ARTIFACT_KEYS.has(key)) return [];
+      Object.entries(value).flatMap(
+        ([key, entry]): Array<[string, unknown]> => {
+          if (ARTIFACT_KEYS.has(key)) return [];
 
-        return [[key, stripArtifactContent(entry)]];
-      }),
+          return [[key, stripArtifactContent(entry)]];
+        },
+      ),
     );
   }
 

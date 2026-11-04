@@ -27,7 +27,7 @@ export async function* readSseStream(
     }
   } finally {
     // An early-exiting consumer leaves the response open; this rejects if it already errored.
-    await reader.cancel().catch(() => undefined);
+    await reader.cancel().catch((): undefined => undefined);
     reader.releaseLock();
   }
 }

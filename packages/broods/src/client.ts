@@ -178,13 +178,15 @@ export class BroodsClient {
 
       return {
         id: id,
-        run: (input: AgentRunInput) =>
+        run: (input: AgentRunInput): Promise<AgentRunResult> =>
           this.run({ ...input, agentName: name, agentId: id }),
-        runAsync: (input: AgentRunInput) =>
+        runAsync: (input: AgentRunInput): Promise<AsyncAgentRun> =>
           this.runAsync({ ...input, agentName: name, agentId: id }),
-        continue: (input: AgentContinueInput) =>
+        continue: (input: AgentContinueInput): Promise<AsyncAgentRun> =>
           this.continue({ ...input, agentId: id }),
-        stream: (input: AgentRunInput) =>
+        stream: (
+          input: AgentRunInput,
+        ): AsyncGenerator<TextStreamPart<ToolSet>> =>
           this.stream({ ...input, agentName: name, agentId: id }),
       };
     }
@@ -197,10 +199,14 @@ export class BroodsClient {
 
     return {
       id: ref.id,
-      run: (input: AgentRunInput) => this.run(ref, input),
-      runAsync: (input: AgentRunInput) => this.runAsync(ref, input),
-      continue: (input: AgentContinueInput) => this.continue(ref, input),
-      stream: (input: AgentRunInput) => this.stream(ref, input),
+      run: (input: AgentRunInput): Promise<AgentRunResult> =>
+        this.run(ref, input),
+      runAsync: (input: AgentRunInput): Promise<AsyncAgentRun> =>
+        this.runAsync(ref, input),
+      continue: (input: AgentContinueInput): Promise<AsyncAgentRun> =>
+        this.continue(ref, input),
+      stream: (input: AgentRunInput): AsyncGenerator<TextStreamPart<ToolSet>> =>
+        this.stream(ref, input),
     };
   }
 
@@ -400,8 +406,8 @@ export class BroodsClient {
     return {
       ...accepted,
       conversationKey: conversationKey,
-      poll: () => this.getAsyncStatus(accepted),
-      wait: (options?: AsyncPollOptions) =>
+      poll: (): Promise<AsyncStatus> => this.getAsyncStatus(accepted),
+      wait: (options?: AsyncPollOptions): Promise<AsyncStatus> =>
         this.waitForAsyncStatus(accepted, options),
     };
   }
@@ -622,7 +628,7 @@ async function responseErrorDetails(
 ): Promise<string> {
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.toLowerCase().includes("text/event-stream")) {
-    await response.body?.cancel().catch(() => {});
+    await response.body?.cancel().catch((): void => {});
 
     return `expected ${expected}, but the server returned an SSE stream. This usually means the core deployment ignored the background flag and ran the request on the direct streaming runner.`;
   }
@@ -634,7 +640,7 @@ async function responseErrorDetails(
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolvePromise, reject) => {
+  return new Promise((resolvePromise, reject): void => {
     if (signal?.aborted) {
       reject(new Error("Async status polling aborted."));
 
@@ -643,7 +649,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     const timer = setTimeout(resolvePromise, ms);
     signal?.addEventListener(
       "abort",
-      () => {
+      (): void => {
         clearTimeout(timer);
         reject(new Error("Async status polling aborted."));
       },

@@ -1,17 +1,21 @@
 import { afterEach, expect, test } from "bun:test";
 import { hostname } from "node:os";
-import type { MachineExecFrame } from "../../../apps/core/src/shared/machine-socket.ts";
+import type {
+  MachineExecFrame,
+  MachineCoreFrame,
+  MachineDaemonFrame,
+} from "../../../apps/core/src/shared/machine-socket.ts";
 import { runExec, runMachineDaemon } from "../src/cli/machine.ts";
 import { StageSessionRefusedError } from "../src/observability-client.ts";
 import { startFakeCore } from "./fixtures/fake-core.ts";
 
 const servers: Bun.Server<undefined>[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const server of servers.splice(0)) await server.stop(true);
 });
 
-test("runExec runs bash on this machine with the frame's cwd and env", async () => {
+test("runExec runs bash on this machine with the frame's cwd and env", async (): Promise<void> => {
   const result = await runExec(
     exec({ code: "echo $GREETING $(hostname); pwd", env: { GREETING: "hi" } }),
     "/tmp",
@@ -26,7 +30,7 @@ test("runExec runs bash on this machine with the frame's cwd and env", async () 
   expect(result.timedOut).toBe(false);
 });
 
-test("runExec keeps the CLI's BROODS_ credentials out of the agent's shell", async () => {
+test("runExec keeps the CLI's BROODS_ credentials out of the agent's shell", async (): Promise<void> => {
   process.env.BROODS_API_KEY = "bsk_secret";
   try {
     const result = await runExec(
@@ -42,7 +46,7 @@ test("runExec keeps the CLI's BROODS_ credentials out of the agent's shell", asy
   }
 });
 
-test("runExec kills a command at the timeout and says so", async () => {
+test("runExec kills a command at the timeout and says so", async (): Promise<void> => {
   const result = await runExec(
     exec({ code: "sleep 5; echo late", timeoutSeconds: 1 }),
     process.cwd(),
@@ -53,14 +57,14 @@ test("runExec kills a command at the timeout and says so", async () => {
   expect(result.durationMs).toBeLessThan(3_000);
 });
 
-test("runExec kills a running command when the socket lifetime aborts", async () => {
+test("runExec kills a running command when the socket lifetime aborts", async (): Promise<void> => {
   const lifetime = new AbortController();
   const pending = runExec(
     exec({ code: "sleep 5; echo late", timeoutSeconds: 10 }),
     process.cwd(),
     lifetime.signal,
   );
-  setTimeout(() => lifetime.abort(), 100);
+  setTimeout((): void => lifetime.abort(), 100);
   const result = await pending;
 
   expect(result.exitCode).toBeNull();
@@ -69,7 +73,7 @@ test("runExec kills a running command when the socket lifetime aborts", async ()
   expect(result.durationMs).toBeLessThan(2_000);
 });
 
-test("runExec cuts output at the limit and reports the exit code", async () => {
+test("runExec cuts output at the limit and reports the exit code", async (): Promise<void> => {
   const result = await runExec(
     exec({ code: "yes | head -c 5000; exit 3", outputLimitBytes: 100 }),
     process.cwd(),
@@ -81,8 +85,8 @@ test("runExec cuts output at the limit and reports the exit code", async () => {
   expect(result.stdout.length).toBeLessThan(200);
 });
 
-test("the daemon says hello, answers an exec, and stops on a refusal", async () => {
-  const core = startFakeCore((frame) =>
+test("the daemon says hello, answers an exec, and stops on a refusal", async (): Promise<void> => {
+  const core = startFakeCore((frame): MachineCoreFrame | null =>
     frame.type === "hello" ? exec({ code: "echo from-daemon" }) : null,
   );
   servers.push(core.server);
@@ -116,7 +120,7 @@ test("the daemon says hello, answers an exec, and stops on a refusal", async () 
   ]);
 });
 
-test("the daemon stops when the stage session is refused", async () => {
+test("the daemon stops when the stage session is refused", async (): Promise<void> => {
   await expect(
     runMachineDaemon({
       baseUrl: "http://127.0.0.1:9",
@@ -131,8 +135,8 @@ test("the daemon stops when the stage session is refused", async () => {
   ).rejects.toThrow("Open stage session failed: 401");
 });
 
-test("the daemon retries when minting a stage session fails in transit", async () => {
-  const core = startFakeCore((frame) =>
+test("the daemon retries when minting a stage session fails in transit", async (): Promise<void> => {
+  const core = startFakeCore((frame): MachineCoreFrame | null =>
     frame.type === "hello" ? exec({ code: "true" }) : null,
   );
   servers.push(core.server);
@@ -161,11 +165,12 @@ test("the daemon retries when minting a stage session fails in transit", async (
   expect(lines[0]).toStartWith("stage session unavailable (network down)");
 });
 
-test("the daemon hands core a fresh ticket before the one it holds expires", async () => {
-  const core = startFakeCore((frame) =>
-    frame.type === "hello"
-      ? { type: "ready", sandboxId: "sbx_1", expiresInMs: 2_000 }
-      : null,
+test("the daemon hands core a fresh ticket before the one it holds expires", async (): Promise<void> => {
+  const core = startFakeCore(
+    (frame): { type: "ready"; sandboxId: string; expiresInMs: number } | null =>
+      frame.type === "hello"
+        ? { type: "ready", sandboxId: "sbx_1", expiresInMs: 2_000 }
+        : null,
   );
   servers.push(core.server);
   let calls = 0;
@@ -186,10 +191,9 @@ test("the daemon hands core a fresh ticket before the one it holds expires", asy
     }),
   ).rejects.toThrow("Replaced by a newer connection");
 
-  expect(core.received.map((frame) => frame.type)).toEqual([
-    "hello",
-    "credential",
-  ]);
+  expect(
+    core.received.map((frame): MachineDaemonFrame["type"] => frame.type),
+  ).toEqual(["hello", "credential"]);
   expect(core.received[1]).toEqual({ type: "credential", token: "ticket-2" });
   expect(Date.now() - startedAt).toBeLessThan(2_000);
 });

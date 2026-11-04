@@ -20,7 +20,7 @@ class FakeObservabilitySocket {
 
   constructor(readonly url: string) {
     FakeObservabilitySocket.instances.push(this);
-    queueMicrotask(() => {
+    queueMicrotask((): void => {
       this.readyState = 1;
       this.onopen?.({});
     });
@@ -42,12 +42,12 @@ class FakeObservabilitySocket {
 
 const originalWebSocket = globalThis.WebSocket;
 
-afterEach(() => {
+afterEach((): void => {
   FakeObservabilitySocket.instances = [];
   globalThis.WebSocket = originalWebSocket;
 });
 
-test("reconnects transient log sockets and de-duplicates overlap backfill", async () => {
+test("reconnects transient log sockets and de-duplicates overlap backfill", async (): Promise<void> => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
   const stream = subscribeObservabilityLogs(
@@ -95,7 +95,7 @@ test("reconnects transient log sockets and de-duplicates overlap backfill", asyn
   await stream.return(undefined);
 });
 
-test("reports each reconnect and gives up after a minute down", async () => {
+test("reports each reconnect and gives up after a minute down", async (): Promise<void> => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const attempts: string[] = [];
   const stream = subscribeObservabilityLogs(
@@ -131,7 +131,7 @@ test("reports each reconnect and gives up after a minute down", async () => {
   }
 });
 
-test("keeps reconnecting past a minute down when asked to", async () => {
+test("keeps reconnecting past a minute down when asked to", async (): Promise<void> => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
   const stream = subscribeObservabilityLogs(
@@ -161,7 +161,7 @@ test("keeps reconnecting past a minute down when asked to", async () => {
   await result;
 });
 
-test("reconnects a socket the gateway never answers", async () => {
+test("reconnects a socket the gateway never answers", async (): Promise<void> => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
   const attempts: string[] = [];
@@ -197,7 +197,7 @@ test("reconnects a socket the gateway never answers", async () => {
   }
 });
 
-test("requests live-only logs when no backfill is requested", async () => {
+test("requests live-only logs when no backfill is requested", async (): Promise<void> => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
   const stream = subscribeObservabilityLogs(
@@ -224,7 +224,7 @@ test("requests live-only logs when no backfill is requested", async () => {
   await pending;
 });
 
-test("does not include the credential in connection errors", async () => {
+test("does not include the credential in connection errors", async (): Promise<void> => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const stream = subscribeObservabilityLogs({
     baseUrl: "https://app.example",
@@ -255,7 +255,7 @@ const traceOptions = {
 };
 const TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736";
 
-test("fetches one trace by id and closes its socket", async () => {
+test("fetches one trace by id and closes its socket", async (): Promise<void> => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const pending = fetchObservabilityTrace(traceOptions, TRACE_ID);
   await Bun.sleep(0);
@@ -284,7 +284,7 @@ test("fetches one trace by id and closes its socket", async () => {
   expect(socket.readyState).toBe(3);
 });
 
-test("rejects with the gateway's reason when the trace is not in the stage", async () => {
+test("rejects with the gateway's reason when the trace is not in the stage", async (): Promise<void> => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const pending = fetchObservabilityTrace(traceOptions, TRACE_ID);
   await Bun.sleep(0);

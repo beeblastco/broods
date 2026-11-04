@@ -10,7 +10,7 @@ const SECRET = "bsig_minted-for-this-test-wxyz";
 const servers: Array<{ stop: () => void }> = [];
 const workdirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const server of servers.splice(0)) server.stop();
   for (const dir of workdirs.splice(0))
     await rm(dir, { recursive: true, force: true });
@@ -30,7 +30,7 @@ function serveBackend(stage: Stage): {
   const regions: unknown[] = [];
   const server = Bun.serve({
     port: 0,
-    fetch: async (request) => {
+    fetch: async (request): Promise<Response> => {
       const url = new URL(request.url);
       if (url.pathname.endsWith("/manifest") && request.method === "PUT") {
         const body = (await request.json()) as {
@@ -139,7 +139,7 @@ async function runDeploy(
   };
 }
 
-test("deploy mints the first signing secret into .env.local without printing it", async () => {
+test("deploy mints the first signing secret into .env.local without printing it", async (): Promise<void> => {
   const cwd = await projectDir();
   const backend = serveBackend({ stageKind: "production" });
 
@@ -152,7 +152,7 @@ test("deploy mints the first signing secret into .env.local without printing it"
   expect(result.output).not.toContain(SECRET);
 });
 
-test("deploy in CI writes neither the runtime key nor a signing secret", async () => {
+test("deploy in CI writes neither the runtime key nor a signing secret", async (): Promise<void> => {
   const cwd = await projectDir();
   const backend = serveBackend({ stageKind: "production" });
 
@@ -163,7 +163,7 @@ test("deploy in CI writes neither the runtime key nor a signing secret", async (
   expect(result.envLocal).toBe('BROODS_PROJECT="demo-app"\n');
 });
 
-test("deploy keeps a production stage's existing secret when this checkout lacks it", async () => {
+test("deploy keeps a production stage's existing secret when this checkout lacks it", async (): Promise<void> => {
   const cwd = await projectDir();
   const backend = serveBackend({
     stageKind: "production",
@@ -178,7 +178,7 @@ test("deploy keeps a production stage's existing secret when this checkout lacks
   expect(result.output).toContain("already has a user token signing secret");
 });
 
-test("deploy keeps a development stage's secret this checkout does not hold", async () => {
+test("deploy keeps a development stage's secret this checkout does not hold", async (): Promise<void> => {
   const cwd = await projectDir([
     'BROODS_STAGE="development"',
     'BROODS_USER_TOKEN_SECRET="bsig_someone-elses-1234"',
@@ -196,7 +196,7 @@ test("deploy keeps a development stage's secret this checkout does not hold", as
   expect(result.output).toContain("already has a user token signing secret");
 });
 
-test("deploy leaves a secret that matches the stage alone", async () => {
+test("deploy leaves a secret that matches the stage alone", async (): Promise<void> => {
   const cwd = await projectDir([`BROODS_USER_TOKEN_SECRET="${SECRET}"`]);
   const backend = serveBackend({
     stageKind: "development",
@@ -210,7 +210,7 @@ test("deploy leaves a secret that matches the stage alone", async () => {
   expect(result.output).not.toContain("user token signing secret");
 });
 
-test("deploy warns when a stale shell export shadows the current secret", async () => {
+test("deploy warns when a stale shell export shadows the current secret", async (): Promise<void> => {
   const cwd = await projectDir([`BROODS_USER_TOKEN_SECRET="${SECRET}"`]);
   const backend = serveBackend({
     stageKind: "development",
@@ -229,11 +229,11 @@ test("deploy warns when a stale shell export shadows the current secret", async 
   expect(result.output).not.toContain("stale-shell");
 });
 
-test("deploy still succeeds when the rotation is refused", async () => {
+test("deploy still succeeds when the rotation is refused", async (): Promise<void> => {
   const cwd = await projectDir();
   const server = Bun.serve({
     port: 0,
-    fetch: (request) =>
+    fetch: (request): Response =>
       new URL(request.url).pathname.endsWith("/user-token-secret")
         ? Response.json(
             { error: { message: "needs keys:write", code: "forbidden" } },
@@ -275,7 +275,7 @@ test("deploy still succeeds when the rotation is refused", async () => {
   expect(result.envLocal).not.toContain("BROODS_USER_TOKEN_SECRET");
 });
 
-test("--region rides the manifest; BROODS_REGION, which init writes, does not", async () => {
+test("--region rides the manifest; BROODS_REGION, which init writes, does not", async (): Promise<void> => {
   const cwd = await projectDir(['BROODS_REGION="us-east-1"']);
   const backend = serveBackend({ stageKind: "production" });
 
@@ -290,7 +290,7 @@ test("--region rides the manifest; BROODS_REGION, which init writes, does not", 
   expect(backend.regions).toEqual([undefined, "eu-west-1"]);
 });
 
-test("an unknown --region fails before any request", async () => {
+test("an unknown --region fails before any request", async (): Promise<void> => {
   const cwd = await projectDir();
   const backend = serveBackend({ stageKind: "production" });
 
@@ -304,7 +304,7 @@ test("an unknown --region fails before any request", async () => {
   expect(backend.regions).toEqual([]);
 });
 
-test("a --region with no value fails rather than falling back", async () => {
+test("a --region with no value fails rather than falling back", async (): Promise<void> => {
   const cwd = await projectDir();
   const backend = serveBackend({ stageKind: "production" });
 

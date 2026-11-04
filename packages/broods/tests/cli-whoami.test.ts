@@ -15,13 +15,13 @@ const ONBOARDING: CliOnboardingContext = {
 const servers: Array<{ stop: () => void }> = [];
 const workdirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const server of servers.splice(0)) server.stop();
   for (const dir of workdirs.splice(0))
     await rm(dir, { recursive: true, force: true });
 });
 
-test("reports no project when only the folder name is known", async () => {
+test("reports no project when only the folder name is known", async (): Promise<void> => {
   const { baseUrl, paths } = serveBackend();
   const cwd = await workdir([]);
 
@@ -32,10 +32,12 @@ test("reports no project when only the folder name is known", async () => {
     /Project: +none \(broods-whoami-\w+ from folder name\)/,
   );
   expect(result.stdout).toContain("No project set.");
-  expect(paths.some((path) => path.endsWith("/runtime-key"))).toBe(false);
+  expect(paths.some((path): boolean => path.endsWith("/runtime-key"))).toBe(
+    false,
+  );
 });
 
-test("checks the runtime key once a project is set", async () => {
+test("checks the runtime key once a project is set", async (): Promise<void> => {
   const { baseUrl, paths } = serveBackend();
   const cwd = await workdir(['BROODS_PROJECT="demo-app"']);
 
@@ -43,10 +45,12 @@ test("checks the runtime key once a project is set", async () => {
 
   expect(result.stdout).toMatch(/Project: +demo-app\n/);
   expect(result.stdout).not.toContain("No project set.");
-  expect(paths.some((path) => path.endsWith("/runtime-key"))).toBe(true);
+  expect(paths.some((path): boolean => path.endsWith("/runtime-key"))).toBe(
+    true,
+  );
 });
 
-test("uses the login for the server .env.local names, not the latest one", async () => {
+test("uses the login for the server .env.local names, not the latest one", async (): Promise<void> => {
   const dev = serveBackend();
   const prod = serveBackend();
   const home = await homeWithLogins([dev.baseUrl, prod.baseUrl]);
@@ -58,7 +62,7 @@ test("uses the login for the server .env.local names, not the latest one", async
   expect(prod.paths).toEqual([]);
 });
 
-test("refuses another server's login when .env.local names one without a login", async () => {
+test("refuses another server's login when .env.local names one without a login", async (): Promise<void> => {
   const prod = serveBackend();
   const home = await homeWithLogins([prod.baseUrl]);
   const cwd = await workdir(['BROODS_BASE_URL="https://gateway.dev.example"']);
@@ -101,10 +105,14 @@ async function homeWithLogins(baseUrls: string[]): Promise<string> {
   workdirs.push(home);
   await mkdir(join(home, ".broods"));
   const logins = Object.fromEntries(
-    baseUrls.map((baseUrl) => [
-      baseUrl,
-      { baseUrl: baseUrl, token: "tok", createdAt: "2026-01-01T00:00:00Z" },
-    ]),
+    baseUrls.map(
+      (
+        baseUrl,
+      ): [string, { baseUrl: string; token: string; createdAt: string }] => [
+        baseUrl,
+        { baseUrl: baseUrl, token: "tok", createdAt: "2026-01-01T00:00:00Z" },
+      ],
+    ),
   );
   await writeFile(
     join(home, ".broods", "config.json"),
@@ -119,7 +127,7 @@ function serveBackend(): { baseUrl: string; paths: string[] } {
   const paths: string[] = [];
   const server = Bun.serve({
     port: 0,
-    fetch: (request) => {
+    fetch: (request): Response => {
       const url = new URL(request.url);
       paths.push(url.pathname);
       if (url.pathname === "/v1/account/onboarding") {
