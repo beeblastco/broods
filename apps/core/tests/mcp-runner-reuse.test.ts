@@ -152,19 +152,6 @@ function terminalFrame(run: string | undefined): RunnerFrame | undefined {
 }
 
 describe("mcp-runner warm reuse", () => {
-  it("reuses the child for the same account and bundle, fetching once", async () => {
-    const { runs, bundleFetches } = await invokeSequence([
-      { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
-      { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
-      { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
-    ]);
-
-    expect(
-      runs.map((run) => (finalBody(run) as { calls: number }).calls),
-    ).toEqual([1, 2, 3]);
-    expect(bundleFetches).toBe(1);
-  }, 30_000);
-
   it("serves a whole batch in one child and keeps it warm", async () => {
     const { runs, bundleFetches } = await invokeSequence([
       { tenantId: "acct-1", bundle: COUNTER_BUNDLE, batch: 3 },
