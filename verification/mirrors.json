@@ -91,7 +91,7 @@
   },
   "Sync": {
     "packages/broods/src/sync.ts": {
-      "BroodsSyncClient.putManifest": "e87601325c4a0ebd",
+      "BroodsSyncClient.putManifest": "9c9e0e219abf2b9d",
       "diffManifests": "f52851adcea4ca72"
     },
     "packages/convex/cli/types.ts": {
@@ -100,7 +100,7 @@
   },
   "SyncConcurrency": {
     "packages/convex/cli/httpRoutes.ts": {
-      "handleManifestSync": "df80fc8a87edbad6"
+      "handleManifestSync": "74a757f0b9a1e767"
     },
     "packages/convex/cli/sync.ts": {
       "recordExternalResourcesBySecretHash": "217070cdd14c4f09",

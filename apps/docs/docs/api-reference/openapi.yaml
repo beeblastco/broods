@@ -620,6 +620,63 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/files:
+    parameters:
+      - {
+          name: projectSlug,
+          in: path,
+          required: true,
+          schema: { type: string },
+        }
+      - { name: stageSlug, in: path, required: true, schema: { type: string } }
+      - { name: endpointId, in: path, required: true, schema: { type: string } }
+      - { name: agentId, in: query, required: true, schema: { type: string } }
+      - name: conversationKey
+        in: query
+        required: true
+        description: The end user's conversation, namespaced under their user token like a run's.
+        schema: { type: string }
+      - name: workspace
+        in: query
+        description: The workspace by its name on the agent. Defaults to the first one with a sandbox.
+        schema: { type: string }
+    get:
+      tags:
+        - Direct API
+      summary: Read an end user's conversation folder
+      description: Every file in the folder a run of this conversation mounts (`users/<hash>` under the workspace). Needs the runtime key plus the user's token (`X-Broods-User-Token`); without a token it answers 403 `user_token_required`, since the workspace root is the owner's. The workspace needs a sandbox.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The folder's files.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationFiles" }
+        "403": { description: No user token, or the agent is not public. }
+        "404": { description: No such agent, or no workspace with a sandbox. }
+    put:
+      tags:
+        - Direct API
+      summary: Replace an end user's conversation folder
+      description: Deletes everything in the conversation's folder and writes these files, in one sandbox command, so the next run starts from them. Same credentials as the GET. The body is capped at 6 MiB.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConversationFiles" }
+      responses:
+        "200":
+          description: How many files were written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { files: { type: integer } }
+        "403": { description: No user token, or the agent is not public. }
+        "413": { description: The body is over 6 MiB. }
   /v1/sandbox-jobs/{resultId}/complete:
     post:
       tags:
@@ -2387,7 +2444,10 @@ paths:
                       type: object
                       description: Omit `bucket` for the managed bucket. A workspace that names its own `bucket` brings its own credentials, so `prefix` and `auth.type` `assumeRole` (AWS) or `r2` (Cloudflare R2) are then required. The request is rejected when `bucket` is a platform bucket, when `auth.roleArn` belongs to the platform AWS account, or when `endpoint` is not a public https URL.
                       properties:
-                        provider: { type: string, enum: [s3] }
+                        provider:
+                          type: string
+                          enum: [s3, disk]
+                          description: "`disk` keeps the files on the workspace's sandbox's own disk instead of a bucket: it needs a `worker` sandbox with `persistent: true`, takes no other storage field, and the files routes below answer 400 for it."
                         bucket:
                           type: string
                           description: A bucket you own. Requires `prefix` and `auth.type` `assumeRole` or `r2`.
@@ -3944,6 +4004,18 @@ components:
         maxLength: 64
 
   schemas:
+    ConversationFiles:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items:
+            type: object
+            required: [path, contentBase64]
+            properties:
+              path: { type: string, description: Relative to the folder. }
+              contentBase64: { type: string }
     AccountEnvVar:
       type: object
       required: [name, updatedAt]

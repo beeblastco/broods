@@ -289,6 +289,10 @@ export async function workspaceFileDownloadUrl(
 // Mirrors core's resolveS3ReadTarget, without the per-conversation isolation suffix.
 async function resolveTarget(ref: WorkspaceFsRef): Promise<WorkspaceFsTarget> {
   const storage = ref.storage;
+  if (storage?.provider === "disk")
+    throw new ClientError(
+      "This workspace's files live on its sandbox's disk, not in a bucket; the agent reads and writes them",
+    );
   if (!storage?.bucket) {
     const namespace = await workspaceNamespace(ref.accountId, ref.workspaceId);
 

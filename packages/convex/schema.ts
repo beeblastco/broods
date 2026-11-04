@@ -10,6 +10,7 @@ import { CONNECTION_TYPE_NAMES } from "./model/connections";
 import { policyDocumentValidator } from "./model/policyDocument";
 import { principalLinkValidator } from "./model/principal";
 import { SANDBOX_PROVIDERS } from "./model/sandboxProviders";
+import { STAGE_SOURCE_ORIGINS } from "./model/stageSource";
 import { handbackValidator } from "./model/subagentResults";
 
 export const planValidator = v.union(v.literal("free"), v.literal("pro"));
@@ -91,6 +92,35 @@ export const stageSyncsFields = {
   stageId: v.id("stages"),
   revision: v.number(),
   activeUntil: v.optional(v.number()),
+  // The stage's manifest as the last sync read it back (`manifestHash`), and when.
+  manifestHash: v.optional(v.string()),
+  syncedAt: v.optional(v.number()),
+};
+
+// One row per stored copy of a stage's source; the newest `revision` is the stage's source.
+export const stageSourcesFields = {
+  stageId: v.id("stages"),
+  revision: v.number(),
+  hash: v.string(),
+  storageId: v.id("_storage"),
+  fileCount: v.number(),
+  bytes: v.number(),
+  manifestHash: v.optional(v.string()),
+  origin: v.union(...STAGE_SOURCE_ORIGINS.map((origin) => v.literal(origin))),
+  commitSha: v.optional(v.string()),
+  // An Apply's outcome: live after its sync, done only once CI deployed the same manifest hash.
+  verification: v.optional(
+    v.object({
+      phase: v.union(
+        v.literal("verifying"),
+        v.literal("deployed"),
+        v.literal("failed"),
+      ),
+      error: v.optional(v.string()),
+      runUrl: v.optional(v.string()),
+    }),
+  ),
+  createdAt: v.number(),
 };
 
 export const agentConfigsFields = {
@@ -1396,6 +1426,10 @@ export default defineSchema({
     .index("by_linkClaimRepoId", ["linkClaim.repoId"]),
   stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
   stageSyncs: defineTable(stageSyncsFields).index("by_stageId", ["stageId"]),
+  stageSources: defineTable(stageSourcesFields).index(
+    "by_stageId_and_revision",
+    ["stageId", "revision"],
+  ),
   agentConfigs: defineTable(agentConfigsFields)
     .index("by_projectId_and_stageId", ["projectId", "stageId"])
     .index("by_agentId", ["agentId"]),

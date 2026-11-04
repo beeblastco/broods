@@ -592,6 +592,29 @@ export const support = defineAgent({
   );
 });
 
+test("compileProject puts a disk workspace only on a persistent worker sandbox", async () => {
+  const project = (persistent: boolean) =>
+    fixtureProject(
+      "",
+      `
+import { defineAgent, defineSandbox, defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const project = defineWorkspace({ name: "project", storage: { provider: "disk" } });
+
+export const disk = defineSandbox({ name: "disk", provider: "worker", persistent: ${persistent} });
+
+export const coder = defineAgent({ name: "coder", sandboxes: [disk], workspaces: [project] });
+`,
+    );
+
+  await expect(
+    compileProject({ cwd: await project(true), command: "dev" }),
+  ).resolves.toBeDefined();
+  await expect(
+    compileProject({ cwd: await project(false), command: "dev" }),
+  ).rejects.toThrow('a "disk" workspace lives on its sandbox\'s own disk');
+});
+
 test("compileProject accepts S3 workspaces on a vercel sandbox", async () => {
   const cwd = await fixtureProject(
     "",
