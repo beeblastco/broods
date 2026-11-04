@@ -2,8 +2,8 @@
 
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { drainInFlight } from "../src/shared/in-flight.ts";
-import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
-import { resetHeldReservationsForTests } from "../src/harness/sandbox/platform-worker.ts";
+import { resetHeldReservationsForTests } from "../src/harness/sandbox/instance-store.ts";
+import { runtime } from "../src/shared/convex/runtime.ts";
 import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
 import {
   CloudflareSandboxExecutor,
@@ -81,23 +81,28 @@ beforeEach((): void => {
   const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
     Object.assign(bridge, { preconnect: (): void => {} }),
   );
-  const getSpy = spyOn(
-    instanceStore,
-    "getSandboxExternalId",
-  ).mockImplementation(async (): Promise<string | null> => {
-    convex.push("get");
+  // `stored` is the one reservation row under the key.
+  const querySpy = spyOn(runtime, "query").mockImplementation(
+    (async (): Promise<string | null> => {
+      convex.push("get");
 
-    return stored;
-  });
-  const reserveSpy = spyOn(
-    instanceStore,
-    "reserveSandboxInstance",
-  ).mockImplementation(async (_provider, _key, externalId): Promise<string> => {
+      return stored;
+    }) as never,
+  );
+  const mutateSpy = spyOn(runtime, "mutate").mockImplementation((async (
+    name: string,
+    args: { externalId: string },
+  ): Promise<unknown> => {
+    if (name === "deleteSandboxReservation") {
+      convex.push("delete");
+
+      return true;
+    }
     convex.push("reserve");
-    stored ??= claimWins ? externalId : "winner-id";
+    stored ??= claimWins ? args.externalId : "winner-id";
 
     return stored;
-  });
+  }) as never);
   const upsertSpy = spyOn(
     sandboxInstances,
     "upsertSandboxInstance",
@@ -114,8 +119,8 @@ beforeEach((): void => {
   });
   restores.push(
     (): void => fetchSpy.mockRestore(),
-    (): void => getSpy.mockRestore(),
-    (): void => reserveSpy.mockRestore(),
+    (): void => querySpy.mockRestore(),
+    (): void => mutateSpy.mockRestore(),
     (): void => upsertSpy.mockRestore(),
     (): void => removeSpy.mockRestore(),
   );
@@ -184,11 +189,6 @@ it("reserves one persistent container, keeps it across runs and mirrors it", asy
 });
 
 it("books a prewarmed container's first command from the hold, and books again on release", async (): Promise<void> => {
-  const deleteSpy = spyOn(
-    instanceStore,
-    "deleteSandboxInstance",
-  ).mockImplementation(async (): Promise<boolean> => true);
-  restores.unshift((): void => deleteSpy.mockRestore());
   const executor = new CloudflareSandboxExecutor({
     ...config,
     persistent: true,
@@ -199,7 +199,7 @@ it("books a prewarmed container's first command from the hold, and books again o
   stored = null;
   await executor.run(request);
 
-  expect(convex).toEqual(["reserve", "get", "reserve"]);
+  expect(convex).toEqual(["reserve", "get", "delete", "reserve"]);
   expect(calls.map((call): string => call.method)).toEqual([
     "POST",
     "POST",
