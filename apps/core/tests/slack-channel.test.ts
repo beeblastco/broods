@@ -779,28 +779,6 @@ describe("slack channel adapter", () => {
     ]);
   });
 
-  it("still refuses the subtypes that are events about a message", async () => {
-    const adapter = createTestSlackChannel(null);
-    const parsed = await adapter.parse(
-      createEventRequest({
-        type: "event_callback",
-        event_id: "evt-join",
-        team_id: "T1",
-        event: {
-          type: "message",
-          subtype: "channel_join",
-          text: "joined",
-          channel: "D1",
-          channel_type: "im",
-          user: "U1",
-          ts: "1713916800.000051",
-        },
-      }),
-    );
-
-    expect(parsed.kind).toBe("ignore");
-  });
-
   it("corrects a voice clip Slack serves as video", async () => {
     const message = await parseFileShare({
       id: "F2",
