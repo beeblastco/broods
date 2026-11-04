@@ -298,8 +298,10 @@ describe("sandbox tools and the run's metadata", () => {
     );
     const row = Promise.withResolvers<SandboxRunMetadata | undefined>();
     spyOn(sandboxInstances, "upsertSandboxInstance").mockImplementation(
-      async (_plane, _provider, _key, _id, metadata): Promise<void> => {
+      async (_plane, _provider, _key, _id, metadata): Promise<boolean> => {
         row.resolve(metadata);
+
+        return true;
       },
     );
     const sources: unknown[] = [];

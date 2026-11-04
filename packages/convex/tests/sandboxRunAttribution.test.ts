@@ -178,6 +178,18 @@ async function upsert(
   reservationKey = "key-1",
   externalId = "vm-1",
 ): Promise<void> {
+  // Core claims the key, or repoints it to a replacement, before it mirrors the row.
+  await t.mutation(internal.runtime.deleteSandboxReservation, {
+    provider: "worker",
+    reservationKey: reservationKey,
+    accountId: accountId,
+  });
+  await t.mutation(internal.runtime.claimSandboxReservation, {
+    provider: "worker",
+    reservationKey: reservationKey,
+    externalId: externalId,
+    accountId: accountId,
+  });
   await t.mutation(internal.sandbox.instances.upsert, {
     accountId: accountId,
     provider: "worker",
