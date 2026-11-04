@@ -47,7 +47,7 @@ import {
 } from "ai";
 import { createOllama, type OllamaProviderSettings } from "ai-sdk-ollama";
 import { createWorkersAI } from "workers-ai-provider";
-import { isContextLengthError, toErrorMessage } from "../shared/errors.ts";
+import { isContextLengthError } from "../shared/errors.ts";
 import { publicHostFetch } from "../shared/http.ts";
 import {
   PROVIDER_ENDPOINT_SETTING,
@@ -220,19 +220,16 @@ export function resolveConfiguredModel(
   };
 }
 
-// Speech-to-text on `transcriptionProvider` or the agent's provider, or why there is none.
 export function resolveTranscriptionModel(
   agentConfig: AgentConfig,
-): { model: Exclude<TranscriptionModel, string> } | { reason: string } {
-  const providerName =
-    agentConfig.model?.transcriptionProvider ?? agentConfig.model?.provider;
-  const source = providerName
-    ? PROVIDER_TRANSCRIPTION[providerName]
-    : undefined;
-  if (!providerName || !source) {
-    return {
-      reason: `${providerName ?? "this provider"} has no transcription model`,
-    };
+): Exclude<TranscriptionModel, string> | undefined {
+  const providerName = agentConfig.model?.provider;
+  if (!providerName) {
+    return undefined;
+  }
+  const source = PROVIDER_TRANSCRIPTION[providerName];
+  if (!source) {
+    return undefined;
   }
   try {
     const provider = source.factory(
@@ -241,13 +238,11 @@ export function resolveTranscriptionModel(
       ) as never,
     );
 
-    return {
-      model: provider.transcription(
-        agentConfig.model?.transcriptionModelId ?? source.modelId,
-      ),
-    };
-  } catch (error) {
-    return { reason: toErrorMessage(error) };
+    return provider.transcription(
+      agentConfig.model?.transcriptionModelId ?? source.modelId,
+    );
+  } catch {
+    return undefined;
   }
 }
 
@@ -258,7 +253,6 @@ export function modelSettingsFromModelConfig(
     provider: _provider,
     modelId: _modelId,
     transcriptionModelId: _transcriptionModelId,
-    transcriptionProvider: _transcriptionProvider,
     providerOptions: _providerOptions,
     output: _output,
     ...settings
