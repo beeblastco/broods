@@ -40,7 +40,12 @@ interface Status {
     protectedSecrets: boolean;
     setupPullRequestUrl?: string;
   };
-  deploys: Array<{ branch: string; status: string; conclusion?: string }>;
+  deploys: Array<{
+    branch: string;
+    conclusion?: string;
+    error?: string;
+    status: string;
+  }>;
 }
 
 /** What every step shares: the stack, the fake and the admin's calls. */
@@ -400,6 +405,17 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
     JSON.stringify({ late: late, rerun: rerun }),
   );
 
+  await dockEdits(run, imported.projectId);
+
+  // A failed run carries the error its log printed, as a hosted build would show it.
+  await github.deliver(hook, "workflow_run", workflowRun(3, "failure"));
+  const failed = (await run.status(imported.projectId)).deploys[0];
+  assertStep(
+    "a failed run records the error its log printed",
+    failed?.error === "Error: defineMcp needs a url or a handler",
+    JSON.stringify(failed),
+  );
+
   const target = {
     installationId: ORG_INSTALLATION,
     repoId: ORG_REPO,
@@ -422,6 +438,48 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
   );
 
   await linkFromCli(run);
+}
+
+// The dock's Apply: each edit is one commit on dev, and a null content deletes the file.
+async function dockEdits(run: Run, projectId: string): Promise<void> {
+  const { github } = run;
+  const stages = (await run.asAdmin("stage:list", {
+    projectId: projectId,
+  })) as Array<{ _id: string; kind: string }>;
+  const stageId = stages.find((stage) => stage.kind === "development")?._id;
+  const apply = async (
+    files: Array<{ content: string | null; path: string }>,
+  ): Promise<void> => {
+    const read = (await run.asAdmin("agentDock:repoFiles", {
+      projectId: projectId,
+      stageId: stageId,
+    })) as { baseSha: string };
+    await run.asAdmin("agentDock:commitChange", {
+      baseSha: read.baseSha,
+      branch: "dev",
+      files: files,
+      fullName: "acme/web",
+      message: "Dock edit",
+      projectId: projectId,
+      stageId: stageId,
+    });
+  };
+  const notes = "apps/agents/broods/notes.ts";
+  const tools = "apps/agents/broods/tools.ts";
+  await apply([{ content: "export {};\n", path: notes }]);
+  const before = github.repos.get(ORG_REPO)?.branches.get("dev");
+  await apply([
+    { content: null, path: notes },
+    { content: "export {};\n", path: tools },
+  ]);
+  const files = github.filesAt(ORG_REPO, "dev");
+  assertStep(
+    "a dock edit deletes a file and writes another in one commit",
+    files?.has(notes) === false &&
+      files.has(tools) &&
+      github.repos.get(ORG_REPO)?.branches.get("dev") !== before,
+    JSON.stringify([...(files?.keys() ?? [])]),
+  );
 }
 
 // `broods github link` with no branches and no Production stage: main deploys Development.
@@ -777,7 +835,8 @@ function workflowRun(
 ): unknown {
   return {
     action: conclusion ? "completed" : "in_progress",
-    repository: { id: ORG_REPO },
+    installation: { id: ORG_INSTALLATION },
+    repository: { id: ORG_REPO, full_name: "acme/web" },
     workflow_run: {
       id: id,
       run_attempt: attempt,

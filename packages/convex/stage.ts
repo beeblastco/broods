@@ -21,6 +21,7 @@ import {
 } from "./model/ownership/project";
 import { agentsInStage, stageNameEquals } from "./model/projectScope";
 import { deploymentRegionValidator, stagesFields } from "./schema";
+import { deleteStageSources } from "./stageSources";
 import { LIVE_DEPLOYMENT_REGIONS } from "./cli/types";
 
 const stageDoc = v.object({
@@ -317,6 +318,7 @@ export async function deleteStageContents(
     .withIndex("by_stageId", (q) => q.eq("stageId", stageId))
     .collect();
   for (const sync of syncs) await ctx.db.delete(sync._id);
+  await deleteStageSources(ctx, stageId);
 
   const layouts = await ctx.db
     .query("canvasLayouts")

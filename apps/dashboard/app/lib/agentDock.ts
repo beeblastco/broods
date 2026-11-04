@@ -6,6 +6,7 @@ import type { TextStreamPart, ToolSet } from "ai";
 import type { FunctionReturnType } from "convex/server";
 import { structuredPatch } from "diff";
 import { z } from "zod";
+import { draftChanges, type DockFile } from "@/app/lib/dockSource";
 import { readSseStream } from "../../../../packages/broods/src/stream";
 
 export const PROPOSE_TOOL = "dock__propose_changes";
@@ -21,6 +22,8 @@ export type DockRepo = NonNullable<
 >;
 
 export interface DockFacts {
+  /** The branch this stage deploys from, when its project is linked. */
+  branch?: string;
   /** Labels of nodes a `broods/` folder or the account API owns; the canvas cannot change them. */
   codeNodes: readonly string[];
   /** `source → target` labels of the canvas edges. */
@@ -43,12 +46,24 @@ const questionsSchema = z.object({
   ),
 });
 
+// A malformed node list drops the nodes, never the proposal.
 const proposalSchema = z.object({
   files: z
-    .array(z.object({ content: z.string(), path: z.string() }))
+    .array(z.object({ content: z.string().nullable(), path: z.string() }))
     .max(10)
     .default([]),
   message: z.string().max(200).default(""),
+  nodes: z
+    .array(
+      z.object({
+        change: z.enum(["add", "remove"]),
+        connectTo: z.string().max(100).optional(),
+        kind: z.enum(["agent", "mcp", "sandbox", "skill", "workspace"]),
+        name: z.string().max(100),
+      }),
+    )
+    .max(10)
+    .catch([]),
   steps: z.array(z.string().max(200)).max(8).default([]),
   summary: z.string().max(500),
 });
@@ -100,7 +115,7 @@ export function proposalPlan(
 ): CopilotPlan | null {
   const parsed = proposalSchema.safeParse(input);
   if (!parsed.success) return null;
-  const { files, message } = parsed.data;
+  const { files, message, nodes } = parsed.data;
   const label = `Commit ${files.map((file) => file.path).join(", ")}`;
   const read = new Set(repo?.files.map((file) => file.path));
   // With files left out of the read, an unread path may exist and would be overwritten blind.
@@ -108,27 +123,34 @@ export function proposalPlan(
     repo && repo.omitted > 0
       ? files.find((file) => !read.has(file.path))
       : undefined;
+  const missing = repo
+    ? files.find((file) => file.content === null && !read.has(file.path))
+    : undefined;
+  const twice = files.find(
+    (file, index) =>
+      files.findIndex((other) => other.path === file.path) !== index,
+  );
+  const refusal = twice
+    ? `${twice.path} is listed twice. Ask again.`
+    : unread
+      ? `${unread.path} was not among the files the agent read. Ask it to edit only files it was shown.`
+      : missing
+        ? `${missing.path} is not in the repo, so it cannot be deleted.`
+        : undefined;
   const commit: CopilotAction[] =
     files.length === 0
       ? []
-      : !repo
-        ? [
+      : repo && !refusal
+        ? [commitAction(files, message, repo)]
+        : [
             {
               label: label,
               reason:
+                refusal ??
                 "The repo could not be read, so this edit cannot be applied. Ask again.",
               type: "blocked",
             },
-          ]
-        : unread
-          ? [
-              {
-                label: label,
-                reason: `${unread.path} was not among the files the agent read. Ask it to edit only files it was shown.`,
-                type: "blocked",
-              },
-            ]
-          : [commitAction(files, message, repo)];
+          ];
 
   return {
     actions: [
@@ -144,7 +166,56 @@ export function proposalPlan(
       ),
       ...commit,
     ],
+    nodes: nodes,
     summary: parsed.data.summary,
+  };
+}
+
+/**
+ * A proposal from the agent's workspace: its canvas steps, plus the diff between the source the
+ * conversation was seeded with and the draft it left, deletes included.
+ */
+export function sourcePlan(
+  input: unknown,
+  context: CopilotContext,
+  seed: {
+    branch?: string;
+    files: readonly DockFile[];
+    revision: number | null;
+  },
+  draft: readonly DockFile[],
+): CopilotPlan | null {
+  const parsed = proposalSchema.safeParse(input);
+  const steps = proposalPlan(
+    parsed.success ? { ...parsed.data, files: [] } : input,
+    context,
+  );
+  if (!steps || !parsed.success) return null;
+  const changes = draftChanges(seed.files, draft);
+  if (changes.length === 0) return steps;
+  const message = parsed.data.message || parsed.data.summary;
+
+  return {
+    ...steps,
+    actions: [
+      ...steps.actions,
+      {
+        files: changes.map((change) => ({
+          content: change.change === "delete" ? null : change.after,
+          patch: filePatch(change.path, change.before, change.after),
+          path: change.path,
+        })),
+        label: `Deploy ${changes.length} ${changes.length === 1 ? "file" : "files"}: ${message}`,
+        message: message,
+        type: "commitFiles",
+        via: {
+          baseRevision: seed.revision,
+          ...(seed.branch ? { branch: seed.branch } : {}),
+          kind: "source",
+          seed: seed.files,
+        },
+      },
+    ],
   };
 }
 
@@ -196,36 +267,48 @@ export async function* streamDockAnswer(
 }
 
 function commitAction(
-  files: readonly { content: string; path: string }[],
+  files: readonly { content: string | null; path: string }[],
   message: string,
   repo: DockRepo,
 ): CopilotAction {
   const before = new Map(repo.files.map((file) => [file.path, file.content]));
 
   return {
-    baseSha: repo.baseSha,
-    branch: repo.branch,
-    fullName: repo.fullName,
     files: files.map((file) => ({
       content: file.content,
-      patch: structuredPatch(
+      patch: filePatch(
         file.path,
-        file.path,
-        withNewline(before.get(file.path) ?? ""),
-        withNewline(file.content),
-        undefined,
-        undefined,
-        { context: 2 },
-      ).hunks.flatMap((hunk) => [
-        `@@ ${hunk.oldStart},${hunk.oldLines} → ${hunk.newStart},${hunk.newLines}`,
-        ...hunk.lines,
-      ]),
+        before.get(file.path) ?? "",
+        file.content ?? "",
+      ),
       path: file.path,
     })),
-    label: `${repo.viaPullRequest ? "Pull request into" : "Commit to"} ${repo.branch}: ${message || "update broods/"}`,
+    label: `Commit to ${repo.branch}: ${message || "update broods/"}`,
     message: message,
     type: "commitFiles",
+    via: {
+      baseSha: repo.baseSha,
+      branch: repo.branch,
+      fullName: repo.fullName,
+      kind: "github",
+    },
   };
+}
+
+// Changed lines, unified-diff style, led by `@@ old → new`.
+function filePatch(path: string, before: string, after: string): string[] {
+  return structuredPatch(
+    path,
+    path,
+    withNewline(before),
+    withNewline(after),
+    undefined,
+    undefined,
+    { context: 2 },
+  ).hunks.flatMap((hunk) => [
+    `@@ ${hunk.oldStart},${hunk.oldLines} → ${hunk.newStart},${hunk.newLines}`,
+    ...hunk.lines,
+  ]);
 }
 
 // A missing final newline would mark the last line changed on both sides.

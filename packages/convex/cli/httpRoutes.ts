@@ -33,6 +33,13 @@ import type { ProjectStageScope } from "../model/projectScope";
 import { uploadQuotaResponse } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { ClientError } from "../model/clientError";
+import { manifestHash } from "../model/manifestSnapshot";
+import {
+  stageSourceProblem,
+  stageSourceSchema,
+  type StageSource,
+} from "../model/stageSource";
+import { storeStageSync } from "../model/stageSourceStore";
 
 export type CliAuth =
   | {
@@ -47,6 +54,12 @@ export type CliAuth =
       scoped: true;
       cliTokenId: Id<"cliTokens">;
       cliAuthId: string;
+    }
+  | {
+      accountId: Id<"accounts">;
+      secretHash: string;
+      scoped: true;
+      applyAuthId: string;
     };
 
 export type RouteParts =
@@ -215,7 +228,12 @@ export async function handleManifestRoute(
       },
     );
 
-    return result ? json(result) : jsonError(404, "Manifest not found");
+    return result
+      ? json({
+          ...result,
+          manifestHash: await manifestHash(result.manifest.resources),
+        })
+      : jsonError(404, "Manifest not found");
   }
   if (req.method === "PUT")
     return await handleManifestSync(ctx, req, route, auth);
@@ -500,7 +518,19 @@ async function handleManifestSync(
     prune?: boolean;
     rotateRuntimeKey?: boolean;
     revision?: unknown;
+    source?: unknown;
   };
+  const source =
+    body.source === undefined
+      ? undefined
+      : stageSourceSchema.safeParse(body.source);
+  const sourceProblem =
+    source && !source.success
+      ? "source must be { files: [{ path, content }], commitSha? }"
+      : source?.data
+        ? stageSourceProblem(source.data.files)
+        : null;
+  if (sourceProblem) return jsonError(400, `Invalid source: ${sourceProblem}`);
   const manifest = body.manifest;
   if (!manifest || typeof manifest !== "object") {
     return jsonError(400, "Request body must include manifest");
@@ -537,7 +567,7 @@ async function handleManifestSync(
   try {
     // The account key and a login token may move an account-wide name between stages
     // (dev, then deploy); only a stage-scoped project key is fenced.
-    const fenced = "deployKeyId" in auth;
+    const fenced = "deployKeyId" in auth || "applyAuthId" in auth;
     const foreign =
       fenced &&
       originalManifest.resources.some((entry) =>
@@ -626,6 +656,13 @@ async function handleManifestSync(
       },
     );
 
+    const synced = await recordStageSync(
+      ctx,
+      scope.stageId,
+      refreshed?.manifest.resources ?? syncManifest.resources,
+      source?.data,
+    );
+
     const deployment = await ctx.runMutation(
       internal.cli.sync.ensureRuntimeKeyBySecretHash,
       {
@@ -637,13 +674,15 @@ async function handleManifestSync(
         auditSync: {
           resourceCount: originalManifest.resources.length,
           prune: prune,
-          actorKind: fenced ? "deployKey" : "cli",
+          actorKind: "deployKeyId" in auth ? "deployKey" : "cli",
           actorId:
             "deployKeyId" in auth
               ? auth.deployKeyId
               : "cliTokenId" in auth
                 ? auth.cliTokenId
-                : accountId,
+                : "applyAuthId" in auth
+                  ? auth.applyAuthId
+                  : accountId,
         },
       },
     );
@@ -657,6 +696,10 @@ async function handleManifestSync(
       warnings: { ...result.warnings, reservedResources: reservedResources },
       deployment: deployment,
       revision: scope.revision,
+      manifestHash: synced.manifestHash,
+      ...(synced.sourceRevision !== null
+        ? { sourceRevision: synced.sourceRevision }
+        : {}),
     });
   } finally {
     await ctx.runMutation(internal.cli.sync.finishManifestSync, {
@@ -1207,4 +1250,19 @@ async function validateManifest(
   for (const job of desiredCrons(manifest, placeholderIds(agentNames))) {
     normalizeCreateCronInput(job);
   }
+}
+
+// The hash is of the manifest read back, so a rerun on the same source lands on the same one.
+async function recordStageSync(
+  ctx: ActionCtx,
+  stageId: Id<"stages">,
+  resources: CliManifest["resources"],
+  source: StageSource | undefined,
+): Promise<{ manifestHash: string; sourceRevision: number | null }> {
+  const hash = await manifestHash(resources);
+
+  return {
+    manifestHash: hash,
+    sourceRevision: await storeStageSync(ctx, stageId, hash, source, "cli"),
+  };
 }

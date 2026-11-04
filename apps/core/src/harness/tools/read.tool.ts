@@ -66,7 +66,7 @@ Usage notes:
             1;
           const code =
             `if [ ! -f ${q} ]; then printf 'Error: file not found: %s\\n' ${q} >&2; exit 1; fi; ` +
-            `sed -n '${start},${end}p' -- ${q} | nl -ba -v ${start}`;
+            `sed -n '${start},${end}p' ${shellQuote(`./${rel}`)} | nl -ba -v ${start}`;
           const result = await runSandbox(runner, ws.namespace, code, {
             metadata: sandboxRunMetadata(context, ws),
           });

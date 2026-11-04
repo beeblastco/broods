@@ -31,7 +31,9 @@ import {
 } from "../../convex/model/modelProviders.ts";
 import { isWorkersSafeBundle } from "../../convex/model/isolateSafety.ts";
 import {
+  DISK_WORKSPACE_HINT,
   S3_MOUNT_PROVIDER_HINT,
+  sandboxHoldsWorkspace,
   supportsS3WorkspaceMount,
 } from "../../convex/model/sandboxProviders.ts";
 import { MAX_CONFIGURED_SKILLS } from "../../convex/model/skillLimits.ts";
@@ -503,7 +505,8 @@ function assertSupportedWorkspaceStorage(resource: AnyResource): void {
     );
   }
   const provider = (storage as Record<string, unknown>).provider;
-  if (provider === undefined || provider === "s3") return;
+  if (provider === undefined || provider === "s3" || provider === "disk")
+    return;
   if (provider === "vercel") {
     throw new Error(
       `Workspace "${resource.name}" uses storage.provider "vercel", but Vercel Drive workspace storage is not supported yet. ` +
@@ -511,7 +514,7 @@ function assertSupportedWorkspaceStorage(resource: AnyResource): void {
     );
   }
   throw new Error(
-    `Workspace "${resource.name}" config.storage.provider must be one of: s3`,
+    `Workspace "${resource.name}" config.storage.provider must be one of: s3, disk`,
   );
 }
 
@@ -670,6 +673,11 @@ function assertSupportedWorkspaceSandboxMounts(resources: AnyResource[]): void {
       .filter((resource) => resource.kind === "sandbox")
       .map((resource) => [resource.name, resource]),
   );
+  const localWorkspaces = new Map(
+    resources
+      .filter((resource) => resource.kind === "workspace")
+      .map((resource) => [resource.name, resource]),
+  );
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
     const config = resource.config as Record<string, unknown>;
@@ -686,6 +694,20 @@ function assertSupportedWorkspaceSandboxMounts(resources: AnyResource[]): void {
         defaultSandbox,
         sandboxes,
       );
+      const storage = workspaceStorageOf(entry, localWorkspaces);
+      if (storage === "disk") {
+        if (
+          sandbox &&
+          sandboxHoldsWorkspace("disk", {
+            provider: sandboxProvider(sandbox),
+            persistent: sandbox.config.persistent,
+          })
+        )
+          continue;
+        throw new Error(
+          `Agent "${resource.name}" workspace "${workspaceName}": ${DISK_WORKSPACE_HINT}.`,
+        );
+      }
       if (
         !sandbox ||
         supportsS3WorkspaceMount(
@@ -726,6 +748,17 @@ function effectiveWorkspaceSandbox(
   }
 
   return defaultSandbox;
+}
+
+function workspaceStorageOf(
+  entry: unknown,
+  workspaces: Map<string, AnyResource>,
+): unknown {
+  const resource = workspaces.get(workspaceNameFor(entry));
+
+  return resource?.kind === "workspace"
+    ? resource.config.storage?.provider
+    : undefined;
 }
 
 function workspaceNameFor(entry: unknown): string {

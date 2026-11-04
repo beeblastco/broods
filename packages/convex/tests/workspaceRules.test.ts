@@ -761,3 +761,16 @@ describe("R2 workspace storage", () => {
     expect((await mint()).accessKeyId).toBe("stage-key-id");
   });
 });
+
+describe("disk workspace storage", () => {
+  it("takes no bucket field, since its files live on the sandbox", () => {
+    expect(normalizeWorkspaceConfig({ storage: { provider: "disk" } })).toEqual(
+      {
+        storage: { provider: "disk" },
+      },
+    );
+    expect(() =>
+      normalizeWorkspaceConfig({ storage: { provider: "disk", prefix: "a/" } }),
+    ).toThrow('config.storage.prefix does not apply to "disk"');
+  });
+});

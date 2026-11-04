@@ -55,7 +55,7 @@ const workspaceFileDoc = v.object({
 
 // Lets file ops reach the bucket the sandbox actually mounts, not always the managed one.
 export const workspaceStorageValidator = v.object({
-  provider: v.literal("s3"),
+  provider: v.union(v.literal("s3"), v.literal("disk")),
   bucket: v.optional(v.string()),
   region: v.optional(v.string()),
   endpoint: v.optional(v.string()),
