@@ -117,7 +117,7 @@ sequenceDiagram
 - Every write for one sandbox id goes through `queueMirrorWrite`, so a removal never lands before the upsert.
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
-- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.
+- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, filed under the sandbox's project, else the project of the run's agent, or of its workspace when the run names no agent, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.
 - A sandbox on the account's own credentials gets no row. No lifecycle verb accepts an ephemeral row.
 
 ## Reservations
@@ -230,6 +230,7 @@ stateDiagram-v2
 
 - Refresh removes the row when the provider reports nothing or `terminating`, so `terminating` is never stored by core.
 - `specs` is what the meter bills. `specsVerified` is set only when the size is real: a provider report, or the size Broods sets on workdir, MicroVM and Cloudflare. Without it the dashboard shows `?`.
+- The row names the run that used it. Every sandbox tool call (`bash` and a background job's launch, `browse`, the file tools and `memory_save`, and a provider tool standing in for one) hands its executor the run's trace, task, agent and conversation, plus the workspace it ran in (`sandboxRunMetadata` in `src/harness/tools/filesystem-utils.ts`). The row keeps the trace and task that created the machine and moves `lastUsedTraceId`, `lastUsedTaskId`, `agentId`, `conversationKey` and the workspace to each use that names them; a write with no run, such as a dashboard `exec`, leaves them. The dashboard's trace link and agent column read them. A `reserve` or `resume` that a write causes names that write's agent, trace and task in `sandboxAuditEvents`, and is the `service`'s when no run is behind it.
 - Executors refresh the row on every command. A refresh of a machine still running at the size, credentials and project it was last billed at bills at most once a minute (`REFRESH_BILL_EVERY_MS` in `packages/convex/sandbox/instances.ts`), so an owner's concurrent tasks write the shared usage rows about once a minute each, not on every command. The next bill, status change or removal covers the stretch, so nothing is lost; like the idle tail, it lands on the day and month of the bill that covers it, and live usage can trail by up to a minute.
 
 ## Lifecycle actions and terminal
