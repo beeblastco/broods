@@ -1,9 +1,9 @@
 /-!
 # Esc mid-turn
 
-`stopTurnOnEscape` in `packages/broods/src/cli/tui.ts`. A lone Esc is held 30 ms: a read starting
-`[` or `O` joins it into a key, else it stops a streaming turn or reaches the TUI. Esc plus more in
-one read (Alt+key) is a key and passes. `out` is what the TUI saw, `.stop` a `stopTurn()` call,
+`stopTurnOnEscape` in `packages/broods/src/cli/tui.ts`. A lone Esc is held 30 ms: a CSI or SS3
+tail (`ESCAPE_SEQUENCE_TAIL`) joins it into a key, else it stops a streaming turn or reaches the
+TUI. Esc plus more in one read (Alt+key) is a key and passes. `out` is what the TUI saw, `.stop` a `stopTurn()` call,
 and `expected` what the keys read so far meant. Any number of keys.
 -/
 
@@ -16,15 +16,15 @@ inductive Intro where
 
 /-- One read from stdin. `escKey` and `escArrow` are the same lone Esc byte; `escArrow` is the
 first half of an arrow key split across reads, `arrowTail i` its `[A` or `OA`. `arrow i` is a
-whole arrow key in one read, `key` any other read (a letter, Ctrl+C, Alt+key) not starting `[` or
-`O`. -/
+whole arrow key in one read, `bracket` a typed `[` or `O` (it starts like a tail but ends no
+sequence), `key` any other read (a letter, Ctrl+C, Alt+key). -/
 inductive Chunk where
-  | escKey | escArrow | arrow (i : Intro) | arrowTail (i : Intro) | key (k : Nat)
+  | escKey | escArrow | arrow (i : Intro) | arrowTail (i : Intro) | bracket | key (k : Nat)
   deriving DecidableEq, Repr
 
 /-- What reaches the TUI, or `stop` for `transport.stopTurn()`. `tail i` is a bare `[A` or `OA`. -/
 inductive Out where
-  | stop | esc | arrow (i : Intro) | tail (i : Intro) | key (k : Nat)
+  | stop | esc | arrow (i : Intro) | tail (i : Intro) | bracket | key (k : Nat)
   deriving DecidableEq, Repr
 
 /-- The bytes still in flight, the held Esc and whether it was read mid-turn, the turn. -/
@@ -46,6 +46,7 @@ def Chunk.plain : Chunk → Out
   | .escKey | .escArrow => .esc
   | .arrow i => .arrow i
   | .arrowTail i => .tail i
+  | .bracket => .bracket
   | .key k => .key k
 
 /-- What reading `c` means for its key, once the keys before it took effect (a held Esc that
@@ -54,13 +55,14 @@ def meaning (s : State) : Chunk → List Out
   | .escKey => [if s.streaming && !(s.held && s.heldMidTurn) then .stop else .esc]
   | .escArrow => []
   | .arrow i | .arrowTail i => [.arrow i]
+  | .bracket => [.bracket]
   | .key k => [.key k]
 
 /-- `settle()`: what a held Esc turns into. -/
 def settleOut (midTurn : Bool) : Out := if midTurn then .stop else .esc
 
-/-- `input.emit("data", chunk)` for the chunk at the head of the wire. A held Esc joins an
-`arrowTail`, the read that `chunk[0] === 0x5b || chunk[0] === 0x4f` matches. -/
+/-- `input.emit("data", chunk)` for the chunk at the head of the wire. Only `arrowTail` joins a
+held Esc: `ESCAPE_SEQUENCE_TAIL` needs a final byte, which a typed `[` or `O` lacks. -/
 def receive (s : State) : Option State :=
   match s.wire with
   | [] => none
@@ -76,7 +78,7 @@ def receive (s : State) : Option State :=
           out := s.out ++ settled, held := true, heldMidTurn := still, streaming := still }
       else some { t with out := s.out ++ settled ++ [c.plain], held := false, streaming := still }
 
-/-- The next read is an arrow's tail, the read `chunk[0] === 0x5b || chunk[0] === 0x4f` joins. -/
+/-- The next read is an arrow's tail, a read `ESCAPE_SEQUENCE_TAIL` matches. -/
 def tailNext (s : State) : Bool :=
   match s.wire with
   | .arrowTail _ :: _ => true
@@ -96,6 +98,7 @@ inductive Press : List Chunk → Prop where
   | esc : Press [.escKey]
   | arrow (i : Intro) : Press [.arrow i]
   | splitArrow (i : Intro) : Press [.escArrow, .arrowTail i]
+  | bracket : Press [.bracket]
   | key (k : Nat) : Press [.key k]
 
 inductive Step : State → State → Prop where
@@ -129,9 +132,12 @@ theorem ok_append : ∀ a b : List Chunk, ok a = true → ok b = true → ok (a 
   | .escArrow :: .escKey :: _, _, ha, _ => by simp [ok] at ha
   | .escArrow :: .escArrow :: _, _, ha, _ => by simp [ok] at ha
   | .escArrow :: .arrow _ :: _, _, ha, _ => by simp [ok] at ha
+  | .escArrow :: .bracket :: _, _, ha, _ => by simp [ok] at ha
   | .escArrow :: .key _ :: _, _, ha, _ => by simp [ok] at ha
   | .escKey :: r, b, ha, hb => by simp only [ok, List.cons_append] at ha ⊢; exact ok_append r b ha hb
   | .arrow _ :: r, b, ha, hb => by
+    simp only [ok, List.cons_append] at ha ⊢; exact ok_append r b ha hb
+  | .bracket :: r, b, ha, hb => by
     simp only [ok, List.cons_append] at ha ⊢; exact ok_append r b ha hb
   | .key _ :: r, b, ha, hb => by simp only [ok, List.cons_append] at ha ⊢; exact ok_append r b ha hb
 
@@ -167,11 +173,11 @@ theorem inv_step (s t : State) (hs : Inv s) (hst : Step s t) : Inv t := by
       | .escArrow :: .arrowTail i :: rest, h3 =>
         simp [Chunk.isEsc] at h; subst h
         exact .inr (.inr ⟨rfl, by simp [meaning], i, rest, rfl, by simpa [ok] using h3⟩)
-      | .arrow _ :: rest, h3 | .key _ :: rest, h3 =>
+      | .arrow _ :: rest, h3 | .bracket :: rest, h3 | .key _ :: rest, h3 =>
         simp [Chunk.isEsc] at h; subst h; left; simp_all [ok, meaning, Chunk.plain]
       | [], _ | .arrowTail _ :: _, h3 | [.escArrow], h3 | .escArrow :: .escKey :: _, h3
       | .escArrow :: .escArrow :: _, h3 | .escArrow :: .arrow _ :: _, h3
-      | .escArrow :: .key _ :: _, h3 => simp [ok] at h3 h
+      | .escArrow :: .bracket :: _, h3 | .escArrow :: .key _ :: _, h3 => simp [ok] at h3 h
   | timer _ h =>
     obtain ⟨wire, held, mid, streaming, out, expected⟩ := s
     simp only [timerFires] at h
@@ -193,6 +199,39 @@ theorem inv (s : State) (hs : Reachable s) : Inv s := by
 never quits, an arrow stays one key, order is kept. -/
 theorem out_matches_keys (s : State) (hs : Reachable s) : s.out <+: s.expected := by
   rcases inv s hs with ⟨_, h, _⟩ | ⟨_, h, _⟩ | ⟨_, h, _⟩ <;> rw [h] <;> simp
+
+/-- The code before the fix: a held Esc joined any read starting with `[` or `O`. -/
+def receiveJoiningBracket (s : State) : Option State :=
+  match s.wire with
+  | .bracket :: rest =>
+    if s.held then
+      some { s with
+        wire := rest, expected := s.expected ++ [.bracket], out := s.out ++ [.arrow .csi],
+        held := false }
+    else receive s
+  | _ => receive s
+
+/-- Esc pressed mid-turn, then `[` typed within the 30 ms wait. -/
+def typedBracket : State :=
+  { wire := [.bracket], held := true, heldMidTurn := true, streaming := true, out := [],
+    expected := [.stop] }
+
+example : Reachable typedBracket :=
+  let s0 : State :=
+    { wire := [], held := false, heldMidTurn := false, streaming := true, out := [],
+      expected := [] }
+  let s1 : State := { s0 with wire := [.escKey] }
+  let s2 : State := { s0 with held := true, heldMidTurn := true, expected := [.stop] }
+  .step s2 _ (.step s1 s2 (.step s0 s1 (.init s0 ⟨rfl, rfl, rfl, rfl, rfl⟩) (.press s0 _ .esc))
+    (.receive s1 s2 rfl)) (.press s2 _ .bracket)
+
+/-- Finding, fixed: the old join read Esc then a typed `[` as Alt+`[`, so the turn went on and
+`out_matches_keys` failed. Now the Esc stops the turn and the `[` reaches the TUI. -/
+example : (receiveJoiningBracket typedBracket).map (fun t => decide (t.out <+: t.expected)) =
+    some false := by decide
+
+example : (receive typedBracket).map (fun t => (t.out, t.expected)) =
+    some ([.stop, .bracket], [.stop, .bracket]) := by decide
 
 /-! ## Liveness under weak fairness of `receive` and the hold timer -/
 
@@ -224,8 +263,8 @@ theorem receive_clears_held {s t : State} (hs : Inv s) (hw : tailNext s = true)
     (h : receive s = some t) : t.held = false := by
   obtain ⟨wire, held, mid, streaming, out, expected⟩ := s
   rcases hs with ⟨_, _, h3⟩ | ⟨_, _, h3⟩ | ⟨h1, _, _, _, h3, _⟩
-  · rcases wire with _ | ⟨_ | _ | _ | _ | _, _⟩ <;> simp_all [tailNext, ok]
-  · rcases wire with _ | ⟨_ | _ | _ | _ | _, _⟩ <;> simp_all [tailNext, ok]
+  · rcases wire with _ | ⟨_ | _ | _ | _ | _ | _, _⟩ <;> simp_all [tailNext, ok]
+  · rcases wire with _ | ⟨_ | _ | _ | _ | _ | _, _⟩ <;> simp_all [tailNext, ok]
   · simp only at h1 h3; subst h1 h3; simp [receive] at h; subst h; rfl
 
 /-- A held split-arrow Esc stays one, its tail next, until a read is handled. -/
