@@ -38,6 +38,17 @@ const LABEL = "cloudflare v8 worker";
 const WORKER_OVERHEAD_MS = 15_000;
 // So two commands never start from the same stored files; the Worker's conditional write backs it.
 const runsByReservation = new Map<string, Promise<unknown>>();
+// A worker row bills nothing, so a run's later commands within a minute skip its write.
+const mirroredFor = new Map<
+  string,
+  { task: string; trace: string | undefined; at: number }
+>();
+const MIRROR_EVERY_MS = 60_000;
+export const MAX_MIRRORED = 1_000;
+
+export function resetMirroredForTests(): void {
+  mirroredFor.clear();
+}
 
 const statusResult = z.object({ exists: z.boolean() });
 
@@ -94,6 +105,8 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     const key = sandboxReservationKey(request);
     const id = key ? await getSandboxExternalId("worker", key) : null;
     if (!id) return null;
+    // A status read may mark the row suspended; the next command must mark it running again.
+    mirroredFor.delete(id);
     const response = await callPlatformWorker(
       workerConnection(),
       LABEL,
@@ -111,6 +124,7 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       request,
       async (id): Promise<void> => {
+        mirroredFor.delete(id);
         await callPlatformWorker(
           workerConnection(),
           LABEL,
@@ -191,6 +205,24 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     id: string,
     metadata: SandboxRunRequest["metadata"],
   ): void {
+    const task = metadata?.taskId;
+    if (task !== undefined) {
+      const trace = metadata?.traceId;
+      const last = mirroredFor.get(id);
+      const now = Date.now();
+      if (
+        last?.task === task &&
+        last.trace === trace &&
+        now - last.at < MIRROR_EVERY_MS
+      )
+        return;
+      mirroredFor.delete(id);
+      if (mirroredFor.size >= MAX_MIRRORED) {
+        const oldest = mirroredFor.keys().next().value;
+        if (oldest !== undefined) mirroredFor.delete(oldest);
+      }
+      mirroredFor.set(id, { task: task, trace: trace, at: now });
+    }
     void queueMirrorWrite(id, (): Promise<void> =>
       upsertSandboxInstance(
         this.#config.controlPlane,

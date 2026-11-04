@@ -1,14 +1,27 @@
 // The Worker itself is tested in its own workspace under Miniflare.
 
-import { afterEach, beforeEach, expect, it, mock, spyOn } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  expect,
+  it,
+  mock,
+  setSystemTime,
+  spyOn,
+} from "bun:test";
 import { MAX_TIMEOUT_MS } from "../../cloudflare-worker/src/limits.ts";
 import * as planLimits from "../src/harness/plan-limits.ts";
 import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
 import {
+  MAX_MIRRORED,
+  resetMirroredForTests,
   WorkerSandboxExecutor,
   workerConnection,
 } from "../src/harness/sandbox/worker-executor.ts";
-import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
+import type {
+  SandboxExecutorConfig,
+  SandboxRunRequest,
+} from "../src/harness/sandbox/types.ts";
 import * as sandboxInstances from "../src/shared/convex/sandbox-instances.ts";
 import { requestUrl } from "./helpers/http.ts";
 import { WORKER_MAX_TIMEOUT_SECONDS } from "@broods/convex/model/sandboxRules";
@@ -60,6 +73,7 @@ beforeEach((): void => {
   calls.length = 0;
   mirrored.length = 0;
   metered.length = 0;
+  resetMirroredForTests();
   spyOn(planLimits, "recordUsage").mockImplementation(
     (accountId, usage, source): void => {
       metered.push(
@@ -111,6 +125,7 @@ beforeEach((): void => {
 
 afterEach((): void => {
   mock.restore();
+  setSystemTime();
   delete process.env.CLOUDFLARE_WORKER_URL;
   delete process.env.CLOUDFLARE_WORKER_API_KEY;
 });
@@ -219,7 +234,7 @@ it("clamps the timeout to the Worker's ceiling, the one the config plane enforce
   expect(WORKER_MAX_TIMEOUT_SECONDS * 1000).toBe(MAX_TIMEOUT_MS);
 });
 
-it("reserves one persistent sandbox, keeps its files across runs and mirrors it", async (): Promise<void> => {
+it("reserves one persistent sandbox, keeps its files across runs and mirrors every command that names no task", async (): Promise<void> => {
   const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
   await executor.run(request);
   await executor.run(request);
@@ -233,6 +248,79 @@ it("reserves one persistent sandbox, keeps its files across runs and mirrors it"
     "upsert acct:workspace false",
     "upsert acct:workspace false",
   ]);
+});
+
+it("mirrors a reserved sandbox once per task and minute, and at once for a new task or trace", async (): Promise<void> => {
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  const writesAfter = async (
+    taskId: string,
+    traceId: string,
+  ): Promise<number> => {
+    await executor.run(inTask(taskId, traceId));
+    await settled();
+
+    return upserts();
+  };
+
+  expect(await writesAfter("task-1", "trace-1")).toBe(1);
+  expect(await writesAfter("task-1", "trace-1")).toBe(1);
+  expect(await writesAfter("task-2", "trace-1")).toBe(2);
+  expect(await writesAfter("task-2", "trace-2")).toBe(3);
+  setSystemTime(new Date(Date.now() + 59_000));
+  expect(await writesAfter("task-2", "trace-2")).toBe(3);
+  setSystemTime(new Date(Date.now() + 2_000));
+  expect(await writesAfter("task-2", "trace-2")).toBe(4);
+});
+
+it("never mirrors a refused command, so the task's next command still writes", async (): Promise<void> => {
+  let refuse = true;
+  mockFetch(async (): Promise<Response> =>
+    refuse
+      ? new Response("another command changed the files", { status: 409 })
+      : Response.json(EXEC_OK),
+  );
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run(inTask("task-1")).catch((): void => {});
+  await settled();
+
+  expect(mirrored).toEqual([]);
+  refuse = false;
+  await executor.run(inTask("task-1"));
+  await settled();
+
+  expect(mirrored).toEqual(["upsert acct:workspace false"]);
+});
+
+it("writes the row again on the first command after a release or a status read", async (): Promise<void> => {
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run(inTask("task-1"));
+  await executor.release(request);
+  await executor.run(inTask("task-1"));
+  await executor.getInstanceInfo(request);
+  await executor.run(inTask("task-1"));
+  await settled();
+
+  expect(mirrored).toEqual([
+    "upsert acct:workspace false",
+    "delete acct:workspace",
+    "upsert acct:workspace false",
+    "upsert acct:workspace false",
+  ]);
+});
+
+it("forgets the sandbox written longest ago past the cap, so its next command writes", async (): Promise<void> => {
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  for (let index = 0; index <= MAX_MIRRORED; index += 1) {
+    stored = `fp-p-${index}`;
+    await executor.run(inTask("task-1"));
+  }
+  stored = "fp-p-0";
+  await executor.run(inTask("task-1"));
+  stored = "fp-p-2";
+  await executor.run(inTask("task-1"));
+  await settled();
+
+  expect(upserts()).toBe(MAX_MIRRORED + 2);
 });
 
 it("runs commands on one reservation one at a time, so none starts from stale files", async (): Promise<void> => {
@@ -322,6 +410,17 @@ it("refuses a workspace mount and a plain-HTTP Worker outside loopback", (): voi
   process.env.CLOUDFLARE_WORKER_URL = "http://127.0.0.1:8787/";
   expect(workerConnection().baseURL).toBe("http://127.0.0.1:8787");
 });
+
+function inTask(
+  taskId: string,
+  traceId: string = "trace-1",
+): SandboxRunRequest {
+  return { ...request, metadata: { taskId: taskId, traceId: traceId } };
+}
+
+function upserts(): number {
+  return mirrored.filter((entry): boolean => entry.startsWith("upsert")).length;
+}
 
 function mockFetch(
   handler: (
