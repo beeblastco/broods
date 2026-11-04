@@ -193,7 +193,11 @@ export function CopilotProvider({
   const syncSource = useAction(api.agentDock.sync);
   const currentStageId =
     stageId ?? stages?.find((stage) => stage.isDefault)?._id ?? null;
-  const sessionRef = useRef<DockSession | null | undefined>(undefined);
+  // Keyed by project: switching orgs lands on another project, and the old login is that org's.
+  const sessionRef = useRef<{
+    projectId: Id<"projects"> | null;
+    session: DockSession | null;
+  } | null>(null);
   const [conversationKey] = useState(() => `dock-${crypto.randomUUID()}`);
 
   const scope = `${projectId ?? ""}:${stageId ?? ""}`;
@@ -383,7 +387,10 @@ export function CopilotProvider({
   );
 
   const dockSession = useCallback(async (): Promise<DockSession | null> => {
-    const cached = sessionRef.current;
+    const cached =
+      sessionRef.current?.projectId === projectId
+        ? sessionRef.current.session
+        : undefined;
     if (
       cached === null ||
       (cached && cached.expiresAt - SESSION_RENEW_MS > Date.now())
@@ -391,13 +398,14 @@ export function CopilotProvider({
       return cached;
     }
     try {
-      sessionRef.current = await mintSession({});
+      const session = await mintSession({});
+      sessionRef.current = { projectId: projectId, session: session };
+
+      return session;
     } catch {
       return null;
     }
-
-    return sessionRef.current;
-  }, [mintSession]);
+  }, [mintSession, projectId]);
 
   const askAgent = useCallback(
     async (

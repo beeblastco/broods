@@ -32,7 +32,8 @@ const EXAMPLES = [
 ] as const;
 
 // A dashboard path, never `//host` or `/\\host`, which a browser reads as another origin.
-const DASHBOARD_PATH = /^\/(?![/\\])/;
+// A scheme or a protocol-relative start leaves the dashboard; `/\\host` reads as `//host`.
+const EXTERNAL_LINK = /^([a-z][a-z0-9+.-]*:|[/\\]{2})/i;
 
 const MARKDOWN_COMPONENTS: Components = { a: AnswerLink };
 
@@ -173,7 +174,7 @@ function AnswerLink({
   href,
 }: React.ComponentProps<"a"> & ExtraProps): React.JSX.Element {
   const className = "wrap-anywhere font-medium text-primary underline";
-  if (href && DASHBOARD_PATH.test(href)) {
+  if (href && !EXTERNAL_LINK.test(href)) {
     return (
       <Link href={href} className={className}>
         {children}
