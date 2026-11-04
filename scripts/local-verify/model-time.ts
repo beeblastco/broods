@@ -11,11 +11,15 @@ interface StepRecord {
     "model.reasoning_stream_ms"?: number;
     "model.text_stream_ms"?: number;
   };
+  // AI SDK 7 `LanguageModelUsage` as logged: cache and reasoning counts sit in the details.
   usage?: {
     inputTokens?: number | null;
-    cachedInputTokens?: number | null;
+    inputTokenDetails?: {
+      cacheReadTokens?: number | null;
+      cacheWriteTokens?: number | null;
+    };
     outputTokens?: number | null;
-    reasoningTokens?: number | null;
+    outputTokenDetails?: { reasoningTokens?: number | null };
   };
 }
 
@@ -90,12 +94,22 @@ export function modelTimeReport(
       values: steps.map((step) => step.usage?.inputTokens ?? 0),
     },
     {
-      name: "cached input tokens",
-      values: steps.map((step) => step.usage?.cachedInputTokens ?? 0),
+      name: "cache read tokens",
+      values: steps.map(
+        (step) => step.usage?.inputTokenDetails?.cacheReadTokens ?? 0,
+      ),
+    },
+    {
+      name: "cache write tokens",
+      values: steps.map(
+        (step) => step.usage?.inputTokenDetails?.cacheWriteTokens ?? 0,
+      ),
     },
     {
       name: "reasoning tokens",
-      values: steps.map((step) => step.usage?.reasoningTokens ?? 0),
+      values: steps.map(
+        (step) => step.usage?.outputTokenDetails?.reasoningTokens ?? 0,
+      ),
     },
     {
       name: "output tokens",
