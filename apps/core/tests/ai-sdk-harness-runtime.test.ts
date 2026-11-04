@@ -403,6 +403,7 @@ async function runProbe(body: string): Promise<string> {
       stderr.trim() || `Harness runtime probe exited ${exitCode}`,
     );
   }
+  expect(stderr).not.toContain("HarnessAgent:");
 
   return stdout.trim();
 }
