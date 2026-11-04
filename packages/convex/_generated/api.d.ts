@@ -4940,7 +4940,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -4960,7 +4960,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -4986,7 +4986,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -5007,7 +5007,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -5029,7 +5029,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -5052,7 +5052,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
@@ -8582,7 +8582,7 @@ export declare const internal: {
             bucket?: string;
             endpoint?: string;
             prefix?: string;
-            provider: "s3";
+            provider: "s3" | "disk";
             region?: string;
           };
           workspaceId: Id<"workspaceConfigs">;
