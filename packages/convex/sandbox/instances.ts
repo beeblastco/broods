@@ -26,6 +26,9 @@ const ACCRUE_LOOKBACK_MS =
   SANDBOX_RESERVATION_TTL_SECONDS * 1000 + 2 * 60 * 60 * 1000;
 // Each instance also reads and writes its meter row: stay far under Convex's read limits.
 const ACCRUE_PAGE_SIZE = 100;
+// Executors refresh a row on every command, and each bill writes the owner's usage rows, which an
+// owner's concurrent tasks then fight over: a running machine's refreshes bill once a minute.
+const REFRESH_BILL_EVERY_MS = 60_000;
 
 const sandboxInstanceDoc = v.object({
   ...sandboxInstancesFields,
@@ -250,24 +253,24 @@ export const upsert = internalMutation({
     if (existing) {
       // The executor found the old machine gone and launched another under the same key.
       const replaced = existing.externalId !== args.externalId;
-      await accrue(ctx, existing, now);
       // Past its idle timeout the provider suspended it, so it loads its snapshot again.
-      if (
+      const relaunched =
         replaced ||
         existing.status === "suspended" ||
-        now > existing.lastUsedAt + sandboxIdleMs(existing)
-      ) {
-        await addUsage(
-          ctx,
-          args.accountId,
-          sandboxLaunchUsage(args),
-          now,
-          args.projectId ?? existing.projectId,
-        );
-      }
-      const patch = {
+        now > existing.lastUsedAt + sandboxIdleMs(existing);
+      const refreshed = {
         ...fields,
-        meteredUntil: now,
+        ...keptVerifiedSize(existing, args.specsVerified, replaced),
+      };
+      const meteredUntil = await billRefresh(ctx, {
+        existing: existing,
+        refreshed: refreshed,
+        launch: relaunched ? sandboxLaunchUsage(args) : undefined,
+        now: now,
+      });
+      const patch = {
+        ...refreshed,
+        meteredUntil: meteredUntil,
         ...(replaced || !existing.createdByTraceId
           ? { createdByTraceId: args.createdByTraceId }
           : {}),
@@ -275,7 +278,6 @@ export const upsert = internalMutation({
           ? { createdByTaskId: args.createdByTaskId }
           : {}),
         ...(replaced ? { burstBilled: undefined } : {}),
-        ...keptVerifiedSize(existing, args.specsVerified, replaced),
       };
       await ctx.db.patch(existing._id, patch);
       const action = replaced
@@ -445,6 +447,45 @@ async function accrue(
   );
 
   return accrual.meteredUntil;
+}
+
+// Bills the stretch a refresh ends and returns the row's new `meteredUntil`. A machine still
+// running at the size, credentials and project it was last billed at leaves the stretch to a
+// later bill for up to a minute; `meteredUntil` keeps saying where it starts. A relaunch also
+// bills its launch.
+async function billRefresh(
+  ctx: MutationCtx,
+  refresh: {
+    existing: Doc<"sandboxInstances">;
+    refreshed: Pick<
+      Doc<"sandboxInstances">,
+      "specs" | "ownCredentials" | "projectId"
+    >;
+    launch: ReturnType<typeof sandboxLaunchUsage> | undefined;
+    now: number;
+  },
+): Promise<number> {
+  const { existing, refreshed, launch, now } = refresh;
+  const projectId = refreshed.projectId ?? existing.projectId;
+  if (
+    !launch &&
+    existing.status === "running" &&
+    existing.meteredUntil !== undefined &&
+    now - existing.meteredUntil < REFRESH_BILL_EVERY_MS &&
+    refreshed.specs.vcpu === existing.specs.vcpu &&
+    refreshed.specs.memoryMb === existing.specs.memoryMb &&
+    (refreshed.ownCredentials === true) ===
+      (existing.ownCredentials === true) &&
+    projectId === existing.projectId
+  ) {
+    return existing.meteredUntil;
+  }
+  await accrue(ctx, existing, now);
+  if (launch) {
+    await addUsage(ctx, existing.accountId, launch, now, projectId);
+  }
+
+  return now;
 }
 
 // A size-less write (a workdir or e2b reconnect) must not unverify the same machine.
