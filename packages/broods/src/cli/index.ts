@@ -5,14 +5,12 @@ import {
   lstat,
   mkdir,
   readFile,
-  readdir,
   stat,
   writeFile,
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import module from "node:module";
-import { basename, join, relative, resolve, sep } from "node:path";
-import { watch } from "node:fs";
+import { basename, join, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
@@ -84,6 +82,7 @@ import {
   isConnectionType,
 } from "../../../convex/model/connections.ts";
 import { connectInBrowser } from "./connect.ts";
+import { collectSourceFiles, watchSource } from "./dev-watch.ts";
 import {
   hasFlag,
   loginWithBrowser,
@@ -1521,11 +1520,6 @@ async function dev(args: string[]): Promise<void> {
   await printDevTarget(args);
   await warnOnOutdatedCli();
 
-  let timer: NodeJS.Timeout | undefined;
-  let syncing = false;
-  let pending = false;
-  let lastSourceSignature: string | undefined;
-
   // Live logs like `convex dev`, retried after each sync: a new stage has none until a deploy.
   const logController = new AbortController();
   let logs: "off" | "on" | "failed" = "off";
@@ -1541,56 +1535,13 @@ async function dev(args: string[]): Promise<void> {
       logs = outcome === "failed" ? "failed" : "off";
     });
   };
-  let lastSyncFailed = false;
-  // A save after the signature may be in what the child read, so that sync records no signature.
-  let savedSinceSignature = false;
-  const syncChanged = async (): Promise<void> => {
-    savedSinceSignature = false;
-    const signature = await sourceSignature();
-    // A failed sync may have written part of the stage, so even an undo syncs again.
-    if (signature === lastSourceSignature && !lastSyncFailed) return;
-    lastSyncFailed = true;
+  const watcher = watchSource(resolve(process.cwd(), PROJECT_DIR), async () => {
     try {
       await runSyncChild(args, childEnv);
-      lastSyncFailed = false;
-      lastSourceSignature = savedSinceSignature ? undefined : signature;
     } finally {
       startLogs();
     }
-  };
-  const printSyncError = (error: unknown): void =>
-    console.error(error instanceof Error ? error.message : String(error));
-
-  const runSync = (): void => {
-    if (syncing) {
-      pending = true;
-
-      return;
-    }
-    syncing = true;
-    syncChanged()
-      .catch(printSyncError)
-      .finally(() => {
-        syncing = false;
-        if (pending) {
-          pending = false;
-          runSync();
-        }
-      });
-  };
-
-  const watcher = watch(
-    resolve(process.cwd(), PROJECT_DIR),
-    { recursive: true },
-    (_event, filename) => {
-      if (!filename || isGeneratedPath(filename)) return;
-      if (/\.(ts|md)$/.test(filename)) savedSinceSignature = true;
-      clearTimeout(timer);
-      timer = setTimeout(runSync, 150);
-    },
-  );
-  // Watching before the first sync, so a save made during it is not missed.
-  runSync();
+  });
 
   process.on("SIGINT", () => {
     logController.abort();
@@ -3239,52 +3190,6 @@ function inferProjectName(cwd: string): string {
       .replace(/[^A-Za-z0-9_-]+/g, "-")
       .replace(/^-+|-+$/g, "") || "broods-app"
   );
-}
-
-async function sourceSignature(): Promise<string> {
-  const root = resolve(process.cwd(), PROJECT_DIR);
-  const files: string[] = [];
-  await collectSourceFiles(root, files);
-  const hash = createHash("sha256");
-  for (const file of files.sort()) {
-    hash.update(relative(root, file));
-    hash.update("\0");
-    hash.update(await readFile(file));
-    hash.update("\0");
-  }
-
-  return hash.digest("hex");
-}
-
-async function collectSourceFiles(dir: string, files: string[]): Promise<void> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (
-        entry.name === GENERATED_DIR ||
-        entry.name === "generated" ||
-        entry.name === ".cache"
-      )
-        continue;
-      await collectSourceFiles(full, files);
-      continue;
-    }
-    if (
-      entry.isFile() &&
-      (entry.name.endsWith(".ts") || entry.name.endsWith(".md"))
-    )
-      files.push(full);
-  }
-}
-
-function isGeneratedPath(path: string): boolean {
-  return path
-    .split(/[\\/]/)
-    .some(
-      (part) =>
-        part === GENERATED_DIR || part === "generated" || part === ".cache",
-    );
 }
 
 function starterAgent(): string {

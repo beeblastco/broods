@@ -31,13 +31,16 @@
     }
   },
   "DevWatch": {
-    "packages/broods/src/cli/index.ts": {
-      "dev": "9d462b979758d0ef"
+    "packages/broods/src/cli/dev-watch.ts": {
+      "watchSource": "c91c2f109fe25de2",
+      "sourceSignature": "de8e594d7a2b34c5",
+      "collectSourceFiles": "1046ffdd914acecd"
     }
   },
   "EscFilter": {
     "packages/broods/src/cli/tui.ts": {
-      "stopTurnOnEscape": "8d794f3dc64079e9"
+      "stopTurnOnEscape": "8601d090ec386507",
+      "ESCAPE_SEQUENCE_TAIL": "7d76f8319c45f778"
     }
   },
   "Gateway": {
