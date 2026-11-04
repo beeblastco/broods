@@ -237,8 +237,8 @@ export const mintObservabilityByLogin = internalMutation({
     const resolved = await resolveActiveCliToken(ctx, args.tokenHash, true);
     if (!resolved) return null;
     const { account, token } = resolved;
-    if (token.lentToAgent === true && token.lentConversation === undefined)
-      return null;
+    const conversation = token.lentConversation;
+    if (token.lentToAgent === true && conversation === undefined) return null;
     const projectDoc = await projectForAccount(ctx, account._id, args.project);
     if (!projectDoc) return null;
     const stages = await ctx.db
@@ -253,8 +253,20 @@ export const mintObservabilityByLogin = internalMutation({
       : null;
     if (!deployment) return null;
     const now = Date.now();
-    if (token.lentToAgent === true && token.observedAt === undefined)
-      await ctx.db.patch(token._id, { observedAt: now });
+    if (token.lentToAgent === true && conversation !== undefined) {
+      const mark = await ctx.db
+        .query("observedConversations")
+        .withIndex("by_authId_and_conversationKey", (q) =>
+          q.eq("authId", token.authId).eq("conversationKey", conversation),
+        )
+        .first();
+      if (!mark)
+        await ctx.db.insert("observedConversations", {
+          authId: token.authId,
+          conversationKey: conversation,
+          observedAt: now,
+        });
+    }
     const expiresAt = observabilityTicketExpiry(now, token.expiresAt);
     await appendAuditEvent(ctx.db, {
       accountId: account._id,

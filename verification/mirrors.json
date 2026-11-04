@@ -141,13 +141,13 @@
   },
   "LentObservability": {
     "packages/convex/cli/stages.ts": {
-      "mintObservabilityByLogin": "d22f458cbd76f5a7"
+      "mintObservabilityByLogin": "3fde45569f2928e7"
     },
     "packages/convex/config/routes/shared.ts": {
       "observedLoginRefusal": "3c5d7d482e4a9cd3"
     },
     "packages/convex/cli/auth.ts": {
-      "conversationObserved": "17104e950c518f68"
+      "conversationObserved": "df40dbc1c695f914"
     },
     "packages/convex/model/observabilityTicket.ts": {
       "observabilityTicketExpiry": "e75a2daab25d7038"

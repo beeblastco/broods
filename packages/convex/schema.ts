@@ -265,9 +265,15 @@ export const cliTokensFields = {
   lastUsedAt: v.optional(v.number()),
   // Minted by the dashboard dock for its agent: the account API only, never a credential route.
   lentToAgent: v.optional(v.literal(true)),
-  // The dock conversation a lent login belongs to, and when it first opened logs.
+  // The dock conversation a lent login belongs to.
   lentConversation: v.optional(v.string()),
-  observedAt: v.optional(v.number()),
+};
+
+// Kept apart from `cliTokens`, whose rows are pruned: the mark must outlive every login.
+export const observedConversationsFields = {
+  authId: v.string(),
+  conversationKey: v.string(),
+  observedAt: v.number(),
 };
 
 export const cliExternalResourcesFields = {
@@ -1474,8 +1480,11 @@ export default defineSchema({
     .index("by_tokenHash", ["tokenHash"])
     .index("by_accountId", ["accountId"])
     .index("by_authId", ["authId"])
-    .index("by_expiresAt", ["expiresAt"])
-    .index("by_lentConversation", ["lentConversation"]),
+    .index("by_expiresAt", ["expiresAt"]),
+  observedConversations: defineTable(observedConversationsFields).index(
+    "by_authId_and_conversationKey",
+    ["authId", "conversationKey"],
+  ),
   cliExternalResources: defineTable(cliExternalResourcesFields)
     .index("by_projectId_and_stageId", ["projectId", "stageId"])
     .index("by_accountId", ["accountId"]),

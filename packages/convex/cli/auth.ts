@@ -631,20 +631,16 @@ async function conversationObserved(
   ctx: MutationCtx,
   token: Doc<"cliTokens">,
 ): Promise<boolean> {
-  if (token.lentToAgent !== true) return false;
-  if (token.observedAt !== undefined) return true;
   const conversation = token.lentConversation;
-  if (conversation === undefined) return false;
-  const siblings = await ctx.db
-    .query("cliTokens")
-    .withIndex("by_lentConversation", (q) =>
-      q.eq("lentConversation", conversation),
+  if (token.lentToAgent !== true || conversation === undefined) return false;
+  const mark = await ctx.db
+    .query("observedConversations")
+    .withIndex("by_authId_and_conversationKey", (q) =>
+      q.eq("authId", token.authId).eq("conversationKey", conversation),
     )
-    .collect();
+    .first();
 
-  return siblings.some(
-    (row) => row.authId === token.authId && row.observedAt !== undefined,
-  );
+  return mark !== null;
 }
 
 async function uniqueOrgSlug(

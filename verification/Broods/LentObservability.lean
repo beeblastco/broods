@@ -7,7 +7,7 @@ agent holds a login lent by the signed-in owner or admin (`agentDock.session`,
 it for a `bdob_` ticket and, in the same mutation, marks its conversation as having read logs.
 `observedLoginRefusal` (`packages/convex/config/routes/shared.ts`) then refuses every write by a login
 of that conversation, using `conversationObserved` (`packages/convex/cli/auth.ts`), so a login
-re-minted mid-conversation inherits it. `observabilityTicketExpiry`
+re-minted mid-conversation inherits it. The mark has its own table, so pruning logins keeps it. `observabilityTicketExpiry`
 (`packages/convex/model/observabilityTicket.ts`) bounds the ticket, and `observabilityTicketScope`
 (`apps/core/src/harness/integrations.ts`) is the one place that accepts it, for the log socket alone.
 
@@ -69,6 +69,9 @@ inductive Step : State → State → Prop where
           observed := fun c => c == l.conv || s.observed c
           tickets :=
             ⟨stage, l.conv, s.now, l.expiresAt, ticketExpiry s.now l.expiresAt⟩ :: s.tickets }
+  /-- `pruneExpiredTokens` deletes logins. The mark lives in its own table, so it stays. -/
+  | prune (s : State) (keep : Login → Bool) :
+      Step s { s with logins := s.logins.filter keep }
   /-- A write through the config plane, past `observedLoginRefusal`. -/
   | write (s : State) (l : Login) (h : Live s l) (clean : s.observed l.conv = false) :
       Step s
@@ -163,6 +166,7 @@ theorem ticketsSound_step {s s' : State} (hs : Step s s') (h : TicketsSound s) :
     · have := h t ht
       exact ⟨this.1, this.2.1, by simp [this.2.2]⟩
   | lend l hm => exact h t ht
+  | prune keep => exact h t ht
   | tick => exact h t ht
   | demote => exact h t ht
   | write l hl clean => exact h t ht
@@ -193,6 +197,7 @@ theorem demoted_step {a b : State} (hs : Step a b) (hm : a.member = false) :
   | openLogs l stage hl => simp [Live, hm] at hl
   | write l hl clean => simp [Live, hm] at hl
   | lend l h => simp [hm] at h
+  | prune keep => exact ⟨hm, rfl, rfl⟩
   | tick => exact ⟨hm, rfl, rfl⟩
   | demote => exact ⟨rfl, rfl, rfl⟩
 
@@ -222,6 +227,13 @@ example : Step lent { lent with writes := fun c => if c = alice.conv then 1 else
 def observedByLogin (observedIds : List Nat) (l : Login) : Bool := observedIds.contains l.id
 
 example : observedByLogin [alice.id] { alice with id := 2 } = false := by decide
+
+/-- Keeping the mark on the login row: pruning that row would forget the conversation read logs. -/
+def observedOnLoginRows (observedLogins : List Login) (conv : Nat) : Bool :=
+  observedLogins.any (·.conv == conv)
+
+example : observedOnLoginRows [alice] alice.conv = true := by decide
+example : observedOnLoginRows ([alice].filter fun _ => false) alice.conv = false := by decide
 
 /-- A ticket stamped `now + TTL` alone outlives a login with less time left. -/
 example : ¬ 10 + TTL ≤ 100 := by decide

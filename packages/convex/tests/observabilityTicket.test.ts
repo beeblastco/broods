@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import {
   OBSERVABILITY_TICKET_TTL_MS,
   observabilityTicketExpiry,
@@ -225,6 +225,19 @@ describe("the read-only logs ticket", () => {
 
     expect((await write(t, await lentLogin(t, "dock-1"))).status).toBe(403);
     expect((await write(t, await lentLogin(t, "dock-2"))).status).not.toBe(403);
+  });
+
+  test("pruning the login that read logs does not lift the conversation's read-only mark", async () => {
+    const t = await seed();
+    expect((await open(t, await lentLogin(t, "dock-1"))).status).toBe(200);
+    await t.mutation(internal.cli.auth.pruneExpiredTokens, {
+      now: Date.now() + 365 * 24 * 60 * 60 * 1000,
+    });
+    expect(
+      await t.run(async (ctx) => ctx.db.query("cliTokens").collect()),
+    ).toEqual([]);
+
+    expect((await write(t, await lentLogin(t, "dock-1"))).status).toBe(403);
   });
 
   test("a lent login with no conversation cannot open logs", async () => {
