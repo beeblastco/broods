@@ -28,7 +28,10 @@ import {
 } from "../shared/domain/workspace-config.ts";
 import { collectSecretValues, logDebug, logError } from "../shared/log.ts";
 import { sealRunToken } from "../shared/run-token.ts";
-import { channelScopeKeyFromConversation } from "../shared/runtime-keys.ts";
+import {
+  channelScopeKeyFromConversation,
+  isUserConversationKey,
+} from "../shared/runtime-keys.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
@@ -256,6 +259,8 @@ export interface SessionOptions {
   trigger?: RunTrigger;
   persist?: boolean;
   principal?: Principal;
+  /** A subagent mounts the folder of the user conversation that started it. */
+  userConversationKey?: string | undefined;
 }
 
 export interface IngestedChannelEvents {
@@ -278,6 +283,7 @@ export class Session {
   readonly channelActions: ChannelActions | undefined;
   readonly trigger: RunTrigger | undefined;
   readonly principal: Principal | undefined;
+  readonly userConversationKey: string | undefined;
   private readonly agentConfig: AgentConfig;
   private readonly persist: boolean;
   private messageSequence = 0;
@@ -319,6 +325,11 @@ export class Session {
     this.trigger = options.trigger;
     this.principal = options.principal;
     this.persist = options.persist ?? true;
+    this.userConversationKey =
+      options.userConversationKey ??
+      (isUserConversationKey(this.conversationKey)
+        ? this.conversationKey
+        : undefined);
   }
 
   // Called per exec, so no `brt_` token ages in the queue while the run waits for a slot.
@@ -1100,6 +1111,9 @@ export class Session {
         channelScopeKey: channelScopeKey,
         conversationKey: conversationScopeKey,
         partition: this.channelPartition(),
+        ...(this.userConversationKey
+          ? { userConversationKey: this.userConversationKey }
+          : {}),
       },
     ).then((resolved) => {
       this.resolvedRuntime = resolved;
