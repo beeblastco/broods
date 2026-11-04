@@ -47,6 +47,41 @@ describe("wrapToolsWithHooks", () => {
     ).rejects.toThrow(/blocked by hook: no shell/);
   });
 
+  it("shows a stand-in call as the Broods call it runs as", async () => {
+    let seen: Record<string, unknown> | undefined;
+    const tools: ToolSet = { shell: fakeTool(() => "ran") };
+    const shellAsBash = new Map([
+      [
+        "shell",
+        {
+          toSandboxCall: () => ({
+            toolName: "bash" as const,
+            input: { command: "rm -rf x" },
+          }),
+          execute: async () => "ran",
+          replaces: ["bash" as const],
+          runsAs: ["bash" as const],
+        },
+      ],
+    ]);
+    const wrapped = wrapToolsWithHooks(
+      tools,
+      dispatcherReturning((event, payload) => {
+        if (event === "tool.call.started") seen = payload;
+        return undefined;
+      }),
+      shellAsBash,
+    );
+    await (
+      wrapped.shell!.execute as (i: unknown, o: unknown) => Promise<unknown>
+    )({ action: { commands: ["rm -rf x"] } }, {});
+    expect(seen).toEqual({
+      toolName: "shell",
+      input: { action: { commands: ["rm -rf x"] } },
+      runsAs: { toolName: "bash", input: { command: "rm -rf x" } },
+    });
+  });
+
   it("edits tool args before execution", async () => {
     let seen: unknown;
     const tools: ToolSet = {
