@@ -9,6 +9,7 @@ import type {
 import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { getStorage } from "../shared/storage.ts";
 import { runCodeHook } from "./hook-runner.ts";
+import type { SandboxStandIn } from "./tools/sandbox-stand-in.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
 import { wrapToolExecute } from "./tool-execute.ts";
@@ -106,9 +107,11 @@ export function createHookDispatcher(
   };
 }
 
+// A stand-in call also carries `runsAs`, the Broods call it makes, so a hook guarding bash sees it.
 export function wrapToolsWithHooks(
   tools: ToolSet,
   hooks: HookDispatcher,
+  standIns?: ReadonlyMap<string, SandboxStandIn>,
 ): ToolSet {
   const wantsStart = hooks.hasHooksFor("tool.call.started");
   const wantsResult = hooks.hasHooksFor("tool.result");
@@ -119,9 +122,11 @@ export function wrapToolsWithHooks(
   return wrapToolExecute(tools, (name) => ({
     before: async (input: unknown) => {
       if (!wantsStart) return input;
+      const runsAs = standIns?.get(name)?.toSandboxCall(input);
       const mutation = await hooks.runMutation("tool.call.started", {
         toolName: name,
         input: toLifecycleValue(input),
+        ...(runsAs ? { runsAs: toLifecycleValue(runsAs) } : {}),
       });
       if (!mutation) return input;
       if (mutation.decision === "deny") {
