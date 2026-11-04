@@ -3,13 +3,10 @@ import { existsSync } from "node:fs";
 import fc from "fast-check";
 import { stripTrailingSlashes } from "../../apps/core/src/shared/paths.ts";
 import { METHODS, ROUTERS, resolveRouter } from "../../apps/edge/src/routes.ts";
+import { oracleRuns, oracleSeed } from "./oracle-options.ts";
 
 const ORACLE = new URL("../.lake/build/bin/gateway-oracle", import.meta.url)
   .pathname;
-
-const RUNS = 5000;
-
-const SEED = 20261103;
 
 // `Dest` in verification/Broods/Gateway.lean; `sockets` maps by rule order to `Socket`.
 const DESTS: Record<string, string> = {
@@ -78,7 +75,10 @@ test("resolveRouter agrees with the Lean model's route on generated requests", (
       `missing ${ORACLE}: run \`lake build gateway-oracle\` in verification/`,
     );
   }
-  const requests = fc.sample(requestArb, { seed: SEED, numRuns: RUNS });
+  const requests = fc.sample(requestArb, {
+    seed: oracleSeed(),
+    numRuns: oracleRuns(),
+  });
   const oracle = Bun.spawnSync([ORACLE], {
     stdin: Buffer.from(
       requests.map(({ method, path }) => `${method}\t${path}\n`).join(""),

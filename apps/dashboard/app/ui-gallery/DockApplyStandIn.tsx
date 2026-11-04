@@ -95,7 +95,6 @@ export const deepwiki = defineMcp({
     ],
     fullName: "acme/agents",
     omitted: 0,
-    viaPullRequest: false,
   },
 );
 
@@ -127,6 +126,8 @@ const PHASES: Record<string, DockApply | null> = {
     startedAt: 0,
   },
   discarded: { phase: "discarded" },
+  verifying: { phase: "verifying", sha: SHA, startedAt: 0 },
+  "out-of-sync": { phase: "discarded" },
 };
 
 // The dock's proposal in each phase, driven by the real bar, chat line and canvas drawing.
@@ -134,10 +135,11 @@ export function DockApplyStandIn(): React.JSX.Element {
   const hydrated = useHydrated();
   const [apply, setApply] = useState<DockApply | null>(null);
   const [dropped, setDropped] = useState<ReadonlySet<string>>(new Set());
+  const [outOfSync, setOutOfSync] = useState(false);
 
   const record = (next: DockApply): void =>
     setApply(
-      next.phase === "applying"
+      next.phase === "applying" || next.phase === "verifying"
         ? { ...next, startedAt: Date.now() - 41_000 }
         : next,
     );
@@ -155,6 +157,12 @@ export function DockApplyStandIn(): React.JSX.Element {
     ask: () => {},
     completed: new Set(),
     discardProposal: () => setApply({ phase: "discarded", sha: apply?.sha }),
+    drift: outOfSync
+      ? {
+          reason: "dev has commits the stored source does not.",
+          syncing: false,
+        }
+      : null,
     dropChange: (messageId, index, path) =>
       setDropped((prev) =>
         new Set(prev).add(changeKey(messageId, index, path)),
@@ -164,8 +172,10 @@ export function DockApplyStandIn(): React.JSX.Element {
     messages: MESSAGES,
     proposal: openProposal(MESSAGES, proposals),
     proposals: proposals,
+    revertProposal: () => {},
     runAction: () => {},
     setOpen: () => {},
+    syncStage: () => {},
     wakeIndex: () => {},
   };
 
@@ -182,7 +192,11 @@ export function DockApplyStandIn(): React.JSX.Element {
               type="button"
               data-set-phase={name}
               className="cursor-pointer rounded-md border border-border px-2 py-1 text-xs"
-              onClick={() => (next ? record(next) : setApply(null))}
+              onClick={() => {
+                setOutOfSync(name === "out-of-sync");
+                if (next) record(next);
+                else setApply(null);
+              }}
             >
               {name}
             </button>

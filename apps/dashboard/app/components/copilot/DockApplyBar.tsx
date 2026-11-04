@@ -13,11 +13,21 @@ import { useState } from "react";
 
 // The one place a proposal is reviewed and applied: its title, its diff, then its deploy.
 export function DockApplyBar(): React.JSX.Element | null {
-  const { applyProposal, discardProposal, dropChange, proposal } = useCopilot();
+  const {
+    applyProposal,
+    discardProposal,
+    drift,
+    dropChange,
+    proposal,
+    revertProposal,
+    syncStage,
+  } = useCopilot();
   const [openFor, setOpenFor] = useState<string | null>(null);
-  if (!proposal) return null;
+  if (!proposal)
+    return drift ? <DriftBar drift={drift} onSync={syncStage} /> : null;
 
   const { apply, messageId } = proposal;
+  const settling = apply.phase === "applying" || apply.phase === "verifying";
   const isOpen = openFor === messageId && apply.phase === "proposed";
 
   return (
@@ -54,21 +64,38 @@ export function DockApplyBar(): React.JSX.Element | null {
             )}
           </span>
         )}
+        {apply.phase === "verifying" && (
+          <span className="shrink-0 text-muted-foreground">
+            Live on {proposal.stage ?? "the stage"}. Verifying{" "}
+            {proposal.branch ?? "its"} deploy ·{" "}
+            <Elapsed since={apply.startedAt ?? Date.now()} />
+          </span>
+        )}
         {apply.phase === "failed" && (
           <span className="shrink-0 text-destructive">Deploy failed</span>
         )}
         {apply.phase !== "proposed" && <RunLink href={apply.runUrl} />}
-        {apply.phase !== "applying" && (
+        {!settling && (
           <Button
             size="xs"
             variant="ghost"
             tone="muted"
             onClick={() => discardProposal(messageId)}
           >
-            Discard
+            {apply.sha ? "Stop tracking" : "Discard"}
           </Button>
         )}
-        {apply.phase !== "applying" && canRetry(proposal) && (
+        {apply.phase === "failed" && canRevert(proposal) && (
+          <Button
+            size="xs"
+            variant="ghost"
+            tone="muted"
+            onClick={() => revertProposal(messageId)}
+          >
+            Revert
+          </Button>
+        )}
+        {!settling && canRetry(proposal) && (
           <Button size="xs" onClick={() => applyProposal(messageId)}>
             {apply.phase === "proposed" ? "Apply" : "Retry"}
           </Button>
@@ -148,6 +175,43 @@ function StepDetail({
         </div>
       ))}
     </>
+  );
+}
+
+// Revert redeploys the source the conversation was seeded from, so only a source Apply has one.
+function canRevert({ changes }: DockProposal): boolean {
+  return changes.some(
+    ({ action }) =>
+      action.type === "commitFiles" && action.via.kind === "source",
+  );
+}
+
+/** The one out-of-sync state: the stage no longer runs its newest source. */
+function DriftBar({
+  drift,
+  onSync,
+}: {
+  drift: { reason?: string; syncing: boolean };
+  onSync: () => void;
+}): React.JSX.Element {
+  return (
+    <section
+      data-apply-bar="out-of-sync"
+      aria-label="Stage out of sync"
+      className="pointer-events-auto w-full max-w-lg rounded-md border border-border bg-card text-xs text-card-foreground shadow-sm"
+    >
+      <div className="flex h-8 items-center gap-2 pr-1 pl-2.5">
+        <span className="min-w-0 flex-1 truncate">
+          <span className="font-medium">Out of sync</span>
+          {drift.reason && (
+            <span className="text-muted-foreground"> · {drift.reason}</span>
+          )}
+        </span>
+        <Button size="xs" disabled={drift.syncing} onClick={onSync}>
+          {drift.syncing ? "Syncing" : "Sync"}
+        </Button>
+      </div>
+    </section>
   );
 }
 

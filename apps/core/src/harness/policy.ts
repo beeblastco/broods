@@ -42,6 +42,7 @@ import {
 } from "./tools/filesystem-utils.ts";
 import { COMPUTER_TOOL_NAME } from "./tools/computer.tool.ts";
 import { MEMORY_DIR, memorySlug } from "./tools/memory.tool.ts";
+import type { SandboxStandIn } from "./tools/sandbox-stand-in.ts";
 
 // httpPolicyClient has no timeout, and a hung OPA would stall every gated tool call.
 const OPA_EVALUATE_TIMEOUT_MS = 3000;
@@ -277,6 +278,7 @@ export function createRuntimeToolApproval(options: {
   workspaces: ResolvedWorkspace[];
   sandboxes?: ResolvedAgentSandbox[];
   policyApproval?: RuntimeToolApproval;
+  sandboxStandIns?: ReadonlyMap<string, SandboxStandIn>;
 }): { approval: RuntimeToolApproval | undefined; startStep: () => void } {
   const hasCompatibilityApprovals =
     options.configuredApprovals.size > 0 ||
@@ -292,8 +294,14 @@ export function createRuntimeToolApproval(options: {
   }
 
   return {
-    approval: async (event): Promise<ToolApprovalStatus> => {
+    approval: async (call): Promise<ToolApprovalStatus> => {
+      const event = asSandboxToolCall(call, options.sandboxStandIns);
       const policy = await options.policyApproval?.(event);
+      const configured =
+        event !== call &&
+        options.configuredApprovals.has(call.toolCall.toolName)
+          ? "user-approval"
+          : undefined;
       const status =
         approvalDecision(policy) === "denied"
           ? policy
@@ -301,7 +309,9 @@ export function createRuntimeToolApproval(options: {
               event.toolCall.toolName,
               event.toolCall.input,
               options,
-            ) ?? policy);
+            ) ??
+            configured ??
+            policy);
       if (event.toolCall.toolName !== COMPUTER_TOOL_NAME) return status;
       const decision = approvalDecision(status);
       if (decision === "user-approval") {
@@ -704,4 +714,23 @@ function approvalDecision(
   status: ToolApprovalStatus,
 ): Exclude<ToolApprovalStatus, object> {
   return typeof status === "object" ? status.type : status;
+}
+
+// A provider tool standing in for a sandbox tool is judged as the call it makes.
+function asSandboxToolCall(
+  event: Parameters<RuntimeToolApproval>[0],
+  standIns: ReadonlyMap<string, SandboxStandIn> | undefined,
+): Parameters<RuntimeToolApproval>[0] {
+  const standIn = standIns?.get(event.toolCall.toolName);
+  if (!standIn) return event;
+  const call = standIn.toSandboxCall(event.toolCall.input);
+
+  return {
+    ...event,
+    toolCall: {
+      ...event.toolCall,
+      toolName: call.toolName,
+      input: call.input,
+    },
+  };
 }

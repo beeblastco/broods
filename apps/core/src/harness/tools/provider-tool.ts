@@ -1,10 +1,10 @@
-import type { ToolSet } from "ai";
+import type { Tool } from "ai";
 import { z } from "zod/mini";
 import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import type { ToolContext } from "./index.ts";
 
 // How the AI SDK serializes a provider tool. Its lazy schemas do not survive JSON, so only
-// `args` is kept and the provider factory rebuilds the tool.
+// `id` and `args` are kept and the provider factory rebuilds the tool.
 const PROVIDER_TOOL_DESCRIPTOR_TYPES = new Set([
   "provider",
   "provider-defined",
@@ -15,29 +15,82 @@ const PROVIDER_TOOL_FACTORY = z.custom<ProviderToolFactory>(
   (value): boolean => typeof value === "function",
 );
 
-type ProviderToolFactory = (args: Record<string, unknown>) => ToolSet[string];
+type ProviderToolFactory = (args: Record<string, unknown>) => Tool;
 
-export function providerDefinedTool(
+export interface ProviderToolBuild {
+  args: Record<string, unknown>;
+  factory: ProviderToolFactory;
+}
+
+// A descriptor names its tool by `id`, so its key is free, as in the AI SDK; a bare
+// entry (`googleSearch: { enabled: true }`) names the factory by its key.
+export function providerToolBuild(
   toolName: string,
   context: ToolContext,
-): ToolSet {
+): ProviderToolBuild {
   const factories = providerToolFactories(context.modelProvider);
-  const factory = parseOr(PROVIDER_TOOL_FACTORY, factories[toolName]);
+  const id = descriptorId(context.config);
+  const factory =
+    id === undefined
+      ? parseOr(PROVIDER_TOOL_FACTORY, factories[toolName])
+      : factoryById(factories, id);
   if (!factory) {
+    const asked = id === undefined ? "" : ` (${id})`;
     throw new Error(
-      `config.tools.${toolName} is not a provider-defined tool on config.model.provider '${context.modelProviderName}' ` +
-        `(available: ${availableToolNames(factories)}). ` +
+      `config.tools.${toolName}${asked} is not a provider-defined tool on config.model.provider '${context.modelProviderName}' ` +
+        `(available: ${availableToolNames(factories, id !== undefined)}). ` +
         `Connect an MCP server for anything the provider does not execute itself.`,
     );
   }
 
-  return { [toolName]: factory(providerToolArgs(context.config)) };
+  return { args: providerToolArgs(context.config), factory: factory };
 }
 
-function availableToolNames(factories: Record<string, unknown>): string {
-  const names = Object.keys(factories).sort();
+function availableToolNames(
+  factories: Record<string, unknown>,
+  byId: boolean,
+): string {
+  const names = Object.entries(factories)
+    .map(([name, factory]): string | undefined =>
+      byId ? factoryId(factory) : name,
+    )
+    .filter((name): name is string => name !== undefined)
+    .sort();
 
   return names.length > 0 ? names.join(", ") : "none";
+}
+
+function descriptorId(config: Record<string, unknown>): string | undefined {
+  const { type, id } = config;
+
+  return typeof type === "string" &&
+    PROVIDER_TOOL_DESCRIPTOR_TYPES.has(type) &&
+    typeof id === "string"
+    ? id
+    : undefined;
+}
+
+function factoryById(
+  factories: Record<string, unknown>,
+  id: string,
+): ProviderToolFactory | undefined {
+  return parseOr(
+    PROVIDER_TOOL_FACTORY,
+    Object.values(factories).find((value): boolean => factoryId(value) === id),
+  );
+}
+
+// Building a provider tool only records its args, so an empty build reads the factory's id.
+function factoryId(value: unknown): string | undefined {
+  const factory = parseOr(PROVIDER_TOOL_FACTORY, value);
+  if (!factory) return undefined;
+  try {
+    const built = factory({});
+
+    return built.type === "provider" ? built.id : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function providerToolArgs(

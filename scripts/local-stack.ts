@@ -35,6 +35,7 @@ import {
   type CrashCase,
 } from "./local-verify/crash-recovery.ts";
 import { runPerf } from "./local-verify/perf.ts";
+import { modelTimeReport } from "./local-verify/model-time.ts";
 import {
   LOCAL_GITHUB_APP,
   VerifyFailure,
@@ -497,6 +498,15 @@ async function verify(): Promise<void> {
   const totalMs = Date.now() - startedAt;
   recordPerf(state.instanceId, "verify", perf, totalMs, failedStep);
   printPerfBreakdown(perf, totalMs);
+  const modelTime = modelTimeReport(
+    join(instanceDir(state.instanceId), "logs", "core.log"),
+    startedAt,
+  );
+  console.log(modelTime.join("\n"));
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+  if (summaryPath && modelTime.length > 0) {
+    writeFileSync(summaryPath, `${modelTime.join("\n")}\n`, { flag: "a" });
+  }
   if (failedStep !== undefined) process.exit(1);
   console.log(`\nverify passed in ${(totalMs / 1000).toFixed(1)}s`);
 }

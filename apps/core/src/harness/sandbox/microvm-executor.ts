@@ -18,7 +18,6 @@ import { z } from "zod";
 import {
   recordSandboxBurst,
   removeSandboxInstance,
-  upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
 import type {
   SandboxExecRequest,
@@ -90,6 +89,7 @@ import {
   execRunResult,
   mergeSandboxEnv,
   parseExecResponse,
+  queueMirrorUpsert,
   queueMirrorWrite,
   SandboxCapacityError,
   SandboxGoneError,
@@ -273,15 +273,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
-    void queueMirrorWrite(reservation.microvmId, () =>
-      upsertSandboxInstance(
-        this.#config.controlPlane,
-        PROVIDER,
-        request.reservationKey,
-        reservation.microvmId,
-        request.metadata,
-        { specs: configuredSandboxSpecs(this.#config) },
-      ),
+    void queueMirrorUpsert(
+      this.#config.controlPlane,
+      PROVIDER,
+      request.reservationKey,
+      reservation.microvmId,
+      request.metadata,
+      { specs: configuredSandboxSpecs(this.#config) },
     );
     request.abortSignal?.throwIfAborted();
 
@@ -449,7 +447,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           this.#terminate(microvmId).then(
             (gone: boolean): Promise<void> | undefined =>
               gone
-                ? queueMirrorWrite(microvmId, () => this.#unmirror(microvmId))
+                ? queueMirrorWrite(
+                    this.#config.controlPlane?.accountId,
+                    microvmId,
+                    () => this.#unmirror(microvmId),
+                  )
                 : undefined,
           ),
         );
@@ -821,19 +823,17 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   ): Promise<MicrovmHarnessReservation> {
     if (!this.#persistent(request)) {
       const created = await this.#runMicrovm(request);
-      void queueMirrorWrite(created.microvmId, () =>
-        upsertSandboxInstance(
-          this.#config.controlPlane,
-          PROVIDER,
-          created.microvmId,
-          created.microvmId,
-          request.metadata,
-          {
-            ephemeral: true,
-            logStream: created.logStream,
-            specs: configuredSandboxSpecs(this.#config),
-          },
-        ),
+      void queueMirrorUpsert(
+        this.#config.controlPlane,
+        PROVIDER,
+        created.microvmId,
+        created.microvmId,
+        request.metadata,
+        {
+          ephemeral: true,
+          logStream: created.logStream,
+          specs: configuredSandboxSpecs(this.#config),
+        },
       );
 
       return {
@@ -854,15 +854,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
           this.#config.controlPlane?.releaseAfterIdleSeconds,
         ).catch(() => {});
-        void queueMirrorWrite(existing, () =>
-          upsertSandboxInstance(
-            this.#config.controlPlane,
-            PROVIDER,
-            key,
-            existing,
-            request.metadata,
-            { specs: configuredSandboxSpecs(this.#config) },
-          ),
+        void queueMirrorUpsert(
+          this.#config.controlPlane,
+          PROVIDER,
+          key,
+          existing,
+          request.metadata,
+          { specs: configuredSandboxSpecs(this.#config) },
         );
 
         return {
@@ -892,18 +890,16 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.releaseAfterIdleSeconds,
         )
       ) {
-        void queueMirrorWrite(created.microvmId, () =>
-          upsertSandboxInstance(
-            this.#config.controlPlane,
-            PROVIDER,
-            key,
-            created.microvmId,
-            request.metadata,
-            {
-              logStream: created.logStream,
-              specs: configuredSandboxSpecs(this.#config),
-            },
-          ),
+        void queueMirrorUpsert(
+          this.#config.controlPlane,
+          PROVIDER,
+          key,
+          created.microvmId,
+          request.metadata,
+          {
+            logStream: created.logStream,
+            specs: configuredSandboxSpecs(this.#config),
+          },
         );
 
         return { ...this.#cacheTarget(key, created), isFirstCreate: true };
@@ -998,15 +994,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     request: SandboxRunRequest,
     payload: SandboxExecRequest,
   ): Promise<SandboxExecResponse | null> {
-    void queueMirrorWrite(target.microvmId, () =>
-      upsertSandboxInstance(
-        this.#config.controlPlane,
-        PROVIDER,
-        sandboxReservationKey(request) ?? target.microvmId,
-        target.microvmId,
-        request.metadata,
-        { specs: configuredSandboxSpecs(this.#config) },
-      ),
+    void queueMirrorUpsert(
+      this.#config.controlPlane,
+      PROVIDER,
+      sandboxReservationKey(request) ?? target.microvmId,
+      target.microvmId,
+      request.metadata,
+      { specs: configuredSandboxSpecs(this.#config) },
     );
     try {
       await this.#runLifecycle(
@@ -1297,17 +1291,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     ) {
       return;
     }
-    waitUntil(
-      queueMirrorWrite(microvmId, async () => {
-        if (!(await recordSandboxBurst(accountId, microvmId, totals))) return;
-        const now = Date.now();
-        evictToCap(burstReported, now);
-        burstReported.set(microvmId, {
-          ...totals,
-          expiresAt: now + BURST_REPORT_TTL_MS,
-        });
-      }),
-    );
+    void queueMirrorWrite(accountId, microvmId, async () => {
+      if (!(await recordSandboxBurst(accountId, microvmId, totals))) return;
+      const now = Date.now();
+      evictToCap(burstReported, now);
+      burstReported.set(microvmId, {
+        ...totals,
+        expiresAt: now + BURST_REPORT_TTL_MS,
+      });
+    });
   }
 
   // A 504 is fatal: the proxy gave up on a guest that may still be running the call.

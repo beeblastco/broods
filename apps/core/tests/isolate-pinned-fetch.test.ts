@@ -3,6 +3,19 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeniedAddress } from "../src/harness/isolate/runner/pinned-fetch.mjs";
 
+// What a scenario script prints: the fetch result or its error, and what the fake network saw.
+interface ScenarioOutput {
+  result?: {
+    status: number;
+    bodyText: string;
+    headers: Record<string, string>;
+  };
+  error?: string;
+  connections: Array<{ host: string }>;
+  requests: string[];
+  lookupCalls?: string[];
+}
+
 describe("isDeniedAddress", () => {
   it("denies private, metadata, carrier-grade NAT, and IPv4-mapped metadata ranges", () => {
     expect(isDeniedAddress("127.0.0.1")).toBe(true);
@@ -49,10 +62,10 @@ describe("guardedFetch", () => {
       status: 200,
       bodyText: "ok",
     });
-    expect(output.result.headers["content-type"]).toBe("text/plain");
+    expect(output.result?.headers["content-type"]).toBe("text/plain");
     expect(output.requests[0]).toContain("Host: public.test");
     expect(output.connections).toHaveLength(1);
-    expect(output.connections[0].host).toBe("93.184.216.34");
+    expect(output.connections[0]?.host).toBe("93.184.216.34");
   });
 
   it("blocks redirects to denied hosts by re-resolving and re-validating the Location", async () => {
@@ -60,13 +73,13 @@ describe("guardedFetch", () => {
 
     expect(output.error).toContain("blocked private or metadata address");
     expect(output.connections).toHaveLength(1);
-    expect(output.connections[0].host).toBe("93.184.216.34");
+    expect(output.connections[0]?.host).toBe("93.184.216.34");
   });
 
   it("drops credentials when a redirect leaves the origin, like fetch", async () => {
     const output = runNodeScenario("redirect-credentials");
 
-    expect(output.result.bodyText).toBe("media");
+    expect(output.result?.bodyText).toBe("media");
     expect(output.requests[1]).toContain("authorization: Basic abc");
     expect(output.requests[2]).not.toContain("authorization");
     expect(output.requests[2]).not.toContain("cookie");
@@ -81,15 +94,15 @@ describe("guardedFetch", () => {
   it("does not re-resolve after validation during DNS rebinding", async () => {
     const output = runNodeScenario("rebind");
 
-    expect(output.result.bodyText).toBe("still public");
+    expect(output.result?.bodyText).toBe("still public");
     expect(output.lookupCalls).toEqual(["rebind.test"]);
     expect(output.connections).toHaveLength(1);
-    expect(output.connections[0].host).toBe("93.184.216.34");
-    expect(output.connections[0].host).not.toBe("127.0.0.1");
+    expect(output.connections[0]?.host).toBe("93.184.216.34");
+    expect(output.connections[0]?.host).not.toBe("127.0.0.1");
   });
 });
 
-function runNodeScenario(scenario: string): any {
+function runNodeScenario(scenario: string): ScenarioOutput {
   const modulePath = fileURLToPath(
     new URL("../src/harness/isolate/runner/pinned-fetch.mjs", import.meta.url),
   );
@@ -230,5 +243,7 @@ function runNodeScenario(scenario: string): any {
     );
   }
 
-  return JSON.parse(child.stdout);
+  const output: ScenarioOutput = JSON.parse(child.stdout);
+
+  return output;
 }

@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   STAGE_SOURCE_ROOT_FILES,
@@ -15,12 +15,14 @@ export async function readStageSource(
 ): Promise<{ source: StageSource } | { skipped: string }> {
   const files: StageSourceFile[] = [];
   for (const path of STAGE_SOURCE_ROOT_FILES) {
-    const content = await readFile(join(root, path), "utf8").catch(
-      (): null => null,
-    );
-    if (content !== null) files.push({ path: path, content: content });
+    if (!(await isPlainEntry(join(root, path)))) continue;
+    files.push({
+      path: path,
+      content: await readFile(join(root, path), "utf8"),
+    });
   }
-  await collect(root, PROJECT_DIR, files);
+  if (await isPlainEntry(join(root, PROJECT_DIR)))
+    await collect(root, PROJECT_DIR, files);
   const problem = stageSourceProblem(files);
   if (problem) return { skipped: problem };
   const commitSha =
@@ -52,4 +54,11 @@ async function collect(
       });
     }
   }
+}
+
+// A link could point outside the project, at a secret; a missing entry is simply absent.
+async function isPlainEntry(path: string): Promise<boolean> {
+  const stat = await lstat(path).catch((): null => null);
+
+  return stat !== null && !stat.isSymbolicLink();
 }

@@ -94,7 +94,7 @@ export async function releasePlatformSandbox(
   if (!id) return;
   await drop(id);
   // Drain queued mirror upserts so none writes the row back after the delete.
-  await queueMirrorWrite(id, async (): Promise<void> => {});
+  await queueMirrorWrite(accountId, id, async (): Promise<void> => {});
   await deleteSandboxInstance(provider, key, accountId, id);
 }
 
