@@ -42,12 +42,12 @@ export function CopilotPlanCard({
             ) : (
               <span className="mt-1 size-2 shrink-0 rounded-full border border-muted-foreground" />
             )}
-            <span data-plan-step className="min-w-0 flex-1 text-xs">
+            <span data-plan-step className="min-w-0 flex-1 text-sm">
               {action.label}
             </span>
           </div>
           {action.type === "blocked" && (
-            <p className="ml-5 text-2xs text-warning">{action.reason}</p>
+            <p className="ml-5 text-xs text-warning">{action.reason}</p>
           )}
         </div>
       ))}
@@ -55,7 +55,7 @@ export function CopilotPlanCard({
         <p
           data-apply-status={proposal.apply.phase}
           className={cn(
-            "text-2xs",
+            "text-xs",
             proposal.apply.phase === "failed"
               ? "text-destructive"
               : "text-muted-foreground",
