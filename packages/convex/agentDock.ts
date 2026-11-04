@@ -253,6 +253,11 @@ export const apply = action({
         `${repo?.branch} has commits the stage does not run. Sync first, then apply.`,
         "conflict",
       );
+    const base = repo
+      ? await ctx.runAction(internal.agentDock.storedSource, {
+          stageId: args.stageId,
+        })
+      : null;
     const deployed = await deployFiles(
       ctx,
       authId,
@@ -275,7 +280,7 @@ export const apply = action({
       token,
       repo.fullName,
       repo.branch,
-      args.files.map((file) => ({
+      changedFiles(base?.files ?? [], args.files).map((file) => ({
         path: `${repo.rootDirectory ? `${repo.rootDirectory}/` : ""}${file.path}`,
         content: file.content,
       })),
@@ -539,6 +544,22 @@ function dockAgent(): {
     url: url.replace(/\/+$/, ""),
     userTokenSecret: userTokenSecret,
   };
+}
+
+// What a commit must carry to turn `base` into `next`; null content deletes.
+function changedFiles(
+  base: readonly { path: string; content: string }[],
+  next: readonly { path: string; content: string }[],
+): { path: string; content: string | null }[] {
+  const before = new Map(base.map((file) => [file.path, file.content]));
+  const kept = new Set(next.map((file) => file.path));
+
+  return [
+    ...next.filter((file) => before.get(file.path) !== file.content),
+    ...base
+      .filter((file) => !kept.has(file.path))
+      .map((file) => ({ path: file.path, content: null })),
+  ];
 }
 
 // Deploys `source` from the compile sandbox as `authId`, then stores it as the next revision.

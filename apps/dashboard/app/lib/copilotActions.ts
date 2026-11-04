@@ -48,14 +48,24 @@ export type CopilotAction =
       url: string;
     }
   | {
-      /** The branch head the agent read; Apply refuses once the branch has moved. */
-      baseSha: string;
-      branch: string;
       files: readonly CommitFile[];
-      fullName: string;
       label: string;
       message: string;
       type: "commitFiles";
+      via: CommitVia;
+    };
+
+/**
+ * Where a commit goes. `github`: one commit on the branch head the agent read, refused once it
+ * moved. `source`: Apply deploys the draft over the stored revision it was seeded from.
+ */
+export type CommitVia =
+  | { baseSha: string; branch: string; fullName: string; kind: "github" }
+  | {
+      baseRevision: number | null;
+      branch?: string;
+      kind: "source";
+      seed: readonly { content: string; path: string }[];
     };
 
 export interface CommitFile {
@@ -102,7 +112,13 @@ export interface ProposedNode {
 export interface DockApply {
   error?: string;
   finishedAt?: number;
-  phase: "applying" | "deployed" | "discarded" | "failed" | "proposed";
+  phase:
+    | "applying"
+    | "deployed"
+    | "discarded"
+    | "failed"
+    | "proposed"
+    | "verifying";
   runUrl?: string;
   sha?: string;
   startedAt?: number;
@@ -124,10 +140,16 @@ export interface DockProposal {
 
 const NO_NODES: readonly ProposedNode[] = [];
 
-const OPEN_PHASES: ReadonlySet<DockApply["phase"]> = new Set([
+// Verifying keeps the bar up, but its nodes are the stage's own by then, so none is drawn.
+const NODE_PHASES: ReadonlySet<DockApply["phase"]> = new Set([
   "applying",
   "failed",
   "proposed",
+]);
+
+const OPEN_PHASES: ReadonlySet<DockApply["phase"]> = new Set([
+  ...NODE_PHASES,
+  "verifying",
 ]);
 
 const RUN_FAILURES: Record<string, string> = {
@@ -210,7 +232,7 @@ export function dockProposals(
     proposals.set(id, {
       apply: apply,
       applied: writes.some(({ index }) => completed.has(changeKey(id, index))),
-      branch: commit?.branch,
+      branch: commit?.via.branch,
       changes: changes,
       messageId: id,
       nodes: edited ? NO_NODES : (plan.nodes ?? NO_NODES),
@@ -228,7 +250,7 @@ export function dockProposals(
 export function proposedNodes(
   proposal: DockProposal | null,
 ): readonly ProposedNode[] {
-  return proposal && OPEN_PHASES.has(proposal.apply.phase)
+  return proposal && NODE_PHASES.has(proposal.apply.phase)
     ? proposal.nodes
     : NO_NODES;
 }
@@ -277,6 +299,8 @@ export function applyStatus({ apply, applied, branch }: DockProposal): string {
       }
 
       return apply.runUrl ? "Opened a pull request." : "Applied.";
+    case "verifying":
+      return `Live. Committed ${sha} to ${branch}; waiting for its deploy to match.`;
     case "failed":
       return `Deploy failed: ${apply.error ?? "unknown error."}`;
     case "discarded":
@@ -301,6 +325,43 @@ export function settleApplies(
     if (next.phase !== "applying") {
       settled = { ...(settled ?? applies), [deploy.messageId]: next };
     }
+  }
+
+  return settled;
+}
+
+/** Verifying applies the stage's newest source settled, by the sha CI ran; null if none. */
+export function settleVerified(
+  applies: Readonly<Record<string, DockApply>>,
+  source:
+    | {
+        commitSha?: string;
+        verification?: { error?: string; phase: string; runUrl?: string };
+      }
+    | null
+    | undefined,
+  now: number,
+): Readonly<Record<string, DockApply>> | null {
+  const phase = source?.verification?.phase;
+  if (!source?.commitSha || (phase !== "deployed" && phase !== "failed"))
+    return null;
+  let settled: Record<string, DockApply> | null = null;
+  for (const [messageId, apply] of Object.entries(applies)) {
+    if (apply.phase !== "verifying" || apply.sha !== source.commitSha) continue;
+    settled = {
+      ...(settled ?? applies),
+      [messageId]: {
+        ...apply,
+        ...(source.verification?.error
+          ? { error: source.verification.error }
+          : {}),
+        ...(source.verification?.runUrl
+          ? { runUrl: source.verification.runUrl }
+          : {}),
+        finishedAt: now,
+        phase: phase,
+      },
+    };
   }
 
   return settled;

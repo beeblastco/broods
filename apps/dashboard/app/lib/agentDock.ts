@@ -6,6 +6,7 @@ import type { TextStreamPart, ToolSet } from "ai";
 import type { FunctionReturnType } from "convex/server";
 import { structuredPatch } from "diff";
 import { z } from "zod";
+import { draftChanges, type DockFile } from "@/app/lib/dockSource";
 import { readSseStream } from "../../../../packages/broods/src/stream";
 
 export const PROPOSE_TOOL = "dock__propose_changes";
@@ -21,6 +22,8 @@ export type DockRepo = NonNullable<
 >;
 
 export interface DockFacts {
+  /** The branch this stage deploys from, when its project is linked. */
+  branch?: string;
   /** Labels of nodes a `broods/` folder or the account API owns; the canvas cannot change them. */
   codeNodes: readonly string[];
   /** `source → target` labels of the canvas edges. */
@@ -162,6 +165,54 @@ export function proposalPlan(
   };
 }
 
+/**
+ * A proposal from the agent's workspace: its canvas steps, plus the diff between the source the
+ * conversation was seeded with and the draft it left, deletes included.
+ */
+export function sourcePlan(
+  input: unknown,
+  context: CopilotContext,
+  seed: {
+    branch?: string;
+    files: readonly DockFile[];
+    revision: number | null;
+  },
+  draft: readonly DockFile[],
+): CopilotPlan | null {
+  const parsed = proposalSchema.safeParse(input);
+  const steps = proposalPlan(
+    parsed.success ? { ...parsed.data, files: [] } : input,
+    context,
+  );
+  if (!steps || !parsed.success) return null;
+  const changes = draftChanges(seed.files, draft);
+  if (changes.length === 0) return steps;
+  const message = parsed.data.message || parsed.data.summary;
+
+  return {
+    ...steps,
+    actions: [
+      ...steps.actions,
+      {
+        files: changes.map((change) => ({
+          content: change.change === "delete" ? null : change.after,
+          patch: filePatch(change.path, change.before, change.after),
+          path: change.path,
+        })),
+        label: `Deploy ${changes.length} ${changes.length === 1 ? "file" : "files"}: ${message}`,
+        message: message,
+        type: "commitFiles",
+        via: {
+          baseRevision: seed.revision,
+          ...(seed.branch ? { branch: seed.branch } : {}),
+          kind: "source",
+          seed: seed.files,
+        },
+      },
+    ],
+  };
+}
+
 export function questionText(input: unknown): string {
   const parsed = questionsSchema.safeParse(input);
   if (!parsed.success) return "";
@@ -217,29 +268,41 @@ function commitAction(
   const before = new Map(repo.files.map((file) => [file.path, file.content]));
 
   return {
-    baseSha: repo.baseSha,
-    branch: repo.branch,
-    fullName: repo.fullName,
     files: files.map((file) => ({
       content: file.content,
-      patch: structuredPatch(
+      patch: filePatch(
         file.path,
-        file.path,
-        withNewline(before.get(file.path) ?? ""),
-        withNewline(file.content ?? ""),
-        undefined,
-        undefined,
-        { context: 2 },
-      ).hunks.flatMap((hunk) => [
-        `@@ ${hunk.oldStart},${hunk.oldLines} → ${hunk.newStart},${hunk.newLines}`,
-        ...hunk.lines,
-      ]),
+        before.get(file.path) ?? "",
+        file.content ?? "",
+      ),
       path: file.path,
     })),
     label: `${repo.viaPullRequest ? "Pull request into" : "Commit to"} ${repo.branch}: ${message || "update broods/"}`,
     message: message,
     type: "commitFiles",
+    via: {
+      baseSha: repo.baseSha,
+      branch: repo.branch,
+      fullName: repo.fullName,
+      kind: "github",
+    },
   };
+}
+
+// Changed lines, unified-diff style, led by `@@ old → new`.
+function filePatch(path: string, before: string, after: string): string[] {
+  return structuredPatch(
+    path,
+    path,
+    withNewline(before),
+    withNewline(after),
+    undefined,
+    undefined,
+    { context: 2 },
+  ).hunks.flatMap((hunk) => [
+    `@@ ${hunk.oldStart},${hunk.oldLines} → ${hunk.newStart},${hunk.newLines}`,
+    ...hunk.lines,
+  ]);
 }
 
 // A missing final newline would mark the last line changed on both sides.

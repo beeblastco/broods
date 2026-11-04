@@ -104,3 +104,24 @@ test("Discard removes the bar and the proposed nodes", async ({ page }) => {
   );
   await page.screenshot({ path: "test-results/dock-apply/discarded.png" });
 });
+
+test("a verifying apply is live with no dashed nodes; out of sync is one bar with Sync", async ({
+  page,
+}) => {
+  await openDock(page);
+  const bar = page.locator("[data-apply-bar]");
+
+  await page.locator('[data-set-phase="verifying"]').click();
+  await expect(bar).toHaveAttribute("data-apply-bar", "verifying");
+  await expect(bar).toContainText(
+    /Live on Development\. Verifying dev deploy · 0:4\d/,
+  );
+  await expect(page.locator("[data-proposed-node]")).toHaveCount(0);
+  await expect(bar.getByRole("button", { name: "Discard" })).toHaveCount(0);
+
+  await page.locator('[data-set-phase="out-of-sync"]').click();
+  await expect(bar).toHaveAttribute("data-apply-bar", "out-of-sync");
+  await expect(bar).toContainText("Out of sync");
+  await expect(bar.getByRole("button", { name: "Sync" })).toBeVisible();
+  await page.screenshot({ path: "test-results/dock-apply/out-of-sync.png" });
+});

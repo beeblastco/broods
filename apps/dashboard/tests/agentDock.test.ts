@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { dockPrompt, proposalPlan } from "../app/lib/agentDock";
+import { dockPrompt, proposalPlan, sourcePlan } from "../app/lib/agentDock";
 import {
   actionTier,
   applyStatus,
@@ -8,6 +8,7 @@ import {
   openProposal,
   proposedNodes,
   settleApplies,
+  settleVerified,
 } from "../app/lib/copilotActions";
 import { withProposal } from "../app/lib/proposedNodes";
 import { planFromQuery } from "../app/lib/copilotIntent";
@@ -176,10 +177,9 @@ describe("agent dock", () => {
 
     expect(plan?.actions).toMatchObject([
       {
-        baseSha: "abc",
-        branch: "dev",
         label: "Commit to dev: Add firecrawl",
         type: "commitFiles",
+        via: { baseSha: "abc", branch: "dev", kind: "github" },
       },
     ]);
     const [action] = plan?.actions ?? [];
@@ -530,5 +530,67 @@ describe("agent dock", () => {
     expect(plan?.actions).toMatchObject([
       { reason: expect.stringContaining("could not be read"), type: "blocked" },
     ]);
+  });
+});
+
+describe("dock source proposals", () => {
+  test("a workspace proposal diffs the draft against its seed, deletes included", () => {
+    const plan = sourcePlan(
+      { summary: "Drop notes", message: "Drop notes" },
+      CONTEXT,
+      {
+        files: [
+          { content: "a", path: "broods/index.ts" },
+          { content: "n", path: "broods/notes.ts" },
+        ],
+        revision: 4,
+      },
+      [{ content: "b", path: "broods/index.ts" }],
+    );
+
+    expect(plan?.actions).toMatchObject([
+      {
+        files: [
+          { content: "b", path: "broods/index.ts" },
+          { content: null, path: "broods/notes.ts" },
+        ],
+        type: "commitFiles",
+        via: { baseRevision: 4, kind: "source" },
+      },
+    ]);
+  });
+
+  test("a verifying apply settles from the stage source CI ran, matched by sha", () => {
+    const applies = {
+      m1: { phase: "verifying" as const, sha: "s1", startedAt: 1 },
+      m2: { phase: "verifying" as const, sha: "s2", startedAt: 1 },
+    };
+
+    expect(
+      settleVerified(
+        applies,
+        {
+          commitSha: "s1",
+          verification: { error: "CI failure.", phase: "failed" },
+        },
+        9,
+      ),
+    ).toEqual({
+      m1: {
+        error: "CI failure.",
+        finishedAt: 9,
+        phase: "failed",
+        sha: "s1",
+        startedAt: 1,
+      },
+      m2: applies.m2,
+    });
+    expect(
+      settleVerified(
+        applies,
+        { commitSha: "s1", verification: { phase: "verifying" } },
+        9,
+      ),
+    ).toBeNull();
   });
 });
