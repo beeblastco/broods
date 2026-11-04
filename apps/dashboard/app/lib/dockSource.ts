@@ -54,9 +54,11 @@ export function draftChanges(
 export async function readDraft(
   session: DockSession,
   conversationKey: string,
+  signal?: AbortSignal,
 ): Promise<DockFile[]> {
   const response = await fetch(filesUrl(session, conversationKey), {
     headers: headers(session),
+    ...(signal ? { signal: signal } : {}),
   });
   if (!response.ok)
     throw new Error(`Reading the draft failed: ${response.status}`);

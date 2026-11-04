@@ -466,17 +466,16 @@ export function CopilotProvider({
           !(currentStageId in seeds.current) &&
           stored?.url
         ) {
-          const files = await readSource(stored.url);
-          seeds.current[currentStageId] = await seedConversation(
-            session,
-            conversationKey,
-            files,
-          )
-            .then((): DockSeed => ({
-              files: files,
-              revision: stored.revision,
-              ...(facts.branch ? { branch: facts.branch } : {}),
-            }))
+          seeds.current[currentStageId] = await readSource(stored.url)
+            .then(async (files): Promise<DockSeed> => {
+              await seedConversation(session, conversationKey, files);
+
+              return {
+                files: files,
+                revision: stored.revision,
+                ...(facts.branch ? { branch: facts.branch } : {}),
+              };
+            })
             .catch((): null => null);
         }
         const seeded =
@@ -551,14 +550,15 @@ export function CopilotProvider({
               drafted.input,
               context,
               drafted.seed,
-              await readDraft(session, conversationKey),
+              await readDraft(session, conversationKey, controller.signal),
             ) ?? plan;
-        controller.signal.throwIfAborted();
         update({
           answeredAt: answeredAt ?? Date.now(),
           pending: false,
           plan: plan,
-          text: answer.text || plan?.summary || answer.interim || "",
+          text: answer.text.trim()
+            ? answer.text
+            : plan?.summary || answer.interim || "",
           trace: answer.trace,
         });
         if (plan) runSafeSteps(replyId, plan);
