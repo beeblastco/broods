@@ -29,7 +29,7 @@ export function createBroodsMcpServer(
   options: BroodsMcpServerOptions = {},
 ): McpServer {
   const client = resolveEnvCredential() ? new BroodsAccountClient({}) : null;
-  if (!client && !options.cli) {
+  if (!client && !options.cli && !options.login) {
     throw new Error(
       "broods mcp needs a credential: set BROODS_SESSION_TOKEN or BROODS_ACCOUNT_SECRET, or run `broods login`.",
     );
