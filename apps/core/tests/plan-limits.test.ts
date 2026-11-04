@@ -4,6 +4,7 @@ import {
   describe,
   expect,
   it,
+  jest,
   setSystemTime,
 } from "bun:test";
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
@@ -12,8 +13,10 @@ import {
   BudgetExhaustedError,
   planRefusalResponse,
   recordUsage,
+  recordUsageSoon,
   refundRun,
   resetPlanLimitsForTests,
+  stopLingeringUsage,
 } from "../src/harness/plan-limits.ts";
 import { createSandboxExecutor } from "../src/harness/sandbox/index.ts";
 import type { CronRecord } from "../src/shared/domain/cron.ts";
@@ -22,7 +25,9 @@ import {
   resetStorageForTests,
   setStorageForTests,
   type Storage,
+  type UsageSource,
 } from "../src/shared/storage.ts";
+import { settleOnFakeClock } from "./helpers/fake-clock.ts";
 
 const { handler } = await import("../src/harness/handler.ts");
 
@@ -255,6 +260,170 @@ describe("recordUsage", () => {
 
     expect(recorded).toEqual([{ ingressGb: 0.5 }]);
   });
+});
+
+describe("recordUsageSoon", () => {
+  type Write = [string, MeterUsage, UsageSource | undefined];
+  const AGENT = { agentId: "agent_1" };
+  const COMMAND = { workerMs: 5, workerRequests: 1 };
+  let writes: Write[];
+
+  beforeEach(() => {
+    writes = [];
+    jest.useFakeTimers();
+    setStorageForTests({
+      budgets: {
+        record: async function (
+          accountId: string,
+          usage: MeterUsage,
+          source?: UsageSource,
+        ): Promise<void> {
+          writes.push([accountId, usage, source]);
+        },
+      },
+    } as unknown as Storage);
+  });
+
+  afterEach(async () => {
+    await settleOnFakeClock(drainInFlight());
+    jest.useRealTimers();
+  });
+
+  it("sums one account and source's usage of a second into one write", async () => {
+    recordUsageSoon(ACCOUNT_ID, { workerMs: 5, workerRequests: 1 }, AGENT);
+    await advance(500);
+    recordUsageSoon(ACCOUNT_ID, { workerMs: 7, workerRequests: 1 }, AGENT);
+    await advance(499);
+    recordUsageSoon(ACCOUNT_ID, { workerMs: 3, workerRequests: 1 }, AGENT);
+
+    expect(writes).toEqual([]);
+    await advance(1);
+    expect(writes).toEqual([
+      [ACCOUNT_ID, { workerMs: 15, workerRequests: 3 }, AGENT],
+    ]);
+  });
+
+  it("keeps each account, project, agent and workspace in its own write", async () => {
+    const sources = [
+      undefined,
+      { projectId: "x" },
+      { agentId: "x" },
+      { workspaceId: "x" },
+      { agentId: "x", workspaceId: "x" },
+    ];
+    for (const source of sources) recordUsageSoon(ACCOUNT_ID, COMMAND, source);
+    recordUsageSoon("acct_2", COMMAND, { agentId: "x" });
+    await settleOnFakeClock(drainInFlight());
+
+    expect(writes).toEqual([
+      ...sources.map((source): Write => [ACCOUNT_ID, COMMAND, source]),
+      ["acct_2", COMMAND, { agentId: "x" }],
+    ]);
+  });
+
+  it("starts a new write for usage after the second is up", async () => {
+    recordUsageSoon(ACCOUNT_ID, { workerMs: 5, workerRequests: 1 }, AGENT);
+    await advance(1_000);
+    recordUsageSoon(ACCOUNT_ID, { workerMs: 7, workerRequests: 1 }, AGENT);
+    await settleOnFakeClock(drainInFlight());
+
+    expect(writes).toEqual([
+      [ACCOUNT_ID, { workerMs: 5, workerRequests: 1 }, AGENT],
+      [ACCOUNT_ID, { workerMs: 7, workerRequests: 1 }, AGENT],
+    ]);
+  });
+
+  it("adds nothing for an undefined amount", async () => {
+    recordUsageSoon(ACCOUNT_ID, { workerMs: 5, workerRequests: undefined });
+    recordUsageSoon(ACCOUNT_ID, { workerMs: undefined, workerRequests: 1 });
+    recordUsageSoon(ACCOUNT_ID, { workerMs: 2 });
+    await settleOnFakeClock(drainInFlight());
+
+    expect(writes).toEqual([
+      [ACCOUNT_ID, { workerMs: 7, workerRequests: 1 }, undefined],
+    ]);
+  });
+
+  it("forgets a waiting batch on reset, and its timer leaves the next batch alone", async () => {
+    recordUsageSoon(ACCOUNT_ID, { workerMs: 5, workerRequests: 1 });
+    resetPlanLimitsForTests();
+    await advance(500);
+    recordUsageSoon(ACCOUNT_ID, { workerMs: 7, workerRequests: 1 });
+    await advance(500);
+    recordUsageSoon(ACCOUNT_ID, { workerMs: 3, workerRequests: 1 });
+
+    expect(writes).toEqual([]);
+    await advance(500);
+    expect(writes).toEqual([
+      [ACCOUNT_ID, { workerMs: 10, workerRequests: 2 }, undefined],
+    ]);
+  });
+
+  it("lets the drain wait out a waiting write and one that starts while it drains", async () => {
+    recordUsageSoon(ACCOUNT_ID, COMMAND);
+    const drained = drainInFlight();
+    await advance(600);
+    recordUsageSoon(ACCOUNT_ID, COMMAND, AGENT);
+    await settleOnFakeClock(drained);
+
+    expect(writes).toEqual([
+      [ACCOUNT_ID, COMMAND, undefined],
+      [ACCOUNT_ID, COMMAND, AGENT],
+    ]);
+  });
+
+  it("sends what waits at shutdown at once, and usage after it without waiting", () => {
+    recordUsageSoon(ACCOUNT_ID, { workerMs: 5, workerRequests: 1 }, AGENT);
+    recordUsageSoon(ACCOUNT_ID, { workerMs: 7, workerRequests: 1 }, AGENT);
+    stopLingeringUsage();
+    recordUsageSoon(ACCOUNT_ID, { workerMs: 3, workerRequests: 1 }, AGENT);
+
+    expect(writes).toEqual([
+      [ACCOUNT_ID, { workerMs: 12, workerRequests: 2 }, AGENT],
+      [ACCOUNT_ID, { workerMs: 3, workerRequests: 1 }, AGENT],
+    ]);
+  });
+
+  it("records the same totals as one write per command, in fewer writes", async () => {
+    const sources = [{ agentId: "a" }, { agentId: "b" }, { workspaceId: "w" }];
+    const run = async (record: typeof recordUsage): Promise<Write[]> => {
+      writes = [];
+      for (let index = 0; index < 30; index += 1) {
+        record(
+          ACCOUNT_ID,
+          { workerMs: 10 + index, workerRequests: 1 },
+          sources[index % sources.length],
+        );
+        await advance(90);
+      }
+      await settleOnFakeClock(drainInFlight());
+
+      return writes;
+    };
+
+    const perCommand = await run(recordUsage);
+    const batched = await run(recordUsageSoon);
+
+    expect(perCommand).toHaveLength(30);
+    expect(batched).toHaveLength(9);
+    expect(totals(batched)).toEqual(totals(perCommand));
+  });
+
+  async function advance(ms: number): Promise<void> {
+    jest.advanceTimersByTime(ms);
+    for (let hop = 0; hop < 10; hop += 1) await Promise.resolve();
+  }
+
+  function totals(list: Write[]): Record<string, Record<string, number>> {
+    const sums: Record<string, Record<string, number>> = {};
+    for (const [accountId, usage, source] of list) {
+      const sum = (sums[JSON.stringify([accountId, source])] ??= {});
+      for (const [name, amount] of Object.entries(usage))
+        sum[name] = (sum[name] ?? 0) + (amount ?? 0);
+    }
+
+    return sums;
+  }
 });
 
 describe("refusal over HTTP", () => {

@@ -3,10 +3,9 @@ import {
   MAX_OUTPUT_BYTES,
   MAX_TIMEOUT_MS,
 } from "../../../../cloudflare-worker/src/limits.ts";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
-import { recordUsage } from "../plan-limits.ts";
+import { recordUsageSoon } from "../plan-limits.ts";
 import { getSandboxExternalId } from "./instance-store.ts";
 import {
   callPlatformWorker,
@@ -29,7 +28,7 @@ import {
   execRunResult,
   mergeSandboxEnv,
   parseExecResponse,
-  queueMirrorWrite,
+  queueMirrorUpsert,
   requiredWorkspacePath,
   sandboxReservationKey,
 } from "./utils.ts";
@@ -169,7 +168,7 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
   #meter(durationMs: number, metadata: SandboxRunMetadata | undefined): void {
     const plane = this.#config.controlPlane;
     if (!plane) return;
-    recordUsage(
+    recordUsageSoon(
       plane.accountId,
       { workerMs: durationMs, workerRequests: 1 },
       {
@@ -191,14 +190,12 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     id: string,
     metadata: SandboxRunRequest["metadata"],
   ): void {
-    void queueMirrorWrite(id, (): Promise<void> =>
-      upsertSandboxInstance(
-        this.#config.controlPlane,
-        "worker",
-        key,
-        id,
-        metadata,
-      ),
+    void queueMirrorUpsert(
+      this.#config.controlPlane,
+      "worker",
+      key,
+      id,
+      metadata,
     );
   }
 }

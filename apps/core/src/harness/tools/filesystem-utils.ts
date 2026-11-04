@@ -79,7 +79,7 @@ export interface SandboxToolContext {
   };
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   sandboxMetadata?: SandboxRunMetadata;
-  // Blocking bash only, minted when a command runs: file tools and background jobs get none.
+  // Blocking bash and browse only, minted per command: file tools and background jobs get none.
   principal?: () => SandboxRunPrincipal | undefined;
 }
 

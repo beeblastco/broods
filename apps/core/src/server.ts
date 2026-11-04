@@ -155,6 +155,7 @@ if (import.meta.main) {
   const { handler: harnessHandler } = await import("./harness/handler.ts");
   const { drainInProcessWorkers } = await import("./harness/worker-queue.ts");
   const { interruptLiveOwners } = await import("./harness/ingress.ts");
+  const { stopLingeringUsage } = await import("./harness/plan-limits.ts");
   const { startIngressRecovery, stopIngressRecovery } =
     await import("./harness/ingress-recovery.ts");
   const { prewarmIsolatePool, shutdownIsolatePool } =
@@ -213,6 +214,7 @@ if (import.meta.main) {
       lifecycle: "shutdown_started",
     });
     stopIngressRecovery();
+    stopLingeringUsage();
     let drained = false;
     const deadline = new Promise<void>((resolve) =>
       setTimeout(resolve, SHUTDOWN_DEADLINE_MS),

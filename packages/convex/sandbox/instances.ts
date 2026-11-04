@@ -290,7 +290,7 @@ export const upsert = internalMutation({
           ? "resume"
           : null;
       if (action) {
-        await recordRuntimeAction(ctx, { ...existing, ...patch }, action);
+        await recordRuntimeAction(ctx, { ...existing, ...patch }, action, args);
       }
 
       return null;
@@ -319,7 +319,7 @@ export const upsert = internalMutation({
       now,
       args.projectId,
     );
-    await recordRuntimeAction(ctx, row, "reserve");
+    await recordRuntimeAction(ctx, row, "reserve", args);
 
     return null;
   },
