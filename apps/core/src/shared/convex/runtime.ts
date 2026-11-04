@@ -40,6 +40,7 @@ export const runtimeMutations = {
   markAsyncAgentHandback: internal.runtime.markAsyncAgentHandback,
   markAsyncToolHandback: internal.runtime.markAsyncToolHandback,
   releaseClaim: internal.runtime.releaseClaim,
+  reserveSandboxReservation: internal.runtime.reserveSandboxReservation,
   saveSandboxReservation: internal.runtime.saveSandboxReservation,
   updateAsyncAgentResult: internal.runtime.updateAsyncAgentResult,
   updateAsyncToolResult: internal.runtime.updateAsyncToolResult,

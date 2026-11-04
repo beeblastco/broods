@@ -145,7 +145,7 @@ Harness adapters pick their own key, see [harness adapters](#harness-adapters).
 
 ### First call and resume
 
-The MicroVM executor (`#acquire` in `microvm-executor.ts`) as the example. Workdir, Daytona, E2B, Vercel and Cloudflare follow the same claim and race rules.
+The MicroVM executor (`#acquire` in `microvm-executor.ts`) as the example. Workdir, Daytona, E2B and Vercel follow the same claim and race rules; `cloudflare` and `worker` book in one trip (below).
 
 ```mermaid
 sequenceDiagram
@@ -182,6 +182,7 @@ sequenceDiagram
   VM-->>T: stdout, stderr, exit code
 ```
 
+- `cloudflare` and `worker` book in one trip instead (`reservePlatformSandbox` in `platform-worker.ts`): `reserveSandboxReservation` returns the stored id, refreshing `expiresAt` when the row is the caller's account's, or claims the new one, and a racing booking gets the winner's id. Without an account (the dashboard console) a stored id is read by key alone and nothing is claimed. Core holds each booking in memory (`reserveSandboxInstance` in `instance-store.ts`), so a later command of the same account on the same key makes no Convex call for a minute; the first command after that books again, which refreshes `expiresAt`, follows a key repointed elsewhere and refuses an account no longer active. Any reservation delete in core (a release, a terminate, a sweep) lets the key go at once.
 - A slow resume or a control-plane error propagates. Only a VM unknown to the provider or terminal is replaced, since replacing a suspended one leaks it against the account's memory quota.
 - A persistent MicroVM counts against that quota while running or suspended. Too many make every launch fail with `ServiceQuotaExceededException`, and a reserved sandbox has no fallback.
 - `lifecycle.maxLifetimeSeconds` is checked on acquire, never on a timer, so it cannot interrupt a running command.
