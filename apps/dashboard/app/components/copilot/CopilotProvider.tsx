@@ -457,9 +457,9 @@ export function CopilotProvider({
         // An ask right after the dock opens beats the subscription: read it instead of skipping.
         const stored =
           source === undefined && currentStageId
-            ? await convex.query(api.stageSources.latest, {
-                stageId: currentStageId,
-              })
+            ? await convex
+                .query(api.stageSources.latest, { stageId: currentStageId })
+                .catch((): null => null)
             : source;
         if (
           currentStageId &&
@@ -553,6 +553,7 @@ export function CopilotProvider({
               drafted.seed,
               await readDraft(session, conversationKey),
             ) ?? plan;
+        controller.signal.throwIfAborted();
         update({
           answeredAt: answeredAt ?? Date.now(),
           pending: false,
