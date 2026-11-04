@@ -46,10 +46,10 @@ Broods.EscFilter.ok_append : ∀ (a b : List Broods.EscFilter.Chunk), Broods.Esc
 Broods.EscFilter.out_matches_keys : ∀ (s : Broods.EscFilter.State), Broods.EscFilter.Reachable s → s.out <+: s.expected
 Broods.EscFilter.press_ok : ∀ {cs : List Broods.EscFilter.Chunk}, Broods.EscFilter.Press cs → Broods.EscFilter.ok cs = true
 Broods.EscFilter.quiet_step : ∀ {s t : Broods.EscFilter.State}, Broods.EscFilter.Step s t → (∀ (cs : List Broods.EscFilter.Chunk), Broods.EscFilter.Press cs → t ≠ { wire := s.wire ++ cs, held := s.held, heldMidTurn := s.heldMidTurn, streaming := s.streaming, out := s.out, expected := s.expected }) → Broods.EscFilter.measure t ≤ Broods.EscFilter.measure s ∧ (Broods.EscFilter.receive s = some t ∨ Broods.EscFilter.timerFires s = some t ∨ t.wire = s.wire ∧ t.held = s.held)
-Broods.EscFilter.receive_clears_held : ∀ {s t : Broods.EscFilter.State}, Broods.EscFilter.Inv s → s.wire.head? = some Broods.EscFilter.Chunk.arrowTail → Broods.EscFilter.receive s = some t → t.held = false
+Broods.EscFilter.receive_clears_held : ∀ {s t : Broods.EscFilter.State}, Broods.EscFilter.Inv s → Broods.EscFilter.tailNext s = true → Broods.EscFilter.receive s = some t → t.held = false
 Broods.EscFilter.receive_isSome : ∀ {s : Broods.EscFilter.State}, s.wire ≠ [] → (Broods.EscFilter.receive s).isSome = true
 Broods.EscFilter.receive_measure : ∀ {s t : Broods.EscFilter.State}, Broods.EscFilter.receive s = some t → Broods.EscFilter.measure t < Broods.EscFilter.measure s
-Broods.EscFilter.tail_held_step : ∀ {s t : Broods.EscFilter.State}, Broods.EscFilter.Inv s → s.held = true → s.wire.head? = some Broods.EscFilter.Chunk.arrowTail → Broods.EscFilter.Step s t → t.held = true → t.wire.head? = some Broods.EscFilter.Chunk.arrowTail
+Broods.EscFilter.tail_held_step : ∀ {s t : Broods.EscFilter.State}, Broods.EscFilter.Inv s → s.held = true → Broods.EscFilter.tailNext s = true → Broods.EscFilter.Step s t → t.held = true → Broods.EscFilter.tailNext t = true
 Broods.EscFilter.timer_measure : ∀ {s t : Broods.EscFilter.State}, Broods.EscFilter.timerFires s = some t → Broods.EscFilter.measure t < Broods.EscFilter.measure s
 Broods.Gateway.normalize_idem : ∀ (p : Broods.Gateway.Path), Broods.Gateway.normalize (Broods.Gateway.normalize p) = Broods.Gateway.normalize p
 Broods.Gateway.route_trailing_slash : ∀ (m : Broods.Gateway.Method) (p : Broods.Gateway.Path), Broods.Gateway.route m (p ++ [""]) = Broods.Gateway.route m p

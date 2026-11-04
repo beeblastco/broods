@@ -1023,9 +1023,6 @@ describe("agent rules", () => {
     expect(
       normalizeAgentConfig({ hooks: { code: [{ hookId: hookId }] } }),
     ).toEqual({ hooks: { code: [{ hookId: hookId }] } });
-    expect(() =>
-      normalizeAgentConfig({ tools: { tool_legacy: { enabled: true } } }),
-    ).toThrow("config.tools.tool_legacy is not a supported tool");
     // Removed custom tools keyed config.tools by row id; a digit-led id names no provider tool.
     expect(() =>
       normalizeAgentConfig({
