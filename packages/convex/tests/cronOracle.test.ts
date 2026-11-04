@@ -55,6 +55,7 @@ test("the cron mutations agree with the Lean model's run on generated write orde
   const oracle = spawnSync(ORACLE, {
     input: cases.map((steps) => `${steps.join(" ")}\n`).join(""),
     encoding: "utf8",
+    maxBuffer: 1024 ** 3,
   });
   expect(oracle.status).toBe(0);
   const answers = oracle.stdout.split("\n").slice(0, -1);
