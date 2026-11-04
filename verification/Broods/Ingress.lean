@@ -3,8 +3,10 @@
 
 Model of one `runtimeIngressEnvelopes` row (the run behind `GET /v1/runs/{runId}`)
 under the mutations in `packages/convex/runtimeIngress.ts`. Each mutation is a
-Convex transaction, so a run is a sequence of `Step`s. The polling row written
-next to it lives in `Broods.AsyncResults`.
+Convex transaction, so a run is a sequence of `Step`s. A queued run either runs
+or ends unrun: expired, or completed by the owner's history write that already
+tells the result it resumes. The polling row written next to it lives in
+`Broods.AsyncResults`.
 -/
 
 namespace Broods.Ingress
@@ -44,11 +46,19 @@ inductive Step where
   /-- `promoteQueuedGroup` and `applySteering`: queued to processing. -/
   | promote (generation appliedTo : Nat)
   /-- `stepBoundary`: the steer claim, behind the fence and the stop check of the
-  same transaction that stores the step and renews the lease. `claim` is
-  `claimSteering`: false for a run winding down, which leaves steers queued. -/
+  same transaction that stores the step and renews the lease. `claim`: `claimSteering`
+  selects this row, false for a run winding down, a row past the steer prefix, or a
+  coordinator counting no queued work (`queuedPage`). -/
   | stepBoundary (ownerEventId generation : Nat) (claim : Bool)
   /-- `settleAppliedEnvelopes`, reached through `settle` and `takeNext`. -/
   | settle (ownerEventId generation : Nat) (outcome : Outcome)
+  /-- `insertOwnedEvents`: the fenced history write of `appendConversationEvent`, and the
+  first write of `settle`, `stepBoundary` (before its stop check) and `takeNext`. It
+  completes a queued resume of a result the write stored. `stored`: `resumesSameResult`
+  matched this row on the queued page. It writes only queued rows, before the settle
+  (processing rows) and the claim (which reads the queue after it), so those mutations
+  are this step then theirs, under one coordinator and clock. -/
+  | insertOwnedEvents (ownerEventId generation : Nat) (stored : Bool)
   /-- `expireQueuedEnvelopes`. -/
   | expireQueued
   /-- `expireStaleOwner`. -/
@@ -114,6 +124,10 @@ def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
         stoppedByUser := e.stoppedByUser ||
           (o == .failed && c.stopRequestedGeneration == some g && !c.stopRequestedByParent) }
     else e
+  | .insertOwnedEvents owner g stored, e =>
+    if stored && requireOwner c owner g now && e.status == .queued then
+      { e with status := .completed }
+    else e
   | .expireQueued, e =>
     if e.status == .queued && decide (e.expiresAt ≤ now) then { e with status := .expired } else e
   | .expireStaleOwner, e =>
@@ -139,6 +153,8 @@ inductive Allowed : Status → Status → Prop where
   | expireQueued : Allowed .queued .expired
   | expireRunning : Allowed .processing .expired
   | finish (o : Outcome) : Allowed .processing o.status
+  /-- A queued resume whose result the owner's history already tells. -/
+  | storedQueued : Allowed .queued .completed
 
 /-! ## Properties -/
 
@@ -227,6 +243,23 @@ theorem boundary_fenced {c : Coord} {now owner g : Nat} {claim : Bool} {e : Enve
     exact ⟨hc.1.1.1, hc.1.1.2.1, hc.1.1.2.2⟩
   · exact absurd rfl h
 
+/-- A queued run completes without running only in the live owner's history write that
+stored the result it resumes; no settle, claim or sweep completes a queued row. -/
+theorem store_fenced {c : Coord} {now : Nat} {e : Envelope} (s : Step)
+    (hq : e.status = .queued) (h : (step c now s e).status = .completed) :
+    ∃ owner g, s = .insertOwnedEvents owner g true ∧ requireOwner c owner g now = true := by
+  cases s with
+  | insertOwnedEvents owner g stored =>
+    simp only [step] at h
+    split at h
+    · rename_i hc
+      simp only [Bool.and_eq_true] at hc
+      exact ⟨owner, g, by rw [hc.1.1], hc.1.2⟩
+    · simp_all
+  | _ =>
+    simp only [step] at h
+    (repeat' split at h) <;> simp_all
+
 /-- A boundary that proceeds leaves its owner fenced in for 9/10 of the TTL. -/
 theorem boundary_lease {c : Coord} {owner g now ttl n : Nat}
     (hp : boundaryProceeds c owner g now = true) (hn : 10 * n ≤ 10 * now + 9 * ttl) :
@@ -298,6 +331,17 @@ example :
     let c : Coord := ⟨1, some 7, some 10, none, false⟩
     let e : Envelope := ⟨8, .queued, 20, none, some 7, false⟩
     (step c 5 (.settle 7 1 .completed) e).status = .queued := by
+  decide
+
+/-- A stopped owner's history write still completes a queued resume of the result it
+stored, as `stepBoundary` writes its rows before the stop check; a stale owner's write,
+or one that stored another result, leaves it queued. -/
+example :
+    let c : Coord := ⟨1, some 7, some 10, some 1, false⟩
+    let e : Envelope := ⟨8, .queued, 20, none, none, false⟩
+    (step c 5 (.insertOwnedEvents 7 1 true) e).status = .completed ∧
+      step c 5 (.insertOwnedEvents 7 0 true) e = e ∧
+      step c 5 (.insertOwnedEvents 7 1 false) e = e := by
   decide
 
 end Broods.Ingress
