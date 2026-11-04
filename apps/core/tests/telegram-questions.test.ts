@@ -263,13 +263,13 @@ describe("telegram bot api", () => {
 
   // No fetch stub on purpose: an escaped request would fail with a different error.
   it("refuses a plain http endpoint before the token leaves", async () => {
-    expect(
+    await expect(
       telegramActions("http://bot-api.example").sendQuestions!(QUESTION_PROMPT),
     ).rejects.toThrow("config.channels.telegram.apiUrl must use https");
   });
 
   it("refuses a base with a query, which would push the token into it", async () => {
-    expect(
+    await expect(
       telegramActions("https://bot-api.example?route=1").sendQuestions!(
         QUESTION_PROMPT,
       ),
@@ -279,7 +279,7 @@ describe("telegram bot api", () => {
   });
 
   it("fails on a redirect instead of carrying the token to the new host", async () => {
-    expect(
+    await expect(
       withTelegramApi(
         () => telegramActions().sendQuestions!(QUESTION_PROMPT),
         () =>

@@ -39,7 +39,7 @@ describe("wrapToolsWithHooks", () => {
           : undefined,
       ),
     );
-    expect(
+    await expect(
       (wrapped.bash!.execute as (i: unknown, o: unknown) => Promise<unknown>)(
         { cmd: "ls" },
         {},
@@ -99,10 +99,10 @@ describe("wrapToolsWithHooks", () => {
         {},
       );
 
-    expect(run(editTo({ query: "" }))).rejects.toThrow(
+    await expect(run(editTo({ query: "" }))).rejects.toThrow(
       /invalid args from hook/,
     );
-    expect(run(editTo({ query: "x", extra: 1 }))).rejects.toThrow(
+    await expect(run(editTo({ query: "x", extra: 1 }))).rejects.toThrow(
       /invalid args from hook/,
     );
     expect(ran).toBe(false);
