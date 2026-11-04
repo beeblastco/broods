@@ -1,9 +1,11 @@
+import { flattenFramedNodes } from "@/app/lib/canvasFrameNodes";
 import type { ProposedNode } from "@/app/lib/copilotActions";
 import { NODE_HEIGHT } from "@broods/convex/model/canvasLayout";
 import type { Edge, Node } from "@xyflow/react";
 
 const COLUMN_GAP = 240;
 const ROW_GAP = NODE_HEIGHT + 40;
+const INERT = { deletable: false, focusable: false, selectable: false };
 
 export interface ProposedNodeData extends Record<string, unknown> {
   failed: boolean;
@@ -22,25 +24,26 @@ export function withProposal(
   const removed = new Set(
     proposed
       .filter((node) => node.change === "remove")
-      .map((node) => nodeKey(node.kind, node.name)),
+      .map((node) => `${node.kind}:${node.name}`),
   );
   const shown = nodes.map((node) =>
-    removed.has(nodeKey(node.type, node.data.label))
+    removed.has(`${node.type}:${String(node.data.label)}`)
       ? {
           ...node,
           data: { ...node.data, proposal: failed ? "failed" : "remove" },
-          style: { ...node.style, opacity: 0.5 },
         }
       : node,
   );
 
+  // Positions are absolute here: a framed member's is relative to its frame.
+  const flat = flattenFramedNodes(nodes);
   const byName = new Map(
-    nodes.map((node) => [String(node.data.label), absolute(node, nodes)]),
+    flat.map((node) => [String(node.data.label), node.position]),
   );
-  const right = Math.max(0, ...[...byName.values()].map((at) => at.x));
-  const top = Math.min(0, ...[...byName.values()].map((at) => at.y));
+  const right = Math.max(0, ...flat.map((node) => node.position.x));
+  const top = Math.min(0, ...flat.map((node) => node.position.y));
   const stacked = new Map<string, number>();
-  const ghosts: Node[] = [];
+  const ghosts: Array<{ connectTo?: string; node: Node }> = [];
   for (const node of proposed) {
     if (node.change !== "add" || byName.has(node.name)) continue;
     const anchor = node.connectTo ?? "";
@@ -50,67 +53,47 @@ export function withProposal(
     const position = { x: at.x + COLUMN_GAP, y: at.y + row * ROW_GAP };
     byName.set(node.name, position);
     ghosts.push({
-      connectable: false,
-      data: { failed: failed, kind: node.kind, label: node.name },
-      deletable: false,
-      draggable: false,
-      focusable: false,
-      id: `proposed:${node.name}`,
-      position: position,
-      selectable: false,
-      type: "proposed",
+      connectTo: node.connectTo,
+      node: {
+        ...INERT,
+        connectable: false,
+        data: { failed: failed, kind: node.kind, label: node.name },
+        draggable: false,
+        id: `proposed:${node.name}`,
+        position: position,
+        type: "proposed",
+      },
     });
   }
 
   // Edges once every ghost is placed, so one may connect to a ghost listed after it.
-  const all = [...nodes, ...ghosts];
-  const ghostEdges = ghosts.flatMap((ghost): Edge[] => {
-    const connectTo = proposed.find(
-      (node) => node.name === ghost.data.label,
-    )?.connectTo;
+  const all = [...nodes, ...ghosts.map(({ node }) => node)];
+  const ghostEdges = ghosts.flatMap(({ connectTo, node }): Edge[] => {
     const target = all.find((other) => other.data.label === connectTo);
     if (!target) return [];
     const targetKind =
       target.type === "proposed" ? target.data.kind : target.type;
-    const fromTarget = ghost.data.kind !== "agent" && targetKind === "agent";
+    const fromTarget = node.data.kind !== "agent" && targetKind === "agent";
 
     return [
       {
-        deletable: false,
-        focusable: false,
-        id: `${ghost.id}:edge`,
-        selectable: false,
-        source: fromTarget ? target.id : ghost.id,
+        ...INERT,
+        id: `${node.id}:edge`,
+        source: fromTarget ? target.id : node.id,
         style: {
           stroke: failed
             ? "var(--color-destructive)"
             : "var(--color-canvas-mount)",
           strokeDasharray: "4 3",
         },
-        target: fromTarget ? ghost.id : target.id,
+        target: fromTarget ? node.id : target.id,
         type: "simplebezier",
       },
     ];
   });
 
-  return { edges: [...edges, ...ghostEdges], nodes: [...shown, ...ghosts] };
-}
-
-// A framed member's position is relative to its frame.
-function absolute(
-  node: Node,
-  nodes: readonly Node[],
-): { x: number; y: number } {
-  const parent = node.parentId
-    ? nodes.find((other) => other.id === node.parentId)
-    : undefined;
-
   return {
-    x: node.position.x + (parent?.position.x ?? 0),
-    y: node.position.y + (parent?.position.y ?? 0),
+    edges: [...edges, ...ghostEdges],
+    nodes: [...shown, ...ghosts.map(({ node }) => node)],
   };
-}
-
-function nodeKey(kind: string | undefined, name: unknown): string {
-  return `${kind ?? ""}:${String(name)}`;
 }

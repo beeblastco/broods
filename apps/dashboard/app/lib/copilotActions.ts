@@ -76,7 +76,6 @@ export interface TrackedDeploy {
   runUrl?: string;
   sha: string;
   state: "deployed" | "deploying" | "failed" | "waiting";
-  url: string;
 }
 
 export interface CopilotPlan {
@@ -89,7 +88,6 @@ export interface CopilotPlan {
 export interface PendingChange {
   action: CopilotAction;
   index: number;
-  messageId: string;
 }
 
 export interface ProposedNode {
@@ -123,12 +121,6 @@ export interface DockProposal {
 }
 
 const NO_NODES: readonly ProposedNode[] = [];
-
-const DRAWN: ReadonlySet<DockApply["phase"]> = new Set([
-  "applying",
-  "failed",
-  "proposed",
-]);
 
 const OPEN_PHASES: ReadonlySet<DockApply["phase"]> = new Set([
   "applying",
@@ -190,7 +182,7 @@ export function dockProposals(
     const changes = writes.flatMap(({ action, index }): PendingChange[] => {
       if (dropped.has(changeKey(id, index))) return [];
       if (action.type !== "commitFiles") {
-        return [{ action: action, index: index, messageId: id }];
+        return [{ action: action, index: index }];
       }
       const files = action.files.filter(
         (file) => !dropped.has(changeKey(id, index, file.path)),
@@ -198,13 +190,7 @@ export function dockProposals(
 
       return files.length === 0
         ? []
-        : [
-            {
-              action: { ...action, files: files },
-              index: index,
-              messageId: id,
-            },
-          ];
+        : [{ action: { ...action, files: files }, index: index }];
     });
     const commit = plan.actions.find((action) => action.type === "commitFiles");
     const applied = applies[id];
@@ -221,7 +207,7 @@ export function dockProposals(
       branch: commit?.branch,
       changes: changes,
       messageId: id,
-      nodes: plan.nodes ?? [],
+      nodes: plan.nodes ?? NO_NODES,
       stage: stage,
       title:
         commit?.message ||
@@ -236,9 +222,9 @@ export function dockProposals(
 export function proposedNodes(
   proposal: DockProposal | null,
 ): readonly ProposedNode[] {
-  if (!proposal || !DRAWN.has(proposal.apply.phase)) return NO_NODES;
-
-  return proposal.nodes.length > 0 ? proposal.nodes : NO_NODES;
+  return proposal && OPEN_PHASES.has(proposal.apply.phase)
+    ? proposal.nodes
+    : NO_NODES;
 }
 
 /** Keys a dropped change: a whole step, or one file of its commit. */
@@ -272,49 +258,25 @@ export function openProposal(
 }
 
 /** The chat's record of a proposal, in the words the bar would use. */
-export function applyStatus(proposal: DockProposal): {
-  failed: boolean;
-  text: string;
-} {
-  const { apply, branch } = proposal;
+export function applyStatus({ apply, branch }: DockProposal): string {
   const sha = apply.sha?.slice(0, 7);
   switch (apply.phase) {
     case "proposed":
-      return {
-        failed: false,
-        text: "Proposed. Review it at the top of the canvas.",
-      };
+      return "Proposed. Review it at the top of the canvas.";
     case "applying":
-      return {
-        failed: false,
-        text: sha ? `Committed ${sha} to ${branch}. Deploying.` : "Applying.",
-      };
+      return sha ? `Committed ${sha} to ${branch}. Deploying.` : "Applying.";
     case "deployed":
       if (apply.finishedAt !== undefined && apply.startedAt !== undefined) {
-        const seconds = Math.max(
-          1,
-          Math.round((apply.finishedAt - apply.startedAt) / 1000),
-        );
-
-        return { failed: false, text: `Deployed in ${seconds} s.` };
+        return `Deployed in ${Math.max(1, Math.round((apply.finishedAt - apply.startedAt) / 1000))} s.`;
       }
 
-      return {
-        failed: false,
-        text: apply.runUrl ? "Opened a pull request." : "Applied.",
-      };
+      return apply.runUrl ? "Opened a pull request." : "Applied.";
     case "failed":
-      return {
-        failed: true,
-        text: `Deploy failed: ${apply.error ?? "unknown error."}`,
-      };
+      return `Deploy failed: ${apply.error ?? "unknown error."}`;
     case "discarded":
-      return {
-        failed: false,
-        text: sha
-          ? `Discarded. ${sha} stays on ${branch}.`
-          : "Discarded. Nothing was changed.",
-      };
+      return sha
+        ? `Discarded. ${sha} stays on ${branch}.`
+        : "Discarded. Nothing was changed.";
   }
 }
 

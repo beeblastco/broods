@@ -53,6 +53,12 @@ export const agentStatusConfig: Record<
   unhealthy: { color: "bg-destructive", text: "Unhealthy" },
 };
 
+// A node a dock proposal removes: dimmed and dashed, red once the deploy failed.
+const REMOVED_BORDER: Record<NonNullable<BaseNodeData["proposal"]>, string> = {
+  failed: "border-dashed border-destructive opacity-50",
+  remove: "border-dashed border-muted-foreground opacity-50",
+};
+
 const STATE_TEXT_TONE: Record<WorkspaceSandboxState["kind"], string> = {
   inherited: "text-muted-foreground",
   override: "text-canvas-mount/90",
@@ -138,9 +144,7 @@ export function BaseNode({
   }
 
   const borderClass = data.proposal
-    ? data.proposal === "failed"
-      ? "border-dashed border-destructive"
-      : "border-dashed border-muted-foreground"
+    ? REMOVED_BORDER[data.proposal]
     : !isConnectedToAgent
       ? "border-destructive/40 hover:border-destructive/60"
       : "border-border hover:border-foreground/25";

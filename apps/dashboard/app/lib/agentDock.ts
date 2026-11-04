@@ -123,35 +123,25 @@ export function proposalPlan(
   const missing = repo
     ? files.find((file) => file.content === null && !read.has(file.path))
     : undefined;
+  const refusal = unread
+    ? `${unread.path} was not among the files the agent read. Ask it to edit only files it was shown.`
+    : missing
+      ? `${missing.path} is not in the repo, so it cannot be deleted.`
+      : undefined;
   const commit: CopilotAction[] =
     files.length === 0
       ? []
-      : !repo
-        ? [
+      : repo && !refusal
+        ? [commitAction(files, message, repo)]
+        : [
             {
               label: label,
               reason:
+                refusal ??
                 "The repo could not be read, so this edit cannot be applied. Ask again.",
               type: "blocked",
             },
-          ]
-        : unread
-          ? [
-              {
-                label: label,
-                reason: `${unread.path} was not among the files the agent read. Ask it to edit only files it was shown.`,
-                type: "blocked",
-              },
-            ]
-          : missing
-            ? [
-                {
-                  label: label,
-                  reason: `${missing.path} is not in the repo, so it cannot be deleted.`,
-                  type: "blocked",
-                },
-              ]
-            : [commitAction(files, message, repo)];
+          ];
 
   return {
     actions: [

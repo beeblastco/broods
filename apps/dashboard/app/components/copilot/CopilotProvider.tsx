@@ -534,7 +534,6 @@ export function CopilotProvider({
           committedAt: Date.now(),
           messageId: messageId,
           sha: result.sha,
-          url: result.url,
         },
       ]);
 

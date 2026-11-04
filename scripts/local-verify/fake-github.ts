@@ -50,8 +50,8 @@ export interface FakeGitHub {
   repos: Map<number, FakeRepo>;
   /** Adds a repo with one commit holding `files` on `defaultBranch`. */
   addRepo: (repo: NewRepo) => FakeRepo;
-  /** The files at a branch's head; null when the branch is missing. */
-  filesAt: (repoId: number, branch: string) => Map<string, string> | null;
+  /** The files at a branch's head or a commit sha; null when neither exists. */
+  filesAt: (repoId: number, ref: string) => Map<string, string> | null;
   /** Posts a webhook delivery to `target`, signed with `secret`. */
   deliver: (
     target: string,

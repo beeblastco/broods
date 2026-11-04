@@ -24,69 +24,53 @@ export function DockApplyBar(): React.JSX.Element | null {
     <section
       data-apply-bar={apply.phase}
       aria-label="Proposed change"
-      className="pointer-events-auto w-full max-w-lg rounded-md border border-border bg-card text-xs shadow-sm"
+      className="pointer-events-auto w-full max-w-lg rounded-md border border-border bg-card text-xs text-card-foreground shadow-sm"
     >
       <div className="flex h-8 items-center gap-2 pr-1 pl-2.5">
         <span className="min-w-0 flex-1 truncate font-medium">
           {proposal.title}
         </span>
         {apply.phase === "proposed" && (
-          <>
-            <button
-              type="button"
-              data-apply-code
-              aria-expanded={isOpen}
-              onClick={() => setOpenFor(isOpen ? null : messageId)}
-              className="shrink-0 cursor-pointer text-2xs text-muted-foreground underline"
-            >
-              <ChangeCount proposal={proposal} />
-            </button>
-            <Button
-              size="xs"
-              variant="ghost"
-              tone="muted"
-              onClick={() => discardProposal(messageId)}
-            >
-              Discard
-            </Button>
-            <Button size="xs" onClick={() => applyProposal(messageId)}>
-              Apply
-            </Button>
-          </>
+          <button
+            type="button"
+            data-apply-code
+            aria-expanded={isOpen}
+            onClick={() => setOpenFor(isOpen ? null : messageId)}
+            className="shrink-0 cursor-pointer text-2xs text-muted-foreground underline"
+          >
+            <ChangeCount proposal={proposal} />
+          </button>
         )}
         {apply.phase === "applying" && (
-          <>
-            <span className="shrink-0 text-muted-foreground">
-              {proposal.branch ? (
-                <>
-                  Deploying to {proposal.stage ?? proposal.branch} ·{" "}
-                  <Elapsed since={apply.startedAt ?? Date.now()} />
-                </>
-              ) : (
-                "Applying"
-              )}
-            </span>
-            <RunLink href={apply.runUrl} />
-          </>
+          <span className="shrink-0 text-muted-foreground">
+            {proposal.branch ? (
+              <>
+                Deploying to {proposal.stage ?? proposal.branch} ·{" "}
+                <Elapsed since={apply.startedAt ?? Date.now()} />
+              </>
+            ) : (
+              "Applying"
+            )}
+          </span>
         )}
         {apply.phase === "failed" && (
-          <>
-            <span className="shrink-0 text-destructive">Deploy failed</span>
-            <RunLink href={apply.runUrl} />
-            <Button
-              size="xs"
-              variant="ghost"
-              tone="muted"
-              onClick={() => discardProposal(messageId)}
-            >
-              Discard
-            </Button>
-            {canRetry(proposal) && (
-              <Button size="xs" onClick={() => applyProposal(messageId)}>
-                Retry
-              </Button>
-            )}
-          </>
+          <span className="shrink-0 text-destructive">Deploy failed</span>
+        )}
+        {apply.phase !== "proposed" && <RunLink href={apply.runUrl} />}
+        {apply.phase !== "applying" && (
+          <Button
+            size="xs"
+            variant="ghost"
+            tone="muted"
+            onClick={() => discardProposal(messageId)}
+          >
+            Discard
+          </Button>
+        )}
+        {apply.phase !== "applying" && canRetry(proposal) && (
+          <Button size="xs" onClick={() => applyProposal(messageId)}>
+            {apply.phase === "proposed" ? "Apply" : "Retry"}
+          </Button>
         )}
       </div>
       {isOpen && (

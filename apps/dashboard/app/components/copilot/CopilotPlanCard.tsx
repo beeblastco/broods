@@ -51,18 +51,20 @@ export function CopilotPlanCard({
           )}
         </div>
       ))}
-      {status && (
+      {proposal && status && (
         <p
-          data-apply-status={proposal?.apply.phase}
+          data-apply-status={proposal.apply.phase}
           className={cn(
             "text-2xs",
-            status.failed ? "text-destructive" : "text-muted-foreground",
+            proposal.apply.phase === "failed"
+              ? "text-destructive"
+              : "text-muted-foreground",
           )}
         >
-          {stale && proposal?.apply.phase === "proposed"
+          {stale && proposal.apply.phase === "proposed"
             ? "Asked on another project or stage. Switch back to apply."
-            : status.text}
-          {proposal?.apply.phase === "deployed" && proposal.apply.runUrl && (
+            : status}
+          {proposal.apply.phase === "deployed" && proposal.apply.runUrl && (
             <>
               {" "}
               <a

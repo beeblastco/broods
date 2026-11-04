@@ -318,7 +318,6 @@ describe("agent dock", () => {
       messageId: "m",
       runUrl: "https://github.test/run/1",
       sha: "8d7ea8b41c",
-      url: "https://github.test/commit/8d7ea8b41c",
     };
     const status = (state: "deployed" | "deploying" | "failed"): string => {
       const proposal = dockProposals(
@@ -335,7 +334,7 @@ describe("agent dock", () => {
         ],
       ).get("m");
 
-      return proposal ? applyStatus(proposal).text : "";
+      return proposal ? applyStatus(proposal) : "";
     };
 
     expect(status("deploying")).toBe("Committed 8d7ea8b to dev. Deploying.");
