@@ -27,6 +27,7 @@ import { orgSeatBilling } from "./org-seat-billing.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
 import { productionRegion } from "./production-region.ts";
 import { projectUsage } from "./project-usage.ts";
+import { providerTools } from "./provider-tools.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
 import { runToken } from "./run-token.ts";
@@ -73,6 +74,7 @@ export const verifyCases: readonly VerifyCase[] = [
   autoCompaction,
   machineSandbox,
   bashTimeout,
+  providerTools,
   ownBucketSandbox,
   snapshotStage,
   browserSandbox,

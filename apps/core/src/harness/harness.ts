@@ -147,6 +147,7 @@ import {
 import { serializeToolCalls, wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { COMPUTER_TOOL_NAME } from "./tools/computer.tool.ts";
 import { createTools } from "./tools/index.ts";
+import type { SandboxStandIn } from "./tools/sandbox-stand-in.ts";
 import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 import {
@@ -476,6 +477,7 @@ export async function runAgentLoop(
 
   let parentQuestion: AgentMessage | undefined;
   const configuredApprovals = new Map<string, true>();
+  const sandboxStandIns = new Map<string, SandboxStandIn>();
   const policyMcpIdsByName = new Map<string, string>();
   const channelDelivery =
     session.delivery?.kind === "channel" ? session.delivery : undefined;
@@ -499,6 +501,7 @@ export async function runAgentLoop(
           detachedResultIds.push(resultId);
         },
         approvalRequirements: configuredApprovals,
+        sandboxStandIns: sandboxStandIns,
         policyMcpIdsByName: policyMcpIdsByName,
         sandboxMetadata: sandboxMetadata,
         ...(channelDelivery && session.channelActions
@@ -549,7 +552,10 @@ export async function runAgentLoop(
   };
   // Computer actions in one step share a screen, so they run in the model's order.
   const { tools, reserve: reserveComputerTurn } = serializeToolCalls(
-    wrapToolsWithOwnerFence(wrapToolsWithHooks(builtTools, hooks), session),
+    wrapToolsWithOwnerFence(
+      wrapToolsWithHooks(builtTools, hooks, sandboxStandIns),
+      session,
+    ),
     COMPUTER_TOOL_NAME,
   );
   const policyToolApproval = await createPolicyToolApproval(
@@ -582,6 +588,7 @@ export async function runAgentLoop(
       configuredApprovals: configuredApprovals,
       workspaces: resolvedWorkspaces,
       sandboxes: sandboxes,
+      sandboxStandIns: sandboxStandIns,
       ...(policyToolApproval ? { policyApproval: policyToolApproval } : {}),
     });
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;

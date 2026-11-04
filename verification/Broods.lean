@@ -11,6 +11,7 @@ import Broods.SyncConcurrency
 import Broods.DevWatch
 import Broods.StageTicket
 import Broods.EscFilter
+import Broods.ProviderTools
 
 open Lean Elab Command
 
