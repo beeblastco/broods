@@ -229,6 +229,7 @@ stateDiagram-v2
 ```
 
 - Refresh removes the row when the provider reports nothing or `terminating`, so `terminating` is never stored by core.
+- A reserved row is written only while its reservation still names the machine (`upsert` in `packages/convex/sandbox/instances.ts`). Every release drops the reservation before the row goes, so a write that lands after it, such as a Cloudflare or Worker command that answered core after a terminate, is dropped instead of bringing back a row that bills a machine that is gone, or pointing a key reserved again at its old machine. Ephemeral rows need no reservation.
 - `specs` is what the meter bills. `specsVerified` is set only when the size is real: a provider report, or the size Broods sets on workdir, MicroVM and Cloudflare. Without it the dashboard shows `?`.
 - Executors refresh the row on every command. A refresh of a machine still running at the size, credentials and project it was last billed at bills at most once a minute (`REFRESH_BILL_EVERY_MS` in `packages/convex/sandbox/instances.ts`), so an owner's concurrent tasks write the shared usage rows about once a minute each, not on every command. The next bill, status change or removal covers the stretch, so nothing is lost; like the idle tail, it lands on the day and month of the bill that covers it, and live usage can trail by up to a minute.
 
