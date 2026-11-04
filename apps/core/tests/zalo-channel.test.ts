@@ -350,10 +350,10 @@ describe("zalo channel adapter", () => {
 
   it("rejects image URLs Zalo could not fetch", async () => {
     const calls = await captureZaloCalls(async (actions): Promise<void> => {
-      expect(
+      await expect(
         actions.sendImages?.([{ type: "image", url: "/workspace/chart.png" }]),
       ).rejects.toThrow("absolute http(s) image URL");
-      expect(
+      await expect(
         actions.sendImages?.([
           { type: "image", url: "data:image/png;base64,iVBORw0KGgo=" },
         ]),

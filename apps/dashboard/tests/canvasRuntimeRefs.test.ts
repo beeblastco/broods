@@ -253,7 +253,7 @@ describe("writeChangedRefs caching", () => {
       if (attempts === 1) throw new Error("mutation failed");
     };
 
-    expect(
+    await expect(
       writeChangedRefs([ref("cfg", "a")], cache, serializeValue, write),
     ).rejects.toThrow("mutation failed");
     expect(cache.has("cfg")).toBe(false);
@@ -272,7 +272,7 @@ describe("writeChangedRefs caching", () => {
       if (r.configId === "cfg_bad") throw new Error("mutation failed");
     };
 
-    expect(
+    await expect(
       writeChangedRefs(
         [ref("cfg_ok", "a"), ref("cfg_bad", "b")],
         cache,

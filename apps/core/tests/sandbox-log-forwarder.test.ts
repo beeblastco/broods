@@ -236,7 +236,7 @@ describe("handler", () => {
       async () => new Response(null, { status: 401 }),
     );
 
-    expect(handler(cloudWatchEvent(payload()))).rejects.toThrow(
+    await expect(handler(cloudWatchEvent(payload()))).rejects.toThrow(
       "OTLP push failed with HTTP 401",
     );
   });

@@ -76,7 +76,7 @@ test("listStages rejects a non-JSON 404 as a missing stages route", async () => 
     () => new Response("Not Found", { status: 404 }),
   );
 
-  expect(client.listStages("demo-app")).rejects.toThrow(
+  await expect(client.listStages("demo-app")).rejects.toThrow(
     /older than your CLI .*no \/v1\/account\/stages route/,
   );
 });
@@ -92,7 +92,7 @@ test("a network failure names the server and the cause", async () => {
     },
   });
 
-  expect(client.listStages("demo-app")).rejects.toThrow(
+  await expect(client.listStages("demo-app")).rejects.toThrow(
     "Cannot reach https://convex.example.com: connect ECONNREFUSED 10.0.0.1:443",
   );
 });
@@ -127,7 +127,7 @@ test("listStages surfaces a JSON 404 as a normal request failure", async () => {
       ),
   );
 
-  expect(client.listStages("demo-app")).rejects.toThrow(
+  await expect(client.listStages("demo-app")).rejects.toThrow(
     /Project demo-app was not found/,
   );
 });
@@ -140,7 +140,7 @@ test("a 401 tells the user to log in again", async () => {
       }),
   );
 
-  expect(client.listStages("demo-app")).rejects.toThrow(
+  await expect(client.listStages("demo-app")).rejects.toThrow(
     "List stages failed: 401 Unauthorized\nRun `broods login` to sign in again.",
   );
 });

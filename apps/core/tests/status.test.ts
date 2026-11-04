@@ -52,9 +52,9 @@ describe("async tool result persistence", () => {
     queryMock.mockResolvedValueOnce(true as never);
     runtime.query = queryMock as never;
     runtime.mutate = mutationMock as never;
-    expect(verifyAsyncToolCompletionToken("result-1", "token-1")).resolves.toBe(
-      true,
-    );
+    await expect(
+      verifyAsyncToolCompletionToken("result-1", "token-1"),
+    ).resolves.toBe(true);
     await settleAsyncToolResultFromCallback({
       resultId: "result-1",
       status: "failed",

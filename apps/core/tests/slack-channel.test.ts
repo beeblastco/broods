@@ -41,9 +41,9 @@ describe("slack channel adapter", () => {
       "1776988800",
     );
 
-    expect(adapter.authenticate(request)).resolves.toBe(true);
+    await expect(adapter.authenticate(request)).resolves.toBe(true);
 
-    expect(
+    await expect(
       adapter.authenticate({
         ...request,
         headers: {
@@ -826,7 +826,7 @@ describe("slack channel adapter", () => {
       url_private: "https://files.slack.com.attacker.example/steal.png",
     });
 
-    expect(message.attachments?.[0]?.fetchData?.()).rejects.toThrow(
+    await expect(message.attachments?.[0]?.fetchData?.()).rejects.toThrow(
       /refusing to send the Slack token/,
     );
   });

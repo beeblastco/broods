@@ -246,7 +246,7 @@ describe("mountRoleArn", () => {
     expect(() =>
       mountRoleArn({ ...storage, auth: { type: "managed" } }),
     ).toThrow(expected);
-    expect(
+    await expect(
       resolveS3ReadTarget({ storage: storage, namespace: NS }),
     ).rejects.toThrow(expected);
     expect(assumeRoleSendMock).not.toHaveBeenCalled();
@@ -405,7 +405,7 @@ describe("resolveS3Mount", () => {
   it("never mints credentials for a prefix that is not a directory", async () => {
     const { assumeScopedMountCredentials } =
       await import("../src/harness/sandbox/s3-mount.ts");
-    expect(
+    await expect(
       assumeScopedMountCredentials({
         roleArn: "arn:aws:iam::2:role/byo",
         bucket: "acme",

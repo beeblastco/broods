@@ -87,7 +87,7 @@ const GUARD_CASES = [
 test("a client on a 2025-era revision is refused with -32022", async () => {
   process.env.BROODS_ACCOUNT_SECRET = "bask_test";
 
-  expect(connect({}, false)).rejects.toMatchObject({ code: -32022 });
+  await expect(connect({}, false)).rejects.toMatchObject({ code: -32022 });
 });
 
 test.each(GUARD_CASES)(

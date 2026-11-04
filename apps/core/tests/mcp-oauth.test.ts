@@ -177,7 +177,7 @@ describe("mcp oauth access tokens", () => {
   it("surfaces a failed refresh as an error naming the server", async () => {
     stubTokenEndpoint([{ status: 400, body: { error: "invalid_grant" } }]);
 
-    expect(mcpAccessToken("gmail", resolvedOauth())).rejects.toThrow(
+    await expect(mcpAccessToken("gmail", resolvedOauth())).rejects.toThrow(
       /MCP server gmail: OAuth token refresh.*invalid_grant/,
     );
   });
@@ -188,7 +188,7 @@ describe("mcp oauth access tokens", () => {
       { body: { access_token: "token-b", expires_in: 3600 } },
     ]);
 
-    expect(mcpAccessToken("gmail", resolvedOauth())).rejects.toThrow();
+    await expect(mcpAccessToken("gmail", resolvedOauth())).rejects.toThrow();
     expect(await mcpAccessToken("gmail", resolvedOauth())).toBe("token-b");
     expect(requests).toHaveLength(2);
   });
@@ -343,7 +343,7 @@ describe("mcp transport fetch", () => {
       return new Response("{}");
     }) as typeof fetch;
     try {
-      expect(
+      await expect(
         listMcpTools(
           mcpConnection(
             oauthRecord({ oauth: undefined, url: "https://mcp.example.com/" }),
