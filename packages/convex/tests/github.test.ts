@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   broodsRootsFromPaths,
   commitFiles,
+  lastErrorLine,
   deployWorkflow,
   isAgentEditable,
   type GitHubApp,
@@ -152,6 +153,20 @@ test("verifyWebhookSignature accepts only the secret's HMAC", async () => {
   expect(await verifyWebhookSignature("secret", body, signature)).toBe(true);
   expect(await verifyWebhookSignature("other", body, signature)).toBe(false);
   expect(await verifyWebhookSignature("secret", body, null)).toBe(false);
+});
+
+test("a failed run's reason is its last logged error line, without GitHub's framing", () => {
+  const log = [
+    "2026-11-04T00:11:50.1000000Z ##[group]Run bunx broods deploy",
+    "2026-11-04T00:11:57.2000000Z Error: defineMcp needs a url or a handler",
+    "2026-11-04T00:11:57.2100000Z     at compile (broods/deepwiki.ts:3:1)",
+    "2026-11-04T00:11:57.3000000Z ##[error]Process completed with exit code 1.",
+  ].join("\n");
+
+  expect(lastErrorLine(log)).toBe("Error: defineMcp needs a url or a handler");
+  expect(
+    lastErrorLine("2026-11-04T00:11:57.3000000Z all good"),
+  ).toBeUndefined();
 });
 
 describe("agent edits", () => {

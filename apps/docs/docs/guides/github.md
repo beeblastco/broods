@@ -57,7 +57,7 @@ A repo deploys one project. Linking a repo another project already deploys from 
 ## Gotchas
 
 - The repo is the source of truth for what `broods/` defines. `--prune` removes a resource from the stage when you delete it from code. Resources made on the dashboard stay, and so do cron jobs your agents schedule at runtime; code-managed nodes are locked there.
-- The dashboard's Broods agent reads the stage's `broods/` folder and can propose an edit, including deleting a file. Review it in the bar at the top of the canvas, where any file can be dropped. Apply commits what is left to the Development branch and the bar follows the deploy, or opens a pull request against the Production branch and the bar closes. It only changes files inside `broods/`, and needs write access to the stage.
+- The dashboard's Broods agent reads the stage's `broods/` folder and can propose an edit, including deleting a file. Review it in the bar at the top of the canvas, where any file can be dropped. Apply commits what is left to the Development branch and the bar follows the deploy (a failed one shows the error its run logged), or opens a pull request against the Production branch and the bar closes. It only changes files inside `broods/`, and needs write access to the stage.
 - Secrets your agents read with `env("NAME")` are not in the repo. Set them per stage with `broods env set` or on the dashboard before the first push, or the deploy fails naming them.
 - **Unlink** revokes both project keys and forgets the deploy history. The workflow file, the environments and the secrets stay in the repo; delete them there if you no longer want them.
 - Uninstalling the App on GitHub, or removing a repo from it, unlinks every project on those repos.

@@ -1329,6 +1329,7 @@ export declare const api: {
         deploys: Array<{
           branch: string;
           conclusion?: string;
+          error?: string;
           sha: string;
           status: string;
           updatedAt: number;
@@ -5844,6 +5845,7 @@ export declare const internal: {
       {
         branch: string;
         conclusion?: string;
+        error?: string;
         repoId: number;
         runAttempt?: number;
         runId: number;
@@ -5906,6 +5908,7 @@ export declare const internal: {
         deploys: Array<{
           branch: string;
           conclusion?: string;
+          error?: string;
           sha: string;
           status: string;
           updatedAt: number;

@@ -207,6 +207,7 @@ export function CopilotProvider({
         return {
           ...commit,
           conclusion: run.conclusion,
+          error: run.error,
           finishedAt: run.updatedAt,
           runUrl: run.url,
           state: run.conclusion === "success" ? "deployed" : "failed",

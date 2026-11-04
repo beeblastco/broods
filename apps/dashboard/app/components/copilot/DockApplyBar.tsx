@@ -45,7 +45,8 @@ export function DockApplyBar(): React.JSX.Element | null {
           <span className="shrink-0 text-muted-foreground">
             {proposal.branch ? (
               <>
-                Deploying to {proposal.stage ?? proposal.branch} ·{" "}
+                {apply.runUrl ? "Deploying to" : "Queued for"}{" "}
+                {proposal.stage ?? proposal.branch} ·{" "}
                 <Elapsed since={apply.startedAt ?? Date.now()} />
               </>
             ) : (
