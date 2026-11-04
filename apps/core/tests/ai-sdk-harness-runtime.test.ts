@@ -66,7 +66,7 @@ const outcomes: Promise<Partial<Record<OutcomeName, Outcome>>> = (async () => {
     new Response(probe.stdout).text(),
     new Response(probe.stderr).text(),
   ]);
-  if (code !== 0) throw new Error(stderr);
+  if (code !== 0 || stderr.includes("HarnessAgent:")) throw new Error(stderr);
 
   return JSON.parse(stdout);
 })();
