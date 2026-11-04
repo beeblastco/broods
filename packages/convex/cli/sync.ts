@@ -1,4 +1,5 @@
 import { type Infer, v } from "convex/values";
+import { getStageForWrite } from "../model/ownership/stage";
 import type { GeneratedIds } from "./types";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
@@ -862,6 +863,61 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
     }
 
     return null;
+  },
+});
+
+// Checked at use, not only at mint: a member who lost write access mid-Apply deploys nothing.
+export const resolveApplyTicketAuth = internalQuery({
+  args: {
+    accountId: v.string(),
+    projectId: v.string(),
+    stageId: v.string(),
+    authId: v.string(),
+    expiresAt: v.number(),
+    project: v.string(),
+    stage: v.string(),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      accountId: v.id("accounts"),
+      secretHash: v.string(),
+      scoped: v.literal(true),
+      applyAuthId: v.string(),
+    }),
+  ),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    accountId: Id<"accounts">;
+    secretHash: string;
+    scoped: true;
+    applyAuthId: string;
+  } | null> => {
+    const accountId = ctx.db.normalizeId("accounts", args.accountId);
+    const account = accountId ? await ctx.db.get(accountId) : null;
+    if (!account || account.status !== "active") return null;
+    const resolved = await resolveProjectStage(
+      ctx,
+      account,
+      args.project,
+      args.stage,
+    );
+    if (
+      !resolved ||
+      resolved.projectDoc._id !== args.projectId ||
+      resolved.stageDoc._id !== args.stageId ||
+      !(await getStageForWrite(ctx, args.authId, resolved.stageDoc._id))
+    )
+      return null;
+
+    return {
+      accountId: account._id,
+      secretHash: account.secretHash,
+      scoped: true,
+      applyAuthId: args.authId,
+    };
   },
 });
 

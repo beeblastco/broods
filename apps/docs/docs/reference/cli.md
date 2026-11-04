@@ -201,6 +201,8 @@ Markers are `[+]` create, `[~]` rename, `[*]` update and `[-]` delete. It also w
 
 Syncs the `production` stage once, or the `stages.deploy` stage set with `defineBroods`, and writes its runtime key to `.env.local`.
 
+It also stores the stage's source (`broods/` text files, `package.json`, `bun.lock`); see [Stored source](../guides/deploying.md#stored-source). In GitHub Actions it records `GITHUB_SHA` with it.
+
 ```bash
 broods deploy [--prune] [--rotate-key] [--region <region>] [--stage <name>]
 ```

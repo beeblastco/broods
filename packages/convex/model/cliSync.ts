@@ -19,7 +19,9 @@ import { configObject, parseOr } from "./storedJson";
 import { remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
 import {
+  DISK_WORKSPACE_HINT,
   S3_MOUNT_PROVIDER_HINT,
+  sandboxHoldsWorkspace,
   supportsS3WorkspaceMount,
 } from "./sandboxProviders";
 import {
@@ -149,6 +151,11 @@ export function assertSupportedWorkspaceSandboxMounts(
       .filter((entry) => entry.kind === "sandbox")
       .map((entry) => [entry.name, entry]),
   );
+  const workspaceResources = new Map(
+    resources
+      .filter((entry) => entry.kind === "workspace")
+      .map((entry) => [entry.name, entry]),
+  );
   for (const agent of resources.filter((entry) => entry.kind === "agent")) {
     const config = plainRecord(agent.config);
     const workspaces = config.workspaces;
@@ -162,8 +169,29 @@ export function assertSupportedWorkspaceSandboxMounts(
           : typeof workspace.sandbox === "string"
             ? workspace.sandbox
             : defaultSandbox;
+      const sandbox = sandboxName ? sandboxes.get(sandboxName) : undefined;
+      const storage = plainRecord(
+        plainRecord(
+          workspaceResources.get(
+            String(workspace.workspaceId ?? workspace.name),
+          )?.config,
+        ).storage,
+      ).provider;
+      if (storage === "disk") {
+        const sandboxConfig = plainRecord(sandbox?.config);
+        if (
+          sandbox &&
+          sandboxHoldsWorkspace("disk", {
+            provider: sandboxProvider(sandbox),
+            persistent: sandboxConfig.persistent,
+          })
+        )
+          continue;
+        throw new ClientError(
+          `Agent "${agent.name}" workspace "${String(workspace.name ?? workspace.workspaceId)}": ${DISK_WORKSPACE_HINT}.`,
+        );
+      }
       if (!sandboxName) continue;
-      const sandbox = sandboxes.get(sandboxName);
       if (
         !sandbox ||
         supportsS3WorkspaceMount(
@@ -191,7 +219,8 @@ export function assertSupportedWorkspaceStorage(resource: CliResource): void {
   const config = plainRecord(resource.config);
   const storage = plainRecord(config.storage);
   const provider = storage.provider;
-  if (provider === undefined || provider === "s3") return;
+  if (provider === undefined || provider === "s3" || provider === "disk")
+    return;
   if (provider === "vercel") {
     throw new ClientError(
       `Workspace "${resource.name}" uses storage.provider "vercel", but Vercel Drive workspace storage is not supported yet. ` +
@@ -199,7 +228,7 @@ export function assertSupportedWorkspaceStorage(resource: CliResource): void {
     );
   }
   throw new ClientError(
-    `Workspace "${resource.name}" config.storage.provider must be one of: s3`,
+    `Workspace "${resource.name}" config.storage.provider must be one of: s3, disk`,
   );
 }
 

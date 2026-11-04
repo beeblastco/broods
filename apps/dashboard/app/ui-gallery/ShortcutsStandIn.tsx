@@ -14,13 +14,14 @@ import {
 } from "@/app/components/ShortcutProvider";
 import { Input } from "@/app/components/ui/input";
 import { useHydrated } from "@/app/hooks/useHydrated";
-import { ChangeTray } from "@/app/components/copilot/ChangeTray";
+import { DockApplyBar } from "@/app/components/copilot/DockApplyBar";
 import {
-  actionTier,
-  pendingChanges,
+  changeKey,
+  dockProposals,
+  openProposal,
   planRunsUnattended,
   type CopilotAction,
-  type TrackedDeploy,
+  type DockApply,
 } from "@/app/lib/copilotActions";
 import { itemAction, planFromQuery } from "@/app/lib/copilotIntent";
 import type { SearchItem } from "@/app/lib/paletteSearch";
@@ -75,26 +76,6 @@ const ITEMS: readonly SearchItem[] = [
     id: "stage:s2",
     target: { href: "/p?stage=s2", type: "navigate" },
     title: "production",
-  },
-];
-
-const SEEDED_DEPLOYS: readonly TrackedDeploy[] = [
-  {
-    branch: "dev",
-    committedAt: 0,
-    label: "Add firecrawl",
-    runUrl: "https://github.test/run/1",
-    sha: "c1",
-    state: "deployed",
-    url: "https://github.test/commit/c1",
-  },
-  {
-    branch: "dev",
-    committedAt: 0,
-    label: "Add a workspace",
-    sha: "c2",
-    state: "deploying",
-    url: "https://github.test/commit/c2",
   },
 ];
 
@@ -155,8 +136,10 @@ function Surfaces(): React.JSX.Element {
   );
   const [messages, setMessages] = useState<readonly CopilotMessage[]>([]);
   const [completed, setCompleted] = useState<ReadonlySet<string>>(new Set());
-  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
-  const [deploys, setDeploys] = useState<readonly TrackedDeploy[]>([]);
+  const [dropped, setDropped] = useState<ReadonlySet<string>>(new Set());
+  const [applies, setApplies] = useState<Readonly<Record<string, DockApply>>>(
+    {},
+  );
   const [isOpen, setOpen] = useState(false);
   const [liveCanvas, setLiveCanvas] = useState(true);
   const [warmed, setWarmed] = useState("");
@@ -206,27 +189,33 @@ function Surfaces(): React.JSX.Element {
     }
   };
 
+  const proposals = dockProposals(messages, dropped, completed, applies, []);
   // Rebuilt every render on purpose: a fixture gains nothing from a stable identity.
   const copilot: CopilotState = {
+    applyProposal: (messageId) => {
+      for (const { action } of proposals.get(messageId)?.changes ?? []) {
+        run(action);
+      }
+      setApplies((prev) => ({ ...prev, [messageId]: { phase: "deployed" } }));
+    },
     ask: ask,
     completed: completed,
-    deploys: deploys,
-    dismissDeploy: (sha) =>
-      setDeploys((prev) => prev.filter((deploy) => deploy.sha !== sha)),
-    dismissed: dismissed,
-    dismissStep: (messageId, index) =>
-      setDismissed((prev) => new Set(prev).add(`${messageId}:${index}`)),
+    discardProposal: (messageId) =>
+      setApplies((prev) => ({ ...prev, [messageId]: { phase: "discarded" } })),
+    drift: null,
+    dropChange: (messageId, index, path) =>
+      setDropped((prev) =>
+        new Set(prev).add(changeKey(messageId, index, path)),
+      ),
     isOpen: isOpen,
     items: ITEMS,
     messages: messages,
-    pending: pendingChanges(messages, new Set([...completed, ...dismissed])),
+    proposal: openProposal(messages, proposals),
+    proposals: proposals,
+    revertProposal: () => {},
     runAction: run,
-    runStep: (messageId, index, action) => {
-      if (actionTier(action) === "blocked") return;
-      run(action);
-      setCompleted((prev) => new Set(prev).add(`${messageId}:${index}`));
-    },
     setOpen: setOpen,
+    syncStage: () => {},
     wakeIndex: () => {},
   };
 
@@ -234,7 +223,9 @@ function Surfaces(): React.JSX.Element {
     <CopilotStateProvider value={copilot}>
       {liveCanvas && <CanvasBindings onRun={record} />}
       <div className="relative flex min-h-0 flex-1">
-        <ChangeTray />
+        <div className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center px-4">
+          <DockApplyBar />
+        </div>
         <div className="flex min-w-0 flex-1 flex-col gap-4 p-8">
           <section data-fixture="palette" className="flex items-center gap-3">
             <CommandPalette
@@ -256,14 +247,6 @@ function Surfaces(): React.JSX.Element {
               onClick={() => setLiveCanvas(false)}
             >
               Unmount canvas bindings
-            </button>
-            <button
-              type="button"
-              data-seed-deploys
-              className="cursor-pointer rounded-md border border-border px-2 py-1 text-xs"
-              onClick={() => setDeploys(SEEDED_DEPLOYS)}
-            >
-              Seed applied commits
             </button>
           </section>
 

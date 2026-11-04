@@ -158,10 +158,7 @@ export function createWorkdirHarnessAgent(
   });
 }
 
-function createHarnessAgent(
-  options: HarnessAgentCommonOptions,
-  sandbox: AiSdkHarnessSandbox["sandbox"],
-): HarnessAgent {
+function createHarnessAgent(options: HarnessAgentCommonOptions): HarnessAgent {
   if (
     options.type === "codex" &&
     options.permissionMode !== undefined &&
@@ -177,7 +174,6 @@ function createHarnessAgent(
 
   const settings = {
     harness: options.adapter,
-    sandbox: sandbox,
     ...(options.debug !== undefined ? { debug: options.debug } : {}),
     ...(options.id !== undefined ? { id: options.id } : {}),
     ...(options.instructions !== undefined
@@ -229,7 +225,7 @@ function createHarnessRuntime(
     shared: options.shared,
     type: options.type,
   });
-  const agent = createHarnessAgent(options, provisioned.sandbox);
+  const agent = createHarnessAgent(options);
 
   return {
     agent: agent,
