@@ -117,7 +117,7 @@ sequenceDiagram
 - Every write for one sandbox id goes through `queueMirrorWrite`, so a removal never lands before the upsert.
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
-- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time. A reserved `worker` sandbox's row is upserted once per task and minute (`mirroredFor` in `worker-executor.ts`), not after every command, since only its last-used fields would change. A new task, a new trace of the same task, a failed write, a release or a status read makes the next command write at once, so only `lastUsedAt` trails, by up to a minute.
+- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.
 - A sandbox on the account's own credentials gets no row. No lifecycle verb accepts an ephemeral row.
 
 ## Reservations
@@ -230,7 +230,8 @@ stateDiagram-v2
 
 - Refresh removes the row when the provider reports nothing or `terminating`, so `terminating` is never stored by core.
 - `specs` is what the meter bills. `specsVerified` is set only when the size is real: a provider report, or the size Broods sets on workdir, MicroVM and Cloudflare. Without it the dashboard shows `?`.
-- Executors refresh the row on every command (a reserved `worker` once per task and minute). A refresh of a machine still running at the size, credentials and project it was last billed at bills at most once a minute (`REFRESH_BILL_EVERY_MS` in `packages/convex/sandbox/instances.ts`), so an owner's concurrent tasks write the shared usage rows about once a minute each, not on every command. The next bill, status change or removal covers the stretch, so nothing is lost; like the idle tail, it lands on the day and month of the bill that covers it, and live usage can trail by up to a minute.
+- Executors refresh the row on every command. A refresh of a machine still running at the size, credentials and project it was last billed at bills at most once a minute (`REFRESH_BILL_EVERY_MS` in `packages/convex/sandbox/instances.ts`), so an owner's concurrent tasks write the shared usage rows about once a minute each, not on every command. The next bill, status change or removal covers the stretch, so nothing is lost; like the idle tail, it lands on the day and month of the bill that covers it, and live usage can trail by up to a minute.
+- A reserved `worker` sandbox's row bills nothing, so its executor upserts it once per task and minute (`mirroredFor` in `worker-executor.ts`) instead, since only its last-used fields would change. A new task, a new trace of the same task, a failed write, a release or a status read makes the next command write at once, so only `lastUsedAt` trails, by up to a minute.
 
 ## Lifecycle actions and terminal
 
