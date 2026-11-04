@@ -208,50 +208,70 @@ export function meterEphemeralSandbox(
     : controlPlane?.accountId;
   if (!accountId) return (): void => {};
   const specs = readSpecs?.();
-  void queueMirrorWrite(sandboxId, (): Promise<void> =>
-    upsertSandboxInstance(
-      controlPlane,
-      provider,
-      sandboxId,
-      sandboxId,
-      metadata,
-      { ephemeral: true, specs: specs instanceof Promise ? undefined : specs },
-    ),
+  void queueMirrorUpsert(
+    controlPlane,
+    provider,
+    sandboxId,
+    sandboxId,
+    metadata,
+    { ephemeral: true, specs: specs instanceof Promise ? undefined : specs },
   );
   if (specs instanceof Promise) {
     void specs.then((reported): void => {
       if (!reported) return;
-      void queueMirrorWrite(sandboxId, (): Promise<void> =>
+      void queueMirrorWrite(accountId, sandboxId, (): Promise<void> =>
         setSandboxInstanceSpecs(accountId, sandboxId, sandboxId, reported),
       );
     });
   }
 
-  return (): void =>
-    waitUntil(
-      queueMirrorWrite(sandboxId, (): Promise<void> =>
-        removeSandboxInstance(accountId, sandboxId, sandboxId),
-      ),
+  return (): void => {
+    void queueMirrorWrite(accountId, sandboxId, (): Promise<void> =>
+      removeSandboxInstance(accountId, sandboxId, sandboxId),
     );
+  };
 }
 
-// Every row write for a sandbox goes here, so neither a burst nor a removal beats its upsert.
+// One queue per account, as a write can bill the account's usage rows. Writes land in the order
+// queued, so a stale refresh never lands after a later create, status or removal of its row. A
+// command or a sandbox start never awaits it; shutdown waits for every queued write.
 export function queueMirrorWrite(
+  accountId: string | undefined,
   sandboxId: string,
   write: () => Promise<unknown>,
 ): Promise<void> {
-  const queued = (mirrorWrites.get(sandboxId) ?? Promise.resolve())
-    .then(write)
-    .then(
-      () => {},
-      () => {},
-    );
-  mirrorWrites.set(sandboxId, queued);
+  const key = accountId ?? sandboxId;
+  const queued = (mirrorWrites.get(key) ?? Promise.resolve()).then(write).then(
+    () => {},
+    () => {},
+  );
+  mirrorWrites.set(key, queued);
+  waitUntil(queued);
   void queued.then(() => {
-    if (mirrorWrites.get(sandboxId) === queued) mirrorWrites.delete(sandboxId);
+    if (mirrorWrites.get(key) === queued) mirrorWrites.delete(key);
   });
 
   return queued;
+}
+
+export function queueMirrorUpsert(
+  controlPlane: SandboxControlPlane | undefined,
+  provider: SandboxProvider,
+  reservationKey: string,
+  externalId: string,
+  metadata?: SandboxRunMetadata,
+  options?: Parameters<typeof upsertSandboxInstance>[5],
+): Promise<void> {
+  return queueMirrorWrite(controlPlane?.accountId, externalId, () =>
+    upsertSandboxInstance(
+      controlPlane,
+      provider,
+      reservationKey,
+      externalId,
+      metadata,
+      options,
+    ),
+  );
 }
 
 export function requiredWorkspacePath(
