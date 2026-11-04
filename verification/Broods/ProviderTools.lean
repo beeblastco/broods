@@ -6,6 +6,9 @@ A provider tool the caller runs gets a stand-in (`tools/sandbox-stand-in.ts`): i
 tools (`runsAs`) and takes the place of some (`replaces`). Names are abstract; a tool's own name
 counts for `denyTools` like any name it runs as. A withheld stand-in gives back the Broods tools
 it replaced that `denyTools` still allows.
+
+`customTool` (`tools/sandbox-stand-in.ts`) sends an OpenAI custom tool's text to its `command` in a
+quoted heredoc, ended by `BROODS_INPUT` plus as many `_` as it takes to match no line of the text.
 -/
 
 namespace Broods.ProviderTools
@@ -115,6 +118,59 @@ theorem register_nodup {harness : List Name} {tools : List Tool} {key : Name}
     simp at hnot
     exact hnot (hok (Or.inr ⟨t, ht, rfl⟩))
 
+/-! ## Custom tool input -/
+
+/-- A line of the model's text: `some k` is `BROODS_INPUT` followed by `k` underscores. -/
+abbrev Line := Option Nat
+
+/-- The largest underscore count among the marker-shaped lines. -/
+def maxMarker : List Line → Nat
+  | [] => 0
+  | none :: ls => maxMarker ls
+  | some k :: ls => max k (maxMarker ls)
+
+theorem le_maxMarker {ls : List Line} {k : Nat} (h : some k ∈ ls) : k ≤ maxMarker ls := by
+  induction ls with
+  | nil => simp at h
+  | cons l ls ih =>
+    simp only [List.mem_cons] at h
+    cases l with
+    | none => simp only [maxMarker]; exact ih (by simpa using h)
+    | some j =>
+      simp only [maxMarker]
+      rcases h with h | h
+      · cases h; omega
+      · have := ih h; omega
+
+/-- `while (input.split("\n").includes(marker)) marker += "_"`, from `BROODS_INPUT`. -/
+def pickMarker (ls : List Line) (k : Nat := 0) : Nat :=
+  if h : some k ∈ ls then pickMarker ls (k + 1) else k
+termination_by maxMarker ls + 1 - k
+decreasing_by have := le_maxMarker h; omega
+
+/-- What bash feeds the command: the heredoc lines before the first one equal to the marker. -/
+def heredocBody (marker : Line) : List Line → List Line
+  | [] => []
+  | l :: ls => if l = marker then [] else l :: heredocBody marker ls
+
+/-- The picked marker is no line of the text. -/
+theorem pickMarker_fresh (ls : List Line) (k : Nat) : some (pickMarker ls k) ∉ ls := by
+  fun_induction pickMarker ls k with
+  | case1 k h ih => exact ih
+  | case2 k h => exact h
+
+/-- The command reads exactly the model's text: no line of it ends the heredoc early, so none of
+it runs as shell. -/
+theorem heredoc_reads_input (ls : List Line) :
+    heredocBody (some (pickMarker ls)) (ls ++ [some (pickMarker ls)]) = ls := by
+  have fresh := pickMarker_fresh ls 0
+  generalize some (pickMarker ls) = m at fresh ⊢
+  induction ls with
+  | nil => simp [heredocBody]
+  | cons l ls ih =>
+    simp only [List.mem_cons, not_or] at fresh
+    simp [heredocBody, Ne.symm fresh.1, ih fresh.2]
+
 /-! ## Examples -/
 
 section
@@ -154,6 +210,14 @@ def withholdOnly (deny : List Name) (tools : List Tool) : List Tool :=
   tools.filter (!denied deny ·)
 
 example : withholdOnly [3] [⟨7, [2, 3, 4], [2, 3, 4]⟩] = [] := by decide
+
+/-- The hypotheses hold: text with a `BROODS_INPUT` line gets `BROODS_INPUT_`, as the test checks. -/
+example : pickMarker [none, some 0, none] = 1 := by
+  rw [pickMarker, pickMarker]; simp
+
+/-- The broken variant, a fixed `BROODS_INPUT`, ends the heredoc at the model's own line, and the
+lines after it run as shell. -/
+example : heredocBody (some 0) ([none, some 0, none] ++ [some 0]) = [none] := by decide
 
 end
 
