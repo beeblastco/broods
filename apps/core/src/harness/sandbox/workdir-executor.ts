@@ -4,6 +4,7 @@ import {
   type Sandbox,
   SandboxError,
 } from "@mv37/workdir";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
@@ -66,7 +67,6 @@ import {
   isSandboxGoneError,
   mergeSandboxEnv,
   meterEphemeralSandbox,
-  queueMirrorUpsert,
   SandboxCapacityError,
   SandboxGoneError,
   sandboxReservationKey,
@@ -155,7 +155,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
-    void queueMirrorUpsert(
+    void upsertSandboxInstance(
       this.#config.controlPlane,
       "sandbox",
       request.reservationKey,
@@ -603,7 +603,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
           this.#config.controlPlane?.releaseAfterIdleSeconds,
         ).catch(() => {});
-        void queueMirrorUpsert(
+        void upsertSandboxInstance(
           this.#config.controlPlane,
           "sandbox",
           ns,
@@ -632,7 +632,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.releaseAfterIdleSeconds,
         )
       ) {
-        void queueMirrorUpsert(
+        await upsertSandboxInstance(
           this.#config.controlPlane,
           "sandbox",
           ns,

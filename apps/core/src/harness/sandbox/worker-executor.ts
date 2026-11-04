@@ -6,7 +6,7 @@ import {
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
-import { recordUsageSoon } from "../plan-limits.ts";
+import { recordUsage } from "../plan-limits.ts";
 import { getSandboxExternalId } from "./instance-store.ts";
 import {
   callPlatformWorker,
@@ -38,17 +38,6 @@ const LABEL = "cloudflare v8 worker";
 const WORKER_OVERHEAD_MS = 15_000;
 // So two commands never start from the same stored files; the Worker's conditional write backs it.
 const runsByReservation = new Map<string, Promise<unknown>>();
-// A worker row bills nothing, so a run's later commands within a minute skip its write.
-const mirroredFor = new Map<
-  string,
-  { run: string; at: number; landed: boolean }
->();
-const MIRROR_EVERY_MS = 60_000;
-export const MAX_MIRRORED = 1_000;
-
-export function resetMirroredForTests(): void {
-  mirroredFor.clear();
-}
 
 const statusResult = z.object({ exists: z.boolean() });
 
@@ -112,8 +101,6 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
       "GET",
     );
     const { exists } = statusResult.parse(await response.json());
-    // The caller marks the row suspended or removes it, so the next command must write it.
-    mirroredFor.delete(id);
 
     return exists ? { externalId: id, state: "suspended" } : null;
   }
@@ -124,7 +111,6 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       request,
       async (id): Promise<void> => {
-        mirroredFor.delete(id);
         await callPlatformWorker(
           workerConnection(),
           LABEL,
@@ -183,7 +169,7 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
   #meter(durationMs: number, metadata: SandboxRunMetadata | undefined): void {
     const plane = this.#config.controlPlane;
     if (!plane) return;
-    recordUsageSoon(
+    recordUsage(
       plane.accountId,
       { workerMs: durationMs, workerRequests: 1 },
       {
@@ -205,41 +191,14 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     id: string,
     metadata: SandboxRunRequest["metadata"],
   ): void {
-    const run =
-      metadata?.taskId === undefined ? undefined : JSON.stringify(metadata);
-    const last = mirroredFor.get(id);
-    if (
-      last?.landed === true &&
-      last.run === run &&
-      Date.now() - last.at < MIRROR_EVERY_MS
-    )
-      return;
-    // The last queued write, so a command never skips behind another run's write still landing.
-    mirroredFor.delete(id);
-    const entry =
-      run === undefined
-        ? undefined
-        : { run: run, at: Date.now(), landed: false };
-    if (entry) {
-      if (mirroredFor.size >= MAX_MIRRORED) {
-        const oldest = mirroredFor.keys().next().value;
-        if (oldest !== undefined) mirroredFor.delete(oldest);
-      }
-      mirroredFor.set(id, entry);
-    }
-    void queueMirrorWrite(
-      this.#config.controlPlane?.accountId,
-      id,
-      async (): Promise<void> => {
-        const written = await upsertSandboxInstance(
-          this.#config.controlPlane,
-          "worker",
-          key,
-          id,
-          metadata,
-        );
-        if (written && entry) entry.landed = true;
-      },
+    void queueMirrorWrite(id, (): Promise<void> =>
+      upsertSandboxInstance(
+        this.#config.controlPlane,
+        "worker",
+        key,
+        id,
+        metadata,
+      ),
     );
   }
 }

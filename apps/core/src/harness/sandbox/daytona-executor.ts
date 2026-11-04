@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Daytona, type Sandbox } from "@daytona/sdk";
+import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { logWarn } from "../../shared/log.ts";
@@ -51,7 +52,6 @@ import {
   isSandboxGoneError,
   mergeSandboxEnv,
   meterEphemeralSandbox,
-  queueMirrorUpsert,
   SandboxCapacityError,
   sandboxReservationKey,
   shellQuote,
@@ -278,7 +278,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
           externalId,
           this.#config.controlPlane?.accountId,
         ).catch(() => {});
-        void queueMirrorUpsert(
+        await upsertSandboxInstance(
           this.#config.controlPlane,
           "daytona",
           ns,
@@ -312,7 +312,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
         )
       ) {
-        void queueMirrorUpsert(
+        await upsertSandboxInstance(
           this.#config.controlPlane,
           "daytona",
           ns,

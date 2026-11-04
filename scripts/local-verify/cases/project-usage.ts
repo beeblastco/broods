@@ -118,28 +118,16 @@ export async function projectUsage(context: VerifyContext): Promise<void> {
       record({ egressGb: 0.25 }, { projectId: support });
       record({ ingressGb: 0.5 }, { projectId: sales });
       record({ egressGb: 0.125 });
-      const machine = {
-        accountId: accountId,
-        provider: "lambda",
-        reservationKey: `usage-${context.runId}`,
-        externalId: `vm-${context.runId}`,
-      };
-      const claim = context.convex([
-        "run",
-        "runtime:claimSandboxReservation",
-        JSON.stringify(machine),
-      ]);
-      assertStep(
-        "the sandbox is reserved",
-        claim.ok && claim.output.trim().endsWith("true"),
-        claim.output.slice(-300),
-      );
+      const reservationKey = `usage-${context.runId}`;
       convexResult(
         context,
         "sandbox/instances:upsert",
         {
-          ...machine,
+          accountId: accountId,
           projectId: support,
+          provider: "lambda",
+          reservationKey: reservationKey,
+          externalId: `vm-${context.runId}`,
           name: "default",
           specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
         },
@@ -148,7 +136,7 @@ export async function projectUsage(context: VerifyContext): Promise<void> {
       convexResult(
         context,
         "sandbox/instances:remove",
-        { accountId: accountId, reservationKey: machine.reservationKey },
+        { accountId: accountId, reservationKey: reservationKey },
         "the sandbox is released",
       );
 

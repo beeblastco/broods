@@ -26,7 +26,6 @@ test("setSpecs bills the time so far at the old size, then only patches the same
   const t = specsTest();
   const accountId = await seedAccount(t, "beeblast");
   const otherId = await seedAccount(t, "other");
-  await reserve(t, accountId, "vm-1");
   vi.setSystemTime(NOW);
   await upsert(t, accountId, "vm-1", { specs: CONFIG_SPECS });
 
@@ -78,7 +77,6 @@ test("a reconnect without a size keeps the verified one, and a new machine start
   vi.useFakeTimers({ now: NOW });
   const t = specsTest();
   const accountId = await seedAccount(t, "beeblast");
-  await reserve(t, accountId, "vm-1");
   await upsert(t, accountId, "vm-1", {
     specs: REPORTED,
     specsVerified: true,
@@ -87,31 +85,11 @@ test("a reconnect without a size keeps the verified one, and a new machine start
   await upsert(t, accountId, "vm-1", { specs: CONFIG_SPECS });
   expect(await row(t)).toMatchObject({ specs: REPORTED, specsVerified: true });
 
-  await reserve(t, accountId, "vm-2");
   await upsert(t, accountId, "vm-2", { specs: CONFIG_SPECS });
   const replaced = await row(t);
   expect(replaced?.specs).toEqual(CONFIG_SPECS);
   expect(replaced?.specsVerified).toBeUndefined();
 });
-
-async function reserve(
-  t: T,
-  accountId: Id<"accounts">,
-  externalId: string,
-): Promise<void> {
-  await t.run(async (ctx) => {
-    for (const held of await ctx.db.query("sandboxReservations").collect()) {
-      await ctx.db.delete(held._id);
-    }
-    await ctx.db.insert("sandboxReservations", {
-      accountId: accountId,
-      provider: "e2b",
-      reservationKey: "key-1",
-      externalId: externalId,
-      expiresAt: Math.floor(Date.now() / 1000) + 3600,
-    });
-  });
-}
 
 async function row(t: T): Promise<Doc<"sandboxInstances"> | null> {
   return await t.run(async (ctx) => ctx.db.query("sandboxInstances").unique());
