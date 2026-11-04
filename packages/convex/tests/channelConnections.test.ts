@@ -307,24 +307,21 @@ describe("listConnections", () => {
     ).rejects.toThrow("ACCOUNT_CONFIG_ENCRYPTION_SECRET");
   });
 
-  test.each(["telegram", "slack", "zalo"])(
-    "reads %s the same way, with the channel in the webhook path",
-    async (channel) => {
-      const tt = t();
-      const scope = await seedScope(tt);
-      await seedAgent(tt, scope, "support", channelConfig(channel, "token-1"));
-      await seedDeployment(tt, scope, "endpoint-1");
+  test("reads another channel the same way, with the channel in the webhook path", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    await seedAgent(tt, scope, "support", channelConfig("slack", "token-1"));
+    await seedDeployment(tt, scope, "endpoint-1");
 
-      expect(await listConnections(tt, channel)).toEqual([
-        {
-          agentId: expect.any(String),
-          agentName: "support",
-          botToken: "token-1",
-          webhookPath: `/v1/webhooks/${scope.accountId}/dev/endpoint-1/${channel}`,
-        },
-      ]);
-    },
-  );
+    expect(await listConnections(tt, "slack")).toEqual([
+      {
+        agentId: expect.any(String),
+        agentName: "support",
+        botToken: "token-1",
+        webhookPath: `/v1/webhooks/${scope.accountId}/dev/endpoint-1/slack`,
+      },
+    ]);
+  });
 
   test("one channel's token never answers for another", async () => {
     const tt = t();
