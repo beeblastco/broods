@@ -575,8 +575,13 @@ async function refreshSandboxStatus(
     context.executor.getInstanceInfo?.(context.ref),
   );
   if (!info || info.state === "terminating") {
+    // Only the machine it read: a replacement's row under the same key stays.
     await queueMirrorWrite(context.accountId, context.reservationKey, () =>
-      removeSandboxInstance(context.accountId, context.reservationKey),
+      removeSandboxInstance(
+        context.accountId,
+        context.reservationKey,
+        info?.externalId,
+      ),
     );
     await context.audit("ok", { status: "terminating" });
 

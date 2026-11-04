@@ -225,17 +225,16 @@ export function meterEphemeralSandbox(
     });
   }
 
-  return (): void =>
-    waitUntil(
-      queueMirrorWrite(accountId, sandboxId, (): Promise<void> =>
-        removeSandboxInstance(accountId, sandboxId, sandboxId),
-      ),
+  return (): void => {
+    void queueMirrorWrite(accountId, sandboxId, (): Promise<void> =>
+      removeSandboxInstance(accountId, sandboxId, sandboxId),
     );
+  };
 }
 
 // One queue per account, as a write can bill the account's usage rows. Writes land in the order
 // queued, so a stale refresh never lands after a later create, status or removal of its row. A
-// command or a sandbox start never awaits it.
+// command or a sandbox start never awaits it; shutdown waits for every queued write.
 export function queueMirrorWrite(
   accountId: string | undefined,
   sandboxId: string,
@@ -247,6 +246,7 @@ export function queueMirrorWrite(
     () => {},
   );
   mirrorWrites.set(key, queued);
+  waitUntil(queued);
   void queued.then(() => {
     if (mirrorWrites.get(key) === queued) mirrorWrites.delete(key);
   });

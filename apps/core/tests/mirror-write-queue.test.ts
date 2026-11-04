@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
 import { releasePlatformSandbox } from "../src/harness/sandbox/platform-worker.ts";
 import { queueMirrorWrite } from "../src/harness/sandbox/utils.ts";
+import { drainInFlight } from "../src/shared/in-flight.ts";
 
 afterEach((): void => {
   mock.restore();
@@ -83,6 +84,19 @@ describe("queueMirrorWrite", () => {
     await Promise.all([first, same]);
 
     expect(order).toEqual(["sbx-own-2", "sbx-own-1 first", "sbx-own-1 second"]);
+  });
+
+  it("holds shutdown until a write nobody awaits lands", async () => {
+    const held = Promise.withResolvers<void>();
+    let landed = false;
+    void queueMirrorWrite("acct-s", "sbx-1", async (): Promise<void> => {
+      await held.promise;
+      landed = true;
+    });
+    const drained = drainInFlight().then((): boolean => landed);
+    held.resolve();
+
+    expect(await drained).toBe(true);
   });
 });
 

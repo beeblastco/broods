@@ -112,7 +112,11 @@ await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
 let registryOwnsReservation = true;
 let budgetUsedPercent = 0;
 const removeSandboxInstanceMock = mock(
-  async (_accountId: string, _key: string): Promise<void> => {},
+  async (
+    _accountId: string,
+    _key: string,
+    _externalId?: string,
+  ): Promise<void> => {},
 );
 await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   setSandboxInstanceSpecs: mock(async (): Promise<void> => {}),
@@ -342,7 +346,7 @@ describe("account-manage sandbox endpoints", () => {
   });
 
   // A refresh still queued for the account would otherwise write the dropped row back.
-  it("drops a gone sandbox's row only after the account's queued writes land", async () => {
+  it("drops a gone sandbox's row, for the machine it read, after the account's queued writes", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     process.env.WORKDIR_URL = "https://workdir.example.com";
     process.env.WORKDIR_API_KEY = "tenant-key";
@@ -383,7 +387,7 @@ describe("account-manage sandbox endpoints", () => {
       status: "terminated",
     });
     expect(removeSandboxInstanceMock.mock.calls).toEqual([
-      [ACCOUNT_ID, reservationKey],
+      [ACCOUNT_ID, reservationKey, "sbx_handler"],
     ]);
   });
 

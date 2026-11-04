@@ -1291,17 +1291,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     ) {
       return;
     }
-    waitUntil(
-      queueMirrorWrite(accountId, microvmId, async () => {
-        if (!(await recordSandboxBurst(accountId, microvmId, totals))) return;
-        const now = Date.now();
-        evictToCap(burstReported, now);
-        burstReported.set(microvmId, {
-          ...totals,
-          expiresAt: now + BURST_REPORT_TTL_MS,
-        });
-      }),
-    );
+    void queueMirrorWrite(accountId, microvmId, async () => {
+      if (!(await recordSandboxBurst(accountId, microvmId, totals))) return;
+      const now = Date.now();
+      evictToCap(burstReported, now);
+      burstReported.set(microvmId, {
+        ...totals,
+        expiresAt: now + BURST_REPORT_TTL_MS,
+      });
+    });
   }
 
   // A 504 is fatal: the proxy gave up on a guest that may still be running the call.
