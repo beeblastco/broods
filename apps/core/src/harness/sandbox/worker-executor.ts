@@ -215,12 +215,12 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     )
       return;
     // The last queued write, so a command never skips behind another run's write still landing.
+    mirroredFor.delete(id);
     const entry =
       run === undefined
         ? undefined
         : { run: run, at: Date.now(), landed: false };
     if (entry) {
-      mirroredFor.delete(id);
       if (mirroredFor.size >= MAX_MIRRORED) {
         const oldest = mirroredFor.keys().next().value;
         if (oldest !== undefined) mirroredFor.delete(oldest);

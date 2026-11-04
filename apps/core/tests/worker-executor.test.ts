@@ -535,6 +535,18 @@ it("writes behind another task's write still landing, so the row ends on the las
   expect(upserts()).toBe(3);
 });
 
+it("writes the task's next command after a write with no task, which was the last queued", async (): Promise<void> => {
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run(inTask("task-1"));
+  await settled();
+  await executor.run(request);
+  await settled();
+  await executor.run(inTask("task-1"));
+  await settled();
+
+  expect(upserts()).toBe(3);
+});
+
 it("writes the row again on the first command after a release or a status read", async (): Promise<void> => {
   const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
   await executor.run(inTask("task-1"));
