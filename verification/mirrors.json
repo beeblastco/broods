@@ -147,13 +147,20 @@
       "observedLoginRefusal": "3c5d7d482e4a9cd3"
     },
     "packages/convex/cli/auth.ts": {
-      "conversationObserved": "df40dbc1c695f914"
+      "conversationObserved": "df40dbc1c695f914",
+      "resolveAccountLogin": "81ae8bcc17500297"
     },
     "packages/convex/model/observabilityTicket.ts": {
       "observabilityTicketExpiry": "e75a2daab25d7038"
     },
     "apps/core/src/harness/integrations.ts": {
       "observabilityTicketScope": "3eac80fc162f9f97"
+    },
+    "packages/convex/config/http.ts": {
+      "handleConfigRequest": "e9550167e5f31857"
+    },
+    "apps/core/src/shared/auth.ts": {
+      "resolveBearerAuth": "511e000d58faf2cc"
     }
   }
 }

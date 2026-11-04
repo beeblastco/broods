@@ -11,7 +11,10 @@ re-minted mid-conversation inherits it. The mark has its own table, so pruning l
 (`packages/convex/model/observabilityTicket.ts`) bounds the ticket, and `observabilityTicketScope`
 (`apps/core/src/harness/integrations.ts`) is the one place that accepts it, for the log socket alone.
 
-Each mutation is serializable, so each is one step. The model omits the signature (`openSignedTicket`
+Each mutation is serializable, so each is one step. A write is two: the refusal check admits it, and
+the route's own mutation commits it later. So a write already admitted when logs open can still land.
+The agent decided on it before it could have seen a log line: nothing admitted after the mark lands,
+which is what stops text in logs from causing a write. The model omits the signature (`openSignedTicket`
 under its own key context, tested in `observabilityTicket.test.ts`) and what the agent does with what
 it read: these theorems bound what its credentials can do, not what the model says. An answer's text
 and links stay outside them, and the agent's web tools are removed in its own repo.
@@ -45,7 +48,11 @@ structure State where
   /-- `conversationObserved`: any login of this conversation has opened logs. -/
   observed : Nat → Bool
   tickets : List Ticket
-  /-- Account writes made by each conversation's logins. -/
+  /-- Writes past `observedLoginRefusal`, per conversation. -/
+  admitted : Nat → Nat
+  /-- Admitted writes whose route mutation has not run yet. -/
+  pending : Nat → Nat
+  /-- Account writes that landed. -/
   writes : Nat → Nat
 
 /-- `observabilityTicketExpiry`. -/
@@ -72,10 +79,18 @@ inductive Step : State → State → Prop where
   /-- `pruneExpiredTokens` deletes logins. The mark lives in its own table, so it stays. -/
   | prune (s : State) (keep : Login → Bool) :
       Step s { s with logins := s.logins.filter keep }
-  /-- A write through the config plane, past `observedLoginRefusal`. -/
-  | write (s : State) (l : Login) (h : Live s l) (clean : s.observed l.conv = false) :
+  /-- `observedLoginRefusal` lets a write through. -/
+  | admit (s : State) (l : Login) (h : Live s l) (clean : s.observed l.conv = false) :
       Step s
-        { s with writes := fun c => if c = l.conv then s.writes c + 1 else s.writes c }
+        { s with
+          admitted := fun c => if c = l.conv then s.admitted c + 1 else s.admitted c
+          pending := fun c => if c = l.conv then s.pending c + 1 else s.pending c }
+  /-- The route's mutation commits a write admitted earlier. -/
+  | commit (s : State) (conv : Nat) (h : 0 < s.pending conv) :
+      Step s
+        { s with
+          pending := fun c => if c = conv then s.pending c - 1 else s.pending c
+          writes := fun c => if c = conv then s.writes c + 1 else s.writes c }
 
 /-- Any number of steps. -/
 inductive Steps : State → State → Prop where
@@ -83,7 +98,7 @@ inductive Steps : State → State → Prop where
   | step {a b c : State} : Step a b → Steps b c → Steps a c
 
 def init : State :=
-  ⟨0, true, [], fun _ => false, [], fun _ => 0⟩
+  ⟨0, true, [], fun _ => false, [], fun _ => 0, fun _ => 0, fun _ => 0⟩
 
 def Reachable (s : State) : Prop := Steps init s
 
@@ -120,23 +135,58 @@ theorem observed_persists {s s' : State} {c : Nat} (hs : Step s s') (ho : s.obse
     s'.observed c = true := by
   cases hs <;> simp_all
 
-/-- Once a conversation has read logs, no step adds a write by any of its logins. -/
-theorem no_write_after_logs {s s' : State} {c : Nat} (hs : Step s s')
-    (ho : s.observed c = true) : s'.writes c = s.writes c := by
+/-- Once a conversation has read logs, no step admits another write by any of its logins. -/
+theorem no_admission_after_logs {s s' : State} {c : Nat} (hs : Step s s')
+    (ho : s.observed c = true) : s'.admitted c = s.admitted c := by
   cases hs with
-  | write l h clean =>
+  | admit l h clean =>
     by_cases hc : c = l.conv
     · subst hc; simp_all
     · simp [hc]
   | _ => simp_all
 
-/-- Over any run, however many logins are re-minted, that conversation's writes stay frozen. -/
-theorem writes_frozen_after_logs {s s' : State} {c : Nat} (hs : Steps s s')
-    (ho : s.observed c = true) : s'.writes c = s.writes c := by
+/-- Over any run, however many logins are re-minted, that conversation's admissions stay frozen. -/
+theorem admissions_frozen_after_logs {s s' : State} {c : Nat} (hs : Steps s s')
+    (ho : s.observed c = true) : s'.admitted c = s.admitted c := by
   induction hs with
   | refl => rfl
   | step hab _ ih =>
-    rw [ih (observed_persists hab ho), no_write_after_logs hab ho]
+    rw [ih (observed_persists hab ho), no_admission_after_logs hab ho]
+
+/-- Every write that landed or is pending was admitted. -/
+def Ledger (s : State) : Prop :=
+  ∀ c, s.writes c + s.pending c = s.admitted c
+
+theorem ledger_step {s s' : State} (hs : Step s s') (h : Ledger s) : Ledger s' := by
+  intro c
+  have hc := h c
+  cases hs with
+  | admit l hl clean =>
+    by_cases he : c = l.conv
+    · subst he; simp; omega
+    · simpa [he] using hc
+  | commit conv hp =>
+    by_cases he : c = conv
+    · subst he; simp; omega
+    · simpa [he] using hc
+  | _ => simpa using hc
+
+theorem ledger_steps {s s' : State} (hs : Steps s s') (h : Ledger s) : Ledger s' := by
+  induction hs with
+  | refl => exact h
+  | step hab _ ih => exact ih (ledger_step hab h)
+
+theorem ledger_reachable {s : State} (hs : Reachable s) : Ledger s :=
+  ledger_steps hs (by intro c; simp [init])
+
+/-- After a conversation reads logs, the only writes of its that can still land are the ones
+already admitted when it did: its own decisions from before it could see a log line. -/
+theorem writes_after_logs_only_in_flight {s s' : State} {c : Nat} (hr : Reachable s)
+    (hs : Steps s s') (ho : s.observed c = true) : s'.writes c ≤ s.writes c + s.pending c := by
+  have before := ledger_reachable hr c
+  have after := ledger_steps hs (ledger_reachable hr) c
+  have frozen := admissions_frozen_after_logs hs ho
+  omega
 
 /-- A login re-minted for that conversation later still cannot write. -/
 theorem remint_stays_read_only {s s' : State} {l : Login} (hs : Steps s s')
@@ -169,7 +219,8 @@ theorem ticketsSound_step {s s' : State} (hs : Step s s') (h : TicketsSound s) :
   | prune keep => exact h t ht
   | tick => exact h t ht
   | demote => exact h t ht
-  | write l hl clean => exact h t ht
+  | admit l hl clean => exact h t ht
+  | commit conv hp => exact h t ht
 
 theorem ticketsSound_steps {s s' : State} (hs : Steps s s') (h : TicketsSound s) :
     TicketsSound s' := by
@@ -192,18 +243,19 @@ theorem demoted_stays_out {s s' : State} (hs : Steps s s') (hm : s.member = fals
     cases hab <;> simp_all
 
 theorem demoted_step {a b : State} (hs : Step a b) (hm : a.member = false) :
-    b.member = false ∧ b.tickets = a.tickets ∧ b.writes = a.writes := by
+    b.member = false ∧ b.tickets = a.tickets ∧ b.admitted = a.admitted := by
   cases hs with
   | openLogs l stage hl => simp [Live, hm] at hl
-  | write l hl clean => simp [Live, hm] at hl
+  | admit l hl clean => simp [Live, hm] at hl
   | lend l h => simp [hm] at h
   | prune keep => exact ⟨hm, rfl, rfl⟩
+  | commit conv hp => exact ⟨hm, rfl, rfl⟩
   | tick => exact ⟨hm, rfl, rfl⟩
   | demote => exact ⟨rfl, rfl, rfl⟩
 
-/-- Once the user is demoted, no ticket is minted and no write lands. -/
+/-- Once the user is demoted, no ticket is minted and no further write is admitted. -/
 theorem demoted_cannot_act {s s' : State} (hs : Steps s s') (hm : s.member = false) :
-    s'.tickets = s.tickets ∧ s'.writes = s.writes := by
+    s'.tickets = s.tickets ∧ s'.admitted = s.admitted := by
   induction hs with
   | refl => exact ⟨rfl, rfl⟩
   | step hab _ ih =>
@@ -218,8 +270,11 @@ def lent : State := { init with logins := [alice] }
 
 example : Reachable lent := .step (.lend init alice rfl) (.refl _)
 
-example : Step lent { lent with writes := fun c => if c = alice.conv then 1 else 0 } :=
-  .write lent alice ⟨by simp [lent, alice], by simp [lent, alice, init], rfl⟩ rfl
+example : Step lent
+    { lent with
+      admitted := fun c => if c = alice.conv then lent.admitted c + 1 else lent.admitted c
+      pending := fun c => if c = alice.conv then lent.pending c + 1 else lent.pending c } :=
+  .admit lent alice ⟨by simp [lent, alice], by simp [lent, alice, init], rfl⟩ rfl
 
 /-! Broken variants these properties catch. -/
 
