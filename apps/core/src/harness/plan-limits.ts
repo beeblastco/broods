@@ -19,6 +19,9 @@ import {
 const WINDOW_MS = 60_000;
 // Usage landing inside this TTL can take an account a little past its budget, never far.
 const BUDGET_TTL_MS = 30_000;
+const USAGE_LINGER_MS = 1_000;
+
+type MeterUsage = Parameters<Storage["budgets"]["record"]>[1];
 
 export interface PlanRefusal {
   kind: "budget" | "rate";
@@ -45,9 +48,17 @@ interface CachedBudget {
   expiresAt: number;
 }
 
+interface LingeringUsage {
+  accountId: string;
+  source: UsageSource | undefined;
+  usage: MeterUsage;
+}
+
 // Exact only while core is a single replica (apps/core AGENTS.md); two would double the burst.
 const windows = new Map<string, AccountWindow>();
 const budgets = new Map<string, CachedBudget>();
+const lingering = new Map<string, LingeringUsage>();
+let lingerUsage = true;
 
 export async function admitRun(
   accountId: string,
@@ -121,15 +132,73 @@ export function planRefusalText(refusal: PlanRefusal): string {
 
 export function recordUsage(
   accountId: string,
-  usage: Parameters<Storage["budgets"]["record"]>[1],
+  usage: MeterUsage,
   source?: UsageSource,
 ): void {
   waitUntil(getStorage().budgets.record(accountId, usage, source));
 }
 
+// Sums one account and source's usage for a second into one write. Budget reads are cached for
+// BUDGET_TTL_MS already, so the second's delay barely moves what they see.
+export function recordUsageSoon(
+  accountId: string,
+  usage: MeterUsage,
+  source?: UsageSource,
+): void {
+  if (!lingerUsage) {
+    recordUsage(accountId, usage, source);
+
+    return;
+  }
+  const key = JSON.stringify([
+    accountId,
+    source?.projectId,
+    source?.agentId,
+    source?.workspaceId,
+  ]);
+  const pending = lingering.get(key);
+  if (pending) {
+    for (const name of Object.keys(usage) as (keyof MeterUsage)[]) {
+      const amount = usage[name];
+      if (amount !== undefined)
+        pending.usage[name] = (pending.usage[name] ?? 0) + amount;
+    }
+
+    return;
+  }
+  const batch: LingeringUsage = {
+    accountId: accountId,
+    source: source,
+    usage: { ...usage },
+  };
+  lingering.set(key, batch);
+  waitUntil(
+    Bun.sleep(USAGE_LINGER_MS).then((): Promise<void> =>
+      sendLingering(key, batch),
+    ),
+  );
+}
+
+// At shutdown, what waits goes out now and later usage at once, as recordUsage sends it.
+export function stopLingeringUsage(): void {
+  lingerUsage = false;
+  for (const [key, batch] of lingering) waitUntil(sendLingering(key, batch));
+}
+
 export function resetPlanLimitsForTests(): void {
   windows.clear();
   budgets.clear();
+  lingering.clear();
+  lingerUsage = true;
+}
+
+async function sendLingering(
+  key: string,
+  batch: LingeringUsage,
+): Promise<void> {
+  if (lingering.get(key) !== batch) return;
+  lingering.delete(key);
+  await getStorage().budgets.record(batch.accountId, batch.usage, batch.source);
 }
 
 // Fails open: a cost ceiling, not an auth check, and a run stalls without Convex anyway.
