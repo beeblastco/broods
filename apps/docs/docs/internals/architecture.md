@@ -231,7 +231,7 @@ stateDiagram-v2
 ```
 
 - The phase lives on the revision (`stageSources.verification`); `verifyRun` settles it from the `workflow_run` webhook. A successful run on a sha no Apply made snapshots the branch at that sha as the source (`snapshotRepo`), so a push needs no button.
-- Production is refused: its change goes through a pull request, and `stageSources.latest` answers no source there, so its dock edits the repo instead.
+- Production is refused: its change goes through a pull request.
 - `stageSources.drift` is the change bar's one state: out of sync when the stage's manifest hash moved away from its newest source (a deploy from elsewhere), or the branch's last finished run is not the newest source's commit. Quiet while an Apply is verifying. `agentDock.sync` redeploys the branch head when linked, else the newest stored source.
 
 ## Run lifecycle
