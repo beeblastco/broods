@@ -94,7 +94,7 @@ export async function reserveSandboxInstance(
     accountId: accountId,
   });
   if (epoch === deletes) {
-    // Re-holding moves the key to the end, so the cap drops the longest unused.
+    // Re-booking moves the key to the end, so the cap drops the oldest booking.
     held.delete(entry);
     if (held.size >= MAX_HELD) {
       const oldest = held.keys().next().value;
