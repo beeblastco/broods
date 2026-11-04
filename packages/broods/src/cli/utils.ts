@@ -1,9 +1,4 @@
-import {
-  createServer,
-  type IncomingMessage,
-  type Server,
-  type ServerResponse,
-} from "node:http";
+import { createServer } from "node:http";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
@@ -418,8 +413,9 @@ export function waitForCallback<T>(
           callbackUrl: `http://127.0.0.1:${address.port}${options.path}`,
           promise: promise,
         },
-        close: (): Server<typeof IncomingMessage, typeof ServerResponse> =>
-          server.close(),
+        close: (): void => {
+          server.close();
+        },
       });
     });
   });

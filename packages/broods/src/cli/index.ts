@@ -1742,9 +1742,7 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
       regions,
       (entry): string => entry.label,
       regions.findIndex((entry): boolean => entry.region === region),
-    ).then(
-      (entry): "ap-southeast-1" | "eu-west-1" | "us-east-1" => entry.region,
-    );
+    ).then((entry): DeploymentRegion => entry.region);
   }
 
   await writeLocalEnvDefaults({
@@ -2275,7 +2273,7 @@ async function inspectEnvRefs(
     ),
   );
 
-  return names.map((name): { name: string; state: EnvRefState } => ({
+  return names.map((name): EnvRef => ({
     name: name,
     state: envRefState(name, remote),
   }));
@@ -2854,13 +2852,15 @@ async function agentCommand(args: string[]): Promise<void> {
   );
 }
 
+interface AgentWithId {
+  name: string;
+  config: Record<string, unknown>;
+  agentId?: string;
+}
+
 async function loadAgentsWithIds(args: string[]): Promise<{
   manifest: CliManifest;
-  agents: Array<{
-    name: string;
-    config: Record<string, unknown>;
-    agentId?: string;
-  }>;
+  agents: AgentWithId[];
 }> {
   const { manifest, config } = await compileProject({
     project: optionValue(args, "--project"),
@@ -2876,19 +2876,11 @@ async function loadAgentsWithIds(args: string[]): Promise<{
   }).getManifest(manifest.project, manifest.stage);
   const agents = manifest.resources
     .filter((resource): boolean => resource.kind === "agent")
-    .map(
-      (
-        resource,
-      ): {
-        name: string;
-        config: Record<string, unknown>;
-        agentId: string | undefined;
-      } => ({
-        name: resource.name,
-        config: (resource.config ?? {}) as Record<string, unknown>,
-        agentId: remote?.ids.agents[resource.name],
-      }),
-    );
+    .map((resource): AgentWithId => ({
+      name: resource.name,
+      config: (resource.config ?? {}) as Record<string, unknown>,
+      agentId: remote?.ids.agents[resource.name],
+    }));
 
   return { manifest: manifest, agents: agents };
 }

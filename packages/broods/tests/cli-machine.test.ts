@@ -166,11 +166,10 @@ test("the daemon retries when minting a stage session fails in transit", async (
 });
 
 test("the daemon hands core a fresh ticket before the one it holds expires", async (): Promise<void> => {
-  const core = startFakeCore(
-    (frame): { type: "ready"; sandboxId: string; expiresInMs: number } | null =>
-      frame.type === "hello"
-        ? { type: "ready", sandboxId: "sbx_1", expiresInMs: 2_000 }
-        : null,
+  const core = startFakeCore((frame): MachineCoreFrame | null =>
+    frame.type === "hello"
+      ? { type: "ready", sandboxId: "sbx_1", expiresInMs: 2_000 }
+      : null,
   );
   servers.push(core.server);
   let calls = 0;

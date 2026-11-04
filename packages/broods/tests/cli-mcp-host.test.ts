@@ -2,8 +2,13 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { MachineCoreFrame } from "../../../apps/core/src/shared/machine-socket.ts";
 import { runMachineDaemon } from "../src/cli/machine.ts";
-import { McpHost, readMcpServersFile } from "../src/cli/mcp-host.ts";
+import {
+  McpHost,
+  readMcpServersFile,
+  type McpServerSpec,
+} from "../src/cli/mcp-host.ts";
 import { startFakeCore } from "./fixtures/fake-core.ts";
 
 const FIXTURE = join(import.meta.dir, "fixtures", "echo-mcp-server.ts");
@@ -36,79 +41,36 @@ test("a bad file fails before any server runs", (): void => {
   const file = join(dir, "mcp.json");
 
   writeFileSync(file, JSON.stringify({ mcpServers: { bad: { args: [] } } }));
-  expect(
-    (): Map<
-      string,
-      {
-        command: string;
-        args: string[];
-        env?: Record<string, string> | undefined;
-        cwd?: string | undefined;
-      }
-    > => readMcpServersFile(file),
-  ).toThrow("mcpServers.bad.command");
+  expect((): Map<string, McpServerSpec> => readMcpServersFile(file)).toThrow(
+    "mcpServers.bad.command",
+  );
   writeFileSync(file, JSON.stringify({ servers: {} }));
-  expect(
-    (): Map<
-      string,
-      {
-        command: string;
-        args: string[];
-        env?: Record<string, string> | undefined;
-        cwd?: string | undefined;
-      }
-    > => readMcpServersFile(file),
-  ).toThrow("mcpServers");
+  expect((): Map<string, McpServerSpec> => readMcpServersFile(file)).toThrow(
+    "mcpServers",
+  );
   writeFileSync(file, "{");
-  expect(
-    (): Map<
-      string,
-      {
-        command: string;
-        args: string[];
-        env?: Record<string, string> | undefined;
-        cwd?: string | undefined;
-      }
-    > => readMcpServersFile(file),
-  ).toThrow("could not read");
+  expect((): Map<string, McpServerSpec> => readMcpServersFile(file)).toThrow(
+    "could not read",
+  );
 });
 
 test("a daemon started with --mcp advertises its servers and answers both frames", async (): Promise<void> => {
-  const core = startFakeCore(
-    (
-      frame,
-    ):
-      | {
-          type: "mcp-list";
-          id: string;
-          server: string;
-          tool?: undefined;
-          args?: undefined;
-        }
-      | {
-          type: "mcp-call";
-          id: string;
-          server: string;
-          tool: string;
-          args: { text: string };
-        }
-      | null => {
-      if (frame.type === "hello") {
-        return { type: "mcp-list", id: "l1", server: "echo" };
-      }
-      if (frame.type === "mcp-tools") {
-        return {
-          type: "mcp-call",
-          id: "c1",
-          server: "echo",
-          tool: "echo",
-          args: { text: "hi" },
-        };
-      }
+  const core = startFakeCore((frame): MachineCoreFrame | null => {
+    if (frame.type === "hello") {
+      return { type: "mcp-list", id: "l1", server: "echo" };
+    }
+    if (frame.type === "mcp-tools") {
+      return {
+        type: "mcp-call",
+        id: "c1",
+        server: "echo",
+        tool: "echo",
+        args: { text: "hi" },
+      };
+    }
 
-      return null;
-    },
-  );
+    return null;
+  });
   servers.push(core.server);
 
   await expect(

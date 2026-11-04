@@ -16,7 +16,6 @@ import type {
   AgentHookEventName,
   CliManifest,
   CliManifestResource,
-  ChannelPartition,
 } from "./contracts.ts";
 import {
   build as esbuild,
@@ -57,7 +56,6 @@ import {
   type PolicyResource,
   type SandboxResource,
   type WorkspaceResource,
-  type McpHandler,
   type ChannelType,
 } from "./resources.ts";
 
@@ -354,17 +352,11 @@ async function loadExports(files: string[]): Promise<ExportedValue[]> {
     const href = `${pathToFileURL(file).href}?t=${Date.now()}`;
     const mod = (await import(href)) as Record<string, unknown>;
     values.push(
-      ...Object.entries(mod).map(
-        ([exportName, value]): {
-          exportName: string;
-          file: string;
-          value: unknown;
-        } => ({
-          exportName: exportName,
-          file: file,
-          value: value,
-        }),
-      ),
+      ...Object.entries(mod).map(([exportName, value]): ExportedValue => ({
+        exportName: exportName,
+        file: file,
+        value: value,
+      })),
     );
   }
 
@@ -614,8 +606,8 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
     const partitionedWorkspaces = attachedWorkspaces.filter(
       (workspace): boolean => workspace.config.partitioned === "conversation",
     );
-    const partitionedChannels = channelDefinitions.filter(
-      (channel): ChannelPartition | undefined => channel.partition,
+    const partitionedChannels = channelDefinitions.filter((channel): boolean =>
+      Boolean(channel.partition),
     );
 
     if (partitionedChannels.length > 0 && partitionedWorkspaces.length === 0) {
@@ -1048,24 +1040,15 @@ async function toManifestResources(
     const ids = channelExternalIds(resource.name, config.externalId);
 
     // Suffix by id, not index, so dropping one id does not rename and recreate the rest.
-    return ids.map(
-      (
-        id,
-      ): {
-        config: unknown;
-        description?: string | undefined;
-        kind: "channelRecord";
-        name: string;
-      } => ({
-        kind: resource.kind,
-        name: ids.length === 1 ? resource.name : `${resource.name}-${id}`,
-        ...(resource.description ? { description: resource.description } : {}),
-        config: normalizeChannelConfig(resource.name, {
-          ...config,
-          externalId: id,
-        }),
+    return ids.map((id): CliManifestResource => ({
+      kind: resource.kind,
+      name: ids.length === 1 ? resource.name : `${resource.name}-${id}`,
+      ...(resource.description ? { description: resource.description } : {}),
+      config: normalizeChannelConfig(resource.name, {
+        ...config,
+        externalId: id,
       }),
-    );
+    }));
   }
 
   return [
@@ -1780,8 +1763,7 @@ async function normalizeMcpConfig(
 ): Promise<Record<string, unknown>> {
   const { handler, ...rest } = config;
   const connections = [handler, config.url, config.sandbox].filter(
-    (value): value is string | McpHandler | SandboxResource<string> =>
-      value !== undefined,
+    (value): boolean => value !== undefined,
   ).length;
   if (connections > 1) {
     throw new Error(
@@ -1885,10 +1867,7 @@ function withMcpServerAuth(
   const mcp = (resource.config as { mcp?: Record<string, McpAuth> }).mcp;
   if (!mcp) return resource;
   const entries = Object.entries(mcp).map(
-    ([server, entry]): (
-      | string
-      | { oauth?: Record<string, unknown>; headers?: Record<string, unknown> }
-    )[] => {
+    ([server, entry]): [string, McpAuth] => {
       const config = servers.get(server);
       const own = new Set(
         Object.keys(entry.headers ?? {}).map((name): string =>

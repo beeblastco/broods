@@ -128,15 +128,7 @@ export function readMcpServersFile(path: string): Map<string, McpServerSpec> {
 
   return new Map(
     Object.entries(parsed.data.mcpServers).map(
-      ([name, spec]): [
-        string,
-        {
-          command: string;
-          args: string[];
-          env?: Record<string, string> | undefined;
-          cwd?: string | undefined;
-        },
-      ] => [
+      ([name, spec]): [string, McpServerSpec] => [
         name,
         spec.cwd ? { ...spec, cwd: resolve(dirname(file), spec.cwd) } : spec,
       ],
