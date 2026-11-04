@@ -1,5 +1,6 @@
 import type { ToolSet } from "ai";
 import {
+  harnessToolNameProblem,
   isHarnessToolName,
   isProviderToolName,
 } from "@broods/convex/model/agentRules";
@@ -398,7 +399,7 @@ function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
 }
 
 function harnessNameError(toolName: string): string {
-  return `config.tools.${toolName} is a Broods tool name; only a provider tool that runs as ${toolName} may use it`;
+  return `config.tools.${toolName} ${harnessToolNameProblem(toolName)}`;
 }
 
 export function isToolEnabled<Entry extends { enabled?: boolean }>(
@@ -546,13 +547,12 @@ function registerProviderTools(
       !runsOnProvider(built.id, args)
         ? sandboxStandIn(built.id, {
             toolName: toolName,
-            args: args,
             command: toolConfig.command,
             sandboxTools: sandbox.sandboxTools,
             fileContext: sandbox.fileContext,
           })
         : undefined;
-    const taken = harnessName || toolName in tools;
+    const taken = harnessName || Object.hasOwn(tools, toolName);
     if (taken && !standIn?.replaces.some((name) => name === toolName)) {
       throw new Error(harnessNameError(toolName));
     }
@@ -561,7 +561,10 @@ function registerProviderTools(
       continue;
     }
     for (const replaced of standIn.replaces) delete tools[replaced];
-    tools[toolName] = factory({ ...args, execute: standIn.execute });
+    tools[toolName] = factory({
+      ...args,
+      execute: standIn.execute.bind(standIn),
+    });
     sandbox.standIns.set(toolName, standIn);
   }
 }

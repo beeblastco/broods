@@ -10,6 +10,7 @@ import {
   AGENT_LIFECYCLE_EVENT_NAMES,
   MODEL_CONFIG_SETTING_KEYS,
   assertAgentRuntimeRefs,
+  harnessToolNameProblem,
   isHarnessToolName,
   isPrivateHostname,
   isProviderToolName,
@@ -669,7 +670,7 @@ const TOOLS = z
           ctx.addIssue({
             code: "custom",
             path: [name],
-            message: `is a Broods tool name; it only keys a provider tool such as ${name}: anthropic.tools.bash_20250124({})`,
+            message: harnessToolNameProblem(name),
           });
       }
     }),

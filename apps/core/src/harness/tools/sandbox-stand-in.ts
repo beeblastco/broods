@@ -4,7 +4,8 @@
 import type { AnthropicProvider } from "@ai-sdk/anthropic";
 import type { OpenAIProvider } from "@ai-sdk/openai";
 import type { InferToolInput, ToolSet } from "ai";
-import { shellQuote } from "../sandbox/utils.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
+import { configString, shellQuote } from "../sandbox/utils.ts";
 import { applyPatchScript } from "./apply-patch.ts";
 import {
   resolveWorkspace,
@@ -12,6 +13,8 @@ import {
   sandboxRunMetadata,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
+
+const TEXT_EDITOR_COMMANDS = new Set(["create", "str_replace", "view"]);
 
 type SandboxToolName = "bash" | "edit" | "read" | "write";
 
@@ -37,21 +40,22 @@ interface AnthropicBashInput {
 
 interface StandInContext {
   toolName: string;
-  args: Record<string, unknown>;
   command: unknown;
   sandboxTools: ToolSet;
   fileContext: SandboxToolContext;
 }
 
-export interface SandboxToolCall {
+interface SandboxToolCall {
   toolName: SandboxToolName;
   input: Record<string, unknown>;
 }
 
-export interface SandboxStandIn {
-  // Policy, approval and denyTools treat a call as this Broods tool call.
-  toSandboxCall: (input: unknown) => SandboxToolCall;
-  execute: (input: unknown, options: ExecutionOptions) => Promise<unknown>;
+// Methods, so a stand-in typed by its provider's input fits the map: the AI SDK checks the
+// model's input against that provider schema before execute.
+export interface SandboxStandIn<Input = unknown> {
+  // Policy, approval and denyTools judge a call as this Broods tool call, which is what runs.
+  toSandboxCall(input: Input): SandboxToolCall;
+  execute(input: Input, options: ExecutionOptions): Promise<unknown>;
   // Broods tools it replaces, so the model never sees two tools for one job.
   replaces: readonly SandboxToolName[];
   runsAs: readonly SandboxToolName[];
@@ -63,6 +67,7 @@ export function runsOnProvider(
   args: Record<string, unknown>,
 ): boolean {
   if (id === "openrouter.web_search") return true;
+  if (id === "openai.tool_search") return args.execution !== "client";
 
   return id === "openai.shell" && !isLocalShell(args);
 }
@@ -93,31 +98,30 @@ export function sandboxStandIn(
   return standIn;
 }
 
-function anthropicBash(context: StandInContext): SandboxStandIn {
+function anthropicBash(
+  context: StandInContext,
+): SandboxStandIn<AnthropicBashInput> {
+  const toSandboxCall = (input: AnthropicBashInput): SandboxToolCall =>
+    bashCall(input.command ?? "");
+  const run = runCall(context, toSandboxCall);
+
   return {
     replaces: ["bash"],
     runsAs: ["bash"],
-    toSandboxCall: (input): SandboxToolCall => ({
-      toolName: "bash",
-      input: { command: (input as AnthropicBashInput).command ?? "" },
-    }),
+    toSandboxCall: toSandboxCall,
     // Every Broods bash call starts a fresh shell, so a restart has nothing to reset.
-    execute: async (input, options): Promise<unknown> => {
-      const { command, restart } = input as AnthropicBashInput;
-      if (restart === true) return "Shell restarted.";
-
-      return await callTool(context, "bash", { command: command }, options);
-    },
+    execute: async (input, options): Promise<unknown> =>
+      input.restart === true ? "Shell restarted." : await run(input, options),
   };
 }
 
-function applyPatch(context: StandInContext): SandboxStandIn {
+function applyPatch(context: StandInContext): SandboxStandIn<ApplyPatchInput> {
   return {
     replaces: ["edit", "write"],
     runsAs: ["edit", "write"],
     toSandboxCall: (input): SandboxToolCall => ({
       toolName: "write",
-      input: { file_path: (input as ApplyPatchInput).operation.path },
+      input: { file_path: input.operation.path },
     }),
     execute: async (input): Promise<unknown> => {
       const ws = resolveWorkspace(context.fileContext.workspaces);
@@ -127,7 +131,7 @@ function applyPatch(context: StandInContext): SandboxStandIn {
       const result = await runSandbox(
         ws.sandbox,
         ws.namespace,
-        applyPatchScript((input as ApplyPatchInput).operation),
+        applyPatchScript(input.operation),
         {
           onSandboxCpu: context.fileContext.onSandboxCpu,
           metadata: sandboxRunMetadata(context.fileContext, ws),
@@ -144,39 +148,38 @@ function applyPatch(context: StandInContext): SandboxStandIn {
   };
 }
 
+function bashCall(command: string): SandboxToolCall {
+  return { toolName: "bash", input: { command: command } };
+}
+
 async function callTool(
   context: StandInContext,
-  name: SandboxToolName,
-  input: Record<string, unknown>,
+  call: SandboxToolCall,
   options: ExecutionOptions,
 ): Promise<unknown> {
-  const execute = context.sandboxTools[name]?.execute;
-  if (!execute) throw new Error(`the ${name} tool is not available`);
+  const execute = context.sandboxTools[call.toolName]?.execute;
+  if (!execute) throw new Error(`the ${call.toolName} tool is not available`);
 
-  return await execute(input, options);
+  return await execute(call.input, options);
 }
 
 // The model's text goes to the configured command on stdin, never into the command line.
-function customTool(context: StandInContext): SandboxStandIn {
-  const { command, toolName } = context;
-  if (typeof command !== "string" || command.trim() === "") {
+function customTool(context: StandInContext): SandboxStandIn<string> {
+  const command = configString(context.command);
+  if (!command) {
     throw new Error(
-      `config.tools.${toolName} is an OpenAI custom tool, so it needs \`command\`: ` +
+      `config.tools.${context.toolName} is an OpenAI custom tool, so it needs \`command\`: ` +
         `the sandbox command that reads the model's text on stdin`,
     );
   }
-  const commandFor = (input: unknown): string =>
-    `printf '%s' ${shellQuote(String(input))} | ${command}`;
+  const toSandboxCall = (input: string): SandboxToolCall =>
+    bashCall(`printf '%s' ${shellQuote(input)} | ${command}`);
 
   return {
     replaces: [],
     runsAs: ["bash"],
-    toSandboxCall: (input): SandboxToolCall => ({
-      toolName: "bash",
-      input: { command: commandFor(input) },
-    }),
-    execute: async (input, options): Promise<unknown> =>
-      await callTool(context, "bash", { command: commandFor(input) }, options),
+    toSandboxCall: toSandboxCall,
+    execute: runCall(context, toSandboxCall),
   };
 }
 
@@ -192,54 +195,42 @@ function isLocalShell(args: Record<string, unknown>): boolean {
   return type === undefined || type === "local";
 }
 
-function localShell(context: StandInContext): SandboxStandIn {
-  const commandFor = (input: unknown): string => {
-    const { command, workingDirectory, env } = (input as LocalShellInput)
-      .action;
+function localShell(context: StandInContext): SandboxStandIn<LocalShellInput> {
+  const toSandboxCall = (input: LocalShellInput): SandboxToolCall => {
+    const { command, workingDirectory, env } = input.action;
     const assignments = Object.entries(env ?? {}).map(
       ([name, value]): string => `${name}=${shellQuote(value)}`,
     );
     const line = [...assignments, ...command.map(shellQuote)].join(" ");
 
-    return workingDirectory
-      ? `cd ${shellQuote(workingDirectory)} && ${line}`
-      : line;
+    return bashCall(
+      workingDirectory ? `cd ${shellQuote(workingDirectory)} && ${line}` : line,
+    );
   };
+  const run = runCall(context, toSandboxCall);
 
   return {
     replaces: ["bash"],
     runsAs: ["bash"],
-    toSandboxCall: (input): SandboxToolCall => ({
-      toolName: "bash",
-      input: { command: commandFor(input) },
-    }),
+    toSandboxCall: toSandboxCall,
     execute: async (input, options): Promise<unknown> => ({
-      output: String(
-        await callTool(
-          context,
-          "bash",
-          { command: commandFor(input) },
-          options,
-        ),
-      ),
+      output: String(await run(input, options)),
     }),
   };
 }
 
-function openaiShell(context: StandInContext): SandboxStandIn {
+function openaiShell(context: StandInContext): SandboxStandIn<ShellInput> {
   return {
     replaces: ["bash"],
     runsAs: ["bash"],
-    toSandboxCall: (input): SandboxToolCall => ({
-      toolName: "bash",
-      input: { command: (input as ShellInput).action.commands.join("\n") },
-    }),
+    toSandboxCall: (input): SandboxToolCall =>
+      bashCall(input.action.commands.join("\n")),
     execute: async (input, options): Promise<unknown> => {
       const output = [];
-      for (const command of (input as ShellInput).action.commands) {
+      for (const command of input.action.commands) {
         try {
           const text = String(
-            await callTool(context, "bash", { command: command }, options),
+            await callTool(context, bashCall(command), options),
           );
           output.push({
             stdout: text,
@@ -247,8 +238,7 @@ function openaiShell(context: StandInContext): SandboxStandIn {
             outcome: { type: "exit", exitCode: exitCodeOf(text) },
           });
         } catch (cause) {
-          const message =
-            cause instanceof Error ? cause.message : String(cause);
+          const message = toErrorMessage(cause);
           output.push({
             stdout: "",
             stderr: message,
@@ -262,6 +252,14 @@ function openaiShell(context: StandInContext): SandboxStandIn {
       return { output: output };
     },
   };
+}
+
+function runCall<Input>(
+  context: StandInContext,
+  toSandboxCall: (input: Input) => SandboxToolCall,
+): SandboxStandIn<Input>["execute"] {
+  return async (input, options): Promise<unknown> =>
+    await callTool(context, toSandboxCall(input), options);
 }
 
 function standInFor(
@@ -280,63 +278,53 @@ function standInFor(
   return undefined;
 }
 
-function textEditor(context: StandInContext): SandboxStandIn {
+function textEditor(context: StandInContext): SandboxStandIn<TextEditorInput> {
+  const toSandboxCall = (editor: TextEditorInput): SandboxToolCall => {
+    const path = editor.path;
+    if (editor.command === "view") {
+      const [start, end] = editor.view_range ?? [];
+      return {
+        toolName: "read",
+        input: {
+          file_path: path,
+          ...(start !== undefined ? { offset: start } : {}),
+          ...(start !== undefined && end !== undefined && end >= start
+            ? { limit: end - start + 1 }
+            : {}),
+        },
+      };
+    }
+    if (editor.command === "create") {
+      return {
+        toolName: "write",
+        input: { file_path: path, content: editor.file_text ?? "" },
+      };
+    }
+
+    return {
+      toolName: "edit",
+      input: {
+        file_path: path,
+        old_string: editor.old_str ?? "",
+        new_string: editor.new_str ?? "",
+      },
+    };
+  };
+  const run = runCall(context, toSandboxCall);
+
   return {
     replaces: ["edit", "read", "write"],
     runsAs: ["edit", "read", "write"],
-    toSandboxCall: (input): SandboxToolCall => {
-      const { command, path } = input as TextEditorInput;
-
-      return {
-        toolName:
-          command === "view" ? "read" : command === "create" ? "write" : "edit",
-        input: { file_path: path },
-      };
-    },
+    toSandboxCall: toSandboxCall,
     execute: async (input, options): Promise<unknown> => {
-      const editor = input as Omit<TextEditorInput, "command"> & {
-        command: string;
-      };
-      const file = editor.path;
-      if (editor.command === "view") {
-        const [start, end] = editor.view_range ?? [];
-        return await callTool(
-          context,
-          "read",
-          {
-            file_path: file,
-            ...(start !== undefined ? { offset: start } : {}),
-            ...(start !== undefined && end !== undefined && end >= start
-              ? { limit: end - start + 1 }
-              : {}),
-          },
-          options,
-        );
-      }
-      if (editor.command === "create") {
-        return await callTool(
-          context,
-          "write",
-          { file_path: file, content: editor.file_text ?? "" },
-          options,
-        );
-      }
-      if (editor.command === "str_replace") {
-        return await callTool(
-          context,
-          "edit",
-          {
-            file_path: file,
-            old_string: editor.old_str ?? "",
-            new_string: editor.new_str ?? "",
-          },
-          options,
+      const { command } = input;
+      if (!TEXT_EDITOR_COMMANDS.has(command)) {
+        throw new Error(
+          `Error: ${command} is not supported here; use str_replace or create`,
         );
       }
 
-      throw new Error(
-        `Error: ${editor.command} is not supported here; use str_replace or create`,
-      );
+      return await run(input, options);
     },
   };
 }

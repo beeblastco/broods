@@ -74,12 +74,10 @@ function factoryById(
   factories: Record<string, unknown>,
   id: string,
 ): ProviderToolFactory | undefined {
-  for (const value of Object.values(factories)) {
-    const factory = parseOr(PROVIDER_TOOL_FACTORY, value);
-    if (factory && factoryId(factory) === id) return factory;
-  }
-
-  return undefined;
+  return parseOr(
+    PROVIDER_TOOL_FACTORY,
+    Object.values(factories).find((value): boolean => factoryId(value) === id),
+  );
 }
 
 // Building a provider tool only records its args, so an empty build reads the factory's id.

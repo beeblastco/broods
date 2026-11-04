@@ -68,6 +68,7 @@ if (op.type === 'delete_file') {
   process.stdout.write('Updated ' + op.path + '\n');
 }
 `;
+const APPLY_SCRIPT_BASE64 = toBase64(APPLY_SCRIPT);
 
 export type ApplyPatchOperation = InferToolInput<
   ReturnType<OpenAIProvider["tools"]["applyPatch"]>
@@ -78,5 +79,5 @@ export function applyPatchScript(operation: ApplyPatchOperation): string {
   if (path === ".") throw new Error("Error: path must reference a file");
   const payload = toBase64(JSON.stringify({ ...operation, path: path }));
 
-  return `node -e "$(printf '%s' '${toBase64(APPLY_SCRIPT)}' | base64 -d)" '${payload}'`;
+  return `node -e "$(printf '%s' '${APPLY_SCRIPT_BASE64}' | base64 -d)" '${payload}'`;
 }

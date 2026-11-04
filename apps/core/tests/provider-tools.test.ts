@@ -75,9 +75,10 @@ describe("provider tools by id", () => {
           hostedShell: descriptor(
             openai.tools.shell({ environment: { type: "containerAuto" } }),
           ),
+          find: descriptor(openai.tools.toolSearch({})),
         })
-      ).hostedShell,
-    ).toMatchObject({ id: "openai.shell", execute: undefined });
+      ).find,
+    ).toMatchObject({ id: "openai.tool_search", execute: undefined });
     expect(
       (
         await build("google", google, {
@@ -91,7 +92,7 @@ describe("provider tools by id", () => {
   });
 
   it("names the ids the provider ships when one is missing", async () => {
-    expect(
+    await expect(
       build("openai", openai, {
         webSearch: descriptor(anthropic.tools.webSearch_20260318({})),
       }),
@@ -101,7 +102,7 @@ describe("provider tools by id", () => {
   });
 
   it("refuses a Broods tool name for a tool that does not run as it", async () => {
-    expect(
+    await expect(
       build("anthropic", anthropic, {
         read: descriptor(anthropic.tools.webSearch_20260318({})),
       }),
@@ -130,7 +131,7 @@ describe("provider tools by id", () => {
   });
 
   it("refuses a client-executed tool Broods cannot run", async () => {
-    expect(
+    await expect(
       build("anthropic", anthropic, {
         computer: descriptor(
           anthropic.tools.computer_20251124({
@@ -245,8 +246,11 @@ describe("client-executed provider tools on the sandbox", () => {
     expect(
       standIns
         .get("str_replace_based_edit_tool")
-        .toSandboxCall({ command: "create", path: "b.ts" }),
-    ).toEqual({ toolName: "write", input: { file_path: "b.ts" } });
+        .toSandboxCall({ command: "create", path: "b.ts", file_text: "x" }),
+    ).toEqual({
+      toolName: "write",
+      input: { file_path: "b.ts", content: "x" },
+    });
     expect(tools.read).toBeUndefined();
   });
 
@@ -271,7 +275,7 @@ describe("client-executed provider tools on the sandbox", () => {
   });
 
   it("asks for a command on a custom tool", async () => {
-    expect(
+    await expect(
       build("openai", openai, {
         write_sql: descriptor(openai.tools.customTool({})),
       }),

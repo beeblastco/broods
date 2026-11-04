@@ -34,7 +34,7 @@ Broods finds the tool by its `id` (`anthropic.web_search_20260318`) on the agent
 
 ### Tools the provider runs
 
-Hosted tools run at the provider during the model call: Anthropic web search, web fetch, code execution, tool search and advisor; OpenAI web search, code interpreter, file search, image generation, MCP and `shell` with a `containerAuto` or `containerReference` environment; Google search, URL context, maps, code execution, file search and enterprise search; xAI web and X search, code execution and the rest of `xai.tools`; Groq browser search, Mistral web search, the Vercel AI Gateway search tools and OpenRouter web search.
+Hosted tools run at the provider during the model call: Anthropic web search, web fetch, code execution, tool search and advisor; OpenAI web search, code interpreter, file search, image generation, MCP, tool search and `shell` with a `containerAuto` or `containerReference` environment; Google search, URL context, maps, code execution, file search and enterprise search; xAI web and X search, code execution and the rest of `xai.tools`; Groq browser search, Mistral web search, the Vercel AI Gateway search tools and OpenRouter web search.
 
 ### Tools that run on your sandbox
 
@@ -71,7 +71,7 @@ write_sql: {
 },
 ```
 
-Anthropic computer use and memory, and OpenAI computer use and client-side tool search, are refused: they need code Broods does not have. A machine sandbox gives the agent Broods' own `computer` tool. An `execute` you pass to a factory, or any other tool your code runs, does not survive sync. Put it behind an MCP server.
+Anthropic computer use and memory, and OpenAI computer use and tool search with `execution: "client"`, are refused: they need code Broods does not have. A machine sandbox gives the agent Broods' own `computer` tool. An `execute` you pass to a factory, or any other tool your code runs, does not survive sync. Put it behind an MCP server.
 
 ## MCP servers
 

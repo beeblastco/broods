@@ -755,7 +755,7 @@ const TOOLS = z
           ctx.addIssue({
             code: "custom",
             path: [name],
-            message: `is a Broods tool name; it only keys a provider tool such as ${name}: anthropic.tools.bash_20250124({})`,
+            message: harnessToolNameProblem(name),
           });
       }
     }),
@@ -1009,6 +1009,10 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
   if (problem) throw new ClientError(`${label} ${problem}`);
 
   return new URL(value);
+}
+
+export function harnessToolNameProblem(toolName: string): string {
+  return `is a Broods tool name; only a provider tool that runs as ${toolName} may use it`;
 }
 
 export function isHarnessToolName(toolName: string): boolean {

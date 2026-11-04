@@ -670,7 +670,6 @@ export type ProviderConfigInput = Partial<
   Record<keyof NonNullable<AgentConfig["provider"]>, ProviderSettingsInput>
 >;
 
-// `Pick`, not `Omit`: AgentConfig's index signature would turn off excess-property checks.
 /**
  * An AI SDK provider tool as its factory returns it, under any key; found by its `id`.
  * A tool the caller would run (bash, text editor, shell, apply patch) runs on the agent's sandbox.
@@ -680,6 +679,7 @@ export type AgentToolInput =
   | NonNullable<AgentConfig["tools"]>[string]
   | (Tool & { enabled?: boolean; command?: string });
 
+// `Pick`, not `Omit`: AgentConfig's index signature would turn off excess-property checks.
 export type AgentDefinitionConfig = EnvRefString<
   Pick<
     AgentConfig,
