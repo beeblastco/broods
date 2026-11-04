@@ -39,10 +39,7 @@ const WORKER_OVERHEAD_MS = 15_000;
 // So two commands never start from the same stored files; the Worker's conditional write backs it.
 const runsByReservation = new Map<string, Promise<unknown>>();
 // A worker row bills nothing, so a run's later commands within a minute skip its write.
-const mirroredFor = new Map<
-  string,
-  { task: string; trace: string | undefined; at: number }
->();
+const mirroredFor = new Map<string, { run: string; at: number }>();
 const MIRROR_EVERY_MS = 60_000;
 export const MAX_MIRRORED = 1_000;
 
@@ -113,7 +110,9 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     );
     const { exists } = statusResult.parse(await response.json());
     // The caller marks the row suspended or removes it, so the next command must write it.
-    mirroredFor.delete(id);
+    await queueMirrorWrite(id, async (): Promise<void> => {
+      mirroredFor.delete(id);
+    });
 
     return exists ? { externalId: id, state: "suspended" } : null;
   }
@@ -124,7 +123,9 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       request,
       async (id): Promise<void> => {
-        mirroredFor.delete(id);
+        await queueMirrorWrite(id, async (): Promise<void> => {
+          mirroredFor.delete(id);
+        });
         await callPlatformWorker(
           workerConnection(),
           LABEL,
@@ -205,26 +206,15 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     id: string,
     metadata: SandboxRunRequest["metadata"],
   ): void {
-    const task = metadata?.taskId;
-    const entry =
-      task === undefined
-        ? undefined
-        : { task: task, trace: metadata?.traceId, at: Date.now() };
-    if (entry) {
-      const last = mirroredFor.get(id);
-      if (
-        last?.task === entry.task &&
-        last.trace === entry.trace &&
-        entry.at - last.at < MIRROR_EVERY_MS
-      )
-        return;
-      mirroredFor.delete(id);
-      if (mirroredFor.size >= MAX_MIRRORED) {
-        const oldest = mirroredFor.keys().next().value;
-        if (oldest !== undefined) mirroredFor.delete(oldest);
-      }
-      mirroredFor.set(id, entry);
-    }
+    const run =
+      metadata?.taskId === undefined ? undefined : JSON.stringify(metadata);
+    const last = mirroredFor.get(id);
+    if (
+      last !== undefined &&
+      last.run === run &&
+      Date.now() - last.at < MIRROR_EVERY_MS
+    )
+      return;
     void queueMirrorWrite(id, async (): Promise<void> => {
       const written = await upsertSandboxInstance(
         this.#config.controlPlane,
@@ -233,7 +223,13 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
         id,
         metadata,
       );
-      if (!written && mirroredFor.get(id) === entry) mirroredFor.delete(id);
+      if (!written || run === undefined) return;
+      mirroredFor.delete(id);
+      if (mirroredFor.size >= MAX_MIRRORED) {
+        const oldest = mirroredFor.keys().next().value;
+        if (oldest !== undefined) mirroredFor.delete(oldest);
+      }
+      mirroredFor.set(id, { run: run, at: Date.now() });
     });
   }
 }

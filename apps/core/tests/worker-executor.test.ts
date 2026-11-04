@@ -65,6 +65,7 @@ const metered: string[] = [];
 let stored: string | null = null;
 let claimWins = true;
 let failNextWrite = false;
+let writesLand: Promise<void> = Promise.resolve();
 
 beforeEach((): void => {
   process.env.CLOUDFLARE_WORKER_URL = "https://worker.example.com/";
@@ -72,6 +73,7 @@ beforeEach((): void => {
   stored = null;
   claimWins = true;
   failNextWrite = false;
+  writesLand = Promise.resolve();
   calls.length = 0;
   mirrored.length = 0;
   metered.length = 0;
@@ -123,6 +125,7 @@ beforeEach((): void => {
       mirrored.push(`upsert ${key} ${options?.ephemeral === true}`);
       const failed = failNextWrite;
       failNextWrite = false;
+      await writesLand;
 
       return !failed;
     },
@@ -256,13 +259,17 @@ it("reserves one persistent sandbox, keeps its files across runs and mirrors eve
   ]);
 });
 
-it("mirrors a reserved sandbox once per task and minute, and at once for a new task or trace", async (): Promise<void> => {
+it("mirrors a reserved sandbox once per task and minute, and at once when the run's metadata changes", async (): Promise<void> => {
   const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
   const writesAfter = async (
     taskId: string,
     traceId: string,
+    agentId?: string,
   ): Promise<number> => {
-    await executor.run(inTask(taskId, traceId));
+    await executor.run({
+      ...inTask(taskId, traceId),
+      metadata: { taskId: taskId, traceId: traceId, agentId: agentId },
+    });
     await settled();
 
     return upserts();
@@ -272,10 +279,11 @@ it("mirrors a reserved sandbox once per task and minute, and at once for a new t
   expect(await writesAfter("task-1", "trace-1")).toBe(1);
   expect(await writesAfter("task-2", "trace-1")).toBe(2);
   expect(await writesAfter("task-2", "trace-2")).toBe(3);
+  expect(await writesAfter("task-2", "trace-2", "agent-2")).toBe(4);
   setSystemTime(new Date(Date.now() + 59_000));
-  expect(await writesAfter("task-2", "trace-2")).toBe(3);
+  expect(await writesAfter("task-2", "trace-2", "agent-2")).toBe(4);
   setSystemTime(new Date(Date.now() + 2_000));
-  expect(await writesAfter("task-2", "trace-2")).toBe(4);
+  expect(await writesAfter("task-2", "trace-2", "agent-2")).toBe(5);
 });
 
 it("never mirrors a refused command, so the task's next command still writes", async (): Promise<void> => {
@@ -307,6 +315,24 @@ it("writes the row again on the task's next command after a failed write", async
   await settled();
 
   expect(upserts()).toBe(2);
+});
+
+it("skips no command while the task's first write is still landing, so a failed one loses nothing", async (): Promise<void> => {
+  let land = (): void => {};
+  writesLand = new Promise((resolve): void => {
+    land = resolve;
+  });
+  failNextWrite = true;
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run(inTask("task-1"));
+  await executor.run(inTask("task-1"));
+  await executor.run(inTask("task-1"));
+  land();
+  await settled();
+  await executor.run(inTask("task-1"));
+  await settled();
+
+  expect(upserts()).toBe(3);
 });
 
 it("writes the row again on the first command after a release or a status read", async (): Promise<void> => {
