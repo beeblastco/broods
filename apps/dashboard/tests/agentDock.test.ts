@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { dockPrompt, proposalPlan, sourcePlan } from "../app/lib/agentDock";
+import {
+  dockPrompt,
+  proposalPlan,
+  sourcePlan,
+  stageProgress,
+} from "../app/lib/agentDock";
 import {
   actionTier,
   applyStatus,
@@ -204,6 +209,23 @@ describe("agent dock", () => {
     );
 
     expect(plan?.actions.map((action) => action.type)).toEqual(["blocked"]);
+  });
+
+  test("the agent reads the stage's source, deploy result and drift", () => {
+    expect(
+      stageProgress(
+        {
+          commitSha: "abcdef1234",
+          origin: "apply",
+          revision: 5,
+          verification: { error: "CI failure.", phase: "failed" },
+        },
+        "dev has commits the stored source does not.",
+      ),
+    ).toBe(
+      "Stored source: revision 5, from apply, commit abcdef1, deploy failed: CI failure., out of sync: dev has commits the stored source does not.",
+    );
+    expect(stageProgress(null, undefined)).toBeUndefined();
   });
 
   test("a code-defined node says so on its own line of the prompt", () => {
