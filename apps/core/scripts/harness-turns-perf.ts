@@ -200,12 +200,11 @@ async function runConversation(
         agentConfig(),
         useStorage ? broodsSession : undefined,
       ),
-      sandbox: sandbox,
       model: MODEL_ID,
       tools: {},
     });
     const openedAt = performance.now();
-    const nativeSession = await openAiSdkHarnessSession({
+    const opened = await openAiSdkHarnessSession({
       abortSignal: new AbortController().signal,
       agent: agent,
       sandbox: sandbox,
@@ -217,12 +216,12 @@ async function runConversation(
       messages: [
         { role: "user", content: `Turn ${turn}. ${conversation.userText}` },
       ],
-      session: nativeSession,
+      session: opened.nativeSession,
     });
     await stream.consumeStream();
     const saveError = await parkAiSdkHarnessSession({
+      ...opened,
       broodsSession: broodsSession,
-      nativeSession: nativeSession,
       reservationKey: "perf",
       successful: true,
       type: "pi",

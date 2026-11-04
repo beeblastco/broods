@@ -1547,11 +1547,11 @@ export async function runAgentLoop(
   const finalizeHarnessStream = async (
     streamError?: unknown,
   ): Promise<void> => {
-    if (!activeHarnessSession || harnessStreamFinalized) {
+    if (!harnessTurn || !activeHarnessSession || harnessStreamFinalized) {
       return;
     }
     harnessStreamFinalized = true;
-    harnessTurn?.stopLeaseMonitor();
+    harnessTurn.stopLeaseMonitor();
     const abortError = runAbort.signal.aborted
       ? runAbort.signal.reason
       : undefined;
@@ -1560,7 +1560,8 @@ export async function runAgentLoop(
       await parkAiSdkHarnessSession({
         broodsSession: session,
         nativeSession: activeHarnessSession,
-        reservationKey: harnessTurn?.reservationKey ?? session.conversationKey,
+        sandboxSession: harnessTurn.sandboxSession,
+        reservationKey: harnessTurn.reservationKey,
         successful: finalizationError === undefined,
         type: agentConfig.harness!.type,
       });
