@@ -11,6 +11,7 @@ import {
 } from "./_generated/server";
 import { stageTicketSecret } from "./agent/deployments";
 import { authKit } from "./auth";
+import { cliLoginTarget, insertCliToken } from "./cli/auth";
 import { sealApplyTicket } from "./model/applyTicket";
 import { accountIdForProject } from "./model/auditEvents";
 import { ClientError } from "./model/clientError";
@@ -100,8 +101,22 @@ export const session = mutation({
     if (!agent) return null;
 
     const expiresAt = Date.now() + USER_TOKEN_MAX_TTL_MS;
+    // An owner or admin lends the agent a login that dies with the token; a member gets advice.
+    const target = await cliLoginTarget(ctx, authUser.id);
+    const credential =
+      target instanceof ClientError
+        ? undefined
+        : await insertCliToken(
+            ctx,
+            { authId: authUser.id, ...target },
+            expiresAt,
+          );
     const userToken = await sealUserToken(
-      { userId: authUser.id, expiresAt: expiresAt },
+      {
+        userId: authUser.id,
+        ...(credential !== undefined ? { credential: credential } : {}),
+        expiresAt: expiresAt,
+      },
       agent.userTokenSecret,
     );
 

@@ -5418,6 +5418,12 @@ export declare const internal: {
           user: { authId: string; email: string; name: string };
         }
       >;
+      pruneExpiredTokens: FunctionReference<
+        "mutation",
+        "internal",
+        { now?: number },
+        { tokensDeleted: number }
+      >;
       resolveCliToken: FunctionReference<
         "mutation",
         "internal",

@@ -67,6 +67,48 @@ describe("credential prefixes", () => {
   });
 });
 
+describe("a CLI login on the account API", () => {
+  test("acts as the account, audited as cli, and never rotates the key", async () => {
+    const t = prefixTest();
+    const cli = `bcli_${BODY}`;
+    await seed(t, {
+      accountKey: `bask_${BODY}`,
+      runtimeKey: `bsk_${BODY}`,
+      projectKey: `bpdk_${BODY}`,
+      cliToken: cli,
+    });
+
+    expect((await get(t, "/v1/agents", cli)).status).toBe(200);
+    const patched = await t.fetch("/v1/account", {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${cli}` },
+      body: JSON.stringify({ description: "from the dock" }),
+    });
+    expect(patched.status).toBe(200);
+    const [token, events] = await t.run(async (ctx) =>
+      Promise.all([
+        ctx.db.query("cliTokens").first(),
+        ctx.db.query("auditEvents").collect(),
+      ]),
+    );
+    expect(events.map((event) => event.actor)).toContainEqual({
+      kind: "cli",
+      id: token?._id,
+    });
+    const accountId = token?.accountId ?? "";
+    for (const path of [
+      "/v1/account/rotate-secret",
+      `/v1/accounts/${accountId}/rotate-secret`,
+    ]) {
+      const rotated = await t.fetch(path, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${cli}` },
+      });
+      expect(rotated.status, path).toBe(403);
+    }
+  });
+});
+
 async function assumeRole(t: T, bearer: string): Promise<Response> {
   return await t.fetch("/v1/account/assume-role", {
     method: "POST",

@@ -24,6 +24,19 @@ describe("user tokens", () => {
     expect(await openUserToken(token, SECRET, NOW)).toEqual(ALICE);
   });
 
+  test("carries a credential and refuses one that is not a header-safe bearer", async () => {
+    const withCredential = { ...ALICE, credential: "bcli_abc.DEF-123" };
+    const token = await sealUserToken(withCredential, SECRET, NOW);
+
+    expect(await openUserToken(token, SECRET, NOW)).toEqual(withCredential);
+    for (const credential of ["", "has space", "x".repeat(513), "caf\u00e9"]) {
+      await expect(
+        sealUserToken({ ...ALICE, credential: credential }, SECRET, NOW),
+        credential,
+      ).rejects.toThrow("Invalid user token");
+    }
+  });
+
   test("refuses a token signed with another secret", async () => {
     const token = await sealUserToken(ALICE, "bsig_other", NOW);
 

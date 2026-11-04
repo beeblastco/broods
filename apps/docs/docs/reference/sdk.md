@@ -69,6 +69,7 @@ const token = await signUserToken({ userId: "user_123" });
 | --------------- | ------------------------------------------------------------------------- |
 | `userId`        | Required. Your id for the user. Letters, digits and `._@+=-`, 128 at most |
 | `conversations` | Any key. Or the only conversation keys this user may use                  |
+| `credential`    | None. The user's own bearer, sent to hosted MCP servers only              |
 | `ttlMs`         | 10 minutes. 60 at most                                                    |
 | `secret`        | `BROODS_USER_TOKEN_SECRET`, which `broods dev` and `deploy` write         |
 

@@ -14,6 +14,12 @@ export interface SignUserTokenInput {
   userId: string;
   /** Conversation keys this user may use. Omit to allow any key, still under this user only. */
   conversations?: string[];
+  /**
+   * The end user's own credential, forwarded to the agent's hosted MCP servers as
+   * `X-Broods-User-Credential`; never shown to the model. At most 512 printable ASCII
+   * characters, no spaces. Readable by whoever holds the token: hand it only to that user.
+   */
+  credential?: string;
   /** Lifetime in ms. Defaults to 10 minutes, at most 60. */
   ttlMs?: number;
   /** The stage's `bsig_` signing secret. Defaults to `BROODS_USER_TOKEN_SECRET`. */
@@ -40,6 +46,9 @@ export async function signUserToken(
     {
       userId: input.userId,
       ...(input.conversations ? { conversations: input.conversations } : {}),
+      ...(input.credential !== undefined
+        ? { credential: input.credential }
+        : {}),
       expiresAt: Date.now() + (input.ttlMs ?? USER_TOKEN_DEFAULT_TTL_MS),
     },
     secret,

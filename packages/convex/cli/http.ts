@@ -3,10 +3,10 @@ import { internal } from "../_generated/api";
 import { bearerToken, runTokenRefusal } from "../config/routes/shared";
 import {
   ACCOUNT_KEY_PREFIX,
+  CLI_TOKEN_PREFIX,
   PROJECT_KEY_PREFIX,
   sha256Hex,
 } from "../model/accountSecrets";
-import { CLI_TOKEN_PREFIX } from "./auth";
 import {
   handleEnvListRoute,
   handleEnvRoute,

@@ -3,10 +3,10 @@ import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import {
   ACCOUNT_KEY_PREFIX,
+  CLI_TOKEN_PREFIX,
   RUNTIME_KEY_PREFIX,
   sha256Hex,
 } from "../../model/accountSecrets";
-import { CLI_TOKEN_PREFIX } from "../../cli/auth";
 import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { toPublicRoleResponse } from "../../model/responses";
 import {

@@ -15,11 +15,13 @@ test("signUserToken signs a token core opens with the same secret", async () => 
   const token = await signUserToken({
     userId: "user_123",
     conversations: ["chat-1"],
+    credential: "bcli_user",
   });
 
   expect(await openUserToken(token, SECRET)).toMatchObject({
     userId: "user_123",
     conversations: ["chat-1"],
+    credential: "bcli_user",
   });
   expect(await openUserToken(token, "bsig_other")).toBeNull();
 });

@@ -18,12 +18,15 @@ const KEY_CONTEXT = "broods-user-token:";
 const USER_ID_PATTERN = /^[A-Za-z0-9._@+=-]{1,128}$/;
 const MAX_CONVERSATIONS = 100;
 const MAX_CONVERSATION_KEY_LENGTH = 256;
+const CREDENTIAL_PATTERN = /^[\x21-\x7e]{1,512}$/;
 const CLOCK_SKEW_MS = 60 * 1000;
 
 export interface UserToken {
   userId: string;
   /** Bare keys; absent allows any key under the user's namespace. */
   conversations?: string[];
+  /** The user's own bearer, for the agent's hosted MCP servers only; the minter vouches for it. */
+  credential?: string;
   expiresAt: number;
 }
 
@@ -41,7 +44,7 @@ export async function sealUserToken(
   // The skew allowance is for verifying, never for minting.
   if (!checked || token.expiresAt > now + USER_TOKEN_MAX_TTL_MS) {
     throw new Error(
-      `Invalid user token: userId must match ${USER_ID_PATTERN.source}, conversations must be at most ${MAX_CONVERSATIONS} non-empty keys, and expiresAt must be in the next ${USER_TOKEN_MAX_TTL_MS / 60_000} minutes.`,
+      `Invalid user token: userId must match ${USER_ID_PATTERN.source}, conversations must be at most ${MAX_CONVERSATIONS} non-empty keys, credential must be 1 to 512 printable ASCII characters without spaces, and expiresAt must be in the next ${USER_TOKEN_MAX_TTL_MS / 60_000} minutes.`,
     );
   }
 
@@ -96,7 +99,7 @@ export function userOwnsConversation(
 
 function parseUserToken(decoded: unknown, now: number): UserToken | null {
   if (!decoded || typeof decoded !== "object") return null;
-  const { userId, conversations, expiresAt } = decoded as Partial<
+  const { userId, conversations, credential, expiresAt } = decoded as Partial<
     Record<keyof UserToken, unknown>
   >;
   if (
@@ -105,13 +108,18 @@ function parseUserToken(decoded: unknown, now: number): UserToken | null {
     typeof expiresAt !== "number" ||
     !Number.isFinite(expiresAt) ||
     expiresAt <= now ||
-    expiresAt > now + USER_TOKEN_MAX_TTL_MS + CLOCK_SKEW_MS
+    expiresAt > now + USER_TOKEN_MAX_TTL_MS + CLOCK_SKEW_MS ||
+    (credential !== undefined &&
+      (typeof credential !== "string" || !CREDENTIAL_PATTERN.test(credential)))
   ) {
     return null;
   }
-  if (conversations === undefined) {
-    return { userId: userId, expiresAt: expiresAt };
-  }
+  const checked: UserToken = {
+    userId: userId,
+    ...(credential !== undefined ? { credential: credential } : {}),
+    expiresAt: expiresAt,
+  };
+  if (conversations === undefined) return checked;
   if (
     !Array.isArray(conversations) ||
     conversations.length > MAX_CONVERSATIONS ||
@@ -126,5 +134,5 @@ function parseUserToken(decoded: unknown, now: number): UserToken | null {
     return null;
   }
 
-  return { userId: userId, conversations: conversations, expiresAt: expiresAt };
+  return { ...checked, conversations: conversations };
 }

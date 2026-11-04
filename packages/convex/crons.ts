@@ -50,6 +50,13 @@ crons.interval(
   internal.account.roles.pruneExpiredSessions,
   {},
 );
+// The dashboard agent mints a CLI login per user each hour; expired ones are dead rows.
+crons.interval(
+  "prune cli tokens",
+  { hours: 24 },
+  internal.cli.auth.pruneExpiredTokens,
+  {},
+);
 // Blobs minted through an upload URL but never registered by a workspace file.
 crons.interval(
   "prune orphan uploads",

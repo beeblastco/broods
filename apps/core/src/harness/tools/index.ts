@@ -445,6 +445,7 @@ async function registerMcpTools(
           serverConfig.headers,
           serverConfig.oauth,
           context.session?.principal,
+          context.session?.userCredential,
         );
         connection.sandbox = sandboxMcpTarget(record, context);
         // Unreachable degrades to zero tools for this run; the config errors above still throw.

@@ -5,6 +5,7 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import { cipherFromKeys } from "../../model/accountKeys";
 import {
   ACCOUNT_KEY_PREFIX,
+  CLI_TOKEN_PREFIX,
   RUNTIME_KEY_PREFIX,
   sha256Hex,
 } from "../../model/accountSecrets";
@@ -38,7 +39,13 @@ const MAX_PAGE_SIZE = 1000;
 
 export type ConfigAuth =
   | { kind: "admin" }
-  | { kind: "account"; account: Doc<"accounts">; viaServiceToken?: boolean }
+  | {
+      kind: "account";
+      account: Doc<"accounts">;
+      viaServiceToken?: boolean;
+      // Set for a `bcli_` login: an owner or admin's own token, refused for key rotation.
+      cliTokenId?: Id<"cliTokens">;
+    }
   | { kind: "deployment" }
   | {
       kind: "role";
@@ -74,6 +81,7 @@ export function auditActorForAuth(auth: ConfigAuth): AuditActor {
       : { kind: "role", id: auth.role.roleId };
   }
   if (auth.viaServiceToken === true) return { kind: "service" };
+  if (auth.cliTokenId) return { kind: "cli", id: auth.cliTokenId };
 
   return { kind: "apiAccountSecret", id: auth.account._id };
 }
@@ -449,6 +457,9 @@ async function resolveBearerAuth(
       : null;
   }
 
+  if (token.startsWith(CLI_TOKEN_PREFIX)) {
+    return await resolveCliLoginAuth(ctx, tokenHash);
+  }
   if (token.startsWith(RUNTIME_KEY_PREFIX)) {
     const deployment: {
       accountId: Id<"accounts">;
@@ -471,6 +482,22 @@ async function resolveBearerAuth(
 
   return account.status === "active"
     ? { kind: "account", account: account }
+    : null;
+}
+
+async function resolveCliLoginAuth(
+  ctx: ActionCtx,
+  tokenHash: string,
+): Promise<ConfigAuth | null> {
+  const resolved = await ctx.runMutation(internal.cli.auth.resolveCliToken, {
+    tokenHash: tokenHash,
+  });
+  const account = resolved
+    ? await getAccountById(ctx, resolved.accountId)
+    : null;
+
+  return resolved && account?.status === "active"
+    ? { kind: "account", account: account, cliTokenId: resolved.cliTokenId }
     : null;
 }
 

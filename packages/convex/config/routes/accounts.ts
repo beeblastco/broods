@@ -140,14 +140,17 @@ async function handleSelfAccountRoute(
   const account = accountAuth.account;
   const actor = auditActorForAuth(accountAuth);
 
+  // Rotating the master secret would be privilege escalation: no role policy can grant it.
+  if (
+    route.kind === "selfRotate" &&
+    (accountAuth.kind === "role" || accountAuth.cliTokenId !== undefined)
+  ) {
+    return jsonError(
+      403,
+      "Scoped keys, role sessions and CLI logins may not rotate the account key",
+    );
+  }
   if (accountAuth.kind === "role") {
-    // Rotating the master secret would be privilege escalation: no role policy can grant it.
-    if (route.kind === "selfRotate") {
-      return jsonError(
-        403,
-        "Scoped keys and role sessions may not rotate the account key",
-      );
-    }
     const denial = roleDenial(rolePrincipal(accountAuth.role), req.method, {
       type: "account",
       id: account._id,

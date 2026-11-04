@@ -1468,7 +1468,8 @@ export default defineSchema({
   cliTokens: defineTable(cliTokensFields)
     .index("by_tokenHash", ["tokenHash"])
     .index("by_accountId", ["accountId"])
-    .index("by_authId", ["authId"]),
+    .index("by_authId", ["authId"])
+    .index("by_expiresAt", ["expiresAt"]),
   cliExternalResources: defineTable(cliExternalResourcesFields)
     .index("by_projectId_and_stageId", ["projectId", "stageId"])
     .index("by_accountId", ["accountId"]),

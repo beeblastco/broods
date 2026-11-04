@@ -11,6 +11,7 @@ import { authKit } from "../auth";
 import { slugifyName } from "../lib/slug";
 import { bearerToken } from "../config/routes/shared";
 import {
+  CLI_TOKEN_PREFIX,
   createAccountSecret,
   randomToken,
   sha256Hex,
@@ -28,8 +29,8 @@ import { planValidator } from "../schema";
 
 const CLI_CODE_PREFIX = "bcode_";
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
-export const CLI_TOKEN_PREFIX = "bcli_";
 const CODE_TTL_MS = 5 * 60 * 1000;
+const PRUNE_BATCH_SIZE = 100;
 
 // RFC 7636: 43..128 unreserved characters, base64url without padding.
 const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
@@ -98,33 +99,9 @@ export const createLoginCode = mutation({
     if (!authUser) {
       throw new Error("User not found or not authenticated");
     }
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
-      .unique();
-    if (!user) throw new ClientError("User not found", "not_found");
-
+    const target = await cliLoginTarget(ctx, authUser.id);
     // ClientError: a plain Error reaches a production caller only as "Server Error".
-    const org = await getActiveOrgForUser(ctx, user._id);
-    if (!org) throw new ClientError("No active organization", "not_found");
-    const membership = await getOrgMembership(ctx, org._id, user._id);
-    if (!membership || !orgRoleMeets(membership.role, "admin")) {
-      throw new ClientError(
-        `broods login needs the owner or admin role in ${org.name}. Switch organizations in the dashboard, then try again.`,
-        "unauthorized",
-      );
-    }
-
-    const account = await ctx.db
-      .query("accounts")
-      .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
-      .unique();
-    if (!account || account.status !== "active") {
-      throw new ClientError(
-        `${org.name} has no active API account. Set it up under Organization > API Access in the dashboard.`,
-      );
-    }
+    if (target instanceof ClientError) throw target;
 
     const now = Date.now();
     const code = randomToken(CLI_CODE_PREFIX);
@@ -132,8 +109,8 @@ export const createLoginCode = mutation({
     await ctx.db.insert("cliAuthCodes", {
       codeHash: await sha256Hex(code),
       authId: authUser.id,
-      orgId: org._id,
-      accountId: account._id,
+      orgId: target.orgId,
+      accountId: target.accountId,
       codeChallenge: codeChallenge,
       expiresAt: expiresAt,
       createdAt: now,
@@ -286,18 +263,8 @@ export const exchangeLoginCode = internalMutation({
       .withIndex("by_authId", (q) => q.eq("authId", row.authId))
       .unique();
 
-    const token = randomToken(CLI_TOKEN_PREFIX);
     const expiresAt = now + TOKEN_TTL_MS;
-    await ctx.db.insert("cliTokens", {
-      tokenHash: await sha256Hex(token),
-      authId: row.authId,
-      orgId: row.orgId,
-      accountId: row.accountId,
-      status: "active",
-      expiresAt: expiresAt,
-      createdAt: now,
-      lastUsedAt: now,
-    });
+    const token = await insertCliToken(ctx, row, expiresAt);
     await ctx.db.patch(row._id, { usedAt: now });
 
     return {
@@ -344,6 +311,83 @@ export async function cliLoginTokenHash(req: Request): Promise<string | null> {
 
   return token?.startsWith(CLI_TOKEN_PREFIX) ? await sha256Hex(token) : null;
 }
+
+// Where a `bcli_` login for this user lands: the active org's account, owner or admin only.
+export async function cliLoginTarget(
+  ctx: MutationCtx,
+  authId: string,
+): Promise<{ orgId: Id<"orgs">; accountId: Id<"accounts"> } | ClientError> {
+  const user = await userByAuthId(ctx, authId);
+  if (!user) return new ClientError("User not found", "not_found");
+  const org = await getActiveOrgForUser(ctx, user._id);
+  if (!org) return new ClientError("No active organization", "not_found");
+  const membership = await getOrgMembership(ctx, org._id, user._id);
+  if (!membership || !orgRoleMeets(membership.role, "admin")) {
+    return new ClientError(
+      `broods login needs the owner or admin role in ${org.name}. Switch organizations in the dashboard, then try again.`,
+      "unauthorized",
+    );
+  }
+  const account = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
+    .unique();
+  if (!account || account.status !== "active") {
+    return new ClientError(
+      `${org.name} has no active API account. Set it up under Organization > API Access in the dashboard.`,
+    );
+  }
+
+  return { orgId: org._id, accountId: account._id };
+}
+
+// Only the hash is stored: the plaintext returned here is the one copy.
+export async function insertCliToken(
+  ctx: MutationCtx,
+  owner: { authId: string; orgId: Id<"orgs">; accountId: Id<"accounts"> },
+  expiresAt: number,
+): Promise<string> {
+  const now = Date.now();
+  const token = randomToken(CLI_TOKEN_PREFIX);
+  await ctx.db.insert("cliTokens", {
+    tokenHash: await sha256Hex(token),
+    authId: owner.authId,
+    orgId: owner.orgId,
+    accountId: owner.accountId,
+    status: "active",
+    expiresAt: expiresAt,
+    createdAt: now,
+    lastUsedAt: now,
+  });
+
+  return token;
+}
+
+// Expiry is checked inline on every resolve; this only bounds growth.
+export const pruneExpiredTokens = internalMutation({
+  args: { now: v.optional(v.number()) },
+  returns: v.object({ tokensDeleted: v.number() }),
+  handler: async (ctx, args): Promise<{ tokensDeleted: number }> => {
+    const now = args.now ?? Date.now();
+    // A token minted with no expiresAt never expires, so the range starts above zero.
+    const expired = await ctx.db
+      .query("cliTokens")
+      .withIndex("by_expiresAt", (q) =>
+        q.gt("expiresAt", 0).lt("expiresAt", now),
+      )
+      .take(PRUNE_BATCH_SIZE);
+    for (const token of expired) {
+      await ctx.db.delete(token._id);
+    }
+    if (expired.length === PRUNE_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.cli.auth.pruneExpiredTokens, {
+        now: now,
+      });
+    }
+
+    return { tokensDeleted: expired.length };
+  },
+});
 
 export const resolveCliToken = internalMutation({
   args: {
