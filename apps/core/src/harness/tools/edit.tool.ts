@@ -1,3 +1,4 @@
+import { SHELL_ONLY_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
@@ -8,6 +9,8 @@ import {
   workspaceParamSchema,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
+import type { SandboxRunResult } from "../sandbox/types.ts";
+import { shellQuote } from "../sandbox/utils.ts";
 import { toolError, toolText } from "./utils.ts";
 
 interface EditInput {
@@ -41,16 +44,34 @@ Usage notes:
           if (rel === ".") {
             return toolError("Error: file_path must reference a file");
           }
+          const sandbox = ws.sandbox;
+          const options = {
+            onSandboxCpu: context.onSandboxCpu,
+            metadata: sandboxRunMetadata(context, ws),
+          };
+          if (SHELL_ONLY_SANDBOX_PROVIDERS.has(sandbox.provider)) {
+            return toolText(
+              await editOnShell(
+                (code) => runSandbox(sandbox, ws.namespace, code, options),
+                rel,
+                old_string ?? "",
+                new_string ?? "",
+                replace_all === true,
+              ),
+            );
+          }
           const code = editScript(
             toBase64(rel),
             toBase64(old_string ?? ""),
             toBase64(new_string ?? ""),
             replace_all === true,
           );
-          const result = await runSandbox(ws.sandbox, ws.namespace, code, {
-            onSandboxCpu: context.onSandboxCpu,
-            metadata: sandboxRunMetadata(context, ws),
-          });
+          const result = await runSandbox(
+            ws.sandbox,
+            ws.namespace,
+            code,
+            options,
+          );
           if (!result.ok) {
             return toolError(
               `${result.stderr}${result.stdout}`.trim() || "Error: edit failed",
@@ -65,6 +86,43 @@ Usage notes:
       },
     }),
   };
+}
+
+// The node script's rules, run in core: read the file out, replace here, write it back.
+async function editOnShell(
+  run: (code: string) => Promise<SandboxRunResult>,
+  rel: string,
+  oldString: string,
+  newString: string,
+  replaceAll: boolean,
+): Promise<string> {
+  if (oldString.length === 0) toolError("Error: old_string must not be empty");
+  if (oldString === newString)
+    toolError("Error: old_string and new_string are identical");
+  const q = shellQuote(`./${rel}`);
+  const read = await run(
+    `if [ ! -f ${q} ]; then printf 'Error: file not found: %s\\n' ${shellQuote(rel)} >&2; exit 1; fi; base64 -w0 ${q}`,
+  );
+  if (!read.ok)
+    toolError(`${read.stderr}${read.stdout}`.trim() || "Error: edit failed");
+  const data = Buffer.from(read.stdout.trim(), "base64").toString("utf8");
+  const count = data.split(oldString).length - 1;
+  if (count === 0) toolError(`Error: old_string not found in ${rel}`);
+  if (!replaceAll && count > 1)
+    toolError(
+      `Error: old_string is not unique (${count} matches); add context or set replace_all`,
+    );
+  const updated = replaceAll
+    ? data.split(oldString).join(newString)
+    : data.replace(oldString, () => newString);
+  const wrote = await run(
+    `printf '%s' ${shellQuote(toBase64(updated))} | base64 -d > ${q}`,
+  );
+  if (!wrote.ok)
+    toolError(`${wrote.stderr}${wrote.stdout}`.trim() || "Error: edit failed");
+  const replacements = replaceAll ? count : 1;
+
+  return `Edited ${rel} (${replacements} replacement${replacements === 1 ? "" : "s"})`;
 }
 
 function editScript(

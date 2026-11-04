@@ -734,6 +734,57 @@ describe("resolveAgentRuntime", () => {
     expect(resolved.workspaces[0]?.sandbox?.options).toBeUndefined();
   });
 
+  it("gives each user-token conversation its own folder and sandbox, whatever the isolation", async () => {
+    setStorageForTests({
+      sandboxConfigs: {
+        getById: async (_accountId: string, id: string) => ({
+          sandboxId: id,
+          name: "primary",
+          config: {
+            provider: "lambda",
+            persistent: true,
+            ...(id === "sb_pinned"
+              ? { options: { reservationKey: "team" } }
+              : {}),
+          },
+        }),
+      },
+      workspaceConfigs: {
+        getById: async () => ({ config: { storage: { provider: "s3" } } }),
+      },
+    } as never);
+    const resolve = (sandboxId: string, user: string) =>
+      resolveAgentRuntime(
+        {
+          sandboxes: [sandboxId],
+          workspaces: [{ name: "notes", workspaceId: "ws_a" }],
+        },
+        { accountId: "acct_1", agentId: "ag_1" },
+        { userConversationKey: `acct:acct_1:agent:ag_1:api:bsu:${user}:chat` },
+      );
+
+    const [alice, bob, pinned] = await Promise.all([
+      resolve("sb_1", "alice"),
+      resolve("sb_1", "bob"),
+      resolve("sb_pinned", "alice"),
+    ]);
+
+    const root = workspaceNamespace("acct_1", "ws_a");
+    expect(alice.workspaces[0]?.namespace).toBe(
+      `${root}/users/${normalizeFilesystemNamespace("acct:acct_1:agent:ag_1:api:bsu:alice:chat")}`,
+    );
+    expect(bob.workspaces[0]?.namespace).not.toBe(
+      alice.workspaces[0]?.namespace,
+    );
+    const keyOf = (runtime: typeof alice) =>
+      runtime.sandboxes[0]?.sandbox.options?.reservationKey;
+    expect(keyOf(alice)).not.toBe(
+      agentSandboxReservationKey("acct_1", "ag_1", "sb_1"),
+    );
+    expect(keyOf(bob)).not.toBe(keyOf(alice));
+    expect(keyOf(pinned)).toBe(pinnedSandboxReservationKey("acct_1", "team"));
+  });
+
   it("resolves sandboxes by record name and reserves each on its own key", async () => {
     setStorageForTests({
       sandboxConfigs: {

@@ -72,6 +72,26 @@ It matters whether the workspace's sandbox is the agent's own first sandbox:
 
 The refusal exists because the workspace is the only storage that outlives a sandbox. `sandboxes: [a, b]` with a workspace on `b` is rejected, since `b` would be reachable both with and without the mount.
 
+### Disk workspaces
+
+`storage: { provider: "disk" }` keeps a workspace's files on its sandbox's own disk instead of a bucket. It needs a persistent `worker` sandbox: no mount and no container, so every file tool answers in a fraction of a second.
+
+```ts
+export const disk = defineSandbox({
+  name: "disk",
+  provider: "worker",
+  persistent: true,
+});
+export const project = defineWorkspace({
+  name: "project",
+  storage: { provider: "disk" },
+});
+```
+
+- Each workspace folder, partition and user conversation is its own disk, up to 24 MiB.
+- `read`, `write`, `edit`, `glob`, `grep` and `bash` all work. `edit` and `glob` read the file out and compute in Broods, since the shell has no `node`.
+- There is no bucket behind it: download links, the workspace files API and memory read nothing. Reach a user's files with [`GET` and `PUT .../files`](../reference/http-api.md#a-users-conversation-files) on the agent's URL, with the runtime key and that user's token.
+
 ## Partitioning
 
 By default every run mounts the same folder. Partitioning gives each conversation, ticket or team its own folder under one workspace, so a GitHub issue cannot read another issue's files. It separates files, `memory/` and `TASKS.md`. The agent's prompt, tools, credentials and skills stay shared.
@@ -105,9 +125,12 @@ export const github = defineGitHubConnection({
 | Run                           | Agent sees          | Mounted folder                      |
 | ----------------------------- | ------------------- | ----------------------------------- |
 | Direct API or cron            | workspace `support` | root                                |
+| Direct API with a user token  | workspace `support` | `users/<hash of the conversation>/` |
 | Slack, any thread in `C456`   | workspace `support` | root                                |
 | GitHub issue `owner/repo#123` | workspace `support` | `support/<hash of owner/repo#123>/` |
 | GitHub issue `owner/repo#456` | workspace `support` | `support/<hash of owner/repo#456>/` |
+
+A run that carries a [user token](../internals/security.md#end-user-tokens) always mounts its own conversation's folder under `users/`, whatever `partitioned` says, so one end user never sees another's files. Its subagents mount that user folder too, under their own agent folder when the workspace is `partitioned: "agent"`. A persistent agent sandbox gets one reservation per user conversation too, unless its `options.reservationKey` pins one to share.
 
 A new child folder starts empty. Files at the root are not copied in. A [channel record](../channels/channel-records.md) can also set `partition` for one place.
 
