@@ -110,7 +110,7 @@ export const github = defineGitHubConnection({
 | GitHub issue `owner/repo#123` | workspace `support` | `support/<hash of owner/repo#123>/` |
 | GitHub issue `owner/repo#456` | workspace `support` | `support/<hash of owner/repo#456>/` |
 
-A run that carries a [user token](../internals/security.md#end-user-tokens) always mounts its own conversation's folder under `users/`, whatever `partitioned` says, so one end user never sees another's files. Its subagents mount the same folder. A persistent agent sandbox gets one reservation per user conversation too, unless its `options.reservationKey` pins one to share.
+A run that carries a [user token](../internals/security.md#end-user-tokens) always mounts its own conversation's folder under `users/`, whatever `partitioned` says, so one end user never sees another's files. Its subagents mount that user folder too, under their own agent folder when the workspace is `partitioned: "agent"`. A persistent agent sandbox gets one reservation per user conversation too, unless its `options.reservationKey` pins one to share.
 
 A new child folder starts empty. Files at the root are not copied in. A [channel record](../channels/channel-records.md) can also set `partition` for one place.
 
