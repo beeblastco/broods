@@ -335,6 +335,22 @@ it("skips no command while the task's first write is still landing, so a failed 
   expect(upserts()).toBe(3);
 });
 
+it("writes behind another task's write still landing, so the row ends on the last command's task", async (): Promise<void> => {
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run(inTask("task-2"));
+  await settled();
+  let land = (): void => {};
+  writesLand = new Promise((resolve): void => {
+    land = resolve;
+  });
+  await executor.run(inTask("task-1"));
+  await executor.run(inTask("task-2"));
+  land();
+  await settled();
+
+  expect(upserts()).toBe(3);
+});
+
 it("writes the row again on the first command after a release or a status read", async (): Promise<void> => {
   const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
   await executor.run(inTask("task-1"));

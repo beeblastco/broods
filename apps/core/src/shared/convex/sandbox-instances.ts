@@ -25,7 +25,7 @@ export type SandboxInstanceStatus =
   | "error";
 
 // Pass `specs` only when the real size is known; else the row bills the config's, unverified.
-// False only when the write failed, so a caller that skips repeat writes knows to retry.
+// True once the row is written; false with no control plane or when the write failed.
 export async function upsertSandboxInstance(
   controlPlane: SandboxControlPlane | undefined,
   provider: SandboxProvider,
@@ -34,7 +34,7 @@ export async function upsertSandboxInstance(
   metadata?: SandboxRunMetadata,
   options?: { ephemeral?: boolean; logStream?: string; specs?: SandboxSpecs },
 ): Promise<boolean> {
-  if (!controlPlane) return true;
+  if (!controlPlane) return false;
   const meta: SandboxRunMetadata = metadata ?? {};
   const ephemeral = options?.ephemeral === true;
   try {
