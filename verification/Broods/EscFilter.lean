@@ -9,8 +9,7 @@ and `expected` what the keys read so far meant. Any number of keys.
 
 namespace Broods.EscFilter
 
-/-- The byte after Esc in an arrow key: `[` (0x5b, CSI) or `O` (0x4f, SS3, sent in application
-cursor mode). -/
+/-- The byte after Esc in an arrow key: `[` (0x5b, CSI) or `O` (0x4f, SS3). -/
 inductive Intro where
   | csi | ss3
   deriving DecidableEq, Repr
@@ -77,7 +76,6 @@ def receive (s : State) : Option State :=
           out := s.out ++ settled, held := true, heldMidTurn := still, streaming := still }
       else some { t with out := s.out ++ settled ++ [c.plain], held := false, streaming := still }
 
-/-- The next read is the rest of a split arrow. -/
 def tailNext (s : State) : Bool :=
   match s.wire with
   | .arrowTail _ :: _ => true
@@ -144,11 +142,6 @@ def Inv (s : State) : Prop :=
     (s.held = true ∧ s.expected = s.out ∧ ∃ i r, s.wire = .arrowTail i :: r ∧ ok r = true)
 
 theorem press_ok {cs : List Chunk} (h : Press cs) : ok cs = true := by cases h <;> rfl
-
-theorem tail_of_tailNext {s : State} (h : tailNext s = true) :
-    ∃ i r, s.wire = .arrowTail i :: r := by
-  obtain ⟨wire, held, mid, streaming, out, expected⟩ := s
-  rcases wire with _ | ⟨_ | _ | _ | i | _, r⟩ <;> simp_all [tailNext]
 
 theorem inv_step (s t : State) (hs : Inv s) (hst : Step s t) : Inv t := by
   cases hst with
@@ -228,21 +221,18 @@ theorem receive_isSome {s : State} (h : s.wire ≠ []) : (receive s).isSome := b
 
 theorem receive_clears_held {s t : State} (hs : Inv s) (hw : tailNext s = true)
     (h : receive s = some t) : t.held = false := by
-  obtain ⟨i, r, hw⟩ := tail_of_tailNext hw
   obtain ⟨wire, held, mid, streaming, out, expected⟩ := s
-  simp only at hw; subst hw
-  rcases hs with ⟨_, _, h3⟩ | ⟨_, _, h3⟩ | ⟨h1, _⟩
-  · simp [ok] at h3
-  · simp [ok] at h3
-  · simp only at h1; subst h1; simp [receive] at h; subst h; rfl
+  rcases hs with ⟨_, _, h3⟩ | ⟨_, _, h3⟩ | ⟨h1, _, _, _, h3, _⟩
+  · rcases wire with _ | ⟨_ | _ | _ | _ | _, _⟩ <;> simp_all [tailNext, ok]
+  · rcases wire with _ | ⟨_ | _ | _ | _ | _, _⟩ <;> simp_all [tailNext, ok]
+  · simp only at h1 h3; subst h1 h3; simp [receive] at h; subst h; rfl
 
 /-- A held split-arrow Esc stays one, its tail next, until a read is handled. -/
 theorem tail_held_step {s t : State} (hs : Inv s) (hh : s.held = true)
     (hw : tailNext s = true) (hst : Step s t) (ht : t.held = true) : tailNext t = true := by
   cases hst with
   | press cs _ =>
-    obtain ⟨i, r, hc⟩ := tail_of_tailNext hw
-    simp [tailNext, hc]
+    revert hw; unfold tailNext; split <;> simp_all
   | receive _ h => simp [receive_clears_held hs hw h] at ht
   | timer _ h => simp [timerFires, hh, hw] at h
   | turnStarts | turnEnds => exact hw

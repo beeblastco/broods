@@ -400,10 +400,9 @@ test("Esc stops a streaming turn; keys, split keys, Ctrl+C and idle Esc reach th
 
   const restore = stopTurnOnEscape(transport, input);
   send("\x1b[A");
-  // An arrow split across two reads is still an arrow, not a stop.
+  // An arrow split across two reads, CSI `[B` or SS3 `OC`, is still an arrow, not a stop.
   send("\x1b");
   send("[B");
-  // Application cursor mode sends SS3 arrows, `ESC O C`.
   send("\x1b");
   send("OC");
   expect(stops).toBe(0);
