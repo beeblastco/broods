@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -11,7 +11,7 @@ const SHA = "a".repeat(40);
 async function seed(
   stageHash: string,
   syncedAt: number,
-): Promise<{ t: ReturnType<typeof convexTest>; stageId: Id<"stages"> }> {
+): Promise<{ t: TestConvex<typeof schema>; stageId: Id<"stages"> }> {
   const t = convexTest(schema, modules);
   const stageId = await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("orgs", {
