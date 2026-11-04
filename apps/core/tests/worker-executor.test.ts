@@ -299,7 +299,7 @@ it("books a held reservation again once a minute, following a key repointed else
   const first = stored;
   stored = "fp-p-other";
   await executor.run(request);
-  setSystemTime(new Date(Date.now() + 61_000));
+  spyOn(performance, "now").mockReturnValue(performance.now() + 61_000);
   await executor.run(request);
   await executor.run(request);
 
@@ -316,10 +316,20 @@ it("refuses a held reservation's next booking once the account is no longer acti
   const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
   await executor.run(request);
   accountActive = false;
-  setSystemTime(new Date(Date.now() + 61_000));
+  spyOn(performance, "now").mockReturnValue(performance.now() + 61_000);
 
   await expect(executor.run(request)).rejects.toThrow("Account is not active");
   expect(calls).toHaveLength(1);
+});
+
+it("books a held reservation again after a minute even if the wall clock is set back", async (): Promise<void> => {
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run(request);
+  setSystemTime(new Date(Date.now() - 3_600_000));
+  spyOn(performance, "now").mockReturnValue(performance.now() + 61_000);
+  await executor.run(request);
+
+  expect(convex).toEqual(["reserve", "reserve"]);
 });
 
 it("lets go of a held reservation when it releases it", async (): Promise<void> => {

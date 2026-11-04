@@ -83,7 +83,7 @@ export async function reserveSandboxInstance(
   const hit = held.get(entry);
   if (
     hit?.accountId === accountId &&
-    Date.now() - hit.checkedAt < REVALIDATE_MS
+    performance.now() - hit.checkedAt < REVALIDATE_MS
   )
     return hit.id;
   const epoch = deletes;
@@ -100,7 +100,11 @@ export async function reserveSandboxInstance(
       const oldest = held.keys().next().value;
       if (oldest !== undefined) held.delete(oldest);
     }
-    held.set(entry, { accountId: accountId, id: id, checkedAt: Date.now() });
+    held.set(entry, {
+      accountId: accountId,
+      id: id,
+      checkedAt: performance.now(),
+    });
   }
 
   return id;
