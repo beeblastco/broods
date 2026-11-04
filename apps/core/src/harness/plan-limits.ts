@@ -20,6 +20,15 @@ const WINDOW_MS = 60_000;
 // Usage landing inside this TTL can take an account a little past its budget, never far.
 const BUDGET_TTL_MS = 30_000;
 const USAGE_LINGER_MS = 1_000;
+// Every meter field, so a field added to MeterUsage fails here until recordUsageSoon sums it.
+const METER_FIELDS: { [Field in keyof Required<MeterUsage>]: Field } = {
+  egressGb: "egressGb",
+  hostedMcpGbSeconds: "hostedMcpGbSeconds",
+  hostedMcpRequests: "hostedMcpRequests",
+  ingressGb: "ingressGb",
+  workerMs: "workerMs",
+  workerRequests: "workerRequests",
+};
 
 type MeterUsage = Parameters<Storage["budgets"]["record"]>[1];
 
@@ -158,7 +167,7 @@ export function recordUsageSoon(
   ]);
   const pending = lingering.get(key);
   if (pending) {
-    for (const name of Object.keys(usage) as (keyof MeterUsage)[]) {
+    for (const name of Object.values(METER_FIELDS)) {
       const amount = usage[name];
       if (amount !== undefined)
         pending.usage[name] = (pending.usage[name] ?? 0) + amount;
