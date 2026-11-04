@@ -20,6 +20,12 @@ Preview first with `broods diff`. It compares your code with the stage, includin
 
 When the stage holds resources your code no longer declares, `broods dev` lists them and asks before deleting. A no is remembered, so it does not ask again for the same resources. `broods deploy` never deletes unless you pass `--prune`. A prune fails if a policy it would remove is still used by an agent or channel record. It only removes skills, hooks and MCP servers this stage created, and cron jobs code declared, never ones an agent scheduled at runtime, and only once the deploy is accepted.
 
+### Stored source
+
+Every `broods dev` and `broods deploy` also stores the stage's source: the text files in `broods/` plus `package.json` and `bun.lock`. Dot files (`.env`, `.env.local`), `_generated/`, `node_modules/` and links are never sent. With or without GitHub, the stage keeps its newest source and the 19 before it, which is what the dashboard's agent edits and what a revert goes back to. A source over 400 files or 2 MB still deploys, with a warning, and the stage keeps its previous source.
+
+The sync answers `manifestHash`, a hash of the stage's manifest as `broods diff` compares it. It changes only when the diff would show something, so a second deploy of the same code answers the same hash.
+
 ## Stages
 
 ```bash

@@ -104,6 +104,7 @@ import { SandboxInstancesStandIn } from "./SandboxInstancesStandIn";
 import { DataTableStandIn } from "./DataTableStandIn";
 import { MotionStandIn } from "./MotionStandIn";
 import { ShortcutsStandIn } from "./ShortcutsStandIn";
+import { DockApplyStandIn } from "./DockApplyStandIn";
 import { InlineEditStandIn } from "./InlineEditStandIn";
 import { UsageChartStandIn } from "./UsageChartStandIn";
 import { AllowanceStandIn } from "./AllowanceStandIn";
@@ -368,6 +369,10 @@ export function UiGallery(): React.JSX.Element {
 
   if (dashboardTab === "shortcuts") {
     return <ShortcutsStandIn />;
+  }
+
+  if (dashboardTab === "dock-apply") {
+    return <DockApplyStandIn />;
   }
 
   if (dashboardTab === "inline-edit") {

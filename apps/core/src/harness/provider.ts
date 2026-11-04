@@ -144,7 +144,7 @@ export type ModelOutputSpec =
   | ReturnType<typeof Output.json>;
 
 // Built per call so each factory is read off its live binding, keeping it mockable.
-export function modelProviderFactories(): Record<
+function modelProviderFactories(): Record<
   Exclude<AccountModelProviderName, "chatgpt">,
   ModelProviderFactory
 > {

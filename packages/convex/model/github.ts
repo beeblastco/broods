@@ -9,6 +9,7 @@ import nacl from "tweetnacl";
 
 import { ClientError } from "./clientError";
 import { bytesToBase64Url } from "./stageSessionTicket";
+import { isSourceFile } from "./stageSource";
 
 export const WORKFLOW_PATH = ".github/workflows/broods.yml";
 const WORKFLOW_NAME = "Broods deploy";
@@ -36,6 +37,8 @@ const DEVELOPMENT_BRANCHES = ["dev", "development"] as const;
 export const STAGES = ["production", "development"] as const;
 
 const GITHUB_TIMEOUT_MS = 15_000;
+const LOG_TAIL_CHARS = 20_000;
+const ERROR_LINE_CHARS = 300;
 
 const INSTALL: Record<PackageManager, string> = {
   bun: "bun install --frozen-lockfile",
@@ -55,16 +58,15 @@ const RUN: Record<PackageManager, string> = {
 /** Lockfiles in the order a monorepo's own beats a stray one. */
 const AGENT_FILE_LIMIT = 40;
 const AGENT_BYTES_LIMIT = 300_000;
-const BUILD_FOLDERS: ReadonlySet<string> = new Set([
-  "_generated",
-  "build",
-  "dist",
-  "node_modules",
-]);
-const AGENT_FILE_PATTERN = /\.(ts|tsx|js|mjs|json|md|txt|ya?ml)$/;
 
 export interface RepoFile {
   content: string;
+  path: string;
+}
+
+/** A file in an agent commit; null `content` deletes it. */
+export interface CommitFile {
+  content: string | null;
   path: string;
 }
 
@@ -456,7 +458,7 @@ export async function commitFiles(
   token: string,
   fullName: string,
   branch: string,
-  files: readonly RepoFile[],
+  files: readonly CommitFile[],
   message: string,
   viaPullRequest: boolean,
   baseSha: string,
@@ -511,18 +513,61 @@ export async function commitFiles(
   return { sha: commit.sha, url: pull.html_url, viaPullRequest: true };
 }
 
+/** Why a deploy run failed: the last error its failed job logged, else the step that failed. */
+export async function runFailure(
+  app: GitHubApp,
+  installationId: number,
+  fullName: string,
+  runId: number,
+): Promise<string | undefined> {
+  const token = await installationToken(app, installationId);
+  const { jobs } = await githubRequest<{
+    jobs: Array<{
+      conclusion: string | null;
+      id: number;
+      steps?: Array<{ conclusion: string | null; name: string }>;
+    }>;
+  }>(app, token, "GET", `/repos/${fullName}/actions/runs/${runId}/jobs`);
+  const job = jobs.find((entry) => entry.conclusion === "failure");
+  if (!job) return undefined;
+  const step = job.steps?.find((entry) => entry.conclusion === "failure");
+  // The log is plain text behind a redirect, so it skips githubRequest's JSON parse.
+  const log = await fetch(
+    `${app.apiUrl}/repos/${fullName}/actions/jobs/${job.id}/logs`,
+    {
+      headers: { Authorization: `Bearer ${token}`, "User-Agent": "broods" },
+      signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
+    },
+  );
+
+  return (
+    (log.ok ? lastErrorLine(await log.text()) : undefined) ??
+    (step ? `${step.name} failed.` : undefined)
+  );
+}
+
+/** The last error line of a run's log, without GitHub's timestamps or its exit-code line. */
+export function lastErrorLine(log: string): string | undefined {
+  return log
+    .slice(-LOG_TAIL_CHARS)
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/^\S+Z /, "")
+        .replace(/^##\[error\]/, "")
+        .trim(),
+    )
+    .findLast(
+      (line) =>
+        /error/i.test(line) &&
+        !line.startsWith("Process completed with exit code"),
+    )
+    ?.slice(0, ERROR_LINE_CHARS);
+}
+
 /** True for a text file inside the `broods/` folder `prefix`, outside build output. */
 export function isAgentEditable(prefix: string, path: string): boolean {
-  return (
-    path.startsWith(prefix) &&
-    !path
-      .split("/")
-      .some(
-        (part) =>
-          part === ".." || part.startsWith(".") || BUILD_FOLDERS.has(part),
-      ) &&
-    AGENT_FILE_PATTERN.test(path)
-  );
+  return path.startsWith(prefix) && isSourceFile(path);
 }
 
 export function broodsFolder(rootDirectory: string): string {
@@ -1062,7 +1107,7 @@ async function commitOn(
   token: string,
   fullName: string,
   parentSha: string,
-  files: readonly RepoFile[],
+  files: readonly CommitFile[],
   message: string,
 ): Promise<{ sha: string; url: string }> {
   const parent = await githubRequest<{ tree: { sha: string } }>(
@@ -1078,12 +1123,17 @@ async function commitOn(
     `/repos/${fullName}/git/trees`,
     {
       base_tree: parent.tree.sha,
-      tree: files.map((file) => ({
-        path: file.path,
-        mode: "100644",
-        type: "blob",
-        content: file.content,
-      })),
+      // A null blob sha removes the path from the base tree.
+      tree: files.map((file) =>
+        file.content === null
+          ? { path: file.path, mode: "100644", type: "blob", sha: null }
+          : {
+              path: file.path,
+              mode: "100644",
+              type: "blob",
+              content: file.content,
+            },
+      ),
     },
   );
   const commit = await githubRequest<{ sha: string; html_url: string }>(

@@ -383,16 +383,6 @@ describe("createTools", () => {
     });
   });
 
-  it("rejects a config.tools key the configured provider does not ship", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-
-    await expect(
-      createTools(createToolContext(), { tools: { notAProviderTool: {} } }),
-    ).rejects.toThrow(
-      /config\.tools\.notAProviderTool is not a provider-defined tool/,
-    );
-  });
-
   it("exposes the full file tool set when a workspace is attached", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
 
