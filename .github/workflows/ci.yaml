@@ -98,6 +98,11 @@ jobs:
       - name: Run unit tests
         run: bun run test
 
+      - name: Report core coverage
+        # Report only: lists the least-covered files so untested state paths show before they are modelled.
+        if: always()
+        run: bun scripts/coverage-summary.ts core apps/core/coverage/lcov.info
+
       - name: Build Lambda binaries
         run: bun run build
 

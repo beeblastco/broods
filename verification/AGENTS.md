@@ -20,8 +20,9 @@ Lean 4 models of broods contracts, with machine-checked proofs. Not a Bun worksp
 
 - humans read `statements.txt`, not proofs. it pins the printed statement of every theorem; `lake env lean Statements.lean` fails when one changes, so a weakened theorem shows in the diff. an intended change: `STATEMENTS=write lake env lean Statements.lean`, and say why in the PR.
 - `mirrors.json` pins a hash of each TypeScript symbol a model mirrors (comments and whitespace ignored). `bun verification/drift.ts` fails when one changed. read the model against the new code, update it if the code changed shape, `lake build`, then `bun verification/drift.ts --write`. a new model lists its symbols there.
-- `tests/gateway-oracle.test.ts` runs the executable Lean `route` (`lake build gateway-oracle`) against `resolveRouter` on 5,000 generated requests. a disagreement is a finding: never edit either side to agree.
-- `bun run verification:test` runs it with the TypeScript contract tests. those test implementation behavior; only the oracle compares TypeScript with Lean. models omit auth, admission, I/O and many product features.
+- oracles: an executable Lean model run against the TypeScript on generated inputs (fast-check). `tests/gateway-oracle.test.ts`: `route` vs `resolveRouter`. `tests/sync-oracle.test.ts`: `diff` vs `diffManifests`. `packages/convex/tests/cronOracle.test.ts`: `run` vs the cron mutations in convex-test, over generated write orders. a disagreement is a finding: never edit either side to agree. each was shown to fail on a broken variant (a wrong route, an artifact kind compared, a dropped `lastRunId` guard, `isLatestFire` made strict).
+- pull requests run a fixed seed (`tests/oracle-options.ts`, 5,000 cases, a tenth for cron); the nightly run picks a random `ORACLE_SEED` with `ORACLE_RUNS=50000` and prints it. replay a nightly failure with both set.
+- `bun run verification:test` runs it with the TypeScript contract tests. those test implementation behavior; only the oracles compare TypeScript with Lean. models omit auth, admission, I/O and many product features.
 - the model is hand-written from the TypeScript; the header names the TS, and the docstring on each def names what it mirrors. change the mirrored code = update the model in the same PR.
 - every property must be able to fail: keep an `example` that a broken variant (a dropped check, a reordered step) violates it, and one that its hypotheses can hold.
 - `example ... := by decide` blocks are findings: concrete inputs where the code does something surprising. fix the code = flip the example to the fixed outcome.
@@ -31,4 +32,4 @@ Lean 4 models of broods contracts, with machine-checked proofs. Not a Bun worksp
 ## Run
 
 - install: `curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none`
-- check, in this folder: `lake build && lake build gateway-oracle && lake env lean Statements.lean`, then from the root `bun verification/drift.ts && bun run verification:test`. CI: `.github/workflows/lean-verification.yaml`.
+- check, in this folder: `lake build && lake build gateway-oracle sync-oracle cron-oracle && lake env lean Statements.lean`, then from the root `bun verification/drift.ts && bun run verification:test`. CI: `.github/workflows/lean-verification.yaml`.
