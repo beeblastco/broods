@@ -120,15 +120,24 @@ export async function openAiSdkHarnessSession(
     );
   }
 
+  const { createSession, providerId, resumeSession } = options.sandbox;
   if (!stored) {
-    return startHarnessSession(options, { sessionId: crypto.randomUUID() });
+    return startHarnessSession(options, createSession, {
+      sessionId: crypto.randomUUID(),
+    });
+  }
+  if (!resumeSession) {
+    throw new HarnessCapabilityUnsupportedError({
+      message: `Sandbox provider '${providerId}' does not support resume.`,
+      harnessId: options.agent.harnessId,
+    });
   }
   const resumed = {
     sessionId: stored.sessionId,
     resumeFrom: stored.resumeState as HarnessAgentResumeSessionState,
   };
   try {
-    return await startHarnessSession(options, resumed, true);
+    return await startHarnessSession(options, resumeSession, resumed);
   } catch (error) {
     if (!isSandboxGoneError(error)) throw error;
     // Pi's history is in Convex, so only its machine is new; other harnesses kept it there.
@@ -142,6 +151,7 @@ export async function openAiSdkHarnessSession(
 
     return startHarnessSession(
       options,
+      createSession,
       keepsHistory ? resumed : { sessionId: crypto.randomUUID() },
     );
   }
@@ -340,22 +350,16 @@ export async function steerHarnessTurn(
 // A sandbox session handed to createSession() stays ours to stop and destroy.
 async function startHarnessSession(
   options: OpenAiSdkHarnessSessionOptions,
+  openSandbox: (open: {
+    sessionId: string;
+    abortSignal: AbortSignal;
+  }) => Promise<HarnessV1NetworkSandboxSession>,
   start: { sessionId: string; resumeFrom?: HarnessAgentResumeSessionState },
-  resumeSandbox = false,
 ): Promise<OpenedHarnessSession> {
-  const sandbox = options.sandbox;
-  const sandboxOptions = {
+  const sandboxSession = await openSandbox({
     sessionId: start.sessionId,
     abortSignal: options.abortSignal,
-  };
-  let sandboxSession: HarnessV1NetworkSandboxSession;
-  if (!resumeSandbox) {
-    sandboxSession = await sandbox.createSession(sandboxOptions);
-  } else if (sandbox.resumeSession) {
-    sandboxSession = await sandbox.resumeSession(sandboxOptions);
-  } else {
-    throw new Error(`${sandbox.providerId} cannot resume a sandbox session`);
-  }
+  });
   try {
     return {
       nativeSession: await options.agent.createSession({

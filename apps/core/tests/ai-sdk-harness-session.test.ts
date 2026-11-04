@@ -55,9 +55,10 @@ describe("openAiSdkHarnessSession", () => {
     const fresh = { id: "fresh-machine" };
     const createSession = mock(async () => ({ sessionId: "fresh" }));
     const createSandbox = mock(async () => fresh);
+    const abortController = new AbortController();
 
     const opened = await openAiSdkHarnessSession({
-      abortSignal: new AbortController().signal,
+      abortSignal: abortController.signal,
       agent: { createSession: createSession } as never,
       sandbox: {
         createSession: createSandbox,
@@ -75,10 +76,40 @@ describe("openAiSdkHarnessSession", () => {
 
     expect(opened.nativeSession).toMatchObject({ sessionId: "fresh" });
     expect(createSession).toHaveBeenCalledTimes(1);
-    expect(createSession).not.toHaveBeenCalledWith(
-      expect.objectContaining({ resumeFrom: CHECKPOINT }),
-    );
+    expect(createSession).toHaveBeenCalledWith({
+      sessionId: expect.any(String),
+      sandboxSession: fresh,
+      abortSignal: abortController.signal,
+    });
     expect(createSandbox).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops the resumed machine when the native session fails to resume on it", async () => {
+    const machine = { stop: mock(async (): Promise<void> => {}) };
+    const createSandbox = mock(async () => machine);
+
+    await expect(
+      openAiSdkHarnessSession({
+        abortSignal: new AbortController().signal,
+        agent: {
+          createSession: async (): Promise<never> => {
+            throw new Error("resume state rejected");
+          },
+        } as never,
+        sandbox: {
+          createSession: createSandbox,
+          resumeSession: async () => machine,
+        } as never,
+        stored: {
+          harnessType: "codex",
+          sessionId: "native-session",
+          resumeState: CHECKPOINT,
+        },
+        type: "codex",
+      }),
+    ).rejects.toThrow("resume state rejected");
+    expect(machine.stop).toHaveBeenCalledTimes(1);
+    expect(createSandbox).not.toHaveBeenCalled();
   });
 
   it("stops the machine it opened when the native session fails to start", async () => {
@@ -317,6 +348,15 @@ describe("prepareHarnessTurn", () => {
     }
   });
 
+  function openedSession(): OpenedHarnessSession {
+    const destroy = async (): Promise<void> => {};
+
+    return {
+      nativeSession: { destroy: destroy },
+      sandboxSession: { destroy: destroy },
+    } as never;
+  }
+
   function turnOptions(
     overrides: Partial<PrepareHarnessTurnOptions> & {
       calls?: string[];
@@ -377,15 +417,6 @@ describe("prepareHarnessTurn", () => {
   }
 });
 
-function openedSession(): OpenedHarnessSession {
-  const destroy = async (): Promise<void> => {};
-
-  return {
-    nativeSession: { destroy: destroy },
-    sandboxSession: { destroy: destroy },
-  } as never;
-}
-
 describe("parkAiSdkHarnessSession", () => {
   function parked(overrides: {
     detach?: () => Promise<unknown>;
@@ -408,21 +439,20 @@ describe("parkAiSdkHarnessSession", () => {
       native: native,
       machine: machine,
       save: save,
-      park: (successful: boolean, type: "codex" | "deepagents") =>
+      park: (turn: { successful: boolean; type: "codex" | "deepagents" }) =>
         parkAiSdkHarnessSession({
           broodsSession: { saveHarnessSession: save } as never,
           nativeSession: native as never,
           sandboxSession: machine as never,
           reservationKey: "acct:a:agent:b:sandbox",
-          successful: successful,
-          type: type,
+          ...turn,
         }),
     };
   }
 
   it("detaches successful Deep Agents sessions before saving and leaves the machine running", async () => {
     const { native, machine, save, park } = parked({});
-    await park(true, "deepagents");
+    await park({ successful: true, type: "deepagents" });
 
     expect(native.detach).toHaveBeenCalledTimes(1);
     expect(native.stop).not.toHaveBeenCalled();
@@ -438,7 +468,7 @@ describe("parkAiSdkHarnessSession", () => {
 
   it("stops snapshot-backed adapters and their machine after successful turns", async () => {
     const { native, machine, park } = parked({});
-    await park(true, "codex");
+    await park({ successful: true, type: "codex" });
 
     expect(native.detach).not.toHaveBeenCalled();
     expect(native.stop).toHaveBeenCalledTimes(1);
@@ -448,7 +478,7 @@ describe("parkAiSdkHarnessSession", () => {
 
   it("stops failed sessions instead of leaving live compute", async () => {
     const { native, machine, park } = parked({});
-    await park(false, "deepagents");
+    await park({ successful: false, type: "deepagents" });
 
     expect(native.detach).not.toHaveBeenCalled();
     expect(native.stop).toHaveBeenCalledTimes(1);
@@ -462,7 +492,9 @@ describe("parkAiSdkHarnessSession", () => {
       },
     });
 
-    await expect(park(true, "codex")).rejects.toThrow("stop failed");
+    await expect(park({ successful: true, type: "codex" })).rejects.toThrow(
+      "stop failed",
+    );
     expect(machine.stop).toHaveBeenCalledTimes(1);
     expect(machine.destroy).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
@@ -475,20 +507,23 @@ describe("parkAiSdkHarnessSession", () => {
       },
     });
 
-    await expect(park(true, "deepagents")).rejects.toThrow("detach failed");
+    await expect(
+      park({ successful: true, type: "deepagents" }),
+    ).rejects.toThrow("detach failed");
     expect(native.destroy).toHaveBeenCalledTimes(1);
     expect(machine.destroy).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a parked machine when the owner-fenced save is refused", async () => {
-    const { native, machine, park } = parked({
+    const { machine, park } = parked({
       save: async (): Promise<never> => {
         throw new Error("stale owner");
       },
     });
 
-    await expect(park(true, "deepagents")).rejects.toThrow("stale owner");
-    expect(native.destroy).not.toHaveBeenCalled();
+    await expect(
+      park({ successful: true, type: "deepagents" }),
+    ).rejects.toThrow("stale owner");
     expect(machine.destroy).not.toHaveBeenCalled();
   });
 });

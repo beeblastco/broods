@@ -151,7 +151,7 @@ describe("openAiSdkHarnessSession for Pi", () => {
     const createSession = mock(async () => ({ sessionId: "pi-session" }));
     const warn = spyOn(process.stdout, "write").mockImplementation(() => true);
     try {
-      await openAiSdkHarnessSession({
+      const opened = await openAiSdkHarnessSession({
         abortSignal: new AbortController().signal,
         agent: { createSession: createSession } as never,
         sandbox: {
@@ -178,6 +178,7 @@ describe("openAiSdkHarnessSession for Pi", () => {
           sandboxSession: fresh,
         }),
       );
+      expect(opened.sandboxSession).toBe(fresh as never);
       expect(JSON.stringify(warn.mock.calls)).toContain("fresh machine");
     } finally {
       warn.mockRestore();
