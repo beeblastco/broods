@@ -189,7 +189,7 @@ export function actionTier(action: CopilotAction): CopilotTier {
 
 /** The proposal of each answer that has a write; a press applies all its changes at once. */
 export function dockProposals(
-  messages: readonly { id: string; plan?: CopilotPlan }[],
+  messages: readonly { id: string; pending?: boolean; plan?: CopilotPlan }[],
   dropped: ReadonlySet<string>,
   completed: ReadonlySet<string>,
   applies: Readonly<Record<string, DockApply>>,
@@ -197,7 +197,9 @@ export function dockProposals(
   stage?: string,
 ): Map<string, DockProposal> {
   const proposals = new Map<string, DockProposal>();
-  for (const { id, plan } of messages) {
+  // An answer still streaming may propose again, so it offers nothing to apply yet.
+  for (const { id, pending, plan } of messages) {
+    if (pending) continue;
     const writes = (plan?.actions ?? []).flatMap((action, index) =>
       actionTier(action) === "approval"
         ? [{ action: action, index: index }]

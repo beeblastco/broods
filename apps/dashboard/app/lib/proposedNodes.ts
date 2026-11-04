@@ -26,10 +26,13 @@ export function withProposal(
   const removed = new Set(
     proposed
       .filter((node) => node.change === "remove")
-      .map((node) => `${node.kind}:${node.name}`),
+      .map((node) => nodeKey(node.kind, node.name)),
+  );
+  const existing = new Set(
+    nodes.map((node) => nodeKey(node.type, node.data.label)),
   );
   const shown = nodes.map((node) =>
-    removed.has(`${node.type}:${String(node.data.label)}`)
+    removed.has(nodeKey(node.type, node.data.label))
       ? {
           ...node,
           data: { ...node.data, proposal: failed ? "failed" : "remove" },
@@ -47,7 +50,9 @@ export function withProposal(
   const stacked = new Map<string, number>();
   const ghosts: Array<{ connectTo?: string; node: Node }> = [];
   for (const node of proposed) {
-    if (node.change !== "add" || byName.has(node.name)) continue;
+    const key = nodeKey(node.kind, node.name);
+    if (node.change !== "add" || existing.has(key)) continue;
+    existing.add(key);
     const anchor = node.connectTo ?? "";
     const row = stacked.get(anchor) ?? 0;
     stacked.set(anchor, row + 1);
@@ -98,4 +103,9 @@ export function withProposal(
     edges: [...edges, ...ghostEdges],
     nodes: [...shown, ...ghosts.map(({ node }) => node)],
   };
+}
+
+// Labels match in any case, as the canvas resolves a name (`nodeByLabel` in Canvas.tsx).
+function nodeKey(kind: string | undefined, label: unknown): string {
+  return `${kind ?? ""}:${String(label).toLowerCase()}`;
 }

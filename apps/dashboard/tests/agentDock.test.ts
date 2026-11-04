@@ -512,6 +512,71 @@ describe("agent dock", () => {
     ]);
   });
 
+  test("an answer still streaming has no proposal to apply", () => {
+    const plan = planFromQuery("pause nightly-digest", CONTEXT) ?? undefined;
+
+    expect(
+      dockProposals(
+        [{ id: "m", pending: true, plan: plan }],
+        new Set(),
+        new Set(),
+        {},
+        [],
+      ).size,
+    ).toBe(0);
+  });
+
+  test("a proposal listing one path twice is blocked, never committed", () => {
+    const plan = proposalPlan(
+      {
+        files: [
+          { content: null, path: "broods/index.ts" },
+          { content: "b", path: "broods/index.ts" },
+        ],
+        summary: "",
+      },
+      CONTEXT,
+      REPO,
+    );
+
+    expect(plan?.actions).toMatchObject([
+      { reason: expect.stringContaining("twice"), type: "blocked" },
+    ]);
+  });
+
+  test("proposed nodes match the canvas by kind and name, in any case", () => {
+    const canvas = [
+      {
+        data: { label: "search" },
+        id: "1",
+        position: { x: 0, y: 0 },
+        type: "workspace",
+      },
+      {
+        data: { label: "notes" },
+        id: "2",
+        position: { x: 0, y: 200 },
+        type: "workspace",
+      },
+    ];
+
+    const drawn = withProposal(
+      canvas,
+      [],
+      [
+        { change: "add", kind: "mcp", name: "search" },
+        { change: "remove", kind: "workspace", name: "Notes" },
+      ],
+      false,
+    );
+
+    expect(drawn.nodes.map((node) => [node.id, node.data.proposal])).toEqual([
+      ["1", undefined],
+      ["2", "remove"],
+      ["proposed:search", undefined],
+    ]);
+  });
+
   test("a malformed node list drops the nodes, not the proposal", () => {
     const plan = proposalPlan(
       { nodes: [{ kind: "cron", name: "x" }], summary: "Hi." },
