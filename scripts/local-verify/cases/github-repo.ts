@@ -40,7 +40,12 @@ interface Status {
     protectedSecrets: boolean;
     setupPullRequestUrl?: string;
   };
-  deploys: Array<{ branch: string; status: string; conclusion?: string }>;
+  deploys: Array<{
+    branch: string;
+    conclusion?: string;
+    error?: string;
+    status: string;
+  }>;
 }
 
 /** What every step shares: the stack, the fake and the admin's calls. */
@@ -401,6 +406,15 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
   );
 
   await dockEdits(run, imported.projectId);
+
+  // A failed run carries the error its log printed, as a hosted build would show it.
+  await github.deliver(hook, "workflow_run", workflowRun(3, "failure"));
+  const failed = (await run.status(imported.projectId)).deploys[0];
+  assertStep(
+    "a failed run records the error its log printed",
+    failed?.error === "Error: defineMcp needs a url or a handler",
+    JSON.stringify(failed),
+  );
 
   const target = {
     installationId: ORG_INSTALLATION,
@@ -821,7 +835,8 @@ function workflowRun(
 ): unknown {
   return {
     action: conclusion ? "completed" : "in_progress",
-    repository: { id: ORG_REPO },
+    installation: { id: ORG_INSTALLATION },
+    repository: { id: ORG_REPO, full_name: "acme/web" },
     workflow_run: {
       id: id,
       run_attempt: attempt,

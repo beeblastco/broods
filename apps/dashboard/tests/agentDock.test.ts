@@ -317,6 +317,16 @@ describe("agent dock", () => {
     expect(status("deploying")).toBe("Committed 8d7ea8b to dev. Deploying.");
     expect(status("deployed")).toBe("Deployed in 42 s.");
     expect(status("failed")).toBe("Deploy failed: the run timed out.");
+    const logged = dockProposals(
+      messages,
+      new Set(),
+      new Set(),
+      { m: { phase: "applying", sha: "8d7ea8b41c", startedAt: 1_000 } },
+      [{ ...deploy, error: "Error: defineMcp needs a url", state: "failed" }],
+    ).get("m");
+    expect(logged ? applyStatus(logged) : "").toBe(
+      "Deploy failed: Error: defineMcp needs a url",
+    );
   });
 
   test("a finished deploy stays finished when a later push runs on the branch", () => {

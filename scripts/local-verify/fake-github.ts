@@ -306,6 +306,30 @@ export function startFakeGitHub(options: FakeOptions): FakeGitHub {
   ];
 
   const repoRoutes: Route<RepoCall>[] = [
+    // Every run fails in its deploy step, so a failed run's reason can be read back.
+    [
+      "GET",
+      /^\/actions\/runs\/(\d+)\/jobs$/,
+      ({ match }): Response =>
+        json(200, {
+          jobs: [
+            {
+              conclusion: "failure",
+              id: Number(match[1]),
+              steps: [{ conclusion: "failure", name: "Deploy" }],
+            },
+          ],
+        }),
+    ],
+    [
+      "GET",
+      /^\/actions\/jobs\/\d+\/logs$/,
+      (): Response =>
+        new Response(
+          "2026-11-04T00:11:57.2000000Z Error: defineMcp needs a url or a handler\n" +
+            "2026-11-04T00:11:57.3000000Z ##[error]Process completed with exit code 1.\n",
+        ),
+    ],
     [
       "GET",
       /^\/git\/trees\/(.+)$/,

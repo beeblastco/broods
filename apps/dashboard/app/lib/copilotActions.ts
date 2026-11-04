@@ -81,6 +81,8 @@ export interface TrackedDeploy {
   branch: string;
   committedAt: number;
   conclusion?: string;
+  /** A failed run's last logged error line. */
+  error?: string;
   finishedAt?: number;
   messageId: string;
   runUrl?: string;
@@ -389,7 +391,10 @@ function withDeploy(apply: DockApply, deploy?: TrackedDeploy): DockApply {
   if (deploy.state === "failed") {
     return {
       ...apply,
-      error: RUN_FAILURES[deploy.conclusion ?? ""] ?? "the run failed.",
+      error:
+        deploy.error ??
+        RUN_FAILURES[deploy.conclusion ?? ""] ??
+        "the run failed.",
       phase: "failed",
       runUrl: deploy.runUrl,
     };

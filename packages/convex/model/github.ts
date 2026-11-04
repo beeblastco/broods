@@ -43,6 +43,8 @@ export const STAGES = ["production", "development"] as const;
 
 const GITHUB_TIMEOUT_MS = 15_000;
 const GITHUB_READ_BATCH = 20;
+const LOG_TAIL_CHARS = 20_000;
+const ERROR_LINE_CHARS = 300;
 
 const INSTALL: Record<PackageManager, string> = {
   bun: "bun install --frozen-lockfile",
@@ -545,6 +547,58 @@ export async function commitFiles(
   );
 
   return { sha: commit.sha, url: pull.html_url, viaPullRequest: true };
+}
+
+/** Why a deploy run failed: the last error its failed job logged, else the step that failed. */
+export async function runFailure(
+  app: GitHubApp,
+  installationId: number,
+  fullName: string,
+  runId: number,
+): Promise<string | undefined> {
+  const token = await installationToken(app, installationId);
+  const { jobs } = await githubRequest<{
+    jobs: Array<{
+      conclusion: string | null;
+      id: number;
+      steps?: Array<{ conclusion: string | null; name: string }>;
+    }>;
+  }>(app, token, "GET", `/repos/${fullName}/actions/runs/${runId}/jobs`);
+  const job = jobs.find((entry) => entry.conclusion === "failure");
+  if (!job) return undefined;
+  const step = job.steps?.find((entry) => entry.conclusion === "failure");
+  // The log is plain text behind a redirect, so it skips githubRequest's JSON parse.
+  const log = await fetch(
+    `${app.apiUrl}/repos/${fullName}/actions/jobs/${job.id}/logs`,
+    {
+      headers: { Authorization: `Bearer ${token}`, "User-Agent": "broods" },
+      signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
+    },
+  );
+
+  return (
+    (log.ok ? lastErrorLine(await log.text()) : undefined) ??
+    (step ? `${step.name} failed.` : undefined)
+  );
+}
+
+/** The last error line of a run's log, without GitHub's timestamps or its exit-code line. */
+export function lastErrorLine(log: string): string | undefined {
+  return log
+    .slice(-LOG_TAIL_CHARS)
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/^\S+Z /, "")
+        .replace(/^##\[error\]/, "")
+        .trim(),
+    )
+    .findLast(
+      (line) =>
+        /error/i.test(line) &&
+        !line.startsWith("Process completed with exit code"),
+    )
+    ?.slice(0, ERROR_LINE_CHARS);
 }
 
 /** True for a text file inside the `broods/` folder `prefix`, outside build output. */

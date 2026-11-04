@@ -51,8 +51,12 @@ const ESC_SEQUENCE_WAIT_MS = 30;
 
 const ESC = Buffer.from("\x1b");
 
+// The rest of a key sequence after Esc: CSI (`[`, parameters, intermediates, final) or SS3.
+const ESCAPE_SEQUENCE_TAIL =
+  /^(?:\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]|O[\x40-\x7e])/;
+
 // Esc mid-turn stops the turn instead of quitting; idle Esc and Ctrl+C still quit. A lone Esc is
-// held briefly, since a following `[` or `O` makes it part of a split arrow key. Returns the undo.
+// held briefly, since a CSI or SS3 tail makes it part of a split key. Returns the undo.
 export function stopTurnOnEscape(
   transport: Pick<RemoteAgentTransport, "stopTurn" | "streaming">,
   input: EventEmitter = process.stdin,
@@ -74,7 +78,7 @@ export function stopTurnOnEscape(
     const chunk = Buffer.isBuffer(args[0])
       ? args[0]
       : Buffer.from(String(args[0]));
-    if (held && (chunk[0] === 0x5b || chunk[0] === 0x4f)) {
+    if (held && ESCAPE_SEQUENCE_TAIL.test(chunk.toString("latin1"))) {
       clearTimeout(held.timer);
       held = undefined;
 
