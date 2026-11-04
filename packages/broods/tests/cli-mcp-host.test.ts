@@ -2,27 +2,32 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { MachineCoreFrame } from "../../../apps/core/src/shared/machine-socket.ts";
 import { runMachineDaemon } from "../src/cli/machine.ts";
-import { McpHost, readMcpServersFile } from "../src/cli/mcp-host.ts";
+import {
+  McpHost,
+  readMcpServersFile,
+  type McpServerSpec,
+} from "../src/cli/mcp-host.ts";
 import { startFakeCore } from "./fixtures/fake-core.ts";
 
 const FIXTURE = join(import.meta.dir, "fixtures", "echo-mcp-server.ts");
 const hosts: McpHost[] = [];
 const servers: Bun.Server<undefined>[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const host of hosts.splice(0)) await host.stop();
   for (const server of servers.splice(0)) await server.stop(true);
 });
 
-test("the host reads a .mcp.json, spawns the server on first use, lists and calls", async () => {
-  const host = new McpHost(readMcpServersFile(mcpFile()), () => {});
+test("the host reads a .mcp.json, spawns the server on first use, lists and calls", async (): Promise<void> => {
+  const host = new McpHost(readMcpServersFile(mcpFile()), (): void => {});
   hosts.push(host);
 
   expect(host.names()).toEqual(["echo"]);
-  expect((await host.listTools("echo")).map((tool) => tool.name)).toEqual([
-    "echo",
-  ]);
+  expect(
+    (await host.listTools("echo")).map((tool): string => tool.name),
+  ).toEqual(["echo"]);
   expect(
     (await host.callTool("echo", "echo", { text: "pong" })).content,
   ).toEqual([{ type: "text", text: "echo: pong" }]);
@@ -31,20 +36,26 @@ test("the host reads a .mcp.json, spawns the server on first use, lists and call
   );
 });
 
-test("a bad file fails before any server runs", () => {
+test("a bad file fails before any server runs", (): void => {
   const dir = mkdtempSync(join(tmpdir(), "broods-mcp-"));
   const file = join(dir, "mcp.json");
 
   writeFileSync(file, JSON.stringify({ mcpServers: { bad: { args: [] } } }));
-  expect(() => readMcpServersFile(file)).toThrow("mcpServers.bad.command");
+  expect((): Map<string, McpServerSpec> => readMcpServersFile(file)).toThrow(
+    "mcpServers.bad.command",
+  );
   writeFileSync(file, JSON.stringify({ servers: {} }));
-  expect(() => readMcpServersFile(file)).toThrow("mcpServers");
+  expect((): Map<string, McpServerSpec> => readMcpServersFile(file)).toThrow(
+    "mcpServers",
+  );
   writeFileSync(file, "{");
-  expect(() => readMcpServersFile(file)).toThrow("could not read");
+  expect((): Map<string, McpServerSpec> => readMcpServersFile(file)).toThrow(
+    "could not read",
+  );
 });
 
-test("a daemon started with --mcp advertises its servers and answers both frames", async () => {
-  const core = startFakeCore((frame) => {
+test("a daemon started with --mcp advertises its servers and answers both frames", async (): Promise<void> => {
+  const core = startFakeCore((frame): MachineCoreFrame | null => {
     if (frame.type === "hello") {
       return { type: "mcp-list", id: "l1", server: "echo" };
     }
@@ -67,7 +78,7 @@ test("a daemon started with --mcp advertises its servers and answers both frames
       credential: async (): Promise<string> => "key",
       baseUrl: core.url,
       cwd: process.cwd(),
-      log: () => {},
+      log: (): void => {},
       mcpFile: mcpFile(),
       sandbox: "my-mac",
       signal: new AbortController().signal,

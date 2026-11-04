@@ -9,9 +9,9 @@ const MANIFEST: CliManifest = {
   resources: [],
 };
 
-test("a revision rides the PUT body, and none is sent without one", async () => {
+test("a revision rides the PUT body, and none is sent without one", async (): Promise<void> => {
   const bodies: string[] = [];
-  const client = stubClient((init) => {
+  const client = stubClient((init): Response => {
     bodies.push(typeof init?.body === "string" ? init.body : "");
 
     return Response.json({ manifest: {}, ids: {}, revision: 6 });
@@ -25,14 +25,14 @@ test("a revision rides the PUT body, and none is sent without one", async () => 
   expect(JSON.parse(bodies[1]!)).not.toHaveProperty("revision");
 });
 
-test("a manifest conflict is its own error, another 409 is not", async () => {
-  const conflict = stubClient(() =>
+test("a manifest conflict is its own error, another 409 is not", async (): Promise<void> => {
+  const conflict = stubClient((): Response =>
     Response.json(
       { error: { message: "Stage changed", code: "manifest_conflict" } },
       { status: 409 },
     ),
   );
-  const nameClash = stubClient(() =>
+  const nameClash = stubClient((): Response =>
     Response.json(
       { error: { message: "already exists", code: "conflict" } },
       { status: 409 },
@@ -44,7 +44,7 @@ test("a manifest conflict is its own error, another 409 is not", async () => {
   );
   const error = await nameClash
     .putManifest(MANIFEST, false)
-    .catch((caught: unknown) => caught);
+    .catch((caught: unknown): unknown => caught);
   expect(error).not.toBeInstanceOf(ManifestConflictError);
   expect(String(error)).toContain("409 already exists");
 });
@@ -55,6 +55,6 @@ function stubClient(
   return new BroodsSyncClient({
     baseUrl: "https://convex.example.com",
     token: "tok",
-    fetch: async (_input, init) => respond(init),
+    fetch: async (_input, init): Promise<Response> => respond(init),
   });
 }

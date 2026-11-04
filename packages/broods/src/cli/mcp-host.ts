@@ -25,7 +25,7 @@ const serversFile = z.object({
   mcpServers: z
     .record(z.string(), serverSpec)
     .refine(
-      (servers) => Object.keys(servers).length > 0,
+      (servers): boolean => Object.keys(servers).length > 0,
       "lists no MCP servers",
     ),
 });
@@ -71,8 +71,10 @@ export class McpHost {
     const clients = [...this.#clients.values()];
     this.#clients.clear();
     await Promise.all(
-      clients.map((pending) =>
-        pending.then((client) => client.close()).catch((): void => {}),
+      clients.map((pending): Promise<void> =>
+        pending
+          .then((client): Promise<void> => client.close())
+          .catch((): void => {}),
       ),
     );
   }
@@ -125,10 +127,12 @@ export function readMcpServersFile(path: string): Map<string, McpServerSpec> {
   }
 
   return new Map(
-    Object.entries(parsed.data.mcpServers).map(([name, spec]) => [
-      name,
-      spec.cwd ? { ...spec, cwd: resolve(dirname(file), spec.cwd) } : spec,
-    ]),
+    Object.entries(parsed.data.mcpServers).map(
+      ([name, spec]): [string, McpServerSpec] => [
+        name,
+        spec.cwd ? { ...spec, cwd: resolve(dirname(file), spec.cwd) } : spec,
+      ],
+    ),
   );
 }
 

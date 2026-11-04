@@ -14,9 +14,31 @@ import {
   type SkillUploadInput,
   type StageScope,
   type UpdateAgentInput,
+  type AccountAgent,
+  type AccountChannel,
+  type AccountEnvVar,
+  type AccountMcp,
+  type AccountPolicy,
+  type AccountRole,
+  type AccountSandbox,
+  type AccountWorkspace,
+  type AssumeRoleResult,
+  type BroodsAccount,
+  type CreateAgentResult,
+  type RotateSecretResult,
+  type SandboxLifecycleResult,
+  type SandboxSnapshotResult,
+  type SandboxTerminalTicket,
 } from "./account.ts";
 import type { CreateCronInput } from "./contracts.ts";
-import type { BroodsSyncClient } from "./sync.ts";
+import type {
+  BroodsSyncClient,
+  CliOnboardingContext,
+  CliOnboardingOrg,
+  CliProject,
+  CliStage,
+} from "./sync.ts";
+import type { Cron, CronRun, Skill } from "./types.ts";
 
 type JsonBody = Record<string, unknown>;
 
@@ -80,15 +102,15 @@ const RESOURCES: ResourceSpec[] = [
     createHint: "Needs name and config; a 409 returns the existing agentId.",
     deleteHint: "Deleting an agent also drops its runtime rows.",
     updateHint: SECRET_MERGE_HINT,
-    list: (client) => client.listAgents(),
-    get: (client, id) => client.getAgent(id),
-    create: (client, body) =>
+    list: (client): Promise<AccountAgent[]> => client.listAgents(),
+    get: (client, id): Promise<AccountAgent | null> => client.getAgent(id),
+    create: (client, body): Promise<CreateAgentResult> =>
       client.createAgent(
         body as unknown as Parameters<BroodsAccountClient["createAgent"]>[0],
       ),
-    update: (client, id, body) =>
+    update: (client, id, body): Promise<AccountAgent | null> =>
       client.updateAgent(id, body as unknown as UpdateAgentInput),
-    remove: (client, id) => client.deleteAgent(id),
+    remove: (client, id): Promise<boolean> => client.deleteAgent(id),
   },
   {
     singular: "cron",
@@ -96,41 +118,45 @@ const RESOURCES: ResourceSpec[] = [
     key: "cronId",
     createHint:
       "Needs name, agentId, scheduleExpression (rate/cron/at) and input or events.",
-    list: (client) => client.listCrons(),
-    get: (client, id) => client.getCron(id),
-    create: (client, body) =>
+    list: (client): Promise<Cron[]> => client.listCrons(),
+    get: (client, id): Promise<Cron | null> => client.getCron(id),
+    create: (client, body): Promise<Cron> =>
       client.createCron(body as unknown as CreateCronInput),
-    update: (client, id, body) => client.updateCron(id, body),
-    remove: (client, id) => client.deleteCron(id),
+    update: (client, id, body): Promise<Cron | null> =>
+      client.updateCron(id, body),
+    remove: (client, id): Promise<boolean> => client.deleteCron(id),
   },
   {
     singular: "sandbox",
     plural: "sandboxes",
     key: "sandboxId",
     updateHint: SECRET_MERGE_HINT,
-    list: (client) => client.listSandboxes(),
-    get: (client, id) => client.getSandbox(id),
-    create: (client, body) =>
+    list: (client): Promise<AccountSandbox[]> => client.listSandboxes(),
+    get: (client, id): Promise<AccountSandbox | null> => client.getSandbox(id),
+    create: (client, body): Promise<AccountSandbox> =>
       client.createSandbox(
         body as unknown as Parameters<BroodsAccountClient["createSandbox"]>[0],
       ),
-    update: (client, id, body) => client.updateSandbox(id, body),
-    remove: (client, id) => client.deleteSandbox(id),
+    update: (client, id, body): Promise<AccountSandbox | null> =>
+      client.updateSandbox(id, body),
+    remove: (client, id): Promise<boolean> => client.deleteSandbox(id),
   },
   {
     singular: "workspace",
     plural: "workspaces",
     key: "workspaceId",
-    list: (client) => client.listWorkspaces(),
-    get: (client, id) => client.getWorkspace(id),
-    create: (client, body) =>
+    list: (client): Promise<AccountWorkspace[]> => client.listWorkspaces(),
+    get: (client, id): Promise<AccountWorkspace | null> =>
+      client.getWorkspace(id),
+    create: (client, body): Promise<AccountWorkspace> =>
       client.createWorkspace(
         body as unknown as Parameters<
           BroodsAccountClient["createWorkspace"]
         >[0],
       ),
-    update: (client, id, body) => client.updateWorkspace(id, body),
-    remove: (client, id) => client.deleteWorkspace(id),
+    update: (client, id, body): Promise<AccountWorkspace | null> =>
+      client.updateWorkspace(id, body),
+    remove: (client, id): Promise<boolean> => client.deleteWorkspace(id),
   },
   {
     singular: "policy",
@@ -138,14 +164,15 @@ const RESOURCES: ResourceSpec[] = [
     key: "policyId",
     createHint:
       "Agent-runtime policy document (tool.call, skill.load), not API credential scoping.",
-    list: (client) => client.listPolicies(),
-    get: (client, id) => client.getPolicy(id),
-    create: (client, body) =>
+    list: (client): Promise<AccountPolicy[]> => client.listPolicies(),
+    get: (client, id): Promise<AccountPolicy | null> => client.getPolicy(id),
+    create: (client, body): Promise<AccountPolicy> =>
       client.createPolicy(
         body as unknown as Parameters<BroodsAccountClient["createPolicy"]>[0],
       ),
-    update: (client, id, body) => client.updatePolicy(id, body),
-    remove: (client, id) => client.deletePolicy(id),
+    update: (client, id, body): Promise<AccountPolicy | null> =>
+      client.updatePolicy(id, body),
+    remove: (client, id): Promise<boolean> => client.deletePolicy(id),
   },
   {
     singular: "role",
@@ -153,27 +180,29 @@ const RESOURCES: ResourceSpec[] = [
     key: "roleId",
     createHint:
       "Needs name and a version-1 policy over the API namespace, e.g. agents:read. Account key only.",
-    list: (client) => client.listRoles(),
-    get: (client, id) => client.getRole(id),
-    create: (client, body) =>
+    list: (client): Promise<AccountRole[]> => client.listRoles(),
+    get: (client, id): Promise<AccountRole | null> => client.getRole(id),
+    create: (client, body): Promise<AccountRole> =>
       client.createRole(
         body as unknown as Parameters<BroodsAccountClient["createRole"]>[0],
       ),
-    update: (client, id, body) => client.updateRole(id, body),
-    remove: (client, id) => client.deleteRole(id),
+    update: (client, id, body): Promise<AccountRole | null> =>
+      client.updateRole(id, body),
+    remove: (client, id): Promise<boolean> => client.deleteRole(id),
   },
   {
     singular: "channel",
     plural: "channels",
     key: "channelId",
-    list: (client) => client.listChannels(),
-    get: (client, id) => client.getChannel(id),
-    create: (client, body) =>
+    list: (client): Promise<AccountChannel[]> => client.listChannels(),
+    get: (client, id): Promise<AccountChannel | null> => client.getChannel(id),
+    create: (client, body): Promise<AccountChannel> =>
       client.createChannel(
         body as unknown as Parameters<BroodsAccountClient["createChannel"]>[0],
       ),
-    update: (client, id, body) => client.updateChannel(id, body),
-    remove: (client, id) => client.deleteChannel(id),
+    update: (client, id, body): Promise<AccountChannel | null> =>
+      client.updateChannel(id, body),
+    remove: (client, id): Promise<boolean> => client.deleteChannel(id),
   },
   {
     singular: "skill",
@@ -181,23 +210,25 @@ const RESOURCES: ResourceSpec[] = [
     key: "skillName",
     createHint:
       'source is "files" (base64), "json" or "github". The stored name comes from the SKILL.md frontmatter.',
-    list: (client) => client.listSkills(),
-    get: (client, id) => client.getSkill(id),
-    create: (client, body) =>
+    list: (client): Promise<Skill[]> => client.listSkills(),
+    get: (client, id): Promise<Skill | null> => client.getSkill(id),
+    create: (client, body): Promise<Skill> =>
       client.createSkill(body as unknown as SkillUploadInput),
-    remove: (client, id) => client.deleteSkill(id),
+    remove: (client, id): Promise<boolean> => client.deleteSkill(id),
   },
   {
     singular: "mcp",
     plural: "mcp",
     key: "serverId",
     scoped: true,
-    list: (client, scope) => client.listMcp(scope as StageScope),
-    get: (client, id) => client.getMcp(id),
-    create: (client, body, scope) =>
+    list: (client, scope): Promise<AccountMcp[]> =>
+      client.listMcp(scope as StageScope),
+    get: (client, id): Promise<AccountMcp | null> => client.getMcp(id),
+    create: (client, body, scope): Promise<AccountMcp> =>
       client.createMcp(scope as StageScope, body as unknown as CreateMcpInput),
-    update: (client, id, body) => client.updateMcp(id, body),
-    remove: (client, id) => client.deleteMcp(id),
+    update: (client, id, body): Promise<AccountMcp | null> =>
+      client.updateMcp(id, body),
+    remove: (client, id): Promise<boolean> => client.deleteMcp(id),
   },
 ];
 
@@ -295,12 +326,17 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
         "Every organization this login can reach, with the current one marked.",
       inputSchema: {},
     },
-    async () =>
-      await attempt(async () => {
-        const context = await cli.getOnboarding();
+    async (): Promise<CallToolResult> =>
+      await attempt(
+        async (): Promise<{
+          currentOrgId: string;
+          orgs: CliOnboardingOrg[];
+        }> => {
+          const context = await cli.getOnboarding();
 
-        return { currentOrgId: context.currentOrgId, orgs: context.orgs };
-      }),
+          return { currentOrgId: context.currentOrgId, orgs: context.orgs };
+        },
+      ),
   );
 
   server.registerTool(
@@ -310,8 +346,11 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
         "Create an organization and switch this login to it. Later calls act in the new org.",
       inputSchema: { name: z.string().min(1) },
     },
-    async ({ name }) =>
-      await attempt(async () => await cli.createOnboardingOrg(name)),
+    async ({ name }): Promise<CallToolResult> =>
+      await attempt(
+        async (): Promise<CliOnboardingContext> =>
+          await cli.createOnboardingOrg(name),
+      ),
   );
 
   server.registerTool(
@@ -321,8 +360,11 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
         "Switch this login to another organization, by an orgId from list-orgs.",
       inputSchema: { orgId: z.string().min(1) },
     },
-    async ({ orgId }) =>
-      await attempt(async () => await cli.selectOnboardingOrg(orgId)),
+    async ({ orgId }): Promise<CallToolResult> =>
+      await attempt(
+        async (): Promise<CliOnboardingContext> =>
+          await cli.selectOnboardingOrg(orgId),
+      ),
   );
 
   server.registerTool(
@@ -332,7 +374,10 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
         "Every project in the current org, empty ones last. Project names are not unique, so take the id from here.",
       inputSchema: {},
     },
-    async () => await attempt(async () => await cli.listProjects()),
+    async (): Promise<CallToolResult> =>
+      await attempt(
+        async (): Promise<CliProject[]> => await cli.listProjects(),
+      ),
   );
 
   server.registerTool(
@@ -341,8 +386,10 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
       description: "Every stage of one project, by project name.",
       inputSchema: { project: z.string().min(1) },
     },
-    async ({ project }) =>
-      await attempt(async () => await cli.listStages(project)),
+    async ({ project }): Promise<CallToolResult> =>
+      await attempt(
+        async (): Promise<CliStage[]> => await cli.listStages(project),
+      ),
   );
 
   server.registerTool(
@@ -359,8 +406,11 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
           .describe("Stage to clone architecture and env vars from."),
       },
     },
-    async ({ project, name, from }) =>
-      await attempt(async () => await cli.createStage(project, name, from)),
+    async ({ project, name, from }): Promise<CallToolResult> =>
+      await attempt(
+        async (): Promise<{ stage: CliStage; clonedFrom: string | null }> =>
+          await cli.createStage(project, name, from),
+      ),
   );
 }
 
@@ -378,8 +428,8 @@ function registerDestructive(
           "Rotate the account key. The current key stops working immediately and the new one is shown once, so this breaks every deployment and CI job still holding the old one. Requires confirm:true.",
         inputSchema: { confirm: CONFIRM_FIELD },
       },
-      async ({ confirm }) =>
-        await attempt(async () => {
+      async ({ confirm }): Promise<CallToolResult> =>
+        await attempt(async (): Promise<RotateSecretResult> => {
           assertConfirmed(
             confirm,
             "Everything holding the current secret breaks the moment this runs.",
@@ -398,8 +448,8 @@ function registerDestructive(
           "Delete a project and everything under it: stages, agents, canvas, env vars, crons and workspace files. Takes a projectId from list-projects and requires confirm:true.",
         inputSchema: { projectId: z.string().min(1), confirm: CONFIRM_FIELD },
       },
-      async ({ projectId, confirm }) =>
-        await attempt(async () => {
+      async ({ projectId, confirm }): Promise<CallToolResult> =>
+        await attempt(async (): Promise<CliProject | null> => {
           assertConfirmed(
             confirm,
             `Project '${projectId}' and everything under it goes away: name it, get the owner's agreement, then retry.`,
@@ -422,9 +472,9 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
         limit: z.number().int().positive().max(100).optional(),
       },
     },
-    async ({ cronId, limit }) =>
+    async ({ cronId, limit }): Promise<CallToolResult> =>
       await attempt(
-        async () =>
+        async (): Promise<CronRun[]> =>
           await client.listCronRuns(
             cronId,
             limit === undefined ? {} : { limit: limit },
@@ -442,25 +492,25 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     [
       "suspend-sandbox",
       "Suspend a persistent sandbox reservation.",
-      (sandboxId, reservationKey) =>
+      (sandboxId, reservationKey): Promise<SandboxLifecycleResult> =>
         client.suspendSandbox(sandboxId, reservationKey),
     ],
     [
       "resume-sandbox",
       "Resume a suspended sandbox reservation.",
-      (sandboxId, reservationKey) =>
+      (sandboxId, reservationKey): Promise<SandboxLifecycleResult> =>
         client.resumeSandbox(sandboxId, reservationKey),
     ],
     [
       "terminate-sandbox",
       "Terminate a sandbox reservation and drop its live-instance row. Terminate only a sandbox you created, and never one holding state you did not put there.",
-      (sandboxId, reservationKey) =>
+      (sandboxId, reservationKey): Promise<SandboxLifecycleResult> =>
         client.terminateSandbox(sandboxId, reservationKey),
     ],
     [
       "open-sandbox-terminal",
       "Mint a short-lived sealed ticket for an interactive PTY session on a persistent sandbox.",
-      (sandboxId, reservationKey) =>
+      (sandboxId, reservationKey): Promise<SandboxTerminalTicket> =>
         client.openSandboxTerminal(sandboxId, reservationKey),
     ],
   ];
@@ -468,8 +518,10 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     server.registerTool(
       name,
       { description: description, inputSchema: LIFECYCLE_FIELDS },
-      async ({ sandboxId, reservationKey }) =>
-        await attempt(async () => await call(sandboxId, reservationKey)),
+      async ({ sandboxId, reservationKey }): Promise<CallToolResult> =>
+        await attempt(
+          async (): Promise<unknown> => await call(sandboxId, reservationKey),
+        ),
     );
   }
 
@@ -480,9 +532,9 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
         "Snapshot a sandbox reservation into an image its provider's sandboxes can pin with `snapshot` (sandbox, lambda, daytona, e2b or vercel; lambda builds for a few minutes).",
       inputSchema: { ...LIFECYCLE_FIELDS, name: z.string().min(1) },
     },
-    async ({ sandboxId, reservationKey, name }) =>
+    async ({ sandboxId, reservationKey, name }): Promise<CallToolResult> =>
       await attempt(
-        async () =>
+        async (): Promise<SandboxSnapshotResult> =>
           await client.snapshotSandbox(sandboxId, reservationKey, name),
       ),
   );
@@ -497,9 +549,9 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
         body: z.record(z.string(), z.unknown()),
       },
     },
-    async ({ id, body }) =>
+    async ({ id, body }): Promise<CallToolResult> =>
       await attempt(
-        async () =>
+        async (): Promise<Skill> =>
           await client.uploadSkill(id, body as unknown as SkillUploadInput),
       ),
   );
@@ -511,7 +563,10 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
         "List environment variable names. Values are write-only: the plane never returns them, so there is no read.",
       inputSchema: {},
     },
-    async () => await attempt(async () => await client.listEnvVars()),
+    async (): Promise<CallToolResult> =>
+      await attempt(
+        async (): Promise<AccountEnvVar[]> => await client.listEnvVars(),
+      ),
   );
 
   server.registerTool(
@@ -524,8 +579,8 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
         value: z.string(),
       },
     },
-    async ({ name, value }) =>
-      await attempt(async () => {
+    async ({ name, value }): Promise<CallToolResult> =>
+      await attempt(async (): Promise<{ name: string; stored: boolean }> => {
         await client.setEnvVar(name, value);
 
         return { name: name, stored: true };
@@ -541,8 +596,8 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
         confirm: CONFIRM_FIELD,
       },
     },
-    async ({ name, confirm }) =>
-      await attempt(async () => {
+    async ({ name, confirm }): Promise<CallToolResult> =>
+      await attempt(async (): Promise<{ deleted: boolean; name: string }> => {
         assertConfirmed(
           confirm,
           `Anything referencing \${${name}} breaks the moment this env var goes.`,
@@ -562,9 +617,9 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
         ttlSeconds: z.number().int().positive().max(43200).optional(),
       },
     },
-    async ({ roleId, ttlSeconds }) =>
+    async ({ roleId, ttlSeconds }): Promise<CallToolResult> =>
       await attempt(
-        async () =>
+        async (): Promise<AssumeRoleResult> =>
           await client.assumeRole(
             roleId,
             ttlSeconds === undefined ? {} : { ttlSeconds: ttlSeconds },
@@ -582,9 +637,9 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
         description: z.string().nullable().optional(),
       },
     },
-    async ({ username, description }) =>
+    async ({ username, description }): Promise<CallToolResult> =>
       await attempt(
-        async () =>
+        async (): Promise<BroodsAccount | null> =>
           await client.updateAccount({
             ...(username === undefined ? {} : { username: username }),
             ...(description === undefined ? {} : { description: description }),
@@ -599,7 +654,10 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
         "The account this server's credential resolves to. Run it first to confirm which tenant you are about to change.",
       inputSchema: {},
     },
-    async () => await attempt(async () => await client.getAccount()),
+    async (): Promise<CallToolResult> =>
+      await attempt(
+        async (): Promise<BroodsAccount> => await client.getAccount(),
+      ),
   );
 }
 
@@ -622,9 +680,9 @@ function registerResource(
       server.registerTool(
         `list-${spec.plural}`,
         { description: description, inputSchema: SCOPE_FIELDS },
-        async ({ project, stage }) =>
+        async ({ project, stage }): Promise<CallToolResult> =>
           await attempt(
-            async () =>
+            async (): Promise<unknown> =>
               await list(client, requireScope(spec, defaults, project, stage)),
           ),
       );
@@ -632,7 +690,8 @@ function registerResource(
       server.registerTool(
         `list-${spec.plural}`,
         { description: description, inputSchema: {} },
-        async () => await attempt(async () => await list(client)),
+        async (): Promise<CallToolResult> =>
+          await attempt(async (): Promise<unknown> => await list(client)),
       );
     }
   }
@@ -644,7 +703,8 @@ function registerResource(
         description: `Read one ${spec.singular} by ${spec.key}.`,
         inputSchema: { id: idField },
       },
-      async ({ id }) => await attempt(async () => await get(client, id)),
+      async ({ id }): Promise<CallToolResult> =>
+        await attempt(async (): Promise<unknown> => await get(client, id)),
     );
   }
 
@@ -664,9 +724,9 @@ function registerResource(
             ...SCOPE_FIELDS,
           },
         },
-        async ({ body, project, stage }) =>
+        async ({ body, project, stage }): Promise<CallToolResult> =>
           await attempt(
-            async () =>
+            async (): Promise<unknown> =>
               await create(
                 client,
                 body,
@@ -681,8 +741,10 @@ function registerResource(
           description: description,
           inputSchema: { body: z.record(z.string(), z.unknown()) },
         },
-        async ({ body }) =>
-          await attempt(async () => await create(client, body)),
+        async ({ body }): Promise<CallToolResult> =>
+          await attempt(
+            async (): Promise<unknown> => await create(client, body),
+          ),
       );
     }
   }
@@ -699,8 +761,10 @@ function registerResource(
           body: z.record(z.string(), z.unknown()),
         },
       },
-      async ({ id, body }) =>
-        await attempt(async () => await update(client, id, body)),
+      async ({ id, body }): Promise<CallToolResult> =>
+        await attempt(
+          async (): Promise<unknown> => await update(client, id, body),
+        ),
     );
   }
 
@@ -716,8 +780,8 @@ function registerResource(
           confirm: CONFIRM_FIELD,
         },
       },
-      async ({ id, confirm }) =>
-        await attempt(async () => {
+      async ({ id, confirm }): Promise<CallToolResult> =>
+        await attempt(async (): Promise<{ deleted: boolean; id: string }> => {
           assertConfirmed(
             confirm,
             `Deleting ${spec.singular} '${id}' goes away for good: name it, get the owner's agreement, then retry.`,

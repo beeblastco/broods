@@ -30,7 +30,7 @@ function recordingClient(): { client: BroodsSyncClient; sent: SentRequest[] } {
   const client = new BroodsSyncClient({
     baseUrl: "https://convex.example.com",
     token: "tok",
-    fetch: async (input, init) => {
+    fetch: async (input, init): Promise<Response> => {
       const url = requestUrl(input);
       sent.push({
         url: url,
@@ -55,13 +55,13 @@ function recordingClient(): { client: BroodsSyncClient; sent: SentRequest[] } {
   return { client: client, sent: sent };
 }
 
-test("a bundle past the inline threshold is uploaded and referenced by storage id", async () => {
+test("a bundle past the inline threshold is uploaded and referenced by storage id", async (): Promise<void> => {
   const bundle = `export default () => new Response("${"x".repeat(10_000_001)}")`;
   const { client, sent } = recordingClient();
 
   await client.putManifest(manifestWithBundle(bundle), false);
 
-  expect(sent.map((request) => request.url)).toEqual([
+  expect(sent.map((request): string => request.url)).toEqual([
     "https://convex.example.com/v1/account/projects/demo-app/stages/staging/mcp-bundle-uploads",
     "https://storage.example.com/upload",
     "https://convex.example.com/v1/account/projects/demo-app/stages/staging/manifest",
@@ -79,7 +79,7 @@ test("a bundle past the inline threshold is uploaded and referenced by storage i
   });
 });
 
-test("a small bundle stays inline in one request", async () => {
+test("a small bundle stays inline in one request", async (): Promise<void> => {
   const bundle = `export default () => new Response("ok")`;
   const { client, sent } = recordingClient();
 

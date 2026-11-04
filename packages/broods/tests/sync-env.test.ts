@@ -10,7 +10,7 @@ function clientWith(handler: (url: string, init: RequestInit) => Response): {
   const client = new BroodsSyncClient({
     baseUrl: "https://convex.example.com",
     token: "tok",
-    fetch: async (input, init) => {
+    fetch: async (input, init): Promise<Response> => {
       const url = requestUrl(input);
       calls.push({ url: url, method: (init?.method ?? "GET").toUpperCase() });
 
@@ -21,9 +21,9 @@ function clientWith(handler: (url: string, init: RequestInit) => Response): {
   return { client: client, calls: calls };
 }
 
-test("listEnv GETs the env collection and returns variable names", async () => {
+test("listEnv GETs the env collection and returns variable names", async (): Promise<void> => {
   const { client, calls } = clientWith(
-    () =>
+    (): Response =>
       new Response(
         JSON.stringify({
           variables: [{ name: "OPENAI_API_KEY", updatedAt: 1 }],
@@ -40,15 +40,17 @@ test("listEnv GETs the env collection and returns variable names", async () => {
   });
 });
 
-test("listEnv returns an empty array when the payload omits variables", async () => {
-  const { client } = clientWith(() => new Response(JSON.stringify({})));
+test("listEnv returns an empty array when the payload omits variables", async (): Promise<void> => {
+  const { client } = clientWith(
+    (): Response => new Response(JSON.stringify({})),
+  );
 
   expect(await client.listEnv("demo-app", "development")).toEqual([]);
 });
 
-test("getRuntimeKey recovers the runtime key", async () => {
+test("getRuntimeKey recovers the runtime key", async (): Promise<void> => {
   const { client, calls } = clientWith(
-    () =>
+    (): Response =>
       new Response(
         JSON.stringify({
           apiKey: "bsk_secret",
@@ -75,17 +77,17 @@ test("getRuntimeKey recovers the runtime key", async () => {
   });
 });
 
-test("getRuntimeKey returns null when the stage is unknown", async () => {
+test("getRuntimeKey returns null when the stage is unknown", async (): Promise<void> => {
   const { client } = clientWith(
-    () => new Response("not found", { status: 404 }),
+    (): Response => new Response("not found", { status: 404 }),
   );
 
   expect(await client.getRuntimeKey("missing", "development")).toBeNull();
 });
 
-test("getEnv GETs the named env var and returns its value", async () => {
+test("getEnv GETs the named env var and returns its value", async (): Promise<void> => {
   const { client, calls } = clientWith(
-    () => new Response(JSON.stringify({ value: "sk-secret" })),
+    (): Response => new Response(JSON.stringify({ value: "sk-secret" })),
   );
 
   const value = await client.getEnv(
@@ -101,17 +103,17 @@ test("getEnv GETs the named env var and returns its value", async () => {
   });
 });
 
-test("getEnv returns null when the var is not set (404)", async () => {
+test("getEnv returns null when the var is not set (404)", async (): Promise<void> => {
   const { client } = clientWith(
-    () => new Response("not found", { status: 404 }),
+    (): Response => new Response("not found", { status: 404 }),
   );
 
   expect(await client.getEnv("demo-app", "development", "MISSING")).toBeNull();
 });
 
-test("removeEnv DELETEs the named env var", async () => {
+test("removeEnv DELETEs the named env var", async (): Promise<void> => {
   const { client, calls } = clientWith(
-    () => new Response(JSON.stringify({ removed: true })),
+    (): Response => new Response(JSON.stringify({ removed: true })),
   );
 
   await client.removeEnv("demo-app", "development", "OPENAI_API_KEY");
@@ -122,15 +124,17 @@ test("removeEnv DELETEs the named env var", async () => {
   });
 });
 
-test("removeEnv throws on a non-ok response", async () => {
-  const { client } = clientWith(() => new Response("nope", { status: 500 }));
+test("removeEnv throws on a non-ok response", async (): Promise<void> => {
+  const { client } = clientWith(
+    (): Response => new Response("nope", { status: 500 }),
+  );
 
   await expect(
     client.removeEnv("demo-app", "development", "X"),
   ).rejects.toThrow("Remove environment variable failed");
 });
 
-test("putManifest PUTs to the stage manifest route and sends manifest.stage", async () => {
+test("putManifest PUTs to the stage manifest route and sends manifest.stage", async (): Promise<void> => {
   const manifest = {
     version: 1 as const,
     project: "demo-app",
@@ -141,7 +145,7 @@ test("putManifest PUTs to the stage manifest route and sends manifest.stage", as
   const client = new BroodsSyncClient({
     baseUrl: "https://convex.example.com",
     token: "tok",
-    fetch: async (input, init) => {
+    fetch: async (input, init): Promise<Response> => {
       sent = {
         url: requestUrl(input),
         body: typeof init?.body === "string" ? init.body : "",
@@ -161,8 +165,8 @@ test("putManifest PUTs to the stage manifest route and sends manifest.stage", as
   expect(JSON.parse(sent?.body ?? "{}").manifest).toEqual(manifest);
 });
 
-test("rotateUserTokenSecret POSTs to the stage and returns the secret once", async () => {
-  const { client, calls } = clientWith(() =>
+test("rotateUserTokenSecret POSTs to the stage and returns the secret once", async (): Promise<void> => {
+  const { client, calls } = clientWith((): Response =>
     Response.json({ secret: "bsig_fresh", hint: "bsig_…resh" }),
   );
 
@@ -175,9 +179,9 @@ test("rotateUserTokenSecret POSTs to the stage and returns the secret once", asy
   });
 });
 
-test("rotateUserTokenSecret returns null when the stage has no deployment", async () => {
+test("rotateUserTokenSecret returns null when the stage has no deployment", async (): Promise<void> => {
   const { client } = clientWith(
-    () => new Response("not found", { status: 404 }),
+    (): Response => new Response("not found", { status: 404 }),
   );
 
   expect(

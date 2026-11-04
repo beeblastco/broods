@@ -73,7 +73,8 @@ export function hasFlag(args: string[], name: string): boolean {
   const inline = VALUE_OPTIONS.has(name) ? `${name}=` : null;
 
   return args.some(
-    (arg) => arg === name || (inline !== null && arg.startsWith(inline)),
+    (arg): boolean =>
+      arg === name || (inline !== null && arg.startsWith(inline)),
   );
 }
 
@@ -262,7 +263,7 @@ export async function promptSelect<T>(
       : undefined;
 
   console.log(label);
-  options.forEach((option, index) => {
+  options.forEach((option, index): void => {
     console.log(
       formatChoiceRow(`${index + 1}. ${render(option)}`, index === fallback),
     );
@@ -295,7 +296,7 @@ export async function promptSelectOrText<T extends object>(
   freeText: { hint: string; defaultValue: string },
 ): Promise<T | string> {
   console.log(label);
-  options.forEach((option, index) => {
+  options.forEach((option, index): void => {
     console.log(`  ${index + 1}. ${render(option)}`);
   });
 
@@ -358,8 +359,8 @@ export function waitForCallback<T>(
   code: { callbackUrl: string; promise: Promise<T> };
   close: () => void;
 }> {
-  return new Promise((resolve, reject) => {
-    const server = createServer((req, res) => {
+  return new Promise((resolve, reject): void => {
+    const server = createServer((req, res): void => {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
       if (
         url.pathname !== options.path ||
@@ -383,12 +384,12 @@ export function waitForCallback<T>(
 
     let callbackResolve!: (callback: T) => void;
     let callbackReject!: (error: unknown) => void;
-    const promise = new Promise<T>((res, rej) => {
+    const promise = new Promise<T>((res, rej): void => {
       callbackResolve = res;
       callbackReject = rej;
     });
 
-    server.on("error", (error: NodeJS.ErrnoException) => {
+    server.on("error", (error: NodeJS.ErrnoException): void => {
       if (
         !options.fixedPort &&
         options.port !== 0 &&
@@ -400,7 +401,7 @@ export function waitForCallback<T>(
       }
       reject(error);
     });
-    server.listen(options.port, "127.0.0.1", () => {
+    server.listen(options.port, "127.0.0.1", (): void => {
       const address = server.address();
       if (!address || typeof address === "string") {
         reject(new Error("Failed to allocate callback port"));
@@ -412,7 +413,9 @@ export function waitForCallback<T>(
           callbackUrl: `http://127.0.0.1:${address.port}${options.path}`,
           promise: promise,
         },
-        close: () => server.close(),
+        close: (): void => {
+          server.close();
+        },
       });
     });
   });
@@ -423,8 +426,11 @@ export async function waitWithTimeout<T>(
   message: string = DASHBOARD_LOGIN_TIMEOUT,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), LOGIN_TIMEOUT_MS);
+  const timeout = new Promise<never>((_, reject): void => {
+    timer = setTimeout(
+      (): void => reject(new Error(message)),
+      LOGIN_TIMEOUT_MS,
+    );
   });
   try {
     return await Promise.race([promise, timeout]);

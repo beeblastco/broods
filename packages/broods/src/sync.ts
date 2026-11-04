@@ -2,6 +2,7 @@ import type {
   CliManifest,
   DeploymentRegion,
   GeneratedIds,
+  CliManifestResource,
 } from "./contracts.ts";
 import { stripTrailingSlash } from "./config.ts";
 import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
@@ -247,13 +248,15 @@ export class BroodsSyncClient {
     manifest: CliManifest,
   ): Promise<CliManifest> {
     if (
-      manifest.resources.every((resource) => largeBundleOf(resource) === null)
+      manifest.resources.every(
+        (resource): boolean => largeBundleOf(resource) === null,
+      )
     ) {
       return manifest;
     }
 
     const resources = await Promise.all(
-      manifest.resources.map(async (resource) => {
+      manifest.resources.map(async (resource): Promise<CliManifestResource> => {
         const bundle = largeBundleOf(resource);
         if (bundle === null) return resource;
         const { bundle: _bundle, ...rest } = resource.config as Record<
@@ -707,13 +710,16 @@ export function diffManifests(
   remote: CliManifest | null,
 ): DiffEntry[] {
   const remoteResources = new Map(
-    (remote?.resources ?? []).map((entry) => [
+    (remote?.resources ?? []).map((entry): [string, CliManifestResource] => [
       `${entry.kind}:${entry.name}`,
       entry,
     ]),
   );
   const localResources = new Map(
-    local.resources.map((entry) => [`${entry.kind}:${entry.name}`, entry]),
+    local.resources.map((entry): [string, CliManifestResource] => [
+      `${entry.kind}:${entry.name}`,
+      entry,
+    ]),
   );
   const entries: DiffEntry[] = [];
   const unmatchedLocal: Array<{
@@ -751,7 +757,7 @@ export function diffManifests(
   const renamedLocalKeys = new Set<string>();
   for (const localEntry of unmatchedLocal) {
     const match = unmatchedRemote.find(
-      (remoteEntry) =>
+      (remoteEntry): boolean =>
         !renamedRemoteKeys.has(remoteEntry.key) &&
         isRenamableKind(localEntry.resource.kind) &&
         localEntry.resource.kind === remoteEntry.resource.kind &&
@@ -789,7 +795,9 @@ export function diffManifests(
     }
   }
 
-  return entries.sort((a, b) => diffSortKey(a).localeCompare(diffSortKey(b)));
+  return entries.sort((a, b): number =>
+    diffSortKey(a).localeCompare(diffSortKey(b)),
+  );
 }
 
 function diffSortKey(entry: DiffEntry): string {

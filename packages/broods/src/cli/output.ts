@@ -96,7 +96,7 @@ export function formatDiffEntries(
 ): string[] {
   const color = shouldUseColor(options);
 
-  return entries.map((entry) => {
+  return entries.map((entry): string => {
     const marker = formatDiffMarker(entry.operation, color);
     if (entry.operation === "rename" && entry.previousName) {
       return `  ${marker} ${entry.kind}:${entry.previousName} -> ${entry.name}`;
@@ -129,10 +129,11 @@ export function formatNext(
   options: FormatOptions = {},
 ): string[] {
   const color = shouldUseColor(options);
-  const width = Math.max(...entries.map(([command]) => command.length)) + 2;
+  const width =
+    Math.max(...entries.map(([command]): number => command.length)) + 2;
 
   return entries.map(
-    ([command, reason]) =>
+    ([command, reason]): string =>
       `  ${command.padEnd(width)}${paint(reason, DIM, color)}`,
   );
 }

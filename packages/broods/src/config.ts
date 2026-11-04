@@ -58,7 +58,7 @@ export function readStoredAuth(baseUrl?: string): StoredAuthConfig | null {
 
     return (
       Object.values(file.logins).find(
-        (login) => login.dashboardUrl === dashboardUrl,
+        (login): boolean => login.dashboardUrl === dashboardUrl,
       ) ?? null
     );
   }

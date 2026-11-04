@@ -10,8 +10,8 @@ afterEach(async (): Promise<void> => {
   await rm(root, { recursive: true, force: true });
 });
 
-describe("readStageSource", () => {
-  test("reads broods/ text and the root manifests, skipping secrets, builds and links", async () => {
+describe("readStageSource", (): void => {
+  test("reads broods/ text and the root manifests, skipping secrets, builds and links", async (): Promise<void> => {
     root = await mkdtemp(join(tmpdir(), "broods-source-"));
     await mkdir(join(root, "broods", "_generated"), { recursive: true });
     await mkdir(join(root, "broods", "tools"));
@@ -26,11 +26,12 @@ describe("readStageSource", () => {
     const read = await readStageSource(root);
 
     expect(
-      "source" in read && read.source.files.map((file) => file.path).sort(),
+      "source" in read &&
+        read.source.files.map((file): string => file.path).sort(),
     ).toEqual(["broods/index.ts", "broods/tools/a.md", "package.json"]);
   });
 
-  test("a linked root manifest or broods/ folder is not followed out of the project", async () => {
+  test("a linked root manifest or broods/ folder is not followed out of the project", async (): Promise<void> => {
     root = await mkdtemp(join(tmpdir(), "broods-source-"));
     const outside = await mkdtemp(join(tmpdir(), "broods-outside-"));
     await writeFile(join(outside, "secret.ts"), "SECRET=1");
@@ -42,7 +43,7 @@ describe("readStageSource", () => {
     await rm(outside, { recursive: true, force: true });
 
     expect(
-      "source" in read && read.source.files.map((file) => file.path),
+      "source" in read && read.source.files.map((file): string => file.path),
     ).toEqual(["package.json"]);
   });
 });

@@ -9,7 +9,7 @@ import {
 } from "../src/client.ts";
 import { requestUrl } from "./fixtures/request-url.ts";
 
-afterEach(() => {
+afterEach((): void => {
   delete process.env.BROODS_DASHBOARD_URL;
   delete process.env.BROODS_TOKEN;
   delete process.env.BROODS_PROJECT;
@@ -19,12 +19,12 @@ afterEach(() => {
   delete process.env.BROODS_API_KEY;
 });
 
-test("client streams directly from core with apiKey auth", async () => {
+test("client streams directly from core with apiKey auth", async (): Promise<void> => {
   const urls: string[] = [];
   const bodies: Record<string, unknown>[] = [];
   const client = new BroodsClient({
     apiKey: "test-key",
-    fetch: async (input, init) => {
+    fetch: async (input, init): Promise<Response> => {
       urls.push(requestUrl(input));
       bodies.push(
         JSON.parse(typeof init?.body === "string" ? init.body : "") as Record<
@@ -88,10 +88,10 @@ test("run reads every pass of a run, past a mid-stream finish, until the stream 
   ).toHaveLength(2);
 });
 
-test("stream reports a busy accepted ingress without treating JSON as SSE", async () => {
+test("stream reports a busy accepted ingress without treating JSON as SSE", async (): Promise<void> => {
   const client = new BroodsClient({
     apiKey: "test-key",
-    fetch: async () =>
+    fetch: async (): Promise<Response> =>
       Response.json(
         {
           eventId: "steer-2",
@@ -118,12 +118,12 @@ test("stream reports a busy accepted ingress without treating JSON as SSE", asyn
   ).rejects.toBeInstanceOf(IngressAcceptedError);
 });
 
-test("client accepts host as a shorthand for https baseUrl", async () => {
+test("client accepts host as a shorthand for https baseUrl", async (): Promise<void> => {
   const urls: string[] = [];
   const client = new BroodsClient({
     host: "core.example",
     apiKey: "test-key",
-    fetch: async (input) => {
+    fetch: async (input): Promise<Response> => {
       urls.push(requestUrl(input));
 
       return new Response(
@@ -140,7 +140,7 @@ test("client accepts host as a shorthand for https baseUrl", async () => {
   expect(urls).toEqual(["https://core.example/v1/runs"]);
 });
 
-test("stageWebhookUrl marks the stage so a sibling cannot receive its traffic", () => {
+test("stageWebhookUrl marks the stage so a sibling cannot receive its traffic", (): void => {
   const client = new BroodsClient({ host: "hooks.example.com" });
 
   expect(client.accountWebhookUrl("account_1", "zalo")).toBe(
@@ -151,11 +151,11 @@ test("stageWebhookUrl marks the stage so a sibling cannot receive its traffic", 
   );
 });
 
-test("client reads apiKey from the shared SDK environment variable", async () => {
+test("client reads apiKey from the shared SDK environment variable", async (): Promise<void> => {
   process.env.BROODS_API_KEY = "env-key";
   const headers: HeadersInit[] = [];
   const client = new BroodsClient({
-    fetch: async (_input, init) => {
+    fetch: async (_input, init): Promise<Response> => {
       headers.push(init?.headers ?? {});
 
       return new Response(
@@ -174,7 +174,7 @@ test("client reads apiKey from the shared SDK environment variable", async () =>
   });
 });
 
-test("client reads apiKey from package-local .env.local", async () => {
+test("client reads apiKey from package-local .env.local", async (): Promise<void> => {
   const originalCwd = process.cwd();
   const tempDir = mkdtempSync(join(tmpdir(), "broods-client-"));
   delete process.env.BROODS_API_KEY;
@@ -184,7 +184,7 @@ test("client reads apiKey from package-local .env.local", async () => {
   try {
     const headers: HeadersInit[] = [];
     const client = new BroodsClient({
-      fetch: async (_input, init) => {
+      fetch: async (_input, init): Promise<Response> => {
         headers.push(init?.headers ?? {});
 
         return new Response(
@@ -208,12 +208,12 @@ test("client reads apiKey from package-local .env.local", async () => {
   }
 });
 
-test("client starts async runs and exposes the run id for polling", async () => {
+test("client starts async runs and exposes the run id for polling", async (): Promise<void> => {
   const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
   const client = new BroodsClient({
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
-    fetch: async (input, init) => {
+    fetch: async (input, init): Promise<Response> => {
       calls.push({
         url: requestUrl(input),
         method: init?.method,
@@ -254,7 +254,7 @@ test("client starts async runs and exposes the run id for polling", async () => 
   expect(run.eventId).toBe("request-1");
   expect(run.agentId).toBe("agent_1");
   expect(status).toEqual({ status: "completed", response: "done" });
-  expect(calls.map((call) => call.url)).toEqual([
+  expect(calls.map((call): string => call.url)).toEqual([
     "https://core.example/v1/runs",
     "https://core.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   ]);
@@ -265,12 +265,12 @@ test("client starts async runs and exposes the run id for polling", async () => 
   });
 });
 
-test("client starts async runs through generated scoped agent references", async () => {
+test("client starts async runs through generated scoped agent references", async (): Promise<void> => {
   const calls: Array<{ url: string; body?: unknown }> = [];
   const client = new BroodsClient({
     baseUrl: "https://gateway.example",
     apiKey: "runtime-key",
-    fetch: async (input, init) => {
+    fetch: async (input, init): Promise<Response> => {
       calls.push({
         url: requestUrl(input),
         body:
@@ -315,11 +315,11 @@ test("client starts async runs through generated scoped agent references", async
   });
 });
 
-test("runAsync rejects an accepted answer without a runId", async () => {
+test("runAsync rejects an accepted answer without a runId", async (): Promise<void> => {
   const client = new BroodsClient({
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
-    fetch: async () =>
+    fetch: async (): Promise<Response> =>
       Response.json(
         {
           statusUrl:
@@ -334,12 +334,12 @@ test("runAsync rejects an accepted answer without a runId", async () => {
   ).rejects.toThrow("Async response missing runId");
 });
 
-test("client passes typed run overrides through async run bodies", async () => {
+test("client passes typed run overrides through async run bodies", async (): Promise<void> => {
   const bodies: unknown[] = [];
   const client = new BroodsClient({
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
-    fetch: async (_input, init) => {
+    fetch: async (_input, init): Promise<Response> => {
       bodies.push(
         typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
       );
@@ -391,12 +391,12 @@ test("client passes typed run overrides through async run bodies", async () => {
   });
 });
 
-test("client defaults async conversation key to the generated event id", async () => {
+test("client defaults async conversation key to the generated event id", async (): Promise<void> => {
   const bodies: unknown[] = [];
   const client = new BroodsClient({
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
-    fetch: async (_input, init) => {
+    fetch: async (_input, init): Promise<Response> => {
       bodies.push(
         typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
       );
@@ -426,11 +426,11 @@ test("client defaults async conversation key to the generated event id", async (
   expect(second!.eventId).not.toBe(first!.eventId);
 });
 
-test("client rejects misrouted async SSE responses without dumping stream internals", async () => {
+test("client rejects misrouted async SSE responses without dumping stream internals", async (): Promise<void> => {
   const client = new BroodsClient({
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
-    fetch: async () =>
+    fetch: async (): Promise<Response> =>
       new Response(
         [
           'data: {"type":"start-step","request":{"body":{"contents":[{"role":"user","parts":[{"text":"secret conversation"}]}]}}}',
@@ -456,12 +456,12 @@ test("client rejects misrouted async SSE responses without dumping stream intern
   ).rejects.not.toThrow("secret conversation");
 });
 
-test("client polls async status by run id", async () => {
+test("client polls async status by run id", async (): Promise<void> => {
   const urls: string[] = [];
   const client = new BroodsClient({
     baseUrl: "https://core.example",
     apiKey: "runtime-key",
-    fetch: async (input) => {
+    fetch: async (input): Promise<Response> => {
       urls.push(requestUrl(input));
 
       return Response.json({ status: "completed", response: { ok: true } });
@@ -478,7 +478,7 @@ test("client polls async status by run id", async () => {
   ]);
 });
 
-test("stream cancels the response body when the consumer stops early", async () => {
+test("stream cancels the response body when the consumer stops early", async (): Promise<void> => {
   let canceled = 0;
   const body = new ReadableStream<Uint8Array>({
     start: (controller): void => {

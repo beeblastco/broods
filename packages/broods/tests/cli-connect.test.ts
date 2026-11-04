@@ -16,19 +16,19 @@ let starts: ConnectionStart[];
 let codes: ConnectionCode[];
 let redirectParams: Record<string, string>;
 
-beforeEach(() => {
+beforeEach((): void => {
   starts = [];
   codes = [];
   redirectParams = { code: "code-1", client_id: "client-issued" };
   console.log = (): void => {};
 });
 
-afterEach(() => {
+afterEach((): void => {
   console.log = realLog;
 });
 
-describe("connectInBrowser", () => {
-  it("starts on the deployment and hands back only the code", async () => {
+describe("connectInBrowser", (): void => {
+  it("starts on the deployment and hands back only the code", async (): Promise<void> => {
     const connection = await runConnect("chatgpt");
 
     const start = starts[0];
@@ -51,7 +51,7 @@ describe("connectInBrowser", () => {
     expect(connection.type).toBe("chatgpt");
   });
 
-  it("signs in again on the started client when the redirect omits it", async () => {
+  it("signs in again on the started client when the redirect omits it", async (): Promise<void> => {
     redirectParams = { code: "code-1" };
 
     await runConnect("chatgpt");
@@ -59,11 +59,11 @@ describe("connectInBrowser", () => {
     expect(codes[0]?.clientId).toBe("client-saved");
   });
 
-  it("fails when the provider refuses the sign-in", async () => {
+  it("fails when the provider refuses the sign-in", async (): Promise<void> => {
     redirectParams = { error: "access_denied" };
 
     const error = await runConnect("chatgpt").catch(
-      (caught: unknown) => caught,
+      (caught: unknown): unknown => caught,
     );
 
     expect(String(error)).toContain("Sign-in failed: access_denied");

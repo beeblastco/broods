@@ -72,8 +72,8 @@ function idsForManifest(
 function namesForKind(manifest: CliManifest, kind: string): Set<string> {
   return new Set(
     manifest.resources
-      .filter((resource) => resource.kind === kind)
-      .map((resource) => resource.name),
+      .filter((resource): boolean => resource.kind === kind)
+      .map((resource): string => resource.name),
   );
 }
 
@@ -82,7 +82,7 @@ function pickIds(
   names: Set<string>,
 ): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(values ?? {}).filter(([name]) => names.has(name)),
+    Object.entries(values ?? {}).filter(([name]): boolean => names.has(name)),
   );
 }
 
@@ -99,13 +99,13 @@ function apiFile(
     : "";
   const agentEntries = agents
     .map(
-      (name) =>
+      (name): string =>
         `    ${propertyKey(aliases.agent?.[name] ?? name)}: { kind: "agent", name: ${JSON.stringify(name)}, id: ids.agents[${JSON.stringify(name)}], project: ${JSON.stringify(manifest.project)}, stage: ${JSON.stringify(manifest.stage)}${scope} },`,
     )
     .join("\n");
   const channelEntries = endpoint
     ? channels
-        .map((channel) => {
+        .map((channel): string => {
           const account = encodeURIComponent(endpoint.accountId);
           // Non-production stages get their own endpointId path so stages never contend.
           const path =
@@ -177,7 +177,7 @@ function aliasedIdMap(
   if (names.length === 0) return "{}";
   const entries = names
     .map(
-      (name) =>
+      (name): string =>
         `    ${propertyKey(alias?.[name] ?? name)}: ids.${idsKey}[${JSON.stringify(name)}],`,
     )
     .join("\n");

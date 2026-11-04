@@ -4,6 +4,7 @@ import { MCP_PROTOCOL_VERSION } from "../../../apps/core/src/shared/mcp-protocol
 import type { BroodsMcpServerOptions } from "../src/mcp.ts";
 import { createBroodsMcpServer, serveBroodsMcp } from "../src/mcp.ts";
 import { BroodsSyncClient } from "../src/sync.ts";
+import type { McpServer } from "@modelcontextprotocol/server";
 
 const CREDENTIAL_ENV_KEYS = [
   "BROODS_ACCOUNT_SECRET",
@@ -11,16 +12,23 @@ const CREDENTIAL_ENV_KEYS = [
 ] as const;
 
 const savedEnv = Object.fromEntries(
-  CREDENTIAL_ENV_KEYS.map((key) => [key, process.env[key]]),
+  CREDENTIAL_ENV_KEYS.map(
+    (
+      key,
+    ): [
+      "BROODS_SESSION_TOKEN" | "BROODS_ACCOUNT_SECRET",
+      string | undefined,
+    ] => [key, process.env[key]],
+  ),
 );
 
 let openClient: Client | undefined;
 
-beforeEach(() => {
+beforeEach((): void => {
   for (const key of CREDENTIAL_ENV_KEYS) delete process.env[key];
 });
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   await openClient?.close();
   openClient = undefined;
   for (const [key, value] of Object.entries(savedEnv)) {
@@ -29,7 +37,7 @@ afterEach(async () => {
   }
 });
 
-test("an account credential registers the config plane, without the destructive or CLI tools", async () => {
+test("an account credential registers the config plane, without the destructive or CLI tools", async (): Promise<void> => {
   const client = await connectWithSecret({});
 
   const names = await toolNames(client);
@@ -43,7 +51,7 @@ test("an account credential registers the config plane, without the destructive 
   expect(names).not.toContain("list-orgs");
 });
 
-test("allowDestructive registers rotate-secret and delete-project", async () => {
+test("allowDestructive registers rotate-secret and delete-project", async (): Promise<void> => {
   const client = await connectWithSecret({
     allowDestructive: true,
     cli: syncClient(),
@@ -54,7 +62,7 @@ test("allowDestructive registers rotate-secret and delete-project", async () => 
   expect(names).toContain("delete-project");
 });
 
-test("a stored login alone serves only the org, project and stage tools", async () => {
+test("a stored login alone serves only the org, project and stage tools", async (): Promise<void> => {
   const client = await connect({ cli: syncClient() });
 
   expect(await toolNames(client)).toEqual([
@@ -67,8 +75,10 @@ test("a stored login alone serves only the org, project and stage tools", async 
   ]);
 });
 
-test("no credential at all fails at startup", () => {
-  expect(() => createBroodsMcpServer({})).toThrow("needs a credential");
+test("no credential at all fails at startup", (): void => {
+  expect((): McpServer => createBroodsMcpServer({})).toThrow(
+    "needs a credential",
+  );
 });
 
 const GUARD_CASES = [
@@ -84,7 +94,7 @@ const GUARD_CASES = [
   },
 ] as const;
 
-test("a client on a 2025-era revision is refused with -32022", async () => {
+test("a client on a 2025-era revision is refused with -32022", async (): Promise<void> => {
   process.env.BROODS_ACCOUNT_SECRET = "bask_test";
 
   await expect(connect({}, false)).rejects.toMatchObject({ code: -32022 });
@@ -92,7 +102,7 @@ test("a client on a 2025-era revision is refused with -32022", async () => {
 
 test.each(GUARD_CASES)(
   "$tool refuses without its guard satisfied",
-  async ({ tool, args, refusal }) => {
+  async ({ tool, args, refusal }): Promise<void> => {
     const client = await connectWithSecret({});
 
     const result = await client.callTool({ name: tool, arguments: args });
@@ -132,13 +142,13 @@ async function connectWithSecret(
 function resultText(result: { content?: unknown }): string {
   const content = result.content as Array<{ text?: string }>;
 
-  return content.map((block) => block.text ?? "").join("\n");
+  return content.map((block): string => block.text ?? "").join("\n");
 }
 
 function syncClient(): BroodsSyncClient {
   return new BroodsSyncClient({
     baseUrl: "http://stub.invalid",
-    fetch: async () => {
+    fetch: async (): Promise<never> => {
       throw new Error("no network in tests");
     },
     token: "cli_test",
@@ -148,5 +158,5 @@ function syncClient(): BroodsSyncClient {
 async function toolNames(client: Client): Promise<string[]> {
   const result = await client.listTools();
 
-  return result.tools.map((tool) => tool.name).sort();
+  return result.tools.map((tool): string => tool.name).sort();
 }

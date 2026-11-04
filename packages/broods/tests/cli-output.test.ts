@@ -9,7 +9,7 @@ import {
 } from "../src/cli/output.ts";
 import { positionalArgs } from "../src/cli/utils.ts";
 
-test("init writes gitignore entries for generated folders", async () => {
+test("init writes gitignore entries for generated folders", async (): Promise<void> => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-cli-init-"));
   try {
     const proc = Bun.spawn({
@@ -40,7 +40,7 @@ test("init writes gitignore entries for generated folders", async () => {
   }
 });
 
-test("formatDiffEntries renders create, rename, update, and delete labels", () => {
+test("formatDiffEntries renders create, rename, update, and delete labels", (): void => {
   const lines = formatDiffEntries(
     [
       { operation: "create", kind: "agent", name: "support" },
@@ -64,7 +64,7 @@ test("formatDiffEntries renders create, rename, update, and delete labels", () =
   ]);
 });
 
-test("formatDeploymentTarget includes project, stage, and dashboard URL", () => {
+test("formatDeploymentTarget includes project, stage, and dashboard URL", (): void => {
   const output = formatDeploymentTarget(
     {
       project: "sandbox-stateless",
@@ -81,7 +81,7 @@ test("formatDeploymentTarget includes project, stage, and dashboard URL", () => 
   );
 });
 
-test("formatDeploymentTarget names the stage it is actually syncing", () => {
+test("formatDeploymentTarget names the stage it is actually syncing", (): void => {
   const output = formatDeploymentTarget(
     {
       project: "sandbox-stateless",
@@ -97,7 +97,7 @@ test("formatDeploymentTarget names the stage it is actually syncing", () => {
   expect(output).toContain("?project=sandbox-stateless&stage=staging");
 });
 
-test("formatDeploymentTarget drops the green badge outside Development", () => {
+test("formatDeploymentTarget drops the green badge outside Development", (): void => {
   const development = formatDeploymentTarget(
     {
       project: "app",
@@ -120,7 +120,7 @@ test("formatDeploymentTarget drops the green badge outside Development", () => {
   expect(production).toContain("\x1b[43m");
 });
 
-test("formatContext names a missing login and a guessed project", () => {
+test("formatContext names a missing login and a guessed project", (): void => {
   const lines = formatContext(
     {
       loggedIn: false,
@@ -139,7 +139,7 @@ test("formatContext names a missing login and a guessed project", () => {
   ]);
 });
 
-test("positionalArgs drops option values so they cannot become a run prompt", () => {
+test("positionalArgs drops option values so they cannot become a run prompt", (): void => {
   expect(positionalArgs(["my-agent", "--project", "foo"])).toEqual([
     "my-agent",
   ]);

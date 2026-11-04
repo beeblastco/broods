@@ -75,13 +75,13 @@ async function replace(path: string, from: string, to: string): Promise<void> {
 }
 
 function classify(commits: string[]): Bump {
-  const breaks = (subject: string) =>
+  const breaks = (subject: string): boolean =>
     BREAKING.test(subject) || subject.includes("BREAKING CHANGE");
 
   if (commits.length === 0) return "none";
   // Pre-1.0 has no stable API to break, so `!` lands as a minor.
   if (commits.some(breaks)) return major === 0 ? "minor" : "major";
-  if (commits.some((subject) => FEATURE.test(subject))) return "minor";
+  if (commits.some((subject): boolean => FEATURE.test(subject))) return "minor";
 
   return "patch";
 }
@@ -115,7 +115,9 @@ function lastBumpCommit(): string | undefined {
 function lastReleaseTag(): { tag: string; version: string } | undefined {
   const tag = git(["tag", "--list", "broods-v*", "--sort=-v:refname"])
     .split("\n")
-    .find((candidate) => SEMVER.test(candidate.slice("broods-v".length)));
+    .find((candidate): boolean =>
+      SEMVER.test(candidate.slice("broods-v".length)),
+    );
 
   return tag ? { tag: tag, version: tag.slice("broods-v".length) } : undefined;
 }

@@ -1027,7 +1027,7 @@ export class BroodsAccountClient {
       new TextEncoder().encode(bundle),
     );
     const digest = Array.from(new Uint8Array(digestBytes))
-      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .map((byte): string => byte.toString(16).padStart(2, "0"))
       .join("");
 
     return { bundleStorageId: storageId, sha256: digest };

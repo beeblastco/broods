@@ -29,7 +29,7 @@ const STAGES = [
 const servers: Array<{ stop: () => void }> = [];
 const workdirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const server of servers.splice(0)) server.stop();
   for (const dir of workdirs.splice(0))
     await rm(dir, { recursive: true, force: true });
@@ -38,7 +38,7 @@ afterEach(async () => {
 function serveBackend(runtimeKey: () => Response): string {
   const server = Bun.serve({
     port: 0,
-    fetch: (request) => {
+    fetch: (request): Response => {
       const url = new URL(request.url);
       if (url.pathname === "/v1/account/stages") {
         return Response.json({ stages: STAGES });
@@ -99,9 +99,9 @@ async function runStageUse(
   return { exitCode: exitCode, stdout: stdout, stderr: stderr };
 }
 
-test("stage use writes the stage and repoints BROODS_API_KEY", async () => {
+test("stage use writes the stage and repoints BROODS_API_KEY", async (): Promise<void> => {
   const cwd = await projectDir();
-  const baseUrl = serveBackend(() =>
+  const baseUrl = serveBackend((): Response =>
     Response.json({ apiKey: "fp_new_key", keyHint: "fp_…_key" }),
   );
 
@@ -115,9 +115,11 @@ test("stage use writes the stage and repoints BROODS_API_KEY", async () => {
   expect(result.stdout).toContain("Wrote BROODS_API_KEY");
 });
 
-test("stage use warns and keeps the old key when the stage has no runtime key", async () => {
+test("stage use warns and keeps the old key when the stage has no runtime key", async (): Promise<void> => {
   const cwd = await projectDir();
-  const baseUrl = serveBackend(() => new Response("", { status: 404 }));
+  const baseUrl = serveBackend(
+    (): Response => new Response("", { status: 404 }),
+  );
 
   const result = await runStageUse(cwd, baseUrl);
   const envLocal = await readFile(join(cwd, ".env.local"), "utf8");
@@ -128,10 +130,10 @@ test("stage use warns and keeps the old key when the stage has no runtime key", 
   expect(result.stdout).toContain("not synced here yet");
 });
 
-test("stage use survives a runtime-key lookup failure", async () => {
+test("stage use survives a runtime-key lookup failure", async (): Promise<void> => {
   const cwd = await projectDir();
   const baseUrl = serveBackend(
-    () => new Response("upstream exploded", { status: 500 }),
+    (): Response => new Response("upstream exploded", { status: 500 }),
   );
 
   const result = await runStageUse(cwd, baseUrl);
@@ -143,10 +145,10 @@ test("stage use survives a runtime-key lookup failure", async () => {
   expect(result.stdout).toContain("Could not read the runtime key");
 });
 
-test("stage use creates .env.local when the project has none", async () => {
+test("stage use creates .env.local when the project has none", async (): Promise<void> => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-stage-use-bare-"));
   workdirs.push(cwd);
-  const baseUrl = serveBackend(() =>
+  const baseUrl = serveBackend((): Response =>
     Response.json({ apiKey: "fp_new_key", keyHint: "fp_…_key" }),
   );
 
@@ -158,7 +160,7 @@ test("stage use creates .env.local when the project has none", async () => {
   expect(envLocal).toContain('BROODS_API_KEY="fp_new_key"');
 });
 
-test("stage use appends BROODS_API_KEY when .env.local has no such line", async () => {
+test("stage use appends BROODS_API_KEY when .env.local has no such line", async (): Promise<void> => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-stage-use-nokey-"));
   workdirs.push(cwd);
   await writeFile(
@@ -166,7 +168,7 @@ test("stage use appends BROODS_API_KEY when .env.local has no such line", async 
     ['BROODS_PROJECT="demo-app"', 'OPENAI_API_KEY="sk-keep-me"', ""].join("\n"),
     "utf8",
   );
-  const baseUrl = serveBackend(() =>
+  const baseUrl = serveBackend((): Response =>
     Response.json({ apiKey: "fp_new_key", keyHint: "fp_…_key" }),
   );
 
@@ -178,9 +180,9 @@ test("stage use appends BROODS_API_KEY when .env.local has no such line", async 
   expect(envLocal).toContain('OPENAI_API_KEY="sk-keep-me"');
 });
 
-test("stage use warns when a shell export shadows the rewritten key", async () => {
+test("stage use warns when a shell export shadows the rewritten key", async (): Promise<void> => {
   const cwd = await projectDir();
-  const baseUrl = serveBackend(() =>
+  const baseUrl = serveBackend((): Response =>
     Response.json({ apiKey: "fp_new_key", keyHint: "fp_…_key" }),
   );
 

@@ -16,13 +16,13 @@ const LOCAL_VALUES = {
 const servers: Array<{ stop: () => void }> = [];
 const workdirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const server of servers.splice(0)) server.stop();
   for (const dir of workdirs.splice(0))
     await rm(dir, { recursive: true, force: true });
 });
 
-test("env sync pushes the drifted and unset vars and leaves the matching one", async () => {
+test("env sync pushes the drifted and unset vars and leaves the matching one", async (): Promise<void> => {
   const cwd = await projectDir();
   const { baseUrl, puts } = serveBackend();
 
@@ -38,7 +38,7 @@ test("env sync pushes the drifted and unset vars and leaves the matching one", a
   );
 });
 
-test("env sync names the referenced vars .env.local does not control", async () => {
+test("env sync names the referenced vars .env.local does not control", async (): Promise<void> => {
   const cwd = await projectDir();
   const { baseUrl, puts } = serveBackend();
 
@@ -53,7 +53,7 @@ test("env sync names the referenced vars .env.local does not control", async () 
   expect(output).not.toContain("UNREFERENCED_KEY");
 });
 
-test("env sync names the refs with no value on either side", async () => {
+test("env sync names the refs with no value on either side", async (): Promise<void> => {
   const cwd = await projectDir();
   const { baseUrl } = serveBackend();
 
@@ -65,7 +65,7 @@ test("env sync names the refs with no value on either side", async () => {
   );
 });
 
-test("diff warns about a stage value that no longer matches .env.local", async () => {
+test("diff warns about a stage value that no longer matches .env.local", async (): Promise<void> => {
   const cwd = await projectDir();
   const { baseUrl, puts } = serveBackend();
 
@@ -103,7 +103,7 @@ function serveBackend(): {
   ];
   const server = Bun.serve({
     port: 0,
-    fetch: (request) => {
+    fetch: (request): Response => {
       const url = new URL(request.url);
       if (url.pathname.endsWith("/env") && request.method === "GET") {
         return Response.json({ variables: variables });
@@ -135,7 +135,7 @@ async function projectDir(): Promise<string> {
       'BROODS_PROJECT="demo-app"',
       'BROODS_STAGE="development"',
       ...Object.entries(LOCAL_VALUES).map(
-        ([name, value]) => `${name}="${value}"`,
+        ([name, value]): string => `${name}="${value}"`,
       ),
       "",
     ].join("\n"),

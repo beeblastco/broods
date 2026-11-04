@@ -243,7 +243,7 @@ async function* subscribeObservabilityLogsOnce(
       }
       if (socketError) throw socketError;
       if (done) return;
-      await new Promise<void>((resolve) => {
+      await new Promise<void>((resolve): void => {
         wake = resolve;
       });
     }
@@ -271,7 +271,7 @@ export async function fetchObservabilityTrace(
         socket.close(1000, "client closed");
       outcome();
     };
-    const fail = (error: Error): void => settle(() => reject(error));
+    const fail = (error: Error): void => settle((): void => reject(error));
     const timer = setTimeout((): void => {
       fail(
         new Error(
@@ -294,7 +294,7 @@ export async function fetchObservabilityTrace(
       } else if (msg?.type === "backfill" && msg.stream === "traces") {
         const rows = msg.entries as ObservabilitySpanRow[];
         if (msg.error) fail(new Error(msg.error));
-        else settle(() => resolve(rows));
+        else settle((): void => resolve(rows));
       }
     };
     socket.onerror = (): void => {

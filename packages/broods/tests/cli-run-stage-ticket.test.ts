@@ -12,7 +12,7 @@ const RESOURCES_MODULE = join(import.meta.dir, "..", "src", "resources.ts");
 const servers: Array<{ stop: () => void }> = [];
 const workdirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const server of servers.splice(0)) server.stop();
   for (const dir of workdirs.splice(0))
     await rm(dir, { recursive: true, force: true });
@@ -31,7 +31,7 @@ function serveBackend(
   const authorizations: Array<string | null> = [];
   const server = Bun.serve({
     port: 0,
-    fetch: (request) => {
+    fetch: (request): Response => {
       const url = new URL(request.url);
       if (url.pathname === "/v1/account/stage-session") {
         // What the route answers a project or account key.
@@ -78,7 +78,7 @@ function serveBackend(
             { type: "text-end", id: "0" },
             { type: "finish", finishReason: "stop" },
           ]
-            .map((part) => `data: ${JSON.stringify(part)}\n\n`)
+            .map((part): string => `data: ${JSON.stringify(part)}\n\n`)
             .join(""),
           { headers: { "content-type": "text/event-stream" } },
         );
@@ -140,7 +140,7 @@ export const support = defineAgent({
   return { exitCode: exitCode, stdout: stdout, stderr: stderr };
 }
 
-test("run sends the stage ticket, not the runtime key", async () => {
+test("run sends the stage ticket, not the runtime key", async (): Promise<void> => {
   const backend = serveBackend(15 * 60_000);
 
   const result = await runAgent(backend.baseUrl);
@@ -150,7 +150,7 @@ test("run sends the stage ticket, not the runtime key", async () => {
   expect(backend.authorizations).toEqual(["Bearer ticket-1"]);
 });
 
-test("run re-mints a ticket with under a minute left", async () => {
+test("run re-mints a ticket with under a minute left", async (): Promise<void> => {
   const backend = serveBackend(30_000);
 
   const result = await runAgent(backend.baseUrl);
@@ -159,7 +159,7 @@ test("run re-mints a ticket with under a minute left", async () => {
   expect(backend.authorizations).toEqual(["Bearer ticket-2"]);
 });
 
-test("run without a login keeps the runtime key and says what it reaches", async () => {
+test("run without a login keeps the runtime key and says what it reaches", async (): Promise<void> => {
   const backend = serveBackend(15 * 60_000, true);
 
   const result = await runAgent(backend.baseUrl);

@@ -40,7 +40,7 @@
   },
   "EscFilter": {
     "packages/broods/src/cli/tui.ts": {
-      "stopTurnOnEscape": "8601d090ec386507",
+      "stopTurnOnEscape": "a740661b1f7124fe",
       "ESCAPE_SEQUENCE_TAIL": "7d76f8319c45f778"
     }
   },
@@ -81,7 +81,7 @@
   },
   "StageTicket": {
     "packages/broods/src/cli/index.ts": {
-      "run": "522b9b79d1ad504d"
+      "run": "a9d84124cd5b5072"
     },
     "packages/convex/agent/deployments.ts": {
       "mintStageSessionTicket": "75c1bbd64b5000e5"
@@ -93,7 +93,7 @@
   "Sync": {
     "packages/broods/src/sync.ts": {
       "BroodsSyncClient.putManifest": "9c9e0e219abf2b9d",
-      "diffManifests": "f52851adcea4ca72",
+      "diffManifests": "e0ebfd1eed42c281",
       "renameSnapshot": "2f385a52543abc07",
       "isRenamableKind": "382365924c44b5aa"
     },
@@ -127,7 +127,7 @@
   },
   "SyncEnv": {
     "packages/broods/src/cli/index.ts": {
-      "pushLocalEnvVars": "1ce1f89d5172446e"
+      "pushLocalEnvVars": "86d7af647aeb7a3e"
     },
     "packages/convex/model/cliSync.ts": {
       "assertEnvRefsResolved": "b0eb07eaa6035da8"

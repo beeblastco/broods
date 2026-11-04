@@ -10,7 +10,7 @@ function clientWith(handler: (url: string, init: RequestInit) => Response): {
   const client = new BroodsSyncClient({
     baseUrl: "https://convex.example.com",
     token: "tok",
-    fetch: async (input, init) => {
+    fetch: async (input, init): Promise<Response> => {
       const url = requestUrl(input);
       calls.push({
         url: url,
@@ -35,9 +35,9 @@ const STAGE = {
   updatedAt: 1,
 };
 
-test("listStages passes the project as a query parameter", async () => {
+test("listStages passes the project as a query parameter", async (): Promise<void> => {
   const { client, calls } = clientWith(
-    () => new Response(JSON.stringify({ stages: [STAGE] })),
+    (): Response => new Response(JSON.stringify({ stages: [STAGE] })),
   );
 
   const stages = await client.listStages("client lamy");
@@ -49,9 +49,9 @@ test("listStages passes the project as a query parameter", async () => {
   });
 });
 
-test("createStage posts the project, name and clone source", async () => {
+test("createStage posts the project, name and clone source", async (): Promise<void> => {
   const { client, calls } = clientWith(
-    () =>
+    (): Response =>
       new Response(JSON.stringify({ stage: STAGE, clonedFrom: "Development" })),
   );
 
@@ -71,9 +71,9 @@ test("createStage posts the project, name and clone source", async () => {
   });
 });
 
-test("listStages rejects a non-JSON 404 as a missing stages route", async () => {
+test("listStages rejects a non-JSON 404 as a missing stages route", async (): Promise<void> => {
   const { client } = clientWith(
-    () => new Response("Not Found", { status: 404 }),
+    (): Response => new Response("Not Found", { status: 404 }),
   );
 
   await expect(client.listStages("demo-app")).rejects.toThrow(
@@ -81,11 +81,11 @@ test("listStages rejects a non-JSON 404 as a missing stages route", async () => 
   );
 });
 
-test("a network failure names the server and the cause", async () => {
+test("a network failure names the server and the cause", async (): Promise<void> => {
   const client = new BroodsSyncClient({
     baseUrl: "https://convex.example.com",
     token: "tok",
-    fetch: async () => {
+    fetch: async (): Promise<never> => {
       throw new TypeError("fetch failed", {
         cause: new Error("connect ECONNREFUSED 10.0.0.1:443"),
       });
@@ -97,9 +97,9 @@ test("a network failure names the server and the cause", async () => {
   );
 });
 
-test("requests time out, except the manifest write", async () => {
+test("requests time out, except the manifest write", async (): Promise<void> => {
   const signals: Array<AbortSignal | null | undefined> = [];
-  const { client } = clientWith((_url, init) => {
+  const { client } = clientWith((_url, init): Response => {
     signals.push(init.signal);
 
     return Response.json({ stages: [], manifest: {}, ids: {} });
@@ -115,9 +115,9 @@ test("requests time out, except the manifest write", async () => {
   expect(signals[1]).toBeUndefined();
 });
 
-test("listStages surfaces a JSON 404 as a normal request failure", async () => {
+test("listStages surfaces a JSON 404 as a normal request failure", async (): Promise<void> => {
   const { client } = clientWith(
-    () =>
+    (): Response =>
       new Response(
         JSON.stringify({ error: "Project demo-app was not found" }),
         {
@@ -132,9 +132,9 @@ test("listStages surfaces a JSON 404 as a normal request failure", async () => {
   );
 });
 
-test("a 401 tells the user to log in again", async () => {
+test("a 401 tells the user to log in again", async (): Promise<void> => {
   const { client } = clientWith(
-    () =>
+    (): Response =>
       new Response(JSON.stringify({ error: { message: "Unauthorized" } }), {
         status: 401,
       }),

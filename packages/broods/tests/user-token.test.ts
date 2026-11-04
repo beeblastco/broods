@@ -6,11 +6,11 @@ import { webSocketSubprotocols } from "../src/websocket.ts";
 
 const SECRET = "bsig_sdk-test-secret";
 
-afterEach(() => {
+afterEach((): void => {
   delete process.env.BROODS_USER_TOKEN_SECRET;
 });
 
-test("signUserToken signs a token core opens with the same secret", async () => {
+test("signUserToken signs a token core opens with the same secret", async (): Promise<void> => {
   process.env.BROODS_USER_TOKEN_SECRET = SECRET;
   const token = await signUserToken({
     userId: "user_123",
@@ -30,8 +30,10 @@ test("signUserToken signs a token core opens with the same secret", async () => 
   );
 });
 
-test("signUserToken refuses without a secret, with the runtime key, or past an hour", async () => {
-  const refusal = (input: Parameters<typeof signUserToken>[0]) =>
+test("signUserToken refuses without a secret, with the runtime key, or past an hour", async (): Promise<void> => {
+  const refusal = (
+    input: Parameters<typeof signUserToken>[0],
+  ): Promise<string> =>
     signUserToken(input).then(
       (): string => "signed",
       (error: unknown): string => String(error),
@@ -52,13 +54,13 @@ test("signUserToken refuses without a secret, with the runtime key, or past an h
   ).toContain("Invalid user token");
 });
 
-test("the client sends a fresh user token beside the runtime key on every call", async () => {
+test("the client sends a fresh user token beside the runtime key on every call", async (): Promise<void> => {
   const sent: Array<string | null> = [];
   let minted = 0;
   const client = new BroodsClient({
     apiKey: "bsk_key",
-    userToken: async () => `buat_${++minted}`,
-    fetch: async (_input, init) => {
+    userToken: async (): Promise<string> => `buat_${++minted}`,
+    fetch: async (_input, init): Promise<Response> => {
       sent.push(new Headers(init?.headers).get(USER_TOKEN_HEADER));
 
       return Response.json(
@@ -79,7 +81,7 @@ test("the client sends a fresh user token beside the runtime key on every call",
   expect(sent).toEqual(["buat_1", "buat_2"]);
 });
 
-test("the user token rides the websocket subprotocols, never the URL", () => {
+test("the user token rides the websocket subprotocols, never the URL", (): void => {
   expect(webSocketSubprotocols("bsk_key", "buat_x")).toEqual([
     "broods.v1",
     "broods.token.bsk_key",

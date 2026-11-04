@@ -45,7 +45,7 @@ async function readTurn(
 
 function sse(...parts: unknown[]): Response {
   return new Response(
-    `${parts.map((part) => `data: ${JSON.stringify(part)}`).join("\n\n")}\n\n`,
+    `${parts.map((part): string => `data: ${JSON.stringify(part)}`).join("\n\n")}\n\n`,
   );
 }
 
@@ -56,7 +56,7 @@ function testTransport(responses: Response[]): {
   const bodies: RunBody[] = [];
   const client = new BroodsClient({
     apiKey: "test-key",
-    fetch: async (_input, init) => {
+    fetch: async (_input, init): Promise<Response> => {
       bodies.push(
         JSON.parse(typeof init?.body === "string" ? init.body : "") as RunBody,
       );
@@ -76,7 +76,7 @@ function userMessage(id: string, text: string): UIMessage {
   };
 }
 
-test("transport streams a user turn and converts core parts to UI chunks", async () => {
+test("transport streams a user turn and converts core parts to UI chunks", async (): Promise<void> => {
   const { transport, bodies } = testTransport([
     sse(
       { type: "text-start", id: "0" },
@@ -98,7 +98,7 @@ test("transport streams a user turn and converts core parts to UI chunks", async
   });
 });
 
-test("transport forwards only the approval response on an approval round-trip", async () => {
+test("transport forwards only the approval response on an approval round-trip", async (): Promise<void> => {
   const { transport, bodies } = testTransport([
     sse(
       {
@@ -135,7 +135,8 @@ test("transport forwards only the approval response on an approval round-trip", 
   const messages: UIMessage[] = [userMessage("m1", "list files")];
   const assistant = await readTurn(transport, messages);
   const pending = assistant?.parts.find(
-    (part) => isToolUIPart(part) && part.state === "approval-requested",
+    (part): boolean =>
+      isToolUIPart(part) && part.state === "approval-requested",
   );
   expect(pending).toBeDefined();
 
@@ -165,7 +166,7 @@ test("transport forwards only the approval response on an approval round-trip", 
   expect(bodies[1]?.conversationKey).toBe(bodies[0]?.conversationKey as string);
 });
 
-test("transport re-sends only the newest approval when one turn asks twice", async () => {
+test("transport re-sends only the newest approval when one turn asks twice", async (): Promise<void> => {
   const { transport, bodies } = testTransport([
     sse({ type: "finish", finishReason: "stop" }),
     sse({ type: "finish", finishReason: "stop" }),
@@ -212,7 +213,7 @@ test("transport re-sends only the newest approval when one turn asks twice", asy
   ]);
 });
 
-test("transport sends each new user turn once", async () => {
+test("transport sends each new user turn once", async (): Promise<void> => {
   const { transport, bodies } = testTransport([
     sse(
       { type: "text-start", id: "0" },
@@ -233,10 +234,10 @@ test("transport sends each new user turn once", async () => {
   ]);
 });
 
-test("redirected output streams plain text without terminal escapes", async () => {
+test("redirected output streams plain text without terminal escapes", async (): Promise<void> => {
   const client = new BroodsClient({
     apiKey: "test-key",
-    fetch: async () =>
+    fetch: async (): Promise<Response> =>
       sse(
         { type: "reasoning-start", id: "r0" },
         { type: "reasoning-delta", id: "r0", text: "thinking hard" },
@@ -268,13 +269,14 @@ test("redirected output streams plain text without terminal escapes", async () =
   expect(written.join("")).toBe("Paris is the capital.\n");
 });
 
-test("a CLI prompt is typed into the terminal UI once it listens", async () => {
+test("a CLI prompt is typed into the terminal UI once it listens", async (): Promise<void> => {
   const chunks: string[] = [];
   const submitted = submitPrompt("hello there");
 
   // The terminal UI attaches its listener a tick after the run starts.
-  await new Promise((resolve) => setTimeout(resolve, 30));
-  const listener = (chunk: Buffer) => chunks.push(chunk.toString("utf8"));
+  await new Promise((resolve): NodeJS.Timeout => setTimeout(resolve, 30));
+  const listener = (chunk: Buffer): number =>
+    chunks.push(chunk.toString("utf8"));
   process.stdin.on("data", listener);
 
   await submitted;
@@ -283,11 +285,11 @@ test("a CLI prompt is typed into the terminal UI once it listens", async () => {
   expect(chunks).toEqual(["hello there", "\r"]);
 });
 
-test("a failed run is re-sent, not silently dropped from the conversation", async () => {
+test("a failed run is re-sent, not silently dropped from the conversation", async (): Promise<void> => {
   const bodies: RunBody[] = [];
   const client = new BroodsClient({
     apiKey: "test-key",
-    fetch: async (_input, init) => {
+    fetch: async (_input, init): Promise<Response> => {
       bodies.push(
         JSON.parse(typeof init?.body === "string" ? init.body : "") as RunBody,
       );
@@ -309,14 +311,14 @@ test("a failed run is re-sent, not silently dropped from the conversation", asyn
   ]);
 });
 
-test("aborting stops a turn that is waiting on the model", async () => {
+test("aborting stops a turn that is waiting on the model", async (): Promise<void> => {
   const controller = new AbortController();
   const client = new BroodsClient({
     apiKey: "test-key",
-    fetch: async () =>
+    fetch: async (): Promise<Response> =>
       new Response(
         new ReadableStream({
-          start: function (sse) {
+          start: function (sse): void {
             sse.enqueue(
               new TextEncoder().encode(
                 `data: ${JSON.stringify({ type: "text-start", id: "0" })}\n\n`,
@@ -358,7 +360,7 @@ function openSse(...parts: unknown[]): Response {
   );
 }
 
-test("stopTurn ends a streaming reply and keeps the text so far", async () => {
+test("stopTurn ends a streaming reply and keeps the text so far", async (): Promise<void> => {
   const { transport } = testTransport([
     openSse(
       { type: "text-start", id: "0" },
@@ -378,10 +380,10 @@ test("stopTurn ends a streaming reply and keeps the text so far", async () => {
   expect(transport.stopTurn()).toBe(false);
 });
 
-test("Esc stops a streaming turn; keys, split keys, Ctrl+C and idle Esc reach the UI", async () => {
+test("Esc stops a streaming turn; keys, split keys, Ctrl+C and idle Esc reach the UI", async (): Promise<void> => {
   const input = new EventEmitter();
   const seen: string[] = [];
-  input.on("data", (chunk: Buffer) => seen.push(String(chunk)));
+  input.on("data", (chunk: Buffer): number => seen.push(String(chunk)));
   let streaming = true;
   let stops = 0;
   const transport = {
@@ -423,10 +425,10 @@ test("Esc stops a streaming turn; keys, split keys, Ctrl+C and idle Esc reach th
   expect(seen).toEqual(["\x1b[A", "\x1b[B", "\x03", "\x1b", "x"]);
 });
 
-test("Esc then a typed [ or O stops the turn; a split CSI or SS3 key stays one key", () => {
+test("Esc then a typed [ or O stops the turn; a split CSI or SS3 key stays one key", (): void => {
   const input = new EventEmitter();
   const seen: string[] = [];
-  input.on("data", (chunk: Buffer) => seen.push(String(chunk)));
+  input.on("data", (chunk: Buffer): number => seen.push(String(chunk)));
   let stops = 0;
   const transport = {
     streaming: true,
@@ -460,7 +462,7 @@ test("Esc then a typed [ or O stops the turn; a split CSI or SS3 key stays one k
   ]);
 });
 
-test("Esc before the first part counts the turn as sent", async () => {
+test("Esc before the first part counts the turn as sent", async (): Promise<void> => {
   const { transport, bodies } = testTransport([
     openSse(),
     sse(
@@ -486,7 +488,7 @@ test("Esc before the first part counts the turn as sent", async () => {
   ]);
 });
 
-test("a turn queued behind a stopped one streams its answer, not the 202", async () => {
+test("a turn queued behind a stopped one streams its answer, not the 202", async (): Promise<void> => {
   const client = new BroodsClient({
     apiKey: "test-key",
     baseUrl: "http://core.test",
@@ -516,7 +518,7 @@ test("a turn queued behind a stopped one streams its answer, not the 202", async
   );
 });
 
-test("a queued turn that fails still counts as sent", async () => {
+test("a queued turn that fails still counts as sent", async (): Promise<void> => {
   const bodies: RunBody[] = [];
   const client = new BroodsClient({
     apiKey: "test-key",
@@ -547,19 +549,19 @@ test("a queued turn that fails still counts as sent", async () => {
   const transport = new RemoteAgentTransport(client, AGENT);
 
   await readTurn(transport, [userMessage("m1", "first")]).catch(
-    () => undefined,
+    (): undefined => undefined,
   );
   await readTurn(transport, [
     userMessage("m1", "first"),
     userMessage("m2", "second"),
-  ]).catch(() => undefined);
+  ]).catch((): undefined => undefined);
 
   expect(bodies[1]?.events).toEqual([
     { role: "user", content: [{ type: "text", text: "second" }] },
   ]);
 });
 
-test("a queued turn waiting on approval shows its approval card", async () => {
+test("a queued turn waiting on approval shows its approval card", async (): Promise<void> => {
   const client = new BroodsClient({
     apiKey: "test-key",
     baseUrl: "http://core.test",

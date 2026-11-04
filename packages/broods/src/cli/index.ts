@@ -193,7 +193,7 @@ connections. Uses the account key in BROODS_ACCOUNT_SECRET when set, otherwise
 your broods login.
 
 Types:
-${CONNECTION_TYPE_NAMES.map((type) => `  ${type.padEnd(11)} ${CONNECTION_TYPES[type].description}`).join("\n")}
+${CONNECTION_TYPE_NAMES.map((type): string => `  ${type.padEnd(11)} ${CONNECTION_TYPES[type].description}`).join("\n")}
 
 ${GLOBAL_OPTIONS}`,
   deploy: `Usage: broods deploy [options]
@@ -713,7 +713,7 @@ async function connectCommand(args: string[]): Promise<void> {
   }
   const meta = CONNECTION_TYPES[type];
   const connection = await connectInBrowser(client, type).catch(
-    (error: unknown) => {
+    (error: unknown): never => {
       throw new Error(apiErrorMessage(error));
     },
   );
@@ -823,7 +823,9 @@ async function whoami(args: string[]): Promise<void> {
     token: auth.token,
   });
   const context = await client.getOnboarding();
-  const org = context.orgs.find((entry) => entry.id === context.currentOrgId);
+  const org = context.orgs.find(
+    (entry): boolean => entry.id === context.currentOrgId,
+  );
   if (context.user) console.log(`User:        ${context.user.email}`);
   console.log(
     `Org:         ${org ? formatOrgChoice(org) : context.currentOrgId}`,
@@ -841,7 +843,7 @@ async function whoami(args: string[]): Promise<void> {
 
   await printRuntimeKeyStatus(client, scope, org?.name);
 
-  const projects = context.projects.map((entry) => entry.name);
+  const projects = context.projects.map((entry): string => entry.name);
   if (!projects.includes(scope.project)) {
     printWarning(
       `This org has no project named ${scope.project}. It has: ${projects.length > 0 ? projects.join(", ") : "none"}.`,
@@ -940,18 +942,20 @@ async function orgCommand(args: string[]): Promise<void> {
 
   if (isUse) {
     const selectable = context.orgs.filter(
-      (org) => org.accountStatus === "active",
+      (org): boolean => org.accountStatus === "active",
     );
     const selected = needle
       ? selectable.find(
-          (org) =>
+          (org): boolean =>
             org.slug === needle || org.name === needle || org.id === needle,
         )
       : await promptSelect(
           "Select organization",
           selectable,
           formatOrgChoice,
-          selectable.findIndex((org) => org.id === context.currentOrgId),
+          selectable.findIndex(
+            (org): boolean => org.id === context.currentOrgId,
+          ),
         );
     if (!selected) {
       throw new Error(
@@ -1021,7 +1025,7 @@ async function projectCommand(args: string[]): Promise<void> {
     for (const project of projects) {
       console.log(formatProject(project, scope.project));
     }
-    const empty = projects.filter((project) => project.empty);
+    const empty = projects.filter((project): boolean => project.empty);
     if (empty.length > 0) {
       console.log(
         `\n${empty.length} empty project(s). Delete one with \`broods project delete <name>\`.`,
@@ -1035,11 +1039,11 @@ async function projectCommand(args: string[]): Promise<void> {
   if (!name.trim()) throw new Error("Project name is required.");
   const projects = await client.listProjects();
   const target = projects.find(
-    (project) => project.name === name || project.slug === name,
+    (project): boolean => project.name === name || project.slug === name,
   );
   if (!target) {
     throw new Error(
-      `No project named "${name}". Existing: ${projects.map((project) => project.name).join(", ")}.`,
+      `No project named "${name}". Existing: ${projects.map((project): string => project.name).join(", ")}.`,
     );
   }
   if (!hasFlag(args, "--yes")) {
@@ -1101,7 +1105,7 @@ async function githubCommand(args: string[]): Promise<void> {
 
   if (subcommand === "connect") {
     const { url } = await client.githubConnect();
-    print({ url: url }, () => {
+    print({ url: url }, (): void => {
       console.log(`Install the Broods GitHub App: ${url}`);
       openBrowser(url);
     });
@@ -1113,7 +1117,7 @@ async function githubCommand(args: string[]): Promise<void> {
       client.githubRepos(project),
       client.githubStatus(project),
     ]);
-    print(repos, () => {
+    print(repos, (): void => {
       if (repos.length === 0) {
         console.log("No repos yet. `broods github connect` adds an account.");
       }
@@ -1146,7 +1150,7 @@ async function githubCommand(args: string[]): Promise<void> {
       productionBranch: branchOption(args, "--production-branch"),
       developmentBranch: branchOption(args, "--development-branch"),
     });
-    print(linked, () => {
+    print(linked, (): void => {
       printSuccess(`Linked ${linked.fullName} to ${project}`);
       printGitHubLink(linked);
     });
@@ -1161,14 +1165,14 @@ async function githubCommand(args: string[]): Promise<void> {
       return;
     }
     await client.githubUnlink(project);
-    print({ unlinked: true }, () =>
+    print({ unlinked: true }, (): void =>
       printSuccess(`Unlinked ${project}; the repo keeps its workflow file.`),
     );
 
     return;
   }
   const status = await client.githubStatus(project);
-  print(status, () => {
+  print(status, (): void => {
     if (!status.configured) {
       console.log(`GitHub is not set up on ${auth.baseUrl}.`);
 
@@ -1182,7 +1186,7 @@ async function githubCommand(args: string[]): Promise<void> {
       console.log(`${project} deploys from ${status.repo.fullName}`);
       printGitHubLink(status.repo, status.deploys);
     }
-    const accounts = status.installations.map((entry) => entry.login);
+    const accounts = status.installations.map((entry): string => entry.login);
     console.log(
       `Connected accounts: ${accounts.length > 0 ? accounts.join(", ") : "none (`broods github connect`)"}`,
     );
@@ -1238,16 +1242,18 @@ async function stageCommand(args: string[]): Promise<void> {
   if (isUse) {
     const stages = await client.listStages(scope.project);
     const selected = needle
-      ? stages.find((stage) => stageNameEquals(stage.name, needle))
+      ? stages.find((stage): boolean => stageNameEquals(stage.name, needle))
       : await promptSelect(
           "Select stage",
           stages,
           formatStageDetail,
-          stages.findIndex((stage) => stageNameEquals(stage.name, scope.stage)),
+          stages.findIndex((stage): boolean =>
+            stageNameEquals(stage.name, scope.stage),
+          ),
         );
     if (!selected) {
       throw new Error(
-        `${scope.project} has no stage "${needle}". Existing: ${stages.map((stage) => stage.name).join(", ")}. Create it with \`broods stage create ${needle} --from ${scope.stage}\`.`,
+        `${scope.project} has no stage "${needle}". Existing: ${stages.map((stage): string => stage.name).join(", ")}. Create it with \`broods stage create ${needle} --from ${scope.stage}\`.`,
       );
     }
     const stageShadowed = isShellOwnedEnv("BROODS_STAGE");
@@ -1329,7 +1335,7 @@ async function deploy(args: string[]): Promise<void> {
   });
   // Not BROODS_REGION: `init` writes that as a default, and Production's region is pinned once.
   const flag = optionValue(args, "--region");
-  const region = DEPLOYMENT_REGIONS.find((known) => known === flag);
+  const region = DEPLOYMENT_REGIONS.find((known): boolean => known === flag);
   if (hasFlag(args, "--region") && !region) {
     throw new Error(
       `Unknown region ${flag ?? "(empty)"}. Use one of: ${DEPLOYMENT_REGIONS.join(", ")}`,
@@ -1403,7 +1409,7 @@ async function applyDeploymentKey(
   // The sync already landed, so a refused rotation (no keys:write) only warns.
   const rotated = await client
     .rotateUserTokenSecret(manifest.project, manifest.stage)
-    .catch((error: unknown) => {
+    .catch((error: unknown): null => {
       printWarning(
         `${error instanceof Error ? error.message : String(error)}. ` +
           `Set ${USER_TOKEN_SECRET_ENV} from the dashboard's Runtime key tab to sign user tokens.`,
@@ -1459,7 +1465,7 @@ async function update(): Promise<void> {
     `Updating broods ${VERSION} → ${next} ${target.global ? "globally" : "in this project"}`,
   );
   console.log(`$ ${[target.command, ...target.args].join(" ")}`);
-  await new Promise<void>((resolveInstall, reject) => {
+  await new Promise<void>((resolveInstall, reject): void => {
     // Every manager is a `.cmd` shim on Windows, which only a shell can run.
     const child = spawn(target.command, target.args, {
       cwd: target.cwd,
@@ -1467,7 +1473,7 @@ async function update(): Promise<void> {
       shell: process.platform === "win32",
     });
     child.on("error", reject);
-    child.on("exit", (code) => {
+    child.on("exit", (code): void => {
       if (code === 0) {
         resolveInstall();
 
@@ -1531,7 +1537,7 @@ async function dev(args: string[]): Promise<void> {
   const startLogs = (): void => {
     if (logs !== "off") return;
     logs = "on";
-    void streamDevLogs(args, logController.signal).then((outcome) => {
+    void streamDevLogs(args, logController.signal).then((outcome): void => {
       if (outcome === "refused" && !hinted) {
         hinted = true;
         console.log("· live logs start after the first sync lands.");
@@ -1550,7 +1556,7 @@ async function dev(args: string[]): Promise<void> {
     },
   );
 
-  process.on("SIGINT", () => {
+  process.on("SIGINT", (): never => {
     logController.abort();
     watcher.close();
     process.exit(0);
@@ -1606,7 +1612,7 @@ async function ensureAgentSkill(force: boolean): Promise<void> {
   const cwd = process.cwd();
   const markers = [".agent", ".agents", ".claude", "AGENTS.md", "CLAUDE.md"];
   const found = await Promise.all(
-    markers.map((marker) => pathExists(resolve(cwd, marker))),
+    markers.map((marker): Promise<boolean> => pathExists(resolve(cwd, marker))),
   );
   if (!found.includes(true)) return;
 
@@ -1686,7 +1692,7 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
     "BROODS_BASE_URL",
     "BROODS_PROJECT",
     "BROODS_REGION",
-  ].filter((key) => values[key] === undefined);
+  ].filter((key): boolean => values[key] === undefined);
   if (missing.length === 0 && stageValue !== undefined) return;
   const needsProject = values.BROODS_PROJECT === undefined;
   const needsStage = stageValue === undefined;
@@ -1728,15 +1734,15 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   }
 
   if (process.stdin.isTTY && needsRegion) {
-    const regions = SERVICE_REGIONS.filter((entry) =>
+    const regions = SERVICE_REGIONS.filter((entry): boolean =>
       LIVE_DEPLOYMENT_REGIONS.includes(entry.region),
     );
     region = await promptSelect(
       "Select service region",
       regions,
-      (entry) => entry.label,
-      regions.findIndex((entry) => entry.region === region),
-    ).then((entry) => entry.region);
+      (entry): string => entry.label,
+      regions.findIndex((entry): boolean => entry.region === region),
+    ).then((entry): DeploymentRegion => entry.region);
   }
 
   await writeLocalEnvDefaults({
@@ -1799,7 +1805,9 @@ async function applyOrgSelection(
   context: CliOnboardingContext,
   args: string[],
 ): Promise<void> {
-  const org = context.orgs.find((entry) => entry.id === context.currentOrgId);
+  const org = context.orgs.find(
+    (entry): boolean => entry.id === context.currentOrgId,
+  );
   if (!org) {
     throw new Error("Selected organization is not visible to this login");
   }
@@ -1825,7 +1833,7 @@ async function applyOrgSelection(
 
   console.log(`Org: ${formatOrgChoice(org)}`);
   console.log(
-    `Projects: ${context.projects.length > 0 ? context.projects.map((entry) => entry.name).join(", ") : "none yet"}`,
+    `Projects: ${context.projects.length > 0 ? context.projects.map((entry): string => entry.name).join(", ") : "none yet"}`,
   );
   await syncRuntimeKeyForScope(client, targetScope(args));
 }
@@ -1889,7 +1897,10 @@ function formatProjectChoice(project: CliOnboardingProject): string {
 // A branch flag: its name, null for `none`, unset when the flag is absent.
 function branchOption(args: string[], name: string): string | null | undefined {
   const value = optionValue(args, name);
-  if (value === undefined && args.some((arg) => arg.startsWith(name))) {
+  if (
+    value === undefined &&
+    args.some((arg): boolean => arg.startsWith(name))
+  ) {
     throw new Error(`${name} needs a branch name, or none.`);
   }
 
@@ -1923,7 +1934,7 @@ function printGitHubLink(
   ] as const;
   for (const [stage, branch] of stages) {
     if (!branch) continue;
-    const run = deploys.find((entry) => entry.branch === branch);
+    const run = deploys.find((entry): boolean => entry.branch === branch);
     const state = !run
       ? "no deploy yet"
       : run.status !== "completed"
@@ -1981,15 +1992,15 @@ async function selectOnboardingOrg(
   context: CliOnboardingContext,
 ): Promise<CliOnboardingContext> {
   const activeOrgs = context.orgs.filter(
-    (org) => org.accountStatus === "active",
+    (org): boolean => org.accountStatus === "active",
   );
   const createNew = { kind: "create" as const, name: "New organization" };
   const selected = await promptSelect(
     "Select organization",
     [...activeOrgs, createNew],
-    (entry) =>
+    (entry): string =>
       "kind" in entry ? "Create new organization" : formatOrgChoice(entry),
-    activeOrgs.findIndex((org) => org.id === context.currentOrgId),
+    activeOrgs.findIndex((org): boolean => org.id === context.currentOrgId),
   );
 
   if ("kind" in selected) {
@@ -2012,7 +2023,8 @@ function defaultProjectName(
   inferred: string,
 ): string {
   const exact = context.projects.find(
-    (project) => project.name === inferred || project.slug === inferred,
+    (project): boolean =>
+      project.name === inferred || project.slug === inferred,
   );
 
   return exact?.name ?? inferred;
@@ -2023,7 +2035,7 @@ function findProject(
   needle: string,
 ): CliOnboardingProject | undefined {
   return context.projects.find(
-    (project) => project.name === needle || project.slug === needle,
+    (project): boolean => project.name === needle || project.slug === needle,
   );
 }
 
@@ -2057,7 +2069,7 @@ async function selectOnboardingProject(
 }
 
 function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-  return new Promise((resolvePromise, reject) => {
+  return new Promise((resolvePromise, reject): void => {
     const entryPoint = process.argv[1] ?? "";
     const child = spawn(
       process.execPath,
@@ -2068,7 +2080,7 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
       },
     );
     child.on("error", reject);
-    child.on("exit", (code, signal) => {
+    child.on("exit", (code, signal): void => {
       if (code === 0) {
         resolvePromise();
 
@@ -2129,7 +2141,9 @@ async function syncDevOnce(
   const { manifest, resourceAliases, channels } = compiled;
   const remote = await client.getManifest(manifest.project, manifest.stage);
   const diff = diffManifests(manifest, remote?.manifest ?? null);
-  printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
+  printDiffEntries(
+    diff.filter((entry): boolean => entry.operation !== "delete"),
+  );
 
   // Deletes wait for the prompt below, so an edit in progress never destroys history.
   // A stage that does not exist yet is revision 0, so two first syncs still conflict.
@@ -2152,9 +2166,9 @@ async function syncDevOnce(
   await ensureGitIgnore();
 
   const declined = await loadDeclinedDeletes();
-  const deletes = diff.filter((entry) => entry.operation === "delete");
+  const deletes = diff.filter((entry): boolean => entry.operation === "delete");
   const undecided = deletes.filter(
-    (entry) => !declined.has(`${entry.kind}:${entry.name}`),
+    (entry): boolean => !declined.has(`${entry.kind}:${entry.name}`),
   );
   let pruned = false;
   if (undecided.length > 0) {
@@ -2184,14 +2198,14 @@ async function syncDevOnce(
       pruned = true;
     } else {
       await rememberDeclinedDeletes(
-        undecided.map((entry) => `${entry.kind}:${entry.name}`),
+        undecided.map((entry): string => `${entry.kind}:${entry.name}`),
       );
     }
   }
 
   if (!pruned && deletes.length > 0) {
     const names = deletes
-      .map((entry) => `${entry.kind}:${entry.name}`)
+      .map((entry): string => `${entry.kind}:${entry.name}`)
       .join(", ");
     printWarning(
       `${deletes.length} undeclared resource(s) kept remotely: ${names}. Re-declare in code or run \`deploy --prune\` to remove.`,
@@ -2250,17 +2264,16 @@ async function inspectEnvRefs(
   manifest: CliManifest,
 ): Promise<EnvRef[]> {
   const names = collectEnvRefNames(manifest).filter(
-    (name) => !name.startsWith("BROODS_"),
+    (name): boolean => !name.startsWith("BROODS_"),
   );
   if (names.length === 0) return [];
   const remote = new Map(
-    (await client.listEnv(manifest.project, manifest.stage)).map((entry) => [
-      entry.name,
-      entry.valueDigest,
-    ]),
+    (await client.listEnv(manifest.project, manifest.stage)).map(
+      (entry): [string, string] => [entry.name, entry.valueDigest],
+    ),
   );
 
-  return names.map((name) => ({
+  return names.map((name): EnvRef => ({
     name: name,
     state: envRefState(name, remote),
   }));
@@ -2279,7 +2292,7 @@ async function askForUnresolvedEnv(refs: EnvRef[]): Promise<EnvRef[]> {
     if (value) await writeEnvValue(name, value);
   }
 
-  return refs.map((ref) =>
+  return refs.map((ref): EnvRef =>
     ref.state === "unresolved" && process.env[ref.name]
       ? { ...ref, state: "unset" }
       : ref,
@@ -2292,12 +2305,12 @@ async function pushLocalEnvVars(
   refs: EnvRef[],
 ): Promise<string[]> {
   const pushable = refs
-    .filter((ref) => ref.state === "unset" || ref.state === "drifted")
-    .map((ref) => ref.name);
+    .filter((ref): boolean => ref.state === "unset" || ref.state === "drifted")
+    .map((ref): string => ref.name);
   if (pushable.length === 0) return [];
 
   await Promise.all(
-    pushable.map((name) =>
+    pushable.map((name): Promise<void> =>
       client.setEnv(manifest.project, manifest.stage, name, process.env[name]!),
     ),
   );
@@ -2331,7 +2344,9 @@ function hashEnvValue(value: string): string {
 }
 
 function namesInState(refs: EnvRef[], state: EnvRefState): string[] {
-  return refs.filter((ref) => ref.state === state).map((ref) => ref.name);
+  return refs
+    .filter((ref): boolean => ref.state === state)
+    .map((ref): string => ref.name);
 }
 
 async function printDevTarget(args: string[]): Promise<void> {
@@ -2364,7 +2379,7 @@ async function loadDeclinedDeletes(): Promise<Set<string>> {
   return new Set(
     text
       .split(/\r?\n/)
-      .map((line) => line.trim())
+      .map((line): string => line.trim())
       .filter(Boolean),
   );
 }
@@ -2773,7 +2788,7 @@ async function trace(args: string[]): Promise<void> {
     );
   const session = await openStageSession(args);
   const spans = (await fetchObservabilityTrace(session, traceId)).toSorted(
-    (a, b) => a.startTimeMs - b.startTimeMs,
+    (a, b): number => a.startTimeMs - b.startTimeMs,
   );
   if (hasFlag(args, "--json")) {
     console.log(JSON.stringify(spans, null, 2));
@@ -2781,8 +2796,8 @@ async function trace(args: string[]): Promise<void> {
     return;
   }
   console.log(`Trace ${traceId} in ${session.project}/${session.stage}`);
-  const ids = new Set(spans.map((span) => span.spanId));
-  const children = Map.groupBy(spans, (span) =>
+  const ids = new Set(spans.map((span): string => span.spanId));
+  const children = Map.groupBy(spans, (span): string =>
     span.parentSpanId &&
     span.parentSpanId !== span.spanId &&
     ids.has(span.parentSpanId)
@@ -2837,13 +2852,15 @@ async function agentCommand(args: string[]): Promise<void> {
   );
 }
 
+interface AgentWithId {
+  name: string;
+  config: Record<string, unknown>;
+  agentId?: string;
+}
+
 async function loadAgentsWithIds(args: string[]): Promise<{
   manifest: CliManifest;
-  agents: Array<{
-    name: string;
-    config: Record<string, unknown>;
-    agentId?: string;
-  }>;
+  agents: AgentWithId[];
 }> {
   const { manifest, config } = await compileProject({
     project: optionValue(args, "--project"),
@@ -2858,8 +2875,8 @@ async function loadAgentsWithIds(args: string[]): Promise<{
     token: auth.token,
   }).getManifest(manifest.project, manifest.stage);
   const agents = manifest.resources
-    .filter((resource) => resource.kind === "agent")
-    .map((resource) => ({
+    .filter((resource): boolean => resource.kind === "agent")
+    .map((resource): AgentWithId => ({
       name: resource.name,
       config: (resource.config ?? {}) as Record<string, unknown>,
       agentId: remote?.ids.agents[resource.name],
@@ -2890,7 +2907,7 @@ async function agentGet(
 ): Promise<void> {
   if (!name) throw new Error(`Missing agent name.\n\n${commandHelp("agent")}`);
   const { manifest, agents } = await loadAgentsWithIds(args);
-  const agent = agents.find((entry) => entry.name === name);
+  const agent = agents.find((entry): boolean => entry.name === name);
   if (!agent) throw new Error(`Unknown local agent: ${name}`);
 
   const config = agent.config;
@@ -2902,7 +2919,7 @@ async function agentGet(
     );
   const workspaces = Array.isArray(config.workspaces)
     ? config.workspaces
-        .map((ref) =>
+        .map((ref): string | undefined =>
           typeof ref === "string" ? ref : (ref as { name?: string }).name,
         )
         .filter(Boolean)
@@ -2914,7 +2931,7 @@ async function agentGet(
   const subagents = (
     SUBAGENT_REFS.safeParse(config.subagent).data?.allowed ?? []
   )
-    .map((entry) =>
+    .map((entry): string | undefined =>
       typeof entry === "string" ? entry : (entry as { name?: string }).name,
     )
     .filter(Boolean);
@@ -2950,7 +2967,7 @@ async function agentGet(
   );
   if (webhooks.length > 0) {
     console.log(`  Webhooks:`);
-    webhooks.forEach((webhook, index) => {
+    webhooks.forEach((webhook, index): void => {
       const events =
         Array.isArray(webhook.events) && webhook.events.length > 0
           ? webhook.events.join(", ")
@@ -2993,7 +3010,8 @@ async function run(args: string[]): Promise<void> {
     optionValue(args, "--base-url") ?? config.baseUrl,
   );
   const agent = manifest.resources.find(
-    (resource) => resource.kind === "agent" && resource.name === agentName,
+    (resource): boolean =>
+      resource.kind === "agent" && resource.name === agentName,
   );
   if (!agent) throw new Error(`Unknown local agent: ${agentName}`);
   const syncClient = new BroodsSyncClient({
@@ -3008,7 +3026,7 @@ async function run(args: string[]): Promise<void> {
     );
   const runtimeKey = await syncClient
     .getRuntimeKey(manifest.project, manifest.stage)
-    .catch(() => null);
+    .catch((): null => null);
   if (runtimeKey?.apiKey) {
     await writeEnvValue("BROODS_API_KEY", runtimeKey.apiKey);
   }
@@ -3017,7 +3035,7 @@ async function run(args: string[]): Promise<void> {
   // token. It lasts 15 minutes, so a request re-mints it near expiry. Keys keep the runtime key.
   let session = await syncClient
     .mintStageSession(manifest.project, manifest.stage)
-    .catch((error: unknown) => {
+    .catch((error: unknown): null => {
       if (error instanceof StageSessionRefusedError) return null;
       throw error;
     });
@@ -3121,7 +3139,8 @@ async function ensureGitIgnore(): Promise<void> {
   const existing = await readTextIfExists(path);
   const needed = ["_generated", ".cache"];
   const missing = needed.filter(
-    (line) => !existing.split(/\r?\n/).some((l) => l.trim() === line),
+    (line): boolean =>
+      !existing.split(/\r?\n/).some((l): boolean => l.trim() === line),
   );
   if (missing.length === 0) return;
   const body = existing
@@ -3156,7 +3175,9 @@ async function writeLocalEnvDefaults(options: {
   for (const [key, value] of Object.entries(nextValues)) {
     if (!value) continue;
     if (values[key] !== undefined && !options.force) continue;
-    const index = lines.findIndex((line) => line.trim().startsWith(`${key}=`));
+    const index = lines.findIndex((line): boolean =>
+      line.trim().startsWith(`${key}=`),
+    );
     if (index >= 0) lines[index] = `${key}=${quoteEnv(value)}`;
     else lines.push(`${key}=${quoteEnv(value)}`);
     if (process.env[key] === undefined) process.env[key] = value;
@@ -3164,7 +3185,7 @@ async function writeLocalEnvDefaults(options: {
   }
 
   if (!changed && current) return;
-  const body = `${lines.filter((line, index, all) => !(line === "" && index === all.length - 1)).join("\n")}\n`;
+  const body = `${lines.filter((line, index, all): boolean => !(line === "" && index === all.length - 1)).join("\n")}\n`;
   await writePrivateFile(path, body);
   await ensureEnvLocalIgnored();
 }
@@ -3175,11 +3196,13 @@ async function writeEnvValue(key: string, value: string): Promise<void> {
   const lines = current
     ? current.replace(/\n?$/, "\n").split(/\n/)
     : ["# Local broods CLI settings. Tokens are stored outside the repo."];
-  const index = lines.findIndex((line) => line.trim().startsWith(`${key}=`));
+  const index = lines.findIndex((line): boolean =>
+    line.trim().startsWith(`${key}=`),
+  );
   if (index >= 0) lines[index] = `${key}=${quoteEnv(value)}`;
   else lines.push(`${key}=${quoteEnv(value)}`);
   process.env[key] = value;
-  const body = `${lines.filter((line, i, all) => !(line === "" && i === all.length - 1)).join("\n")}\n`;
+  const body = `${lines.filter((line, i, all): boolean => !(line === "" && i === all.length - 1)).join("\n")}\n`;
   await writePrivateFile(path, body);
   await ensureEnvLocalIgnored();
 }
@@ -3296,12 +3319,12 @@ async function mcp(): Promise<void> {
     scope: { project: runtime.project, stage: runtime.stage },
   });
   serveBroodsMcp(server);
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve): void => {
     process.stdin.on("close", resolve);
   });
 }
 
-main().catch((error) => {
+main().catch((error): never => {
   printError(error instanceof Error ? error.message : String(error));
   process.exit(1);
 });

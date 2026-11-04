@@ -7,7 +7,7 @@ import { watchSource } from "../src/cli/dev-watch.ts";
 // Long enough for the OS to deliver a watcher event and the 150 ms debounce to fire.
 const SETTLE_MS = 400;
 
-test("a folder renamed and renamed back during a sync syncs again", async () => {
+test("a folder renamed and renamed back during a sync syncs again", async (): Promise<void> => {
   const root = await mkdtemp(join(tmpdir(), "broods-dev-watch-"));
   await mkdir(join(root, "agents"));
   await writeFile(join(root, "agents", "index.ts"), "export {};\n");

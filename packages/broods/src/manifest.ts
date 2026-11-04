@@ -56,6 +56,7 @@ import {
   type PolicyResource,
   type SandboxResource,
   type WorkspaceResource,
+  type ChannelType,
 } from "./resources.ts";
 
 const CHANNEL_REACH_WILDCARD = "*";
@@ -199,7 +200,7 @@ export async function compileProject(
       file: entry.file,
       resource: entry.value,
     }));
-  const resources = resourceExports.map((entry) => entry.resource);
+  const resources = resourceExports.map((entry): AnyResource => entry.resource);
   assertUniqueResources(resources);
   assertAgentSandboxes(resources);
   const channels = compileChannels(resourceExports, exports);
@@ -220,18 +221,25 @@ export async function compileProject(
   );
   const sortedResources = (
     await Promise.all(
-      resourceExports.map((entry) => toManifestResources(entry, root, reach)),
+      resourceExports.map((entry): Promise<CliManifestResource[]> =>
+        toManifestResources(entry, root, reach),
+      ),
     )
   )
     .flat()
-    .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`));
+    .sort((a, b): number =>
+      `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`),
+    );
   const mcpServers = new Map(
     sortedResources
-      .filter((resource) => resource.kind === "mcp")
-      .map((resource) => [resource.name, resource.config as McpAuth]),
+      .filter((resource): boolean => resource.kind === "mcp")
+      .map((resource): [string, McpAuth] => [
+        resource.name,
+        resource.config as McpAuth,
+      ]),
   );
-  const manifestResources = sortedResources.map((resource) =>
-    withMcpServerAuth(resource, mcpServers),
+  const manifestResources = sortedResources.map(
+    (resource): CliManifestResource => withMcpServerAuth(resource, mcpServers),
   );
   assertUniqueResources(manifestResources);
 
@@ -332,7 +340,7 @@ async function listTypeScriptFiles(root: string): Promise<string[]> {
 
   await walk(root);
 
-  return results.sort((a, b) =>
+  return results.sort((a, b): number =>
     relative(root, a).localeCompare(relative(root, b)),
   );
 }
@@ -344,7 +352,7 @@ async function loadExports(files: string[]): Promise<ExportedValue[]> {
     const href = `${pathToFileURL(file).href}?t=${Date.now()}`;
     const mod = (await import(href)) as Record<string, unknown>;
     values.push(
-      ...Object.entries(mod).map(([exportName, value]) => ({
+      ...Object.entries(mod).map(([exportName, value]): ExportedValue => ({
         exportName: exportName,
         file: file,
         value: value,
@@ -543,7 +551,10 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
         (resource): resource is WorkspaceResource =>
           resource.kind === "workspace",
       )
-      .map((resource) => [resource.name, resource]),
+      .map((resource): [string, WorkspaceResource] => [
+        resource.name,
+        resource,
+      ]),
   );
 
   for (const resource of resources) {
@@ -587,14 +598,16 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
 
     const attachedWorkspaces = Array.isArray(config.workspaces)
       ? config.workspaces
-          .map((entry) => resolveLocalWorkspace(entry, workspaceResources))
+          .map((entry): WorkspaceResource | undefined =>
+            resolveLocalWorkspace(entry, workspaceResources),
+          )
           .filter((entry): entry is WorkspaceResource => Boolean(entry))
       : [];
     const partitionedWorkspaces = attachedWorkspaces.filter(
-      (workspace) => workspace.config.partitioned === "conversation",
+      (workspace): boolean => workspace.config.partitioned === "conversation",
     );
-    const partitionedChannels = channelDefinitions.filter(
-      (channel) => channel.partition,
+    const partitionedChannels = channelDefinitions.filter((channel): boolean =>
+      Boolean(channel.partition),
     );
 
     if (partitionedChannels.length > 0 && partitionedWorkspaces.length === 0) {
@@ -670,13 +683,25 @@ function resolveLocalWorkspace(
 function assertSupportedWorkspaceSandboxMounts(resources: AnyResource[]): void {
   const sandboxes = new Map(
     resources
-      .filter((resource) => resource.kind === "sandbox")
-      .map((resource) => [resource.name, resource]),
+      .filter(
+        (resource): resource is SandboxResource<string> =>
+          resource.kind === "sandbox",
+      )
+      .map((resource): [string, SandboxResource<string>] => [
+        resource.name,
+        resource,
+      ]),
   );
   const localWorkspaces = new Map(
     resources
-      .filter((resource) => resource.kind === "workspace")
-      .map((resource) => [resource.name, resource]),
+      .filter(
+        (resource): resource is WorkspaceResource<string> =>
+          resource.kind === "workspace",
+      )
+      .map((resource): [string, WorkspaceResource<string>] => [
+        resource.name,
+        resource,
+      ]),
   );
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
@@ -784,7 +809,7 @@ function assertAgentSandboxes(resources: AnyResource[]): void {
       .filter(
         (resource): resource is SandboxResource => resource.kind === "sandbox",
       )
-      .map((sandbox) => sandbox.name),
+      .map((sandbox): string => sandbox.name),
   );
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
@@ -925,7 +950,9 @@ function compileChannels(
       );
   }
 
-  return compiled.sort((left, right) => left.alias.localeCompare(right.alias));
+  return compiled.sort((left, right): number =>
+    left.alias.localeCompare(right.alias),
+  );
 }
 
 type DeclaredReach = Map<AnyConnectionDefinition, Set<string>>;
@@ -1013,7 +1040,7 @@ async function toManifestResources(
     const ids = channelExternalIds(resource.name, config.externalId);
 
     // Suffix by id, not index, so dropping one id does not rename and recreate the rest.
-    return ids.map((id) => ({
+    return ids.map((id): CliManifestResource => ({
       kind: resource.kind,
       name: ids.length === 1 ? resource.name : `${resource.name}-${id}`,
       ...(resource.description ? { description: resource.description } : {}),
@@ -1338,7 +1365,8 @@ function validateHarnessStringArray(
     value !== undefined &&
     (!Array.isArray(value) ||
       !value.every(
-        (entry) => typeof entry === "string" && entry.trim().length > 0,
+        (entry): boolean =>
+          typeof entry === "string" && entry.trim().length > 0,
       ))
   ) {
     throw new Error(
@@ -1420,31 +1448,34 @@ function normalizeAgentConfig(
       );
     }
     config.channels = Object.fromEntries(
-      config.connections.map((channel) => {
-        if (!isConnectionDefinition(channel)) {
-          throw new Error(
-            `Agent "${resource.name}" config.connections must contain connection definitions`,
-          );
-        }
-        const channelId = `${resource.name}${capitalize(channel.type)}Channel`;
-        const allowedChannelIds = connectionReach(channel, reach);
+      config.connections.map(
+        (channel): [ChannelType, Record<string, unknown>] => {
+          if (!isConnectionDefinition(channel)) {
+            throw new Error(
+              `Agent "${resource.name}" config.connections must contain connection definitions`,
+            );
+          }
+          const channelId = `${resource.name}${capitalize(channel.type)}Channel`;
+          const allowedChannelIds = connectionReach(channel, reach);
 
-        return [
-          channel.type,
-          {
-            id: channelId,
-            ...channel.config,
-            ...(channel.partition ? { partition: channel.partition } : {}),
-            allowedChannelIds: allowedChannelIds,
-          },
-        ];
-      }),
+          return [
+            channel.type,
+            {
+              id: channelId,
+              ...channel.config,
+              ...(channel.partition ? { partition: channel.partition } : {}),
+              allowedChannelIds: allowedChannelIds,
+            },
+          ];
+        },
+      ),
     );
     delete config.connections;
   }
   if (Array.isArray(config.workspaces)) {
-    const workspaces = config.workspaces.map((workspace) =>
-      normalizeWorkspaceRef(workspace, resource.name),
+    const workspaces = config.workspaces.map(
+      (workspace): Record<string, unknown> =>
+        normalizeWorkspaceRef(workspace, resource.name),
     );
     // Only the first sandbox mounts workspaces; a later one would expose it unmounted.
     for (const workspace of workspaces) {
@@ -1493,23 +1524,31 @@ function normalizeInlineAgentHooks(
   const hookConfig = hooks as Record<string, unknown>;
   const entries = (
     Object.keys(INLINE_AGENT_HOOK_EVENTS) as InlineAgentHookName[]
-  ).flatMap((name) => {
-    const handler = hookConfig[name];
-    if (handler === undefined) return [];
-    if (typeof handler !== "function") {
-      throw new Error(
-        `Agent "${agentName}" config.hooks.${name} must be a function`,
-      );
-    }
+  ).flatMap(
+    (
+      name,
+    ): {
+      name: keyof AgentHooks;
+      event: AgentHookEventName;
+      source: string;
+    }[] => {
+      const handler = hookConfig[name];
+      if (handler === undefined) return [];
+      if (typeof handler !== "function") {
+        throw new Error(
+          `Agent "${agentName}" config.hooks.${name} must be a function`,
+        );
+      }
 
-    return [
-      {
-        name: name,
-        event: INLINE_AGENT_HOOK_EVENTS[name],
-        source: toHookFunctionExpression(handler.toString()),
-      },
-    ];
-  });
+      return [
+        {
+          name: name,
+          event: INLINE_AGENT_HOOK_EVENTS[name],
+          source: toHookFunctionExpression(handler.toString()),
+        },
+      ];
+    },
+  );
 
   if (entries.length === 0) return undefined;
 
@@ -1521,7 +1560,7 @@ function normalizeInlineAgentHooks(
       `Agent "${agentName}" hook bundle is too large (${bundleSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`,
     );
   }
-  const events = entries.map((entry) => entry.event);
+  const events = entries.map((entry): AgentHookEventName => entry.event);
   const agentHooksConfig = stripInlineHookKeys(hookConfig, agentName);
   agentHooksConfig.code = [{ hookId: hookName }];
 
@@ -1556,7 +1595,7 @@ function stripInlineHookKeys(
     );
   }
   const result = Object.fromEntries(
-    entries.filter(([key]) => key === "webhooks"),
+    entries.filter(([key]): boolean => key === "webhooks"),
   );
 
   return result;
@@ -1584,7 +1623,9 @@ function transpileInlineHookBundle(
   entries: Array<{ event: AgentHookEventName; source: string }>,
 ): string {
   const moduleSource = `export default {\n${entries
-    .map((entry) => `  ${JSON.stringify(entry.event)}: ${entry.source},`)
+    .map(
+      (entry): string => `  ${JSON.stringify(entry.event)}: ${entry.source},`,
+    )
     .join("\n")}\n};\n`;
   try {
     return transformSync(moduleSource, { loader: "ts" }).code;
@@ -1603,7 +1644,7 @@ function normalizePolicyRefs(
   if (!Array.isArray(refs)) {
     throw new Error(`Agent "${agentName}" config.policies must be an array`);
   }
-  const names = refs.map((entry) => {
+  const names = refs.map((entry): string => {
     if (isResource(entry) && entry.kind === "policy")
       return (entry as PolicyResource).name;
     if (typeof entry === "string") return entry;
@@ -1671,10 +1712,10 @@ async function buildBundleModule(options: {
     write: false,
     logLevel: "silent",
     plugins: options.plugins ?? [],
-  }).catch((error: unknown) => {
+  }).catch((error: unknown): never => {
     const details = isBuildFailure(error)
       ? error.errors
-          .map((entry) => entry.text)
+          .map((entry): string => entry.text)
           .filter(Boolean)
           .join("; ")
       : error instanceof Error
@@ -1704,7 +1745,7 @@ async function normalizeSkillConfig(
   );
   const manifestPath = relative(projectRoot, skillRoot).split("\\").join("/");
   const files = await readBundleFiles(skillRoot);
-  if (!files.some((file) => file.path === "SKILL.md")) {
+  if (!files.some((file): boolean => file.path === "SKILL.md")) {
     throw new Error(`Skill folder ${config.path} must contain SKILL.md`);
   }
 
@@ -1722,7 +1763,7 @@ async function normalizeMcpConfig(
 ): Promise<Record<string, unknown>> {
   const { handler, ...rest } = config;
   const connections = [handler, config.url, config.sandbox].filter(
-    (value) => value !== undefined,
+    (value): boolean => value !== undefined,
   ).length;
   if (connections > 1) {
     throw new Error(
@@ -1799,14 +1840,20 @@ function sdkStubPlugin(): Plugin {
   return {
     name: "broods-sdk-stub",
     setup: function (build): void {
-      build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({
-        path: "broods",
-        namespace: "broods-stub",
-      }));
-      build.onLoad({ filter: /.*/, namespace: "broods-stub" }, () => ({
-        contents: SDK_STUB_SOURCE,
-        loader: "js",
-      }));
+      build.onResolve(
+        { filter: /^broods(\/.*)?$/ },
+        (): { path: string; namespace: string } => ({
+          path: "broods",
+          namespace: "broods-stub",
+        }),
+      );
+      build.onLoad(
+        { filter: /.*/, namespace: "broods-stub" },
+        (): { contents: string; loader: "js" } => ({
+          contents: SDK_STUB_SOURCE,
+          loader: "js",
+        }),
+      );
     },
   };
 }
@@ -1819,28 +1866,32 @@ function withMcpServerAuth(
   if (resource.kind !== "agent") return resource;
   const mcp = (resource.config as { mcp?: Record<string, McpAuth> }).mcp;
   if (!mcp) return resource;
-  const entries = Object.entries(mcp).map(([server, entry]) => {
-    const config = servers.get(server);
-    const own = new Set(
-      Object.keys(entry.headers ?? {}).map((name) => name.toLowerCase()),
-    );
-    const headers = Object.entries(config?.headers ?? {}).filter(
-      ([name]) => !own.has(name.toLowerCase()),
-    );
-    // `tokenUrl` stays on the server row, where registration checked it.
-    const { tokenUrl: _tokenUrl, ...oauth } = config?.oauth ?? {};
+  const entries = Object.entries(mcp).map(
+    ([server, entry]): [string, McpAuth] => {
+      const config = servers.get(server);
+      const own = new Set(
+        Object.keys(entry.headers ?? {}).map((name): string =>
+          name.toLowerCase(),
+        ),
+      );
+      const headers = Object.entries(config?.headers ?? {}).filter(
+        ([name]): boolean => !own.has(name.toLowerCase()),
+      );
+      // `tokenUrl` stays on the server row, where registration checked it.
+      const { tokenUrl: _tokenUrl, ...oauth } = config?.oauth ?? {};
 
-    return [
-      server,
-      {
-        ...entry,
-        ...(headers.length > 0
-          ? { headers: { ...Object.fromEntries(headers), ...entry.headers } }
-          : {}),
-        ...(config?.oauth ? { oauth: { ...oauth, ...entry.oauth } } : {}),
-      },
-    ];
-  });
+      return [
+        server,
+        {
+          ...entry,
+          ...(headers.length > 0
+            ? { headers: { ...Object.fromEntries(headers), ...entry.headers } }
+            : {}),
+          ...(config?.oauth ? { oauth: { ...oauth, ...entry.oauth } } : {}),
+        },
+      ];
+    },
+  );
 
   return {
     ...resource,
@@ -1926,14 +1977,17 @@ function normalizeChannelConfig(name: string, value: unknown): unknown {
 
 function rewriteValues(value: unknown): unknown {
   if (Array.isArray(value)) {
-    return value.map((entry) => rewriteValues(entry));
+    return value.map((entry): unknown => rewriteValues(entry));
   }
   if (isResource(value)) {
     return value.name;
   }
   if (value && typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, rewriteValues(entry)]),
+      Object.entries(value).map(([key, entry]): [string, unknown] => [
+        key,
+        rewriteValues(entry),
+      ]),
     );
   }
 
@@ -1987,7 +2041,9 @@ async function readBundleFiles(
 
   await walk(root);
 
-  return files.sort((a, b) => String(a.path).localeCompare(String(b.path)));
+  return files.sort((a, b): number =>
+    String(a.path).localeCompare(String(b.path)),
+  );
 }
 
 function shouldSkipBundleEntry(name: string): boolean {
@@ -2015,9 +2071,9 @@ function isUnsafeBundlePath(path: string): boolean {
   const parts = path.split("/");
 
   return parts.some(
-    (part) =>
+    (part): boolean =>
       part.startsWith(".") ||
-      UNSAFE_BUNDLE_FILE_NAMES.some((pattern) => pattern.test(part)),
+      UNSAFE_BUNDLE_FILE_NAMES.some((pattern): boolean => pattern.test(part)),
   );
 }
 
