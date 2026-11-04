@@ -123,11 +123,17 @@ export function proposalPlan(
   const missing = repo
     ? files.find((file) => file.content === null && !read.has(file.path))
     : undefined;
-  const refusal = unread
-    ? `${unread.path} was not among the files the agent read. Ask it to edit only files it was shown.`
-    : missing
-      ? `${missing.path} is not in the repo, so it cannot be deleted.`
-      : undefined;
+  const twice = files.find(
+    (file, index) =>
+      files.findIndex((other) => other.path === file.path) !== index,
+  );
+  const refusal = twice
+    ? `${twice.path} is listed twice. Ask again.`
+    : unread
+      ? `${unread.path} was not among the files the agent read. Ask it to edit only files it was shown.`
+      : missing
+        ? `${missing.path} is not in the repo, so it cannot be deleted.`
+        : undefined;
   const commit: CopilotAction[] =
     files.length === 0
       ? []
