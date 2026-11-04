@@ -87,6 +87,50 @@ describe("agentDock.session", () => {
     ).toEqual({ tokensDeleted: 1 });
   });
 
+  test("the login is lent for the open project's org, not the active one", async () => {
+    stubDockAgent();
+    const t = dockTest();
+    await seedOrg(t, "admin");
+    const projectId = await t.run(async (ctx) => {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_authId", (q) => q.eq("authId", AUTH_ID))
+        .unique();
+      const orgId = await ctx.db.insert("orgs", {
+        name: "other",
+        slug: "other",
+        ownerAuthId: "user_owner",
+        plan: "free",
+        createdAt: Date.now(),
+      });
+      await ctx.db.insert("orgMembers", {
+        orgId: orgId,
+        userId: user?._id ?? userIdMissing(),
+        role: "member",
+        createdAt: Date.now(),
+      });
+
+      return await ctx.db.insert("projects", {
+        authId: AUTH_ID,
+        orgId: orgId,
+        name: "other",
+        slug: "other",
+        updatedAt: Date.now(),
+      });
+    });
+
+    const session = await t.mutation(api.agentDock.session, {
+      projectId: projectId,
+    });
+    const opened = await openUserToken(
+      session?.userToken ?? "",
+      SIGNING_SECRET,
+    );
+
+    expect(opened).toMatchObject({ userId: AUTH_ID });
+    expect(opened?.credential).toBeUndefined();
+  });
+
   test("a member's token carries no credential", async () => {
     stubDockAgent();
     const t = dockTest();
@@ -151,4 +195,8 @@ async function seedOrg(
       updatedAt: Date.now(),
     });
   });
+}
+
+function userIdMissing(): never {
+  throw new Error("seedOrg inserts the dock user first");
 }

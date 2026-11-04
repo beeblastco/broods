@@ -898,11 +898,13 @@ export class Session {
 
   /** The agent's own secret values, which every log line and span of its runs drops. */
   secretValues(): string[] {
-    return collectSecretValues([
+    const secrets = collectSecretValues([
       this.agentConfig,
       this.sandboxes(),
       this.resolvedWorkspaces(),
     ]);
+
+    return this.#userCredential ? [...secrets, this.#userCredential] : secrets;
   }
 
   private async appendConversationEvents(

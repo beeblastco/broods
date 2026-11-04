@@ -7,6 +7,7 @@ import {
   MCP_PRINCIPAL_HEADER,
   MCP_USER_CREDENTIAL_HEADER,
 } from "../src/harness/mcp/client.ts";
+import { Session } from "../src/harness/session.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import type { Principal } from "../src/shared/domain/principal.ts";
 
@@ -119,6 +120,16 @@ describe("mcp user credential", () => {
         MCP_USER_CREDENTIAL_HEADER,
       ),
     ).toBeNull();
+  });
+
+  it("is a secret the session redacts from spans and logs", () => {
+    const session = new Session({
+      eventId: "evt",
+      conversationKey: "acct:a:agent:b:api:c",
+      userCredential: "bcli_user",
+    });
+
+    expect(session.secretValues()).toContain("bcli_user");
   });
 });
 

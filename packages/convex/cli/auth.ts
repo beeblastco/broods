@@ -325,10 +325,13 @@ export async function cliLoginTokenHash(req: Request): Promise<string | null> {
 export async function cliLoginTarget(
   ctx: MutationCtx,
   authId: string,
+  orgId?: Id<"orgs">,
 ): Promise<{ orgId: Id<"orgs">; accountId: Id<"accounts"> } | ClientError> {
   const user = await userByAuthId(ctx, authId);
   if (!user) return new ClientError("User not found", "not_found");
-  const org = await getActiveOrgForUser(ctx, user._id);
+  const org = orgId
+    ? await ctx.db.get(orgId)
+    : await getActiveOrgForUser(ctx, user._id);
   if (!org) return new ClientError("No active organization", "not_found");
   const membership = await getOrgMembership(ctx, org._id, user._id);
   if (!membership || !orgRoleMeets(membership.role, "admin")) {

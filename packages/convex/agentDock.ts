@@ -92,17 +92,22 @@ type RepoTarget = Infer<typeof repoTargetValidator>;
 
 // The dock talks to one Broods agent per deployment, as the signed-in user; null keeps its planner.
 export const session = mutation({
-  args: {},
+  args: { projectId: v.optional(v.id("projects")) },
   returns: v.union(sessionValidator, v.null()),
-  handler: async (ctx): Promise<DockSession | null> => {
+  handler: async (ctx, { projectId }): Promise<DockSession | null> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
     const agent = dockAgent();
     if (!agent) return null;
 
     const expiresAt = Date.now() + USER_TOKEN_MAX_TTL_MS;
-    // Only an owner or admin holds the whole account, so only they lend the agent a login.
-    const target = await cliLoginTarget(ctx, authUser.id);
+    // Only an owner or admin holds the whole account, so only they lend the agent a login: for
+    // the open project's org, which need not be the active one.
+    const project = projectId ? await ctx.db.get(projectId) : null;
+    const target =
+      projectId && !project
+        ? new ClientError("Project not found", "not_found")
+        : await cliLoginTarget(ctx, authUser.id, project?.orgId);
     const credential =
       target instanceof ClientError
         ? undefined

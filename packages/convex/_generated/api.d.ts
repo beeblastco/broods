@@ -1006,7 +1006,7 @@ export declare const api: {
     session: FunctionReference<
       "mutation",
       "public",
-      {},
+      { projectId?: Id<"projects"> },
       {
         agentId: string;
         expiresAt: number;

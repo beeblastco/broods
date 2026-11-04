@@ -245,9 +245,11 @@ export function questionText(input: unknown): string {
 export async function* streamDockAnswer(
   session: DockSession,
   conversationKey: string,
+  signal: AbortSignal,
   text: string,
 ): AsyncGenerator<TextStreamPart<ToolSet>> {
   const response = await fetch(session.url, {
+    signal: signal,
     body: JSON.stringify({
       agentId: session.agentId,
       conversationKey: conversationKey,

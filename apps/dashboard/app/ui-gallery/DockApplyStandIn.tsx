@@ -237,6 +237,7 @@ export function DockApplyStandIn(): React.JSX.Element {
     revertProposal: () => {},
     runAction: () => {},
     setOpen: () => {},
+    stop: () => {},
     syncStage: () => {},
     wakeIndex: () => {},
   };

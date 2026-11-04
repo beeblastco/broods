@@ -14,7 +14,7 @@ import {
 } from "@/app/components/ui/input-group";
 import { useStickToBottom } from "@/app/hooks/useStickToBottom";
 import { sameOriginPath } from "@/app/lib/navigation";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useState } from "react";
@@ -36,7 +36,8 @@ const MARKDOWN_COMPONENTS: Components = { a: AnswerLink };
 
 // Takes its width from the page, not floating, so what the plan changes stays on screen.
 export function CopilotDock(): React.JSX.Element | null {
-  const { ask, completed, isOpen, messages, proposals, setOpen } = useCopilot();
+  const { ask, completed, isOpen, messages, proposals, setOpen, stop } =
+    useCopilot();
 
   const [input, setInput] = useState("");
   const thread = useStickToBottom<HTMLDivElement>([messages]);
@@ -45,8 +46,7 @@ export function CopilotDock(): React.JSX.Element | null {
 
   if (!isOpen) return null;
 
-  // One turn at a time: a turn queued behind a running one loses the user's login.
-  const answering = messages.some((message) => message.pending);
+  const answering = messages.some((message) => message.pending === true);
   const send = (): void => {
     if (!input.trim() || answering) return;
     ask(input);
@@ -151,16 +151,28 @@ export function CopilotDock(): React.JSX.Element | null {
             className="max-h-32 min-h-0 py-2 text-sm"
           />
           <InputGroupAddon align="block-end" className="pt-0">
-            <InputGroupButton
-              size="icon-xs"
-              variant="default"
-              disabled={!input.trim() || answering}
-              onClick={send}
-              className="ml-auto rounded-sm"
-              aria-label="Send"
-            >
-              <ArrowUp className="size-3.5" />
-            </InputGroupButton>
+            {answering ? (
+              <InputGroupButton
+                size="icon-xs"
+                variant="default"
+                onClick={stop}
+                className="ml-auto cursor-pointer rounded-sm"
+                aria-label="Stop"
+              >
+                <Square className="size-3" />
+              </InputGroupButton>
+            ) : (
+              <InputGroupButton
+                size="icon-xs"
+                variant="default"
+                disabled={!input.trim()}
+                onClick={send}
+                className="ml-auto rounded-sm"
+                aria-label="Send"
+              >
+                <ArrowUp className="size-3.5" />
+              </InputGroupButton>
+            )}
           </InputGroupAddon>
         </InputGroup>
       </div>
