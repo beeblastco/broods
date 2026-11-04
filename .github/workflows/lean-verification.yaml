@@ -6,7 +6,7 @@ on:
   pull_request:
   push:
     branches: [dev]
-  # Nightly: the oracles on a random seed and 25x the cases, since a fixed seed finds
+  # Nightly: the oracles on a random seed and 10x the cases, since a fixed seed finds
   # nothing new after the first day. The log prints the seed to replay a failure.
   schedule:
     - cron: "23 3 * * *"
