@@ -120,7 +120,7 @@ const PHASES: Record<string, DockApply | null> = {
     startedAt: 0,
   },
   failed: {
-    error: "the run failed.",
+    error: "Error: defineMcp needs a url or a handler",
     phase: "failed",
     runUrl: RUN,
     sha: SHA,

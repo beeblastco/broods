@@ -81,7 +81,7 @@ test("a failed deploy says why, turns the nodes red, and offers Retry", async ({
   await expect(bar).toContainText("Deploy failed");
   await expect(bar.getByRole("link", { name: "Run" })).toBeVisible();
   await expect(page.locator("[data-apply-status]")).toHaveText(
-    "Deploy failed: the run failed.",
+    "Deploy failed: Error: defineMcp needs a url or a handler",
   );
   await expect(page.locator('[data-proposed-node="failed"]')).toHaveCount(1);
   await page.screenshot({ path: "test-results/dock-apply/failed.png" });
