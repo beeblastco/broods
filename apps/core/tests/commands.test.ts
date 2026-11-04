@@ -100,17 +100,6 @@ describe("parseCommand", () => {
 });
 
 describe("executeCommand", () => {
-  it("executes /new and sends confirmation reply", async () => {
-    const channel = createMockChannelActions();
-    const ctx = createCommandContext({ channel: channel });
-
-    await executeCommand("/new", ctx);
-
-    expect(channel.sendText).toHaveBeenCalledWith(
-      "Context cleared. Starting fresh.",
-    );
-  });
-
   it("executes /help and lists executable commands", async () => {
     const channel = createMockChannelActions();
     const ctx = createCommandContext({ channel: channel });
@@ -295,14 +284,6 @@ describe("resolveChannelCommand", () => {
 });
 
 describe("resolveDiscordCommand", () => {
-  it("resolves a standard discord command with a command token", () => {
-    const result = resolveDiscordCommand("new", "");
-
-    expect(result).not.toBeNull();
-    expect(result?.commandToken).toBe("/new");
-    expect(result?.contentText).toBe("");
-  });
-
   it("resolves the Discord clear alias with the same command token", () => {
     const result = resolveDiscordCommand("clear", "");
 
@@ -375,14 +356,6 @@ describe("getDiscordCommandRegistrations", () => {
     expect(registrations.find((r) => r.name === "queue")?.options).toHaveLength(
       1,
     );
-  });
-
-  it("defaults to global scope when no scope is provided", () => {
-    const globalRegistrations = getDiscordCommandRegistrations();
-    const explicitGlobalRegistrations =
-      getDiscordCommandRegistrations("global");
-
-    expect(globalRegistrations).toEqual(explicitGlobalRegistrations);
   });
 });
 

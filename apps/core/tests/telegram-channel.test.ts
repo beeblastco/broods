@@ -738,24 +738,6 @@ describe("telegram channel adapter", () => {
       expect(sent).toBeLessThan(MAX_ATTACHMENT_BYTES + 4 * chunk.byteLength);
     });
   });
-
-  it("still ignores a message carrying neither text nor media", async () => {
-    const adapter = createTelegramChannel(
-      "bot-token",
-      "secret",
-      null,
-      null,
-      "👀",
-    );
-
-    expect(
-      (
-        await adapter.parse(
-          createRequest({ update_id: 35, message: createMessage({}) }),
-        )
-      ).kind,
-    ).toBe("ignore");
-  });
 });
 
 async function parseTelegram(

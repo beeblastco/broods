@@ -210,6 +210,26 @@ describe("harness reasoning settings", (): void => {
   });
 });
 
+describe("harness provider auth", (): void => {
+  it("hands Codex a custom endpoint as OpenAI's key and base URL", (): void => {
+    const settings = createConfiguredCodexAdapter({
+      harness: { type: "codex" },
+      model: { provider: "custom", modelId: "Qwen3.6-27B" },
+      provider: {
+        custom: {
+          apiKey: "test-key",
+          base_url: "https://llm.example.test/v1/",
+        },
+      },
+    }) as { auth?: unknown };
+
+    expect(settings.auth).toEqual({
+      OPENAI_API_KEY: "test-key",
+      OPENAI_BASE_URL: "https://llm.example.test/v1/",
+    });
+  });
+});
+
 function agent(
   harness: NonNullable<AgentConfig["harness"]>["type"],
   provider: "anthropic" | "openai" | "vercel",
