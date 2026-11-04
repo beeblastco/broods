@@ -208,7 +208,7 @@ export function meterEphemeralSandbox(
     : controlPlane?.accountId;
   if (!accountId) return (): void => {};
   const specs = readSpecs?.();
-  void queueMirrorWrite(sandboxId, (): Promise<void> =>
+  void queueMirrorWrite(sandboxId, (): Promise<boolean> =>
     upsertSandboxInstance(
       controlPlane,
       provider,

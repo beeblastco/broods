@@ -105,8 +105,6 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     const key = sandboxReservationKey(request);
     const id = key ? await getSandboxExternalId("worker", key) : null;
     if (!id) return null;
-    // A status read may mark the row suspended; the next command must mark it running again.
-    mirroredFor.delete(id);
     const response = await callPlatformWorker(
       workerConnection(),
       LABEL,
@@ -114,6 +112,8 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
       "GET",
     );
     const { exists } = statusResult.parse(await response.json());
+    // The caller marks the row suspended or removes it, so the next command must write it.
+    mirroredFor.delete(id);
 
     return exists ? { externalId: id, state: "suspended" } : null;
   }
@@ -206,14 +206,16 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
     metadata: SandboxRunRequest["metadata"],
   ): void {
     const task = metadata?.taskId;
-    if (task !== undefined) {
-      const trace = metadata?.traceId;
+    const entry =
+      task === undefined
+        ? undefined
+        : { task: task, trace: metadata?.traceId, at: Date.now() };
+    if (entry) {
       const last = mirroredFor.get(id);
-      const now = Date.now();
       if (
-        last?.task === task &&
-        last.trace === trace &&
-        now - last.at < MIRROR_EVERY_MS
+        last?.task === entry.task &&
+        last.trace === entry.trace &&
+        entry.at - last.at < MIRROR_EVERY_MS
       )
         return;
       mirroredFor.delete(id);
@@ -221,17 +223,18 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
         const oldest = mirroredFor.keys().next().value;
         if (oldest !== undefined) mirroredFor.delete(oldest);
       }
-      mirroredFor.set(id, { task: task, trace: trace, at: now });
+      mirroredFor.set(id, entry);
     }
-    void queueMirrorWrite(id, (): Promise<void> =>
-      upsertSandboxInstance(
+    void queueMirrorWrite(id, async (): Promise<void> => {
+      const written = await upsertSandboxInstance(
         this.#config.controlPlane,
         "worker",
         key,
         id,
         metadata,
-      ),
-    );
+      );
+      if (!written && mirroredFor.get(id) === entry) mirroredFor.delete(id);
+    });
   }
 }
 

@@ -64,12 +64,14 @@ const mirrored: string[] = [];
 const metered: string[] = [];
 let stored: string | null = null;
 let claimWins = true;
+let failNextWrite = false;
 
 beforeEach((): void => {
   process.env.CLOUDFLARE_WORKER_URL = "https://worker.example.com/";
   process.env.CLOUDFLARE_WORKER_API_KEY = "worker-key";
   stored = null;
   claimWins = true;
+  failNextWrite = false;
   calls.length = 0;
   mirrored.length = 0;
   metered.length = 0;
@@ -117,8 +119,12 @@ beforeEach((): void => {
     },
   );
   spyOn(sandboxInstances, "upsertSandboxInstance").mockImplementation(
-    async (_plane, _provider, key, _id, _meta, options): Promise<void> => {
+    async (_plane, _provider, key, _id, _meta, options): Promise<boolean> => {
       mirrored.push(`upsert ${key} ${options?.ephemeral === true}`);
+      const failed = failNextWrite;
+      failNextWrite = false;
+
+      return !failed;
     },
   );
 });
@@ -289,6 +295,18 @@ it("never mirrors a refused command, so the task's next command still writes", a
   await settled();
 
   expect(mirrored).toEqual(["upsert acct:workspace false"]);
+});
+
+it("writes the row again on the task's next command after a failed write", async (): Promise<void> => {
+  failNextWrite = true;
+  const executor = new WorkerSandboxExecutor({ ...config, persistent: true });
+  await executor.run(inTask("task-1"));
+  await settled();
+  await executor.run(inTask("task-1"));
+  await executor.run(inTask("task-1"));
+  await settled();
+
+  expect(upserts()).toBe(2);
 });
 
 it("writes the row again on the first command after a release or a status read", async (): Promise<void> => {
