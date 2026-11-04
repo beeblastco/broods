@@ -34,8 +34,6 @@ describe("sandboxDisplayConfig", () => {
     });
 
     expect(display).toEqual({ network: { mode: "allow-all" } });
-    expect(display.envVars).toBeUndefined();
-    expect(display.options).toBeUndefined();
   });
 
   test("absent and non-object configs collapse to an empty projection", () => {
