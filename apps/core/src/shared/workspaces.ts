@@ -21,6 +21,8 @@ import {
 } from "./sandbox-sizes.ts";
 import { getStorage } from "./storage.ts";
 
+const USER_PARTITION_ALIAS = "users";
+
 export type WorkspaceSandboxConfig = SandboxConfig & {
   storage?: WorkspaceStorageConfig;
   controlPlane?: SandboxControlPlane;
@@ -56,6 +58,8 @@ export interface WorkspaceIsolationScope {
   channelScopeKey?: string;
   conversationKey?: string;
   partition?: ChannelPartition;
+  /** A user-token conversation (`bsu:`): its folder, never the root, whatever the isolation. */
+  userConversationKey?: string;
 }
 
 export interface AgentRuntimeIdentity {
@@ -102,39 +106,16 @@ export function isolatedWorkspaceNamespace(
   isolation: WorkspaceIsolation | undefined,
   scope: WorkspaceIsolationScope = {},
 ): string {
-  if (isolation === undefined) {
-    return baseNamespace;
-  }
-  if (isolation === "agent") {
-    if (!scope.agentId) {
-      throw new Error('Workspace isolation "agent" requires an agent identity');
-    }
+  if (!scope.userConversationKey)
+    return sharedWorkspaceNamespace(baseNamespace, isolation, scope);
+  // The user folder is already one conversation's, so its subagents share it; only an
+  // agent folder still splits it.
+  const namespace =
+    isolation === "agent"
+      ? sharedWorkspaceNamespace(baseNamespace, isolation, scope)
+      : baseNamespace;
 
-    return `${baseNamespace}/${agentNamespaceFolder(scope.agentId)}`;
-  }
-
-  const partition = scope.partition;
-  if (!partition) {
-    if (!scope.channelName) {
-      return baseNamespace;
-    }
-    throw new Error(
-      "Workspace isolation requires the active channel to define partition",
-    );
-  }
-
-  if (partition.by === "shared") {
-    return baseNamespace;
-  }
-
-  const conversationKey = scope.conversationKey ?? scope.channelScopeKey;
-  if (!conversationKey) {
-    throw new Error(
-      "Conversation workspace isolation requires an active conversation key",
-    );
-  }
-
-  return `${baseNamespace}/${partition.alias}/${normalizeFilesystemNamespace(conversationKey)}`;
+  return `${namespace}/${USER_PARTITION_ALIAS}/${normalizeFilesystemNamespace(scope.userConversationKey)}`;
 }
 
 // The registry is keyed by reservation key alone, so unscoped pinned text could
@@ -171,6 +152,7 @@ export async function resolveAgentRuntime(
         accountId,
         identity.agentId,
         sandboxId,
+        isolationScope.userConversationKey,
       ),
     };
   }
@@ -363,18 +345,27 @@ function assertDistinctSandboxNames(sandboxes: ResolvedAgentSandbox[]): void {
   }
 }
 
+// A pinned key is the owner's choice to share; otherwise each user conversation gets its own.
 function reservedAgentSandbox(
   sandbox: WorkspaceSandboxConfig,
   accountId: string | undefined,
   agentId: string | undefined,
   sandboxId: string,
+  userConversationKey: string | undefined,
 ): WorkspaceSandboxConfig {
-  const reservationKey = agentSandboxReservation(
+  const agentKey = agentSandboxReservation(
     sandbox,
     accountId,
     agentId,
     sandboxId,
   );
+  const pinned = sandbox.options?.reservationKey;
+  const reservationKey =
+    agentKey &&
+    userConversationKey &&
+    !(typeof pinned === "string" && pinned.trim().length > 0)
+      ? normalizeFilesystemNamespace(`${agentKey}:${userConversationKey}`)
+      : agentKey;
   if (!reservationKey || reservationKey === sandbox.options?.reservationKey) {
     return sandbox;
   }
@@ -412,4 +403,44 @@ export function sandboxControlPlane(
     idleTimeoutSeconds: resolveSandboxLifecycle(record.config.lifecycle)
       .idleTimeoutSeconds,
   };
+}
+
+function sharedWorkspaceNamespace(
+  baseNamespace: string,
+  isolation: WorkspaceIsolation | undefined,
+  scope: WorkspaceIsolationScope,
+): string {
+  if (isolation === undefined) {
+    return baseNamespace;
+  }
+  if (isolation === "agent") {
+    if (!scope.agentId) {
+      throw new Error('Workspace isolation "agent" requires an agent identity');
+    }
+
+    return `${baseNamespace}/${agentNamespaceFolder(scope.agentId)}`;
+  }
+
+  const partition = scope.partition;
+  if (!partition) {
+    if (!scope.channelName) {
+      return baseNamespace;
+    }
+    throw new Error(
+      "Workspace isolation requires the active channel to define partition",
+    );
+  }
+
+  if (partition.by === "shared") {
+    return baseNamespace;
+  }
+
+  const conversationKey = scope.conversationKey ?? scope.channelScopeKey;
+  if (!conversationKey) {
+    throw new Error(
+      "Conversation workspace isolation requires an active conversation key",
+    );
+  }
+
+  return `${baseNamespace}/${partition.alias}/${normalizeFilesystemNamespace(conversationKey)}`;
 }
