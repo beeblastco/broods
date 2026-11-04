@@ -882,6 +882,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               className="flex flex-col overflow-hidden"
             >
               <McpToolsTab
+                key={node.id}
                 projectId={projectId}
                 stageId={stageId}
                 nodeId={node.id}

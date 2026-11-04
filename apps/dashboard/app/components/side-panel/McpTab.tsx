@@ -10,6 +10,7 @@ import { formatSource } from "@/app/lib/formatSource";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { Check } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useState } from "react";
@@ -124,7 +125,7 @@ export function McpTab({
         nodeLabel: nodeLabel,
         ...(headers !== undefined ? { headers: headers } : {}),
       };
-      let result: { verified: boolean; tools: unknown[] };
+      let result: FunctionReturnType<typeof api.mcp.saveForNode>;
       if (activeTransport === "hosted") {
         result = await saveForNode({
           ...shared,
