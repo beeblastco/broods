@@ -278,8 +278,9 @@ describe("sandbox tools and the run's metadata", () => {
     process.env.CLOUDFLARE_WORKER_URL = "https://worker.example.com";
     process.env.CLOUDFLARE_WORKER_API_KEY = "worker-key";
     spyOn(planLimits, "assertSandboxBudget").mockResolvedValue(undefined);
-    spyOn(instanceStore, "getSandboxExternalId").mockResolvedValue(null);
-    spyOn(instanceStore, "claimSandboxInstance").mockResolvedValue(true);
+    spyOn(instanceStore, "reserveSandboxInstance").mockImplementation(
+      async (_provider, _key, externalId): Promise<string> => externalId,
+    );
     spyOn(globalThis, "fetch").mockImplementation(
       Object.assign(
         async (): Promise<Response> =>
@@ -302,7 +303,7 @@ describe("sandbox tools and the run's metadata", () => {
       },
     );
     const sources: unknown[] = [];
-    spyOn(planLimits, "recordUsage").mockImplementation(
+    spyOn(planLimits, "recordUsageSoon").mockImplementation(
       (_accountId, _usage, source): void => {
         sources.push(source);
       },

@@ -114,10 +114,10 @@ sequenceDiagram
   end
 ```
 
-- Every write for one sandbox id goes through `queueMirrorWrite`, so a removal never lands before the upsert.
+- Every write for an ephemeral row goes through `queueMirrorWrite`, so a removal never lands before the upsert. The queue is per account (see [Instance row](#instance-row)).
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
-- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, filed under the sandbox's project, else the project of the run's agent, or of its workspace when the run names no agent, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.
+- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, filed under the sandbox's project, else the project of the run's agent, or of its workspace when the run names no agent, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time. Commands of one account, project, agent and workspace that end within a second of the first go out as one `account/budget:record` write (`recordUsageSoon` in `src/harness/plan-limits.ts`), so live usage can trail by up to a second and lands on the day of the write. From shutdown on, core sends what waits at once and stops batching.
 - A sandbox on the account's own credentials gets no row. No lifecycle verb accepts an ephemeral row.
 
 ## Reservations
@@ -145,7 +145,7 @@ Harness adapters pick their own key, see [harness adapters](#harness-adapters).
 
 ### First call and resume
 
-The MicroVM executor (`#acquire` in `microvm-executor.ts`) as the example. Workdir, Daytona, E2B, Vercel and Cloudflare follow the same claim and race rules.
+The MicroVM executor (`#acquire` in `microvm-executor.ts`) as the example. Workdir, Daytona, E2B and Vercel follow the same claim and race rules; `cloudflare` and `worker` book in one trip (below).
 
 ```mermaid
 sequenceDiagram
@@ -182,6 +182,7 @@ sequenceDiagram
   VM-->>T: stdout, stderr, exit code
 ```
 
+- `cloudflare` and `worker` book in one trip instead (`reservePlatformSandbox` in `platform-worker.ts`): `reserveSandboxReservation` returns the stored id, refreshing `expiresAt` when the row is the caller's account's, or claims the new one, and a racing booking gets the winner's id. Without an account (the dashboard console) a stored id is read by key alone and nothing is claimed. Core holds each booking in memory (`reserveSandboxInstance` in `instance-store.ts`), so a later command of the same account on the same key makes no Convex call for a minute; the first command after that books again, which refreshes `expiresAt`, follows a key repointed elsewhere and refuses an account no longer active. Any reservation delete in core (a release, a terminate, a sweep) lets the key go at once.
 - A slow resume or a control-plane error propagates. Only a VM unknown to the provider or terminal is replaced, since replacing a suspended one leaks it against the account's memory quota.
 - A persistent MicroVM counts against that quota while running or suspended. Too many make every launch fail with `ServiceQuotaExceededException`, and a reserved sandbox has no fallback.
 - `lifecycle.maxLifetimeSeconds` is checked on acquire, never on a timer, so it cannot interrupt a running command.
@@ -232,6 +233,9 @@ stateDiagram-v2
 - `specs` is what the meter bills. `specsVerified` is set only when the size is real: a provider report, or the size Broods sets on workdir, MicroVM and Cloudflare. Without it the dashboard shows `?`.
 - The row names the run that used it. Every sandbox tool call (`bash` and a background job's launch, `browse`, the file tools and `memory_save`, and a provider tool standing in for one) hands its executor the run's trace, task, agent and conversation, plus the workspace it ran in (`sandboxRunMetadata` in `src/harness/tools/filesystem-utils.ts`). The row keeps the trace and task that created the machine and moves `lastUsedTraceId`, `lastUsedTaskId`, `agentId`, `conversationKey` and the workspace to each use that names them; a write with no run, such as a dashboard `exec`, leaves them. The dashboard's trace link and agent column read them. A `reserve` or `resume` that a write causes names that write's agent, trace and task in `sandboxAuditEvents`, and is the `service`'s when no run is behind it.
 - Executors refresh the row on every command. A refresh of a machine still running at the size, credentials and project it was last billed at bills at most once a minute (`REFRESH_BILL_EVERY_MS` in `packages/convex/sandbox/instances.ts`), so an owner's concurrent tasks write the shared usage rows about once a minute each, not on every command. The next bill, status change or removal covers the stretch, so nothing is lost; like the idle tail, it lands on the day and month of the bill that covers it, and live usage can trail by up to a minute.
+- Core sends row writes through `queueMirrorWrite` (`src/harness/sandbox/utils.ts`): one queue per account, or per sandbox id when there is none, so an account's concurrent tasks reach Convex one write at a time, in the order they were queued. Executors queue every row write, a new machine's first one included, and never wait for it, so neither a command nor a sandbox start waits behind other tasks. Every queued write is tracked with `waitUntil`, so shutdown waits for the queue to empty. That order also keeps a refresh still queued for a machine that died from repointing the row after its replacement's write.
+- Terminate, suspend, resume, a refresh that finds the machine gone, a platform (`cloudflare`, `worker`) release, the sweeper and conversation or account cleanup wait for the writes already queued, so a refresh queued before them never lands after and writes the row back. A refresh that sees the machine terminating removes the row only while it still names that machine, so a replacement's row under the same key stays. The `exec` and `terminal` status writes and a refresh's observed status skip the queue, so those dashboard calls answer at once. A refresh still queued from a recent command can then mark a stopped row running again, until the next refresh reads it.
+- The trade-off: those waits sit behind every write the account queued, which in a burst of concurrent tasks can take seconds, and a slow or failing Convex write (a removal retries for up to 2.5 s) holds the whole account's queue, not one sandbox's. A row's first write and its removal both land after the backlog, so the billed stretch shifts by that wait. Two orgs of one owner share one usage pool (`addPoolUsage`) but each has its own queue, so their writes still run side by side.
 
 ## Lifecycle actions and terminal
 

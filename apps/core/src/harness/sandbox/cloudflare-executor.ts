@@ -5,7 +5,6 @@ import {
   MAX_OUTPUT_BYTES,
   MAX_TIMEOUT_MS,
 } from "../../../../cloudflare-sandbox/src/limits.ts";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
@@ -35,7 +34,7 @@ import {
   mergeSandboxEnv,
   meterEphemeralSandbox,
   parseExecResponse,
-  queueMirrorWrite,
+  queueMirrorUpsert,
   requiredWorkspacePath,
   sandboxReservationKey,
 } from "./utils.ts";
@@ -219,15 +218,13 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     id: string,
     metadata: SandboxRunRequest["metadata"],
   ): void {
-    void queueMirrorWrite(id, (): Promise<void> =>
-      upsertSandboxInstance(
-        this.#config.controlPlane,
-        "cloudflare",
-        key,
-        id,
-        metadata,
-        { specs: configuredSandboxSpecs(this.#config) },
-      ),
+    void queueMirrorUpsert(
+      this.#config.controlPlane,
+      "cloudflare",
+      key,
+      id,
+      metadata,
+      { specs: configuredSandboxSpecs(this.#config) },
     );
   }
 }

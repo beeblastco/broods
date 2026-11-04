@@ -1,9 +1,8 @@
 import { optionalEnv } from "../../shared/env.ts";
 import {
-  claimSandboxInstance,
   deleteSandboxInstance,
   getSandboxExternalId,
-  saveSandboxInstance,
+  reserveSandboxInstance,
 } from "./instance-store.ts";
 import type { SandboxProvider, SandboxReleaseRequest } from "./types.ts";
 import {
@@ -94,31 +93,24 @@ export async function releasePlatformSandbox(
   if (!id) return;
   await drop(id);
   // Drain queued mirror upserts so none writes the row back after the delete.
-  await queueMirrorWrite(id, async (): Promise<void> => {});
+  await queueMirrorWrite(accountId, id, async (): Promise<void> => {});
   await deleteSandboxInstance(provider, key, accountId, id);
 }
 
-// A Worker-side resource exists once named, so reserving is just the claim. Reuse goes by key
-// alone (the console has no account) and refreshes the deadline so the sweeper keeps off it.
+// A Worker-side resource exists once named, so reserving is just the claim. Without an account
+// (the console) an existing reservation is reused by key alone and nothing is claimed.
 export async function reservePlatformSandbox(
   provider: SandboxProvider,
   accountId: string | undefined,
   key: string,
 ): Promise<string | undefined> {
-  const existing = await getSandboxExternalId(provider, key);
-  if (existing) {
-    await saveSandboxInstance(provider, key, existing, accountId);
+  if (!accountId)
+    return (await getSandboxExternalId(provider, key)) ?? undefined;
 
-    return existing;
-  }
-  if (!accountId) return undefined;
-  const id = `${sandboxNamePrefix(key)}-${crypto.randomUUID().slice(0, 8)}`;
-  if (await claimSandboxInstance(provider, key, id, accountId)) return id;
-  const winner = await getSandboxExternalId(provider, key);
-  if (!winner)
-    throw new Error(
-      `failed to reserve a ${provider} sandbox (lost the reservation race)`,
-    );
-
-  return winner;
+  return reserveSandboxInstance(
+    provider,
+    key,
+    `${sandboxNamePrefix(key)}-${crypto.randomUUID().slice(0, 8)}`,
+    accountId,
+  );
 }

@@ -1496,13 +1496,13 @@ export declare const api: {
       "action",
       "public",
       {
-        input?: any;
+        inputJson?: string;
         nodeId: string;
         projectId: Id<"projects">;
         stageId: Id<"stages">;
         toolName: string;
       },
-      { durationMs: number; result: any }
+      { durationMs: number; isError: boolean; text: string }
     >;
     getByNode: FunctionReference<
       "query",
@@ -1557,7 +1557,7 @@ export declare const api: {
       "action",
       "public",
       { nodeId: string; projectId: Id<"projects">; stageId: Id<"stages"> },
-      Array<any>
+      Array<{ description?: string; inputSchemaJson: string; name: string }>
     >;
     removeForNode: FunctionReference<
       "action",
@@ -1581,7 +1581,15 @@ export declare const api: {
         stageId: Id<"stages">;
         url?: string;
       },
-      { serverId: Id<"mcp">; tools: Array<any>; verified: boolean }
+      {
+        serverId: Id<"mcp">;
+        tools: Array<{
+          description?: string;
+          inputSchemaJson: string;
+          name: string;
+        }>;
+        verified: boolean;
+      }
     >;
   };
   org: {
@@ -7011,6 +7019,26 @@ export declare const internal: {
       "internal",
       { accountId: Id<"accounts">; key: string },
       null
+    >;
+    reserveSandboxReservation: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        accountId: Id<"accounts">;
+        externalId: string;
+        provider:
+          | "sandbox"
+          | "lambda"
+          | "e2b"
+          | "daytona"
+          | "vercel"
+          | "cloudflare"
+          | "worker"
+          | "machine"
+          | "custom";
+        reservationKey: string;
+      },
+      string
     >;
     saveSandboxReservation: FunctionReference<
       "mutation",

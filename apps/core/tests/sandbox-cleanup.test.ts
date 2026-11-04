@@ -96,6 +96,9 @@ await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxReleaseTarget: getSandboxReleaseTargetMock,
   getSandboxReservationRecord: mock(async () => null),
   claimSandboxInstance: claimSandboxInstanceMock,
+  reserveSandboxInstance: mock(
+    async (_provider: string, _key: string, id: string): Promise<string> => id,
+  ),
   saveSandboxInstance: mock(async () => {}),
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
@@ -110,6 +113,7 @@ await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
 
 const { releaseExpiredSandboxes, releaseReservedSandboxes } =
   await import("../src/shared/sandbox-cleanup.ts");
+const { queueMirrorWrite } = await import("../src/harness/sandbox/utils.ts");
 
 setStorageForTests({
   sandboxConfigs: { list: async () => accountConfigs },
@@ -297,6 +301,34 @@ it("still drops the rows when the reservation lookup fails", async () => {
   expect(released).toBe(0);
   expect(e2bKillMock).not.toHaveBeenCalled();
   expect(removeSandboxInstanceMock.mock.calls).toEqual([
+    ["acct-1", "key-live", undefined],
+  ]);
+});
+
+// A refresh still queued for the account would otherwise write the dropped row back.
+it("drops the mirror row only after the account's queued writes land", async () => {
+  const held = Promise.withResolvers<void>();
+  const pending = queueMirrorWrite(
+    "acct-1",
+    "sbx-other",
+    (): Promise<void> => held.promise,
+  );
+
+  const expired = releaseExpiredSandboxes("acct-1", [
+    { provider: "e2b", reservationKey: "key-a", externalId: "sbx-a" },
+  ]);
+  const reserved = releaseReservedSandboxes("acct-1", ["key-live"]);
+  await Bun.sleep(5);
+  expect(e2bKillMock.mock.calls.map((c) => c[0])).toEqual([
+    "sbx-a",
+    "sbx-live",
+  ]);
+  expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
+
+  held.resolve();
+  await Promise.all([pending, expired, reserved]);
+  expect(removeSandboxInstanceMock.mock.calls).toEqual([
+    ["acct-1", "key-a", "sbx-a"],
     ["acct-1", "key-live", undefined],
   ]);
 });
