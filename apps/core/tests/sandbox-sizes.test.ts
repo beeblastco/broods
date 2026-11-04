@@ -98,6 +98,9 @@ describe("resolveSandboxSpecs", () => {
       memoryMb: 512,
       storageGb: 8,
     });
+    expect(resolveSandboxSpecs({ provider: "sandbox", size: "large" })).toEqual(
+      { vcpu: 4, memoryMb: 8192, storageGb: 32 },
+    );
     expect(resolveSandboxSpecs({ provider: "sandbox" })).toEqual(
       SANDBOX_SIZES.xsmall,
     );

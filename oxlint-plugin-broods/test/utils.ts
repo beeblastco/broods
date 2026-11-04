@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
 const oxlintBin = join(repoRoot, "node_modules", ".bin", "oxlint");
@@ -80,7 +80,7 @@ const lintPending = (rule: string, fixtures: Array<Fixture>): void => {
       }),
     );
     const paths = pending.map((fixture, index) => {
-      const path = join(String(index), fixture.filename);
+      const path = posix.join(String(index), fixture.filename);
       mkdirSync(dirname(join(dir, path)), { recursive: true });
       writeFileSync(join(dir, path), dedent(fixture.source));
       return path;
@@ -109,7 +109,8 @@ const lintPending = (rule: string, fixtures: Array<Fixture>): void => {
           .filter(
             (diagnostic) =>
               diagnostic.code === `${plugin}(${name})` &&
-              diagnostic.filename === paths[index],
+              // oxlint prints a file:// URL instead of the relative path in JetBrains terminals.
+              `/${diagnostic.filename}`.endsWith(`/${paths[index]}`),
           )
           .map((diagnostic) => ({
             line: diagnostic.labels[0]?.span.line ?? 0,
