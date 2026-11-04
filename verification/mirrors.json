@@ -69,6 +69,15 @@
       "takeNext": "281ea22c0bdddcaa"
     }
   },
+  "ProviderTools": {
+    "apps/core/src/harness/tools/index.ts": {
+      "registerProviderTools": "430663b352686362",
+      "withholdTools": "6e67d8582c6cdb26"
+    },
+    "apps/core/src/harness/tools/sandbox-stand-in.ts": {
+      "customTool": "604e2aa8ade9a18e"
+    }
+  },
   "StageTicket": {
     "packages/broods/src/cli/index.ts": {
       "run": "522b9b79d1ad504d"
