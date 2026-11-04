@@ -58,6 +58,34 @@ test("a stored login alone still reads logs, traces, runs, audit and usage", asy
   expect(names).not.toContain("list-agents");
 });
 
+test("audit answers to the shell's credential, so a role's policy still bounds it beside a login", async (): Promise<void> => {
+  process.env.BROODS_SESSION_TOKEN = "bsts_role";
+  const seen: (string | null)[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (
+    _url: string,
+    init: RequestInit,
+  ): Promise<Response> => {
+    seen.push(new Headers(init.headers).get("authorization"));
+
+    return Response.json({ events: [], nextSince: 0, head: null });
+  }) as typeof fetch;
+  try {
+    const client = await connect({
+      login: new BroodsAccountClient({
+        baseUrl: "http://127.0.0.1:9",
+        sessionToken: "bcli_someone_else",
+      }),
+    });
+    await client.callTool({ name: "read-audit", arguments: {} });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  expect(seen.length).toBeGreaterThan(0);
+  expect(new Set(seen)).toEqual(new Set(["Bearer bsts_role"]));
+});
+
 test("an account credential registers the config plane, without the destructive or CLI tools", async (): Promise<void> => {
   const client = await connectWithSecret({});
 

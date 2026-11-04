@@ -60,6 +60,19 @@ describe("what an agent reads", (): void => {
     ]);
     expect(JSON.stringify(events)).not.toContain("h1");
     expect(auditSummaries(rows, { agentId: "a1", limit: 10 }).matched).toBe(1);
+    expect(
+      auditSummaries(
+        [
+          {
+            seq: 4,
+            at: 4000,
+            action: "run",
+            resource: { id: "acct:x:agent:a10:tg:1" },
+          },
+        ],
+        { agentId: "a1", limit: 10 },
+      ).matched,
+    ).toBe(0);
   });
 
   test("a run is its root span, newest first, with its tokens and first words", (): void => {

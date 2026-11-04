@@ -77,7 +77,8 @@ export function auditSummaries(
       (row): boolean =>
         (!agentId ||
           row.actor?.agentId === agentId ||
-          row.resource?.id?.includes(agentId) === true) &&
+          row.resource?.id === agentId ||
+          row.resource?.id?.includes(`:agent:${agentId}:`) === true) &&
         (!action || row.action === action),
     )
     .toReversed();

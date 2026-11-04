@@ -407,7 +407,7 @@ takes. Authenticates with your \`broods login\`.
 Options:
   --limit <n>           How many to print. Default 20
   --agent <id>          Only this agent's runs
-  --status <status>     running, waiting, needs_input, ok or error
+  --status <status>     waiting, needs_input, ok or error
   --json                Print them as JSON
 
 ${GLOBAL_OPTIONS}`,
@@ -2875,7 +2875,7 @@ async function runs(args: string[]): Promise<void> {
   const configured = await resolveProjectStage(args);
   const agent = optionValue(args, "--agent");
   const status = optionValue(args, "--status");
-  const found = await (
+  const { incomplete, runs: found } = await (
     await accountClient(args)
   ).listRuns(configured, {
     ...limitOption(args),
@@ -2883,10 +2883,13 @@ async function runs(args: string[]): Promise<void> {
     ...(status ? { status: status } : {}),
   });
   if (hasFlag(args, "--json")) {
-    console.log(JSON.stringify(found, null, 2));
+    console.log(
+      JSON.stringify({ runs: found, incomplete: incomplete }, null, 2),
+    );
 
     return;
   }
+  if (incomplete) printWarning(`Not every run could be read: ${incomplete}`);
   for (const run of found)
     console.log(
       stripVTControlCharacters(
@@ -2921,6 +2924,9 @@ async function usage(args: string[]): Promise<void> {
     `  tokens        ${totals.totalTokens} (${totals.inputTokens} in, ${totals.outputTokens} out, ${totals.cachedInputTokens} cached)`,
   );
   console.log(`  run time      ${formatDuration(totals.runtimeWallMs)}`);
+  console.log(
+    `  sandbox CPU   ${formatDuration((totals.agentSandboxCpuUsec + totals.toolSandboxCpuUsec) / 1000)}`,
+  );
 }
 
 async function trace(args: string[]): Promise<void> {

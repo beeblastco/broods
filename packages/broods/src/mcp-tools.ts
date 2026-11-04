@@ -225,11 +225,11 @@ export function registerBroodsTools(
   server: McpServer,
   client: BroodsAccountClient,
   scope: McpScopeDefaults = {},
-  observer: BroodsAccountClient = client,
+  login: BroodsAccountClient = client,
 ): void {
   for (const spec of RESOURCES) registerResource(server, client, spec, scope);
   registerExtras(server, client);
-  registerObservability(server, observer, scope);
+  registerObservability(server, client, login, scope);
 }
 
 function assertConfirmed(
@@ -631,9 +631,12 @@ const UNTRUSTED =
 const LOG_LEVELS = ["DEBUG", "INFO", "WARN", "ERROR"] as const;
 const USAGE_RANGES = ["1h", "3h", "1d", "7d", "30d", "1y"] as const;
 
+// Audit and usage answer to the caller's own credential, so a role's policy still bounds them;
+// logs and traces open only with a login.
 export function registerObservability(
   server: McpServer,
   client: BroodsAccountClient,
+  login: BroodsAccountClient,
   defaults: McpScopeDefaults,
 ): void {
   const scopeOf = (project?: string, stage?: string): StageScope => {
@@ -692,9 +695,7 @@ export function registerObservability(
       inputSchema: {
         limit: z.number().int().positive().max(50).optional(),
         agentId: z.string().min(1).optional(),
-        status: z
-          .enum(["running", "waiting", "needs_input", "ok", "error"])
-          .optional(),
+        status: z.enum(["waiting", "needs_input", "ok", "error"]).optional(),
         ...SCOPE_FIELDS,
       },
     },
@@ -707,7 +708,7 @@ export function registerObservability(
     }): Promise<CallToolResult> =>
       await attempt(
         async (): Promise<unknown> =>
-          await client.listRuns(scopeOf(project, stage), {
+          await login.listRuns(scopeOf(project, stage), {
             ...(agentId ? { agentId: agentId } : {}),
             ...(limit ? { limit: limit } : {}),
             ...(status ? { status: status } : {}),
@@ -724,7 +725,7 @@ export function registerObservability(
     async ({ project, stage, traceId }): Promise<CallToolResult> =>
       await attempt(
         async (): Promise<unknown> =>
-          await client.readTrace(scopeOf(project, stage), traceId),
+          await login.readTrace(scopeOf(project, stage), traceId),
       ),
   );
 
@@ -748,7 +749,7 @@ export function registerObservability(
     }): Promise<CallToolResult> =>
       await attempt(
         async (): Promise<unknown> =>
-          await client.readLogs(scopeOf(project, stage), {
+          await login.readLogs(scopeOf(project, stage), {
             ...(level ? { level: level } : {}),
             ...(limit ? { limit: limit } : {}),
             ...(sandboxId ? { sandboxId: sandboxId } : {}),

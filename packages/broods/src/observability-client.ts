@@ -256,11 +256,14 @@ export async function fetchObservabilityTrace(
   options: ObservabilityClientOptions,
   traceId: string,
 ): Promise<ObservabilitySpanRow[]> {
-  return await requestBackfill<ObservabilitySpanRow>(
+  const { error, rows } = await requestBackfill<ObservabilitySpanRow>(
     options,
     { type: "fetchTrace", traceId: traceId },
     "traces",
   );
+  if (error) throw new Error(error);
+
+  return rows;
 }
 
 /** One page of history with no live tail: what a tool or a one-shot command wants. */
@@ -268,27 +271,31 @@ export async function fetchObservabilityLogs(
   options: ObservabilityClientOptions,
   request: { limit: number; minLevel?: LogLevel; sandboxId?: string },
 ): Promise<ObservabilityLogEntry[]> {
-  return await requestBackfill<ObservabilityLogEntry>(
+  const { error, rows } = await requestBackfill<ObservabilityLogEntry>(
     options,
     {
       type: "subscribe",
       stream: "logs",
       backfill: request.limit,
+      historyOnly: true,
       ...(request.minLevel ? { minLevel: request.minLevel } : {}),
       ...(request.sandboxId ? { sandboxId: request.sandboxId } : {}),
     },
     "logs",
   );
+  if (error) throw new Error(error);
+
+  return rows;
 }
 
-/** Recent spans, every run's root among them, with no live tail. */
+/** The latest traces' spans with no live tail, and why any of them could not be read. */
 export async function fetchObservabilitySpans(
   options: ObservabilityClientOptions,
   limit: number,
-): Promise<ObservabilitySpanRow[]> {
+): Promise<{ rows: ObservabilitySpanRow[]; error?: string }> {
   return await requestBackfill<ObservabilitySpanRow>(
     options,
-    { type: "subscribe", stream: "traces", backfill: limit },
+    { type: "subscribe", stream: "traces", backfill: limit, historyOnly: true },
     "traces",
   );
 }
@@ -297,13 +304,13 @@ async function requestBackfill<T>(
   options: ObservabilityClientOptions,
   message: ObservabilityClientMessage,
   stream: "logs" | "traces",
-): Promise<T[]> {
+): Promise<{ rows: T[]; error?: string }> {
   const { socket, url } = openObservabilitySocket(
     options,
     await options.credential(),
   );
 
-  return new Promise<T[]>((resolve, reject): void => {
+  return new Promise<{ rows: T[]; error?: string }>((resolve, reject): void => {
     let settled = false;
     const rows: T[] = [];
     const settle = (outcome: () => void): void => {
@@ -315,13 +322,15 @@ async function requestBackfill<T>(
       outcome();
     };
     const fail = (error: Error): void => settle((): void => reject(error));
-    const timer = setTimeout((): void => {
+    const silent = (): void => {
       fail(
         new Error(
           `The observability gateway did not answer within ${READY_TIMEOUT_MS / 1000} s.`,
         ),
       );
-    }, READY_TIMEOUT_MS);
+    };
+    // Each piece restarts it: a long backfill that keeps arriving is not a silent gateway.
+    let timer = setTimeout(silent, READY_TIMEOUT_MS);
 
     socket.onopen = (): void => socket.send(JSON.stringify(message));
     socket.onmessage = (event: MessageEvent): void => {
@@ -330,8 +339,13 @@ async function requestBackfill<T>(
         fail(new Error(`Observability gateway error: ${msg.error}`));
       } else if (msg?.type === "backfill" && msg.stream === stream) {
         rows.push(...(msg.entries as T[]));
-        if (msg.error) fail(new Error(msg.error));
-        else if (!msg.more) settle((): void => resolve(rows));
+        clearTimeout(timer);
+        timer = setTimeout(silent, READY_TIMEOUT_MS);
+        const { error } = msg;
+        if (!msg.more)
+          settle((): void =>
+            resolve({ rows: rows, ...(error ? { error: error } : {}) }),
+          );
       }
     };
     socket.onerror = (): void => {

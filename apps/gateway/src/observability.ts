@@ -175,6 +175,7 @@ export async function handleObservabilityMessage(
     msg.minLevel ?? "INFO",
     getNatsConnection,
     msg.sandboxId,
+    msg.historyOnly === true,
   );
 }
 
@@ -472,6 +473,7 @@ async function handleObservabilitySubscribe(
   minLevel: LogLevel,
   getNatsConnection: () => Promise<NatsConnection>,
   sandboxId?: string,
+  historyOnly = false,
 ): Promise<void> {
   const state = obsState.get(socket);
   if (!state) return;
@@ -499,15 +501,17 @@ async function handleObservabilitySubscribe(
   // A sandbox tail owns its backfill: one seen set across history and polls dedupes overlap.
   const live = sandboxId
     ? startSandboxLogPoll(socket, scope, sandboxId, minLevel, backfill ?? 0)
-    : await startLiveSubscription(
-        socket,
-        scope,
-        stream,
-        state,
-        run,
-        liveOnly,
-        getNatsConnection,
-      );
+    : historyOnly
+      ? { unsubscribe: (): void => {} }
+      : await startLiveSubscription(
+          socket,
+          scope,
+          stream,
+          state,
+          run,
+          liveOnly,
+          getNatsConnection,
+        );
   if (state.runs[stream] !== run) {
     live?.unsubscribe();
 

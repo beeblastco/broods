@@ -84,6 +84,7 @@
     "zod": "^4.6.7"
   },
   "peerDependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
     "ai": "^7.0.162"
   },
   "peerDependenciesMeta": {

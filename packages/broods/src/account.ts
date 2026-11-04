@@ -397,10 +397,6 @@ export function resolveEnvCredential(): string | undefined {
   return envVar("BROODS_SESSION_TOKEN") ?? envVar("BROODS_ACCOUNT_SECRET");
 }
 
-/**
- * Lookups, updates and deletes return `null`/`false` on a 404, so upserts need no try/catch.
- * Any other failure throws {@link BroodsAccountApiError}.
- */
 export interface StageUsage {
   range: string;
   startTimeMs: number;
@@ -421,9 +417,11 @@ export interface StageUsage {
 }
 
 const AUDIT_SCAN = 500;
-// A run is several spans, so a page of spans holds fewer runs than its size.
-const RUN_SPAN_FACTOR = 10;
 
+/**
+ * Lookups, updates and deletes return `null`/`false` on a 404, so upserts need no try/catch.
+ * Any other failure throws {@link BroodsAccountApiError}.
+ */
 export class BroodsAccountClient {
   private readonly baseUrl: string;
   private readonly bearerToken: string;
@@ -501,15 +499,18 @@ export class BroodsAccountClient {
   async listRuns(
     scope: StageScope,
     options: { agentId?: string; limit?: number; status?: string } = {},
-  ): Promise<RunSummary[]> {
+  ): Promise<{ runs: RunSummary[]; incomplete?: string }> {
     const limit = options.limit ?? 20;
     const { fetchObservabilitySpans } = await observabilityClient();
-    const spans = await fetchObservabilitySpans(
+    const { error, rows } = await fetchObservabilitySpans(
       await this.openObservabilitySession(scope.project, scope.stage),
-      Math.min(MAX_OBSERVABILITY_BACKFILL, limit * RUN_SPAN_FACTOR),
+      Math.min(MAX_OBSERVABILITY_BACKFILL, limit),
     );
 
-    return runSummaries(spans, { ...options, limit: limit });
+    return {
+      runs: runSummaries(rows, { ...options, limit: limit }),
+      ...(error ? { incomplete: error } : {}),
+    };
   }
 
   /** Newest first and without the hash chain; says how much of the ledger it looked at. */

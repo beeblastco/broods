@@ -47,7 +47,12 @@ export function createBroodsMcpServer(
       options.login ?? client,
     );
   else if (options.login)
-    registerObservability(server, options.login, options.scope ?? {});
+    registerObservability(
+      server,
+      options.login,
+      options.login,
+      options.scope ?? {},
+    );
   if (options.cli) registerCliScope(server, options.cli);
   if (options.allowDestructive) {
     registerDestructive(server, client, options.cli ?? null);
