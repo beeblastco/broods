@@ -10,6 +10,8 @@ const ORIGINAL_FETCH = globalThis.fetch;
 const ORIGINAL_ENV = { ...process.env };
 const root = mkdtempSync(join(tmpdir(), "shell-only-"));
 const scripts: string[] = [];
+// Set to a byte count, the stand-in cuts stdout there and says so, as the Worker's cap does.
+let outputCap: number | undefined;
 
 // A Worker stand-in: runs each script in real bash with no node on PATH, like just-bash.
 beforeAll((): void => {
@@ -27,8 +29,8 @@ beforeAll((): void => {
       ok: run.exitCode === 0,
       exit_code: run.exitCode,
       timed_out: false,
-      truncated: false,
-      stdout: run.stdout.toString(),
+      truncated: outputCap !== undefined,
+      stdout: run.stdout.toString().slice(0, outputCap),
       stderr: run.stderr.toString(),
       duration_ms: 1,
     });
@@ -77,6 +79,25 @@ describe("file tools on a shell-only sandbox", () => {
         new_string: "let",
       }),
     ).rejects.toThrow("not unique");
+  });
+
+  it("edit refuses a read cut at the output cap instead of writing back the prefix", async () => {
+    writeFileSync(join(root, "big.ts"), "const a = 1;\n".repeat(100));
+    const edit = editTool(context).edit as unknown as Runnable;
+    outputCap = 40;
+
+    await expect(
+      edit.execute({
+        file_path: "big.ts",
+        old_string: "a = 1",
+        new_string: "a = 2",
+        replace_all: true,
+      }),
+    ).rejects.toThrow("too large to edit here");
+    outputCap = undefined;
+    expect(readFileSync(join(root, "big.ts"), "utf8")).toBe(
+      "const a = 1;\n".repeat(100),
+    );
   });
 
   it("glob lists with find and matches in core", async () => {

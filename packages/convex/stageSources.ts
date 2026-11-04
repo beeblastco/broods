@@ -329,12 +329,20 @@ async function settleRun(
     .order("desc")
     .take(STAGE_SOURCE_LIMITS.revisions);
   const rows = recent.filter((row) => row.commitSha === run.sha);
-  const applied = rows.find((row) => row.verification?.phase === "verifying");
+  // A rerun that succeeds after a failure settles it again.
+  const applied = rows.find(
+    (row) =>
+      row.verification?.phase === "verifying" ||
+      (row.verification?.phase === "failed" && run.conclusion === "success"),
+  );
   if (rows.length === 0) {
-    if (run.conclusion === "success" && recent[0]?.commitSha !== run.sha)
+    // A late event for a run older than the newest source never snapshots over it.
+    const newer = run.startedAt > (recent[0]?.createdAt ?? 0);
+    if (run.conclusion === "success" && newer)
       await ctx.scheduler.runAfter(0, internal.agentDock.snapshotRepo, {
         stageId: stageId,
         sha: run.sha,
+        since: run.startedAt,
       });
     return;
   }

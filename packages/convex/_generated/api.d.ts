@@ -4652,7 +4652,7 @@ export declare const internal: {
     snapshotRepo: FunctionReference<
       "action",
       "internal",
-      { sha: string; stageId: Id<"stages"> },
+      { sha: string; since: number; stageId: Id<"stages"> },
       null
     >;
     sourceUrl: FunctionReference<

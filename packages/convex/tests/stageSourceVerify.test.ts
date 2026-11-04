@@ -128,6 +128,35 @@ describe("verifying an Apply on CI", () => {
     });
   });
 
+  test("a rerun that succeeds after a failure settles the Apply as deployed", async () => {
+    const { t, stageId } = await seed("applied", 200);
+    const run = (conclusion: string): Promise<null> =>
+      t.mutation(internal.stageSources.verifyRun, {
+        repoId: 7,
+        branch: "dev",
+        sha: SHA,
+        conclusion: conclusion,
+        url: "https://github.com/acme/app/actions/runs/1",
+        startedAt: 100,
+      });
+    await run("failure");
+    await run("success");
+
+    expect(
+      await t.run(
+        async (ctx) =>
+          (
+            await ctx.db
+              .query("stageSources")
+              .withIndex("by_stageId_and_revision", (q) =>
+                q.eq("stageId", stageId),
+              )
+              .first()
+          )?.verification,
+      ),
+    ).toMatchObject({ phase: "deployed" });
+  });
+
   test("a newer row CI stored for the same commit settles with the Apply", async () => {
     expect(await settle("applied", "success", true)).toMatchObject({
       phase: "deployed",

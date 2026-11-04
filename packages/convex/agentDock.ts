@@ -340,15 +340,16 @@ export const sync = action({
 
 /** A push CI deployed that no Apply made: its files become the source, at the hash CI left. */
 export const snapshotRepo = internalAction({
-  args: { stageId: v.id("stages"), sha: v.string() },
+  args: { stageId: v.id("stages"), sha: v.string(), since: v.number() },
   returns: v.null(),
-  handler: async (ctx, { stageId, sha }): Promise<null> => {
+  handler: async (ctx, { stageId, sha, since }): Promise<null> => {
     const repo = await ctx.runQuery(internal.agentDock.stageRepo, {
       stageId: stageId,
     });
+    // Only a run that synced the stage left it on this commit's source.
     const manifestHash = await ctx.runQuery(internal.stageSources.syncedSince, {
       stageId: stageId,
-      since: 0,
+      since: since,
     });
     if (!repo || !manifestHash) return null;
     const app = requireGitHubApp();

@@ -63,10 +63,14 @@ Usage notes:
               .filter((rel) => rel.length > 0 && matcher.match(rel))
               .sort();
 
+            const cut = listed.truncated
+              ? "(listing cut at the sandbox's output limit; narrow the path)\n"
+              : "";
+
             return toolText(
               matches.length > 0
-                ? `${matches.join("\n")}\n`
-                : "No files found\n",
+                ? `${matches.join("\n")}\n${cut}`
+                : `No files found\n${cut}`,
             );
           }
           const code = globScript(toBase64(pattern), toBase64(root));

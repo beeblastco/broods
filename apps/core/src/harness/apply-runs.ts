@@ -1,6 +1,7 @@
 // The dashboard's Apply: `broods deploy` on approved files, in a compile sandbox, never in core.
 // Convex calls it in-cluster; the gateway marks proxied calls, which never pass.
 
+import { SHELL_ONLY_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import { normalizeSandboxConfig } from "@broods/convex/model/sandboxRules";
 import { z } from "zod";
 import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
@@ -59,10 +60,17 @@ export async function handleApplyRunRequest(
   if (!parsed.success) return errorResponse(400, "Invalid apply run");
   const run = parsed.data;
   const sandbox = normalizeSandboxConfig(JSON.parse(sandboxJson));
+  if (SHELL_ONLY_SANDBOX_PROVIDERS.has(sandbox.provider))
+    return errorResponse(
+      503,
+      "APPLY_SANDBOX needs a sandbox that runs bun, not a shell-only one",
+    );
   const startedAt = Date.now();
   const config = {
     ...sandbox,
-    // One warm sandbox per stage and lockfile: its node_modules are the install cache.
+    // One warm sandbox per stage and lockfile: its node_modules are the install cache, and
+    // writes split across scripts land on one disk.
+    persistent: true,
     options: {
       ...sandbox.options,
       reservationKey: normalizeFilesystemNamespace(

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { handleApplyRunRequest } from "../src/harness/apply-runs.ts";
 import * as planLimits from "../src/harness/plan-limits.ts";
+import * as platformWorker from "../src/harness/sandbox/platform-worker.ts";
 import { coreRequest } from "./helpers/http.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -19,16 +20,21 @@ const RUN = {
 
 beforeAll((): void => {
   spyOn(planLimits, "recordUsage").mockImplementation((): void => {});
+  spyOn(platformWorker, "reservePlatformSandbox").mockResolvedValue("apply-1");
   process.env.SERVICE_AUTH_SECRET = "service";
   process.env.PUBLIC_BASE_URL = "https://broods.test";
-  process.env.CLOUDFLARE_WORKER_URL = "http://127.0.0.1:9";
-  process.env.CLOUDFLARE_WORKER_API_KEY = "key";
+  process.env.CLOUDFLARE_SANDBOX_URL = "http://127.0.0.1:9";
+  process.env.CLOUDFLARE_SANDBOX_API_KEY = "key";
   globalThis.fetch = (async (url: string, init: RequestInit) => {
     const body = JSON.parse(init.body as string) as {
-      script: string;
+      argv: string[];
       env: Record<string, string>;
     };
-    sent.push({ ...body, id: String(url) });
+    sent.push({
+      script: body.argv.at(-1) ?? "",
+      env: body.env,
+      id: String(url),
+    });
 
     return Response.json({
       ok: true,
@@ -56,10 +62,12 @@ describe("apply runs", () => {
 
     expect((await call({ Authorization: "Bearer nope" })).status).toBe(401);
     expect((await call({ Authorization: "Bearer service" })).status).toBe(503);
+    process.env.APPLY_SANDBOX = JSON.stringify({ provider: "worker" });
+    expect((await call({ Authorization: "Bearer service" })).status).toBe(503);
   });
 
   it("deploys the files with the ticket in the sandbox's env and answers each phase", async () => {
-    process.env.APPLY_SANDBOX = JSON.stringify({ provider: "worker" });
+    process.env.APPLY_SANDBOX = JSON.stringify({ provider: "cloudflare" });
 
     const response = await call({ Authorization: "Bearer service" });
 
@@ -78,7 +86,7 @@ describe("apply runs", () => {
   });
 
   it("splits files over one script's argument cap into several, deploying in the last", async () => {
-    process.env.APPLY_SANDBOX = JSON.stringify({ provider: "worker" });
+    process.env.APPLY_SANDBOX = JSON.stringify({ provider: "cloudflare" });
     const lock = "x".repeat(300_000);
     sent.length = 0;
 
