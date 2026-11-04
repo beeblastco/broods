@@ -1,6 +1,3 @@
-// Seed and size for the Lean oracle tests: fixed on pull requests, so a run is reproducible;
-// the nightly job sets `ORACLE_SEED` and `ORACLE_RUNS` to look further, and prints the seed.
-
 const DEFAULT_SEED = 20261103;
 
 const DEFAULT_RUNS = 5000;
@@ -10,7 +7,7 @@ export function oracleRuns(): number {
   return positiveInt(process.env.ORACLE_RUNS) ?? DEFAULT_RUNS;
 }
 
-/** fast-check seed: `ORACLE_SEED`, or the fixed pull request seed. */
+/** fast-check seed: `ORACLE_SEED` (nightly, printed), or the fixed pull request seed. */
 export function oracleSeed(): number {
   return positiveInt(process.env.ORACLE_SEED) ?? DEFAULT_SEED;
 }

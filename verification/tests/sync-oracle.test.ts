@@ -20,8 +20,7 @@ const KINDS: CliManifestResource["kind"][] = [
   "channelRecord",
 ];
 
-// `Broods.Sync.Resource`: names and settings are small numbers, so keys, renames and equal
-// configs collide often.
+// `Broods.Sync.Resource`, small numbers so keys, renames and equal configs collide often.
 interface Abstract {
   kind: CliManifestResource["kind"];
   name: number;
@@ -38,7 +37,6 @@ const resourceArb = fc.record({
   storage: fc.option(fc.nat({ max: 1 })),
 });
 
-// The model assumes unique manifests (`Manifest.unique`); `diffManifests` keys by kind and name.
 const manifestArb = fc.uniqueArray(resourceArb, {
   maxLength: 6,
   selector: (resource) => `${resource.kind}:${resource.name}`,
@@ -80,8 +78,7 @@ test("diffManifests agrees with the Lean model's diff on generated manifests", (
   expect(disagreements.slice(0, 5)).toEqual([]);
 });
 
-// The concrete resource: every kind carries the artifact keys, so the diff must strip them for
-// skills, hooks and MCP servers only.
+// The concrete resource; every kind has artifact keys, only skills, hooks and MCP drop them.
 function concrete(resource: Abstract): CliManifestResource {
   return {
     kind: resource.kind,
