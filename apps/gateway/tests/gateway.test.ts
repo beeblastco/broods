@@ -2999,7 +2999,7 @@ test("terminal relay closes sockets that exceed the pending input buffer", () =>
   }
 });
 
-test("terminal relay reports an upstream failure as a failure, and anything else as an end", () => {
+test("terminal relay ends cleanly only on a clean upstream close", () => {
   const originalWebSocket = globalThis.WebSocket;
   const closes: Array<[number, string]> = [];
 
@@ -3016,7 +3016,7 @@ test("terminal relay reports an upstream failure as a failure, and anything else
 
   globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
   try {
-    for (const code of [1011, 1000]) {
+    for (const code of [1011, 1001, 1000, 1005]) {
       const socket = {
         readyState: FakeWebSocket.OPEN,
         data: {
@@ -3043,10 +3043,49 @@ test("terminal relay reports an upstream failure as a failure, and anything else
 
     expect(closes).toEqual([
       [1011, "Terminal output failed"],
+      [1011, "Terminal output failed"],
+      [1000, "terminal session ended"],
       [1000, "terminal session ended"],
     ]);
   } finally {
     globalThis.WebSocket = originalWebSocket;
+  }
+});
+
+test("attach reports a timeout while NATS is stalled, and frees the socket", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        eventId: "event-1",
+        agentId: "agent_1",
+        conversationKey: "conversation-1",
+        status: "processing",
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )) as unknown as typeof fetch;
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-1",
+        agentId: "agent_1",
+        conversationKey: "conversation-1",
+        eventId: "event-1",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "20" }),
+      () => new Promise<never>(() => {}),
+    );
+
+    await waitForGatewayMessage(sent, (message) => message.type === "error");
+
+    expect(sent).toEqual([{ type: "error", error: "Attach timed out" }]);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

@@ -191,8 +191,6 @@ import {
   type ContinuationDependencies,
 } from "./continuation.ts";
 
-const PAUSED_CRON_RUN_ERROR =
-  "The run stopped to wait for an approval or an answer, which a scheduled run has nobody to give.";
 const CONTINUE_TURN_TEXT =
   "Your previous turn was cut off before it finished. Continue the task from where you left off.";
 const NO_RUN_OUTCOMES: ReadonlySet<IngressAdmission["outcome"]> = new Set([
@@ -278,7 +276,14 @@ export async function settleCronRun(
 ): Promise<void> {
   if (!cronRun) return;
   const crons = getStorage().crons;
-  if (outcome.status === "completed") {
+  if (outcome.status === "failed") {
+    await crons.failRun(
+      accountId,
+      cronRun.cronId,
+      cronRun.runId,
+      outcome.error,
+    );
+  } else if (outcome.status === "completed") {
     await crons.completeRun(
       accountId,
       cronRun.cronId,
@@ -286,12 +291,7 @@ export async function settleCronRun(
       outcome.response,
     );
   } else {
-    await crons.failRun(
-      accountId,
-      cronRun.cronId,
-      cronRun.runId,
-      outcome.status === "failed" ? outcome.error : PAUSED_CRON_RUN_ERROR,
-    );
+    return;
   }
   if (cronRun.oneShot) await removeOneShotCron(accountId, cronRun.cronId);
 }
@@ -2674,6 +2674,7 @@ async function openCronRun(
       cronId: job.cronId,
       eventId: event.publicEventId,
       ingressEventId: event.eventId,
+      ingressConversationKey: event.conversationKey,
       conversationKey: event.publicConversationKey,
     },
     firedAt,

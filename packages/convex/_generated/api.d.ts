@@ -754,7 +754,9 @@ export declare const api: {
           cronId: Id<"crons">;
           error?: string;
           eventId: string;
+          ingressConversationKey?: string;
           ingressEventId?: string;
+          oneShot?: boolean;
           startedAt: number;
           status: "started" | "completed" | "failed";
         }>
@@ -4129,6 +4131,7 @@ export declare const internal: {
           cronId: Id<"crons">;
           eventId: string;
           firedAt: number;
+          ingressConversationKey?: string;
           ingressEventId?: string;
         },
         Id<"cronRuns">
@@ -4267,7 +4270,9 @@ export declare const internal: {
           cronId: Id<"crons">;
           error?: string;
           eventId: string;
+          ingressConversationKey?: string;
           ingressEventId?: string;
+          oneShot?: boolean;
           result?: any;
           startedAt: number;
           status: "started" | "completed" | "failed";
@@ -4300,7 +4305,9 @@ export declare const internal: {
             cronId: Id<"crons">;
             error?: string;
             eventId: string;
+            ingressConversationKey?: string;
             ingressEventId?: string;
+            oneShot?: boolean;
             result?: any;
             startedAt: number;
             status: "started" | "completed" | "failed";
@@ -4333,7 +4340,12 @@ export declare const internal: {
         { accountId: Id<"accounts">; cronId: Id<"crons"> },
         null
       >;
-      sweepDeadRuns: FunctionReference<"mutation", "internal", {}, number>;
+      sweepDeadRuns: FunctionReference<
+        "mutation",
+        "internal",
+        { cursor?: string | null },
+        number
+      >;
       update: FunctionReference<
         "mutation",
         "internal",

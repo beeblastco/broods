@@ -19,16 +19,16 @@
   },
   "Cron": {
     "packages/convex/agent/crons.ts": {
-      "createRun": "90ea085807be1aa6",
+      "createRun": "b8e04d84a539c7fa",
       "completeRun": "f79dd7eff7929367",
       "failRun": "50aa145f59830fd3",
-      "settleRun": "237bfc0b9d0a7067",
+      "settleRun": "f74673d414fc78dc",
       "recordFailedFire": "36bb2309504c6e4c",
       "isLatestFire": "da7aadfec5f179bf",
-      "sweepDeadRuns": "66612ba3a796e3fb"
+      "sweepDeadRuns": "4afd44559c362ea0"
     },
     "apps/core/src/harness/handler.ts": {
-      "settleCronRun": "beaf1e38e02aa0fa",
+      "settleCronRun": "e42d96ab0ca4c897",
       "startScheduledAgentRun": "d2b699a822ff5cf7"
     }
   },
@@ -66,7 +66,7 @@
       "maintain": "6cb7d9d14532f480",
       "releaseOwner": "cd83d4c19ff2389c",
       "renewOwner": "74c1cd8a0d2e122a",
-      "settle": "e1a97be81c8191d1",
+      "settle": "f129b07762d16af0",
       "stepBoundary": "01c1feafc46ac761",
       "takeNext": "281ea22c0bdddcaa"
     }

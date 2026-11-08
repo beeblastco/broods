@@ -577,6 +577,80 @@ describe("runtime ingress", () => {
     }
   });
 
+  test("settling a turn that answers an approval ends the cron run paused on it", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "answer",
+        mode: "reject",
+      }),
+    );
+    const runId = await t.run(async (ctx) => {
+      const agentId = await ctx.db.insert("agents", {
+        accountId: accountId,
+        name: "agent",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const cronId = await ctx.db.insert("crons", {
+        accountId: accountId,
+        name: "job",
+        agentId: agentId,
+        events: [],
+        scheduleExpression: "rate(1 day)",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const envelope = await ctx.db
+        .query("runtimeIngressEnvelopes")
+        .withIndex("by_eventId", (q) => q.eq("eventId", "answer"))
+        .unique();
+      await ctx.db.patch(envelope!._id, {
+        events: [
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-approval-response",
+                approvalId: "a",
+                approved: true,
+              },
+            ],
+          },
+        ],
+      });
+
+      return await ctx.db.insert("cronRuns", {
+        accountId: accountId,
+        cronId: cronId,
+        eventId: "paused",
+        ingressConversationKey: conversationKey,
+        conversationKey: "api:cron",
+        status: "started",
+        startedAt: 1,
+      });
+    });
+
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey: conversationKey,
+      ownerEventId: "answer",
+      ownerGeneration: owner.ownerGeneration!,
+      status: "completed",
+      result: "approved",
+    });
+
+    expect(await t.run((ctx) => ctx.db.get(runId))).toMatchObject({
+      status: "completed",
+      result: "approved",
+    });
+  });
+
   test("takeNext and settle store the owner's last rows under the same fence", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
