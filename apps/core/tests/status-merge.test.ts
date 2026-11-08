@@ -156,6 +156,21 @@ describe("status route ingress/async merge", () => {
     });
   });
 
+  it("reports a dead run's expired envelope over the row it left processing", async () => {
+    ingressRow = ingress({ status: "expired" });
+    asyncRow = {
+      eventId: SCOPED_EVENT_ID,
+      conversationKey: SCOPED_CONVERSATION_KEY,
+      status: "processing",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:01.000Z",
+      expiresAt: 1780000000,
+    };
+
+    const payload = await responseJson(await statusRequest());
+    expect(payload).toMatchObject({ status: "expired" });
+  });
+
   it("serves pure ingress statuses unchanged when no async record exists", async () => {
     ingressRow = ingress({ status: "queued" });
     asyncRow = null;

@@ -1265,6 +1265,8 @@ export const cronRunsFields = {
   accountId: v.id("accounts"),
   cronId: v.id("crons"),
   eventId: v.string(),
+  // The scoped id of the run's envelope; `eventId` is the public one. Absent on older rows.
+  ingressEventId: v.optional(v.string()),
   conversationKey: v.string(),
   status: v.union(
     v.literal("started"),
@@ -1724,10 +1726,13 @@ export default defineSchema({
     "accountId",
     "agentId",
   ]),
-  cronRuns: defineTable(cronRunsFields).index(
-    "by_accountId_and_cronId_and_startedAt",
-    ["accountId", "cronId", "startedAt"],
-  ),
+  cronRuns: defineTable(cronRunsFields)
+    .index("by_accountId_and_cronId_and_startedAt", [
+      "accountId",
+      "cronId",
+      "startedAt",
+    ])
+    .index("by_status_and_startedAt", ["status", "startedAt"]),
   taskUsage: defineTable(taskUsageFields)
     .index("by_accountId_and_taskId", ["accountId", "taskId"])
     .index("by_endpointId_and_finishedAt", ["endpointId", "finishedAt"])

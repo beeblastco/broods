@@ -19,15 +19,16 @@
   },
   "Cron": {
     "packages/convex/agent/crons.ts": {
-      "createRun": "5b1c52d9eea658a8",
+      "createRun": "90ea085807be1aa6",
       "completeRun": "f79dd7eff7929367",
       "failRun": "50aa145f59830fd3",
       "settleRun": "237bfc0b9d0a7067",
       "recordFailedFire": "36bb2309504c6e4c",
-      "isLatestFire": "da7aadfec5f179bf"
+      "isLatestFire": "da7aadfec5f179bf",
+      "sweepDeadRuns": "66612ba3a796e3fb"
     },
     "apps/core/src/harness/handler.ts": {
-      "settleCronRun": "e42d96ab0ca4c897",
+      "settleCronRun": "beaf1e38e02aa0fa",
       "startScheduledAgentRun": "d2b699a822ff5cf7"
     }
   },

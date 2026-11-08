@@ -10,6 +10,8 @@ import { cronSchedules } from "../model/cronSchedules";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
+const DAY_MS = 24 * 60 * 60 * 1000;
+const STALE_AGE_MS = 10 * 60 * 1000;
 
 const t = () => {
   const tt = convexTest(schema, modules);
@@ -18,6 +20,78 @@ const t = () => {
   return tt;
 };
 type T = ReturnType<typeof t>;
+
+describe("sweepDeadRuns", () => {
+  test("fails a run whose envelope ended, and shows it on the cron", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const runId = await staleRun(tt, accountId, cronId, "event-dead");
+    await insertEnvelope(tt, accountId, "event-dead", "expired", STALE_AGE_MS);
+
+    expect(await tt.mutation(internal.agent.crons.sweepDeadRuns, {})).toBe(1);
+
+    expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+      status: "failed",
+      error: "The run stopped before it recorded an outcome.",
+    });
+    expect(await tt.run((ctx) => ctx.db.get(cronId))).toMatchObject({
+      lastStatus: "failed",
+    });
+  });
+
+  test("leaves a live run, and one that ended moments ago, to settle itself", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const live = await staleRun(tt, accountId, cronId, "event-live");
+    await insertEnvelope(
+      tt,
+      accountId,
+      "event-live",
+      "processing",
+      STALE_AGE_MS,
+    );
+    const ending = await staleRun(tt, accountId, cronId, "event-ending");
+    await insertEnvelope(tt, accountId, "event-ending", "completed", 1_000);
+
+    expect(await tt.mutation(internal.agent.crons.sweepDeadRuns, {})).toBe(0);
+
+    for (const runId of [live, ending]) {
+      expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+        status: "started",
+      });
+    }
+  });
+
+  test("ends a row with no envelope id only once it is a day old", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const recent = await staleRun(tt, accountId, cronId, undefined);
+    const old = await staleRun(tt, accountId, cronId, undefined, DAY_MS + 1);
+
+    await tt.mutation(internal.agent.crons.sweepDeadRuns, {});
+
+    expect(await tt.run((ctx) => ctx.db.get(recent))).toMatchObject({
+      status: "started",
+    });
+    expect(await tt.run((ctx) => ctx.db.get(old))).toMatchObject({
+      status: "failed",
+    });
+  });
+
+  test("retires a one-time job with its dead run", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    await tt.run((ctx) =>
+      ctx.db.patch(cronId, { scheduleExpression: "at(2100-01-01T09:00:00)" }),
+    );
+    await staleRun(tt, accountId, cronId, "event-once");
+    await insertEnvelope(tt, accountId, "event-once", "expired", STALE_AGE_MS);
+
+    await tt.mutation(internal.agent.crons.sweepDeadRuns, {});
+
+    expect(await tt.run((ctx) => ctx.db.get(cronId))).toBeNull();
+  });
+});
 
 describe("list", () => {
   test("returns only the named agent's jobs", async () => {
@@ -529,6 +603,61 @@ async function seed(
 
     return { accountId: accountId, agentId: agentId };
   });
+}
+
+async function insertEnvelope(
+  tt: T,
+  accountId: Id<"accounts">,
+  eventId: string,
+  status: "completed" | "expired" | "processing",
+  ageMs: number,
+): Promise<void> {
+  const updatedAt = Date.now() - ageMs;
+  await tt.run((ctx) =>
+    ctx.db.insert("runtimeIngressEnvelopes", {
+      accountId: accountId,
+      agentId: "agent",
+      conversationKey: "api:cron",
+      sequence: 1,
+      eventId: eventId,
+      runId: `run-${eventId}`,
+      identity: "cron",
+      idempotencyKey: eventId,
+      payloadDigest: "digest",
+      events: [],
+      delivery: {
+        kind: "http",
+        publicEventId: eventId,
+        publicConversationKey: "api:cron",
+      },
+      requestedMode: "reject",
+      status: status,
+      sizeBytes: 0,
+      createdAt: updatedAt,
+      updatedAt: updatedAt,
+      expiresAt: updatedAt,
+      statusExpiresAt: updatedAt + DAY_MS,
+    }),
+  );
+}
+
+// A run old enough for the sweep to read.
+async function staleRun(
+  tt: T,
+  accountId: Id<"accounts">,
+  cronId: Id<"crons">,
+  ingressEventId: string | undefined,
+  ageMs: number = STALE_AGE_MS,
+): Promise<Id<"cronRuns">> {
+  const runId = await startRun(tt, accountId, cronId, Date.now());
+  await tt.run((ctx) =>
+    ctx.db.patch(runId, {
+      ingressEventId: ingressEventId,
+      startedAt: Date.now() - ageMs,
+    }),
+  );
+
+  return runId;
 }
 
 async function startRun(

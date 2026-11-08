@@ -780,6 +780,7 @@ describe("async turn that throws after it settles", (): void => {
       getStorage().crons,
       "completeRun",
     ).mockResolvedValue();
+    const failRun = spyOn(getStorage().crons, "failRun").mockResolvedValue();
 
     await handler({
       kind: "direct-api-async-worker",
@@ -793,6 +794,7 @@ describe("async turn that throws after it settles", (): void => {
       settle.mock.calls.map(([options]) => options.asyncResult?.outcome.status),
     ).toEqual(["awaiting_input"]);
     expect(completeRun).not.toHaveBeenCalled();
+    expect(failRun).toHaveBeenCalledTimes(1);
   });
 
   it("retries the pending questions when their settle fails before a kept final text", async (): Promise<void> => {
