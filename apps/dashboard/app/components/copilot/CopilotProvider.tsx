@@ -425,6 +425,7 @@ export function CopilotProvider({
       query: string,
       context: CopilotContext,
       session: DockSession,
+      controller: AbortController,
     ): Promise<void> => {
       const update = (patch: Partial<CopilotMessage>): void =>
         setMessages((prev) =>
@@ -436,9 +437,6 @@ export function CopilotProvider({
       let plan: CopilotPlan | undefined;
       let answeredAt: number | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
-      // Set before seeding and the repo read, so Stop also ends an answer still being set up.
-      const controller = new AbortController();
-      streamRef.current = controller;
       try {
         // Lazy: zod and the stream reader load on the first ask, not with every page.
         const {
@@ -633,8 +631,13 @@ export function CopilotProvider({
         },
       ]);
 
+      // Set before the mint, so Stop also ends an answer still being set up.
+      const controller = new AbortController();
+      streamRef.current = controller;
       void dockSession().then(async (session) => {
-        if (session) return await askAgent(replyId, trimmed, context, session);
+        if (session) {
+          return await askAgent(replyId, trimmed, context, session, controller);
+        }
 
         const plan = planFromQuery(trimmed, context);
         setMessages((prev) =>

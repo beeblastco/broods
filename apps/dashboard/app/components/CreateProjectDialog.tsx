@@ -75,7 +75,7 @@ export function CreateProjectDialog({
   const [source, setSource] = useState<Source>("empty");
   // The project a failed link or GitHub hop already made, reused on retry.
   const [createdId, setCreatedId] = useState<Id<"projects"> | null>(null);
-  // Advances on every close, so a GitHub hop that resolves after Cancel stays put.
+  // Advances on every close, so a create that resolves after Cancel stays put.
   const closes = useRef(0);
   const [repo, setRepo] = useState<RepoChoice | null>(null);
   const [owner, setOwner] = useState<string | null>(null);
@@ -137,7 +137,7 @@ export function CreateProjectDialog({
         createdId ??
         (await createProject({ name: name.trim(), description: undefined }));
       if (!createdId) {
-        setCreatedId(id);
+        if (session === closes.current) setCreatedId(id);
         void analytics.then((posthog): void => {
           posthog.capture("project_created", { source: source });
         });
@@ -170,10 +170,11 @@ export function CreateProjectDialog({
           },
         });
       }
+      if (session !== closes.current) return;
       handleOpenChange(false);
       router.push(source === "empty" ? `/${id}` : `/${id}/settings?tab=git`);
     } catch (err) {
-      setError(toErrorMessage(err));
+      if (session === closes.current) setError(toErrorMessage(err));
     } finally {
       setIsCreating(false);
     }
