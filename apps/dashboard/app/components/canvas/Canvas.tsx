@@ -608,6 +608,9 @@ function CanvasInner({
   const updateRuntimeRefs = useMutation(api.agent.config.updateRuntimeRefs);
   const updateSubagentRefs = useMutation(api.agent.config.updateSubagentRefs);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSave = useRef<(() => void) | null>(null);
+  // Survives the rollback to the database, so Retry can send the edit that failed.
+  const failedLayout = useRef<{ edges: Edge[]; nodes: Node[] } | null>(null);
   const hasLocalChanges = useRef(false);
   // A save from an older generation must not clear the dirty flag a newer edit set.
   const editGeneration = useRef(0);
@@ -618,7 +621,10 @@ function CanvasInner({
     hasLocalChanges.current = true;
     editGeneration.current += 1;
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    debounceTimer.current = setTimeout(() => {
+    if (stageId) setSaveState("pending");
+    const save = (): void => {
+      debounceTimer.current = null;
+      pendingSave.current = null;
       if (!stageId) return;
       const generation = editGeneration.current;
       const currentNodes = nodesRef.current;
@@ -642,6 +648,7 @@ function CanvasInner({
       }
       setSaveError(null);
       setSaveState("saving");
+      failedLayout.current = null;
       const startedAt = performance.now();
       let refsFailed = false;
       saveLayoutMutation({
@@ -674,19 +681,23 @@ function CanvasInner({
           // Merge back only changed `data` (fresh resourceIds): whole nodes drop sizes and drags.
           const persistedNodes = savedLayout.nodes as Node[];
           const persistedById = new Map(persistedNodes.map((n) => [n.id, n]));
+          // A newer edit keeps its data and takes only the id the server minted.
+          const superseded = editGeneration.current !== generation;
           setNodes((current) => {
             let changed = false;
             const next = current.map((n) => {
               const persisted = persistedById.get(n.id);
-              if (
-                !persisted ||
-                JSON.stringify(persisted.data) === JSON.stringify(n.data)
-              ) {
-                return n;
-              }
+              if (!persisted) return n;
+              const data = superseded
+                ? {
+                    ...n.data,
+                    resourceId: persisted.data.resourceId ?? n.data.resourceId,
+                  }
+                : persisted.data;
+              if (JSON.stringify(data) === JSON.stringify(n.data)) return n;
               changed = true;
 
-              return { ...n, data: persisted.data };
+              return { ...n, data: data };
             });
 
             return changed ? next : current;
@@ -738,13 +749,15 @@ function CanvasInner({
             },
           });
           // Back to the database: a held dirty flag let a later save overwrite CLI deploys.
-          if (editGeneration.current === generation) {
-            hasLocalChanges.current = false;
-          }
+          if (editGeneration.current !== generation) return;
+          hasLocalChanges.current = false;
+          failedLayout.current = { edges: currentEdges, nodes: currentNodes };
           setSaveError(toErrorMessage(error));
           setSaveState("error");
         });
-    }, 500);
+    };
+    pendingSave.current = save;
+    debounceTimer.current = setTimeout(save, 500);
   }, [
     stageId,
     projectId,
@@ -754,10 +767,17 @@ function CanvasInner({
     updateSubagentRefs,
   ]);
 
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- clears the save timer
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- flushes the save timer on exit
   useEffect(() => {
-    return () => {
+    const flush = (): void => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      pendingSave.current?.();
+    };
+    window.addEventListener("pagehide", flush);
+
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      flush();
     };
   }, []);
 
@@ -837,6 +857,12 @@ function CanvasInner({
     },
     [mcpServers, setNodes, setEdges, scheduleSave],
   );
+
+  const retrySave = useCallback((): void => {
+    const failed = failedLayout.current;
+    if (failed) editGraph(() => failed);
+    else scheduleSave();
+  }, [editGraph, scheduleSave]);
 
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => {
@@ -1645,7 +1671,7 @@ function CanvasInner({
         <CanvasSaveStatus
           state={saveState}
           message={saveError}
-          onRetry={scheduleSave}
+          onRetry={retrySave}
         />
       </CanvasNoticeStrip>
     </ReactFlow>
@@ -1661,6 +1687,7 @@ function CanvasInner({
       <div className="relative flex size-full overflow-hidden">
         <div
           ref={canvasContainerRef}
+          data-save-state={saveState}
           className="relative h-full min-w-0 flex-1 overflow-hidden"
         >
           <ContextMenu>

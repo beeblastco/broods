@@ -889,7 +889,11 @@ export function TracingPanel({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div
+      className="flex h-full min-h-0 flex-col"
+      data-stream-state={status}
+      data-history-state={history}
+    >
       <ObservabilityToolbar
         search={filter}
         onSearchChange={narrowSearch}

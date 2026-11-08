@@ -91,7 +91,8 @@ export function useObservabilityStream(
     sandboxId,
   } = options;
 
-  const connKey = `${stream}|${projectSlug ?? ""}|${stageSlug ?? ""}|${apiKey ?? ""}|${sandboxId ?? ""}|${minLevel ?? ""}`;
+  // No credential: a renewed ticket reconnects the same stream and keeps its entries.
+  const connKey = `${stream}|${projectSlug ?? ""}|${stageSlug ?? ""}|${sandboxId ?? ""}|${minLevel ?? ""}`;
 
   const [entries, setEntries] = useState<
     (ObservabilityLogEntry | ObservabilitySpanRow)[]
@@ -174,11 +175,7 @@ export function useObservabilityStream(
 
       return;
     }
-    if (!projectSlug || !stageSlug || !apiKey) {
-      setStatus("idle");
-
-      return;
-    }
+    if (!projectSlug || !stageSlug || !apiKey) return;
 
     closeSocket();
     clearReconnect();
@@ -258,6 +255,7 @@ export function useObservabilityStream(
       if (msg.type === "error") {
         setStatus("error");
         setError(msg.error);
+        setHistory((current) => (current === "loading" ? "failed" : current));
       }
     };
 
@@ -336,7 +334,7 @@ export function useObservabilityStream(
 
   return {
     entries: entries,
-    status: status,
+    status: projectSlug && stageSlug && apiKey ? status : "idle",
     history: history,
     error: error,
     refresh: refresh,
