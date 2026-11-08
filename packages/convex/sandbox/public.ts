@@ -145,7 +145,8 @@ export const suspendSandbox = action({
     try {
       await callLifecycle(ctx, args.sandboxId, args.reservationKey, "suspend");
     } catch (error) {
-      await markInstance(ctx, args.reservationKey, "running");
+      // Only from `suspending`: a lost reply can follow core's own `suspended` write.
+      await markInstance(ctx, args.reservationKey, "running", "suspending");
       throw error;
     }
 
@@ -250,6 +251,7 @@ async function markInstance(
   ctx: ActionCtx,
   reservationKey: string,
   status: "running" | "suspending",
+  onlyFrom?: "suspending",
 ): Promise<void> {
   try {
     const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {
@@ -261,6 +263,7 @@ async function markInstance(
       accountId: account.accountId as never,
       reservationKey: reservationKey,
       status: status,
+      onlyFrom: onlyFrom,
     });
   } catch (err) {
     console.warn("sandbox instance status marker failed", err);

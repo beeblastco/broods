@@ -8328,6 +8328,8 @@ export declare const internal: {
           accountId: Id<"accounts">;
           errorMessage?: string;
           observed?: boolean;
+          onlyFrom?:
+            "running" | "suspending" | "suspended" | "terminating" | "error";
           reservationKey: string;
           status:
             "running" | "suspending" | "suspended" | "terminating" | "error";

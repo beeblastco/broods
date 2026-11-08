@@ -353,6 +353,39 @@ test.each([
   },
 );
 
+test("a suspend rollback that lost the race to suspended bills no launch", async () => {
+  vi.useFakeTimers({ now: NOW });
+  const t = meterTest();
+  const accountId = await seedAccount(t);
+  await t.mutation(internal.sandbox.instances.upsert, {
+    accountId: accountId,
+    provider: "cloudflare" as const,
+    reservationKey: "cf-abc",
+    externalId: "cf-1",
+    name: "default",
+    specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+  });
+  await t.mutation(internal.sandbox.instances.setStatus, {
+    accountId: accountId,
+    reservationKey: "cf-abc",
+    status: "suspended",
+  });
+
+  const changed = await t.mutation(internal.sandbox.instances.setStatus, {
+    accountId: accountId,
+    reservationKey: "cf-abc",
+    status: "running",
+    onlyFrom: "suspending",
+  });
+
+  expect(changed).toBe(false);
+  const instance = await t.run(
+    async (ctx) => await ctx.db.query("sandboxInstances").unique(),
+  );
+  expect(instance?.status).toBe("suspended");
+  vi.useRealTimers();
+});
+
 test("a refresh at a new size bills the time before it at the old size", async () => {
   vi.useFakeTimers({ now: NOW });
   const t = meterTest();
