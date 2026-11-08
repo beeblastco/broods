@@ -170,13 +170,14 @@ export const setStatus = internalMutation({
     accountId: v.id("accounts"),
     reservationKey: v.string(),
     status: sandboxInstancesFields.status,
+    onlyFrom: v.optional(sandboxInstancesFields.status),
     observed: v.optional(v.boolean()),
     errorMessage: sandboxInstancesFields.errorMessage,
   },
   returns: v.boolean(),
   handler: async (
     ctx,
-    { accountId, reservationKey, status, observed, errorMessage },
+    { accountId, reservationKey, status, onlyFrom, observed, errorMessage },
   ): Promise<boolean> => {
     const instance = await ctx.db
       .query("sandboxInstances")
@@ -185,6 +186,7 @@ export const setStatus = internalMutation({
       )
       .unique();
     if (!instance || instance.accountId !== accountId) return false;
+    if (onlyFrom && instance.status !== onlyFrom) return false;
 
     const now = Date.now();
     await accrue(ctx, instance, now);
