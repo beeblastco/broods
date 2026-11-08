@@ -28,7 +28,6 @@ import {
   runtimeHarnessSessionsFields,
   systemModelMessageValidator,
 } from "./schema";
-import { settleRunAnsweredBy } from "./agent/crons";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
 import {
   findHarnessEntry,
@@ -861,13 +860,13 @@ export const settle = internalMutation({
       paused !== "awaiting_approval" &&
       paused !== "awaiting_input"
     ) {
-      await settleRunAnsweredBy(
-        ctx,
-        args.conversationKey,
-        args.status === "completed"
-          ? { status: "completed", result: args.result ?? null }
-          : { status: "failed", error: args.error ?? "The run failed." },
-      );
+      // Scheduled: importing `agent/crons` here would load auth into everything that reads this.
+      await ctx.scheduler.runAfter(0, internal.agent.crons.settleAnsweredRun, {
+        conversationKey: args.conversationKey,
+        status: args.status,
+        result: args.result,
+        error: args.error,
+      });
     }
 
     return settled.count;

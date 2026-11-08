@@ -25,7 +25,8 @@
       "settleRun": "f74673d414fc78dc",
       "recordFailedFire": "36bb2309504c6e4c",
       "isLatestFire": "da7aadfec5f179bf",
-      "sweepDeadRuns": "4afd44559c362ea0"
+      "sweepDeadRuns": "4afd44559c362ea0",
+      "settleAnsweredRun": "f4acad039f77253c"
     },
     "apps/core/src/harness/handler.ts": {
       "settleCronRun": "e42d96ab0ca4c897",
@@ -66,7 +67,7 @@
       "maintain": "6cb7d9d14532f480",
       "releaseOwner": "cd83d4c19ff2389c",
       "renewOwner": "74c1cd8a0d2e122a",
-      "settle": "f129b07762d16af0",
+      "settle": "dfc459ef0a20305d",
       "stepBoundary": "01c1feafc46ac761",
       "takeNext": "281ea22c0bdddcaa"
     }
