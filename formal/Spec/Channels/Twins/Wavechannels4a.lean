@@ -304,6 +304,26 @@ private def directRoute (request handlers context auth : Json) : Prog Json := do
     let statusUrl ← Prog.effect "buildStatusUrl" [get payload "runId"]
     returned "handlers.handleAsyncRequest" [obj (parsed ++ [("statusUrl", statusUrl)])]
 
+/-- `observabilityTicketScope`: a read-only ticket answers the log socket's scope check. -/
+private def observabilityTicketScope (c : Json) : Prog Json := do
+  let token ← Prog.effect "extractBearerToken" [get (a c 0) "authorization"]
+  if !live token || !isPrefix (text token) "bdob_" then
+    return Json.null
+  let secret ← Prog.effect "requireEnv" [.str "STAGE_TICKET_SECRET"]
+  let ticket ← Prog.effect "openObservabilityTicket" [token, secret]
+  if !live ticket then
+    return Json.null
+  let _ ← Prog.effect "getStorage"
+  let account ← Prog.effect "getStorage().accounts.getById" [get ticket "accountId"]
+  if !live account || get account "status" != .str "active" then
+    return Json.null
+  return obj
+    [("accountId", get ticket "accountId"),
+     ("projectSlug", get ticket "projectSlug"),
+     ("stageSlug", get ticket "stageSlug"),
+     ("endpointIds", .arr #[get ticket "endpointId"]),
+     ("expiresAt", get ticket "expiresAt")]
+
 private def handleHttpRequest (c : Json) : Prog Json := do
   let request := a c 0
   let handlers := a c 1
@@ -346,9 +366,13 @@ private def handleHttpRequest (c : Json) : Prog Json := do
     if live route then
       return ← webhookRoute route channelRequest method handlers context
     let publicEndpoint ← Prog.effect "parsePublicEndpointPath" [.str path]
+    let scope ← Prog.effect "socketScopePath" [.str path]
+    if scope == .str "observability" then
+      let readOnly ← Prog.effect "observabilityTicketScope" [get request "headers"]
+      if live readOnly then
+        return ← Prog.effect "jsonResponse" [num 200, readOnly]
     let auth ← Prog.effect "context.authResolver" [get request "headers"]
     let kind := text (get auth "kind")
-    let scope ← Prog.effect "socketScopePath" [.str path]
     if live scope then
       if kind != "deployment" || (scope == .str "observability" && !live (get auth "stageTicket")) then
         return ← Prog.effect "unauthorizedResponse"
@@ -621,6 +645,7 @@ def twins : List Spec.Twin :=
    Twin.traced (source "shared/slack-channel" "fetchSlackFile") fetchSlackFile,
    Twin.traced "apps/discord-forwarder/src/forward.ts#forwardMessageCreate" forwardMessageCreate,
    Twin.traced (source "harness/integrations" "handleHttpRequest") handleHttpRequest,
+   Twin.traced (source "harness/integrations" "observabilityTicketScope") observabilityTicketScope,
    Twin.traced (source "harness/integrations" "receiveChannelWebhook") receiveChannelWebhook,
    Twin.traced (source "harness/integrations" "handleChannelWebhook") handleChannelWebhook,
    Twin.traced (source "harness/integrations" "acceptChannelTurn") acceptChannelTurn,

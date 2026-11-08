@@ -79,6 +79,18 @@ private def claimWrite (args : Json) : Json :=
   let last := (xs (f (Twin.arg args 0) "$map")).find? (fun p => Twin.arg p 0 == Twin.arg args 1)
   let interval := if (xs args).length < 4 then 300000.0 else n (Twin.arg args 3)
   toJson (!(last.any fun p => n (Twin.arg args 2) - n (Twin.arg p 1) < interval))
+/-- `claimLastUsedWrite`. A claim drops every stale stamp, then writes this key's at the end. -/
+private def claimWriteProg (call : Json) : Prog Json := do
+  let args := f call "args"
+  let claimed := claimWrite args
+  if claimed == toJson true then
+    let interval := if (xs args).length < 4 then 300000.0 else n (Twin.arg args 3)
+    let table := Twin.arg args 0
+    let kept := (xs (f table "$map")).filter fun p =>
+      n (Twin.arg args 2) - n (Twin.arg p 1) < interval
+    Prog.setChanged "args.0.$map" (f table "$map")
+      (Json.arr (kept ++ [Json.arr #[Twin.arg args 1, Twin.arg args 2]]).toArray)
+  pure claimed
 private def positiveInt (args : Json) : Json :=
   let v := Twin.arg args 0
   if v == Json.null || u v || (match v with | .str t => Js.trim t == "" | _ => false)
@@ -181,7 +193,7 @@ private def pureTwins : List Twin :=
    Js.jsonTwin "apps/core/src/server.ts#routesToAccountManage" routeManage,
    Js.jsonTwin "apps/gateway/src/observability.ts#normalizeOtelId" normalizeOtel,
    Js.jsonTwin "apps/gateway/src/observability.ts#spanKind" spanKind,
-   tracedPure "apps/core/src/shared/auth.ts#claimLastUsedWrite" claimWrite,
+   Twin.traced "apps/core/src/shared/auth.ts#claimLastUsedWrite" claimWriteProg,
    Js.jsonTwin "apps/core/src/shared/auth.ts#extractBearerToken" extractBearer,
    Js.jsonTwin "apps/gateway/src/terminal.ts#isSessionInitFrame" sessionInit,
    Js.jsonTwin "packages/convex/model/stageSessionTicket.ts#parseTicket" parseTicket,
@@ -816,6 +828,7 @@ private def bearerAuth (call : Json) : Prog Json := do
   let prefixed (pre : String) : Bool := Js.startsWith (s token) pre
   if prefixed "bsts_" then return ← Prog.effect "resolveRoleSessionAuth" [token]
   if prefixed "bdts_" then return ← Prog.effect "resolveStageSessionAuth" [token]
+  if prefixed "bdob_" then return Json.null
   if prefixed "brt_" then return ← Prog.effect "resolveRunTokenAuth" [token]
   let admin ← Prog.effect "optionalEnv" [j "ADMIN_ACCOUNT_SECRET"]
   if truth admin then
@@ -858,7 +871,7 @@ private def observabilityMessage (call : Json) : Prog Json := do
   let _ ← Prog.effect "handleObservabilitySubscribe"
     [socket, scopeOf socket, f parsed "stream", f parsed "backfill",
      toJson (f parsed "liveOnly" == toJson true), orElse (f parsed "minLevel") (j "INFO"),
-     Twin.callArg call 2, f parsed "sandboxId"]
+     Twin.callArg call 2, f parsed "sandboxId", toJson (f parsed "historyOnly" == toJson true)]
   pure undef
 
 private def queryParams (search : String) : Json :=

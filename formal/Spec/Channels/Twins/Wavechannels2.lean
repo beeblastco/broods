@@ -1304,9 +1304,14 @@ private def readSealed (c : Json) : Prog Json := do
   let replay := a c 1
   if get ticket "accountId" != get replay "accountId" then return .null
   let budget := min maxImageBytes (nat (get replay "remainingBytes"))
+  let charge (spent : Nat) : Prog Unit :=
+    Prog.setChanged "args.1.remainingBytes" (get replay "remainingBytes")
+      (toJson (nat (get replay "remainingBytes") - spent))
   let cached ← Prog.effect "cachedMedia" [link]
   if live cached then
-    return if byteLength cached > budget then .null else Json.mkObj [("bytes", cached)]
+    if byteLength cached > budget then return .null
+    charge (byteLength cached)
+    return Json.mkObj [("bytes", cached)]
   Prog.catchFail (do
     let located ← Prog.effect "locateMediaObject" [ticket]
     if !live located then
@@ -1314,6 +1319,7 @@ private def readSealed (c : Json) : Prog Json := do
       return Json.mkObj [("gone", name)]
     let size := get (get located "head") "contentLength"
     if size == Twin.undefinedJson || nat size > budget then return .null
+    charge (nat size)
     let bytes ← Prog.effect "readMediaObject" [located, ticket]
     let _ ← Prog.effect "cacheMedia" [link, bytes]
     return Json.mkObj [("bytes", bytes)])

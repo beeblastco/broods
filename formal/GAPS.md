@@ -41,3 +41,4 @@ Status: `open` (the code still disagrees), `decide` (needs an owner decision).
 
 | G502 | open | `packages/convex/model/cronRules.ts:185` | `rate(5 constructor)` returns an interval of `NaN` ms instead of throwing: the unit lookup hits `Object.prototype.constructor`. Found while writing a twin and confirmed by running it. |
 | G503 | open | `packages/convex/model/skillRules.ts:96` | `parseGitHubSkillUrl("not a url")` throws a raw `TypeError` rather than a `ClientError`, so a bad skill URL surfaces as an internal error. |
+| G504 | open | `apps/core/src/shared/run-token.ts` | A correctly signed token whose claims are JSON `null` throws a raw `TypeError` reading `exp`, rather than being refused as invalid. Reaching it requires the signing key. |

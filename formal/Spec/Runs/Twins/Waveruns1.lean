@@ -535,9 +535,21 @@ private def adminCall (method : String) (call : Json) (extra : List Json) : Prog
   Prog.effect ("getConvexClient()." ++ method) ([reference, Twin.callArg call 1] ++ extra)
 
 private def renewQueuedLease (call : Json) : Prog Json := do
-  let lease := (items (Twin.callArg call 0)).getD 2 Twin.undefinedJson
+  let entry := items (Twin.callArg call 0)
+  let lease := entry.getD 2 Twin.undefinedJson
   if !truthy lease then return Twin.undefinedJson
-  let _ ← Prog.attempt "renewIngressOwner" [lease]
+  match ← Prog.attempt "renewIngressOwner" [lease] with
+  | .ok renewal =>
+    if renewal != .str "renewed" then
+      let cleared := Json.arr (entry.set 2 Twin.undefinedJson).toArray
+      Prog.setState "args.0" cleared
+      -- `Array.map` passes the array too, and it holds this same entry.
+      match Twin.callArg call 1, Twin.callArg call 2 with
+      | index, .arr waiting =>
+        Prog.setState "args.2"
+          (.arr (waiting.toList.set (index.getNat?.toOption.getD 0) cleared).toArray)
+      | _, _ => pure ()
+  | _ => pure ()
   return Twin.undefinedJson
 
 private def withQueuePlace (call : Json) : Prog Json := do
@@ -861,7 +873,14 @@ private def settleFailedIngressAndDrain (call : Json) : Prog Json := do
     | .threw _ _ => pure (.bool false)
     | .pending => Prog.unsupported "dispatchNext is unfinished"
   if !truthy transferred then
-    let _ ← Prog.attempt "session.releaseConversationLease"
+    -- `Session.releaseConversationLease` marks the handoff only once it has released the lease.
+    let session := Twin.callArg call 0
+    match ← Prog.attempt "session.releaseConversationLease" with
+    | .ok _ =>
+      if Twin.field session "ownerGeneration" != Twin.undefinedJson &&
+          !truthy (Twin.field session "ownerHandedOff") then
+        Prog.setState "args.0.ownerHandedOff" (toJson true)
+    | _ => pure ()
   return transferred
 
 private def settleChannelQuestion (call : Json) : Prog Json := do

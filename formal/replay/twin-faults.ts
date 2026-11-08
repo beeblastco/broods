@@ -39,7 +39,7 @@ export const FAULTS: readonly TwinFault[] = [
   passFault(
     "a yielded pass does not resume",
     "if (stream.yielded()) {",
-    "if (!stream.yielded()) {",
+    "if (false as boolean) {",
   ),
   passFault(
     "hooks are not attached",
@@ -51,4 +51,22 @@ export const FAULTS: readonly TwinFault[] = [
     "await options.consumeStream(stream);",
     "",
   ),
+  {
+    name: "a refreshed credential is never stored",
+    twin: "apps/core/src/harness/sandbox/machine-executor.ts#refreshCredential",
+    file: "apps/core/src/harness/sandbox/machine-executor.ts",
+    find: "socket.data.authorization = authorization;",
+    replace: "void authorization;",
+    cwd: "apps/core",
+    tests: ["tests/machine-expiry.test.ts"],
+  },
+  {
+    name: "a released worker forgets its tenant",
+    twin: "apps/core/src/harness/isolate/executor.ts#releaseWorker",
+    file: "apps/core/src/harness/isolate/executor.ts",
+    find: "if (worker.alive) worker.tenants.add(tenantId);",
+    replace: "void tenantId;",
+    cwd: "apps/core",
+    tests: ["tests/isolate-executor.test.ts"],
+  },
 ];

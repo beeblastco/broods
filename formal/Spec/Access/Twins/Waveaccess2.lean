@@ -697,7 +697,8 @@ private def routers : List Json :=
      rule s!"/v1/agents/{segment}/channels/{segment}/directory" ["GET"],
      rule "/v1/env" ["GET"], rule s!"/v1/env/{segment}" ["PUT", "DELETE"],
      rule s!"/v1/workspaces/{segment}/download-links" ["POST"],
-     rule "/v1/audit(?:/verify)?" ["GET"], rule "/v1/audit/sink" ["GET", "PUT", "DELETE"],
+     rule "/v1/audit(?:/verify)?" ["GET"], rule "/v1/usage" ["GET"],
+     rule "/v1/audit/sink" ["GET", "PUT", "DELETE"],
      rule s!"/v1/(?:skills|mcp|hooks|workspaces|sandboxes|policies|roles|channels|crons)(?:/{segment})?",
      rule s!"/v1/workspaces/{segment}/files", rule s!"/v1/crons/{segment}/runs"],
    router "secret-webhooks" "core" "none"

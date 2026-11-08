@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { ROOT } from "./functions.ts";
 
 const FORMAL = join(ROOT, "formal");
@@ -66,7 +66,7 @@ export function manifestSources(): string[] {
 }
 
 function feed(hash: ReturnType<typeof createHash>, path: string): void {
-  hash.update(path);
+  hash.update(relative(ROOT, path));
   hash.update(readFileSync(path));
 }
 

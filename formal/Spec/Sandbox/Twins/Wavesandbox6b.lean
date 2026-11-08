@@ -130,6 +130,17 @@ def revalidate (call : Json) : Prog Json := do
     let _ ← Prog.effect "socket.close" (if expired then closeExpired else closeUnauthorized)
     return undef
 
+private def setKey (value : Json) (name : String) (item : Json) : Json :=
+  match value with
+  | .obj kvs => .obj (kvs.insert name item)
+  | other => other
+
+/-- `socket` once `socket.data` holds this credential. -/
+private def withCredential (socket authorization expiresAt : Json) : Json :=
+  let fields := field socket "$fields"
+  let data := setKey (setKey (field fields "data") "authorization" authorization) "expiresAt" expiresAt
+  setKey socket "$fields" (setKey fields "data" data)
+
 /-- `refreshCredential`. `socket.data` is read as at entry; see `revalidate`. -/
 def refreshCredential (call : Json) : Prog Json := do
   let socket := Twin.callArg call 0
@@ -164,6 +175,18 @@ def refreshCredential (call : Json) : Prog Json := do
     match asInt (field ticket "expiresAt"), asInt expiresAt with
     | some fresh, some held =>
       if fresh <= held then return undef
+      Prog.setChanged "args.0.data.authorization" (field data "authorization") authorization
+      Prog.setChanged "args.0.data.expiresAt" expiresAt (field ticket "expiresAt")
+      let table := Twin.moduleValue call "connections"
+      let hasSocket (entry : Json) : Bool := same (field (Twin.arg entry 1) "socket") socket
+      let rows := (field table "$map").getArr?.toOption.getD #[]
+      if rows.any hasSocket then
+        let updated := rows.map fun entry =>
+          if hasSocket entry then
+            .arr #[Twin.arg entry 0, setKey (Twin.arg entry 1) "socket"
+              (withCredential socket authorization (field ticket "expiresAt"))]
+          else entry
+        Prog.setState "module.connections" (Json.mkObj [("$map", .arr updated)])
       let _ ← Prog.effect "armExpiry" [socket]
       let key := field data "key"
       let connection := match key with

@@ -193,74 +193,133 @@ private def upgradeMachineSocket (call : Json) : Prog Json := do
 
 /-- What one provider tool leaves behind for the tools after it. -/
 private structure ProviderState where
-  names : List String
+  tools : List (String × Json)
   context : Json
+  standIns : Array Json
+
+/-- `map.set(name, value)` on a recorded `Map`'s entries: a known key keeps its place. -/
+private def mapSet (pairs : Array Json) (name : String) (value : Json) : Array Json :=
+  let entry := Json.arr #[toJson name, value]
+  let isName (pair : Json) : Bool := str (Twin.arg pair 0) == name
+  if pairs.any isName then pairs.map (fun pair => if isName pair then entry else pair)
+  else pairs.push entry
 
 /-- `context.approvalRequirements?.set(name, true)`, as the next effect's arguments will show it. -/
 private def requireApproval (context : Json) (name : String) : Json :=
   match (field context "approvalRequirements").getObjVal? "$map" with
   | .ok (.arr pairs) =>
-    let entry := Json.arr #[toJson name, toJson true]
-    let isName (pair : Json) : Bool := str (Twin.arg pair 0) == name
-    let updated := if pairs.any isName then pairs.map (fun pair => if isName pair then entry else pair)
-      else pairs.push entry
-    spread context [("approvalRequirements", Json.mkObj [("$map", .arr updated)])]
+    spread context
+      [("approvalRequirements", Json.mkObj [("$map", .arr (mapSet pairs name (toJson true)))])]
   | _ => context
 
+/-- What the recorder writes in place of an object an effect was handed. -/
+private def handed : Json := Json.mkObj [("$handed", toJson true)]
+
+/-- `built` as stored: a tool that kept the object `factory` was handed as `options` holds that object,
+which the recorder reports as handed. -/
+private def storedTool (built args : Json) : Json :=
+  let options := field built "options"
+  if !isUndef options && options.compress == args.compress then
+    spread built [("options", handed)]
+  else built
+
+/-- States the changes the entries handled so far made to `tools` and to the Maps it shares. -/
+private def stateProviderWrites (call : Json) (state : ProviderState) : Prog Unit := do
+  let tools := Twin.callArg call 0
+  let context := Twin.callArg call 2
+  let before := keysOf tools
+  for name in before ++ (state.tools.map (·.1)).filter (!before.contains ·) do
+    Prog.setChanged s!"args.0.{name}" (field tools name) ((state.tools.lookup name).getD undef)
+  Prog.setChanged "args.2.approvalRequirements.$map"
+    (field (field context "approvalRequirements") "$map")
+    (field (field state.context "approvalRequirements") "$map")
+  let standIns := field (Twin.callArg call 3) "standIns"
+  Prog.setChanged "args.3.standIns.$map" (field standIns "$map") (.arr state.standIns)
+  -- The caller passes one Map as both `context.sandboxStandIns` and `sandbox.standIns`.
+  if !isUndef (field context "sandboxStandIns") then
+    Prog.setChanged "args.2.sandboxStandIns.$map" (field standIns "$map") (.arr state.standIns)
+
+/-- Runs `body`; if it throws, the writes up to `state` still happened. -/
+private def stating {α : Type} (call : Json) (state : ProviderState) (body : Prog α) : Prog α :=
+  Prog.catchFail body fun error => do
+    stateProviderWrites call state
+    .fail error
+
+/-- The entries of a `Map` argument, or none if the call passed something else. -/
+private def mapPairs (value : Json) : Array Json :=
+  (field value "$map").getArr?.toOption.getD #[]
+
 /-- `registerProviderTools`, one entry of `agentConfig.tools` at a time. -/
-private def providerEntry (sandbox : Json) (state : ProviderState)
+private def providerEntry (call : Json) (state : ProviderState)
     (toolName : String) (toolConfig : Json) : Prog ProviderState := do
-  let names := state.names
+  let sandbox := Twin.callArg call 3
+  let names := state.tools.map (·.1)
   let nameJson := toJson toolName
-  let supported ← Prog.effect "isProviderToolName" [nameJson]
-  if !truthy supported then
-    Prog.throwError "Error" s!"config.tools.{toolName} is not a supported tool"
-  let harnessName ← Prog.effect "isHarnessToolName" [nameJson]
-  if truthy harnessName && str (field toolConfig "type") != "provider" then
-    let message ← Prog.effect "harnessNameError" [nameJson]
-    Prog.throwError "Error" (str message)
-  let enabled ← Prog.effect "isToolEnabled" [toolConfig]
+  let (harnessName, enabled) ← stating call state do
+    let supported ← Prog.effect "isProviderToolName" [nameJson]
+    if !truthy supported then
+      Prog.throwError "Error" s!"config.tools.{toolName} is not a supported tool"
+    let harnessName ← Prog.effect "isHarnessToolName" [nameJson]
+    if truthy harnessName && str (field toolConfig "type") != "provider" then
+      let message ← Prog.effect "harnessNameError" [nameJson]
+      Prog.throwError "Error" (str message)
+    let enabled ← Prog.effect "isToolEnabled" [toolConfig]
+    pure (harnessName, enabled)
   if !truthy enabled then
     return state
   let context := if jsTrue (field toolConfig "needsApproval") then
     requireApproval state.context toolName else state.context
-  let runtimeConfig ← Prog.effect "externalToolRuntimeConfig" [toolConfig]
-  let build ← Prog.effect "providerToolBuild"
-    [nameJson, spread context [("config", runtimeConfig)]]
-  let args := field build "args"
-  let built ← Prog.effect "factory" [args]
-  let id := field built "id"
-  let candidate := str (field built "type") == "provider" &&
-    !jsTrue (field built "isProviderExecuted")
-  let onProvider ←
-    if candidate then Prog.effect "runsOnProvider" [id, args] else pure (toJson false)
-  let standIn ←
-    if candidate && !truthy onProvider then
-      Prog.effect "sandboxStandIn"
-        [id, Json.mkObj
-          ([("toolName", nameJson),
-            ("sandboxTools", field sandbox "sandboxTools"),
-            ("fileContext", field sandbox "fileContext")] ++
-            (if isUndef (field toolConfig "command") then []
-             else [("command", field toolConfig "command")]))]
-    else pure undef
-  let replaces := (elems (field standIn "replaces")).map str
-  let taken := truthy harnessName || names.contains toolName
-  if taken && !replaces.contains toolName then
-    let message ← Prog.effect "harnessNameError" [nameJson]
-    Prog.throwError "Error" (str message)
+  let approved : ProviderState := { state with context := context }
+  let (args, built, standIn, replaces, bound) ← stating call approved do
+    let runtimeConfig ← Prog.effect "externalToolRuntimeConfig" [toolConfig]
+    let build ← Prog.effect "providerToolBuild"
+      [nameJson, spread context [("config", runtimeConfig)]]
+    let args := field build "args"
+    let built ← Prog.effect "factory" [args]
+    let id := field built "id"
+    let candidate := str (field built "type") == "provider" &&
+      !jsTrue (field built "isProviderExecuted")
+    let onProvider ←
+      if candidate then Prog.effect "runsOnProvider" [id, args] else pure (toJson false)
+    let standIn ←
+      if candidate && !truthy onProvider then
+        Prog.effect "sandboxStandIn"
+          [id, Json.mkObj
+            ([("toolName", nameJson),
+              ("sandboxTools", field sandbox "sandboxTools"),
+              ("fileContext", field sandbox "fileContext")] ++
+              (if isUndef (field toolConfig "command") then []
+               else [("command", field toolConfig "command")]))]
+      else pure undef
+    let replaces := (elems (field standIn "replaces")).map str
+    let taken := truthy harnessName || names.contains toolName
+    if taken && !replaces.contains toolName then
+      let message ← Prog.effect "harnessNameError" [nameJson]
+      Prog.throwError "Error" (str message)
+    let bound ← if isUndef standIn then pure undef else Prog.effect "standIn.execute.bind" [standIn]
+    pure (args, built, standIn, replaces, bound)
   if isUndef standIn then
-    return ⟨names ++ [toolName], context⟩
-  let bound ← Prog.effect "standIn.execute.bind" [standIn]
-  let _ ← Prog.effect "factory" [spread args [("execute", bound)]]
-  return ⟨(names.filter (!replaces.contains ·)) ++ [toolName], context⟩
+    return { approved with
+      tools := approved.tools.filter (·.1 != toolName) ++ [(toolName, storedTool built args)] }
+  let remaining := approved.tools.filter (!replaces.contains ·.1)
+  let withoutReplaced : ProviderState := { approved with tools := remaining }
+  let tool ← stating call withoutReplaced
+    (Prog.effect "factory" [spread args [("execute", bound)]])
+  return { withoutReplaced with
+    tools := remaining.filter (·.1 != toolName) ++ [(toolName, tool)]
+    -- `sandbox.standIns` keeps the stand-in that `standIn.execute.bind` was handed.
+    standIns := mapSet approved.standIns toolName handed }
 
 private def registerProviderTools (call : Json) : Prog Json := do
-  let sandbox := Twin.callArg call 3
   let configured := field (Twin.callArg call 1) "tools"
-  let mut state : ProviderState := ⟨keysOf (Twin.callArg call 0), Twin.callArg call 2⟩
+  let initial : ProviderState :=
+    { tools := entriesOf (Twin.callArg call 0)
+      context := Twin.callArg call 2
+      standIns := mapPairs (field (Twin.callArg call 3) "standIns") }
+  let mut state := initial
   for (toolName, toolConfig) in entriesOf (if nullish configured then Json.mkObj [] else configured) do
-    state ← providerEntry sandbox state toolName toolConfig
+    state ← providerEntry call state toolName toolConfig
+  stateProviderWrites call state
   pure undef
 
 /-- One server `registerMcpTools` resolved, ready to merge. -/
@@ -326,12 +385,28 @@ private def registerMcpTools (call : Json) : Prog Json := do
       if names.length != server.remoteTools.length then
         Prog.throwError "Error"
           s!"config.mcp.{server.serverId} has remote tools whose sanitized model-facing names collide"
-      let existing := keysOf (Twin.callArg call 0)
-      match names.find? existing.contains with
+      let tools := Twin.callArg call 0
+      let existing := keysOf tools
+      let conflict := names.find? existing.contains
+      let registered := names.takeWhile (!existing.contains ·)
+      let approvals := field context "approvalRequirements"
+      if !isUndef approvals && jsTrue (field server.serverConfig "needsApproval") then
+        let updated := registered.foldl (fun pairs name => mapSet pairs name (toJson true))
+          (mapPairs approvals)
+        Prog.setChanged "args.2.approvalRequirements.$map" (field approvals "$map") (.arr updated)
+      let policy := field context "policyMcpIdsByName"
+      if !isUndef policy then
+        let updated := registered.foldl (fun pairs name => mapSet pairs name (toJson server.serverId))
+          (mapPairs policy)
+        Prog.setChanged "args.2.policyMcpIdsByName.$map" (field policy "$map") (.arr updated)
+      match conflict with
       | some name =>
         Prog.throwError "Error"
           s!"config.mcp.{server.serverId} model-facing name '{name}' conflicts with another tool"
-      | none => pure undef
+      | none =>
+        for name in names do
+          Prog.setChanged s!"args.0.{name}" (field tools name) (field serverTools name)
+        pure undef
 
 /-- `availableToolNames`. -/
 private def availableToolNames (call : Json) : Prog Json := do

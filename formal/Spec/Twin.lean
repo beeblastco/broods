@@ -76,7 +76,7 @@ def effect (fn : String) (args : List Json := []) : Prog Json :=
 def attempt (fn : String) (args : List Json := []) : Prog Outcome :=
   .call fn (.arr args.toArray) .done
 
-/-- States a change the call made: `self.#windows`, `self.closed`, `module.cache`. A function whose
+/-- States a change the call made: `self.#windows`, `self.closed`, `module.cache`, `args.0.data.token`. A function whose
 recording shows a state change earns no credit until its twin states that change. -/
 def setState (path : String) (value : Json) : Prog Unit :=
   .state path value (.done ())
@@ -286,6 +286,41 @@ private def stripFields (text : String) : String :=
 
 private def same (a b : Json) : Bool :=
   stripFields a.compress == stripFields b.compress
+
+private def isRecord (value : Json) : Bool :=
+  match value with
+  | .obj _ => value.compress != Twin.undefinedJson.compress
+  | _ => false
+
+private def recordFields (value : Json) : Json :=
+  match value.getObjVal? "$fields" with
+  | .ok fields@(.obj _) => fields
+  | _ => value
+
+/-- The leaves a write changed, as the recording lists them: two records compare key by key, anything
+else is one leaf, `undefined` reads as a deleted key, and a handed value is that effect's. -/
+private def changedLeaves : Nat → String → Json → Json → List (String × Json)
+  | 0, path, _, after => [(path, after)]
+  | fuel + 1, path, before, after =>
+    if same before after || (after.getObjVal? "$handed").toOption == some (toJson true) then []
+    else if isRecord before && isRecord after then
+      let was := recordFields before
+      let now := recordFields after
+      let keysOf (record : Json) : List String := match record with
+        | .obj kvs => kvs.keys
+        | _ => []
+      let keys := keysOf was ++ (keysOf now).filter (!(keysOf was).contains ·)
+      (keys.filter (fun key => key != "$keys" && key != "$class")).flatMap fun key =>
+        changedLeaves fuel s!"{path}.{key}"
+          ((was.getObjVal? key).toOption.getD Twin.undefinedJson)
+          ((now.getObjVal? key).toOption.getD Twin.undefinedJson)
+    else [(path, if after.compress == Twin.undefinedJson.compress then .null else after)]
+
+/-- States a write to `path`, which held `before` at entry. A write that left it as it was states
+nothing, and an object written over an object states each leaf that differs. -/
+def Prog.setChanged (path : String) (before after : Json) : Prog Unit :=
+  (changedLeaves 32 path before after).foldr
+    (fun (leaf, value) rest => .state leaf value rest) (.done ())
 
 private def callJson (fn : String) (args : Json) : Json :=
   Json.mkObj [("fn", toJson fn), ("args", args)]

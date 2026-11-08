@@ -43,6 +43,16 @@ interface TwinRow {
   traced: boolean;
 }
 
+// What the recorder writes for any value: plain JSON, with `$`-tagged objects for the rest.
+type Encoded =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | Encoded[]
+  | { [key: string]: Encoded };
+
 interface RecordedEffect {
   fn: string;
   to?: string;
@@ -53,11 +63,12 @@ interface RecordedEffect {
   nested: boolean | "detached";
   selfBefore?: unknown;
   selfAfter?: unknown;
+  argWindows?: { index: number; before: Encoded; after: Encoded }[];
 }
 
 interface Traced {
   fn: string;
-  args: unknown[];
+  args: Encoded[];
   self: unknown;
   params: unknown;
   env: unknown;
@@ -65,6 +76,7 @@ interface Traced {
   aborted: unknown;
   selfAfter: unknown;
   moduleAfter: unknown;
+  argsAfter?: Encoded[];
   effects: RecordedEffect[];
   outcome: { returned?: unknown; threw?: unknown; sync?: boolean };
   hits: number[];
@@ -106,6 +118,8 @@ function main(): void {
 
     return;
   }
+  const control = Boolean(option("traces") || option("corpus") || ONLY);
+  if (!option("traces") && !option("corpus")) buildTwins();
   const twins = readTwins().filter((twin) => !ONLY || twin.source === ONLY);
   console.log(`${twins.length} twins`);
   let brokenRecording = false;
@@ -119,13 +133,20 @@ function main(): void {
     brokenRecording = true;
   }
   const opaqueAllowed = declaredOpaque();
-  const results = twins.map((twin) =>
-    twin.traced ? checkTraced(twin, opaqueAllowed) : checkPlain(twin),
-  );
-  writeFileSync(
-    resultsPath(),
-    `${JSON.stringify({ inputs: inputsHash(), twins: results }, null, 1)}\n`,
-  );
+  const results = twins.map((twin) => {
+    const result = twin.traced
+      ? checkTraced(twin, opaqueAllowed)
+      : checkPlain(twin);
+
+    // A twin with nothing compared says nothing about whether the function gave an answer.
+    return { ...result, hollow: result.compared > 0 && result.hollow };
+  });
+  // Credit is bound to this file's hash, so a recording that cannot be trusted must not write it.
+  if (control || !brokenRecording)
+    writeFileSync(
+      resultsPath(),
+      `${JSON.stringify({ inputs: inputsHash(), twins: results }, null, 1)}\n`,
+    );
   let failed = 0;
   for (const result of results) {
     const unexpected = result.mismatches - result.allowedByGap;
@@ -164,6 +185,19 @@ function resultsPath(): string {
     return join(OUT, "results-control.json");
 
   return join(OUT, subsystem ? `results-${subsystem}.json` : "results.json");
+}
+
+function buildTwins(): void {
+  const run = spawnSync(
+    "lake",
+    ["build", subsystem ? `twins-${subsystem}` : "spec-replay"],
+    {
+      cwd: FORMAL,
+      encoding: "utf8",
+    },
+  );
+  if (run.status !== 0)
+    throw new Error(`lake build failed: ${run.stdout}${run.stderr}`);
 }
 
 function readTwins(): TwinRow[] {
@@ -385,6 +419,10 @@ function checkPlain(twin: TwinRow): TwinResult {
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Plain);
   result.recorded = calls.length;
+  // A plain twin only returns a value, so it can state no change the call made.
+  result.stateUnmodelled = readTraced(twin.source).filter(
+    (call) => stateChanges(call).length > 0,
+  ).length;
   const input = calls
     .map((call) => JSON.stringify({ fn: call.fn, args: call.args }))
     .join("\n");
@@ -425,13 +463,18 @@ function checkPlain(twin: TwinRow): TwinResult {
 
 // A traced twin is handed each recorded effect only after asking for it correctly. It must end the
 // same way and leave none over. A call whose recording lost information is not compared at all.
-function checkTraced(twin: TwinRow, opaqueAllowed: Set<string>): TwinResult {
-  const result = emptyResult(twin);
-  const path = join(TRACES, `${encodeURIComponent(twin.source)}.jsonl`);
-  if (!existsSync(path)) return result;
-  const all = [
+function readTraced(source: string): Traced[] {
+  const path = join(TRACES, `${encodeURIComponent(source)}.jsonl`);
+  if (!existsSync(path)) return [];
+
+  return [
     ...new Set(readFileSync(path, "utf8").split("\n").filter(Boolean)),
   ].map((line) => JSON.parse(line) as Traced);
+}
+
+function checkTraced(twin: TwinRow, opaqueAllowed: Set<string>): TwinResult {
+  const result = emptyResult(twin);
+  const all = readTraced(twin.source);
   result.recorded = all.length;
   const reasons = new Set<string>();
   const calls = all.filter((call) => {
@@ -533,16 +576,27 @@ function stateChanges(call: Traced): { path: string; value: unknown }[] {
     const was = fieldsOf(before);
     const now = fieldsOf(after);
     for (const key of new Set([...Object.keys(was), ...Object.keys(now)])) {
-      if (key === "$keys") continue;
-      if (canonical(was[key]) !== canonical(now[key]))
-        changes.push({ path: `${prefix}.${key}`, value: now[key] ?? null });
+      if (
+        key === "$keys" ||
+        sameBesideHanded(was[key] as Encoded, now[key] as Encoded)
+      )
+        continue;
+      changes.push({ path: `${prefix}.${key}`, value: now[key] ?? null });
     }
   };
   compare("self", call.self, call.selfAfter);
+  call.argsAfter?.forEach((after, index) => {
+    deepChanges(`args.${index}`, call.args[index], after, changes);
+  });
   compare("module", call.module, call.moduleAfter);
   // A traced method called on the same object answers for its own writes.
   const byCallee = new Set<string>();
   for (const effect of call.effects) {
+    for (const window of effect.argWindows ?? []) {
+      const during: { path: string; value: unknown }[] = [];
+      deepChanges(`args.${window.index}`, window.before, window.after, during);
+      for (const change of during) byCallee.add(change.path);
+    }
     if (!effect.to || effect.selfBefore === undefined) continue;
     const was = fieldsOf(effect.selfBefore);
     const now = fieldsOf(effect.selfAfter);
@@ -553,6 +607,53 @@ function stateChanges(call: Traced): { path: string; value: unknown }[] {
   }
 
   return changes.filter((change) => !byCallee.has(change.path));
+}
+
+// Every leaf that differs, so two writes to one object are told apart. An array counts as one leaf.
+function deepChanges(
+  path: string,
+  before: Encoded,
+  after: Encoded,
+  out: { path: string; value: unknown }[],
+): void {
+  if (sameBesideHanded(before, after)) return;
+  if (
+    typeof before !== "object" ||
+    before === null ||
+    Array.isArray(before) ||
+    typeof after !== "object" ||
+    after === null ||
+    Array.isArray(after)
+  ) {
+    out.push({ path: path, value: after ?? null });
+
+    return;
+  }
+  const was = fieldsOf(before) as Record<string, Encoded>;
+  const now = fieldsOf(after) as Record<string, Encoded>;
+  for (const key of new Set([...Object.keys(was), ...Object.keys(now)])) {
+    if (key !== "$keys" && key !== "$class")
+      deepChanges(`${path}.${key}`, was[key], now[key], out);
+  }
+}
+
+// Equal, leaving out whatever an effect was handed, since that effect answers for it.
+function sameBesideHanded(before: Encoded, after: Encoded): boolean {
+  if (typeof after !== "object" || after === null)
+    return canonical(before) === canonical(after);
+  if (Array.isArray(after))
+    return (
+      Array.isArray(before) &&
+      before.length === after.length &&
+      before.every((item, index) => sameBesideHanded(item, after[index]))
+    );
+  if (after["$handed"] === true) return true;
+  if (typeof before !== "object" || before === null || Array.isArray(before))
+    return false;
+
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((key) => key !== "$keys" && key !== "$class")
+    .every((key) => sameBesideHanded(before[key], after[key]));
 }
 
 function fieldsOf(value: unknown): Record<string, unknown> {
@@ -641,6 +742,7 @@ function incompleteReasons(call: Traced, opaqueAllowed: Set<string>): string[] {
   scan(call.env);
   scan(call.module);
   scan(call.outcome);
+  scan(call.argsAfter);
   for (const effect of call.effects) {
     scan(effect.args);
     scan(effect.outcome);

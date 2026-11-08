@@ -285,7 +285,9 @@ def awsClient (call : Json) : Prog Json := do
     return ← Prog.unsupported "per-access client cache is not recorded"
   let existing := Twin.moduleValue call "defaultClient"
   if !isNullish existing then return existing
-  Prog.effect "new AwsS3Client" [Json.mkObj [("region", Twin.env call "AWS_REGION")]]
+  let region := Twin.env call "AWS_REGION"
+  Prog.effect "new AwsS3Client"
+    [Json.mkObj (if region == Twin.undefinedJson then [] else [("region", region)])]
 
 /-- `HarnessShellProcess.kill`, with its private `#kill` inlined. -/
 def harnessKill (call : Json) : Prog Json := do

@@ -37,8 +37,10 @@ to cover a lot of logic, and the same calls can later grade a port.
   only if at least 90% of its recorded calls are compared and none mismatches.
 - A mismatch is a finding. Fix the twin if it is wrong. If the function is wrong per `DECISIONS.md`, set
   `gaps` on the twin to the `GAPS.md` id.
-- Check with `bun formal/scripts/conform.ts --reuse --sub=<sub>` after
-  `lake build twins-<sub>`. Do not rerun recording: that takes minutes and slows other authors.
+- First run `bun formal/scripts/conform.ts --all` once: recordings are not committed, so a fresh checkout has none and every twin comes back UNCHECKED. It takes about 15 minutes.
+- A function no test reaches needs a test first. Put it in `replay/extra/<workspace>/` and record it with `conform.ts --record-extra=<workspace>`. Assert real behaviour there: these tests are also what the twin is graded on.
+- Then check with `bun formal/scripts/conform.ts --reuse --sub=<sub>`, which rebuilds the twins itself. If it prints STALE, source or tooling changed since recording, so it writes no results: run `--all` again.
+- A twin's coverage credit lands only after a full `conform.ts --all` or `--reuse` followed by `bun formal/scripts/check.ts`.
 - `bun formal/scripts/twin-controls.ts` must stay green: it damages recordings and injects source
   faults, and each must make the twin disagree.
 
@@ -56,6 +58,7 @@ line per call: `args`, `self`, `effects` (each with `fn`, `args`, `outcome`, `to
 - `call`/`Prog.effect` must be alone in time. Effects that overlapped in the recording need `Prog.all`.
 - `Prog.attempt` returns `.pending` for an await the recording never saw settle, so a race can be modelled. `Prog.effect` fails on it.
 - `Prog.spawn` starts an effect without waiting, for `void f()`. A plain effect still running when the function ended fails the comparison; a spawned one reads nothing from it.
+- `Prog.setState path value` states a change the call made. A call that changed its receiver, module state or an argument, and whose twin does not state it, earns no credit. Paths are `self.x`, `module.cache`, and for arguments the changed leaf: `args.0.data.token`, or `args.1` for an array. What changed while an effect ran on that object is the effect's, so it needs no statement. `Prog.setChanged` states a write only when it really changes the value, and each differing leaf when one object overwrites another.
 - Errors are `{"$error":{"name","message","fields"}}`: use `Prog.throwError`. `undefined` is
   `Twin.undefinedJson`. Values the recorder cannot carry are `$`-tagged; see `record-preload.ts`.
 - `Twin.callArg call i` and `Twin.self call` read the input. `Prog.unsupported "why"` opts out of a call.
@@ -138,8 +141,9 @@ suite's comment. Do not count a fault as caught unless tests ran and failed.
   a reason for every status but `replayed`.
 - `lean`: the Lean module or definition. `replay`: the test file.
 
-Be honest here: this file is what the coverage number is computed from, and a file marked `replayed`
-whose logic is not actually compared is worse than one marked `open`.
+Be honest here: coverage itself counts statements (`scripts/check.ts`), but a file's status says what
+kind of evidence it has, and a file marked `replayed` whose logic is not actually compared is worse
+than one marked `open`.
 
 ## Adding a feature later
 

@@ -295,6 +295,20 @@ def resumeChild (call : Json) : Prog Json := do
   finish result.2
   return result.1
 
+/-- `unanswered.set(conversationKey, eventId)` on the module's Map. -/
+private def noteUnanswered (call completion : Json) : Prog Unit := do
+  let table := Twin.moduleValue call "unanswered"
+  if isBig table then return
+  let key := field completion "conversationKey"
+  let entry := Json.arr #[key, field completion "eventId"]
+  let pairs := items (field table "$map")
+  let updated :=
+    if pairs.any (fun pair => Twin.arg pair 0 == key) then
+      pairs.map fun pair => if Twin.arg pair 0 == key then entry else pair
+    else pairs ++ [entry]
+  if (arr updated).compress != (arr pairs).compress then
+    Prog.setState "module.unanswered" (Json.mkObj [("$map", arr updated)])
+
 /-- `SubagentCoordinator.completeTask`. A coordinator too big to record is read as still waiting on
 the task, which the comparison checks. -/
 def completeTask (call : Json) : Prog Json := do
@@ -307,6 +321,7 @@ def completeTask (call : Json) : Prog Json := do
   let detached := thisField call "detached"
   if isUndef completion then
     return ← Prog.unsupported "a missing completion is a type error the compiler rules out"
+  if isStr status "awaiting_input" then noteUnanswered call completion
   let pending := thisField call "pending"
   let shouldInject := isBig pending || mapHas pending taskId || mapHas detached taskId
   let recorded := thisField call "recorded"

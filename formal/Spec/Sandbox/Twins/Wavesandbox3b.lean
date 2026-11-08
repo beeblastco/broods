@@ -291,10 +291,43 @@ def withholdToolNames (names denied : List String) (standIns : Json)
         sandboxTools.contains name && !denied.contains name
       kept.filter (· != toolName) ++ back.filter (!kept.contains ·)
 
-/-- `withholdTools` only mutates its arguments, and a recording keeps them as they stood at entry,
-so the comparison covers the void result. `withholdToolNames` holds the decision. -/
-private def withholdTools (_call : Json) : Prog Json :=
-  pure Twin.undefinedJson
+/-- An object's own keys, in `$keys` order when the recorder gave one. -/
+private def ownKeys (value : Json) : List String :=
+  match value with
+  | .obj kvs =>
+    match value.getObjVal? "$keys" with
+    | .ok (.arr keys) => keys.toList.filterMap fun key => (Json.getStr? key).toOption
+    | _ => kvs.keys.filter fun key => key != "$keys" && key != "$fields"
+  | _ => []
+
+/-- What `withholdTools` leaves in `tools` and in `standIns`, as `withholdToolNames` decides it. -/
+private def withheld (names denied : List String) (standIns sandboxTools : Json)
+    (tools : List (String × Json)) : List (String × Json) × Array Json :=
+  names.foldl (init := (tools, (items (field standIns "$map")).toArray))
+    fun (kept, entries) toolName =>
+      let standIn := mapGet standIns toolName
+      let runsAs := (standIn.map (fun one => items (field one "runsAs"))).getD []
+      if !denied.contains toolName && !runsAs.any (fun name => denied.contains (str name)) then
+        (kept, entries)
+      else
+        let restored := ((standIn.map (fun one => items (field one "replaces"))).getD []).map str
+        let back := restored.filter fun name =>
+          !denied.contains name && !undef (field sandboxTools name)
+        (back.foldl (fun out name => out.filter (·.1 != name) ++ [(name, field sandboxTools name)])
+          (kept.filter (·.1 != toolName)),
+         entries.filter (fun entry => str (Twin.arg entry 0) != toolName))
+
+/-- `withholdTools`: deletes denied tools from `tools` and `standIns`, and restores what they replaced. -/
+private def withholdTools (call : Json) : Prog Json := do
+  let tools := Twin.callArg call 0
+  let standIns := Twin.callArg call 2
+  let names := ownKeys tools
+  let (kept, entries) := withheld names ((items (Twin.callArg call 1)).map str) standIns
+    (Twin.callArg call 3) (names.map fun name => (name, field tools name))
+  for name in names ++ (kept.map (·.1)).filter (!names.contains ·) do
+    Prog.setChanged s!"args.0.{name}" (field tools name) ((kept.lookup name).getD Twin.undefinedJson)
+  Prog.setChanged "args.2.$map" (field standIns "$map") (.arr entries)
+  return Twin.undefinedJson
 
 private def fn (name : String) : Json := Json.mkObj [("$fn", toJson name)]
 

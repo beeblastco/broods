@@ -241,10 +241,15 @@ private def startHarnessSession (call : Json) : Prog Json := do
     .fail err
   | .pending => Prog.unsupported "session creation pending"
 
-private def timePhase (_ : Json) : Prog Json := do
-  let _ ← Prog.effect "Date.now"
+private def timePhase (call : Json) : Prog Json := do
+  let started ← Prog.effect "Date.now"
   let value ← Prog.effect "load"
-  let _ ← Prog.effect "Date.now"
+  let finished ← Prog.effect "Date.now"
+  match Twin.callArg call 1, started.getInt?, finished.getInt? with
+  | .str key, .ok startedAt, .ok finishedAt =>
+    Prog.setChanged s!"args.0.{key}" (field (Twin.callArg call 0) key)
+      (toJson (finishedAt - startedAt))
+  | _, _, _ => Prog.unsupported "a phase key or clock that is not recorded as a whole number"
   pure value
 
 private def applyRunOverrides (args : Json) : Json :=

@@ -607,6 +607,7 @@ private def claimWarning (call : Json) : Prog Json := do
   let account := Twin.callArg call 0
   let status := Twin.callArg call 1
   if truthy (field status "warned") || float (field status "usedPercent") < 80 then return Json.null
+  Prog.setState "args.1.warned" (toJson true)
   let marked := obj (props status |>.filter (·.1 != "warned") |>.append [("warned", toJson true)])
   let _ ← Prog.effect "getStorage"
   let claimed ←

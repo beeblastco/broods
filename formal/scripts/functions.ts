@@ -82,8 +82,10 @@ const NOT_EXECUTABLE = new Set([
 
 // Lists a file's named top-level functions, consts holding a function, and class methods. A
 // replay's source id is `path#name`, or `path#Class.method` for a method.
-export function listFunctions(file: string): FunctionInfo[] {
-  const text = readFileSync(join(ROOT, file), "utf8");
+export function listFunctions(
+  file: string,
+  text = readFileSync(join(ROOT, file), "utf8"),
+): FunctionInfo[] {
   const parsed = parseSync(file, text);
   const lineStarts = [0];
   for (let index = 0; index < text.length; index += 1) {
@@ -203,7 +205,7 @@ export function listFunctions(file: string): FunctionInfo[] {
 // constants never appear. `owner` is the listed function around the site, if there is one.
 export function analyzeFile(file: string, text: string): FileAnalysis {
   const program = parseSync(file, text).program as unknown as AstNode;
-  const functions = listFunctions(file);
+  const functions = listFunctions(file, text);
   const lineStarts = [0];
   for (let index = 0; index < text.length; index += 1) {
     if (text[index] === "\n") lineStarts.push(index + 1);

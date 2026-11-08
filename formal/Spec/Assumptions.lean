@@ -17,7 +17,7 @@ A6. Time only moves forward, and every timer the model treats as an input eventu
 
 namespace Spec
 
-/-- The list of assumption labels theorems may cite. Being data, a removed label breaks its users. -/
+/-- The assumptions theorems rest on, named for reference. Theorems cite them in prose, so nothing checks a citation. -/
 inductive Assumption where
   | unforgeable
   | serialisableConvex

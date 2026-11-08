@@ -399,10 +399,14 @@ private def isSha256Hex (s : String) : Bool :=
 private def normalizeConnection (call : Json) : Prog Json := do
   let record := Twin.callArg call 0
   let input := Twin.callArg call 1
+  let write (name : String) (value : Json) : Prog Unit :=
+    Prog.setChanged s!"args.1.{name}" (field input name) value
   let url ← if undef (field record "url") then pure (field input "url")
     else Prog.effect "normalizeUrl" [field record "url"]
+  write "url" url
   let bundle ← if undef (field record "bundle") then pure (field input "bundle")
     else Prog.effect "normalizeBundle" [field record "bundle"]
+  write "bundle" bundle
   let storageId := field record "bundleStorageId"
   if !undef storageId then
     let good := match storageId with
@@ -413,19 +417,26 @@ private def normalizeConnection (call : Json) : Prog Json := do
       | .str s => isSha256Hex s
       | _ => false
     refuseIf (!sha) "bundleStorageId needs sha256, the hex digest of the uploaded bytes"
+    write "bundleStorageId" storageId
+    write "sha256" (field record "sha256")
   let sandbox := field record "sandbox"
   if !undef sandbox then
     let good := match sandbox with
       | .str s => !s.isEmpty
       | _ => false
     refuseIf (!good) "sandbox must be the name of the sandbox that serves it"
+    write "sandbox" sandbox
   if !undef (field record "runtime") then
-    let _ ← Prog.effect "normalizeRuntime" [field record "runtime"]
+    write "runtime" (← Prog.effect "normalizeRuntime" [field record "runtime"])
   let finalStorage := if undef storageId then field input "bundleStorageId" else storageId
   let finalSandbox := if undef sandbox then field input "sandbox" else sandbox
   let connections := [url, bundle, finalStorage, finalSandbox].filter (!undef ·)
   refuseIf (connections.length > 1)
     "url, bundle, bundleStorageId and sandbox are mutually exclusive"
+  if !undef finalSandbox then write "transport" (toJson "machine")
+  else if !undef bundle || !undef finalStorage then write "transport" (toJson "hosted")
+  else if !undef url then write "transport" (toJson "http")
+  -- The array stored here was handed to `normalizeCommand`, so the recording leaves it to that effect.
   if !nil (field record "command") then
     let _ ← Prog.effect "normalizeCommand" [field record "command"]
   return Twin.undefinedJson
@@ -458,14 +469,18 @@ private def normalizeOauth (call : Json) : Prog Json := do
   refuseIf (!Js.isObj value)
     "oauth must be an object with clientId, clientSecret and refreshToken"
   let tokenUrl := field value "tokenUrl"
+  let normalizedUrl ← if nil tokenUrl then pure Twin.undefinedJson
+    else Prog.effect "normalizeUrl" [tokenUrl]
   if !nil tokenUrl then
-    let normalized ← Prog.effect "normalizeUrl" [tokenUrl]
-    match parseUrl (text normalized) with
+    match parseUrl (text normalizedUrl) with
     | .ok url => refuseIf (url.protocol != "https:") "oauth.tokenUrl must use https"
     | _ => let _ : Unit ← Prog.unsupported "a URL the model does not parse"
-  let _ ← oauthField value "clientId" false
-  let _ ← oauthField value "clientSecret" true
-  let _ ← oauthField value "refreshToken" true
+  let clientId ← oauthField value "clientId" false
+  let clientSecret ← oauthField value "clientSecret" true
+  let refreshToken ← oauthField value "refreshToken" true
+  Prog.setState "args.1.oauth" (Json.mkObj
+    ([("clientId", clientId), ("clientSecret", clientSecret), ("refreshToken", refreshToken)] ++
+      (if nil tokenUrl then [] else [("tokenUrl", normalizedUrl)])))
   return Twin.undefinedJson
 
 /-! ### Recorded helpers -/
@@ -554,7 +569,14 @@ private def runRequest (call : Json) : Prog Json :=
   pure (fields.foldl (fun out (key, value) => Js.set out key value) request)
 
 private def releaseWorker (call : Json) : Prog Json := do
-  let _ ← Prog.effect "Date.now"
+  let worker := Twin.callArg call 0
+  let now ← Prog.effect "Date.now"
+  Prog.setChanged "args.0.busy" (Twin.field worker "busy") (toJson false)
+  Prog.setChanged "args.0.idleSince" (Twin.field worker "idleSince") now
+  if truthy (Twin.field worker "alive") then
+    let tenants := (Js.arr? (field (Twin.field worker "tenants") "$set")).getD []
+    if !tenants.contains (Twin.callArg call 1) then
+      Prog.setState "args.0.tenants.$set" (.arr (tenants ++ [Twin.callArg call 1]).toArray)
   match Js.arr? (Twin.moduleValue call "poolWaiters") with
   | some (_ :: rest) =>
     Prog.setState "module.poolWaiters" (.arr rest.toArray)

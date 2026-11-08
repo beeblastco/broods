@@ -14,7 +14,7 @@ import { SUITES } from "../replay/suites/index.ts";
 import type { Suite } from "../replay/suite.ts";
 import { functionNode, unobservedCalls } from "../replay/instrument.ts";
 import { analyzeFile, type AstNode, type FileAnalysis } from "./functions.ts";
-import { inputsHash } from "./inputs.ts";
+import { inputsHash, sourcesHash } from "./inputs.ts";
 
 const FORMAL = resolve(import.meta.dir, "..");
 const ROOT = resolve(FORMAL, "..");
@@ -363,7 +363,26 @@ function creditedTwins(
   failures: string[],
 ): Map<string, TwinResult> {
   const path = join(FORMAL, ".lake/conform/results.json");
-  if (!existsSync(path)) return new Map();
+  const captured = join(FORMAL, ".lake/conform/captured.json");
+  if (
+    !existsSync(path) ||
+    !existsSync(captured) ||
+    !existsSync(join(FORMAL, ".lake/conform/traces/_counts.txt"))
+  ) {
+    failures.push("no twin results: run formal/scripts/conform.ts --all");
+
+    return new Map();
+  }
+  const { sources } = JSON.parse(readFileSync(captured, "utf8")) as {
+    sources: string;
+  };
+  if (sources !== sourcesHash()) {
+    failures.push(
+      "recordings were captured against other source or tooling: run formal/scripts/conform.ts --all",
+    );
+
+    return new Map();
+  }
   const parsed = JSON.parse(readFileSync(path, "utf8")) as {
     inputs: string;
     twins: TwinResult[];
@@ -385,10 +404,10 @@ function creditedTwins(
   const eligible = new Map<string, TwinResult>();
   for (const result of parsed.twins) {
     const seen = counts.get(result.source) ?? {};
-    const lost =
-      (seen["tooBig"] ?? 0) +
-      (seen["traceTooBig"] ?? 0) +
-      (seen["resultNotJson"] ?? 0);
+    // A trace carries any value, so only a plain twin loses calls whose result is not JSON.
+    const lost = result.traced
+      ? (seen["traceTooBig"] ?? 0)
+      : (seen["tooBig"] ?? 0) + (seen["resultNotJson"] ?? 0);
     if (
       result.compared === 0 ||
       result.hollow ||

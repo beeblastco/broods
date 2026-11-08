@@ -30,3 +30,4 @@ packages/convex/model/secretNames.ts	decision	replayed	Spec.Access.isSecretName	
 packages/convex/model/serviceBridge.ts	glue	excluded			Types, constants or environment/CLI wiring; no subsystem state transition claimed.
 packages/convex/model/stageSessionTicket.ts	protocol	open	Spec.Access.openTicket; ticketContext	formal/replay/access.test.ts	Purpose/expiry replay; base64url parser, signed-ticket grammar and exact claim validation remain.
 packages/convex/model/userToken.ts	protocol	open	Spec.Access.userOwns; embeddableReaches; openTicket	formal/replay/access.test.ts	User ownership is exercised by status replay; complete claim validation, credential encryption, skew/max TTL and requested-key projection remain.
+packages/convex/model/observabilityTicket.ts	protocol	open			Signed ticket for read-only agent logs. Not modelled yet.

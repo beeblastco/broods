@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +17,8 @@ const OUT = join(ROOT, "formal/.lake/conform");
 const TRACES = join(OUT, "traces");
 const PRELOAD = join(ROOT, "formal/replay/record-preload.ts");
 const SAMPLE = 60;
+const MAX_SAMPLED_TRACE_BYTES = 4_000_000;
+const FAULT_RUN_LIMIT_MS = 180_000;
 
 interface Line {
   fn: string;
@@ -28,6 +31,8 @@ interface Line {
 
 interface Result {
   source: string;
+  internal: string[];
+  external: string[];
   traced: boolean;
   compared: number;
   mismatches: number;
@@ -36,28 +41,42 @@ interface Result {
 type Damage = (line: Line) => Line | undefined;
 
 const DAMAGES: Record<string, Damage> = {
-  "drop an effect": (line) =>
-    line.effects.length === 0
+  "drop an effect": (line) => {
+    const target = firstEffect(line);
+
+    return target === -1
       ? undefined
-      : { ...line, effects: line.effects.slice(1) },
-  "change an effect's arguments": (line) =>
-    line.effects.length === 0
+      : {
+          ...line,
+          effects: line.effects.filter((_, index) => index !== target),
+        };
+  },
+  "change an effect's arguments": (line) => {
+    const target = firstEffect(line);
+
+    return target === -1
       ? undefined
       : {
           ...line,
           effects: line.effects.map((effect, index) =>
-            index === 0 ? { ...effect, args: ["__control__"] } : effect,
+            index === target ? { ...effect, args: ["__control__"] } : effect,
           ),
-        },
-  "rename an effect": (line) =>
-    line.effects.length === 0
+        };
+  },
+  "rename an effect": (line) => {
+    const target = firstEffect(line);
+
+    return target === -1
       ? undefined
       : {
           ...line,
           effects: line.effects.map((effect, index) =>
-            index === 0 ? { ...effect, fn: `${effect.fn}__control` } : effect,
+            index === target
+              ? { ...effect, fn: `${effect.fn}__control` }
+              : effect,
           ),
-        },
+        };
+  },
   "change the result": (line) => ({
     ...line,
     outcome:
@@ -72,9 +91,15 @@ const DAMAGES: Record<string, Damage> = {
 // tests run again against the faulty code, with the same tests passing cleanly first.
 function main(): void {
   const twins = readResults().filter(
-    (twin) => twin.traced && twin.compared > 0,
+    (twin) =>
+      twin.traced &&
+      // Damage changes effects, so a twin whose compared calls made none has nothing to catch.
+      twin.compared > 0 &&
+      twin.internal.length + twin.external.length > 0 &&
+      statSync(tracePath(twin.source)).size <= MAX_SAMPLED_TRACE_BYTES,
   );
-  const sample = twins.slice(0, SAMPLE);
+  const step = Math.max(1, Math.floor(twins.length / SAMPLE));
+  const sample = twins.filter((_, index) => index % step === 0);
   let failed = 0;
   let caught = 0;
   for (const [name, damage] of Object.entries(DAMAGES)) {
@@ -108,6 +133,15 @@ function main(): void {
   }
   console.log(`${caught} caught, ${failed} missed`);
   if (failed > 0) process.exit(1);
+}
+
+// A callback entry is the outside calling in, so only a real effect is worth damaging.
+function firstEffect(line: Line): number {
+  return line.effects.findIndex((effect) => !effect.fn.startsWith("$enter:"));
+}
+
+function tracePath(source: string): string {
+  return join(TRACES, `${encodeURIComponent(source)}.jsonl`);
 }
 
 function readResults(): Result[] {
@@ -176,6 +210,8 @@ function runFault(fault: (typeof FAULTS)[number], active: boolean): Result {
   const run = spawnSync("bun", ["test", "--preload", PRELOAD, ...fault.tests], {
     cwd: join(ROOT, fault.cwd),
     encoding: "utf8",
+    // A fault can turn a loop infinite, and the recorder would then fill the machine's memory.
+    timeout: FAULT_RUN_LIMIT_MS,
     maxBuffer: 1 << 28,
     env: {
       ...process.env,

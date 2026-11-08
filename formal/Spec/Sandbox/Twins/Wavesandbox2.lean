@@ -114,12 +114,14 @@ private def parseJobStatus (call : Json) : Json :=
   else obj [("jobId", job), ("state", toJson (if text == "running" then "running" else "unknown"))]
 
 private def rejectPending (call : Json) : Prog Json := do
-  for entry in items (field (field (Twin.callArg call 0) "pending") "$map") do
+  let entries := items (field (field (Twin.callArg call 0) "pending") "$map")
+  for entry in entries do
     let pending := Twin.arg entry 1
     let _ ← Prog.effect "clearTimeout" [field pending "timer"]
     let _ ← Prog.effect "pending.reject" [Json.mkObj [("$error", Json.mkObj
       [("name", toJson "Error"), ("message", Twin.callArg call 1), ("fields", Json.mkObj []),
        ("$class", toJson "Error")])]]
+  if !entries.isEmpty then Prog.setState "args.0.pending.$map" (.arr #[])
   return Twin.undefinedJson
 
 private def stripSlashes (s : String) : String :=

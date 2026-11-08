@@ -949,6 +949,8 @@ private def collectEnvPlaceholderNames (call : Json) : Prog Json := do
     let found := placeholderNames (chars.length + 1) chars
     let added := found.foldl (fun seen name =>
       if seen.contains (toJson name) then seen else seen ++ [toJson name]) (items (field names "$set"))
+    if !undef supplied then
+      Prog.setChanged "args.1.$set" (field names "$set") (.arr added.toArray)
     return obj [("$set", .arr added.toArray)]
   let children := if Js.isArr value then items value
     else if Js.isObj value then (insertionEntries value).map (·.2) else []

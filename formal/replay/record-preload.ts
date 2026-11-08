@@ -1,3 +1,4 @@
+import { afterAll } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -21,6 +22,7 @@ const SOCKET_CLASSES = new Set(["ServerWebSocket", "WebSocket"]);
 const SOCKET_FIELDS = ["data", "readyState", "url", "remoteAddress"];
 const MAX_DEPTH = 32;
 const MAX_ENCODED_NODES = 8_192;
+const MAX_ARG_WINDOWS = 64;
 const MAX_FIELD_NODES = 256;
 const FIELD_DEPTH = 3;
 const NOT_BEHAVIOUR =
@@ -129,6 +131,13 @@ interface Effect {
   // Set around a call to another traced method on the same object, whose writes are its own.
   selfBefore: string | undefined;
   selfAfter: string | undefined;
+  argWindows: ArgWindow[];
+}
+
+interface ArgWindow {
+  index: number;
+  before: string;
+  after: string | undefined;
 }
 
 interface Frame {
@@ -143,6 +152,9 @@ interface Frame {
   module: string;
   aborted: boolean[];
   self: unknown;
+  args: unknown[];
+  handed: WeakSet<object>;
+  windows: number;
   readers: Record<string, () => unknown> | undefined;
 }
 
@@ -157,6 +169,8 @@ const promiseThen = Promise.prototype.then;
 const settledValues = new WeakMap<Promise<unknown>, unknown>();
 const privateReaders = new WeakMap<object, (value: object) => object>();
 let budget = 0;
+let textLeft = 0;
+let handedNow: WeakSet<object> | undefined;
 
 // With SPEC_CORPUS and SPEC_RECORD_SOURCES set, this wraps each listed function at load time and
 // appends its calls to the corpus. Nothing on disk changes. With SPEC_TRACES set it also records,
@@ -186,7 +200,8 @@ if (CORPUS && SOURCES) {
     __specAborted: traceAborted,
     __specHit: hit,
   });
-  process.on("exit", flushCounts);
+  // Once per test file: with `--isolate` an exit handler never runs.
+  afterAll(flushCounts);
   plugin({
     name: "spec-record",
     setup: function (build): void {
@@ -232,7 +247,10 @@ function observe(
   const before = isPassive(args) ? safeJson(args) : undefined;
   if (!before) count(source, "notJson");
   const frame = TRACES && hasTraceRoom(source) ? newFrame(source) : undefined;
-  if (frame) frame.self = self;
+  if (frame) {
+    frame.self = self;
+    frame.args = args;
+  }
   if (TRACES && !frame) count(source, "overTraceCap");
   const traceArgs = frame ? encodeText(args) : "";
   const traceSelf = frame ? encodeText(self) : "";
@@ -291,6 +309,9 @@ function newFrame(source: string): Frame {
     module: "null",
     aborted: [],
     self: undefined,
+    args: [],
+    handed: new WeakSet(),
+    windows: 0,
     readers: undefined,
   };
 }
@@ -372,6 +393,7 @@ function traceMethod(
       nested,
       () => invoke(args),
       receiver === frame.self,
+      receiver,
     );
 }
 
@@ -411,6 +433,7 @@ function traceEnter(
     nested: true,
     selfBefore: undefined,
     selfAfter: undefined,
+    argWindows: [],
   });
 }
 
@@ -466,8 +489,15 @@ function traceModule(
   readers: Record<string, () => unknown>,
 ): void {
   if (!frame) return;
-  frame.readers = readers;
-  frame.module = readModule(readers);
+  // A private method runs in its caller's frame, so what it reads adds to the caller's snapshot.
+  const fresh = Object.fromEntries(
+    Object.entries(readers).filter(([name]) => !frame.readers?.[name]),
+  );
+  frame.readers = { ...frame.readers, ...readers };
+  frame.module = JSON.stringify({
+    ...(JSON.parse(frame.module) as object | null),
+    ...(JSON.parse(readModule(fresh)) as object),
+  });
 }
 
 function readModule(readers: Record<string, () => unknown>): string {
@@ -498,10 +528,37 @@ function traceNow(frame: Frame | undefined, nested: Nested): number {
       nested: nested,
       selfBefore: undefined,
       selfAfter: undefined,
+      argWindows: [],
     });
   }
 
   return now;
+}
+
+// An effect answers for what changes in an object it was given or called on while it runs. For an
+// argument of the function that means a before and after; anything else is left out altogether.
+function openWindow(frame: Frame, effect: Effect, value: unknown): void {
+  if (typeof value !== "object" || value === null) return;
+  const index = frame.args.indexOf(value);
+  frame.windows += 1;
+  if (index === -1 || frame.windows > MAX_ARG_WINDOWS) {
+    frame.handed.add(value);
+
+    return;
+  }
+  effect.argWindows.push({
+    index: index,
+    before: encodeText(value),
+    after: undefined,
+  });
+}
+
+function closeWindows(frame: Frame, effect: Effect): void {
+  for (const window of effect.argWindows)
+    window.after = encodeText(frame.args[window.index]);
+  effect.argWindows = effect.argWindows.filter(
+    (window) => window.after !== window.before,
+  );
 }
 
 function isPure(receiver: unknown): boolean {
@@ -520,6 +577,7 @@ function record(
   nested: Nested,
   invoke: () => unknown,
   onSelf = false,
+  receiver?: unknown,
 ): unknown {
   if (frame.closed) count(frame.source, "lateEffects");
   const effect: Effect = {
@@ -532,12 +590,15 @@ function record(
     nested: nested,
     selfBefore: onSelf && to ? encodeText(frame.self) : undefined,
     selfAfter: undefined,
+    argWindows: [],
   };
   frame.clock += 1;
   frame.effects.push(effect);
+  for (const value of [...args, receiver]) openWindow(frame, effect, value);
   let result: unknown;
   const settle = (outcome: Outcome): void => {
     effect.outcome = outcome;
+    closeWindows(frame, effect);
     effect.settle = frame.clock;
     frame.clock += 1;
     if (effect.selfBefore) effect.selfAfter = encodeText(frame.self);
@@ -567,6 +628,7 @@ function record(
 
 function encodeText(value: unknown): string {
   budget = MAX_ENCODED_NODES;
+  textLeft = MAX_VALUE_BYTES;
   const text = JSON.stringify(encode(value, 0, []));
 
   return text.length > MAX_VALUE_BYTES ? '{"$big":true}' : text;
@@ -578,11 +640,14 @@ function encodeText(value: unknown): string {
 // object property holding undefined counts as absent, as JSON and `Object.keys`-free code see it.
 function encode(value: unknown, depth: number, path: object[]): unknown {
   budget -= 1;
-  if (budget < 0) return { $big: true };
+  if (budget < 0 || textLeft < 0) return { $big: true };
   if (value === undefined) return { $undefined: true };
   if (value === null || typeof value === "boolean") return value;
-  if (typeof value === "string")
-    return value.length > MAX_VALUE_BYTES ? { $big: true } : value;
+  if (typeof value === "string") {
+    textLeft -= value.length;
+
+    return textLeft < 0 ? { $big: true } : value;
+  }
   if (typeof value === "number") {
     return Number.isFinite(value) && !Object.is(value, -0)
       ? value
@@ -591,6 +656,13 @@ function encode(value: unknown, depth: number, path: object[]): unknown {
   if (typeof value === "bigint") return { $bigint: value.toString() };
   if (typeof value === "symbol") return { $symbol: String(value.description) };
   if (typeof value === "function") return { $fn: value.name };
+  if (
+    handedNow &&
+    (handedNow.has(value) ||
+      value instanceof Promise ||
+      value instanceof AbortSignal)
+  )
+    return { $handed: true };
   const back = path.indexOf(value);
   // A reference to an enclosing value is exact data: how far up it points.
   if (back !== -1) return { $ref: path.length - back };
@@ -859,6 +931,7 @@ function flushCounts(): void {
   );
   if (lines.length > 0)
     appendFileSync(join(TRACES, "_counts.txt"), `${lines.join("\n")}\n`);
+  counts.clear();
 }
 
 function write(
@@ -907,6 +980,29 @@ function outcomeText(outcome: Outcome): string {
   return '{"pending":true}';
 }
 
+function windowsField(effect: Effect): string {
+  const closed = effect.argWindows.filter((window) => window.after);
+  if (closed.length === 0) return "";
+
+  return `,"argWindows":[${closed
+    .map(
+      (window) =>
+        `{"index":${window.index},"before":${window.before},"after":${window.after ?? "null"}}`,
+    )
+    .join(",")}]`;
+}
+
+// What the call did to its own arguments, written only when they differ from what it was given.
+function argsAfterField(frame: Frame, entry: string): string {
+  if (encodeText(frame.args) === entry) return "";
+  handedNow = frame.handed;
+  try {
+    return `,"argsAfter":${encodeText(frame.args)}`;
+  } finally {
+    handedNow = undefined;
+  }
+}
+
 function writeTrace(
   frame: Frame,
   args: string,
@@ -918,13 +1014,13 @@ function writeTrace(
     .map((effect) => {
       const to = effect.to ? `,"to":${JSON.stringify(effect.to)}` : "";
 
-      return `{"fn":${JSON.stringify(effect.fn)}${to},"args":${effect.args},"outcome":${outcomeText(effect.outcome)},"start":${effect.start},"settle":${effect.settle ?? "null"},"nested":${JSON.stringify(effect.nested)}${effect.selfBefore ? `,"selfBefore":${effect.selfBefore},"selfAfter":${effect.selfAfter ?? "null"}` : ""}}`;
+      return `{"fn":${JSON.stringify(effect.fn)}${to},"args":${effect.args},"outcome":${outcomeText(effect.outcome)},"start":${effect.start},"settle":${effect.settle ?? "null"},"nested":${JSON.stringify(effect.nested)}${effect.selfBefore ? `,"selfBefore":${effect.selfBefore},"selfAfter":${effect.selfAfter ?? "null"}` : ""}${windowsField(effect)}}`;
     })
     .join(",");
   const env = [...frame.env.entries()]
     .map(([name, value]) => `${JSON.stringify(name)}:${value}`)
     .join(",");
-  const line = `{"fn":${JSON.stringify(frame.source)},"args":${args},"self":${self},"params":${frame.params},"env":{${env}},"module":${frame.module},"aborted":${JSON.stringify(frame.aborted)},"selfAfter":${encodeText(frame.self)},"moduleAfter":${frame.readers ? readModule(frame.readers) : "null"},"effects":[${effects}],"outcome":${outcomeText(outcome)},"hits":${JSON.stringify([...frame.hits])}}`;
+  const line = `{"fn":${JSON.stringify(frame.source)},"args":${args},"self":${self},"params":${frame.params},"env":{${env}},"module":${frame.module},"aborted":${JSON.stringify(frame.aborted)},"selfAfter":${encodeText(frame.self)},"moduleAfter":${frame.readers ? readModule(frame.readers) : "null"}${argsAfterField(frame, args)},"effects":[${effects}],"outcome":${outcomeText(outcome)},"hits":${JSON.stringify([...frame.hits])}}`;
   if (line.length > MAX_TRACE_BYTES) {
     count(frame.source, "traceTooBig");
 

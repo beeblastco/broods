@@ -63,6 +63,8 @@ def handleObservabilitySubscribe (call : Json) : Prog Json := do
       Prog.effect "startSandboxLogPoll"
         [socket, scope, sandboxId, minLevel,
          if backfill == Twin.undefinedJson then toJson (0 : Nat) else backfill]
+    else if Twin.callArg call 8 == toJson true then
+      pure (Json.mkObj [("unsubscribe", Json.mkObj [("$fn", toJson "unsubscribe")])])
     else
       Prog.effect "startLiveSubscription"
         [socket, scope, streamJson, current, run, Twin.callArg call 4, Twin.callArg call 6]
