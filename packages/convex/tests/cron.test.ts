@@ -3,7 +3,6 @@ import cronsComponent from "@convex-dev/crons/test";
 import { convexTest } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
-import { settleRunAnsweredBy } from "../agent/crons";
 import type { Id } from "../_generated/dataModel";
 import { sha256Hex } from "../model/accountSecrets";
 import { translateScheduleExpression } from "../model/cronRules";
@@ -217,7 +216,7 @@ describe("sweepDeadRuns", () => {
   });
 });
 
-describe("settleRunAnsweredBy", () => {
+describe("settleAnsweredRun", () => {
   test("ends the paused run with the outcome of the turn that answered it", async () => {
     const tt = t();
     const { accountId, cronId } = await firstCron(tt);
@@ -226,12 +225,11 @@ describe("settleRunAnsweredBy", () => {
       ctx.db.patch(runId, { ingressConversationKey: "scoped:cron" }),
     );
 
-    await tt.run((ctx) =>
-      settleRunAnsweredBy(ctx, "scoped:cron", {
-        status: "completed",
-        result: "approved and done",
-      }),
-    );
+    await tt.mutation(internal.agent.crons.settleAnsweredRun, {
+      conversationKey: "scoped:cron",
+      status: "completed",
+      result: "approved and done",
+    });
 
     expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
       status: "completed",

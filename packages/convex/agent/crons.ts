@@ -58,7 +58,7 @@ const DEAD_RUN_ERROR = "The run stopped before it recorded an outcome.";
 const UNANSWERED_RUN_ERROR =
   "The run waited for an approval or an answer that never came.";
 
-export type RunOutcome =
+type RunOutcome =
   | { status: "completed"; result: unknown }
   | { status: "failed"; error: string };
 
@@ -81,24 +81,6 @@ const cronRunDoc = v.object({
 });
 
 type Ctx = QueryCtx | MutationCtx;
-
-// A run paused for an approval ends in the later turn that answered it, with that turn's outcome.
-export async function settleRunAnsweredBy(
-  ctx: MutationCtx,
-  ingressConversationKey: string,
-  outcome: RunOutcome,
-): Promise<void> {
-  const run = await ctx.db
-    .query("cronRuns")
-    .withIndex("by_ingressConversationKey_and_status", (q) =>
-      q
-        .eq("ingressConversationKey", ingressConversationKey)
-        .eq("status", "started"),
-    )
-    .order("desc")
-    .first();
-  if (run) await finishRun(ctx, run, outcome);
-}
 
 export const completeRun = internalMutation({
   args: {
@@ -496,6 +478,40 @@ export const removeRunsCascade = internalMutation({
         accountId: args.accountId,
         cronId: args.cronId,
       });
+    }
+
+    return null;
+  },
+});
+
+// A run paused for an approval ends in the later turn that answered it, with that turn's outcome.
+export const settleAnsweredRun = internalMutation({
+  args: {
+    conversationKey: v.string(),
+    status: v.union(v.literal("completed"), v.literal("failed")),
+    result: v.optional(v.any()),
+    error: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (
+    ctx,
+    { conversationKey, status, result, error },
+  ): Promise<null> => {
+    const run = await ctx.db
+      .query("cronRuns")
+      .withIndex("by_ingressConversationKey_and_status", (q) =>
+        q.eq("ingressConversationKey", conversationKey).eq("status", "started"),
+      )
+      .order("desc")
+      .first();
+    if (run) {
+      await finishRun(
+        ctx,
+        run,
+        status === "completed"
+          ? { status: "completed", result: result ?? null }
+          : { status: "failed", error: error ?? DEAD_RUN_ERROR },
+      );
     }
 
     return null;
