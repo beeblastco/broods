@@ -459,7 +459,7 @@ describe("settleCronRun", () => {
     expect(remove).toHaveBeenCalledWith("acct_1", "cron_1");
   });
 
-  it("fails a run that paused, since a scheduled run has nobody to answer it", async () => {
+  it("leaves a paused run open for the turn that answers it", async () => {
     const { settleCronRun } = await import("../src/harness/handler.ts");
     const failRun = mock(async function (): Promise<void> {});
     const remove = mock(async function (): Promise<boolean> {
@@ -475,13 +475,8 @@ describe("settleCronRun", () => {
       { status: "awaiting_approval", approvals: [] },
     );
 
-    expect(failRun).toHaveBeenCalledWith(
-      "acct_1",
-      "cron_1",
-      "run_1",
-      expect.stringContaining("approval"),
-    );
-    expect(remove).toHaveBeenCalledWith("acct_1", "cron_1");
+    expect(failRun).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("keeps the run alive when the cleanup delete fails", async () => {
