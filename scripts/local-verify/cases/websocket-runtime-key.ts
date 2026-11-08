@@ -250,4 +250,22 @@ export async function websocketRuntimeKey(
     publicTurn.error?.includes("requires a signed user token") === true,
     JSON.stringify(publicTurn),
   );
+
+  const errors: string[] = [];
+  socket
+    .subscribe(
+      { agent: publicAgent, sessionId: `${project}-closed`, input: "Say OK." },
+      {
+        onError: (error: Error): void => {
+          errors.push(error.message);
+        },
+      },
+    )
+    .close();
+  await Bun.sleep(500);
+  assertStep(
+    "a socket closed while connecting reports no error",
+    errors.length === 0,
+    errors.join("; "),
+  );
 }

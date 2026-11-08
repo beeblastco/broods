@@ -14,6 +14,7 @@ const SANDBOX_PATH =
 const TERMINAL_SIZE = { cols: 120, rows: 32 };
 const PROMPT_UNSAFE = /[^A-Za-z0-9_.-]+/g;
 const KILL_GRACE_SECONDS = 5;
+const STDIN_EXIT_WAIT_MS = 1000;
 const BACKSTOP_GRACE_MS = (KILL_GRACE_SECONDS + 5) * 1000;
 const LAUNCH_KEY = "launch";
 const IDLE_KEY = "idleMs";
@@ -159,9 +160,19 @@ export class Sandbox extends DurableObject<Env> {
         typeof event.data === "string"
           ? encoder.encode(event.data)
           : new Uint8Array(event.data);
-      stdin
-        .write(bytes)
-        .catch((): void => server.close(1011, "Terminal input failed"));
+      stdin.write(bytes).catch(async (): Promise<void> => {
+        // A key pressed as the shell exits: the output loop closes it cleanly.
+        const exiting = await Promise.race([
+          shell.exitCode.then(
+            (): boolean => true,
+            (): boolean => true,
+          ),
+          new Promise<boolean>((resolve) =>
+            setTimeout((): void => resolve(false), STDIN_EXIT_WAIT_MS),
+          ),
+        ]);
+        if (!exiting) server.close(1011, "Terminal input failed");
+      });
     });
     // Aborting an exited process throws.
     let exited = false;
