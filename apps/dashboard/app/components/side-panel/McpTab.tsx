@@ -261,7 +261,7 @@ export function McpTab({
           <Button
             size="sm"
             className="h-8 cursor-pointer text-xs"
-            disabled={isSaving}
+            disabled={isSaving || isFormatting}
             onClick={handleSave}
           >
             {isSaving ? "Verifying…" : "Save Server"}

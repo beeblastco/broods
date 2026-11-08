@@ -143,6 +143,7 @@ export function CreateProjectDialog({
         });
         markProjectCreated(id);
       }
+      if (session !== closes.current) return;
       const baseUrl = endpoint.ok ? endpoint.httpBaseUrl : "";
       if (source === "new" && owner) {
         // GitHub signs the user in, then the callback creates and links the repo.
