@@ -139,6 +139,8 @@ export async function runMachineDaemon(
         delayMs = Math.min(delayMs * 2, RECONNECT_MAX_MS);
         continue;
       }
+      // An abort during the mint fired before serveOnce could listen for it.
+      if (options.signal.aborted) return;
       const closed = await serveOnce(
         options,
         token,

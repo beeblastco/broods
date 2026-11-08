@@ -189,6 +189,8 @@ export function openTerminalUpstream(
     if (socket.readyState !== WebSocket.OPEN) return;
     if (socket.data.kind === "machine") {
       socket.close(relayCloseCode(event.code), event.reason);
+    } else if (event.code === 1011) {
+      socket.close(1011, event.reason);
     } else {
       socket.close(1000, "terminal session ended");
     }

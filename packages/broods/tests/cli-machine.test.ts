@@ -120,6 +120,27 @@ test("the daemon says hello, answers an exec, and stops on a refusal", async ():
   ]);
 });
 
+test("the daemon never connects when it is stopped during the credential mint", async (): Promise<void> => {
+  const core = startFakeCore((): MachineCoreFrame | null => null);
+  servers.push(core.server);
+  const controller = new AbortController();
+
+  await runMachineDaemon({
+    credential: async (): Promise<string> => {
+      controller.abort();
+
+      return "key";
+    },
+    baseUrl: core.url,
+    cwd: process.cwd(),
+    log: (): void => {},
+    sandbox: "my-mac",
+    signal: controller.signal,
+  });
+
+  expect(core.received).toEqual([]);
+});
+
 test("the daemon stops when the stage session is refused", async (): Promise<void> => {
   await expect(
     runMachineDaemon({

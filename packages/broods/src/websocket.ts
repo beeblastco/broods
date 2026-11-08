@@ -162,6 +162,7 @@ export class BroodsWebSocketClient {
     };
 
     const fail = (error: Error): void => {
+      if (closed) return;
       handlers.onError?.(error);
       close(1000, "websocket error");
     };

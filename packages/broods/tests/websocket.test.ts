@@ -215,6 +215,29 @@ test("websocket client closes with a browser-valid code on a server error", asyn
   expect(socket.readyState).toBe(3);
 });
 
+test("websocket subscribe reports a failure once and nothing after a deliberate close", (): void => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const errors: string[] = [];
+  const input = { endpointId: "agent_1", sessionId: "session_1", input: "hi" };
+  const onError = (error: Error): void => {
+    errors.push(error.message);
+  };
+
+  const closedByCaller = client.subscribe(input, { onError: onError });
+  closedByCaller.close();
+  FakeWebSocket.instances[0]!.onerror?.({});
+  expect(errors).toEqual([]);
+
+  client.subscribe(input, { onError: onError });
+  FakeWebSocket.instances[1]!.onerror?.({});
+  FakeWebSocket.instances[1]!.onerror?.({});
+  expect(errors).toHaveLength(1);
+});
+
 test("websocket client unwraps output envelopes for handlers and stream consumers", async (): Promise<void> => {
   const messages: WebSocketServerMessage[] = [];
   const outputs: unknown[] = [];

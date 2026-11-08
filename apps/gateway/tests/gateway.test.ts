@@ -2999,6 +2999,57 @@ test("terminal relay closes sockets that exceed the pending input buffer", () =>
   }
 });
 
+test("terminal relay reports an upstream failure as a failure, and anything else as an end", () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const closes: Array<[number, string]> = [];
+
+  class FakeWebSocket {
+    static OPEN = 1;
+    static instances: FakeWebSocket[] = [];
+    readyState = FakeWebSocket.OPEN;
+    binaryType = "arraybuffer";
+    onclose: ((event: { code: number; reason: string }) => void) | null = null;
+    constructor(_url: string, _options?: unknown) {
+      FakeWebSocket.instances.push(this);
+    }
+  }
+
+  globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+  try {
+    for (const code of [1011, 1000]) {
+      const socket = {
+        readyState: FakeWebSocket.OPEN,
+        data: {
+          kind: "terminal",
+          ticket: {
+            url: "ws://sandbox.example/pty",
+            authorization: "Bearer sandbox-token",
+            accountId: "acct_1",
+            expiresAt: Date.now() + 60_000,
+          },
+        },
+        send: () => {},
+        close: (closeCode: number, reason: string) =>
+          closes.push([closeCode, reason]),
+      } as unknown as Bun.ServerWebSocket<
+        import("../src/terminal.ts").TerminalGatewayData
+      >;
+      openTerminalUpstream(socket);
+      FakeWebSocket.instances.at(-1)!.onclose?.({
+        code: code,
+        reason: "Terminal output failed",
+      });
+    }
+
+    expect(closes).toEqual([
+      [1011, "Terminal output failed"],
+      [1000, "terminal session ended"],
+    ]);
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+});
+
 test("a terminal socket whose ticket did not verify is closed with a reason, and never dials upstream", () => {
   const originalWebSocket = globalThis.WebSocket;
   const closes: Array<[number, string]> = [];

@@ -89,6 +89,18 @@ const activeRuns = new WeakMap<
   Bun.ServerWebSocket<AgentTestGatewayData>,
   ActiveRun
 >();
+// A Record, so a status added to the contract fails the build until it is listed here.
+const INGRESS_STATUSES: Record<IngressStatus, true> = {
+  accepted: true,
+  queued: true,
+  applied: true,
+  processing: true,
+  awaiting_approval: true,
+  awaiting_input: true,
+  completed: true,
+  failed: true,
+  expired: true,
+};
 const TERMINAL_STATUSES = new Set<IngressStatus>([
   "completed",
   "failed",
@@ -660,10 +672,11 @@ async function attachCoreStream(
   getNatsConnection: () => Promise<NatsConnection>,
 ): Promise<void> {
   const abort = new AbortController();
-  const startTimeout = setTimeout(
-    () => abort.abort(),
-    limits.runStartTimeoutMs,
-  );
+  let startTimedOut = false;
+  const startTimeout = setTimeout((): void => {
+    startTimedOut = true;
+    abort.abort();
+  }, limits.runStartTimeoutMs);
   const active: ActiveRun = {
     abort: abort,
     startTimeout: startTimeout,
@@ -807,6 +820,8 @@ async function attachCoreStream(
     if (!abort.signal.aborted)
       sendAgentTest(socket, { type: "error", error: errorMessage(error) });
   } finally {
+    if (startTimedOut)
+      sendAgentTest(socket, { type: "error", error: "Attach timed out" });
     stopActiveRun(socket, active);
   }
 }
@@ -1133,14 +1148,5 @@ function isIngressMode(
 }
 
 function isIngressStatus(value: unknown): value is IngressStatus {
-  return (
-    value === "accepted" ||
-    value === "queued" ||
-    value === "applied" ||
-    value === "processing" ||
-    value === "awaiting_approval" ||
-    value === "completed" ||
-    value === "failed" ||
-    value === "expired"
-  );
+  return typeof value === "string" && Object.hasOwn(INGRESS_STATUSES, value);
 }
