@@ -28,6 +28,7 @@ import {
   runtimeHarnessSessionsFields,
   systemModelMessageValidator,
 } from "./schema";
+import { settleRunAnsweredBy } from "./agent/crons";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
 import {
   findHarnessEntry,
@@ -845,12 +846,28 @@ export const settle = internalMutation({
     if (args.events && args.events.length > 0) {
       coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
+    const answersApproval = await ownerAnswersApproval(ctx, args.ownerEventId);
     const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
     // Only with the owner's own envelope, so polling rows never disagree with it.
     if (args.asyncResult && settled.ownerFinished) {
       for (const eventId of args.asyncResult.eventIds) {
         await writeAsyncAgentResult(ctx, eventId, args.asyncResult.outcome);
       }
+    }
+    const paused = (args.result as { status?: string } | undefined)?.status;
+    if (
+      answersApproval &&
+      settled.ownerFinished &&
+      paused !== "awaiting_approval" &&
+      paused !== "awaiting_input"
+    ) {
+      await settleRunAnsweredBy(
+        ctx,
+        args.conversationKey,
+        args.status === "completed"
+          ? { status: "completed", result: args.result ?? null }
+          : { status: "failed", error: args.error ?? "The run failed." },
+      );
     }
 
     return settled.count;
@@ -989,6 +1006,26 @@ export const takeNext = internalMutation({
 });
 
 // A retried entry id is skipped, as Pi's session storage contract allows.
+async function ownerAnswersApproval(
+  ctx: QueryCtx,
+  ownerEventId: string,
+): Promise<boolean> {
+  const owner = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_eventId", (q) => q.eq("eventId", ownerEventId))
+    .first();
+  const events = (owner?.events ?? []) as {
+    role: string;
+    content: { type: string }[];
+  }[];
+
+  return events.some(
+    (event) =>
+      event.role === "tool" &&
+      event.content.some((part) => part.type === "tool-approval-response"),
+  );
+}
+
 async function appendHarnessEntries(
   ctx: MutationCtx,
   options: {
