@@ -578,6 +578,7 @@ describe("runtime ingress", () => {
   });
 
   test("settling a turn that answers an approval ends the cron run paused on it", async () => {
+    vi.useFakeTimers();
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
@@ -644,6 +645,8 @@ describe("runtime ingress", () => {
       status: "completed",
       result: "approved",
     });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
 
     expect(await t.run((ctx) => ctx.db.get(runId))).toMatchObject({
       status: "completed",
