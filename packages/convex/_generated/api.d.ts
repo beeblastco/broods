@@ -4340,6 +4340,17 @@ export declare const internal: {
         { accountId: Id<"accounts">; cronId: Id<"crons"> },
         null
       >;
+      settleAnsweredRun: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          conversationKey: string;
+          error?: string;
+          result?: any;
+          status: "completed" | "failed";
+        },
+        null
+      >;
       sweepDeadRuns: FunctionReference<
         "mutation",
         "internal",
