@@ -629,6 +629,7 @@ function CanvasInner({
       const generation = editGeneration.current;
       const currentNodes = nodesRef.current;
       const currentEdges = edgesRef.current;
+      failedLayout.current = null;
       // Config would refuse these refs once the layout landed: save nothing, restore the last.
       const saved = savedLayoutRef.current;
       const problem = introducedRuntimeRefsProblem(
@@ -648,7 +649,6 @@ function CanvasInner({
       }
       setSaveError(null);
       setSaveState("saving");
-      failedLayout.current = null;
       const startedAt = performance.now();
       let refsFailed = false;
       saveLayoutMutation({
@@ -860,9 +860,18 @@ function CanvasInner({
 
   const retrySave = useCallback((): void => {
     const failed = failedLayout.current;
-    if (failed) editGraph(() => failed);
-    else scheduleSave();
-  }, [editGraph, scheduleSave]);
+    if (failed) {
+      nodesRef.current = failed.nodes;
+      edgesRef.current = failed.edges;
+      setNodes(failed.nodes);
+      setEdges(failed.edges);
+      nextId.current = Math.max(
+        nextId.current,
+        ...failed.nodes.map((node) => (Number(node.id) || 0) + 1),
+      );
+    }
+    scheduleSave();
+  }, [scheduleSave, setEdges, setNodes]);
 
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => {
