@@ -672,10 +672,10 @@ async function attachCoreStream(
   getNatsConnection: () => Promise<NatsConnection>,
 ): Promise<void> {
   const abort = new AbortController();
-  let startTimedOut = false;
+  // From the timer: the NATS reads below cannot be aborted, and may never settle.
   const startTimeout = setTimeout((): void => {
-    startTimedOut = true;
-    abort.abort();
+    sendAgentTest(socket, { type: "error", error: "Attach timed out" });
+    stopActiveRun(socket, active);
   }, limits.runStartTimeoutMs);
   const active: ActiveRun = {
     abort: abort,
@@ -718,6 +718,7 @@ async function attachCoreStream(
       return;
     }
     const connection = await getNatsConnection();
+    if (abort.signal.aborted) return;
     const scope = {
       accountId: socket.data.accountId,
       agentId: message.agentId,
@@ -727,6 +728,7 @@ async function attachCoreStream(
       connection: connection,
       ...scope,
     });
+    if (abort.signal.aborted) return;
     const cursor = message.afterCursor
       ? parseCursor(message.afterCursor)
       : null;
@@ -777,6 +779,7 @@ async function attachCoreStream(
         return;
       }
     }
+    if (abort.signal.aborted) return;
     // A fresh attach starts at the earliest retained frame, whose sequence is not known yet.
     const replayFrom = cursor ? cursor.sequence + 1 : null;
     sendAgentTest(socket, {
@@ -820,8 +823,6 @@ async function attachCoreStream(
     if (!abort.signal.aborted)
       sendAgentTest(socket, { type: "error", error: errorMessage(error) });
   } finally {
-    if (startTimedOut)
-      sendAgentTest(socket, { type: "error", error: "Attach timed out" });
     stopActiveRun(socket, active);
   }
 }

@@ -1,5 +1,6 @@
 import type { VerifyCase } from "../harness.ts";
 import { agentRun } from "./agent-run.ts";
+import { cronRun } from "./cron-run.ts";
 import { asyncToolHandback } from "./async-tool-handback.ts";
 import { auditLedger } from "./audit-ledger.ts";
 import { authFailures } from "./auth-failures.ts";
@@ -56,6 +57,7 @@ import { workspaceIsolation } from "./workspace-isolation.ts";
 
 export const verifyCases: readonly VerifyCase[] = [
   agentRun,
+  cronRun,
   websocketAttachAbort,
   websocketRuntimeKey,
   traceFetch,

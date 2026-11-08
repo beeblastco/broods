@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import {
   FREE_MONTHLY_BUDGET_EUR,
   PLAN_LIMITS,
@@ -353,37 +353,82 @@ test.each([
   },
 );
 
-test("a suspend rollback that lost the race to suspended bills no launch", async () => {
-  vi.useFakeTimers({ now: NOW });
-  const t = meterTest();
-  const accountId = await seedAccount(t);
-  await t.mutation(internal.sandbox.instances.upsert, {
-    accountId: accountId,
-    provider: "cloudflare" as const,
-    reservationKey: "cf-abc",
-    externalId: "cf-1",
-    name: "default",
-    specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
-  });
-  await t.mutation(internal.sandbox.instances.setStatus, {
-    accountId: accountId,
-    reservationKey: "cf-abc",
-    status: "suspended",
+describe("a failed suspend's status writes", () => {
+  const seedMicrovm = async (): Promise<{
+    t: T;
+    meters: () => Promise<unknown>;
+    row: () => Promise<Doc<"sandboxInstances"> | null>;
+    set: (
+      status: "running" | "suspending" | "suspended",
+      onlyFrom?: "running" | "suspending",
+    ) => Promise<boolean>;
+  }> => {
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    await t.mutation(internal.sandbox.instances.upsert, {
+      accountId: accountId,
+      provider: "lambda" as const,
+      reservationKey: "vm",
+      externalId: "vm-1",
+      name: "default",
+      specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+    });
+
+    return {
+      t: t,
+      meters: () =>
+        t.run(async (ctx) => await ctx.db.query("usageMeters").collect()),
+      row: () =>
+        t.run(async (ctx) => await ctx.db.query("sandboxInstances").unique()),
+      set: (status, onlyFrom) =>
+        t.mutation(internal.sandbox.instances.setStatus, {
+          accountId: accountId,
+          reservationKey: "vm",
+          status: status,
+          onlyFrom: onlyFrom,
+          observed: status === "running",
+        }),
+    };
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  const changed = await t.mutation(internal.sandbox.instances.setStatus, {
-    accountId: accountId,
-    reservationKey: "cf-abc",
-    status: "running",
-    onlyFrom: "suspending",
+  test("a rollback that lost the race to suspended changes and bills nothing", async () => {
+    const { meters, row, set } = await seedMicrovm();
+    await set("suspended");
+    const billed = await meters();
+
+    expect(await set("running", "suspending")).toBe(false);
+
+    expect((await row())?.status).toBe("suspended");
+    expect(await meters()).toEqual(billed);
   });
 
-  expect(changed).toBe(false);
-  const instance = await t.run(
-    async (ctx) => await ctx.db.query("sandboxInstances").unique(),
-  );
-  expect(instance?.status).toBe("suspended");
-  vi.useRealTimers();
+  test("the marker leaves a row that is not running alone", async () => {
+    const { row, set } = await seedMicrovm();
+    await set("suspended");
+
+    expect(await set("suspending", "running")).toBe(false);
+
+    expect((await row())?.status).toBe("suspended");
+  });
+
+  test("a rollback from suspending applies without counting as a use", async () => {
+    const { row, set } = await seedMicrovm();
+    await set("suspending", "running");
+    const lastUsedAt = (await row())?.lastUsedAt;
+    vi.setSystemTime(NOW + 60_000);
+
+    expect(await set("running", "suspending")).toBe(true);
+
+    expect(await row()).toMatchObject({
+      status: "running",
+      lastUsedAt: lastUsedAt,
+    });
+  });
 });
 
 test("a refresh at a new size bills the time before it at the old size", async () => {

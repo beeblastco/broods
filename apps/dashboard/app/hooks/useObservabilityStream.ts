@@ -1,5 +1,6 @@
 "use client";
 
+import { useParams } from "next/navigation";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import {
   useCallback,
@@ -91,8 +92,10 @@ export function useObservabilityStream(
     sandboxId,
   } = options;
 
-  // No credential: a renewed ticket reconnects the same stream and keeps its entries.
-  const connKey = `${stream}|${projectSlug ?? ""}|${stageSlug ?? ""}|${sandboxId ?? ""}|${minLevel ?? ""}`;
+  // The project id, not its slug (unique per org), and no credential: a renewed ticket
+  // reconnects the same stream and keeps its entries.
+  const { projectId } = useParams<{ projectId: string }>();
+  const connKey = `${stream}|${projectId}|${stageSlug ?? ""}|${sandboxId ?? ""}|${minLevel ?? ""}`;
 
   const [entries, setEntries] = useState<
     (ObservabilityLogEntry | ObservabilitySpanRow)[]
@@ -263,6 +266,7 @@ export function useObservabilityStream(
       if (destroyedRef.current || socketRef.current !== socket) return;
       setStatus("error");
       setError("WebSocket transport error.");
+      setHistory((current) => (current === "loading" ? "failed" : current));
     };
 
     socket.onclose = (event) => {
@@ -280,6 +284,7 @@ export function useObservabilityStream(
         (current) =>
           (current ?? event.reason) || `WebSocket closed (${event.code}).`,
       );
+      setHistory((current) => (current === "loading" ? "failed" : current));
       reconnectTimerRef.current = setTimeout(() => {
         if (!destroyedRef.current) connectRef.current();
       }, RECONNECT_DELAY_MS);
