@@ -89,6 +89,18 @@ const activeRuns = new WeakMap<
   Bun.ServerWebSocket<AgentTestGatewayData>,
   ActiveRun
 >();
+// A Record, so a status added to the contract fails the build until it is listed here.
+const INGRESS_STATUSES: Record<IngressStatus, true> = {
+  accepted: true,
+  queued: true,
+  applied: true,
+  processing: true,
+  awaiting_approval: true,
+  awaiting_input: true,
+  completed: true,
+  failed: true,
+  expired: true,
+};
 const TERMINAL_STATUSES = new Set<IngressStatus>([
   "completed",
   "failed",
@@ -660,10 +672,11 @@ async function attachCoreStream(
   getNatsConnection: () => Promise<NatsConnection>,
 ): Promise<void> {
   const abort = new AbortController();
-  const startTimeout = setTimeout(
-    () => abort.abort(),
-    limits.runStartTimeoutMs,
-  );
+  // From the timer: the NATS reads below cannot be aborted, and may never settle.
+  const startTimeout = setTimeout((): void => {
+    sendAgentTest(socket, { type: "error", error: "Attach timed out" });
+    stopActiveRun(socket, active);
+  }, limits.runStartTimeoutMs);
   const active: ActiveRun = {
     abort: abort,
     startTimeout: startTimeout,
@@ -705,6 +718,7 @@ async function attachCoreStream(
       return;
     }
     const connection = await getNatsConnection();
+    if (abort.signal.aborted) return;
     const scope = {
       accountId: socket.data.accountId,
       agentId: message.agentId,
@@ -714,6 +728,7 @@ async function attachCoreStream(
       connection: connection,
       ...scope,
     });
+    if (abort.signal.aborted) return;
     const cursor = message.afterCursor
       ? parseCursor(message.afterCursor)
       : null;
@@ -764,6 +779,7 @@ async function attachCoreStream(
         return;
       }
     }
+    if (abort.signal.aborted) return;
     // A fresh attach starts at the earliest retained frame, whose sequence is not known yet.
     const replayFrom = cursor ? cursor.sequence + 1 : null;
     sendAgentTest(socket, {
@@ -1133,14 +1149,5 @@ function isIngressMode(
 }
 
 function isIngressStatus(value: unknown): value is IngressStatus {
-  return (
-    value === "accepted" ||
-    value === "queued" ||
-    value === "applied" ||
-    value === "processing" ||
-    value === "awaiting_approval" ||
-    value === "completed" ||
-    value === "failed" ||
-    value === "expired"
-  );
+  return typeof value === "string" && Object.hasOwn(INGRESS_STATUSES, value);
 }

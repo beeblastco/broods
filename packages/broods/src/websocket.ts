@@ -162,11 +162,13 @@ export class BroodsWebSocketClient {
     };
 
     const fail = (error: Error): void => {
+      if (closed) return;
       handlers.onError?.(error);
       close(1000, "websocket error");
     };
 
     const finish = (): void => {
+      if (closed) return;
       handlers.onDone?.();
       close(1000, "done");
     };
@@ -209,12 +211,15 @@ export class BroodsWebSocketClient {
     };
 
     socket.onmessage = (event): void => {
-      if (typeof event.data !== "string") return;
+      if (closed || typeof event.data !== "string") return;
       const payload = parseServerMessage(event.data);
       if (!payload) return;
 
       const effective = unwrapServerMessage(payload, handlers);
+      // A handler may close this subscription; nothing is delivered after.
+      if (closed) return;
       handlers.onMessage?.(effective);
+      if (closed) return;
 
       switch (effective.type) {
         case "meta":
@@ -301,8 +306,10 @@ export class BroodsWebSocketClient {
       handlers.onMessage?.(effective);
       if (closed) return;
       if (effective.type === "done") handlers.onDone?.();
-      if (effective.type === "error")
+      if (effective.type === "error") {
+        close(1000, "websocket error");
         handlers.onError?.(new Error(formatWireError(effective.error)));
+      }
     };
     // The abnormal close that follows a socket error is reported once, here.
     socket.onerror = (): void => {
