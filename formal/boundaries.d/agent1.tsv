@@ -44,7 +44,6 @@ opaque	OpenAIResponsesLanguageModel	An AI SDK model object passed through unexam
 opaque	DefaultTranscriptionResult	The AI SDK result; the twin reads only its recorded text field.
 internal	apps/core/src/harness/session.ts#Session.confirmOwner	Only updates a private timestamp, so there is no observable result; callers check its argument.
 internal	apps/core/src/harness/session.ts#Session.resolvedWorkspaces	Reads private runtime state that recordings do not carry; callers consume the recorded answer.
-internal	apps/core/src/harness/session.ts#Session.writeFenced	Depends on the private pending-row buffer, which recordings do not carry; callers check its arguments.
 internal	apps/core/src/harness/tool-execute.ts#isStreamingExecute	Tests the function kind, which a recorded function value does not carry; callers branch on the answer.
 external	^new SkillAuthorizationError$	Constructs the error from the checked path; the twin throws what it returns.
 external	^createPi$	The harness SDK builds the adapter from the checked auth and thinking level.

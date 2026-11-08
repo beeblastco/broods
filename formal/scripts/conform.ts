@@ -316,10 +316,12 @@ function record(wanted: string[]): boolean {
     }
     if (introduced.length > 0) broken = true;
   }
-  writeFileSync(
-    join(OUT, "captured.json"),
-    `${JSON.stringify({ sources: sourcesHash() })}\n`,
-  );
+  // Only a sound recording counts as captured, so `--reuse` cannot credit a broken one later.
+  if (!broken)
+    writeFileSync(
+      join(OUT, "captured.json"),
+      `${JSON.stringify({ sources: sourcesHash() })}\n`,
+    );
 
   return broken;
 }
@@ -547,7 +549,12 @@ function checkTraced(twin: TwinRow, opaqueAllowed: Set<string>): TwinResult {
     );
     if (stateChanges(call).some((change) => !checked.has(change.path)))
       result.stateUnmodelled += 1;
-    if (call.effects.length > 0 || !isUndefined(outcome)) result.hollow = false;
+    if (
+      call.effects.length > 0 ||
+      !isUndefined(outcome) ||
+      stateChanges(call).length > 0
+    )
+      result.hollow = false;
     for (const effect of call.effects) {
       if (effect.to) internal.add(effect.to);
       else external.add(effect.fn);
@@ -589,24 +596,41 @@ function stateChanges(call: Traced): { path: string; value: unknown }[] {
     deepChanges(`args.${index}`, call.args[index], after, changes);
   });
   compare("module", call.module, call.moduleAfter);
-  // A traced method called on the same object answers for its own writes.
-  const byCallee = new Set<string>();
+  // A traced callee answers for a leaf only if the call ended with the value that callee left.
+  const byCallee = new Map<string, unknown>();
+  const noteCallee = (
+    prefix: string,
+    before: Encoded,
+    after: Encoded,
+  ): void => {
+    const during: { path: string; value: unknown }[] = [];
+    deepChanges(prefix, before, after, during);
+    for (const change of during) byCallee.set(change.path, change.value);
+  };
   for (const effect of call.effects) {
-    for (const window of effect.argWindows ?? []) {
-      const during: { path: string; value: unknown }[] = [];
-      deepChanges(`args.${window.index}`, window.before, window.after, during);
-      for (const change of during) byCallee.add(change.path);
-    }
-    if (!effect.to || effect.selfBefore === undefined) continue;
-    const was = fieldsOf(effect.selfBefore);
-    const now = fieldsOf(effect.selfAfter);
-    for (const key of new Set([...Object.keys(was), ...Object.keys(now)])) {
-      if (canonical(was[key]) !== canonical(now[key]))
-        byCallee.add(`self.${key}`);
+    for (const window of effect.argWindows ?? [])
+      noteCallee(`args.${window.index}`, window.before, window.after);
+    if (effect.to && effect.selfBefore !== undefined) {
+      const was = fieldsOf(effect.selfBefore);
+      const now = fieldsOf(effect.selfAfter);
+      for (const key of new Set([...Object.keys(was), ...Object.keys(now)])) {
+        if (
+          key !== "$keys" &&
+          !sameBesideHanded(was[key] as Encoded, now[key] as Encoded)
+        )
+          byCallee.set(`self.${key}`, now[key] ?? null);
+      }
     }
   }
 
-  return changes.filter((change) => !byCallee.has(change.path));
+  return changes.filter(
+    (change) =>
+      !byCallee.has(change.path) ||
+      !sameBesideHanded(
+        change.value as Encoded,
+        byCallee.get(change.path) as Encoded,
+      ),
+  );
 }
 
 // Every leaf that differs, so two writes to one object are told apart. An array counts as one leaf.
@@ -730,7 +754,7 @@ function incompleteReasons(call: Traced, opaqueAllowed: Set<string>): string[] {
       ) {
         problems.add(`opaque ${record["$opaque"]}`);
       }
-      // `$fields` is readable but never compared, so what it lost cannot weaken a comparison.
+      // `$fields` is left out of results; a write hidden by its truncation is covered by L18.
       for (const [key, item] of Object.entries(record)) {
         if (key !== "$fields") scan(item);
       }

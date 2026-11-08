@@ -22,7 +22,7 @@ Read these in order. Nothing else is needed to learn what is claimed.
   later grade a port.
 - **Controls test the tests.** Kernel-checked controls prove a broken model fails a theorem. Injected
   faults check that replay notices a broken implementation.
-- **The manifest measures coverage.** Each in-scope source file has a row saying what covers it.
+- **Coverage is counted by statement.** `scripts/check.ts` counts each executable statement a replay or a credited twin reached. The manifest is different: it has one row per in-scope file saying what kind of model or replay that file has, so a file can be `open` there and still have credited twins.
 
 ## Commands
 

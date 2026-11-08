@@ -551,7 +551,9 @@ private def jsonResponse (call : Json) : Prog Json := do
   let entries := entries.mergeSort (fun a b => a.1 <= b.1)
   let status := if u (f init "status") then toJson (200 : Nat) else f init "status"
   pure (Json.mkObj [("$response", Json.mkObj [("status", status),
-    ("headers", toJson (entries.map fun (key, value) => toJson [j key, value]))])])
+    ("headers", toJson (entries.map fun (key, value) => toJson [j key, value])),
+    ("body", if u (Twin.callArg call 0) then Json.mkObj [("$undefined", toJson true)]
+      else toJson (Twin.jsonStringify 64 (Twin.callArg call 0)))])])
 
 private def extraTwins : List Twin :=
   [Twin.traced "packages/convex/model/stageSessionTicket.ts#base64UrlToBytes" base64ToBytes,

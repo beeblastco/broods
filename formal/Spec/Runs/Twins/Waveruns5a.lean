@@ -41,13 +41,14 @@ private def errorMessageOr (error : Json) (fallback : String) : String :=
   | some message => message
   | none => fallback
 
-private def response (status : Nat) (headers : List (String × String)) : Json :=
+private def response (status : Nat) (headers : List (String × String)) (body : Json) : Json :=
   Json.mkObj [("$response", Json.mkObj
     [("status", toJson status),
      ("headers", .arr (headers.map fun (name, value) =>
-       Json.arr #[.str name, .str value]).toArray)])]
+       Json.arr #[.str name, .str value]).toArray),
+     ("body", body)])]
 
-private def noContent : Json := response 204 []
+private def noContent : Json := response 204 [] Json.null
 
 /-- `WORKER_QUEUE_FULL` in `worker-queue.ts`. -/
 private def workerQueueFull : String := "In-process worker queue is full"
@@ -197,6 +198,7 @@ def directTurnResponse (call : Json) : Prog Json := do
   let _ ← Prog.effect "new ReadableStream"
     [Json.mkObj [("start", named "start"), ("cancel", named "cancel")]]
   return response 200 [("content-type", "text/event-stream")]
+    (Json.mkObj [("$opaque", "ReadableStream")])
 
 /-- The channel reply a refused admission sends, or none. -/
 private def refusalReply (outcome : Json) : Option String :=

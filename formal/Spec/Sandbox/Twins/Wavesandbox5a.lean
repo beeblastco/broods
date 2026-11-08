@@ -397,9 +397,9 @@ private def promptName (text : String) : String :=
     else ('-' :: acc.1, true)
   String.ofList ((text.foldl step ([], false)).1.reverse.take 63)
 
-private def responseJson (status : Nat) : Json :=
+private def responseJson (status : Nat) (body : String) : Json :=
   Json.mkObj [("$response", Json.mkObj
-    [("status", toJson status), ("headers", .arr #[])])]
+    [("status", toJson status), ("headers", .arr #[]), ("body", toJson body)])]
 
 /-- `Sandbox.fetch` up to the shell starting. The WebSocket bridge after it is unsupported. -/
 def sandboxFetch (call : Json) : Prog Json := do
@@ -407,9 +407,9 @@ def sandboxFetch (call : Json) : Prog Json := do
   let container ← requireContainer self
   let request := Twin.callArg call 0
   if requestHeader request "Upgrade" != some "websocket" then
-    return responseJson 426
+    return responseJson 426 "Expected a WebSocket upgrade"
   if !truthy (field container "running") then
-    return responseJson 409
+    return responseJson 409 "Sandbox is not running"
   let url := stringOf (field (field request "$request") "url")
   let name ← match nameParam url with
     | some raw => pure (promptName raw)

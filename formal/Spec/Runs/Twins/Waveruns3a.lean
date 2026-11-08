@@ -642,7 +642,8 @@ def emptySseResponse (_call : Json) : Prog Json := do
   let _ ← Prog.effect "new ReadableStream" [Json.mkObj [("start", Json.mkObj [("$fn", "start")])]]
   return Json.mkObj [("$response", Json.mkObj
     [("status", toJson (200 : Nat)),
-     ("headers", toJson [toJson ["content-type", "text/event-stream"]])])]
+     ("headers", toJson [toJson ["content-type", "text/event-stream"]]),
+     ("body", Json.mkObj [("$opaque", "ReadableStream")])])]
 
 /-- This author's twins. -/
 def twins : List Spec.Twin :=

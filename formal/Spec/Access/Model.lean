@@ -45,6 +45,7 @@ def configPath (m : String) (p : List String) : Bool :=
   | ["", "v1", "env", a] => segment a && ["PUT", "DELETE"].contains m
   | ["", "v1", "workspaces", a, "download-links"] => segment a && m == "POST"
   | ["", "v1", "audit"] | ["", "v1", "audit", "verify"] => m == "GET"
+  | ["", "v1", "usage"] => m == "GET"
   | ["", "v1", "audit", "sink"] => ["GET", "PUT", "DELETE"].contains m
   | ["", "v1", "workspaces", a, "files"] | ["", "v1", "crons", a, "runs"] => segment a
   | ["", "v1", r] => ["skills", "mcp", "hooks", "workspaces", "sandboxes", "policies", "roles", "channels", "crons"].contains r

@@ -47,7 +47,5 @@ opaque	ReadableStreamDefaultController	The platform owns the stream controller; 
 opaque	ReadableStream	The platform owns the stream object; the twin checks its underlying source.
 opaque	Session	The session is an identity handle here; twins read only its recorded scalar fields and check its method calls.
 opaque	SubagentCoordinator	The coordinator is an identity handle here; twins check the methods called on it.
-internal	apps/core/src/harness/ingress.ts#trackOwner	Only adds to the in-memory lease map, which recordings do not capture, so no twin can observe it; callers are checked to call it with the right lease.
-internal	apps/core/src/harness/ingress.ts#forgetOwner	Only removes from the in-memory lease map, which recordings do not capture; callers are checked to call it with the right lease.
 external	^(new ReadableStream|controller\.(enqueue|close))$	The platform owns the response stream; the twin checks the underlying source, the exact enqueued bytes and the close.
 external	^getStorage\(\)\.crons\.(failRun|markFailed)$	The storage adapter writes the cron failure; the twin checks account, cron and run identifiers and the message.

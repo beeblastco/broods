@@ -22,6 +22,7 @@ const FAULT_RUN_LIMIT_MS = 180_000;
 
 interface Line {
   fn: string;
+  moduleAfter?: unknown;
   args: unknown[];
   self: unknown;
   effects: { fn: string; args: unknown; outcome: unknown }[];
@@ -36,6 +37,7 @@ interface Result {
   traced: boolean;
   compared: number;
   mismatches: number;
+  stateUnmodelled: number;
 }
 
 type Damage = (line: Line) => Line | undefined;
@@ -77,6 +79,10 @@ const DAMAGES: Record<string, Damage> = {
           ),
         };
   },
+  "add a write": (line) => ({
+    ...line,
+    moduleAfter: { __control__: 1 },
+  }),
   "change the result": (line) => ({
     ...line,
     outcome:
@@ -95,6 +101,7 @@ function main(): void {
       twin.traced &&
       // Damage changes effects, so a twin whose compared calls made none has nothing to catch.
       twin.compared > 0 &&
+      twin.stateUnmodelled === 0 &&
       twin.internal.length + twin.external.length > 0 &&
       statSync(tracePath(twin.source)).size <= MAX_SAMPLED_TRACE_BYTES,
   );
@@ -171,7 +178,7 @@ function damagedVerdict(source: string, damage: Damage): boolean | undefined {
   const result = conform(source, directory);
   rmSync(directory, { recursive: true, force: true });
 
-  return result.mismatches > 0;
+  return result.mismatches > 0 || result.stateUnmodelled > 0;
 }
 
 function conform(source: string, traces: string): Result {

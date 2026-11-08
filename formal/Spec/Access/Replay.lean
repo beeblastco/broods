@@ -9,7 +9,7 @@ def paths : List String :=
   ["/", "/healthz", "/unknown", "/v1", "/mcp", "/v1/downloads/key", "/v1/accounts", "/v1/accounts/a",
    "/v1/accounts/a/rotate-secret", "/v1/account", "/v1/account/x", "/v1/agents", "/v1/agents/a",
    "/v1/agents/a/channels/c/directory", "/v1/env", "/v1/env/x", "/v1/workspaces/w/download-links",
-   "/v1/audit", "/v1/audit/verify", "/v1/audit/sink", "/v1/workspaces/w/files", "/v1/crons/c/runs",
+   "/v1/audit", "/v1/audit/verify", "/v1/usage", "/v1/audit/sink", "/v1/workspaces/w/files", "/v1/crons/c/runs",
    "/v1/sandboxes/terminal/ws", "/v1/machines/ws", "/v1/agents/a/ws",
    "/v1/projects/p/stages/s/agents/a/ws", "/v1/projects/p/stages/s/observability/ws",
    "/v1/webhooks/a/pancake", "/v1/webhooks/a/dev/b/pancake", "/v1/webhooks/a/other", "/v1/media/key",

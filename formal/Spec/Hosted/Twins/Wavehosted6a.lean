@@ -476,7 +476,8 @@ def tenantOutboundFetch (call : Json) : Prog Json := do
   let props := field (Twin.field (Twin.self call) "ctx") "props"
   let blocked := (items (field props "blockedHosts")).any (· == toJson host)
   if (scheme != "https:" && scheme != "http:") || blocked then
-    return obj [("$response", obj [("status", toJson (403 : Nat)), ("headers", .arr #[])])]
+    return obj [("$response", obj [("status", toJson (403 : Nat)), ("headers", .arr #[]),
+      ("body", toJson "blocked by the Broods MCP egress policy")])]
   Prog.effect "fetch" [request, obj [("redirect", toJson "manual")]]
 
 private def harness : String := "apps/core/src/harness/"

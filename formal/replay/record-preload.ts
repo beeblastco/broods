@@ -167,6 +167,7 @@ const frames = new AsyncLocalStorage<Frame>();
 // oxlint-disable-next-line typescript/unbound-method -- kept before tests can patch it
 const promiseThen = Promise.prototype.then;
 const settledValues = new WeakMap<Promise<unknown>, unknown>();
+const responseBodies = new WeakMap<Response, string>();
 const privateReaders = new WeakMap<object, (value: object) => object>();
 let budget = 0;
 let textLeft = 0;
@@ -358,8 +359,16 @@ function traceCall(
     return callee;
 
   return (...args: unknown[]): unknown =>
-    record(frame, label, sourceOf.get(callee), args, nested, () =>
-      Reflect.apply(callee, undefined, args),
+    record(
+      frame,
+      label,
+      sourceOf.get(callee),
+      args,
+      nested,
+      () => Reflect.apply(callee, undefined, args),
+      false,
+      undefined,
+      callee,
     );
 }
 
@@ -379,6 +388,10 @@ function traceMethod(
   if (optionalCall && target == null) return undefined;
   const invoke = (args: unknown[]): unknown =>
     Reflect.apply(target as Callee, receiver as unknown, args);
+  if ((receiver as unknown) === Response && key === "json") {
+    return (...args: unknown[]): unknown =>
+      rememberBody(invoke(args), JSON.stringify(args[0]));
+  }
   const pure = isPure(receiver) && !ENVIRONMENT_EFFECTS.has(label);
   if (!frame || pure || NOT_BEHAVIOUR.test(label)) {
     return (...args: unknown[]): unknown => invoke(args);
@@ -397,12 +410,24 @@ function traceMethod(
     );
 }
 
+// A Response's body can only be read by consuming it, so the code that built it says what it is.
+function rememberBody(response: unknown, body: unknown): unknown {
+  if (response instanceof Response)
+    responseBodies.set(response, encodeText(body));
+
+  return response;
+}
+
 function traceNew(
   frame: Frame | undefined,
   label: string,
   callee: new (...args: unknown[]) => unknown,
   nested: Nested,
 ): Callee {
+  if (callee === (Response as unknown)) {
+    return (...args: unknown[]): unknown =>
+      rememberBody(Reflect.construct(callee, args), args[0]);
+  }
   if (!frame || PURE_CONSTRUCTORS.has(callee)) {
     return (...args: unknown[]): unknown => Reflect.construct(callee, args);
   }
@@ -578,6 +603,7 @@ function record(
   invoke: () => unknown,
   onSelf = false,
   receiver?: unknown,
+  callee?: unknown,
 ): unknown {
   if (frame.closed) count(frame.source, "lateEffects");
   const effect: Effect = {
@@ -594,7 +620,12 @@ function record(
   };
   frame.clock += 1;
   frame.effects.push(effect);
-  for (const value of [...args, receiver]) openWindow(frame, effect, value);
+  // A callback the caller passed in can reach anything the caller holds.
+  const reached =
+    callee !== undefined && frame.args.includes(callee)
+      ? frame.args
+      : [...args, receiver];
+  for (const value of reached) openWindow(frame, effect, value);
   let result: unknown;
   const settle = (outcome: Outcome): void => {
     effect.outcome = outcome;
@@ -719,10 +750,13 @@ function encode(value: unknown, depth: number, path: object[]): unknown {
     };
   }
   if (value instanceof Response) {
+    const body = responseBodies.get(value);
+
     return {
       $response: {
         status: value.status,
         headers: Array.from(value.headers.entries()),
+        ...(body === undefined ? {} : { body: JSON.parse(body) as unknown }),
       },
     };
   }

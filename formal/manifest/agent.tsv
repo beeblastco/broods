@@ -21,11 +21,11 @@ apps/core/src/harness/lifecycle.ts	glue	excluded			Manifest-classified wiring, f
 apps/core/src/harness/plan-limits.ts	decision	open	Spec.Agent.Model		Admission precedence modelled; remaining: TTL/window/cache/refund/warning behavior, recordUsage and response formatting replay.
 apps/core/src/harness/policy.ts	decision	open	Spec.Agent.Model	formal/replay/agent.test.ts	Gate order/computer waiting replayed; remaining: complete target resolution/input sanitization, policy loading/outages and channel invoke exported replay.
 apps/core/src/harness/provider.ts	decision	open	Spec.Agent.Model		Single-wrapper retry bound and item stripping boundary modelled; remaining: recovery predicates/transforms, provider composition/settings, stream normalization, cache behavior and exported middleware replay.
-apps/core/src/harness/pruning.ts	decision	open			Remaining: complete function-level model and exported replay; no coverage claimed.
+apps/core/src/harness/pruning.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
 apps/core/src/harness/session.ts	decision	open	Spec.Agent.Model		Projection and raw append kernels modelled; remaining: full stored-event sanitization, fencing/retry batches, compaction/history projection, pruning, ingress/media and system-context construction; no exported Session replay yet.
-apps/core/src/harness/skills.ts	decision	open			Remaining: complete function-level model and exported replay; no coverage claimed.
+apps/core/src/harness/skills.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
 apps/core/src/harness/subagents.ts	decision	open	Spec.Agent.Model		Principal/trigger/flag inheritance and caps modelled; remaining: complete coordinator dispatch/resume/message/outbox/detach/recovery state machine and exported replay.
-apps/core/src/harness/tool-execute.ts	decision	open			Remaining: complete function-level model and exported replay; no coverage claimed.
+apps/core/src/harness/tool-execute.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
 apps/core/src/harness/transcribe.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
 apps/core/src/harness/usage-metering.ts	decision	open	Spec.Agent.Model	formal/replay/agent.test.ts	TaskTotals replayed; remaining: cache-write extraction, CPU ledger, timing tracker and attribute projection model/replay.
 apps/core/src/shared/cache-digest.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
@@ -50,15 +50,15 @@ apps/core/src/shared/node-aead.ts	glue	excluded			Manifest-classified wiring, fo
 apps/core/src/shared/otel.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
 apps/core/src/shared/paths.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
 apps/core/src/shared/sandbox.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
-apps/core/src/shared/skills.ts	decision	open			Remaining: complete function-level model and exported replay; no coverage claimed.
+apps/core/src/shared/skills.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
 apps/core/src/shared/telemetry.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
 apps/core/src/shared/webhook.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
-packages/convex/model/accountHooks.ts	decision	open			Remaining: complete function-level model and exported replay; no coverage claimed.
+packages/convex/model/accountHooks.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
 packages/convex/model/harnessSessionEntries.ts	decision	replayed	Spec.Agent.Model	formal/replay/agent.test.ts	Pure byte/row batch decisions replayed; indexed lookup is EntryStore.find under trusted Convex contract.
 packages/convex/model/modelPricing.ts	decision	open	Spec.Agent.Model	formal/replay/agent.test.ts	Cost numerator and canonical provider modelled; remaining: model-id/date-alias lookup and absent-rates/canonical-provider replay.
-packages/convex/model/modelProviders.ts	decision	open			Remaining: complete function-level model and exported replay; no coverage claimed.
+packages/convex/model/modelProviders.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
 packages/convex/model/planLimits.ts	decision	open	Spec.Agent.Model	formal/replay/agent.test.ts	Budget levels replayed and caps modelled; remaining: plan constants, accountOrg contract, managed-service flag and cap replay.
 packages/convex/model/policyDocument.ts	protocol	modelled	Spec.Agent.Contracts.PolicyDocument		Data/validator shape represented independently; Convex validation engine is external and not replayed.
-packages/convex/model/policyRules.ts	decision	open			Remaining: complete function-level model and exported replay; no coverage claimed.
-packages/convex/model/pricing.ts	decision	open			Remaining: complete function-level model and exported replay; no coverage claimed.
+packages/convex/model/policyRules.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
+packages/convex/model/pricing.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
 packages/convex/model/subagentResults.ts	protocol	replayed	Spec.Agent.Model	formal/replay/agent.test.ts	Dedupe formatting/parser replayed; handback/status sets represented by parser terminalStatus; Convex validators are external shape contracts.

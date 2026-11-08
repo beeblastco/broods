@@ -343,7 +343,9 @@ private def jsonResponse (args : Json) : Json :=
     (entries (Twin.arg args 2)).filter (·.1 != "$keys"))
   let normalized := (entries headers).map fun (k, v) => (k.toLower, .str (trim (text v)))
   let pairs := (entries (obj normalized)).map fun (k, v) => Json.arr #[.str k, v]
-  obj [("$response", obj [("status", Twin.arg args 0), ("headers", .arr pairs.toArray)])]
+  obj [("$response", obj [("status", Twin.arg args 0), ("headers", .arr pairs.toArray),
+    ("body", if Twin.arg args 1 == Twin.undefinedJson then obj [("$undefined", .bool true)]
+      else .str (Twin.jsonStringify 64 (Twin.arg args 1)))])]
 
 private def bytesOf (v : Json) : List UInt8 := Crypto.base64Decode (text (field v "$bytes"))
 private def bytesJson (xs : List UInt8) : Json :=

@@ -576,7 +576,8 @@ private def errorSseResponse (call : Json) : Prog Json := do
     else Prog.unsupported s!"callback {label}") 4
   let _ ← Prog.effect "new ReadableStream" [obj [("start", obj [("$fn", .str "start")])]]
   return obj [("$response", obj [("status", status),
-    ("headers", toJson ((sseHeaders headers).map fun (k, v) => toJson [Json.str k, v]))])]
+    ("headers", toJson ((sseHeaders headers).map fun (k, v) => toJson [Json.str k, v])),
+    ("body", obj [("$opaque", .str "ReadableStream")])])]
 
 private def continuationResponse (call : Json) : Prog Json :=
   let settled := Twin.callArg call 0
@@ -873,14 +874,7 @@ private def settleFailedIngressAndDrain (call : Json) : Prog Json := do
     | .threw _ _ => pure (.bool false)
     | .pending => Prog.unsupported "dispatchNext is unfinished"
   if !truthy transferred then
-    -- `Session.releaseConversationLease` marks the handoff only once it has released the lease.
-    let session := Twin.callArg call 0
-    match ← Prog.attempt "session.releaseConversationLease" with
-    | .ok _ =>
-      if Twin.field session "ownerGeneration" != Twin.undefinedJson &&
-          !truthy (Twin.field session "ownerHandedOff") then
-        Prog.setState "args.0.ownerHandedOff" (toJson true)
-    | _ => pure ()
+    let _ ← Prog.attempt "session.releaseConversationLease"
   return transferred
 
 private def settleChannelQuestion (call : Json) : Prog Json := do

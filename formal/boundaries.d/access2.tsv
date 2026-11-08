@@ -26,7 +26,6 @@ opaque	WeakMap	Only map operations are used; all reads and writes are recorded e
 opaque	Cipheriv2	Only update, final and getAuthTag are used; each is a recorded effect whose arguments are checked.
 opaque	Decipheriv2	Only setAuthTag, update and final are used; each is a recorded effect whose arguments are checked.
 opaque	Hmac	Only update and digest are used; each is a recorded effect whose input is checked.
-internal	apps/core/src/shared/run-token.ts#derivedKey	A module-private Map caches keys and its reads are not recorded, so a twin cannot tell a hit from a miss; the value is HKDF-SHA256 of the stage secret under a fixed info string.
 external	^dns\.lookup$	DNS is the outside world; the twin checks the hostname and uses the recorded addresses.
 external	^signal\.(throwIfAborted|addEventListener|removeEventListener)$	AbortSignal methods on a caller-supplied signal; arguments are checked and the answers are the recorded ones.
 external	^createHmac$	Node implements HMAC; the twin checks the algorithm and key and uses the recorded digest.

@@ -17,8 +17,10 @@ private def toResponse (call : Json) : Prog Json := do
   let supplied := get response "headers"
   let pairs := if missing supplied then [] else entries supplied
   let headers := jarr (pairs.map fun (name, value) => jarr [.str name.toLower, value])
+  let body := get response "body"
   return Json.mkObj [("$response", Json.mkObj
-    [("status", if nullish status then num 200 else status), ("headers", headers)])]
+    [("status", if nullish status then num 200 else status), ("headers", headers),
+     ("body", if nullish body then .str "" else body)])]
 
 private def drainList (context accountId endpointId : Json) : Nat → Prog Unit
   | 0 => pure ()

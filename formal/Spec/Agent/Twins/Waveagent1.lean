@@ -106,25 +106,117 @@ private def storedEventBatches (args : Json) : Json := Id.run do
   if !batch.isEmpty then batches := batches ++ [toJson batch]
   return toJson batches
 
+/-- `Response.json(value, { status })`, given the text `JSON.stringify(value)` gives. -/
+private def jsonBodyResponse (body : String) (status : Nat) : Json :=
+  obj [("$response", obj [("status", toJson status),
+    ("headers", toJson [toJson [toJson "content-type", toJson "application/json;charset=utf-8"]]),
+    ("body", toJson body)])]
+
+/-- A token of JSON text; `open_ true` starts an object, `open_ false` an array. -/
+private inductive JsonToken where
+  | open_ : Bool → JsonToken
+  | close : JsonToken
+  | text : String → JsonToken
+  | literal : Json → JsonToken
+
+/-- The raw characters of a string literal up to its closing quote, and what follows. -/
+private def stringChars : List Char → List Char → Option (List Char × List Char)
+  | '"' :: rest, acc => some (acc.reverse, rest)
+  | '\\' :: c :: rest, acc => stringChars rest (c :: '\\' :: acc)
+  | c :: rest, acc => stringChars rest (c :: acc)
+  | [], _ => none
+
+/-- The characters of a bare literal (number, `true`, `null`), and what follows. -/
+private def wordChars : List Char → List Char × List Char
+  | c :: rest =>
+    if c.isWhitespace || ",:]}".toList.contains c then ([], c :: rest)
+    else let (word, after) := wordChars rest; (c :: word, after)
+  | [] => ([], [])
+
+/-- One token per step; each step consumes a character, so the length is enough fuel. -/
+private def tokenize : Nat → List Char → List JsonToken → Option (List JsonToken)
+  | 0, [], acc => some acc.reverse
+  | 0, _, _ => none
+  | _ + 1, [], acc => some acc.reverse
+  | fuel + 1, '{' :: rest, acc => tokenize fuel rest (.open_ true :: acc)
+  | fuel + 1, '[' :: rest, acc => tokenize fuel rest (.open_ false :: acc)
+  | fuel + 1, '}' :: rest, acc => tokenize fuel rest (.close :: acc)
+  | fuel + 1, ']' :: rest, acc => tokenize fuel rest (.close :: acc)
+  | fuel + 1, ',' :: rest, acc => tokenize fuel rest acc
+  | fuel + 1, ':' :: rest, acc => tokenize fuel rest acc
+  | fuel + 1, '"' :: rest, acc => do
+    let (raw, after) ← stringChars rest []
+    match Json.parse ("\"" ++ String.ofList raw ++ "\"") with
+    | .ok (.str decoded) => tokenize fuel after (.text decoded :: acc)
+    | _ => none
+  | fuel + 1, c :: rest, acc =>
+    if c.isWhitespace then tokenize fuel rest acc
+    else
+      let (word, after) := wordChars (c :: rest)
+      match Json.parse (String.ofList word) with
+      | .ok value => tokenize fuel after (.literal value :: acc)
+      | .error _ => none
+
+/-- An object or array being read: keys so far in source order, and the key awaiting its value. -/
+private inductive JsonFrame where
+  | items : List Json → JsonFrame
+  | fields : List (String × Json) → Option String → JsonFrame
+
+private def placeValue (stack : List JsonFrame) (value : Json) : Option (List JsonFrame × Option Json) :=
+  match stack with
+  | [] => some ([], some value)
+  | .items list :: rest => some (.items (list ++ [value]) :: rest, none)
+  | .fields entries (some key) :: rest => some (.fields (entries ++ [(key, value)]) none :: rest, none)
+  | .fields _ none :: _ => none
+
+private def closeFrame (stack : List JsonFrame) : Option (List JsonFrame × Option Json) :=
+  match stack with
+  | .items list :: rest => placeValue rest (.arr list.toArray)
+  | .fields entries none :: rest =>
+    placeValue rest (Json.mkObj (entries ++ [("$keys", toJson (entries.map (·.1)))]))
+  | _ => none
+
+private def readTokens (tokens : List JsonToken) : Option Json :=
+  let step (state : Option (List JsonFrame × Option Json)) (token : JsonToken) :
+      Option (List JsonFrame × Option Json) := do
+    let (stack, done) ← state
+    if done.isSome then none else
+    match token, stack with
+    | .open_ true, _ => some (.fields [] none :: stack, none)
+    | .open_ false, _ => some (.items [] :: stack, none)
+    | .close, _ => closeFrame stack
+    | .text key, .fields entries none :: rest => some (.fields entries (some key) :: rest, none)
+    | .text decoded, _ => placeValue stack (toJson decoded)
+    | .literal value, _ => placeValue stack value
+  (tokens.foldl step (some ([], none))).bind (·.2)
+
+/-- `JSON.parse`, keeping each object's key order in `$keys` so `Twin.jsonStringify` can restore it. -/
+private def parseOrdered (text : String) : Option Json :=
+  (tokenize (text.length + 1) text.toList []).bind readTokens
+
 private def completedResponse (call : Json) : Prog Json := do
   let text ← Prog.effect "response.text"
   for line in (str text).splitOn "\n" do
     if !line.startsWith "data:" then continue
     let data := (line.drop 5).toString.trimAscii.toString
     if data.isEmpty || data == "[DONE]" then continue
-    match Json.parse data with
-    | .error _ => continue
-    | .ok event =>
+    match parseOrdered data with
+    | none => continue
+    | some event =>
       let kind := str (field event "type")
       if kind == "response.completed" || kind == "response.incomplete" then
-        return ← Prog.effect "Response.json" [field event "response"]
+        if undef (field event "response") then
+          return ← Prog.unsupported "Response.json of undefined"
+        return jsonBodyResponse (Twin.jsonStringify 64 (field event "response")) 200
       if kind == "response.failed" || kind == "error" then
         let err := field (field event "response") "error"
-        return ← Prog.effect "Response.json"
-          [obj [("error", if undef err || err == Json.null then field event "error" else err)],
-           obj [("status", toJson (400 : Nat))]]
+        let error := if undef err || err == Json.null then field event "error" else err
+        -- `{ error: undefined }` stringifies to `{}`.
+        return jsonBodyResponse
+          (if undef error then "{}" else "{\"error\":" ++ Twin.jsonStringify 64 error ++ "}") 400
   let _ := call
-  Prog.effect "Response.json" [obj [("error", obj [("message", toJson "ChatGPT stream ended before response.completed")])], obj [("status", toJson (502 : Nat))]]
+  pure (jsonBodyResponse
+    "{\"error\":{\"message\":\"ChatGPT stream ended before response.completed\"}}" 502)
 
 private def splitIngressEvents (call : Json) : Prog Json := do
   let mut ephemeral : List Json := []
@@ -503,7 +595,7 @@ private def withRateLimitRetryHeader (call : Json) : Prog Json := do
     | none => headers
     | some ms => (headers ++ [toJson [toJson "retry-after-ms", toJson (toString ms)]]).mergeSort
       (fun a b => str (Twin.arg a 0) <= str (Twin.arg b 0))
-  pure (obj [("$response", merge data (obj [("headers", toJson headers)]))])
+  pure (obj [("$response", merge data (obj [("headers", toJson headers), ("body", toJson body)]))])
 
 private def discordForwarderToken (call : Json) : Prog Json := do
   let bytes ← Prog.effect "hkdfSync" [toJson "sha256", Twin.callArg call 0, toJson "",
@@ -1477,7 +1569,7 @@ private def settleIngress (call : Json) : Prog Json := do
   | .pending => Prog.unsupported "writeFenced never settled"
   | .threw error _ =>
     if (arr inline).isEmpty then (.fail error : Prog Json)
-    else Prog.unsupported "the retry depends on the pending rows, which the recording does not carry"
+    else Prog.unsupported "the retry after a failed fenced write is not modelled"
 
 private def batch3Twins : List Twin :=
   [Twin.traced "apps/core/src/harness/ai-sdk-harness/adapters/opencode.ts#openCodeVariant" openCodeVariant,

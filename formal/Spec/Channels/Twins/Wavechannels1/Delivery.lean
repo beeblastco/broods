@@ -155,12 +155,15 @@ private def handleMediaRequest (call : Json) : Prog Json := do
   let size := if missing (get head "contentLength") then 0 else (asNum (get head "contentLength")).mantissa
   if size > (maxMediaBytes : Int) then
     return ← Prog.effect "errorResponse" [num 413, .str "Payload too large"]
-  if (text (get request "method")).toUpper != "HEAD" then
-    let _ ← Prog.effect "readMediaObject" [object, ticket]
+  let bytes ←
+    if (text (get request "method")).toUpper != "HEAD" then
+      Prog.effect "readMediaObject" [object, ticket]
+    else pure Json.null
   let contentType ← Prog.effect "contentTypeForPath" [get ticket "path"]
   let now ← Prog.effect "Date.now"
   return Json.mkObj [("$response", Json.mkObj
-    [("status", num 200), ("headers", mediaHeaders ticket head contentType now)])]
+    [("status", num 200), ("headers", mediaHeaders ticket head contentType now),
+     ("body", bytes)])]
 
 private def namedFns (names : List (String × String)) : List (String × Json) :=
   names.map fun (key, name) => (key, fnJson name)

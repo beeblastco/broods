@@ -229,7 +229,9 @@ private def withRequestId (call : Json) : Prog Json := do
   let headers := headers.filter (fun entry => (text (Twin.arg entry 0)).toLower != "x-request-id")
   let headers := headers ++ [.arr #[toJson "x-request-id", Twin.callArg call 1]]
   let headers := headers.mergeSort (fun a b => text (Twin.arg a 0) ≤ text (Twin.arg b 0))
-  return Js.set response "$response" (Js.set data "headers" (.arr headers.toArray))
+  -- `response.body` is a stream, or null when the response has no body.
+  let body := if field data "body" == Json.null then Json.null else obj [("$opaque", toJson "ReadableStream")]
+  return Js.set response "$response" (Js.set (Js.set data "headers" (.arr headers.toArray)) "body" body)
 
 private def normalizeHeaders (call : Json) : Prog Json := do
   let value := Twin.callArg call 0
@@ -590,7 +592,9 @@ private def jsonResponse (call : Json) : Prog Json := do
     let existing := field normalized key
     normalized := Js.set normalized key (toJson (if undef existing then value else text existing ++ ", " ++ value))
   return obj [("$response", obj [("status", status), ("headers", .arr
-    ((Js.entries normalized).map fun (key, value) => .arr #[toJson key, value]).toArray)])]
+    ((Js.entries normalized).map fun (key, value) => .arr #[toJson key, value]).toArray),
+    ("body", if undef (Twin.callArg call 0) then obj [("$undefined", .bool true)]
+      else toJson (Twin.jsonStringify 64 (Twin.callArg call 0)))])]
 
 private def jsonError (call : Json) : Prog Json := do
   let init := if undef (Twin.callArg call 2) then obj [] else Twin.callArg call 2

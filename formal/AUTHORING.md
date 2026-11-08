@@ -1,7 +1,8 @@
 # Writing and extending the Broods Lean specification
 
 Follow this for a new subsystem and for any feature that changes one. `Spec/Workers/` and
-`replay/workers.test.ts` are the worked example: read them first and copy their shape.
+`replay/workers.test.ts` are the worked example of a model with replay. `Spec/Agent/Twins/Continuation.lean`
+is the worked example of a traced twin. Read them first and copy their shape.
 
 ## What a subsystem consists of
 
@@ -39,6 +40,7 @@ to cover a lot of logic, and the same calls can later grade a port.
   `gaps` on the twin to the `GAPS.md` id.
 - First run `bun formal/scripts/conform.ts --all` once: recordings are not committed, so a fresh checkout has none and every twin comes back UNCHECKED. It takes about 15 minutes.
 - A function no test reaches needs a test first. Put it in `replay/extra/<workspace>/` and record it with `conform.ts --record-extra=<workspace>`. Assert real behaviour there: these tests are also what the twin is graded on.
+- Register a twin by adding it to its file's list and importing that file from `Spec/<Sub>/Twins.lean`. `Wave*` files are batches of twins from earlier work: a new file can have any name. `bun formal/scripts/worklist.ts` lists what to do next, callees first, so a twin's dependencies earn credit before it does.
 - Then check with `bun formal/scripts/conform.ts --reuse --sub=<sub>`, which rebuilds the twins itself. If it prints STALE, source or tooling changed since recording, so it writes no results: run `--all` again.
 - A twin's coverage credit lands only after a full `conform.ts --all` or `--reuse` followed by `bun formal/scripts/check.ts`.
 - `bun formal/scripts/twin-controls.ts` must stay green: it damages recordings and injects source
@@ -158,7 +160,9 @@ than one marked `open`.
 
 From `formal/`: `lake build Spec.<Sub>.All` builds one subsystem. `lake build` builds everything.
 From the repository root: `bun test formal/replay/<sub>.test.ts` runs replay, and
-`bun formal/scripts/check.ts` runs every check.
+`bun formal/scripts/check.ts` runs the audit, replay and coverage. `bun formal/scripts/conform.ts --all`
+records and compares twins, and `bun formal/scripts/twin-controls.ts` shows they can fail. Run all three
+before claiming a number.
 
 `lake` lives in `~/.elan/bin`. Add it to `PATH` first. Build only your own subsystem's target while
 others are working: Lake holds a lock on the shared build folder, so a build may wait for another.

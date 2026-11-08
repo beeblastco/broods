@@ -11,12 +11,23 @@ const TOOLING = [
   "scripts/conform.ts",
 ];
 
+const LEAN_ROOTS = [
+  "Replay.lean",
+  "Spec.lean",
+  "Audit.lean",
+  "lakefile.toml",
+  "lake-manifest.json",
+  "lean-toolchain",
+];
+
 // Hash of everything a twin result depends on: the source it describes, the Lean that describes
 // it, the recording tools, and the recording. A result under a different hash earns nothing.
 export function inputsHash(): string {
   const hash = createHash("sha256");
   hash.update(sourcesHash());
   for (const path of walk(join(FORMAL, "Spec"))) feed(hash, path);
+  for (const path of walk(join(FORMAL, "TwinMain"))) feed(hash, path);
+  for (const name of LEAN_ROOTS) feed(hash, join(FORMAL, name));
   for (const path of contractFiles()) feed(hash, path);
   for (const name of ["corpus", "traces", "captured.json"]) {
     const entry = join(FORMAL, ".lake/conform", name);

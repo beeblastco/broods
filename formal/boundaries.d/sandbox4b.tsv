@@ -19,5 +19,4 @@ external	^this\.#executor( \.release|\.acquireHarnessReservation|\.resumeHarness
 external	^\$enter:arg[34]$	Marks the recorder entering a callback this function passed; it carries no answer to trust.
 internal	apps/core/src/harness/sandbox/e2b-executor.ts#e2bSandboxApi	A dynamic import of the e2b SDK that hands back its Sandbox class unchanged, so there is no logic to twin.
 internal	apps/core/src/harness/sandbox/worker-executor.ts#serializedByReservation	Only chains the caller's callback per reservation; the answer is that callback's, which WorkerSandboxExecutor.run models.
-internal	apps/core/src/harness/sandbox/machine-executor.ts#sendFrame	The reply arrives from the socket's own message handler and depends on socket.data, which the recorder cannot read; the frame and timeout it is given are checked.
 internal	apps/core/src/harness/sandbox/utils.ts#meterEphemeralSandbox	Its mirror write never finishes inside a recording, so no recording can grade it; callers only invoke the stop function it returns.
