@@ -1,0 +1,41 @@
+kind	name	reason
+external	^new ClientError$	Constructs the error the twin then throws; the trace checks the exact message.
+external	^parseOr$	Library schema parse; the trace checks the classified error and the twin reads the fields back.
+external	^Sandbox\.get$	Vercel SDK lookup; the trace checks name and auth, and the twin reads only recorded fields.
+external	^sandbox\.(delete|snapshot)$	Vercel SDK verb on the sandbox just looked up; the twin reads the recorded status.
+external	^new (Terminate|Get|CreateMicrovmAuthToken)MicrovmCommand$	AWS SDK command constructors; the trace checks the exact input and the token goes only to send.
+external	^new CreateMicrovmAuthTokenCommand$	AWS SDK command constructor; the trace checks the exact input and the token goes only to send.
+external	^this\.#client( \.|\.)send$	AWS Lambda MicroVM transport; the trace checks which command token is sent.
+external	^new AwsS3Client$	AWS SDK constructor; the trace checks the region and the client is returned unchanged.
+external	^q$	Local alias of shellQuote whose answer is checked against the exact command.
+external	^this\.#executor\.(exec|suspend|release)$	Harness transport or executor verb; the trace checks the exact command or reservation key.
+external	^this\.#proxy\.close$	Proxy teardown with no answer used.
+external	^HarnessShellProcess\.start$	Starts the guest process; the trace checks the whole start request and the handle is returned unchanged.
+external	^Date\.now$	Host clock, used only as a cache timestamp passed on.
+external	^response\.json$	Worker response body; the twin hands it to the schema parse.
+external	^statusResult\.parse$	Schema parse of the worker status; the trace checks the body.
+external	^mapMicrovmState$	Enum map whose input the trace checks; its answer is returned unchanged.
+internal	apps/core/src/harness/sandbox/microvm-executor.ts#evictToCap	Only trims a cache and returns undefined, so no answer is taken from it.
+opaque	S3Client	AWS client token returned unchanged.
+opaque	ReadableStream	Stream token passed through unchanged.
+external	^(parseInput|disabledFeature)$	Schema parse and a one-line flag read; the trace checks the input and the twin reads back the answer.
+external	^options\.abortSignal\?\.throwIfAborted$	Host abort signal; an abort reaches the twin as this effect's throw.
+external	^this\.#executor( \.|\.)(acquireHarnessReservation|resumeHarnessReservation|release)$	Reservation verbs on the injected executor; the trace checks the full request.
+external	^new MicrovmHarnessSession$	Session constructor; the trace checks the complete options and the handle is passed on unchanged.
+external	^(readS3Text|readS3Bytes|listS3Prefix|s3ObjectExists|isMissingS3Error)$	S3 helpers; the trace checks bucket, key and access and the twin uses the recorded answer.
+external	^new Bun\.Glob$	Glob compiler; the trace checks the pattern.
+external	^matcher\.match$	Glob match; the trace checks each candidate and the twin only filters on the answer.
+external	^(getHarnessPublicUrl|requireSecretsEnv|sealMediaTicket)$	Configuration and ticket sealing; the trace checks the sealed payload and secret.
+external	^executor \.run$	Sandbox provider run; the trace checks the whole request and the result is returned unchanged.
+external	^(runSandboxOn|resolveSandboxSpecs|toErrorMessage|options\?\.onSandboxCpu)$	Traced helper or formatter; the trace checks the arguments.
+external	^(resolveWorkspace|workspaceAttachment|channelAttachmentName|contentTypeForPath|toolError|toolText)$	Tool helpers; the trace checks their inputs and passes their answers through.
+external	^(sandboxConfigs|deleteSandboxInstance|claimSandboxInstance|removeSandboxInstance|releaseOnProvider)$	Persistence and provider release; the trace checks each call and its args.
+opaque	Glob	Bun glob matcher token, used only through match.
+opaque	MicrovmHarnessSession	Session handle returned unchanged.
+opaque	CloudflareSandboxExecutor	Executor token passed only to run.
+opaque	WorkerSandboxExecutor	Executor token passed only to run.
+opaque	DaytonaSandboxExecutor	Executor token passed only to run.
+opaque	MicrovmHarnessDriver	Receiver of the traced driver methods; the twin reads only its recorded options.
+opaque	TerminateMicrovmCommand	AWS command token handed unchanged to send.
+opaque	GetMicrovmCommand	AWS command token handed unchanged to send.
+opaque	CreateMicrovmAuthTokenCommand	AWS command token handed unchanged to send.

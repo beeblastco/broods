@@ -1,0 +1,72 @@
+path	class	status	lean	replay	note
+apps/cloudflare-sandbox/scripts/deploy.ts	glue	excluded			Deployment/build wiring; no runtime decision model.
+apps/cloudflare-sandbox/src/bearer.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/cloudflare-sandbox/src/index.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/cloudflare-sandbox/src/limits.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/cloudflare-sandbox/src/terminal-token.ts	protocol	open			Whole-file model and replay not completed; no coverage claimed.
+apps/cloudflare-worker/scripts/build-runtime.ts	glue	excluded			Bundling and generated asset wiring; no runtime decision model.
+apps/cloudflare-worker/src/contract.ts	protocol	open			Whole-file model and replay not completed; no coverage claimed.
+apps/cloudflare-worker/src/index.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/cloudflare-worker/src/limits.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/cloudflare-worker/src/modules.d.ts	glue	excluded			Ambient module types only.
+apps/cloudflare-worker/src/runtime.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/cloudflare-worker/src/vfs-state.ts	protocol	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/cloudflare-executor.ts	adapter	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/daytona-executor.ts	adapter	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/e2b-executor.ts	adapter	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/harness-shell-process.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/http-executor.ts	adapter	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/index.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/instance-store.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/jobs.ts	decision	open	Spec.Sandbox.jobStep; Spec.Sandbox.background_no_uniform_cap	formal/replay/sandbox.test.ts	Racing admission model and arbitrary-N proof; script ordering replayed; lifecycle scripts, callbacks and job-status full protocol remain open.
+apps/core/src/harness/sandbox/live-status.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/machine-executor.ts	decision	open	Spec.Sandbox.acceptsHello	formal/replay/sandbox.test.ts	All 64 hello exclusion/reclaim/force combinations replayed; stage, credentials, heartbeat and pending wire-roundtrip lifecycle remain open.
+apps/core/src/harness/sandbox/microvm-executor.ts	adapter	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/microvm-harness-driver.ts	adapter	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/microvm-snapshot.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/microvm-websocket-proxy.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/platform-worker.ts	decision	open	Spec.Sandbox.instanceStep	formal/replay/sandbox.test.ts	Cached physical-id release race proved and replayed (G401); full reserve/claim/transport model open.
+apps/core/src/harness/sandbox/s3-mount.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/types.ts	glue	excluded			Executor and request/result types only; external provider isolation is A5.
+apps/core/src/harness/sandbox/utils.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/vercel-executor.ts	adapter	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/workdir-executor.ts	adapter	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/workdir-harness-driver.ts	adapter	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/sandbox/worker-executor.ts	adapter	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/ask-questions.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/async-status.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/bash.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/browse.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/channel.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/computer.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/edit.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/file-operation.ts	protocol	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/filesystem-utils.ts	decision	open	Spec.Sandbox.lexicalPath; Spec.Sandbox.select; Spec.Sandbox.tool_attachment	formal/replay/sandbox.test.ts	Lexical path and computer selection kernels replayed; remaining helpers, approval inputs, and full attachment/account composition open (L400,L403).
+apps/core/src/harness/tools/glob.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/grep.tool.ts	decision	open		formal/replay/sandbox.test.ts	G402 offline test.failing confirms unchecked glob-derived fallback root; full search behavior unmodelled.
+apps/core/src/harness/tools/index.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/load-skill.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/memory.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/message-agents.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/provider-tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/read.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/run-subagent.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/sandbox-stand-in.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/schedule.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/stop-subagent.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/utils.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/harness/tools/write.tool.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/shared/convex/sandbox-audit-events.ts	glue	excluded			Best-effort audit formatting and forwarding; outside the abstract cleanup observation.
+apps/core/src/shared/convex/sandbox-instances.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/shared/convex/sandbox-snapshots.ts	glue	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/shared/machine-socket.ts	protocol	open	Spec.Sandbox.acceptsHello		Directed actual-parser round trips tested; Lean wire codec, all validator branches and Unicode holder truncation open.
+apps/core/src/shared/s3.ts	adapter	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/shared/sandbox-cleanup.ts	decision	open	Spec.Sandbox.cleanupSystem		Conditional single-reservation progress and declared-outcome privacy proved; provider candidates, retries and concurrent transitions open (L402).
+apps/core/src/shared/sandbox-sizes.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/shared/sandbox-snapshot-builds.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+apps/core/src/shared/sandbox-sweeper.ts	decision	open	Spec.Sandbox.cleanupSystem		Single-reservation abstract sweep only; lease/pages/deferral/clock completeness open.
+apps/core/src/shared/workspaces.ts	decision	open			Account-scoped loading and reservation key preimages read; full resolver and isolation model/proofs remain open (L403,L404).
+packages/convex/model/sandboxProviders.ts	decision	replayed	Spec.Sandbox.providers; capabilities; holdsWorkspace	formal/replay/sandbox.test.ts	All providers and all boolean workspace capability combinations; constants compared as sets.
+packages/convex/model/sandboxRules.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+packages/convex/model/workspaceIsolation.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.
+packages/convex/model/workspaceRules.ts	decision	open			Whole-file model and replay not completed; no coverage claimed.

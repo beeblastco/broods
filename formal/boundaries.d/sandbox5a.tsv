@@ -1,0 +1,18 @@
+kind	name	reason
+external	^storage\.sandboxConfigs \.getById$	Convex owns sandbox records; replay checks the account and sandbox ids and the twin validates the row it gets back.
+external	^storage\.workspaceConfigs\.getById$	Convex owns workspace records; replay checks the account and workspace ids and the twin validates the row it gets back.
+external	^new Daytona$	Vendor client constructor; replay checks the options it is given.
+external	^client\.create$	Daytona SDK boundary; replay checks the create options and the twin handles the answer or the failure.
+external	^sandbox\.process\.executeCommand$	Daytona SDK boundary; replay checks the command, cwd, env and timeout.
+external	^sandbox\.delete$	Daytona SDK boundary; replay checks it runs once on every exit path.
+external	^endMeter$	The stop callback returned by meterEphemeralSandbox; replay checks it runs after the delete.
+external	^new SandboxCapacityError$	Constructs the repository's own error class from the message the twin computed.
+opaque	Daytona	The vendor client is only passed along, never inspected.
+external	^stream\?\.getReader$	Web streams API; the twin only needs the reader to exist.
+external	^signal\.(add|remove)EventListener$	Web AbortSignal API; replay checks the listener is attached and removed.
+external	^reader\.read$	Web streams API; the chunks are the input the twin caps.
+external	^container\.(destroy|exec)$	Cloudflare Container binding; replay checks the arguments and the twin handles the answer.
+external	^abort\.abort$	Web AbortController; replay checks the abort happens when the shell has no stdin.
+opaque	ReadableStream	A stream is only handed to getReader, and its chunks arrive as recorded effects.
+opaque	ReadableStreamDefaultReader	The reader is only used through the recorded reader.read effect.
+opaque	Sandbox	The Durable Object instance; the twin reads only its recorded container and booting fields.

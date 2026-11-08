@@ -1,0 +1,46 @@
+kind	name	reason
+external	^(res\.body\.getReader|reader\.(read|cancel|releaseLock)|stream\.getReader|res\.body\?\.cancel)$	WHATWG stream operations provide ordered byte chunks and cancellation; twins compute the bounds and decoded output.
+external	^runtime\.query$	Convex query supplies persisted orphan pages; the twin checks query arguments and pagination.
+external	^(new GetMicrovmImageCommand|new GetMicrovmCommand|new CreateMicrovmShellAuthTokenCommand|this\.#client\.send|client\.send)$	AWS SDK constructors and transport supply service responses; twins check identifiers and derive states and credentials.
+opaque	MicrovmSandboxExecutor	Private client is used only through checked AWS command and send effects.
+external	^optionalEnv$	Reads the operator environment; the twin checks the variable name and computes the ARN.
+external	^runtime \.mutate$	Convex mutation persists deferral; the twin checks the mapped reservation identities and handles failure.
+external	^socket\.send$	Bun websocket sends supplied bytes; the twin checks the payload.
+opaque	ServerWebSocket	Only the checked send method is used; no hidden fields determine the payload.
+external	^(gzipSync|new InMemoryFs)$	Node gzip and just-bash filesystem construction are library contracts with checked inputs.
+opaque	ir	Minified just-bash filesystem instance is returned unchanged from its checked constructor.
+external	^sandbox\.process\.executeCommand$	Daytona process execution returns exit status and text; the twin derives the setup failure from them.
+external	^runtime\.mutate$	Convex deletion compares the requested reservation identity; the twin checks every supplied argument.
+external	^crypto\.subtle\.(importKey|sign)$	WebCrypto HMAC-SHA256 is trusted cryptography; the twin checks key import and domain-separated message bytes.
+opaque	CryptoKey	WebCrypto owns key material; the twin passes the imported key unchanged to the checked signing call.
+external	^Date\.now$	Wall clock is an explicit input; the twin computes elapsed time from that answer.
+external	^(fs \.getAllPaths|fs\.lstat|fs\.readlink|fs\.readFileBuffer)$	just-bash filesystem reads supply paths, stats and bytes; the twin computes filtering, order and the packed layout.
+external	^(new DataView|new DataView\(packed\.buffer\)\.setUint32)$	Standard typed-array view; the twin checks the buffer size and the header length written.
+external	^(createHash|createHash\("sha256"\) \.update|createHash\("sha256"\) \.update\(title, "utf8"\) \.digest)$	Node SHA-256 is trusted cryptography; the twin checks algorithm, input and encoding and truncates the digest.
+external	^EXECUTORS\[config\.provider\]$	Provider constructor from a closed table; the twin checks the provider key and passes the config unchanged.
+external	^setTimeout$	Runtime timer; the twin checks the delay and the resolve callback.
+opaque	Timeout	Node timer handle is discarded by the caller.
+opaque	Hash	Node hash object is only chained through checked update and digest calls.
+opaque	DataView	Standard typed-array view created over the checked buffer and used only for the checked setUint32.
+opaque	CloudflareSandboxExecutor	Returned unchanged from the checked provider constructor; the twin reads no field of it.
+opaque	DaytonaSandboxExecutor	Returned unchanged from the checked provider constructor; the twin reads no field of it.
+opaque	HttpSandboxExecutor	Returned unchanged from the checked provider constructor; the twin reads no field of it.
+opaque	E2BSandboxExecutor	Returned unchanged from the checked provider constructor; the twin reads no field of it.
+opaque	MachineSandboxExecutor	Returned unchanged from the checked provider constructor; the twin reads no field of it.
+opaque	VercelSandboxExecutor	Returned unchanged from the checked provider constructor; the twin reads no field of it.
+opaque	WorkerSandboxExecutor	Returned unchanged from the checked provider constructor; the twin reads no field of it.
+opaque	WorkdirSandboxExecutor	Returned unchanged from the checked provider constructor; the twin reads no field of it.
+opaque	MicrovmHarnessSession	The twin only observes that no probe is sent; no field decides the result.
+opaque	WorkdirHarnessSession	The twin only observes that no probe is sent; no field decides the result.
+opaque	ZodMiniObject	Schema object passed unchanged to the separately twinned parseOr.
+opaque	ZodMiniRecord	Schema object passed unchanged to the separately twinned parseOr.
+opaque	ZodMiniCustom	Schema object passed unchanged to the separately twinned parseOr.
+external	^factory$	Provider SDK tool factory; the twin checks it is called with an empty object and reads only type and id.
+external	^crypto\.subtle\.digest$	WebCrypto SHA-256 is trusted cryptography; the twin checks algorithm and input bytes.
+external	^executor\.exec$	Shell execution in the sandbox; the twin checks the exact command and parses exit code and output.
+external	^executor\.(run\.bind|runBackground\?\.bind|resume\?\.bind|postReserved\?\.bind|prewarm\?\.bind)$	Function.prototype.bind on the checked executor; the bound wrappers run later and are outside this call.
+internal	apps/core/src/harness/sandbox/live-status.ts#sandboxNeighbours	Its answer depends on the module-level occupant map, which no recording exposes, so no twin of it can exist.
+internal	apps/core/src/shared/convex/client.ts#adminMutation	Convex admin transport; the twin checks the payload and ignores the outcome because the mirror write is best effort.
+external	^new Client$	Workdir SDK client constructor; the twin checks the URL and key and returns it unchanged.
+opaque	Client	Workdir SDK client is returned unchanged from its checked constructor.
+external	^channel\.(transformText|actions\.sendQuestions|actions\.sendText)$	Channel adapter callbacks; the twin checks the text and question payload and handles the blocked result.

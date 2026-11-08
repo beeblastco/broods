@@ -1,0 +1,53 @@
+kind	name	reason
+external	^runtime\.(query|mutate)$	Convex validates and executes named backend operations; the twin checks the operation and all arguments before using the recorded response.
+external	^getHarnessPublicUrl$	Environment configuration supplies the public origin; the twin computes the run URL from that origin and the input identifier.
+external	^new ConvexHttpClient$	The Convex SDK constructor supplies the client instance; configuration and subsequent authentication arguments are checked by the twin.
+external	^\(client as unknown as \{ setAdminAuth\(key: string\): void \}\)\.setAdminAuth$	The Convex SDK accepts the deployment credential; the twin verifies the input credential passed to this method.
+external	^Date\.now$	The system clock supplies the current time; expiry arithmetic is computed by the twin.
+external	^resumeConversation$	The injected continuation callback owns admission; the twin validates the row passed in and computes handback handling from its answer.
+external	^run\.pendingWork$	The caller supplies current pending work; the twin computes its priority after approvals and questions.
+external	^context\?\.yieldSlot$	The injected scheduling callback controls the worker slot; the twin checks the lease passed to it before reloading the turn.
+opaque	ConvexHttpClient	The SDK owns transport and authentication state; twins check constructor and method arguments and use instance identity only.
+external	^crypto\.subtle\.digest$	Web Crypto computes SHA-256; the twin checks the UTF-8 input bytes and computes hexadecimal from the digest bytes.
+external	^jetstreamManagers\.(get|set|delete)$	JavaScript WeakMap methods supply cache reads and writes; the twin checks cache keys, concurrent manager creation and promise insertion.
+external	^connection\.jetstreamManager$	The NATS SDK supplies a manager with its documented checkAPI option; the twin checks that probe suppression and cache behavior.
+opaque	Promise	A promise is an identity token for an in-flight SDK request; its fulfilled value comes only from the checked effect outcome.
+opaque	WeakMap	JavaScript owns weak-reference storage; twins check method names and keys rather than inspect its storage.
+external	^requireSecretsEnv$	Operator configuration supplies the account encryption secrets; the twin checks the exact environment variable name.
+external	^new AccountCipher$	The account encryption implementation owns authenticated encryption and key unwrapping; the twin checks tenant, key list, secrets and primitive wiring.
+opaque	AccountCipher	The envelope implementation verifies tenant-scoped encryption; the wrapper twin checks construction and decrypt arguments and rejection of empty results.
+external	^new Date$	The system clock supplies the current epoch milliseconds; explicit UTC ISO timestamps are computed from the input by the twin.
+external	^acceptIngress$	Ingress admission is decided by the Convex mutation; the twin checks the whole candidate and only branches on the returned outcome and owner generation.
+external	^collectSecretValues$	The secret collector walks the configuration it is given; the twin checks exactly which configuration values are passed in.
+external	^(consumer\.consume|js\.consumers\.get|options\.connection\.jetstream)$	The NATS client builds consumers; the twin checks the stream name, subject filter and start policy.
+external	^jsm\.streams\.(info|getMessage)$	The NATS server reports stream state; the twin checks the subject filter and computes the snapshot from the answer.
+external	^createAgentHookDispatcher$	The hook dispatcher is built from checked account and agent config and is passed through unread.
+external	^crons\.(completeRun|failRun)$	The storage adapter writes the cron run row; the twin checks ids and the settled result.
+external	^getStorage\(\)( )?\.crons\.(remove|createRun)$	The storage adapter writes cron rows; the twin checks account, cron and run identifiers.
+external	^(getStorage\(\)|storage)\.agents\.getById$	The storage adapter reads the agent row by checked account and agent id; absence is handled by the twin.
+external	^getStorage\(\)\.agentDeployments\.getByAgentId$	The storage adapter reads the deployment row by checked ids; the twin copies only its stage fields.
+external	^storage\.channelRecords\.getById$	The storage adapter reads the channel record by checked ids; the twin evaluates its status and binding.
+external	^getStorage\(\)\.connections\.(load|saveRefreshed)$	The storage adapter owns the compare-and-swap on the connection row; the twin checks arguments and handles both answers.
+external	^(dispatchNext|full)$	A caller-supplied callback; the twin checks when it runs and handles its answer.
+external	^finishedBefore$	The window callback comes from lostResultWindows; the twin checks the handback it is asked about.
+external	^getFunctionName$	The Convex SDK reads a function reference name; the twin passes it unchanged to makeFunctionReference.
+external	^makeFunctionReference$	The Convex SDK builds a reference from a checked name.
+external	^getConvexClient\(\)\.(query|mutation)$	The Convex client performs the admin call; the twin checks the reference, arguments and options.
+external	^listOwedAsyncToolResults$	Convex pages the owed result rows; the twin checks each filter and follows the returned cursor.
+external	^markAsyncToolHandback$	Convex records the hand-back; the twin checks the result id and the stored state.
+external	^new Session$	The Session constructor stores the options it is given; the twin checks every option.
+external	^options\.(consumeStream|onQuestionsPending)$	A callback supplied by the caller; the twin checks its arguments and timing.
+external	^queuePlace\.run$	AsyncLocalStorage runs the callback with the held place; the twin checks the place and returns the callback answer.
+external	^(redactWithRunSecrets|runSecretValues)$	The log redactor scrubs known secret strings; the twin checks what is scrubbed and with which secrets.
+external	^toErrorMessage$	Formats a caught value for a message; the twin checks the error it is given.
+external	^runAgentLoop$	The model loop is the boundary of this function; the twin checks session, turn, config, callbacks and options.
+external	^session\.(assertCurrentOwner|createTurnContext|releaseConversationLease|settleIngress)$	Session methods own the durable lease and turn state; the twin checks arguments, order and handles both answers.
+external	^stream\.(didFail|failureText|questionSummaries|traceId|yielded)$	Stream accessors expose the finished model pass; the twin decides what happens next from their answers.
+opaque	ReadableStreamDefaultController	The platform owns the stream controller; the twin checks the enqueued bytes and the close.
+opaque	ReadableStream	The platform owns the stream object; the twin checks its underlying source.
+opaque	Session	The session is an identity handle here; twins read only its recorded scalar fields and check its method calls.
+opaque	SubagentCoordinator	The coordinator is an identity handle here; twins check the methods called on it.
+internal	apps/core/src/harness/ingress.ts#trackOwner	Only adds to the in-memory lease map, which recordings do not capture, so no twin can observe it; callers are checked to call it with the right lease.
+internal	apps/core/src/harness/ingress.ts#forgetOwner	Only removes from the in-memory lease map, which recordings do not capture; callers are checked to call it with the right lease.
+external	^(new ReadableStream|controller\.(enqueue|close))$	The platform owns the response stream; the twin checks the underlying source, the exact enqueued bytes and the close.
+external	^getStorage\(\)\.crons\.(failRun|markFailed)$	The storage adapter writes the cron failure; the twin checks account, cron and run identifiers and the message.

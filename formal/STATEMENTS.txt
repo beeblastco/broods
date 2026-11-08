@@ -1,0 +1,684 @@
+Spec.Access.api_deny_overrides
+  ∀ (p s : Option String) (rs : List Spec.Access.ApiRule) (a : String) (r : Spec.Access.ApiResource),
+  (rs.any fun rule => rule.deny && Spec.Access.ruleMatches a r rule) = true → Spec.Access.authorize p s rs a r = false
+
+Spec.Access.first_match_deterministic
+  ∀ (m p : String) (other : Option Spec.Access.Route),
+  Spec.Access.FirstResult (Spec.Access.routeMatches m.toUpper p) Spec.Access.routeOrder other →
+    other = Spec.Access.resolveRoute m p
+
+Spec.Access.first_match_order
+  ∀ (m p : String),
+  Spec.Access.FirstResult (Spec.Access.routeMatches m.toUpper p) Spec.Access.routeOrder (Spec.Access.resolveRoute m p)
+
+Spec.Access.first_match_unique
+  ∀ (m p : String),
+  ∃ r, Spec.Access.resolveRoute m p = r ∧ ∀ (s : Option Spec.Access.Route), Spec.Access.resolveRoute m p = s → s = r
+
+Spec.Access.gateway_refuses_service
+  ∀ (c : Spec.Access.Credential) (r : Spec.Access.Request),
+  c.kind = Spec.Access.Kind.service → r.viaGateway = true → Spec.Access.resolve c r = none
+
+Spec.Access.resolved_credential_tenant
+  ∀ (c : Spec.Access.Credential) (r : Spec.Access.Request) (a : Spec.Access.Auth),
+  Spec.Access.resolve c r = some a → Spec.Access.authAccount a = none ∨ Spec.Access.authAccount a = some c.account
+
+Spec.Access.resolved_tenant_account
+  ∀ (c : Spec.Access.Credential) (r : Spec.Access.Request) (a : Spec.Access.Auth) (id : Nat),
+  Spec.Access.resolve c r = some a → Spec.Access.authAccount a = some id → id = c.account
+
+Spec.Access.secret_routes_exact
+  ∀ (r : Spec.Access.Route),
+  Spec.Access.secretPath r = true ↔
+    r = Spec.Access.Route.downloads ∨ r = Spec.Access.Route.secretWebhooks ∨ r = Spec.Access.Route.media
+
+Spec.Access.token_purpose_separation
+  ∀ (p : Spec.Access.Purpose) (now : Nat) (t : Spec.Access.Ticket), t.purpose ≠ p → Spec.Access.openTicket p now t = none
+
+Spec.Access.unauthenticated_private
+  Spec.Private Spec.Access.publicSystem Unit (List Spec.Access.PublicLeak) Spec.Access.PublicLeak (fun x => True)
+  (fun x x_1 => []) Spec.Access.publicLeaks fun x xs => xs
+
+Spec.Agent.child_principal_extends
+  ∀ (p : Spec.Agent.RunContext) (a : Nat) (chain : List Nat),
+  p.principal.chain = some chain →
+    (Spec.Agent.child p a).principal.account = p.principal.account ∧
+      (Spec.Agent.child p a).principal.chain = some (chain ++ [p.principal.agent])
+
+Spec.Agent.cron_children_no_schedules
+  ∀ (p : Spec.Agent.RunContext) (a : Nat) (enabled : Bool),
+  p.cron = true → Spec.Agent.scheduleTools enabled (Spec.Agent.child p a).cron = false
+
+Spec.Agent.cross_model_items_private
+  ∀ (results pending : List Nat) (xs : List Spec.Agent.Item) (x : Spec.Agent.Item),
+  x ∈ Spec.Agent.project false results pending xs →
+    x.storedId = none ∧ ∀ (n : Nat), x.part ≠ Spec.Agent.Part.reasoning n
+
+Spec.Agent.deny_dominates
+  ∀ (waiting : Bool) (i : Spec.Agent.GateInput),
+  i.policy = Spec.Agent.Verdict.deny → (Spec.Agent.gate waiting i).fst = Spec.Agent.Verdict.deny
+
+Spec.Agent.finite_run_fuel_decreases
+  ∀ (maxTurn slots steps : Nat),
+  steps < maxTurn * slots → Spec.Agent.remaining maxTurn slots (steps + 1) < Spec.Agent.remaining maxTurn slots steps
+
+Spec.Agent.finite_run_stops
+  ∀ (budget : Nat),
+  Spec.Progress (Spec.Agent.fuelSystem budget) (fun x => True) (fun n schedule => n ≤ schedule.length) (fun n => 0 < n)
+    fun n => n = 0
+
+Spec.Agent.policy_only_refuses
+  ∀ (v : Spec.Agent.Verdict) (granted : Bool), Spec.Agent.executes false v granted = false
+
+Spec.Agent.projection_calls_resolved
+  ∀ (same : Bool) (results pending : List Nat) (xs : List Spec.Agent.Item) (x : Spec.Agent.Item),
+  x ∈ Spec.Agent.project same results pending xs → Spec.Agent.resolved results pending x.part = true
+
+Spec.Agent.tool_execution_gated
+  ∀ (present granted : Bool) (v : Spec.Agent.Verdict),
+  Spec.Agent.executes present v granted = true →
+    present = true ∧ (v = Spec.Agent.Verdict.allow ∨ v = Spec.Agent.Verdict.ask ∧ granted = true)
+
+Spec.Agent.tool_execution_sound
+  Spec.Sound Spec.Agent.executionSystem (fun x => True) Spec.Agent.ExecutionInput Spec.Agent.executionJustified
+
+Spec.Agent.usage_recording_private
+  Spec.Private Spec.Agent.recordingSystem Nat Unit Spec.Agent.Totals (fun x => True)
+  (fun run trace => List.filter (fun e => e.fst == run) trace) (fun x => ()) fun run effects =>
+  [Spec.Agent.runUsage run effects]
+
+Spec.Agent.usage_run_local
+  ∀ (run : Nat) (a b : List Spec.Agent.RunEvent),
+  Spec.Agent.ownEvents run a = Spec.Agent.ownEvents run b → Spec.Agent.runUsage run a = Spec.Agent.runUsage run b
+
+Spec.Channels.at_most_one_cron_run
+  Spec.Always Spec.Channels.system fun s => s.fires.Nodup
+
+Spec.Channels.cron_progress
+  Spec.Progress Spec.Channels.system (fun x => True)
+  (fun x schedule => schedule = [Spec.Channels.Input.cron 1 5 true true true true]) (fun s => s.fires = []) fun s =>
+  s.fires ≠ []
+
+Spec.Channels.delivery_deduplicated
+  ∀ (s : Spec.Channels.State) (trace : List Spec.Channels.Input),
+  s.deliveries.Nodup → (Spec.Channels.system.runFrom s trace).fst.deliveries.Nodup
+
+Spec.Channels.duplicate_cron_never_runs
+  ∀ (s : Spec.Channels.State) (id time : Nat),
+  (id, time) ∈ s.fires →
+    ∀ (ex ac ad st : Bool), (Spec.Channels.step s (Spec.Channels.Input.cron id time ex ac ad st)).snd = []
+
+Spec.Channels.media_without_ticket_private
+  ∀ (present head : Bool) (size : Nat) (metadata body : String),
+  Spec.Channels.mediaView false present head size metadata body = (404, "", "")
+
+Spec.Channels.one_shot_cleanup_progress
+  Spec.Progress Spec.Channels.system (fun x => True)
+  (fun x schedule => schedule = [Spec.Channels.Input.finish 1 true true true true]) (fun x => True) fun s =>
+  1 ∈ s.removed
+
+Spec.Channels.one_shot_removal_attempted
+  ∀ (s : Spec.Channels.State) (id : Nat) (ok : Bool),
+  Spec.Channels.Effect.removeAttempt id ∈ (Spec.Channels.step s (Spec.Channels.Input.finish id true true true ok)).snd
+
+Spec.Channels.one_shot_removed
+  ∀ (s : Spec.Channels.State) (id : Nat),
+  Spec.Channels.Effect.removed id ∈ (Spec.Channels.step s (Spec.Channels.Input.finish id true true true true)).snd
+
+Spec.Channels.record_never_grants_tools
+  ∀ (a r : List Nat) (x : Nat), x ∈ Spec.Channels.allowedTools a r → x ∈ a
+
+Spec.Channels.record_never_grants_workspaces
+  ∀ (a r : List Nat) (x : Nat), x ∈ Spec.Channels.selectRefs a r → x ∈ a
+
+Spec.Channels.replies_stay_in_conversation
+  ∀ (s : Spec.Channels.Source) (t : Bool), Spec.Channels.SameConversation s (Spec.Channels.reply s t) t
+
+Spec.Channels.schedule_calendar_roundtrip
+  ∀ (d : Spec.Channels.Calendar),
+  Spec.Channels.validDate d = true → Spec.Channels.parseDate (Spec.Channels.dateWire d) = some d
+
+Spec.Channels.schedule_rejects_invalid_dates
+  ∀ (d : Spec.Channels.Calendar),
+  Spec.Channels.validDate d = false → Spec.Channels.parseDate (Spec.Channels.dateWire d) = none
+
+Spec.Channels.unsigned_webhook_privacy
+  Spec.Private Spec.Channels.probeSystem Unit (List Nat) Nat (fun x => True) (fun x x_1 => []) Spec.Channels.probeLeak
+  fun x es => es
+
+Spec.Channels.unverified_never_runs
+  ∀ (s : Spec.Channels.State) (d : Spec.Channels.Delivery),
+  d.verified = false → (Spec.Channels.step s (Spec.Channels.Input.webhook d)).snd = []
+
+Spec.Config.accepted_url_public_https
+  ∀ {p h : String},
+  Spec.Config.publicHttpsProblem (some (p, h)) = none → p = "https:" ∧ Spec.Config.privateHostname h = false
+
+Spec.Config.codec_fragment_roundtrip
+  ∀ (v : Spec.Config.AgentFragment), Spec.Config.decodeFragment (Spec.Config.encodeFragment v) = v
+
+Spec.Config.normalisation_fixed
+  ∀ (s : String), s.trimAscii.toString = s → Spec.Config.canonicalBase none (some s) = (none, some s)
+
+Spec.Config.placeholders_intact
+  ∀ (v : String) (a b : List (String × String)), Spec.Config.normaliseCredential v a = Spec.Config.normaliseCredential v b
+
+Spec.Config.rejection_message_stable
+  ∀ (status : Int) (message : String) (code param : Option String),
+  (Spec.Config.apiError status message code param).get "error" =
+    some
+      (Spec.Config.Value.obj
+        ([("message", Spec.Config.Value.str message),
+            ("type", Spec.Config.Value.str (Spec.Config.apiStatus status).snd),
+            ("code", Spec.Config.Value.str (code.getD (Spec.Config.apiStatus status).fst))] ++
+          List.map (fun p => ("param", Spec.Config.Value.str p)) param.toList))
+
+Spec.Hosted.every_request_one_outcome
+  ∀ (ids : List String) (s : Spec.Hosted.Collection),
+  (Spec.Hosted.settle ids s).length = ids.length ∧ List.map Prod.fst (Spec.Hosted.settle ids s) = ids
+
+Spec.Hosted.frames_chunk_independent
+  ∀ (a b : List (List Char)), a.flatten = b.flatten → Spec.Hosted.parseChunks a = Spec.Hosted.parseChunks b
+
+Spec.Hosted.pool_acquisition_progress
+  ∀ (tenants : List String) (now : Nat) (tenant : String),
+  Spec.Hosted.chooseWorker
+        [Spec.Hosted.workerStep { phase := Spec.Hosted.WorkerPhase.busy, tenants := tenants }
+            (Spec.Hosted.PoolEvent.release tenant now)]
+        tenant =
+      some 0 ∧
+    (Spec.Hosted.workerStep
+          (Spec.Hosted.workerStep { phase := Spec.Hosted.WorkerPhase.busy, tenants := tenants }
+            (Spec.Hosted.PoolEvent.release tenant now))
+          Spec.Hosted.PoolEvent.acquire).phase =
+      Spec.Hosted.WorkerPhase.busy
+
+Spec.Hosted.semantic_retry_bounded
+  ∀ (e r a : Bool) (n : Nat), Spec.Hosted.semanticRetry e r a n = true → n ≤ 3
+
+Spec.Hosted.tenant_child_loader_keys_separate
+  ∀ (a b : Spec.Hosted.TenantKey),
+  a.tenant ≠ b.tenant → a.digest.length = b.digest.length → Spec.Hosted.loaderKey a ≠ Spec.Hosted.loaderKey b
+
+Spec.Hosted.tenant_isolates_separate
+  ∀ (a b : Spec.Hosted.TenantKey), a.tenant ≠ b.tenant → a ≠ b
+
+Spec.Hosted.tenant_observation_private
+  ∀ (a b : Spec.Hosted.World), a.visible = b.visible → Spec.Hosted.observe a = Spec.Hosted.observe b
+
+Spec.Hosted.terminal_encoder_agrees
+  ∀ (f : Spec.Hosted.Frame), Spec.Hosted.terminal f = true → Spec.Hosted.terminalPrefix (Spec.Hosted.encode f) = true
+
+Spec.Hosted.terminal_is_final
+  ∀ (ids : List String) (s : Spec.Hosted.Collection) (f : Spec.Hosted.BatchFrame),
+  s.ended = true → Spec.Hosted.collect ids s f = s
+
+Spec.Hosted.transport_never_retries_possible_execution
+  ∀ (f : Spec.Hosted.Failure), Spec.Hosted.retry f = true → Spec.Hosted.mayHaveRun f = false
+
+Spec.Hosted.worker_pin_exact
+  ∀ (now : Nat) (f : Spec.Hosted.Failure),
+  Spec.Hosted.pinUntil now f = some (now + 600000) ↔ f = Spec.Hosted.Failure.nothingRan 422
+
+Spec.Runs.conversations_private
+  Spec.Private Spec.Runs.worldSystem Nat Unit Spec.Runs.Effect (fun x => True)
+  (fun p t => List.filter (fun i => i.conversation == p) t) (fun x => ()) Spec.Runs.observations
+
+Spec.Runs.duplicate_no_second_run
+  ∀ (s : Spec.Runs.State) (r old : Spec.Runs.Row) (now ttl : Nat),
+  List.find? (fun x => x.key == r.key) s.rows = some old → (Spec.Runs.step s (Spec.Runs.Input.accept r now ttl)).fst = s
+
+Spec.Runs.finished_async_requires_tied_continuation
+  ∀ (run : Nat) (continuation : Option Nat), Spec.Runs.asyncWrite true run continuation = true ↔ continuation = some run
+
+Spec.Runs.maintenance_records_not_lost
+  ∀ (s : Spec.Runs.State) (now : Nat),
+  List.map (fun x => x.key) (Spec.Runs.maintain s now).rows = List.map (fun x => x.key) s.rows
+
+Spec.Runs.owner_exclusive
+  ∀ (s : Spec.Runs.State) (a b : Spec.Runs.Owner) (now : Nat),
+  Spec.Runs.fence s a now = true → Spec.Runs.fence s b now = true → a = b
+
+Spec.Runs.queue_fifo_head
+  ∀ (s : Spec.Runs.State) (now ttl : Nat) (r : Spec.Runs.Row) (rest : List Spec.Runs.Row),
+  Spec.Runs.queued s = r :: rest →
+    ∃ tail, (Spec.Runs.promote s now ttl).snd = [Spec.Runs.Effect.applied (r.event :: tail)]
+
+Spec.Runs.queued_cannot_expire_behind_owner
+  ∀ (s : Spec.Runs.State) (now : Nat) (r : Spec.Runs.Row),
+  Spec.Runs.active s now = true → r.phase = Spec.Runs.Phase.queued → Spec.Runs.maintainRow s now r = r
+
+Spec.Runs.recovery_before_queue_expiry
+  ∀ (s : Spec.Runs.State) (now : Nat) (r : Spec.Runs.Row),
+  s.recoveryOffered = false → r.phase = Spec.Runs.Phase.queued → Spec.Runs.maintainRow s now r = r
+
+Spec.Runs.stale_owner_cannot_write
+  ∀ (s : Spec.Runs.State) (o : Spec.Runs.Owner) (now ttl sender : Nat) (claim : Bool),
+  Spec.Runs.fence s o now = false → (Spec.Runs.step s (Spec.Runs.Input.stepBoundary o now ttl claim sender)).fst = s
+
+Spec.Runtime.Config.lookup.eq_1
+  ∀ (cfg : Spec.Runtime.Config) (account : Spec.Runtime.AccountId) (agent : Spec.Runtime.AgentId),
+  cfg.lookup account agent = List.find? (fun entry => entry.account == account && entry.agent == agent) cfg
+
+Spec.Runtime.admit.eq_1
+  ∀ (s : Spec.Runtime.AccountState) (run : Spec.Runtime.Run) (account : Spec.Runtime.AccountId),
+  Spec.Runtime.admit s run account =
+    if Spec.Runtime.busy s.runs run.conversation = true then
+      ({
+          runs :=
+            s.runs ++
+              [{ id := run.id, root := run.root, context := run.context, conversation := run.conversation,
+                  tools := run.tools, sandboxes := run.sandboxes, status := Spec.Runtime.Status.queued }],
+          log := s.log },
+        [Spec.Runtime.Effect.queued account run.id run.root])
+    else
+      ({
+          runs :=
+            s.runs ++
+              [{ id := run.id, root := run.root, context := run.context, conversation := run.conversation,
+                  tools := run.tools, sandboxes := run.sandboxes, status := Spec.Runtime.Status.running }],
+          log := s.log },
+        [Spec.Runtime.Effect.started account run.id run.root])
+
+Spec.Runtime.appendCongr
+  ∀ {x x' y y' : List Spec.Runtime.Effect}, x = x' → y = y' → x ++ y = x' ++ y'
+
+Spec.Runtime.conversation_exclusive
+  ∀ (cfg : Spec.Runtime.Config),
+  Spec.Always (Spec.Runtime.system cfg) fun w =>
+    ∀ (a : Spec.Runtime.AccountId) (x : Spec.Runtime.Run),
+      x ∈ (w a).runs →
+        ∀ (y : Spec.Runtime.Run),
+          y ∈ (w a).runs →
+            x.status = Spec.Runtime.Status.running →
+              y.status = Spec.Runtime.Status.running → x.conversation = y.conversation → x = y
+
+Spec.Runtime.effect_account
+  ∀ (cfg : Spec.Runtime.Config) (s : Spec.Runtime.AccountState) (i : Spec.Runtime.Input) (e : Spec.Runtime.Effect),
+  e ∈ (Spec.Runtime.accountStep cfg s i).snd → e.account = i.account
+
+Spec.Runtime.effect_of_step
+  ∀ (cfg : Spec.Runtime.Config) (s : Spec.Runtime.AccountState) (i : Spec.Runtime.Input) (e : Spec.Runtime.Effect),
+  Spec.Runtime.Inv cfg i.account s.log s.runs →
+    e ∈ (Spec.Runtime.accountStep cfg s i).snd →
+      e.account = i.account ∧ ∃ w, w ∈ i :: s.log ∧ Spec.Runtime.Authorizes w e.account e.root
+
+Spec.Runtime.emptyWorld.eq_1
+  ∀ (x : Spec.Runtime.AccountId), Spec.Runtime.emptyWorld x = { runs := [], log := [] }
+
+Spec.Runtime.inductive_world
+  ∀ (cfg : Spec.Runtime.Config), Spec.Inductive (Spec.Runtime.system cfg) (Spec.Runtime.WorldInv cfg)
+
+Spec.Runtime.liveRun.eq_1
+  ∀ (runs : List Spec.Runtime.Run) (id : Spec.Runtime.RunId),
+  Spec.Runtime.liveRun runs id = List.find? (fun r => r.id == id && r.status == Spec.Runtime.Status.running) runs
+
+Spec.Runtime.log_of_trace
+  ∀ (cfg : Spec.Runtime.Config) (a : Spec.Runtime.AccountId) (trace : List Spec.Runtime.Input) (w : Spec.Runtime.World)
+  (x : Spec.Runtime.Input), x ∈ (((Spec.Runtime.system cfg).runFrom w trace).fst a).log → x ∈ (w a).log ∨ x ∈ trace
+
+Spec.Runtime.non_vacuous
+  Spec.NonVacuous (Spec.Runtime.system [{ account := 1, agent := 2, tools := [3], sandboxes := [4] }]) (fun x => True)
+  fun e => ∃ a g r root t x, e = Spec.Runtime.Effect.toolExecuted a g r root t x
+
+Spec.Runtime.ownInputs.eq_1
+  ∀ (a : Spec.Runtime.AccountId) (trace : List Spec.Runtime.Input),
+  Spec.Runtime.ownInputs a trace = List.filter (fun i => i.account == a) trace
+
+Spec.Runtime.owner_end_hands_on
+  ∀ (cfg : Spec.Runtime.Config) (s : Spec.Runtime.AccountState) (run n : Spec.Runtime.Run) (a : Spec.Runtime.AccountId)
+  (st : Spec.Runtime.Status),
+  Spec.Runtime.nextQueued (Spec.Runtime.setStatus s.runs run.id st) run.conversation = some n →
+    { id := n.id, root := n.root, context := n.context, conversation := n.conversation, tools := n.tools,
+        sandboxes := n.sandboxes, status := Spec.Runtime.Status.running } ∈
+      (Spec.Runtime.endRun s a run st).fst.runs
+
+Spec.Runtime.queue_never_stranded
+  ∀ (cfg : Spec.Runtime.Config),
+  Spec.Always (Spec.Runtime.system cfg) fun w =>
+    ∀ (a : Spec.Runtime.AccountId) (r : Spec.Runtime.Run),
+      r ∈ (w a).runs →
+        r.status = Spec.Runtime.Status.queued →
+          ∃ o, o ∈ (w a).runs ∧ o.status = Spec.Runtime.Status.running ∧ o.conversation = r.conversation
+
+Spec.Runtime.rootRun.eq_1
+  ∀ (account : Spec.Runtime.AccountId) (agent : Spec.Runtime.AgentId) (conversation : Spec.Runtime.Conversation)
+  (id : Spec.Runtime.RunId) (tools : List Spec.Runtime.ToolId) (sandboxes : List Spec.Runtime.SandboxId),
+  Spec.Runtime.rootRun account agent conversation id tools sandboxes =
+    { id := id, root := id,
+      context :=
+        { principal := { account := account, agent := agent, chain := some [] }, cron := false, delivery := 0,
+          credential := 0, userConversation := 0 },
+      conversation := conversation, tools := tools, sandboxes := sandboxes, status := Spec.Runtime.Status.queued }
+
+Spec.Runtime.run_is_local
+  ∀ (cfg : Spec.Runtime.Config) (a : Spec.Runtime.AccountId) (trace : List Spec.Runtime.Input) (w : Spec.Runtime.World),
+  ((Spec.Runtime.system cfg).runFrom w trace).fst a =
+      (Spec.Runtime.localRun cfg (w a) (Spec.Runtime.ownInputs a trace)).fst ∧
+    Spec.Runtime.viewOf a ((Spec.Runtime.system cfg).runFrom w trace).snd =
+      (Spec.Runtime.localRun cfg (w a) (Spec.Runtime.ownInputs a trace)).snd
+
+Spec.Runtime.served_request_starts
+  ∀ (cfg : Spec.Runtime.Config) (s : Spec.Runtime.AccountState) (c : Spec.Access.Credential) (r : Spec.Access.Request)
+  (ag : Spec.Runtime.AgentId) (conv : Spec.Runtime.Conversation) (id : Spec.Runtime.RunId) (auth : Spec.Access.Auth)
+  (entry : Spec.Runtime.AgentConfig),
+  Spec.Access.resolve c r = some auth →
+    Spec.Access.authAccount auth = some c.account →
+      conv.account = c.account →
+        conv.agent = ag →
+          cfg.lookup c.account ag = some entry →
+            Spec.Runtime.fresh s.runs id = true →
+              Spec.Runtime.busy s.runs conv = false →
+                Spec.Runtime.Effect.started c.account id id ∈
+                  (Spec.Runtime.accountStep cfg s (Spec.Runtime.Input.request c r ag conv id true)).snd
+
+Spec.Runtime.sound
+  ∀ (cfg : Spec.Runtime.Config),
+  Spec.Sound (Spec.Runtime.system cfg) (fun x => True) Spec.Runtime.Input fun w e =>
+    Spec.Runtime.Authorizes w (Spec.Runtime.Effect.account e) (Spec.Runtime.Effect.root e)
+
+Spec.Runtime.sound_effects
+  ∀ (cfg : Spec.Runtime.Config) (trace : List Spec.Runtime.Input) (i : Spec.Runtime.Input) (e : Spec.Runtime.Effect),
+  e ∈ ((Spec.Runtime.system cfg).step ((Spec.Runtime.system cfg).final trace) i).snd →
+    ∃ w, w ∈ trace ++ [i] ∧ Spec.Runtime.Authorizes w e.account e.root
+
+Spec.Runtime.step.eq_1
+  ∀ (cfg : Spec.Runtime.Config) (w : Spec.Runtime.World) (i : Spec.Runtime.Input),
+  Spec.Runtime.step cfg w i =
+    (fun a =>
+      if a = i.account then
+        have __src := (Spec.Runtime.accountStep cfg (w i.account) i).fst;
+        { runs := __src.runs, log := i :: (w i.account).log }
+      else w a,
+      (Spec.Runtime.accountStep cfg (w i.account) i).snd)
+
+Spec.Runtime.system.eq_1
+  ∀ (cfg : Spec.Runtime.Config),
+  Spec.Runtime.system cfg =
+    { State := Spec.Runtime.World, Input := Spec.Runtime.Input, Effect := Spec.Runtime.Effect,
+      init := Spec.Runtime.emptyWorld, step := Spec.Runtime.step cfg }
+
+Spec.Runtime.tenant_isolation
+  ∀ (cfg : Spec.Runtime.Config),
+  Spec.Always (Spec.Runtime.system cfg) fun w =>
+    ∀ (a : Spec.Runtime.AccountId) (r : Spec.Runtime.Run),
+      r ∈ (w a).runs →
+        r.conversation.account = a ∧
+          r.context.principal.account = a ∧
+            ∃ entry,
+              cfg.lookup a r.context.principal.agent = some entry ∧
+                (∀ (t : Spec.Runtime.ToolId), t ∈ r.tools → t ∈ entry.tools) ∧
+                  ∀ (x : Spec.Runtime.SandboxId), x ∈ r.sandboxes → x ∈ entry.sandboxes
+
+Spec.Runtime.tenant_private
+  ∀ (cfg : Spec.Runtime.Config),
+  Spec.Private (Spec.Runtime.system cfg) Spec.Runtime.AccountId Unit Spec.Runtime.Effect (fun x => True)
+    Spec.Runtime.ownInputs (fun x => ()) Spec.Runtime.viewOf
+
+Spec.Runtime.tool_call_gated
+  ∀ (cfg : Spec.Runtime.Config) (s : Spec.Runtime.AccountState) (a : Spec.Runtime.AccountId) (id : Spec.Runtime.RunId)
+  (t : Spec.Runtime.ToolId) (sb : Option Spec.Runtime.SandboxId) (g : Spec.Agent.GateInput) (waiting granted : Bool)
+  (e : Spec.Runtime.Effect),
+  e ∈ (Spec.Runtime.accountStep cfg s (Spec.Runtime.Input.toolCall a id t sb g waiting granted)).snd →
+    ∃ run,
+      run ∈ s.runs ∧
+        run.id = id ∧
+          run.status = Spec.Runtime.Status.running ∧
+            t ∈ run.tools ∧
+              Spec.Agent.executes true (Spec.Agent.gate waiting g).fst granted = true ∧
+                ∃ chosen,
+                  chosen ∈ run.sandboxes ∧
+                    e = Spec.Runtime.Effect.toolExecuted a run.context.principal.agent id run.root t chosen
+
+Spec.Runtime.viewOf_append
+  ∀ (a : Spec.Runtime.AccountId) (x y : List Spec.Runtime.Effect),
+  Spec.Runtime.viewOf a (x ++ y) = Spec.Runtime.viewOf a x ++ Spec.Runtime.viewOf a y
+
+Spec.Sandbox.background_check_bound
+  ∀ (cap : Nat) (s : Spec.Sandbox.Jobs),
+  (Spec.Sandbox.jobStep cap s Spec.Sandbox.JobInput.check).running < cap ∨
+    Spec.Sandbox.jobStep cap s Spec.Sandbox.JobInput.check = s
+
+Spec.Sandbox.background_launch_bound
+  ∀ (cap : Nat) (s : Spec.Sandbox.Jobs),
+  (Spec.Sandbox.jobStep cap s Spec.Sandbox.JobInput.launch).running +
+      (Spec.Sandbox.jobStep cap s Spec.Sandbox.JobInput.launch).admitted =
+    s.running + s.admitted
+
+Spec.Sandbox.background_no_uniform_cap
+  ∀ (n : Nat), (Spec.Sandbox.launchBurst 1 n (Spec.Sandbox.checkBurst 1 n { })).running = n
+
+Spec.Sandbox.cleanup_private
+  Spec.Private Spec.Sandbox.cleanupSystem Unit (List Bool) Bool (fun x => True) (fun x x_1 => []) Spec.Sandbox.cleanupLeak
+  fun x effects => effects
+
+Spec.Sandbox.cleanup_progress
+  Spec.Progress Spec.Sandbox.cleanupSystem (fun x => True)
+  (fun x schedule => schedule = [Spec.Sandbox.CleanupInput.sweep true true true true]) (fun s => s.row = true) fun s =>
+  s.physical = false ∧ s.mirror = false
+
+Spec.Sandbox.daemon_exclusion
+  ∀ (p i : Option String) (force : Bool),
+  Spec.Sandbox.acceptsHello true p i force = true → force = true ∨ i.isSome = true ∧ i ≠ some "" ∧ i = p
+
+Spec.Sandbox.lexical_confinement
+  ∀ (p result : String), Spec.Sandbox.lexicalPath p = some result → ¬".." ∈ Spec.Sandbox.pathParts p
+
+Spec.Sandbox.no_resurrection_without_inflight
+  ∀ (s : Spec.Sandbox.Instance),
+  s.cached = false →
+    (Spec.Sandbox.instanceStep
+          (Spec.Sandbox.instanceStep (Spec.Sandbox.instanceStep s Spec.Sandbox.InstanceInput.drop)
+            Spec.Sandbox.InstanceInput.delete)
+          Spec.Sandbox.InstanceInput.refreshReturn).returned =
+      false
+
+Spec.Sandbox.tool_attachment
+  ∀ (xs : List Nat) (r : Option Nat) (x : Nat), Spec.Sandbox.select xs r = some x → x ∈ xs
+
+Spec.Top.noStarvation
+  ∀ {L : Spec.Workers.Limits},
+  0 < L.maxSlots →
+    ∀ (r : Spec.Workers.RunId) (k : Nat),
+      Spec.Progress (Spec.Workers.system L) (fun x => True)
+        (fun s schedule => Spec.Workers.Releasing L s schedule ∧ k + 1 ≤ schedule.length)
+        (fun s => r ∈ s.pending ∧ List.idxOf r s.pending = k) fun s =>
+        ∀ (m : Nat), s.phase r ≠ Spec.Workers.Phase.waiting m
+
+Spec.Top.oneOwner
+  ∀ (cfg : Spec.Runtime.Config),
+  Spec.Always (Spec.Runtime.system cfg) fun w =>
+    ∀ (a : Spec.Runtime.AccountId) (x : Spec.Runtime.Run),
+      x ∈ (w a).runs →
+        ∀ (y : Spec.Runtime.Run),
+          y ∈ (w a).runs →
+            x.status = Spec.Runtime.Status.running →
+              y.status = Spec.Runtime.Status.running → x.conversation = y.conversation → x = y
+
+Spec.Top.queueHasOwner
+  ∀ (cfg : Spec.Runtime.Config),
+  Spec.Always (Spec.Runtime.system cfg) fun w =>
+    ∀ (a : Spec.Runtime.AccountId) (r : Spec.Runtime.Run),
+      r ∈ (w a).runs →
+        r.status = Spec.Runtime.Status.queued →
+          ∃ o, o ∈ (w a).runs ∧ o.status = Spec.Runtime.Status.running ∧ o.conversation = r.conversation
+
+Spec.Top.servedStarts
+  ∀ (cfg : Spec.Runtime.Config) (s : Spec.Runtime.AccountState) (c : Spec.Access.Credential) (r : Spec.Access.Request)
+  (ag : Spec.Runtime.AgentId) (conv : Spec.Runtime.Conversation) (id : Spec.Runtime.RunId) (auth : Spec.Access.Auth)
+  (entry : Spec.Runtime.AgentConfig),
+  Spec.Access.resolve c r = some auth →
+    Spec.Access.authAccount auth = some c.account →
+      conv.account = c.account →
+        conv.agent = ag →
+          cfg.lookup c.account ag = some entry →
+            Spec.Runtime.fresh s.runs id = true →
+              Spec.Runtime.busy s.runs conv = false →
+                Spec.Runtime.Effect.started c.account id id ∈
+                  (Spec.Runtime.accountStep cfg s (Spec.Runtime.Input.request c r ag conv id true)).snd
+
+Spec.Top.slotsBounded
+  ∀ {L : Spec.Workers.Limits}, 0 < L.maxSlots → Spec.Always (Spec.Workers.system L) fun s => s.active ≤ L.maxWorkers
+
+Spec.Top.sound
+  ∀ (cfg : Spec.Runtime.Config) (trace : List Spec.Runtime.Input) (i : Spec.Runtime.Input) (e : Spec.Runtime.Effect),
+  e ∈ ((Spec.Runtime.system cfg).step ((Spec.Runtime.system cfg).final trace) i).snd →
+    ∃ w, w ∈ trace ++ [i] ∧ Spec.Runtime.Authorizes w e.account e.root
+
+Spec.Top.tenantIsolation
+  ∀ (cfg : Spec.Runtime.Config),
+  Spec.Always (Spec.Runtime.system cfg) fun w =>
+    ∀ (a : Spec.Runtime.AccountId) (r : Spec.Runtime.Run),
+      r ∈ (w a).runs →
+        r.conversation.account = a ∧
+          r.context.principal.account = a ∧
+            ∃ entry,
+              cfg.lookup a r.context.principal.agent = some entry ∧
+                (∀ (t : Spec.Runtime.ToolId), t ∈ r.tools → t ∈ entry.tools) ∧
+                  ∀ (x : Spec.Runtime.SandboxId), x ∈ r.sandboxes → x ∈ entry.sandboxes
+
+Spec.Top.tenantPrivate
+  ∀ (cfg : Spec.Runtime.Config),
+  Spec.Private (Spec.Runtime.system cfg) Spec.Runtime.AccountId Unit Spec.Runtime.Effect (fun x => True)
+    Spec.Runtime.ownInputs (fun x => ()) Spec.Runtime.viewOf
+
+Spec.Top.toolGated
+  ∀ (cfg : Spec.Runtime.Config) (s : Spec.Runtime.AccountState) (a : Spec.Runtime.AccountId) (id : Spec.Runtime.RunId)
+  (t : Spec.Runtime.ToolId) (sb : Option Spec.Runtime.SandboxId) (g : Spec.Agent.GateInput) (waiting granted : Bool)
+  (e : Spec.Runtime.Effect),
+  e ∈ (Spec.Runtime.accountStep cfg s (Spec.Runtime.Input.toolCall a id t sb g waiting granted)).snd →
+    ∃ run,
+      run ∈ s.runs ∧
+        run.id = id ∧
+          run.status = Spec.Runtime.Status.running ∧
+            t ∈ run.tools ∧
+              Spec.Agent.executes true (Spec.Agent.gate waiting g).fst granted = true ∧
+                ∃ chosen,
+                  chosen ∈ run.sandboxes ∧
+                    e = Spec.Runtime.Effect.toolExecuted a run.context.principal.agent id run.root t chosen
+
+Spec.Workers.capacity_bounded
+  ∀ {L : Spec.Workers.Limits},
+  0 < L.maxSlots →
+    Spec.Always (Spec.Workers.system L) fun s =>
+      s.active + s.pending.length + s.held ≤ Spec.Workers.cap L + L.maxWorkers
+
+Spec.Workers.counter_exact
+  ∀ {L : Spec.Workers.Limits},
+  0 < L.maxSlots → Spec.Always (Spec.Workers.system L) fun s => s.active = s.running.length ∧ s.running.Nodup
+
+Spec.Workers.end_run_state
+  ∀ {L : Spec.Workers.Limits} {s : Spec.Workers.State} {x : Spec.Workers.RunId} {n : Nat} {i : Spec.Workers.Input},
+  s.phase x = Spec.Workers.Phase.running n →
+    i = Spec.Workers.Input.settle x ∨ i = Spec.Workers.Input.overrun x →
+      (Spec.Workers.step L s i).fst = (Spec.Workers.release s x).fst
+
+Spec.Workers.enqueue.eq_1
+  ∀ (L : Spec.Workers.Limits) (s : Spec.Workers.State) (r : Spec.Workers.RunId) (used : Nat) (loadShed : Bool),
+  Spec.Workers.enqueue L s r used loadShed =
+    if s.active < L.maxWorkers then Spec.Workers.start s r used
+    else
+      if (loadShed && Spec.Workers.full L s) = true then
+        (s.setPhase r Spec.Workers.Phase.refused, [Spec.Workers.Effect.refused r])
+      else
+        (have __src := s.setPhase r (Spec.Workers.Phase.waiting used);
+          { active := __src.active, pending := s.pending ++ [r], held := __src.held, running := __src.running,
+            places := __src.places, phase := __src.phase },
+          [])
+
+Spec.Workers.enqueue_effects
+  ∀ {L : Spec.Workers.Limits} {s : Spec.Workers.State} {r x : Spec.Workers.RunId} {used slot : Nat} {shed : Bool},
+  used < L.maxSlots →
+    Spec.Workers.Effect.started x slot ∈ (Spec.Workers.enqueue L s r used shed).snd → 1 ≤ slot ∧ slot ≤ L.maxSlots
+
+Spec.Workers.no_starvation
+  ∀ {L : Spec.Workers.Limits},
+  0 < L.maxSlots →
+    ∀ (r : Spec.Workers.RunId) (k : Nat) (schedule : List Spec.Workers.Input) (s : Spec.Workers.State),
+      Spec.Workers.Inv L s →
+        r ∈ s.pending →
+          List.idxOf r s.pending = k →
+            Spec.Workers.Releasing L s schedule →
+              k + 1 ≤ schedule.length →
+                ∀ (m : Nat), ((Spec.Workers.system L).runFrom s schedule).fst.phase r ≠ Spec.Workers.Phase.waiting m
+
+Spec.Workers.non_vacuous
+  ∀ {L : Spec.Workers.Limits},
+  0 < L.maxWorkers →
+    Spec.NonVacuous (Spec.Workers.system L) (fun x => True) fun e => ∃ r slot, e = Spec.Workers.Effect.started r slot
+
+Spec.Workers.progress
+  ∀ {L : Spec.Workers.Limits},
+  0 < L.maxSlots →
+    ∀ (r : Spec.Workers.RunId) (k : Nat),
+      Spec.Progress (Spec.Workers.system L) (fun x => True)
+        (fun s schedule => Spec.Workers.Releasing L s schedule ∧ k + 1 ≤ schedule.length)
+        (fun s => r ∈ s.pending ∧ List.idxOf r s.pending = k) fun s =>
+        ∀ (m : Nat), s.phase r ≠ Spec.Workers.Phase.waiting m
+
+Spec.Workers.release_effects
+  ∀ {L : Spec.Workers.Limits} {s : Spec.Workers.State} {r x : Spec.Workers.RunId} {slot : Nat},
+  Spec.Workers.Inv L s →
+    Spec.Workers.Effect.started x slot ∈ (Spec.Workers.release s r).snd → 1 ≤ slot ∧ slot ≤ L.maxSlots
+
+Spec.Workers.release_moves_forward
+  ∀ {L : Spec.Workers.Limits} {s : Spec.Workers.State} {x r : Spec.Workers.RunId} {n k : Nat},
+  Spec.Workers.Inv L s →
+    s.phase x = Spec.Workers.Phase.running n →
+      r ∈ s.pending →
+        List.idxOf r s.pending = k →
+          have after := (Spec.Workers.release s x).fst;
+          if k = 0 then
+            (∀ (m : Nat), after.phase r ≠ Spec.Workers.Phase.waiting m) ∧ after.phase r ≠ Spec.Workers.Phase.absent
+          else r ∈ after.pending ∧ List.idxOf r after.pending = k - 1
+
+Spec.Workers.release_stays_out
+  ∀ {L : Spec.Workers.Limits} {s : Spec.Workers.State} {x r : Spec.Workers.RunId} {n : Nat},
+  Spec.Workers.Inv L s →
+    s.phase x = Spec.Workers.Phase.running n →
+      (∀ (m : Nat), s.phase r ≠ Spec.Workers.Phase.waiting m) →
+        s.phase r ≠ Spec.Workers.Phase.absent →
+          have after := (Spec.Workers.release s x).fst;
+          (∀ (m : Nat), after.phase r ≠ Spec.Workers.Phase.waiting m) ∧ after.phase r ≠ Spec.Workers.Phase.absent
+
+Spec.Workers.releasing_stays_out
+  ∀ {L : Spec.Workers.Limits},
+  0 < L.maxSlots →
+    ∀ (r : Spec.Workers.RunId) (schedule : List Spec.Workers.Input) (s : Spec.Workers.State),
+      Spec.Workers.Inv L s →
+        Spec.Workers.Releasing L s schedule →
+          (∀ (m : Nat), s.phase r ≠ Spec.Workers.Phase.waiting m) →
+            s.phase r ≠ Spec.Workers.Phase.absent →
+              (∀ (m : Nat), ((Spec.Workers.system L).runFrom s schedule).fst.phase r ≠ Spec.Workers.Phase.waiting m) ∧
+                ((Spec.Workers.system L).runFrom s schedule).fst.phase r ≠ Spec.Workers.Phase.absent
+
+Spec.Workers.shed_only_fresh_unplaced
+  ∀ {L : Spec.Workers.Limits} (s : Spec.Workers.State) (r x : Spec.Workers.RunId) (p : Spec.Workers.PlaceId),
+  (p ∈ s.places →
+      ¬Spec.Workers.Effect.refused x ∈ (Spec.Workers.step L s (Spec.Workers.Input.dispatch r (some p))).snd) ∧
+    ¬Spec.Workers.Effect.refused x ∈ (Spec.Workers.step L s (Spec.Workers.Input.yieldSlot r)).snd
+
+Spec.Workers.slot_numbers_bounded
+  ∀ {L : Spec.Workers.Limits},
+  0 < L.maxSlots →
+    ∀ (trace : List (Spec.Workers.system L).Input) (e : (Spec.Workers.system L).Effect),
+      e ∈ (Spec.Workers.system L).effects trace →
+        ∀ (x : Spec.Workers.RunId) (slot : Nat), e = Spec.Workers.Effect.started x slot → 1 ≤ slot ∧ slot ≤ L.maxSlots
+
+Spec.Workers.slots_bounded
+  ∀ {L : Spec.Workers.Limits}, 0 < L.maxSlots → Spec.Always (Spec.Workers.system L) fun s => s.active ≤ L.maxWorkers
+
+Spec.Workers.start_effects
+  ∀ {s : Spec.Workers.State} {r : Spec.Workers.RunId} {used : Nat} {e : Spec.Workers.Effect},
+  e ∈ (Spec.Workers.start s r used).snd → e = Spec.Workers.Effect.started r (used + 1)
+
+Spec.Workers.system.eq_1
+  ∀ (L : Spec.Workers.Limits),
+  Spec.Workers.system L =
+    { State := Spec.Workers.State, Input := Spec.Workers.Input, Effect := Spec.Workers.Effect,
+      init := Spec.Workers.State.empty, step := Spec.Workers.step L }
+
+Spec.Workers.work_conserving
+  ∀ {L : Spec.Workers.Limits},
+  0 < L.maxSlots → Spec.Always (Spec.Workers.system L) fun s => s.pending ≠ [] → s.active = L.maxWorkers
+

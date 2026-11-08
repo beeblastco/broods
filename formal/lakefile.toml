@@ -1,0 +1,45 @@
+name = "spec"
+defaultTargets = ["Spec", "spec-replay"]
+
+[leanOptions]
+autoImplicit = false
+relaxedAutoImplicit = false
+
+[[lean_lib]]
+name = "Spec"
+
+[[lean_exe]]
+name = "spec-replay"
+root = "Replay"
+
+[[lean_exe]]
+name = "twins-workers"
+root = "TwinMain.Workers"
+
+[[lean_exe]]
+name = "twins-access"
+root = "TwinMain.Access"
+
+[[lean_exe]]
+name = "twins-runs"
+root = "TwinMain.Runs"
+
+[[lean_exe]]
+name = "twins-agent"
+root = "TwinMain.Agent"
+
+[[lean_exe]]
+name = "twins-sandbox"
+root = "TwinMain.Sandbox"
+
+[[lean_exe]]
+name = "twins-channels"
+root = "TwinMain.Channels"
+
+[[lean_exe]]
+name = "twins-hosted"
+root = "TwinMain.Hosted"
+
+[[lean_exe]]
+name = "twins-config"
+root = "TwinMain.Config"

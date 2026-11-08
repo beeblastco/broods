@@ -1,0 +1,2 @@
+kind	name	reason
+internal	apps/core/src/harness/subagents.ts#SubagentCoordinator.getHooks	Its usual branch returns the promise it already holds and the recorder writes a held promise as an opaque tag, so no twin can state its resolved value. The caller's recording shows the dispatcher it got.

@@ -1,0 +1,3 @@
+pattern	category	reason
+apps/core/src/harness/integrations.ts#routeIncomingEvent	delegate	Builds the router with createIncomingEventRouter and calls it; no decision of its own.
+apps/discord-forwarder/src/log.ts#setLogService	process-setup	Stores the log service name for the process; nothing to compare.

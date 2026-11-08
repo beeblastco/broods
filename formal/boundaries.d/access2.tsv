@@ -1,0 +1,53 @@
+kind	name	reason
+external	^AbortSignal\.timeout$	The operation is an injected transport or library effect; replay checks its arguments and releases only its recorded answer.
+external	^Date\.now$	Clock and random identifiers are external inputs; replay supplies their recorded values after the named operation.
+external	^activeRun\.abort\.abort$	The operation is an injected transport or library effect; replay checks its arguments and releases only its recorded answer.
+external	^activeRuns\.delete$	Module-private maps are not included in call inputs; their get, set and delete operations are recorded and their keys are checked.
+external	^activeRuns\.get$	Module-private maps are not included in call inputs; their get, set and delete operations are recorded and their keys are checked.
+external	^call$	The operation is an injected transport or library effect; replay checks its arguments and releases only its recorded answer.
+external	^clearTimeout$	The operation is an injected transport or library effect; replay checks its arguments and releases only its recorded answer.
+external	^createHash$	Node and WebCrypto implement the standard cryptographic primitive; the twin checks the algorithm and input and uses the recorded digest or key handle.
+external	^createHash\("sha256"\)\ \.update$	Node and WebCrypto implement the standard cryptographic primitive; the twin checks the algorithm and input and uses the recorded digest or key handle.
+external	^createHash\("sha256"\)\ \.update\(`sandbox\-terminal\-ticket:\$\{secret\}`\)\ \.digest$	Node and WebCrypto implement the standard cryptographic primitive; the twin checks the algorithm and input and uses the recorded digest or key handle.
+external	^createHash\("sha256"\)\.update$	Node and WebCrypto implement the standard cryptographic primitive; the twin checks the algorithm and input and uses the recorded digest or key handle.
+external	^createHash\("sha256"\)\.update\(eventId\)\.digest$	Node and WebCrypto implement the standard cryptographic primitive; the twin checks the algorithm and input and uses the recorded digest or key handle.
+external	^crypto\.randomUUID$	Clock and random identifiers are external inputs; replay supplies their recorded values after the named operation.
+external	^crypto\.subtle\.deriveKey$	Node and WebCrypto implement the standard cryptographic primitive; the twin checks the algorithm and input and uses the recorded digest or key handle.
+external	^crypto\.subtle\.importKey$	Node and WebCrypto implement the standard cryptographic primitive; the twin checks the algorithm and input and uses the recorded digest or key handle.
+external	^fetchImpl$	The operation is an injected transport or library effect; replay checks its arguments and releases only its recorded answer.
+external	^message\.ack$	The operation is an injected transport or library effect; replay checks its arguments and releases only its recorded answer.
+external	^optionalEnv$	The operation is an injected transport or library effect; replay checks its arguments and releases only its recorded answer.
+external	^resolveRunEvents$	The operation is an injected transport or library effect; replay checks its arguments and releases only its recorded answer.
+external	^response\.json$	The operation is an injected transport or library effect; replay checks its arguments and releases only its recorded answer.
+external	^response\.text$	The operation is an injected transport or library effect; replay checks its arguments and releases only its recorded answer.
+external	^runtime\.mutate$	Convex mutation results are the database boundary; the twin checks the mutation name and account and computes batch totals itself.
+external	^tokenLifetimes\.get$	Module-private maps are not included in call inputs; their get, set and delete operations are recorded and their keys are checked.
+opaque	WeakMap	Only map operations are used; all reads and writes are recorded effects.
+opaque	Cipheriv2	Only update, final and getAuthTag are used; each is a recorded effect whose arguments are checked.
+opaque	Decipheriv2	Only setAuthTag, update and final are used; each is a recorded effect whose arguments are checked.
+opaque	Hmac	Only update and digest are used; each is a recorded effect whose input is checked.
+internal	apps/core/src/shared/run-token.ts#derivedKey	A module-private Map caches keys and its reads are not recorded, so a twin cannot tell a hit from a miss; the value is HKDF-SHA256 of the stage secret under a fixed info string.
+external	^dns\.lookup$	DNS is the outside world; the twin checks the hostname and uses the recorded addresses.
+external	^signal\.(throwIfAborted|addEventListener|removeEventListener)$	AbortSignal methods on a caller-supplied signal; arguments are checked and the answers are the recorded ones.
+external	^createHmac$	Node implements HMAC; the twin checks the algorithm and key and uses the recorded digest.
+external	^createHmac\("sha256", derivedKey\((HKDF_INFO|SUBAGENT_KEY_HKDF_INFO)\)\)\ ?\.update(\((payload|scope)\)\ ?\.digest)?$	Node implements HMAC; the twin checks the input and encoding and uses the recorded digest.
+external	^randomBytes$	Random bytes are an external input supplied by the recording.
+external	^createCipheriv$	Node implements AES-GCM; the twin checks algorithm, key, IV and tag length.
+external	^cipher\.(update|final|getAuthTag)$	Node implements AES-GCM; the twin checks the plaintext and uses the recorded ciphertext.
+external	^crypto\.getRandomValues$	Random bytes are an external input supplied by the recording.
+external	^crypto\.subtle\.(encrypt|decrypt)$	WebCrypto implements AES-GCM; the twin checks parameters and input and uses the recorded result.
+external	^fetch$	The network is the outside world; the twin checks URL and init and uses the recorded response.
+external	^requireEnv$	Process environment is an external input; the twin checks the variable name.
+external	^runtime\.query$	Convex query results are the database boundary; the twin checks the function name and arguments.
+external	^getStorage(\(\)\.(workspaceConfigs\.(list|removeAllForAccount)|sandboxConfigs\.removeAllForAccount|accounts\.(disable|remove)|agents\.removeAllForAccount|accountHooks\.removeAllForAccount|mcp\.removeAllForAccount|channelRecords\.removeAllForAccount))?$	The storage layer is the database boundary; the twin checks each operation and account id.
+external	^\$enter:isReplay$	A callback the follower enters; it reads only captured numbers and has no effect of its own.
+external	^activeRuns\.set$	Module-private maps are not included in call inputs; their operations are recorded and their keys are checked.
+external	^tokenLifetimes\.set$	Module-private maps are not included in call inputs; their operations are recorded and their keys are checked.
+external	^context\.audit$	A closure handed in by the caller; the twin checks the result and details it is given.
+external	^context\.executor\.(run|snapshot|release|resume|getInstanceInfo)$	The sandbox provider is the outside world; the twin checks the request and uses the recorded answer.
+external	^getNatsConnection$	An injected connection factory; the twin passes the handle along without reading it.
+external	^getStorage\(\)\.(accounts\.(create|getById)|sandboxConfigs\.getById)$	The storage layer is the database boundary; the twin checks each operation and id.
+external	^isUnreachableError$	Classifies a thrown provider error; the twin uses its recorded verdict on the checked error.
+external	^new SandboxProviderUnreachableError$	Constructs the error the twin rethrows; the recording supplies the instance.
+external	^(remove|set)SandboxInstance(Status)?$	The sandbox instance registry is a Convex boundary; the twin checks account, key and status.
+external	^upsertSandboxSnapshot$	The snapshot registry is a Convex boundary; the twin checks every field written.
