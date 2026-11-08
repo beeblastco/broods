@@ -459,6 +459,26 @@ describe("settleCronRun", () => {
     expect(remove).toHaveBeenCalledWith("acct_1", "cron_1");
   });
 
+  it("leaves a paused run open for the turn that answers it", async () => {
+    const { settleCronRun } = await import("../src/harness/handler.ts");
+    const failRun = mock(async function (): Promise<void> {});
+    const remove = mock(async function (): Promise<boolean> {
+      return true;
+    });
+    setStorageForTests({
+      crons: { failRun: failRun, remove: remove },
+    } as unknown as Storage);
+
+    await settleCronRun(
+      "acct_1",
+      { cronId: "cron_1", runId: "run_1", oneShot: true },
+      { status: "awaiting_approval", approvals: [] },
+    );
+
+    expect(failRun).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
   it("keeps the run alive when the cleanup delete fails", async () => {
     const { settleCronRun } = await import("../src/harness/handler.ts");
     setStorageForTests({

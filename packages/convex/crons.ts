@@ -32,6 +32,12 @@ crons.interval(
   {},
 );
 crons.interval(
+  "sweep dead cron runs",
+  { minutes: 5 },
+  internal.agent.crons.sweepDeadRuns,
+  {},
+);
+crons.interval(
   "prune cron run history",
   { hours: 24 },
   internal.agent.crons.pruneExpiredRuns,

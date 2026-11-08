@@ -2009,7 +2009,9 @@ async function handleStatusRequest(
     asyncResult &&
     (asyncResult.status === "awaiting_approval" ||
       asyncResult.status === "awaiting_input" ||
-      (asyncResult.status === "processing" && result.status !== "failed"))
+      (asyncResult.status === "processing" &&
+        result.status !== "failed" &&
+        result.status !== "expired"))
       ? asyncResult.status
       : result.status;
 
@@ -2671,6 +2673,8 @@ async function openCronRun(
       accountId: job.accountId,
       cronId: job.cronId,
       eventId: event.publicEventId,
+      ingressEventId: event.eventId,
+      ingressConversationKey: event.conversationKey,
       conversationKey: event.publicConversationKey,
     },
     firedAt,
