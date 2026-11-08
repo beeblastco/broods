@@ -348,9 +348,10 @@ export function useAgentChat({
           commitQueued();
         }
 
-        setStatus("ready");
+        // An aborted turn's status now belongs to a reset or a newer turn.
+        if (!controller.signal.aborted) setStatus("ready");
       } catch (err) {
-        if ((err as Error).name === "AbortError") return;
+        if (controller.signal.aborted) return;
         const message =
           err instanceof TypeError && err.message === "Failed to fetch"
             ? `Cannot reach the agent service at ${baseUrl}. Is it running?`

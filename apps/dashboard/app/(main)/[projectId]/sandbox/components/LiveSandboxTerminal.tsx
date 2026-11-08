@@ -177,7 +177,10 @@ export function LiveSandboxTerminal({
   const overlay = !started && status !== "error";
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col bg-terminal-background">
+    <div
+      className="relative flex min-h-0 flex-1 flex-col bg-terminal-background"
+      data-terminal-state={status}
+    >
       <div className="flex min-h-0 flex-1 py-2 pl-3">
         <div ref={containerRef} className="h-full min-h-40 w-full font-mono" />
       </div>
