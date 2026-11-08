@@ -46,7 +46,12 @@ export async function cronRun(context: VerifyContext): Promise<void> {
   assertStep("the cron run settles", status === expected, String(status));
 
   const [run] = convexResult<
-    { ingressConversationKey?: string; ingressEventId?: string }[]
+    {
+      conversationKey: string;
+      eventId: string;
+      ingressConversationKey?: string;
+      ingressEventId?: string;
+    }[]
   >(
     context,
     "agent/crons:listRuns",
@@ -54,8 +59,13 @@ export async function cronRun(context: VerifyContext): Promise<void> {
     "agent/crons:listRuns answers",
   );
   assertStep(
-    "the run row names its envelope",
-    Boolean(run?.ingressEventId && run.ingressConversationKey),
+    "the run row names its envelope by scoped id, not the public one",
+    Boolean(
+      run?.ingressEventId &&
+      run.ingressEventId !== run.eventId &&
+      run.ingressConversationKey &&
+      run.ingressConversationKey !== run.conversationKey,
+    ),
     JSON.stringify(run),
   );
   await context.account.deleteCron(cron.cronId);

@@ -845,7 +845,7 @@ export const settle = internalMutation({
     if (args.events && args.events.length > 0) {
       coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
-    const answersApproval = await ownerAnswersApproval(ctx, args.ownerEventId);
+    const answersPrompt = await ownerAnswersPrompt(ctx, args.ownerEventId);
     const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
     // Only with the owner's own envelope, so polling rows never disagree with it.
     if (args.asyncResult && settled.ownerFinished) {
@@ -853,20 +853,8 @@ export const settle = internalMutation({
         await writeAsyncAgentResult(ctx, eventId, args.asyncResult.outcome);
       }
     }
-    const paused = (args.result as { status?: string } | undefined)?.status;
-    if (
-      answersApproval &&
-      settled.ownerFinished &&
-      paused !== "awaiting_approval" &&
-      paused !== "awaiting_input"
-    ) {
-      // Scheduled: importing `agent/crons` here would load auth into everything that reads this.
-      await ctx.scheduler.runAfter(0, internal.agent.crons.settleAnsweredRun, {
-        conversationKey: args.conversationKey,
-        status: args.status,
-        result: args.result,
-        error: args.error,
-      });
+    if (answersPrompt && settled.ownerFinished) {
+      await settleAnsweredCronRun(ctx, args.conversationKey, args);
     }
 
     return settled.count;
@@ -972,10 +960,14 @@ export const takeNext = internalMutation({
       coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     if (args.settle) {
-      await settleAppliedEnvelopes(ctx, coordinator, {
+      const answersPrompt = await ownerAnswersPrompt(ctx, args.ownerEventId);
+      const settled = await settleAppliedEnvelopes(ctx, coordinator, {
         ...args,
         ...args.settle,
       });
+      if (answersPrompt && settled.ownerFinished) {
+        await settleAnsweredCronRun(ctx, args.conversationKey, args.settle);
+      }
     }
     const rows = await queuedPage(ctx, coordinator);
     const queue = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
@@ -1005,7 +997,8 @@ export const takeNext = internalMutation({
 });
 
 // A retried entry id is skipped, as Pi's session storage contract allows.
-async function ownerAnswersApproval(
+// A paused cron run waits on a person: an approval, or a question its answering turn then asked.
+async function ownerAnswersPrompt(
   ctx: QueryCtx,
   ownerEventId: string,
 ): Promise<boolean> {
@@ -1013,6 +1006,8 @@ async function ownerAnswersApproval(
     .query("runtimeIngressEnvelopes")
     .withIndex("by_eventId", (q) => q.eq("eventId", ownerEventId))
     .first();
+  const toolResult = await asyncToolResultRow(ctx, owner?.toolResultId);
+  if (toolResult) return toolResult.toolName === "ask_questions";
   const events = (owner?.events ?? []) as {
     role: string;
     content: { type: string }[];
@@ -1023,6 +1018,26 @@ async function ownerAnswersApproval(
       event.role === "tool" &&
       event.content.some((part) => part.type === "tool-approval-response"),
   );
+}
+
+// Scheduled: importing `agent/crons` here would load auth into everything that reads this.
+async function settleAnsweredCronRun(
+  ctx: MutationCtx,
+  conversationKey: string,
+  settlement: {
+    status: "completed" | "failed";
+    result?: unknown;
+    error?: string;
+  },
+): Promise<void> {
+  const paused = (settlement.result as { status?: string } | undefined)?.status;
+  if (paused === "awaiting_approval" || paused === "awaiting_input") return;
+  await ctx.scheduler.runAfter(0, internal.agent.crons.settleAnsweredRun, {
+    conversationKey: conversationKey,
+    status: settlement.status,
+    result: settlement.result,
+    error: settlement.error,
+  });
 }
 
 async function appendHarnessEntries(
