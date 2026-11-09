@@ -173,7 +173,7 @@ private def closeFrame (stack : List JsonFrame) : Option (List JsonFrame × Opti
   match stack with
   | .items list :: rest => placeValue rest (.arr list.toArray)
   | .fields entries none :: rest =>
-    placeValue rest (Json.mkObj (entries ++ [("$keys", toJson (entries.map (·.1)))]))
+    placeValue rest (Json.mkObj (entries ++ [("$keys", toJson (entries.map (·.1)).eraseDups)]))
   | _ => none
 
 private def readTokens (tokens : List JsonToken) : Option Json :=
