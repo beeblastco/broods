@@ -39,7 +39,7 @@ to cover a lot of logic, and the same calls can later grade a port.
 - A mismatch is a finding. Fix the twin if it is wrong. If the function is wrong per `DECISIONS.md`, set
   `gaps` on the twin to the `GAPS.md` id.
 - First run `bun formal/scripts/conform.ts --all` once: recordings are not committed, so a fresh checkout has none and every twin comes back UNCHECKED. It takes about 15 minutes.
-- A function no test reaches needs a test first. Put it in `replay/extra/<workspace>/` and record it with `conform.ts --record-extra=<workspace>`. Assert real behaviour there: these tests are also what the twin is graded on.
+- A function no test reaches needs a test first. Put it in `replay/extra/<workspace>/` and record it with `conform.ts --record-extra=<workspace>`. Assert real behaviour there: these tests are also what the twin is graded on. A run that fails adds nothing to the recordings.
 - Register a twin by adding it to its file's list and importing that file from `Spec/<Sub>/Twins.lean`. `Wave*` files are batches of twins from earlier work: a new file can have any name. `bun formal/scripts/worklist.ts` lists what to do next, callees first, so a twin's dependencies earn credit before it does.
 - Then check with `bun formal/scripts/conform.ts --reuse --sub=<sub>`, which rebuilds the twins itself. If it prints STALE, source or tooling changed since recording, so it writes no results: run `--all` again.
 - A twin's coverage credit lands only after a full `conform.ts --all` or `--reuse` followed by `bun formal/scripts/check.ts`.
@@ -77,7 +77,7 @@ What earns credit, per statement rather than per function:
 - A call with a value too big to record is not compared. What a function's closures do after it returned is outside its trace (L25).
 - If a recording shows the call changed a field on its receiver or a module binding, the twin must state each change with `Prog.setState "self.field" value` or `"module.name"`, or it earns nothing.
 - A callback runs inside the effect that called it, so `Prog.drain` comes before that effect's `Prog.effect`.
-- A closure that runs after the function that made it has returned has its own trace, under `file#outer/label`. The label is the property or variable holding it, or `argN` or `return`, with `~2` for a repeat. Register a twin under that name. It sees the variables it can reach from the enclosing function through `Twin.moduleValue`, and states a write to one as `module.name`.
+- A closure that runs after the function that made it has returned has its own trace, under `file#outer/label`. The label is the property or variable holding it, or `argN` or `return`. `~N` marks the Nth closure with that label in source order, so numbers can skip when an earlier one is a generator or shorthand method. List names with `ls formal/.lake/conform/traces`, url-decoded. `worklist.ts` does not list closures. Generators, shorthand methods and handed-out `function` declarations have no trace (L25). A twin registered under that name sees the variables it can reach from the enclosing function through `Twin.moduleValue`, and states a write to one as `module.name`.
 - A twin whose every call returned `undefined`, with no effects and no state change, earns nothing: there was nothing to be right about.
 - A gap excuses only calls its `gapCovers` predicate names.
 - Results are bound to a hash of the source, the Lean and the recording. Any change makes them stale.

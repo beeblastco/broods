@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -351,6 +353,10 @@ function recordExtra(path: string): void {
     path.includes(`replay/extra/${item.split("/").at(-1) ?? ""}/`),
   );
   if (!directory) throw new Error(`no workspace for ${path}`);
+  // Only a passing run reaches the shared recordings, so a failed draft costs nothing.
+  const scratch = mkdtempSync(join(OUT, "extra-"));
+  const corpus = join(scratch, "corpus");
+  const traces = join(scratch, "traces");
   const run = spawnSync(
     "bun",
     ["test", "--preload", PRELOAD, join(ROOT, path)],
@@ -361,18 +367,25 @@ function recordExtra(path: string): void {
       timeout: RUN_LIMIT_MS,
       env: {
         ...process.env,
-        SPEC_CORPUS: CORPUS,
-        SPEC_TRACES: TRACES,
+        SPEC_CORPUS: corpus,
+        SPEC_TRACES: traces,
         SPEC_RECORD_SOURCES: join(OUT, "sources.txt"),
       },
     },
   );
   console.log(`${run.stdout}${run.stderr}`.split("\n").slice(-12).join("\n"));
-  if (run.status !== 0) {
-    // What a failed run appended must not be credited by a later `--reuse`.
-    rmSync(join(OUT, "captured.json"), { force: true });
-    process.exit(1);
+  if (run.status === 0) {
+    mergeRecordings(corpus, CORPUS);
+    mergeRecordings(traces, TRACES);
   }
+  rmSync(scratch, { recursive: true, force: true });
+  if (run.status !== 0) process.exit(1);
+}
+
+function mergeRecordings(from: string, to: string): void {
+  if (!existsSync(from)) return;
+  for (const file of readdirSync(from))
+    appendFileSync(join(to, file), readFileSync(join(from, file)));
 }
 
 function baselineFailures(directory: string): Set<string> {

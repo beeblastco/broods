@@ -527,15 +527,58 @@ private structure ChannelTurn where
   ephemeral : Json
   config : Json
 
-/-- The `try` around one turn: gives the settlement, `undefined` when there is none. -/
+/-- What the reply callbacks of one turn leave behind: `terminal`, `finalResult`, `approvalRequired`. -/
+private structure TurnReply where
+  terminal : String := ""
+  finalResult : Json := Twin.undefinedJson
+  approvalRequired : Bool := false
+
+/-- One reply callback the agent loop entered: `onFinalText` sends the text, `onApprovalRequired`
+denies every pending tool call. The others are not exercised by a recording. -/
+private def replyCallback (event hooks : Json) (turn : ChannelTurn) (state : TurnReply)
+    (label : String) (args : Json) : Prog TurnReply := do
+  match label with
+  | "onFinalText" =>
+    let response := Twin.arg args 0
+    let _ ← Prog.effect "session.assertCurrentOwner"
+    let state := { state with terminal := "completed", finalResult := response }
+    let reply ← Prog.effect "channelReplyText" [response]
+    if reply == Json.null then return state
+    let formatted ← Prog.effect "formatChannelFinalText"
+      [reply, Twin.arg args 1, event, field event "channelName", turn.config]
+    let sending ← Prog.effect "applyMessageSendingHook"
+      [hooks, field event "channelName", formatted]
+    if sending != Json.null then
+      let _ ← Prog.effect "event.channel.sendText" [sending]
+    return state
+  | "onApprovalRequired" =>
+    let state := { state with approvalRequired := true }
+    let denial ← Prog.effect "createChannelApprovalDenial" [Twin.arg args 0]
+    let _ ← Prog.effect "session.persistModelMessages" [toJson [denial]]
+    return state
+  | other => Prog.unsupported s!"callback {other}"
+
+/-- Enters the reply callbacks in order. A callback's own failure goes back to the loop that called it. -/
+private def drainReply (event hooks : Json) (turn : ChannelTurn) : Nat → TurnReply → Prog TurnReply
+  | 0, state => pure state
+  | limit + 1, state =>
+    .input fun
+      | none => pure state
+      | some (label, args) =>
+        (Prog.catchFail (replyCallback event hooks turn state label args) fun error =>
+          if (error.getObjVal? "$unsupported").isOk then throw error else pure state).bind
+          (drainReply event hooks turn limit)
+
+/-- The `try` around one turn: gives the settlement (`undefined` when there is none) and whether the
+turn was cut short by pending approvals, which restarts it with no new input. -/
 private def channelSettlement (event hooks context dependencies : Json) (turn : ChannelTurn) :
-    Prog Json :=
+    Prog (Json × Bool) :=
   Prog.catchFail
     (do
       let command ← Prog.effect "queuedCommand" [turn.incoming, field event "channelName"]
       if truthy command then
         let outcome ← Prog.effect "commandOutcome" [turn.session, command]
-        return ← Prog.effect "outcomeSettlement" [outcome]
+        return (← Prog.effect "outcomeSettlement" [outcome], false)
       let startedAt ← Prog.effect "Date.now"
       let turnContext ←
         match ← Prog.attempt "session .createTurnContext" [turn.ephemeral, turn.incoming] with
@@ -546,7 +589,7 @@ private def channelSettlement (event hooks context dependencies : Json) (turn : 
         | .pending => Prog.unsupported "turn context never finished"
       let runnable ← Prog.effect "isRunnableModelInput" [lastOf (field turnContext "messages")]
       if !truthy runnable then
-        return failed "Request did not produce pending model input"
+        return (failed "Request did not produce pending model input", false)
       let streaming :=
         if undef (field (field event "channel") "stream") then []
         else [("streamMessage", named "streamMessage")]
@@ -555,14 +598,26 @@ private def channelSettlement (event hooks context dependencies : Json) (turn : 
          ("onErrorText", named "onErrorText"),
          ("onApprovalRequired", named "onApprovalRequired"),
          ("onQuestionsPending", named "onQuestionsPending")])
+      let state ← drainReply event hooks turn 16 {}
       let looped ← Prog.attempt "runAgentLoopUntilSubagentsIdle"
         [turn.session, turnContext, turn.config, context, reply, dependencies, hooks]
       match looped with
       | .threw error _ => throw error
-      | _ => Prog.unsupported "no recording has a channel loop that returns")
+      | .pending => Prog.unsupported "the agent loop never finished"
+      | .ok result =>
+        if state.approvalRequired then return (Twin.undefinedJson, true)
+        let terminal := if truthy (field result "didFail") then "failed" else state.terminal
+        if terminal == "failed" then
+          let failure := field result "failureText"
+          if nullish failure then Prog.unsupported "no recording has a failed loop without text"
+          else return (failed (text failure), false)
+        else if terminal == "completed" then
+          return (obj ([("status", .str "completed")] ++
+            (if undef state.finalResult then [] else [("result", state.finalResult)])), false)
+        else return (Twin.undefinedJson, false))
     (fun error =>
       if (error.getObjVal? "$unsupported").isOk then throw error
-      else return failed (errorMessageOr error "Channel turn failed"))
+      else return (failed (errorMessageOr error "Channel turn failed"), false))
 
 /-- The `while (next)` loop: a queued turn whose config will not load is failed and skipped. -/
 private def nextLoadable (event scope : Json) : Nat → Json → Prog (Json × Json)
@@ -617,7 +672,9 @@ private def channelTurns (event scope hooks context dependencies : Json) :
   | 0, _ => Prog.unsupported "more queued turns than the model allows"
   | fuel + 1, turn => do
     let step : Prog (Option ChannelTurn) := do
-      let settlement ← channelSettlement event hooks context dependencies turn
+      let (settlement, again) ← channelSettlement event hooks context dependencies turn
+      if again then
+        return some { turn with incoming := .arr #[], ephemeral := .arr #[] }
       let first ← Prog.effect "session.takeNextIngress" [settlement]
       let (next, config) ← nextLoadable event scope 16 first
       if !truthy next then

@@ -135,7 +135,7 @@ private def tenantGraphApi (c : Json) : Prog Json := do
   let init := a c 1
   let signal ← Prog.effect "AbortSignal.timeout" [num 30000]
   let extra := match get init "headers" with
-    | .obj kvs => kvs.toArray.toList.filter (·.1 != "$keys")
+    | .obj kvs => kvs.toArray.toList.filter (fun entry => entry.1 != "$keys" && entry.1 != "$undefined")
     | _ => []
   let headers := obj (("Authorization", .str ("Bearer " ++ text (Twin.field self "accessToken"))) :: extra)
   let response ← Prog.effect "publicHostFetch"
@@ -453,6 +453,10 @@ private def receiveChannelWebhook (c : Json) : Prog Json := do
       let ack := orElse (get parsed "ack") statusOk
       if kind == "cleanup" then
         let _ ← Prog.effect "context.waitUntil" [promise]
+        let _ ← Prog.attempt "cleanupChannelPartitions"
+          [obj [("accountId", get account "accountId"), ("agentConfig", get agent "config"),
+                ("channelName", get parsed "channelName"),
+                ("conversationKey", get parsed "conversationKey")]]
         return obj [("kind", .str "accepted"), ("ack", ack)]
       if kind == "batch" then
         return ← Prog.unsupported "a batch admits after the receipt returns"

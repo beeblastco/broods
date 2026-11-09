@@ -55,7 +55,7 @@ regexes = ['''(?i)(conversation_?key|reservationKey)\b''']
 description = "Made-up filesystem reservation id in a formal spec test"
 targetRules = ["generic-api-key"]
 condition = "AND"
-paths = ['''(^|/)formal/replay/extra/core/sandbox8b-vercel-jobs\.test\.ts$''']
+paths = ['''(^|/)formal/replay/extra/core/sandbox(8b|11)-vercel-[a-z-]+\.test\.ts$''']
 regexes = ['''fs-0123456789abcdef''']
 
 [[allowlists]]

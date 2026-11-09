@@ -30,7 +30,7 @@ private def createChannelRegistry (call : Json) : Prog Json := do
 /-- `TELEGRAM_API_URL` in `telegram-channel.ts`. -/
 private def telegramApiUrl : String := "https://api.telegram.org"
 
-private def jsonText (value : Json) : String :=
+def jsonText (value : Json) : String :=
   match value with
   | .str body => body
   | other => other.compress
@@ -76,7 +76,7 @@ private def telegramFetch (call : Json) : Prog Json := do
   pure (member data "result")
 
 /-- `new URL(url).host` for an absolute URL: lowercase, userinfo and path dropped. -/
-private def urlHost (url : String) : String :=
+def urlHost (url : String) : String :=
   let rest := (url.splitOn "://").getD 1 ""
   let authority := (rest.takeWhile fun c => c != '/' && c != '?' && c != '#').toString
   let host := (authority.splitOn "@").getLast?.getD authority

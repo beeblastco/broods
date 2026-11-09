@@ -1416,9 +1416,6 @@ def twins : List Twin := [
   traced "shared/convex/account-keys" "cipherFromKeys" cipherFromKeys,
   traced "shared/convex/account-keys" "decryptAccountBlob" decryptAccountBlob,
   traced "harness/handler" "formatChannelFinalText" formatChannelFinalText,
-  plain "harness/async-tools" "formatUnknown" (fun a =>
-    let v := Twin.arg a 0
-    match v with | .str s => .str s | _ => .str v.compress),
   plain "harness/handler" "channelReplyText" channelReplyText,
   traced "harness/handler" "scheduledFireTime" scheduledFireTime,
 

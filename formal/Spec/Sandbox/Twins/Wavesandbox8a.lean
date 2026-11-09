@@ -74,7 +74,7 @@ private def errorInfo (error : Json) : Json := field error "$error"
 private def errorMessage (error : Json) : String := str (field (errorInfo error) "message")
 
 /-- `#persistent`: the key is only computed for a persistent config. -/
-private def persistent (call request : Json) : Prog Bool := do
+def persistent (call request : Json) : Prog Bool := do
   if !isTrue (field (config call) "persistent") then return false
   return truthy (← Prog.effect "sandboxReservationKey" [request])
 
@@ -209,7 +209,9 @@ private def createAndClaim (call request key : Json) : Prog (Json × Bool) := do
     Prog.fail error
   if let some reservation := claimed then return reservation
   let winner ← Prog.effect "getSandboxExternalId" [toJson "sandbox", key]
-  let _ ← Prog.attempt "created.delete"
+  match ← Prog.attempt "created.delete" with
+  | .threw error _ => let _ ← Prog.effect "toErrorMessage" [error]
+  | _ => pure ()
   if !truthy winner then
     Prog.throwError "Error" "failed to reserve workdir sandbox (lost create race)"
   return (← reconnect winner, false)
@@ -231,7 +233,7 @@ private def reuseReserved (call request key externalId : Json) : Prog (Option (J
     return none
 
 /-- `#acquireWithState`. -/
-private def acquireWithState (call request : Json) : Prog (Json × Bool) := do
+def acquireWithState (call request : Json) : Prog (Json × Bool) := do
   if !(← persistent call request) then
     let opts ← createOptions call request false
     return (← create call opts, true)

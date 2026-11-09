@@ -153,99 +153,11 @@ def resolveAgentRuntime (call : Json) : Prog Json := do
   return Json.mkObj
     [("sandboxes", .arr sandboxes.toArray), ("workspaces", .arr workspaces.toArray)]
 
-private def fnValue : Json := Json.mkObj [("$fn", toJson "")]
-
 private def isNullish (value : Json) : Bool :=
   isUndefined value || value == .null
 
 private def orElse (value fallback : Json) : Json :=
   if isNullish value then fallback else value
-
-private def isEmptyObject (value : Json) : Bool :=
-  match value with
-  | .obj kvs => kvs.isEmpty
-  | _ => false
-
-/-- `#create`: a runner shortage becomes a capacity error, anything else passes through. -/
-private def daytonaCreate (config options : Json) : Prog Json := do
-  match ← Prog.attempt "client.create" [options] with
-  | .ok sandbox => return sandbox
-  | .threw error _ =>
-    let noRunners ← Prog.effect "isNoRunnersError" [error]
-    if !truthy noRunners then throw error
-    let snapshot := field config "snapshot"
-    let subject := if truthy snapshot then s!"snapshot '{stringOf snapshot}'" else "the request"
-    let capacity ← Prog.effect "new SandboxCapacityError"
-      [toJson (s!"Daytona has no available runner for {subject} in the " ++
-        "selected region. The snapshot may be non-general (pinned to one runner) or the " ++
-        "runner is at capacity. Rebuild it as a general snapshot or retry.")]
-    throw capacity
-  | .pending => Prog.unsupported "client.create never finished"
-
-/-- The `() => daytonaSpecs(sandbox)` callback, entered when the meter reads the specs. -/
-private def daytonaMeterCallback (sandbox : Json) : Prog Unit :=
-  .input fun
-    | some ("arg4", _) => do
-      let _ ← Prog.effect "daytonaSpecs" [sandbox]
-      pure ()
-    | _ => pure ()
-
-private def elapsed (later earlier : Json) : Json :=
-  match later.getInt?, earlier.getInt? with
-  | .ok end_, .ok start => toJson (end_ - start)
-  | _, _ => Json.null
-
-/-- The body of `run`'s `try`, for a sandbox that is not reserved. -/
-private def daytonaExecute (config request sandbox startedAt : Json) : Prog Json := do
-  let _ ← Prog.effect "mountAwsS3Buckets" [sandbox, request, config]
-  let cwd ← Prog.effect "workspacePath" [request]
-  let env ← Prog.effect "mergeSandboxEnv"
-    [field config "envVars", field request "envVars", field request "principal"]
-  let response ← Prog.effect "sandbox.process.executeCommand"
-    [field request "code", cwd, if isEmptyObject env then Twin.undefinedJson else env,
-     field request "timeoutSeconds"]
-  let exitCode := field response "exitCode"
-  let text :=
-    orElse (field response "result")
-      (orElse (field (field response "artifacts") "stdout") (toJson ""))
-  let stdout ← Prog.effect "truncateText" [text, field request "outputLimitBytes"]
-  let finished ← Prog.effect "Date.now"
-  return Json.mkObj
-    [("ok", toJson ((orElse exitCode (toJson (0 : Nat))).compress == "0")),
-     ("runtime", orElse (field request "runtime") (toJson "bash")),
-     ("exitCode", orElse exitCode Json.null),
-     ("stdout", field stdout "value"),
-     ("stderr", toJson ""),
-     ("durationMs", elapsed finished startedAt),
-     ("truncated", field stdout "truncated"),
-     ("provider", toJson "daytona")]
-
-/-- `DaytonaSandboxExecutor.run`, for a sandbox that is not reserved. -/
-def daytonaRun (call : Json) : Prog Json := do
-  let request := Twin.callArg call 0
-  let config := Twin.field (Twin.self call) "#config"
-  let startedAt ← Prog.effect "Date.now"
-  if (field config "persistent").compress == "true" then
-    Prog.unsupported "reserved Daytona sandboxes"
-  let clientOptions ← Prog.effect "daytonaClientOptions" [config]
-  let _ ← Prog.effect "new Daytona" [clientOptions]
-  let createOptions ← Prog.effect "daytonaCreateOptions" [config, request, toJson false]
-  let sandbox ← daytonaCreate config createOptions
-  daytonaMeterCallback sandbox
-  let endMeter ← Prog.effect "meterEphemeralSandbox"
-    [field config "controlPlane", toJson "daytona", field sandbox "id", field request "metadata",
-     fnValue]
-  let cleanup : Prog Unit := do
-    let _ ← Prog.effect "sandbox.delete"
-    if truthy endMeter then
-      let _ ← Prog.effect "endMeter"
-    pure ()
-  let result ← Prog.catchFail (daytonaExecute config request sandbox startedAt)
-    (fun error => do
-      cleanup
-      throw error)
-  cleanup
-  return result
 
 private def base64Value (c : Char) : Option Nat :=
   if 'A' ≤ c ∧ c ≤ 'Z' then some (c.toNat - 'A'.toNat)
@@ -435,8 +347,6 @@ private def bridgeSource (name : String) : String :=
 /-- This author's twins. -/
 def twins : List Spec.Twin :=
   [Twin.traced "apps/core/src/shared/workspaces.ts#resolveAgentRuntime" resolveAgentRuntime,
-   Twin.traced "apps/core/src/harness/sandbox/daytona-executor.ts#DaytonaSandboxExecutor.run"
-     daytonaRun,
    Twin.traced (bridgeSource "readCapped") readCapped,
    Twin.traced (bridgeSource "Sandbox.status") sandboxStatus,
    Twin.traced (bridgeSource "Sandbox.destroy") sandboxDestroy,

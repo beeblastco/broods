@@ -23,6 +23,7 @@ const FAULT_RUN_LIMIT_MS = 180_000;
 interface Line {
   fn: string;
   moduleAfter?: unknown;
+  overlapped?: boolean;
   argsAfter?: unknown[];
   selfAfter?: unknown;
   args: unknown[];
@@ -81,8 +82,10 @@ const DAMAGES: Record<string, Damage> = {
           ),
         };
   },
+  // An overlapping call would be set aside as incomplete, and then nothing is left to catch.
   "add a write to module state": (line) => ({
     ...line,
+    overlapped: false,
     moduleAfter: { __control__: 1 },
   }),
   "add a write to an argument": (line) => {

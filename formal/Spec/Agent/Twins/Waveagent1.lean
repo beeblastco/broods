@@ -1101,14 +1101,15 @@ private def formatWorkspaceHarnessSystemPrompt (call : Json) : Prog Json := do
       "1. Use read to inspect files and glob to find files by pattern.\n2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace."
   pure (toJson ("<workspace>\nA persistent workspace is attached. " ++ tools ++ "\n\nConfigured workspaces:\n" ++ list ++ "\n\nGuidance:\n" ++ guidance ++ "\n</workspace>"))
 
-/-- `JSON.stringify` of content parts, whose keys are written `type` first. -/
-private def stringifyParts (parts : List Json) : Option String :=
-  let one (p : Json) : Option String :=
-    match (fields p).filter (·.1 != "type") with
-    | [(key, value)] =>
-      some ("{\"type\":" ++ (field p "type").compress ++ "," ++ (toJson key).compress ++ ":" ++ value.compress ++ "}")
-    | _ => none
-  (parts.mapM one).map fun items => "[" ++ String.intercalate "," items ++ "]"
+/-- A recorded `URL` serialises as its string under `JSON.stringify`. -/
+private def urlsAsText : Nat → Json → Json
+  | 0, value => value
+  | fuel + 1, .arr items => .arr (items.map (urlsAsText fuel))
+  | fuel + 1, .obj fields =>
+    match fields.toList with
+    | [("$url", .str href)] => .str href
+    | entries => Json.mkObj (entries.map fun entry => (entry.1, urlsAsText fuel entry.2))
+  | _, value => value
 
 private def storableToolResultOutput (call : Json) : Prog Json := do
   let output := Twin.callArg call 0
@@ -1132,17 +1133,14 @@ private def storableToolResultOutput (call : Json) : Prog Json := do
         else pure true
       if keep then kept := kept ++ [part]
     let value := if kept.isEmpty
-      then [obj [("type", toJson "text"), ("text", toJson "[attachment not retained]")]]
+      then [obj [("type", toJson "text"), ("text", toJson "[attachment not retained]"),
+        ("$keys", toJson ["type", "text"])]]
       else kept
     stored := merge output (Json.mkObj [("value", .arr value.toArray)])
   let value := field stored "value"
-  let serializedOption : Option String := match value with
-    | .str text => some text
-    | .arr items => stringifyParts items.toList
-    | .obj _ => if (fields value).length <= 1 then some value.compress else none
-    | _ => some value.compress
-  let some serialized := serializedOption
-    | Prog.unsupported "JSON.stringify key order of a structured tool output"
+  let serialized := match value with
+    | .str text => text
+    | _ => Twin.jsonStringify 64 (urlsAsText 64 value)
   let text ← Prog.effect "truncateText" [toJson serialized, limit]
   if !truth (field text "truncated") then return stored
   pure (obj [("type", toJson (if kind == toJson "error-text" || kind == toJson "error-json" then "error-text" else "text")),

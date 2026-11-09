@@ -2,6 +2,7 @@ import Spec.Twin
 import Spec.Config.Twins.AgentRules
 import Spec.Config.Twins.Rest
 import Spec.Config.Twins.Wave10
+import Spec.Config.Twins.Wave11
 import Spec.Config.Twins.Closures
 
 /-!
@@ -12,6 +13,6 @@ namespace Spec.Config
 
 /-- This subsystem's twins. -/
 def twins : List Spec.Twin :=
-  (agentRuleTwins ++ restTwins ++ Wave10.twins ++ Closures.twins).map Spec.Js.guardNull
+  (agentRuleTwins ++ restTwins ++ Wave10.twins ++ Wave11.twins ++ Closures.twins).map Spec.Js.guardNull
 
 end Spec.Config
