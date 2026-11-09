@@ -5,3 +5,4 @@ import Spec.Channels.Controls
 import Spec.Channels.Replay
 import Spec.Channels.Contracts
 import Spec.Channels.CronLifecycle
+import Spec.Channels.CronLifecycleProofs

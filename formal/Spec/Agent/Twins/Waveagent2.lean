@@ -833,7 +833,19 @@ private def moreTwins : List Twin :=
           ("fields", Json.mkObj [])])]]
      return Twin.undefinedJson),
    traced sub "SubagentCoordinator.enqueue" (fun call => do
-     let _ ← Prog.effect "completionToParentMessage" [Twin.callArg call 0]
+     let message ← Prog.effect "completionToParentMessage" [Twin.callArg call 0]
+     let before := Twin.field (Twin.self call) "outbox"
+     if !undef (field before "$big") then return ← Prog.unsupported "the outbox was too big to record"
+     -- Past about twenty entries the recorder keeps each one as a size marker only.
+     if (items before).length ≥ 18 then return ← Prog.unsupported "the outbox outgrew the recorder's budget"
+     -- The recorder keeps the message's content parts as one marker each.
+     let recorded := Json.mkObj
+       [("message", Json.mkObj
+         [("role", field message "role"), ("dedupeKey", field message "dedupeKey"),
+          ("content", Json.arr ((items (field message "content")).map fun _ =>
+            Json.mkObj [("$opaque", toJson "too-deep")]).toArray)]),
+        ("completion", Twin.callArg call 0)]
+     Prog.setChanged "self.outbox" before (Json.arr ((items before).toArray.push recorded))
      return Twin.undefinedJson),
    traced sub "SubagentCoordinator.emitTaskFinished" emitTaskFinished,
    traced sub "SubagentCoordinator.mintedChildKey" mintedChildKey,

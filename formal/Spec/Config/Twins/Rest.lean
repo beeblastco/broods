@@ -585,7 +585,7 @@ private def bareTarget : Re :=
   let relative := Re.alt (Re.seqs [.lit ".", .opt (.lit "."), .lit "/"]) (.alt (.lit "/") (.lit "node:"))
   Re.seqs [.notAhead relative, .plus (.any fun c => !quoteChar c), .any quoteChar]
 
-private def isIdentifierPart (c : Char) : Bool :=
+def isIdentifierPart (c : Char) : Bool :=
   c == '.' || c == '$' || c == '_' || isAsciiAlnum c
 
 /-- `NODE_ONLY_PATTERNS`, in the code's order. -/
@@ -655,14 +655,14 @@ def kekIdOfTwin : Spec.Twin where
 
 /-- The twins in this file. -/
 def restTwins : List Spec.Twin :=
-  [parseOrTwin, parseInputTwin, renderPathTwin, issueSentenceTwin, defaultMessageTwin,
+  [renderPathTwin, issueSentenceTwin,
    mergeConfigValueTwin, mergeConfigObjectsTwin, redactSecretsTwin, redactConfigSecretsTwin,
-   assembleNestedConfigTwin, collectExtraConfigTwin, substitutePlaceholdersTwin,
+   assembleNestedConfigTwin, collectExtraConfigTwin,
    substituteAccountEnvPlaceholdersTwin, pruneEmptyTwin, mergeProviderOptionsTwin,
    buildNestedAgentBranchTwin, buildNestedModelBranchTwin, buildNestedToolsBranchTwin,
    toNestedAgentConfigTwin, fromNestedAgentConfigTwin, assertNoUnsupportedKeysTwin, sortJsonTwin,
    stableJsonTwin, stripUndefinedTwin, apiErrorBodyTwin, byStatusTwin, rateLimitHeadersTwin,
-   clientErrorDataTwin, isClientErrorCodeTwin, workspaceOnLaterSandboxTwin, isWorkersSafeBundleTwin,
-   resolveRequestIdTwin, bytesToBase64UrlTwin, blobKeyIdTwin, wrapAadTwin, kekIdOfTwin]
+   isClientErrorCodeTwin, isWorkersSafeBundleTwin,
+   wrapAadTwin, kekIdOfTwin]
 
 end Spec.Config

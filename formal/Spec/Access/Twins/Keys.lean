@@ -292,7 +292,6 @@ def userTokenTwins : List Spec.Twin :=
       match Spec.Twin.arg args 1 with
       | .str key => .bool (userOwns (Spec.Twin.arg args 0) key)
       | _ => Spec.Twin.unsupported "key is not a string",
-    stringTwin "packages/convex/model/secretNames.ts#judgeName" secretName,
-    stringTwin "packages/convex/model/secretNames.ts#isSecretName" secretName ]
+    stringTwin "packages/convex/model/secretNames.ts#judgeName" secretName ]
 
 end Spec.Access.Keys

@@ -57,14 +57,24 @@ private def markReady (call : Json) : Prog Json := do
   stateChange "self.state" (Twin.field self "state") (.str "ready")
   return undef
 
+/-- The socket after `socket.send`: the frame joins the `sent` list the test double keeps. -/
+private def sentSocket (socket payload : Json) : Json :=
+  let fields := (socket.getObjVal? "$fields").toOption.getD (Json.mkObj [])
+  let sent := ((fields.getObjVal? "sent").toOption.bind (·.getArr?.toOption)).getD #[]
+  socket.setObjVal! "$fields" (fields.setObjVal! "sent" (.arr (sent.push payload)))
+
 private def send (call : Json) : Prog Json := do
   let socket := Twin.callArg call 0
   if Twin.field socket "readyState" == num 1 then
     let _ ← Prog.effect "socket.send" [.str (stringifyPayload (Twin.callArg call 1))]
+    if Twin.field (Twin.self call) "socket" == socket then
+      Prog.setState "self.socket" (sentSocket socket (Twin.callArg call 1))
   return undef
 
 private def start (call : Json) : Prog Json := do
-  if Twin.field (Twin.self call) "state" == .str "stopped" then
+  let self := Twin.self call
+  if Twin.field self "state" == .str "stopped" then
+    socketFields self [("state", .str "connecting")]
     let _ ← Prog.effect "this.dial"
   return undef
 

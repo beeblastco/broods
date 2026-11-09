@@ -1,4 +1,5 @@
 import Spec.Channels.Model
+import Spec.Channels.CronLifecycle
 namespace Spec.Channels
 /-- Removing authentication admits this unsigned delivery. -/
 def brokenAuthenticate (_ : Bool) : Bool := true
@@ -66,5 +67,16 @@ theorem broken_cron_fails_uniqueness :
 /-- Explicit storage failure counterexample behind G501's conditional cleanup theorem. -/
 theorem terminal_recording_failure_skips_cleanup :
     (step {} (.finish 1 true true false true)).2 = [] := by decide
+
+/-- A sweep that fails every run breaks the guarantee for a run that really finished. -/
+theorem cron_sweep_control :
+    ¬ ∀ (run : CronLifecycle.Run) (e : CronLifecycle.Envelope), run.tracked = true → e.status = .completed →
+      CronLifecycle.Verdict.failedDead.isFailure = true → e.polling = .waitsOnPerson := by
+  intro claim
+  have wrong := claim
+    { id := 1, job := 1, conversation := 1, startedAt := 0, tracked := true, oneShot := false,
+      status := .started }
+    { status := .completed, updatedAt := 0, polling := .settled } rfl rfl rfl
+  cases wrong
 
 end Spec.Channels

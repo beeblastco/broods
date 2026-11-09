@@ -282,6 +282,8 @@ def notifyCompletion (call : Json) : Prog Json := do
     return ← Prog.unsupported "the waiter set was too big to record"
   for _ in setItems waiters do
     let _ ← Prog.effect "waiter"
+  if !(setItems waiters).isEmpty then
+    Prog.setState "self.waiters" (Json.mkObj [("$set", arr [])])
   return undef
 
 private def parentSession (call : Json) : Json := thisField call "parentSession"
@@ -952,6 +954,11 @@ def detachPending (call : Json) : Prog Json := do
     (fun metadata => do return !isTrue (← Prog.effect "this.answered" [metadata])) all
   let handled := setItems (thisField call "handled")
   let toMark := detaching.filter fun metadata => !handled.contains (field metadata "eventId")
+  let emptied := Json.mkObj [("$map", arr [])]
+  if !(mapPairs (thisField call "pending")).isEmpty then
+    Prog.setState "self.pending" emptied
+  if !(mapPairs (thisField call "pendingMetadata")).isEmpty then
+    Prog.setState "self.pendingMetadata" emptied
   let outcomes ← Prog.all (toMark.map fun metadata =>
     ("markAsyncAgentHandback", [field metadata "eventId", toJson "detached"]))
   for outcome in outcomes do
@@ -1268,7 +1275,6 @@ def twins : List Spec.Twin :=
   , plain "apps/core/src/shared/in-flight.ts#inFlightForTests"
       (fun call => pure (Twin.moduleValue call "inFlight"))
   , voidTwin "apps/core/src/shared/in-flight.ts#drainInFlight"
-  , voidTwin "apps/core/src/shared/in-flight.ts#waitUntil"
   , plain "packages/convex/model/planLimits.ts#isManagedService" isManagedService
   , plain "packages/convex/model/planLimits.ts#accountOrg" accountOrg
   , plain "packages/convex/model/planLimits.ts#budgetLevel" budgetLevel

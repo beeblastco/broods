@@ -86,6 +86,7 @@ const DAMAGES: Record<string, Damage> = {
     moduleAfter: { __control__: 1 },
   }),
   "add a write to an argument": (line) => {
+    if (!Array.isArray(line.args)) return undefined;
     const target = line.args.findIndex(
       (arg) => typeof arg === "object" && arg !== null && !Array.isArray(arg),
     );
@@ -147,6 +148,17 @@ function main(): void {
       }
     }
   }
+  const plain = readResults().filter(
+    (twin) => !twin.traced && twin.compared > 0,
+  );
+  const plainStep = Math.max(1, Math.floor(plain.length / SAMPLE));
+  for (const twin of plain.filter((_, index) => index % plainStep === 0)) {
+    if (damagedPlainVerdict(twin.source)) caught += 1;
+    else {
+      failed += 1;
+      console.log(`MISSED change a plain result: ${twin.source}`);
+    }
+  }
   console.log(`${caught} damaged recordings caught`);
   for (const fault of FAULTS) {
     const clean = runFault(fault, false);
@@ -197,6 +209,27 @@ function readResults(): Result[] {
   return parsed.twins;
 }
 
+// A plain twin is compared on its return value alone, so that comparison must be able to fail too.
+function damagedPlainVerdict(source: string): boolean {
+  const encoded = `${encodeURIComponent(source)}.jsonl`;
+  const lines = readFileSync(join(OUT, "corpus", encoded), "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => ({
+      ...(JSON.parse(line) as Record<string, unknown>),
+      outcome: { returned: { control: "__control__" } },
+    }));
+  const directory = mkdtempSync(join(tmpdir(), "spec-twin-control-"));
+  writeFileSync(
+    join(directory, encoded),
+    `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+  );
+  const result = conform(source, directory, "corpus");
+  rmSync(directory, { recursive: true, force: true });
+
+  return result.mismatches > 0;
+}
+
 function damagedVerdict(source: string, damage: Damage): boolean | undefined {
   const encoded = `${encodeURIComponent(source)}.jsonl`;
   const path = join(TRACES, encoded);
@@ -219,13 +252,17 @@ function damagedVerdict(source: string, damage: Damage): boolean | undefined {
   return result.mismatches > 0 || result.stateUnmodelled > 0;
 }
 
-function conform(source: string, traces: string): Result {
+function conform(
+  source: string,
+  recordings: string,
+  kind: "traces" | "corpus" = "traces",
+): Result {
   spawnSync(
     "bun",
     [
       "formal/scripts/conform.ts",
       "--reuse",
-      `--traces=${traces}`,
+      `--${kind}=${recordings}`,
       `--only=${source}`,
     ],
     { cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 26 },

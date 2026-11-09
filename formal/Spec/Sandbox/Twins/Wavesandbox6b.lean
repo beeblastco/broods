@@ -220,12 +220,13 @@ private def mapJson (entries : List (String × Json)) : Json :=
     Json.arr #[toJson key, value]).toArray)]
 
 /-- `readTargetCache.set`: a key already present keeps its place. States only a visible change. -/
-private def noteReadTarget (cache : Json) (key : String) (staleAt : Json) : Prog Unit := do
-  let entry := Json.mkObj [("target", Json.mkObj [("$opaque", toJson "Promise")]), ("staleAt", staleAt)]
+private def noteReadTarget (cache : Json) (key : String) (target staleAt : Json) : Prog Unit := do
+  let promise := Json.mkObj [("$opaque", toJson "Promise"), ("$fields", Json.mkObj [("$resolved", target)])]
+  let entry := Json.mkObj [("target", promise), ("staleAt", staleAt)]
   let entries := mapEntries cache
   match entries.find? (·.1 == key) with
   | some (_, old) =>
-    if !same (field old "staleAt") staleAt then
+    if !same (field old "staleAt") staleAt || !same (Twin.resolved (field old "target")) target then
       Prog.setState "module.readTargetCache"
         (mapJson (entries.map fun item => if item.1 == key then (key, entry) else item))
   | none => Prog.setState "module.readTargetCache" (mapJson (entries ++ [(key, entry)]))
@@ -271,7 +272,7 @@ def resolveS3ReadTarget (call : Json) : Prog Json := do
       let staleAt := match asInt now with
         | some current => toJson (current + 60 * 1000)
         | none => undef
-      noteReadTarget cache cacheKey staleAt
+      noteReadTarget cache cacheKey target staleAt
       return target
     | [.threw error _, _] =>
       forgetReadTarget cache cacheKey
@@ -279,7 +280,7 @@ def resolveS3ReadTarget (call : Json) : Prog Json := do
     | _ => Prog.unsupported "the mount lookup never finished"
   match ← Prog.attempt "readTargetFromMount" [ctx] with
   | .ok target =>
-    noteReadTarget cache cacheKey (Json.mkObj [("$number", toJson "Infinity")])
+    noteReadTarget cache cacheKey target (Json.mkObj [("$number", toJson "Infinity")])
     return target
   | .threw error _ =>
     forgetReadTarget cache cacheKey

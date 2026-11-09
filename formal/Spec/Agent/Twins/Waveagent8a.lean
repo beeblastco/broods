@@ -375,6 +375,9 @@ def twins : List Spec.Twin :=
    Twin.traced (sandbox ++ "versionScopedReservationKey") versionScopedReservationKey,
    Twin.traced (sandbox ++ "createWorkdirHarnessSandbox")
      (createHarnessSandbox "createWorkdirHarnessDriver" "broods-workdir-" [ensurePnpmCommand]),
+   Twin.traced (sandbox ++ "createMicrovmHarnessSandbox")
+     (createHarnessSandbox "createMicrovmHarnessDriver" "broods-microvm-"
+       ["mkdir -p /workspace", ensurePnpmCommand]),
    Twin.traced "apps/core/src/harness/ai-sdk-harness/adapters/claude-code.ts#createConfiguredClaudeCodeAdapter"
      createConfiguredClaudeCodeAdapter,
    Twin.traced "apps/core/src/harness/skills.ts#loadConfiguredHarnessSkills"

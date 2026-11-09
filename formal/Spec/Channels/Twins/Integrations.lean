@@ -779,9 +779,6 @@ private def ingressTwins : List Spec.Twin :=
           match channelActorRoles record (field identity "userId") with
           | [] => identity
           | roles => setField identity "userRoles" (jarr roles) },
-    { source := source ++ "#createChannelRegistry"
-      run := fun args =>
-        registryOutcome (Spec.Twin.arg args 0) (Json.mkObj [("webhookChannels", jarr [])]) },
     { source := source ++ "#channelAdapterFromConfig"
       run := fun args => registryOutcome (Spec.Twin.arg args 0) .null },
     { source := source ++ "#channelActionsFromConfig"

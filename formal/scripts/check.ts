@@ -17,6 +17,8 @@ import { analyzeFile, type AstNode, type FileAnalysis } from "./functions.ts";
 import { inputsHash, sourcesHash } from "./inputs.ts";
 
 const FORMAL = resolve(import.meta.dir, "..");
+const TRACES = join(FORMAL, ".lake/conform/traces");
+const PURE_PLAIN_EFFECT = /^new \w*Error$|\.safeParse$/;
 const ROOT = resolve(FORMAL, "..");
 const LAKE = join(process.env.HOME ?? "", ".elan/bin/lake");
 const RUNTIME_DIRS = [
@@ -418,8 +420,8 @@ function creditedTwins(
     ) {
       continue;
     }
+    if (!result.traced && hasImpureEffect(result.source)) continue;
     if (result.traced) {
-      if ((seen["lateEffects"] ?? 0) > 0) continue;
       if ((unobserved.get(result.source) ?? []).length > 0) continue;
       // A callback entry is the outside calling in, not an answer the function asked for.
       const undeclared = result.external.filter(
@@ -454,6 +456,27 @@ function creditedTwins(
   }
 
   return eligible;
+}
+
+// A plain twin only compares a return value, so it cannot vouch for a function that does more
+// than build an error or parse a value on the way there.
+function hasImpureEffect(source: string): boolean {
+  const path = join(TRACES, `${encodeURIComponent(source)}.jsonl`);
+  if (!existsSync(path)) return false;
+
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .some((line) =>
+      (
+        JSON.parse(line) as { effects: { fn: string; to?: string }[] }
+      ).effects.some(
+        (effect) =>
+          !effect.to &&
+          !effect.fn.startsWith("$enter:") &&
+          !PURE_PLAIN_EFFECT.test(effect.fn),
+      ),
+    );
 }
 
 // An external rule is a whole-label match, so one rule cannot quietly cover unrelated calls.
@@ -791,7 +814,11 @@ function walk(directory: string, extension: string): string[] {
 
 // One pass, so a string holding `--` cannot be mistaken for a comment or the reverse.
 function stripLeanComments(text: string): string {
-  return text.replace(/"(?:[^"\\]|\\.)*"|\/-[\s\S]*?-\/|--[^\n]*/g, '""');
+  // A character literal goes first: `'"'` would otherwise flip what counts as inside a string.
+  return text.replace(
+    /'(?:[^'\\\n]|\\[^\n]+?)'|"(?:[^"\\]|\\.)*"|\/-[\s\S]*?-\/|--[^\n]*/g,
+    '""',
+  );
 }
 
 main();

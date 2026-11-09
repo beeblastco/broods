@@ -214,7 +214,6 @@ private def pureTwins : List Twin :=
    tracedPure "packages/convex/model/accountSecrets.ts#hexFromBytes" (fun a => j (Crypto.hex (readBytes (Twin.arg a 0)))),
    Js.jsonTwin "apps/gateway/src/observability.ts#quoteLabel" (fun a =>
      j ("\"" ++ ((s (Twin.arg a 0)).replace "\\" "\\\\").replace "\"" "\\\"" ++ "\"")),
-   Js.jsonTwin "apps/gateway/src/observability.ts#resetTempoTraceCacheForTests" (fun _ => Json.null),
    Js.jsonTwin "apps/gateway/src/observability.ts#rowInScope" rowScope,
    Js.jsonTwin "apps/gateway/src/observability.ts#otelValue" (fun a => otelValue 64 (Twin.arg a 0)),
    Js.jsonTwin "apps/gateway/src/utils.ts#errorText" (fun a =>

@@ -12,6 +12,7 @@ import Spec.Channels.Twins.Wavechannels5a
 import Spec.Channels.Twins.Wavechannels5b
 import Spec.Channels.Twins.Wavechannels6a
 import Spec.Channels.Twins.Wavechannels8a
+import Spec.Channels.Twins.Wave10
 
 /-!
 Twins of the channels subsystem's functions. See `AUTHORING.md`.
@@ -21,6 +22,6 @@ namespace Spec.Channels
 
 /-- This subsystem's twins. -/
 def twins : List Spec.Twin :=
-  commandTwins ++ forwarderTwins ++ integrationTwins ++ recordTwins ++ Wavechannels1.twins ++ Wavechannels2.twins ++ Wavechannels3a.twins ++ Wavechannels4a.twins ++ Wavechannels4b.twins ++ Wavechannels5a.twins ++ Wavechannels5b.twins ++ Wavechannels6a.twins ++ Wavechannels8a.twins
+  commandTwins ++ forwarderTwins ++ integrationTwins ++ recordTwins ++ Wavechannels1.twins ++ Wavechannels2.twins ++ Wavechannels3a.twins ++ Wavechannels4a.twins ++ Wavechannels4b.twins ++ Wavechannels5a.twins ++ Wavechannels5b.twins ++ Wavechannels6a.twins ++ Wavechannels8a.twins ++ Wave10.twins
 
 end Spec.Channels

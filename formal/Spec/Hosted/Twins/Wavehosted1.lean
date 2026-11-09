@@ -483,7 +483,13 @@ private def killWorker (call : Json) : Prog Json := do
   let self := Twin.self call
   if Twin.field self "alive" != toJson false then
     Prog.setState "self.alive" (toJson false)
-  let _ ← Prog.attempt "this.child.kill" [toJson "SIGKILL"]
+  let sent ← Prog.attempt "this.child.kill" [toJson "SIGKILL"]
+  -- A signal that went out marks the child process object as killed.
+  let child := Twin.field self "child"
+  if let .ok (.bool true) := sent then
+    if Twin.field child "killed" != toJson true then
+      let fields := (child.getObjVal? "$fields").toOption.getD (obj [])
+      Prog.setState "self.child" (child.setObjVal! "$fields" (fields.setObjVal! "killed" (toJson true)))
   return Twin.undefinedJson
 
 private def isolatePoolEnabled (_ : Json) : Prog Json := do

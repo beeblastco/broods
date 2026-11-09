@@ -94,10 +94,50 @@ Spec.Agent.usage_run_local
 Spec.Channels.at_most_one_cron_run
   Spec.Always Spec.Channels.system fun s => s.fires.Nodup
 
+Spec.Channels.cron_active_envelope_waits
+  ∀ (l : Spec.Channels.CronLifecycle.Limits) (run : Spec.Channels.CronLifecycle.Run)
+  (e : Spec.Channels.CronLifecycle.Envelope) (now : Nat),
+  run.tracked = true →
+    e.status = Spec.Channels.CronLifecycle.EnvelopeStatus.active →
+      Spec.Channels.CronLifecycle.deadRunOutcome l run (some e) now = Spec.Channels.CronLifecycle.Verdict.wait
+
+Spec.Channels.cron_answer_settles_own_conversation
+  ∀ (conversation : Nat) (run : Spec.Channels.CronLifecycle.Run) (runs : List Spec.Channels.CronLifecycle.Run),
+  Spec.Channels.CronLifecycle.newestStarted conversation runs = some run →
+    run.conversation = conversation ∧ run.status = Spec.Channels.CronLifecycle.RunStatus.started
+
+Spec.Channels.cron_completed_fails_only_after_limit
+  ∀ (l : Spec.Channels.CronLifecycle.Limits) (run : Spec.Channels.CronLifecycle.Run)
+  (e : Spec.Channels.CronLifecycle.Envelope) (now : Nat),
+  run.tracked = true →
+    e.status = Spec.Channels.CronLifecycle.EnvelopeStatus.completed →
+      (Spec.Channels.CronLifecycle.deadRunOutcome l run (some e) now).isFailure = true →
+        e.polling = Spec.Channels.CronLifecycle.Polling.waitsOnPerson ∧ run.startedAt + l.pausedRunMaxAge < now
+
+Spec.Channels.cron_pause_keeps_run_started
+  ∀ (run : Spec.Channels.CronLifecycle.Run) (s : Spec.Channels.CronLifecycle.State),
+  Spec.Channels.CronLifecycle.settleCronRun Spec.Channels.CronLifecycle.TurnOutcome.awaitingApproval run s = s ∧
+    Spec.Channels.CronLifecycle.settleCronRun Spec.Channels.CronLifecycle.TurnOutcome.awaitingInput run s = s
+
+Spec.Channels.cron_paused_not_failed_inside_limit
+  ∀ (l : Spec.Channels.CronLifecycle.Limits) (run : Spec.Channels.CronLifecycle.Run)
+  (e : Spec.Channels.CronLifecycle.Envelope) (now : Nat),
+  run.tracked = true →
+    e.status = Spec.Channels.CronLifecycle.EnvelopeStatus.completed →
+      e.polling = Spec.Channels.CronLifecycle.Polling.waitsOnPerson →
+        now ≤ run.startedAt + l.pausedRunMaxAge →
+          Spec.Channels.CronLifecycle.deadRunOutcome l run (some e) now = Spec.Channels.CronLifecycle.Verdict.wait
+
 Spec.Channels.cron_progress
   Spec.Progress Spec.Channels.system (fun x => True)
   (fun x schedule => schedule = [Spec.Channels.Input.cron 1 5 true true true true]) (fun s => s.fires = []) fun s =>
   s.fires ≠ []
+
+Spec.Channels.cron_settle_first_wins
+  ∀ (status : Spec.Channels.CronLifecycle.RunStatus) (id : Nat) (runs : List Spec.Channels.CronLifecycle.Run),
+  (∀ (run : Spec.Channels.CronLifecycle.Run),
+      run ∈ runs → run.id = id → run.status ≠ Spec.Channels.CronLifecycle.RunStatus.started) →
+    Spec.Channels.CronLifecycle.settleRun status id runs = runs
 
 Spec.Channels.delivery_deduplicated
   ∀ (s : Spec.Channels.State) (trace : List Spec.Channels.Input),

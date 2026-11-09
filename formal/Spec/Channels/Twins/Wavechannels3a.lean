@@ -90,7 +90,7 @@ private def forwarderOpen (c : Json) : Prog Json := do
   let next := Spec.Channels.Wavechannels8a.mapSet before token
     (obj [("socket", socket),
       ("targets", Spec.Channels.Wavechannels8a.recordedTargets (a c 1))])
-  Spec.Channels.Wavechannels8a.stateChange "self.managed" before next
+  Prog.setState "self.managed" next
   pure undef
 
 private def forwarderStatus (c : Json) : Prog Json := do

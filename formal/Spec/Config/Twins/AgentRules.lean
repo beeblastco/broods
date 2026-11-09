@@ -920,21 +920,23 @@ def publicHttpsUrlProblemTwin : Spec.Twin where
       | .error reason => Spec.Twin.unsupported reason
     | _ => Spec.Twin.unsupported "value is not a string"
 
-def assertPublicHttpsUrlTwin : Spec.Twin where
-  source := source "assertPublicHttpsUrl"
-  run := fun args =>
-    match Spec.Twin.arg args 0, Spec.Twin.arg args 1 with
-    | .str value, .str label =>
-      match Spec.Url.parse value with
-      | .invalid => Spec.Twin.threw s!"{label} must be a valid URL"
-      | .unknown reason => Spec.Twin.unsupported reason
+/-- `assertPublicHttpsUrl`. A trace can carry the `URL` it returns, so every call is compared. -/
+def assertPublicHttpsUrlTwin : Spec.Twin :=
+  Spec.Twin.traced (source "assertPublicHttpsUrl") fun call => do
+    let value := Spec.Twin.callArg call 0
+    let label := Spec.Twin.callArg call 1
+    match ← Spec.Prog.effect "publicHttpsUrlProblem" [value], value, label with
+    | .str problem, _, .str name =>
+      let error ← Spec.Prog.effect "new ClientError" [.str s!"{name} {problem}"]
+      .fail error
+    | _, .str raw, _ =>
+      match Spec.Url.parse raw with
       | .ok url =>
-        match publicHttpsProblem (some (url.protocol, url.hostname)) with
-        | some problem => Spec.Twin.threw s!"{label} {problem}"
-        | none =>
-          if Spec.Url.plainHref url then .str (Spec.Url.href url)
-          else Spec.Twin.unsupported "path needs re-encoding"
-    | _, _ => Spec.Twin.unsupported "value or label is not a string"
+        if Spec.Url.plainHref url then
+          return Lean.Json.mkObj [("$url", .str (Spec.Url.href url))]
+        else Spec.Prog.unsupported "path needs re-encoding"
+      | _ => Spec.Prog.unsupported "a URL the checker passed but the parser does not read"
+    | _, _, _ => Spec.Prog.unsupported "value or label is not a string"
 
 /-- `providerBaseURL` on unvalidated settings: a defined non-string has no `trim`. -/
 def providerBaseURLTwin : Spec.Twin where
@@ -989,11 +991,11 @@ def normalizeModelConfigTwin : Spec.Twin where
 
 /-- The twins in this file. -/
 def agentRuleTwins : List Spec.Twin :=
-  [assertCompleteChannelsTwin, assertRuntimeRefsTwin, normalizeAgentConfigTwin,
+  [normalizeAgentConfigTwin,
    normalizeAgentConfigPatchTwin, mergeAgentConfigTwin, normalizeCreateAgentInputTwin,
-   normalizeUpdateAgentInputTwin, assertAgentRuntimeRefsTwin, assertHarnessSupportsTwin,
-   assertMetaCredentialsTwin, removeNullConfigValuesTwin, isPrivateHostnameTwin, isPrivateIpv4Twin,
-   isPrivateIpv6Twin, publicHttpsUrlProblemTwin, assertPublicHttpsUrlTwin, providerBaseURLTwin,
+   normalizeUpdateAgentInputTwin, assertAgentRuntimeRefsTwin,
+   removeNullConfigValuesTwin, isPrivateHostnameTwin, isPrivateIpv4Twin,
+   isPrivateIpv6Twin, assertPublicHttpsUrlTwin,
    isProviderToolNameTwin, isHarnessToolNameTwin, harnessToolNameProblemTwin,
    normalizeWebhookHookConfigTwin, normalizeModelConfigTwin]
 

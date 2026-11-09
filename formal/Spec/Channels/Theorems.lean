@@ -1,4 +1,5 @@
 import Spec.Channels.Proofs
+import Spec.Channels.CronLifecycleProofs
 /-! Safety, progress and declared leakage; assumptions A1/A2/A3 apply at adapter boundaries. -/
 namespace Spec.Channels
 /-- A delivery which fails authentication never emits a run. -/
@@ -57,4 +58,45 @@ namespace Spec.Channels
 theorem one_shot_cleanup_progress : Spec.Progress system (fun _ => True)
     (fun _ schedule => schedule = [.finish 1 true true true true])
     (fun _ => True) (fun s => 1 ∈ s.removed) := cleanup_progress_proof
+/-- A cron run whose envelope really completed is shown failed only once it has waited its limit on
+a person. -/
+theorem cron_completed_fails_only_after_limit (l : CronLifecycle.Limits) (run : CronLifecycle.Run)
+    (e : CronLifecycle.Envelope) (now : Nat) (tracked : run.tracked = true)
+    (ended : e.status = .completed)
+    (shown : (CronLifecycle.deadRunOutcome l run (some e) now).isFailure = true) :
+    e.polling = .waitsOnPerson ∧ run.startedAt + l.pausedRunMaxAge < now :=
+  CronLifecycle.completed_envelope_fails_only_after_limit l run e now tracked ended shown
+
+/-- A paused cron run is not failed inside its limit. -/
+theorem cron_paused_not_failed_inside_limit (l : CronLifecycle.Limits) (run : CronLifecycle.Run)
+    (e : CronLifecycle.Envelope) (now : Nat) (tracked : run.tracked = true)
+    (ended : e.status = .completed) (waits : e.polling = .waitsOnPerson)
+    (inside : now ≤ run.startedAt + l.pausedRunMaxAge) :
+    CronLifecycle.deadRunOutcome l run (some e) now = .wait :=
+  CronLifecycle.paused_not_failed_inside_limit l run e now tracked ended waits inside
+
+/-- The sweep never ends a cron run whose envelope is still in flight. -/
+theorem cron_active_envelope_waits (l : CronLifecycle.Limits) (run : CronLifecycle.Run)
+    (e : CronLifecycle.Envelope) (now : Nat) (tracked : run.tracked = true)
+    (active : e.status = .active) : CronLifecycle.deadRunOutcome l run (some e) now = .wait :=
+  CronLifecycle.active_envelope_waits l run e now tracked active
+
+/-- A paused turn leaves its cron run started. -/
+theorem cron_pause_keeps_run_started (run : CronLifecycle.Run) (s : CronLifecycle.State) :
+    CronLifecycle.settleCronRun .awaitingApproval run s = s ∧
+      CronLifecycle.settleCronRun .awaitingInput run s = s :=
+  CronLifecycle.pause_keeps_run_started run s
+
+/-- The first outcome of a cron run stands. -/
+theorem cron_settle_first_wins (status : CronLifecycle.RunStatus) (id : Nat)
+    (runs : List CronLifecycle.Run) (finished : ∀ run ∈ runs, run.id = id → run.status ≠ .started) :
+    CronLifecycle.settleRun status id runs = runs :=
+  CronLifecycle.settle_first_wins status id runs finished
+
+/-- An answer only ever ends a started run of its own conversation. -/
+theorem cron_answer_settles_own_conversation (conversation : Nat) (run : CronLifecycle.Run)
+    (runs : List CronLifecycle.Run) (found : CronLifecycle.newestStarted conversation runs = some run) :
+    run.conversation = conversation ∧ run.status = .started :=
+  CronLifecycle.answer_settles_own_conversation conversation run runs found
+
 end Spec.Channels
