@@ -480,20 +480,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     }
 
     const winner = await getSandboxExternalId("vercel", key);
-    if (!winner) {
-      // The row vanished after the refused claim; the sweeper's orphan adoption reaches it now.
-      await upsertSandboxInstance(
-        this.#config.controlPlane,
-        "vercel",
-        key,
-        name,
-        request.metadata,
-        { specs: vercelSpecs(sandbox) },
-      );
-
-      return sandbox;
-    }
     await sandbox.delete().catch(() => {});
+    if (!winner)
+      throw new Error("failed to reserve vercel sandbox (lost create race)");
 
     return Sandbox.get({
       name: winner,

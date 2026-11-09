@@ -3368,6 +3368,20 @@ describe("createSandboxExecutor", () => {
     expect(vercelGetMock.mock.calls.at(-1)?.[0]?.name).toBe("fp-p-winner");
   });
 
+  it("drops its own sandbox and fails when the refused claim's winner is gone", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(persistentVercelConfig());
+    claimSandboxInstanceMock.mockImplementationOnce(async () => false);
+
+    await expect(executor.run(persistentVercelRun())).rejects.toThrow(
+      "lost create race",
+    );
+
+    expect(vercelDeleteMock).toHaveBeenCalledTimes(1);
+    expect(upsertSandboxInstanceMock).not.toHaveBeenCalled();
+  });
+
   // Vercel's session timeout is a hard stop, so a busy sandbox would be cut mid-command.
   it("extends the session to one idle window past each call", async () => {
     const { VercelSandboxExecutor } =

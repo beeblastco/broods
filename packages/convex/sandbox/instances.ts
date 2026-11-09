@@ -17,7 +17,10 @@ import {
   sandboxLaunchUsage,
 } from "../model/usageMeter";
 import { getActiveAccountForUser } from "../org/orgs";
-import { SANDBOX_RESERVATION_TTL_SECONDS } from "../runtime";
+import {
+  SANDBOX_RESERVATION_TTL_SECONDS,
+  sandboxStillReserved,
+} from "../runtime";
 import { sandboxInstancesFields } from "../schema";
 import { recordRuntimeAction } from "./auditEvents";
 
@@ -242,6 +245,7 @@ export const upsert = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
+    if (!(await mirrorsLiveMachine(ctx, args))) return null;
     const existing = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_reservationKey", (q) =>
@@ -488,6 +492,18 @@ async function billRefresh(
   }
 
   return now;
+}
+
+// A write a release overtook would bill a machine that is gone, so a reserved row lives only
+// while its reservation names it.
+async function mirrorsLiveMachine(
+  ctx: MutationCtx,
+  write: Pick<
+    Doc<"sandboxInstances">,
+    "provider" | "reservationKey" | "externalId" | "ephemeral"
+  >,
+): Promise<boolean> {
+  return write.ephemeral === true || (await sandboxStillReserved(ctx, write));
 }
 
 // A size-less write (a workdir or e2b reconnect) must not unverify the same machine.
