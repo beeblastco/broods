@@ -175,6 +175,18 @@ describe("mirror write lanes", () => {
     expect(mirrorQueueStats().rows).toBe(0);
   });
 
+  it("keeps a row's lane moving when a sender throws before it returns", async () => {
+    void queueMirrorWrite("row-a", {
+      kind: "status",
+      send: (): Promise<void> => {
+        throw new Error("sender broke");
+      },
+    });
+    await upsert("row-a", "m-1", "t-1");
+
+    expect(landed.map((entry) => entry[0])).toEqual(["upsert"]);
+  });
+
   it("holds shutdown's drain until every queued write landed", async () => {
     const first = hold("row-a");
     void upsert("row-a", "m-1", "t-1");

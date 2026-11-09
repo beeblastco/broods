@@ -166,7 +166,10 @@ async function land(rowKey: string, write: MirrorWrite): Promise<void> {
   const timedOut = new Promise<boolean>((resolve): void => {
     timer = setTimeout((): void => resolve(true), MIRROR_WRITE_TIMEOUT_MS);
   });
-  const sent = write.send().then(
+  // The executor turns a sender's synchronous throw into a rejection, so the lane moves on.
+  const sent = new Promise<unknown>((resolve): void =>
+    resolve(write.send()),
+  ).then(
     (): boolean => false,
     (): boolean => false,
   );

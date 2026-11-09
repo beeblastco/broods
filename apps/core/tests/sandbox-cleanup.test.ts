@@ -10,6 +10,8 @@ const PLATFORM_ROW: SandboxReleaseTarget["instance"] = {
 let accountConfigs: SandboxConfigRecord[] = [];
 let instanceRow: SandboxReleaseTarget["instance"] = PLATFORM_ROW;
 let reservedProvider = "e2b";
+// A second provider's reservation on the same key, as after a provider switch.
+let alsoReserved: { provider: string; externalId: string } | undefined;
 let lookupError: Error | undefined;
 
 const e2bKillMock = mock(
@@ -83,6 +85,9 @@ const getSandboxReleaseTargetMock = mock(
     externalId?: string,
   ): Promise<SandboxReleaseTarget> => {
     if (lookupError) throw lookupError;
+    if (provider === alsoReserved?.provider) {
+      return { externalId: alsoReserved.externalId, instance: instanceRow };
+    }
     if (provider !== reservedProvider) {
       return { externalId: null, instance: null };
     }
@@ -124,6 +129,7 @@ beforeEach(() => {
   instanceRow = PLATFORM_ROW;
   reservedProvider = "e2b";
   lookupError = undefined;
+  alsoReserved = undefined;
   e2bKillMock.mockReset();
   claimSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
@@ -269,6 +275,19 @@ it("tears down a live reservation when the row take is refused", async () => {
   expect(released).toBe(1);
   expect(e2bKillMock.mock.calls.map((c) => c[0])).toEqual(["sbx-live"]);
   expect(removeSandboxInstanceMock.mock.calls).toEqual([
+    ["acct-1", "key-live", "sbx-live"],
+  ]);
+});
+
+// One row per key: either provider's machine may be the one it names.
+it("removes the row for each machine it released under one key", async () => {
+  alsoReserved = { provider: "lambda", externalId: "microvm-old" };
+
+  const released = await releaseReservedSandboxes("acct-1", ["key-live"]);
+
+  expect(released).toBe(2);
+  expect(removeSandboxInstanceMock.mock.calls).toEqual([
+    ["acct-1", "key-live", "microvm-old"],
     ["acct-1", "key-live", "sbx-live"],
   ]);
 });

@@ -97,24 +97,25 @@ export async function releaseReservedSandboxes(
   let released = 0;
   const removals: Promise<void>[] = [];
   for (const namespace of namespaces) {
-    let machine: string | undefined;
+    const machines: string[] = [];
     for (const provider of RELEASABLE_PROVIDERS) {
-      const releasedId = await releaseOnProvider(
+      const machine = await releaseOnProvider(
         accountId,
         provider,
         configs,
         namespace,
       );
-      if (releasedId) {
-        released++;
-        machine = releasedId;
-      }
+      if (machine) machines.push(machine);
       await deleteSandboxInstance(provider, namespace, accountId).catch(
         () => {},
       );
     }
-    // Only the machine it released: a run that reserved the key since keeps its row.
-    removals.push(queueMirrorRemove(accountId, namespace, machine));
+    released += machines.length;
+    // Only the machines it released: a run that reserved the key since keeps its row.
+    const fences = machines.length > 0 ? machines : [undefined];
+    for (const machine of fences) {
+      removals.push(queueMirrorRemove(accountId, namespace, machine));
+    }
   }
   await Promise.all(removals);
 
