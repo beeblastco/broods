@@ -77,7 +77,7 @@ What earns credit, per statement rather than per function:
 - A call with a value too big to record, or a late effect, is not compared.
 - If a recording shows the call changed a field on its receiver or a module binding, the twin must state each change with `Prog.setState "self.field" value` or `"module.name"`, or it earns nothing.
 - A callback runs inside the effect that called it, so `Prog.drain` comes before that effect's `Prog.effect`.
-- A twin whose every call returned `undefined` with no effects earns nothing: there was nothing to be right about.
+- A twin whose every call returned `undefined`, with no effects and no state change, earns nothing: there was nothing to be right about.
 - A gap excuses only calls its `gapCovers` predicate names.
 - Results are bound to a hash of the source, the Lean and the recording. Any change makes them stale.
 

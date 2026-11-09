@@ -1,4 +1,5 @@
 import Spec.Channels.Model
+import Spec.Channels.CronLifecycle
 import Lean
 namespace Spec.Channels
 open Lean
@@ -55,6 +56,32 @@ def vectors : List Json := Id.run do
   for mask in List.range 16 do
     let es := (List.range 4).map fun n => (mask / 2^n % 2 == 1, toString n)
     out := out ++ [vector "rewrite" (toJson es) (toJson (rewriteLatest es "replacement"))]
+  let base := 1000000000
+  let run (tracked : Bool) : CronLifecycle.Run :=
+    { id := 1, job := 1, conversation := 1, startedAt := base, tracked := tracked, oneShot := false,
+      status := .started }
+  let statusName : CronLifecycle.EnvelopeStatus → String
+    | .active => "processing"
+    | .completed => "completed"
+    | .failed => "failed"
+    | .expired => "expired"
+  let cl := CronLifecycle.limits
+  for limit in [cl.deadRunGrace, cl.expiredRunGrace, cl.pausedRunMaxAge, cl.untrackedRunMaxAge] do
+    for offset in [0, 1, 2] do
+      let now := base + limit + offset - 1
+      for tracked in [false, true] do
+        out := out ++ [vector "cronSweep"
+          (Json.mkObj [("tracked", toJson tracked), ("startedAt", toJson base), ("now", toJson now)])
+          (toJson (CronLifecycle.deadRunOutcome cl (run tracked) none now).name)]
+        for status in [CronLifecycle.EnvelopeStatus.active, .completed, .failed, .expired] do
+          for polling in [CronLifecycle.Polling.waitsOnPerson, .settled] do
+            let e : CronLifecycle.Envelope := { status := status, updatedAt := base, polling := polling }
+            out := out ++ [vector "cronSweep"
+              (Json.mkObj
+                [("tracked", toJson tracked), ("startedAt", toJson base), ("now", toJson now),
+                 ("status", toJson (statusName status)), ("updatedAt", toJson base),
+                 ("paused", toJson (polling == .waitsOnPerson))])
+              (toJson (CronLifecycle.deadRunOutcome cl (run tracked) (some e) now).name)]
   return out
 end Spec.Channels
 

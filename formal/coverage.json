@@ -1,15 +1,15 @@
 {
   "totals": {
-    "statements": 18493,
+    "statements": 18697,
     "excluded": 590,
-    "verifiable": 17903,
-    "verified": 7785,
-    "byTwin": 7165,
+    "verifiable": 18107,
+    "verified": 7769,
+    "byTwin": 7149,
     "byReplay": 620,
-    "arms": 13520,
-    "armsVerified": 5560
+    "arms": 13655,
+    "armsVerified": 5552
   },
-  "twins": 1499,
+  "twins": 1498,
   "creditedTwins": [
     "apps/cloudflare-mcp/src/index.ts#TenantOutbound.fetch",
     "apps/cloudflare-mcp/src/index.ts#boundedMessage",
@@ -116,6 +116,7 @@
     "apps/core/src/harness/channel-media.ts#acceptsNativeMedia",
     "apps/core/src/harness/channel-media.ts#assertWithinLimit",
     "apps/core/src/harness/channel-media.ts#attachmentNote",
+    "apps/core/src/harness/channel-media.ts#audioTranscript",
     "apps/core/src/harness/channel-media.ts#formatBytes",
     "apps/core/src/harness/channel-media.ts#imageLinks",
     "apps/core/src/harness/channel-media.ts#isStoredMediaPart",
@@ -143,8 +144,6 @@
     "apps/core/src/harness/compaction.ts#stringifyMessageContent",
     "apps/core/src/harness/compaction.ts#summarizeBlocks",
     "apps/core/src/harness/connections.ts#expiresSoon",
-    "apps/core/src/harness/connections.ts#loadFresh",
-    "apps/core/src/harness/connections.ts#refreshAndSave",
     "apps/core/src/harness/continuation.ts#isRunnableModelInput",
     "apps/core/src/harness/continuation.ts#resumeAfterYield",
     "apps/core/src/harness/continuation.ts#turnSettlement",
@@ -1531,20 +1530,24 @@
       "by replay",
       "branch arms"
     ],
-    ["access", "1969", "131", "1838", "63.2%", "1098", "64", "826/1355"],
+    ["access", "1977", "131", "1846", "63.1%", "1101", "64", "823/1357"],
     ["agent", "3902", "138", "3764", "38.1%", "1329", "105", "1049/2744"],
-    ["channels", "3486", "2", "3484", "42.2%", "1400", "69", "1197/2916"],
+    ["channels", "3676", "2", "3674", "40.1%", "1403", "69", "1201/3046"],
     ["config", "617", "0", "617", "79.4%", "401", "89", "303/509"],
     ["hosted", "1962", "311", "1651", "45.2%", "627", "119", "483/1084"],
-    ["runs", "1682", "8", "1674", "27.5%", "450", "11", "292/1153"],
-    ["sandbox", "4783", "0", "4783", "40.6%", "1849", "94", "1407/3727"],
+    ["runs", "1682", "8", "1674", "26.2%", "428", "11", "283/1154"],
+    ["sandbox", "4789", "0", "4789", "40.6%", "1849", "94", "1407/3729"],
     ["workers", "92", "0", "92", "87.0%", "11", "69", "3/32"],
-    ["all", "18493", "590", "17903", "43.5%", "7165", "620", "5560/13520"]
+    ["all", "18697", "590", "18107", "42.9%", "7149", "620", "5552/13655"]
   ],
   "largestUnverified": [
     {
       "source": "apps/core/src/harness/harness.ts#runAgentLoop",
       "count": 389
+    },
+    {
+      "source": "packages/convex/agent/crons.ts#<unlisted>",
+      "count": 141
     },
     {
       "source": "apps/core/src/shared/convex/storage.ts#<unlisted>",
@@ -1631,12 +1634,12 @@
       "count": 43
     },
     {
-      "source": "apps/core/src/shared/twilio-channel.ts#createTwilioChannel",
+      "source": "apps/gateway/src/terminal.ts#openTerminalUpstream",
       "count": 42
     },
     {
-      "source": "apps/gateway/src/terminal.ts#openTerminalUpstream",
-      "count": 41
+      "source": "apps/core/src/shared/twilio-channel.ts#createTwilioChannel",
+      "count": 42
     },
     {
       "source": "apps/core/src/shared/zalo-channel.ts#createZaloChannel",
@@ -1811,6 +1814,10 @@
       "count": 28
     },
     {
+      "source": "apps/cloudflare-sandbox/src/index.ts#Sandbox.fetch",
+      "count": 28
+    },
+    {
       "source": "apps/core/src/harness/tools/bash.tool.ts#bashTool",
       "count": 28
     },
@@ -1964,10 +1971,6 @@
     },
     {
       "source": "apps/core/src/harness/ingress-recovery.ts#sweepQueuedIngress",
-      "count": 22
-    },
-    {
-      "source": "apps/cloudflare-sandbox/src/index.ts#Sandbox.fetch",
       "count": 22
     },
     {
@@ -2139,6 +2142,10 @@
       "count": 18
     },
     {
+      "source": "packages/convex/agent/crons.ts#deadRunOutcome",
+      "count": 18
+    },
+    {
       "source": "apps/core/src/harness/isolate/executor.ts#IsolateWorker.constructor",
       "count": 18
     },
@@ -2279,6 +2286,10 @@
       "count": 15
     },
     {
+      "source": "apps/gateway/src/agent.ts#attachCoreStream",
+      "count": 15
+    },
+    {
       "source": "apps/core/src/harness/harness.ts#readAgentFullStream",
       "count": 15
     },
@@ -2328,18 +2339,6 @@
     },
     {
       "source": "apps/core/src/harness/sandbox/daytona-executor.ts#DaytonaSandboxExecutor.run",
-      "count": 15
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/utils.ts#meterEphemeralSandbox",
-      "count": 15
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/workdir-harness-driver.ts#WorkdirHarnessSession.constructor",
-      "count": 15
-    },
-    {
-      "source": "apps/core/src/harness/tools/load-skill.tool.ts#loadSkillTool",
       "count": 15
     }
   ]

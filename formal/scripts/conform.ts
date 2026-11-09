@@ -78,6 +78,7 @@ interface Traced {
   moduleAfter: unknown;
   argsAfter?: Encoded[];
   windowsLost?: boolean;
+  overlapped?: boolean;
   effects: RecordedEffect[];
   outcome: { returned?: unknown; threw?: unknown; sync?: boolean };
   hits: number[];
@@ -299,7 +300,11 @@ function record(wanted: string[]): boolean {
       },
     );
     const after = failingTests(report);
-    const introduced = [...after].filter((test) => !before.has(test));
+    const introduced = stillFailing(
+      directory,
+      [...after].filter((test) => !before.has(test)),
+      sources,
+    );
     console.log(
       `${directory}: ${after.size} failing, baseline ${before.size}, ${introduced.length} introduced by recording`,
     );
@@ -400,6 +405,47 @@ function testCount(report: string): number {
   if (!existsSync(report)) return 0;
 
   return [...readFileSync(report, "utf8").matchAll(/<testcase\b/g)].length;
+}
+
+// Coverage slows tests that assert on elapsed time. A test that passes once more under the
+// recorder, without coverage, was not changed by recording.
+function stillFailing(
+  directory: string,
+  tests: string[],
+  sources: string,
+): string[] {
+  if (tests.length === 0) return [];
+  const report = join(OUT, `${directory.replaceAll("/", "-")}.retry.xml`);
+  spawnSync(
+    "bun",
+    [
+      "test",
+      "--isolate",
+      "--max-concurrency=1",
+      "--timeout=60000",
+      "--preload",
+      PRELOAD,
+      "--reporter=junit",
+      `--reporter-outfile=${report}`,
+      ...new Set(tests.map((test) => test.split(" ")[0] ?? "")),
+    ],
+    {
+      cwd: join(ROOT, directory),
+      encoding: "utf8",
+      maxBuffer: 1 << 28,
+      timeout: RUN_LIMIT_MS,
+      env: {
+        ...process.env,
+        SPEC_CORPUS: CORPUS,
+        SPEC_TRACES: TRACES,
+        SPEC_RECORD_SOURCES: sources,
+      },
+    },
+  );
+  if (!existsSync(report)) return tests;
+  const again = failingTests(report);
+
+  return tests.filter((test) => again.has(test));
 }
 
 function failingTests(report: string): Set<string> {
@@ -748,6 +794,10 @@ function runTwin(input: string): string[] {
 // of a class no entry in `boundaries.tsv` says can be erased.
 function incompleteReasons(call: Traced, opaqueAllowed: Set<string>): string[] {
   const problems = new Set<string>();
+  if (call.overlapped && canonical(call.module) !== canonical(call.moduleAfter))
+    problems.add(
+      "module state changed while another call of this function ran",
+    );
   if (call.windowsLost)
     problems.add("too many effects touched an argument to separate them");
   const scan = (value: unknown): void => {

@@ -36,6 +36,18 @@ export const suite: Suite = {
       replace: "if (false) await removeOneShotCron(accountId, cronRun.cronId);",
     },
     {
+      name: "a paused cron run is failed at the short limit",
+      file: "packages/convex/agent/crons.ts",
+      find: "return now - run.startedAt > PAUSED_RUN_MAX_AGE_MS",
+      replace: "return now - run.startedAt > DEAD_RUN_GRACE_MS",
+    },
+    {
+      name: "an expired cron run is failed at the short limit",
+      file: "packages/convex/agent/crons.ts",
+      find: "return endedAgo > EXPIRED_RUN_GRACE_MS ? dead : null;",
+      replace: "return endedAgo > DEAD_RUN_GRACE_MS ? dead : null;",
+    },
+    {
       name: "accept expired ticket",
       file: "apps/core/src/shared/media-ticket.ts",
       find: "parsed.data.exp * 1000 > now",

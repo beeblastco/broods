@@ -188,6 +188,68 @@ test.failing.each(
   ),
 )("G500 calendar $name", ({ vector }): Promise<void> => replay(vector));
 
+interface CronSweepInput {
+  tracked: boolean;
+  startedAt: number;
+  now: number;
+  status?: string;
+  updatedAt?: number;
+  paused?: boolean;
+}
+
+// Runs the real `deadRunOutcome` with its own constants, on a database answering from the vector.
+async function replayCronSweep(input: CronSweepInput): Promise<string> {
+  const path = "packages/convex/agent/crons.ts";
+  const source = await Bun.file(`${import.meta.dir}/../../${path}`).text();
+  const constant = (name: string): number =>
+    (new RegExp(`const ${name} = ([\\d\\s*]+);`).exec(source)?.[1] ?? "")
+      .split("*")
+      .reduce((product, factor): number => product * Number(factor), 1);
+  const { deadRunOutcome } = await sourceFunctions<{
+    deadRunOutcome: (
+      ctx: unknown,
+      run: unknown,
+      now: number,
+    ) => Promise<{ status: string; error?: string } | null>;
+  }>(path, ["deadRunOutcome"], {
+    DEAD_RUN_GRACE_MS: constant("DEAD_RUN_GRACE_MS"),
+    EXPIRED_RUN_GRACE_MS: constant("EXPIRED_RUN_GRACE_MS"),
+    PAUSED_RUN_MAX_AGE_MS: constant("PAUSED_RUN_MAX_AGE_MS"),
+    UNTRACKED_RUN_MAX_AGE_MS: constant("UNTRACKED_RUN_MAX_AGE_MS"),
+    DEAD_RUN_ERROR: "dead",
+    UNANSWERED_RUN_ERROR: "unanswered",
+  });
+  const rows: Record<string, unknown> = {
+    runtimeIngressEnvelopes:
+      input.status === undefined
+        ? null
+        : { status: input.status, updatedAt: input.updatedAt, error: "boom" },
+    runtimeAsyncAgentResults: {
+      status: input.paused === true ? "awaiting_approval" : "completed",
+    },
+  };
+  const ctx = {
+    db: {
+      query: (table: string) => ({
+        withIndex: () => ({ first: async (): Promise<unknown> => rows[table] }),
+      }),
+    },
+  };
+  const outcome = await deadRunOutcome(
+    ctx,
+    {
+      startedAt: input.startedAt,
+      ingressEventId: input.tracked ? "event" : undefined,
+    },
+    input.now,
+  );
+  if (outcome === null) return "wait";
+  if (outcome.status === "completed") return "finished";
+  if (outcome.error === "dead") return "failedDead";
+
+  return outcome.error === "unanswered" ? "failedUnanswered" : "failedEnvelope";
+}
+
 async function replay(v: Vector): Promise<void> {
   switch (v.kind) {
     case "rewrite": {
@@ -407,6 +469,11 @@ async function replay(v: Vector): Promise<void> {
       expect(
         holder.receivers?.map((r): number => Number(r.agent.agentId)) ?? [],
       ).toEqual(v.expected);
+      break;
+    }
+    case "cronSweep": {
+      const input = v.input as CronSweepInput;
+      expect(await replayCronSweep(input)).toBe(v.expected);
       break;
     }
     case "reply": {

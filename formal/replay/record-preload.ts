@@ -156,6 +156,7 @@ interface Frame {
   handed: WeakSet<object>;
   windows: number;
   windowsLost: boolean;
+  overlapped: boolean;
   readers: Record<string, () => unknown> | undefined;
 }
 
@@ -169,6 +170,7 @@ const frames = new AsyncLocalStorage<Frame>();
 const promiseThen = Promise.prototype.then;
 const settledValues = new WeakMap<Promise<unknown>, unknown>();
 const responseBodies = new WeakMap<Response, string>();
+const running = new Map<string, Set<Frame>>();
 const privateReaders = new WeakMap<object, (value: object) => object>();
 let budget = 0;
 let textLeft = 0;
@@ -254,12 +256,16 @@ function observe(
     frame.args = args;
   }
   if (TRACES && !frame) count(source, "overTraceCap");
+  if (frame) noteRunning(source, frame);
   const traceArgs = frame ? encodeText(args) : "";
   const traceSelf = frame ? encodeText(self) : "";
   const run = (): unknown => Reflect.apply(target, self, args);
   const finish = (outcome: Outcome, plain: PlainOutcome): void => {
     if (before) write(source, before, plain, frame);
-    if (frame) writeTrace(frame, traceArgs, traceSelf, outcome);
+    if (frame) {
+      running.get(source)?.delete(frame);
+      writeTrace(frame, traceArgs, traceSelf, outcome);
+    }
   };
   let result: unknown;
   try {
@@ -315,6 +321,7 @@ function newFrame(source: string): Frame {
     handed: new WeakSet(),
     windows: 0,
     windowsLost: false,
+    overlapped: false,
     readers: undefined,
   };
 }
@@ -562,6 +569,17 @@ function traceNow(frame: Frame | undefined, nested: Nested): number {
   }
 
   return now;
+}
+
+// Calls of one function that overlap share its module state, so neither owns what changed there.
+function noteRunning(source: string, frame: Frame): void {
+  const others = running.get(source) ?? new Set<Frame>();
+  running.set(source, others);
+  for (const other of others) {
+    other.overlapped = true;
+    frame.overlapped = true;
+  }
+  others.add(frame);
 }
 
 // An effect answers for what changes in an object it was given or called on while it runs. For an
@@ -1063,7 +1081,7 @@ function writeTrace(
   const env = [...frame.env.entries()]
     .map(([name, value]) => `${JSON.stringify(name)}:${value}`)
     .join(",");
-  const line = `{"fn":${JSON.stringify(frame.source)},"args":${args},"self":${self},"params":${frame.params},"env":{${env}},"module":${frame.module},"aborted":${JSON.stringify(frame.aborted)},"selfAfter":${encodeText(frame.self)},"moduleAfter":${frame.readers ? readModule(frame.readers) : "null"}${argsAfterField(frame, args)}${frame.windowsLost ? ',"windowsLost":true' : ""},"effects":[${effects}],"outcome":${outcomeText(outcome)},"hits":${JSON.stringify([...frame.hits])}}`;
+  const line = `{"fn":${JSON.stringify(frame.source)},"args":${args},"self":${self},"params":${frame.params},"env":{${env}},"module":${frame.module},"aborted":${JSON.stringify(frame.aborted)},"selfAfter":${encodeText(frame.self)},"moduleAfter":${frame.readers ? readModule(frame.readers) : "null"}${argsAfterField(frame, args)}${frame.windowsLost ? ',"windowsLost":true' : ""}${frame.overlapped ? ',"overlapped":true' : ""},"effects":[${effects}],"outcome":${outcomeText(outcome)},"hits":${JSON.stringify([...frame.hits])}}`;
   if (line.length > MAX_TRACE_BYTES) {
     count(frame.source, "traceTooBig");
 

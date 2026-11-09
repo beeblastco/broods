@@ -772,7 +772,8 @@ private def handleStatusRequest (call : Json) : Prog Json := do
   let asyncResult ← Prog.effect "getAsyncAgentResult" [field event "eventId"]
   let held := field asyncResult "status"
   let status := if truthy asyncResult && (held == .str "awaiting_approval" || held == .str "awaiting_input" ||
-      (held == .str "processing" && field result "status" != .str "failed")) then held
+      (held == .str "processing" && field result "status" != .str "failed" &&
+        field result "status" != .str "expired")) then held
     else field result "status"
   let scope := [field event "accountId", field event "agentId"]
   let key ← Prog.effect "eventPublicConversationKey" ([field result "conversationKey"] ++ scope)
@@ -935,6 +936,8 @@ private def openCronRun (call : Json) : Prog Json := do
   let _ ← Prog.effect "getStorage"
   let run ← Prog.effect "getStorage().crons.createRun" [obj [("accountId", field job "accountId"),
     ("cronId", field job "cronId"), ("eventId", field event "publicEventId"),
+    ("ingressEventId", field event "eventId"),
+    ("ingressConversationKey", field event "conversationKey"),
     ("conversationKey", field event "publicConversationKey")], Twin.callArg call 1]
   return obj [("event", event), ("run", run)]
 
