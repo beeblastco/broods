@@ -195,6 +195,10 @@ const CASES: readonly Case[] = [
     name: "array from with a mapper",
     body: `return Array.from({ length: 2 }, () => f(3));`,
   },
+  {
+    name: "closure in an escaped object keeps its name and result",
+    body: `const o = { call: (x: number) => f(x) }; take(o); return [o.call.name, o.call(4)];`,
+  },
   { name: "void call", body: `void later(1); return f(2);` },
   {
     name: "typed non-null",

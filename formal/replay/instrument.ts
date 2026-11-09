@@ -18,6 +18,7 @@ const METHOD = "globalThis.__specMethod";
 const HIT = "globalThis.__specHit";
 const NEW = "globalThis.__specNew";
 const ENTER = "globalThis.__specEnter";
+const LATE = "globalThis.__specLate";
 const RANK: Record<EditKind, number> = { close: 0, open: 1, replace: 2 };
 // A call hanging off one of these cannot be routed without changing what short-circuits, so it is
 // left alone. These names are JavaScript built-ins, whose results a twin works out itself.
@@ -149,6 +150,7 @@ export function instrument(
     if (!body) continue;
     const escaped = escapedClosures(body);
     edits.push(...escapeEdits(escaped));
+    edits.push(...lateEdits(target, analysis.program, body, escaped, mutable));
     edits.push(...callEdits(body, source, withCallbackHelpers(body, escaped)));
   }
 
@@ -629,6 +631,126 @@ function localDeclarations(body: AstNode): Map<string, AstNode> {
   });
 
   return names;
+}
+
+// A closure that outlives its function gets a trace of its own whenever it runs after that function
+// returned. It is given what it can see of the function that made it, like module state.
+function lateEdits(
+  target: FunctionInfo,
+  program: AstNode,
+  body: AstNode,
+  escaped: Map<AstNode, string>,
+  mutable: Set<string>,
+): Edit[] {
+  const node = functionNode(program, target);
+  const enclosing = declaredNames(body);
+  for (const param of node ? parameterNames(node["params"] as AstNode[]) : [])
+    enclosing.add(param);
+  const counts = new Map<string, number>();
+  const edits: Edit[] = [];
+  const named = positionNames(body);
+  const closures = [...lateClosures(body, escaped)].sort(
+    ([a], [b]) => a.start - b.start,
+  );
+  for (const [closure, label] of closures) {
+    const seen = (counts.get(label) ?? 0) + 1;
+    counts.set(label, seen);
+    const name = seen === 1 ? label : `${label}~${seen}`;
+    const own = declaredNames(closure);
+    for (const param of parameterNames(closure["params"] as AstNode[]))
+      own.add(param);
+    const free = [...mentioned(closure["body"] as AstNode)]
+      .filter(
+        (item) => !own.has(item) && (enclosing.has(item) || mutable.has(item)),
+      )
+      .sort();
+    const thunks = free.map((item) => `${item}:()=>${item}`).join(",");
+    edits.push(
+      open(
+        closure.start,
+        `${LATE}(__specF,${JSON.stringify(name)},${JSON.stringify(named.get(closure) ?? "")},{${thunks}},`,
+      ),
+      close(closure.end, ")"),
+    );
+  }
+
+  return edits;
+}
+
+// JavaScript names a closure after the property or variable it directly initialises, and only then.
+function positionNames(body: AstNode): Map<AstNode, string> {
+  const names = new Map<AstNode, string>();
+  walk(body, (node) => {
+    if (node.type === "Property" && node["computed"] !== true) {
+      const key = node["key"] as { name?: string; value?: unknown };
+      names.set(
+        node["value"] as AstNode,
+        String(
+          (key.name as string | undefined) ??
+            (key.value as string | undefined) ??
+            "",
+        ),
+      );
+    } else if (node.type === "VariableDeclarator") {
+      const id = node["id"] as { name?: string };
+      if (id.name && node["init"]) names.set(node["init"] as AstNode, id.name);
+    }
+  });
+
+  return names;
+}
+
+function declaredNames(body: AstNode): Set<string> {
+  const names = new Set<string>();
+  walk(body, (node) => {
+    if (node === body) return;
+    if (node.type === "VariableDeclarator")
+      for (const name of parameterNames([node["id"] as AstNode]))
+        names.add(name);
+    else if (node.type === "FunctionDeclaration") {
+      const id = node["id"] as { name?: string } | null;
+      if (id?.name) names.add(id.name);
+    }
+  });
+
+  return names;
+}
+
+// Closures that can run after their function has returned: callbacks it handed out and closures it
+// returned. A generator or a shorthand method cannot be wrapped where it stands.
+function lateClosures(
+  body: AstNode,
+  escaped: Map<AstNode, string>,
+): Map<AstNode, string> {
+  const found = new Map(escaped);
+  const locals = localDeclarations(body);
+  const objects = localObjects(body);
+  const noteReturned = (value: AstNode): void => {
+    note(found, locals, value, "return");
+    scanObject(found, locals, objects, value, new Set());
+  };
+  if (body.type !== "BlockStatement") noteReturned(body);
+  walk(body, (node) => {
+    if (node.type === "ReturnStatement" && node["argument"])
+      noteReturned(node["argument"] as AstNode);
+  });
+  const shorthand = new Set<AstNode>();
+  walk(body, (node) => {
+    if (
+      node.type === "Property" &&
+      (node["method"] === true || node["kind"] !== "init")
+    )
+      shorthand.add(node["value"] as AstNode);
+  });
+
+  return new Map(
+    [...found].filter(
+      ([closure]) =>
+        isClosure(closure) &&
+        closure["generator"] !== true &&
+        !shorthand.has(closure),
+    ),
+  );
 }
 
 function escapeEdits(escaped: Map<AstNode, string>): Edit[] {

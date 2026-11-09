@@ -88,7 +88,12 @@ const DAMAGES: Record<string, Damage> = {
   "add a write to an argument": (line) => {
     if (!Array.isArray(line.args)) return undefined;
     const target = line.args.findIndex(
-      (arg) => typeof arg === "object" && arg !== null && !Array.isArray(arg),
+      (arg) =>
+        typeof arg === "object" &&
+        arg !== null &&
+        !Array.isArray(arg) &&
+        !("$big" in arg) &&
+        !("$undefined" in arg),
     );
 
     return target === -1

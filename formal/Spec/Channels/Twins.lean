@@ -1,4 +1,5 @@
 import Spec.Twin
+import Spec.Channels.Twins.Closures
 import Spec.Channels.Twins.Commands
 import Spec.Channels.Twins.Forwarder
 import Spec.Channels.Twins.Integrations
@@ -22,6 +23,6 @@ namespace Spec.Channels
 
 /-- This subsystem's twins. -/
 def twins : List Spec.Twin :=
-  commandTwins ++ forwarderTwins ++ integrationTwins ++ recordTwins ++ Wavechannels1.twins ++ Wavechannels2.twins ++ Wavechannels3a.twins ++ Wavechannels4a.twins ++ Wavechannels4b.twins ++ Wavechannels5a.twins ++ Wavechannels5b.twins ++ Wavechannels6a.twins ++ Wavechannels8a.twins ++ Wave10.twins
+  Closures.twins ++ commandTwins ++ forwarderTwins ++ integrationTwins ++ recordTwins ++ Wavechannels1.twins ++ Wavechannels2.twins ++ Wavechannels3a.twins ++ Wavechannels4a.twins ++ Wavechannels4b.twins ++ Wavechannels5a.twins ++ Wavechannels5b.twins ++ Wavechannels6a.twins ++ Wavechannels8a.twins ++ Wave10.twins
 
 end Spec.Channels

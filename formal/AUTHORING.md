@@ -74,9 +74,10 @@ What earns credit, per statement rather than per function:
   `boundaries.tsv` with a reason. So build leaves first.
 - Every external effect label must match a `boundaries.tsv` regex, and every opaque class must be
   declared there, or the call does not count.
-- A call with a value too big to record, or a late effect, is not compared.
+- A call with a value too big to record is not compared. What a function's closures do after it returned is outside its trace (L25).
 - If a recording shows the call changed a field on its receiver or a module binding, the twin must state each change with `Prog.setState "self.field" value` or `"module.name"`, or it earns nothing.
 - A callback runs inside the effect that called it, so `Prog.drain` comes before that effect's `Prog.effect`.
+- A closure that runs after the function that made it has returned has its own trace, under `file#outer/label`. The label is the property or variable holding it, or `argN` or `return`, with `~2` for a repeat. Register a twin under that name. It sees the variables it can reach from the enclosing function through `Twin.moduleValue`, and states a write to one as `module.name`.
 - A twin whose every call returned `undefined`, with no effects and no state change, earns nothing: there was nothing to be right about.
 - A gap excuses only calls its `gapCovers` predicate names.
 - Results are bound to a hash of the source, the Lean and the recording. Any change makes them stale.

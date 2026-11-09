@@ -120,6 +120,12 @@ type Outcome =
   | { threw: string; sync: boolean }
   | { pending: true };
 
+interface LateCall {
+  of: Frame;
+  label: string;
+  readers: Record<string, () => unknown>;
+}
+
 interface Effect {
   fn: string;
   to: string | undefined;
@@ -157,6 +163,8 @@ interface Frame {
   windows: number;
   windowsLost: boolean;
   overlapped: boolean;
+  lateOf: Frame | undefined;
+  lateLabel: string | undefined;
   readers: Record<string, () => unknown> | undefined;
 }
 
@@ -192,17 +200,18 @@ if (CORPUS && SOURCES) {
     __specWrap: wrap,
     __specFrame: claimFrame,
     __specInherit: (): Frame | undefined => frames.getStore(),
-    __specCall: traceCall,
-    __specMethod: traceMethod,
-    __specNow: traceNow,
-    __specNew: traceNew,
-    __specEnter: traceEnter,
-    __specEnv: traceEnv,
-    __specParams: traceParams,
-    __specModule: traceModule,
+    __specLate: traceLate,
+    __specCall: inCurrent(traceCall),
+    __specMethod: inCurrent(traceMethod),
+    __specNow: inCurrent(traceNow),
+    __specNew: inCurrent(traceNew),
+    __specEnter: inCurrent(traceEnter),
+    __specEnv: inCurrent(traceEnv),
+    __specParams: inCurrent(traceParams),
+    __specModule: inCurrent(traceModule),
     __specPrivate: registerPrivateReader,
-    __specAborted: traceAborted,
-    __specHit: hit,
+    __specAborted: inCurrent(traceAborted),
+    __specHit: inCurrent(hit),
   });
   // Once per test file: with `--isolate` an exit handler never runs.
   afterAll(flushCounts);
@@ -246,6 +255,7 @@ function observe(
   target: Callee,
   self: unknown,
   args: unknown[],
+  late?: LateCall,
 ): unknown {
   count(source, "attempted");
   const before = isPassive(args) ? safeJson(args) : undefined;
@@ -254,6 +264,12 @@ function observe(
   if (frame) {
     frame.self = self;
     frame.args = args;
+    if (late) {
+      frame.lateOf = late.of;
+      frame.lateLabel = late.label;
+      frame.claimed = true;
+      traceModule(frame, late.readers);
+    }
   }
   if (TRACES && !frame) count(source, "overTraceCap");
   if (frame) noteRunning(source, frame);
@@ -322,6 +338,8 @@ function newFrame(source: string): Frame {
     windows: 0,
     windowsLost: false,
     overlapped: false,
+    lateOf: undefined,
+    lateLabel: undefined,
     readers: undefined,
   };
 }
@@ -334,6 +352,48 @@ function claimFrame(source: string): Frame | undefined {
   frame.claimed = true;
 
   return frame;
+}
+
+// Hooks inside a closure hold the frame of the function that made it. Once that function has
+// returned, they belong to the closure's own trace.
+function current(frame: Frame | undefined): Frame | undefined {
+  if (!frame?.closed) return frame;
+  const store = frames.getStore();
+
+  return store?.lateOf === frame ? store : frame;
+}
+
+function inCurrent<A extends unknown[], R>(
+  hook: (frame: Frame | undefined, ...rest: A) => R,
+): (frame: Frame | undefined, ...rest: A) => R {
+  return (frame, ...rest): R => hook(current(frame), ...rest);
+}
+
+function traceLate(
+  frame: Frame | undefined,
+  label: string,
+  name: string,
+  readers: Record<string, () => unknown>,
+  closure: Callee,
+): Callee {
+  if (typeof closure !== "function") return closure;
+  // Passing a closure through this call stops JavaScript naming it after what holds it.
+  if (closure.name === "" && name !== "")
+    Object.defineProperty(closure, "name", { value: name });
+  if (!frame) return closure;
+  const source = `${frame.source}/${label}`;
+  const wrapped = function (this: unknown, ...args: unknown[]): unknown {
+    return frame.closed
+      ? observe(source, closure, this, args, {
+          of: frame,
+          label: label,
+          readers: readers,
+        })
+      : Reflect.apply(closure, this, args);
+  };
+  Object.defineProperties(wrapped, Object.getOwnPropertyDescriptors(closure));
+
+  return wrapped as Callee;
 }
 
 function hit(frame: Frame | undefined, offset: number): void {
@@ -453,7 +513,7 @@ function traceEnter(
   label: string,
   args: unknown[],
 ): void {
-  if (!frame) return;
+  if (!frame || frame.lateLabel === label) return;
   if (frame.closed) count(frame.source, "lateEffects");
   const start = frame.clock;
   frame.clock += 2;

@@ -208,6 +208,8 @@ private def proxyClose (call : Json) : Prog Json := do
   let routesByPort := Twin.field self "#routesByPort"
   let connections := Twin.field self "#connections"
   let server := Twin.field self "#server"
+  if !(setItems connections).isEmpty then
+    return ← Prog.unsupported "each socket's closed flag is written, then the socket is dropped from the set"
   clear "self.#routes" routes emptyMap
   clear "self.#routesByPort" routesByPort emptyMap
   for socket in setItems connections do
@@ -234,7 +236,8 @@ private def secondsText (ms : Nat) : String :=
   let whole := toString (ms / 1000)
   if digits.isEmpty then whole else whole ++ "." ++ String.ofList digits
 
-/-- `snapshotCapture`: the in-VM capture script and the environment that parameterises it. -/
+/-- `snapshotCapture`: the in-VM capture script and the environment that parameterises it. The script's
+own behaviour (clock-skew check, byte limits, modified-time filter) is outside this twin. -/
 private def snapshotCapture (call : Json) : Prog Json := do
   let input := Twin.callArg call 0
   let quoted ← Prog.effect "shellQuote" [toJson capturePy]

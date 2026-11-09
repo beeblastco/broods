@@ -783,10 +783,14 @@ private def reportSandboxUsage (call : Json) : Prog Json := do
     [Json.mkObj [("command", toJson usageProbe), ("abortSignal", signal)]]
   match result with
   | .ok value =>
-    if get value "exitCode" == toJson (0 : Nat) then
-      let usage ← Prog.effect "parseSandboxUsage" [get value "stdout"]
-      let _ ← Prog.effect "onUsage" [usage]
-    return voidJson
+    Prog.catchFail
+      (do
+        if get value "exitCode" == toJson (0 : Nat) then
+          let usage ← Prog.effect "parseSandboxUsage" [get value "stdout"]
+          let _ ← Prog.effect "onUsage" [usage]
+        return voidJson)
+      (fun error =>
+        if (error.getObjVal? "$unsupported").isOk then .fail error else pure voidJson)
   | _ => return voidJson
 
 private def stringProp (description : String) : Json :=
