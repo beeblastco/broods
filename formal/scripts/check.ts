@@ -415,7 +415,8 @@ function creditedTwins(
       result.hollow ||
       result.stateUnmodelled > 0 ||
       result.mismatches > 0 ||
-      result.compared < 0.9 * result.recorded ||
+      result.compared < 0.9 * comparable(result) ||
+      result.compared < 0.5 * result.recorded ||
       lost > 0.1 * (seen["attempted"] ?? 0)
     ) {
       continue;
@@ -456,6 +457,16 @@ function creditedTwins(
   }
 
   return eligible;
+}
+
+// A value too big to record is the recorder's limit, not a case the twin chose to skip. Such a call
+// earns nothing either way, because only compared calls contribute statements.
+function comparable(result: TwinResult): number {
+  const onlyTooBig =
+    result.incompleteReasons.length === 1 &&
+    result.incompleteReasons[0] === "too big to record";
+
+  return onlyTooBig ? result.recorded - result.incomplete : result.recorded;
 }
 
 // A plain twin only compares a return value, so it cannot vouch for a function that does more
