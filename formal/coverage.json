@@ -3,13 +3,13 @@
     "statements": 18697,
     "excluded": 603,
     "verifiable": 18094,
-    "verified": 10145,
-    "byTwin": 9625,
-    "byReplay": 520,
+    "verified": 10601,
+    "byTwin": 10086,
+    "byReplay": 515,
     "arms": 13655,
-    "armsVerified": 7251
+    "armsVerified": 7501
   },
-  "twins": 1949,
+  "twins": 1987,
   "creditedTwins": [
     "apps/cloudflare-mcp/src/index.ts#TenantOutbound.fetch",
     "apps/cloudflare-mcp/src/index.ts#boundedMessage",
@@ -35,14 +35,21 @@
     "apps/cloudflare-worker/src/vfs-state.ts#packState",
     "apps/cloudflare-worker/src/vfs-state.ts#samePacked",
     "apps/core/src/accounts/cleanup.ts#deleteAccountAttachments",
+    "apps/core/src/accounts/cleanup.ts#deleteAccountBundles",
+    "apps/core/src/accounts/cleanup.ts#deleteAccountRuntimeData",
+    "apps/core/src/accounts/cleanup.ts#deleteAccountSkills",
     "apps/core/src/accounts/cleanup.ts#deleteConvexRuntimeRows",
+    "apps/core/src/accounts/cleanup.ts#deleteWorkspaceFilesystem",
+    "apps/core/src/accounts/cleanup.ts#deleteWorkspaceFilesystems",
     "apps/core/src/accounts/handler.ts#auditedSandboxCall",
     "apps/core/src/accounts/handler.ts#boundedInteger",
+    "apps/core/src/accounts/handler.ts#deleteAccountResponse",
     "apps/core/src/accounts/handler.ts#errorResponseForError",
     "apps/core/src/accounts/handler.ts#errorText",
     "apps/core/src/accounts/handler.ts#execSandbox",
     "apps/core/src/accounts/handler.ts#handleMcpServiceRoute",
     "apps/core/src/accounts/handler.ts#lambdaBaseImage",
+    "apps/core/src/accounts/handler.ts#openSandboxTerminal",
     "apps/core/src/accounts/handler.ts#refreshSandboxStatus",
     "apps/core/src/accounts/handler.ts#requireAccountAuth",
     "apps/core/src/accounts/handler.ts#retiredImageOptionsRefusal",
@@ -285,6 +292,7 @@
     "apps/core/src/harness/integrations.ts#channelAdapterFromConfig",
     "apps/core/src/harness/integrations.ts#channelAgentListKey",
     "apps/core/src/harness/integrations.ts#channelReplySource",
+    "apps/core/src/harness/integrations.ts#cleanupChannelPartitions",
     "apps/core/src/harness/integrations.ts#createChannelRegistry",
     "apps/core/src/harness/integrations.ts#createDiscordChannelFromConfig",
     "apps/core/src/harness/integrations.ts#createGitHubChannelFromConfig",
@@ -306,6 +314,7 @@
     "apps/core/src/harness/integrations.ts#directConversationKeys",
     "apps/core/src/harness/integrations.ts#dropAgedChannelAgentList",
     "apps/core/src/harness/integrations.ts#findChannelCredentialHolder",
+    "apps/core/src/harness/integrations.ts#handleChannelWebhook",
     "apps/core/src/harness/integrations.ts#identityWithChannelRoles",
     "apps/core/src/harness/integrations.ts#integrationNotConfigured",
     "apps/core/src/harness/integrations.ts#listRunnableAgents",
@@ -326,6 +335,7 @@
     "apps/core/src/harness/integrations.ts#parseSystemOverride",
     "apps/core/src/harness/integrations.ts#processChannelMessage",
     "apps/core/src/harness/integrations.ts#publicDeploymentIngress",
+    "apps/core/src/harness/integrations.ts#receiveChannelWebhook",
     "apps/core/src/harness/integrations.ts#refuseChannelInvoke",
     "apps/core/src/harness/integrations.ts#resetChannelAgentListsForTests",
     "apps/core/src/harness/integrations.ts#resolveChannelTarget",
@@ -370,7 +380,6 @@
     "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#sanitizeFetchInit",
     "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#validateHttpUrl",
     "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#withoutCredentials",
-    "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#writeRequestBody",
     "apps/core/src/harness/lifecycle.ts#createAgentLifecycleEmitter",
     "apps/core/src/harness/lifecycle.ts#toLifecycleValue",
     "apps/core/src/harness/mcp-tasks.ts#agentTool",
@@ -612,9 +621,20 @@
     "apps/core/src/harness/sandbox/machine-executor.ts#rejectPending",
     "apps/core/src/harness/sandbox/machine-executor.ts#sendHeartbeats/arg0",
     "apps/core/src/harness/sandbox/machine-executor.ts#sendReady",
+    "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.acquireHarnessReservation",
+    "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.createHarnessAuthToken",
+    "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.getInstanceInfo",
+    "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.jobLogs",
+    "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.jobStatus",
+    "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.release",
     "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.resume",
+    "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.resumeHarnessReservation",
+    "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.runHarnessCommand",
+    "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.snapshotStatus",
+    "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.stopJob",
     "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.suspend",
     "apps/core/src/harness/sandbox/microvm-executor.ts#boundedText",
+    "apps/core/src/harness/sandbox/microvm-executor.ts#burstHeader",
     "apps/core/src/harness/sandbox/microvm-executor.ts#delay",
     "apps/core/src/harness/sandbox/microvm-executor.ts#homeEnv",
     "apps/core/src/harness/sandbox/microvm-executor.ts#isMicrovmGone",
@@ -626,6 +646,7 @@
     "apps/core/src/harness/sandbox/microvm-executor.ts#microvmImageScope",
     "apps/core/src/harness/sandbox/microvm-executor.ts#microvmImageVariant",
     "apps/core/src/harness/sandbox/microvm-executor.ts#microvmLocalNamespace",
+    "apps/core/src/harness/sandbox/microvm-executor.ts#microvmShellConnection",
     "apps/core/src/harness/sandbox/microvm-executor.ts#s3Location",
     "apps/core/src/harness/sandbox/microvm-harness-driver.ts#MicrovmHarnessDriver.resumeSession",
     "apps/core/src/harness/sandbox/microvm-harness-driver.ts#MicrovmHarnessSession.readFile",
@@ -1355,10 +1376,27 @@
     "apps/core/src/shared/runtime-keys.ts#subagentParentEventId",
     "apps/core/src/shared/runtime-keys.ts#subagentTaskNonce",
     "apps/core/src/shared/runtime-keys.ts#unscopedChannelConversationKey",
+    "apps/core/src/shared/s3.ts#copyS3Object",
+    "apps/core/src/shared/s3.ts#deleteS3Object",
+    "apps/core/src/shared/s3.ts#deleteS3Prefix",
+    "apps/core/src/shared/s3.ts#ensureS3DirectoryMarkers",
     "apps/core/src/shared/s3.ts#getS3ObjectUrl",
+    "apps/core/src/shared/s3.ts#headS3Object",
     "apps/core/src/shared/s3.ts#isMissingS3Error",
+    "apps/core/src/shared/s3.ts#listS3Prefix",
     "apps/core/src/shared/s3.ts#posixMetadata",
+    "apps/core/src/shared/s3.ts#putS3Object",
+    "apps/core/src/shared/s3.ts#putS3ObjectUrl",
+    "apps/core/src/shared/s3.ts#readS3Body",
+    "apps/core/src/shared/s3.ts#readS3Bytes",
+    "apps/core/src/shared/s3.ts#readS3Text",
+    "apps/core/src/shared/s3.ts#readS3TextHead",
+    "apps/core/src/shared/s3.ts#s3ObjectExists",
+    "apps/core/src/shared/s3.ts#writeS3Object",
     "apps/core/src/shared/sandbox-cleanup.ts#releaseCandidates",
+    "apps/core/src/shared/sandbox-cleanup.ts#releaseExpiredSandboxes",
+    "apps/core/src/shared/sandbox-cleanup.ts#releaseOnProvider",
+    "apps/core/src/shared/sandbox-cleanup.ts#releaseReservedSandboxes",
     "apps/core/src/shared/sandbox-cleanup.ts#sandboxConfigs",
     "apps/core/src/shared/sandbox-sizes.ts#positiveNumber",
     "apps/core/src/shared/sandbox-sizes.ts#resolveSandboxSpecs",
@@ -1588,7 +1626,6 @@
     "apps/discord-forwarder/src/supervisor.ts#webhookUrls",
     "apps/discord-forwarder/src/threads.ts#ThreadDirectory.fetchChannel",
     "apps/discord-forwarder/src/threads.ts#ThreadDirectory.lookup",
-    "apps/discord-forwarder/src/threads.ts#ThreadDirectory.resolve",
     "apps/edge/src/routes.ts#resolveRouter",
     "apps/edge/src/traefik.ts#headersMiddleware",
     "apps/edge/src/traefik.ts#middlewareName",
@@ -1665,6 +1702,7 @@
     "apps/gateway/src/observability.ts#tempoTraceRowsFromResponse",
     "apps/gateway/src/observability.ts#waitForObsDrain",
     "apps/gateway/src/observability.ts#watchObservabilityLifetime",
+    "apps/gateway/src/observability.ts#watchObservabilityLifetime/arg0",
     "apps/gateway/src/rate-limiter.ts#RateLimiter.allow",
     "apps/gateway/src/rate-limiter.ts#RateLimiter.blocked",
     "apps/gateway/src/rate-limiter.ts#RateLimiter.retryAfterSeconds",
@@ -1981,15 +2019,15 @@
       "by replay",
       "branch arms"
     ],
-    ["access", "1977", "133", "1844", "66.2%", "1163", "58", "848/1357"],
+    ["access", "1977", "133", "1844", "70.0%", "1232", "58", "874/1357"],
     ["agent", "3902", "139", "3763", "49.5%", "1769", "95", "1323/2744"],
-    ["channels", "3676", "3", "3673", "62.9%", "2260", "50", "1785/3046"],
+    ["channels", "3676", "3", "3673", "64.6%", "2321", "50", "1817/3046"],
     ["config", "617", "0", "617", "85.6%", "450", "78", "338/509"],
-    ["hosted", "1962", "320", "1642", "51.2%", "730", "111", "553/1084"],
+    ["hosted", "1962", "320", "1642", "50.9%", "724", "111", "548/1084"],
     ["runs", "1682", "8", "1674", "34.7%", "576", "5", "426/1154"],
-    ["sandbox", "4789", "0", "4789", "56.8%", "2632", "88", "1965/3729"],
+    ["sandbox", "4789", "0", "4789", "63.7%", "2969", "83", "2162/3729"],
     ["workers", "92", "0", "92", "87.0%", "45", "35", "13/32"],
-    ["all", "18697", "603", "18094", "56.1%", "9625", "520", "7251/13655"]
+    ["all", "18697", "603", "18094", "58.6%", "10086", "515", "7501/13655"]
   ],
   "largestUnverified": [
     {
@@ -2085,10 +2123,6 @@
       "count": 37
     },
     {
-      "source": "apps/core/src/accounts/handler.ts#openSandboxTerminal",
-      "count": 36
-    },
-    {
       "source": "apps/core/src/harness/isolate/executor.ts#streamViaPool",
       "count": 35
     },
@@ -2117,20 +2151,8 @@
       "count": 33
     },
     {
-      "source": "apps/core/src/harness/integrations.ts#receiveChannelWebhook",
-      "count": 32
-    },
-    {
       "source": "apps/core/src/harness/integrations.ts#handleConversationFilesRequest",
       "count": 32
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#acquire",
-      "count": 32
-    },
-    {
-      "source": "apps/core/src/harness/integrations.ts#handleChannelWebhook",
-      "count": 31
     },
     {
       "source": "apps/core/src/harness/sandbox/microvm-websocket-proxy.ts#MicrovmWebSocketProxy.#connectUpstream",
@@ -2333,7 +2355,7 @@
       "count": 22
     },
     {
-      "source": "apps/core/src/shared/s3.ts#deleteS3Prefix",
+      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#acquire",
       "count": 22
     },
     {
@@ -2410,10 +2432,6 @@
     },
     {
       "source": "apps/core/src/harness/tools/edit.tool.ts#editTool",
-      "count": 19
-    },
-    {
-      "source": "apps/core/src/shared/sandbox-cleanup.ts#releaseExpiredSandboxes",
       "count": 19
     },
     {
@@ -2501,10 +2519,6 @@
       "count": 17
     },
     {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#reconnect",
-      "count": 17
-    },
-    {
       "source": "apps/core/src/harness/tools/message-agents.tool.ts#messageAgentsTool",
       "count": 17
     },
@@ -2541,10 +2555,6 @@
       "count": 16
     },
     {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#image",
-      "count": 16
-    },
-    {
       "source": "apps/core/src/harness/tools/write.tool.ts#writeTool",
       "count": 16
     },
@@ -2566,10 +2576,6 @@
     },
     {
       "source": "apps/core/src/harness/subagents.ts#SubagentCoordinator.wakeChild",
-      "count": 15
-    },
-    {
-      "source": "apps/core/src/harness/integrations.ts#cleanupChannelPartitions",
       "count": 15
     },
     {
@@ -2609,31 +2615,7 @@
       "count": 14
     },
     {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#reportBurst",
-      "count": 14
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#post",
-      "count": 14
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#authToken",
-      "count": 14
-    },
-    {
       "source": "apps/core/src/harness/tools/load-skill.tool.ts#loadSkillTool",
-      "count": 14
-    },
-    {
-      "source": "apps/core/src/shared/s3.ts#listS3Prefix",
-      "count": 14
-    },
-    {
-      "source": "apps/core/src/shared/s3.ts#s3ObjectExists",
-      "count": 14
-    },
-    {
-      "source": "apps/core/src/shared/sandbox-cleanup.ts#releaseOnProvider",
       "count": 14
     },
     {
@@ -2693,6 +2675,10 @@
       "count": 13
     },
     {
+      "source": "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#writeRequestBody",
+      "count": 13
+    },
+    {
       "source": "apps/core/src/harness/continuation.ts#runAgentLoopUntilSubagentsIdle",
       "count": 13
     },
@@ -2713,10 +2699,6 @@
       "count": 13
     },
     {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.resumeHarnessReservation",
-      "count": 13
-    },
-    {
       "source": "apps/core/src/harness/sandbox/microvm-harness-driver.ts#MicrovmHarnessDriver.createSession",
       "count": 13
     },
@@ -2727,10 +2709,6 @@
     {
       "source": "apps/core/src/harness/sandbox/workdir-harness-driver.ts#WorkdirHarnessDriver.createSession",
       "count": 13
-    },
-    {
-      "source": "apps/core/src/accounts/cleanup.ts#deleteAccountRuntimeData",
-      "count": 12
     },
     {
       "source": "apps/core/src/harness/chatgpt.ts#chatgptFetch",
@@ -2791,6 +2769,66 @@
     {
       "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.runBackground",
       "count": 12
+    },
+    {
+      "source": "apps/core/src/harness/tools/channel.tool.ts#sendFilesTool",
+      "count": 12
+    },
+    {
+      "source": "apps/core/src/harness/tools/computer.tool.ts#computerTool",
+      "count": 12
+    },
+    {
+      "source": "apps/core/src/shared/sandbox-sweeper.ts#sweepExpiredSandboxes",
+      "count": 12
+    },
+    {
+      "source": "apps/core/src/accounts/handler.ts#handleSandboxLifecycleRoute",
+      "count": 11
+    },
+    {
+      "source": "apps/gateway/src/observability.ts#sendTrace",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/harness.ts#applyAgentStartedMutation",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/lifecycle.ts#createAgentLifecycleEmitter",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/provider.ts#resolveConfiguredModel",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/session.ts#Session.writeFenced",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/session.ts#Session.loadSubagentMetadata",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/subagents.ts#SubagentCoordinator.recordOutcome",
+      "count": 11
+    },
+    {
+      "source": "apps/discord-forwarder/src/socket.ts#GatewaySocket.dial",
+      "count": 11
+    },
+    {
+      "source": "apps/cloudflare-mcp/src/index.ts#loadBundle",
+      "count": 11
+    },
+    {
+      "source": "apps/cloudflare-mcp/src/index.ts#serveRequest",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/handler.ts#handleSandboxJobCompletionRequest",
+      "count": 11
     }
   ]
 }

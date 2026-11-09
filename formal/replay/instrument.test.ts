@@ -201,6 +201,38 @@ const CASES: readonly Case[] = [
   },
   { name: "void call", body: `void later(1); return f(2);` },
   {
+    name: "awaited and unawaited callees",
+    body: `const pending = stash(); registry.set("pending", 1); await pending; await stash(); return counter;`,
+  },
+  {
+    name: "callee awaited inside an inner function",
+    body: `const pending = (async (): Promise<void> => { await stash(); })(); registry.set("own", 1); await pending; return counter;`,
+  },
+  {
+    name: "callback handed to a callee",
+    body: `await withCallback(() => { registry.set("cb", 4); }); return counter;`,
+  },
+  {
+    name: "write after an await inside an inner function",
+    body: `const pending = (async (): Promise<void> => { registry.set("late", await later(1)); })(); await settleLater(); await pending; return counter;`,
+  },
+  {
+    name: "write after a race",
+    body: `registry.set("won", await Promise.race([later(1), settleLater()])); return counter;`,
+  },
+  {
+    name: "write beside an awaited element",
+    body: `let seen = 0; await Promise.all([settleLater(), registry.set("late", 1), (seen = 1)]); return counter + seen;`,
+  },
+  {
+    name: "two awaited elements",
+    body: `if (registry.size > counter) return 0; await Promise.all([stash(), settleLater()]); return counter;`,
+  },
+  {
+    name: "awaited through a combinator and a return",
+    body: `if (registry.size > counter) return 0; await Promise.all([(stash() as Promise<number>)]); return stash();`,
+  },
+  {
     name: "typed non-null",
     body: `const o = { m: () => 2 } as { m?: () => number }; return o.m!();`,
   },
@@ -221,6 +253,9 @@ class Box { #secret = 4; read(): number { return this.#secret; } }
 let counter = 0;
 const registry = new Map<string, number>();
 const helperA = (): number => 1, helperB = (): number => 2;
+async function stash(): Promise<number> { await null; counter += 1; return counter; }
+async function withCallback(cb: () => void): Promise<void> { cb(); await null; counter += 1; }
+async function settleLater(): Promise<void> { for (let i = 0; i < 5; i += 1) await null; counter += 1; }
 class Thing { value: number; constructor(x = 7) { this.value = x; } }
 class Bad { constructor() { throw new SyntaxError("bad"); } }
 `;
@@ -258,6 +293,9 @@ describe("instrumentation keeps behaviour", () => {
         `${tracedName(index)}#target`,
         `${tracedName(index)}#helperA`,
         `${tracedName(index)}#helperB`,
+        `${tracedName(index)}#stash`,
+        `${tracedName(index)}#withCallback`,
+        `${tracedName(index)}#settleLater`,
       ]).join("\n"),
     );
     process.env["SPEC_CORPUS"] = join(ROOT, DIR, "corpus");
@@ -344,4 +382,65 @@ describe("instrumentation keeps behaviour", () => {
     ]);
     expect(call.hits.length).toBeGreaterThan(0);
   });
+
+  // Each callee window as [counter before, counter after, registry after].
+  test.each([
+    [
+      "awaited and unawaited callees",
+      "stash",
+      [
+        [0, 0, { $map: [] }],
+        [1, 2, { $map: [["pending", 1]] }],
+      ],
+    ],
+    [
+      "callee awaited inside an inner function",
+      "stash",
+      [[0, 0, { $map: [] }]],
+    ],
+    ["callback handed to a callee", "withCallback", [[0, 0, { $map: [] }]]],
+    [
+      "write after an await inside an inner function",
+      "settleLater",
+      [[0, 0, { $map: [] }]],
+    ],
+    ["write after a race", "settleLater", [[0, 0, { $map: [] }]]],
+    ["write beside an awaited element", "settleLater", [[0, 0, { $map: [] }]]],
+    ["two awaited elements", "stash", [[0, 1, { $map: [] }]]],
+    [
+      "awaited through a combinator and a return",
+      "stash",
+      [
+        [0, 1, { $map: [] }],
+        [1, 2, { $map: [] }],
+      ],
+    ],
+  ] as const)(
+    "a callee answers only while its caller's own code is idle: %s",
+    async (name, fn, expected) => {
+      const index = CASES.findIndex((item) => item.name === name);
+      await run(join(ROOT, tracedName(index)));
+      const file = join(
+        TRACES,
+        `${encodeURIComponent(`${tracedName(index)}#target`)}.jsonl`,
+      );
+      const call = JSON.parse(
+        readFileSync(file, "utf8").split("\n")[0] ?? "",
+      ) as {
+        effects: {
+          fn: string;
+          moduleBefore?: Record<string, unknown>;
+          moduleAfter?: Record<string, unknown>;
+        }[];
+      };
+      const windows = call.effects
+        .filter((effect) => effect.fn === fn)
+        .map((effect) => [
+          effect.moduleBefore?.["counter"],
+          effect.moduleAfter?.["counter"],
+          effect.moduleAfter?.["registry"],
+        ]);
+      expect(windows).toEqual(expected);
+    },
+  );
 });

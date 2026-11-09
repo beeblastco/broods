@@ -339,14 +339,14 @@ def keyringFor (call : Json) : Prog Json := do
   return entry
 
 /-- `keyringHolding`: reloads once when the cipher lacks the blob's key. Which cipher comes back is
-visible only through the promise, so the twin answers with the class, whose fields are not compared. -/
+visible only through the promise, so the twin answers with the class, whose fields are not compared.
+The cache ends as the last `keyringFor` left it, so that callee answers for it. -/
 def keyringHolding (call : Json) : Prog Json := do
   let accountId := Twin.callArg call 0
-  let cached ← Prog.effect "keyringFor" [accountId]
+  let _ ← Prog.effect "keyringFor" [accountId]
   let holds ← Prog.effect "cipher.hasKey" [Twin.callArg call 1]
-  let entry ← if !truthy holds then Prog.effect "keyringFor" [accountId] else pure cached
-  let old := Twin.moduleValue call "keyrings"
-  Waveruns8a.changed "module.keyrings" old (Waveruns8a.mapPut old accountId entry)
+  if !truthy holds then
+    let _ ← Prog.effect "keyringFor" [accountId]
   return Json.mkObj [("$opaque", "AccountCipher")]
 
 private def settled : Outcome → Bool

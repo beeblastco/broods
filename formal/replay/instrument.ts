@@ -19,6 +19,7 @@ const HIT = "globalThis.__specHit";
 const NEW = "globalThis.__specNew";
 const ENTER = "globalThis.__specEnter";
 const LATE = "globalThis.__specLate";
+const RESUME = "globalThis.__specResume";
 const RANK: Record<EditKind, number> = { close: 0, open: 1, replace: 2 };
 // A call hanging off one of these cannot be routed without changing what short-circuits, so it is
 // left alone. These names are JavaScript built-ins, whose results a twin works out itself.
@@ -29,6 +30,22 @@ const PURE_METHODS = new Set(
 );
 
 const INLINE_METHODS = new Set(["forEach", "then", "catch", "finally"]);
+const PROMISE_COMBINATORS = new Set(["all", "allSettled", "any", "race"]);
+const SETTLE_CHAIN = new Set(["then", "catch", "finally"]);
+// Below these the code belongs to another function; the rest only wrap an expression.
+const SCOPES = new Set([
+  "FunctionDeclaration",
+  "ClassDeclaration",
+  "ClassExpression",
+]);
+const TRANSPARENT = new Set([
+  "ChainExpression",
+  "ParenthesizedExpression",
+  "TSAsExpression",
+  "TSNonNullExpression",
+  "TSSatisfiesExpression",
+  "TSTypeAssertion",
+]);
 
 // Returns `source` with each listed function wrapped, each statement and branch arm in it probed,
 // and each call in it routed through the tracer. Nothing else about the file changes.
@@ -346,8 +363,17 @@ function callEdits(
   const locals = new Set([...localFunctions(body), ...inlined]);
   // `x.closed = true` and similar cannot go through a read helper.
   const writeTargets = new Set<AstNode>();
-  const visit = (node: AstNode, nested: boolean, detached = false): void => {
+  const visit = (
+    node: AstNode,
+    nested: boolean,
+    detached = false,
+    awaited = false,
+    own = true,
+  ): void => {
     const inside = nested || escaped.has(node);
+    // Code after an `await` may run mid-statement, where no statement probe would see it.
+    if (node.type === "AwaitExpression")
+      edits.push(open(node.start, `${RESUME}(__specF,`), close(node.end, ")"));
     if (node.type === "AssignmentExpression")
       writeTargets.add(node["left"] as AstNode);
     if (node.type === "UpdateExpression")
@@ -413,23 +439,35 @@ function callEdits(
           locals,
           inside || detached,
           detached && !inside,
+          awaited && !inside,
         ),
       );
     }
     const unawaited =
       (node.type === "UnaryExpression" && node["operator"] === "void") ||
       node.type === "ExpressionStatement";
-    for (const value of Object.values(node)) {
+    const ownBelow = own && !isClosure(node) && !SCOPES.has(node.type);
+    for (const [key, value] of Object.entries(node)) {
+      const waits = ownBelow && awaitedChild(node, key, awaited);
       if (Array.isArray(value)) {
-        for (const item of value) {
-          if (isNode(item)) visit(item, inside);
-        }
+        value.forEach((item, index) => {
+          if (!isNode(item)) return;
+          // A later element runs while this one's window is open.
+          const quiet = !waits || !value.slice(index + 1).some(hasWrite);
+          visit(item, inside, false, waits && quiet, ownBelow);
+        });
       } else if (isNode(value)) {
-        visit(value, inside, unawaited && value.type === "CallExpression");
+        visit(
+          value,
+          inside,
+          unawaited && value.type === "CallExpression",
+          waits,
+          ownBelow,
+        );
       }
     }
   };
-  visit(body, false);
+  visit(body, false, false, body.type !== "BlockStatement");
 
   return edits;
 }
@@ -597,6 +635,34 @@ function withCallbackHelpers(
   }
 
   return all;
+}
+
+// Whether the child under `key` hands its value straight to an `await` or `return`, so the rest
+// of its statement runs only once the function resumes, past a probe.
+function awaitedChild(node: AstNode, key: string, awaited: boolean): boolean {
+  if (node.type === "AwaitExpression" || node.type === "ReturnStatement")
+    return key === "argument";
+  if (!awaited) return false;
+  if (TRANSPARENT.has(node.type)) return key === "expression";
+  if (node.type === "ConditionalExpression") return key !== "test";
+  if (node.type === "LogicalExpression")
+    return key === "right" || !hasWrite(node["right"]);
+  if (node.type === "ArrayExpression") return key === "elements";
+  if (node.type === "MemberExpression") return key === "object";
+  if (node.type !== "CallExpression") return false;
+  const callee = node["callee"] as AstNode;
+  if (callee.type !== "MemberExpression" || callee["computed"] === true)
+    return false;
+  const object = callee["object"] as AstNode;
+  const name = String((callee["property"] as AstNode)["name"]);
+  if (key === "callee") return SETTLE_CHAIN.has(name);
+
+  return (
+    key === "arguments" &&
+    object.type === "Identifier" &&
+    object["name"] === "Promise" &&
+    PROMISE_COMBINATORS.has(name)
+  );
 }
 
 function isClosure(node: AstNode): boolean {
@@ -854,11 +920,32 @@ function oneNew(node: AstNode, source: string, nested: boolean): Edit[] {
 }
 
 // A callback's effects happen inside something else's run. A `void` call only stops being waited
-// for, so its place in the order of the function's own work is real.
-function nestedText(nested: boolean, detached: boolean): string {
+// for, so its place in the order of the function's own work is real. An awaited one is not cut
+// short at its return.
+function nestedText(
+  nested: boolean,
+  detached: boolean,
+  awaited: boolean,
+): string {
   if (detached) return '"detached"';
+  if (awaited && !nested) return '"awaited"';
 
   return String(nested);
+}
+
+function hasWrite(node: unknown): boolean {
+  if (!isNode(node)) return false;
+  let found = false;
+  walk(node, (current) => {
+    if (
+      current.type === "AssignmentExpression" ||
+      current.type === "UpdateExpression" ||
+      (current.type === "UnaryExpression" && current["operator"] === "delete")
+    )
+      found = true;
+  });
+
+  return found;
 }
 
 function containsCall(node: AstNode): boolean {
@@ -876,6 +963,7 @@ function oneCall(
   locals: Set<string>,
   nested: boolean,
   detached: boolean,
+  awaited: boolean,
 ): Edit[] {
   let callee = node["callee"] as AstNode;
   const open_ = argumentsOpen(node, source);
@@ -899,7 +987,7 @@ function oneCall(
       {
         start: callee.start,
         end: open_,
-        text: `${CALL}(__specF,${label},${name},${nestedText(nested, detached)})${callText}`,
+        text: `${CALL}(__specF,${label},${name},${nestedText(nested, detached, awaited)})${callText}`,
         kind: "replace",
       },
     ];
@@ -915,7 +1003,7 @@ function oneCall(
       {
         start: callee.end,
         end: open_,
-        text: `,${nestedText(nested, detached)})${callText}`,
+        text: `,${nestedText(nested, detached, awaited)})${callText}`,
         kind: "replace",
       },
     ];
@@ -930,7 +1018,7 @@ function oneCall(
   const optionalObject = callee["optional"] === true;
   // The key would run before the helper could short-circuit.
   if (optionalObject && callee["computed"] === true) return [];
-  const mode = `${String(optionalObject)},${String(optionalCall)},${nestedText(nested, detached)}`;
+  const mode = `${String(optionalObject)},${String(optionalCall)},${nestedText(nested, detached, awaited)}`;
   const skip = optionalObject || optionalCall ? "?." : "";
   const prefix = {
     start: object.start,

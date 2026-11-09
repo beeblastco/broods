@@ -65,6 +65,8 @@ interface RecordedEffect {
   nested: boolean | "detached";
   selfBefore?: unknown;
   selfAfter?: unknown;
+  moduleBefore?: unknown;
+  moduleAfter?: unknown;
   argWindows?: { index: number; before: Encoded; after: Encoded }[];
 }
 
@@ -674,8 +676,30 @@ function stateChanges(call: Traced): { path: string; value: unknown }[] {
   };
   for (const effect of call.effects) {
     for (const window of effect.argWindows ?? [])
-      noteCallee(`args.${window.index}`, window.before, window.after);
-    if (effect.to && effect.selfBefore !== undefined) {
+      if (!hasBig(window.before) && !hasBig(window.after))
+        noteCallee(`args.${window.index}`, window.before, window.after);
+    if (
+      effect.to &&
+      effect.moduleBefore !== undefined &&
+      !hasBig(effect.moduleBefore) &&
+      !hasBig(effect.moduleAfter)
+    ) {
+      const was = fieldsOf(effect.moduleBefore);
+      const now = fieldsOf(effect.moduleAfter);
+      for (const key of new Set([...Object.keys(was), ...Object.keys(now)])) {
+        if (
+          key !== "$keys" &&
+          !sameBesideHanded(was[key] as Encoded, now[key] as Encoded)
+        )
+          byCallee.set(`module.${key}`, now[key] ?? null);
+      }
+    }
+    if (
+      effect.to &&
+      effect.selfBefore !== undefined &&
+      !hasBig(effect.selfBefore) &&
+      !hasBig(effect.selfAfter)
+    ) {
       const was = fieldsOf(effect.selfBefore);
       const now = fieldsOf(effect.selfAfter);
       for (const key of new Set([...Object.keys(was), ...Object.keys(now)])) {
@@ -691,11 +715,17 @@ function stateChanges(call: Traced): { path: string; value: unknown }[] {
   return changes.filter(
     (change) =>
       !byCallee.has(change.path) ||
+      hasBig(change.value) ||
       !sameBesideHanded(
         change.value as Encoded,
         byCallee.get(change.path) as Encoded,
       ),
   );
+}
+
+// `$big` is one marker for every value too large to record, so it proves nothing about who wrote.
+function hasBig(value: unknown): boolean {
+  return JSON.stringify(value ?? null).includes('"$big"');
 }
 
 // Every leaf that differs, so two writes to one object are told apart. An array counts as one leaf.

@@ -478,22 +478,13 @@ private def sendTrace (call : Json) : Prog Json := do
 
 private def pendingPromise : Json := Json.mkObj [("$opaque", str "Promise")]
 
-/-- Schedules a last-used stamp when `claimLastUsedWrite` grants one. -/
+/-- Schedules a last-used stamp when `claimLastUsedWrite` grants one; that callee records the
+claim in `keyLastUsedWrites` itself. -/
 private def stampIfClaimed (call : Json) (hash now : Json) (touch : String) (touchArg : Json) :
     Prog Unit := do
   let claimed ← Prog.effect "claimLastUsedWrite"
     [Twin.moduleValue call "keyLastUsedWrites", hash, now]
   if truth claimed then
-    let old := items (field (Twin.moduleValue call "keyLastUsedWrites") "$map")
-    let live := old.filter fun entry =>
-      match now, Twin.arg entry 1 with
-      | .num current, .num stamp => current.toFloat - stamp.toFloat < 300000
-      | _, _ => true
-    let pair := toJson [hash, now]
-    let next := if live.any (fun entry => Twin.arg entry 0 == hash) then
-      live.map (fun entry => if Twin.arg entry 0 == hash then pair else entry)
-      else live ++ [pair]
-    Waveaccess8a.setModule call "keyLastUsedWrites" (Json.mkObj [("$map", toJson next)])
     let _ ← Prog.effect "getStorage"
     Prog.spawn touch [touchArg, now]
     let _ ← Prog.effect "waitUntil" [pendingPromise]

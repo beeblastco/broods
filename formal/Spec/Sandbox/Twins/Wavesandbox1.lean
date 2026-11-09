@@ -607,7 +607,7 @@ private def microvmUpstreamUrl (call : Json) : Prog Json := do
     return toJson s!"ws://{authority}/{search}"
   | _ => Prog.unsupported "endpoint with more than one scheme separator"
 
-/-- `burstHeader`: both totals must be numbers, and any other key is dropped. -/
+/-- `burstHeader`: zod keeps the two totals when both are numbers and drops any other key. -/
 private def burstHeader (call : Json) : Prog Json := do
   let headers := items (get (Twin.callArg call 0) "$headers")
   let found := headers.findSome? fun h =>
@@ -618,10 +618,8 @@ private def burstHeader (call : Json) : Prog Json := do
     match Json.parse value with
     | .error _ => return voidJson
     | .ok parsed =>
-      match get parsed "vcpu_seconds", get parsed "gb_seconds" with
-      | .num vcpu, .num gb =>
-        return Json.mkObj [("vcpu_seconds", .num vcpu), ("gb_seconds", .num gb)]
-      | _, _ => return voidJson
+      let checked ← Prog.effect "burstTotals.safeParse" [parsed]
+      if get checked "success" == toJson true then return get checked "data" else return voidJson
 
 /-- `assertSandboxReachesWorkspace`. The disk hint text has no recording. -/
 private def assertSandboxReachesWorkspace (call : Json) : Prog Json := do

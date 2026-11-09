@@ -116,6 +116,8 @@ const PURE_PROTOTYPES = new Set<unknown>([
 
 type Callee = (...args: unknown[]) => unknown;
 type Nested = boolean | "detached";
+// "awaited": the call's value goes straight to an `await` or `return` of the function itself.
+type CallSite = Nested | "awaited";
 type Outcome =
   | { returned: string }
   | { threw: string; sync: boolean }
@@ -138,6 +140,8 @@ interface Effect {
   // Set around a call to another traced method on the same object, whose writes are its own.
   selfBefore: string | undefined;
   selfAfter: string | undefined;
+  moduleBefore: string | undefined;
+  moduleAfter: string | undefined;
   argWindows: ArgWindow[];
 }
 
@@ -167,6 +171,7 @@ interface Frame {
   lateOf: Frame | undefined;
   lateLabel: string | undefined;
   readers: Record<string, () => unknown> | undefined;
+  openWindows: Set<() => void>;
 }
 
 // Hashes, not lines: holding every recorded line in memory runs a large test suite out of memory.
@@ -179,6 +184,7 @@ const frames = new AsyncLocalStorage<Frame>();
 const promiseThen = Promise.prototype.then;
 const settledValues = new WeakMap<Promise<unknown>, unknown>();
 const bodies = new WeakMap<Response | Request, string>();
+const constructedAs = new WeakMap<object, string>();
 const running = new Map<string, Set<Frame>>();
 const privateReaders = new WeakMap<object, (value: object) => object>();
 let budget = 0;
@@ -213,6 +219,7 @@ if (CORPUS && SOURCES) {
     __specPrivate: registerPrivateReader,
     __specAborted: inCurrent(traceAborted),
     __specHit: inCurrent(hit),
+    __specResume: inCurrent(resume),
   });
   // Once per test file: with `--isolate` an exit handler never runs.
   afterAll(flushCounts);
@@ -281,6 +288,7 @@ function observe(
     if (before) write(source, before, plain, frame);
     if (frame) {
       running.get(source)?.delete(frame);
+      closeOpenWindows(frame);
       writeTrace(frame, traceArgs, traceSelf, outcome);
     }
   };
@@ -342,6 +350,7 @@ function newFrame(source: string): Frame {
     lateOf: undefined,
     lateLabel: undefined,
     readers: undefined,
+    openWindows: new Set(),
   };
 }
 
@@ -398,7 +407,20 @@ function traceLate(
 }
 
 function hit(frame: Frame | undefined, offset: number): void {
-  frame?.hits.add(offset);
+  if (!frame) return;
+  frame.hits.add(offset);
+  closeOpenWindows(frame);
+}
+
+// The function's own code is running again, so what changes from here on may be its own doing.
+function closeOpenWindows(frame: Frame): void {
+  for (const close of frame.openWindows) close();
+}
+
+function resume(frame: Frame | undefined, value: unknown): unknown {
+  if (frame) closeOpenWindows(frame);
+
+  return value;
 }
 
 function hasTraceRoom(source: string): boolean {
@@ -409,7 +431,7 @@ function traceCall(
   frame: Frame | undefined,
   label: string,
   callee: Callee,
-  nested: Nested,
+  nested: CallSite,
 ): Callee {
   if (label === "getObservabilityContext" && frame) {
     return (...args: unknown[]): unknown => {
@@ -451,7 +473,7 @@ function traceMethod(
   key: PropertyKey,
   optionalObject: boolean,
   optionalCall: boolean,
-  nested: Nested,
+  nested: CallSite,
 ): Callee | undefined {
   if (optionalObject && receiver == null) return undefined;
   const target = (receiver as Record<PropertyKey, Callee>)[key];
@@ -464,7 +486,14 @@ function traceMethod(
   }
   const pure = isPure(receiver) && !ENVIRONMENT_EFFECTS.has(label);
   if (!frame || pure || NOT_BEHAVIOUR.test(label)) {
-    return (...args: unknown[]): unknown => invoke(args);
+    // `registry.set(...)` is the function's own write; a promise method only waits.
+    const own = frame && !isPromiseReceiver(receiver);
+
+    return (...args: unknown[]): unknown => {
+      if (own) closeOpenWindows(frame);
+
+      return invoke(args);
+    };
   }
 
   return (...args: unknown[]): unknown =>
@@ -511,8 +540,16 @@ function traceNew(
 
   return (...args: unknown[]): unknown =>
     record(frame, label, undefined, args, nested, () =>
-      Reflect.construct(callee, args),
+      nameAtConstruction(Reflect.construct(callee, args), label),
     );
+}
+
+// An anonymous class has no name of its own, so its instance takes the one at its `new` call.
+function nameAtConstruction(instance: object, label: string): object {
+  if (classNameOf(instance) === "")
+    constructedAs.set(instance, label.replace(/^new /, ""));
+
+  return instance;
 }
 
 // A callback was entered. To its function this is an answer from outside: what it was given.
@@ -523,6 +560,7 @@ function traceEnter(
 ): void {
   if (!frame || frame.lateLabel === label) return;
   if (frame.closed) count(frame.source, "lateEffects");
+  closeOpenWindows(frame);
   const start = frame.clock;
   frame.clock += 2;
   frame.effects.push({
@@ -535,6 +573,8 @@ function traceEnter(
     nested: true,
     selfBefore: undefined,
     selfAfter: undefined,
+    moduleBefore: undefined,
+    moduleAfter: undefined,
     argWindows: [],
   });
 }
@@ -620,6 +660,7 @@ function readModule(readers: Record<string, () => unknown>): string {
 function traceNow(frame: Frame | undefined, nested: Nested): number {
   const now = Date.now();
   if (frame) {
+    closeOpenWindows(frame);
     const start = frame.clock;
     frame.clock += 2;
     frame.effects.push({
@@ -632,6 +673,8 @@ function traceNow(frame: Frame | undefined, nested: Nested): number {
       nested: nested,
       selfBefore: undefined,
       selfAfter: undefined,
+      moduleBefore: undefined,
+      moduleAfter: undefined,
       argWindows: [],
     });
   }
@@ -681,6 +724,15 @@ function closeWindows(frame: Frame, effect: Effect): void {
   );
 }
 
+function isPromiseReceiver(receiver: unknown): boolean {
+  if (receiver === Promise) return true;
+  if (typeof receiver !== "object" || receiver === null) return false;
+
+  return (
+    isPure(receiver) && Object.getPrototypeOf(receiver) === Promise.prototype
+  );
+}
+
 function isPure(receiver: unknown): boolean {
   if (typeof receiver !== "object" && typeof receiver !== "function")
     return true;
@@ -694,13 +746,16 @@ function record(
   label: string,
   to: string | undefined,
   args: unknown[],
-  nested: Nested,
+  site: CallSite,
   invoke: () => unknown,
   onSelf = false,
   receiver?: unknown,
   callee?: unknown,
 ): unknown {
   if (frame.closed) count(frame.source, "lateEffects");
+  const awaited = site === "awaited";
+  // Starting a call is not a write, but an unawaited one hands control back mid-statement.
+  if (!awaited) closeOpenWindows(frame);
   const effect: Effect = {
     fn: label,
     to: to,
@@ -708,9 +763,11 @@ function record(
     outcome: { pending: true },
     start: frame.clock,
     settle: undefined,
-    nested: nested,
+    nested: awaited ? false : site,
     selfBefore: onSelf && to ? encodeText(frame.self) : undefined,
     selfAfter: undefined,
+    moduleBefore: to && frame.readers ? readModule(frame.readers) : undefined,
+    moduleAfter: undefined,
     argWindows: [],
   };
   frame.clock += 1;
@@ -722,12 +779,19 @@ function record(
       : [...args, receiver];
   for (const value of reached) openWindow(frame, effect, value);
   let result: unknown;
+  const closeState = (): void => {
+    if (!frame.openWindows.delete(closeState)) return;
+    closeWindows(frame, effect);
+    if (effect.selfBefore) effect.selfAfter = encodeText(frame.self);
+    if (effect.moduleBefore && frame.readers)
+      effect.moduleAfter = readModule(frame.readers);
+  };
+  frame.openWindows.add(closeState);
   const settle = (outcome: Outcome): void => {
     effect.outcome = outcome;
-    closeWindows(frame, effect);
+    closeState();
     effect.settle = frame.clock;
     frame.clock += 1;
-    if (effect.selfBefore) effect.selfAfter = encodeText(frame.self);
   };
   try {
     result = invoke();
@@ -736,6 +800,8 @@ function record(
     throw error;
   }
   if (result instanceof Promise) {
+    // The rest of the caller's statement runs before its next statement: `cache = load()`.
+    if (!awaited) closeState();
     void Reflect.apply(promiseThen, result, [
       (value: unknown): void => {
         settledValues.set(result as Promise<unknown>, value);
@@ -883,7 +949,10 @@ function encode(value: unknown, depth: number, path: object[]): unknown {
     };
   }
 
-  return { $opaque: classNameOf(value), $fields: scalarFields(value) };
+  return {
+    $opaque: classNameOf(value) || (constructedAs.get(value) ?? ""),
+    $fields: scalarFields(value),
+  };
 }
 
 // An instance's own plain data, which a twin may read. It is not compared, since it changes as the
@@ -1162,7 +1231,7 @@ function writeTrace(
     .map((effect) => {
       const to = effect.to ? `,"to":${JSON.stringify(effect.to)}` : "";
 
-      return `{"fn":${JSON.stringify(effect.fn)}${to},"args":${effect.args},"outcome":${outcomeText(effect.outcome)},"start":${effect.start},"settle":${effect.settle ?? "null"},"nested":${JSON.stringify(effect.nested)}${effect.selfBefore ? `,"selfBefore":${effect.selfBefore},"selfAfter":${effect.selfAfter ?? "null"}` : ""}${windowsField(effect)}}`;
+      return `{"fn":${JSON.stringify(effect.fn)}${to},"args":${effect.args},"outcome":${outcomeText(effect.outcome)},"start":${effect.start},"settle":${effect.settle ?? "null"},"nested":${JSON.stringify(effect.nested)}${effect.selfBefore ? `,"selfBefore":${effect.selfBefore},"selfAfter":${effect.selfAfter ?? "null"}` : ""}${effect.moduleBefore ? `,"moduleBefore":${effect.moduleBefore},"moduleAfter":${effect.moduleAfter ?? "null"}` : ""}${windowsField(effect)}}`;
     })
     .join(",");
   const env = [...frame.env.entries()]
