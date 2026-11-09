@@ -42,7 +42,8 @@ theorem oneOwner (cfg : Config) :
   conversation_exclusive cfg
 
 /-- **Tools.** A tool runs only if it is the run's own, the gate passed it, and the sandbox is the run's.
-By decision D5 this covers the model's original call, not arguments a hook later rewrites. -/
+By decision D5 this covers the model's original call, not arguments a hook later rewrites. The code
+fences a lost lease at step boundaries, later than this model ends the run (`LIMITS.md` L21). -/
 theorem toolGated (cfg : Config) (s : AccountState) (a : AccountId) (id : RunId) (t : ToolId)
     (sb : Option SandboxId) (g : Agent.GateInput) (waiting granted : Bool) (e : Effect)
     (he : e ∈ (accountStep cfg s (.toolCall a id t sb g waiting granted)).2) :

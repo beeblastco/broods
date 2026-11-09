@@ -23,6 +23,8 @@ const FAULT_RUN_LIMIT_MS = 180_000;
 interface Line {
   fn: string;
   moduleAfter?: unknown;
+  argsAfter?: unknown[];
+  selfAfter?: unknown;
   args: unknown[];
   self: unknown;
   effects: { fn: string; args: unknown; outcome: unknown }[];
@@ -79,10 +81,35 @@ const DAMAGES: Record<string, Damage> = {
           ),
         };
   },
-  "add a write": (line) => ({
+  "add a write to module state": (line) => ({
     ...line,
     moduleAfter: { __control__: 1 },
   }),
+  "add a write to an argument": (line) => {
+    const target = line.args.findIndex(
+      (arg) => typeof arg === "object" && arg !== null && !Array.isArray(arg),
+    );
+
+    return target === -1
+      ? undefined
+      : {
+          ...line,
+          argsAfter: line.args.map((arg, index) =>
+            index === target
+              ? { ...withControlField(arg as Record<string, unknown>) }
+              : arg,
+          ),
+        };
+  },
+  "add a write to the receiver": (line) =>
+    typeof line.self === "object" &&
+    line.self !== null &&
+    !Array.isArray(line.self)
+      ? {
+          ...line,
+          selfAfter: withControlField(line.self as Record<string, unknown>),
+        }
+      : undefined,
   "change the result": (line) => ({
     ...line,
     outcome:
@@ -140,6 +167,17 @@ function main(): void {
   }
   console.log(`${caught} caught, ${failed} missed`);
   if (failed > 0) process.exit(1);
+}
+
+// A class instance keeps its fields under `$fields`, which is where a write would show up.
+function withControlField(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  const fields = value["$fields"];
+
+  return fields && typeof fields === "object"
+    ? { ...value, $fields: { ...fields, __control__: 1 } }
+    : { ...value, __control__: 1 };
 }
 
 // A callback entry is the outside calling in, so only a real effect is worth damaging.

@@ -190,9 +190,12 @@ private def readTokens (tokens : List JsonToken) : Option Json :=
     | .literal value, _ => placeValue stack value
   (tokens.foldl step (some ([], none))).bind (·.2)
 
-/-- `JSON.parse`, keeping each object's key order in `$keys` so `Twin.jsonStringify` can restore it. -/
+/-- `JSON.parse`, keeping each object's key order in `$keys` so `Twin.jsonStringify` can restore it.
+`Json.parse` decides what is valid: the tokenizer only recovers key order. -/
 private def parseOrdered (text : String) : Option Json :=
-  (tokenize (text.length + 1) text.toList []).bind readTokens
+  match Json.parse text with
+  | .error _ => none
+  | .ok _ => (tokenize (text.length + 1) text.toList []).bind readTokens
 
 private def completedResponse (call : Json) : Prog Json := do
   let text ← Prog.effect "response.text"

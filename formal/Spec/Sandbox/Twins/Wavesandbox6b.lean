@@ -93,8 +93,8 @@ def armExpiry (call : Json) : Prog Json := do
     return undef
   | _, _ => Prog.unsupported "a clock that is not an integer"
 
-/-- `revalidate`. `socket.data` is read as it stood at entry, where the code reads it after the
-lookup, so a socket closed or refreshed during the lookup is not modelled. -/
+/-- `revalidate`. `closed` is read as the code read it, after the lookup. The other `socket.data`
+fields are as they stood at entry, so a credential refreshed during the lookup is not modelled. -/
 def revalidate (call : Json) : Prog Json := do
   let socket := Twin.callArg call 0
   let data := socketData socket
@@ -106,7 +106,7 @@ def revalidate (call : Json) : Prog Json := do
     let _ ← Prog.effect "toErrorMessage" [error]
     return undef
   | .ok auth =>
-    if isTrue (field data "closed") then return undef
+    if Twin.abortedRead call 0 then return undef
     let claim := field data "claim"
     let kind := field auth "kind"
     let accountMatches :=
@@ -141,7 +141,7 @@ private def withCredential (socket authorization expiresAt : Json) : Json :=
   let data := setKey (setKey (field fields "data") "authorization" authorization) "expiresAt" expiresAt
   setKey socket "$fields" (setKey fields "data" data)
 
-/-- `refreshCredential`. `socket.data` is read as at entry; see `revalidate`. -/
+/-- `refreshCredential`. `closed` is read after the lookup; other fields as at entry, see `revalidate`. -/
 def refreshCredential (call : Json) : Prog Json := do
   let socket := Twin.callArg call 0
   let data := socketData socket
@@ -154,7 +154,7 @@ def refreshCredential (call : Json) : Prog Json := do
     let _ ← Prog.effect "toErrorMessage" [error]
     return undef
   | .ok auth =>
-    if isTrue (field data "closed") then return undef
+    if Twin.abortedRead call 0 then return undef
     let ticket :=
       if same (field auth "kind") (toJson "deployment") &&
           same (field (field auth "account") "accountId") (field data "accountId")

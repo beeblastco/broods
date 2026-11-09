@@ -77,6 +77,7 @@ interface Traced {
   selfAfter: unknown;
   moduleAfter: unknown;
   argsAfter?: Encoded[];
+  windowsLost?: boolean;
   effects: RecordedEffect[];
   outcome: { returned?: unknown; threw?: unknown; sync?: boolean };
   hits: number[];
@@ -362,7 +363,11 @@ function recordExtra(path: string): void {
     },
   );
   console.log(`${run.stdout}${run.stderr}`.split("\n").slice(-12).join("\n"));
-  if (run.status !== 0) process.exit(1);
+  if (run.status !== 0) {
+    // What a failed run appended must not be credited by a later `--reuse`.
+    rmSync(join(OUT, "captured.json"), { force: true });
+    process.exit(1);
+  }
 }
 
 function baselineFailures(directory: string): Set<string> {
@@ -425,6 +430,7 @@ function checkPlain(twin: TwinRow): TwinResult {
   result.stateUnmodelled = readTraced(twin.source).filter(
     (call) => stateChanges(call).length > 0,
   ).length;
+  if (result.stateUnmodelled > 0) result.hollow = false;
   const input = calls
     .map((call) => JSON.stringify({ fn: call.fn, args: call.args }))
     .join("\n");
@@ -742,6 +748,8 @@ function runTwin(input: string): string[] {
 // of a class no entry in `boundaries.tsv` says can be erased.
 function incompleteReasons(call: Traced, opaqueAllowed: Set<string>): string[] {
   const problems = new Set<string>();
+  if (call.windowsLost)
+    problems.add("too many effects touched an argument to separate them");
   const scan = (value: unknown): void => {
     if (Array.isArray(value)) {
       for (const item of value) scan(item);

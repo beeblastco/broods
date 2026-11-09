@@ -155,6 +155,7 @@ interface Frame {
   args: unknown[];
   handed: WeakSet<object>;
   windows: number;
+  windowsLost: boolean;
   readers: Record<string, () => unknown> | undefined;
 }
 
@@ -313,6 +314,7 @@ function newFrame(source: string): Frame {
     args: [],
     handed: new WeakSet(),
     windows: 0,
+    windowsLost: false,
     readers: undefined,
   };
 }
@@ -471,7 +473,9 @@ function traceAborted(
 ): unknown {
   if (optional && signal == null) return undefined;
   const value = (signal as Record<string, unknown>)[name];
-  if (frame && typeof value === "boolean") frame.aborted.push(value);
+  // `socket.data.closed` stays undefined until a close sets it, which reads as not closed.
+  if (frame && (typeof value === "boolean" || name === "closed"))
+    frame.aborted.push(value === true);
 
   return value;
 }
@@ -565,9 +569,14 @@ function traceNow(frame: Frame | undefined, nested: Nested): number {
 function openWindow(frame: Frame, effect: Effect, value: unknown): void {
   if (typeof value !== "object" || value === null) return;
   const index = frame.args.indexOf(value);
-  frame.windows += 1;
-  if (index === -1 || frame.windows > MAX_ARG_WINDOWS) {
+  if (index === -1) {
     frame.handed.add(value);
+
+    return;
+  }
+  frame.windows += 1;
+  if (frame.windows > MAX_ARG_WINDOWS) {
+    frame.windowsLost = true;
 
     return;
   }
@@ -1054,7 +1063,7 @@ function writeTrace(
   const env = [...frame.env.entries()]
     .map(([name, value]) => `${JSON.stringify(name)}:${value}`)
     .join(",");
-  const line = `{"fn":${JSON.stringify(frame.source)},"args":${args},"self":${self},"params":${frame.params},"env":{${env}},"module":${frame.module},"aborted":${JSON.stringify(frame.aborted)},"selfAfter":${encodeText(frame.self)},"moduleAfter":${frame.readers ? readModule(frame.readers) : "null"}${argsAfterField(frame, args)},"effects":[${effects}],"outcome":${outcomeText(outcome)},"hits":${JSON.stringify([...frame.hits])}}`;
+  const line = `{"fn":${JSON.stringify(frame.source)},"args":${args},"self":${self},"params":${frame.params},"env":{${env}},"module":${frame.module},"aborted":${JSON.stringify(frame.aborted)},"selfAfter":${encodeText(frame.self)},"moduleAfter":${frame.readers ? readModule(frame.readers) : "null"}${argsAfterField(frame, args)}${frame.windowsLost ? ',"windowsLost":true' : ""},"effects":[${effects}],"outcome":${outcomeText(outcome)},"hits":${JSON.stringify([...frame.hits])}}`;
   if (line.length > MAX_TRACE_BYTES) {
     count(frame.source, "traceTooBig");
 
