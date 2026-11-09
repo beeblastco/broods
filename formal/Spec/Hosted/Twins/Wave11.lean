@@ -46,7 +46,9 @@ def promptAnswers (call : Json) : Prog Json := do
       else match stringOf value with
         | some rendered => pure rendered
         | none => Prog.unsupported "a reply value that is an object or array"
-    answers := answers.filter (·.1 != id) ++ [(id, toJson [answer])]
+    answers := if answers.any (·.1 == id)
+      then answers.map fun entry => if entry.1 == id then (id, toJson [answer]) else entry
+      else answers ++ [(id, toJson [answer])]
   return Json.mkObj answers
 
 /-- `answerQuestions`: each prompt the reply answers is sent as one answer in a single run request. -/

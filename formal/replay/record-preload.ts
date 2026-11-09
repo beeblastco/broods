@@ -2,6 +2,7 @@ import { afterAll } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { types } from "node:util";
 import { plugin } from "bun";
 import { ROOT } from "../scripts/functions.ts";
 import { instrument } from "./instrument.ts";
@@ -751,6 +752,20 @@ function record(
   return result;
 }
 
+// A Convex function reference has no own keys, so without this every function looks the same.
+function convexFunctionName(value: object): string | undefined {
+  const key = Symbol.for("functionName");
+  try {
+    const name: unknown = types.isProxy(value)
+      ? (value as Record<symbol, unknown>)[key]
+      : Object.getOwnPropertyDescriptor(value, key)?.value;
+
+    return typeof name === "string" ? name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function encodeText(value: unknown): string {
   budget = MAX_ENCODED_NODES;
   textLeft = MAX_VALUE_BYTES;
@@ -781,6 +796,8 @@ function encode(value: unknown, depth: number, path: object[]): unknown {
   if (typeof value === "bigint") return { $bigint: value.toString() };
   if (typeof value === "symbol") return { $symbol: String(value.description) };
   if (typeof value === "function") return { $fn: value.name };
+  const convexFunction = convexFunctionName(value);
+  if (convexFunction !== undefined) return { $convexFunction: convexFunction };
   if (
     handedNow &&
     (handedNow.has(value) ||

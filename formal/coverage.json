@@ -4,12 +4,12 @@
     "excluded": 603,
     "verifiable": 18094,
     "verified": 9864,
-    "byTwin": 9323,
-    "byReplay": 541,
+    "byTwin": 9322,
+    "byReplay": 542,
     "arms": 13655,
-    "armsVerified": 7034
+    "armsVerified": 7033
   },
-  "twins": 1904,
+  "twins": 1903,
   "creditedTwins": [
     "apps/cloudflare-mcp/src/index.ts#TenantOutbound.fetch",
     "apps/cloudflare-mcp/src/index.ts#boundedMessage",
@@ -721,7 +721,6 @@
     "apps/core/src/harness/session.ts#Session.releaseMessageTurn",
     "apps/core/src/harness/session.ts#Session.renewConversationLease",
     "apps/core/src/harness/session.ts#Session.sandboxPrincipal",
-    "apps/core/src/harness/session.ts#Session.sandboxes",
     "apps/core/src/harness/session.ts#Session.trackSystemCursor",
     "apps/core/src/harness/session.ts#agentSystemMessages",
     "apps/core/src/harness/session.ts#appendToLatestUserEvent",
@@ -1937,14 +1936,14 @@
       "branch arms"
     ],
     ["access", "1977", "133", "1844", "66.2%", "1162", "58", "848/1357"],
-    ["agent", "3902", "139", "3763", "47.1%", "1659", "112", "1241/2744"],
+    ["agent", "3902", "139", "3763", "47.1%", "1658", "113", "1240/2744"],
     ["channels", "3676", "3", "3673", "60.5%", "2173", "50", "1697/3046"],
     ["config", "617", "0", "617", "85.6%", "450", "78", "338/509"],
     ["hosted", "1962", "320", "1642", "51.2%", "730", "111", "553/1084"],
     ["runs", "1682", "8", "1674", "31.2%", "512", "11", "400/1154"],
     ["sandbox", "4789", "0", "4789", "55.9%", "2592", "86", "1944/3729"],
     ["workers", "92", "0", "92", "87.0%", "45", "35", "13/32"],
-    ["all", "18697", "603", "18094", "54.5%", "9323", "541", "7034/13655"]
+    ["all", "18697", "603", "18094", "54.5%", "9322", "542", "7033/13655"]
   ],
   "largestUnverified": [
     {

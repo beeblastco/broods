@@ -186,7 +186,8 @@ def accountHookFromConvex (call : Json) : Prog Json :=
 
 /-- `loadFromConvex`: the account's wrapped keys, by the admin query. -/
 def loadFromConvex (call : Json) : Prog Json :=
-  Prog.effect "adminQuery" [Json.mkObj [], Json.mkObj [("accountId", Twin.callArg call 0)]]
+  Prog.effect "adminQuery"
+    [(Json.mkObj [("$convexFunction", toJson "account/keys:list")]), Json.mkObj [("accountId", Twin.callArg call 0)]]
 
 /-- `settleQuestion`: completes the row with the answers while it is still processing. -/
 def settleQuestion (call : Json) : Prog Json :=

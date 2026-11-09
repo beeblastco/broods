@@ -1362,7 +1362,7 @@ private def upsertSandboxInstance (call : Json) : Prog Json := do
      present "logStream" (get options "logStream") ++
      (if ephemeral then [("ephemeral", toJson true)] else []))
   let _ ← Prog.attempt "adminMutation"
-    [Json.mkObj [], payload, Json.mkObj [("skipQueue", toJson true)]]
+    [(Json.mkObj [("$convexFunction", toJson "sandbox/instances:upsert")]), payload, Json.mkObj [("skipQueue", toJson true)]]
   return voidJson
 
 /-- The optional methods each executor class declares, in the order the wrapper binds them. -/

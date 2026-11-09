@@ -1422,7 +1422,8 @@ private def recordSandboxAuditEvent (call : Json) : Prog Json := do
     optionalKey "taskId" (field input "taskId") ++ optionalKey "errorMessage" (field input "errorMessage") ++
     exitCode ++ [("durationMs", field input "durationMs"), ("truncated", field input "truncated")])
   Prog.catchFail (do
-    let _ ← Prog.effect "adminMutation" [obj [], args]
+    let _ ← Prog.effect "adminMutation"
+      [(Json.mkObj [("$convexFunction", toJson "sandbox/auditEvents:insert")]), args]
     return Twin.undefinedJson) (fun _ => pure Twin.undefinedJson)
 
 private def loadSkillTool (_call : Json) : Prog Json := do

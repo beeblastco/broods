@@ -695,7 +695,9 @@ private def channelTurns (event scope hooks context dependencies : Json) :
     | none => return Twin.undefinedJson
     | some following => channelTurns event scope hooks context dependencies fuel following
 
-/-- `runChannelTurns`: settle the turn, take the next queued one, repeat until the queue is empty. -/
+/-- `runChannelTurns`: settle the turn, take the next queued one, repeat until the queue is empty.
+Only `onFinalText` and `onApprovalRequired` replies are modelled: error replies, question prompts,
+streaming, a channel factory, a failed loop with no failure text, and long queues opt out. -/
 def runChannelTurns (call : Json) : Prog Json := do
   let event := Twin.callArg call 0
   let supplied := field event "agentConfig"

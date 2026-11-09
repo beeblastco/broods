@@ -387,7 +387,7 @@ private def watchChannelConnections (c : Json) : Prog Json := do
   for plane in items (a c 1) do
     let _ ← Prog.effect "planeClient" [plane]
     let _ ← Prog.effect "client.onUpdate"
-      [Json.mkObj [], obj [("channel", a c 0)], Json.mkObj [("$fn", .str "")],
+      [(Json.mkObj [("$convexFunction", toJson "channel/connections:listConnections")]), obj [("channel", a c 0)], Json.mkObj [("$fn", .str "")],
        Json.mkObj [("$fn", .str "")]]
     latest ← drainPlane c plane 64 latest
   pure (obj [("close", Json.mkObj [("$fn", .str "close")])])

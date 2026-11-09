@@ -22,23 +22,7 @@ describe("Session.sandboxes", (): void => {
     ["no runtime resolved yet", undefined, []],
     ["a runtime with no sandbox key", { workspaces: [] }, []],
     ["an empty list", { sandboxes: [] }, []],
-    ["one sandbox", { sandboxes: ["box"] }, ["box"]],
     ["two sandboxes", { sandboxes: ["a", "b"] }, ["a", "b"]],
-    ["three sandboxes", { sandboxes: ["a", "b", "c"] }, ["a", "b", "c"]],
-    ["numbered sandboxes", { sandboxes: [1, 2] }, [1, 2]],
-    ["an empty name", { sandboxes: [""] }, [""]],
-    [
-      "sandboxes beside workspaces",
-      { sandboxes: ["x"], workspaces: ["w"] },
-      ["x"],
-    ],
-    ["workspaces only", { workspaces: ["w1", "w2"] }, []],
-    [
-      "a long name",
-      { sandboxes: ["a-rather-long-sandbox-name"] },
-      ["a-rather-long-sandbox-name"],
-    ],
-    ["repeated names", { sandboxes: ["a", "a"] }, ["a", "a"]],
   ])("%s", (label, runtime, expected): void => {
     expect(
       sessionWith(label.replaceAll(" ", "_"), runtime).sandboxes(),

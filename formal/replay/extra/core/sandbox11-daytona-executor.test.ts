@@ -44,6 +44,7 @@ let createImpl: () => Promise<FakeDaytona> = async (): Promise<FakeDaytona> =>
 let made: FakeDaytona[] = [];
 let starts: string[] = [];
 let deletes: string[] = [];
+let creates: unknown[] = [];
 
 function box(id: string, state = "started"): FakeDaytona {
   const sandbox: FakeDaytona = {
@@ -73,7 +74,11 @@ function box(id: string, state = "started"): FakeDaytona {
 
 await mock.module("@daytona/sdk", () => ({
   Daytona: class {
-    create = (): Promise<FakeDaytona> => createImpl();
+    create = (params: unknown): Promise<FakeDaytona> => {
+      creates.push(params);
+
+      return createImpl();
+    };
     get = (id: string): Promise<FakeDaytona> => getImpl(id);
   },
 }));
@@ -134,6 +139,7 @@ beforeEach((): void => {
   made = [];
   starts = [];
   deletes = [];
+  creates = [];
   getImpl = async (id: string): Promise<FakeDaytona> => box(id);
   createImpl = async (): Promise<FakeDaytona> => box("fresh");
   claim = spyOn(instanceStore, "claimSandboxInstance").mockResolvedValue(true);
@@ -375,7 +381,7 @@ describe("daytona run", () => {
     expect(commands).toHaveLength(2);
   });
 
-  test("warns about a restricted allowlist and keeps the CIDRs", async (): Promise<void> => {
+  test("keeps the CIDRs of a restricted allowlist", async (): Promise<void> => {
     const result = await new DaytonaSandboxExecutor(
       config({
         persistent: false,
@@ -393,6 +399,10 @@ describe("daytona run", () => {
 
     expect(result.ok).toBe(true);
     expect(deletes).toHaveLength(1);
+    expect(creates[0]).toMatchObject({
+      networkBlockAll: true,
+      networkAllowList: "10.0.0.0/8",
+    });
   });
 
   test("mounts with the sandbox's own AWS keys when no mount role is set", async (): Promise<void> => {
@@ -418,6 +428,10 @@ describe("daytona run", () => {
     });
 
     expect(result.ok).toBe(true);
+    const sent = JSON.stringify(commands);
+    expect(sent).toContain("mount-s3");
+    expect(sent).toContain('"AWS_ACCESS_KEY_ID":"ak"');
+    expect(sent).toContain('"AWS_SESSION_TOKEN":"st"');
   });
 
   test("passes only the keys it has when the sandbox env has no session token", async (): Promise<void> => {
@@ -440,6 +454,9 @@ describe("daytona run", () => {
     });
 
     expect(result.ok).toBe(true);
+    const sent = JSON.stringify(commands);
+    expect(sent).toContain('"AWS_ACCESS_KEY_ID":"ak"');
+    expect(sent).not.toContain("AWS_SESSION_TOKEN");
   });
 
   test("refuses a mount with no AWS keys at all", async (): Promise<void> => {
