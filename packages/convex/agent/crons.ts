@@ -17,6 +17,7 @@ import { authKit } from "../auth";
 import { actorsOf, actorValidator } from "../model/actor";
 import { accountIdForProject } from "../model/auditEvents";
 import {
+  isOneTimeSchedule,
   normalizeCreateCronInput,
   normalizeUpdateCronInput,
 } from "../model/cronRules";
@@ -45,6 +46,21 @@ const CRON_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const CRON_RUN_PAGE_WINDOW = 1000;
 const DASHBOARD_RUN_LIMIT = 20;
 const PRUNE_BATCH_SIZE = 100;
+// A younger run may not have its envelope yet, or may be about to settle its own row.
+const DEAD_RUN_GRACE_MS = 5 * 60 * 1000;
+// A worker that outlives its lease on one long step still settles afterwards.
+const EXPIRED_RUN_GRACE_MS = 60 * 60 * 1000;
+// As long as the polling row that holds the open approval.
+const PAUSED_RUN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+// Rows from before `ingressEventId` have no envelope to read, so only age can end them.
+const UNTRACKED_RUN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const DEAD_RUN_ERROR = "The run stopped before it recorded an outcome.";
+const UNANSWERED_RUN_ERROR =
+  "The run waited for an approval or an answer that never came.";
+
+type RunOutcome =
+  | { status: "completed"; result: unknown }
+  | { status: "failed"; error: string };
 
 const cronDoc = v.object({
   ...cronsFields,
@@ -124,6 +140,8 @@ export const createRun = internalMutation({
     accountId: v.id("accounts"),
     cronId: v.id("crons"),
     eventId: v.string(),
+    ingressEventId: v.optional(v.string()),
+    ingressConversationKey: v.optional(v.string()),
     conversationKey: v.string(),
     firedAt: v.number(),
   },
@@ -139,6 +157,7 @@ export const createRun = internalMutation({
     const startedAt = Date.now();
     const runId = await ctx.db.insert("cronRuns", {
       ...args,
+      ...(isOneTimeSchedule(cron.scheduleExpression) ? { oneShot: true } : {}),
       status: "started",
       startedAt: startedAt,
     });
@@ -465,6 +484,69 @@ export const removeRunsCascade = internalMutation({
   },
 });
 
+// A run paused for an approval ends in the later turn that answered it, with that turn's outcome.
+export const settleAnsweredRun = internalMutation({
+  args: {
+    conversationKey: v.string(),
+    status: v.union(v.literal("completed"), v.literal("failed")),
+    result: v.optional(v.any()),
+    error: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (
+    ctx,
+    { conversationKey, status, result, error },
+  ): Promise<null> => {
+    const run = await ctx.db
+      .query("cronRuns")
+      .withIndex("by_ingressConversationKey_and_status", (q) =>
+        q.eq("ingressConversationKey", conversationKey).eq("status", "started"),
+      )
+      .order("desc")
+      .first();
+    if (run) {
+      await finishRun(
+        ctx,
+        run,
+        status === "completed"
+          ? { status: "completed", result: result ?? null }
+          : { status: "failed", error: error ?? DEAD_RUN_ERROR },
+      );
+    }
+
+    return null;
+  },
+});
+
+// Ends runs a killed pod can no longer settle; `settleRun` lets a real outcome win any race.
+export const sweepDeadRuns = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.number(),
+  handler: async (ctx, { cursor }): Promise<number> => {
+    const now = Date.now();
+    const page = await ctx.db
+      .query("cronRuns")
+      .withIndex("by_status_and_startedAt", (q) =>
+        q.eq("status", "started").lt("startedAt", now - DEAD_RUN_GRACE_MS),
+      )
+      .paginate({ cursor: cursor ?? null, numItems: PRUNE_BATCH_SIZE });
+    let settled = 0;
+    for (const run of page.page) {
+      const outcome = await deadRunOutcome(ctx, run, now);
+      if (outcome === null) continue;
+      await finishRun(ctx, run, outcome);
+      settled += 1;
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.agent.crons.sweepDeadRuns, {
+        cursor: page.continueCursor,
+      });
+    }
+
+    return settled;
+  },
+});
+
 export const update = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -539,6 +621,53 @@ export const update = internalMutation({
   },
 });
 
+// Null while the run may still settle itself, or waits on a person.
+async function deadRunOutcome(
+  ctx: QueryCtx,
+  run: Doc<"cronRuns">,
+  now: number,
+): Promise<RunOutcome | null> {
+  const dead: RunOutcome = { status: "failed", error: DEAD_RUN_ERROR };
+  if (run.ingressEventId === undefined) {
+    return run.startedAt < now - UNTRACKED_RUN_MAX_AGE_MS ? dead : null;
+  }
+  const eventId = run.ingressEventId;
+  const envelope = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
+    .first();
+  if (!envelope) return dead;
+  const endedAgo = now - envelope.updatedAt;
+  switch (envelope.status) {
+    case "completed": {
+      const polling = await ctx.db
+        .query("runtimeAsyncAgentResults")
+        .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
+        .first();
+      if (
+        polling?.status === "awaiting_approval" ||
+        polling?.status === "awaiting_input"
+      ) {
+        return now - run.startedAt > PAUSED_RUN_MAX_AGE_MS
+          ? { status: "failed", error: UNANSWERED_RUN_ERROR }
+          : null;
+      }
+
+      return endedAgo > DEAD_RUN_GRACE_MS
+        ? { status: "completed", result: envelope.result ?? null }
+        : null;
+    }
+    case "failed":
+      return endedAgo > DEAD_RUN_GRACE_MS
+        ? { status: "failed", error: envelope.error || DEAD_RUN_ERROR }
+        : null;
+    case "expired":
+      return endedAgo > EXPIRED_RUN_GRACE_MS ? dead : null;
+    default:
+      return null;
+  }
+}
+
 async function deleteRunsBatch(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -590,6 +719,24 @@ async function getOwnedByString(
   return normalized ? await getOwned(ctx, accountId, normalized) : null;
 }
 
+async function finishRun(
+  ctx: MutationCtx,
+  run: Doc<"cronRuns">,
+  outcome: RunOutcome,
+): Promise<void> {
+  await settleRun(
+    ctx,
+    { accountId: run.accountId, cronId: run.cronId, runId: run._id },
+    outcome,
+  );
+  if (run.oneShot) {
+    await ctx.scheduler.runAfter(0, internal.agent.crons.remove, {
+      accountId: run.accountId,
+      cronId: run.cronId,
+    });
+  }
+}
+
 function isLatestFire(cron: Doc<"crons">, firedAt: number): boolean {
   return cron.lastInvokedAt === undefined || firedAt >= cron.lastInvokedAt;
 }
@@ -601,9 +748,7 @@ async function settleRun(
     cronId: Id<"crons">;
     runId: Id<"cronRuns">;
   },
-  outcome:
-    | { status: "completed"; result: unknown }
-    | { status: "failed"; error: string },
+  outcome: RunOutcome,
 ): Promise<null> {
   const run = await ctx.db.get(ids.runId);
   if (!run) return null;

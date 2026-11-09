@@ -158,7 +158,7 @@ export function SandboxInstancesTable({
     void setSelectedId(selectedId === id ? null : id);
   };
   const [confirming, setConfirming] = useState<Instance | null>(null);
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const lastRefresh = useRef<string | null>(null);
@@ -280,7 +280,7 @@ export function SandboxInstancesTable({
     nextRunning: boolean,
   ): Promise<void> {
     if (!controllable(instance)) return;
-    setPendingId(instance._id);
+    setPendingIds((ids) => new Set(ids).add(instance._id));
     setError(null);
     try {
       const args = {
@@ -292,7 +292,12 @@ export function SandboxInstancesTable({
     } catch (err) {
       setError(toErrorMessage(err));
     } finally {
-      setPendingId(null);
+      setPendingIds((ids) => {
+        const next = new Set(ids);
+        next.delete(instance._id);
+
+        return next;
+      });
     }
   }
 
@@ -424,7 +429,7 @@ export function SandboxInstancesTable({
                       now={now}
                       selected={selectedId === row.id}
                       shells={shellCount(row.id)}
-                      canToggle={canWrite && pendingId !== row.id}
+                      canToggle={canWrite && !pendingIds.has(row.id)}
                       onSelect={() => select(row.id)}
                       onToggle={(next) =>
                         next
@@ -491,7 +496,7 @@ export function SandboxInstancesTable({
           title={`Suspend ${confirming.name}?`}
           description="Suspending frees the sandbox's compute. Running processes stop, anything in flight on it is dropped, and it comes back reset. Files on the workspace disk are kept."
           verb="Suspend"
-          pending={pendingId === confirming._id}
+          pending={pendingIds.has(confirming._id)}
           error={error}
           onConfirm={() => toggle(confirming, false)}
           onClose={() => setConfirming(null)}

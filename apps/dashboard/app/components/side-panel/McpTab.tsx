@@ -55,6 +55,9 @@ const DEFAULT_SOURCE = [
 
 type SaveState =
   | { kind: "idle" }
+  | { kind: "formatting" }
+  | { kind: "saving" }
+  | { kind: "failed"; message: string }
   | { kind: "saved"; toolCount: number; verified: boolean };
 
 export function McpTab({
@@ -89,33 +92,35 @@ export function McpTab({
     sourceCode,
     url,
   } = form;
-  const [isSaving, setIsSaving] = useState(false);
-  const [isFormatting, setIsFormatting] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
+  const isFormatting = saveState.kind === "formatting";
+  const isSaving = saveState.kind === "saving";
 
   async function handleFormat(): Promise<void> {
-    setIsFormatting(true);
-    setSaveError(null);
+    setSaveState({ kind: "formatting" });
     try {
-      setSourceCode(await formatSource(sourceCode));
+      const formatted = await formatSource(sourceCode);
+      // The first press lazy-loads prettier: typing during it wins.
+      setSourceCode((current) =>
+        current === sourceCode ? formatted : current,
+      );
+      setSaveState({ kind: "idle" });
     } catch (error) {
-      setSaveError(toErrorMessage(error));
-    } finally {
-      setIsFormatting(false);
+      setSaveState({ kind: "failed", message: toErrorMessage(error) });
     }
   }
 
   async function handleSave(): Promise<void> {
     if (!projectId || !stageId) {
-      setSaveError("Select a stage before saving this server.");
+      setSaveState({
+        kind: "failed",
+        message: "Select a stage before saving this server.",
+      });
 
       return;
     }
 
-    setIsSaving(true);
-    setSaveError(null);
-    setSaveState({ kind: "idle" });
+    setSaveState({ kind: "saving" });
     try {
       const headers = parseHeaders(headersJson);
       const shared = {
@@ -141,9 +146,7 @@ export function McpTab({
         verified: result.verified,
       });
     } catch (error) {
-      setSaveError(toErrorMessage(error));
-    } finally {
-      setIsSaving(false);
+      setSaveState({ kind: "failed", message: toErrorMessage(error) });
     }
   }
 
@@ -193,7 +196,11 @@ export function McpTab({
             Save bundles the code, runs it in the sandbox, and lists its tools;
             a server that fails to build or answer never uploads.
           </p>
-          <CodeEditor value={sourceCode} onChange={setSourceCode} />
+          <CodeEditor
+            value={sourceCode}
+            onChange={setSourceCode}
+            readOnly={isSaving}
+          />
         </>
       ) : (
         <>
@@ -204,6 +211,7 @@ export function McpTab({
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://mcp.example.com/mcp"
               aria-label="Server URL"
+              disabled={isSaving}
               className="h-8 font-mono text-xs"
             />
           </div>
@@ -220,6 +228,7 @@ export function McpTab({
           value={headersJson}
           onChange={(e) => setHeadersJson(e.target.value)}
           aria-label="Headers"
+          disabled={isSaving}
           spellCheck={false}
           placeholder={'{\n  "Authorization": "Bearer ${MY_TOKEN}"\n}'}
           variant="code"
@@ -232,9 +241,11 @@ export function McpTab({
         </p>
       </div>
 
-      {saveError && <p className="text-xs text-destructive">{saveError}</p>}
+      {saveState.kind === "failed" && (
+        <p className="text-xs text-destructive">{saveState.message}</p>
+      )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2" data-save-state={saveState.kind}>
         {activeTransport === "hosted" && (
           <Button
             size="sm"
@@ -250,7 +261,7 @@ export function McpTab({
           <Button
             size="sm"
             className="h-8 cursor-pointer text-xs"
-            disabled={isSaving}
+            disabled={isSaving || isFormatting}
             onClick={handleSave}
           >
             {isSaving ? "Verifying…" : "Save Server"}
@@ -386,7 +397,7 @@ function useServerForm(server: Doc<"mcp"> | null | undefined): {
   activeTransport: "hosted" | "http";
   headersJson: string;
   setHeadersJson: (value: string) => void;
-  setSourceCode: (value: string) => void;
+  setSourceCode: React.Dispatch<React.SetStateAction<string>>;
   setTransport: (value: "hosted" | "http") => void;
   setUrl: (value: string) => void;
   sourceCode: string;

@@ -5,7 +5,7 @@ import { useTimeoutFlag } from "@/app/hooks/useTimeoutFlag";
 
 const SAVED_PILL_MS = 2_000;
 
-export type CanvasSaveState = "idle" | "saving" | "saved" | "error";
+export type CanvasSaveState = "idle" | "pending" | "saving" | "saved" | "error";
 
 export function CanvasSaveStatus({
   state,
@@ -18,7 +18,13 @@ export function CanvasSaveStatus({
 }): React.JSX.Element | null {
   const saved = useTimeoutFlag(state === "saved" ? state : null, SAVED_PILL_MS);
 
-  if (state === "idle" || (state === "saved" && saved === null)) return null;
+  if (
+    state === "idle" ||
+    state === "pending" ||
+    (state === "saved" && saved === null)
+  ) {
+    return null;
+  }
 
   if (state === "error") {
     return (

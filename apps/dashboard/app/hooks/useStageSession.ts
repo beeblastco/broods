@@ -8,39 +8,51 @@ const RETRY_MS = 30 * 1000;
 
 type StageSession = {
   stageId: Id<"stages">;
-  token: string;
+  token: string | null;
   expiresAt: number;
 };
 
-// Undefined while the first mint is in flight, null while the stage has no deployment.
+// Undefined while the stage's first mint is in flight, null while it has no live ticket.
 export function useStageSession(
   projectId: Id<"projects"> | undefined,
   stageId: Id<"stages"> | null,
 ): string | null | undefined {
   const mint = useMutation(api.agent.deployments.mintStageSession);
-  const [session, setSession] = useState<StageSession | null | undefined>(
-    undefined,
-  );
+  const [session, setSession] = useState<StageSession | undefined>(undefined);
 
   // oxlint-disable-next-line broods/no-unreasoned-state-sync -- ticket renewal timer
   useEffect(() => {
     if (!projectId || !stageId) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const none: StageSession = {
+      stageId: stageId,
+      token: null,
+      expiresAt: 0,
+    };
 
     const schedule = (delayMs: number): void => {
       timer = setTimeout(() => void renew(), delayMs);
     };
     const renew = async (): Promise<void> => {
-      let minted: { token: string; expiresAt: number } | null = null;
+      let minted: { token: string; expiresAt: number } | null;
       try {
         minted = await mint({ projectId: projectId, stageId: stageId });
       } catch {
-        minted = null;
+        if (cancelled) return;
+        // A failed renewal keeps the ticket the gateway still honors.
+        setSession((held) =>
+          held?.stageId === stageId && held.expiresAt > Date.now()
+            ? held
+            : none,
+        );
+        schedule(RETRY_MS);
+
+        return;
       }
       if (cancelled) return;
       if (!minted) {
-        setSession(null);
+        setSession(none);
         schedule(RETRY_MS);
 
         return;
@@ -60,8 +72,8 @@ export function useStageSession(
     };
   }, [mint, projectId, stageId]);
 
-  if (!projectId || !stageId || session === null) return null;
-  if (session === undefined || session.stageId !== stageId) return undefined;
+  if (!projectId || !stageId) return null;
+  if (session?.stageId !== stageId) return undefined;
 
   return session.token;
 }

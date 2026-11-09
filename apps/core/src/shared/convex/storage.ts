@@ -334,6 +334,8 @@ const crons: Storage["crons"] = {
       accountId: input.accountId,
       cronId: input.cronId,
       eventId: input.eventId,
+      ingressEventId: input.ingressEventId,
+      ingressConversationKey: input.ingressConversationKey,
       conversationKey: input.conversationKey,
       firedAt: firedAt.getTime(),
     });

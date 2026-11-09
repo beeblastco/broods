@@ -577,6 +577,120 @@ describe("runtime ingress", () => {
     }
   });
 
+  describe.each([
+    ["settle", "approval"],
+    ["takeNext", "approval"],
+    ["takeNext", "question"],
+  ] as const)("a turn ended by %s that answers a %s", (path, prompt) => {
+    test("ends the cron run paused on it", async () => {
+      vi.useFakeTimers();
+      const t = runtimeTest();
+      const accountId = await createActiveAccount(t);
+      const conversationKey = conversationKeyFor(accountId);
+      const owner = await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: "answer",
+          mode: "reject",
+        }),
+      );
+      const runId = await t.run(async (ctx) => {
+        const agentId = await ctx.db.insert("agents", {
+          accountId: accountId,
+          name: "agent",
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        const cronId = await ctx.db.insert("crons", {
+          accountId: accountId,
+          name: "job",
+          agentId: agentId,
+          events: [],
+          scheduleExpression: "rate(1 day)",
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        const envelope = await ctx.db
+          .query("runtimeIngressEnvelopes")
+          .withIndex("by_eventId", (q) => q.eq("eventId", "answer"))
+          .unique();
+        await ctx.db.patch(
+          envelope!._id,
+          prompt === "question"
+            ? { toolResultId: "question-1" }
+            : {
+                events: [
+                  {
+                    role: "tool",
+                    content: [
+                      {
+                        type: "tool-approval-response",
+                        approvalId: "a",
+                        approved: true,
+                      },
+                    ],
+                  },
+                ],
+              },
+        );
+        if (prompt === "question") {
+          await ctx.db.insert("runtimeAsyncToolResults", {
+            accountId: accountId,
+            resultId: "question-1",
+            parentEventId: "paused",
+            conversationKey: conversationKey,
+            toolName: "ask_questions",
+            toolCallId: "call-1",
+            input: {},
+            status: "completed",
+            createdAt: "2026-11-01T00:00:00.000Z",
+            updatedAt: "2026-11-01T00:00:00.000Z",
+            expiresAt: 4_000_000_000,
+          });
+        }
+
+        return await ctx.db.insert("cronRuns", {
+          accountId: accountId,
+          cronId: cronId,
+          eventId: "paused",
+          ingressConversationKey: conversationKey,
+          conversationKey: "api:cron",
+          status: "started",
+          startedAt: 1,
+        });
+      });
+      const fence = {
+        conversationKey: conversationKey,
+        ownerEventId: "answer",
+        ownerGeneration: owner.ownerGeneration!,
+      };
+
+      if (path === "settle") {
+        await t.mutation(internal.runtimeIngress.settle, {
+          ...fence,
+          status: "completed",
+          result: "approved",
+        });
+      } else {
+        await t.mutation(internal.runtimeIngress.takeNext, {
+          ...fence,
+          leaseTtlMs: 60_000,
+          settle: { status: "completed", result: "approved" },
+        });
+      }
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      vi.useRealTimers();
+
+      expect(await t.run((ctx) => ctx.db.get(runId))).toMatchObject({
+        status: "completed",
+        result: "approved",
+      });
+    });
+  });
+
   test("takeNext and settle store the owner's last rows under the same fence", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

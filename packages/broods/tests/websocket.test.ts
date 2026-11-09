@@ -215,6 +215,86 @@ test("websocket client closes with a browser-valid code on a server error", asyn
   expect(socket.readyState).toBe(3);
 });
 
+test("websocket subscribe reports a failure once and nothing after a deliberate close", (): void => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const errors: string[] = [];
+  const input = { endpointId: "agent_1", sessionId: "session_1", input: "hi" };
+  const onError = (error: Error): void => {
+    errors.push(error.message);
+  };
+
+  const closedByCaller = client.subscribe(input, { onError: onError });
+  closedByCaller.close();
+  FakeWebSocket.instances[0]!.onerror?.({});
+  expect(errors).toEqual([]);
+
+  client.subscribe(input, { onError: onError });
+  FakeWebSocket.instances[1]!.onerror?.({});
+  FakeWebSocket.instances[1]!.onerror?.({});
+  expect(errors).toHaveLength(1);
+});
+
+test("websocket subscribe delivers no frame after a deliberate close", async (): Promise<void> => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const calls: string[] = [];
+  const subscription = client.subscribe(
+    { endpointId: "agent_1", sessionId: "session_1", input: "hi" },
+    {
+      onDone: (): void => {
+        calls.push("done");
+      },
+      onMessage: (message: WebSocketServerMessage): void => {
+        calls.push(message.type);
+      },
+    },
+  );
+
+  await Promise.resolve();
+  subscription.close();
+  FakeWebSocket.instances[0]!.emit({ type: "done" } as WebSocketServerMessage);
+
+  expect(calls).toEqual([]);
+});
+
+test("websocket attach reports an error frame once, and not again when the socket drops", async (): Promise<void> => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const errors: string[] = [];
+  client.attach(
+    {
+      endpointId: "agent_1",
+      agentId: "agent_1",
+      requestId: "attach-1",
+      runId: "run_1",
+      eventId: "event-1",
+      conversationKey: "conversation-1",
+    },
+    {
+      onError: (error: Error): void => {
+        errors.push(error.message);
+      },
+    },
+  );
+
+  await Promise.resolve();
+  const socket = FakeWebSocket.instances[0]!;
+  socket.emit({ type: "error", error: "Attach timed out" });
+  socket.onclose?.({ code: 1006, reason: "" });
+
+  expect(errors).toHaveLength(1);
+});
+
 test("websocket client unwraps output envelopes for handlers and stream consumers", async (): Promise<void> => {
   const messages: WebSocketServerMessage[] = [];
   const outputs: unknown[] = [];

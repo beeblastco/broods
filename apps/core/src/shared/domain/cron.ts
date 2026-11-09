@@ -32,6 +32,8 @@ export interface CronRunRecord {
   cronId: string;
   runId: string;
   eventId: string;
+  ingressEventId?: string;
+  ingressConversationKey?: string;
   conversationKey: string;
   status: CronLastStatus;
   result?: JSONValue;

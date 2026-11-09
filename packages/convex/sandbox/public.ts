@@ -261,6 +261,9 @@ async function markInstance(
       accountId: account.accountId as never,
       reservationKey: reservationKey,
       status: status,
+      // A rollback undoes only its own marker: a lost reply can follow core's `suspended` write.
+      onlyFrom: status === "running" ? "suspending" : "running",
+      observed: status === "running",
     });
   } catch (err) {
     console.warn("sandbox instance status marker failed", err);

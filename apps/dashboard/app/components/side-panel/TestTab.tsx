@@ -271,7 +271,10 @@ function ChatWindow({
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div
+      className="flex flex-1 flex-col overflow-hidden"
+      data-chat-state={awaitingAnswer ? "awaiting-answer" : status}
+    >
       <div
         ref={listRef}
         onScroll={(e) => {

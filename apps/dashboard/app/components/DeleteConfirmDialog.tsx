@@ -47,6 +47,7 @@ export function DeleteConfirmDialog({
   const canConfirm = phrase === deletePhrase && !isDeleting;
 
   function handleOpenChange(next: boolean): void {
+    if (!next && isDeleting) return;
     if (!next) {
       setPhrase("");
       setError(null);

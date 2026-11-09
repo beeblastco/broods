@@ -3,9 +3,11 @@
 
 A `cronRuns` row under `createRun` and `settleRun` (behind `completeRun` /
 `failRun`, `packages/convex/agent/crons.ts`), settled by core through
-`settleCronRun` (the async worker) and the catch in `startScheduledAgentRun`
-(`apps/core/src/harness/handler.ts`). A row is `none` once `removeRunsCascade`
-drained it with its one-time cron.
+`settleCronRun` (the async worker, which leaves a paused run open) and the catch
+in `startScheduledAgentRun` (`apps/core/src/harness/handler.ts`). A paused run is
+settled by `settleAnsweredRun` from the turn that answered it, and `sweepDeadRuns`
+settles a run whose envelope ended without one; both are the same `settle` step.
+A row is `none` once `removeRunsCascade` drained it with its one-time cron.
 
 The cron row's `lastStatus` follows `lastRunId`, the run of the latest fire by
 scheduled time (`lastInvokedAt`). `createRun` takes the cron only for a fire at

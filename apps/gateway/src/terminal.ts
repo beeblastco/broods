@@ -187,11 +187,15 @@ export function openTerminalUpstream(
 
   upstream.onclose = (event): void => {
     if (socket.readyState !== WebSocket.OPEN) return;
-    if (socket.data.kind === "machine") {
-      socket.close(relayCloseCode(event.code), event.reason);
-    } else {
+    if (
+      socket.data.kind !== "machine" &&
+      (event.code === 1000 || event.code === 1005)
+    ) {
       socket.close(1000, "terminal session ended");
+
+      return;
     }
+    socket.close(relayCloseCode(event.code), event.reason);
   };
 
   upstream.onerror = (): void => {
