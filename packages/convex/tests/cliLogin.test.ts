@@ -150,3 +150,57 @@ describe("CLI login code minting", () => {
     );
   });
 });
+
+describe("an AuthKit user at /mcp", () => {
+  test("an owner gets the org's account, a member a reason", async () => {
+    const t = loginTest();
+    const accountId = await t.run(async (ctx) => {
+      const orgId = await ctx.db.insert("orgs", {
+        name: "beeblast",
+        slug: "beeblast",
+        ownerAuthId: AUTH_ID,
+        plan: "free",
+        createdAt: 1,
+      });
+      for (const [authId, role] of [
+        [AUTH_ID, "owner"],
+        ["auth_member", "member"],
+      ] as const) {
+        const userId = await ctx.db.insert("users", {
+          authId: authId,
+          email: `${authId}@example.com`,
+          name: authId,
+          plan: "free",
+        });
+        await ctx.db.insert("orgMembers", {
+          orgId: orgId,
+          userId: userId,
+          role: role,
+          createdAt: 1,
+        });
+      }
+
+      return await ctx.db.insert("accounts", {
+        orgId: orgId,
+        username: "beeblast",
+        secretHash: "hash-beeblast",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+
+    const owner = await t.query(internal.cli.auth.resolveUserLogin, {
+      authId: AUTH_ID,
+    });
+    expect("account" in owner && owner.account._id).toBe(accountId);
+    expect(
+      await t.query(internal.cli.auth.resolveUserLogin, {
+        authId: "auth_member",
+      }),
+    ).toEqual({
+      refused:
+        "Signing in to Broods needs the owner or admin role in beeblast. Switch organizations in the dashboard, then try again.",
+    });
+  });
+});

@@ -1,4 +1,4 @@
-// One stateless client per operation, pinned to MCP spec 2026-07-28: older servers are refused.
+// One stateless client per operation. 2026-07-28 when the server has it, else the older handshake.
 // A "machine" row never dials: the user's daemon or a lambda VM runs the client and core relays.
 
 import {
@@ -7,8 +7,8 @@ import {
   isSpecType,
   StreamableHTTPClientTransport,
   type CallToolResult,
-  type DiscoverResult,
   type ListToolsResult,
+  type PriorDiscovery,
   type Tool,
 } from "@modelcontextprotocol/client";
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
@@ -22,6 +22,7 @@ import {
 import {
   authorizationHeaderName,
   ENV_PLACEHOLDER_PATTERN,
+  isGoogleMcpUrl,
   type McpOauth,
   type McpRecord,
 } from "../../shared/domain/mcp.ts";
@@ -31,6 +32,7 @@ import {
 } from "../sandbox/machine-executor.ts";
 import { mergeSandboxEnv } from "../sandbox/utils.ts";
 import { publicHostFetch } from "../../shared/http.ts";
+import { MCP_PROTOCOL_VERSION } from "../../shared/mcp-protocol.ts";
 import { logInfo } from "../../shared/log.ts";
 import { MAX_IMAGE_BYTES } from "../../shared/media-types.ts";
 import { guardedFetch } from "../isolate/runner/pinned-fetch.mjs";
@@ -46,7 +48,7 @@ import {
   mcpAccessToken,
   type ResolvedMcpOauth,
 } from "./oauth.ts";
-import { MCP_PROTOCOL_VERSION } from "../../shared/mcp-protocol.ts";
+import { mcpConnectionFetch } from "./connection.ts";
 import { sandboxMcpRequest, type SandboxMcpTarget } from "./sandbox.ts";
 
 export const MCP_AGENT_ID_HEADER = "X-Broods-Agent-Id";
@@ -92,10 +94,12 @@ export interface McpCallOptions {
   abortSignal?: AbortSignal;
   onCpuUsec?: (cpuUsec: number) => void;
   onRetry?: (waitMs: number) => void;
+  /** A rate-limited call is resent only when the server says resending is safe. */
+  retryRateLimited?: boolean;
 }
 
 interface CachedDiscover {
-  discover: DiscoverResult;
+  prior: PriorDiscovery;
   expiresAt: number;
 }
 
@@ -122,7 +126,7 @@ export async function callMcpTool(
   let result = await callMcpToolResult(connection, toolName, args, options);
   for (
     let attempt = 1;
-    result.isError && attempt <= RATE_LIMIT_RETRIES;
+    result.isError && options.retryRateLimited && attempt <= RATE_LIMIT_RETRIES;
     attempt += 1
   ) {
     const waitMs = rateLimitWaitMs(renderContent(result.content), attempt);
@@ -394,7 +398,7 @@ async function connectClient(
     );
   }
   const makeClient = async (
-    discover: DiscoverResult | undefined,
+    prior: PriorDiscovery | undefined,
   ): Promise<Client> => {
     const headers = await mcpRequestHeaders(connection);
     const transport = new StreamableHTTPClientTransport(
@@ -402,18 +406,25 @@ async function connectClient(
       {
         requestInit: { headers: headers },
         // Dialed from inside the cluster: resolve, refuse private addresses, pin.
-        fetch: hosted ? hostedMcpFetch(connection, onCpuUsec) : publicHostFetch,
+        fetch: hosted
+          ? hostedMcpFetch(connection, onCpuUsec)
+          : connection.record.connected
+            ? mcpConnectionFetch(connection.record)
+            : publicHostFetch,
       },
     );
+    // A hosted bundle ships with our templates; only a third party gets the older handshake.
     // supportedProtocolVersions also pins the cached `prior` path, which ignores the `pin` mode.
-    const client = new Client(CLIENT_INFO, {
-      supportedProtocolVersions: [MCP_PROTOCOL_VERSION],
-      versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } },
-    });
-    await client.connect(
-      transport,
-      discover ? { prior: { kind: "modern", discover: discover } } : {},
+    const client = new Client(
+      CLIENT_INFO,
+      hosted
+        ? {
+            supportedProtocolVersions: [MCP_PROTOCOL_VERSION],
+            versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } },
+          }
+        : { versionNegotiation: { mode: "auto" } },
     );
+    await client.connect(transport, prior ? { prior: prior } : {});
 
     return client;
   };
@@ -421,7 +432,7 @@ async function connectClient(
   const cached = discoverCache.get(key);
   const fresh = cached !== undefined && cached.expiresAt > Date.now();
   if (cached && !fresh) discoverCache.delete(key);
-  const prior = fresh ? cached.discover : undefined;
+  const prior = fresh ? cached.prior : undefined;
   let client: Client;
   try {
     client = await makeClient(prior);
@@ -430,12 +441,15 @@ async function connectClient(
     discoverCache.delete(key);
     client = await makeClient(undefined);
   }
+  // Remembering an older server also skips its failed probe on every later call.
   const discover = client.getDiscoverResult();
-  if (discover && !discoverCache.has(key)) {
+  if (!discoverCache.has(key)) {
     pruneCache(discoverCache);
     discoverCache.set(key, {
-      discover: discover,
-      expiresAt: Date.now() + clampTtlMs(discover.ttlMs),
+      prior: discover
+        ? { kind: "modern", discover: discover }
+        : { kind: "legacy" },
+      expiresAt: Date.now() + clampTtlMs(discover?.ttlMs),
     });
   }
 
@@ -612,8 +626,17 @@ function resolveOauth(
     clientSecret: resolved("clientSecret"),
     refreshToken: resolved("refreshToken"),
     // From the row alone: registration is the one place that checked it is https.
-    tokenUrl: record.oauth?.tokenUrl ?? DEFAULT_OAUTH_TOKEN_URL,
+    tokenUrl: tokenUrlFor(record),
   };
+}
+
+// The default sends the client secret to Google, so it is for Google's own servers only.
+function tokenUrlFor(record: McpRecord): string {
+  if (record.oauth?.tokenUrl) return record.oauth.tokenUrl;
+  if (isGoogleMcpUrl(record.url)) return DEFAULT_OAUTH_TOKEN_URL;
+  throw new Error(
+    `config.mcp.${record.serverId} oauth needs tokenUrl: only Google servers have a default`,
+  );
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

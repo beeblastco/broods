@@ -34,7 +34,7 @@ export const MCP_CLEARABLE_FIELDS = [
 // Prefixes provider tool names as `server__tool`: no underscore keeps `__` unambiguous.
 const MCP_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 
-const MCP_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const MCP_TOOL_NAME_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
 
 export type McpPlacement = { sandbox: string | null; transport: McpTransport };
 
@@ -109,6 +109,15 @@ export function assertMcpRow(row: {
       `oauth mints the Authorization header itself; drop the explicit ${authorization} header`,
     );
   }
+  if (row.oauth.tokenUrl === undefined && !isGoogleMcpUrl(row.url)) {
+    throw new ClientError(
+      "oauth.tokenUrl is required: only Google servers have a default",
+    );
+  }
+}
+
+export function isGoogleMcpUrl(url: string | undefined): boolean {
+  return url !== undefined && new URL(url).hostname.endsWith(".googleapis.com");
 }
 
 export function authorizationHeaderName(

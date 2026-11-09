@@ -90,6 +90,13 @@ export const ENVELOPE_COLUMNS = [
     tag: "tag",
   },
   {
+    table: "mcpConnections",
+    scope: "mcpConnections:ciphertext",
+    ciphertext: "ciphertext",
+    iv: "iv",
+    tag: "tag",
+  },
+  {
     table: "auditSinks",
     scope: "auditSinks:encryptedSecret",
     ciphertext: "encryptedSecret",

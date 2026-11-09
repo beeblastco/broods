@@ -58,33 +58,14 @@ export async function mcpTasks(context: VerifyContext): Promise<void> {
     JSON.stringify(discovered),
   );
 
+  await assertMetadataRoute(context);
+
   const { agentId } = await context.account.createAgent({
     name: key,
     description: "Says OK.",
     config: { ...context.model, agent: OK_AGENT },
   });
-  const listed = await mcp(context, "tools/list", {});
-  const tools = (listed.result?.tools ?? []) as {
-    name: string;
-    title?: string;
-  }[];
-  assertStep(
-    "tools/list names the agent by id with its name as title",
-    tools.some((tool) => tool.name === agentId && tool.title === key),
-    JSON.stringify(tools.map((tool) => tool.name)),
-  );
-
-  const refused = await mcp(
-    context,
-    "tools/call",
-    { name: agentId, arguments: { prompt: "Say OK." } },
-    { capabilities: {} },
-  );
-  assertStep(
-    "a client without the tasks extension gets -32021",
-    refused.error?.code === -32021,
-    JSON.stringify(refused),
-  );
+  await assertAgentTool(context, key);
 
   const task = await callTool(context, agentId, "Say OK.");
   assertStep(
@@ -137,6 +118,49 @@ export async function mcpTasks(context: VerifyContext): Promise<void> {
   }
   await questionRoundTrip(context, key);
   await liveCancel(context, key);
+}
+
+/** The agent is a tool named after it, and a client without tasks gets its answer inline. */
+async function assertAgentTool(
+  context: VerifyContext,
+  key: string,
+): Promise<void> {
+  const listed = await mcp(context, "tools/list", {});
+  const tools = (listed.result?.tools ?? []) as {
+    name: string;
+    title?: string;
+  }[];
+  assertStep(
+    "tools/list names the agent by its name",
+    tools.some((tool) => tool.name === key && tool.title === key),
+    JSON.stringify(tools.map((tool) => tool.name)),
+  );
+
+  const direct = await mcp(
+    context,
+    "tools/call",
+    { name: key, arguments: { prompt: "Say OK." } },
+    { capabilities: {}, timeoutMs: 60_000 },
+  );
+  assertStep(
+    "a client without the tasks extension gets the answer directly",
+    direct.result?.resultType === "complete" &&
+      (direct.result.isError === true) === !context.hasModelKey,
+    JSON.stringify(direct),
+  );
+}
+
+// The local stack runs without WorkOS: the edge still sends the metadata path to core.
+async function assertMetadataRoute(context: VerifyContext): Promise<void> {
+  const response = await fetch(
+    `${context.edgeUrl}/.well-known/oauth-protected-resource/mcp`,
+  );
+  const text = await response.text();
+  assertStep(
+    "the edge sends /mcp's OAuth metadata path to core",
+    response.status === 404 && text.includes("no OAuth sign-in"),
+    `${response.status} ${text}`,
+  );
 }
 
 async function callTool(
@@ -201,7 +225,12 @@ async function mcp(
   context: VerifyContext,
   method: string,
   params: Record<string, unknown>,
-  options: { capabilities?: object; path?: string; token?: string } = {},
+  options: {
+    capabilities?: object;
+    path?: string;
+    timeoutMs?: number;
+    token?: string;
+  } = {},
 ): Promise<McpResponse> {
   const name = params.taskId ?? params.name;
   const response = await fetch(`${context.edgeUrl}${options.path ?? "/mcp"}`, {
@@ -231,7 +260,7 @@ async function mcp(
         },
       },
     }),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(options.timeoutMs ?? 30_000),
   });
 
   return (await response.json()) as McpResponse;

@@ -40,7 +40,13 @@ it("reports each wait against the tool call, for its span", async () => {
   const retries: Array<[string, number]> = [];
   const tools = mcpTools(
     mcpConnection(record, undefined),
-    [{ name: "search", inputSchema: { type: "object" } }],
+    [
+      {
+        name: "search",
+        inputSchema: { type: "object" },
+        annotations: { idempotentHint: true },
+      },
+    ],
     undefined,
     (toolCallId, waitMs): void => {
       retries.push([toolCallId, waitMs]);
@@ -80,9 +86,12 @@ it("reads a wait given in words", async () => {
   });
   const startedAt = Date.now();
 
-  const result = await callMcpTool(mcpConnection(record, undefined), "search", {
-    q: "x",
-  });
+  const result = await callMcpTool(
+    mcpConnection(record, undefined),
+    "search",
+    { q: "x" },
+    { retryRateLimited: true },
+  );
 
   expect(result).toBe("found");
   expect(calls).toBe(2);
@@ -101,9 +110,30 @@ it("fails the call once the retries are spent", async () => {
   });
 
   await expect(
-    callMcpTool(mcpConnection(record, undefined), "search", { q: "x" }),
+    callMcpTool(
+      mcpConnection(record, undefined),
+      "search",
+      { q: "x" },
+      { retryRateLimited: true },
+    ),
   ).rejects.toThrow("Rate limit exceeded");
   expect(calls).toBe(4);
+});
+
+it("never resends a call the server has not marked safe to repeat", async () => {
+  let calls = 0;
+  setMcpForTests({
+    callTool: async () => {
+      calls += 1;
+
+      return { isError: true, content: [{ type: "text", text: RATE_LIMITED }] };
+    },
+  });
+
+  await expect(
+    callMcpTool(mcpConnection(record, undefined), "search", { q: "x" }),
+  ).rejects.toThrow("Rate limit exceeded");
+  expect(calls).toBe(1);
 });
 
 it("hands any other failure straight to the model", async () => {

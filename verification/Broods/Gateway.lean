@@ -96,10 +96,12 @@ where
     shape [.lit "v1", .lit "workspaces", .any, .lit "files"] p ||
     shape [.lit "v1", .lit "crons", .any, .lit "runs"] p
   /-- The `webhooks`, `media` and `core` routers: `/v1` or anything under `/v1/`,
-  and core's MCP Tasks server at `/mcp`. -/
+  core's MCP Tasks server at `/mcp`, and its OAuth protected-resource metadata. -/
   isCore : Path → Bool
     | "v1" :: _ => true
     | ["mcp"] => true
+    | [".well-known", "oauth-protected-resource"] => true
+    | [".well-known", "oauth-protected-resource", "mcp"] => true
     | _ => false
   /-- The `sockets` router, by path alone. -/
   socket (p : Path) : Option Socket :=
@@ -180,6 +182,10 @@ example : route .post ["v1", "agents", "a", "ws"] = .socket .agent := by decide
 example : route .post ["mcp"] = .core := by decide
 example : route .post ["mcp", "x"] = .notFound := by decide
 example : route .get ["v1", "mcp"] = .config := by decide
+
+/-- Its OAuth metadata reaches core at the well-known path, and nothing else under it. -/
+example : route .get [".well-known", "oauth-protected-resource", "mcp"] = .core := by decide
+example : route .get [".well-known", "oauth-protected-resource", "x"] = .notFound := by decide
 
 /-- In-cluster paths reach core, which refuses them without the service token. -/
 example : route .post ["v1", "cron-runs"] = .core := by decide

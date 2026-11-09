@@ -82,6 +82,10 @@ export interface SandboxUsageEntry {
 interface AccountStore {
   getById(accountId: string): Promise<AccountRecord | null>;
   getBySecretHash(secretHash: string): Promise<AccountRecord | null>;
+  /** The account a WorkOS user's `broods login` lands on, or why they have none. */
+  getForUser(
+    authId: string,
+  ): Promise<{ account: AccountRecord } | { refused: string }>;
   create(
     input: CreateAccountInput,
   ): Promise<{ account: AccountRecord; secret: string }>;
@@ -241,6 +245,41 @@ interface ConnectionStore {
   ): Promise<boolean>;
 }
 
+export interface StoredMcpConnection {
+  clientId: string;
+  tokenUrl: string;
+  resource: string;
+  accessToken: string;
+  refreshToken: string;
+  clientSecret?: string;
+  expiresAt: number;
+  updatedAt: number;
+}
+
+interface McpConnectionStore {
+  load(
+    accountId: string,
+    serverId: string,
+  ): Promise<StoredMcpConnection | null>;
+  set(
+    connection: Omit<StoredMcpConnection, "updatedAt"> & {
+      accountId: string;
+      serverId: string;
+    },
+  ): Promise<void>;
+  /** False when `updatedAt` moved since `loaded` was read: a new sign-in wins. */
+  saveRefreshed(
+    accountId: string,
+    serverId: string,
+    loaded: StoredMcpConnection,
+    refreshed: Pick<
+      StoredMcpConnection,
+      "accessToken" | "refreshToken" | "expiresAt"
+    >,
+  ): Promise<boolean>;
+  disconnect(accountId: string, serverId: string): Promise<boolean>;
+}
+
 interface RoleSessionStore {
   resolveByTokenHash(tokenHash: string): Promise<RolePrincipal | null>;
 }
@@ -317,6 +356,7 @@ export interface Storage {
   mcp: McpStore;
   agentPolicies: AgentPolicyStore;
   connections: ConnectionStore;
+  mcpConnections: McpConnectionStore;
   roleSessions: RoleSessionStore;
   taskUsage: TaskUsageStore;
 }

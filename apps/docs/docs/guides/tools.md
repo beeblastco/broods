@@ -109,9 +109,22 @@ Rules:
 - Tool lists are cached for the time the server's listing allows. Server-pushed list changes are not supported.
 - Every request carries `X-Broods-Agent-Id` (the calling agent) and, when the requester is known, `X-Broods-Principal` (base64url JSON of the delegation chain: who asked, then each agent that delegated, the caller last; ids and kinds only, no display names). On remote and hosted servers, a run made with a [user token](security.md#users-behind-the-runtime-key) starts the chain with `{"kind":"user","id":"<userId>"}`, so a server can act for that user. A server can authorize per agent on them. Hosted servers read the same headers off the `Request` they are handed. A hosted server also gets the user's own `X-Broods-User-Credential` when the token carries one ([security](security.md#acting-with-the-users-own-credential)). These names are reserved: a configured header of any of them, in any case, is dropped. Tool lists are shared across agents, so authorize in the call, not by hiding tools from the list.
 
-### Servers with expiring OAuth tokens
+### Servers that need a sign-in
 
-Some servers, such as Google's Workspace MCP endpoints, only accept short-lived access tokens. Give `oauth` instead of an Authorization header, and Broods mints, caches and refreshes the tokens:
+Most hosted MCP servers use OAuth. Register the server with just its URL, then make one request. Broods does the discovery, client registration and PKCE, and answers with a link:
+
+```bash
+curl -X POST "$BROODS_BASE_URL/v1/mcp-connections/$SERVER_ID" \
+  -H "Authorization: Bearer $BROODS_ACCOUNT_SECRET"
+```
+
+A person opens `authorizeUrl` and approves. Poll the same URL with `GET` until `connected` is `true`. Nothing else has to run on your machine, so an agent in a sandbox can start this too. The connection belongs to that server: Broods refreshes it, and changing the server's URL or deleting it drops the tokens. `DELETE` disconnects.
+
+Until a person signs in, the agent gets one `<server>__sign_in_needed` tool that explains this, so it can tell you rather than guess.
+
+### Servers with a refresh token you already hold
+
+Some servers, such as Google's Workspace MCP endpoints, only accept short-lived access tokens and offer no sign-in Broods can register with. Give `oauth` instead of an Authorization header, and Broods mints, caches and refreshes the tokens. A server that rotates refresh tokens needs a sign-in instead, since a token in an env var cannot be updated:
 
 ```ts
 export const gmail = defineMcp({
@@ -121,7 +134,7 @@ export const gmail = defineMcp({
     clientId: "1234.apps.googleusercontent.com",
     clientSecret: env("GMAIL_CLIENT_SECRET"),
     refreshToken: env("GMAIL_REFRESH_TOKEN"),
-    // tokenUrl defaults to https://oauth2.googleapis.com/token
+    // tokenUrl defaults to https://oauth2.googleapis.com/token, on googleapis.com hosts only
   },
 });
 

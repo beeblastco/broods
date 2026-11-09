@@ -6,7 +6,7 @@ import { toErrorMessage } from "../shared/errors.ts";
 import { getStorage, type StoredConnection } from "../shared/storage.ts";
 import {
   REFRESH_MARGIN_MS,
-  refreshTokenGrant,
+  tokenGrant,
   type RefreshedToken,
 } from "./mcp/oauth.ts";
 
@@ -15,23 +15,50 @@ const REFRESH_TIMEOUT_MS = 15_000;
 
 // Core runs one replica, so an in-flight promise per key stops a refresh token being spent twice.
 const cache = new Map<string, CachedConnection>();
-const inFlight = new Map<string, Promise<StoredConnection>>();
+const inFlight = new Map<string, Promise<StoredTokens>>();
 const rejected = new Map<string, string>();
 
 interface CachedConnection {
-  connection: StoredConnection;
+  connection: StoredTokens;
   loadedAt: number;
 }
 
-type Fetch = (
+interface StoredTokens {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  updatedAt: number;
+}
+
+export type Fetch = (
   input: string | URL | Request,
   init?: RequestInit,
 ) => Promise<Response>;
 
-/** On a 401 it refreshes once and resends: the AI SDK does not retry a 401. */
+/** Where one credential's tokens live and how they refresh. */
+export interface TokenSource<Stored extends StoredTokens> {
+  key: string;
+  missing: string;
+  load(): Promise<Stored | null>;
+  refresh(stored: Stored): Promise<RefreshedToken>;
+  refreshFailed(message: string): string;
+  save(
+    stored: Stored,
+    rotated: Pick<StoredTokens, "accessToken" | "refreshToken" | "expiresAt">,
+  ): Promise<boolean>;
+}
+
 export function connectionFetch(
   accountId: string,
   type: ConnectionType,
+  baseFetch: Fetch,
+): Fetch {
+  return tokenFetch(connectionSource(accountId, type), baseFetch);
+}
+
+/** On a 401 it refreshes once and resends: neither SDK retries a 401. */
+export function tokenFetch<Stored extends StoredTokens>(
+  source: TokenSource<Stored>,
   baseFetch: Fetch,
 ): Fetch {
   return async (input, init): Promise<Response> => {
@@ -41,14 +68,13 @@ export function connectionFetch(
 
       return await baseFetch(input, { ...init, headers: headers });
     };
-    const token = await accessToken(accountId, type);
+    const token = await accessToken(source);
     const response = await send(token);
     if (response.status !== 401) return response;
-    const key = `${accountId}:${type}`;
-    cache.delete(key);
-    rejected.set(key, token);
+    cache.delete(source.key);
+    rejected.set(source.key, token);
 
-    return await send(await accessToken(accountId, type));
+    return await send(await accessToken(source));
   };
 }
 
@@ -58,12 +84,10 @@ export function resetConnectionsForTests(): void {
   rejected.clear();
 }
 
-async function accessToken(
-  accountId: string,
-  type: ConnectionType,
+async function accessToken<Stored extends StoredTokens>(
+  source: TokenSource<Stored>,
 ): Promise<string> {
-  const key = `${accountId}:${type}`;
-  const cached = cache.get(key);
+  const cached = cache.get(source.key);
   if (
     cached &&
     Date.now() - cached.loadedAt < CACHE_TTL_MS &&
@@ -72,84 +96,90 @@ async function accessToken(
     return cached.connection.accessToken;
   }
   // Joined or registered before any await, so concurrent calls share one refresh.
-  let pending = inFlight.get(key);
+  let pending = inFlight.get(source.key);
   if (!pending) {
-    pending = loadFresh(accountId, type).finally(() => inFlight.delete(key));
-    inFlight.set(key, pending);
+    pending = loadFresh(source).finally(() => inFlight.delete(source.key));
+    inFlight.set(source.key, pending);
   }
 
   return (await pending).accessToken;
 }
 
-function expiresSoon(connection: StoredConnection): boolean {
+function connectionSource(
+  accountId: string,
+  type: ConnectionType,
+): TokenSource<StoredConnection> {
+  const meta = CONNECTION_TYPES[type];
+  const store = getStorage().connections;
+
+  return {
+    key: `${accountId}:${type}`,
+    missing: `This account has no ${type} connection. Run \`broods connect ${type}\` to sign in.`,
+    load: () => store.load(accountId, type),
+    refresh: (stored) =>
+      tokenGrant(
+        meta.tokenUrl,
+        {
+          client_id: stored.clientId,
+          refresh_token: stored.refreshToken,
+          ...(meta.resource ? { resource: meta.resource } : {}),
+        },
+        (url, init) =>
+          fetch(url, {
+            ...init,
+            signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+          }),
+      ),
+    refreshFailed: (message) =>
+      `${meta.label} connection could not refresh: ${message}. Run \`broods connect ${type}\` to sign in again.`,
+    save: (stored, rotated) =>
+      store.saveRefreshed(accountId, type, stored, rotated),
+  };
+}
+
+function expiresSoon(connection: StoredTokens): boolean {
   return connection.expiresAt - Date.now() < REFRESH_MARGIN_MS;
 }
 
-async function loadFresh(
-  accountId: string,
-  type: ConnectionType,
-): Promise<StoredConnection> {
-  const key = `${accountId}:${type}`;
-  const stored = await getStorage().connections.load(accountId, type);
+async function loadFresh<Stored extends StoredTokens>(
+  source: TokenSource<Stored>,
+): Promise<StoredTokens> {
+  const stored = await source.load();
   if (!stored) {
-    cache.delete(key);
-    throw new Error(
-      `This account has no ${type} connection. Run \`broods connect ${type}\` to sign in.`,
-    );
+    cache.delete(source.key);
+    throw new Error(source.missing);
   }
   const connection =
-    expiresSoon(stored) || rejected.get(key) === stored.accessToken
-      ? await refreshAndSave(accountId, type, stored)
+    expiresSoon(stored) || rejected.get(source.key) === stored.accessToken
+      ? await refreshAndSave(source, stored)
       : stored;
-  rejected.delete(key);
-  cache.set(key, { connection: connection, loadedAt: Date.now() });
+  rejected.delete(source.key);
+  cache.set(source.key, { connection: connection, loadedAt: Date.now() });
 
   return connection;
 }
 
-async function refreshAndSave(
-  accountId: string,
-  type: ConnectionType,
-  stored: StoredConnection,
-): Promise<StoredConnection> {
-  const meta = CONNECTION_TYPES[type];
+async function refreshAndSave<Stored extends StoredTokens>(
+  source: TokenSource<Stored>,
+  stored: Stored,
+): Promise<StoredTokens> {
   let refreshed: RefreshedToken;
   try {
-    refreshed = await refreshTokenGrant(
-      meta.tokenUrl,
-      {
-        client_id: stored.clientId,
-        refresh_token: stored.refreshToken,
-        ...(meta.resource ? { resource: meta.resource } : {}),
-      },
-      (url, init) =>
-        fetch(url, {
-          ...init,
-          signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
-        }),
-    );
+    refreshed = await source.refresh(stored);
   } catch (error) {
     // Another writer may have spent this refresh token and saved its pair: start over from it.
-    const latest = await getStorage().connections.load(accountId, type);
+    const latest = await source.load();
     if (latest && latest.updatedAt !== stored.updatedAt)
-      return await loadFresh(accountId, type);
-    throw new Error(
-      `${meta.label} connection could not refresh: ${toErrorMessage(error)}. Run \`broods connect ${type}\` to sign in again.`,
-    );
+      return await loadFresh(source);
+    throw new Error(source.refreshFailed(toErrorMessage(error)));
   }
   const rotated = {
     accessToken: refreshed.accessToken,
     refreshToken: refreshed.refreshToken ?? stored.refreshToken,
     expiresAt: refreshed.expiresAt,
   };
-  const saved = await getStorage().connections.saveRefreshed(
-    accountId,
-    type,
-    stored,
-    rotated,
-  );
   // A new sign-in or a disconnect landed while this refresh ran; it wins.
-  if (!saved) return await loadFresh(accountId, type);
+  if (!(await source.save(stored, rotated))) return await loadFresh(source);
 
   return { ...stored, ...rotated, updatedAt: Date.now() };
 }

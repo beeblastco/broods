@@ -521,6 +521,7 @@ describe("normalizeMcpInput", () => {
     const scope = await seedScope(tt);
     const serverId = await seedServer(tt, scope);
     const oauth = {
+      tokenUrl: "https://oauth.example.com/token",
       clientId: "client-1",
       clientSecret: "${GMAIL_CLIENT_SECRET}",
       refreshToken: "${GMAIL_REFRESH_TOKEN}",
@@ -621,6 +622,7 @@ describe("normalizeMcpInput", () => {
     const tt = t();
     const scope = await seedScope(tt);
     const oauth = {
+      tokenUrl: "https://oauth.example.com/token",
       clientId: "client-1",
       clientSecret: "${GMAIL_CLIENT_SECRET}",
       refreshToken: "${GMAIL_REFRESH_TOKEN}",

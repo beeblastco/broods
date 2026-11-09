@@ -1518,6 +1518,7 @@ export declare const api: {
         allowedTools?: Array<string>;
         bundleStorageKey?: string;
         command?: Array<string>;
+        connected?: boolean;
         createdAt: number;
         deletedAt?: number;
         description?: string;
@@ -3105,6 +3106,7 @@ export declare const internal: {
             | "agentDeployments"
             | "channelEndpoints"
             | "connections"
+            | "mcpConnections"
             | "auditSinks";
           target?: string;
         },
@@ -3160,6 +3162,7 @@ export declare const internal: {
           allowedTools?: Array<string>;
           bundleStorageKey?: string;
           command?: Array<string>;
+          connected?: boolean;
           createdAt: number;
           deletedAt?: number;
           description?: string;
@@ -3197,6 +3200,7 @@ export declare const internal: {
           allowedTools?: Array<string>;
           bundleStorageKey?: string;
           command?: Array<string>;
+          connected?: boolean;
           createdAt: number;
           deletedAt?: number;
           description?: string;
@@ -3234,6 +3238,7 @@ export declare const internal: {
           allowedTools?: Array<string>;
           bundleStorageKey?: string;
           command?: Array<string>;
+          connected?: boolean;
           createdAt: number;
           deletedAt?: number;
           description?: string;
@@ -3284,6 +3289,7 @@ export declare const internal: {
             allowedTools?: Array<string>;
             bundleStorageKey?: string;
             command?: Array<string>;
+            connected?: boolean;
             createdAt: number;
             deletedAt?: number;
             description?: string;
@@ -3354,6 +3360,59 @@ export declare const internal: {
           transport?: "http" | "hosted" | "machine";
           url?: string;
           workersCompatible?: boolean;
+        },
+        null
+      >;
+    };
+    mcpConnections: {
+      disconnect: FunctionReference<
+        "mutation",
+        "internal",
+        { accountId: Id<"accounts">; serverId: Id<"mcp"> },
+        boolean
+      >;
+      load: FunctionReference<
+        "query",
+        "internal",
+        { accountId: Id<"accounts">; serverId: Id<"mcp"> },
+        null | {
+          accessToken: string;
+          clientId: string;
+          clientSecret?: string;
+          expiresAt: number;
+          refreshToken: string;
+          resource: string;
+          tokenUrl: string;
+          updatedAt: number;
+        }
+      >;
+      saveRefreshed: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          accessToken: string;
+          accountId: Id<"accounts">;
+          clientSecret?: string;
+          expiresAt: number;
+          loadedUpdatedAt: number;
+          refreshToken: string;
+          serverId: Id<"mcp">;
+        },
+        boolean
+      >;
+      set: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          accessToken: string;
+          accountId: Id<"accounts">;
+          clientId: string;
+          clientSecret?: string;
+          expiresAt: number;
+          refreshToken: string;
+          resource: string;
+          serverId: Id<"mcp">;
+          tokenUrl: string;
         },
         null
       >;
@@ -5490,6 +5549,30 @@ export declare const internal: {
           secretHash: string;
         }
       >;
+      resolveUserLogin: FunctionReference<
+        "query",
+        "internal",
+        { authId: string },
+        | {
+            account: {
+              _creationTime: number;
+              _id: Id<"accounts">;
+              auditRetentionDays?: number;
+              createdAt: number;
+              description?: string;
+              orgId: string;
+              secretHash: string;
+              secretHint?: string;
+              secretRotatedAt?: number;
+              secretRotatedBy?: Id<"users">;
+              status: "active" | "disabled";
+              storageExternalId?: string;
+              updatedAt: number;
+              username: string;
+            };
+          }
+        | { refused: string }
+      >;
       selectOnboardingOrg: FunctionReference<
         "mutation",
         "internal",
@@ -6248,6 +6331,7 @@ export declare const internal: {
           allowedTools?: Array<string>;
           bundleStorageKey?: string;
           command?: Array<string>;
+          connected?: boolean;
           createdAt: number;
           deletedAt?: number;
           description?: string;

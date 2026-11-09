@@ -1728,6 +1728,7 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
     machineConnections: {} as never,
     mcp: {} as never,
     connections: {} as never,
+    mcpConnections: {} as never,
     roleSessions: {} as never,
     accountApiKeys: {} as never,
     taskUsage: {} as never,

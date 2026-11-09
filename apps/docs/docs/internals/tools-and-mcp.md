@@ -89,7 +89,7 @@ Two tools return a status id at once and settle outside the model step: `bash` w
 
 ## MCP servers
 
-Core is a stateless MCP client, spec 2026-07-28, Streamable HTTP only (`src/harness/mcp/client.ts`). `MCP_PROTOCOL_VERSION` in `src/shared/mcp-protocol.ts` is the one revision every MCP surface in this repo speaks, with no 2025-era `initialize` fallback: core's client, the `broods machine --mcp` host and the `broods mcp` server pin it, and hosted templates pass `createMcpHandler(factory, { legacy: "reject" })`. The MicroVM host behind `mcp/sandbox.ts` lives in `lambda-sanbdox` and still speaks 2025-06-18 until it moves there. Each run lists tools (cached per row for the listing's `ttlMs`) and registers them as `<server>__<tool>`. Every `tools/call` is one POST with no session. The row's transport decides where that POST goes:
+Core is a stateless MCP client over Streamable HTTP only (`src/harness/mcp/client.ts`). As a client, core and the `broods machine --mcp` host negotiate: 2026-07-28 when the server offers it, else the older `initialize` handshake, since nobody here controls third-party servers. A hosted row stays pinned to 2026-07-28. An older server's verdict is cached so it is probed once. As a server, Broods speaks only `MCP_PROTOCOL_VERSION` (`src/shared/mcp-protocol.ts`): `/mcp`, `broods mcp` and hosted templates all pass `legacy: "reject"`. The MicroVM host behind `mcp/sandbox.ts` lives in `lambda-sanbdox` and still speaks 2025-06-18 until it moves there. Each run lists tools (cached per row for the listing's `ttlMs`) and registers them as `<server>__<tool>`. Every `tools/call` is one POST with no session. The row's transport decides where that POST goes:
 
 ```mermaid
 flowchart LR
@@ -101,6 +101,7 @@ flowchart LR
 ```
 
 - External URLs: the host is resolved first and private, loopback, link-local and metadata addresses are refused, as are redirects. The OAuth `tokenUrl` gets the same check (`oauth.ts` mints and caches refresh-grant tokens).
+- Sign-in: `mcp/connection.ts` serves `/v1/mcp-connections/{serverId}`. Core discovers the authorization server, registers a public client, and holds the PKCE verifier sealed inside the OAuth `state` (AES-GCM, key HKDF-derived from `MEDIA_TICKET_SECRET`), so a sign-in in progress has no row. Tokens live encrypted in `mcpConnections`, one row per server, and `mcp.connected` saves runs a lookup for every other server. `connections.ts` `tokenFetch` refreshes ahead of expiry and once on a 401, for ChatGPT plan connections too. `account/mcp.ts` drops the row when the URL changes.
 - Headers: a credential-bearing header must be a `${NAME}` env ref. Inline secrets and URL userinfo are refused at registration.
 - Every remote request carries `X-Broods-Agent-Id` and, when the chain is known, `X-Broods-Principal`. See [security](security.md#agent-principal-and-run-tokens). A hosted request also carries `X-Broods-User-Credential` when the run came with a user token holding a `credential`; see [end-user tokens](security.md#end-user-tokens). All three names are reserved and a tenant copy is dropped.
 - Results: `structuredContent`, or the text blocks. Images reach the model only within `withImageLimits` in `tools/utils.ts` (PNG, JPEG, GIF or WebP, at most 8000 px a side, 8 images and 6 MB per result). An image `resource_link` over http(s) is read by core with the same address checks and limits, and keeps its link line. Stored history keeps each picture in the attachment store behind a sealed link (`sealConversationMedia` in `channel-media.ts`); later turns read the newest back as images, up to 20, and older ones become a line of text ten at a time, so the prompt prefix stays cached.
@@ -267,7 +268,7 @@ Before every spawn the handler also kills every other process of its user (`reap
 
 ## MCP Tasks server
 
-Core is also an MCP server: `POST /mcp` (`src/harness/mcp-tasks.ts`) serves the account's agents as tools with the `io.modelcontextprotocol/tasks` extension, so a client gets a task handle back from `tools/call`. It is a translator with no state of its own. A low-level SDK `Server` behind `createMcpHandler(factory, { legacy: "reject" })` answers each request; `McpServer` would reshape the `resultType: "task"` result. Every run read and write is replayed through core's own handler as `POST /v1/runs` or `GET /v1/runs/{runId}` with the caller's headers, so auth, stage scope, public access, user tokens, plan limits and the run-token rules stay in `integrations.ts`.
+Core is also an MCP server: `POST /mcp` (`src/harness/mcp-tasks.ts`) serves the account's agents as tools. A client declaring `io.modelcontextprotocol/tasks` gets a task handle back from `tools/call`; any other polls inline up to 50 s (`waitForRun`) and gets `continue_run` for what is left. It is a translator with no state of its own. A low-level SDK `Server` behind `createMcpHandler(factory, { legacy: "reject" })` answers each request; `McpServer` would reshape the `resultType: "task"` result. Every run read and write is replayed through core's own handler as `POST /v1/runs` or `GET /v1/runs/{runId}` with the caller's resolved credential, so stage scope, public access, user tokens, plan limits and the run-token rules stay in `integrations.ts`.
 
 ```mermaid
 sequenceDiagram
@@ -292,7 +293,9 @@ sequenceDiagram
 - Cancel: `stopIngressOwner` on the task's conversation, the path `/stop` and `stop_subagent` take, for a key that may start runs. The run ends `failed` with `stoppedByUser`, which maps to `cancelled`.
 - Timestamps: `createdAt` and `lastUpdatedAt` come from `GET /v1/runs/{runId}`. `lastUpdatedAt` is the later of the envelope and its polling row, since an answered question moves only the row.
 
-Not built: client-side elicitation pushed to the caller mid-run, Broods calling remote task servers, and MCP OAuth for hosted connectors.
+- Sign-in: WorkOS AuthKit is the authorization server, the same login as the dashboard and `broods login`. `src/harness/mcp/authkit.ts` serves the RFC 9728 metadata at `/.well-known/oauth-protected-resource/mcp`, names it in every 401, and verifies an AuthKit JWT against `<WORKOS_AUTHKIT_DOMAIN>/oauth2/jwks`, audience `<PUBLIC_BASE_URL>/mcp`. Its `sub` maps through `cli.auth.resolveUserLogin` (`cliLoginTarget`, the `broods login` rule) to the active org's account. The token is good at `/mcp` only: its replays carry the resolved credential, and no other route accepts it.
+
+Not built: client-side elicitation pushed to the caller mid-run, and Broods calling remote task servers.
 
 ## Add a built-in tool
 

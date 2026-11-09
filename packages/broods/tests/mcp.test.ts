@@ -55,7 +55,7 @@ test("a stored login alone still reads logs, traces, runs, audit and usage", asy
     "read-usage",
   ])
     expect(names).toContain(tool);
-  expect(names).not.toContain("list-agents");
+  expect(names).not.toContain("list-resources");
 });
 
 test("audit answers to the shell's credential, so a role's policy still bounds it beside a login", async (): Promise<void> => {
@@ -90,8 +90,10 @@ test("an account credential registers the config plane, without the destructive 
   const client = await connectWithSecret({});
 
   const names = await toolNames(client);
-  expect(names).toContain("list-agents");
-  expect(names).toContain("create-cron");
+  expect(names).toContain("list-resources");
+  expect(names).toContain("create-resource");
+  expect(names).toContain("sandbox-action");
+  expect(names.length).toBeLessThanOrEqual(25);
   expect(names).toContain("upload-skill");
   expect(names).toContain("assume-role");
   expect(names).toContain("get-account");
@@ -132,13 +134,13 @@ test("no credential at all fails at startup", (): void => {
 
 const GUARD_CASES = [
   {
-    tool: "delete-agent",
-    args: { id: "agent_x", confirm: false },
+    tool: "delete-resource",
+    args: { resource: "agent", id: "agent_x", confirm: false },
     refusal: "Refusing without confirm:true",
   },
   {
-    tool: "list-mcp",
-    args: {},
+    tool: "list-resources",
+    args: { resource: "mcp" },
     refusal: "'project' and 'stage'",
   },
 ] as const;

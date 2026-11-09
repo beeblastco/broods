@@ -1,9 +1,12 @@
 import type { Tool as McpTool } from "@modelcontextprotocol/client";
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
+import type { McpRecord } from "../../shared/domain/mcp.ts";
 import type { SandboxCpuSample } from "../sandbox/types.ts";
 import { normalizeToolResultOutput } from "../tools/utils.ts";
 import { callMcpTool, type McpConnection } from "./client.ts";
+
+const MAX_TOOL_NAME_LENGTH = 64;
 
 export function mcpTools(
   connection: McpConnection,
@@ -26,6 +29,9 @@ export function mcpTools(
           (input ?? {}) as Record<string, unknown>,
           {
             abortSignal: options.abortSignal,
+            retryRateLimited:
+              remote.annotations?.readOnlyHint === true ||
+              remote.annotations?.idempotentHint === true,
             onRetry: (waitMs: number): void =>
               onToolRetry?.(options.toolCallId, waitMs),
             ...(onSandboxCpu
@@ -49,7 +55,23 @@ export function mcpTools(
   return tools;
 }
 
-// Providers reject names outside [A-Za-z0-9_-]; a collision this makes fails registration.
+// Stands in for a server that refused the run, so the model can say why instead of guessing.
+export function mcpSignInTool(record: McpRecord): ToolSet[string] {
+  const message = `${record.name} needs a person to sign in before its tools work. With the account key: POST /v1/mcp-connections/${record.serverId} returns a link for them to open.`;
+
+  return tool({
+    description: `${record.name} is not signed in, so its tools are missing. Call this for how to fix it.`,
+    inputSchema: jsonSchema({ type: "object", properties: {} }),
+    execute: async function (): Promise<string> {
+      return message;
+    },
+  });
+}
+
+// Providers reject names outside [A-Za-z0-9_-] or past 64; a collision fails registration.
 export function mcpToolName(serverName: string, remoteName: string): string {
-  return `${serverName}__${remoteName.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+  return `${serverName}__${remoteName.replace(/[^A-Za-z0-9_-]/g, "_")}`.slice(
+    0,
+    MAX_TOOL_NAME_LENGTH,
+  );
 }

@@ -433,16 +433,19 @@ paths:
       description: |
         A Model Context Protocol server (revision 2026-07-28, stateless HTTP)
         with the `io.modelcontextprotocol/tasks` extension. Each agent the
-        credential can run is one tool named by its agent id, with input
-        `{prompt}`. `tools/call` starts a background run in a fresh
-        conversation and answers a task handle (`resultType: "task"`) whose
-        `taskId` is the run id; `tasks/get`, `tasks/update` and `tasks/cancel`
-        follow it. A `tools/call` or `tasks/*` request that does not declare
-        the tasks extension gets `-32021`; `tools/list` answers without it.
-        Run reads and writes go through `/v1/runs`, so
-        the same credential rules apply: an account key lists every agent of
-        the account, a member's stage ticket its stage, the runtime key its
-        stage's public agents. A run token lists no tools yet. 2025-era
+        credential can run is one tool named after the agent, with input
+        `{prompt, conversationId?}`. With the tasks extension, `tools/call`
+        starts a background run and answers a task handle (`resultType:
+        "task"`) whose `taskId` is the run id; `tasks/get`, `tasks/update` and
+        `tasks/cancel` follow it. Without it, `tools/call` answers directly
+        within 50 seconds and lists a `continue_run` tool for longer runs and
+        questions; `tasks/*` then gets `-32021`. Run reads and writes go
+        through `/v1/runs`, so the same credential rules apply: an account
+        key lists every agent of the account, a member's stage ticket its
+        stage, the runtime key its stage's public agents. A run token lists no
+        tools yet. With `WORKOS_AUTHKIT_DOMAIN` set, a 401 names
+        `/.well-known/oauth-protected-resource/mcp`, and an AuthKit access
+        token for an org owner or admin acts as that org's account. 2025-era
         (`initialize`) traffic is refused with `-32022`.
       requestBody:
         required: true
@@ -480,7 +483,7 @@ paths:
                   id: 1
                   method: tools/call
                   params:
-                    name: agent_123
+                    name: support_bot
                     arguments:
                       prompt: Summarize yesterday's support tickets.
                     _meta:
@@ -2936,6 +2939,59 @@ paths:
                       message: "upload quota: 20 uploads per hour; retry after 2026-09-03T11:20:00.000Z"
                       type: rate_limit_error
                       code: upload_quota_exceeded
+
+  /v1/mcp-connections/{serverId}:
+    parameters:
+      - name: serverId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [MCP servers]
+      summary: Start an OAuth sign-in
+      description: Broods does discovery, client registration and PKCE. Give `authorizeUrl` to a person to open.
+      responses:
+        "200":
+          description: Sign-in started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, authorizeUrl, next]
+                properties:
+                  status: { type: string, enum: [pending] }
+                  authorizeUrl: { type: string, format: uri }
+                  next: { type: string }
+        "422":
+          {
+            description: The server offers no OAuth sign-in Broods can register with,
+          }
+    get:
+      tags: [MCP servers]
+      summary: Read whether the server is connected
+      responses:
+        "200":
+          description: Connection state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [connected]
+                properties:
+                  connected: { type: boolean }
+    delete:
+      tags: [MCP servers]
+      summary: Disconnect and forget the tokens
+      responses:
+        "200":
+          description: Disconnected
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted: { type: boolean }
 
   /v1/mcp/{serverId}:
     get:

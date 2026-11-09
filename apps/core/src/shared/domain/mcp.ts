@@ -3,6 +3,7 @@ import type { McpOauth, McpTransport } from "@broods/convex/model/mcp";
 export { ACCOUNT_ENV_PLACEHOLDER_PATTERN as ENV_PLACEHOLDER_PATTERN } from "@broods/convex/model/envRefs";
 export {
   authorizationHeaderName,
+  isGoogleMcpUrl,
   type McpOauth,
   type McpTransport,
 } from "@broods/convex/model/mcp";
@@ -31,6 +32,8 @@ export interface McpRecord {
   headers?: Record<string, string>;
   /** Secret fields carry ${NAME} env refs on the row, never the values. */
   oauth?: McpOauth;
+  /** Signed in through /v1/mcp-connections; core sends that connection's token. */
+  connected?: boolean;
   allowedTools?: string[];
   disabled?: boolean;
   status: McpStatus;

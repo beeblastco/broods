@@ -48,7 +48,7 @@
   },
   "Gateway": {
     "apps/edge/src/routes.ts": {
-      "ROUTERS": "ac7c294a0f2062f0",
+      "ROUTERS": "e96579acb7ac08ed",
       "resolveRouter": "3ee948aef0561a03"
     },
     "apps/core/src/shared/paths.ts": {

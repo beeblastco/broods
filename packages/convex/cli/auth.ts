@@ -2,8 +2,10 @@ import { v, type Infer } from "convex/values";
 import {
   httpAction,
   internalMutation,
+  internalQuery,
   mutation,
   type MutationCtx,
+  type QueryCtx,
 } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -323,9 +325,9 @@ export async function cliLoginTokenHash(req: Request): Promise<string | null> {
   return token?.startsWith(CLI_TOKEN_PREFIX) ? await sha256Hex(token) : null;
 }
 
-// Where a `bcli_` login for this user lands: the active org's account, owner or admin only.
+// Where a `bcli_` login or AuthKit `/mcp` token lands: the active org's account, owner or admin.
 export async function cliLoginTarget(
-  ctx: MutationCtx,
+  ctx: QueryCtx | MutationCtx,
   authId: string,
   orgId?: Id<"orgs">,
 ): Promise<{ orgId: Id<"orgs">; accountId: Id<"accounts"> } | ClientError> {
@@ -338,7 +340,7 @@ export async function cliLoginTarget(
   const membership = await getOrgMembership(ctx, org._id, user._id);
   if (!membership || !orgRoleMeets(membership.role, "admin")) {
     return new ClientError(
-      `broods login needs the owner or admin role in ${org.name}. Switch organizations in the dashboard, then try again.`,
+      `Signing in to Broods needs the owner or admin role in ${org.name}. Switch organizations in the dashboard, then try again.`,
       "unauthorized",
     );
   }
@@ -427,6 +429,27 @@ export const resolveAccountLogin = internalMutation({
       lentToAgent: resolved.token.lentToAgent === true,
       observed: await conversationObserved(ctx, resolved.token),
     };
+  },
+});
+
+// An AuthKit-signed-in user at core's `/mcp`: the account `broods login` would give them.
+export const resolveUserLogin = internalQuery({
+  args: { authId: v.string() },
+  returns: v.union(
+    v.object({ account: accountDoc }),
+    v.object({ refused: v.string() }),
+  ),
+  handler: async (
+    ctx,
+    { authId },
+  ): Promise<{ account: Doc<"accounts"> } | { refused: string }> => {
+    const target = await cliLoginTarget(ctx, authId);
+    if (target instanceof ClientError) return { refused: target.message };
+    const account = await ctx.db.get(target.accountId);
+
+    return account
+      ? { account: account }
+      : { refused: "The organization has no API account" };
   },
 });
 

@@ -13,6 +13,7 @@ import {
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
+import { dropMcpConnection } from "./mcpConnections";
 
 export const mcpDoc = v.object({
   ...mcpFields,
@@ -215,6 +216,7 @@ export const remove = internalMutation({
       nodeId: undefined,
       updatedAt: Date.now(),
     });
+    await dropMcpConnection(ctx, normalized);
 
     return null;
   },
@@ -305,6 +307,9 @@ export const update = internalMutation({
     assertMcpRow({ ...doc, ...patch });
 
     await ctx.db.patch(normalized, patch);
+    if (doc.connected && "url" in patch && patch.url !== doc.url) {
+      await dropMcpConnection(ctx, normalized);
+    }
 
     return null;
   },

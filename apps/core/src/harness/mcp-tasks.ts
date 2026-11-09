@@ -1,7 +1,7 @@
 /**
- * `/mcp`: an MCP Tasks server where each runnable agent is one tool and a call starts a run
- * whose id is the task id. Holds no state: every read and write goes through core's own
- * `/v1/runs` routes with the caller's headers, so auth and limits stay in integrations.ts.
+ * `/mcp`: each runnable agent is one tool. A client with the tasks extension gets a task whose
+ * id is the run id; any other client gets the answer directly. Holds no state: every read and
+ * write goes through core's own `/v1/runs` routes, so auth and limits stay in integrations.ts.
  */
 import {
   CallToolResultV2Schema,
@@ -33,7 +33,11 @@ import type {
   ToolApprovalSummary,
 } from "../../../../packages/broods/src/types.ts";
 import type { PendingQuestion } from "../../../../packages/broods/src/websocket-contracts.ts";
-import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
+import {
+  extractBearerToken,
+  resolveBearerAuth,
+  type AuthContext,
+} from "../shared/auth.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import { errorResponse, type CoreRequest } from "../shared/http.ts";
@@ -44,37 +48,80 @@ import {
 import { asyncToolContinuationEventId } from "./async-tool-result.ts";
 import { getIngressStatusByEventId } from "./ingress.ts";
 import { listRunnableAgents } from "./integrations.ts";
+import {
+  MCP_PATH,
+  mcpUnauthorized,
+  resolveAuthKitAuth,
+} from "./mcp/authkit.ts";
 
-export const MCP_PATH = "/mcp";
-
+const AGENT_ARGS = z.object({
+  prompt: z.string().trim().min(1),
+  conversationId: z.string().trim().min(1).optional(),
+});
+const AGENT_INPUT_SCHEMA: ToolV2["inputSchema"] = {
+  type: "object",
+  properties: {
+    prompt: {
+      type: "string",
+      description:
+        "The full request. The agent cannot see your conversation, so include what it needs.",
+    },
+    conversationId: {
+      type: "string",
+      description:
+        "From an earlier answer, to continue that conversation. Omit to start a new one.",
+    },
+  },
+  required: ["prompt"],
+};
 const APPROVAL_KEY_PREFIX = "approval-";
 // An approval reply's event id is the waiting run's plus this, so a task can
 // find the reply that carries it on without storing anything.
 const APPROVAL_EVENT_SUFFIX = ":approval";
 const DECLINED_ANSWER = "The user declined to answer.";
+const CONTINUE_ARGS = z.object({
+  runId: z.string().min(1),
+  answers: z.record(z.string(), z.string()).optional(),
+});
+const CONTINUE_TOOL = "continue_run";
+const CONTINUE_TOOL_DEFINITION: ToolV2 = {
+  name: CONTINUE_TOOL,
+  description:
+    "Get the answer of a run that was still working, or answer the questions it asked. Waits up to 50 seconds.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      runId: { type: "string", description: "The runId you were given." },
+      answers: {
+        type: "object",
+        description: "Question id to answer. Pick an option or write your own.",
+        additionalProperties: { type: "string" },
+      },
+    },
+    required: ["runId"],
+  },
+};
 const FINISHED_STATUSES: ReadonlySet<RunStatus["status"]> = new Set([
   "completed",
   "failed",
   "expired",
 ]);
+const MAX_APPROVAL_INPUT_CHARS = 300;
+const MAX_TOOL_NAME_LENGTH = 48;
 const POLL_INTERVAL_MS = 2_000;
-const PROMPT_INPUT_SCHEMA: ToolV2["inputSchema"] = {
-  type: "object",
-  properties: {
-    prompt: { type: "string", description: "What to ask the agent." },
-  },
-  required: ["prompt"],
-};
 const QUESTION_KEY_PREFIX = "question-";
 const RUN_PATH = "/v1/runs";
 // Prefixes the event id and conversation key of every run a task starts.
 const RUN_PREFIX = "mcp-";
 const SERVER_INFO = { name: "broods", version: "1.0.0" };
+// Under the 60 second default request timeout most MCP clients apply.
+const SYNC_WAIT_MS = 50_000;
+const SYNC_FIRST_POLL_MS = 250;
 const TASK_CAPABILITY = { extensions: { [TASKS_EXTENSION_ID_V2]: {} } };
 const TASK_PARAMS = GetTaskRequestV2Schema.shape.params;
 const TOOL_CALL_PARAMS = z.object({
   name: z.string(),
-  arguments: z.object({ prompt: z.string().trim().min(1) }),
+  arguments: z.record(z.string(), z.unknown()).default({}),
 });
 const TOOL_CALL_RESULT = z.union([
   CreateTaskResultV2Schema,
@@ -82,7 +129,7 @@ const TOOL_CALL_RESULT = z.union([
 ]);
 
 /** Core's own request handler, which every run read and write replays through. */
-type McpReplay = (request: CoreRequest) => Promise<Response>;
+type McpReplay = (request: CoreRequest, auth: McpAuth) => Promise<Response>;
 
 /** A run as `GET /v1/runs/{runId}` answers it; core sets every field named here. */
 export type RunStatus = AsyncStatus &
@@ -110,22 +157,21 @@ type McpAuth = Exclude<AuthContext, { kind: "admin" }>;
 interface McpCaller {
   auth: McpAuth;
   request: CoreRequest;
-  replay: McpReplay;
+  replay: (request: CoreRequest) => Promise<Response>;
 }
 
-/**
- * Serves one `/mcp` request. Only 2026-07-28 traffic is served: a task needs
- * the per-request capability that revision introduced.
- */
+/** Serves one `/mcp` request. Only 2026-07-28 traffic is served. */
 export async function handleMcpRequest(
   request: CoreRequest,
   replay: McpReplay,
 ): Promise<Response> {
-  const auth = await resolveBearerAuth(request.headers);
-  if (!auth || auth.kind === "admin") {
-    return errorResponse(401, "Unauthorized");
-  }
-  const caller: McpCaller = { auth: auth, request: request, replay: replay };
+  const auth = await mcpAuth(request.headers);
+  if (auth instanceof Response) return auth;
+  const caller: McpCaller = {
+    auth: auth,
+    request: request,
+    replay: (replayed): Promise<Response> => replay(replayed, auth),
+  };
   const mcp = createMcpHandler((): Server => createTaskServer(caller), {
     legacy: "reject",
   });
@@ -186,14 +232,7 @@ export function taskFromRuns(runs: TaskRuns): DetailedTaskV2 {
       return {
         ...base,
         status: "completed",
-        result: toolResult(
-          current.response === undefined
-            ? ""
-            : typeof current.response === "string"
-              ? current.response
-              : JSON.stringify(current.response),
-          false,
-        ),
+        result: answerResult(current, root.conversationKey),
       };
     case "failed":
       if (current.stoppedByUser) {
@@ -214,17 +253,46 @@ function createTaskServer(caller: McpCaller): Server {
   });
   server.setRequestHandler(
     "tools/list",
-    async (): Promise<{ tools: ToolV2[] }> => ({
-      tools: (await listRunnableAgents(caller.auth)).map(agentTool),
-    }),
+    async (_params, ctx): Promise<{ tools: ToolV2[] }> => {
+      const agents = agentsByToolName(await listRunnableAgents(caller.auth));
+
+      return {
+        tools: [
+          ...[...agents].map(([name, agent]) => agentTool(name, agent)),
+          ...(agents.size === 0 || declaresTasks(ctx)
+            ? []
+            : [CONTINUE_TOOL_DEFINITION]),
+        ],
+      };
+    },
   );
   server.setRequestHandler(
     "tools/call",
     { params: TOOL_CALL_PARAMS, result: TOOL_CALL_RESULT },
     async (params, ctx): Promise<CreateTaskResultV2 | CallToolResultV2> => {
-      requireTaskCapability(ctx);
+      const direct = !declaresTasks(ctx);
+      const { signal } = ctx.mcpReq;
+      if (direct && params.name === CONTINUE_TOOL) {
+        return await continueRun(caller, params.arguments, signal);
+      }
+      const agents = agentsByToolName(await listRunnableAgents(caller.auth));
+      const agent =
+        agents.get(params.name) ??
+        [...agents.values()].find(({ agentId }) => agentId === params.name);
+      if (!agent) {
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidParams,
+          `Unknown tool: ${params.name}. Tools: ${[...agents.keys()].join(", ")}`,
+        );
+      }
+      const input = AGENT_ARGS.safeParse(params.arguments);
+      if (!input.success) return toolResult(z.prettifyError(input.error), true);
+      const runId = await startRun(caller, agent.agentId, input.data);
+      if (typeof runId !== "string") return runId;
 
-      return startTask(caller, params.name, params.arguments.prompt);
+      return direct
+        ? await waitForRun(caller, runId, signal)
+        : await startedTask(caller, runId);
     },
   );
   server.setRequestHandler(
@@ -278,12 +346,58 @@ function createTaskServer(caller: McpCaller): Server {
   return server;
 }
 
-function agentTool(agent: AgentRecord): ToolV2 {
+function agentTool(name: string, agent: AgentRecord): ToolV2 {
   return {
-    name: agent.agentId,
+    name: name,
     title: agent.name,
     description: agent.description ?? `Ask the ${agent.name} agent.`,
-    inputSchema: PROMPT_INPUT_SCHEMA,
+    inputSchema: AGENT_INPUT_SCHEMA,
+  };
+}
+
+/** Models pick tools by name, so an agent is named for what it is; an account can repeat a name. */
+function agentsByToolName(agents: AgentRecord[]): Map<string, AgentRecord> {
+  const slug = ({ name }: AgentRecord): string =>
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, MAX_TOOL_NAME_LENGTH) || "agent";
+  const taken = new Map<string, number>([[CONTINUE_TOOL, 1]]);
+  for (const agent of agents) {
+    taken.set(slug(agent), (taken.get(slug(agent)) ?? 0) + 1);
+  }
+
+  return new Map(
+    agents.map((agent) => [
+      taken.get(slug(agent)) === 1
+        ? slug(agent)
+        : `${slug(agent)}_${agent.agentId.slice(-6)}`,
+      agent,
+    ]),
+  );
+}
+
+function answerResult(
+  run: RunStatus,
+  conversationKey: string,
+): CallToolResultV2 {
+  const answer =
+    run.response === undefined
+      ? ""
+      : typeof run.response === "string"
+        ? run.response
+        : JSON.stringify(run.response);
+
+  return {
+    ...toolResult(answer, false),
+    content: [
+      { type: "text", text: answer },
+      {
+        type: "text",
+        text: `[conversationId: ${conversationKey}. Pass it back to continue this conversation.]`,
+      },
+    ],
   };
 }
 
@@ -432,6 +546,88 @@ async function cancelTask(caller: McpCaller, taskId: string): Promise<void> {
   });
 }
 
+async function continueRun(
+  caller: McpCaller,
+  args: Record<string, unknown>,
+  signal: AbortSignal,
+): Promise<CallToolResultV2> {
+  const input = CONTINUE_ARGS.safeParse(args);
+  if (!input.success) return toolResult(z.prettifyError(input.error), true);
+  const { runId, answers = {} } = input.data;
+  try {
+    const { current } = await resolveTask(caller, runId);
+    const responses = Object.fromEntries(
+      (current.questions ?? [])
+        .filter((prompt) => prompt.questions.some(({ id }) => id in answers))
+        .map((prompt) => [
+          `${QUESTION_KEY_PREFIX}${prompt.statusId}`,
+          { action: "accept", content: answers },
+        ]),
+    );
+    if (Object.keys(responses).length === 0) {
+      return await waitForRun(caller, runId, signal);
+    }
+    await answerQuestions(caller, current, responses);
+
+    return await waitForRun(caller, runId, signal, current.runId);
+  } catch (error) {
+    if (error instanceof ProtocolError) {
+      return toolResult(error.message, true);
+    }
+    throw error;
+  }
+}
+
+function declaresTasks(ctx: ServerContext): boolean {
+  return hasTaskClientCapabilityV2({ _meta: ctx.mcpReq.envelope });
+}
+
+/** What a client without tasks reads for a run that has not produced its answer. */
+function directReply(runs: TaskRuns): CallToolResultV2 {
+  const { root, current } = runs;
+  const task = taskFromRuns(runs);
+  if (task.status === "completed") return task.result as CallToolResultV2;
+  if (task.status === "cancelled") {
+    return toolResult("The run was cancelled.", true);
+  }
+  if (task.status !== "input_required") {
+    return toolResult(
+      `Still working. Call ${CONTINUE_TOOL} with runId "${root.runId}" for the answer.`,
+      false,
+    );
+  }
+  const questions = (current.questions ?? []).flatMap((prompt) =>
+    prompt.questions.map(
+      ({ id, options, question }) =>
+        `- ${id}: ${question} Options: ${options.map(({ label }) => label).join(", ")}`,
+    ),
+  );
+  const approvals = (current.approvals ?? []).map(
+    ({ input, toolName }) =>
+      `- ${toolName} ${JSON.stringify(input).slice(0, MAX_APPROVAL_INPUT_CHARS)}`,
+  );
+
+  return toolResult(
+    [
+      ...(questions.length > 0
+        ? [
+            "The agent asked:",
+            ...questions,
+            `Call ${CONTINUE_TOOL} with runId "${root.runId}" and answers, a map of question id to answer.`,
+          ]
+        : []),
+      ...(approvals.length > 0
+        ? [
+            "The agent needs a person to approve these tool calls, and you cannot approve them:",
+            ...approvals,
+            "Tell the user. The run waits until someone approves it from a client with MCP tasks or POST /v1/runs.",
+          ]
+        : []),
+    ].join("\n"),
+    false,
+  );
+}
+
 async function errorText(response: Response): Promise<string> {
   const body = (await response
     .json()
@@ -450,6 +646,21 @@ function failedTask(
     statusMessage: error,
     result: toolResult(error, true),
   };
+}
+
+/** A key or token core already trusts, else an AuthKit OAuth token, else the 401 or 403. */
+async function mcpAuth(
+  headers: Record<string, string>,
+): Promise<McpAuth | Response> {
+  const auth = await resolveBearerAuth(headers);
+  if (auth && auth.kind !== "admin") return auth;
+  const token = extractBearerToken(headers.authorization);
+  if (auth || !token) return mcpUnauthorized(false);
+  const signedIn = await resolveAuthKitAuth(token);
+  if (signedIn.kind === "signed-in") return signedIn.auth;
+  if (signedIn.kind === "refused") return errorResponse(403, signedIn.message);
+
+  return mcpUnauthorized(true);
 }
 
 function promptAnswers(
@@ -579,20 +790,20 @@ async function sendRunRequest(
   }
 }
 
-/** Starts a background run in a fresh conversation; its run id is the task id. */
-async function startTask(
+/** Starts a background run and answers its id, or the tool error that refused it. */
+async function startRun(
   caller: McpCaller,
   agentId: string,
-  prompt: string,
-): Promise<CreateTaskResultV2 | CallToolResultV2> {
+  input: z.infer<typeof AGENT_ARGS>,
+): Promise<string | CallToolResultV2> {
   const id = `${RUN_PREFIX}${crypto.randomUUID()}`;
   const started = await caller.replay(
     runRequest(caller, "POST", RUN_PATH, {
       agentId: agentId,
       eventId: id,
-      conversationKey: id,
+      conversationKey: input.conversationId ?? id,
       background: true,
-      events: [{ role: "user", content: prompt }],
+      events: [{ role: "user", content: input.prompt }],
     }),
   );
   if (started.status === 404) {
@@ -604,15 +815,22 @@ async function startTask(
   if (!started.ok) {
     return toolResult(await errorText(started), true);
   }
-  const accepted = (await started.json()) as AsyncRequestAccepted;
+
+  return ((await started.json()) as AsyncRequestAccepted).runId;
+}
+
+async function startedTask(
+  caller: McpCaller,
+  runId: string,
+): Promise<CreateTaskResultV2> {
   // The run is already going, so a failed first read still hands back its id:
   // a retry would start a second run.
-  const run = await readRun(caller, accepted.runId).catch((): null => null);
+  const run = await readRun(caller, runId).catch((): null => null);
   const now = new Date().toISOString();
 
   return {
     resultType: "task",
-    taskId: accepted.runId,
+    taskId: runId,
     status: run ? taskFromRuns({ root: run, current: run }).status : "working",
     createdAt: run?.createdAt ?? now,
     lastUpdatedAt: run?.lastUpdatedAt ?? now,
@@ -635,6 +853,32 @@ function unknownTask(taskId: string): ProtocolError {
     ProtocolErrorCode.InvalidParams,
     `No task ${taskId}`,
   );
+}
+
+/**
+ * Polls a run until it can tell the caller something. `answeredRunId` is a run just answered,
+ * whose row keeps saying it waits until the continuation is admitted.
+ */
+async function waitForRun(
+  caller: McpCaller,
+  runId: string,
+  signal: AbortSignal,
+  answeredRunId?: string,
+): Promise<CallToolResultV2> {
+  const deadline = Date.now() + SYNC_WAIT_MS;
+  let pollMs = SYNC_FIRST_POLL_MS;
+  for (;;) {
+    const runs = await resolveTask(caller, runId);
+    const { status } = taskFromRuns(runs);
+    const settled =
+      status !== "working" &&
+      !(status === "input_required" && runs.current.runId === answeredRunId);
+    if (settled || signal.aborted || Date.now() + pollMs >= deadline) {
+      return directReply(runs);
+    }
+    await Bun.sleep(pollMs);
+    pollMs = Math.min(pollMs * 2, POLL_INTERVAL_MS);
+  }
 }
 
 async function updateTask(

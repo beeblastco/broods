@@ -200,6 +200,7 @@ function fakeStorage(): Storage {
     accounts: {
       getById: none,
       getBySecretHash: none,
+      getForUser: async () => ({ refused: "not in bench" }),
       create: async () => {
         throw new Error("not in bench");
       },
@@ -262,6 +263,12 @@ function fakeStorage(): Storage {
     mcp: { getById: none, removeAllForAccount: zero },
     agentPolicies: { getById: none },
     connections: { load: none, saveRefreshed: async () => false },
+    mcpConnections: {
+      load: none,
+      set: async () => undefined,
+      saveRefreshed: async () => false,
+      disconnect: async () => false,
+    },
     roleSessions: { resolveByTokenHash: none },
     accountApiKeys: {
       resolveByKeyHash: none,
