@@ -745,6 +745,7 @@ describe("createSandboxExecutor", () => {
     expect(removeSandboxInstanceMock).toHaveBeenCalledWith(
       "account-1",
       "microvm-1",
+      "microvm-1",
     );
   });
 
@@ -3917,9 +3918,12 @@ describe("persistent acquire teardown", () => {
   it.each(cases)(
     "destroys the $provider sandbox it just created when the claim fails",
     async ({ provider, destroy, options }) => {
-      upsertSandboxInstanceMock.mockImplementationOnce(async () => {
-        throw new Error("post-claim persistence failed");
-      });
+      claimSandboxInstanceMock.mockImplementationOnce(
+        async (_provider, _key, externalId): Promise<boolean> => {
+          storedSandboxExternalId = externalId;
+          throw new Error("claim response lost");
+        },
+      );
       const {
         createSandboxExecutor,
       } = require("../src/harness/sandbox/index.ts");
@@ -3936,7 +3940,7 @@ describe("persistent acquire teardown", () => {
           timeoutSeconds: 30,
           outputLimitBytes: 4096,
         }),
-      ).rejects.toThrow("post-claim persistence failed");
+      ).rejects.toThrow("claim response lost");
 
       expect(destroy).toHaveBeenCalled();
       expect(deleteSandboxInstanceMock.mock.calls[0]?.[0]).toBe(provider);

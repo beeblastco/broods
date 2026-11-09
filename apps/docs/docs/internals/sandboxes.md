@@ -114,7 +114,7 @@ sequenceDiagram
   end
 ```
 
-- Every write for one sandbox id goes through `queueMirrorWrite`, so a removal never lands before the upsert.
+- Every write for an ephemeral row goes through its row lane (see [Instance row](#instance-row)), so a removal never lands before the upsert.
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
 - An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.
@@ -228,7 +228,11 @@ stateDiagram-v2
   error --> [*]: terminate or swept
 ```
 
-- Refresh removes the row when the provider reports nothing or `terminating`, so `terminating` is never stored by core.
+- Refresh removes the row when the provider reports nothing or `terminating`, so `terminating` is never stored by core. The removal names the machine it read, so a replacement's row under the same key stays.
+- Core sends every row write through a lane per row (`src/harness/sandbox/mirror-writes.ts`), keyed on the reservation key (an ephemeral row's key is its sandbox id): executor upserts on start and on every command, E2B's size patch, MicroVM burst reports, the `exec`, `terminal`, `refresh`, `suspend` and `resume` status writes, and every removal. One row's writes land in the order they were queued, and different rows run in parallel, so an account with 1,000 sandboxes sends up to 1,000 writes at once. Executors never wait for their writes.
+- A lane holds one write in flight and at most one pending write per kind and machine. A newer upsert replaces the pending one and keeps the run fields it lacks; a newer burst or status replaces the pending one. A removal drops the pending upsert and status writes for the machine it removes, never a burst or size write, since those change what it bills. Memory follows rows, not writes.
+- A write that has not answered after 10 s (`MIRROR_WRITE_TIMEOUT_MS`) frees its lane and logs, with the lane count, pending writes and oldest pending age; so does one that waited over 2 s. Terminate, suspend, resume, refresh and a sweep wait only for their own row. Shutdown's `drainInFlight` waits for every lane.
+- A lane only orders one pod's writes. The reservation check in `upsert` is what keeps a late write from another pod, such as the old pod of a rolling update, or one that timed out but landed, from bringing a released row back.
 - A reserved row is written only while its reservation still names the machine (`upsert` in `packages/convex/sandbox/instances.ts`). Every release drops the reservation before the row goes, so a write that lands after it, such as a Cloudflare or Worker command that answered core after a terminate, is dropped instead of bringing back a row that bills a machine that is gone, or pointing a key reserved again at its old machine. Ephemeral rows need no reservation.
 - `specs` is what the meter bills. `specsVerified` is set only when the size is real: a provider report, or the size Broods sets on workdir, MicroVM and Cloudflare. Without it the dashboard shows `?`.
 - Executors refresh the row on every command. A refresh of a machine still running at the size, credentials and project it was last billed at bills at most once a minute (`REFRESH_BILL_EVERY_MS` in `packages/convex/sandbox/instances.ts`), so an owner's concurrent tasks write the shared usage rows about once a minute each, not on every command. The next bill, status change or removal covers the stretch, so nothing is lost; like the idle tail, it lands on the day and month of the bill that covers it, and live usage can trail by up to a minute.

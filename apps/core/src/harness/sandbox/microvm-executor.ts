@@ -15,11 +15,7 @@ import {
 } from "@aws-sdk/client-lambda-microvms";
 import { createHmac, randomUUID } from "node:crypto";
 import { z } from "zod";
-import {
-  recordSandboxBurst,
-  removeSandboxInstance,
-  upsertSandboxInstance,
-} from "../../shared/convex/sandbox-instances.ts";
+import { recordSandboxBurst } from "../../shared/convex/sandbox-instances.ts";
 import type {
   SandboxExecRequest,
   SandboxExecResponse,
@@ -83,6 +79,11 @@ import type {
   SandboxSnapshotResult,
 } from "./types.ts";
 import {
+  queueMirrorRemove,
+  queueMirrorUpsert,
+  queueMirrorWrite,
+} from "./mirror-writes.ts";
+import {
   assertSnapshotBootable,
   configuredSandboxSpecs,
   configString,
@@ -90,7 +91,6 @@ import {
   execRunResult,
   mergeSandboxEnv,
   parseExecResponse,
-  queueMirrorWrite,
   SandboxCapacityError,
   SandboxGoneError,
   sandboxReservationKey,
@@ -273,16 +273,14 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
-    void queueMirrorWrite(reservation.microvmId, () =>
-      upsertSandboxInstance(
-        this.#config.controlPlane,
-        PROVIDER,
-        request.reservationKey,
-        reservation.microvmId,
-        request.metadata,
-        { specs: configuredSandboxSpecs(this.#config) },
-      ),
-    );
+    void queueMirrorUpsert({
+      controlPlane: this.#config.controlPlane,
+      provider: PROVIDER,
+      reservationKey: request.reservationKey,
+      externalId: reservation.microvmId,
+      metadata: request.metadata,
+      options: { specs: configuredSandboxSpecs(this.#config) },
+    });
     request.abortSignal?.throwIfAborted();
 
     return reservation;
@@ -448,9 +446,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         waitUntil(
           this.#terminate(microvmId).then(
             (gone: boolean): Promise<void> | undefined =>
-              gone
-                ? queueMirrorWrite(microvmId, () => this.#unmirror(microvmId))
-                : undefined,
+              gone ? this.#unmirror(microvmId) : undefined,
           ),
         );
       }
@@ -821,20 +817,18 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   ): Promise<MicrovmHarnessReservation> {
     if (!this.#persistent(request)) {
       const created = await this.#runMicrovm(request);
-      void queueMirrorWrite(created.microvmId, () =>
-        upsertSandboxInstance(
-          this.#config.controlPlane,
-          PROVIDER,
-          created.microvmId,
-          created.microvmId,
-          request.metadata,
-          {
-            ephemeral: true,
-            logStream: created.logStream,
-            specs: configuredSandboxSpecs(this.#config),
-          },
-        ),
-      );
+      void queueMirrorUpsert({
+        controlPlane: this.#config.controlPlane,
+        provider: PROVIDER,
+        reservationKey: created.microvmId,
+        externalId: created.microvmId,
+        metadata: request.metadata,
+        options: {
+          ephemeral: true,
+          logStream: created.logStream,
+          specs: configuredSandboxSpecs(this.#config),
+        },
+      });
 
       return {
         microvmId: created.microvmId,
@@ -854,16 +848,14 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
           this.#config.controlPlane?.releaseAfterIdleSeconds,
         ).catch(() => {});
-        void queueMirrorWrite(existing, () =>
-          upsertSandboxInstance(
-            this.#config.controlPlane,
-            PROVIDER,
-            key,
-            existing,
-            request.metadata,
-            { specs: configuredSandboxSpecs(this.#config) },
-          ),
-        );
+        void queueMirrorUpsert({
+          controlPlane: this.#config.controlPlane,
+          provider: PROVIDER,
+          reservationKey: key,
+          externalId: existing,
+          metadata: request.metadata,
+          options: { specs: configuredSandboxSpecs(this.#config) },
+        });
 
         return {
           ...this.#cacheTarget(key, reconnected),
@@ -892,19 +884,17 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.releaseAfterIdleSeconds,
         )
       ) {
-        void queueMirrorWrite(created.microvmId, () =>
-          upsertSandboxInstance(
-            this.#config.controlPlane,
-            PROVIDER,
-            key,
-            created.microvmId,
-            request.metadata,
-            {
-              logStream: created.logStream,
-              specs: configuredSandboxSpecs(this.#config),
-            },
-          ),
-        );
+        void queueMirrorUpsert({
+          controlPlane: this.#config.controlPlane,
+          provider: PROVIDER,
+          reservationKey: key,
+          externalId: created.microvmId,
+          metadata: request.metadata,
+          options: {
+            logStream: created.logStream,
+            specs: configuredSandboxSpecs(this.#config),
+          },
+        });
 
         return { ...this.#cacheTarget(key, created), isFirstCreate: true };
       }
@@ -998,16 +988,14 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     request: SandboxRunRequest,
     payload: SandboxExecRequest,
   ): Promise<SandboxExecResponse | null> {
-    void queueMirrorWrite(target.microvmId, () =>
-      upsertSandboxInstance(
-        this.#config.controlPlane,
-        PROVIDER,
-        sandboxReservationKey(request) ?? target.microvmId,
-        target.microvmId,
-        request.metadata,
-        { specs: configuredSandboxSpecs(this.#config) },
-      ),
-    );
+    void queueMirrorUpsert({
+      controlPlane: this.#config.controlPlane,
+      provider: PROVIDER,
+      reservationKey: sandboxReservationKey(request) ?? target.microvmId,
+      externalId: target.microvmId,
+      metadata: request.metadata,
+      options: { specs: configuredSandboxSpecs(this.#config) },
+    });
     try {
       await this.#runLifecycle(
         target.microvmId,
@@ -1297,8 +1285,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     ) {
       return;
     }
-    waitUntil(
-      queueMirrorWrite(microvmId, async () => {
+    // A newer report replaces a pending one, so a backlog sends the latest totals once.
+    void queueMirrorWrite(microvmId, {
+      kind: "burst",
+      externalId: microvmId,
+      send: async (): Promise<void> => {
         if (!(await recordSandboxBurst(accountId, microvmId, totals))) return;
         const now = Date.now();
         evictToCap(burstReported, now);
@@ -1306,8 +1297,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           ...totals,
           expiresAt: now + BURST_REPORT_TTL_MS,
         });
-      }),
-    );
+      },
+    });
   }
 
   // A 504 is fatal: the proxy gave up on a guest that may still be running the call.
@@ -1623,7 +1614,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
   async #unmirror(microvmId: string): Promise<void> {
     const accountId = this.#config.controlPlane?.accountId;
-    if (accountId) await removeSandboxInstance(accountId, microvmId);
+    if (accountId) await queueMirrorRemove(accountId, microvmId, microvmId);
   }
 }
 

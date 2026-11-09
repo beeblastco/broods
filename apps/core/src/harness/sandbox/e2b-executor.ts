@@ -1,9 +1,6 @@
 import type { Sandbox } from "e2b";
 import { Buffer } from "node:buffer";
-import {
-  setSandboxInstanceSpecs,
-  upsertSandboxInstance,
-} from "../../shared/convex/sandbox-instances.ts";
+import { setSandboxInstanceSpecs } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
@@ -24,6 +21,7 @@ import type {
   SandboxRunResult,
   SandboxSnapshotResult,
 } from "./types.ts";
+import { queueMirrorUpsert, queueMirrorWrite } from "./mirror-writes.ts";
 import {
   assertSnapshotBootable,
   configString,
@@ -194,13 +192,13 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           externalId,
           this.#config.controlPlane?.accountId,
         ).catch(() => {});
-        await upsertSandboxInstance(
-          this.#config.controlPlane,
-          "e2b",
-          ns,
-          externalId,
-          request.metadata,
-        );
+        void queueMirrorUpsert({
+          controlPlane: this.#config.controlPlane,
+          provider: "e2b",
+          reservationKey: ns,
+          externalId: externalId,
+          metadata: request.metadata,
+        });
 
         return sandbox;
       } catch (error) {
@@ -228,24 +226,29 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
         )
       ) {
-        await upsertSandboxInstance(
-          this.#config.controlPlane,
-          "e2b",
-          ns,
-          created.sandboxId,
-          request.metadata,
-        );
+        void queueMirrorUpsert({
+          controlPlane: this.#config.controlPlane,
+          provider: "e2b",
+          reservationKey: ns,
+          externalId: created.sandboxId,
+          metadata: request.metadata,
+        });
         // Read once, off the acquire path; reconnects send no size and the row keeps this one.
         const accountId = this.#config.controlPlane?.accountId;
         if (accountId) {
           void e2bSpecs(created).then((specs): void => {
             if (specs) {
-              void setSandboxInstanceSpecs(
-                accountId,
-                ns,
-                created.sandboxId,
-                specs,
-              );
+              void queueMirrorWrite(ns, {
+                kind: "specs",
+                externalId: created.sandboxId,
+                send: (): Promise<void> =>
+                  setSandboxInstanceSpecs(
+                    accountId,
+                    ns,
+                    created.sandboxId,
+                    specs,
+                  ),
+              });
             }
           });
         }

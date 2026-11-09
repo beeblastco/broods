@@ -1,15 +1,10 @@
 import { z } from "zod/mini";
-import {
-  removeSandboxInstance,
-  setSandboxInstanceSpecs,
-  upsertSandboxInstance,
-} from "../../shared/convex/sandbox-instances.ts";
+import { setSandboxInstanceSpecs } from "../../shared/convex/sandbox-instances.ts";
 import {
   findSandboxSnapshot,
   type SandboxSnapshotRecord,
 } from "../../shared/convex/sandbox-snapshots.ts";
 import type { SandboxExecResponse } from "../../shared/domain/sandbox-config.ts";
-import { waitUntil } from "../../shared/in-flight.ts";
 import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import {
   CONFIGURED_SIZE_PROVIDERS,
@@ -21,6 +16,11 @@ import {
   sandboxScope,
   snapshotBootRefusal,
 } from "@broods/convex/model/sandboxRules";
+import {
+  queueMirrorRemove,
+  queueMirrorUpsert,
+  queueMirrorWrite,
+} from "./mirror-writes.ts";
 import type {
   SandboxExecutorConfig,
   SandboxProvider,
@@ -77,8 +77,6 @@ export const RESERVED_SANDBOX_ENV_KEYS: ReadonlySet<string> = new Set([
 export class SandboxCapacityError extends Error {}
 
 export class SandboxGoneError extends Error {}
-
-const mirrorWrites = new Map<string, Promise<void>>();
 
 // The server answers `timed_out` itself; this only catches a server that never answers.
 export const EXEC_GRACE_MS = 15_000;
@@ -208,50 +206,32 @@ export function meterEphemeralSandbox(
     : controlPlane?.accountId;
   if (!accountId) return (): void => {};
   const specs = readSpecs?.();
-  void queueMirrorWrite(sandboxId, (): Promise<void> =>
-    upsertSandboxInstance(
-      controlPlane,
-      provider,
-      sandboxId,
-      sandboxId,
-      metadata,
-      { ephemeral: true, specs: specs instanceof Promise ? undefined : specs },
-    ),
-  );
+  void queueMirrorUpsert({
+    controlPlane: controlPlane,
+    provider: provider,
+    reservationKey: sandboxId,
+    externalId: sandboxId,
+    metadata: metadata,
+    options: {
+      ephemeral: true,
+      specs: specs instanceof Promise ? undefined : specs,
+    },
+  });
   if (specs instanceof Promise) {
     void specs.then((reported): void => {
       if (!reported) return;
-      void queueMirrorWrite(sandboxId, (): Promise<void> =>
-        setSandboxInstanceSpecs(accountId, sandboxId, sandboxId, reported),
-      );
+      void queueMirrorWrite(sandboxId, {
+        kind: "specs",
+        externalId: sandboxId,
+        send: (): Promise<void> =>
+          setSandboxInstanceSpecs(accountId, sandboxId, sandboxId, reported),
+      });
     });
   }
 
-  return (): void =>
-    waitUntil(
-      queueMirrorWrite(sandboxId, (): Promise<void> =>
-        removeSandboxInstance(accountId, sandboxId, sandboxId),
-      ),
-    );
-}
-
-// Every row write for a sandbox goes here, so neither a burst nor a removal beats its upsert.
-export function queueMirrorWrite(
-  sandboxId: string,
-  write: () => Promise<unknown>,
-): Promise<void> {
-  const queued = (mirrorWrites.get(sandboxId) ?? Promise.resolve())
-    .then(write)
-    .then(
-      () => {},
-      () => {},
-    );
-  mirrorWrites.set(sandboxId, queued);
-  void queued.then(() => {
-    if (mirrorWrites.get(sandboxId) === queued) mirrorWrites.delete(sandboxId);
-  });
-
-  return queued;
+  return (): void => {
+    void queueMirrorRemove(accountId, sandboxId, sandboxId);
+  };
 }
 
 export function requiredWorkspacePath(

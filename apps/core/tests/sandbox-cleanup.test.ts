@@ -269,7 +269,7 @@ it("tears down a live reservation when the row take is refused", async () => {
   expect(released).toBe(1);
   expect(e2bKillMock.mock.calls.map((c) => c[0])).toEqual(["sbx-live"]);
   expect(removeSandboxInstanceMock.mock.calls).toEqual([
-    ["acct-1", "key-live", undefined],
+    ["acct-1", "key-live", "sbx-live"],
   ]);
 });
 

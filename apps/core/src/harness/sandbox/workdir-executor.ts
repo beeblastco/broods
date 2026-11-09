@@ -4,7 +4,6 @@ import {
   type Sandbox,
   SandboxError,
 } from "@mv37/workdir";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
@@ -60,6 +59,7 @@ import type {
   SandboxRunResult,
   SandboxSnapshotResult,
 } from "./types.ts";
+import { queueMirrorUpsert } from "./mirror-writes.ts";
 import {
   assertSnapshotBootable,
   configuredSandboxSpecs,
@@ -155,13 +155,13 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
       this.#config.controlPlane?.releaseAfterIdleSeconds,
     ).catch(() => {});
-    void upsertSandboxInstance(
-      this.#config.controlPlane,
-      "sandbox",
-      request.reservationKey,
-      externalId,
-      request.metadata,
-    );
+    void queueMirrorUpsert({
+      controlPlane: this.#config.controlPlane,
+      provider: "sandbox",
+      reservationKey: request.reservationKey,
+      externalId: externalId,
+      metadata: request.metadata,
+    });
     request.abortSignal?.throwIfAborted();
 
     return sandbox;
@@ -603,13 +603,13 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
           this.#config.controlPlane?.releaseAfterIdleSeconds,
         ).catch(() => {});
-        void upsertSandboxInstance(
-          this.#config.controlPlane,
-          "sandbox",
-          ns,
-          externalId,
-          "metadata" in request ? request.metadata : undefined,
-        );
+        void queueMirrorUpsert({
+          controlPlane: this.#config.controlPlane,
+          provider: "sandbox",
+          reservationKey: ns,
+          externalId: externalId,
+          metadata: "metadata" in request ? request.metadata : undefined,
+        });
 
         return { sandbox: sandbox, isFirstCreate: false };
       } catch (error) {
@@ -632,14 +632,14 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.releaseAfterIdleSeconds,
         )
       ) {
-        await upsertSandboxInstance(
-          this.#config.controlPlane,
-          "sandbox",
-          ns,
-          created.id,
-          "metadata" in request ? request.metadata : undefined,
-          { specs: configuredSandboxSpecs(this.#config) },
-        );
+        void queueMirrorUpsert({
+          controlPlane: this.#config.controlPlane,
+          provider: "sandbox",
+          reservationKey: ns,
+          externalId: created.id,
+          metadata: "metadata" in request ? request.metadata : undefined,
+          options: { specs: configuredSandboxSpecs(this.#config) },
+        });
 
         return { sandbox: created, isFirstCreate: true };
       }

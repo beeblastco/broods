@@ -9,11 +9,11 @@ import {
   deleteSandboxInstance,
   getSandboxReleaseTarget,
 } from "../harness/sandbox/instance-store.ts";
+import { queueMirrorRemove } from "../harness/sandbox/mirror-writes.ts";
 import type {
   ReservedSandbox,
   SandboxReleaseTarget,
 } from "../harness/sandbox/types.ts";
-import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
 import { toErrorMessage } from "./errors.ts";
 import type {
   SandboxConfig,
@@ -41,6 +41,7 @@ export async function releaseExpiredSandboxes(
   const configs = await sandboxConfigs(accountId);
 
   const released: ReservedSandbox[] = [];
+  const removals: Promise<void>[] = [];
   for (const reservation of reservations) {
     const key = reservation.reservationKey;
     const taken = await deleteSandboxInstance(
@@ -59,13 +60,13 @@ export async function releaseExpiredSandboxes(
       return false;
     });
     if (!taken) continue;
-    const done = await releaseOnProvider(
+    const done = !!(await releaseOnProvider(
       accountId,
       reservation.provider,
       configs,
       key,
       reservation.externalId,
-    );
+    ));
     if (!done) {
       await claimSandboxInstance(
         reservation.provider,
@@ -77,8 +78,9 @@ export async function releaseExpiredSandboxes(
       continue;
     }
     released.push(reservation);
-    await removeSandboxInstance(accountId, key, reservation.externalId);
+    removals.push(queueMirrorRemove(accountId, key, reservation.externalId));
   }
+  await Promise.all(removals);
 
   return released;
 }
@@ -93,17 +95,28 @@ export async function releaseReservedSandboxes(
   const configs = await sandboxConfigs(accountId);
 
   let released = 0;
+  const removals: Promise<void>[] = [];
   for (const namespace of namespaces) {
+    let machine: string | undefined;
     for (const provider of RELEASABLE_PROVIDERS) {
-      if (await releaseOnProvider(accountId, provider, configs, namespace)) {
+      const releasedId = await releaseOnProvider(
+        accountId,
+        provider,
+        configs,
+        namespace,
+      );
+      if (releasedId) {
         released++;
+        machine = releasedId;
       }
       await deleteSandboxInstance(provider, namespace, accountId).catch(
         () => {},
       );
     }
-    await removeSandboxInstance(accountId, namespace);
+    // Only the machine it released: a run that reserved the key since keeps its row.
+    removals.push(queueMirrorRemove(accountId, namespace, machine));
   }
+  await Promise.all(removals);
 
   return released;
 }
@@ -142,14 +155,15 @@ function releaseCandidates(
     : configs;
 }
 
-// Via the reservation's provider, which may differ from every config's now.
+// Via the reservation's provider, which may differ from every config's now. Answers the id of
+// the machine it released.
 async function releaseOnProvider(
   accountId: string,
   provider: SandboxProvider,
   records: SandboxConfigRecord[],
   namespace: string,
   expectedExternalId?: string,
-): Promise<boolean> {
+): Promise<string | undefined> {
   const target = await getSandboxReleaseTarget(
     accountId,
     provider,
@@ -165,7 +179,7 @@ async function releaseOnProvider(
     return null;
   });
   if (!target?.externalId) {
-    return false;
+    return undefined;
   }
   for (const config of releaseCandidates(provider, records, target.instance)) {
     try {
@@ -176,7 +190,7 @@ async function releaseOnProvider(
         expectedExternalId: target.externalId,
       });
 
-      return true;
+      return target.externalId;
     } catch (error) {
       logWarn("Reserved sandbox release failed", {
         provider: provider,
@@ -186,7 +200,7 @@ async function releaseOnProvider(
     }
   }
 
-  return false;
+  return undefined;
 }
 
 async function sandboxConfigs(
