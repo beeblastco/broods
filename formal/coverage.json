@@ -3,13 +3,13 @@
     "statements": 18697,
     "excluded": 603,
     "verifiable": 18094,
-    "verified": 10101,
-    "byTwin": 9581,
-    "byReplay": 520,
+    "verified": 9960,
+    "byTwin": 9421,
+    "byReplay": 539,
     "arms": 13655,
-    "armsVerified": 7221
+    "armsVerified": 7127
   },
-  "twins": 1932,
+  "twins": 1920,
   "creditedTwins": [
     "apps/cloudflare-mcp/src/index.ts#TenantOutbound.fetch",
     "apps/cloudflare-mcp/src/index.ts#boundedMessage",
@@ -78,7 +78,6 @@
     "apps/core/src/harness/ai-sdk-harness/adapters/pi.ts#createConfiguredPiAdapter",
     "apps/core/src/harness/ai-sdk-harness/adapters/pi.ts#createPiAdapter",
     "apps/core/src/harness/ai-sdk-harness/adapters/pi.ts#createPiSessionStorage",
-    "apps/core/src/harness/ai-sdk-harness/adapters/pi.ts#fitPiEntry",
     "apps/core/src/harness/ai-sdk-harness/adapters/pi.ts#resolvePrefixedAuthEnv",
     "apps/core/src/harness/ai-sdk-harness/adapters/pi.ts#trim",
     "apps/core/src/harness/ai-sdk-harness/provider.ts#anthropicHarnessReasoning",
@@ -146,8 +145,6 @@
     "apps/core/src/harness/channel-media.ts#mediaReferenceUrl",
     "apps/core/src/harness/channel-media.ts#nativePart",
     "apps/core/src/harness/channel-media.ts#parseMediaReference",
-    "apps/core/src/harness/channel-media.ts#readSealedMedia",
-    "apps/core/src/harness/channel-media.ts#rehydrateToolMessage",
     "apps/core/src/harness/channel-media.ts#resolveMediaType",
     "apps/core/src/harness/channel-media.ts#sealBytes",
     "apps/core/src/harness/channel-media.ts#sealConversationMedia",
@@ -249,7 +246,6 @@
     "apps/core/src/harness/hook-dispatcher.ts#loadAgentHooks",
     "apps/core/src/harness/hook-runner.ts#isHookMutableEvent",
     "apps/core/src/harness/hook-runner.ts#safeStringify",
-    "apps/core/src/harness/hook-runner.ts#sanitizeHookResult",
     "apps/core/src/harness/hook-runner.ts#sanitizeHookState",
     "apps/core/src/harness/ingress-recovery.ts#recoveryScope",
     "apps/core/src/harness/ingress-recovery.ts#stopIngressRecovery",
@@ -620,7 +616,6 @@
     "apps/core/src/harness/sandbox/microvm-executor.ts#microvmLocalNamespace",
     "apps/core/src/harness/sandbox/microvm-executor.ts#s3Location",
     "apps/core/src/harness/sandbox/microvm-harness-driver.ts#MicrovmHarnessDriver.resumeSession",
-    "apps/core/src/harness/sandbox/microvm-harness-driver.ts#MicrovmHarnessSession.readFile",
     "apps/core/src/harness/sandbox/microvm-harness-driver.ts#MicrovmHarnessSession.spawnCommand",
     "apps/core/src/harness/sandbox/microvm-harness-driver.ts#MicrovmHarnessSession.writeFile",
     "apps/core/src/harness/sandbox/microvm-snapshot.ts#snapshotCapture",
@@ -735,7 +730,6 @@
     "apps/core/src/harness/session.ts#Session.releaseMessageTurn",
     "apps/core/src/harness/session.ts#Session.renewConversationLease",
     "apps/core/src/harness/session.ts#Session.sandboxPrincipal",
-    "apps/core/src/harness/session.ts#Session.saveHarnessSession",
     "apps/core/src/harness/session.ts#Session.toolResultIdsOf",
     "apps/core/src/harness/session.ts#Session.trackSystemCursor",
     "apps/core/src/harness/session.ts#agentSystemMessages",
@@ -1009,7 +1003,6 @@
     "apps/core/src/harness/tools/utils.ts#urlToolContentPartToUserPart",
     "apps/core/src/harness/tools/utils.ts#virtualSubagentConfig",
     "apps/core/src/harness/tools/utils.ts#webpSize",
-    "apps/core/src/harness/tools/utils.ts#withImageLimits",
     "apps/core/src/harness/tools/write.tool.ts#inputSchema",
     "apps/core/src/harness/tools/write.tool.ts#writeTool",
     "apps/core/src/harness/transcribe.ts#recoveryFor",
@@ -1366,7 +1359,6 @@
     "apps/core/src/shared/skills.ts#skillInstructionsFromMarkdown",
     "apps/core/src/shared/skills.ts#skillsBucketName",
     "apps/core/src/shared/skills.ts#stripYamlScalarQuotes",
-    "apps/core/src/shared/skills.ts#validateSkillBundle",
     "apps/core/src/shared/skills.ts#validateSkillDescription",
     "apps/core/src/shared/skills.ts#validateSkillName",
     "apps/core/src/shared/slack-channel.ts#appendBufferedSlackText",
@@ -1446,7 +1438,6 @@
     "apps/core/src/shared/telegram-channel.ts#normalizeBotUsername",
     "apps/core/src/shared/telegram-channel.ts#postTelegramAttachments",
     "apps/core/src/shared/telegram-channel.ts#questionKeyboard",
-    "apps/core/src/shared/telegram-channel.ts#readCappedFile",
     "apps/core/src/shared/telegram-channel.ts#repliesToTelegramBot",
     "apps/core/src/shared/telegram-channel.ts#splitTelegramRawText",
     "apps/core/src/shared/telegram-channel.ts#stickerText",
@@ -1697,8 +1688,6 @@
     "apps/lambda/sandbox-log-forwarder.mjs#scoped",
     "apps/lambda/sandbox-log-forwarder.mjs#verifyLogStream",
     "packages/convex/model/accountHooks.ts#accountHookBundleStorageKey",
-    "packages/convex/model/accountHooks.ts#normalizeAccountHookUpload",
-    "packages/convex/model/accountHooks.ts#normalizeBundle",
     "packages/convex/model/accountHooks.ts#normalizeDescription",
     "packages/convex/model/accountHooks.ts#normalizeEvents",
     "packages/convex/model/accountHooks.ts#normalizeHookName",
@@ -1804,7 +1793,6 @@
     "packages/convex/model/envelope.ts#webKey",
     "packages/convex/model/envelope.ts#wrapAad",
     "packages/convex/model/envelope.ts#wrapAccountKey",
-    "packages/convex/model/harnessSessionEntries.ts#harnessEntryBatches",
     "packages/convex/model/harnessSessionEntries.ts#harnessEntryBytes",
     "packages/convex/model/httpJson.ts#json",
     "packages/convex/model/httpJson.ts#jsonError",
@@ -1965,14 +1953,14 @@
       "branch arms"
     ],
     ["access", "1977", "133", "1844", "66.2%", "1162", "58", "848/1357"],
-    ["agent", "3902", "139", "3763", "49.7%", "1778", "91", "1328/2744"],
-    ["channels", "3676", "3", "3673", "63.2%", "2273", "50", "1775/3046"],
+    ["agent", "3902", "139", "3763", "48.1%", "1701", "110", "1283/2744"],
+    ["channels", "3676", "3", "3673", "61.9%", "2225", "50", "1746/3046"],
     ["config", "617", "0", "617", "85.6%", "450", "78", "338/509"],
     ["hosted", "1962", "320", "1642", "51.2%", "730", "111", "553/1084"],
     ["runs", "1682", "8", "1674", "31.2%", "512", "11", "400/1154"],
-    ["sandbox", "4789", "0", "4789", "56.7%", "2631", "86", "1966/3729"],
+    ["sandbox", "4789", "0", "4789", "56.0%", "2596", "86", "1946/3729"],
     ["workers", "92", "0", "92", "87.0%", "45", "35", "13/32"],
-    ["all", "18697", "603", "18094", "55.8%", "9581", "520", "7221/13655"]
+    ["all", "18697", "603", "18094", "55.0%", "9421", "539", "7127/13655"]
   ],
   "largestUnverified": [
     {
@@ -2188,6 +2176,10 @@
       "count": 26
     },
     {
+      "source": "apps/core/src/harness/channel-media.ts#readSealedMedia",
+      "count": 26
+    },
+    {
       "source": "apps/lambda/handler.mjs#<unlisted>",
       "count": 26
     },
@@ -2276,6 +2268,10 @@
       "count": 23
     },
     {
+      "source": "apps/core/src/harness/tools/utils.ts#withImageLimits",
+      "count": 23
+    },
+    {
       "source": "apps/core/src/harness/provider.ts#retryingMiddleware",
       "count": 22
     },
@@ -2356,6 +2352,10 @@
       "count": 20
     },
     {
+      "source": "apps/core/src/shared/skills.ts#validateSkillBundle",
+      "count": 20
+    },
+    {
       "source": "apps/discord-forwarder/src/main.ts#<unlisted>",
       "count": 20
     },
@@ -2409,6 +2409,14 @@
     },
     {
       "source": "apps/core/src/harness/subagents.ts#SubagentCoordinator.startTask",
+      "count": 18
+    },
+    {
+      "source": "packages/convex/model/accountHooks.ts#normalizeAccountHookUpload",
+      "count": 18
+    },
+    {
+      "source": "apps/core/src/shared/telegram-channel.ts#readCappedFile",
       "count": 18
     },
     {
@@ -2476,6 +2484,10 @@
       "count": 17
     },
     {
+      "source": "apps/core/src/harness/sandbox/microvm-harness-driver.ts#MicrovmHarnessSession.readFile",
+      "count": 17
+    },
+    {
       "source": "apps/core/src/harness/tools/message-agents.tool.ts#messageAgentsTool",
       "count": 17
     },
@@ -2485,6 +2497,10 @@
     },
     {
       "source": "apps/core/src/harness/harness.ts#recordCompactionTask",
+      "count": 16
+    },
+    {
+      "source": "apps/core/src/harness/session.ts#Session.saveHarnessSession",
       "count": 16
     },
     {
@@ -2745,34 +2761,6 @@
     },
     {
       "source": "packages/convex/model/agentConfigCodec.ts#extractModelFields",
-      "count": 12
-    },
-    {
-      "source": "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#normalizeRequestHeaders",
-      "count": 12
-    },
-    {
-      "source": "apps/core/src/harness/mcp/hosted.ts#drainInvokeStream",
-      "count": 12
-    },
-    {
-      "source": "apps/core/src/harness/connections.ts#connectionFetch",
-      "count": 12
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.runBackground",
-      "count": 12
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#runInput",
-      "count": 12
-    },
-    {
-      "source": "apps/core/src/harness/tools/channel.tool.ts#sendFilesTool",
-      "count": 12
-    },
-    {
-      "source": "apps/core/src/harness/tools/computer.tool.ts#computerTool",
       "count": 12
     }
   ]

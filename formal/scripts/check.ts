@@ -357,9 +357,9 @@ interface Tally {
 }
 
 // Which twins count, and for which statements. A twin must match every call it was compared on and
-// cover at least 90% of what was recorded, on a recording that kept what it saw. A traced twin may
-// only take answers from boundaries declared in `boundaries.tsv`, or from functions that themselves
-// earned credit, so nothing is believed because a caller said so.
+// cover at least 90% of what was recorded (see `comparable`), on a recording that kept what it
+// saw. A traced twin may only take answers from boundaries declared in `boundaries.tsv`, or from
+// functions that themselves earned credit, so nothing is believed because a caller said so.
 function creditedTwins(
   rows: Row[],
   failures: string[],
@@ -459,14 +459,28 @@ function creditedTwins(
   return eligible;
 }
 
-// A value too big to record is the recorder's limit, not a case the twin chose to skip. Such a call
-// earns nothing either way, because only compared calls contribute statements.
+// A value too big to record is the recorder's limit, not a case the twin chose to skip. It is
+// excused only if a compared call reached everything it did, or it may be the one call on the far
+// side of a size guard, and that guard would be credited without anything testing it.
 function comparable(result: TwinResult): number {
   const onlyTooBig =
     result.incompleteReasons.length === 1 &&
     result.incompleteReasons[0] === "too big to record";
+  if (!onlyTooBig) return result.recorded;
+  const compared = new Set(result.hits);
+  const reachesMore = readFileSync(
+    join(TRACES, `${encodeURIComponent(result.source)}.jsonl`),
+    "utf8",
+  )
+    .split("\n")
+    .filter((line) => line.includes('"$big"'))
+    .some((line) =>
+      (JSON.parse(line) as { hits: number[] }).hits.some(
+        (offset) => !compared.has(offset),
+      ),
+    );
 
-  return onlyTooBig ? result.recorded - result.incomplete : result.recorded;
+  return reachesMore ? result.recorded : result.recorded - result.incomplete;
 }
 
 // A plain twin only compares a return value, so it cannot vouch for a function that does more

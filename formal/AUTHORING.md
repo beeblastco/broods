@@ -35,7 +35,7 @@ to cover a lot of logic, and the same calls can later grade a port.
 - Reuse definitions in `Model.lean`, and put new logic in the twin's file as ordinary pure functions, so
   theorems can use it later.
 - Use `Twin.unsupported` only for arguments the model really does not cover. A twin gets coverage credit
-  only if at least 90% of its recorded calls are compared and none mismatches.
+  only if at least 90% of its recorded calls are compared and none mismatches. A call too big to record is left out of that count when a compared call reached everything it did.
 - A mismatch is a finding. Fix the twin if it is wrong. If the function is wrong per `DECISIONS.md`, set
   `gaps` on the twin to the `GAPS.md` id.
 - First run `bun formal/scripts/conform.ts --all` once: recordings are not committed, so a fresh checkout has none and every twin comes back UNCHECKED. It takes about 15 minutes.
