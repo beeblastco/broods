@@ -224,18 +224,27 @@ private def optKey (present : Bool) (key : String) (value : Json) : List (String
 private def spread (value : Json) (extra : List (String × Json)) : Json :=
   extra.foldl (fun acc entry => acc.setObjVal! entry.1 entry.2) value
 
-/-- `Session.writeFenced`. A failed write puts rows back in private state, which is not compared. -/
+/-- `Session.writeFenced`. The pending rows are taken at entry and put back, with the ones given, when
+anything fails. Rows another caller queues during the write are not stated. -/
 def writeFenced (call : Json) : Prog Json := do
-  let pending := items (thisField call "pendingStoredEvents")
+  let before := thisField call "pendingStoredEvents"
+  let pending := items before
   let rows := (pending ++ items (Twin.callArg call 0)).map fun row =>
     let key := field row "dedupeKey"
     setKey row "dedupeKey" (if nullish key then field row "cursor" else key)
-  let batches ← Prog.effect "storedEventBatches" [arr rows]
-  let all := items batches
-  let inline := all.getLast?.getD (arr [])
-  for batch in all.dropLast do
-    let _ ← Prog.effect "this.appendConversationEvents" [batch]
-  Prog.effect "write" [inline, arr rows]
+  let result ← Prog.catchFail
+    (do
+      let batches ← Prog.effect "storedEventBatches" [arr rows]
+      let all := items batches
+      let inline := all.getLast?.getD (arr [])
+      for batch in all.dropLast do
+        let _ ← Prog.effect "this.appendConversationEvents" [batch]
+      Prog.effect "write" [inline, arr rows])
+    (fun error => do
+      Prog.setChanged "self.pendingStoredEvents" before (arr rows)
+      throw error)
+  Prog.setChanged "self.pendingStoredEvents" before (arr [])
+  return result
 
 /-- `Session.flushPendingStoredEvents` -/
 def flushPendingStoredEvents (call : Json) : Prog Json := do

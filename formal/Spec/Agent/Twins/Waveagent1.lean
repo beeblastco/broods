@@ -1675,7 +1675,8 @@ def twins : List Twin :=
    plain "apps/core/src/harness/session.ts#storedEventBatches" storedEventBatches,
    Twin.traced "apps/core/src/harness/chatgpt.ts#completedResponse" completedResponse,
    Twin.traced "apps/core/src/harness/session.ts#splitIngressEvents" splitIngressEvents,
-   plain "apps/core/src/harness/session.ts#withUnwrittenRows" withUnwrittenRows,
+   Twin.traced "apps/core/src/harness/session.ts#withUnwrittenRows"
+     (fun call => pure (withUnwrittenRows (call.getObjValD "args"))),
    Twin.traced "apps/core/src/harness/session.ts#Session.readHarnessSessionEntries" (fun c => readHarnessPages c 256 Twin.undefinedJson []),
    Twin.traced "apps/core/src/harness/ai-sdk-harness/session.ts#startHarnessLeaseMonitor" startHarnessLeaseMonitor,
    plain "apps/core/src/harness/skills.ts#formatLoadedSkillPrompt" formatLoadedSkillPrompt,

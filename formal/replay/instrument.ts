@@ -151,7 +151,14 @@ export function instrument(
     const escaped = escapedClosures(body);
     edits.push(...escapeEdits(escaped));
     edits.push(...lateEdits(target, analysis.program, body, escaped, mutable));
-    edits.push(...callEdits(body, source, withCallbackHelpers(body, escaped)));
+    edits.push(
+      ...callEdits(
+        body,
+        source,
+        withCallbackHelpers(body, escaped),
+        inlinedCallbacks(target, analysis.program),
+      ),
+    );
   }
 
   edits.push(...privateFieldReaders(analysis.program));
@@ -333,9 +340,10 @@ function callEdits(
   body: AstNode,
   source: string,
   escaped: Map<AstNode, string>,
+  inlined: string[],
 ): Edit[] {
   const edits: Edit[] = [];
-  const locals = localFunctions(body);
+  const locals = new Set([...localFunctions(body), ...inlined]);
   // `x.closed = true` and similar cannot go through a read helper.
   const writeTargets = new Set<AstNode>();
   const visit = (node: AstNode, nested: boolean, detached = false): void => {
@@ -751,6 +759,14 @@ function lateClosures(
         !shorthand.has(closure),
     ),
   );
+}
+
+// A private method runs inside its caller's trace, so a callback it is handed is the caller's own
+// code, not something outside the function.
+function inlinedCallbacks(target: FunctionInfo, program: AstNode): string[] {
+  const node = target.isPrivate ? functionNode(program, target) : undefined;
+
+  return node ? parameterNames(node["params"] as AstNode[]) : [];
 }
 
 function escapeEdits(escaped: Map<AstNode, string>): Edit[] {

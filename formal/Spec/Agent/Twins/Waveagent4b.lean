@@ -247,8 +247,14 @@ def storedEvents (call : Json) : Prog Json := do
   let messages := Twin.callArg call 0
   let dedupeKeys := Twin.callArg call 1
   if !truthy (field self "persist") then
+    let unsaved := field self "unsavedToolResults"
+    let mut ids := items (field unsaved "$set")
     for message in items messages do
-      let _ ← Prog.effect "this.toolResultIdsOf" [message]
+      let found ← Prog.effect "this.toolResultIdsOf" [message]
+      for resultId in items found do
+        if !ids.contains resultId then ids := ids ++ [resultId]
+    if ids.length != (items (field unsaved "$set")).length then
+      Prog.setState "self.unsavedToolResults" (Json.mkObj [("$set", arr ids)])
     return arr []
   let config := field self "agentConfig"
   if truncated config then return ← Prog.unsupported "agentConfig is cut off in the recording"

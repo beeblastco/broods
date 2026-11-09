@@ -335,11 +335,6 @@ def providerTwinList : List Spec.Twin := [
       if has model "provider" && has model "modelId" then
         toJson (primitiveText (get model "provider") ++ "/" ++ primitiveText (get model "modelId"))
       else .null },
-  { source := "apps/core/src/harness/provider.ts#modelOutputFromModelConfig"
-    run := fun args =>
-      let output := get (get (Twin.arg args 0) "model") "output"
-      if !truthy output || get output "type" == .str "text" then .null
-      else Twin.unsupported "createModelOutput builds a live output spec" },
   { source := "apps/core/src/harness/provider.ts#requireProviderSettings"
     run := fun args =>
       match Twin.arg args 1 with
@@ -393,32 +388,6 @@ def providerTwinList : List Spec.Twin := [
   { source := "apps/core/src/harness/provider.ts#withLatestPartMarked"
     run := fun args => withLatestPartMarked (Twin.arg args 0) (Twin.arg args 1) },
   { source := "apps/core/src/harness/provider.ts#toolImagesAsUserMessages"
-    run := fun args => .arr (toolImagesAsUserMessages (items (Twin.arg args 0))).toArray },
-  { source := "apps/core/src/harness/provider.ts#resolveTranscriptionModel"
-    run := fun args =>
-      let config := Twin.arg args 0
-      match get (get config "model") "provider" with
-      | .str name =>
-        if !["groq", "mistral", "openai"].contains name then .null
-        else
-          match requireProviderSettings config name with
-          | .error _ => .null
-          | .ok _ => Twin.unsupported "returns a live transcription model"
-      | _ => .null },
-  { source := "apps/core/src/harness/provider.ts#resolveConfiguredModel"
-    run := fun args =>
-      let config := Twin.arg args 0
-      match requireModelProvider config, requireModelId config with
-      | .error message, _ => Twin.threw message
-      | _, .error message => Twin.threw message
-      | .ok provider, .ok _ =>
-        match provider with
-        | .str name =>
-          if name == "chatgpt" then Twin.unsupported "chatgpt resolves through stored login state"
-          else
-            match requireProviderSettings config name with
-            | .error message => Twin.threw message
-            | .ok _ => Twin.unsupported "returns a live model"
-        | _ => Twin.unsupported "provider is not a string" }]
+    run := fun args => .arr (toolImagesAsUserMessages (items (Twin.arg args 0))).toArray }]
 
 end Spec.Agent

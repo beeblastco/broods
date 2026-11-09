@@ -183,13 +183,29 @@ def userKey (token : Json) (requested : String) : Json :=
   let key := if startsWith requested pre then requested else pre ++ requested
   if userOwns token key then .str key else nullResult
 
+/-- `hashScopedValue` as a traced twin: it asks Node's `createHash` the same questions in the same order,
+and the digest it returns is its own SHA-256, so the recorded one must agree. -/
+def hashScopedProg (call : Json) : Spec.Prog Json := do
+  let scope := Spec.Twin.callArg call 0
+  let value := Spec.Twin.callArg call 1
+  match scope, value with
+  | .str scopeText, .str valueText =>
+    let _ ← Spec.Prog.effect "createHash" [.str "sha256"]
+    let _ ← Spec.Prog.effect "createHash(\"sha256\") .update" [scope]
+    let _ ← Spec.Prog.effect "createHash(\"sha256\") .update(scope) .update" [.str "\u0000"]
+    let _ ← Spec.Prog.effect "createHash(\"sha256\") .update(scope) .update(\"\\0\") .update" [value]
+    let _ ← Spec.Prog.effect
+      "createHash(\"sha256\") .update(scope) .update(\"\\0\") .update(value) .digest" [.str "hex"]
+    return .str (hashScoped scopeText valueText)
+  | _, _ => Spec.Prog.unsupported "arguments are not strings"
+
 /-- Twins of `apps/core/src/shared/runtime-keys.ts`. -/
 def runtimeKeyTwins : List Spec.Twin :=
   let source (name : String) : String := "apps/core/src/shared/runtime-keys.ts#" ++ name
   [ stringTwin (source "normalizeFilesystemNamespace") fun key => .str (filesystemNamespace key),
     stringTwin (source "agentNamespaceFolder") fun agent =>
       .str ("agent/" ++ filesystemNamespace agent),
-    stringTwin2 (source "hashScopedValue") fun scope value => .str (hashScoped scope value),
+    Spec.Twin.traced (source "hashScopedValue") hashScopedProg,
     stringTwin (source "unscopedChannelConversationKey") fun key => .str (unscopedChannelKey key),
     jsonTwin (source "channelScopeKeyFromConversation") fun args =>
       match Spec.Twin.arg args 0 with

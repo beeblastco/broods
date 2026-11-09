@@ -1530,11 +1530,31 @@ private def workdirClient (call : Json) : Prog Json := do
   let connection ← Prog.effect "workdirConnection" [Twin.callArg call 0]
   Prog.effect "new Client" [get connection "baseUrl", get connection "apiKey"]
 
-/-- `removeSandboxInstance` when the Convex client is missing; the retried writes sleep. -/
-private def removeSandboxInstance (_call : Json) : Prog Json := do
+/-- `REMOVE_RETRY_DELAYS_MS`. -/
+private def removeRetryDelays : List Nat := [0, 500, 2000]
+
+/-- The retried `internal.sandbox.instances.remove` calls: the last failure is the caller's to log. -/
+private def removeAttempts (args : Json) : List Nat → Prog Json
+  | [] => pure voidJson
+  | delay :: rest => do
+    let _ ← Prog.effect "Bun.sleep" [toJson delay]
+    match ← Prog.attempt "adminMutation"
+        [toJson "sandbox.instances.remove", args, Json.mkObj [("skipQueue", toJson true)]] with
+    | .ok _ => pure voidJson
+    | .threw _ _ => if rest.isEmpty then pure voidJson else removeAttempts args rest
+    | .pending => Prog.unsupported "the mutation never settled"
+
+/-- `removeSandboxInstance`: every failure is logged, so it always settles undefined. -/
+private def removeSandboxInstance (call : Json) : Prog Json := do
   match ← Prog.attempt "getConvexClient" with
   | .threw _ _ => return voidJson
-  | _ => Prog.unsupported "the retry loop has no recording here"
+  | .pending => return ← Prog.unsupported "the client never settled"
+  | .ok _ => pure ()
+  let externalId := Twin.callArg call 2
+  let args := Json.mkObj
+    ([("accountId", Twin.callArg call 0), ("reservationKey", Twin.callArg call 1)] ++
+      (if externalId == voidJson then [] else [("externalId", externalId)]))
+  removeAttempts args removeRetryDelays
 
 private def postToChannel (call : Json) : Prog Json := do
   let channel := Twin.callArg call 0

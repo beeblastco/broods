@@ -596,9 +596,11 @@ private def num (v : Nat) : Json := toJson v
 private def bigOf (v : Json) : Int := (s (f v "$bigint")).toInt?.getD 0
 private def big (v : Int) : Json := Json.mkObj [("$bigint", j (toString v))]
 private def optKey (key : String) (v : Json) : List (String × Json) := if u v then [] else [(key, v)]
+/-- `socket.data`: a plain record, or the `$fields` of a recorded `ServerWebSocket`. -/
+private def socketData (socket : Json) : Json :=
+  if u (f socket "$opaque") then f socket "data" else Twin.field socket "data"
 private def scopeOf (socket : Json) : Json :=
-  let data := if u (f socket "$opaque") then f socket "data" else Twin.field socket "data"
-  f data "scope"
+  f (socketData socket) "scope"
 private def isOpaque (v : Json) : Bool := !u (f v "$opaque")
 private def responseStatus (response : Json) : Nat :=
   (n (f (f response "$response") "status")).toUInt64.toNat
@@ -608,17 +610,20 @@ private def responseOk (response : Json) : Bool :=
 private def closeExpired (call : Json) : Prog Json := do
   let socket := Twin.callArg call 0
   let now ← Prog.effect "Date.now"
-  if isOpaque socket then return ← Prog.unsupported "socket.data was not recorded"
-  if u (f socket "data") then
+  if u (socketData socket) then
     return ← Prog.throwError "TypeError" "undefined is not an object (evaluating 'socket.data.scope')"
   if n now < n (f (scopeOf socket) "expiresAt") then return toJson false
   let _ ← Prog.effect "socket.close" [num 4419, j "Stage session expired"]
   pure (toJson true)
 
+/-- `socket.readyState`: a plain record, or the `$fields` of a recorded `ServerWebSocket`. -/
+private def socketReady (socket : Json) : Json :=
+  if isOpaque socket then Twin.field socket "readyState" else f socket "readyState"
+
 private def drainPolls (socket : Json) (limit deadline : Float) : Nat → Prog Json
   | 0 => Prog.unsupported "more drain polls than the model allows"
   | fuel + 1 => do
-    if f socket "readyState" != num 1 then return undef
+    if socketReady socket != num 1 then return undef
     let buffered ← Prog.effect "socket.getBufferedAmount"
     if n buffered <= limit then return undef
     let now ← Prog.effect "Date.now"
@@ -633,7 +638,6 @@ private def waitDrain (call : Json) : Prog Json := do
   let socket := Twin.callArg call 0
   let limit := if u (Twin.callArg call 1) then 524288.0 else n (Twin.callArg call 1)
   let now ← Prog.effect "Date.now"
-  if isOpaque socket then return ← Prog.unsupported "socket.readyState was not recorded"
   drainPolls socket limit (n now + 5000.0) 1024
 
 private def openObsSocket (call : Json) : Prog Json := do

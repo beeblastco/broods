@@ -131,6 +131,8 @@ private def framePush (call : Json) : Prog Json := do
   for line in lines.dropLast do
     let frame ← Prog.effect "parseRunnerFrame" [toJson line]
     if !nil frame then frames := frames ++ [frame]
+  if lines.getLast!.length > 524288 then
+    return ← Prog.unsupported "the new frame buffer is too big to record"
   let buffer := toJson (lines.getLast!)
   if buffer != Twin.field self "#buffer" then
     Prog.setState "self.#buffer" buffer

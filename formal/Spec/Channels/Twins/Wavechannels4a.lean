@@ -64,13 +64,11 @@ private def errorHints : List (Re × Option String) :=
     some "Try again."),
    (lit "ran out of time", some "Send a message to continue where I left off.")]
 
-/-- `simplifyErrorText`. `secretValues` comes from the ambient observability context, which a
-recording does not show, so a message that names a secret is left out of the comparison. -/
+/-- `simplifyErrorText`. `secretValues` comes from the ambient observability context the recording
+carries in the call's environment. -/
 private def simplifyErrorText (c : Json) : Prog Json := do
-  let raw := text (a c 0)
-  if contains raw "secret" then
-    return ← Prog.unsupported "secretValues come from an ambient context the recording omits"
-  let redacted := text (← Prog.effect "redactSensitiveText" [a c 0, undef])
+  let secrets := get (Twin.observabilityContext c) "secretValues"
+  let redacted := text (← Prog.effect "redactSensitiveText" [a c 0, secrets])
   let chars := redacted.toList.toArray
   let body :=
     ((execFrom lastError (lower redacted).toList.toArray 0).bind

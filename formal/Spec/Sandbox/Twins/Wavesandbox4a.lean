@@ -279,15 +279,29 @@ def vercelSnapshot (call : Json) : Prog Json := do
     let classified ← Prog.effect "classifyVercelError" [error]
     Prog.fail classified)
 
-/-- `awsClient`. The per-access cache sits in a `WeakMap` no recording can read. -/
+/-- `awsClient`: a client per access object, or the module's default one. -/
 def awsClient (call : Json) : Prog Json := do
-  if truthy (Twin.callArg call 0) then
-    return ← Prog.unsupported "per-access client cache is not recorded"
+  let access := Twin.callArg call 0
+  let envRegion := Twin.env call "AWS_REGION"
+  let options (region : Json) (extra : List (String × Json)) : Json :=
+    Json.mkObj ((if region == Twin.undefinedJson then [] else [("region", region)]) ++ extra)
+  if truthy access then
+    let existing ← Prog.effect "accessClients.get" [access]
+    if truthy existing then return existing
+    let region := if isNullish (field access "region") then envRegion else field access "region"
+    let client ← Prog.effect "new AwsS3Client"
+      [options region
+        ((if truthy (field access "endpoint") then
+            [("endpoint", field access "endpoint"), ("forcePathStyle", toJson true)] else []) ++
+          (if truthy (field access "credentials") then
+            [("credentials", field access "credentials")] else []))]
+    let _ ← Prog.effect "accessClients.set" [access, client]
+    return client
   let existing := Twin.moduleValue call "defaultClient"
   if !isNullish existing then return existing
-  let region := Twin.env call "AWS_REGION"
-  Prog.effect "new AwsS3Client"
-    [Json.mkObj (if region == Twin.undefinedJson then [] else [("region", region)])]
+  let client ← Prog.effect "new AwsS3Client" [options envRegion []]
+  Prog.setState "module.defaultClient" client
+  return client
 
 /-- `HarnessShellProcess.kill`, with its private `#kill` inlined. -/
 def harnessKill (call : Json) : Prog Json := do
@@ -338,6 +352,20 @@ private def sessionTeardown (verb message : String) (call : Json) : Prog Json :=
     [Json.mkObj [("reservationKey", Twin.field self "#reservationKey")]]
   return undef
 
+/-- A `Map` snapshot without the entries whose key `drop` names. -/
+private def dropMapEntries (cache : Json) (drop : String → Bool) : Json :=
+  Json.mkObj [("$map", .arr ((items (field cache "$map")).filter fun entry =>
+    match entry with
+    | .arr #[.str key, _] => !drop key
+    | _ => true).toArray)]
+
+/-- States a module `Map` that lost entries; a delete that found nothing writes nothing. -/
+private def stateDropped (call : Json) (name : String) (drop : String → Bool) : Prog Unit := do
+  let cache := Twin.moduleValue call name
+  let next := dropMapEntries cache drop
+  if (items (field next "$map")).length != (items (field cache "$map")).length then
+    Prog.setState s!"module.{name}" next
+
 /-- `MicrovmSandboxExecutor.release`, with its private `#terminate` inlined. -/
 def microvmRelease (call : Json) : Prog Json := do
   let request := Twin.callArg call 0
@@ -348,7 +376,10 @@ def microvmRelease (call : Json) : Prog Json := do
   let microvmId ←
     if isNullish expected then Prog.effect "getSandboxExternalId" [toJson "lambda", key]
     else pure expected
+  stateDropped call "reservedEndpoints" (· == str key)
+  stateDropped call "mountCredentialRefreshes" (· == str key)
   if !truthy microvmId then return undef
+  stateDropped call "authTokens" (·.startsWith (str microvmId ++ ":"))
   let command ← Prog.effect "new TerminateMicrovmCommand"
     [Json.mkObj [("microvmIdentifier", microvmId)]]
   let sent ← Prog.attempt "this.#client .send" [command]
@@ -451,6 +482,14 @@ def createHarnessAuthToken (call : Json) : Prog Json := do
       return ← Prog.throwError "Error"
         "CreateMicrovmAuthToken did not return an X-aws-proxy-auth token"
     let _ ← Prog.effect "evictToCap" [cache, now]
+    let cacheKey := s!"{str microvmId}:{p}"
+    let entry := Json.arr #[toJson cacheKey, Json.mkObj
+      [("token", token), ("expiresAt", toJson (now.getInt?.toOption.getD 0 + 600000))]]
+    let entries := items (field cache "$map")
+    let updated := if (cachedEntry cache cacheKey).isSome then
+      entries.map (fun pair => if Twin.arg pair 0 == toJson cacheKey then entry else pair)
+      else entries ++ [entry]
+    Prog.setState "module.authTokens" (Json.mkObj [("$map", .arr updated.toArray)])
     return token
   | none => Prog.unsupported "non-integer port"
 
