@@ -934,7 +934,8 @@ private def twilioAuthenticate (call : Json) : Prog Json := do
   if !isTruthy url then return .bool false
   let outcome ← Prog.attempt "verifyTwilioRequest"
     [Json.mkObj [("$request", Json.mkObj
-       [("method", .str "POST"), ("url", url), ("headers", sortedHeaders (get req "headers"))])],
+       [("method", .str "POST"), ("url", url), ("headers", sortedHeaders (get req "headers")),
+        ("body", get req "body")])],
      Json.mkObj [("authToken", get options "authToken"), ("webhookUrl", url)]]
   match outcome with
   | .ok _ => return .bool true
@@ -1069,7 +1070,8 @@ private def gchatAuthenticate (call : Json) : Prog Json := do
     [Json.mkObj [("$request", Json.mkObj
        [("method", .str "POST"),
         ("url", .str s!"https://core.invalid{jsString (get req "rawPath")}"),
-        ("headers", jarr [jarr [.str "authorization", header]])])]]
+        ("headers", jarr [jarr [.str "authorization", header]]),
+        ("body", get req "body")])]]
   return .bool (get (get response "$response") "status" == toJson (200 : Nat))
 
 /-- `createGoogleChatChannel`'s `parse`. -/

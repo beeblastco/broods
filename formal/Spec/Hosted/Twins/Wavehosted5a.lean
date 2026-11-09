@@ -440,7 +440,9 @@ private def handleMcpRequest (call : Json) : Prog Json := do
   let mcp ← Prog.effect "createMcpHandler" [fnValue "", obj [("legacy", toJson "reject")]]
   let _ := mcp
   let incoming := obj [("$request", obj [("method", field request "method"),
-    ("url", toJson "http://core/mcp"), ("headers", requestHeaderPairs (field request "headers"))])]
+    ("url", toJson "http://core/mcp"), ("headers", requestHeaderPairs (field request "headers")),
+    ("body", if field request "method" == toJson "GET" || field request "method" == toJson "HEAD"
+      then Json.null else field request "body")])]
   Prog.drain (fun label _ =>
     match label with
     | "arg0" => do

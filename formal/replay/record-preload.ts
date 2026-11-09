@@ -177,7 +177,7 @@ const frames = new AsyncLocalStorage<Frame>();
 // oxlint-disable-next-line typescript/unbound-method -- kept before tests can patch it
 const promiseThen = Promise.prototype.then;
 const settledValues = new WeakMap<Promise<unknown>, unknown>();
-const responseBodies = new WeakMap<Response, string>();
+const bodies = new WeakMap<Response | Request, string>();
 const running = new Map<string, Set<Frame>>();
 const privateReaders = new WeakMap<object, (value: object) => object>();
 let budget = 0;
@@ -479,12 +479,12 @@ function traceMethod(
     );
 }
 
-// A Response's body can only be read by consuming it, so the code that built it says what it is.
-function rememberBody(response: unknown, body: unknown): unknown {
-  if (response instanceof Response)
-    responseBodies.set(response, encodeText(body));
+// A message's body can only be read by consuming it, so the code that built it says what it is.
+function rememberBody(message: unknown, body: unknown): unknown {
+  if (message instanceof Response || message instanceof Request)
+    bodies.set(message, encodeText(body));
 
-  return response;
+  return message;
 }
 
 function traceNew(
@@ -496,6 +496,13 @@ function traceNew(
   if (callee === (Response as unknown)) {
     return (...args: unknown[]): unknown =>
       rememberBody(Reflect.construct(callee, args), args[0]);
+  }
+  if (callee === (Request as unknown)) {
+    return (...args: unknown[]): unknown =>
+      rememberBody(
+        Reflect.construct(callee, args),
+        (args[1] as { body?: unknown } | undefined)?.body,
+      );
   }
   if (!frame || PURE_CONSTRUCTORS.has(callee)) {
     return (...args: unknown[]): unknown => Reflect.construct(callee, args);
@@ -828,16 +835,19 @@ function encode(value: unknown, depth: number, path: object[]): unknown {
     };
   }
   if (value instanceof Request) {
+    const body = bodies.get(value);
+
     return {
       $request: {
         method: value.method,
         url: value.url,
         headers: Array.from(value.headers.entries()),
+        ...(body === undefined ? {} : { body: JSON.parse(body) as unknown }),
       },
     };
   }
   if (value instanceof Response) {
-    const body = responseBodies.get(value);
+    const body = bodies.get(value);
 
     return {
       $response: {
