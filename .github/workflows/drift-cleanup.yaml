@@ -171,21 +171,24 @@ jobs:
       - name: Mask AWS account id
         run: echo "::add-mask::${AWS_ACCOUNT_ID}"
 
-      # Push runs only: a manual run can name another stage.
-      - name: Find the commit deploy.yaml last shipped
+      # Production ships by manual run (promote), dev by push. A manual run that
+      # named another stage carries it in its title (deploy.yaml run-name).
+      - name: Find the commit deploy.yaml last shipped to this stage
         id: deployed
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ matrix.ref }}
+          STAGE: ${{ matrix.stage }}
         shell: bash
         run: |
           set -euo pipefail
-          SHA=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yaml/runs?branch=$BRANCH&event=push&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // empty')
+          SHA=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yaml/runs?branch=$BRANCH&status=success&per_page=20" \
+            | jq -r --arg stage "$STAGE" '[.workflow_runs[] | select(.event == "push" or (.display_title | ltrimstr("Deploy to ") | IN("Deploy", $stage) or (. == "production" and ($stage | startswith("production-")))))][0].head_sha // empty')
           if [[ -z "$SHA" ]]; then
-            echo "::error::No successful deploy.yaml push run on $BRANCH; nothing to reconcile against."
+            echo "::error::No successful deploy.yaml run shipped $BRANCH to $STAGE; nothing to reconcile against."
             exit 1
           fi
-          echo "Checking $BRANCH at $SHA, the last commit deploy.yaml shipped"
+          echo "Checking $STAGE at $SHA, the last commit deploy.yaml shipped from $BRANCH"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
       - name: Checkout repository
