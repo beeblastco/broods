@@ -53,7 +53,7 @@ crons.interval(
 crons.interval(
   "sweep due account deletions",
   { hours: 1 },
-  internal.org.workosUserDeletionCleanup.sweep,
+  internal.org.workosUserDeletion.sweep,
   {},
 );
 // Expiry is checked inline on every session resolve; this only bounds growth.

@@ -186,7 +186,7 @@ export const requestAccountDeletion = mutation({
   },
 });
 
-// Support's restore path; the deletion sweep re-reads the field, so clearing it stops the purge.
+// Support's restore path, open until the hourly sweep claims the request.
 export const cancelAccountDeletion = internalMutation({
   args: { authId: v.string() },
   returns: v.null(),

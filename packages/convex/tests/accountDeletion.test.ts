@@ -1,7 +1,9 @@
 /// <reference types="vite/client" />
+import workosTest from "@convex-dev/workos-authkit/test";
+import { createFunctionHandle } from "convex/server";
 import { convexTest, type TestConvex } from "convex-test";
-import { afterEach, expect, test, vi } from "vitest";
-import { api, internal } from "../_generated/api";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { api, components, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 
@@ -10,9 +12,12 @@ const LEAVING = "auth_leaving";
 const STAYING = "auth_staying";
 
 const caller = vi.hoisted(() => ({ authId: "auth_leaving" }));
-const deleteUser = vi.hoisted(() => vi.fn(async (): Promise<void> => {}));
+const deleteUser = vi.hoisted(() =>
+  vi.fn(async (_authId: string): Promise<void> => {}),
+);
 
-vi.mock("../auth", () => ({
+vi.mock("../auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../auth")>()),
   authKit: {
     getAuthUser: async () => ({ id: caller.authId }),
     registerRoutes: () => undefined,
@@ -22,14 +27,7 @@ vi.mock("../auth", () => ({
 
 const modules = import.meta.glob("../**/*.ts");
 
-afterEach((): void => {
-  vi.useRealTimers();
-  vi.unstubAllEnvs();
-  vi.unstubAllGlobals();
-  deleteUser.mockClear();
-});
-
-test("a past-due account deletion removes the user and their org, a cancelled one stays", async (): Promise<void> => {
+beforeEach((): void => {
   vi.useFakeTimers();
   vi.stubEnv("BROODS_ACCOUNT_MANAGE_URL", "https://core.test");
   vi.stubEnv("ADMIN_ACCOUNT_SECRET", "secret");
@@ -37,14 +35,20 @@ test("a past-due account deletion removes the user and their org, a cancelled on
     "fetch",
     vi.fn(async (): Promise<Response> => new Response(null, { status: 204 })),
   );
+});
+
+afterEach((): void => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  deleteUser.mockReset();
+});
+
+test("a past-due account deletion removes the user and their org, a cancelled one stays", async (): Promise<void> => {
   const t = convexTest(schema, modules);
   const leaving = await seedSoleOwner(t, LEAVING);
   const staying = await seedSoleOwner(t, STAYING);
-
-  for (const authId of [LEAVING, STAYING]) {
-    caller.authId = authId;
-    await t.mutation(api.user.requestAccountDeletion, {});
-  }
+  await requestDeletion(t, [LEAVING, STAYING]);
   await t.mutation(internal.user.cancelAccountDeletion, { authId: STAYING });
 
   await sweep(t);
@@ -61,41 +65,133 @@ test("a past-due account deletion removes the user and their org, a cancelled on
   expect(await t.run(async (ctx) => ctx.db.get(staying.orgId))).not.toBe(null);
 });
 
-test("an owner of an org with other members cannot delete their account, and the sweep skips them", async (): Promise<void> => {
-  vi.useFakeTimers();
+test("a cancel that lands while the sweep runs is refused, never silently ignored", async (): Promise<void> => {
   const t = convexTest(schema, modules);
-  const owner = await seedSoleOwner(t, LEAVING);
-  await t.run(async (ctx) => {
-    const memberId = await ctx.db.insert("users", {
-      authId: STAYING,
-      email: "member@example.com",
-      name: "Member",
-      plan: "free",
-    });
-    await ctx.db.insert("orgMembers", {
-      orgId: owner.orgId,
-      userId: memberId,
-      role: "admin",
-      createdAt: Date.now(),
+  await seedSoleOwner(t, LEAVING);
+  await seedSoleOwner(t, STAYING);
+  await requestDeletion(t, [LEAVING, STAYING]);
+  const cancels: Promise<string>[] = [];
+  deleteUser.mockImplementation(async (authId: string): Promise<void> => {
+    if (authId !== LEAVING) return;
+    cancels.push(
+      t.mutation(internal.user.cancelAccountDeletion, { authId: STAYING }).then(
+        (): string => "cancelled",
+        (error: Error): string => error.message,
+      ),
+    );
+  });
+
+  vi.advanceTimersByTime(8 * DAY_MS);
+  await sweep(t);
+
+  expect(await Promise.all(cancels)).toEqual([
+    expect.stringMatching(/already started/),
+  ]);
+  expect(deleteUser.mock.calls).toEqual([[LEAVING], [STAYING]]);
+});
+
+test("an identity WorkOS no longer has is still torn down", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  const leaving = await seedSoleOwner(t, LEAVING);
+  await requestDeletion(t, [LEAVING]);
+  deleteUser.mockRejectedValueOnce(
+    Object.assign(new Error("User not found"), { name: "NotFoundException" }),
+  );
+
+  vi.advanceTimersByTime(8 * DAY_MS);
+  await sweep(t);
+
+  expect(await t.run(async (ctx) => ctx.db.get(leaving.userId))).toBe(null);
+  expect(await t.run(async (ctx) => ctx.db.get(leaving.orgId))).toBe(null);
+});
+
+test("a failed identity delete keeps the account and the next sweep retries it", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  const leaving = await seedSoleOwner(t, LEAVING);
+  await requestDeletion(t, [LEAVING]);
+  deleteUser.mockRejectedValueOnce(new Error("WorkOS unavailable"));
+
+  vi.advanceTimersByTime(8 * DAY_MS);
+  await sweep(t);
+  const kept = await t.run(async (ctx) => ctx.db.get(leaving.userId));
+  expect(kept?.workosDeletionRequestedAt).toBe(undefined);
+  expect(kept?.deletionScheduledFor).toEqual(expect.any(Number));
+
+  vi.advanceTimersByTime(DAY_MS / 24);
+  await sweep(t);
+
+  expect(deleteUser.mock.calls).toEqual([[LEAVING], [LEAVING]]);
+  expect(await t.run(async (ctx) => ctx.db.get(leaving.userId))).toBe(null);
+});
+
+test("the user.deleted webhook that follows the sweep queues no second teardown", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  workosTest.register(t);
+  await seedSoleOwner(t, LEAVING);
+  await requestDeletion(t, [LEAVING]);
+  const onEventHandle = await t.run(
+    async (): Promise<string> =>
+      await createFunctionHandle(internal.auth.authKitEvent),
+  );
+  deleteUser.mockImplementation(async (authId: string): Promise<void> => {
+    await t.mutation(components.workOSAuthKit.lib.onWebhookEvent, {
+      event: {
+        id: "event_deleted",
+        createdAt: "2026-11-03T00:00:00.000Z",
+        event: "user.deleted",
+        data: { id: authId },
+      },
+      onEventHandle: onEventHandle,
     });
   });
 
-  caller.authId = LEAVING;
-  await expect(t.mutation(api.user.requestAccountDeletion, {})).rejects.toThrow(
-    /other members/,
-  );
-
-  // A request made before this rule existed.
-  await t.run(async (ctx) =>
-    ctx.db.patch(owner.userId, { deletionScheduledFor: Date.now() }),
-  );
-  vi.advanceTimersByTime(DAY_MS);
+  vi.advanceTimersByTime(8 * DAY_MS);
   await sweep(t);
 
-  expect(deleteUser).not.toHaveBeenCalled();
-  expect(await t.run(async (ctx) => ctx.db.get(owner.userId))).not.toBe(null);
-  expect(await t.run(async (ctx) => ctx.db.get(owner.orgId))).not.toBe(null);
+  const scheduled = await t.run(async (ctx) =>
+    ctx.db.system.query("_scheduled_functions").collect(),
+  );
+  expect(
+    scheduled.filter(
+      ({ name }) => name === "org/workosUserDeletionCleanup:run",
+    ),
+  ).toHaveLength(1);
 });
+
+test("one sweep handles a bounded batch and the next one picks up the rest", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 26; index += 1) {
+      await ctx.db.insert("users", {
+        authId: `auth_${index}`,
+        email: `user${index}@example.com`,
+        name: `User ${index}`,
+        plan: "free",
+        deletionScheduledFor: Date.now(),
+      });
+    }
+  });
+
+  vi.advanceTimersByTime(DAY_MS);
+  await sweep(t);
+  expect(deleteUser).toHaveBeenCalledTimes(25);
+
+  await sweep(t);
+  expect(deleteUser).toHaveBeenCalledTimes(26);
+  expect(await t.run(async (ctx) => ctx.db.query("users").collect())).toEqual(
+    [],
+  );
+});
+
+async function requestDeletion(
+  t: TestConvex<typeof schema>,
+  authIds: string[],
+): Promise<void> {
+  for (const authId of authIds) {
+    caller.authId = authId;
+    await t.mutation(api.user.requestAccountDeletion, {});
+  }
+}
 
 async function seedSoleOwner(
   t: TestConvex<typeof schema>,
@@ -127,6 +223,6 @@ async function seedSoleOwner(
 }
 
 async function sweep(t: TestConvex<typeof schema>): Promise<void> {
-  await t.action(internal.org.workosUserDeletionCleanup.sweep, {});
+  await t.mutation(internal.org.workosUserDeletion.sweep, {});
   await t.finishAllScheduledFunctions(vi.runAllTimers);
 }
