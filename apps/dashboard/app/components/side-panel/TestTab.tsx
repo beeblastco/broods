@@ -1,6 +1,7 @@
 "use client";
 
 import { IconTooltip } from "@/app/components/IconTooltip";
+import { MARKDOWN_IMAGE_COMPONENTS } from "@/app/components/MarkdownImage";
 import type { StageDeployment } from "@/app/components/side-panel/DetailsTab";
 import {
   Collapsible,
@@ -475,6 +476,7 @@ const MessageBubble = memo(function MessageBubble({
               <Streamdown
                 // oxlint-disable-next-line react/no-array-index-key -- append-only parts, no id
                 key={`text-${index}`}
+                components={MARKDOWN_IMAGE_COMPONENTS}
                 className="min-w-0 text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_code]:whitespace-pre-wrap [&_code]:wrap-break-word [&_pre]:max-w-full [&_pre]:overflow-x-auto"
               >
                 {text}

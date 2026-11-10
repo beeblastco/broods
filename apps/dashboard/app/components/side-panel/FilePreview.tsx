@@ -3,6 +3,7 @@
 import type { CodeLanguage } from "@/app/components/side-panel/CodeEditor";
 import type { FileRecord } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { IconTooltip } from "@/app/components/IconTooltip";
+import { MARKDOWN_IMAGE_COMPONENTS } from "@/app/components/MarkdownImage";
 import { Button } from "@/app/components/ui/button";
 import { toErrorMessage } from "@/app/lib/errors";
 import { cn } from "@/app/lib/utils";
@@ -392,7 +393,10 @@ function PreviewContent({
   if (markdown) {
     return (
       <div className="h-full overflow-y-auto px-4 py-3">
-        <Streamdown className="text-sm wrap-break-word [&>*:first-child]:mt-0 [&_pre]:max-w-full [&_pre]:overflow-x-auto">
+        <Streamdown
+          components={MARKDOWN_IMAGE_COMPONENTS}
+          className="text-sm wrap-break-word [&>*:first-child]:mt-0 [&_pre]:max-w-full [&_pre]:overflow-x-auto"
+        >
           {state.content.text}
         </Streamdown>
       </div>

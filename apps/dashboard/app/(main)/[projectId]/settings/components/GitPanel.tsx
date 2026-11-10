@@ -88,6 +88,7 @@ function LinkedRepo({
   const linkRepo = useAction(api.github.linkRepo);
   const submit = useSubmit();
   const [confirming, setConfirming] = useState(false);
+  const [unlinking, setUnlinking] = useState(false);
   const branches = useRepoBranches(projectId, status);
   const [edited, setEdited] = useState<Mapping | null>(null);
   const repo = status.repo;
@@ -118,8 +119,12 @@ function LinkedRepo({
   }
 
   async function handleUnlink(): Promise<void> {
-    if (await submit.run(() => unlink({ projectId: projectId }))) {
+    setUnlinking(true);
+    try {
+      await unlink({ projectId: projectId });
       setConfirming(false);
+    } finally {
+      setUnlinking(false);
     }
   }
 
@@ -194,7 +199,7 @@ function LinkedRepo({
           verb="Unlink"
           critical={false}
           onConfirm={handleUnlink}
-          isDeleting={submit.pending}
+          isDeleting={unlinking}
         />
       )}
     </Section>

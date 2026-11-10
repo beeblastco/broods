@@ -89,7 +89,9 @@ export default function DashboardPage(): React.JSX.Element {
   const stageSession = useStageSession(projectId, activeStageId);
   const revealedKey = useQuery(
     api.agent.deployments.revealKeyForStage,
-    activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
+    activeStageId && activeTab === "api-key"
+      ? { projectId: projectId, stageId: activeStageId }
+      : "skip",
   );
   const generatedKey =
     generated && generated.endpointId === activeDeployment?.endpointId
@@ -224,6 +226,8 @@ export default function DashboardPage(): React.JSX.Element {
             projectSlug={projectSlug}
             stageSlug={stageSlug}
           />
+        ) : activeStageId && revealedKey === undefined ? (
+          <ColumnLoading />
         ) : observabilityApiKey ? (
           <p className="text-sm text-muted-foreground">
             Only an org admin can reveal the runtime key.

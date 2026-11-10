@@ -31,6 +31,8 @@ import {
 import { useMemo, useState } from "react";
 import { toErrorMessage } from "@/app/lib/errors";
 
+const SKILL_NAME = /^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/;
+
 type SkillSource = "files" | "github" | "json";
 
 type SkillsSlice = {
@@ -305,6 +307,7 @@ function GithubForm({
         githubUrl: trimmedUrl,
       });
       onSuccess(result.path);
+      setStatus({ type: "idle" });
     } catch (err) {
       const msg = toErrorMessage(err);
       if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
@@ -372,7 +375,9 @@ function JsonForm({
 }): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const createFromJson = useAction(api.skillsPublic.createFromJson);
-  const [name, setName] = useState("");
+  const existingName = existingPath?.split("/").pop() ?? "";
+  const published = SKILL_NAME.test(existingName);
+  const [name, setName] = useState(published ? existingName : "");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
   const [token, setToken] = useState(() => getSkillsBearerToken() ?? "");
@@ -381,15 +386,14 @@ function JsonForm({
     message?: string;
   }>({ type: "idle" });
 
-  const nameValid =
-    /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name) || /^[a-z0-9]$/.test(name);
+  const nameValid = SKILL_NAME.test(name);
   const canSubmit =
     nameValid &&
     description.trim() &&
     content.trim() &&
     token.trim() &&
     status.type !== "busy";
-  const isUpdate = !!existingPath || status.type === "success";
+  const isUpdate = published || status.type === "success";
 
   async function handleSubmit(): Promise<void> {
     if (!canSubmit) return;
