@@ -4,6 +4,7 @@ import {
   upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
 import type { SandboxProvider } from "../../shared/domain/sandbox-config.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
 import { DEFAULT_IDLE_TIMEOUT_SECONDS } from "../../shared/sandbox.ts";
@@ -319,14 +320,22 @@ function pump(accountId: string, sender: AccountSender): void {
   sender.ready.delete(lane);
   sender.busy = true;
   lane.sending = true;
-  void land(lane, write).then((): void => {
-    write.done.resolve();
-    sender.busy = false;
-    lane.sending = false;
-    if (lane.writes.length > 0) park(sender, lane);
-    else lanes.delete(lane.id);
-    pump(accountId, sender);
-  });
+  void land(lane, write)
+    .catch((error: unknown): void => {
+      logWarn("Sandbox mirror write failed", {
+        rowKey: lane.rowKey,
+        kind: write.kind,
+        error: toErrorMessage(error),
+      });
+    })
+    .finally((): void => {
+      write.done.resolve();
+      sender.busy = false;
+      lane.sending = false;
+      if (lane.writes.length > 0) park(sender, lane);
+      else lanes.delete(lane.id);
+      pump(accountId, sender);
+    });
 }
 
 function sendUpsert(upsert: MirrorUpsert): Promise<boolean> {
