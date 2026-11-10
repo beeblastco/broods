@@ -3,7 +3,7 @@ import {
   NODE_TEMPLATES,
   NODE_TYPE_SHORTCUTS,
 } from "@/app/components/canvas/nodeTemplates";
-import type { CopilotAction, CopilotPlan } from "@/app/lib/copilotActions";
+import { itemAction, type CopilotPlan } from "@/app/lib/copilotActions";
 import { rankItems, type SearchItem } from "@/app/lib/paletteSearch";
 import { SHORTCUTS, type ShortcutId } from "@/app/lib/shortcuts";
 
@@ -67,29 +67,6 @@ export function planFromQuery(
     planCommand(trimmed, context) ??
     planLookup(trimmed, context)
   );
-}
-
-export function itemAction(item: SearchItem): CopilotAction {
-  switch (item.target.type) {
-    case "navigate":
-      return {
-        href: item.target.href,
-        label: `Go to ${item.title}`,
-        type: "navigate",
-      };
-    case "openNode":
-      return {
-        label: `Open ${item.title}`,
-        nodeId: item.target.nodeId,
-        type: "openNode",
-      };
-    case "command":
-      return {
-        commandId: item.target.commandId,
-        label: item.title,
-        type: "command",
-      };
-  }
 }
 
 // `add mcp <name> at <url> [to <agent>]`: a server with its address, wired to an agent.

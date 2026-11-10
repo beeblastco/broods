@@ -4,7 +4,7 @@
 import { CommandPalette } from "@/app/components/CommandPalette";
 import { useCopilot } from "@/app/components/copilot/CopilotProvider";
 import { useRouteIntent } from "@/app/hooks/useRouteIntent";
-import { itemAction } from "@/app/lib/copilotIntent";
+import { itemAction } from "@/app/lib/copilotActions";
 import type { SearchItem } from "@/app/lib/paletteSearch";
 import { useCallback } from "react";
 

@@ -3,6 +3,7 @@ import {
   NODE_TYPE_SHORTCUTS,
   type NodeType,
 } from "@/app/components/canvas/nodeTemplates";
+import type { SearchItem } from "@/app/lib/paletteSearch";
 import type { ShortcutId } from "@/app/lib/shortcuts";
 
 export type CopilotTier = "safe" | "approval" | "blocked";
@@ -253,6 +254,29 @@ export function dockProposals(
 }
 
 /** The architecture change a proposal makes: the one source the canvas draws it from. */
+export function itemAction(item: SearchItem): CopilotAction {
+  switch (item.target.type) {
+    case "navigate":
+      return {
+        href: item.target.href,
+        label: `Go to ${item.title}`,
+        type: "navigate",
+      };
+    case "openNode":
+      return {
+        label: `Open ${item.title}`,
+        nodeId: item.target.nodeId,
+        type: "openNode",
+      };
+    case "command":
+      return {
+        commandId: item.target.commandId,
+        label: item.title,
+        type: "command",
+      };
+  }
+}
+
 export function proposedNodes(
   proposal: DockProposal | null,
 ): readonly ProposedNode[] {

@@ -1,30 +1,20 @@
 "use client";
 
 // Takes its rows as props, so the `/ui-gallery` fixture drives it with no Convex behind it.
-import {
-  useShortcut,
-  useShortcutRegistry,
-} from "@/app/components/ShortcutProvider";
-import {
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/app/components/ui/command";
-import {
-  rankItems,
-  type RankedGroup,
-  type SearchGroup,
-  type SearchItem,
-} from "@/app/lib/paletteSearch";
-import { formatCombo, SHORTCUTS } from "@/app/lib/shortcuts";
-import { BroodsMark } from "@/app/components/BroodsMark";
+import { useShortcut } from "@/app/components/ShortcutProvider";
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
-import { useCommandState } from "cmdk";
+import { useEverTrue } from "@/app/hooks/useEverTrue";
+import { afterLoad } from "@/app/lib/prefetch";
+import type { SearchGroup, SearchItem } from "@/app/lib/paletteSearch";
 import { Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
+
+const loadDialog = (): Promise<typeof import("./CommandPaletteDialog")> =>
+  import("./CommandPaletteDialog");
+
+const CommandPaletteDialog = lazy(() =>
+  loadDialog().then((mod) => ({ default: mod.CommandPaletteDialog })),
+);
 
 export function CommandPalette({
   items,
@@ -39,11 +29,10 @@ export function CommandPalette({
   onSelect: (item: SearchItem) => void;
   onWake?: () => void;
 }): React.JSX.Element {
-  const { activeIds, isMac } = useShortcutRegistry();
-
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [only, setOnly] = useState<SearchGroup | null>(null);
+  const wanted = useEverTrue(open);
 
   const openScoped = (group: SearchGroup | null): void => {
     onWake?.();
@@ -51,44 +40,17 @@ export function CommandPalette({
     setOnly(group);
     setOpen(true);
   };
+  const close = (): void => {
+    setQuery("");
+    setOnly(null);
+    setOpen(false);
+  };
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- warms the chunk after the load event
+  useEffect(() => afterLoad(() => void loadDialog()), []);
   useShortcut("search.open", () => (open ? setOpen(false) : openScoped(null)));
   useShortcut("project.switch", () => openScoped("Projects"));
   useShortcut("stage.switch", () => openScoped("Stages"));
-
-  const actions = useMemo(
-    () =>
-      SHORTCUTS.filter((shortcut) => activeIds.has(shortcut.id)).map(
-        (shortcut): SearchItem => ({
-          detail: formatCombo(shortcut.combos[0], isMac).join(" "),
-          group: "Actions",
-          id: `action:${shortcut.id}`,
-          keywords: [shortcut.scope, ...(shortcut.keywords ?? [])],
-          target: { commandId: shortcut.id, type: "command" },
-          title: shortcut.label,
-        }),
-      ),
-    [activeIds, isMac],
-  );
-
-  const groups = useMemo(() => {
-    const ranked = rankItems([...items, ...actions], query);
-
-    return only ? ranked.filter((group) => group.group === only) : ranked;
-  }, [actions, items, only, query]);
-
-  const select = (item: SearchItem): void => {
-    openScoped(null);
-    setOpen(false);
-    onSelect(item);
-  };
-
-  const handOff = (): void => {
-    const asked = query;
-    openScoped(null);
-    setOpen(false);
-    onAsk(asked);
-  };
 
   return (
     <>
@@ -106,86 +68,41 @@ export function CommandPalette({
         <ShortcutKeys id="search.open" className="ml-auto hidden lg:flex" />
       </button>
 
-      <CommandDialog
-        open={open}
-        onOpenChange={setOpen}
-        title="Search everything"
-        description="Find a node, a cron, a variable, a page, or run a command."
-        shouldFilter={false}
-      >
-        <CommandInput
-          value={query}
-          onValueChange={setQuery}
-          placeholder={
-            only
-              ? `Switch ${only.toLowerCase().replace(/s$/, "")}...`
-              : "Search nodes, crons, variables, pages, actions..."
+      {wanted && (
+        <Suspense
+          // Until the dialog arrives, typing lands in the query, not on a page shortcut.
+          fallback={
+            open && (
+              <input
+                // oxlint-disable-next-line jsx-a11y/no-autofocus -- the user just opened the palette
+                autoFocus
+                aria-label="Search everything"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape") return;
+                  event.preventDefault();
+                  close();
+                }}
+                className="sr-only"
+              />
+            )
           }
-        />
-        {onHighlight && (
-          <HighlightWatch groups={groups} onHighlight={onHighlight} />
-        )}
-        <CommandList>
-          {groups.length === 0 && (
-            <CommandEmpty>Nothing here matches.</CommandEmpty>
-          )}
-          {groups.map((group) => (
-            <CommandGroup key={group.group} heading={group.group}>
-              {group.items.map((item) => (
-                <CommandItem
-                  key={item.id}
-                  value={item.id}
-                  onSelect={() => select(item)}
-                >
-                  <span className="truncate">{item.title}</span>
-                  {item.detail && (
-                    <span className="ml-auto pl-2 text-2xs text-muted-foreground">
-                      {item.detail}
-                    </span>
-                  )}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          ))}
-          {query.trim() && !only && (
-            <CommandGroup heading="Ask">
-              <CommandItem value="ask-broods" onSelect={handOff}>
-                <BroodsMark className="size-3.5" />
-                <span className="truncate">
-                  Ask Broods agent: {query.trim()}
-                </span>
-              </CommandItem>
-            </CommandGroup>
-          )}
-        </CommandList>
-      </CommandDialog>
+        >
+          <CommandPaletteDialog
+            items={items}
+            only={only}
+            open={open}
+            query={query}
+            onAsk={onAsk}
+            onClose={close}
+            onHighlight={onHighlight}
+            onOpenChange={setOpen}
+            onQueryChange={setQuery}
+            onSelect={onSelect}
+          />
+        </Suspense>
+      )}
     </>
   );
-}
-
-const HIGHLIGHT_SETTLE_MS = 120;
-
-function HighlightWatch({
-  groups,
-  onHighlight,
-}: {
-  groups: readonly RankedGroup[];
-  onHighlight: (item: SearchItem) => void;
-}): null {
-  const value = useCommandState((state) => state.value);
-  const item = useMemo(
-    () =>
-      groups.flatMap((group) => group.items).find((row) => row.id === value),
-    [groups, value],
-  );
-
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- settle timer on cmdk's highlight
-  useEffect(() => {
-    if (!item) return;
-    const id = window.setTimeout(() => onHighlight(item), HIGHLIGHT_SETTLE_MS);
-
-    return () => window.clearTimeout(id);
-  }, [item, onHighlight]);
-
-  return null;
 }
