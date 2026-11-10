@@ -145,7 +145,7 @@ Each workspace has its own `AGENTS.md` with the gotchas for that folder. Read it
 
 - `bun install` at the root. Scripts live in each `package.json`.
 - Before calling a change done: the workspace's `bun run check` (types, plus lint for the dashboard) and the root `bun run format` (oxfmt). Never raw `tsc`.
-- Lint is oxlint, one `.oxlintrc.json` at the root. Root `bun run check` runs the type-aware `bun run lint:types`, and any finding fails CI.
+- Lint is oxlint, one `.oxlintrc.json` at the root. Root `bun run check` runs the type-aware `bun run lint:types`, and any lint error fails CI.
 - Convex schema or function change: `bun run --filter @broods/convex codegen` and commit the generated diff.
 - End to end without cloud: `bun run local:up`, then `bun run local:verify`.
 - React is pinned per app package, never at the root.

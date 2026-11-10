@@ -267,7 +267,7 @@ The key opens a socket for its own stage only; another stage's path answers `403
 | -------------------- | -------------------------------------------------------------------- |
 | `meta`               | `{ sessionId, taskId }`. The socket is ready                         |
 | `output`             | `{ eventId, cursor, replay, data }`. `data` is one stream part       |
-| `ack`                | A `control` input was durably accepted                               |
+| `ack`                | A `control` input, or an `execute` that queued, was durably accepted |
 | `status`             | Later state of that input, with `appliedMode` and `appliedToEventId` |
 | `attached`           | Attach accepted, with `replayFromCursor` and `replayThroughCursor`   |
 | `replay_unavailable` | The cursor cannot be resumed. Read the final result from `statusUrl` |

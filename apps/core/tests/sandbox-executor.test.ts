@@ -723,6 +723,7 @@ describe("createSandboxExecutor", () => {
 
   it("signs the log stream with the key the forwarder trims", async () => {
     const key = "Authorization=Basic dXNlcjpwYXNz";
+    const previous = process.env.OTEL_EXPORTER_OTLP_HEADERS;
     process.env.OTEL_EXPORTER_OTLP_HEADERS = `${key}\n`;
     const {
       createSandboxExecutor,
@@ -734,7 +735,8 @@ describe("createSandboxExecutor", () => {
         controlPlane: { accountId: "account-1", name: "ephemeral" },
       }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
     } finally {
-      delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
+      if (previous === undefined) delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
+      else process.env.OTEL_EXPORTER_OTLP_HEADERS = previous;
     }
 
     const stream = upsertSandboxInstanceMock.mock.calls[0]?.[5]?.logStream;
