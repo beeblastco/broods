@@ -2382,21 +2382,26 @@ export async function dispatchAppliedIngress(
       await invokeAsyncWorker(event);
     }
   } catch (error) {
-    if (error instanceof Error && error.message === WORKER_QUEUE_FULL) {
-      const owner = {
-        conversationKey: event.conversationKey,
-        ownerEventId: event.eventId,
-        ownerGeneration: next.ownerGeneration,
-      };
-      await releaseIngressOwner(owner, true);
-      throw error;
+    const owner = {
+      conversationKey: event.conversationKey,
+      ownerEventId: event.eventId,
+      ownerGeneration: next.ownerGeneration,
+    };
+    const requeued =
+      error instanceof Error &&
+      error.message === WORKER_QUEUE_FULL &&
+      (await releaseIngressOwner(owner, true).then(
+        (): boolean => true,
+        (): boolean => false,
+      ));
+    if (!requeued) {
+      await failOwnedIngress(
+        event,
+        error instanceof Error
+          ? error.message
+          : "Failed to schedule queued ingress",
+      );
     }
-    await failOwnedIngress(
-      event,
-      error instanceof Error
-        ? error.message
-        : "Failed to schedule queued ingress",
-    );
     throw error;
   }
   logInfo("Queued ingress transferred to follow-up worker", {

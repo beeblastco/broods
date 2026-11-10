@@ -6,6 +6,7 @@ import * as asyncToolResults from "../src/harness/async-tool-result.ts";
 import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
 import * as handler from "../src/harness/handler.ts";
 import * as ingress from "../src/harness/ingress.ts";
+import * as log from "../src/shared/log.ts";
 import type {
   IngressAdmission,
   IngressCandidate,
@@ -90,9 +91,10 @@ describe("queued ingress recovery", () => {
   });
 
   it.each([
-    [WORKER_QUEUE_FULL, "leaves shed work queued for the next sweep"],
-    ["worker crashed", "fails work whose dispatch broke for another reason"],
-  ])("%s: %s", async (failure: string): Promise<void> => {
+    ["leaves shed work queued for the next sweep", WORKER_QUEUE_FULL, true],
+    ["fails work whose dispatch broke otherwise", "worker crashed", true],
+    ["fails shed work when the requeue is refused", WORKER_QUEUE_FULL, false],
+  ])("%s", async (_name, failure, requeueAccepted): Promise<void> => {
     const conversationKey = scopedDirectConversationKey(
       "account_1",
       "agent_1",
@@ -120,10 +122,19 @@ describe("queued ingress recovery", () => {
     };
     const pages = [{ recovered: [recovered], continueAfter: null }];
     const writes: { name: string; args: Record<string, unknown> }[] = [];
+    const logged = spyOn(log, "logError");
+    const surfaced = (): unknown =>
+      logged.mock.calls.find(
+        (call) => call[0] === "Recovered ingress dispatch failed",
+      )?.[1]?.error;
     const spies = [
       spyOn(runtime, "mutate").mockImplementation(
         async <T>(name: string, args: unknown): Promise<T> => {
-          writes.push({ name: name, args: args as Record<string, unknown> });
+          const write = { name: name, args: args as Record<string, unknown> };
+          writes.push(write);
+          if (write.args.requeue === true && !requeueAccepted) {
+            throw new Error("ArgumentValidationError: requeue");
+          }
           if (name === "recoverQueuedIngress") {
             return (pages.shift() ?? {
               recovered: [],
@@ -135,6 +146,7 @@ describe("queued ingress recovery", () => {
         },
       ),
       spyOn(ingress, "loadAppliedIngressConfig").mockResolvedValue({}),
+      logged,
       spyOn(workerQueue, "dispatchInProcessWorker").mockImplementation(
         (): void => {
           throw new Error(failure);
@@ -153,12 +165,7 @@ describe("queued ingress recovery", () => {
     ];
     try {
       startIngressRecovery();
-      for (
-        let i = 0;
-        i < 200 &&
-        !writes.some((write) => write.name === "releaseIngressOwner");
-        i += 1
-      ) {
+      for (let i = 0; i < 200 && surfaced() === undefined; i += 1) {
         await Bun.sleep(1);
       }
 
@@ -166,7 +173,8 @@ describe("queued ingress recovery", () => {
       const released = writes.find(
         (write) => write.name === "releaseIngressOwner",
       );
-      if (failure === WORKER_QUEUE_FULL) {
+      expect(surfaced()).toBe(failure);
+      if (failure === WORKER_QUEUE_FULL && requeueAccepted) {
         expect(failed).toEqual([]);
         expect(released?.args).toEqual({
           conversationKey: conversationKey,
@@ -179,9 +187,8 @@ describe("queued ingress recovery", () => {
       expect(failed[0]?.args).toMatchObject({
         ownerEventId: "evt_queued",
         ownerGeneration: 2,
-        error: "worker crashed",
+        error: failure,
       });
-      expect(released?.args.requeue).toBeUndefined();
     } finally {
       for (const spy of spies) spy.mockRestore();
     }
