@@ -1,7 +1,7 @@
 {
   "AsyncResults": {
     "apps/core/src/harness/handler.ts": {
-      "handleAsyncWorkerRequest": "590dd886c1e4f437"
+      "handleAsyncWorkerRequest": "2dae531c79166bf0"
     },
     "apps/core/src/harness/subagents.ts": {
       "SubagentCoordinator.recordOutcome": "7c211928098b912c"
@@ -25,19 +25,19 @@
       "settleRun": "f74673d414fc78dc",
       "recordFailedFire": "36bb2309504c6e4c",
       "isLatestFire": "da7aadfec5f179bf",
-      "sweepDeadRuns": "4afd44559c362ea0",
+      "sweepDeadRuns": "d07ee26f75422da3",
       "settleAnsweredRun": "f4acad039f77253c"
     },
     "apps/core/src/harness/handler.ts": {
       "settleCronRun": "e42d96ab0ca4c897",
-      "startScheduledAgentRun": "d2b699a822ff5cf7"
+      "startScheduledAgentRun": "69f1c238a35c553b"
     }
   },
   "DevWatch": {
     "packages/broods/src/cli/dev-watch.ts": {
       "watchSource": "5f2fbe6d48ce4f1e",
-      "sourceSignature": "de8e594d7a2b34c5",
-      "collectSourceFiles": "1046ffdd914acecd"
+      "sourceSignature": "d6909e6f68af57f6",
+      "collectSourceFiles": "64606eb34f438dfe"
     }
   },
   "EscFilter": {

@@ -2,7 +2,7 @@
 
 import { cn } from "@/app/lib/utils";
 
-export interface SegmentedOption<T extends string> {
+interface SegmentedOption<T extends string> {
   id: T;
   label?: string;
   count?: number;

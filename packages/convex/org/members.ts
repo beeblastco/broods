@@ -226,7 +226,10 @@ export const updateRole = mutation({
       targetUser.authId === org.ownerAuthId &&
       role !== "owner"
     ) {
-      throw new Error("Cannot change the role of the org owner");
+      throw new ClientError(
+        "Cannot change the role of the org owner",
+        "forbidden",
+      );
     }
 
     await ctx.db.patch(membershipId, { role: role, roleId: args.roleId });
@@ -279,7 +282,7 @@ export const remove = mutation({
     const targetUser = await ctx.db.get(membership.userId);
     const org = await ctx.db.get(membership.orgId);
     if (targetUser && org && targetUser.authId === org.ownerAuthId) {
-      throw new Error("Cannot remove the org owner");
+      throw new ClientError("Cannot remove the org owner", "forbidden");
     }
 
     await ctx.db.delete(membershipId);
@@ -322,6 +325,9 @@ function assertCanTouchOwnerRole(
   role: Doc<"orgMembers">["role"] | undefined,
 ): void {
   if (role === "owner" && caller.role !== "owner") {
-    throw new Error("Only an owner can grant, change or remove the owner role");
+    throw new ClientError(
+      "Only an owner can grant, change or remove the owner role",
+      "forbidden",
+    );
   }
 }

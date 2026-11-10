@@ -43,7 +43,7 @@ export const provision = action({
     const account = await ctx.runMutation(internal.account.accounts.create, {
       orgId: args.orgId,
       username: org.slug,
-      description: `Cherry-coke org ${org.name}`,
+      description: `Broods org ${org.name}`,
       secretHash: await sha256Hex(secret),
       secretHint: keyHint(ACCOUNT_KEY_PREFIX, secret),
       secretRotatedBy: await userIdOf(ctx, identity?.subject),

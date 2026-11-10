@@ -278,7 +278,7 @@ Options:
   -n, --limit <n>       Backfill line count (default 100)
   --level <lvl>         Minimum log level DEBUG|INFO|WARN|ERROR (default: WARN)
   --all                 Show every level (DEBUG from the backfill only)
-  --json                Print the backfill as raw JSON
+  --json                Print each log line as JSON
   --sandbox <id>        Tail one sandbox instance's guest output instead. The id
                         is the last segment of the instance's log stream
                         (dashboard Instances sheet).
@@ -812,8 +812,12 @@ async function listConnections(client: BroodsAccountClient): Promise<void> {
     console.log(`${"TYPE".padEnd(16)} ACCOUNT`);
   }
   for (const connection of connections) {
+    // A newer server can list a type this CLI release does not know.
+    const label = isConnectionType(connection.type)
+      ? CONNECTION_TYPES[connection.type].label
+      : String(connection.type);
     console.log(
-      `${CONNECTION_TYPES[connection.type].label.padEnd(16)} ${connection.email ?? connection.clientId}`,
+      `${label.padEnd(16)} ${connection.email ?? connection.clientId}`,
     );
   }
   console.log(
@@ -1552,12 +1556,8 @@ async function dev(args: string[]): Promise<void> {
   await ensureDevOnboarding(args);
 
   if (hasFlag(args, "--once")) {
-    if (!process.env.BROODS_SUPPRESS_DEV_TARGET) {
-      await printDevTarget(args);
-      await warnOnOutdatedCli();
-    }
     const start = performance.now();
-    await syncDev(args);
+    await syncDev(args, !process.env.BROODS_SUPPRESS_DEV_TARGET);
     printReadyLine(performance.now() - start);
 
     return;
@@ -1573,7 +1573,8 @@ async function dev(args: string[]): Promise<void> {
     BROODS_RELOAD_ENV: "1",
   };
 
-  await printDevTarget(args);
+  const { compiled, auth } = await loadDevTarget(args);
+  printDevTarget(args, compiled, auth);
   await warnOnOutdatedCli();
 
   // Live logs like `convex dev`, retried after each sync: a new stage has none until a deploy.
@@ -2146,15 +2147,15 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
   });
 }
 
-async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
-  const compiled = await compileProject({
-    project: optionValue(args, "--project"),
-    stage: optionValue(args, "--stage"),
-    command: "dev",
-  });
-  const auth = await requireAuth(
-    optionValue(args, "--base-url") ?? compiled.config.baseUrl,
-  );
+async function syncDev(
+  args: string[],
+  showTarget: boolean,
+): Promise<RemoteManifestResponse> {
+  const { compiled, auth } = await loadDevTarget(args);
+  if (showTarget) {
+    printDevTarget(args, compiled, auth);
+    await warnOnOutdatedCli();
+  }
   const client = new BroodsSyncClient({
     baseUrl: auth.baseUrl,
     token: auth.token,
@@ -2220,11 +2221,12 @@ async function syncDevOnce(
   );
   let pruned = false;
   if (undecided.length > 0) {
+    // The server prunes every undeclared resource at once, earlier-declined ones too.
     printWarning("These remote resources are no longer declared locally:");
-    printDiffEntries(undecided);
+    printDiffEntries(deletes);
     if (
       await promptConfirm(
-        `Delete ${undecided.length} resource(s) from ${manifest.project}/${manifest.stage}?`,
+        `Delete all ${deletes.length} resource(s) from ${manifest.project}/${manifest.stage}?`,
       )
     ) {
       result = await client.putManifest(
@@ -2397,16 +2399,28 @@ function namesInState(refs: EnvRef[], state: EnvRefState): string[] {
     .map((ref): string => ref.name);
 }
 
-async function printDevTarget(args: string[]): Promise<void> {
-  const runtime = loadBroodsRuntimeConfig();
-  const { manifest, config } = await compileProject({
+async function loadDevTarget(args: string[]): Promise<{
+  compiled: Awaited<ReturnType<typeof compileProject>>;
+  auth: Awaited<ReturnType<typeof requireAuth>>;
+}> {
+  const compiled = await compileProject({
     project: optionValue(args, "--project"),
     stage: optionValue(args, "--stage"),
     command: "dev",
   });
   const auth = await requireAuth(
-    optionValue(args, "--base-url") ?? config.baseUrl,
+    optionValue(args, "--base-url") ?? compiled.config.baseUrl,
   );
+
+  return { compiled: compiled, auth: auth };
+}
+
+function printDevTarget(
+  args: string[],
+  { manifest, config }: Awaited<ReturnType<typeof compileProject>>,
+  auth: Awaited<ReturnType<typeof requireAuth>>,
+): void {
+  const runtime = loadBroodsRuntimeConfig();
   printDeploymentTarget({
     project: manifest.project,
     stage: manifest.stage,
@@ -2796,7 +2810,8 @@ async function logs(args: string[]): Promise<void> {
   const onSigint = (): void => controller.abort();
   process.on("SIGINT", onSigint);
 
-  console.log(
+  // stderr under --json, so stdout carries only entries.
+  (jsonMode ? console.error : console.log)(
     `Logs for ${project}/${stage}` +
       (sandboxId ? ` sandbox ${sandboxId}` : "") +
       ` [${minLevel}+]` +
@@ -3320,7 +3335,7 @@ async function writeLocalEnvDefaults(options: {
   };
   const lines = current
     ? current.replace(/\n?$/, "\n").split(/\n/)
-    : ["# Local broods CLI settings. Tokens are stored outside the repo."];
+    : ["# Local broods settings and stage keys. Keep this file out of git."];
   let changed = false;
 
   for (const [key, value] of Object.entries(nextValues)) {
@@ -3346,7 +3361,7 @@ async function writeEnvValue(key: string, value: string): Promise<void> {
   const current = await readTextIfExists(path);
   const lines = current
     ? current.replace(/\n?$/, "\n").split(/\n/)
-    : ["# Local broods CLI settings. Tokens are stored outside the repo."];
+    : ["# Local broods settings and stage keys. Keep this file out of git."];
   const index = lines.findIndex((line): boolean =>
     line.trim().startsWith(`${key}=`),
   );
@@ -3414,9 +3429,9 @@ function starterAgent(): string {
     `    system: "You are a helpful assistant.",\n` +
     `  },\n` +
     `  sandboxes: [lambdaSandbox],\n` +
-    `  // Expose the public runtime endpoint (SSE/WebSocket) so the runtime key and\n` +
-    `  // \`broods run\` can reach this agent. Off by default: a private agent is\n` +
-    `  // only reachable via internal endpoints or channel webhooks.\n` +
+    `  // Expose the public runtime endpoint (SSE/WebSocket) so the runtime key can\n` +
+    `  // reach this agent. Off by default: a private agent is only reachable via\n` +
+    `  // internal endpoints, channel webhooks or \`broods run\`.\n` +
     `  publicAccess: true,\n` +
     `});\n`
   );

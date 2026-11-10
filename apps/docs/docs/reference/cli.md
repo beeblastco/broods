@@ -30,10 +30,13 @@ Next
 
 Commands
   Develop   dev  diff  run  logs  stream
-  Ship      deploy  env  stage
-  Inspect   agent  trace  whoami
-  Account   login  org  project
+  Ship      deploy  env  stage  github
+  Inspect   agent  runs  trace  audit  usage  whoami
+  Account   login  connect  disconnect  org  project
   Tools     init  machine  mcp  update
+
+Usage: broods <command> [options]    -h, --help    -v, --version
+Run `broods <command> --help` for a command's flags.
 ```
 
 Help does not apply `defineBroods` project or stage settings, because it never loads your `broods/` code. `broods whoami` and the commands themselves do.
@@ -121,7 +124,7 @@ Signs an external account in through the browser and keeps it on your deployment
 broods connect [chatgpt]
 ```
 
-It uses the account key in `BROODS_ACCOUNT_SECRET` when set, otherwise your `broods login`. `chatgpt` works on self-hosted deployments, and on the managed service when the deployment sets `CHATGPT_PLAN_ENABLED=true`.
+It uses the account key in `BROODS_ACCOUNT_SECRET` when set, otherwise your `broods login`. `chatgpt` works on self-hosted deployments, and on the managed service when the deployment enables it.
 
 ## disconnect
 
@@ -265,7 +268,7 @@ echo "$VALUE" | broods env set SOME_NAME
 1 referenced variable(s) live only on demo-app/production: SLACK_SIGNING_SECRET
 ```
 
-The stage stores a SHA-256 digest next to each value, so `sync` and `diff` compare without revealing secrets. A project key can set and list variables but not read them.
+The stage answers a SHA-256 of each value on request, so `sync` and `diff` compare without the CLI reading secrets. A project key can set and list variables but not read them.
 
 ## run
 
@@ -308,7 +311,7 @@ broods logs [-n <n>] [--level <lvl>] [--all] [--json] [--sandbox <id>]
 | `-n`, `--limit`  | Backfill line count. Default 100                                                                      |
 | `--level <lvl>`  | Minimum level, `DEBUG`, `INFO`, `WARN` or `ERROR`. Default `WARN`                                     |
 | `--all`          | Every level. DEBUG comes from the backfill only                                                       |
-| `--json`         | Print the backfill as raw JSON                                                                        |
+| `--json`         | Print each log line as JSON                                                                           |
 | `--sandbox <id>` | Tail one sandbox instance's guest output instead. The id is the UUID in the dashboard Instances sheet |
 
 The CLI trades your login token for a 15-minute stage session ticket and refreshes it on reconnect. The runtime key in `BROODS_API_KEY` cannot open logs, because logs carry every end user's chats. Code hook `console.*` lines appear here too, tagged `source: "user-code"`.

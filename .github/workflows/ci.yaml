@@ -349,7 +349,7 @@ jobs:
     env:
       NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL || 'https://example.convex.cloud' }}
       NEXT_PUBLIC_WORKOS_REDIRECT_URI: http://localhost:3000/auth/callback
-      NEXT_PUBLIC_BROODS_BASE_URL: https://gateway.broods.app
+      NEXT_PUBLIC_BROODS_BASE_URL: ${{ vars.NEXT_PUBLIC_BROODS_BASE_URL || 'https://gateway.broods.app' }}
       WORKOS_REDIRECT_URI: http://localhost:3000/auth/callback
     steps:
       - name: Checkout repository

@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { Daytona, type Sandbox } from "@daytona/sdk";
 import { optionalEnv } from "../../shared/env.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
+import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
@@ -114,8 +116,17 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       };
     } finally {
       if (!persistent) {
-        await sandbox.delete();
-        endMeter?.();
+        waitUntil(
+          sandbox.delete().then(
+            (): void => endMeter?.(),
+            (error: unknown): void => {
+              logWarn("daytona sandbox delete failed", {
+                sandboxId: sandbox.id,
+                error: toErrorMessage(error),
+              });
+            },
+          ),
+        );
       }
     }
   }

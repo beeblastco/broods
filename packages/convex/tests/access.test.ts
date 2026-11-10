@@ -775,3 +775,179 @@ test("access:write and members:write may not drop a deny by switching it to audi
   expect(stored?.document.mode).toBe("enforce");
   expect(stored?.document.rules).toHaveLength(1);
 });
+
+test("a rule may scope only to the caller's own projects and stages", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  const seeded = await t.run(
+    async (
+      ctx,
+    ): Promise<{
+      ownProject: Id<"projects">;
+      ownStage: Id<"stages">;
+      foreignProject: Id<"projects">;
+      foreignStage: Id<"stages">;
+    }> => {
+      const now = Date.now();
+      const org = async (slug: string, authId: string): Promise<Id<"orgs">> => {
+        const orgId = await ctx.db.insert("orgs", {
+          name: slug,
+          slug: slug,
+          ownerAuthId: authId,
+          plan: "free",
+          createdAt: now,
+        });
+        const userId = await ctx.db.insert("users", {
+          authId: authId,
+          email: `${authId}@example.com`,
+          name: authId,
+          plan: "free",
+          activeOrgId: orgId,
+        });
+        await ctx.db.insert("orgMembers", {
+          orgId: orgId,
+          userId: userId,
+          role: "owner",
+          createdAt: now,
+        });
+        await ctx.db.insert("accounts", {
+          orgId: orgId,
+          username: slug,
+          secretHash: `hash-${slug}`,
+          status: "active",
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        return orgId;
+      };
+      const project = async (
+        orgId: Id<"orgs">,
+        name: string,
+      ): Promise<[Id<"projects">, Id<"stages">]> => {
+        const projectId = await ctx.db.insert("projects", {
+          authId: "auth_owner",
+          orgId: orgId,
+          name: name,
+          slug: name,
+          updatedAt: now,
+        });
+        const stageId = await ctx.db.insert("stages", {
+          authId: "auth_owner",
+          projectId: projectId,
+          name: "Production",
+          kind: "production",
+          isDefault: true,
+          updatedAt: now,
+        });
+
+        return [projectId, stageId];
+      };
+      const [ownProject, ownStage] = await project(
+        await org("beeblast", "auth_owner"),
+        "mine",
+      );
+      const [foreignProject, foreignStage] = await project(
+        await org("elsewhere", "auth_other"),
+        "theirs",
+      );
+
+      return {
+        ownProject: ownProject,
+        ownStage: ownStage,
+        foreignProject: foreignProject,
+        foreignStage: foreignStage,
+      };
+    },
+  );
+
+  currentAuthId = "auth_owner";
+  const policyId = await t.mutation(api.access.createPolicy, {
+    name: "Tools",
+    mode: "enforce",
+  });
+  for (const scope of [
+    { projectId: seeded.foreignProject },
+    { stageId: seeded.foreignStage },
+    { projectId: seeded.ownProject, stageId: seeded.foreignStage },
+  ]) {
+    await expect(
+      t.mutation(api.access.addRule, {
+        policyId: policyId,
+        permission: "tool.call",
+        scope: scope,
+      }),
+    ).rejects.toThrow(/not found/);
+  }
+  await t.mutation(api.access.addRule, {
+    policyId: policyId,
+    permission: "tool.call",
+    scope: { projectId: seeded.ownProject, stageId: seeded.ownStage },
+  });
+
+  const [listed] = await t.query(api.access.listPolicies, {});
+  expect(listed?.rules.map((rule) => rule.scope)).toEqual([
+    "stage mine / Production",
+  ]);
+});
+
+test("a renamed role or policy keeps the names creating one allows", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  await t.run(async (ctx): Promise<void> => {
+    const now = Date.now();
+    const orgId = await ctx.db.insert("orgs", {
+      name: "beeblast",
+      slug: "beeblast",
+      ownerAuthId: "auth_owner",
+      plan: "free",
+      createdAt: now,
+    });
+    const userId = await ctx.db.insert("users", {
+      authId: "auth_owner",
+      email: "owner@example.com",
+      name: "Owner",
+      plan: "free",
+      activeOrgId: orgId,
+    });
+    await ctx.db.insert("orgMembers", {
+      orgId: orgId,
+      userId: userId,
+      role: "owner",
+      createdAt: now,
+    });
+    await ctx.db.insert("accounts", {
+      orgId: orgId,
+      username: "beeblast",
+      secretHash: "hash-beeblast",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+
+  currentAuthId = "auth_owner";
+  const policyId = await t.mutation(api.access.createPolicy, {
+    name: "Ops",
+    mode: "audit",
+  });
+  const roleId = await t.mutation(api.access.createRole, {
+    name: "Engineer",
+    policyIds: [policyId],
+  });
+
+  await expect(
+    t.mutation(api.access.updatePolicy, { policyId: policyId, name: "  " }),
+  ).rejects.toThrow("A policy needs a name");
+  await expect(
+    t.mutation(api.access.updateRole, { roleId: roleId, name: " " }),
+  ).rejects.toThrow("A role needs a name");
+  await expect(
+    t.mutation(api.access.updateRole, { roleId: roleId, name: "Owner" }),
+  ).rejects.toThrow("Owner is a built-in role");
+  await t.mutation(api.access.updateRole, { roleId: roleId, name: " SRE " });
+
+  expect(
+    (await t.query(api.access.listRoles, {})).find(
+      (role) => role.kind === "custom",
+    )?.name,
+  ).toBe("SRE");
+});
