@@ -32,6 +32,13 @@ const DISCORD_FETCH_TIMEOUT_MS = 30_000;
 // Discord caps content at 2000; the margin covers markdown the SDK rewrites on the way out.
 const DISCORD_TEXT_LIMIT = 1900;
 
+const DISCORD_RATE_LIMIT_TRIES = 4;
+
+const DISCORD_RATE_LIMIT_MAX_WAIT_MS = 10_000;
+
+// The SDK throws on any non-OK status, so a 429 is read back from its error text.
+const DISCORD_RATE_LIMIT_ERROR = /API error: 429 .*"retry_after":\s*([\d.]+)/s;
+
 // Format 3 is Lottie, a JSON animation with no raster form, so it is absent.
 const DISCORD_STICKER_EXTENSIONS: Record<number, string | undefined> = {
   1: "png",
@@ -138,8 +145,26 @@ export interface DiscordSource {
 // `integrations.ts` must scope the tenant before the SDK's `handleWebhook` could run, so this
 // subclass only exposes the protected hooks it needs and guards a tenant `apiUrl`.
 class BroodsDiscordAdapter extends DiscordAdapter {
+  protected override discordFetch(
+    path: string,
+    method: string,
+    body?: unknown,
+  ): Promise<Response> {
+    return retryRateLimited(() => this.discordFetchOnce(path, method, body));
+  }
+
+  protected override discordInteractionFetch(
+    path: string,
+    method: string,
+    body?: unknown,
+  ): Promise<Response> {
+    return retryRateLimited(() =>
+      super.discordInteractionFetch(path, method, body),
+    );
+  }
+
   // A tenant `apiUrl` gets the bot token only pinned to a checked public address.
-  protected override async discordFetch(
+  private async discordFetchOnce(
     path: string,
     method: string,
     body?: unknown,
@@ -501,7 +526,9 @@ function createDiscordActions(
     },
 
     sendText: async function (text) {
-      for (const chunk of chunkChannelText(text, DISCORD_TEXT_LIMIT)) {
+      for (const chunk of chunkChannelText(text, DISCORD_TEXT_LIMIT, {
+        markdown: true,
+      })) {
         await sendChunk(chunk);
       }
     },
@@ -860,6 +887,27 @@ function parseForwardedGatewayEvent(
       source: { ...source },
     },
   };
+}
+
+async function retryRateLimited(
+  send: () => Promise<Response>,
+): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await send();
+    } catch (err) {
+      const retryAfter =
+        err instanceof Error
+          ? DISCORD_RATE_LIMIT_ERROR.exec(err.message)?.[1]
+          : undefined;
+      if (!retryAfter || attempt >= DISCORD_RATE_LIMIT_TRIES) {
+        throw err;
+      }
+      await Bun.sleep(
+        Math.min(Number(retryAfter) * 1000, DISCORD_RATE_LIMIT_MAX_WAIT_MS),
+      );
+    }
+  }
 }
 
 function toDiscordGatewayThread(

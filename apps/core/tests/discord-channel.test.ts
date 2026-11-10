@@ -607,9 +607,22 @@ describe("discord channel adapter", () => {
     expect(contents.every((content) => content.length <= 2000)).toBe(true);
     expect(contents.join("")).toBe(answer);
   });
+
+  it("waits out Discord's rate limit and still delivers every piece", async () => {
+    const answer = `${"word ".repeat(1200)}\n\nTrace: https://broods.test/t/1`;
+    const sent = await sendSlashCommandReplies([answer], new Set([2, 3]));
+    const delivered = sent.filter((line) => !line.startsWith("429"));
+
+    expect(sent.filter((line) => line.startsWith("429"))).toHaveLength(2);
+    expect(delivered).toHaveLength(4);
+    expect(delivered.at(-1)).toEndWith("Trace: https://broods.test/t/1");
+  });
 });
 
-async function sendSlashCommandReplies(texts: string[]): Promise<string[]> {
+async function sendSlashCommandReplies(
+  texts: string[],
+  rateLimitedCalls: Set<number> = new Set(),
+): Promise<string[]> {
   const sent: string[] = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = Object.assign(
@@ -621,9 +634,20 @@ async function sendSlashCommandReplies(texts: string[]): Promise<string[]> {
       const body = JSON.parse(requestBodyText(init?.body)) as {
         content: string;
       };
-      sent.push(
-        `${init?.method} ${url.pathname.replace(/^\/api(\/v10)?/, "")}${url.search} ${body.content}`,
-      );
+      const line = `${init?.method} ${url.pathname.replace(/^\/api(\/v10)?/, "")}${url.search} ${body.content}`;
+      if (rateLimitedCalls.has(sent.length)) {
+        sent.push(`429 ${line}`);
+
+        return Response.json(
+          {
+            message: "You are being rate limited.",
+            retry_after: 0.01,
+            global: false,
+          },
+          { status: 429 },
+        );
+      }
+      sent.push(line);
 
       return Response.json({ id: `message-${sent.length}` });
     },

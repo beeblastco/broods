@@ -445,7 +445,7 @@ describe("discord channel actions", () => {
       fetchMock.calls
         .slice(0, 2)
         .map((call) => JSON.parse(requestBodyText(call.init?.body)).content)
-        .join(""),
+        .join(" "),
     ).toBe(text);
 
     expect(requestUrl(fetchMock.calls[2]!.input)).toBe(
