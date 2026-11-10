@@ -284,7 +284,7 @@ export const listPolicies = query({
     const caller = await getActiveCaller(ctx);
     if (!caller) return [];
     const policies = await accountPolicies(ctx, caller.account._id);
-    const names = await scopeNames(ctx, caller.account.orgId, policies);
+    const names = await scopeNames(ctx, orgIdOf(ctx, caller.account), policies);
     const creators = await actorsOf(
       ctx,
       policies.map((policy) => policy.createdBy),
