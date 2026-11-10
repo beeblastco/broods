@@ -19,6 +19,9 @@ import {
 const WINDOW_MS = 60_000;
 // Usage landing inside this TTL can take an account a little past its budget, never far.
 const BUDGET_TTL_MS = 30_000;
+// One write per account and source every few seconds: a Convex write costs the same CPU
+// whatever it adds, and parallel writes on one account collide on its usage rows.
+const USAGE_FLUSH_MS = 5_000;
 
 export interface PlanRefusal {
   kind: "budget" | "rate";
@@ -45,9 +48,26 @@ interface CachedBudget {
   expiresAt: number;
 }
 
+type MeterUsage = Parameters<Storage["budgets"]["record"]>[1];
+
+interface PendingUsage {
+  usage: MeterUsage;
+  source: UsageSource | undefined;
+}
+
+interface ScheduledFlush {
+  timer: ReturnType<typeof setTimeout>;
+  settle: (flush: Promise<void>) => void;
+}
+
 // Exact only while core is a single replica (apps/core AGENTS.md); two would double the burst.
 const windows = new Map<string, AccountWindow>();
 const budgets = new Map<string, CachedBudget>();
+// Per account, then per source.
+const pendingUsage = new Map<string, Map<string, PendingUsage>>();
+let scheduledFlush: ScheduledFlush | null = null;
+// Each account's last queued write: its next one waits for it, other accounts do not.
+const accountWrites = new Map<string, Promise<void>>();
 
 export async function admitRun(
   accountId: string,
@@ -119,17 +139,57 @@ export function planRefusalText(refusal: PlanRefusal): string {
     : `${refusal.message} Try again in ${refusal.retryAfterSeconds} seconds.`;
 }
 
+export async function flushUsage(): Promise<void> {
+  const due = scheduledFlush;
+  scheduledFlush = null;
+  if (due) clearTimeout(due.timer);
+  const written = Promise.all(
+    [...pendingUsage.keys()].map(queueAccountWrite),
+  ).then((): void => {});
+  due?.settle(written);
+  await written;
+}
+
 export function recordUsage(
   accountId: string,
-  usage: Parameters<Storage["budgets"]["record"]>[1],
+  usage: MeterUsage,
   source?: UsageSource,
 ): void {
-  waitUntil(getStorage().budgets.record(accountId, usage, source));
+  const sources =
+    pendingUsage.get(accountId) ?? new Map<string, PendingUsage>();
+  pendingUsage.set(accountId, sources);
+  const key = JSON.stringify([
+    source?.projectId,
+    source?.agentId,
+    source?.workspaceId,
+  ]);
+  const pending = sources.get(key);
+  if (pending) {
+    for (const field of Object.keys(usage) as (keyof MeterUsage)[]) {
+      pending.usage[field] = (pending.usage[field] ?? 0) + (usage[field] ?? 0);
+    }
+  } else {
+    sources.set(key, { usage: { ...usage }, source: source });
+  }
+  if (scheduledFlush) return;
+  const flushed = Promise.withResolvers<void>();
+  scheduledFlush = {
+    timer: setTimeout((): void => void flushUsage(), USAGE_FLUSH_MS),
+    settle: flushed.resolve,
+  };
+  waitUntil(flushed.promise);
 }
 
 export function resetPlanLimitsForTests(): void {
   windows.clear();
   budgets.clear();
+  pendingUsage.clear();
+  if (scheduledFlush) {
+    clearTimeout(scheduledFlush.timer);
+    scheduledFlush.settle(Promise.resolve());
+    scheduledFlush = null;
+  }
+  accountWrites.clear();
 }
 
 // Fails open: a cost ceiling, not an auth check, and a run stalls without Convex anyway.
@@ -211,4 +271,35 @@ function currentWindow(
   if (open) windows.set(accountId, fresh);
 
   return fresh;
+}
+
+// One account's sources share its usage rows in Convex, so its writes go one after another. A
+// write takes what is waiting when its turn comes, so a slow Convex gets bigger writes, not more.
+function queueAccountWrite(accountId: string): Promise<void> {
+  const written = (accountWrites.get(accountId) ?? Promise.resolve())
+    .then(async (): Promise<void> => {
+      const sources = pendingUsage.get(accountId);
+      pendingUsage.delete(accountId);
+      for (const pending of sources?.values() ?? []) {
+        await getStorage().budgets.record(
+          accountId,
+          pending.usage,
+          pending.source,
+        );
+      }
+    })
+    .catch((err: unknown): void => {
+      logWarn("Usage flush failed", {
+        accountId: accountId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    })
+    .finally((): void => {
+      if (accountWrites.get(accountId) === written) {
+        accountWrites.delete(accountId);
+      }
+    });
+  accountWrites.set(accountId, written);
+
+  return written;
 }
