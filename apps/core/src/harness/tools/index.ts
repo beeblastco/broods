@@ -13,7 +13,10 @@ import {
   type AgentToolConfig,
 } from "../../shared/domain/agent-config.ts";
 import type { Tool as RemoteMcpTool } from "@modelcontextprotocol/client";
-import type { McpRecord } from "../../shared/domain/mcp.ts";
+import {
+  authorizationHeaderName,
+  type McpRecord,
+} from "../../shared/domain/mcp.ts";
 import { workspaceMemoryHarnessEnabled } from "../../shared/domain/workspace-config.ts";
 import { logWarn } from "../../shared/log.ts";
 import { publicConversationKeyFromScoped } from "../../shared/runtime-keys.ts";
@@ -35,7 +38,7 @@ import {
   mcpConnection,
   type McpConnection,
 } from "../mcp/client.ts";
-import { mcpTools } from "../mcp/mcp.tool.ts";
+import { mcpSignInTool, mcpToolName, mcpTools } from "../mcp/mcp.tool.ts";
 import { sandboxMcpTarget } from "../mcp/sandbox.ts";
 import askQuestionsTool from "./ask-questions.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
@@ -86,6 +89,8 @@ import messageAgentsTool from "./message-agents.tool.ts";
 import stopSubagentTool from "./stop-subagent.tool.ts";
 import writeTool from "./write.tool.ts";
 
+const MCP_AUTH_FAILURE_PATTERN =
+  /\b401\b|requires authorization|sign in again|has no connection/i;
 interface ResolvedMcpServer {
   serverId: string;
   serverConfig: AgentMcpEntry;
@@ -459,11 +464,31 @@ async function registerMcpTools(
               : undefined,
           );
         } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
           logWarn("MCP server tool listing failed; skipping its tools", {
             serverId: serverId,
             serverName: record.name,
-            error: error instanceof Error ? error.message : String(error),
+            error: message,
           });
+          if (
+            record.transport === "http" &&
+            !record.oauth &&
+            !authorizationHeaderName(record.headers) &&
+            MCP_AUTH_FAILURE_PATTERN.test(message)
+          ) {
+            // Owner only: an account key started the run and its reply stays off channels.
+            const session = context.session;
+            const requester = session?.principal?.chain?.[0];
+            tools[mcpToolName(record.name, "sign_in")] = mcpSignInTool(
+              record,
+              requester?.kind === "api" &&
+                requester.keyKind === "account" &&
+                !context.channel &&
+                session?.delivery?.kind !== "channel" &&
+                session?.policyDelivery?.kind !== "channel",
+            );
+          }
 
           return null;
         }

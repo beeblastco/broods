@@ -41,7 +41,7 @@ When the user hands you a trace id, or a prompt copied from the dashboard's Trac
 
 ## When the CLI has no command
 
-Crons, skills, sandboxes, policies, roles, channels, and hooks have no CLI verb. Prefer changing them in the project definition and syncing. Hooks have no MCP tool either, so they go through the project definition only. For one-off reads and operations a manifest cannot say, use the MCP server. `claude mcp add broods -- broods mcp` adds it, and its tool names mirror the SDK: `list-agents`, `create-cron`, `update-agent`, and so on. For scoped automation credentials, read the roles section of https://docs.broods.app/guides/security.
+Crons, skills, sandboxes, policies, roles, channels, and hooks have no CLI verb. Prefer changing them in the project definition and syncing. Hooks have no MCP tool either, so they go through the project definition only. For one-off reads and operations a manifest cannot say, use the MCP server. `claude mcp add broods -- broods mcp` adds it, and it has one tool per verb across resources: `list-resources`, `get-resource`, `create-resource`, `update-resource`, `delete-resource`, each taking a `resource` such as `agent` or `cron`. For scoped automation credentials, read the roles section of https://docs.broods.app/guides/security.
 
 ## Rules that keep you out of trouble
 

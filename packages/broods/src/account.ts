@@ -268,6 +268,8 @@ export type McpRuntime = "auto" | "lambda";
 
 export interface AccountMcp {
   accountId: string;
+  /** True once a person signed in through `/v1/mcp-connections/{serverId}`. */
+  connected?: boolean;
   serverId: string;
   projectId: string;
   stageId: string;

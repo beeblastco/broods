@@ -1448,6 +1448,43 @@ describe("connected MCP servers", () => {
     expect(disabled).toEqual({});
   });
 
+  it("offers a sign-in tool for a remote server that answers 401, never for a hosted one", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    setMcpForTests({
+      listTools: async function () {
+        throw new Error("HTTP 401 Unauthorized");
+      },
+    });
+    const tools = async (record: McpRecord): Promise<string[]> => {
+      setStorageForTests(storageWithMcp(record));
+
+      return Object.keys(
+        await createTools(createToolContext(), { mcp: { [serverId]: {} } }),
+      );
+    };
+
+    expect(await tools(mcpRecord())).toEqual(["search__sign_in"]);
+    // No account key started this run, so the tool hands out no link and names no route.
+    setStorageForTests(storageWithMcp(mcpRecord()));
+    const offered = await createTools(createToolContext(), {
+      mcp: { [serverId]: {} },
+    });
+    const told = await (
+      offered.search__sign_in as unknown as ChannelTestTool
+    ).execute({}, {} as never);
+    expect(told).toContain("the owner of this agent has to connect it");
+    expect(told).not.toContain("/v1/");
+    expect(
+      await tools(
+        mcpRecord({
+          transport: "hosted",
+          url: undefined,
+          sha256: "a".repeat(64),
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   it("surfaces an isError tool result as a thrown error", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     setStorageForTests(storageWithMcp(mcpRecord()));
@@ -1786,6 +1823,10 @@ function storageWithMcp(record: McpRecord): Storage {
       removeAllForAccount: async function (): Promise<number> {
         return 0;
       },
+      loadConnection: async (): Promise<null> => null,
+      setConnection: async (): Promise<boolean> => false,
+      saveRefreshedConnection: async (): Promise<boolean> => false,
+      disconnect: async (): Promise<boolean> => false,
     },
   };
 }

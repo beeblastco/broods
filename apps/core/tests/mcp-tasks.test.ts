@@ -3,7 +3,7 @@
  * task updates and cancels replay through core's own run routes.
  */
 
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { TASKS_EXTENSION_ID_V2 } from "@modelcontextprotocol/ext-tasks/core/v2";
 import type { AuthContext } from "../src/shared/auth.ts";
 import * as authModule from "../src/shared/auth.ts";
@@ -68,6 +68,19 @@ await mock.module("../src/shared/convex/runtime.ts", () => ({
 const { handleMcpRequest, taskFromRuns } =
   await import("../src/harness/mcp-tasks.ts");
 
+beforeEach((): void => {
+  setStorageForTests({
+    agents: {
+      listForAccount: async (): Promise<AgentRecord[]> => [
+        agent("agent_1", true),
+      ],
+      listForEndpoint: async (): Promise<AgentRecord[]> => [
+        agent("agent_1", true),
+      ],
+    },
+  } as StorageStubs as Storage);
+});
+
 afterEach((): void => {
   stops.length = 0;
   approvalReplies.clear();
@@ -83,11 +96,17 @@ describe("taskFromRuns", () => {
       expect(at({ status: status }).status).toBe("working");
     }
     expect(at({ status: "completed" })).toMatchObject({
-      result: { content: [{ type: "text", text: "" }], isError: false },
+      result: {
+        content: [{ type: "text", text: "" }, { type: "text" }],
+        isError: false,
+      },
     });
     expect(at({ status: "completed", response: "done" })).toMatchObject({
       status: "completed",
-      result: { content: [{ type: "text", text: "done" }], isError: false },
+      result: {
+        content: [{ type: "text", text: "done" }, { type: "text" }],
+        isError: false,
+      },
     });
     expect(at({ status: "failed", error: "boom" })).toMatchObject({
       status: "completed",
@@ -203,17 +222,258 @@ describe("handleMcpRequest", () => {
     expect(await names("frontend")).toEqual(["public"]);
   });
 
-  it("refuses a tool call from a client that does not declare tasks", async () => {
-    const { error } = await rpc(
+  it("names tools for agents, and apart when an account repeats a name", async () => {
+    const named = (agentId: string, name: string): AgentRecord => ({
+      ...agent(agentId, true),
+      name: name,
+    });
+    setStorageForTests({
+      agents: {
+        listForAccount: async (): Promise<AgentRecord[]> => [
+          named("id_aaaaaa", "Support Bot"),
+          named("id_bbbbbb", "dup"),
+          named("id_cccccc", "dup"),
+        ],
+      },
+    } as StorageStubs as Storage);
+    const { result } = await rpc(mcpRequest("tools/list", {}), replayOf({}));
+
+    expect(
+      (result as { tools: { name: string }[] }).tools.map(({ name }) => name),
+    ).toEqual(["support_bot", "dup_bbbbbb", "dup_cccccc"]);
+  });
+
+  it("tells a caller holding a renamed agent's old tool name the current names", async () => {
+    setStorageForTests({
+      agents: {
+        listForAccount: async (): Promise<AgentRecord[]> => [
+          { ...agent("agent_1", true), name: "help-desk" },
+        ],
+      },
+    } as StorageStubs as Storage);
+    const old = await rpc(
+      mcpRequest("tools/call", {
+        name: "support-bot",
+        arguments: { prompt: "hi" },
+      }),
+      replayOf({}),
+    );
+
+    expect(JSON.stringify(old.error)).toContain(
+      "it may have been renamed. Current tools: help-desk.",
+    );
+  });
+
+  it("answers directly when the client does not declare tasks", async () => {
+    const replay = replayOf({
+      run_1: run({
+        runId: "run_1",
+        status: "completed",
+        response: "done",
+        conversationKey: "conv_1",
+      }),
+    });
+    const { result } = await rpc(
       mcpRequest(
         "tools/call",
         { name: "agent_1", arguments: { prompt: "hi" } },
         { capabilities: {} },
       ),
+      replay,
+    );
+
+    expect(result).toMatchObject({
+      resultType: "complete",
+      isError: false,
+      content: [{ text: "done" }, { text: expect.stringContaining("conv_1") }],
+    });
+  });
+
+  it("hands back the run id when a read fails after the run started", async () => {
+    const replay = replayOf({});
+    const { result } = await rpc(
+      mcpRequest(
+        "tools/call",
+        { name: "agent_1", arguments: { prompt: "hi" } },
+        { capabilities: {} },
+      ),
+      {
+        ...replay,
+        replay: async (request): Promise<Response> =>
+          request.method === "POST"
+            ? await replay.replay(request)
+            : Response.json({ error: { message: "down" } }, { status: 503 }),
+      },
+    );
+
+    expect(replay.posts).toHaveLength(1);
+    expect(JSON.stringify(result)).toContain('runId \\"run_1\\"');
+  });
+
+  it("refuses answers that leave a question of the prompt open", async () => {
+    const replay = replayOf({
+      run_1: run({
+        runId: "run_1",
+        status: "awaiting_input",
+        questions: [
+          {
+            statusId: "status_1",
+            answerBy: "2026-11-10T00:00:00.000Z",
+            questions: ["color", "size"].map((id) => ({
+              id: id,
+              header: id,
+              question: `Which ${id}?`,
+              options: [{ label: "A" }],
+            })),
+          },
+        ],
+      }),
+    });
+    const { result } = await rpc(
+      mcpRequest(
+        "tools/call",
+        {
+          name: "continue_run",
+          arguments: { runId: "run_1", answers: { color: "A" } },
+        },
+        { capabilities: {} },
+      ),
+      replay,
+    );
+
+    expect(result).toMatchObject({
+      isError: true,
+      content: [{ text: "Answer these questions too: size" }],
+    });
+    expect(replay.posts).toHaveLength(0);
+  });
+
+  it("lists continue_run only for a client without tasks", async () => {
+    const names = async (capabilities: object): Promise<string[]> => {
+      const { result } = await rpc(
+        mcpRequest("tools/list", {}, { capabilities: capabilities }),
+        replayOf({}),
+      );
+
+      return (result as { tools: { name: string }[] }).tools.map(
+        ({ name }) => name,
+      );
+    };
+
+    expect(await names({})).toEqual(["agent_1", "continue_run"]);
+    expect(await names(TASKS)).toEqual(["agent_1"]);
+  });
+
+  it("tells a client without tasks what the agent asked and takes its answer", async () => {
+    const question = {
+      statusId: "status_1",
+      answerBy: "2026-11-10T00:00:00.000Z",
+      questions: [
+        {
+          id: "color",
+          header: "Color",
+          question: "Which color?",
+          options: [{ label: "Blue" }],
+        },
+      ],
+    };
+    const replay = replayOf({
+      run_1: run({
+        runId: "run_1",
+        status: "awaiting_input",
+        questions: [question],
+      }),
+      run_2: run({ runId: "run_2", status: "completed", response: "Blue" }),
+    });
+    const asked = await rpc(
+      mcpRequest(
+        "tools/call",
+        { name: "agent_1", arguments: { prompt: "hi" } },
+        { capabilities: {} },
+      ),
+      replay,
+    );
+
+    expect(JSON.stringify(asked.result)).toContain("color: Which color?");
+    expect(JSON.stringify(asked.result)).toContain("continue_run");
+
+    const continued = await rpc(
+      mcpRequest(
+        "tools/call",
+        {
+          name: "continue_run",
+          arguments: { runId: "run_1", answers: { color: "Blue" } },
+        },
+        { capabilities: {} },
+      ),
+      {
+        ...replay,
+        replay: async (request): Promise<Response> => {
+          if (request.method === "POST") {
+            approvalReplies.set(
+              "acct:acct_1:agent:agent_1:api:mcp-1:async-tools:status_1",
+              "run_2",
+            );
+          }
+
+          return await replay.replay(request);
+        },
+      },
+    );
+
+    expect(JSON.stringify(continued.result)).toContain("Blue");
+
+    expect(JSON.parse(replay.posts.at(-1)!.body).answers).toEqual([
+      { statusId: "status_1", answers: { color: ["Blue"] } },
+    ]);
+  });
+
+  it("never lets a client without tasks approve a tool call", async () => {
+    const { result } = await rpc(
+      mcpRequest(
+        "tools/call",
+        { name: "agent_1", arguments: { prompt: "hi" } },
+        { capabilities: {} },
+      ),
+      replayOf({
+        run_1: run({
+          runId: "run_1",
+          status: "awaiting_approval",
+          approvals: [
+            {
+              approvalId: "approval_1",
+              toolCallId: "call_1",
+              toolName: "bash",
+              input: { command: "ls" },
+            },
+          ],
+        }),
+      }),
+    );
+
+    expect(JSON.stringify(result)).toContain("you cannot approve them");
+  });
+
+  it("hands a bad argument back as a tool error the model can fix", async () => {
+    const { result } = await rpc(
+      mcpRequest("tools/call", { name: "agent_1", arguments: {} }),
       replayOf({}),
     );
 
-    expect(error?.code).toBe(-32021);
+    expect(result).toMatchObject({ isError: true });
+  });
+
+  it("continues a conversation the caller names", async () => {
+    const replay = replayOf({ run_1: run({ runId: "run_1" }) });
+    await rpc(
+      mcpRequest("tools/call", {
+        name: "agent_1",
+        arguments: { prompt: "more", conversationId: "conv_1" },
+      }),
+      replay,
+    );
+
+    expect(JSON.parse(replay.posts[0]!.body).conversationKey).toBe("conv_1");
   });
 
   it("starts a background run in a fresh conversation and answers its task", async () => {
@@ -314,7 +574,7 @@ describe("handleMcpRequest", () => {
     expect(result).toMatchObject({
       taskId: "run_1",
       status: "completed",
-      result: { content: [{ type: "text", text: "listed" }] },
+      result: { content: [{ type: "text", text: "listed" }, { type: "text" }] },
     });
   });
 
@@ -346,7 +606,7 @@ describe("handleMcpRequest", () => {
     expect(result).toMatchObject({
       taskId: "run_1",
       status: "completed",
-      result: { content: [{ type: "text", text: "Blue" }] },
+      result: { content: [{ type: "text", text: "Blue" }, { type: "text" }] },
     });
   });
 
@@ -481,7 +741,7 @@ function replayOf(runs: Record<string, RunStatus>): FakeReplay {
 async function rpc(
   request: CoreRequest,
   replay: FakeReplay,
-): Promise<{ result?: unknown; error?: { code: number } }> {
+): Promise<{ result?: unknown; error?: { code: number; message?: string } }> {
   const response = await handleMcpRequest(request, replay.replay);
 
   return (await response.json()) as {

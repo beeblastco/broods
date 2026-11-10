@@ -7,7 +7,11 @@ import type {
   ToolSet,
 } from "ai";
 import { stripUndefined } from "@broods/convex/model/objects";
-import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
+import {
+  extractBearerToken,
+  isServiceToken,
+  type AuthContext,
+} from "../shared/auth.ts";
 import {
   extractText,
   formatChannelErrorText,
@@ -125,6 +129,7 @@ import {
   routeIncomingEvent,
   sendChannelReply,
   type AsyncDirectInboundEvent,
+  type IntegrationRoutingOptions,
   type ChannelContextEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
@@ -133,7 +138,16 @@ import {
   type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
-import { handleMcpRequest, MCP_PATH } from "./mcp-tasks.ts";
+import {
+  handleMcpConnectionRequest,
+  routesToMcpConnection,
+} from "./mcp/connection.ts";
+import {
+  handleProtectedResourceRequest,
+  MCP_PATH,
+  routesToProtectedResource,
+} from "./mcp/authkit.ts";
+import { handleMcpRequest } from "./mcp-tasks.ts";
 import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   admitRun,
@@ -344,12 +358,32 @@ async function handleRequest(
   if (event.path === APPLY_RUN_PATH) {
     return handleApplyRunRequest(event);
   }
+  if (routesToMcpConnection(event.path)) {
+    return handleMcpConnectionRequest(event);
+  }
+  if (routesToProtectedResource(normalizePath(event.path))) {
+    return handleProtectedResourceRequest();
+  }
   if (normalizePath(event.path) === MCP_PATH) {
-    return handleMcpRequest(event, (replayed): Promise<Response> =>
-      handleRequest(replayed, context),
+    // `/mcp` already resolved the caller: its replays skip a second lookup, and an AuthKit token
+    // stays good only here.
+    return handleMcpRequest(event, (replayed, auth): Promise<Response> =>
+      routeCoreRequest(
+        replayed,
+        context,
+        async (): Promise<AuthContext> => auth,
+      ),
     );
   }
 
+  return routeCoreRequest(event, context);
+}
+
+function routeCoreRequest(
+  event: CoreRequest,
+  context: RequestContext | undefined,
+  authResolver?: IntegrationRoutingOptions["authResolver"],
+): Promise<Response> {
   return routeIncomingEvent(
     event,
     {
@@ -374,6 +408,7 @@ async function handleRequest(
     {
       directApiEnabled: ENABLE_DIRECT_API,
       cacheAgentLists: true,
+      ...(authResolver ? { authResolver: authResolver } : {}),
       ...(context?.waitUntil
         ? { waitUntil: context.waitUntil.bind(context) }
         : {}),
