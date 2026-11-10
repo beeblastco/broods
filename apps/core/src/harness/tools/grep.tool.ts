@@ -139,8 +139,11 @@ function searchCommand(input: GrepInput): string {
   else if (input.line_numbers) flags.push("-n");
   const path = input.path ? toWorkspaceRelative(input.path) : undefined;
   // grep filters file names only, so a glob's literal directory (`src/*.ts`) becomes its root.
+  const globRoot = /^([^!*?[{]+)\/(?:\*\*\/)?[^/]+$/.exec(
+    input.glob ?? "",
+  )?.[1];
   const grepRoot =
-    path ?? /^([^!*?[{]+)\/(?:\*\*\/)?[^/]+$/.exec(input.glob ?? "")?.[1];
+    path ?? (globRoot ? toWorkspaceRelative(globRoot) : undefined);
   const inside = new Set(grepRoot?.split("/"));
   const rg = [
     "rg",

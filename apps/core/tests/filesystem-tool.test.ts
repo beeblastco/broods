@@ -1219,6 +1219,28 @@ describe("sandbox tool set", () => {
     }
   });
 
+  it.each(["../*.ts", "src/../../x/*"])(
+    "grep refuses a glob whose directory leaves the workspace, like path: %s",
+    async (glob) => {
+      const grep = await tool("grep", workspaceCtx());
+      const refusal = "Invalid path: directory traversal not allowed";
+      await expect(
+        grep.execute({ pattern: "x", path: "../x" }),
+      ).rejects.toThrow(refusal);
+      await expect(grep.execute({ pattern: "x", glob: glob })).rejects.toThrow(
+        refusal,
+      );
+      expect(sandboxExecPayloads()).toEqual([]);
+    },
+  );
+
+  it("grep roots an absolute glob at the workspace root", async () => {
+    const grep = await tool("grep", workspaceCtx());
+    await grep.execute({ pattern: "x", glob: "/etc/*" });
+    const { code } = lastSandboxExec().payload;
+    expect(code).toEndWith("'-e' 'x' '--' 'etc'; fi");
+  });
+
   it("rejects unknown named workspaces", async () => {
     const bash = await tool("bash", {
       workspaces: [
