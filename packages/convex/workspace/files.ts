@@ -110,6 +110,21 @@ export const create = mutation({
       );
     }
 
+    // An upload to a taken path replaces what is there; old duplicate rows go with it.
+    const existing = await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
+        q.eq("projectId", projectId).eq("nodeId", nodeId).eq("path", path),
+      )
+      .collect();
+    if (existing.some((row) => row.isFolder !== isFolder)) {
+      throw new Error(
+        `${path} already exists as a ${isFolder ? "file" : "folder"}.`,
+      );
+    }
+    if (isFolder && existing[0]) return existing[0]._id;
+    for (const row of existing) await deleteWorkspaceFile(ctx, row);
+
     const now = Date.now();
 
     return await ctx.db.insert("workspaceFiles", {
@@ -333,6 +348,24 @@ export const rename = mutation({
     const slash = file.path.lastIndexOf("/");
     const newPath =
       slash === -1 ? trimmed : `${file.path.slice(0, slash)}/${trimmed}`;
+    const taken = await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
+        q
+          .eq("projectId", file.projectId)
+          .eq("nodeId", file.nodeId)
+          .gte("path", newPath)
+          .lt("path", pathPrefixUpperBound(newPath)),
+      )
+      .collect();
+    if (
+      newPath !== file.path &&
+      taken.some(
+        (doc) => doc.path === newPath || doc.path.startsWith(`${newPath}/`),
+      )
+    ) {
+      throw new Error(`${trimmed} already exists.`);
+    }
     const now = Date.now();
 
     if (file.isFolder) {
