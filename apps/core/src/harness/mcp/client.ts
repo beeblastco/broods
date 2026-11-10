@@ -5,6 +5,7 @@ import {
   Client,
   isCallToolResult,
   isSpecType,
+  ProtocolError,
   StreamableHTTPClientTransport,
   type CallToolResult,
   type ListToolsResult,
@@ -62,6 +63,10 @@ const PRINCIPAL_HEADER_NAMES: ReadonlySet<string> = new Set([
 
 const CLIENT_INFO = { name: "broods-core", version: "1.0.0" };
 const DEFAULT_TTL_MS = 5 * 60_000;
+// The SDK's default today; pinned so our limit holds if the SDK changes its default.
+const INPUT_REQUIRED_MAX_ROUNDS = 10;
+// The SDK's HeaderMismatch code, which it does not export.
+const HEADER_MISMATCH_CODE = -32020;
 const LINKED_IMAGE_TIMEOUT_MS = 30_000;
 const MAX_CACHE_ENTRIES = 256;
 const MAX_TTL_MS = 60 * 60_000;
@@ -93,6 +98,7 @@ export interface McpCallOptions {
   abortSignal?: AbortSignal;
   onCpuUsec?: (cpuUsec: number) => void;
   onRetry?: (waitMs: number) => void;
+  toolDefinition?: Tool;
 }
 
 interface CachedDiscover {
@@ -187,15 +193,35 @@ export async function callMcpToolResult(
     return relayed;
   }
 
-  return await withClient(
-    connection,
-    (client) =>
-      client.callTool(
-        { name: toolName, arguments: args },
-        options.abortSignal ? { signal: options.abortSignal } : {},
-      ),
-    options.onCpuUsec,
-  );
+  try {
+    return await withClient(
+      connection,
+      (client) =>
+        // A definition stops the SDK's re-list and resend after a -32020; without its
+        // outputSchema the SDK does not start validating results, which core never did.
+        client.callTool(
+          { name: toolName, arguments: args },
+          {
+            ...(options.abortSignal ? { signal: options.abortSignal } : {}),
+            ...(options.toolDefinition
+              ? {
+                  toolDefinition: {
+                    ...options.toolDefinition,
+                    outputSchema: undefined,
+                  },
+                }
+              : {}),
+          },
+        ),
+      options.onCpuUsec,
+    );
+  } catch (error) {
+    // The cached listing named headers the server no longer declares: the next listing refetches.
+    if (error instanceof ProtocolError && error.code === HEADER_MISMATCH_CODE) {
+      toolListCache.delete(cacheKeyFor(connection));
+    }
+    throw error;
+  }
 }
 
 export async function listMcpTools(
@@ -412,15 +438,15 @@ async function connectClient(
     );
     // A hosted bundle ships with our templates; only a third party gets the older handshake.
     // supportedProtocolVersions also pins the cached `prior` path, which ignores the `pin` mode.
-    const client = new Client(
-      CLIENT_INFO,
-      hosted
+    const client = new Client(CLIENT_INFO, {
+      inputRequired: { maxRounds: INPUT_REQUIRED_MAX_ROUNDS },
+      ...(hosted
         ? {
             supportedProtocolVersions: [MCP_PROTOCOL_VERSION],
             versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } },
           }
-        : { versionNegotiation: { mode: "auto" } },
-    );
+        : { versionNegotiation: { mode: "auto" } }),
+    });
     await client.connect(transport, prior ? { prior: prior } : {});
 
     return client;
