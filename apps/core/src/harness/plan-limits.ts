@@ -51,7 +51,6 @@ interface CachedBudget {
 type MeterUsage = Parameters<Storage["budgets"]["record"]>[1];
 
 interface PendingUsage {
-  accountId: string;
   usage: MeterUsage;
   source: UsageSource | undefined;
 }
@@ -64,7 +63,8 @@ interface ScheduledFlush {
 // Exact only while core is a single replica (apps/core AGENTS.md); two would double the burst.
 const windows = new Map<string, AccountWindow>();
 const budgets = new Map<string, CachedBudget>();
-const pendingUsage = new Map<string, PendingUsage>();
+// Per account, then per source.
+const pendingUsage = new Map<string, Map<string, PendingUsage>>();
 let scheduledFlush: ScheduledFlush | null = null;
 // Each account's last queued write: its next one waits for it, other accounts do not.
 const accountWrites = new Map<string, Promise<void>>();
@@ -143,9 +143,9 @@ export async function flushUsage(): Promise<void> {
   const due = scheduledFlush;
   scheduledFlush = null;
   if (due) clearTimeout(due.timer);
-  const batch = [...pendingUsage.values()];
-  pendingUsage.clear();
-  const written = writeUsage(batch);
+  const written = Promise.all(
+    [...pendingUsage.keys()].map(queueAccountWrite),
+  ).then((): void => {});
   due?.settle(written);
   await written;
 }
@@ -155,18 +155,21 @@ export function recordUsage(
   usage: MeterUsage,
   source?: UsageSource,
 ): void {
-  const key = JSON.stringify([accountId, source ?? null]);
-  const pending = pendingUsage.get(key);
+  const sources =
+    pendingUsage.get(accountId) ?? new Map<string, PendingUsage>();
+  pendingUsage.set(accountId, sources);
+  const key = JSON.stringify([
+    source?.projectId,
+    source?.agentId,
+    source?.workspaceId,
+  ]);
+  const pending = sources.get(key);
   if (pending) {
     for (const field of Object.keys(usage) as (keyof MeterUsage)[]) {
       pending.usage[field] = (pending.usage[field] ?? 0) + (usage[field] ?? 0);
     }
   } else {
-    pendingUsage.set(key, {
-      accountId: accountId,
-      usage: { ...usage },
-      source: source,
-    });
+    sources.set(key, { usage: { ...usage }, source: source });
   }
   if (scheduledFlush) return;
   const flushed = Promise.withResolvers<void>();
@@ -270,29 +273,33 @@ function currentWindow(
   return fresh;
 }
 
-// One account's entries share its usage rows in Convex, so they go one after another, behind
-// any write of that account still under way. `budgets.record` never throws.
-async function writeUsage(batch: PendingUsage[]): Promise<void> {
-  const byAccount = Map.groupBy(batch, (entry): string => entry.accountId);
-  await Promise.all(
-    [...byAccount].map(([accountId, entries]): Promise<void> => {
-      const written = (accountWrites.get(accountId) ?? Promise.resolve()).then(
-        async (): Promise<void> => {
-          for (const entry of entries) {
-            await getStorage().budgets.record(
-              entry.accountId,
-              entry.usage,
-              entry.source,
-            );
-          }
-          if (accountWrites.get(accountId) === written) {
-            accountWrites.delete(accountId);
-          }
-        },
-      );
-      accountWrites.set(accountId, written);
+// One account's sources share its usage rows in Convex, so its writes go one after another. A
+// write takes what is waiting when its turn comes, so a slow Convex gets bigger writes, not more.
+function queueAccountWrite(accountId: string): Promise<void> {
+  const written = (accountWrites.get(accountId) ?? Promise.resolve())
+    .then(async (): Promise<void> => {
+      const sources = pendingUsage.get(accountId);
+      pendingUsage.delete(accountId);
+      for (const pending of sources?.values() ?? []) {
+        await getStorage().budgets.record(
+          accountId,
+          pending.usage,
+          pending.source,
+        );
+      }
+    })
+    .catch((err: unknown): void => {
+      logWarn("Usage flush failed", {
+        accountId: accountId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    })
+    .finally((): void => {
+      if (accountWrites.get(accountId) === written) {
+        accountWrites.delete(accountId);
+      }
+    });
+  accountWrites.set(accountId, written);
 
-      return written;
-    }),
-  );
+  return written;
 }

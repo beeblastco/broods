@@ -329,6 +329,31 @@ describe("recordUsage", () => {
     await slow;
   });
 
+  it("adds usage up behind a slow write and sends it as one", async () => {
+    holdWrites = true;
+    recordUsage(ACCOUNT_ID, { workerRequests: 1 });
+    const slow = flushUsage();
+    await Bun.sleep(0);
+    holdWrites = false;
+    recordUsage(ACCOUNT_ID, { workerRequests: 2 });
+    const second = flushUsage();
+    recordUsage(ACCOUNT_ID, { workerRequests: 4 });
+    const third = flushUsage();
+    releaseHeld();
+    await Promise.all([slow, second, third]);
+    expect(recorded.map((write) => write.usage)).toEqual([
+      { workerRequests: 1 },
+      { workerRequests: 6 },
+    ]);
+  });
+
+  it("counts a source the same whatever order its fields come in", async () => {
+    recordUsage(ACCOUNT_ID, { egressGb: 1 }, { projectId: "p", agentId: "a" });
+    recordUsage(ACCOUNT_ID, { egressGb: 2 }, { agentId: "a", projectId: "p" });
+    await flushUsage();
+    expect(recorded.map((write) => write.usage)).toEqual([{ egressGb: 3 }]);
+  });
+
   it("keeps usage recorded during a flush for the next one", async () => {
     jest.useFakeTimers();
     holdWrites = true;
