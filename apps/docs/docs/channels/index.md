@@ -200,7 +200,7 @@ A failed transcription never drops the message. The note names the cause, such a
 ## Shared behavior
 
 - Typing and reactions. An accepted message triggers a typing indicator and a reaction where the provider supports them. Telegram and Slack reactions are configurable with `reactionEmoji`. GitHub and Linear react with eyes. Zalo, Teams, Messenger and Instagram show typing only. WhatsApp shows typing and reacts only when the agent calls `send-reactions`. Pancake, Google Chat and Twilio do neither.
-- Tool approval. Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` Keep approval-gated tools off channel agents.
+- Tool approval. Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` The model gets two more passes to answer without them; a third denial ends the turn with a message saying so. Keep approval-gated tools off channel agents.
 - Errors. If a turn fails, the room receives a short `⚠️` line with the error simplified, for example a quota or timeout message.
 - Deferred replies. When a turn finishes later, such as a background sandbox job, the result is pushed back into the same chat.
 - Trace links. Replies omit the dashboard trace link. Set `trace: "enabled"` on the connection to include it. Tracing itself is unaffected.
