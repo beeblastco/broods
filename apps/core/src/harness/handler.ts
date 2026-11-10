@@ -857,6 +857,7 @@ async function handleDirectAnswers(
 // True when the message was an answer: a click names its prompt, typed text takes the oldest.
 async function settleChannelQuestion(
   event: ChannelInboundEvent,
+  accountId: string,
 ): Promise<boolean> {
   const click = event.answer;
   const open = click
@@ -879,11 +880,21 @@ async function settleChannelQuestion(
     ? { status: "answered", answers: chosen }
     : answersFromText(open.pending, extractText(event.content));
   if (!answer) return false;
+  const plan = await admitRun(accountId);
+  if (plan.refusal) {
+    await event.channel.sendText(planRefusalText(plan.refusal));
+
+    return true;
+  }
   const settled = await settleQuestion(open.record, {
     ...answer,
     ...(event.identity ? { answeredBy: event.identity } : {}),
   });
-  if (!settled) return false;
+  if (!settled) {
+    refundRun(plan, accountId);
+
+    return false;
+  }
   const outcome = await continueAfterAsyncToolSettlement(settled);
   logInfo("Question answered", {
     channel: event.channelName,
@@ -1574,7 +1585,9 @@ async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
     throw new Error("Channel ingress requires account and agent scope");
   }
   const command = queuedCommand(event.events, event.channelName);
-  if (!command && (await settleChannelQuestion(event))) return;
+  if (!command && (await settleChannelQuestion(event, event.accountId))) {
+    return;
+  }
   const requestedMode =
     outcome.kind === "rewrite" ? outcome.requestedMode : "steer";
   // A provider redelivery must not store its files twice; only messages with files pay this read.
