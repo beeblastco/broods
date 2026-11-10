@@ -25,6 +25,11 @@ def vectors : List Json := Id.run do
       for d in [0,1,28,29,30,31,32] do
         let c := Calendar.mk y m d 12 0 0
         out := out ++ [vector "date" (toJson (dateWire c)) (toJson (validDate c))]
+  for c in [Calendar.mk 2026 2 30 0 0 0, ⟨2026,2,29,0,0,0⟩, ⟨2024,2,29,23,59,59⟩, ⟨2026,0,1,0,0,0⟩,
+      ⟨2026,13,1,0,0,0⟩, ⟨2026,99,99,99,99,99⟩, ⟨2026,1,0,0,0,0⟩, ⟨2026,12,31,24,60,60⟩,
+      ⟨50,1,1,0,0,0⟩, ⟨0,1,1,0,0,0⟩, ⟨99,12,31,0,0,0⟩, ⟨100,3,1,0,0,0⟩, ⟨1600,2,29,0,0,0⟩,
+      ⟨1969,12,31,23,59,59⟩, ⟨9999,12,31,23,59,59⟩] do
+    out := out ++ [vector "dateCode" (toJson (dateWire c)) (toJson (atUtc c))]
   for p in List.range 8 do
     for m in List.range 5 do
       out := out ++ [vector "native" (toJson [p,m]) (toJson (nativeMedia p m))]
@@ -35,10 +40,16 @@ def vectors : List Json := Id.run do
       out := out ++ [vector "command" (Json.mkObj [("token",toJson token),("text",toJson hasText)])
         (toJson (commandMode (command token) hasText))]
   for incoming in [none,some 7] do
-    for t in [false,true] do
+    for r in [none, some false, some true] do
       let s := Source.mk 1 2 3 incoming (some 9)
-      out := out ++ [vector "reply" (Json.mkObj [("incoming",toJson incoming),("thread",toJson t)])
-        (toJson (reply s t).thread)]
+      out := out ++ [vector "reply" (Json.mkObj [("incoming",toJson incoming),("replyIn",toJson r)])
+        (toJson (reply s r).thread)]
+  for incoming in [none, some 7] do
+    for eventType in ["app_mention", "message", "reaction_added"] do
+      for channelType in ["channel", "group", "im", "app_home", "mpim"] do
+        out := out ++ [vector "replyThread" (Json.mkObj [("incoming",toJson incoming),
+            ("type",toJson eventType),("channelType",toJson channelType)])
+          (toJson (parsedThread incoming 3 (opensThread eventType channelType)))]
   for mask in List.range 16 do
     let cs := (List.range 4).map fun n => Candidate.mk n (mask / 2^n % 2 == 1) false
     out := out ++ [vector "holders" (toJson (cs.map fun c => [c.agent, if c.verifies then 1 else 0,0]))
@@ -46,6 +57,13 @@ def vectors : List Json := Id.run do
     let batch := cs.map fun c => { c with eachEntry := true }
     out := out ++ [vector "holders" (toJson (batch.map fun c => [c.agent, if c.verifies then 1 else 0,1]))
       (toJson (receivers batch))]
+  for mask in List.range 128 do
+    let bit (n : Nat) : Bool := mask / 2^n % 2 == 1
+    let c : Coarse := ⟨bit 0, bit 1, bit 2, bit 3, bit 4, bit 5, bit 6⟩
+    if !c.candidates || c.configured then
+      out := out ++ [vector "webhook"
+        (toJson [c.get, c.query, c.active, c.available, c.stageKnown, c.configured, c.candidates])
+        (toJson (probeStatus ⟨c, 0⟩))]
   for ts in [[],[1],[1,1],[1,2,1],[2,1,2,3]] do
     out := out ++ [vector "owners" (toJson ts) (toJson (socketOwners ts))]
   for valid in [false,true] do

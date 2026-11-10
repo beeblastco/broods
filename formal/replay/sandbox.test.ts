@@ -4,7 +4,12 @@ import * as providers from "../../packages/convex/model/sandboxProviders.ts";
 import {
   toWorkspaceRelative,
   computerSandboxTarget,
+  resolveAgentSandbox,
 } from "../../apps/core/src/harness/tools/filesystem-utils.ts";
+import type {
+  ResolvedAgentSandbox,
+  ResolvedWorkspace,
+} from "../../apps/core/src/shared/workspaces.ts";
 import {
   parseCoreFrame,
   parseDaemonFrame,
@@ -31,6 +36,19 @@ type Vector =
       capabilities: boolean[];
     }
   | { kind: "path"; path: string; expected: string | null }
+  | {
+      kind: "computer";
+      attached: number[];
+      requested: number | null;
+      expected: number | null;
+    }
+  | {
+      kind: "bash";
+      attached: number[];
+      mounted: boolean;
+      requested: number | null;
+      expected: number | null;
+    }
   | {
       kind: "hello";
       occupied: boolean;
@@ -125,6 +143,20 @@ test.each(vectors)("Lean vector %# $kind", async (vector): Promise<void> => {
       });
       setStorageForTests(null);
     }
+    return;
+  }
+  if (vector.kind === "computer") {
+    const picked = computerSandboxTarget(
+      vector.attached.map(attachedSandbox),
+      vector.requested === null ? undefined : `s${vector.requested}`,
+    );
+    expect(picked?.name ?? null).toBe(
+      vector.expected === null ? null : `s${vector.expected}`,
+    );
+    return;
+  }
+  if (vector.kind === "bash") {
+    replayBash(vector);
     return;
   }
   if (vector.kind === "path") {
@@ -324,3 +356,42 @@ test("G401 cached externalId returns after concurrent provider deletion", async 
     mutate.mockRestore();
   }
 });
+
+function attachedSandbox(id: number): ResolvedAgentSandbox {
+  return {
+    name: `s${id}`,
+    sandbox: {
+      provider: "machine",
+      controlPlane: { sandboxConfigId: `c${id}` },
+    } as ResolvedAgentSandbox["sandbox"],
+  };
+}
+
+function replayBash(vector: Extract<Vector, { kind: "bash" }>): void {
+  const first = vector.attached[0];
+  const workspaces = vector.mounted
+    ? [
+        {
+          name: "w",
+          workspaceId: "w",
+          namespace: "w",
+          config: { storage: { provider: "disk" } },
+          sandbox: attachedSandbox(first ?? 0).sandbox,
+        } as ResolvedWorkspace,
+      ]
+    : [];
+  let picked: string | null;
+  try {
+    picked =
+      resolveAgentSandbox(
+        {
+          workspaces: workspaces,
+          sandboxes: vector.attached.map(attachedSandbox),
+        },
+        vector.requested === null ? undefined : `s${vector.requested}`,
+      )?.name ?? null;
+  } catch {
+    picked = null;
+  }
+  expect(picked).toBe(vector.expected === null ? null : `s${vector.expected}`);
+}

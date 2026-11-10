@@ -1,5 +1,6 @@
 import Spec.Statements
 import Lean.Data.Json
+import Spec.Config.Twins.Js
 
 /-! `packages/convex/model` pure configuration rules. Scheduling progress does not apply.
 URL parsing and cryptography are external contracts. See L700 onward for coverage limits. -/
@@ -127,7 +128,7 @@ def positiveInteger (max : Int) (v : Value) : Option String :=
 
 def nonEmpty (v : Value) : Option String :=
   match v with
-  | .str s => if s.trimAscii.toString.isEmpty then some "must be a non-empty string" else none
+  | .str s => if (Spec.Js.trim s).isEmpty then some "must be a non-empty string" else none
   | _ => some "must be a non-empty string"
 
 def privateIpv4 (a b : Nat) : Bool :=
@@ -158,9 +159,9 @@ def publicHttpsProblem (parsed : Option (String × String)) : Option String :=
     else if privateHostname host then some "must not point to a private or internal address"
     else none
 
-/-- The post-validation provider base spelling transformation. -/
+/-- The post-validation provider base spelling transformation; `.trim()` is ECMAScript trim. -/
 def canonicalBase (base_url baseURL : Option String) : Option String × Option String :=
-  let chosen := (base_url.or baseURL).map (fun s => s.trimAscii.toString)
+  let chosen := (base_url.or baseURL).map (fun s => Spec.Js.trim s)
   match chosen with
   | some s => if s == "" then (base_url, baseURL) else (none, some s)
   | none => (base_url, baseURL)
@@ -354,7 +355,7 @@ def providerBase (v : Value) : Option String :=
   let raw := match v.get "base_url" with
     | some (.str s) => some s
     | _ => match v.get "baseURL" with | some (.str s) => some s | _ => none
-  raw.bind fun s => let trimmed := s.trimAscii.toString
+  raw.bind fun s => let trimmed := Spec.Js.trim s
                    if trimmed == "" then none else some trimmed
 
 def gatewayIdValid (s : String) : Bool :=
@@ -392,8 +393,8 @@ def normaliseProviderSettings (urlProblem : String → Option String) (v : Value
       let endpointError := ordered.findSome? fun (key, value) =>
         if key == "baseURL" || (key == "base_url" && base.isSome) || !key.toLower.endsWith "url" then none
         else match value with
-          | .str s => if s.trimAscii.toString == "" then none
-            else (urlProblem s.trimAscii.toString).map (fun e => s!"{root}.{key} {e}")
+          | .str s => if Spec.Js.trim s == "" then none
+            else (urlProblem (Spec.Js.trim s)).map (fun e => s!"{root}.{key} {e}")
           | _ => some s!"{root}.{key} must be a string"
       match baseError.or endpointError with
       | some e => .error e

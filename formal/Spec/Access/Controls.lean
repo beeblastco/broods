@@ -2,7 +2,8 @@ import Spec.Access.Theorems
 
 namespace Spec.Access.Controls
 
-def tenantCredential : Credential := ⟨.runtime, 7, true, true, false, true⟩
+def tenantCredential : Credential :=
+  { kind := .runtime, account := 7, valid := true, active := true, userPresent := false }
 
 theorem tenant_nonvacuous : resolve tenantCredential {} = some (.deployment 7) := by decide
 
@@ -87,5 +88,28 @@ theorem secret_effect_violates_privacy :
   intro h
   have bad := h () [⟨leak, "a"⟩] [⟨leak, "b"⟩] trivial trivial rfl rfl
   exact (by decide : (["a"] : List String) ≠ ["b"]) bad
+
+end Spec.Access.Controls
+
+namespace Spec.Access.Controls
+
+/-- An AuthKit sign-in resolves on `/mcp` only; admin resolves on bearer routes but not on `/mcp`. -/
+theorem mcp_nonvacuous :
+    mcpResolve { kind := .authkit, account := 3 } {} = some (.account 3 false) ∧
+    resolve { kind := .authkit, account := 3 } {} = none ∧
+    resolve { kind := .admin, account := 3 } {} = some .admin ∧
+    mcpResolve { kind := .admin, account := 3 } {} = none := by decide
+
+/-- The pre-fix route model: stopping at the first fitting pattern sent these GETs to `webhooks`. -/
+def stopAtFirstPattern (m : String) (p : List String) : Bool :=
+  match p with
+  | ["", "v1", "webhooks", a, "pancake"] => segment a
+  | "" :: "v1" :: "webhooks" :: xs => xs != [] && m == "GET"
+  | _ => false
+
+theorem first_pattern_breaks_secret_webhooks :
+    stopAtFirstPattern "GET" ["", "v1", "webhooks", "", "pancake"] = false ∧
+    routeMatches "GET" "/v1/webhooks//pancake" .secretWebhooks = true := by
+  constructor <;> cbv <;> decide
 
 end Spec.Access.Controls

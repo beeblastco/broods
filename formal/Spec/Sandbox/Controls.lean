@@ -81,3 +81,11 @@ theorem no_inflight_nonvacuous :
     (instanceStep (instanceStep {} .delete) .read).cached = false := by decide
 
 end Spec.Sandbox.Controls
+
+namespace Spec.Sandbox.Controls
+
+/-- The old single `select` ran an unnamed computer action on the first of two machines. -/
+theorem head_selection_breaks_computer :
+    select [1, 2] none = some 1 ∧ selectComputer [1, 2] none = none := by decide
+
+end Spec.Sandbox.Controls

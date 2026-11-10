@@ -13,8 +13,14 @@ theorem refs_subset (a r : List Nat) (x : Nat) (h : x ∈ selectRefs a r) : x �
 theorem tools_subset (a r : List Nat) (x : Nat) (h : x ∈ allowedTools a r) : x ∈ a :=
   (List.mem_filter.mp h).1
 
-theorem reply_same (s : Source) (t : Bool) : SameConversation s (reply s t) t := by
-  simp [SameConversation, reply]
+theorem reply_same (s : Source) (r : Option Bool) (opens : Bool)
+    (h : s.thread = parsedThread s.incomingThread s.message opens) :
+    SameConversation s (reply s r) := by
+  cases r with
+  | none =>
+    cases opens <;> cases hi : s.incomingThread <;>
+      simp [SameConversation, reply, parsedThread, h, hi]
+  | some t => cases t <;> cases hi : s.incomingThread <;> simp [SameConversation, reply, hi]
 
 theorem fire_nodup_step (s : State) (i : Input) (h : s.fires.Nodup) :
     (step s i).1.fires.Nodup := by
@@ -58,22 +64,39 @@ theorem date_roundtrip (d : Calendar) (h : validDate d = true) :
 theorem invalid_date (d : Calendar) (h : validDate d = false) :
     parseDate (dateWire d) = none := by cases d; simp_all [parseDate, dateWire]
 
+theorem at_day_carries (d : Calendar) :
+    atUtc { d with day := d.day + 1 } = atUtc d + 86400000 := by
+  simp only [atUtc]
+  generalize monthStartDay _ _ = start
+  push_cast
+  omega
+
+theorem at_normalises :
+    atUtc ⟨2026, 2, 30, 0, 0, 0⟩ = atUtc ⟨2026, 3, 2, 0, 0, 0⟩ ∧
+    atUtc ⟨50, 1, 1, 0, 0, 0⟩ = atUtc ⟨1950, 1, 1, 0, 0, 0⟩ := by decide
+
 theorem probe_effects (s : Unit) (ps : List Probe) :
-    (probeSystem.runFrom s ps).2 = probeLeak ps := by
+    (probeSystem.runFrom s ps).2 = ps.map probeStatus := by
   induction ps generalizing s with
   | nil => rfl
   | cons p ps ih =>
-    change [webhookStatus p.get p.stageKnown p.configured p.candidates p.available] ++
-      (probeSystem.runFrom s ps).2 = _
+    change [probeStatus p] ++ (probeSystem.runFrom s ps).2 = _
     rw [ih]
     rfl
 
-theorem probe_private : Spec.Private probeSystem Unit (List Nat) Nat (fun _ => True)
+theorem probe_private : Spec.Private probeSystem Unit (List Coarse) Nat (fun _ => True)
     (fun _ _ => []) probeLeak (fun _ es => es) := by
   intro p a b _ _ _ h
   change (probeSystem.runFrom probeSystem.init a).2 = (probeSystem.runFrom probeSystem.init b).2
   rw [probe_effects, probe_effects]
-  exact h
+  have : a.map probeStatus = (a.map Probe.coarse).map (fun c =>
+      webhookStatus c.get c.query c.active c.available c.stageKnown c.candidates) := by
+    simp [List.map_map, Function.comp_def, probeStatus]
+  have h' : b.map probeStatus = (b.map Probe.coarse).map (fun c =>
+      webhookStatus c.get c.query c.active c.available c.stageKnown c.candidates) := by
+    simp [List.map_map, Function.comp_def, probeStatus]
+  rw [this, h']
+  exact congrArg _ h
 
 end Spec.Channels
 
@@ -82,10 +105,6 @@ namespace Spec.Channels
 theorem media_no_ticket (present head : Bool) (size : Nat) (metadata body : String) :
     mediaView false present head size metadata body = (404,"","") := by
   simp [mediaView, mediaStatus]
-
-theorem unsigned_no_secrets (get stage configured candidates available : Bool) (s t : Nat) :
-    probeLeak [⟨get,stage,configured,candidates,available,s⟩] =
-    probeLeak [⟨get,stage,configured,candidates,available,t⟩] := rfl
 
 theorem delivery_nodup_step (s : State) (i : Input) (h : s.deliveries.Nodup) :
     (step s i).1.deliveries.Nodup := by

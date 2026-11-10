@@ -30,5 +30,12 @@ def run (_args : List String) : IO Unit := do
           IO.println (Json.mkObj [("kind", "hello"), ("occupied", toJson occupied),
             ("previous", toJson previous), ("incoming", toJson incoming), ("force", toJson force),
             ("expected", toJson (acceptsHello occupied previous incoming force))]).compress
+  for attached in [[], [1], [1, 2], [2, 1]] do
+    for requested in [none, some 1, some 2, some 3] do
+      IO.println (Json.mkObj [("kind", "computer"), ("attached", toJson attached),
+        ("requested", toJson requested), ("expected", toJson (selectComputer attached requested))]).compress
+      for mounted in [false, true] do
+        IO.println (Json.mkObj [("kind", "bash"), ("attached", toJson attached), ("mounted", toJson mounted),
+          ("requested", toJson requested), ("expected", toJson (selectBash attached mounted requested))]).compress
 
 end Spec.Sandbox.Replay

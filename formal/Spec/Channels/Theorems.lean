@@ -11,13 +11,23 @@ theorem record_never_grants_workspaces (a r : List Nat) (x : Nat)
 /-- Additional denials cannot create a tool capability for the selected execution agent. -/
 theorem record_never_grants_tools (a r : List Nat) (x : Nat)
     (h : x ∈ allowedTools a r) : x ∈ a := tools_subset a r x h
-/-- The app, channel and replyIn-selected thread define the incoming reply conversation. -/
-theorem replies_stay_in_conversation (s : Source) (t : Bool) :
-    SameConversation s (reply s t) t := reply_same s t
-/-- D7: every reachable state's accepted cron/fire-time keys are unique; G2 disagrees. -/
-theorem at_most_one_cron_run : Spec.Always system (fun s => s.fires.Nodup) := cron_always
-/-- An already accepted cron/fire-time cannot emit another start. -/
-theorem duplicate_cron_never_runs (s : State) (id time : Nat) (h : (id,time) ∈ s.fires)
+/-- For a Slack source as the parser builds it, whatever a channel record's replyIn says, or with
+none set, a reply keeps the incoming app and channel and goes to the thread the message arrived
+in or a new thread on the message; it reaches the channel root only from a root message. -/
+theorem replies_stay_in_conversation (s : Source) (replyIn : Option Bool) (opens : Bool)
+    (parsed : s.thread = parsedThread s.incomingThread s.message opens) :
+    SameConversation s (reply s replyIn) := reply_same s replyIn opens parsed
+
+/-- The parser hypothesis is needed: a source whose thread was set elsewhere is kept as is. -/
+example : ¬ SameConversation ⟨1, 2, 3, some 7, some 9⟩ (reply ⟨1, 2, 3, some 7, some 9⟩ none) := by
+  simp [SameConversation, reply]
+/-- Decision D7, not today's code: a model that keys starts by cron and fire time never accepts
+one key twice. The code keys a run by a random id, and the fire time falls back to the clock when
+the scheduler sends none (G2), so a duplicate POST can start a second run. -/
+theorem intended_at_most_one_cron_run : Spec.Always system (fun s => s.fires.Nodup) := cron_always
+/-- Decision D7, not today's code (G2): under a durable cron/fire-time key, an already accepted
+firing emits no second start. -/
+theorem intended_duplicate_cron_never_runs (s : State) (id time : Nat) (h : (id,time) ∈ s.fires)
     (ex ac ad st : Bool) : (step s (.cron id time ex ac ad st)).2 = [] :=
   duplicate_fire s id time h ex ac ad st
 /-- After terminal recording succeeds, a one-shot always attempts deletion, even if it fails. -/
@@ -26,14 +36,29 @@ theorem one_shot_removal_attempted (s : State) (id : Nat) (ok : Bool) :
 /-- A successful cleanup input removes the job; no unconditional storage liveness is claimed. -/
 theorem one_shot_removed (s : State) (id : Nat) :
     Effect.removed id ∈ (step s (.finish id true true true true)).2 := cleanup_success s id
-/-- Valid calendar field encoding round-trips before timezone conversion. -/
+/-- The intended at(...) parser (G500, not today's code) returns a valid calendar unchanged.
+By construction (L22). -/
 theorem schedule_calendar_roundtrip (d : Calendar) (h : validDate d = true) :
     parseDate (dateWire d) = some d := date_roundtrip d h
-/-- Invalid calendar fields are rejected rather than normalised; G500 disagrees. -/
-theorem schedule_rejects_invalid_dates (d : Calendar) (h : validDate d = false) :
+/-- Intent, not today's code (G500): the intended parser rejects invalid calendar fields. The
+code normalises them instead (`schedule_at_normalises`). -/
+theorem intended_schedule_rejects_invalid_dates (d : Calendar) (h : validDate d = false) :
     parseDate (dateWire d) = none := invalid_date d h
-/-- Unsigned probes reveal the declared routing response classes, independently of secrets. -/
-theorem unsigned_webhook_privacy : Spec.Private probeSystem Unit (List Nat) Nat (fun _ => True)
+/-- With no timezone, today's code never rejects a day: day n+1 is day n plus 24 hours, whatever
+the month, so February 30 is March 2 and day 00 is the last day of the month before. -/
+theorem schedule_at_day_carries (d : Calendar) :
+    atUtc { d with day := d.day + 1 } = atUtc d + 86400000 := at_day_carries d
+/-- With no timezone, today's code accepts February 30 as March 2 and reads year 0050 as 1950
+(G500). -/
+theorem schedule_at_normalises :
+    atUtc ⟨2026, 2, 30, 0, 0, 0⟩ = atUtc ⟨2026, 3, 2, 0, 0, 0⟩ ∧
+    atUtc ⟨50, 1, 1, 0, 0, 0⟩ = atUtc ⟨1950, 1, 1, 0, 0, 0⟩ := at_normalises
+/-- What a webhook request no agent verifies gets back depends only on its method and query,
+whether the account is active, the listing succeeded, the stage exists, an agent configures the
+channel and an adapter handles the request; never on any agent's secret. Includes the bare-GET 200
+and the 404s. A correct secret does change the status. By construction (L22): `probeStatus` reads
+only the coarse facts; the content is the `webhook` replay vectors. -/
+theorem unsigned_webhook_privacy : Spec.Private probeSystem Unit (List Coarse) Nat (fun _ => True)
     (fun _ _ => []) probeLeak (fun _ es => es) := probe_private
 end Spec.Channels
 

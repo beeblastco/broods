@@ -3,9 +3,9 @@
     "statements": 18825,
     "excluded": 602,
     "verifiable": 18223,
-    "verified": 11324,
+    "verified": 11468,
     "byTwin": 10846,
-    "byReplay": 478,
+    "byReplay": 622,
     "arms": 13738,
     "armsVerified": 8219
   },
@@ -2026,13 +2026,13 @@
     ],
     ["access", "1964", "133", "1831", "77.6%", "1406", "15", "1031/1350"],
     ["agent", "3841", "139", "3702", "50.8%", "1780", "100", "1359/2705"],
-    ["channels", "3658", "2", "3656", "71.6%", "2573", "45", "2026/3031"],
+    ["channels", "3658", "2", "3656", "74.5%", "2573", "152", "2026/3031"],
     ["config", "616", "0", "616", "89.4%", "488", "63", "379/509"],
-    ["hosted", "2202", "320", "1882", "46.0%", "735", "131", "569/1249"],
-    ["runs", "1683", "8", "1675", "37.6%", "624", "5", "468/1159"],
+    ["hosted", "2202", "320", "1882", "46.9%", "735", "148", "569/1249"],
+    ["runs", "1683", "8", "1675", "38.7%", "624", "25", "468/1159"],
     ["sandbox", "4769", "0", "4769", "68.7%", "3194", "84", "2373/3703"],
     ["workers", "92", "0", "92", "88.0%", "46", "35", "14/32"],
-    ["all", "18825", "602", "18223", "62.1%", "10846", "478", "8219/13738"]
+    ["all", "18825", "602", "18223", "62.9%", "10846", "622", "8219/13738"]
   ],
   "largestUnverified": [
     {
@@ -2050,10 +2050,6 @@
     {
       "source": "apps/core/src/shared/slack-channel.ts#toSlackStream",
       "count": 118
-    },
-    {
-      "source": "apps/core/src/harness/integrations.ts#handleHttpRequest",
-      "count": 102
     },
     {
       "source": "apps/lambda/handler.mjs#runRequest",
@@ -2834,6 +2830,10 @@
     {
       "source": "apps/core/src/harness/tools/channel.tool.ts#sendImagesTool",
       "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/session.ts#Session.buildSystemPromptParts",
+      "count": 10
     }
   ]
 }

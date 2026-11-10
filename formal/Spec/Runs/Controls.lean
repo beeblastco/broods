@@ -1,7 +1,8 @@
 import Spec.Runs.Theorems
 namespace Spec.Runs.Controls
 
-def row (key : Nat) : Row := ⟨key, key, key, .followup, 0, 10, .queued, 0, 0⟩
+def row (key : Nat) : Row :=
+  { key := key, event := key, digest := key, mode := .followup, sender := 0, expires := 10, retainUntil := 1000, phase := .queued }
 def owner : Owner := ⟨1, 1⟩
 def live : State := (step {} (.accept (row 1) 0 100)).1
 
@@ -14,6 +15,19 @@ theorem duplicate_nonvacuous : (step live (.accept (row 1) 1 100)).2 = [.admissi
 /-- D6 has a queued row whose nominal deadline passes while its owner lives. -/
 theorem d6_nonvacuous :
     ((maintain (step live (.accept (row 2) 1 100)).1 11).rows[1]).phase = .queued := by decide
+/-- The D6 expiry branch is reachable: after the owner leaves and recovery declines the
+conversation, maintenance expires the queued envelope past its TTL. -/
+theorem d6_expiry_reachable :
+    let queuedBehind := (step live (.accept (row 2) 1 100)).1
+    let released := (step (step queuedBehind (.settle owner 2 false [] false)).1 (.releaseOwner owner)).1
+    let declined := (step released (.declineRecovery 3)).1
+    declined.recoveryOffered = true ∧ queued declined ≠ [] ∧
+      ((maintain declined 11).rows.map (·.phase)) = [.completed, .expired] := by decide
+/-- Without a decline, the same trace keeps the queued envelope for recovery. -/
+theorem d6_needs_offer :
+    let queuedBehind := (step live (.accept (row 2) 1 100)).1
+    let released := (step (step queuedBehind (.settle owner 2 false [] false)).1 (.releaseOwner owner)).1
+    ((maintain released 11).rows.map (·.phase)) = [.completed, .queued] := by decide
 /-- A finished async row permits its own continuation and rejects an unrelated one. -/
 theorem d8_nonvacuous : asyncWrite true 1 (some 1) = true ∧ asyncWrite true 1 (some 2) = false := by decide
 /-- Dropping the owner-id check lets two different owners pass the broken fence. -/
@@ -27,7 +41,7 @@ theorem broken_duplicate : (live.rows ++ [row 1]).length = 2 := by decide
 theorem broken_expiry : (row 2).expires ≤ 11 ∧ active live 11 = true := by decide
 /-- An unconditional write admits an unrelated overwrite of a finished row (G3). -/
 theorem broken_async : true ≠ asyncWrite true 1 (some 2) := by decide
-/-- Deleting expired rows destroys the lifecycle record. -/
+/-- Deleting a row before its retention passes loses the key `maintain_keeps_until_retention` keeps. -/
 theorem broken_conservation : ([] : List Row).map (·.key) ≠ [1] := by decide
 /-- A real trace emits an accepted-owner response, so rejecting every input cannot satisfy this witness. -/
 theorem accepted_nonvacuous : Spec.NonVacuous system (fun _ => True)

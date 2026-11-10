@@ -1,4 +1,4 @@
-import Spec.Hosted.Model
+import Spec.Hosted.Theorems
 namespace Spec.Hosted.Replay
 open Lean
 
@@ -42,7 +42,39 @@ def retryVectors : List Json :=
     row "retry" s!"{status}-{tagged}" (Json.mkObj [("status", toJson status), ("tagged", toJson tagged)])
       (toJson [retry (if tagged then Failure.nothingRan status else .http status), false])))
 
-def vectors : List Json := retryVectors ++ frameVectors ++ trailingVectors ++
+def tokenVectors : List Json :=
+  [200, 401, 403, 500].flatMap fun first => [200, 401].map fun second =>
+    let answer := tokenFetch true (fun n => ⟨if n = 0 then first else second, false, false, false⟩) 0
+    row "token" s!"{first}-{second}" (toJson [first, second]) (toJson [answer.1, answer.2.status])
+
+def answerOf : String → Answer
+  | "401" => ⟨401, false, false, false⟩
+  | "rate" => ⟨200, true, false, false⟩
+  | "input" => ⟨200, false, true, false⟩
+  | "mismatch" => ⟨400, false, false, true⟩
+  | _ => ⟨200, false, false, false⟩
+
+def answerName (a : Answer) : String :=
+  if a.status == 401 then "401" else if a.rateLimited then "rate"
+  else if a.inputRequired then "input" else if a.headerMismatch then "mismatch" else "ok"
+
+/-- The server answers the n-th tools/call send with the script, cycling. -/
+def scripted (script : List String) (n : Nat) : Answer :=
+  answerOf (script[n % script.length]?.getD "ok")
+
+def answerNames : List String := ["ok", "401", "rate", "input", "mismatch"]
+
+def sendVectors : List Json :=
+  let scripts := answerNames.map (fun a => [a]) ++
+    answerNames.flatMap (fun a => answerNames.map (fun b => [a, b])) ++
+    [(List.range 44).map (fun n => answerName (worstAnswer n))]
+  scripts.flatMap fun script => bools.flatMap fun connected => bools.map fun modern =>
+    row "sends" s!"{connected}-{modern}-{script.take 4}"
+      (Json.mkObj [("connected", toJson connected), ("modern", toJson modern),
+        ("script", toJson script)])
+      (toJson (toolCallSends connected modern (scripted script)))
+
+def vectors : List Json := retryVectors ++ tokenVectors ++ sendVectors ++ frameVectors ++ trailingVectors ++
   malformed.map (fun line => row "parse" line (toJson line) (toJson (parseLine line))) ++
   ["README.md", " SKILL.md ", "a/b.json", "../a", "/a", "a//b", "a/../b", "a\\b", "a/./b", "", "a\x00b"].map
     (fun path => row "path" path (toJson path) (toJson (skillPath path))) ++

@@ -38,15 +38,27 @@ structure Source where
   thread : Option Nat
   deriving Repr, DecidableEq
 
-/-- slack-channel.ts:452: source keeps an existing thread; thread opens on the message if needed. -/
-def reply (s : Source) (inThread : Bool) : Source :=
-  { s with thread := if inThread then s.incomingThread.orElse (fun _ => some s.message)
-                     else s.incomingThread }
+/-- integrations.ts channelReplySource: with no record replyIn the parsed source is kept; Slack's
+applyReplyIn keeps an incoming thread, and `thread` opens one on the message. -/
+def reply (s : Source) : Option Bool → Source
+  | none => s
+  | some inThread => { s with thread := if inThread then s.incomingThread.orElse (fun _ => some s.message)
+                                        else s.incomingThread }
 
-/-- Same conversation means same app, same channel and the replyIn-selected thread. -/
-def SameConversation (s destination : Source) (inThread : Bool) : Prop :=
+/-- slack-channel.ts getSlackReplyThreadTs: a mention or a non-DM message opens a thread on the
+message unless it arrived in one; any other event keeps the thread it arrived in, if any. -/
+def parsedThread (incoming : Option Nat) (message : Nat) (opensThread : Bool) : Option Nat :=
+  if opensThread then some (incoming.getD message) else incoming
+
+def opensThread (eventType channelType : String) : Bool :=
+  eventType == "app_mention" ||
+    (eventType == "message" && channelType != "im" && channelType != "app_home")
+
+/-- Same app and channel, and the thread the message arrived in or a new thread on the message:
+the channel root only when the message itself was at the root. -/
+def SameConversation (s destination : Source) : Prop :=
   destination.app = s.app ∧ destination.channel = s.channel ∧
-  destination.thread = (reply s inThread).thread
+  destination.thread ∈ [s.incomingThread, some s.message]
 
 inductive ParseKind where
   | response | ignore | cleanup | context | message
@@ -85,7 +97,8 @@ inductive Effect where
   | removed (id : Nat)
   deriving Repr, DecidableEq
 
-/-- handler.ts scheduled entry and channel admission; D7 uses a durable fire key, unlike G2. -/
+/-- handler.ts scheduled entry and channel admission. The cron branch is decision D7 (a durable
+cron/fire-time key), not the code's random event id (G2). -/
 def step (s : State) : Input → State × List Effect
   | .webhook d =>
     let key := (d.account, d.targetAgent, d.event)
@@ -111,32 +124,46 @@ def system : Spec.System := ⟨State, Input, Effect, {}, step⟩
 def mediaStatus (valid present : Bool) (bytes : Nat) : Nat :=
   if !valid || !present then 404 else if bytes > 25 * 1024 * 1024 then 413 else 200
 
-/-- Public lookup outcomes before authentication, including unknown_webhook_stage. -/
-def webhookStatus (get stageKnown configured candidates available : Bool) : Nat :=
-  if !available then 503 else if !stageKnown then 404
-  else if !candidates then (if get then 200 else 503) else if configured then 401 else 503
+/-- integrations.ts webhook route for a request no agent verifies. A bare GET answers 200 before
+any lookup; a missing or inactive account is 404; a failed listing 503; an endpoint whose stage
+lists no agent 404; no adapter that handles the request 200 for a GET, else 503; otherwise 401.
+`candidates` (an adapter handles it) implies `configured` in the code. -/
+def webhookStatus (get query active available stageKnown candidates : Bool) : Nat :=
+  if get && !query then 200 else if !active then 404 else if !available then 503
+  else if !stageKnown then 404 else if !candidates then (if get then 200 else 503) else 401
 
-/-- An unsigned observer sees only response classes; secrets and message bodies are absent. -/
-structure Probe where
+/-- What an unsigned prober controls or can learn anyway. `configured` picks the 503 message
+("Webhook <channel> ..."), so it is part of the declared leak. -/
+structure Coarse where
   get : Bool
+  query : Bool
+  active : Bool
+  available : Bool
   stageKnown : Bool
   configured : Bool
   candidates : Bool
-  available : Bool
+  deriving Repr, DecidableEq
+
+/-- An unsigned probe: the coarse routing facts, plus every agent's webhook secret. -/
+structure Probe where
+  coarse : Coarse
   secret : Nat
   deriving Repr
+
+def probeStatus (p : Probe) : Nat :=
+  webhookStatus p.coarse.get p.coarse.query p.coarse.active p.coarse.available
+    p.coarse.stageKnown p.coarse.candidates
 
 abbrev probeSystem : Spec.System where
   State := Unit
   Input := Probe
   Effect := Nat
   init := ()
-  step := fun s p => (s, [webhookStatus p.get p.stageKnown p.configured p.candidates p.available])
+  step := fun s p => (s, [probeStatus p])
 
-def probeLeak (ps : List Probe) : List Nat :=
-  ps.map fun p => webhookStatus p.get p.stageKnown p.configured p.candidates p.available
+def probeLeak (ps : List Probe) : List Coarse := ps.map Probe.coarse
 
-/-- cronRules.ts: leap years and calendar fields checked before encoding; G500 is the code gap. -/
+/-- The intended at(...) calendar check (G500): the code does not run it, see `atUtc`. -/
 def leap (y : Nat) : Bool := y % 400 == 0 || (y % 4 == 0 && y % 100 != 0)
 
 def days (y m : Nat) : Nat :=
@@ -155,6 +182,23 @@ structure Calendar where
 def validDate (d : Calendar) : Bool :=
   d.month ≥ 1 && d.month ≤ 12 && d.day ≥ 1 && d.day ≤ days d.year d.month &&
   d.hour < 24 && d.minute < 60 && d.second < 60
+
+/-- Days from 1970-01-01 to day 1 of month `m` (1-12) of year `y`, proleptic Gregorian. -/
+def monthStartDay (y : Int) (m : Nat) : Int :=
+  let y := if m ≤ 2 then y - 1 else y
+  let era := y / 400
+  let yoe := y - era * 400
+  let doy : Int := (153 * (if m > 2 then m - 3 else m + 9) + 2) / 5
+  era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468
+
+/-- cronRules.ts at(...) with no timezone, as the code runs it (G500): every digit field goes to
+Date.UTC, so a year 0-99 means 1900-1999 and out-of-range fields carry into the next unit. Never
+rejects. A timezone adds a two-pass offset this model leaves out. -/
+def atUtc (d : Calendar) : Int :=
+  let year : Int := if d.year ≤ 99 then 1900 + d.year else d.year
+  let month : Int := (d.month : Int) - 1
+  let start := monthStartDay (year + month / 12) ((month % 12).toNat + 1)
+  (start + d.day - 1) * 86400000 + d.hour * 3600000 + d.minute * 60000 + d.second * 1000
 
 /-- Numeric wire fields of at(yyyy-mm-ddThh:mm:ss), after the exact-width syntax check. -/
 def dateWire (d : Calendar) : List Nat :=

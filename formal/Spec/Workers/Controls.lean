@@ -50,7 +50,7 @@ def shedOnYieldStep (L : Limits) (s : State) : Input → State × List Effect
     | _ => (s, [])
   | i => step L s i
 
-/-- `shed_only_fresh_unplaced` fails if a yield can be shed: a run that held its lease and already
+/-- `shed_only_unplaced_first_dispatch` fails if a yield can be shed: a run that held its lease and already
 did work would be dropped mid-turn. The trace reaches it through the capacity slack that
 `capacity_bounded` documents. -/
 theorem shed_on_yield_drops_a_live_run :

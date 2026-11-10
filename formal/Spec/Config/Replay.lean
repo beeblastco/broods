@@ -79,7 +79,8 @@ def vectors : List Json := Id.run do
     out := out ++ [row "envelope" (toJson text) (Json.mkObj [
       ("keyId",toJson (currentKey keys)), ("hasKey",toJson (hasKey keys text)),
       ("needsRewrite",toJson (needsRewrite keys text))])]
-  for base in [none, some "", some " ", some "https://example.com/", some " https://example.com/ "] do
+  for base in [none, some "", some " ", some "https://example.com/", some " https://example.com/ ",
+      some "\u00A0https://example.com/", some "https://example.com/\uFEFF", some "\u3000"] do
     for alias in [none, some "", some "https://other.example/"] do
       let result := canonicalBase base alias
       out := out ++ [row "canonical" (Json.mkObj [("base_url",toJson base),("baseURL",toJson alias)])

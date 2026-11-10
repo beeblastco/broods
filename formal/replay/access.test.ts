@@ -25,6 +25,8 @@ const { sealStageSessionTicket, openStageSessionTicket } =
   await import("../../packages/convex/model/stageSessionTicket.ts");
 const { sealUserToken, openUserToken } =
   await import("../../packages/convex/model/userToken.ts");
+const { sealObservabilityTicket, openObservabilityTicket } =
+  await import("../../packages/convex/model/observabilityTicket.ts");
 
 type Vector =
   | { kind: "secretName"; name: string; secret: boolean }
@@ -52,6 +54,14 @@ type Vector =
       bits: number;
       result: string | null;
       account: number | null;
+    }
+  | {
+      kind: "credentialKind";
+      index: number;
+      prefix: string;
+      bits: number;
+      result: string | null;
+      service: boolean;
     }
   | {
       kind: "ticket";
@@ -167,6 +177,8 @@ test.each(vectors.map((vector, index) => [index, vector] as const))(
       await replayUpgrade(vector);
     } else if (vector.kind === "auth") {
       await replayAuth(vector);
+    } else if (vector.kind === "credentialKind") {
+      await replayCredentialKind(vector);
     } else if (vector.kind === "ticket") {
       expect(
         (await openers[vector.target]!(tokens[vector.source]!, vector.at)) !==
@@ -308,13 +320,24 @@ const user = await sealUserToken(
   "bsig_test",
   now,
 );
-const tokens = [run, terminal, media, stage, user];
+const observability = await sealObservabilityTicket(
+  {
+    accountId: "a",
+    endpointId: "e",
+    projectSlug: "p",
+    stageSlug: "s",
+    expiresAt: now + 1000,
+  },
+  secret,
+);
+const tokens = [run, terminal, media, stage, user, observability];
 const openers = [
   (s: string, at: number) => openRunToken(s, at),
   (s: string, at: number) => openTerminalTicket(s, secret, at),
   (s: string, at: number) => openMediaTicket(s, ["wrong", secret], at),
   (s: string, at: number) => openStageSessionTicket(s, secret, at),
   (s: string, at: number) => openUserToken(s, "bsig_test", at),
+  (s: string, at: number) => openObservabilityTicket(s, secret, at),
 ];
 test.each([undefined, 0, 1, 3600, 43200, 43201, -1, 1.5])(
   "role ttl %s",
@@ -413,6 +436,7 @@ const credentialTokens = [
   media,
   "unknown",
   "bask_scoped",
+  observability,
 ];
 
 async function replayAuth(v: Extract<Vector, { kind: "auth" }>): Promise<void> {
@@ -441,6 +465,38 @@ async function replayAuth(v: Extract<Vector, { kind: "auth" }>): Promise<void> {
         ? Number(actual.account.accountId)
         : null,
   }).toEqual({ kind: v.result, account: v.account });
+}
+
+// The admin and service secrets are set to the token itself when the vector says it matches.
+async function replayCredentialKind(
+  v: Extract<Vector, { kind: "credentialKind" }>,
+): Promise<void> {
+  const flag = (n: number): boolean => Math.floor(v.bits / 2 ** n) % 2 === 1;
+  const token = credentialTokens[v.index]!;
+  if (v.prefix.includes("_")) {
+    expect(token.startsWith(v.prefix.slice(0, v.prefix.indexOf("_") + 1))).toBe(
+      true,
+    );
+  }
+  authState.scoped = false;
+  authState.valid = true;
+  authState.active = true;
+  process.env.ADMIN_ACCOUNT_SECRET = flag(0) ? token : "admin-test";
+  process.env.SERVICE_AUTH_SECRET = flag(1) ? token : "service-test";
+  try {
+    const actual = await resolveBearerAuth({
+      authorization: `Bearer ${token}`,
+      "x-account-id": "7",
+      ...(flag(2) ? { "x-broods-via-gateway": "" } : {}),
+    });
+    expect({
+      result: actual?.kind ?? null,
+      service: actual?.kind === "account" && actual.viaServiceToken === true,
+    }).toEqual({ result: v.result, service: v.service });
+  } finally {
+    process.env.ADMIN_ACCOUNT_SECRET = "admin-test";
+    process.env.SERVICE_AUTH_SECRET = "service-test";
+  }
 }
 
 test("service marker presence refuses even an empty marker", (): void => {

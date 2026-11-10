@@ -24,11 +24,13 @@ def ownModule (env : Environment) (name : Name) : Option Name :=
   | none => none
 
 /-- True for a theorem stating a claim: subsystem `Theorems` modules and `Spec.Top` hold those, and
-`Proofs` modules hold the lemmas beneath them. -/
+`Proofs` modules hold the lemmas beneath them. The equations Lean generates for a definition
+(`f.eq_1`, `f.eq_def`) are not claims: their names are reserved, so no written theorem can take one. -/
 def isFront (env : Environment) (name : Name) : Bool :=
   match ownModule env name with
   | some moduleName =>
-    !name.isInternal && (moduleName == `Spec.Top || moduleName.getString! == "Theorems")
+    !name.isInternal && !isReservedName env name &&
+      (moduleName == `Spec.Top || moduleName.getString! == "Theorems")
   | none => false
 
 elab "#audit_spec" : command => do

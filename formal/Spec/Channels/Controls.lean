@@ -9,7 +9,7 @@ theorem workspace_control : 2 ∈ ([2] : List Nat) ∧ 2 ∉ ([1] : List Nat) :=
 /-- Replacing agent tools by a record's tools grants id 2. -/
 theorem tool_control : 2 ∈ ([1,2] : List Nat) ∧ 2 ∉ ([1] : List Nat) := by decide
 /-- Routing on a user-supplied channel breaks conversation confinement. -/
-theorem reply_control : ¬ SameConversation ⟨1,2,3,none,none⟩ ⟨1,9,3,none,none⟩ false := by
+theorem reply_control : ¬ SameConversation ⟨1,2,3,none,none⟩ ⟨1,9,3,none,none⟩ := by
   simp [SameConversation]
 /-- G2's random ids permit two entries for the same firing. -/
 theorem cron_control : ¬ ([(1,5),(1,5)] : List FireKey).Nodup := by decide
@@ -17,8 +17,11 @@ theorem cron_control : ¬ ([(1,5),(1,5)] : List FireKey).Nodup := by decide
 theorem cleanup_control : Effect.removed 1 ∉ ([] : List Effect) := by decide
 /-- Date.UTC's overflow behaviour admits February 30; the intended calendar rejects it. -/
 theorem calendar_control : validDate ⟨2026,2,30,0,0,0⟩ = false := by decide
-/-- Appending the secret to the response distinguishes two otherwise equal probes. -/
-theorem privacy_control : ([401,7] : List Nat) ≠ [401,8] := by decide
+/-- A status that reads the secret separates two probes with the same coarse facts. -/
+def leakyStatus (p : Probe) : Nat := probeStatus p + p.secret
+theorem privacy_control :
+    let c : Coarse := ⟨false, false, true, true, true, true, true⟩
+    [c] = [c] ∧ leakyStatus ⟨c, 7⟩ ≠ leakyStatus ⟨c, 8⟩ := by decide
 
 def good : Delivery := ⟨true,.message,1,2,3,true,false,true⟩
 /-- A verified, admitted message really starts. -/
@@ -26,15 +29,17 @@ theorem authentication_nonvacuous : (step {} (.webhook good)).2 = [.run (1,2,3)]
 /-- Narrowing preserves a real attached workspace and an allowed tool. -/
 theorem record_nonvacuous : selectRefs [1,2] [2,3] = [2] ∧ allowedTools [1,2] [1] = [2] := by decide
 /-- Thread replies open on the original top-level message. -/
-theorem reply_nonvacuous : (reply ⟨1,2,3,none,none⟩ true).thread = some 3 := by decide
+theorem reply_nonvacuous : (reply ⟨1,2,3,none,none⟩ (some true)).thread = some 3 ∧
+    (reply ⟨1,2,3,none,some 9⟩ none).thread = some 9 := by decide
 /-- An active cron really emits a run. -/
 theorem cron_nonvacuous : (step {} (.cron 1 5 true true true true)).2 = [.cronRun (1,5)] := by decide
 /-- Failed best-effort removal still attempts cleanup. -/
 theorem cleanup_nonvacuous : (step {} (.finish 1 true true true false)).2 = [.removeAttempt 1] := by decide
 /-- Leap day is an accepted calendar. -/
 theorem calendar_nonvacuous : parseDate [2024,2,29,23,59,59] = some ⟨2024,2,29,23,59,59⟩ := by decide
-/-- Authentication distinguishes a configured unsigned endpoint. -/
-theorem privacy_nonvacuous : webhookStatus false true true true true = 401 := by decide
+/-- An unsigned POST that an adapter handles is refused; a missing account is 404. -/
+theorem privacy_nonvacuous : webhookStatus false false true true true true = 401 ∧
+    webhookStatus false false false true true true = 404 := by decide
 /-- A bearer ticket with a real object serves bytes; an invalid ticket cannot. -/
 theorem media_nonvacuous : mediaStatus true true 100 = 200 ∧ mediaStatus false true 100 = 404 := by decide
 end Spec.Channels
@@ -52,7 +57,7 @@ theorem broken_record_fails_subset :
 def brokenReply (s : Source) : Source := { s with channel := 9 }
 
 theorem broken_reply_fails_theorem :
-    ¬ SameConversation ⟨1,2,3,none,none⟩ (brokenReply ⟨1,2,3,none,none⟩) false := by
+    ¬ SameConversation ⟨1,2,3,none,none⟩ (brokenReply ⟨1,2,3,none,none⟩) := by
   simp [SameConversation, brokenReply]
 
 def brokenMedia (_ : Bool) (body : String) : String := body

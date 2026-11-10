@@ -29,10 +29,10 @@ theorem stable_message (status : Int) (message : String) (code param : Option St
         ("code", .str (code.getD (apiStatus status).1))] ++
        param.toList.map (fun p => ("param", .str p)))) := rfl
 
-theorem canonical_fixed (s : String) (trimmed : s.trimAscii.toString = s) :
+theorem canonical_fixed (s : String) (trimmed : Spec.Js.trim s = s) :
     canonicalBase none (some s) = (none, some s) := by
-  change (if s.trimAscii.toString == "" then (none, some s)
-    else (none, some s.trimAscii.toString)) = (none, some s)
+  change (if Spec.Js.trim s == "" then (none, some s)
+    else (none, some (Spec.Js.trim s))) = (none, some s)
   rw [trimmed]
   split <;> rfl
 

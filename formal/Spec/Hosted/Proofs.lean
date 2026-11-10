@@ -52,6 +52,80 @@ theorem semantic_bound (e r a : Bool) (n : Nat) (h : semanticRetry e r a n = tru
   simp [semanticRetry] at h
   omega
 
+theorem token_fetch_sends (signedIn : Bool) (server : Nat → Answer) (sent : Nat) :
+    (tokenFetch signedIn server sent).1 ≤ (if signedIn then 2 else 1) := by
+  unfold tokenFetch
+  cases signedIn <;> simp <;> split <;> simp
+
+theorem request_legs_bound (signedIn modern : Bool) (server : Nat → Answer) (sent rounds : Nat) :
+    (requestLegs signedIn modern server sent rounds).1 ≤
+      (if modern then rounds + 1 else 1) * (if signedIn then 2 else 1) := by
+  induction rounds generalizing sent with
+  | zero =>
+    have := token_fetch_sends signedIn server sent
+    cases modern <;> simpa [requestLegs] using this
+  | succ r ih =>
+    have once := token_fetch_sends signedIn server sent
+    have rest := ih (sent + (tokenFetch signedIn server sent).1)
+    simp only [requestLegs]
+    rcases hp : tokenFetch signedIn server sent with ⟨n, answer⟩
+    rw [hp] at once rest
+    simp only at once rest ⊢
+    cases modern
+    · simpa using once
+    · simp only [ite_true] at rest ⊢
+      split
+      · rcases hq : requestLegs signedIn true server (sent + n) r with ⟨m, last⟩
+        rw [hq] at rest
+        simp only at rest ⊢
+        rw [Nat.succ_mul]; omega
+      · rw [Nat.succ_mul]; omega
+
+theorem sdk_call_bound (signedIn modern : Bool) (server : Nat → Answer) (sent : Nat) :
+    (sdkCallTool signedIn modern server sent).1 ≤
+      (if modern then 2 * (maxRounds + 1) else 1) * (if signedIn then 2 else 1) := by
+  have first := request_legs_bound signedIn modern server sent maxRounds
+  have second := request_legs_bound signedIn modern server
+    (sent + (requestLegs signedIn modern server sent maxRounds).1) maxRounds
+  simp only [sdkCallTool]
+  rcases hp : requestLegs signedIn modern server sent maxRounds with ⟨n, answer⟩
+  rw [hp] at first second
+  simp only at first second ⊢
+  cases modern
+  · simpa using first
+  · simp only [ite_true] at first second ⊢
+    split
+    · rcases hq : requestLegs signedIn true server (sent + n) maxRounds with ⟨m, last⟩
+      rw [hq] at second
+      simp only at second ⊢
+      rw [Nat.mul_assoc]
+      generalize (maxRounds + 1) * (if signedIn = true then 2 else 1) = k at *
+      omega
+    · rw [Nat.mul_assoc]
+      generalize (maxRounds + 1) * (if signedIn = true then 2 else 1) = k at *
+      omega
+
+theorem call_sends_bound (signedIn modern : Bool) (server : Nat → Answer) (sent retries : Nat) :
+    callSends signedIn modern server sent retries ≤
+      (retries + 1) * ((if modern then 2 * (maxRounds + 1) else 1) * (if signedIn then 2 else 1)) := by
+  induction retries generalizing sent with
+  | zero => simpa [callSends] using sdk_call_bound signedIn modern server sent
+  | succ r ih =>
+    have once := sdk_call_bound signedIn modern server sent
+    have rest := ih (sent + (sdkCallTool signedIn modern server sent).1)
+    simp only [callSends]
+    rcases hp : sdkCallTool signedIn modern server sent with ⟨n, answer⟩
+    rw [hp] at once rest
+    simp only at once rest ⊢
+    split <;> rw [Nat.succ_mul] <;> omega
+
+theorem tool_call_bound (signedIn modern : Bool) (server : Nat → Answer) :
+    toolCallSends signedIn modern server ≤
+      4 * (if modern then 2 * (maxRounds + 1) else 1) * (if signedIn then 2 else 1) := by
+  have := call_sends_bound signedIn modern server 0 3
+  rw [Nat.mul_assoc]
+  simpa [toolCallSends] using this
+
 theorem isolation_nonvacuous :
     tenantId "account" (some "agent-a") ≠ tenantId "account" (some "agent-b") := by cbv
 

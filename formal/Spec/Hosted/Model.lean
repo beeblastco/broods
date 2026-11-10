@@ -203,9 +203,61 @@ def listingHit (now : Nat) (uncached machineWithoutSandbox : Bool) (entry : Opti
 def listingTtl (asked : Option Nat) : Nat :=
   min (match asked with | some n => if n > 0 then n else 300000 | none => 300000) 3600000
 
-/-- G7: semantic rate-limit errors may retry three times after acting; transport errors do not. -/
+/-- G7: callMcpTool's loop re-calls a tool after a rate-limit error result, at attempts 1 to 3. -/
 def semanticRetry (isError rateLimited aborted : Bool) (attempt : Nat) : Bool :=
   isError && rateLimited && !aborted && decide (1 ≤ attempt ∧ attempt ≤ 3)
+
+/-- One HTTP answer to a tools/call send. `rateLimited`: an isError result naming 429 or a rate
+limit. `inputRequired`: an `input_required` result carrying only `requestState`, which the SDK
+re-sends with no handler. `headerMismatch`: a -32020 JSON-RPC error. -/
+structure Answer where
+  status : Nat
+  rateLimited : Bool := false
+  inputRequired : Bool := false
+  headerMismatch : Bool := false
+  deriving DecidableEq, Repr
+
+/-- connections.ts tokenFetch on a signed-in row: a 401 drops the token and resends once, trusting
+the 401 to mean nothing ran (G602). Returns sends made and the answer handed back. -/
+def tokenFetch (signedIn : Bool) (server : Nat → Answer) (sent : Nat) : Nat × Answer :=
+  if signedIn && (server sent).status == 401 then (2, server (sent + 1)) else (1, server sent)
+
+/-- The SDK's default `inputRequired.maxRounds`; core's `Client` sets no `inputRequired` option. -/
+def maxRounds : Nat := 10
+
+/-- SDK `request()`: in the 2026-07-28 era an `input_required` answer is re-sent, up to
+`maxRounds` more legs, then it throws. Each leg goes through tokenFetch. -/
+def requestLegs (signedIn modern : Bool) (server : Nat → Answer) (sent : Nat) : Nat → Nat × Answer
+  | 0 => tokenFetch signedIn server sent
+  | rounds + 1 =>
+    let (n, answer) := tokenFetch signedIn server sent
+    if modern && answer.status == 200 && answer.inputRequired then
+      let (m, last) := requestLegs signedIn modern server (sent + n) rounds
+      (n + m, last)
+    else (n, answer)
+
+/-- SDK `Client.callTool`: in the 2026-07-28 era a -32020 re-lists tools and calls once more,
+since core passes no `toolDefinition`. -/
+def sdkCallTool (signedIn modern : Bool) (server : Nat → Answer) (sent : Nat) : Nat × Answer :=
+  let (n, answer) := requestLegs signedIn modern server sent maxRounds
+  if modern && answer.status == 400 && answer.headerMismatch then
+    let (m, last) := requestLegs signedIn modern server (sent + n) maxRounds
+    (n + m, last)
+  else (n, answer)
+
+/-- callMcpTool: one call plus up to `retries` rate-limit retries, each through sdkCallTool.
+`server n` answers the n-th tools/call send; aborts and thrown errors only end the loop sooner. -/
+def callSends (signedIn modern : Bool) (server : Nat → Answer) (sent : Nat) : Nat → Nat
+  | 0 => (sdkCallTool signedIn modern server sent).1
+  | retries + 1 =>
+    let (n, answer) := sdkCallTool signedIn modern server sent
+    if answer.status == 200 && answer.rateLimited then
+      n + callSends signedIn modern server (sent + n) retries
+    else n
+
+/-- tools/call sends one tool call makes with the code's three rate-limit retries. -/
+def toolCallSends (signedIn modern : Bool) (server : Nat → Answer) : Nat :=
+  callSends signedIn modern server 0 3
 
 def rateWait (attempt : Nat) (asked : Option Nat) : Nat :=
   min (asked.getD (if attempt = 0 then 1000 else 2000 * 2 ^ (attempt - 1))) 60000

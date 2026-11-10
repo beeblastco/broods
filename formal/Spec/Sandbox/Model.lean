@@ -45,11 +45,26 @@ def lexicalPath (path : String) : Option String :=
   if parts.contains ".." then none
   else some (if parts.isEmpty then "." else String.intercalate "/" parts)
 
-/-- Selection is from the supplied attached list; account ownership is a storage contract (A3). -/
+/-- Bash selection when no workspace mounts the first sandbox, equal to `selectBash attached false`.
+Computer actions use `selectComputer`. Account ownership of `attached` is a storage contract (A3). -/
 def select (attached : List Nat) (requested : Option Nat) : Option Nat :=
   match requested with
   | none => attached.head?
   | some id => if id ∈ attached then some id else none
+
+/-- resolveAgentSandbox in filesystem-utils.ts: unnamed takes the first sandbox; a name searches
+`selectableSandboxes`, which leaves the first out when a workspace mounts it (`mounted`). -/
+def selectBash (attached : List Nat) (mounted : Bool) (requested : Option Nat) : Option Nat :=
+  match requested with
+  | none => attached.head?
+  | some id => if id ∈ (if mounted then attached.tail else attached) then some id else none
+
+/-- computerSandboxTarget in filesystem-utils.ts: a name always decides; an unnamed call needs at
+most one attached machine. -/
+def selectComputer (machines : List Nat) (requested : Option Nat) : Option Nat :=
+  match requested with
+  | none => if machines.length ≤ 1 then machines.head? else none
+  | some id => if id ∈ machines then some id else none
 
 /-- machine-executor.ts:399; absent instance strings do not reclaim an occupied machine. -/
 def acceptsHello (occupied : Bool) (previous incoming : Option String) (force : Bool) : Bool :=

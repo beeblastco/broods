@@ -70,12 +70,33 @@ end Spec.Access
 
 namespace Spec.Access.Proofs
 
-theorem tenant_account (c : Credential) (r : Request) (a : Auth) (id : Nat)
-    (h : resolve c r = some a) (ha : authAccount a = some id) : id = c.account := by
-  rcases tenant c r a h with hn | hs
-  · rw [ha] at hn
-    contradiction
-  · rw [ha] at hs
-    exact Option.some.inj hs
+theorem mcp_tenant (c : Credential) (r : Request) (a : Auth) (h : mcpResolve c r = some a) :
+    authAccount a = some c.account := by
+  unfold mcpResolve at h
+  split at h
+  · contradiction
+  · rename_i b hb hres
+    cases tenant c _ b hres with
+    | inl hn =>
+      cases b <;> simp_all [authAccount]
+    | inr hs => simp_all
+  · split at h <;> simp_all [authAccount] <;> subst a <;> rfl
+
+theorem context_injective (p q : Purpose) (h : ticketContext p = ticketContext q) : p = q := by
+  cases p <;> cases q <;> first | rfl | (simp [ticketContext] at h)
+
+theorem kind_not_service (token : String) (adminMatch serviceMatch : Bool) :
+    credentialKind token adminMatch serviceMatch true ≠ .service := by
+  have hc : classify token ≠ .service := by
+    unfold classify
+    repeat (split; all_goals (try simp))
+  intro h
+  unfold credentialKind at h
+  simp only [Bool.not_true, Bool.and_false, Bool.false_eq_true, ↓reduceIte] at h
+  split at h
+  · exact hc h
+  · split at h
+    · cases h
+    · exact hc h
 
 end Spec.Access.Proofs

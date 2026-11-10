@@ -1,6 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { sourceFunctions } from "./channels-source.ts";
+import type { IntegrationRoutingOptions } from "../../apps/core/src/harness/integrations.ts";
 
 const savedFetch = globalThis.fetch;
 globalThis.fetch = ((): never => {
@@ -96,6 +97,58 @@ const vectors = result.stdout
   .trim()
   .split("\n")
   .map((s): Vector => JSON.parse(s) as Vector);
+
+const { createIncomingEventRouter } =
+  await import("../../apps/core/src/harness/integrations.ts");
+const { coreRequest } = await import("../../apps/core/tests/helpers/http.ts");
+type Router = ReturnType<typeof createIncomingEventRouter>;
+
+// The real webhook route for one unsigned request; the flags say what the stage stores hold.
+async function replayWebhook(flags: boolean[]): Promise<number> {
+  const [get, query, active, available, stageKnown, configured, candidates] =
+    flags;
+  const agent = {
+    accountId: "acct",
+    agentId: "agent",
+    name: "agent",
+    status: "active",
+    config: configured
+      ? { channels: { telegram: { botToken: "t", webhookSecret: "secret" } } }
+      : {},
+    createdAt: "",
+    updatedAt: "",
+  };
+  const router = createIncomingEventRouter({
+    accountLoader: async () =>
+      ({
+        accountId: "acct",
+        status: active ? "active" : "suspended",
+        config: {},
+      }) as Awaited<
+        ReturnType<Required<IntegrationRoutingOptions>["accountLoader"]>
+      >,
+    stageAgentLister: async () => {
+      if (!available) throw new Error("listing down");
+
+      return (stageKnown ? [agent] : []) as Awaited<
+        ReturnType<Required<IntegrationRoutingOptions>["stageAgentLister"]>
+      >;
+    },
+    deploymentLoader: async () => null,
+    channelRecordLoader: async () => null,
+  });
+  const response = await router(
+    coreRequest(
+      get ? "GET" : "POST",
+      `/v1/webhooks/acct/dev/st/telegram${query ? "?probe=1" : ""}`,
+      candidates ? { "x-telegram-bot-api-secret-token": "wrong" } : {},
+      get ? undefined : { update_id: 1 },
+    ),
+    {} as Parameters<Router>[1],
+  );
+
+  return response.status;
+}
 
 const integrationPath = "apps/core/src/harness/integrations.ts";
 interface Holder {
@@ -386,6 +439,20 @@ async function replay(v: Vector): Promise<void> {
       }
       break;
     }
+    case "dateCode": {
+      const fields = (v.input as number[]).map((n, i): string =>
+        String(n).padStart(i === 0 ? 4 : 2, "0"),
+      );
+      const [y, m, d, h, n, s] = fields;
+      const translated = cron.translateScheduleExpression(
+        `at(${y}-${m}-${d}T${h}:${n}:${s})`,
+        undefined,
+      );
+      expect(translated.kind === "at" ? translated.timestamp : null).toBe(
+        v.expected as number,
+      );
+      break;
+    }
     case "rate": {
       const [count, unit] = v.input as number[];
       const expression = `rate(${count} ${["minutes", "hours", "days", "seconds"][unit ?? 3]})`;
@@ -476,8 +543,43 @@ async function replay(v: Vector): Promise<void> {
       expect(await replayCronSweep(input)).toBe(v.expected);
       break;
     }
+    case "webhook":
+      expect(await replayWebhook(v.input as boolean[])).toBe(v.expected);
+      break;
+    case "replyThread": {
+      const input = v.input as {
+        incoming: number | null;
+        type: string;
+        channelType: string;
+      };
+      const { getSlackReplyThreadTs } = await sourceFunctions<{
+        getSlackReplyThreadTs: (
+          event: { type: string; channel_type: string; thread_ts?: string },
+          messageTs: string,
+        ) => string | undefined;
+      }>(
+        "apps/core/src/shared/slack-channel.ts",
+        ["getSlackReplyThreadTs"],
+        {},
+      );
+      const thread = getSlackReplyThreadTs(
+        {
+          type: input.type,
+          channel_type: input.channelType,
+          ...(input.incoming === null
+            ? {}
+            : { thread_ts: String(input.incoming) }),
+        },
+        "3",
+      );
+      expect(thread === undefined ? null : Number(thread)).toEqual(v.expected);
+      break;
+    }
     case "reply": {
-      const input = v.input as { incoming: number | null; thread: boolean };
+      const input = v.input as {
+        incoming: number | null;
+        replyIn: boolean | null;
+      };
       const source = {
         channelId: "2",
         messageTs: "3",
@@ -502,7 +604,12 @@ async function replay(v: Vector): Promise<void> {
       const output = integration.channelReplySource(
         adapter,
         { source: source },
-        { config: { replyIn: input.thread ? "thread" : "source" } },
+        {
+          config:
+            input.replyIn === null
+              ? {}
+              : { replyIn: input.replyIn ? "thread" : "source" },
+        },
       ) as typeof source;
       expect(output.channelId).toBe(source.channelId);
       expect(

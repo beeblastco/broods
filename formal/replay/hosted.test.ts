@@ -5,9 +5,13 @@ import {
   isUnreachableError,
   toErrorMessage,
 } from "../../apps/core/src/shared/errors.ts";
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, mock, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import {
+  resetConnectionsForTests,
+  tokenFetch,
+} from "../../apps/core/src/harness/connections.ts";
 import {
   FrameQueue,
   parseRunnerFrame,
@@ -21,6 +25,16 @@ import {
   taskFromRuns,
   type RunStatus,
 } from "../../apps/core/src/harness/mcp-tasks.ts";
+import {
+  callMcpTool,
+  mcpConnection,
+  setMcpForTests,
+} from "../../apps/core/src/harness/mcp/client.ts";
+import * as http from "../../apps/core/src/shared/http.ts";
+import {
+  setStorageForTests,
+  type Storage,
+} from "../../apps/core/src/shared/storage.ts";
 import { normalizeBundlePath } from "../../packages/convex/model/skillRules.ts";
 import { assertMcpRow } from "../../packages/convex/model/mcp.ts";
 import type { McpRecord } from "../../apps/core/src/shared/domain/mcp.ts";
@@ -32,6 +46,17 @@ interface Vector {
   input: unknown;
   expected: unknown;
 }
+
+const TOKEN_URL = "https://auth.tool.test/token";
+let serveTool: typeof http.publicHostFetch = async (): Promise<Response> => {
+  throw new Error("unstubbed public host call");
+};
+void mock.module("../../apps/core/src/shared/http.ts", () => ({
+  ...http,
+  publicHostFetch: (
+    ...args: Parameters<typeof http.publicHostFetch>
+  ): Promise<Response> => serveTool(...args),
+}));
 
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (): Promise<Response> => {
@@ -66,6 +91,142 @@ function privateFunction<T>(
   return new Function(...Object.keys(dependencies), js)(
     ...Object.values(dependencies),
   ) as T;
+}
+
+// A fake MCP server behind the stubbed publicHostFetch; counts tools/call sends only.
+async function toolCallSends(input: {
+  connected: boolean;
+  modern: boolean;
+  script: string[];
+}): Promise<number> {
+  let sends = 0;
+  let issued = 0;
+  serveTool = async (url, init): Promise<Response> => {
+    const target = url instanceof Request ? url.url : url.toString();
+    if (target === TOKEN_URL) {
+      issued += 1;
+
+      return Response.json({
+        access_token: `token-${issued}`,
+        expires_in: 3600,
+      });
+    }
+    const sent = typeof init?.body === "string" ? init.body : "";
+    const body = JSON.parse(sent) as {
+      id?: number;
+      method: string;
+    };
+    if (body.id === undefined) return new Response(null, { status: 202 });
+    const reply = (result: object): Response =>
+      Response.json({ jsonrpc: "2.0", id: body.id, result: result });
+    const complete = input.modern ? { resultType: "complete" } : {};
+    if (body.method === "server/discover") {
+      if (!input.modern) {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          error: { code: -32601, message: "Method not found" },
+        });
+      }
+
+      return reply({
+        ...complete,
+        ttlMs: 0,
+        cacheScope: "private",
+        supportedVersions: ["2026-07-28"],
+        capabilities: { tools: {} },
+      });
+    }
+    if (body.method === "initialize") {
+      return reply({
+        protocolVersion: "2025-06-18",
+        capabilities: { tools: {} },
+        serverInfo: { name: "fake", version: "1" },
+      });
+    }
+    if (body.method === "tools/list") {
+      return reply({
+        ...complete,
+        ttlMs: 0,
+        cacheScope: "private",
+        tools: [{ name: "write", inputSchema: { type: "object" } }],
+      });
+    }
+    const answer = input.script[sends % input.script.length];
+    sends += 1;
+    switch (answer) {
+      case "401":
+        return new Response("unauthorized", { status: 401 });
+      case "mismatch":
+        return Response.json(
+          {
+            jsonrpc: "2.0",
+            id: body.id,
+            error: { code: -32020, message: "header mismatch" },
+          },
+          { status: 400 },
+        );
+      case "input":
+        return reply({ resultType: "input_required", requestState: "state" });
+      default:
+        return reply({
+          ...complete,
+          isError: answer === "rate",
+          content: [
+            {
+              type: "text",
+              text: answer === "rate" ? "429 retry after 0ms" : "ok",
+            },
+          ],
+        });
+    }
+  };
+  const stored = {
+    clientId: "client",
+    tokenUrl: TOKEN_URL,
+    resource: "https://tool.test/mcp",
+    accessToken: "token-0",
+    refreshToken: "refresh",
+    expiresAt: Date.now() + 3_600_000,
+    updatedAt: 0,
+  };
+  setStorageForTests({
+    mcp: {
+      loadConnection: async (): Promise<typeof stored> => stored,
+      saveRefreshedConnection: async (): Promise<boolean> => true,
+    },
+  } as unknown as Storage);
+  setMcpForTests(null);
+  resetConnectionsForTests();
+  // The SDK paces a requestState-only input_required leg by 250ms; the count does not depend on it.
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = ((handler: () => void, ms?: number): unknown =>
+    realSetTimeout(handler, ms === 250 ? 0 : ms)) as typeof setTimeout;
+  const record = {
+    accountId: "account",
+    serverId: "server",
+    projectId: "project",
+    stageId: "stage",
+    name: "server",
+    transport: "http",
+    url: "https://tool.test/mcp",
+    connected: input.connected,
+    status: "active",
+    createdAt: "date",
+    updatedAt: "date",
+  } as McpRecord;
+  try {
+    await callMcpTool(mcpConnection(record, undefined), "write", {});
+  } catch {
+    // A thrown call ends the loop; only the send count is compared.
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    setStorageForTests(null);
+    setMcpForTests(null);
+    resetConnectionsForTests();
+  }
+
+  return sends;
 }
 
 function sourceFor(file: string): string {
@@ -182,6 +343,66 @@ test.each(vectors)("$kind: $name", async (vector): Promise<void> => {
         globalThis.fetch = blockedFetch;
       }
       expect([retryable, metered]).toEqual(vector.expected);
+
+      return;
+    }
+    case "token": {
+      const statuses = vector.input as number[];
+      const sent: string[] = [];
+      let issued = 0;
+      const stored = (): {
+        accessToken: string;
+        refreshToken: string;
+        expiresAt: number;
+        updatedAt: number;
+      } => ({
+        accessToken: `token-${issued}`,
+        refreshToken: "refresh",
+        expiresAt: Date.now() + 3_600_000,
+        updatedAt: issued,
+      });
+      resetConnectionsForTests();
+      const signedIn = tokenFetch(
+        {
+          key: "replay",
+          missing: "missing",
+          load: async () => stored(),
+          refresh: async () => {
+            issued += 1;
+
+            return {
+              accessToken: `token-${issued}`,
+              expiresAt: Date.now() + 3_600_000,
+            };
+          },
+          refreshFailed: (message: string): string => message,
+          save: async (): Promise<boolean> => true,
+        },
+        async (_input, init): Promise<Response> => {
+          sent.push(new Headers(init?.headers).get("Authorization") ?? "");
+
+          return new Response(null, {
+            status: statuses[Math.min(sent.length - 1, 1)],
+          });
+        },
+      );
+      const response = await signedIn("https://tool.test/mcp", {
+        method: "POST",
+        body: "{}",
+      });
+      resetConnectionsForTests();
+      expect([sent.length, response.status]).toEqual(vector.expected);
+      if (sent.length === 2) expect(sent[1]).not.toBe(sent[0]);
+
+      return;
+    }
+    case "sends": {
+      const input = vector.input as {
+        connected: boolean;
+        modern: boolean;
+        script: string[];
+      };
+      expect(await toolCallSends(input)).toBe(vector.expected);
 
       return;
     }

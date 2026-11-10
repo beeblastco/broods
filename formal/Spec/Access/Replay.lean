@@ -13,7 +13,8 @@ def paths : List String :=
    "/v1/sandboxes/terminal/ws", "/v1/machines/ws", "/v1/agents/a/ws",
    "/v1/projects/p/stages/s/agents/a/ws", "/v1/projects/p/stages/s/observability/ws",
    "/v1/webhooks/a/pancake", "/v1/webhooks/a/dev/b/pancake", "/v1/webhooks/a/other", "/v1/media/key",
-   "/v1/webhooks/", "/v1/media/", "/v1/downloads/a/b", "/v1/projects//stages/s/agents/a/ws"] ++
+   "/v1/webhooks/", "/v1/media/", "/v1/downloads/a/b", "/v1/projects//stages/s/agents/a/ws",
+   "/v1/webhooks//pancake", "/v1/webhooks/a/dev//pancake"] ++
    ["skills", "mcp", "hooks", "workspaces", "sandboxes", "policies", "roles", "channels", "crons"].flatMap
       (fun r => ["/v1/" ++ r, "/v1/" ++ r ++ "/id"])
 
@@ -48,11 +49,14 @@ namespace Spec.Access.Replay
 open Lean
 
 def authRun : IO Unit := do
-  let kinds := [Kind.role, .stage, .run, .admin, .service, .account, .runtime, .user, .terminal, .media, .unknown, .scoped]
+  let kinds := [Kind.role, .stage, .run, .admin, .service, .account, .runtime, .user, .terminal, .media, .unknown, .scoped,
+    .observability]
   for (kind, index) in kinds.zipIdx do
     for bits in [0:64] do
       let flag := fun n => bits / 2^n % 2 == 1
-      let c : Credential := ⟨kind, 7, flag 0, flag 1, flag 4, flag 5⟩
+      let c : Credential :=
+        { kind := kind, account := 7, valid := flag 0, active := flag 1, userPresent := flag 4,
+          userValid := flag 5 }
       let r : Request := ⟨flag 2, flag 3⟩
       let resolved := resolve c r
       let name := resolved.map fun a => match a with
@@ -60,7 +64,21 @@ def authRun : IO Unit := do
         | .deployment _ => "deployment" | .agent _ => "agent"
       IO.println (Json.mkObj [("kind", toJson "auth"), ("index", toJson index), ("bits", toJson bits),
         ("result", toJson name), ("account", toJson (resolved.bind authAccount))]).compress
-  let purposes := [Purpose.run, .terminal, .media, .stage, .user]
+  -- Indexes into the replay's real tokens; each string carries only the prefix `classify` reads.
+  let prefixed := [(0, "bsts_test"), (1, "bdts_"), (2, "brt_"), (5, "bask_test"), (6, "bsk_test"),
+    (10, "unknown"), (12, "bdob_")]
+  for (index, token) in prefixed do
+    for bits in [0:8] do
+      let flag := fun n => bits / 2^n % 2 == 1
+      let kind := credentialKind token (flag 0) (flag 1) (flag 2)
+      let resolved := resolve { kind := kind, account := 7 } ⟨flag 2, false⟩
+      let name := resolved.map fun a => match a with
+        | .admin => "admin" | .account _ _ => "account" | .role _ => "role"
+        | .deployment _ => "deployment" | .agent _ => "agent"
+      IO.println (Json.mkObj [("kind", toJson "credentialKind"), ("index", toJson index),
+        ("prefix", toJson token), ("bits", toJson bits), ("result", toJson name),
+        ("service", toJson (kind == .service))]).compress
+  let purposes := [Purpose.run, .terminal, .media, .stage, .user, .observability]
   for (source, i) in purposes.zipIdx do
     for (target, j) in purposes.zipIdx do
       let expires := if source == .media then 2592100000 else 101000

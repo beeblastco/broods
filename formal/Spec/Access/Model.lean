@@ -61,11 +61,13 @@ def routeMatches (m path : String) (r : Route) : Bool :=
     | ["", "v1", "downloads", a] => segment a && ["GET", "HEAD"].contains m
     | _ => false
   | .config => configPath m p
-  | .secretWebhooks => match p with
-    | ["", "v1", "webhooks", a, "pancake"] => segment a
-    | ["", "v1", "webhooks", a, "dev", b, "pancake"] => segment a && segment b
-    | "" :: "v1" :: "webhooks" :: xs => xs != [] && m == "GET"
-    | _ => false
+  | .secretWebhooks =>
+    -- One match per TypeScript rule, OR-ed like `rules.some`: a failed arm must not hide a later rule.
+    (match p with
+      | ["", "v1", "webhooks", a, "pancake"] => segment a
+      | ["", "v1", "webhooks", a, "dev", b, "pancake"] => segment a && segment b
+      | _ => false) ||
+    (m == "GET" && match p with | "" :: "v1" :: "webhooks" :: xs => xs != [] | _ => false)
   | .webhooks => match p with | "" :: "v1" :: "webhooks" :: xs => xs != [] | _ => false
   | .media => match p with
     | "" :: "v1" :: "media" :: xs => xs != [] && ["GET", "HEAD"].contains m
@@ -81,13 +83,19 @@ def resolveRoute (method path : String) : Option Route :=
 
 inductive Kind where
   | role | stage | run | admin | service | account | runtime | user | terminal | media | unknown | scoped
+  | observability | authkit
   deriving DecidableEq, Repr
 
+/-- Token prefixes in shared/auth.ts; `bdob_` is the observability ticket's early return. -/
 def classify (s : String) : Kind :=
   if s.startsWith "bsts_" then .role else if s.startsWith "bdts_" then .stage
+  else if s.startsWith "bdob_" then .observability
   else if s.startsWith "brt_" then .run else if s.startsWith "bask_" then .account
   else if s.startsWith "bsk_" then .runtime else .unknown
 
+/-- `account` and `stage` are the row's or the signed subject's, never a request field (A3). `stage` is
+the deployment scope (endpoint, project and stage) a stage credential belongs to.
+`userConversations`: the user token lists its conversations. -/
 structure Credential where
   kind : Kind
   account : Nat
@@ -95,6 +103,8 @@ structure Credential where
   active : Bool := true
   userPresent : Bool := false
   userValid : Bool := true
+  stage : Nat := 0
+  userConversations : Bool := false
   deriving Repr
 
 structure Request where
@@ -121,10 +131,20 @@ def resolve (c : Credential) (r : Request) : Option Auth :=
   | .stage => if c.active then some (.deployment c.account) else none
   | .run => if c.active then some (.agent c.account) else none
   | .runtime => if c.active && (!c.userPresent || c.userValid) then some (.deployment c.account) else none
+  | .observability => none
   | _ => none
 
+/-- `mcpAuth` in harness/mcp-tasks.ts: core's own credentials except admin, else an AuthKit token.
+For `.authkit`, `valid` is a verified WorkOS subject, `active` that `accounts.getForUser(subject, org)`
+did not refuse, and `account` the row it chose from the subject's memberships (A3). -/
+def mcpResolve (c : Credential) (r : Request) : Option Auth :=
+  match resolve c { r with allowDisabled := false } with
+  | some .admin => none
+  | some a => some a
+  | none => if c.kind == .authkit && c.valid && c.active then some (.account c.account false) else none
+
 inductive Purpose where
-  | run | stage | terminal | media | user
+  | run | stage | terminal | media | user | observability
   deriving DecidableEq, Repr
 
 /-- A1 abstracts verification and distinct key contexts; terminal canonical encoding is checked separately. -/
@@ -325,6 +345,7 @@ def ticketContext : Purpose → String
   | .terminal => "sandbox-terminal-ticket:"
   | .media => "workspace-media-link:"
   | .user => "broods-user-token:"
+  | .observability => "observability-read-ticket:"
 
 end Spec.Access
 
@@ -410,7 +431,7 @@ def claimLastUsed (writes : List (String × Nat)) (key : String) (now interval :
 
 def credentialKind (token : String) (adminMatch serviceMatch via : Bool) : Kind :=
   let kind := classify token
-  if kind == .role || kind == .stage || kind == .run then kind
+  if kind == .role || kind == .stage || kind == .observability || kind == .run then kind
   else if adminMatch then .admin else if serviceMatch && !via then .service else kind
 
 end Spec.Access

@@ -4,13 +4,47 @@ import Spec.Hosted.Proofs
 by acquisition, not fairness of the actual event loop; see L602. -/
 namespace Spec.Hosted
 
-/-- Distinct tenant cache keys identify distinct isolates; host processes may still be shared. -/
-theorem tenant_isolates_separate (a b : TenantKey) (h : a.tenant ≠ b.tenant) : a ≠ b :=
+/-- Cache keys with different tenant fields are different keys. By construction (L22): the
+content is in `tenant_child_loader_keys_separate`; host processes may still be shared. -/
+theorem tenant_keys_distinct (a b : TenantKey) (h : a.tenant ≠ b.tenant) : a ≠ b :=
   Proofs.tenant_separate a b h
 
-/-- A transport retry requires a no-execution signal; the G7 semantic exception is separate. -/
-theorem transport_never_retries_possible_execution (f : Failure) :
+/-- The hosted runner falls back from the Worker only on a no-execution signal (a tagged status
+or a never-connected code). This is mcp/hosted.ts only: a signed-in HTTP row's 401 resend, the
+SDK's -32020 and `input_required` resends and the G7 rate-limit retry do re-send possibly executed
+calls (`tool_call_sends_bounded`, G602). By construction (L22): `retry` is `¬mayHaveRun`; the
+content is the `retry` replay through the real `drainBridgeStream`. -/
+theorem hosted_fallback_never_reruns (f : Failure) :
     retry f = true → mayHaveRun f = false := Proofs.retry_safe f
+
+/-- One tool call through `callMcpTool` makes at most this many `tools/call` sends: the first call
+and three rate-limit retries (G7); in the 2026-07-28 era the SDK re-sends each after a -32020 and
+an `input_required` answer up to ten more times; a signed-in row resends each send once after a
+401 (G602). So 4 or 8 in the older era, 88 or 176 in the new one. No resend checks that nothing
+ran. Connect, discover and list requests are not counted; the hosted Worker-to-Lambda fallback
+and `LambdaClient`'s default retries sit below this layer. -/
+theorem tool_call_sends_bounded (signedIn modern : Bool) (server : Nat → Answer) :
+    toolCallSends signedIn modern server ≤
+      4 * (if modern then 2 * (maxRounds + 1) else 1) * (if signedIn then 2 else 1) :=
+  Proofs.tool_call_bound signedIn modern server
+
+/-- The worst answer at the `n`-th send: a 401 on every even send; otherwise `input_required`,
+except a -32020 closing the first request and a rate limit closing the second. -/
+def worstAnswer (n : Nat) : Answer :=
+  if n % 2 = 0 then ⟨401, false, false, false⟩
+  else if n / 2 % 22 = 10 then ⟨400, false, false, true⟩
+  else if n / 2 % 22 = 21 then ⟨200, true, false, false⟩
+  else ⟨200, false, true, false⟩
+
+/-- The bound is reached on a signed-in row in the 2026-07-28 era: 176 sends. -/
+example : toolCallSends true true worstAnswer = 176 := by decide
+
+/-- The older era reaches eight: alternating 401 and a rate-limit result. -/
+example : toolCallSends true false (fun n => if n % 2 = 0 then ⟨401, false, false, false⟩
+    else ⟨200, true, false, false⟩) = 8 := by decide
+
+/-- A 401 alone is resent even though the first send may have run: no no-execution signal. -/
+example : toolCallSends true false (fun _ => ⟨401, false, false, false⟩) = 2 := by decide
 
 /-- Only a tagged 422 pins a bundle away from Workers for ten minutes. -/
 theorem worker_pin_exact (now : Nat) (f : Failure) :
@@ -39,7 +73,9 @@ theorem pool_acquisition_progress (tenants : List String) (now : Nat) (tenant : 
 theorem tenant_observation_private (a b : World) (h : a.visible = b.visible) : observe a = observe b :=
   Proofs.private_public a b h
 
-/-- The semantic rate-limit exception makes at most three additional calls. -/
+/-- The rate-limit rule allows a retry only at attempts 1 to 3: at most three more tool calls.
+Each call may be sent more than once: the SDK resends after a -32020 or an `input_required`
+answer, and a signed-in row after a 401 (`tool_call_sends_bounded`). By construction (L22). -/
 theorem semantic_retry_bounded (e r a : Bool) (n : Nat) (h : semanticRetry e r a n = true) :
     n ≤ 3 := Proofs.semantic_bound e r a n h
 /-- Valid SHA-256 digests have equal length, so distinct tenants cannot share a child/loader key. -/

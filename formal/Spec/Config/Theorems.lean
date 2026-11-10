@@ -4,9 +4,17 @@ The fragment round-trip and base canonicalisation are deliberately narrow (L700-
 Envelope secrecy is a cryptographic assumption, not a JSON-validation property (G701). -/
 namespace Spec.Config
 
-/-- An already trimmed canonical provider base URL is a fixed point. -/
-theorem normalisation_fixed (s : String) (trimmed : s.trimAscii.toString = s) :
+/-- A provider base URL that ECMAScript `trim` leaves unchanged (no leading or trailing
+whitespace, U+00A0 and U+FEFF included) is a fixed point of the baseURL canonicalisation. -/
+theorem normalisation_fixed (s : String) (trimmed : Spec.Js.trim s = s) :
     canonicalBase none (some s) = (none, some s) := Proofs.canonical_fixed s trimmed
+
+/-- ASCII trimming is not enough: U+00A0 is not Lean's ASCII whitespace, yet the code strips it,
+so a base starting with it satisfies a `trimAscii` hypothesis and is still rewritten. -/
+example : Char.isWhitespace '\u00A0' = false ∧
+    canonicalBase none (some (String.ofList ['\u00A0', 'a'])) = (none, some (String.ofList ['a'])) := by
+  refine ⟨by decide, ?_⟩
+  simp [canonicalBase, Spec.Js.trim, Spec.Js.trimStartChars, Spec.Js.isSpace]
 
 /-- Credential validation never reads a secret map or substitutes a placeholder. -/
 theorem placeholders_intact (v : String) (a b : List (String × String)) :

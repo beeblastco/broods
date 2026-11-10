@@ -9,6 +9,7 @@ import {
   askingEventId,
   asyncToolContinuationEventId,
 } from "../../apps/core/src/harness/async-tool-result.ts";
+import { subagentResultDedupeKey } from "../../packages/convex/model/subagentResults.ts";
 import {
   isRunnableModelInput,
   turnSettlement,
@@ -41,13 +42,21 @@ interface Input {
   now: number;
   ttl: number;
   mode: "reject" | "followup" | "collect" | "steer";
+  retain: number;
+  resume: boolean;
   claim: boolean;
   failed: boolean;
+  results?: number[];
+  settles?: boolean;
+  rows?: boolean;
+  asyncResult?: boolean;
+  active?: boolean;
 }
 interface Vector {
   name: string;
   steps: {
     input: Input;
+    refused: boolean;
     rows: { key: number; status: string }[];
     generation: number;
   }[];
@@ -98,99 +107,173 @@ async function replay(vector: Vector): Promise<void> {
   const conversationKey = `acct:${accountId}:agent:test:api:replay`;
   const realNow = Date.now;
   try {
-    for (const { input: i, rows, generation } of vector.steps) {
-      Date.now = (): number => 2000000000000 + i.now;
+    for (const { input: i, refused, rows, generation } of vector.steps) {
+      // A fenced write's history rows: the result events of the late results it carries.
+      const events = (i.results ?? []).map((key) => ({
+        cursor: `c${key}`,
+        dedupeKey: subagentResultDedupeKey(`r${key}`, "completed"),
+        event: { role: "user", content: "result" },
+      }));
+      Date.now = (): number => 2000000000000 + (i.now ?? 0);
       const owned = {
         conversationKey: conversationKey,
         ownerEventId: `e${i.event}`,
         ownerGeneration: i.generation,
       };
-      switch (i.op) {
-        case "accept":
-          await t.mutation(internal.runtimeIngress.accept, {
-            accountId: accountId,
-            agentId: "test",
-            conversationKey: conversationKey,
-            eventId: `e${i.key}`,
-            runId: `run_${i.key}`,
-            idempotencyKey: `k${i.key}`,
-            payloadDigest: `d${i.key}`,
-            events: [{ role: "user", content: "hello" }],
-            delivery: {
-              kind: "async",
-              publicEventId: `e${i.key}`,
-              publicConversationKey: conversationKey,
-              statusUrl: "https://invalid.test/status",
-            },
-            requestedMode: i.mode,
-            sizeBytes: 1,
-            leaseTtlMs: i.ttl,
-            envelopeTtlMs: 10 - i.now,
-            statusTtlMs: 604800000,
-            maxQueuedCount: 100,
-            maxQueuedBytes: 1048576,
-          });
-          break;
-        case "takeNext":
-          await t.mutation(internal.runtimeIngress.takeNext, {
-            ...owned,
-            leaseTtlMs: i.ttl,
-            settle: { status: "completed" },
-          });
-          break;
-        case "applySteering":
-          await t.mutation(internal.runtimeIngress.applySteering, {
-            ...owned,
-            leaseTtlMs: i.ttl,
-          });
-          break;
-        case "stepBoundary":
-          await t.mutation(internal.runtimeIngress.stepBoundary, {
-            ...owned,
-            leaseTtlMs: i.ttl,
-            claimSteering: i.claim,
-          });
-          break;
-        case "renewOwner":
-          await t.mutation(internal.runtimeIngress.renewOwner, {
-            ...owned,
-            leaseTtlMs: i.ttl,
-          });
-          break;
-        case "releaseOwner":
-          await t.mutation(internal.runtimeIngress.releaseOwner, owned);
-          break;
-        case "settle":
-          try {
-            await t.mutation(internal.runtimeIngress.settle, {
-              ...owned,
-              status: i.failed ? "failed" : "completed",
+      const apply = async (): Promise<void> => {
+        switch (i.op) {
+          case "accept":
+            // A resume names an async result the conversation has not stored yet.
+            if (i.resume)
+              await t.mutation(internal.runtime.createAsyncAgentResult, {
+                eventId: `r${i.key}`,
+                conversationKey: conversationKey,
+                subagent: { parentConversationKey: conversationKey },
+              });
+            await t.mutation(internal.runtimeIngress.accept, {
+              accountId: accountId,
+              agentId: "test",
+              conversationKey: conversationKey,
+              eventId: `e${i.event}`,
+              runId: `run_${i.key}`,
+              idempotencyKey: `k${i.key}`,
+              payloadDigest: `d${i.key}`,
+              events: [{ role: "user", content: "hello" }],
+              delivery: {
+                kind: "async",
+                publicEventId: `e${i.event}`,
+                publicConversationKey: conversationKey,
+                statusUrl: "https://invalid.test/status",
+              },
+              requestedMode: i.mode,
+              sizeBytes: 1,
+              leaseTtlMs: i.ttl,
+              envelopeTtlMs: 10 - i.now,
+              statusTtlMs: i.retain - i.now,
+              maxQueuedCount: 100,
+              maxQueuedBytes: 1048576,
+              ...(i.resume ? { resultEventId: `r${i.key}` } : {}),
             });
-          } catch (error) {
-            if (
-              !(error instanceof Error) ||
-              !error.message.includes("Stale conversation owner")
-            )
-              throw error;
-          }
-          break;
-        case "stopOwner":
-          await t.mutation(internal.runtimeIngress.stopOwner, {
-            accountId: accountId,
-            agentId: "test",
-            conversationKey: conversationKey,
-          });
-          break;
-        case "recoverQueued":
-          await t.mutation(internal.runtimeIngress.recoverQueued, {
-            leaseTtlMs: i.ttl,
-          });
-          break;
-        case "maintain":
-          await t.mutation(internal.runtimeIngress.maintain, {});
-          break;
-        default:
-          throw new Error(i.op);
+            // The polling row a background run's settle writes its outcome to.
+            await t.mutation(internal.runtime.createAsyncAgentResult, {
+              eventId: `a${i.event}`,
+              conversationKey: conversationKey,
+            });
+            break;
+          case "takeNext":
+            await t.mutation(internal.runtimeIngress.takeNext, {
+              ...owned,
+              leaseTtlMs: i.ttl,
+              ...(i.settles
+                ? { settle: { status: "completed" as const } }
+                : {}),
+              ...(i.rows
+                ? {
+                    events: [
+                      {
+                        cursor: `t${i.event}`,
+                        event: { role: "user", content: "row" },
+                      },
+                    ],
+                  }
+                : {}),
+            });
+            break;
+          case "applySteering":
+            await t.mutation(internal.runtimeIngress.applySteering, {
+              ...owned,
+              leaseTtlMs: i.ttl,
+            });
+            break;
+          case "stepBoundary":
+            await t.mutation(internal.runtimeIngress.stepBoundary, {
+              ...owned,
+              leaseTtlMs: i.ttl,
+              claimSteering: i.claim,
+              events: events,
+            });
+            break;
+          case "renewOwner":
+            await t.mutation(internal.runtimeIngress.renewOwner, {
+              ...owned,
+              leaseTtlMs: i.ttl,
+            });
+            break;
+          case "releaseOwner":
+            await t.mutation(internal.runtimeIngress.releaseOwner, owned);
+            break;
+          case "settle":
+            try {
+              await t.mutation(internal.runtimeIngress.settle, {
+                ...owned,
+                status: i.failed ? "failed" : "completed",
+                events: events,
+                ...(i.asyncResult
+                  ? {
+                      asyncResult: {
+                        eventIds: [`a${i.event}`],
+                        outcome: { status: i.failed ? "failed" : "completed" },
+                      },
+                    }
+                  : {}),
+              });
+            } catch (error) {
+              if (
+                !(error instanceof Error) ||
+                !error.message.includes("Stale conversation owner")
+              )
+                throw error;
+            }
+            break;
+          case "stopOwner":
+            await t.mutation(internal.runtimeIngress.stopOwner, {
+              accountId: accountId,
+              agentId: "test",
+              conversationKey: conversationKey,
+            });
+            break;
+          case "recoverQueued":
+            await t.mutation(internal.runtimeIngress.recoverQueued, {
+              leaseTtlMs: i.ttl,
+            });
+            break;
+          case "declineRecovery":
+            // recoverQueued skips a conversation whose account is not active.
+            await t.run(async (ctx): Promise<void> => {
+              await ctx.db.patch(accountId, { status: "disabled" });
+            });
+            await t.mutation(internal.runtimeIngress.recoverQueued, {
+              leaseTtlMs: 100,
+            });
+            await t.run(async (ctx): Promise<void> => {
+              await ctx.db.patch(accountId, { status: "active" });
+            });
+            break;
+          case "maintain":
+            await t.mutation(internal.runtimeIngress.maintain, {});
+            break;
+          case "status":
+            await t.run(async (ctx): Promise<void> => {
+              await ctx.db.patch(accountId, {
+                status: i.active ? "active" : "disabled",
+              });
+            });
+            break;
+          default:
+            throw new Error(i.op);
+        }
+      };
+      // The model's `refused` is `requireActiveAccount` throwing, which rolls the mutation back.
+      const thrown = await apply().then(
+        (): null => null,
+        (error: unknown): unknown => error,
+      );
+      if (refused) {
+        expect(thrown instanceof Error && thrown.message).toContain(
+          "not active",
+        );
+      } else if (thrown !== null) {
+        throw thrown;
       }
       const actual = await t.run(async (ctx) => {
         const saved = await ctx.db.query("runtimeIngressEnvelopes").collect();
