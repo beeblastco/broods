@@ -7,16 +7,18 @@ import {
 } from "@/app/lib/detailSplit";
 import { cn } from "@/app/lib/utils";
 import { X } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { observeResize } from "@/app/lib/observeResize";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 
+const HANDLE_WIDTH_PX = 1;
 const KEY_STEP_PX = 16;
 
-// The separator's keys, as the detail width they move to.
+// The separator's keys, as the detail width they move to; the detail is the primary pane.
 const KEY_MOVES: Partial<Record<string, (width: number) => number>> = {
   ArrowLeft: (width) => width + KEY_STEP_PX,
   ArrowRight: (width) => width - KEY_STEP_PX,
-  End: () => DETAIL_MIN_WIDTH,
-  Home: () => Infinity,
+  End: () => Infinity,
+  Home: () => DETAIL_MIN_WIDTH,
 };
 
 interface DetailPanelProps {
@@ -74,19 +76,26 @@ export function DetailSplit({
   flush = false,
   tableMinWidth = TABLE_MIN_WIDTH,
 }: DetailSplitProps): React.JSX.Element {
-  const group = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ from: number; room: number } | null>(null);
+  const drag = useRef<number | null>(null);
   const [width, setWidth] = useState(DETAIL_DEFAULT_WIDTH);
+  const [frameWidth, setFrameWidth] = useState(0);
   if (!detail && width !== DETAIL_DEFAULT_WIDTH) setWidth(DETAIL_DEFAULT_WIDTH);
+  const measure = useCallback(
+    (el: HTMLDivElement | null) =>
+      el ? observeResize(el, () => setFrameWidth(el.clientWidth)) : undefined,
+    [],
+  );
+  const room = Math.max(
+    DETAIL_MIN_WIDTH,
+    frameWidth - HANDLE_WIDTH_PX - tableMinWidth,
+  );
 
-  const room = (handle: HTMLElement): number =>
-    (group.current?.clientWidth ?? 0) - handle.offsetWidth - tableMinWidth;
-  const resize = (next: number, max: number): void =>
-    setWidth(Math.max(DETAIL_MIN_WIDTH, Math.min(next, max)));
+  const resize = (next: number): void =>
+    setWidth(Math.max(DETAIL_MIN_WIDTH, Math.min(next, room)));
 
   return (
     <div
-      ref={group}
+      ref={measure}
       data-slot="resizable-panel-group"
       style={{
         "--detail-min": `${DETAIL_MIN_WIDTH}px`,
@@ -117,27 +126,24 @@ export function DetailSplit({
             role="separator"
             aria-label="Resize details"
             aria-orientation="vertical"
+            aria-valuemax={room}
             aria-valuemin={DETAIL_MIN_WIDTH}
-            aria-valuenow={width}
+            aria-valuenow={Math.min(width, room)}
             tabIndex={0}
             data-slot="resizable-handle"
             onKeyDown={(event) => {
               const move = KEY_MOVES[event.key];
               if (!move) return;
               event.preventDefault();
-              resize(move(width), room(event.currentTarget));
+              resize(move(width));
             }}
             onPointerDown={(event) => {
               if (event.button !== 0) return;
               event.currentTarget.setPointerCapture(event.pointerId);
-              drag.current = {
-                from: event.clientX + width,
-                room: room(event.currentTarget),
-              };
+              drag.current = event.clientX + width;
             }}
             onPointerMove={(event) => {
-              if (drag.current)
-                resize(drag.current.from - event.clientX, drag.current.room);
+              if (drag.current !== null) resize(drag.current - event.clientX);
             }}
             onLostPointerCapture={() => {
               drag.current = null;

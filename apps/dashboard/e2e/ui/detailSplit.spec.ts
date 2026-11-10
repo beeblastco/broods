@@ -112,10 +112,13 @@ test("the separator resizes from the keyboard within both floors", async ({
   await page.keyboard.press("ArrowRight");
   expectNear(await width(detail), DETAIL_DEFAULT_WIDTH);
 
-  await page.keyboard.press("End");
-  expectNear(await width(detail), DETAIL_MIN_WIDTH);
   await page.keyboard.press("Home");
-  expectNear(await width(detail), frame - handleWidth - TABLE_MIN_WIDTH);
+  expectNear(await width(detail), DETAIL_MIN_WIDTH);
+  await page.keyboard.press("End");
+  const widest = frame - handleWidth - TABLE_MIN_WIDTH;
+  expectNear(await width(detail), widest);
+  await expect(handle).toHaveAttribute("aria-valuemax", String(widest));
+  await expect(handle).toHaveAttribute("aria-valuenow", String(widest));
 });
 
 test("on a phone the open detail takes the table's place, and closing it brings the table back", async ({
