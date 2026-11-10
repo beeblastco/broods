@@ -835,7 +835,8 @@ export const webhook = httpAction(async (ctx, request): Promise<Response> => {
     }
   } else if (event === "installation") {
     const payload = JSON.parse(body) as InstallationEvent;
-    if (payload.action === "deleted" || payload.action === "suspend") {
+    // A suspend is reversible on GitHub, so only an uninstall drops the links and keys.
+    if (payload.action === "deleted") {
       await ctx.runMutation(internal.github.removeInstallation, {
         installationId: payload.installation.id,
       });
