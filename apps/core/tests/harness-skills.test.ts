@@ -412,10 +412,13 @@ describe("loadConfiguredSkillPrompt", () => {
       workspace({ provider: "s3" }),
     );
 
-    expect(result.stagedPath).toBe("/.claude/skills/script-skill");
+    expect(result.stagedPath).toBe(".claude/skills/script-skill");
     expect(result.stagedFiles).toEqual(["SKILL.md", "scripts/analyze.py"]);
     expect(result.prompt.content).toContain(
-      "staged inside the current sandbox at `/.claude/skills/script-skill`",
+      "staged in the workspace at `.claude/skills/script-skill`",
+    );
+    expect(result.prompt.content).toContain(
+      "`bash .claude/skills/script-skill/script.sh`",
     );
     expect(s3Copies).toContainEqual({
       sourceBucket: "test-skills-bucket",
@@ -426,7 +429,7 @@ describe("loadConfiguredSkillPrompt", () => {
       options: { contentType: "text/plain; charset=utf-8", executable: true },
     });
     // Mirrored into the .agents/skills location for tools that expect it.
-    expect(result.prompt.content).toContain("/.agents/skills/script-skill");
+    expect(result.prompt.content).toContain("`.agents/skills/script-skill`");
     expect(s3Copies).toContainEqual({
       sourceBucket: "test-skills-bucket",
       sourceKey: "acct_test/script-skill/scripts/analyze.py",
