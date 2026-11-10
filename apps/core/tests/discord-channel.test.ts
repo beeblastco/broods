@@ -596,6 +596,16 @@ describe("discord channel adapter", () => {
       "POST /webhooks/app-1/token-1?wait=true final answer",
     ]);
   });
+
+  it("splits a reply longer than Discord's 2000 characters, keeping its end", async () => {
+    const answer = `${"x".repeat(5000)}\n\nTrace: https://broods.test/t/1`;
+    const sent = await sendSlashCommandReplies([answer]);
+    const contents = sent.map((line) => line.split(" ").slice(2).join(" "));
+
+    expect(sent).toHaveLength(3);
+    expect(contents.every((content) => content.length <= 2000)).toBe(true);
+    expect(contents.join("")).toBe(answer);
+  });
 });
 
 async function sendSlashCommandReplies(texts: string[]): Promise<string[]> {

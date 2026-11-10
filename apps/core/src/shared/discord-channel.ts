@@ -11,7 +11,11 @@ import {
   type ChannelImage,
   type ChannelParseResult,
 } from "./channels.ts";
-import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
+import {
+  chunkChannelText,
+  isAllowedId,
+  parseChannelWebhookBody,
+} from "./channels.ts";
 import { parseCommand, resolveDiscordCommand } from "./commands.ts";
 import {
   DISCORD_GATEWAY_TOKEN_HEADER,
@@ -25,6 +29,8 @@ import { DISCORD_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 const DISCORD_THREAD_CHANNEL_TYPES = new Set([10, 11, 12]);
 
 const DISCORD_FETCH_TIMEOUT_MS = 30_000;
+// Discord caps content at 2000; the margin covers markdown the SDK rewrites on the way out.
+const DISCORD_TEXT_LIMIT = 1900;
 
 // Format 3 is Lottie, a JSON animation with no raster form, so it is absent.
 const DISCORD_STICKER_EXTENSIONS: Record<number, string | undefined> = {
@@ -451,6 +457,27 @@ function createDiscordActions(
     });
   };
 
+  const sendChunk = async function (text: string): Promise<void> {
+    if (!slashCommand) {
+      await discord.postMessage(threadId, { markdown: text });
+
+      return;
+    }
+
+    try {
+      await discord.runWithSlashCommandContext(slashCommand, () =>
+        discord.postMessage(threadId, { markdown: text }),
+      );
+    } catch (err) {
+      if (source.channelId) {
+        await discord.postMessage(threadId, { markdown: text });
+
+        return;
+      }
+      throw err;
+    }
+  };
+
   return {
     // Discord ignores URL attachments, so both read the bytes into one multipart message.
     sendFiles: sendAttachments,
@@ -474,23 +501,8 @@ function createDiscordActions(
     },
 
     sendText: async function (text) {
-      if (!slashCommand) {
-        await discord.postMessage(threadId, { markdown: text });
-
-        return;
-      }
-
-      try {
-        await discord.runWithSlashCommandContext(slashCommand, () =>
-          discord.postMessage(threadId, { markdown: text }),
-        );
-      } catch (err) {
-        if (source.channelId) {
-          await discord.postMessage(threadId, { markdown: text });
-
-          return;
-        }
-        throw err;
+      for (const chunk of chunkChannelText(text, DISCORD_TEXT_LIMIT)) {
+        await sendChunk(chunk);
       }
     },
 
