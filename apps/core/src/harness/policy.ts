@@ -382,7 +382,7 @@ export async function evaluateChannelInvoke(
   }
 }
 
-export function isPolicyEnabled(agentConfig: AgentConfig): boolean {
+function isPolicyEnabled(agentConfig: AgentConfig): boolean {
   return (agentConfig.policies?.length ?? 0) > 0;
 }
 

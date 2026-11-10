@@ -4,6 +4,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { accountCipherForWrite, hasEncryptionSecret } from "./accountKeys";
+import { sha256Hex } from "./accountSecrets";
 import type { AccountCipher } from "./envelope";
 import { agentsInStage } from "./projectScope";
 
@@ -177,14 +178,8 @@ async function endpointDigest(entry: DesiredEndpoint): Promise<string> {
     entry.platform,
     entry.webhookPath,
   ]);
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
 
-  return [...new Uint8Array(digest)]
-    .map((byte): string => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return await sha256Hex(value);
 }
 
 function endpointKey(entry: {

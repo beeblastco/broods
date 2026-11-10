@@ -1,8 +1,8 @@
-# Deploy pipeline.
-# `main` = SaaS production: PR CI already validated, skip re-validation and
-#   deploy directly to the active production region (Convex storage provider).
-# `dev` = OSS / community staging: re-validates (typecheck + test + build)
-#   before deploying. Requires the development Convex credentials.
+# Deploy pipeline: `sst deploy` of the AWS data plane and the Cloudflare Workers.
+# `main` = production: PR CI already validated, skip re-validation and deploy
+#   directly to the production region.
+# `dev` = the dev stage: re-validates (check + test + build) before deploying.
+#   Requires the development Convex credentials.
 
 name: Deploy
 
@@ -103,22 +103,6 @@ jobs:
       RUNTIME_EGRESS_IPS: ${{ vars.RUNTIME_EGRESS_IPS }}
       INPUT_STAGE: ${{ inputs.stage }}
       CI: "true"
-      ACCOUNT_MODEL_PROVIDER: ${{ vars.ACCOUNT_MODEL_PROVIDER || 'google' }}
-      ACCOUNT_MODEL_ID: ${{ vars.ACCOUNT_MODEL_ID || 'gemma-4-31b-it' }}
-      ACCOUNT_MODEL_OPTIONS_JSON: ${{ vars.ACCOUNT_MODEL_OPTIONS_JSON }}
-      ACCOUNT_PROVIDER_CONFIG_JSON: ${{ secrets.ACCOUNT_PROVIDER_CONFIG_JSON }}
-      ACCOUNT_TOOLS_JSON: ${{ vars.ACCOUNT_TOOLS_JSON }}
-      ACCOUNT_GOOGLE_API_KEY: ${{ secrets.ACCOUNT_GOOGLE_API_KEY || secrets.SST_SECRET_GOOGLEAPIKEY }}
-      ACCOUNT_OPENAI_API_KEY: ${{ secrets.ACCOUNT_OPENAI_API_KEY }}
-      ACCOUNT_OPENAI_BASE_URL: ${{ vars.ACCOUNT_OPENAI_BASE_URL }}
-      ACCOUNT_OPENAI_ORGANIZATION: ${{ vars.ACCOUNT_OPENAI_ORGANIZATION }}
-      ACCOUNT_OPENAI_PROJECT: ${{ vars.ACCOUNT_OPENAI_PROJECT }}
-      ACCOUNT_BEDROCK_API_KEY: ${{ secrets.ACCOUNT_BEDROCK_API_KEY }}
-      ACCOUNT_BEDROCK_REGION: ${{ vars.ACCOUNT_BEDROCK_REGION || vars.DEV_AWS_REGION || 'eu-west-1' }}
-      ACCOUNT_BEDROCK_ACCESS_KEY_ID: ${{ secrets.ACCOUNT_BEDROCK_ACCESS_KEY_ID }}
-      ACCOUNT_BEDROCK_SECRET_ACCESS_KEY: ${{ secrets.ACCOUNT_BEDROCK_SECRET_ACCESS_KEY }}
-      ACCOUNT_BEDROCK_SESSION_TOKEN: ${{ secrets.ACCOUNT_BEDROCK_SESSION_TOKEN }}
-      ACCOUNT_GATEWAY_API_KEY: ${{ secrets.ACCOUNT_GATEWAY_API_KEY }}
       # Create the image-based sandbox Lambdas only after the arm64 image is in a target's
       # regional ECR repo. When a target's flag is true but the image is missing, this
       # workflow bootstraps the region by running one repo-only SST deploy, mirroring the

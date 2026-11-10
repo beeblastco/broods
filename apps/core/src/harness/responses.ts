@@ -4,10 +4,7 @@ import { publicEventIdForScope } from "../shared/runtime-keys.ts";
 import type { AsyncToolResultRecord } from "./async-tool-result.ts";
 import { readAgentFullStream, type AgentLoopStream } from "./harness.ts";
 import { INGRESS_RETRY_HEADERS, type IngressAdmission } from "./ingress.ts";
-import type {
-  AsyncDirectInboundEvent,
-  DirectInboundEvent,
-} from "./integrations.ts";
+import type { DirectInboundEvent } from "./integrations.ts";
 
 const textEncoder = new TextEncoder();
 
@@ -211,44 +208,4 @@ export function directAdmissionResponse(
     requestedMode: event.requestedMode,
     ...(statusUrl ? { statusUrl: statusUrl } : {}),
   });
-}
-
-export function asyncAdmissionResponse(
-  event: AsyncDirectInboundEvent,
-  admission: IngressAdmission,
-): Response {
-  if (admission.outcome === "rejected") {
-    return errorResponse(409, CONVERSATION_BUSY, { code: "conversation_busy" });
-  }
-  if (admission.outcome === "capacity") {
-    return errorResponse(
-      429,
-      "Conversation ingress queue is at capacity",
-      { code: "ingress_capacity" },
-      INGRESS_RETRY_HEADERS,
-    );
-  }
-  if (admission.outcome === "conflict") {
-    return errorResponse(
-      409,
-      "Idempotency key is already bound to a different ingress payload",
-      {
-        code: "idempotency_conflict",
-      },
-    );
-  }
-  const publicEventId = publicEventIdFromScoped(admission.eventId, event);
-  const runId = admission.runId ?? event.runId;
-  const statusUrl = directStatusUrl({ runId: runId }) ?? event.statusUrl;
-
-  return acceptedAsyncResponse(
-    runId,
-    statusUrl,
-    {
-      publicEventId: publicEventId,
-      publicConversationKey: event.publicConversationKey,
-      requestedMode: event.requestedMode,
-    },
-    admission.status ?? "queued",
-  );
 }

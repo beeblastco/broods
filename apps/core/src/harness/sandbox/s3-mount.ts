@@ -9,7 +9,6 @@ import { optionalEnv } from "../../shared/env.ts";
 import { agentNamespaceFolder } from "../../shared/runtime-keys.ts";
 import type { S3Access } from "../../shared/s3.ts";
 import type { SandboxControlPlane } from "../../shared/sandbox-sizes.ts";
-import { workspaceNamespacePrefix } from "../../shared/sandbox.ts";
 import { getStorage } from "../../shared/storage.ts";
 import type { SandboxExecutorConfig, SandboxRunRequest } from "./types.ts";
 import { configString, shellQuote } from "./utils.ts";
@@ -268,7 +267,7 @@ export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
         normalizeWorkspacePrefix(storage.prefix),
         namespaceIsolationSuffix(ctx.namespace),
       )
-    : `${workspaceNamespacePrefix(ctx.namespace)}/`;
+    : `${ctx.namespace}/`;
   const region = storage?.region ?? ctx.region;
   const endpoint = storage?.endpoint ?? ctx.endpoint;
 

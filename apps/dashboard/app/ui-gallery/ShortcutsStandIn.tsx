@@ -16,11 +16,12 @@ import { Input } from "@/app/components/ui/input";
 import { useHydrated } from "@/app/hooks/useHydrated";
 import { DockApplyBar } from "@/app/components/copilot/DockApplyBar";
 import {
+  actionTier,
   changeKey,
   dockProposals,
   openProposal,
-  planRunsUnattended,
   type CopilotAction,
+  type CopilotPlan,
   type DockApply,
 } from "@/app/lib/copilotActions";
 import { itemAction, planFromQuery } from "@/app/lib/copilotIntent";
@@ -104,6 +105,10 @@ function describe(action: CopilotAction): string {
     case "commitFiles":
       return `commit ${action.files.map((file) => file.path).join(",")}`;
   }
+}
+
+function planRunsUnattended(plan: CopilotPlan): boolean {
+  return plan.actions.every((action) => actionTier(action) === "safe");
 }
 
 export function ShortcutsStandIn(): React.JSX.Element {

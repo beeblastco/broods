@@ -1,7 +1,0 @@
-.DS_Store
-.env*
-.git
-.github
-.next
-node_modules
-tsconfig.tsbuildinfo

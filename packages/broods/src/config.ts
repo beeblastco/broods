@@ -90,10 +90,6 @@ export async function writePrivateFile(
   await chmod(path, 0o600);
 }
 
-export function stageFromEnv(): string | undefined {
-  return process.env.BROODS_STAGE;
-}
-
 export function stripTrailingSlash(value: string): string {
   let end = value.length;
   while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;

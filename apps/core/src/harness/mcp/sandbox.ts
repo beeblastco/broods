@@ -57,7 +57,7 @@ export async function sandboxMcpRequest(
         server: serverName,
         command: target.command,
         // No run identity: the server outlives the run. The image restarts it when env changes.
-        env: mergeSandboxEnv(target.config.envVars, undefined),
+        env: mergeSandboxEnv(target.config.envVars),
         message: {
           jsonrpc: "2.0",
           id: randomUUID(),

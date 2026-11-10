@@ -61,17 +61,12 @@ export class HttpSandboxExecutor implements SandboxExecutor {
       );
     }
     const payload: SandboxExecRequest = {
-      runtime: request.runtime ?? "bash",
+      runtime: "bash",
       code: request.code,
       timeout_ms: request.timeoutSeconds * 1000,
-      ...(request.args && request.args.length > 0
-        ? { args: request.args }
-        : {}),
-      env: mergeSandboxEnv(
-        this.#config.envVars,
-        request.envVars,
-        request.principal,
-      ),
+      env: mergeSandboxEnv(this.#config.envVars, {
+        principal: request.principal,
+      }),
     };
     // No redirects: the token reaches the public address guardedFetch pinned, or nowhere.
     const response = await guardedFetch(

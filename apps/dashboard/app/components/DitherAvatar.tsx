@@ -1,7 +1,6 @@
 "use client";
 
 import { cn } from "@/app/lib/utils";
-import type { CSSProperties } from "react";
 
 const GRID = 34;
 const SIZE = 200;
@@ -22,14 +21,12 @@ export type DitherAvatarProps = {
   seed: string;
   size?: number;
   className?: string;
-  style?: CSSProperties;
 };
 
 export function DitherAvatarSVG({
   seed,
   size = 40,
   className,
-  style,
 }: DitherAvatarProps): React.JSX.Element {
   const inner = ditherAvatarMarkup(seed);
 
@@ -40,7 +37,6 @@ export function DitherAvatarSVG({
       height={size}
       shapeRendering="crispEdges"
       className={cn("rounded-full", className)}
-      style={style}
       dangerouslySetInnerHTML={{ __html: inner }}
     />
   );

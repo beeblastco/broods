@@ -13,23 +13,19 @@ const EMPTY_DEFAULT = "{}";
 export function BranchEditor({
   title,
   value,
-  placeholder = EMPTY_DEFAULT,
   onSave,
-  disabled,
 }: {
   title: string;
   value: unknown;
-  placeholder?: string;
   onSave: (parsed: unknown) => Promise<void> | void;
-  disabled?: boolean;
 }): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const serialized = useMemo(
     () =>
       value === undefined || value === null
-        ? placeholder
+        ? EMPTY_DEFAULT
         : JSON.stringify(value, null, 2),
-    [value, placeholder],
+    [value],
   );
 
   const [draft, setDraft] = useState(serialized);
@@ -84,7 +80,6 @@ export function BranchEditor({
         spellCheck={false}
         rows={8}
         className="min-h-32 resize-y"
-        disabled={disabled}
         readOnly={!canWrite}
       />
       {error && <p className="text-xs text-destructive">{error}</p>}
@@ -94,7 +89,7 @@ export function BranchEditor({
             size="sm"
             variant="outline"
             className="h-8 cursor-pointer text-xs"
-            disabled={disabled || !dirty || isSaving}
+            disabled={!dirty || isSaving}
             onClick={handleSave}
           >
             {isSaving ? "Saving…" : "Save"}

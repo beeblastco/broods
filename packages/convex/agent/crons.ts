@@ -269,27 +269,19 @@ export const list = internalQuery({
 export const listPage = internalQuery({
   args: {
     accountId: v.id("accounts"),
-    agentId: v.optional(v.id("agents")),
     paginationOpts: paginationOptsValidator,
   },
   returns: v.object({ page: v.array(cronDoc), ...paginationCursorFields }),
   handler: (
     ctx,
-    { accountId, agentId, paginationOpts },
+    { accountId, paginationOpts },
   ): Promise<PaginationResult<Doc<"crons">>> =>
-    agentId
-      ? ctx.db
-          .query("crons")
-          .withIndex("by_accountId_and_agentId", (q) =>
-            q.eq("accountId", accountId).eq("agentId", agentId),
-          )
-          .paginate(paginationOpts)
-      : ctx.db
-          .query("crons")
-          .withIndex("by_accountId_and_agentId", (q) =>
-            q.eq("accountId", accountId),
-          )
-          .paginate(paginationOpts),
+    ctx.db
+      .query("crons")
+      .withIndex("by_accountId_and_agentId", (q) =>
+        q.eq("accountId", accountId),
+      )
+      .paginate(paginationOpts),
 });
 
 export const listForProject = query({

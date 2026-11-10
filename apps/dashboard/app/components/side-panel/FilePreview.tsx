@@ -435,6 +435,13 @@ function PreviewNotice({
   );
 }
 
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function isImageFile(name: string): boolean {
   return IMAGE_EXTENSIONS.has(extensionOf(name));
 }
@@ -446,13 +453,6 @@ function contentKey(file: FileRecord): string {
 
 function extensionOf(name: string): string {
   return name.includes(".") ? (name.split(".").pop()?.toLowerCase() ?? "") : "";
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function previewKind(file: FileRecord): PreviewKind {

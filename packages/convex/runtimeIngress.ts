@@ -28,6 +28,7 @@ import {
   runtimeHarnessSessionsFields,
   systemModelMessageValidator,
 } from "./schema";
+import { sha256Hex } from "./model/accountSecrets";
 import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
 import {
   findHarnessEntry,
@@ -1209,14 +1210,8 @@ async function canonicalIdentity(options: {
     options.conversationKey,
     options.idempotencyKey,
   ]);
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
 
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return await sha256Hex(value);
 }
 
 /** Writes only to let a late result through once; null means the candidate is new. */

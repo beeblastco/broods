@@ -29,7 +29,7 @@ export interface ForwarderConfig {
 
 // Deploy keys are secrets, so they stay out of the Helm-values plane list; each plane names
 // its key by convention.
-export function configPlanesEnv(): ConfigPlane[] {
+function configPlanesEnv(): ConfigPlane[] {
   return parseConfigPlanes(requireEnv(PLANES_ENV)).map(
     (plane): ConfigPlane => ({
       convexUrl: plane.convexUrl,

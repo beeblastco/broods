@@ -13,7 +13,6 @@ import {
   formatChannelErrorText,
   sendChannelFailure,
 } from "../shared/channels.ts";
-import { markHandlerEntry } from "../shared/cold-start.ts";
 import {
   executeCommand,
   queuedCommand,
@@ -160,7 +159,6 @@ import {
 } from "./questions.ts";
 import {
   acceptedAsyncResponse,
-  asyncAdmissionResponse,
   continuationResponse,
   CONVERSATION_BUSY,
   directAdmissionResponse,
@@ -318,8 +316,6 @@ async function handleRequest(
     | CronInvocation,
   context?: RequestContext,
 ): Promise<Response> {
-  markHandlerEntry(Date.now());
-
   if (isAsyncWorkerInvocation(event)) {
     await handleAsyncWorkerRequest(event.event, context);
 
@@ -645,7 +641,7 @@ export async function loadReentryTarget(
   return await resolveReentryTarget({
     accountId: accountId,
     agentId: agentId,
-    publicConversationKey: eventPublicConversationKey(
+    publicConversationKey: publicConversationKeyFromScoped(
       conversationKey,
       accountId,
       agentId,
@@ -679,7 +675,7 @@ async function resumeConversation(options: {
   if (!target) {
     return { kind: "skip" };
   }
-  const publicConversationKey = eventPublicConversationKey(
+  const publicConversationKey = publicConversationKeyFromScoped(
     options.conversationKey,
     options.accountId,
     options.agentId,
@@ -1098,7 +1094,7 @@ async function handleAsyncRequest(
   });
   await dispatchRecoveredIngress(event, admission);
   if (admission.outcome !== "owner") {
-    return asyncAdmissionResponse(event, admission);
+    return directAdmissionResponse(event, admission, true);
   }
   await startOwnedAsyncRun({
     ...event,
@@ -1596,7 +1592,7 @@ async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
     accountId: event.accountId,
     agentId: event.agentId,
     conversationKey: event.conversationKey,
-    publicConversationKey: eventPublicConversationKey(
+    publicConversationKey: publicConversationKeyFromScoped(
       event.conversationKey,
       event.accountId,
       event.agentId,
@@ -2021,7 +2017,7 @@ async function handleStatusRequest(
       runId: event.runId,
       eventId: event.publicEventId,
       agentId: event.agentId,
-      conversationKey: eventPublicConversationKey(
+      conversationKey: publicConversationKeyFromScoped(
         result.conversationKey,
         event.accountId,
         event.agentId,
@@ -2947,14 +2943,6 @@ function createChannelApprovalDenial(
       reason: CHANNEL_APPROVAL_DENIAL_REASON,
     })),
   };
-}
-
-function eventPublicConversationKey(
-  conversationKey: string,
-  accountId: string,
-  agentId?: string,
-): string {
-  return publicConversationKeyFromScoped(conversationKey, accountId, agentId);
 }
 
 function parseAccountAgentFromScopedKey(

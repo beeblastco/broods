@@ -70,6 +70,7 @@ import {
 } from "./provider.ts";
 import {
   hasPendingToolApprovalResponse,
+  isToolApprovalResponseMessage,
   pruneSessionMessages,
   retainsReasoningParts,
 } from "./pruning.ts";
@@ -1834,16 +1835,6 @@ function isStorableMediaReference(
   return (
     typeof value === "string" &&
     (/^https?:\/\//i.test(value) || value.startsWith(MEDIA_REFERENCE_SCHEME))
-  );
-}
-
-function isToolApprovalResponseMessage(
-  message: ModelMessage | undefined,
-): message is ToolModelMessage {
-  return (
-    message?.role === "tool" &&
-    message.content.length > 0 &&
-    message.content.every((part) => part.type === "tool-approval-response")
   );
 }
 

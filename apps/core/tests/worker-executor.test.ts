@@ -120,8 +120,6 @@ it("runs an ephemeral command on an empty disk and keeps no row for it", async (
     code: "echo ok",
     timeoutSeconds: 10,
     outputLimitBytes: 1024,
-    envVars: { PATH: "/evil", CALL_VAR: "b" },
-    args: ["one"],
     principal: { accountId: "acct", agentId: "agent", runToken: "tok" },
   });
   await settled();
@@ -139,11 +137,10 @@ it("runs an ephemeral command on an empty disk and keeps no row for it", async (
   expect(exec?.authorization).toBe("Bearer worker-key");
   expect(exec?.body).toEqual({
     script: "echo ok",
-    args: ["one"],
+    args: [],
     cwd: "/workspace",
     env: {
       ACCOUNT_VAR: "a",
-      CALL_VAR: "b",
       BROODS_ACCOUNT_ID: "acct",
       BROODS_AGENT_ID: "agent",
       BROODS_RUN_TOKEN: "tok",

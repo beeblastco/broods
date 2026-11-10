@@ -11,16 +11,11 @@ import {
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import { shellQuote } from "../sandbox/utils.ts";
-import { toolError, toolText } from "./utils.ts";
+import { toolError } from "./utils.ts";
 
 export const MEMORY_DIR = "memory";
 export const MEMORY_INDEX_PATH = `${MEMORY_DIR}/MEMORY.md`;
-export const MEMORY_TYPES = [
-  "user",
-  "feedback",
-  "project",
-  "reference",
-] as const;
+const MEMORY_TYPES = ["user", "feedback", "project", "reference"] as const;
 
 export type MemoryToolContext = SandboxToolContext & {
   conversationKey: string;
@@ -120,7 +115,7 @@ Usage notes:
             );
           }
 
-          return toolText(result.stdout.trim());
+          return result.stdout.trim();
         } catch (cause) {
           // toolError throws; rethrow as is so a fatal setup error is not prefixed twice.
           throw cause instanceof Error ? cause : new Error(String(cause));

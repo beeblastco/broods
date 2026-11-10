@@ -23,18 +23,6 @@ export interface ForwarderConnection {
   webhookUrl: string;
 }
 
-/** A silent (null) plane adds nothing; throws when every plane, or the empty list, is silent. */
-export function combinePlaneAnswers<T>(
-  planeNames: readonly string[],
-  answers: readonly (T[] | null)[],
-): T[] {
-  if (answers.every((answer): boolean => answer === null)) {
-    throw new Error(`No config plane answered: ${planeNames.join(", ")}`);
-  }
-
-  return answers.flatMap((answer): T[] => answer ?? []);
-}
-
 export function planeConnections(
   plane: ConfigPlane,
   rows: readonly ChannelConnection[],
@@ -62,12 +50,7 @@ export function watchChannelConnections<T>(
       { channel: channel },
       (rows: ChannelConnection[]): void => {
         latest.set(plane.name, resolve(plane, rows));
-        onChange(
-          combinePlaneAnswers(
-            planes.map((entry): string => entry.name),
-            planes.map((entry): T[] | null => latest.get(entry.name) ?? null),
-          ),
-        );
+        onChange(planes.flatMap((entry): T[] => latest.get(entry.name) ?? []));
       },
       (error: Error): void => {
         logWarn("Config plane subscription error", {

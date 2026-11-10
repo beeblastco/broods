@@ -635,7 +635,6 @@ function createEvent(
     query: new URLSearchParams(),
     headers: lower,
     body: body === undefined ? "" : JSON.stringify(body),
-    cookies: [],
     clientIp: "127.0.0.1",
   };
 }

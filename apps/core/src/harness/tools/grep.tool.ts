@@ -8,7 +8,7 @@ import {
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import { shellQuote } from "../sandbox/utils.ts";
-import { toolError, toolText } from "./utils.ts";
+import { toolError } from "./utils.ts";
 
 const VENDORED_DIRS = [".git", "node_modules"];
 
@@ -52,11 +52,9 @@ Usage notes:
           });
           // rg and grep: exit 1 is no match, not an error; its stderr can explain the miss.
           if (result.exitCode === 1) {
-            return toolText(
-              ["No matches found", result.stderr.trim()]
-                .filter(Boolean)
-                .join("\n"),
-            );
+            return ["No matches found", result.stderr.trim()]
+              .filter(Boolean)
+              .join("\n");
           }
           if (!result.ok) {
             return toolError(
@@ -72,7 +70,7 @@ Usage notes:
                   .join("\n")
               : result.stdout;
 
-          return toolText(output.trim() || "No matches found");
+          return output.trim() || "No matches found";
         } catch (cause) {
           // toolError throws; rethrow as is so a fatal setup error is not prefixed twice.
           throw cause instanceof Error ? cause : new Error(String(cause));

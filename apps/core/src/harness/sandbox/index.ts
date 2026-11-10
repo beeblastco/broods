@@ -70,14 +70,6 @@ export function createSandboxExecutor(
       return postReserved(request);
     };
   }
-  const prewarm = executor.prewarm?.bind(executor);
-  if (prewarm) {
-    executor.prewarm = async (request): Promise<void> => {
-      await assertSandboxBudget(accountId);
-
-      return prewarm(request);
-    };
-  }
 
   return executor;
 }

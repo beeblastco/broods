@@ -1,6 +1,6 @@
 # packages/convex
 
-`@broods/convex` is the shared Convex backend and config plane. dashboard deploy it, core read it.
+`@broods/convex` is the shared Convex backend and config plane. `deploy-convex.yaml` deploy it, dashboard and core read it.
 
 Convex skills sit in `.claude/skills/`; grab `convex-migration-helper` for any breaking schema change, backfill or table reshape.
 

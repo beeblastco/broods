@@ -101,9 +101,6 @@ export const createInternal = internalMutation({
     name: v.string(),
     description: v.optional(v.string()),
     document: v.any(),
-    projectId: v.optional(v.id("projects")),
-    stageId: v.optional(v.id("stages")),
-    managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
   },
   returns: v.id("agentPolicies"),
   handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
@@ -114,13 +111,10 @@ export const createInternal = internalMutation({
 
     return await ctx.db.insert("agentPolicies", {
       accountId: args.accountId,
-      projectId: args.projectId,
-      stageId: args.stageId,
       name: args.name,
       description: args.description,
       document: document,
       status: "active",
-      managedBy: args.managedBy,
       createdAt: now,
       updatedAt: now,
     });

@@ -354,7 +354,7 @@ export function cacheKeyFor(connection: McpConnection): string {
         sandbox.snapshot ?? null,
         sandbox.onCreate ?? null,
         sandbox.onResume ?? null,
-        mergeSandboxEnv(sandbox.envVars, undefined),
+        mergeSandboxEnv(sandbox.envVars),
       ]
     : null;
   const identity = cacheDigest(

@@ -6,6 +6,7 @@ export {
   withRequestId,
 } from "../../../packages/convex/model/requestId.ts";
 export {
+  json,
   jsonError,
   rateLimitHeaders,
 } from "../../../packages/convex/model/httpJson.ts";
@@ -30,18 +31,6 @@ export function errorText(
   error: string | ApiError | undefined,
 ): string | undefined {
   return typeof error === "string" ? error : error?.message;
-}
-
-export function json(payload: unknown, init: ResponseInit = {}): Response {
-  const headers = new Headers(init.headers);
-  if (!headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
-
-  return new Response(JSON.stringify(payload), {
-    ...init,
-    headers: headers,
-  });
 }
 
 export function parseJson(value: string): unknown {

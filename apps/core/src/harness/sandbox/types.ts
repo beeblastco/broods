@@ -1,4 +1,3 @@
-import type { Readable } from "node:stream";
 import type { SandboxImage } from "@broods/convex/model/sandboxRules";
 import type {
   SandboxNetworkMode,
@@ -22,7 +21,6 @@ export interface SandboxNetworkConfig {
   mode: SandboxNetworkMode;
   allowDomains?: string[];
   allowCidrs?: string[];
-  denyCidrs?: string[];
 }
 
 export interface SandboxExecutorConfig {
@@ -52,22 +50,21 @@ export interface SandboxLifecycle {
 }
 
 export interface SandboxRunRequest {
-  runtime?: SandboxRuntime;
   code: string;
   namespace?: string;
   reservationKey?: string;
   workspaceRoot?: string;
   timeoutSeconds: number;
   outputLimitBytes: number;
-  args?: string[];
-  // Never inherits the host env; `mergeSandboxEnv` drops RESERVED_SANDBOX_ENV_KEYS.
-  envVars?: Record<string, string>;
   // Blocking execs only: a background job outlives the run and its token.
   principal?: SandboxRunPrincipal;
   metadata?: SandboxRunMetadata;
-  // Caller-chosen, so the tracking row exists before the background job can finish.
-  jobId?: string;
   callback?: SandboxJobCallback;
+}
+
+export interface SandboxBackgroundRequest extends SandboxRunRequest {
+  // Caller-chosen, so the tracking row exists before the background job can finish.
+  jobId: string;
 }
 
 export interface SandboxRunPrincipal {
@@ -75,6 +72,11 @@ export interface SandboxRunPrincipal {
   agentId: string;
   runToken: string;
   baseUrl?: string;
+}
+
+export interface SandboxEnvLayers {
+  requestEnv?: Record<string, string>;
+  principal?: SandboxRunPrincipal;
 }
 
 export interface SandboxJobCallback {
@@ -186,27 +188,7 @@ export interface SandboxReservedPost
 
 export interface SandboxExecutor {
   run(request: SandboxRunRequest): Promise<SandboxRunResult>;
-  prewarm?(request: {
-    namespace?: string;
-    reservationKey?: string;
-  }): Promise<void>;
-  execInReservedPod?(
-    request: { namespace?: string; reservationKey?: string },
-    command: string[],
-    opts?: {
-      stdin?: Readable;
-      timeoutSeconds?: number;
-      outputLimitBytes?: number;
-      onStdout?: (chunk: string) => void;
-    },
-  ): Promise<{
-    stdout: string;
-    stderr: string;
-    exitCode: number | null;
-    timedOut?: boolean;
-    cpuUsec?: number;
-  }>;
-  runBackground?(request: SandboxRunRequest): Promise<SandboxJobHandle>;
+  runBackground?(request: SandboxBackgroundRequest): Promise<SandboxJobHandle>;
   postReserved?(request: SandboxReservedPost): Promise<unknown>;
   jobStatus?(request: SandboxJobRequest): Promise<SandboxJobStatus>;
   jobLogs?(request: SandboxJobRequest): Promise<SandboxJobLogs>;

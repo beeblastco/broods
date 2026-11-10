@@ -1,10 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
-import {
-  BroodsWebSocketClient,
-  type WebSocketServerMessage,
-  type WebSocketLike,
-} from "../src/websocket.ts";
-import type { QuestionAnswer } from "../src/websocket-contracts.ts";
+import { BroodsWebSocketClient, type WebSocketLike } from "../src/websocket.ts";
+import type {
+  QuestionAnswer,
+  WebSocketServerMessage,
+} from "../src/websocket-contracts.ts";
 
 class FakeWebSocket implements WebSocketLike {
   static instances: FakeWebSocket[] = [];
@@ -397,13 +396,13 @@ test("websocket client sends correlated control and attach frames", async (): Pr
     agentId: "agent_1",
     conversationKey: "conversation-1",
     eventId: "event-1",
-    afterCursor: "ws-responses:generation:42",
+    afterCursor: "ws-responses:generation:42:event-1",
   });
   await Promise.resolve();
   expect(JSON.parse(FakeWebSocket.instances[1]!.sent[0]!)).toMatchObject({
     type: "attach",
     requestId: "attach-1",
-    afterCursor: "ws-responses:generation:42",
+    afterCursor: "ws-responses:generation:42:event-1",
   });
   attached.close();
 });

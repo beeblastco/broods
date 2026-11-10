@@ -29,7 +29,6 @@ import {
 } from "./instance-store.ts";
 import {
   callbackEnv,
-  generateJobId,
   launchScript,
   lifecycleScript,
   logsScript,
@@ -46,6 +45,7 @@ import {
   resolveS3MountIdentity,
 } from "./s3-mount.ts";
 import type {
+  SandboxBackgroundRequest,
   SandboxExecutor,
   SandboxExecutorConfig,
   SandboxInstanceInfo,
@@ -208,11 +208,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         `timeout -k 5 ${request.timeoutSeconds} bash -c ${shellQuote(request.code)}`,
         {
           ...(cwd ? { cwd: cwd } : {}),
-          env: mergeSandboxEnv(
-            this.#config.envVars,
-            request.envVars,
-            request.principal,
-          ),
+          env: mergeSandboxEnv(this.#config.envVars, {
+            principal: request.principal,
+          }),
         },
       );
       const stdout = truncateText(
@@ -226,7 +224,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
 
       return {
         ok: result.exit_code === 0,
-        runtime: request.runtime ?? "bash",
+        runtime: "bash",
         exitCode: result.exit_code,
         stdout: stdout.value,
         stderr: stderr.value,
@@ -253,13 +251,15 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
+  async runBackground(
+    request: SandboxBackgroundRequest,
+  ): Promise<SandboxJobHandle> {
     const ns = this.#requirePersistent(request);
     const { sandbox, isFirstCreate } = await this.#acquireWithState(request);
     if (this.#s3MountStrategy(request) === "exec")
       await this.#ensureS3Mount(sandbox, request, isFirstCreate);
     await this.#runLifecycle(sandbox, this.#workDir(ns));
-    const jobId = request.jobId ?? generateJobId();
+    const jobId = request.jobId;
     const script = launchScript(
       this.#jobsDir(ns),
       jobId,
@@ -272,7 +272,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     );
     const result = await sandbox.exec(script, {
       env: {
-        ...mergeSandboxEnv(this.#config.envVars, request.envVars),
+        ...mergeSandboxEnv(this.#config.envVars),
         ...callbackEnv(request.callback),
       },
     });
@@ -317,14 +317,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       request.jobId,
       await this.#shell(sandbox, statusScript(jobsDir, request.jobId)),
     );
-  }
-
-  async prewarm(request: {
-    namespace?: string;
-    reservationKey?: string;
-  }): Promise<void> {
-    if (!this.#persistent(request)) return;
-    await this.#acquire(request).catch(() => {});
   }
 
   async suspend(request: SandboxReservationRef): Promise<void> {
@@ -540,14 +532,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     const externalId = await this.#reservedId(request);
 
     return externalId ? this.#client.sandboxes.get(externalId) : undefined;
-  }
-
-  async #acquire(
-    request:
-      | SandboxRunRequest
-      | { namespace?: string; reservationKey?: string },
-  ): Promise<Sandbox> {
-    return (await this.#acquireWithState(request)).sandbox;
   }
 
   async #create(options: CreateOptions): Promise<Sandbox> {

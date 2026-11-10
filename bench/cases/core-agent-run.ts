@@ -223,7 +223,6 @@ function fakeStorage(): Storage {
     channelRecords: {
       getByExternalId: none,
       getById: none,
-      list: empty,
       removeAllForAccount: zero,
     },
     crons: {

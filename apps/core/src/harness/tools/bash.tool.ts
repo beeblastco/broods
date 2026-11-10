@@ -38,7 +38,7 @@ import {
   writesOutsideAllowed,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
-import { toolError, toolText } from "./utils.ts";
+import { toolError } from "./utils.ts";
 
 const THROWAWAY_NOTE =
   "Nothing written there reaches durable storage, so use it for throwaway work";
@@ -119,16 +119,16 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
             pty: pty === true,
           });
 
-          return toolText(
+          return (
             ignoredWorkspace +
-              formatRunText(
-                await runSandbox(sandbox, ws?.namespace, effective, {
-                  onSandboxCpu: context.onSandboxCpu,
-                  metadata: sandboxRunMetadata(context, ws),
-                  principal: context.principal?.(),
-                }),
-                sandboxTimeoutSeconds(sandbox),
-              ),
+            formatRunText(
+              await runSandbox(sandbox, ws?.namespace, effective, {
+                onSandboxCpu: context.onSandboxCpu,
+                metadata: sandboxRunMetadata(context, ws),
+                principal: context.principal?.(),
+              }),
+              sandboxTimeoutSeconds(sandbox),
+            )
           );
         } catch (cause) {
           return toolError(
@@ -291,9 +291,9 @@ async function dispatchBackground(
     ? `You can also use async_status to check status, tail logs (action "logs"), or stop it (action "stop").`
     : `You can use async_status with this statusId to read the completed result after delivery; this sandbox does not support live log tailing or stop controls.`;
 
-  return toolText(
+  return (
     `Started background job ${jobId} (statusId: ${resultId}). ${delivery} ` +
-      controls,
+    controls
   );
 }
 

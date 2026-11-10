@@ -100,7 +100,6 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
           "bash",
           requiredWorkspacePath(request, "/workspace"),
           request.code,
-          ...(request.args ?? []),
         ],
         request,
         reserved !== undefined,
@@ -141,24 +140,6 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     return running ? { externalId: id, state: "running" } : null;
   }
 
-  async prewarm(request: SandboxReservationRef): Promise<void> {
-    const key = sandboxReservationKey(request);
-    if (this.#config.persistent !== true || !key) return;
-    const id = await reservePlatformSandbox(
-      "cloudflare",
-      this.#config.controlPlane?.accountId,
-      key,
-    );
-    if (!id) return;
-    await this.#exec(
-      id,
-      ["true"],
-      { timeoutSeconds: 30, outputLimitBytes: 1024 },
-      true,
-    );
-    this.#mirror(key, id, undefined);
-  }
-
   async release(request: SandboxReleaseRequest): Promise<void> {
     await releasePlatformSandbox(
       "cloudflare",
@@ -182,7 +163,7 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
     argv: string[],
     request: Pick<
       SandboxRunRequest,
-      "envVars" | "outputLimitBytes" | "principal" | "timeoutSeconds"
+      "outputLimitBytes" | "principal" | "timeoutSeconds"
     >,
     reserved: boolean,
   ): Promise<SandboxExecResponse> {
@@ -194,11 +175,9 @@ export class CloudflareSandboxExecutor implements SandboxExecutor {
       "POST",
       {
         argv: argv,
-        env: mergeSandboxEnv(
-          this.#config.envVars,
-          request.envVars,
-          request.principal,
-        ),
+        env: mergeSandboxEnv(this.#config.envVars, {
+          principal: request.principal,
+        }),
         timeoutMs: timeoutMs,
         outputLimitBytes: Math.min(request.outputLimitBytes, MAX_OUTPUT_BYTES),
         idleTimeoutSeconds: reserved

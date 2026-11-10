@@ -75,13 +75,8 @@ export const handler = streamifyResponse(async (event, responseStream) => {
 });
 
 async function readBundleSource(event) {
-  if (typeof event.bundleSourceB64 === "string") {
-    return Buffer.from(event.bundleSourceB64, "base64");
-  }
   if (typeof event.bundleUrl !== "string") {
-    throw new Error(
-      "mcp runner event needs one of bundleSourceB64 or bundleUrl",
-    );
+    throw new Error("mcp runner event needs bundleUrl");
   }
   const response = await fetch(event.bundleUrl);
   if (!response.ok) {
@@ -210,7 +205,6 @@ async function runRequest(state, event, home, responseStream) {
     child.stdin.write(
       `${JSON.stringify({
         ...event,
-        bundleSourceB64: undefined,
         bundleUrl: undefined,
         home: home,
       })}\n`,

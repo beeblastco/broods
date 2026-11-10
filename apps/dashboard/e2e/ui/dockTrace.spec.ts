@@ -19,7 +19,7 @@ test("an answer's trace folds into one row that opens to each step's input and o
   await trace.getByRole("button", { name: /GET \/v1\/agents\/broods/ }).click();
   await expect(trace.locator("pre").first()).toContainText('"method": "GET"');
   await page.screenshot({
-    path: process.env.DOCK_TRACE_SCREENSHOT ?? "test-results/dock-trace.png",
+    path: "test-results/dock-trace.png",
   });
   await trace.getByRole("button", { name: /read_docs/ }).click();
   await expect(trace).toContainText("First 4 KB of 6 KB shown.");

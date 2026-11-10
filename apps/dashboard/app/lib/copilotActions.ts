@@ -373,10 +373,6 @@ export function settleVerified(
   return settled;
 }
 
-export function planRunsUnattended(plan: CopilotPlan): boolean {
-  return plan.actions.every((action) => actionTier(action) === "safe");
-}
-
 // A commit's state comes from its GitHub run once one reports.
 function withDeploy(apply: DockApply, deploy?: TrackedDeploy): DockApply {
   if (apply.phase !== "applying" || !deploy?.runUrl) return apply;

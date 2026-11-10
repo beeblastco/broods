@@ -85,10 +85,6 @@ export function describeSchedule(
   return expression;
 }
 
-export function nextRunAt(cron: Scheduled, now: number): number | null {
-  return cron.status === "active" ? nextFireAt(cron, now) : null;
-}
-
 export function nextFireAt(cron: Scheduled, now: number): number | null {
   let schedule: ReturnType<typeof translateScheduleExpression>;
   try {

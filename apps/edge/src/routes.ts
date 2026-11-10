@@ -12,11 +12,11 @@ export const METHODS = [
 
 const SEGMENT = "[^/]+";
 
-export type Method = (typeof METHODS)[number];
+type Method = (typeof METHODS)[number];
 
 export type Upstream = "config" | "core" | "gateway";
 
-export type Limit = "http" | "none" | "upgrade";
+type Limit = "http" | "none" | "upgrade";
 
 export interface EdgeRule {
   /** Anchored regex without `^` and `$`, matched after trailing slashes are stripped. */
