@@ -22,6 +22,7 @@ import {
 } from "../shared/domain/agent-config.ts";
 import type { Principal } from "../shared/domain/principal.ts";
 import { getHarnessPublicUrl } from "../shared/env.ts";
+import { S3ObjectTooLargeError } from "../shared/errors.ts";
 import {
   workspaceGuidanceEnabled,
   workspaceMemoryHarnessEnabled,
@@ -92,6 +93,8 @@ import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 // Half of Convex's per-mutation caps (16 MiB of arguments, 16,000 written documents).
 const APPEND_EVENT_BYTES = 8 * 1_024 * 1_024;
 const APPEND_EVENT_COUNT = 8_000;
+// Loaded into the prompt every turn, so it stays an index, not the memories themselves.
+const MAX_MEMORY_INDEX_BYTES = 64 * 1_024;
 export const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
 // Tool outputs that hand the model no result: a hook or the run turned the
 // call into an error or a denial, so a status read in it stores nothing.
@@ -1239,10 +1242,16 @@ export class Session {
     const key = `${target.prefix}${MEMORY_INDEX_PATH}`;
 
     try {
-      return target.access
-        ? await readS3Text(target.bucket, key, target.access)
-        : await readS3Text(target.bucket, key);
+      return await readS3Text(
+        target.bucket,
+        key,
+        target.access,
+        MAX_MEMORY_INDEX_BYTES,
+      );
     } catch (error) {
+      if (error instanceof S3ObjectTooLargeError) {
+        return `(not loaded: it is over ${MAX_MEMORY_INDEX_BYTES / 1024} KB. Shorten it to one line per memory.)`;
+      }
       if (!isMissingS3Error(error)) {
         logError("Failed to load the memory index for session prompt", {
           conversationKey: this.conversationKey,

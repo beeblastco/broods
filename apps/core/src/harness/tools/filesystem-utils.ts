@@ -9,7 +9,11 @@ import {
   s3ObjectExists,
 } from "../../shared/s3.ts";
 import { getHarnessPublicUrl, requireSecretsEnv } from "../../shared/env.ts";
-import { isTimeoutError, toErrorMessage } from "../../shared/errors.ts";
+import {
+  isTimeoutError,
+  S3ObjectTooLargeError,
+  toErrorMessage,
+} from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/media-types.ts";
 import {
@@ -460,6 +464,11 @@ export async function s3ReadNumbered(
   } catch (cause) {
     if (isMissingS3Error(cause)) {
       return toolError(`Error: file not found: ${rel}`);
+    }
+    if (cause instanceof S3ObjectTooLargeError) {
+      return toolError(
+        `Error: ${rel} is over the ${cause.maxBytes / 1024 / 1024} MB a workspace without a sandbox can read`,
+      );
     }
 
     return toolError(cause instanceof Error ? cause.message : String(cause));

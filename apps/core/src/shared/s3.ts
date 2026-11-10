@@ -12,7 +12,7 @@ import {
   type GetObjectCommandOutput,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { toErrorMessage } from "./errors.ts";
+import { S3ObjectTooLargeError, toErrorMessage } from "./errors.ts";
 import { logDebug, logError } from "./log.ts";
 
 const SANDBOX_UID = "993";
@@ -526,9 +526,7 @@ async function readS3Body(
     (contentLength === undefined || contentLength > maxBytes)
   ) {
     await result.Body.transformToWebStream().cancel();
-    throw new Error(
-      `S3 object ${key} is ${contentLength ?? "an unknown number of"} bytes, over the ${maxBytes} byte limit`,
-    );
+    throw new S3ObjectTooLargeError(key, contentLength, maxBytes);
   }
 
   return result.Body;

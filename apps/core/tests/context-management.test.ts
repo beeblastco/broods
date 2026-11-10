@@ -1,4 +1,5 @@
 import { APICallError } from "@ai-sdk/provider";
+import { S3Client } from "@aws-sdk/client-s3";
 import {
   afterAll,
   afterEach,
@@ -7,6 +8,7 @@ import {
   it,
   mock,
   setSystemTime,
+  spyOn,
 } from "bun:test";
 import * as actualAi from "ai";
 import type { ModelMessage, ToolCallPart, UserContent } from "ai";
@@ -19,6 +21,8 @@ import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import * as actualS3 from "../src/shared/s3.ts";
 
 const ORIGINAL_ENV = { ...process.env };
+// Taken before the module mock below replaces it.
+const realReadS3Text = actualS3.readS3Text;
 
 type StoredRow = StoredConversationEventPage["page"][number];
 
@@ -41,7 +45,12 @@ const generateTextMock = mock(
   }),
 );
 const readS3TextMock = mock(
-  async (_bucket: string, _key: string): Promise<string> => {
+  async (
+    _bucket: string,
+    _key: string,
+    _access?: actualS3.S3Access,
+    _maxBytes?: number,
+  ): Promise<string> => {
     const error = new Error("not found") as Error & {
       name: string;
       $metadata: { httpStatusCode: number };
@@ -312,12 +321,47 @@ describe("session system context", () => {
     expect(readS3TextMock).toHaveBeenCalledWith(
       "filesystem",
       expect.stringContaining("/memory/MEMORY.md"),
+      undefined,
+      64 * 1024,
     );
     expect(
       enabledContext.system.some((message) =>
         message.content.startsWith("<memory>"),
       ),
     ).toBe(false);
+  });
+
+  it("refuses a 2 GB memory index without buffering it and tells the agent to shorten it", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    readS3TextMock.mockImplementation(realReadS3Text);
+    const buffer = mock(async (): Promise<never> => {
+      throw new Error("buffered the whole index");
+    });
+    const send = spyOn(S3Client.prototype, "send").mockImplementation(
+      (async () => ({
+        ContentLength: 2 * 1024 * 1024 * 1024,
+        Body: {
+          transformToString: buffer,
+          transformToWebStream: () => ({
+            cancel: async (): Promise<void> => {},
+          }),
+        },
+      })) as never,
+    );
+
+    const session = await newSession({
+      workspaces: [{ name: "default", workspaceId: "ws_a" }],
+    });
+    const context = await session
+      .createEphemeralTurnContext([{ role: "user", content: "hello" }])
+      .finally(() => send.mockRestore());
+
+    expect(buffer).not.toHaveBeenCalled();
+    expect(
+      context.system.find((message) =>
+        message.content.includes("Current memory index"),
+      )?.content,
+    ).toContain("not loaded: it is over 64 KB");
   });
 
   it("adds <memory> guidance only when a sandbox-backed workspace exposes memory_save", async () => {
