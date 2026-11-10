@@ -21,7 +21,8 @@ on:
           Space-separated workflow files in this repo that must have succeeded
           for this sha before the image is allowed onto the cluster. One that
           did not run for this commit is judged by the branch's newest push run
-          of it instead, and skipped only when it never ran on the branch.
+          of it instead, and skipped only when it never ran on the branch. One
+          cancelled and replaced by a newer run is judged by the newer run.
         required: false
         default: ""
         type: string
@@ -93,11 +94,21 @@ jobs:
             fi
 
             # The run is pinned by id, so a newer push during the wait does not
-            # move the target.
+            # move the target. A cancelled run was most often replaced while it
+            # waited in its concurrency group: the branch's newest run stands in.
             echo "Waiting for $AWAIT run $RUN_ID to settle for $TARGET"
             for _ in $(seq 1 "$DEADLINE"); do
               STATE=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq '"\(.status) \(.conclusion // "none")"')
               read -r STATUS CONCLUSION <<<"$STATE"
+              if [[ "$STATUS" == "completed" && "$CONCLUSION" == "cancelled" ]]; then
+                NEWEST=$(newest_run "$WORKFLOW_RUNS?branch=$GITHUB_REF_NAME&per_page=1")
+                if [[ "$NEWEST" != "$RUN_ID" ]]; then
+                  RUN_ID="$NEWEST"
+                  TARGET="the newer $GITHUB_REF_NAME run that replaced it"
+                  echo "Cancelled; waiting for $AWAIT run $RUN_ID, $TARGET"
+                  continue
+                fi
+              fi
               if [[ "$STATUS" == "completed" ]]; then
                 break
               fi
