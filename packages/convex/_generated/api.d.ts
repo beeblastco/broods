@@ -7914,6 +7914,7 @@ export declare const internal: {
         conversationKey: string;
         ownerEventId: string;
         ownerGeneration: number;
+        requeue?: boolean;
       },
       boolean
     >;

@@ -774,6 +774,8 @@ export const releaseOwner = internalMutation({
     conversationKey: v.string(),
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
+    // The owner never started: its applied envelopes wait in the queue again, in order.
+    requeue: v.optional(v.boolean()),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -785,11 +787,48 @@ export const releaseOwner = internalMutation({
     ) {
       return false;
     }
+    const now = Date.now();
+    const queue = {
+      queuedCount: coordinator.queuedCount,
+      queuedBytes: coordinator.queuedBytes,
+    };
+    const applied =
+      args.requeue === true
+        ? await ctx.db
+            .query("runtimeIngressEnvelopes")
+            .withIndex(
+              "by_conversationKey_and_appliedToEventId_and_sequence",
+              (q) =>
+                q
+                  .eq("conversationKey", args.conversationKey)
+                  .eq("appliedToEventId", args.ownerEventId),
+            )
+            .take(MAX_DRAIN_ENVELOPES)
+        : [];
+    for (const row of applied) {
+      if (
+        row.status !== "processing" ||
+        row.ownerGeneration !== args.ownerGeneration
+      ) {
+        continue;
+      }
+      await ctx.db.patch(row._id, {
+        status: "queued",
+        appliedMode: undefined,
+        appliedToEventId: undefined,
+        applicationId: undefined,
+        ownerGeneration: undefined,
+        updatedAt: now,
+      });
+      queue.queuedCount += 1;
+      queue.queuedBytes += row.sizeBytes;
+    }
     await ctx.db.patch(coordinator._id, {
+      ...queue,
       ownerEventId: undefined,
       stopRequestedGeneration: undefined,
       leaseExpiresAt: undefined,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
 
     return true;
@@ -972,14 +1011,19 @@ export const takeNext = internalMutation({
     }
     const rows = await queuedPage(ctx, coordinator);
     const queue = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
-    const promoted = await promoteQueuedGroup(ctx, {
-      coordinator: coordinator,
-      queue: queue,
-      rows: rows,
-      now: now,
-      leaseTtlMs: args.leaseTtlMs,
-      ownerGeneration: args.ownerGeneration + 1,
-    });
+    // A suspended account starts nothing: its queue waits for `recoverQueued` after reactivation.
+    const account = await ctx.db.get(coordinator.accountId);
+    const promoted =
+      account?.status === "active"
+        ? await promoteQueuedGroup(ctx, {
+            coordinator: coordinator,
+            queue: queue,
+            rows: rows,
+            now: now,
+            leaseTtlMs: args.leaseTtlMs,
+            ownerGeneration: args.ownerGeneration + 1,
+          })
+        : null;
     if (!promoted) {
       await ctx.db.patch(coordinator._id, {
         ...queue,
