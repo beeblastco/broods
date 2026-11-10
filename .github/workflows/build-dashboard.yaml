@@ -21,6 +21,12 @@ env:
 # Each job grants only the token permissions it needs.
 permissions: {}
 
+# One run per branch at a time, in push order, so the newest commit rolls last.
+# A newer push replaces a run still waiting; a running build is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-24.04
