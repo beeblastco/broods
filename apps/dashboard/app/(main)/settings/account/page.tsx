@@ -9,7 +9,6 @@ import { api } from "@broods/convex/_generated/api";
 import { useMutation, useQuery } from "convex/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { toErrorMessage } from "@/app/lib/errors";
 
 export default function AccountSettingsPage(): React.JSX.Element {
   const searchParams = useSearchParams();
@@ -34,21 +33,17 @@ function AccountDangerPanel(): React.JSX.Element {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [scheduledAt, setScheduledAt] = useState<number | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const effectiveDeletionAt =
     scheduledAt ?? currentUser?.deletionScheduledFor ?? null;
 
   async function handleDelete(): Promise<void> {
     setIsDeleting(true);
-    setDeleteError(null);
     try {
       const result = await requestAccountDeletion({});
       setScheduledAt(result.scheduledFor);
       setDialogOpen(false);
       router.replace("/auth/sign-in");
-    } catch (err) {
-      setDeleteError(toErrorMessage(err));
     } finally {
       setIsDeleting(false);
     }
@@ -92,17 +87,11 @@ function AccountDangerPanel(): React.JSX.Element {
                 variant="destructive"
                 size="sm"
                 className="shrink-0 cursor-pointer"
-                onClick={() => {
-                  setDeleteError(null);
-                  setDialogOpen(true);
-                }}
+                onClick={() => setDialogOpen(true)}
               >
                 Delete Account
               </Button>
             </div>
-          )}
-          {deleteError && (
-            <p className="text-sm text-destructive">{deleteError}</p>
           )}
         </div>
       </Section>
