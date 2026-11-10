@@ -11,6 +11,7 @@ export const REDIRECT_LIMIT = 5;
 const BODY_HEADERS = new Set([
   "content-encoding",
   "content-language",
+  "content-length",
   "content-location",
   "content-type",
 ]);
