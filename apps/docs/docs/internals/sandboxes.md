@@ -199,6 +199,8 @@ stateDiagram-v2
   expired --> taken: sweeper deletes the row, only while expired and same id
   taken --> [*]: provider delete succeeds
   taken --> claimed: provider delete failed, claimed back
+  taken --> kept: claim back failed or lost, re-reserved as teardown:id for 60 s
+  kept --> taken: next sweep retries the delete
   claimed --> [*]: terminate, workspace or account delete
   claimed --> [*]: machine gone, next call claims a new one
 ```
