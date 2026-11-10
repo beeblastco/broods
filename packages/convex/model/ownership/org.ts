@@ -1,5 +1,6 @@
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
+import { ClientError } from "../clientError";
 
 export type OrgRole = "owner" | "admin" | "member";
 
@@ -81,11 +82,12 @@ export async function requireOrgMember(
 ): Promise<Doc<"orgMembers">> {
   const membership = await getOrgMembership(ctx, orgId, userId);
   if (!membership) {
-    throw new Error("Not a member of this org");
+    throw new ClientError("Not a member of this org", "forbidden");
   }
   if (!orgRoleMeets(membership.role, requiredRole)) {
-    throw new Error(
+    throw new ClientError(
       `Role ${requiredRole} required; caller has ${membership.role}`,
+      "forbidden",
     );
   }
 

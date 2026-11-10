@@ -4436,7 +4436,7 @@ export declare const internal: {
       sweepDeadRuns: FunctionReference<
         "mutation",
         "internal",
-        { cursor?: string | null },
+        { cursor?: string | null; now?: number },
         number
       >;
       update: FunctionReference<

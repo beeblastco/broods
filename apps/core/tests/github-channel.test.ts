@@ -555,6 +555,67 @@ describe("github channel adapter", () => {
     expect(context).not.toContain("@my-bot can you review this?");
   });
 
+  it("fetches the thread and its comments at once, each with a timeout", async () => {
+    const signals: unknown[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      signals.push(init?.signal);
+      const url = requestUrl(input);
+      if (url.endsWith("/access_tokens")) {
+        return jsonResponse(201, { token: "installation-token" });
+      }
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight -= 1;
+
+      return url.endsWith("/pulls/10")
+        ? jsonResponse(200, { number: 10, title: "T", state: "open" })
+        : jsonResponse(200, []);
+    }) as typeof fetch;
+    const adapter = createGitHubChannel(
+      "webhook-secret",
+      "app-id",
+      testPrivateKey(),
+      null,
+      null,
+      undefined,
+      "my-bot",
+    );
+
+    await adapter.parse(
+      createRequest(
+        JSON.stringify({
+          action: "created",
+          repository: createRepository(),
+          pull_request: { number: 10 },
+          comment: {
+            id: 60,
+            body: "@my-bot review",
+            path: "src/retry.ts",
+            line: 18,
+            created_at: "2026-06-01T10:00:00Z",
+            user: { login: "bob", type: "User" },
+          },
+          installation: { id: 99 },
+          sender: { login: "bob", type: "User" },
+        }),
+        {
+          "x-github-event": "pull_request_review_comment",
+          "x-github-delivery": "delivery-pr-parallel",
+        },
+      ),
+    );
+
+    expect(maxInFlight).toBe(3);
+    expect(signals).toHaveLength(4);
+    expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true);
+  });
+
   it("ignores review comments without @-mention when botUserName is configured", async () => {
     const adapter = createGitHubChannel(
       "webhook-secret",

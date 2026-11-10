@@ -190,7 +190,7 @@ function ChatWindow({
   });
   const [input, setInput] = useState("");
   const followRef = useRef(true);
-  const hasAssistantMessage = messages.some((m) => m.role === "assistant");
+  const answerStarted = messages.at(-1)?.role === "assistant";
   const awaitingAnswer = status === "ready" && pendingQuestions.length > 0;
   // A message typed while a question waits would steer the run and leave it open.
   const composerLocked = status === "streaming" || awaitingAnswer;
@@ -238,7 +238,7 @@ function ChatWindow({
             nodeColor={nodeColor}
           />
         ))}
-        {status === "streaming" && !hasAssistantMessage && (
+        {status === "streaming" && !answerStarted && (
           <ThinkingIndicator nodeColor={nodeColor} />
         )}
         {awaitingAnswer && (
@@ -258,10 +258,7 @@ function ChatWindow({
             onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                if (input.trim() && !composerLocked) {
-                  void sendMessage(input);
-                  setInput("");
-                }
+                send();
               }
             }}
             placeholder={

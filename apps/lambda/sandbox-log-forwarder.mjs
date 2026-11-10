@@ -18,7 +18,7 @@ const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
 const BROODS_CREDENTIAL_PATTERN =
-  /(?=b)(?<=^|[^A-Za-z0-9_]|\\[nrt]|%[0-9A-Fa-f]{2})b(?:sk|ask|pdk|cli|code|sts|dts|rt)_[A-Za-z0-9_.-]{20,}/g;
+  /(?=b)(?<=^|[^A-Za-z0-9_]|\\[nrt]|%[0-9A-Fa-f]{2})b(?:sk|ask|pdk|cli|code|sts|dts|rt|sig|uat|dap|dob)_[A-Za-z0-9_.-]{20,}/g;
 const PROVIDER_CREDENTIAL_PATTERN =
   /(?=[gsAxey])(?:(?<=^|[^A-Za-z0-9]|\\[nrt]|%[0-9A-Fa-f]{2})(?:gh[oprsu]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-[A-Za-z0-9_-]{32,}|A[KS]IA[A-Z0-9]{16}(?![A-Za-z0-9])|xox[abcdeoprs]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35}|ya29\.[A-Za-z0-9_-]{20,})|(?<=^|[^A-Za-z0-9_-]|\\[nrt]|%[0-9A-Fa-f]{2})eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g;
 

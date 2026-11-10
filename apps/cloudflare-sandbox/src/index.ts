@@ -257,21 +257,29 @@ const handler: ExportedHandler<Env> = {
     if (!match?.[1]) return new Response("Not found", { status: 404 });
     const sandbox = env.SANDBOX.getByName(match[1]);
     if (action === "/terminal") return sandbox.fetch(request);
-    if (action === "/exec" && request.method === "POST") {
-      const body = execRequest.safeParse(
-        await request.json().catch((): null => null),
-      );
-      if (!body.success)
-        return Response.json({ error: body.error.message }, { status: 400 });
+    try {
+      if (action === "/exec" && request.method === "POST") {
+        const body = execRequest.safeParse(
+          await request.json().catch((): null => null),
+        );
+        if (!body.success)
+          return Response.json({ error: body.error.message }, { status: 400 });
 
-      return Response.json(await sandbox.exec(body.data));
-    }
-    if (!action && request.method === "GET")
-      return Response.json(await sandbox.status());
-    if (!action && request.method === "DELETE") {
-      await sandbox.destroy();
+        return Response.json(await sandbox.exec(body.data));
+      }
+      if (!action && request.method === "GET")
+        return Response.json(await sandbox.status());
+      if (!action && request.method === "DELETE") {
+        await sandbox.destroy();
 
-      return new Response(null, { status: 204 });
+        return new Response(null, { status: 204 });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      return new Response(`the sandbox's container failed: ${message}`, {
+        status: 500,
+      });
     }
 
     return new Response("Method not allowed", { status: 405 });

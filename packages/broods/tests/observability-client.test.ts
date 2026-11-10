@@ -1,5 +1,6 @@
 import { afterEach, expect, jest, setSystemTime, test } from "bun:test";
 import {
+  fetchObservabilityLogs,
   fetchObservabilitySpans,
   fetchObservabilityTrace,
   subscribeObservabilityLogs,
@@ -334,4 +335,21 @@ test("rejects with the gateway's reason when the trace is not in the stage", asy
   });
 
   await expect(pending).rejects.toThrow("Trace not found in this stage");
+});
+
+test("a zero-line log read returns at once, as the gateway sends no backfill for it", async (): Promise<void> => {
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+
+  const rows = await fetchObservabilityLogs(
+    {
+      baseUrl: "https://app.example",
+      credential: async (): Promise<string> => "secret-key",
+      project: "demo",
+      stage: "development",
+    },
+    { limit: 0 },
+  );
+
+  expect(rows).toEqual([]);
+  expect(FakeObservabilitySocket.instances).toHaveLength(0);
 });

@@ -16,7 +16,7 @@ import { cn } from "@/app/lib/utils";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
-export interface FilterValue {
+interface FilterValue {
   value: string;
   label: ReactNode;
 }
