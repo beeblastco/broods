@@ -180,7 +180,8 @@ function LinkedRepo({
             variant="outline"
             size="sm"
             tone="muted-destructive"
-            className="cursor-pointer"
+            className={submit.pending ? "cursor-not-allowed" : "cursor-pointer"}
+            disabled={submit.pending}
             onClick={() => setConfirming(true)}
           >
             Unlink repository

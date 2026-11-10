@@ -32,6 +32,8 @@ import { useMemo, useState } from "react";
 import { toErrorMessage } from "@/app/lib/errors";
 
 const SKILL_NAME = /^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/;
+// The server also takes a hyphen at either end, so a published name can have one.
+const PUBLISHED_SKILL_NAME = /^[a-z0-9-]{1,64}$/;
 
 type SkillSource = "files" | "github" | "json";
 
@@ -376,7 +378,7 @@ function JsonForm({
   const { canWrite } = useOrgRole();
   const createFromJson = useAction(api.skillsPublic.createFromJson);
   const existingName = existingPath?.split("/").pop() ?? "";
-  const published = SKILL_NAME.test(existingName);
+  const published = PUBLISHED_SKILL_NAME.test(existingName);
   const [name, setName] = useState(published ? existingName : "");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
@@ -386,7 +388,7 @@ function JsonForm({
     message?: string;
   }>({ type: "idle" });
 
-  const nameValid = SKILL_NAME.test(name);
+  const nameValid = published || SKILL_NAME.test(name);
   const canSubmit =
     nameValid &&
     description.trim() &&
