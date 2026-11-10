@@ -63,7 +63,8 @@ export function CronDialog({
   const [agentId, setAgentId] = useState<string>(
     cron?.agentId ?? agents[0]?._id ?? "",
   );
-  const [prompt, setPrompt] = useState(eventsToText(cron?.events));
+  const [storedPrompt] = useState(() => eventsToText(cron?.events));
+  const [prompt, setPrompt] = useState(storedPrompt);
   const [conversationKey, setConversationKey] = useState(
     cron?.conversationKey ?? "",
   );
@@ -80,10 +81,13 @@ export function CronDialog({
   const submittingRef = useRef(false);
 
   const scheduleValid = SCHEDULE_REGEX.test(scheduleExpression.trim());
+  // An untouched prompt keeps the stored events, which can hold images or several messages.
+  const input =
+    cron && prompt.trim() === storedPrompt.trim() ? undefined : prompt.trim();
   const canSubmit =
     name.trim().length > 0 &&
     agentId.length > 0 &&
-    prompt.trim().length > 0 &&
+    input !== "" &&
     timezone.trim().length > 0 &&
     scheduleValid &&
     !pending;
@@ -100,7 +104,6 @@ export function CronDialog({
       const payload = {
         name: name.trim(),
         agentId: agentId as Id<"agents">,
-        input: prompt.trim(),
         conversationKey: conversationKey.trim() || undefined,
         scheduleExpression: scheduleExpression.trim(),
         timezone: timezoneToSave(cron?.timezone, timezone),
@@ -108,9 +111,9 @@ export function CronDialog({
         description: description.trim() || undefined,
       };
       if (mode === "create") {
-        await create(payload);
+        await create({ ...payload, input: prompt.trim() });
       } else if (cron) {
-        await update({ cronId: cron._id, ...payload });
+        await update({ cronId: cron._id, input: input, ...payload });
       }
       void analytics.then((posthog): void => {
         posthog.capture(

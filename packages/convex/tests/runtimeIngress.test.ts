@@ -2275,6 +2275,160 @@ describe("runtime ingress", () => {
     ).toEqual({ recovered: [], continueAfter: null });
   });
 
+  test("a recovered group the pod shed waits in the queue for the next sweep", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    for (const role of ["owner", "first", "second"]) {
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: `shed-${role}`,
+          mode: "collect",
+        }),
+      );
+    }
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey: conversationKey,
+      ownerEventId: "shed-owner",
+      ownerGeneration: 1,
+      status: "failed",
+      error: "interrupted",
+    });
+    await t.mutation(internal.runtimeIngress.releaseOwner, {
+      conversationKey: conversationKey,
+      ownerEventId: "shed-owner",
+      ownerGeneration: 1,
+    });
+    const first = await t.mutation(internal.runtimeIngress.recoverQueued, {
+      leaseTtlMs: 60_000,
+    });
+    expect(first.recovered[0]?.applied.contributingEventIds).toEqual([
+      "shed-first",
+      "shed-second",
+    ]);
+
+    await t.mutation(internal.runtimeIngress.releaseOwner, {
+      conversationKey: conversationKey,
+      ownerEventId: "shed-first",
+      ownerGeneration: 2,
+      requeue: true,
+    });
+
+    const state = await t.run(async (ctx) => ({
+      coordinator: await ctx.db
+        .query("runtimeConversationCoordinators")
+        .withIndex("by_conversationKey", (q) =>
+          q.eq("conversationKey", conversationKey),
+        )
+        .unique(),
+      rows: await ctx.db
+        .query("runtimeIngressEnvelopes")
+        .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+          q.eq("conversationKey", conversationKey),
+        )
+        .collect(),
+    }));
+    expect(state.coordinator?.ownerEventId).toBeUndefined();
+    expect(state.coordinator?.queuedCount).toBe(2);
+    expect(
+      state.rows.map((row) => [row.eventId, row.status, row.ownerGeneration]),
+    ).toEqual([
+      ["shed-owner", "failed", 1],
+      ["shed-first", "queued", undefined],
+      ["shed-second", "queued", undefined],
+    ]);
+    const second = await t.mutation(internal.runtimeIngress.recoverQueued, {
+      leaseTtlMs: 60_000,
+    });
+    expect(second.recovered.map((entry) => entry.applied)).toEqual([
+      expect.objectContaining({
+        eventId: "shed-first",
+        contributingEventIds: ["shed-first", "shed-second"],
+        ownerGeneration: 3,
+      }),
+    ]);
+  });
+
+  test.each(["active", "disabled"] as const)(
+    "a drain hands the queue on only while the account is active (%s)",
+    async (status): Promise<void> => {
+      const t = runtimeTest();
+      const accountId = await createActiveAccount(t);
+      const conversationKey = conversationKeyFor(accountId);
+      for (const eventId of ["owner-run", "queued-run"]) {
+        await t.mutation(
+          internal.runtimeIngress.accept,
+          admission({
+            accountId: accountId,
+            conversationKey: conversationKey,
+            eventId: eventId,
+            mode: "followup",
+          }),
+        );
+      }
+      await t.run(async (ctx) => {
+        await ctx.db.patch(accountId, { status: status });
+      });
+      const owner = {
+        conversationKey: conversationKey,
+        ownerEventId: "owner-run",
+        ownerGeneration: 1,
+      };
+      await t.mutation(internal.runtimeIngress.settle, {
+        ...owner,
+        status: "completed",
+      });
+
+      const next = await t.mutation(internal.runtimeIngress.takeNext, {
+        ...owner,
+        leaseTtlMs: 60_000,
+      });
+
+      if (status === "active") {
+        expect(next?.eventId).toBe("queued-run");
+        return;
+      }
+      expect(next).toBeNull();
+      const state = await t.run(async (ctx) => ({
+        coordinator: await ctx.db
+          .query("runtimeConversationCoordinators")
+          .withIndex("by_conversationKey", (q) =>
+            q.eq("conversationKey", conversationKey),
+          )
+          .unique(),
+        queued: await ctx.db
+          .query("runtimeIngressEnvelopes")
+          .withIndex("by_status_and_conversationKey", (q) =>
+            q.eq("status", "queued").eq("conversationKey", conversationKey),
+          )
+          .collect(),
+      }));
+      expect(state.coordinator?.ownerEventId).toBeUndefined();
+      expect(state.coordinator?.queuedCount).toBe(1);
+      expect(state.queued.map((row) => row.eventId)).toEqual(["queued-run"]);
+      expect(
+        await t.mutation(internal.runtimeIngress.recoverQueued, {
+          leaseTtlMs: 60_000,
+        }),
+      ).toEqual({ recovered: [], continueAfter: null });
+
+      await t.run(async (ctx) => {
+        await ctx.db.patch(accountId, { status: "active" });
+      });
+      const { recovered } = await t.mutation(
+        internal.runtimeIngress.recoverQueued,
+        { leaseTtlMs: 60_000 },
+      );
+
+      expect(recovered.map((entry) => entry.applied.eventId)).toEqual([
+        "queued-run",
+      ]);
+    },
+  );
+
   test("recovery expires a released queue's elapsed envelopes instead of running them", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

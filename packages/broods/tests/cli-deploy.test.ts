@@ -111,9 +111,10 @@ async function runDeploy(
   baseUrl: string,
   shell: Record<string, string> = {},
   args: string[] = [],
+  command: string[] = ["deploy"],
 ): Promise<{ exitCode: number; output: string; envLocal: string }> {
   const proc = Bun.spawn({
-    cmd: [process.execPath, CLI, "deploy", ...args],
+    cmd: [process.execPath, CLI, ...command, ...args],
     cwd: cwd,
     stdout: "pipe",
     stderr: "pipe",
@@ -314,4 +315,75 @@ test("a --region with no value fails rather than falling back", async (): Promis
   expect(result.exitCode).not.toBe(0);
   expect(result.output).toContain("Unknown region (empty)");
   expect(backend.regions).toEqual([]);
+});
+
+test("dev lists every resource a confirmed prune deletes, earlier-declined ones included", async (): Promise<void> => {
+  const cwd = await projectDir();
+  const stale = ["old-a", "old-b"].map(
+    (name): { kind: string; name: string; config: object } => ({
+      kind: "agent",
+      name: name,
+      config: {},
+    }),
+  );
+  const server = Bun.serve({
+    port: 0,
+    fetch: async (request): Promise<Response> =>
+      Response.json({
+        manifest:
+          request.method === "GET"
+            ? { version: 1, project: "demo-app", stage: "x", resources: stale }
+            : ((await request.json()) as { manifest: unknown }).manifest,
+        revision: 1,
+        ids: { agents: { support: "agent_1" } },
+        deployment: null,
+      }),
+  });
+  servers.push(server);
+  const declinedFile = join(cwd, "declined.txt");
+  await writeFile(declinedFile, "agent:old-a\n");
+
+  const result = await runDeploy(
+    cwd,
+    `http://127.0.0.1:${server.port}`,
+    { BROODS_DECLINED_FILE: declinedFile },
+    [],
+    ["dev", "--once"],
+  );
+  const listed = result.output
+    .split("no longer declared locally:")[1]
+    ?.split("kept remotely")[0];
+
+  expect(result.exitCode).toBe(0);
+  expect(listed).toContain("old-a");
+  expect(listed).toContain("old-b");
+});
+
+test("dev --once compiles the project once", async (): Promise<void> => {
+  const cwd = await projectDir();
+  const imports = join(cwd, "imports.txt");
+  // One x from loading the project (Bun caches it), one per compile from its fresh MCP bundle.
+  await writeFile(
+    join(cwd, "broods", "mcp.ts"),
+    `import { appendFileSync } from "node:fs";
+import { defineMcp } from "${RESOURCES_MODULE}";
+appendFileSync(${JSON.stringify(imports)}, "x");
+export const search = defineMcp({
+  name: "search",
+  handler: (request) => new Response("{}", { status: 200 }),
+});
+`,
+  );
+  const backend = serveBackend({ stageKind: "development" });
+
+  const result = await runDeploy(
+    cwd,
+    backend.baseUrl,
+    {},
+    [],
+    ["dev", "--once"],
+  );
+
+  expect(result.exitCode).toBe(0);
+  expect(await readFile(imports, "utf8")).toBe("xx");
 });

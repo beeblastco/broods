@@ -461,23 +461,16 @@ export function createSlackChannel(
   };
 }
 
-async function formatSlackMessageText(
-  text: string,
-  userId: string | undefined,
+function formatSlackMessageText(
+  normalized: string,
+  userName: string | undefined,
   isGroupChannel: boolean,
-  omittedUserIds: Set<string>,
-  resolveUserName: SlackUserNameResolver,
-): Promise<string> {
-  const normalized = await normalizeSlackMentions(
-    text,
-    omittedUserIds,
-    resolveUserName,
-  );
-  if (!isGroupChannel || !userId || !normalized || parseCommand(normalized)) {
+): string {
+  if (!isGroupChannel || !userName || !normalized || parseCommand(normalized)) {
     return normalized;
   }
 
-  return `${await resolveSlackUserName(userId, resolveUserName)}: ${normalized}`;
+  return `${userName}: ${normalized}`;
 }
 
 async function normalizeSlackMentions(
@@ -598,18 +591,15 @@ async function parseEventCallback(
     payload.event.type === "app_mention" && botUserIds.size === 0
       ? (payload.event.text ?? "").replace(/<@[^>]+>\s*/, "")
       : (payload.event.text ?? "");
-  const text = await formatSlackMessageText(
-    rawText,
-    payload.event.user,
-    isGroupChannel,
-    botUserIds,
-    resolveUserName,
-  );
+  const [normalized, userName] = await Promise.all([
+    normalizeSlackMentions(rawText, botUserIds, resolveUserName),
+    payload.event.user
+      ? resolveSlackUserName(payload.event.user, resolveUserName)
+      : undefined,
+  ]);
+  const text = formatSlackMessageText(normalized, userName, isGroupChannel);
   const threadTs = payload.event.thread_ts ?? ts;
   const replyThreadTs = getSlackReplyThreadTs(payload.event, ts);
-  const userName = payload.event.user
-    ? await resolveSlackUserName(payload.event.user, resolveUserName)
-    : undefined;
   const attachments = slackAttachments(payload.event.files ?? [], botToken);
   const source: SlackSource = {
     teamId: payload.team_id,

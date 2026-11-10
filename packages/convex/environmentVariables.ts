@@ -4,6 +4,7 @@ import { mutation, query, type MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedStage, getStageForWrite } from "./model/ownership/stage";
 import { accountCipher, requireAccountIdForProject } from "./model/accountKeys";
+import { ClientError } from "./model/clientError";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
 import { assertEnvironmentVariableUnreferenced } from "./model/environmentValues";
 import { upsertEnvironmentVariable } from "./model/environmentWrites";
@@ -76,7 +77,7 @@ export const remove = mutation({
       variable.stageId,
       "admin",
     );
-    if (!stage) throw new Error(ADMIN_REQUIRED);
+    if (!stage) throw new ClientError(ADMIN_REQUIRED, "forbidden");
     await assertEnvironmentVariableUnreferenced(
       ctx,
       variable.projectId,
@@ -131,7 +132,7 @@ export const reveal = mutation({
 
     const stage = await getStageForWrite(ctx, user.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) {
-      throw new Error(ADMIN_REQUIRED);
+      throw new ClientError(ADMIN_REQUIRED, "forbidden");
     }
 
     const variable = await ctx.db.get(variableId);
@@ -182,7 +183,7 @@ export const set = mutation({
 
     const stage = await getStageForWrite(ctx, user.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) {
-      throw new Error(ADMIN_REQUIRED);
+      throw new ClientError(ADMIN_REQUIRED, "forbidden");
     }
 
     const trimmedName = name.trim();

@@ -511,17 +511,21 @@ export const settleAnsweredRun = internalMutation({
 });
 
 // Ends runs a killed pod can no longer settle; `settleRun` lets a real outcome win any race.
+// Every page reads up to the same `now`: a cursor is valid only for the query that made it.
 export const sweepDeadRuns = internalMutation({
-  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  args: {
+    now: v.optional(v.number()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
   returns: v.number(),
-  handler: async (ctx, { cursor }): Promise<number> => {
-    const now = Date.now();
+  handler: async (ctx, args): Promise<number> => {
+    const now = args.now ?? Date.now();
     const page = await ctx.db
       .query("cronRuns")
       .withIndex("by_status_and_startedAt", (q) =>
         q.eq("status", "started").lt("startedAt", now - DEAD_RUN_GRACE_MS),
       )
-      .paginate({ cursor: cursor ?? null, numItems: PRUNE_BATCH_SIZE });
+      .paginate({ cursor: args.cursor ?? null, numItems: PRUNE_BATCH_SIZE });
     let settled = 0;
     for (const run of page.page) {
       const outcome = await deadRunOutcome(ctx, run, now);
@@ -531,6 +535,7 @@ export const sweepDeadRuns = internalMutation({
     }
     if (!page.isDone) {
       await ctx.scheduler.runAfter(0, internal.agent.crons.sweepDeadRuns, {
+        now: now,
         cursor: page.continueCursor,
       });
     }

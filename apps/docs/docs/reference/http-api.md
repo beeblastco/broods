@@ -263,16 +263,17 @@ The key opens a socket for its own stage only; another stage's path answers `403
 
 ### Server frames
 
-| Frame                | Meaning                                                                           |
-| -------------------- | --------------------------------------------------------------------------------- |
-| `meta`               | `{ sessionId, taskId }`. The socket is ready                                      |
-| `output`             | `{ eventId, cursor, replay, data }`. `data` is one stream part                    |
-| `ack`                | A `control` input was durably accepted                                            |
-| `status`             | Later state of that input, with `appliedMode` and `appliedToEventId`              |
-| `attached`           | Attach accepted, with `replayFromCursor` and `replayThroughCursor`                |
-| `replay_unavailable` | The cursor cannot be resumed. Read the final result from `statusUrl`              |
-| `question-request`   | The agent asked with `ask_questions`. Answer with an `execute` carrying `answers` |
-| `done`, `error`      | The run ended                                                                     |
+| Frame                | Meaning                                                              |
+| -------------------- | -------------------------------------------------------------------- |
+| `meta`               | `{ sessionId, taskId }`. The socket is ready                         |
+| `output`             | `{ eventId, cursor, replay, data }`. `data` is one stream part       |
+| `ack`                | A `control` input, or an `execute` that queued, was durably accepted |
+| `status`             | Later state of that input, with `appliedMode` and `appliedToEventId` |
+| `attached`           | Attach accepted, with `replayFromCursor` and `replayThroughCursor`   |
+| `replay_unavailable` | The cursor cannot be resumed. Read the final result from `statusUrl` |
+| `done`, `error`      | The run ended                                                        |
+
+Besides AI SDK parts, `output.data` can be `question-request` (`questions`, answer with an `execute` carrying `answers`), `tool-approval-request` (`approvals`) and `waiting` (a heartbeat while async work is pending).
 
 ```json
 { "type": "ack", "requestId": "r2", "eventId": "event-2", "status": "queued" }

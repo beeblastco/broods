@@ -136,6 +136,10 @@ describe("redact", () => {
       "bcode_",
       "bsts_",
       "brt_",
+      "bsig_",
+      "buat_",
+      "bdap_",
+      "bdob_",
     ]) {
       expect(redact(`key ${prefix}${BODY} column bsk_id`)).toBe(
         "key [redacted] column bsk_id",

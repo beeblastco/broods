@@ -8,7 +8,7 @@ import {
 import type { ResolvedAgentSandbox } from "../../shared/workspaces.ts";
 import { runMachineComputerAction } from "../sandbox/machine-executor.ts";
 import { computerSandboxTarget } from "./filesystem-utils.ts";
-import { toolError } from "./utils.ts";
+import { toolError, withImageLimits } from "./utils.ts";
 
 export const COMPUTER_TOOL_NAME = "computer";
 
@@ -62,7 +62,7 @@ export default function computerTool(
 
         return {
           type: "content",
-          value: [
+          value: withImageLimits([
             {
               type: "text",
               text: `${action.action === "zoom" ? "Zoomed region" : "Screenshot"}${on}${app}`,
@@ -72,7 +72,7 @@ export default function computerTool(
               data: reply.image.data,
               mediaType: reply.image.mediaType,
             },
-          ],
+          ]),
         };
       },
     }),

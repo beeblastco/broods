@@ -1029,7 +1029,18 @@ export const getSandboxReleaseTarget = internalQuery({
         : instances[0]?.externalId) ??
       null;
     if (!externalId) return { externalId: null, instance: null };
-    const instance = instances.find((row) => row.externalId === externalId);
+    // A machine kept for the sweeper under another key keeps the row it was started under.
+    const instance =
+      instances.find((row) => row.externalId === externalId) ??
+      (
+        await ctx.db
+          .query("sandboxInstances")
+          .withIndex("by_externalId", (q) => q.eq("externalId", externalId))
+          .collect()
+      ).find(
+        (row) =>
+          row.accountId === args.accountId && row.provider === args.provider,
+      );
 
     return {
       externalId: externalId,

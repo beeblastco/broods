@@ -153,3 +153,77 @@ test("positionalArgs drops option values so they cannot become a run prompt", ()
     "hi",
   ]);
 });
+
+test("logs --json prints only JSON lines on stdout", async (): Promise<void> => {
+  const entry = {
+    ts: 1,
+    level: "WARN",
+    eventType: "agent.failed",
+    message: "x",
+  };
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request, bun): Response | undefined => {
+      if (new URL(request.url).pathname === "/v1/account/stage-session") {
+        return Response.json({
+          token: "ticket-1",
+          expiresAt: Date.now() + 15 * 60_000,
+          projectSlug: "demo-app",
+          stageSlug: "development",
+        });
+      }
+      if (bun.upgrade(request)) return undefined;
+
+      return new Response("not found", { status: 404 });
+    },
+    websocket: {
+      message: (socket): void => {
+        socket.send(
+          JSON.stringify({
+            type: "backfill",
+            stream: "logs",
+            entries: [entry],
+          }),
+        );
+      },
+    },
+  });
+  const cwd = await mkdtemp(join(tmpdir(), "broods-logs-json-"));
+  try {
+    const proc = Bun.spawn({
+      cmd: [
+        process.execPath,
+        new URL("../src/cli/index.ts", import.meta.url).pathname,
+        "logs",
+        "--json",
+        "--project",
+        "demo-app",
+        "--stage",
+        "development",
+      ],
+      cwd: cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: process.env.HOME ?? "",
+        BROODS_TOKEN: "tok",
+        BROODS_BASE_URL: `http://127.0.0.1:${server.port}`,
+      },
+    });
+    const reader = proc.stdout.getReader();
+    let stdout = "";
+    while (!stdout.includes("agent.failed")) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      stdout += new TextDecoder().decode(chunk.value);
+    }
+    proc.kill();
+
+    const lines = stdout.trim().split("\n");
+    expect(lines.map((line): unknown => JSON.parse(line))).toEqual([entry]);
+  } finally {
+    await server.stop(true);
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

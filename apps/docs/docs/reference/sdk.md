@@ -40,9 +40,11 @@ Pass an `AgentReference` to the client. It carries the routing metadata, and the
 ## BroodsClient
 
 ```ts
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 
-const client = new BroodsClient();
+const client = new BroodsClient({
+  userToken: await signUserToken({ userId: "me" }),
+});
 ```
 
 | Option      | Default                                                                               |

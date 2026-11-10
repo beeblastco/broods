@@ -12,6 +12,10 @@ on:
       - dev
     paths:
       - "packages/convex/**"
+      # Convex bundles the installed dependencies into the deployed functions.
+      - "package.json"
+      - "bun.lock"
+      - "patches/**"
       - ".github/workflows/deploy-convex.yaml"
       - ".github/actions/bun-install/**"
   workflow_dispatch:
