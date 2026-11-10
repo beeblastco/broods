@@ -629,54 +629,65 @@ export function CopilotProvider({
         dockSession(),
         import("@/app/lib/copilotIntent"),
         import("@/app/components/canvas/edgeOwnership"),
-      ]).then(async ([session, { planFromQuery }, { isCodeManagedOwner }]) => {
-        const codeNodes = (canvas?.nodes ?? [])
-          .filter((node) => isCodeManagedOwner(node.data.managedBy))
-          .map((node) =>
-            typeof node.data.label === "string" ? node.data.label : node.id,
-          );
-        const context: CopilotContext = {
-          crons: (crons ?? []).map((cron) => ({
-            id: cron._id,
-            name: cron.name,
-            status: cron.status,
-          })),
-          envNames: (envVars ?? []).map((envVar) => envVar.name),
-          items: items,
-          liveCommands: registry.activeIds,
-          lockedNodes: new Set(codeNodes),
-        };
-        if (session) {
-          return await askAgent(
-            replyId,
-            trimmed,
-            context,
-            { ...facts, codeNodes: codeNodes },
-            session,
-            controller,
-          );
-        }
+      ])
+        .then(async ([session, { planFromQuery }, { isCodeManagedOwner }]) => {
+          const codeNodes = (canvas?.nodes ?? [])
+            .filter((node) => isCodeManagedOwner(node.data.managedBy))
+            .map((node) =>
+              typeof node.data.label === "string" ? node.data.label : node.id,
+            );
+          const context: CopilotContext = {
+            crons: (crons ?? []).map((cron) => ({
+              id: cron._id,
+              name: cron.name,
+              status: cron.status,
+            })),
+            envNames: (envVars ?? []).map((envVar) => envVar.name),
+            items: items,
+            liveCommands: registry.activeIds,
+            lockedNodes: new Set(codeNodes),
+          };
+          if (session) {
+            return await askAgent(
+              replyId,
+              trimmed,
+              context,
+              { ...facts, codeNodes: codeNodes },
+              session,
+              controller,
+            );
+          }
 
-        streamRef.current = null;
-        const plan = controller.signal.aborted
-          ? null
-          : planFromQuery(trimmed, context);
-        setMessages((prev) =>
-          prev.map((message) =>
-            message.id === replyId
-              ? {
-                  ...message,
-                  pending: false,
-                  plan: plan ?? undefined,
-                  text: controller.signal.aborted
-                    ? "Stopped."
-                    : (plan?.summary ?? NO_MODEL_REPLY),
-                }
-              : message,
-          ),
-        );
-        if (plan) runSafeSteps(replyId, plan);
-      });
+          streamRef.current = null;
+          const plan = controller.signal.aborted
+            ? null
+            : planFromQuery(trimmed, context);
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === replyId
+                ? {
+                    ...message,
+                    pending: false,
+                    plan: plan ?? undefined,
+                    text: controller.signal.aborted
+                      ? "Stopped."
+                      : (plan?.summary ?? NO_MODEL_REPLY),
+                  }
+                : message,
+            ),
+          );
+          if (plan) runSafeSteps(replyId, plan);
+        })
+        .catch((error: unknown) => {
+          streamRef.current = null;
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === replyId
+                ? { ...message, pending: false, text: toErrorMessage(error) }
+                : message,
+            ),
+          );
+        });
     },
     [
       answering,
