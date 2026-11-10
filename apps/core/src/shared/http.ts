@@ -1,5 +1,6 @@
 import { dns } from "bun";
 import { apiErrorBody, type ApiErrorInit } from "@broods/convex/model/apiError";
+import { ClientError } from "@broods/convex/model/clientError";
 export { methodNotAllowed } from "@broods/convex/model/httpJson";
 import {
   isDeniedAddress,
@@ -106,7 +107,7 @@ export function parseJsonBody(request: Pick<CoreRequest, "body">): unknown {
   try {
     return JSON.parse(request.body);
   } catch (err) {
-    throw new Error(
+    throw new ClientError(
       `Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
