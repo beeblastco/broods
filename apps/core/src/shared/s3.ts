@@ -348,11 +348,12 @@ export async function readS3TextHead(
   bucket: string,
   key: string,
   maxBytes: number,
+  access?: S3Access,
 ): Promise<string> {
   const body = await readS3Body(
     bucket,
     key,
-    undefined,
+    access,
     maxBytes,
     `bytes=0-${maxBytes - 1}`,
   );
