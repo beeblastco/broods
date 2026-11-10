@@ -942,8 +942,34 @@ export function CopilotProvider({
       setDropped((prev) =>
         new Set(prev).add(changeKey(messageId, index, path)),
       );
+      const step = proposals
+        .get(messageId)
+        ?.changes.find((change) => change.index === index)?.action;
+      const seeded = folder.current;
+      if (
+        path === undefined ||
+        step?.type !== "commitFiles" ||
+        step.via.kind !== "source" ||
+        seeded?.stageId !== currentStageId
+      )
+        return;
+      // The agent's folder keeps the edit, so the next ask would propose the file again.
+      void (async (): Promise<void> => {
+        const session = await dockSession();
+        if (!session) return;
+        const { readDraft, revertPaths, seedConversation } =
+          await import("@/app/lib/dockSource");
+        const draft = await readDraft(session, conversationKey);
+        await seedConversation(
+          session,
+          conversationKey,
+          revertPaths(draft, seeded.seed.files, [path]),
+        );
+      })().catch((error: unknown): void =>
+        note(`Could not drop ${path}: ${toErrorMessage(error)}`),
+      );
     },
-    [],
+    [conversationKey, currentStageId, dockSession, note, proposals],
   );
 
   const runAction = useCallback(

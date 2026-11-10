@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { draftChanges, rebaseDraft } from "../app/lib/dockSource";
+import { draftChanges, rebaseDraft, revertPaths } from "../app/lib/dockSource";
 
 describe("dock source", () => {
   test("a draft's changes are its adds, edits and deletes against the seed, by path", () => {
@@ -48,5 +48,22 @@ describe("dock source", () => {
       ],
       lost: ["broods/b.ts"],
     });
+  });
+
+  test("a dropped file goes back to the seed in the agent's folder, so the next diff leaves it out", () => {
+    const seed = [
+      { path: "broods/a.ts", content: "a" },
+      { path: "broods/b.ts", content: "b" },
+    ];
+    const draft = [
+      { path: "broods/a.ts", content: "a2" },
+      { path: "broods/b.ts", content: "b2" },
+      { path: "broods/new.ts", content: "n" },
+    ];
+    const folder = revertPaths(draft, seed, ["broods/b.ts", "broods/new.ts"]);
+
+    expect(draftChanges(seed, folder).map((change) => change.path)).toEqual([
+      "broods/a.ts",
+    ]);
   });
 });

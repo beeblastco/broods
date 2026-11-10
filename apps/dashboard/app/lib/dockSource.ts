@@ -109,6 +109,20 @@ export function rebaseDraft(
   };
 }
 
+/** The draft with `paths` as the seed has them, so a dropped file is not proposed again. */
+export function revertPaths(
+  draft: readonly DockFile[],
+  seed: readonly DockFile[],
+  paths: readonly string[],
+): DockFile[] {
+  const reverted = new Set(paths);
+
+  return [
+    ...draft.filter((file) => !reverted.has(file.path)),
+    ...seed.filter((file) => reverted.has(file.path)),
+  ];
+}
+
 /** Puts the stage's source in the conversation's folder before the agent's first turn. */
 export async function seedConversation(
   session: DockSession,
