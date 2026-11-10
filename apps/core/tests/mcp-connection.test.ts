@@ -287,7 +287,6 @@ function request(
     query: new URLSearchParams(search),
     headers: token ? { authorization: `Bearer ${token}` } : {},
     body: "",
-    cookies: [],
     clientIp: "127.0.0.1",
   };
 }
