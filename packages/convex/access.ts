@@ -284,7 +284,7 @@ export const listPolicies = query({
     const caller = await getActiveCaller(ctx);
     if (!caller) return [];
     const policies = await accountPolicies(ctx, caller.account._id);
-    const names = await scopeNames(ctx, policies);
+    const names = await scopeNames(ctx, caller.account.orgId, policies);
     const creators = await actorsOf(
       ctx,
       policies.map((policy) => policy.createdBy),
@@ -771,8 +771,10 @@ async function permissionNames(
   ]);
 }
 
+// A rule may hold any id, so only the account's own projects and stages are named.
 async function scopeNames(
   ctx: Ctx,
+  orgId: string,
   policies: readonly Doc<"agentPolicies">[],
 ): Promise<Map<string, string>> {
   const stageIds = new Set<Id<"stages">>();
@@ -798,17 +800,16 @@ async function scopeNames(
   for (const stage of stages) projectIds.add(stage.projectId);
   const projects = (
     await Promise.all([...projectIds].map((id) => ctx.db.get(id)))
-  ).filter((project) => project !== null);
+  )
+    .filter((project) => project !== null)
+    .filter((project) => project.orgId === orgId);
   const names = new Map<string, string>();
   for (const project of projects) {
     names.set(project._id, `project ${project.name}`);
   }
   for (const stage of stages) {
     const project = projects.find((entry) => entry._id === stage.projectId);
-    names.set(
-      stage._id,
-      `stage ${project ? `${project.name} / ` : ""}${stage.name}`,
-    );
+    if (project) names.set(stage._id, `stage ${project.name} / ${stage.name}`);
   }
 
   return names;

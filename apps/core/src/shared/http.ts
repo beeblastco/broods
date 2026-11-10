@@ -194,7 +194,11 @@ export function resetPublicHostsForTests(): void {
 }
 
 function isPrivateHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  // A trailing DNS dot names the same host: `localhost.` is `localhost`.
+  const host = hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.+$/, "");
   if (
     host === "localhost" ||
     host.endsWith(".localhost") ||

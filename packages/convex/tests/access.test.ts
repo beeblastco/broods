@@ -775,3 +775,103 @@ test("access:write and members:write may not drop a deny by switching it to audi
   expect(stored?.document.mode).toBe("enforce");
   expect(stored?.document.rules).toHaveLength(1);
 });
+
+test("listPolicies names only the account's own projects and stages", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  const ids = await t.run(
+    async (
+      ctx,
+    ): Promise<{
+      ownProject: Id<"projects">;
+      otherProject: Id<"projects">;
+      otherStage: Id<"stages">;
+    }> => {
+      const now = Date.now();
+      const orgId = await ctx.db.insert("orgs", {
+        name: "beeblast",
+        slug: "beeblast",
+        ownerAuthId: "auth_owner",
+        plan: "free",
+        createdAt: now,
+      });
+      const otherOrgId = await ctx.db.insert("orgs", {
+        name: "other",
+        slug: "other",
+        ownerAuthId: "auth_other",
+        plan: "free",
+        createdAt: now,
+      });
+      const ownerId = await ctx.db.insert("users", {
+        authId: "auth_owner",
+        email: "owner@example.com",
+        name: "Owner",
+        plan: "free",
+        activeOrgId: orgId,
+      });
+      await ctx.db.insert("orgMembers", {
+        orgId: orgId,
+        userId: ownerId,
+        role: "owner",
+        createdAt: now,
+      });
+      await ctx.db.insert("accounts", {
+        orgId: orgId,
+        username: "beeblast",
+        secretHash: "hash-beeblast",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const ownProject = await ctx.db.insert("projects", {
+        authId: "auth_owner",
+        orgId: orgId,
+        name: "mine",
+        slug: "mine",
+        updatedAt: now,
+      });
+      const otherProject = await ctx.db.insert("projects", {
+        authId: "auth_other",
+        orgId: otherOrgId,
+        name: "theirs",
+        slug: "theirs",
+        updatedAt: now,
+      });
+      const otherStage = await ctx.db.insert("stages", {
+        authId: "auth_other",
+        projectId: otherProject,
+        name: "Production",
+        kind: "production",
+        isDefault: true,
+        updatedAt: now,
+      });
+
+      return {
+        ownProject: ownProject,
+        otherProject: otherProject,
+        otherStage: otherStage,
+      };
+    },
+  );
+
+  currentAuthId = "auth_owner";
+  const policyId = await t.mutation(api.access.createPolicy, {
+    name: "Scoped",
+    mode: "audit",
+  });
+  for (const scope of [
+    { projectId: ids.ownProject },
+    { projectId: ids.otherProject },
+    { stageId: ids.otherStage },
+  ])
+    await t.mutation(api.access.addRule, {
+      policyId: policyId,
+      permission: "keys:read",
+      scope: scope,
+    });
+  const [policy] = await t.query(api.access.listPolicies, {});
+  expect(policy?.rules.map((rule) => rule.scope)).toEqual([
+    "project mine",
+    "organization",
+    "organization",
+  ]);
+});
