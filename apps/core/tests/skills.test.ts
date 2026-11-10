@@ -50,4 +50,9 @@ description: <tag>bad</tag>
     });
     expect(parseSkillPath("acct_123/../support-flow")).toBeNull();
   });
+
+  it("parses frontmatter longer than the head an upload validates", () => {
+    const lateFrontmatter = `---\nname: late-skill\ndescription: Late\nnotes: ${"y".repeat(64 * 1024)}\n---\n`;
+    expect(parseSkillMarkdown(lateFrontmatter).name).toBe("late-skill");
+  });
 });

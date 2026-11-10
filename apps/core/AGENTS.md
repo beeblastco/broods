@@ -1,6 +1,6 @@
 # apps/core
 
-`@broods/core` is the agent harness. one Bun container (Vercel AI SDK) serving the whole runtime behind the gateway.
+`@broods/core` is the agent harness. one Bun container (Vercel AI SDK) serving the whole runtime behind Traefik.
 
 ## Flow
 
