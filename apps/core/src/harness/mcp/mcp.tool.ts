@@ -31,6 +31,7 @@ export function mcpTools(
           (input ?? {}) as Record<string, unknown>,
           {
             abortSignal: options.abortSignal,
+            toolDefinition: remote,
             onRetry: (waitMs: number): void =>
               onToolRetry?.(options.toolCallId, waitMs),
             ...(onSandboxCpu
