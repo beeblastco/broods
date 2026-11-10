@@ -823,6 +823,7 @@ describe("streamed runs", (): void => {
         runsPerMinute: 60,
         warned: false,
       });
+      const mutate = spyOn(runtime, "mutate").mockResolvedValue(null);
       const message = channelMessage(1);
       const pending: PendingQuestionInput = {
         questions: [
@@ -852,7 +853,7 @@ describe("streamed runs", (): void => {
       await handleChannelRequest(message);
 
       expect(sent).toEqual([expect.stringContaining("monthly resource caps")]);
-      expect(runtime.mutate).not.toHaveBeenCalledWith(
+      expect(mutate).not.toHaveBeenCalledWith(
         "updateAsyncToolResult",
         expect.anything(),
       );
