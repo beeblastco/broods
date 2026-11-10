@@ -339,7 +339,7 @@ export async function collectUsageTasks(
     return await ctx.db
       .query("taskUsage")
       .withIndex(
-        "by_accountId_and_endpointId_and_modelProvider_and_modelId_and_finishedAt",
+        "by_accountId_endpointId_modelProvider_modelId_finishedAt",
         (q) =>
           q
             .eq("accountId", endpoint.accountId)

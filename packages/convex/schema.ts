@@ -1760,10 +1760,13 @@ export default defineSchema({
       "endpointId",
       "finishedAt",
     ])
-    .index(
-      "by_accountId_and_endpointId_and_modelProvider_and_modelId_and_finishedAt",
-      ["accountId", "endpointId", "modelProvider", "modelId", "finishedAt"],
-    ),
+    .index("by_accountId_endpointId_modelProvider_modelId_finishedAt", [
+      "accountId",
+      "endpointId",
+      "modelProvider",
+      "modelId",
+      "finishedAt",
+    ]),
   usageRollups: defineTable(usageRollupsFields).index(
     "by_accountId_endpointId_grain_bucketStart_modelProvider_modelId",
     [
