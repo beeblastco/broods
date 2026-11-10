@@ -152,26 +152,39 @@ describe("CLI login code minting", () => {
 });
 
 describe("an AuthKit user at /mcp", () => {
-  test("an owner gets the org's account, a member a reason", async () => {
-    const t = loginTest();
-    const accountId = await t.run(async (ctx) => {
+  const signIn = (t: T, authId: string, org?: string) =>
+    t.query(internal.cli.auth.resolveUserLogin, {
+      authId: authId,
+      ...(org ? { org: org } : {}),
+    });
+
+  async function seedOrg(
+    t: T,
+    slug: string,
+    members: Record<string, "owner" | "member">,
+  ): Promise<Id<"accounts">> {
+    return await t.run(async (ctx) => {
       const orgId = await ctx.db.insert("orgs", {
-        name: "beeblast",
-        slug: "beeblast",
+        name: slug,
+        slug: slug,
         ownerAuthId: AUTH_ID,
         plan: "free",
         createdAt: 1,
       });
-      for (const [authId, role] of [
-        [AUTH_ID, "owner"],
-        ["auth_member", "member"],
-      ] as const) {
-        const userId = await ctx.db.insert("users", {
-          authId: authId,
-          email: `${authId}@example.com`,
-          name: authId,
-          plan: "free",
-        });
+      for (const [authId, role] of Object.entries(members)) {
+        const userId =
+          (
+            await ctx.db
+              .query("users")
+              .withIndex("by_authId", (q) => q.eq("authId", authId))
+              .unique()
+          )?._id ??
+          (await ctx.db.insert("users", {
+            authId: authId,
+            email: `${authId}@example.com`,
+            name: authId,
+            plan: "free",
+          }));
         await ctx.db.insert("orgMembers", {
           orgId: orgId,
           userId: userId,
@@ -182,25 +195,44 @@ describe("an AuthKit user at /mcp", () => {
 
       return await ctx.db.insert("accounts", {
         orgId: orgId,
-        username: "beeblast",
-        secretHash: "hash-beeblast",
+        username: slug,
+        secretHash: `hash-${slug}`,
         status: "active",
         createdAt: 1,
         updatedAt: 1,
       });
     });
+  }
 
-    const owner = await t.query(internal.cli.auth.resolveUserLogin, {
-      authId: AUTH_ID,
+  test("an owner gets the org's account, a member a reason", async () => {
+    const t = loginTest();
+    const accountId = await seedOrg(t, "beeblast", {
+      [AUTH_ID]: "owner",
+      auth_member: "member",
     });
+
+    const owner = await signIn(t, AUTH_ID);
     expect("account" in owner && owner.account._id).toBe(accountId);
-    expect(
-      await t.query(internal.cli.auth.resolveUserLogin, {
-        authId: "auth_member",
-      }),
-    ).toEqual({
+    expect(await signIn(t, "auth_member")).toEqual({
       refused:
         "Signing in to Broods needs the owner or admin role in beeblast. Switch organizations in the dashboard, then try again.",
+    });
+  });
+
+  test("an admin of several orgs names one in the URL, whatever the dashboard shows", async () => {
+    const t = loginTest();
+    const acme = await seedOrg(t, "acme", { [AUTH_ID]: "owner" });
+    await seedOrg(t, "globex", { [AUTH_ID]: "owner" });
+
+    expect(await signIn(t, AUTH_ID)).toEqual({
+      refused:
+        "You administer several organizations. Add ?org=<slug> to the MCP URL to pick one: acme, globex.",
+    });
+    const picked = await signIn(t, AUTH_ID, "acme");
+    expect("account" in picked && picked.account._id).toBe(acme);
+    expect(await signIn(t, AUTH_ID, "initech")).toEqual({
+      refused:
+        "You are not an owner or admin of an organization with the slug initech.",
     });
   });
 });

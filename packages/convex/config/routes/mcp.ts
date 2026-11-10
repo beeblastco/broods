@@ -309,7 +309,7 @@ function toPublicMcp(record: Doc<"mcp">): Record<string, unknown> {
     ...(record.headers !== undefined ? { headers: record.headers } : {}),
     // Safe to echo like headers: the secret fields hold ${NAME} refs.
     ...(record.oauth !== undefined ? { oauth: record.oauth } : {}),
-    connected: record.connected === true,
+    connected: record.connection !== undefined,
     ...(record.allowedTools !== undefined
       ? { allowedTools: record.allowedTools }
       : {}),

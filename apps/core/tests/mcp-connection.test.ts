@@ -89,9 +89,9 @@ beforeEach((): void => {
   process.env.MEDIA_TICKET_SECRET = "test-secret";
   process.env.PUBLIC_BASE_URL = "https://broods.test";
   setStorageForTests({
-    mcp: { getById: async (): Promise<McpRecord> => record() },
-    mcpConnections: {
-      set: async (connection: unknown): Promise<void> => {
+    mcp: {
+      getById: async (): Promise<McpRecord> => record(),
+      setConnection: async (connection: unknown): Promise<void> => {
         saved.push(connection);
       },
     },
@@ -137,6 +137,18 @@ describe("MCP connections", () => {
     });
   });
 
+  it("hands the account's own agent a link for the user, with no key or curl", async () => {
+    const { mcpSignInTool } = await import("../src/harness/mcp/mcp.tool.ts");
+    const execute = mcpSignInTool(record(), true).execute as (
+      input: object,
+      options: never,
+    ) => Promise<string>;
+
+    expect(await execute({}, {} as never)).toContain(
+      `Give the user this link to sign in to linked: ${ISSUER}/authorize?`,
+    );
+  });
+
   it("refuses a forged sign-in state", async () => {
     const response = await handleMcpConnectionRequest(
       request(
@@ -170,9 +182,9 @@ describe("MCP connections", () => {
       updatedAt: 1,
     };
     setStorageForTests({
-      mcpConnections: {
-        load: async (): Promise<StoredMcpConnection> => stored,
-        saveRefreshed: async (
+      mcp: {
+        loadConnection: async (): Promise<StoredMcpConnection> => stored,
+        saveRefreshedConnection: async (
           _accountId: string,
           _serverId: string,
           _loaded: StoredMcpConnection,
@@ -223,9 +235,9 @@ describe("MCP connections", () => {
       updatedAt: 1,
     };
     setStorageForTests({
-      mcp: { getById: async (): Promise<McpRecord> => record() },
-      mcpConnections: {
-        load: async (): Promise<StoredMcpConnection> => stored,
+      mcp: {
+        getById: async (): Promise<McpRecord> => record(),
+        loadConnection: async (): Promise<StoredMcpConnection> => stored,
         disconnect: async (): Promise<boolean> => {
           stored = { ...stored, accessToken: "access_second", updatedAt: 2 };
 

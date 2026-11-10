@@ -243,6 +243,27 @@ describe("handleMcpRequest", () => {
     ).toEqual(["support_bot", "dup_bbbbbb", "dup_cccccc"]);
   });
 
+  it("tells a caller holding a renamed agent's old tool name the current names", async () => {
+    setStorageForTests({
+      agents: {
+        listForAccount: async (): Promise<AgentRecord[]> => [
+          { ...agent("agent_1", true), name: "help-desk" },
+        ],
+      },
+    } as StorageStubs as Storage);
+    const old = await rpc(
+      mcpRequest("tools/call", {
+        name: "support-bot",
+        arguments: { prompt: "hi" },
+      }),
+      replayOf({}),
+    );
+
+    expect(JSON.stringify(old.error)).toContain(
+      "it may have been renamed. Current tools: help-desk.",
+    );
+  });
+
   it("answers directly when the client does not declare tasks", async () => {
     const replay = replayOf({
       run_1: run({
@@ -720,7 +741,7 @@ function replayOf(runs: Record<string, RunStatus>): FakeReplay {
 async function rpc(
   request: CoreRequest,
   replay: FakeReplay,
-): Promise<{ result?: unknown; error?: { code: number } }> {
+): Promise<{ result?: unknown; error?: { code: number; message?: string } }> {
   const response = await handleMcpRequest(request, replay.replay);
 
   return (await response.json()) as {

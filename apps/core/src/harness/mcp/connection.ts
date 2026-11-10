@@ -36,6 +36,8 @@ const NO_AAD = new Uint8Array();
 const PATH_PREFIX = "/v1/mcp-connections/";
 const STATE_TTL_MS = 10 * 60_000;
 
+class SignInUnsupportedError extends Error {}
+
 // Sealed into the OAuth `state`, so a sign-in in progress needs no row.
 interface PendingSignIn {
   accountId: string;
@@ -68,7 +70,7 @@ export async function handleMcpConnectionRequest(
     return jsonResponse(200, { connected: record.connected === true });
   }
   if (event.method === "DELETE") {
-    const deleted = await getStorage().mcpConnections.disconnect(
+    const deleted = await getStorage().mcp.disconnect(
       record.accountId,
       record.serverId,
     );
@@ -108,12 +110,12 @@ async function authorizedRecord(
 
 function connectionSource(record: McpRecord): TokenSource<StoredMcpConnection> {
   const reconnect = `POST ${PATH_PREFIX}${record.serverId} with the account key to sign in again.`;
-  const store = getStorage().mcpConnections;
+  const store = getStorage().mcp;
 
   return {
     key: tokenKey(record.accountId, record.serverId),
     missing: `MCP server ${record.name} has no connection. ${reconnect}`,
-    load: () => store.load(record.accountId, record.serverId),
+    load: () => store.loadConnection(record.accountId, record.serverId),
     refresh: async (stored) => {
       if (!stored.refreshToken) throw new Error("no refresh token was issued");
 
@@ -133,7 +135,12 @@ function connectionSource(record: McpRecord): TokenSource<StoredMcpConnection> {
     refreshFailed: (message) =>
       `MCP server ${record.name} could not refresh: ${message}. ${reconnect}`,
     save: (stored, rotated) =>
-      store.saveRefreshed(record.accountId, record.serverId, stored, rotated),
+      store.saveRefreshedConnection(
+        record.accountId,
+        record.serverId,
+        stored,
+        rotated,
+      ),
   };
 }
 
@@ -177,7 +184,7 @@ async function finishSignIn(event: CoreRequest): Promise<Response> {
       },
       publicHostFetch,
     );
-    await getStorage().mcpConnections.set({
+    await getStorage().mcp.setConnection({
       accountId: pending.accountId,
       serverId: pending.serverId,
       clientId: pending.clientId,
@@ -239,11 +246,30 @@ async function sealState(pending: PendingSignIn): Promise<string> {
 }
 
 async function startSignIn(record: McpRecord): Promise<Response> {
-  const base = getHarnessPublicUrl();
-  if (!base) return errorResponse(503, "PUBLIC_BASE_URL is not configured");
-  const url = record.url!;
-  const redirectUri = `${base}${PATH_PREFIX}${CALLBACK_SEGMENT}`;
+  if (!getHarnessPublicUrl()) {
+    return errorResponse(503, "PUBLIC_BASE_URL is not configured");
+  }
   try {
+    return jsonResponse(200, {
+      status: "pending",
+      authorizeUrl: await mcpSignInLink(record),
+      next: "Give authorizeUrl to a person to open. GET this same URL until connected is true.",
+    });
+  } catch (error) {
+    return errorResponse(
+      error instanceof SignInUnsupportedError ? 422 : 502,
+      error instanceof SignInUnsupportedError
+        ? error.message
+        : `Could not start sign-in for ${record.name}: ${toErrorMessage(error)}`,
+    );
+  }
+}
+
+/** The link a person opens to sign in to a remote server; the callback stores the tokens. */
+export async function mcpSignInLink(record: McpRecord): Promise<string> {
+  const url = record.url!;
+  const redirectUri = `${getHarnessPublicUrl()}${PATH_PREFIX}${CALLBACK_SEGMENT}`;
+  {
     const protectedResource = await discoverOAuthProtectedResourceMetadata(
       url,
       undefined,
@@ -255,14 +281,12 @@ async function startSignIn(record: McpRecord): Promise<Response> {
       fetchFn: publicHostFetch,
     });
     if (!metadata?.registration_endpoint) {
-      return errorResponse(
-        422,
+      throw new SignInUnsupportedError(
         `${record.name} offers no OAuth sign-in Broods can register with. Give it an Authorization header instead.`,
       );
     }
     if (new URL(metadata.token_endpoint).protocol !== "https:") {
-      return errorResponse(
-        422,
+      throw new SignInUnsupportedError(
         `${record.name} has a non-https token endpoint`,
       );
     }
@@ -305,16 +329,7 @@ async function startSignIn(record: McpRecord): Promise<Response> {
       }),
     );
 
-    return jsonResponse(200, {
-      status: "pending",
-      authorizeUrl: authorizationUrl.href,
-      next: "Give authorizeUrl to a person to open. GET this same URL until connected is true.",
-    });
-  } catch (error) {
-    return errorResponse(
-      502,
-      `Could not start sign-in for ${record.name}: ${toErrorMessage(error)}`,
-    );
+    return authorizationUrl.href;
   }
 }
 

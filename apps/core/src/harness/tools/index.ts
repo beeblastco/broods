@@ -472,8 +472,11 @@ async function registerMcpTools(
             record.transport === "http" &&
             MCP_AUTH_FAILURE_PATTERN.test(message)
           ) {
-            tools[mcpToolName(record.name, "sign_in_needed")] =
-              mcpSignInTool(record);
+            const requester = context.session?.principal?.chain?.[0];
+            tools[mcpToolName(record.name, "sign_in")] = mcpSignInTool(
+              record,
+              requester?.kind === "api" && requester.keyKind === "account",
+            );
           }
 
           return null;

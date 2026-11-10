@@ -317,7 +317,19 @@ export const mcpFields = {
       tokenUrl: v.optional(v.string()),
     }),
   ),
-  connected: v.optional(v.boolean()),
+  // A sign-in through /v1/mcp-connections: its tokens are sealed in the three columns below.
+  connection: v.optional(
+    v.object({
+      clientId: v.string(),
+      tokenUrl: v.string(),
+      resource: v.string(),
+      expiresAt: v.number(),
+      updatedAt: v.number(),
+    }),
+  ),
+  connectionCiphertext: v.optional(v.string()),
+  connectionIv: v.optional(v.string()),
+  connectionTag: v.optional(v.string()),
   allowedTools: v.optional(v.array(v.string())),
   disabled: v.optional(v.boolean()),
   nodeId: v.optional(v.string()),
@@ -768,19 +780,6 @@ export const connectionsFields = {
   hostId: v.string(),
   email: v.optional(v.string()),
   scopes: v.array(v.string()),
-  expiresAt: v.number(),
-  ciphertext: v.string(),
-  iv: v.string(),
-  tag: v.string(),
-  updatedAt: v.number(),
-};
-
-export const mcpConnectionsFields = {
-  accountId: v.id("accounts"),
-  serverId: v.id("mcp"),
-  clientId: v.string(),
-  tokenUrl: v.string(),
-  resource: v.string(),
   expiresAt: v.number(),
   ciphertext: v.string(),
   iv: v.string(),
@@ -1624,9 +1623,6 @@ export default defineSchema({
     "accountId",
     "type",
   ]),
-  mcpConnections: defineTable(mcpConnectionsFields)
-    .index("by_serverId", ["serverId"])
-    .index("by_accountId", ["accountId"]),
   environmentVariableReveals: defineTable(environmentVariableRevealsFields)
     .index("by_stageId", ["stageId"])
     .index("by_revealedByAuthId", ["revealedByAuthId"])

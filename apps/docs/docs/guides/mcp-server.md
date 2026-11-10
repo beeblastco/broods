@@ -6,14 +6,14 @@ Broods serves your agents as tools on an MCP server at `/mcp`. A client such as 
 claude mcp add --transport http broods https://gateway.broods.app/mcp
 ```
 
-The client opens a browser to sign in with your Broods login, the same one as the dashboard. It needs the owner or admin role, like `broods login`, and acts as your active organization's account. A client without OAuth, or a script, sends a key instead:
+The client opens a browser to sign in with your Broods login, the same one as the dashboard. It needs the owner or admin role, like `broods login`. If you administer one organization, it acts as that one's account. With several, name one in the URL, `https://gateway.broods.app/mcp?org=<slug>`; switching organizations in the dashboard never changes what a connected client acts as. A client without OAuth, or a script, sends a key instead:
 
 ```sh
 claude mcp add --transport http broods https://gateway.broods.app/mcp \
   --header "Authorization: Bearer $BROODS_ACCOUNT_KEY"
 ```
 
-Each agent the key can run is one tool, named after the agent. Its description is the agent's description, so write one the calling model can pick from. Agents that share a name across an account's stages get the end of their id added. The input:
+Each agent the key can run is one tool, named after the agent. Its description is the agent's description, so write one the calling model can pick from. Agents that share a name across an account's stages get the end of their id added. Renaming an agent renames its tool; a call with the old name is told the current names, and an agent id always works as a tool name. The input:
 
 ```json
 {
@@ -37,7 +37,7 @@ Whether a tool call asks first is the agent's own config, the same as on every o
 | Credential                          | Tools                                                               |
 | ----------------------------------- | ------------------------------------------------------------------- |
 | Account key (`bask_...`)            | Every agent in the account                                          |
-| OAuth sign-in                       | Every agent in your active organization's account                   |
+| OAuth sign-in                       | Every agent in your organization's account (`?org=` picks one)      |
 | Member's stage ticket (`bdts_...`)  | Every agent of that stage                                           |
 | Runtime key (`bsk_...`)             | Public agents of its stage, with a user token where one is required |
 | Run token, role session, scoped key | None                                                                |

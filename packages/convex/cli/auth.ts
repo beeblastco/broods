@@ -434,16 +434,29 @@ export const resolveAccountLogin = internalMutation({
 
 // An AuthKit-signed-in user at core's `/mcp`: the account `broods login` would give them.
 export const resolveUserLogin = internalQuery({
-  args: { authId: v.string() },
+  args: { authId: v.string(), org: v.optional(v.string()) },
   returns: v.union(
     v.object({ account: accountDoc }),
     v.object({ refused: v.string() }),
   ),
   handler: async (
     ctx,
-    { authId },
+    { authId, org },
   ): Promise<{ account: Doc<"accounts"> } | { refused: string }> => {
-    const target = await cliLoginTarget(ctx, authId);
+    // Never the dashboard's active org: switching it there must not repoint a connected client.
+    const orgs = await administeredOrgs(ctx, authId);
+    const picked = org ? orgs.filter(({ slug }) => slug === org) : orgs;
+    if (org && picked.length === 0) {
+      return {
+        refused: `You are not an owner or admin of an organization with the slug ${org}.`,
+      };
+    }
+    if (picked.length > 1) {
+      return {
+        refused: `You administer several organizations. Add ?org=<slug> to the MCP URL to pick one: ${picked.map(({ slug }) => slug).join(", ")}.`,
+      };
+    }
+    const target = await cliLoginTarget(ctx, authId, picked[0]?._id);
     if (target instanceof ClientError) return { refused: target.message };
     const account = await ctx.db.get(target.accountId);
 
@@ -607,6 +620,25 @@ async function onboardingContext(
       name: user.name,
     },
   };
+}
+
+async function administeredOrgs(
+  ctx: QueryCtx,
+  authId: string,
+): Promise<Doc<"orgs">[]> {
+  const user = await userByAuthId(ctx, authId);
+  if (!user) return [];
+  const memberships = await ctx.db
+    .query("orgMembers")
+    .withIndex("by_userId", (q) => q.eq("userId", user._id))
+    .collect();
+  const orgs = await Promise.all(
+    memberships
+      .filter(({ role }) => orgRoleMeets(role, "admin"))
+      .map(({ orgId }) => ctx.db.get(orgId)),
+  );
+
+  return orgs.filter((org) => org !== null);
 }
 
 // A login lent to the agent is unknown to the CLI plane: it cannot mint keys or sessions there.

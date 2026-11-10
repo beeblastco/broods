@@ -260,24 +260,23 @@ describe("deleteStageContents", () => {
     expect(orphaned).toEqual([]);
   });
 
-  test("drops a server's sign-in with the server, and a copy starts signed out", async () => {
+  test("a copied stage's server starts signed out", async () => {
     vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
     const t = cascadeTest();
-    const { accountId, projectId, stageId } = await seedFullStage(t);
+    const { projectId, stageId } = await seedFullStage(t);
     const copyId = await t.run(async (ctx) => {
       const [server] = await ctx.db.query("mcp").collect();
-      await ctx.db.patch(server!._id, { connected: true });
-      await ctx.db.insert("mcpConnections", {
-        accountId: accountId,
-        serverId: server!._id,
-        clientId: "client_1",
-        tokenUrl: "https://auth.example.com/token",
-        resource: "https://mcp.example.com/mcp",
-        expiresAt: 1,
-        ciphertext: "ct",
-        iv: "iv",
-        tag: "tag",
-        updatedAt: 1,
+      await ctx.db.patch(server!._id, {
+        connection: {
+          clientId: "client_1",
+          tokenUrl: "https://auth.example.com/token",
+          resource: "https://mcp.example.com/mcp",
+          expiresAt: 1,
+          updatedAt: 1,
+        },
+        connectionCiphertext: "ct",
+        connectionIv: "iv",
+        connectionTag: "tag",
       });
 
       return await ctx.db.insert("stages", {
@@ -298,15 +297,9 @@ describe("deleteStageContents", () => {
         (server) => server.stageId === copyId,
       ),
     );
-    expect(copied?.connected).toBeUndefined();
 
-    await t.run(async (ctx) => {
-      await deleteStageContents(ctx, (await ctx.db.get(stageId))!);
-    });
-    const connections = await t.run(
-      async (ctx) => await ctx.db.query("mcpConnections").collect(),
-    );
-    expect(connections).toEqual([]);
+    expect(copied?.connection).toBeUndefined();
+    expect(copied?.connectionCiphertext).toBeUndefined();
     vi.unstubAllEnvs();
   });
 

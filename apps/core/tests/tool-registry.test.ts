@@ -1463,7 +1463,17 @@ describe("connected MCP servers", () => {
       );
     };
 
-    expect(await tools(mcpRecord())).toEqual(["search__sign_in_needed"]);
+    expect(await tools(mcpRecord())).toEqual(["search__sign_in"]);
+    // No account key started this run, so the tool hands out no link and names no route.
+    setStorageForTests(storageWithMcp(mcpRecord()));
+    const offered = await createTools(createToolContext(), {
+      mcp: { [serverId]: {} },
+    });
+    const told = await (
+      offered.search__sign_in as unknown as ChannelTestTool
+    ).execute({}, {} as never);
+    expect(told).toContain("the owner of this agent has to connect it");
+    expect(told).not.toContain("/v1/");
     expect(
       await tools(
         mcpRecord({
@@ -1755,7 +1765,6 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
     machineConnections: {} as never,
     mcp: {} as never,
     connections: {} as never,
-    mcpConnections: {} as never,
     roleSessions: {} as never,
     accountApiKeys: {} as never,
     taskUsage: {} as never,
@@ -1814,6 +1823,10 @@ function storageWithMcp(record: McpRecord): Storage {
       removeAllForAccount: async function (): Promise<number> {
         return 0;
       },
+      loadConnection: async (): Promise<null> => null,
+      setConnection: async (): Promise<void> => {},
+      saveRefreshedConnection: async (): Promise<boolean> => false,
+      disconnect: async (): Promise<boolean> => false,
     },
   };
 }

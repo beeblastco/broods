@@ -85,6 +85,7 @@ interface AccountStore {
   /** The account a WorkOS user's `broods login` lands on, or why they have none. */
   getForUser(
     authId: string,
+    org?: string,
   ): Promise<{ account: AccountRecord } | { refused: string }>;
   create(
     input: CreateAccountInput,
@@ -212,6 +213,27 @@ interface AccountHookStore {
 interface McpStore {
   getById(accountId: string, serverId: string): Promise<McpRecord | null>;
   removeAllForAccount(accountId: string): Promise<number>;
+  loadConnection(
+    accountId: string,
+    serverId: string,
+  ): Promise<StoredMcpConnection | null>;
+  setConnection(
+    connection: Omit<StoredMcpConnection, "updatedAt"> & {
+      accountId: string;
+      serverId: string;
+    },
+  ): Promise<void>;
+  /** False when `updatedAt` moved since `loaded` was read: a new sign-in wins. */
+  saveRefreshedConnection(
+    accountId: string,
+    serverId: string,
+    loaded: StoredMcpConnection,
+    refreshed: Pick<
+      StoredMcpConnection,
+      "accessToken" | "refreshToken" | "expiresAt"
+    >,
+  ): Promise<boolean>;
+  disconnect(accountId: string, serverId: string): Promise<boolean>;
 }
 
 interface AgentPolicyStore {
@@ -254,30 +276,6 @@ export interface StoredMcpConnection {
   clientSecret?: string;
   expiresAt: number;
   updatedAt: number;
-}
-
-interface McpConnectionStore {
-  load(
-    accountId: string,
-    serverId: string,
-  ): Promise<StoredMcpConnection | null>;
-  set(
-    connection: Omit<StoredMcpConnection, "updatedAt"> & {
-      accountId: string;
-      serverId: string;
-    },
-  ): Promise<void>;
-  /** False when `updatedAt` moved since `loaded` was read: a new sign-in wins. */
-  saveRefreshed(
-    accountId: string,
-    serverId: string,
-    loaded: StoredMcpConnection,
-    refreshed: Pick<
-      StoredMcpConnection,
-      "accessToken" | "refreshToken" | "expiresAt"
-    >,
-  ): Promise<boolean>;
-  disconnect(accountId: string, serverId: string): Promise<boolean>;
 }
 
 interface RoleSessionStore {
@@ -356,7 +354,6 @@ export interface Storage {
   mcp: McpStore;
   agentPolicies: AgentPolicyStore;
   connections: ConnectionStore;
-  mcpConnections: McpConnectionStore;
   roleSessions: RoleSessionStore;
   taskUsage: TaskUsageStore;
 }

@@ -260,15 +260,16 @@ function fakeStorage(): Storage {
       removeAllForAccount: zero,
     },
     accountHooks: { getById: none, removeAllForAccount: zero },
-    mcp: { getById: none, removeAllForAccount: zero },
-    agentPolicies: { getById: none },
-    connections: { load: none, saveRefreshed: async () => false },
-    mcpConnections: {
-      load: none,
-      set: async () => undefined,
-      saveRefreshed: async () => false,
+    mcp: {
+      getById: none,
+      removeAllForAccount: zero,
+      loadConnection: none,
+      setConnection: async () => undefined,
+      saveRefreshedConnection: async () => false,
       disconnect: async () => false,
     },
+    agentPolicies: { getById: none },
+    connections: { load: none, saveRefreshed: async () => false },
     roleSessions: { resolveByTokenHash: none },
     accountApiKeys: {
       resolveByKeyHash: none,

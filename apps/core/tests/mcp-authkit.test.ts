@@ -28,6 +28,7 @@ const AGENT = {
 } as AgentRecord;
 type StorageStubs = { [Store in keyof Storage]?: Partial<Storage[Store]> };
 
+const askedOrgs: (string | undefined)[] = [];
 const realFetch = globalThis.fetch;
 let signingKey: CryptoKey;
 
@@ -46,10 +47,13 @@ beforeAll(async (): Promise<void> => {
   process.env.PUBLIC_BASE_URL = BASE;
   setStorageForTests({
     accounts: {
-      getForUser: async (authId: string) =>
-        authId === "user_admin"
+      getForUser: async (authId: string, org?: string) => {
+        askedOrgs.push(org);
+
+        return authId === "user_admin"
           ? { account: ACCOUNT }
-          : { refused: "Signing in to Broods needs the owner or admin role" },
+          : { refused: "Signing in to Broods needs the owner or admin role" };
+      },
     },
     agents: { listForAccount: async (): Promise<AgentRecord[]> => [AGENT] },
   } as StorageStubs as Storage);
@@ -103,6 +107,14 @@ describe("AuthKit sign-in at /mcp", () => {
 
     expect(response.status).toBe(200);
     expect(replayed[0]).toEqual({ kind: "account", account: ACCOUNT });
+  });
+
+  it("signs in to the org the MCP URL names", async () => {
+    const named = request(await token({}));
+    named.query = new URLSearchParams("org=acme");
+    await handleMcpRequest(named, noReplay);
+
+    expect(askedOrgs.at(-1)).toBe("acme");
   });
 
   it("refuses a token minted for another resource", async () => {

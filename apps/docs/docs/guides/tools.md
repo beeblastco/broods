@@ -120,7 +120,7 @@ curl -X POST "$BROODS_BASE_URL/v1/mcp-connections/$SERVER_ID" \
 
 A person opens `authorizeUrl` and approves. Poll the same URL with `GET` until `connected` is `true`. Nothing else has to run on your machine, so an agent in a sandbox can start this too. The connection belongs to that server: Broods refreshes it, and changing the server's URL or deleting it drops the tokens. `DELETE` disconnects.
 
-Until a person signs in, the agent gets one `<server>__sign_in_needed` tool that explains this, so it can tell you rather than guess.
+You rarely need the curl. Until a person signs in, the agent gets one `<server>__sign_in` tool in place of the server's tools. In a run you started with your account key (or a `/mcp` sign-in), calling it returns the link, and the agent passes it to you in its answer. Open it, approve, and the server's tools are there on the agent's next turn. In any other run, such as a public channel, the tool hands out no link and the agent says the server is not connected yet: a link there would let a stranger connect their own account to your agent.
 
 ### Servers with a refresh token you already hold
 

@@ -49,7 +49,10 @@ export function mcpUnauthorized(invalidToken: boolean): Response {
 }
 
 /** An AuthKit access token for `/mcp`, signed in as the account `broods login` would give. */
-export async function resolveAuthKitAuth(token: string): Promise<AuthKitAuth> {
+export async function resolveAuthKitAuth(
+  token: string,
+  org: string | undefined,
+): Promise<AuthKitAuth> {
   const config = authKitConfig();
   if (!config || !JWT_SHAPE.test(token)) return { kind: "invalid" };
   let subject: string | undefined;
@@ -59,7 +62,7 @@ export async function resolveAuthKitAuth(token: string): Promise<AuthKitAuth> {
     return { kind: "invalid" };
   }
   if (!subject) return { kind: "invalid" };
-  const login = await getStorage().accounts.getForUser(subject);
+  const login = await getStorage().accounts.getForUser(subject, org);
   if ("refused" in login) return { kind: "refused", message: login.refused };
 
   return {

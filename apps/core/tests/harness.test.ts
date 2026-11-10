@@ -3433,7 +3433,6 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
     machineConnections: null as never,
     mcp: null as never,
     connections: null as never,
-    mcpConnections: null as never,
     roleSessions: null as never,
     accountApiKeys: null as never,
     taskUsage: {

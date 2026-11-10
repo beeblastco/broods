@@ -1518,7 +1518,16 @@ export declare const api: {
         allowedTools?: Array<string>;
         bundleStorageKey?: string;
         command?: Array<string>;
-        connected?: boolean;
+        connection?: {
+          clientId: string;
+          expiresAt: number;
+          resource: string;
+          tokenUrl: string;
+          updatedAt: number;
+        };
+        connectionCiphertext?: string;
+        connectionIv?: string;
+        connectionTag?: string;
         createdAt: number;
         deletedAt?: number;
         description?: string;
@@ -3106,7 +3115,7 @@ export declare const internal: {
             | "agentDeployments"
             | "channelEndpoints"
             | "connections"
-            | "mcpConnections"
+            | "mcp"
             | "auditSinks";
           target?: string;
         },
@@ -3151,6 +3160,12 @@ export declare const internal: {
         },
         Id<"mcp">
       >;
+      disconnect: FunctionReference<
+        "mutation",
+        "internal",
+        { accountId: Id<"accounts">; serverId: Id<"mcp"> },
+        boolean
+      >;
       getById: FunctionReference<
         "query",
         "internal",
@@ -3162,7 +3177,16 @@ export declare const internal: {
           allowedTools?: Array<string>;
           bundleStorageKey?: string;
           command?: Array<string>;
-          connected?: boolean;
+          connection?: {
+            clientId: string;
+            expiresAt: number;
+            resource: string;
+            tokenUrl: string;
+            updatedAt: number;
+          };
+          connectionCiphertext?: string;
+          connectionIv?: string;
+          connectionTag?: string;
           createdAt: number;
           deletedAt?: number;
           description?: string;
@@ -3200,7 +3224,16 @@ export declare const internal: {
           allowedTools?: Array<string>;
           bundleStorageKey?: string;
           command?: Array<string>;
-          connected?: boolean;
+          connection?: {
+            clientId: string;
+            expiresAt: number;
+            resource: string;
+            tokenUrl: string;
+            updatedAt: number;
+          };
+          connectionCiphertext?: string;
+          connectionIv?: string;
+          connectionTag?: string;
           createdAt: number;
           deletedAt?: number;
           description?: string;
@@ -3238,7 +3271,16 @@ export declare const internal: {
           allowedTools?: Array<string>;
           bundleStorageKey?: string;
           command?: Array<string>;
-          connected?: boolean;
+          connection?: {
+            clientId: string;
+            expiresAt: number;
+            resource: string;
+            tokenUrl: string;
+            updatedAt: number;
+          };
+          connectionCiphertext?: string;
+          connectionIv?: string;
+          connectionTag?: string;
           createdAt: number;
           deletedAt?: number;
           description?: string;
@@ -3289,7 +3331,16 @@ export declare const internal: {
             allowedTools?: Array<string>;
             bundleStorageKey?: string;
             command?: Array<string>;
-            connected?: boolean;
+            connection?: {
+              clientId: string;
+              expiresAt: number;
+              resource: string;
+              tokenUrl: string;
+              updatedAt: number;
+            };
+            connectionCiphertext?: string;
+            connectionIv?: string;
+            connectionTag?: string;
             createdAt: number;
             deletedAt?: number;
             description?: string;
@@ -3319,6 +3370,21 @@ export declare const internal: {
           splitCursor?: string | null;
         }
       >;
+      loadConnection: FunctionReference<
+        "query",
+        "internal",
+        { accountId: Id<"accounts">; serverId: Id<"mcp"> },
+        null | {
+          accessToken: string;
+          clientId: string;
+          clientSecret?: string;
+          expiresAt: number;
+          refreshToken: string;
+          resource: string;
+          tokenUrl: string;
+          updatedAt: number;
+        }
+      >;
       remove: FunctionReference<
         "mutation",
         "internal",
@@ -3330,6 +3396,36 @@ export declare const internal: {
         "internal",
         { accountId: Id<"accounts">; project: string; stage: string },
         { projectId: Id<"projects">; stageId: Id<"stages"> } | null
+      >;
+      saveRefreshedConnection: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          accessToken: string;
+          accountId: Id<"accounts">;
+          clientSecret?: string;
+          expiresAt: number;
+          loadedUpdatedAt: number;
+          refreshToken: string;
+          serverId: Id<"mcp">;
+        },
+        boolean
+      >;
+      setConnection: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          accessToken: string;
+          accountId: Id<"accounts">;
+          clientId: string;
+          clientSecret?: string;
+          expiresAt: number;
+          refreshToken: string;
+          resource: string;
+          serverId: Id<"mcp">;
+          tokenUrl: string;
+        },
+        null
       >;
       update: FunctionReference<
         "mutation",
@@ -3360,59 +3456,6 @@ export declare const internal: {
           transport?: "http" | "hosted" | "machine";
           url?: string;
           workersCompatible?: boolean;
-        },
-        null
-      >;
-    };
-    mcpConnections: {
-      disconnect: FunctionReference<
-        "mutation",
-        "internal",
-        { accountId: Id<"accounts">; serverId: Id<"mcp"> },
-        boolean
-      >;
-      load: FunctionReference<
-        "query",
-        "internal",
-        { accountId: Id<"accounts">; serverId: Id<"mcp"> },
-        null | {
-          accessToken: string;
-          clientId: string;
-          clientSecret?: string;
-          expiresAt: number;
-          refreshToken: string;
-          resource: string;
-          tokenUrl: string;
-          updatedAt: number;
-        }
-      >;
-      saveRefreshed: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          accessToken: string;
-          accountId: Id<"accounts">;
-          clientSecret?: string;
-          expiresAt: number;
-          loadedUpdatedAt: number;
-          refreshToken: string;
-          serverId: Id<"mcp">;
-        },
-        boolean
-      >;
-      set: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          accessToken: string;
-          accountId: Id<"accounts">;
-          clientId: string;
-          clientSecret?: string;
-          expiresAt: number;
-          refreshToken: string;
-          resource: string;
-          serverId: Id<"mcp">;
-          tokenUrl: string;
         },
         null
       >;
@@ -5552,7 +5595,7 @@ export declare const internal: {
       resolveUserLogin: FunctionReference<
         "query",
         "internal",
-        { authId: string },
+        { authId: string; org?: string },
         | {
             account: {
               _creationTime: number;
@@ -6331,7 +6374,16 @@ export declare const internal: {
           allowedTools?: Array<string>;
           bundleStorageKey?: string;
           command?: Array<string>;
-          connected?: boolean;
+          connection?: {
+            clientId: string;
+            expiresAt: number;
+            resource: string;
+            tokenUrl: string;
+            updatedAt: number;
+          };
+          connectionCiphertext?: string;
+          connectionIv?: string;
+          connectionTag?: string;
           createdAt: number;
           deletedAt?: number;
           description?: string;

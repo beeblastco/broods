@@ -165,7 +165,7 @@ export async function handleMcpRequest(
   request: CoreRequest,
   replay: McpReplay,
 ): Promise<Response> {
-  const auth = await mcpAuth(request.headers);
+  const auth = await mcpAuth(request);
   if (auth instanceof Response) return auth;
   const caller: McpCaller = {
     auth: auth,
@@ -282,7 +282,7 @@ function createTaskServer(caller: McpCaller): Server {
       if (!agent) {
         throw new ProtocolError(
           ProtocolErrorCode.InvalidParams,
-          `Unknown tool: ${params.name}. Tools: ${[...agents.keys()].join(", ")}`,
+          `No tool named ${params.name}. Tools are named after agents, so it may have been renamed. Current tools: ${[...agents.keys()].join(", ")}.`,
         );
       }
       const input = AGENT_ARGS.safeParse(params.arguments);
@@ -658,14 +658,16 @@ function failedTask(
 }
 
 /** A key or token core already trusts, else an AuthKit OAuth token, else the 401 or 403. */
-async function mcpAuth(
-  headers: Record<string, string>,
-): Promise<McpAuth | Response> {
+async function mcpAuth(request: CoreRequest): Promise<McpAuth | Response> {
+  const { headers } = request;
   const auth = await resolveBearerAuth(headers);
   if (auth && auth.kind !== "admin") return auth;
   const token = extractBearerToken(headers.authorization);
   if (auth || !token) return mcpUnauthorized(false);
-  const signedIn = await resolveAuthKitAuth(token);
+  const signedIn = await resolveAuthKitAuth(
+    token,
+    request.query.get("org")?.trim() || undefined,
+  );
   if (signedIn.kind === "signed-in") return signedIn.auth;
   if (signedIn.kind === "refused") return errorResponse(403, signedIn.message);
 

@@ -90,11 +90,11 @@ export const ENVELOPE_COLUMNS = [
     tag: "tag",
   },
   {
-    table: "mcpConnections",
-    scope: "mcpConnections:ciphertext",
-    ciphertext: "ciphertext",
-    iv: "iv",
-    tag: "tag",
+    table: "mcp",
+    scope: "mcp:connection",
+    ciphertext: "connectionCiphertext",
+    iv: "connectionIv",
+    tag: "connectionTag",
   },
   {
     table: "auditSinks",

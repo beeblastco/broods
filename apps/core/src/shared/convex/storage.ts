@@ -159,9 +159,10 @@ const accounts: Storage["accounts"] = {
 
     return accountFromConvex(doc);
   },
-  getForUser: async function (authId) {
+  getForUser: async function (authId, org) {
     const login = await adminQuery(internal.cli.auth.resolveUserLogin, {
       authId: authId,
+      ...(org ? { org: org } : {}),
     });
     if ("refused" in login) return login;
     const account = accountFromConvex(login.account);
@@ -642,7 +643,7 @@ interface ConvexMcpDoc {
   sha256?: string;
   headers?: Record<string, string>;
   oauth?: McpOauth;
-  connected?: boolean;
+  connection?: object;
   allowedTools?: string[];
   disabled?: boolean;
   status: "active" | "deleted";
@@ -675,7 +676,7 @@ function mcpFromConvex(doc: ConvexMcpDoc | null): McpRecord | null {
     ...(doc.sha256 !== undefined ? { sha256: doc.sha256 } : {}),
     ...(doc.headers !== undefined ? { headers: doc.headers } : {}),
     ...(doc.oauth !== undefined ? { oauth: doc.oauth } : {}),
-    ...(doc.connected === true ? { connected: true } : {}),
+    ...(doc.connection ? { connected: true } : {}),
     ...(doc.allowedTools !== undefined
       ? { allowedTools: doc.allowedTools }
       : {}),
@@ -786,6 +787,35 @@ const mcp: Storage["mcp"] = {
 
     return docs.length;
   },
+  loadConnection: async function (accountId, serverId) {
+    return await adminQuery(internal.account.mcp.loadConnection, {
+      accountId: accountId,
+      serverId: serverId,
+    });
+  },
+  setConnection: async function (connection) {
+    await adminMutation(internal.account.mcp.setConnection, connection);
+  },
+  saveRefreshedConnection: async function (
+    accountId,
+    serverId,
+    loaded,
+    refreshed,
+  ) {
+    return await adminMutation(internal.account.mcp.saveRefreshedConnection, {
+      accountId: accountId,
+      serverId: serverId,
+      loadedUpdatedAt: loaded.updatedAt,
+      ...refreshed,
+      ...(loaded.clientSecret ? { clientSecret: loaded.clientSecret } : {}),
+    });
+  },
+  disconnect: async function (accountId, serverId) {
+    return await adminMutation(internal.account.mcp.disconnect, {
+      accountId: accountId,
+      serverId: serverId,
+    });
+  },
 };
 
 const accountHooks: Storage["accountHooks"] = {
@@ -841,33 +871,6 @@ const connections: Storage["connections"] = {
   },
 };
 
-const mcpConnections: Storage["mcpConnections"] = {
-  load: async function (accountId, serverId) {
-    return await adminQuery(internal.account.mcpConnections.load, {
-      accountId: accountId,
-      serverId: serverId,
-    });
-  },
-  set: async function (connection) {
-    await adminMutation(internal.account.mcpConnections.set, connection);
-  },
-  saveRefreshed: async function (accountId, serverId, loaded, refreshed) {
-    return await adminMutation(internal.account.mcpConnections.saveRefreshed, {
-      accountId: accountId,
-      serverId: serverId,
-      loadedUpdatedAt: loaded.updatedAt,
-      ...refreshed,
-      ...(loaded.clientSecret ? { clientSecret: loaded.clientSecret } : {}),
-    });
-  },
-  disconnect: async function (accountId, serverId) {
-    return await adminMutation(internal.account.mcpConnections.disconnect, {
-      accountId: accountId,
-      serverId: serverId,
-    });
-  },
-};
-
 const roleSessions: Storage["roleSessions"] = {
   resolveByTokenHash: async function (tokenHash) {
     return await adminQuery(internal.account.roles.resolveSession, {
@@ -910,7 +913,6 @@ export const convexStorage: Storage = {
   machineConnections: machineConnections,
   mcp: mcp,
   connections: connections,
-  mcpConnections: mcpConnections,
   roleSessions: roleSessions,
   taskUsage: taskUsage,
 };

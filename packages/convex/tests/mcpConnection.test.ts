@@ -3,7 +3,7 @@
 import { convexTest, type TestConvex } from "convex-test";
 import { beforeEach, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -19,16 +19,16 @@ beforeEach(() => {
   vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
 });
 
-test("the tokens round-trip encrypted and mark the server connected", async () => {
+test("the tokens round-trip sealed on the server's own row", async () => {
   const t = convexTest(schema, modules);
   const scope = await connectedServer(t);
 
   expect(
-    await t.query(internal.account.mcpConnections.load, scope),
+    await t.query(internal.account.mcp.loadConnection, scope),
   ).toMatchObject({ accessToken: "access", refreshToken: "refresh" });
-  const row = await t.run((ctx) => ctx.db.query("mcpConnections").first());
+  const row = await server(t, scope);
   expect(JSON.stringify(row)).not.toContain('refresh"');
-  expect((await server(t, scope))?.connected).toBe(true);
+  expect(row?.connection?.clientId).toBe("client");
 });
 
 test("a new url drops the tokens, so they never reach another host", async () => {
@@ -40,8 +40,8 @@ test("a new url drops the tokens, so they never reach another host", async () =>
     url: "https://elsewhere.example.com/mcp",
   });
 
-  expect(await t.query(internal.account.mcpConnections.load, scope)).toBeNull();
-  expect((await server(t, scope))?.connected).toBeUndefined();
+  expect(await t.query(internal.account.mcp.loadConnection, scope)).toBeNull();
+  expect((await server(t, scope))?.connection).toBeUndefined();
 });
 
 test("deleting the server drops the tokens", async () => {
@@ -50,7 +50,8 @@ test("deleting the server drops the tokens", async () => {
 
   await t.mutation(internal.account.mcp.remove, scope);
 
-  expect(await t.query(internal.account.mcpConnections.load, scope)).toBeNull();
+  expect(await t.query(internal.account.mcp.loadConnection, scope)).toBeNull();
+  expect((await server(t, scope))?.connectionCiphertext).toBeUndefined();
 });
 
 test("a refresh loses to a sign-in that landed after it loaded", async () => {
@@ -58,7 +59,7 @@ test("a refresh loses to a sign-in that landed after it loaded", async () => {
   const scope = await connectedServer(t);
 
   expect(
-    await t.mutation(internal.account.mcpConnections.saveRefreshed, {
+    await t.mutation(internal.account.mcp.saveRefreshedConnection, {
       ...scope,
       loadedUpdatedAt: -1,
       expiresAt: 2,
@@ -115,7 +116,7 @@ async function connectedServer(t: T): Promise<Scope> {
 
     return { accountId: accountId, serverId: serverId };
   });
-  await t.mutation(internal.account.mcpConnections.set, {
+  await t.mutation(internal.account.mcp.setConnection, {
     ...scope,
     clientId: "client",
     tokenUrl: "https://auth.example.com/token",
@@ -128,9 +129,6 @@ async function connectedServer(t: T): Promise<Scope> {
   return scope;
 }
 
-async function server(
-  t: T,
-  scope: Scope,
-): Promise<{ connected?: boolean } | null> {
+async function server(t: T, scope: Scope): Promise<Doc<"mcp"> | null> {
   return await t.run((ctx) => ctx.db.get(scope.serverId));
 }
