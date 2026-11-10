@@ -352,7 +352,7 @@ export async function resolveActiveAccount(
   return { account: account, role: role, user: user };
 }
 
-async function insertOwnedOrg(
+export async function insertOwnedOrg(
   ctx: MutationCtx,
   user: Doc<"users">,
   name: string,
