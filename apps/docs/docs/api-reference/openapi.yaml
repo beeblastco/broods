@@ -193,7 +193,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Conversation busy in reject mode (`conversation_busy`), the idempotency key is bound to a different payload (`idempotency_conflict`), or an `answers` entry names a prompt that was already answered (`question_already_answered`). JSON envelope on a background run; on a streamed run the busy and idempotency errors arrive as the first SSE `error` frame.
+          description: Conversation busy in reject mode (`conversation_busy`), the idempotency key is bound to a different payload (`idempotency_conflict`), or every `answers` entry names a prompt that was already answered (`question_already_answered`; when some landed, the request answers `202` for those). JSON envelope on a background run; on a streamed run the busy and idempotency errors arrive as the first SSE `error` frame.
           content:
             application/json:
               schema:
@@ -2411,6 +2411,110 @@ paths:
             description: "Provider does not support snapshot, or the name is already another provider's snapshot",
           }
 
+  /v1/sandboxes/{sandboxId}/exec:
+    post:
+      tags: [Sandboxes]
+      summary: Run a command in a sandbox instance
+      description: Runs `code` in a persistent sandbox reservation and answers its output, as the agent's `bash` tool would. The `reservationKey` must belong to this account and sandbox config. A scoped key or role session needs `sandboxes:write` on the sandbox. The audit row names the calling credential.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reservationKey, code]
+              properties:
+                reservationKey: { type: string }
+                code: { type: string, maxLength: 20000 }
+                timeoutSeconds:
+                  {
+                    type: integer,
+                    minimum: 1,
+                    description: "Defaults to the sandbox config's `timeout`; a value above the provider's cap uses the default.",
+                  }
+                outputLimitBytes:
+                  {
+                    type: integer,
+                    minimum: 1,
+                    description: "Defaults to the sandbox config's `outputLimitBytes`; a value above the provider's cap uses the default.",
+                  }
+      responses:
+        "200":
+          description: The command ran; `ok` is false when it exited non-zero
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  runtime: { type: string }
+                  exitCode: { type: [integer, "null"] }
+                  stdout: { type: string }
+                  stderr: { type: string }
+                  durationMs: { type: number }
+                  truncated: { type: boolean }
+                  provider: { type: string }
+        "400":
+          { description: "`code` is missing or longer than 20,000 characters" }
+        "402":
+          {
+            description: "The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
+          }
+        "403":
+          {
+            description: Reservation does not belong to this account or sandbox config,
+          }
+
+  /v1/sandboxes/{sandboxId}/refresh:
+    post:
+      tags: [Sandboxes]
+      summary: Refresh sandbox instance status
+      description: Asks the provider for the instance's state and writes it to the live-instance registry row. An instance the provider no longer has, or is terminating, is removed from the registry and answers `terminated`. The `reservationKey` must belong to this account and sandbox config.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reservationKey]
+              properties:
+                reservationKey: { type: string }
+      responses:
+        "200":
+          description: Current status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    {
+                      type: string,
+                      enum: [running, suspended, error, terminated],
+                    }
+                  externalId: { type: string }
+        "403":
+          {
+            description: Reservation does not belong to this account or sandbox config,
+          }
+        "409": { description: Provider does not support status refresh }
+
   /v1/sandboxes/{sandboxId}/terminal:
     post:
       tags: [Sandboxes]
@@ -4432,7 +4536,9 @@ components:
       description: >-
         The 202 for a body carrying `answers`. `resultId` is the last prompt
         settled. `accepted` means the conversation resumed (`invoked`), or had
-        nothing to resume.
+        nothing to resume. A prompt that was already answered is skipped
+        when another answer in the same request landed, and listed in
+        `alreadyAnswered`.
       required: [status, resultId]
       properties:
         status:
@@ -4446,6 +4552,11 @@ components:
         invoked:
           type: boolean
           description: Present with `accepted`. True when this request started the resumed turn.
+        alreadyAnswered:
+          type: array
+          items:
+            type: string
+          description: The `statusId`s in this request that were already answered and skipped. Present only when there were any.
 
     IngressStatus:
       type: object
@@ -6400,10 +6511,10 @@ components:
               description: Bot's numeric GitHub user ID for self-message detection. Auto-detected from the GitHub API when omitted.
             triggerOnIssueOpen:
               type: boolean
-              description: When false, the bot does not auto-trigger on new issues (opened, edited, reopened). Defaults to true.
+              description: When false, the bot does not auto-trigger on new issues (opened, reopened). Defaults to true.
             triggerOnPROpen:
               type: boolean
-              description: When false, the bot does not auto-trigger on new pull requests (opened, edited, reopened). Defaults to true.
+              description: When false, the bot does not auto-trigger on new pull requests (opened, reopened). Defaults to true.
             trace:
               type: string
               enum: [enabled, disabled]

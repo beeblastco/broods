@@ -9,9 +9,10 @@ on:
       - ".github/actions/bun-install/**"
   workflow_dispatch:
 
+# Queue, never cancel: a run stopped inside `s3 sync --delete` leaves old and new assets mixed.
 concurrency:
   group: deploy-docs-${{ github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 # Each job grants only the token permissions it needs.
 permissions: {}

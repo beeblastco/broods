@@ -182,11 +182,11 @@ flowchart LR
   Session --> Model
   Model -->|"load_skill(path)"| Loader["load-skill.tool.ts"]
   Loader -->|"SKILL.md + resources"| Store
-  Loader -->|"server-side copy"| Ws["workspace namespace<br/>.claude/skills + .agents/skills"]
+  Loader -->|"copy into the workspace's storage"| Ws["workspace namespace<br/>.claude/skills + .agents/skills"]
 ```
 
 - `load_skill` returns `SKILL.md` and requested resources over the S3 API, so it works with no workspace.
-- With a workspace, every `load_skill` re-stages a fresh copy to `.claude/skills/<name>` and mirrors it to `.agents/skills/<name>` (`SKILL_CANONICAL_DIR`, `SKILL_MIRROR_DIRS` in `src/harness/skills.ts`), dropping stale files first. No sandbox mounts the skills bucket; the staged copy is how scripts reach one.
+- With a workspace, every `load_skill` re-stages a fresh copy to `.claude/skills/<name>` and mirrors it to `.agents/skills/<name>` (`SKILL_CANONICAL_DIR`, `SKILL_MIRROR_DIRS` in `src/harness/skills.ts`), dropping stale files first. No sandbox mounts the skills bucket; the staged copy is how scripts reach one. It goes where the workspace's files live: a server-side copy into the managed bucket, or bytes read and written with the bucket's own credentials for a bring-your-own bucket. A `disk` workspace gets no copy.
 - Script files (`.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs`, `.ts`) are staged executable.
 - `src/shared/skills.ts` and `packages/convex/model/skillRules.ts` validate: names of lowercase letters, digits and hyphens, at most 64 characters, no `anthropic`, `claude` or XML tags; text files only, 5 MB each, 30 MB per bundle.
 - Skill CRUD is Node actions in the config plane (`packages/convex/config/http.ts`, `packages/convex/model/skills.ts`). There is no Convex skills table. Editing a skill goes through an editable workspace and the file tools, never `load_skill`.

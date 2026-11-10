@@ -95,7 +95,8 @@ A self-hosted deployment without the forwarder can post the events itself. The p
 
 ## Replies and media
 
-- Replies are sent as one final message. Discord has no native streaming here.
+- Replies are sent once the answer is done, in pieces of at most 1900 characters under Discord's 2000-character limit, cut at a line break or space. A code block cut in two is closed and reopened, and a rate-limited piece waits and is sent again. Discord has no native streaming here.
+- In a slash command, the first reply fills the command's response and every later one is a follow-up message.
 - The agent can send pictures and documents, uploaded in one multipart message.
 - Delayed replies, such as background job results, are sent with the bot token, so the bot needs Send Messages in that channel.
 - `ask_questions` renders as numbered text.

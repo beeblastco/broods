@@ -60,8 +60,8 @@ The App's install list already limits which repositories reach the agent, so `al
 | `privateKey`         | yes      | GitHub App private key                                                                                       |
 | `botUserName`        | no       | bot login for mention detection, such as `my-bot` or `my-bot[bot]`                                           |
 | `botUserId`          | no       | bot's numeric user id. Broods ignores every comment by a `Bot` account, its own included, with or without it |
-| `triggerOnIssueOpen` | no       | `false` stops auto-runs on issues opened, edited or reopened. Default `true`                                 |
-| `triggerOnPROpen`    | no       | `false` stops auto-runs on pull requests opened, edited or reopened. Default `true`                          |
+| `triggerOnIssueOpen` | no       | `false` stops auto-runs on issues opened or reopened. Default `true`                                         |
+| `triggerOnPROpen`    | no       | `false` stops auto-runs on pull requests opened or reopened. Default `true`                                  |
 | `apiUrl`             | no       | API base URL, for GitHub Enterprise. Must be public `https`                                                  |
 | `allowedChannelIds`  | no       | extra repositories as `owner/repo`, or `["*"]` for every installed repository                                |
 | `allowedUserIds`     | no       | GitHub logins allowed to trigger the agent. Everyone when omitted                                            |
@@ -72,14 +72,14 @@ The App's install list already limits which repositories reach the agent, so `al
 
 | Event                         | Actions                                    |
 | ----------------------------- | ------------------------------------------ |
-| `issues`                      | `opened`, `edited`, `reopened`, `assigned` |
-| `pull_request`                | `opened`, `edited`, `reopened`, `assigned` |
+| `issues`                      | `opened`, `reopened`, `assigned`           |
+| `pull_request`                | `opened`, `reopened`, `assigned`           |
 | `issue_comment`               | `created`, including pull request comments |
 | `pull_request_review_comment` | `created`                                  |
 
-With `botUserName` set, a comment runs the agent only when it mentions `@botUserName`. Without it, every human comment runs the agent.
+With `botUserName` set, a comment runs the agent only when it mentions `@botUserName`. Without it, every human comment runs the agent. Editing an issue, a pull request or a comment never runs it, so a typo fix does not bring a second answer.
 
-`triggerOnIssueOpen` and `triggerOnPROpen` only cover `opened`, `edited` and `reopened`, and never fire when a `Bot` account (Dependabot, the agent's own App) did it. Assigning the issue or pull request to the user account named in `botUserName` triggers it whatever these two flags say, so with `botUserName` set you can turn both off and still call the bot in by assigning it. An assignee of type `Bot` (a GitHub App) never triggers.
+`triggerOnIssueOpen` and `triggerOnPROpen` only cover `opened` and `reopened`, and never fire when a `Bot` account (Dependabot, the agent's own App) did it. Assigning the issue or pull request to the user account named in `botUserName` triggers it whatever these two flags say, so with `botUserName` set you can turn both off and still call the bot in by assigning it. An assignee of type `Bot` (a GitHub App) never triggers.
 
 ## Context and replies
 

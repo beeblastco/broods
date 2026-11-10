@@ -162,12 +162,24 @@ test("each range reads only its own grain", async () => {
 
   const startMs = FINISHED_AT - 30 * DAY_MS;
   const dayRows = await tt.run(
-    async (ctx) => await collectUsageRollups(ctx, ENDPOINT_ID, grain, startMs),
+    async (ctx) =>
+      await collectUsageRollups(
+        ctx,
+        { accountId: accountId, endpointId: ENDPOINT_ID },
+        grain,
+        startMs,
+      ),
   );
   expect(dayRows.map((row) => row.grain)).toEqual(["day"]);
 
   const fiveMinuteRows = await tt.run(
-    async (ctx) => await collectUsageRollups(ctx, ENDPOINT_ID, "5m", startMs),
+    async (ctx) =>
+      await collectUsageRollups(
+        ctx,
+        { accountId: accountId, endpointId: ENDPOINT_ID },
+        "5m",
+        startMs,
+      ),
   );
   expect(fiveMinuteRows.map((row) => row.grain)).toEqual(["5m"]);
 });
@@ -191,7 +203,13 @@ test("collectUsageTasks reads only tasks that finished inside the bin", async ()
 
   const rows = await tt.run(
     async (ctx) =>
-      await collectUsageTasks(ctx, ENDPOINT_ID, binStart, binEnd, 10),
+      await collectUsageTasks(
+        ctx,
+        { accountId: accountId, endpointId: ENDPOINT_ID },
+        binStart,
+        binEnd,
+        10,
+      ),
   );
   expect(rows.map((row) => row.taskId)).toEqual(["first#t1", "last#t2"]);
   expect(rows[0].inputPreview).toBe("prompt for first#t1");
@@ -216,7 +234,7 @@ test("collectUsageTasks for one model skips other models before the limit", asyn
     async (ctx) =>
       await collectUsageTasks(
         ctx,
-        ENDPOINT_ID,
+        { accountId: accountId, endpointId: ENDPOINT_ID },
         binStart,
         binStart + HOUR_MS,
         1,

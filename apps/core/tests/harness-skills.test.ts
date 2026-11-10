@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import * as realMount from "../src/harness/sandbox/s3-mount.ts";
 import type { S3ObjectInfo } from "../src/shared/s3.ts";
 import * as realS3 from "../src/shared/s3.ts";
+import type { WorkspaceRuntimeConfig } from "../src/shared/domain/workspace-config.ts";
+import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const s3Writes: Array<{
@@ -90,6 +93,12 @@ await mock.module("../src/shared/s3.ts", () => ({
   copyS3Object: copyS3ObjectMock,
   deleteS3Object: deleteS3ObjectMock,
   ensureS3DirectoryMarkers: ensureS3DirectoryMarkersMock,
+}));
+
+const resolveS3ReadTargetMock = mock(realMount.resolveS3ReadTarget);
+await mock.module("../src/harness/sandbox/s3-mount.ts", () => ({
+  ...realMount,
+  resolveS3ReadTarget: resolveS3ReadTargetMock,
 }));
 
 beforeEach(() => {
@@ -400,13 +409,16 @@ describe("loadConfiguredSkillPrompt", () => {
       ["acct_test/script-skill"],
       "acct_test/script-skill",
       ["scripts/analyze.py"],
-      "fs-0123456789abcdef0123456789abcdef01234567",
+      workspace({ provider: "s3" }),
     );
 
-    expect(result.stagedPath).toBe("/.claude/skills/script-skill");
+    expect(result.stagedPath).toBe(".claude/skills/script-skill");
     expect(result.stagedFiles).toEqual(["SKILL.md", "scripts/analyze.py"]);
     expect(result.prompt.content).toContain(
-      "staged inside the current sandbox at `/.claude/skills/script-skill`",
+      "staged in the workspace at `.claude/skills/script-skill`",
+    );
+    expect(result.prompt.content).toContain(
+      "`bash .claude/skills/script-skill/script.sh`",
     );
     expect(s3Copies).toContainEqual({
       sourceBucket: "test-skills-bucket",
@@ -417,7 +429,7 @@ describe("loadConfiguredSkillPrompt", () => {
       options: { contentType: "text/plain; charset=utf-8", executable: true },
     });
     // Mirrored into the .agents/skills location for tools that expect it.
-    expect(result.prompt.content).toContain("/.agents/skills/script-skill");
+    expect(result.prompt.content).toContain("`.agents/skills/script-skill`");
     expect(s3Copies).toContainEqual({
       sourceBucket: "test-skills-bucket",
       sourceKey: "acct_test/script-skill/scripts/analyze.py",
@@ -469,7 +481,7 @@ describe("loadConfiguredSkillPrompt", () => {
       ["acct_test/refresh-skill"],
       "acct_test/refresh-skill",
       [],
-      "fs-0123456789abcdef0123456789abcdef01234567",
+      workspace({ provider: "s3" }),
     );
 
     expect(result.stagedFiles).toEqual(["SKILL.md"]);
@@ -487,6 +499,65 @@ describe("loadConfiguredSkillPrompt", () => {
       bucket: "workspace-bucket",
       key: `${canonicalPrefix}old.py`,
     });
+  });
+});
+
+describe("skill staging per workspace storage", () => {
+  const skillContent = createSkillMarkdown("run-skill", "Run skill");
+
+  beforeEach(() => {
+    process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
+    readS3TextMock.mockImplementation(async () => skillContent);
+    listS3PrefixMock.mockImplementation(async (_bucket, prefix) =>
+      prefix === "acct_test/run-skill/"
+        ? [{ key: "acct_test/run-skill/run.sh", size: 9, etag: "e" }]
+        : [],
+    );
+  });
+
+  it("writes into a bring-your-own bucket with that bucket's credentials", async () => {
+    const access = { region: "eu-west-1" };
+    resolveS3ReadTargetMock.mockImplementationOnce(async () => ({
+      bucket: "customer-bucket",
+      prefix: "team/support/",
+      access: access,
+    }));
+    const { loadConfiguredSkillPrompt } =
+      await import("../src/harness/skills.ts");
+
+    const result = await loadConfiguredSkillPrompt(
+      "acct_test",
+      ["acct_test/run-skill"],
+      "acct_test/run-skill",
+      [],
+      workspace({ provider: "s3", bucket: "customer-bucket", prefix: "team" }),
+    );
+
+    expect(result.stagedFiles).toEqual(["run.sh"]);
+    expect(s3Copies).toEqual([]);
+    expect(s3Writes.map((write) => [write.bucket, write.key])).toEqual([
+      ["customer-bucket", "team/support/.claude/skills/run-skill/run.sh"],
+      ["customer-bucket", "team/support/.agents/skills/run-skill/run.sh"],
+    ]);
+    expect(s3Writes[0]?.options?.access).toBe(access);
+  });
+
+  it("stages nothing on a disk workspace, whose files live on its sandbox", async () => {
+    const { loadConfiguredSkillPrompt } =
+      await import("../src/harness/skills.ts");
+
+    const result = await loadConfiguredSkillPrompt(
+      "acct_test",
+      ["acct_test/run-skill"],
+      "acct_test/run-skill",
+      [],
+      workspace({ provider: "disk" }),
+    );
+
+    expect(result.stagedPath).toBeUndefined();
+    expect(s3Copies).toEqual([]);
+    expect(s3Writes).toEqual([]);
+    expect(result.prompt.content).toContain("No sandbox staging path");
   });
 });
 
@@ -904,3 +975,14 @@ describe("loadSkillContent", () => {
     expect(result.bytes).toBe(expectedBytes);
   });
 });
+
+function workspace(
+  storage: WorkspaceRuntimeConfig["storage"],
+): ResolvedWorkspace {
+  return {
+    name: "default",
+    workspaceId: "ws_1",
+    namespace: "fs-0123456789abcdef0123456789abcdef01234567",
+    config: { storage: storage },
+  };
+}
