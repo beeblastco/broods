@@ -73,6 +73,8 @@ import {
   type MachineConnectionWrite,
 } from "./helpers/machine.ts";
 
+const PNG_1X1 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 const servers: Bun.Server<MachineSocketData>[] = [];
 const sockets: WebSocket[] = [];
 
@@ -399,10 +401,12 @@ test("the computer tool reaches a daemon started with --computer, and names the 
           type: "computer-result",
           id: frame.id,
           ...(frame.action === "screenshot"
-            ? { image: { data: "AAAA", mediaType: "image/png" } }
-            : {
-                text: `X=${frame.coordinate?.[0]},Y=${frame.coordinate?.[1]}`,
-              }),
+            ? { image: { data: PNG_1X1, mediaType: "image/png" } }
+            : frame.action === "zoom"
+              ? { image: { data: "AAAA", mediaType: "image/png" } }
+              : {
+                  text: `X=${frame.coordinate?.[0]},Y=${frame.coordinate?.[1]}`,
+                }),
           app: "com.apple.Safari",
         }),
       );
@@ -420,7 +424,19 @@ test("the computer tool reaches a daemon started with --computer, and names the 
     type: "content",
     value: [
       { type: "text", text: "Screenshot (frontmost app: com.apple.Safari)" },
-      { type: "image-data", data: "AAAA", mediaType: "image/png" },
+      { type: "image-data", data: PNG_1X1, mediaType: "image/png" },
+    ],
+  });
+  expect(
+    await execute({ action: "zoom", region: [0, 0, 10, 10] }, options),
+  ).toEqual({
+    type: "content",
+    value: [
+      { type: "text", text: "Zoomed region (frontmost app: com.apple.Safari)" },
+      {
+        type: "text",
+        text: "[An image (image/png, 4 base64 characters) was not shown to you: it is not a PNG, JPEG, GIF or WebP image.]",
+      },
     ],
   });
   expect(

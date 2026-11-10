@@ -297,6 +297,32 @@ describe("mirror writes", () => {
     expect(kinds()).toEqual(["upsert:row-a"]);
   });
 
+  it("keeps sending when a write fails after it landed", async () => {
+    let serialised = 0;
+    const metadata = Object.assign(
+      { traceId: "t-1" },
+      {
+        toJSON: (): { traceId: string } => {
+          serialised += 1;
+          if (serialised > 1) throw new Error("cannot serialise");
+          return { traceId: "t-1" };
+        },
+      },
+    );
+    const broken = queueMirrorUpsert({
+      controlPlane: plane("acct"),
+      provider: "cloudflare",
+      reservationKey: "row-a",
+      externalId: "m-1",
+      metadata: metadata,
+    });
+    const removed = queueMirrorRemove("acct", "row-b", "m-2");
+    await broken;
+    await removed;
+    expect(kinds()).toEqual(["upsert:row-a", "remove:row-b"]);
+    expect(mirrorQueueStats().rows).toBe(0);
+  });
+
   it("holds shutdown's drain until every queued write landed", async () => {
     const first = hold("row-a");
     void upsert("acct", "row-a", "m-1", "t-1");

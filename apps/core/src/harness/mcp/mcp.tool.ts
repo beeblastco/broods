@@ -31,6 +31,7 @@ export function mcpTools(
           (input ?? {}) as Record<string, unknown>,
           {
             abortSignal: options.abortSignal,
+            toolDefinition: remote,
             onRetry: (waitMs: number): void =>
               onToolRetry?.(options.toolCallId, waitMs),
             ...(onSandboxCpu
@@ -54,7 +55,6 @@ export function mcpTools(
   return tools;
 }
 
-// Stands in for a server that refused the run, so the model can say why instead of guessing.
 /**
  * Stands in for a remote server that needs a sign-in. The account's own caller gets the link
  * to hand to the user; anyone else could bind their own account to it, so they get none.

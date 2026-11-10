@@ -53,28 +53,28 @@ Names are uppercase letters, digits and underscores. A sync fails, and writes no
 
 The agent's model, instructions, tools, and what it can reach. See [Agents](../guides/agents.md).
 
-| Field               | Description                                                                                              |
-| ------------------- | -------------------------------------------------------------------------------------------------------- |
-| `name`              | Unique per stage. Required                                                                               |
-| `description`       | Shown to parent agents choosing a subagent                                                               |
-| `provider`          | Credentials per model provider. See [providers](#model-providers)                                        |
-| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`, `transcriptionModelId`   |
-| `agent`             | `system` prompt and `maxTurn`, the steps per turn. Default 30, `0` for no cap                            |
-| `harness`           | A `defineHarness()` value to replace the built-in loop                                                   |
-| `tools`             | Provider-executed tools, keyed by the provider's tool name                                               |
-| `mcp`               | MCP servers to enable, keyed by server name                                                              |
-| `connections`       | Channel connections the agent answers on                                                                 |
-| `sandboxes`         | Sandboxes it can use. The first is the default                                                           |
-| `workspaces`        | Workspaces it mounts, with optional per-workspace sandbox                                                |
-| `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`, `model`                                 |
-| `skills`            | `enabled`, `allowed` skill resources                                                                     |
-| `scheduler`         | `{ enabled: true }` gives the agent scheduling tools                                                     |
-| `browser`           | `{ enabled: true }` gives the agent `browse`. The first sandbox needs `image: "obscura"` and `allow-all` |
-| `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                           |
-| `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                  |
-| `policies`          | Policies that gate the agent. Each carries its own mode                                                  |
-| `publicAccess`      | Open the agent to the runtime key. Default `false`                                                       |
-| `allowRunOverrides` | Let runtime-key callers send `system` and `model` overrides. Default `false`                             |
+| Field               | Description                                                                                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`              | Unique per stage. Required                                                                                                                                                   |
+| `description`       | Shown to parent agents choosing a subagent                                                                                                                                   |
+| `provider`          | Credentials per model provider. See [providers](#model-providers)                                                                                                            |
+| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`, `transcriptionModelId`                                                                       |
+| `agent`             | `system` prompt and `maxTurn`, the steps per turn. Default 30, `0` for no cap                                                                                                |
+| `harness`           | A `defineHarness()` value to replace the built-in loop                                                                                                                       |
+| `tools`             | Provider-executed tools, keyed by the provider's tool name                                                                                                                   |
+| `mcp`               | MCP servers to enable, keyed by server name                                                                                                                                  |
+| `connections`       | Channel connections the agent answers on                                                                                                                                     |
+| `sandboxes`         | Sandboxes it can use. The first is the default                                                                                                                               |
+| `workspaces`        | Workspaces it mounts, with optional per-workspace sandbox                                                                                                                    |
+| `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`, `model`                                                                                                     |
+| `skills`            | `enabled`, `allowed` skill resources                                                                                                                                         |
+| `scheduler`         | `{ enabled: true }` gives the agent scheduling tools                                                                                                                         |
+| `browser`           | `{ enabled: true }` gives the agent `browse`. The first sandbox is a `lambda` sandbox with `image: "obscura"` and `allow-all`, or a `machine` sandbox with obscura installed |
+| `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                                                                                               |
+| `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                                                                                      |
+| `policies`          | Policies that gate the agent. Each carries its own mode                                                                                                                      |
+| `publicAccess`      | Open the agent to the runtime key. Default `false`                                                                                                                           |
+| `allowRunOverrides` | Let runtime-key callers send `system` and `model` overrides. Default `false`                                                                                                 |
 
 ```ts
 import { defineAgent, env } from "broods";
@@ -266,11 +266,11 @@ export const lambdaSandbox = defineSandbox({
 
 Persistent files, mounted into a sandbox. See [Workspaces](../guides/workspaces.md).
 
-| Field         | Default              | Description                                                                                              |
-| ------------- | -------------------- | -------------------------------------------------------------------------------------------------------- |
-| `storage`     | `{ provider: "s3" }` | Managed bucket, or your own with `bucket`, `region`, `prefix`, `endpoint`, `auth`                        |
-| `partitioned` |                      | `"conversation"` lets channels split the workspace per conversation, `"agent"` gives each agent its own  |
-| `harness`     |                      | `workspace.enabled` for the workspace prompt, `memory.enabled` for structured memory. Both on by default |
+| Field         | Default              | Description                                                                                                                                                                                                |
+| ------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storage`     | `{ provider: "s3" }` | Managed bucket, your own with `bucket`, `region`, `prefix`, `endpoint`, `auth`, or `{ provider: "disk" }` on a persistent `worker` sandbox. See [Disk workspaces](../guides/workspaces.md#disk-workspaces) |
+| `partitioned` |                      | `"conversation"` lets channels split the workspace per conversation, `"agent"` gives each agent its own                                                                                                    |
+| `harness`     |                      | `workspace.enabled` for the workspace prompt, `memory.enabled` for structured memory. Both on by default                                                                                                   |
 
 ```ts
 export const notes = defineWorkspace({
@@ -407,17 +407,20 @@ Every connection also takes `allowedChannelIds`, where `["*"]` answers everywher
 - Every `env("NAME")` needs a stored value on the stage.
 - Skill folders need a `SKILL.md`.
 - Hosted MCP bundles must build as ESM and export a fetch-style handler.
-- Workspace storage must be `s3`.
+- Workspace storage is `s3` (default) or `disk`.
 - The old `sandbox` agent key fails. List sandboxes in `sandboxes`. A stored agent that still carries `sandbox` refuses to run until you resync.
 - A connection with no declared channels and no `allowedChannelIds` fails. `"*"` as a channel id fails.
 
 ## Generated references
 
 ```ts
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-await new BroodsClient().run(api.agents.myAgent, { input: "Hello" });
+const client = new BroodsClient({
+  userToken: await signUserToken({ userId: "me" }),
+});
+await client.run(api.agents.myAgent, { input: "Hello" });
 ```
 
 `api.agents`, `api.channels`, `api.workspaces`, `api.sandboxes` and the other maps hold the deployed ids. See the [SDK reference](sdk.md). Every resource also maps to the raw account API, documented in the [API reference](/api-reference).
