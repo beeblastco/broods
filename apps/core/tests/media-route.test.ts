@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { flushUsage } from "../src/harness/plan-limits.ts";
 import type { CoreRequest } from "../src/shared/http.ts";
 import { sealMediaTicket } from "../src/shared/media-ticket.ts";
 import {
@@ -53,7 +54,8 @@ beforeEach(() => {
   setStorageForTests(storageWithWorkspace());
 });
 
-afterEach(() => {
+afterEach(async (): Promise<void> => {
+  await flushUsage();
   process.env = { ...ORIGINAL_ENV };
   resetStorageForTests();
 });
@@ -75,6 +77,7 @@ describe("handleMediaRequest", () => {
       new Uint8Array([1, 2, 3]),
     );
     // Egress from a workspace is billed to that workspace's project.
+    await flushUsage();
     expect(meterWrites).toEqual([
       {
         accountId: ACCOUNT,
@@ -192,6 +195,7 @@ describe("handleMediaRequest", () => {
       "filesystem-bucket",
       `attachments/${ACCOUNT}/media/ab12/0-photo.png`,
     ]);
+    await flushUsage();
     expect(meterWrites).toEqual([
       { accountId: ACCOUNT, usage: { egressGb: 3 / 1e9 } },
     ]);

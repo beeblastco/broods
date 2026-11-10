@@ -1,5 +1,5 @@
 // Mirror writes log instead of failing the lifecycle call. Each keys on its own row, so all
-// skip the mutation FIFO: order two writes to one row by awaiting or `queueMirrorWrite`.
+// skip the mutation FIFO: core orders one row's writes in `harness/sandbox/mirror-writes.ts`.
 
 import type { SandboxProvider } from "../domain/sandbox-config.ts";
 import { logError } from "../log.ts";
@@ -18,6 +18,12 @@ import {
 // A lost remove leaves a row the meter keeps billing; the remove is idempotent.
 const REMOVE_RETRY_DELAYS_MS = [0, 500, 2_000];
 
+export interface SandboxInstanceUpsertOptions {
+  ephemeral?: boolean;
+  logStream?: string;
+  specs?: SandboxSpecs;
+}
+
 export type SandboxInstanceStatus =
   | "running"
   | "suspended"
@@ -25,19 +31,20 @@ export type SandboxInstanceStatus =
   | "error";
 
 // Pass `specs` only when the real size is known; else the row bills the config's, unverified.
+// False when the write failed or Convex refused it.
 export async function upsertSandboxInstance(
   controlPlane: SandboxControlPlane | undefined,
   provider: SandboxProvider,
   reservationKey: string,
   externalId: string,
   metadata?: SandboxRunMetadata,
-  options?: { ephemeral?: boolean; logStream?: string; specs?: SandboxSpecs },
-): Promise<void> {
-  if (!controlPlane) return;
+  options?: SandboxInstanceUpsertOptions,
+): Promise<boolean> {
+  if (!controlPlane) return true;
   const meta: SandboxRunMetadata = metadata ?? {};
   const ephemeral = options?.ephemeral === true;
   try {
-    await adminMutation(
+    const written: boolean = await adminMutation(
       internal.sandbox.instances.upsert,
       {
         accountId: controlPlane.accountId,
@@ -68,10 +75,14 @@ export async function upsertSandboxInstance(
       },
       { skipQueue: true },
     );
+
+    return written;
   } catch (err) {
     logError("Sandbox instance upsert mirror failed (convex)", {
       error: err instanceof Error ? err.message : String(err),
     });
+
+    return false;
   }
 }
 

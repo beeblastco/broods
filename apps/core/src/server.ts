@@ -146,6 +146,7 @@ if (import.meta.main) {
   const { handler: accountHandler } = await import("./accounts/handler.ts");
   const { handleMediaRequest, routesToMedia } = await import("./media.ts");
   const { handler: harnessHandler } = await import("./harness/handler.ts");
+  const { flushUsage } = await import("./harness/plan-limits.ts");
   const { drainInProcessWorkers } = await import("./harness/worker-queue.ts");
   const { interruptLiveOwners } = await import("./harness/ingress.ts");
   const { startIngressRecovery, stopIngressRecovery } =
@@ -213,8 +214,11 @@ if (import.meta.main) {
     const graceful = (async () => {
       await server.stop();
       // An admission in flight can start a worker; a finished worker leaves a usage write.
+      // Usage waiting for its 5 s timer is sent now, so a drain does not wait the timer out.
+      await flushUsage();
       await drainInFlight();
       await drainInProcessWorkers();
+      await flushUsage();
       await drainInFlight();
       drained = true;
       shutdownIsolatePool();

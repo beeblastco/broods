@@ -5,6 +5,7 @@ import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { Server } from "node:net";
 import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
+import { flushUsage } from "../src/harness/plan-limits.ts";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
 import { requestUrl, stubPublicDns } from "./helpers/http.ts";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
@@ -148,7 +149,8 @@ beforeEach(() => {
   } as never);
 });
 
-afterEach(() => {
+afterEach(async (): Promise<void> => {
+  await flushUsage();
   process.env = { ...ORIGINAL_ENV };
   globalThis.fetch = ORIGINAL_FETCH;
   resetStorageForTests();
@@ -216,6 +218,7 @@ describe("ingestInboundAttachments", () => {
     expect(workspaceOptions).toEqual({ contentType: "image/png" });
     expect(storeKey).toStartWith(`attachments/${ACCOUNT}/media/`);
     expect(storeKey).toEndWith("-photo.png");
+    await flushUsage();
     expect(meterWrites).toEqual([
       {
         accountId: ACCOUNT,
@@ -463,6 +466,7 @@ describe("ingestInboundAttachments", () => {
     );
 
     expect(writeS3ObjectMock).toHaveBeenCalledTimes(20);
+    await flushUsage();
     expect(meterWrites).toEqual([
       {
         accountId: ACCOUNT,
@@ -819,6 +823,7 @@ describe("rehydrateStoredMedia", () => {
     expect(readS3BytesMock).toHaveBeenCalledTimes(2);
     const egress = { accountId: ACCOUNT, usage: { egressGb: 3 / 1e9 } };
     // The two links are read side by side, so in either order.
+    await flushUsage();
     expect(meterWrites).toHaveLength(2);
     expect(meterWrites).toEqual(
       expect.arrayContaining([
@@ -890,6 +895,7 @@ describe("rehydrateStoredMedia", () => {
     ]);
     expect(headS3ObjectMock).not.toHaveBeenCalled();
     expect(readS3BytesMock).not.toHaveBeenCalled();
+    await flushUsage();
     expect(meterWrites).toEqual([]);
   });
 

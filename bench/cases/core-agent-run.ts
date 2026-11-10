@@ -218,6 +218,7 @@ function fakeStorage(): Storage {
       listForProduction: empty,
       listForEndpoint: empty,
       listForStage: empty,
+      scopes: async () => new Map(),
       removeAllForAccount: zero,
     },
     agentDeployments: { getByApiKeyHash: none, touchLastUsed: async () => {} },
