@@ -1,6 +1,6 @@
 # Agents as MCP tools
 
-Broods serves your agents as tools on an MCP server at `/mcp`. A client such as Claude Code calls an agent like any other tool and gets its answer back.
+Broods serves your agents on an MCP server at `/mcp`. A client such as Claude Code lists them, asks one, and gets its answer back.
 
 ```sh
 claude mcp add --transport http broods https://gateway.broods.app/mcp
@@ -13,10 +13,19 @@ claude mcp add --transport http broods https://gateway.broods.app/mcp \
   --header "Authorization: Bearer $BROODS_ACCOUNT_KEY"
 ```
 
-Each agent the key can run is one tool, named after the agent. Its description is the agent's description, so write one the calling model can pick from. Agents that share a name across an account's stages get the end of their id added. Renaming an agent renames its tool; a call with the old name is told the current names, and an agent id always works as a tool name. The input:
+The tools are the same for every account, however many agents it has:
+
+| Tool           | Input                                        | Answer                                                    |
+| -------------- | -------------------------------------------- | --------------------------------------------------------- |
+| `list_agents`  | `project`, `stage`, both optional filters    | Each agent's name, description, project, stage and id     |
+| `ask_agent`    | `agent`, `prompt`, optional `conversationId` | The agent's answer                                        |
+| `continue_run` | `runId`, optional `answers`                  | The rest of a run; listed only for a client without tasks |
+
+`agent` is a name or an id from `list_agents`. A name that two agents share, such as the same agent in two stages, is refused with each one's id, project and stage, so pass the id. The calling model picks an agent by its description, so write one for each agent.
 
 ```json
 {
+  "agent": "support",
   "prompt": "Summarize yesterday's support tickets.",
   "conversationId": "optional, from an earlier answer, to continue it"
 }
@@ -28,13 +37,13 @@ Every answer ends with its `conversationId`. Leave the field out to start fresh.
 
 A client with the `io.modelcontextprotocol/tasks` extension gets a task and polls it, as below. The task id is the run id, so the same run is also readable at `GET /v1/runs/{runId}`.
 
-Any other client gets the answer directly, waiting up to 50 seconds. If the run needs longer, or the agent asks a question, the result says so and the extra `continue_run` tool takes the `runId`, plus `answers` when there is a question.
+Any other client gets the answer directly, waiting up to 50 seconds. If the run needs longer, or the agent asks a question, the result says so and `continue_run` takes the `runId`, plus `answers` when there is a question.
 
 Whether a tool call asks first is the agent's own config, the same as on every other surface: a sandbox with `permissionMode: "bypass"` runs everything without asking, and otherwise only the calls its mode or a tool's `needsApproval` gates wait. When one waits, a person approves it. A client without tasks is told what is waiting and cannot approve it itself.
 
 ## Which agents are listed
 
-| Credential                          | Tools                                                               |
+| Credential                          | Agents                                                              |
 | ----------------------------------- | ------------------------------------------------------------------- |
 | Account key (`bask_...`)            | Every agent in the account                                          |
 | OAuth sign-in                       | Every agent in your organization's account (`?org=` picks one)      |
@@ -42,7 +51,7 @@ Whether a tool call asks first is the agent's own config, the same as on every o
 | Runtime key (`bsk_...`)             | Public agents of its stage, with a user token where one is required |
 | Run token, role session, scoped key | None                                                                |
 
-The rules are the ones `POST /v1/runs` applies: a tool you can see is a run you can start, and plan limits count each call as a run.
+The rules are the ones `POST /v1/runs` applies: an agent you can list is a run you can start, and plan limits count each `ask_agent` call as a run.
 
 ## Task states
 

@@ -258,6 +258,42 @@ export const listForEndpoint = internalQuery({
   },
 });
 
+/** Which project and stage each agent runs in; an agent with no config row is left out. */
+export const scopes = internalQuery({
+  args: { agentIds: v.array(v.id("agents")) },
+  returns: v.array(
+    v.object({
+      agentId: v.id("agents"),
+      project: v.string(),
+      stage: v.string(),
+    }),
+  ),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ agentId: Id<"agents">; project: string; stage: string }[]> => {
+    const scoped = await Promise.all(
+      args.agentIds.map(async (agentId) => {
+        const config = await ctx.db
+          .query("agentConfigs")
+          .withIndex("by_agentId", (q) => q.eq("agentId", agentId))
+          .first();
+        if (!config) return null;
+        const [project, stage] = await Promise.all([
+          ctx.db.get(config.projectId),
+          ctx.db.get(config.stageId),
+        ]);
+
+        return project && stage
+          ? { agentId: agentId, project: project.name, stage: stage.name }
+          : null;
+      }),
+    );
+
+    return scoped.filter((scope) => scope !== null);
+  },
+});
+
 export const listForStage = internalQuery({
   args: {
     accountId: v.id("accounts"),

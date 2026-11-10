@@ -12,7 +12,11 @@ import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import type { RunStatus } from "../src/harness/mcp-tasks.ts";
 import type { CoreRequest } from "../src/shared/http.ts";
 import type { AccountRecord } from "../src/shared/domain/accounts.ts";
-import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
+import {
+  setStorageForTests,
+  type AgentScope,
+  type Storage,
+} from "../src/shared/storage.ts";
 
 const ACCOUNT: AccountRecord = {
   accountId: "acct_1",
@@ -204,63 +208,97 @@ describe("handleMcpRequest", () => {
           agent("private", false),
           agent("public", true),
         ],
+        scopes: async (): Promise<Map<string, AgentScope>> => new Map(),
       },
     };
     setStorageForTests(stubs as Storage);
-    const names = async (token: string): Promise<string[]> => {
-      const { result } = await rpc(
-        mcpRequest("tools/list", {}, { token: token }),
-        replayOf({}),
-      );
+    const ids = async (token: string): Promise<string[]> =>
+      (await listedAgents({}, token)).map(({ id }) => id);
 
-      return (result as { tools: { name: string }[] }).tools.map(
-        (tool) => tool.name,
-      );
-    };
-
-    expect(await names("account")).toEqual(["private", "public"]);
-    expect(await names("frontend")).toEqual(["public"]);
+    expect(await ids("account")).toEqual(["private", "public"]);
+    expect(await ids("frontend")).toEqual(["public"]);
   });
 
-  it("names tools for agents, and apart when an account repeats a name", async () => {
-    const named = (agentId: string, name: string): AgentRecord => ({
-      ...agent(agentId, true),
-      name: name,
-    });
-    setStorageForTests({
-      agents: {
-        listForAccount: async (): Promise<AgentRecord[]> => [
-          named("id_aaaaaa", "Support Bot"),
-          named("id_bbbbbb", "dup"),
-          named("id_cccccc", "dup"),
-        ],
-      },
-    } as StorageStubs as Storage);
-    const { result } = await rpc(mcpRequest("tools/list", {}), replayOf({}));
+  it("lists each agent with its project and stage, and filters by them", async () => {
+    setStorageForTests(twoStages() as Storage);
 
+    expect(await listedAgents({})).toEqual([
+      {
+        name: "support",
+        description: "Answers tickets.",
+        project: "shop",
+        stage: "production",
+        id: "agent_prod",
+      },
+      {
+        name: "support",
+        project: "shop",
+        stage: "development",
+        id: "agent_dev",
+      },
+    ]);
     expect(
-      (result as { tools: { name: string }[] }).tools.map(({ name }) => name),
-    ).toEqual(["support_bot", "dup_bbbbbb", "dup_cccccc"]);
+      (await listedAgents({ stage: "Development" })).map(({ id }) => id),
+    ).toEqual(["agent_dev"]);
   });
 
-  it("tells a caller holding a renamed agent's old tool name the current names", async () => {
+  it("asks an agent by name, and asks for an id when the name repeats", async () => {
     setStorageForTests({
       agents: {
+        ...twoStages().agents,
         listForAccount: async (): Promise<AgentRecord[]> => [
-          { ...agent("agent_1", true), name: "help-desk" },
+          { ...agent("agent_1", true), name: "Help Desk" },
         ],
       },
     } as StorageStubs as Storage);
-    const old = await rpc(
+    const replay = replayOf({ run_1: run({ runId: "run_1" }) });
+    await rpc(
       mcpRequest("tools/call", {
-        name: "support-bot",
-        arguments: { prompt: "hi" },
+        name: "ask_agent",
+        arguments: { agent: "help desk", prompt: "hi" },
+      }),
+      replay,
+    );
+
+    expect(JSON.parse(replay.posts[0]!.body).agentId).toBe("agent_1");
+
+    setStorageForTests(twoStages() as Storage);
+    const repeated = await rpc(
+      mcpRequest("tools/call", {
+        name: "ask_agent",
+        arguments: { agent: "support", prompt: "hi" },
       }),
       replayOf({}),
     );
 
-    expect(JSON.stringify(old.error)).toContain(
-      "it may have been renamed. Current tools: help-desk.",
+    expect(repeated.result).toMatchObject({
+      isError: true,
+      content: [
+        {
+          text: "2 agents are named support. Pass one of these ids as agent: agent_prod (project shop, stage production), agent_dev (project shop, stage development).",
+        },
+      ],
+    });
+  });
+
+  it("points a caller with an unknown agent or tool at list_agents", async () => {
+    const unknownAgent = await rpc(
+      mcpRequest("tools/call", {
+        name: "ask_agent",
+        arguments: { agent: "gone", prompt: "hi" },
+      }),
+      replayOf({}),
+    );
+    const unknownTool = await rpc(
+      mcpRequest("tools/call", { name: "gone", arguments: { prompt: "hi" } }),
+      replayOf({}),
+    );
+
+    expect(JSON.stringify(unknownAgent.result)).toContain(
+      "No agent named gone. Call list_agents",
+    );
+    expect(JSON.stringify(unknownTool.error)).toContain(
+      "No tool named gone. Call list_agents to see the agents, then ask_agent to run one.",
     );
   });
 
@@ -276,7 +314,7 @@ describe("handleMcpRequest", () => {
     const { result } = await rpc(
       mcpRequest(
         "tools/call",
-        { name: "agent_1", arguments: { prompt: "hi" } },
+        { name: "ask_agent", arguments: { agent: "agent_1", prompt: "hi" } },
         { capabilities: {} },
       ),
       replay,
@@ -294,7 +332,7 @@ describe("handleMcpRequest", () => {
     const { result } = await rpc(
       mcpRequest(
         "tools/call",
-        { name: "agent_1", arguments: { prompt: "hi" } },
+        { name: "ask_agent", arguments: { agent: "agent_1", prompt: "hi" } },
         { capabilities: {} },
       ),
       {
@@ -360,8 +398,12 @@ describe("handleMcpRequest", () => {
       );
     };
 
-    expect(await names({})).toEqual(["agent_1", "continue_run"]);
-    expect(await names(TASKS)).toEqual(["agent_1"]);
+    expect(await names({})).toEqual([
+      "list_agents",
+      "ask_agent",
+      "continue_run",
+    ]);
+    expect(await names(TASKS)).toEqual(["list_agents", "ask_agent"]);
   });
 
   it("tells a client without tasks what the agent asked and takes its answer", async () => {
@@ -388,7 +430,7 @@ describe("handleMcpRequest", () => {
     const asked = await rpc(
       mcpRequest(
         "tools/call",
-        { name: "agent_1", arguments: { prompt: "hi" } },
+        { name: "ask_agent", arguments: { agent: "agent_1", prompt: "hi" } },
         { capabilities: {} },
       ),
       replay,
@@ -432,7 +474,7 @@ describe("handleMcpRequest", () => {
     const { result } = await rpc(
       mcpRequest(
         "tools/call",
-        { name: "agent_1", arguments: { prompt: "hi" } },
+        { name: "ask_agent", arguments: { agent: "agent_1", prompt: "hi" } },
         { capabilities: {} },
       ),
       replayOf({
@@ -456,7 +498,10 @@ describe("handleMcpRequest", () => {
 
   it("hands a bad argument back as a tool error the model can fix", async () => {
     const { result } = await rpc(
-      mcpRequest("tools/call", { name: "agent_1", arguments: {} }),
+      mcpRequest("tools/call", {
+        name: "ask_agent",
+        arguments: { agent: "agent_1" },
+      }),
       replayOf({}),
     );
 
@@ -467,8 +512,12 @@ describe("handleMcpRequest", () => {
     const replay = replayOf({ run_1: run({ runId: "run_1" }) });
     await rpc(
       mcpRequest("tools/call", {
-        name: "agent_1",
-        arguments: { prompt: "more", conversationId: "conv_1" },
+        name: "ask_agent",
+        arguments: {
+          agent: "agent_1",
+          prompt: "more",
+          conversationId: "conv_1",
+        },
       }),
       replay,
     );
@@ -480,8 +529,8 @@ describe("handleMcpRequest", () => {
     const replay = replayOf({ run_1: run({ runId: "run_1" }) });
     const { result } = await rpc(
       mcpRequest("tools/call", {
-        name: "agent_1",
-        arguments: { prompt: "hi" },
+        name: "ask_agent",
+        arguments: { agent: "agent_1", prompt: "hi" },
       }),
       replay,
     );
@@ -657,6 +706,14 @@ describe("handleMcpRequest", () => {
   });
 });
 
+interface ListedAgent {
+  name: string;
+  description?: string;
+  project?: string;
+  stage?: string;
+  id: string;
+}
+
 interface FakeReplay {
   posts: CoreRequest[];
   replay: (request: CoreRequest) => Promise<Response>;
@@ -671,6 +728,23 @@ function agent(agentId: string, publicAccess: boolean): AgentRecord {
     createdAt: "2026-11-01T00:00:00.000Z",
     updatedAt: "2026-11-01T00:00:00.000Z",
   } as AgentRecord;
+}
+
+async function listedAgents(
+  filter: { project?: string; stage?: string },
+  token = "account",
+): Promise<ListedAgent[]> {
+  const { result } = await rpc(
+    mcpRequest(
+      "tools/call",
+      { name: "list_agents", arguments: filter },
+      { token: token },
+    ),
+    replayOf({}),
+  );
+  const [content] = (result as { content: { text: string }[] }).content;
+
+  return (JSON.parse(content!.text) as { agents: ListedAgent[] }).agents;
 }
 
 function mcpRequest(
@@ -759,5 +833,26 @@ function run(fields: Partial<RunStatus>): RunStatus {
     createdAt: "2026-11-01T00:00:00.000Z",
     lastUpdatedAt: "2026-11-01T00:00:00.000Z",
     ...fields,
+  };
+}
+
+/** One account whose `support` agent runs in two stages of one project. */
+function twoStages(): StorageStubs {
+  return {
+    agents: {
+      listForAccount: async (): Promise<AgentRecord[]> => [
+        {
+          ...agent("agent_prod", true),
+          name: "support",
+          description: "Answers tickets.",
+        },
+        { ...agent("agent_dev", true), name: "support" },
+      ],
+      scopes: async (): Promise<Map<string, AgentScope>> =>
+        new Map([
+          ["agent_prod", { project: "shop", stage: "production" }],
+          ["agent_dev", { project: "shop", stage: "development" }],
+        ]),
+    },
   };
 }

@@ -94,6 +94,11 @@ interface AccountStore {
   remove(accountId: string): Promise<boolean>;
 }
 
+export interface AgentScope {
+  project: string;
+  stage: string;
+}
+
 interface AgentStore {
   getById(accountId: string, agentId: string): Promise<AgentRecord | null>;
   listForAccount(accountId: string): Promise<AgentRecord[]>;
@@ -107,6 +112,8 @@ interface AgentStore {
     projectId: string,
     stageId: string,
   ): Promise<AgentRecord[]>;
+  /** Project and stage names by agent id; an agent outside any stage has no entry. */
+  scopes(agentIds: string[]): Promise<Map<string, AgentScope>>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
