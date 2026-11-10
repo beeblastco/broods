@@ -3,7 +3,9 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
+  rmdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -59,7 +61,7 @@ const FALSE_POSITIVE_RULES: Rule[] = [
   {
     name: "broken_test_runner",
     source: "log",
-    pattern: /Cannot find (?:module|package)|Could not resolve|SyntaxError/,
+    pattern: /Cannot find (?:module|package)|Could not resolve/,
   },
   {
     name: "type_mismatch",
@@ -262,6 +264,7 @@ export interface Repro extends ReproTest {
   code: string;
   output: string;
   culprit: string | undefined;
+  checked: number;
 }
 
 interface Args {
@@ -301,13 +304,23 @@ export async function jittest(
     console.log("jittest: no runtime change in a tested workspace, skipped");
     return;
   }
-  const diff = git(["diff", base, "--", ...files], root);
+  const untracked = new Set(
+    git(["ls-files", "--others", "--exclude-standard", "-z"], root).split("\0"),
+  );
+  const diff = [
+    git(["diff", base, "--", ...files], root),
+    ...files
+      .filter((file) => untracked.has(file))
+      .map((file) =>
+        Bun.spawnSync(["git", "diff", "--no-index", "--", "/dev/null", file], {
+          cwd: root,
+        }).stdout.toString(),
+      ),
+  ].join("");
   const title =
     args.title ?? git(["log", "--format=%s", `${base}..HEAD`], root).trim();
   const parent = mkdtempSync(join(tmpdir(), "jittest-"));
-  const used = [...new Set(files.map(workspaceOf))].filter(
-    (workspace) => workspace !== undefined,
-  );
+  const copied: string[] = [];
   let cost = 0;
   try {
     checkout(root, parent, base);
@@ -326,10 +339,16 @@ export async function jittest(
     });
     cost += generated.cost;
     const generation = generated.output;
+    if (!exec(["git", "diff", "--quiet"], parent).ok) {
+      console.error(
+        "jittest: the session left source edits; restoring the parent",
+      );
+      must(exec(["git", "checkout", "--", "."], parent), "restore the parent");
+    }
 
     const candidates = generation.tests
       .slice(0, 2 * MAX_TESTS_PER_WORKFLOW)
-      .map((test): Candidate => harvest(test, parent, root));
+      .map((test): Candidate => harvest(test, parent, root, copied));
     cost += await assess(generation, diff, candidates);
 
     publish(
@@ -344,11 +363,9 @@ export async function jittest(
       renderComment(generation, candidates),
     );
   } finally {
-    for (const workspace of used) {
-      rmSync(join(root, workspace, "tests/jittest"), {
-        recursive: true,
-        force: true,
-      });
+    for (const file of copied) {
+      rmSync(file, { force: true });
+      if (readdirSync(dirname(file)).length === 0) rmdirSync(dirname(file));
     }
     Bun.spawnSync(["git", "worktree", "remove", "--force", parent], {
       cwd: root,
@@ -433,8 +450,8 @@ export function parseArgs(argv: string[]): Args {
   const args: Args = {
     report: undefined,
     base: undefined,
-    title: process.env.JITTEST_TITLE,
-    summary: process.env.JITTEST_SUMMARY,
+    title: process.env.JITTEST_TITLE || undefined,
+    summary: process.env.JITTEST_SUMMARY || undefined,
     out: ".jittest",
   };
   const queue = [...argv];
@@ -504,8 +521,8 @@ export function renderDiagnosis(
       `**${repro.behavior}**`,
       "",
       repro.culprit === undefined
-        ? `No commit among the last ${MAX_HISTORY} touching ${repro.suspects.join(", ")} makes this test pass.`
-        : `Broken by ${repro.culprit}: the test passes on its parent.`,
+        ? `No culprit among the ${repro.checked} commit(s) checked that touch ${repro.suspects.join(", ")}.`
+        : `Broken by ${repro.culprit}: the test fails there and passes on its parent.`,
       "",
       ...fold(repro.file, "ts", repro.code),
       ...fold("Failure", "text", repro.output),
@@ -641,8 +658,12 @@ function claude<T>(options: { cwd: string; prompt: string; schema: object }): {
   return { output: last.structured_output, cost: last.total_cost_usd ?? 0 };
 }
 
-// Walks back through the commits that touched the suspects: the first whose parent passes.
-function culprit(test: ReproTest, tree: string): string | undefined {
+// Walks back through the commits that touched the suspects: the first that fails the test
+// while its parent passes. Stops at a revision the test cannot run on.
+function culprit(
+  test: ReproTest,
+  tree: string,
+): { commit: string | undefined; checked: number } {
   const commits = git(
     [
       "log",
@@ -656,15 +677,25 @@ function culprit(test: ReproTest, tree: string): string | undefined {
   )
     .split("\n")
     .filter((line) => line !== "");
+  const runAt = (ref: string): Run | undefined => {
+    if (!exec(["git", "checkout", "--detach", ref], tree).ok) return undefined;
+    prepare(tree);
+    const run = runTest(test.file, tree);
+
+    return falsePositiveRule("", run.output) === undefined ? run : undefined;
+  };
+  let checked = 0;
   for (const commit of commits) {
     const sha = commit.slice(0, commit.indexOf(" "));
-    if (!exec(["git", "checkout", "--detach", `${sha}^`], tree).ok) break;
-    const run = runTest(test.file, tree);
-    if (run.ok) return commit;
-    if (falsePositiveRule("", run.output) !== undefined) break;
+    const atCommit = runAt(sha);
+    if (atCommit === undefined || atCommit.ok) break;
+    checked += 1;
+    const atParent = runAt(`${sha}^`);
+    if (atParent === undefined) break;
+    if (atParent.ok) return { commit: commit, checked: checked };
   }
 
-  return undefined;
+  return { commit: undefined, checked: checked };
 }
 
 // The router key stays out of generated tests.
@@ -728,7 +759,7 @@ STEPS, in this order
 4. Dodgy-diff tests (intent-unaware workflow), at most ${MAX_TESTS_PER_WORKFLOW}. Ignore the intent and treat the diff itself as a mutant of the parent. Write tests that pass on the parent and that the diff would make fail. These have no patch.
 
 EVERY TEST
-- lives at <workspace>/tests/jittest/<name>.test.ts and pins one behavior;
+- lives at <workspace>/tests/jittest/<name>.test.ts, a name no other test uses, and pins one behavior;
 - asserts observable behavior through exported functions: return values, thrown errors, stored state. Never private members, casts that reach internals, module mocks, call counts or order, snapshots, exact log text, timing or the network. Each of those is a known false-positive pattern and the test will be discarded;
 - is deterministic and follows the neighbouring files in <workspace>/tests for imports, helpers and style;
 - passes on this checkout. Run it from the workspace directory with the runner below plus the path \`tests/jittest/<name>.test.ts\`. Drop a test you cannot make pass.
@@ -754,6 +785,7 @@ function harvest(
   test: GeneratedTest,
   parent: string,
   child: string,
+  copied: string[],
 ): Candidate {
   const workspace = workspaceOf(test.file);
   const source = join(parent, test.file);
@@ -767,6 +799,7 @@ function harvest(
     workspace === undefined ||
     !TEST_FILE.test(test.file) ||
     !existsSync(source) ||
+    (test.workflow === "intent-aware" && test.mutant === undefined) ||
     (test.mutant !== undefined && !MUTANT_FILE.test(test.mutant))
   ) {
     return done("invalid", "");
@@ -785,8 +818,10 @@ function harvest(
   }
 
   const target = join(child, test.file);
+  if (existsSync(target)) return done("invalid", "");
   mkdirSync(dirname(target), { recursive: true });
   copyFileSync(source, target);
+  copied.push(target);
   const onChild = run(child);
   if (onChild.ok) return done("passes", "");
 
@@ -921,6 +956,7 @@ function reproduce(test: ReproTest, tree: string, head: string): Repro {
     code: existsSync(source) ? readFileSync(source, "utf8") : "",
     output: output,
     culprit: undefined,
+    checked: 0,
   });
   if (
     workspaceOf(test.file) === undefined ||
@@ -936,8 +972,13 @@ function reproduce(test: ReproTest, tree: string, head: string): Repro {
   if (rule !== undefined) return done("invalid", first.output, rule);
   const found = culprit(test, tree);
   must(exec(["git", "checkout", "--detach", head], tree), "return to HEAD");
+  prepare(tree);
 
-  return { ...done("reproduced", first.output), culprit: found };
+  return {
+    ...done("reproduced", first.output),
+    culprit: found.commit,
+    checked: found.checked,
+  };
 }
 
 function reproPrompt(): string {
@@ -1042,7 +1083,14 @@ async function vote(
     const answer = JSON.parse(
       text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1),
     ) as Answer;
-    if (!(answer.likelihood in LIKELIHOOD_SCORE)) throw new Error("off schema");
+    if (
+      !Object.hasOwn(LIKELIHOOD_SCORE, answer.likelihood) ||
+      typeof answer.change !== "string" ||
+      typeof answer.unexpected !== "string" ||
+      typeof answer.duplicate !== "boolean"
+    ) {
+      throw new Error("off schema");
+    }
 
     return { answer: answer, cost: completion.usage?.cost ?? 0 };
   } catch (error) {
@@ -1063,6 +1111,7 @@ function targets(root: string, base: string): string[] {
       .filter((change) => change.kind === "runtime")
       .map((change) => change.path),
     ...result.added,
+    ...result.deleted,
   ]
     .filter((path) => workspaceOf(path) !== undefined && !NOT_SOURCE.test(path))
     .slice(0, MAX_FILES);

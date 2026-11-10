@@ -64,6 +64,15 @@ describe("falsePositiveRule", () => {
     expect(falsePositiveRule(code, output)).toBe(name);
   });
 
+  test("a SyntaxError the changed code throws is not the test runner's fault", () => {
+    expect(
+      falsePositiveRule(
+        "expect(parse(render(rows))).toEqual(rows);",
+        "SyntaxError: JSON Parse error: Unexpected identifier",
+      ),
+    ).toBeUndefined();
+  });
+
   test("an assertion on a return value matches no rule", () => {
     expect(
       falsePositiveRule(
@@ -168,12 +177,25 @@ test("renderDiagnosis names the commit whose parent passes the reproduction", ()
         code: "expect(limiter.blocked(key)).toBe(true);",
         output: "Expected: true",
         culprit: "abc1234 refactor the limiter",
+        checked: 2,
+      },
+      {
+        file: "apps/gateway/tests/jittest/expiry.test.ts",
+        behavior: "An expired window is not blocked.",
+        suspects: ["apps/gateway/src/rate-limiter.ts"],
+        outcome: "reproduced",
+        rule: undefined,
+        code: "expect(limiter.blocked(key)).toBe(false);",
+        output: "Expected: false",
+        culprit: undefined,
+        checked: 1,
       },
     ],
     "0123456789abcdef",
   );
   expect(comment).toContain("reproduced on 01234567");
   expect(comment).toContain("Broken by abc1234 refactor the limiter");
+  expect(comment).toContain("No culprit among the 1 commit(s) checked");
   expect(renderDiagnosis("No unit test can show it.", [], "0123")).toContain(
     "not reproduced",
   );
@@ -182,6 +204,15 @@ test("renderDiagnosis names the commit whose parent passes the reproduction", ()
 test("workspaceOf maps a path to a workspace it can run tests in", () => {
   expect(workspaceOf("apps/core/src/run.ts")).toBe("apps/core");
   expect(workspaceOf("apps/dashboard/app/page.tsx")).toBeUndefined();
+});
+
+test("parseArgs treats an empty title from a manual CI run as unset", () => {
+  process.env.JITTEST_TITLE = "";
+  try {
+    expect(parseArgs([]).title).toBeUndefined();
+  } finally {
+    delete process.env.JITTEST_TITLE;
+  }
 });
 
 test("parseArgs rejects an unknown flag", () => {
