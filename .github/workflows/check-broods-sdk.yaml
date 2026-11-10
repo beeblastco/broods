@@ -5,6 +5,13 @@ on:
     paths:
       - "packages/broods/**"
       - "packages/demos/**"
+      # Bundled into the CLI or inlined into the published .d.ts.
+      - "apps/core/src/shared/**"
+      - "apps/core/src/harness/isolate/runner/pinned-fetch.mjs"
+      - "packages/convex/model/**"
+      - "packages/convex/cli/types.ts"
+      - "packages/convex/schema.ts"
+      - "packages/convex/_generated/**"
       - "tsconfig.base.json"
       - "package.json"
       - "bun.lock"
@@ -19,6 +26,13 @@ on:
     paths:
       - "packages/broods/**"
       - "packages/demos/**"
+      # Bundled into the CLI or inlined into the published .d.ts.
+      - "apps/core/src/shared/**"
+      - "apps/core/src/harness/isolate/runner/pinned-fetch.mjs"
+      - "packages/convex/model/**"
+      - "packages/convex/cli/types.ts"
+      - "packages/convex/schema.ts"
+      - "packages/convex/_generated/**"
       - "tsconfig.base.json"
       - "package.json"
       - "bun.lock"

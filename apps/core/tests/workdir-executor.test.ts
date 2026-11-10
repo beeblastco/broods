@@ -7,6 +7,7 @@ import {
   expect,
   it,
   mock,
+  setSystemTime,
   spyOn,
 } from "bun:test";
 import { requestBodyText } from "./helpers/http.ts";
@@ -30,6 +31,7 @@ let createRefusal: number | null = null;
 let execRefusal: number | null = null;
 let mountCheckExitCode = 0;
 let pendingDelete: Promise<void> | null = null;
+let execElapsedMs = 0;
 
 function sandboxObject(id: string, state: string): Record<string, unknown> {
   return {
@@ -103,6 +105,7 @@ const fetchMock = mock(
       }
       if (isMountCheck(body))
         return jsonResponse({ exit_code: mountCheckExitCode, stdout: "" });
+      if (execElapsedMs > 0) setSystemTime(Date.now() + execElapsedMs);
 
       return jsonResponse(execResult);
     }
@@ -275,6 +278,7 @@ beforeEach(() => {
   execRefusal = null;
   mountCheckExitCode = 0;
   pendingDelete = null;
+  execElapsedMs = 0;
   storedSandboxExternalId = null;
   storedReservedAt = Date.now();
   process.env.AWS_REGION = "us-east-1";
@@ -297,6 +301,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = realFetch;
+  setSystemTime();
 });
 
 describe("createSandboxExecutor (sandbox provider)", () => {
@@ -425,6 +430,7 @@ describe("WorkdirSandboxExecutor.run", () => {
   });
 
   it("reports the wrapper's exit 124 and its follow-up kill as a timeout", async (): Promise<void> => {
+    execElapsedMs = 30_000;
     for (const exitCode of [124, 137]) {
       execResult = { exit_code: exitCode, stdout: "", stderr: "" };
       const executor = await newExecutor({
@@ -440,10 +446,26 @@ describe("WorkdirSandboxExecutor.run", () => {
 
       expect(result).toMatchObject({
         ok: false,
-        exitCode: exitCode,
+        exitCode: null,
         timedOut: true,
       });
     }
+  });
+
+  it("reports an exit 137 before the deadline as the command's own exit", async (): Promise<void> => {
+    execResult = { exit_code: 137, stdout: "", stderr: "Killed" };
+    const executor = await newExecutor({
+      provider: "sandbox",
+      options: { workdirUrl: BASE },
+    });
+
+    const result = await executor.run({
+      code: "python3 oom.py",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ exitCode: 137, timedOut: false });
   });
 
   it("returns an ephemeral result without waiting for the sandbox delete", async (): Promise<void> => {

@@ -1109,7 +1109,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       scope?.stage || "-",
       crypto.randomUUID(),
     ].join("/");
-    const key = optionalEnv("OTEL_EXPORTER_OTLP_HEADERS");
+    // Trimmed: the forwarder trims its copy, and the two must key the MAC alike.
+    const key = optionalEnv("OTEL_EXPORTER_OTLP_HEADERS")?.trim();
     if (!key) return name;
     const mac = createHmac("sha256", key)
       .update(name)
@@ -1534,12 +1535,14 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "X-aws-proxy-auth": token,
+            [MICROVM_SHELL_AUTH_HEADER]: token,
             "X-aws-proxy-port": String(MICROVM_PROXY_PORT),
           },
           body: JSON.stringify(mount.credentials),
+          signal: AbortSignal.timeout(EXEC_GRACE_MS),
         },
       );
+      await res.body?.cancel();
       // A 404 is an older image with no credential endpoint: nothing to refresh.
       if (res.ok || res.status === 404) {
         markMountCredentialsFresh(key);

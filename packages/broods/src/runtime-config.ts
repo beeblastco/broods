@@ -117,7 +117,12 @@ export function parseEnv(source: string): Record<string, string> {
 
 function unquoteEnvValue(value: string): string {
   if (value.startsWith('"') && value.endsWith('"')) {
-    return value.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"');
+    // The CLI writes JSON strings; a hand-written value that is not one keeps the old reading.
+    try {
+      return JSON.parse(value) as string;
+    } catch {
+      return value.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"');
+    }
   }
   if (value.startsWith("'") && value.endsWith("'")) {
     return value.slice(1, -1);

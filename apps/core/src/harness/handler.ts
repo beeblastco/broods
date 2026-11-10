@@ -772,11 +772,19 @@ async function resumeConversation(options: {
       publicEventId: continuationEvent.publicEventId,
     };
   }
-  await createPendingAsyncAgentResult({
-    eventId: ownedContinuation.eventId,
-    conversationKey: ownedContinuation.conversationKey,
-  });
-  await invokeContinuationWorker(ownedContinuation, options.delivery);
+  try {
+    await createPendingAsyncAgentResult({
+      eventId: ownedContinuation.eventId,
+      conversationKey: ownedContinuation.conversationKey,
+    });
+    await invokeContinuationWorker(ownedContinuation, options.delivery);
+  } catch (err) {
+    const error =
+      err instanceof Error ? err.message : "Failed to start continuation";
+    await recordAsyncRun(ownedContinuation, { status: "failed", error: error });
+    await failOwnedIngress(ownedContinuation, error);
+    throw err;
+  }
 
   return {
     kind: "ready",
@@ -999,80 +1007,99 @@ async function directTurnResponse(
       }, SSE_KEEPALIVE_INTERVAL_MS);
       const frame = (chunk: unknown): Uint8Array =>
         textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`);
-      dispatchInProcessWorker(
-        "direct-sse",
-        (context): Promise<void> =>
-          runWithObservabilityScope(async (): Promise<void> => {
-            try {
-              if (cancelled) {
-                await failOwnedIngress(
-                  ownedEvent,
-                  "The client disconnected before the run started",
-                );
-
-                return;
-              }
-              const command = queuedCommand(ownedEvent.events);
-              if (command) {
-                await runCommandTurn({
-                  event: ownedEvent,
-                  command: command,
-                  send: async (chunk): Promise<void> => {
-                    try {
-                      controller.enqueue(frame(chunk));
-                    } catch {}
-                  },
-                });
-
-                return;
-              }
-              const turn = await prepareDirectTurn(ownedEvent).catch(
-                (err: unknown): null => {
-                  // prepareDirectTurn already settled the run as failed.
-                  const error =
-                    err instanceof Error ? err.message : String(err);
-                  logError("Direct request pre-processing failed", {
-                    eventId: ownedEvent.eventId,
-                    error: error,
-                  });
-                  controller.enqueue(frame({ type: "error", error: error }));
-
-                  return null;
-                },
-              );
-              if (!turn) return;
-              const { session, turnContext } = turn;
-              if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-                await settleFailedIngressAndDrain(
-                  session,
-                  "Request did not produce pending model input",
-                  () => dispatchNextIngress(session, ownedEvent),
-                );
-
-                return;
-              }
-              await streamDirectContinuation(
-                ownedEvent,
-                session,
-                turnContext,
-                controller,
-                context,
-              );
-            } finally {
-              clearInterval(keepalive);
+      try {
+        dispatchInProcessWorker(
+          "direct-sse",
+          (context): Promise<void> =>
+            runWithObservabilityScope(async (): Promise<void> => {
               try {
-                controller.close();
-              } catch {}
-            }
-          }, observability),
-        ownedEvent.ownerGeneration === undefined
-          ? undefined
-          : {
-              conversationKey: ownedEvent.conversationKey,
-              ownerEventId: ownedEvent.eventId,
-              ownerGeneration: ownedEvent.ownerGeneration,
-            },
-      );
+                if (cancelled) {
+                  await failOwnedIngress(
+                    ownedEvent,
+                    "The client disconnected before the run started",
+                  );
+
+                  return;
+                }
+                const command = queuedCommand(ownedEvent.events);
+                if (command) {
+                  await runCommandTurn({
+                    event: ownedEvent,
+                    command: command,
+                    send: async (chunk): Promise<void> => {
+                      try {
+                        controller.enqueue(frame(chunk));
+                      } catch {}
+                    },
+                  });
+
+                  return;
+                }
+                const turn = await prepareDirectTurn(ownedEvent).catch(
+                  (err: unknown): null => {
+                    // prepareDirectTurn already settled the run as failed.
+                    const error =
+                      err instanceof Error ? err.message : String(err);
+                    logError("Direct request pre-processing failed", {
+                      eventId: ownedEvent.eventId,
+                      error: error,
+                    });
+                    controller.enqueue(frame({ type: "error", error: error }));
+
+                    return null;
+                  },
+                );
+                if (!turn) return;
+                const { session, turnContext } = turn;
+                if (!isRunnableModelInput(turnContext.messages.at(-1))) {
+                  await settleFailedIngressAndDrain(
+                    session,
+                    "Request did not produce pending model input",
+                    () => dispatchNextIngress(session, ownedEvent),
+                  );
+
+                  return;
+                }
+                await streamDirectContinuation(
+                  ownedEvent,
+                  session,
+                  turnContext,
+                  controller,
+                  context,
+                );
+              } finally {
+                clearInterval(keepalive);
+                try {
+                  controller.close();
+                } catch {}
+              }
+            }, observability),
+          ownedEvent.ownerGeneration === undefined
+            ? undefined
+            : {
+                conversationKey: ownedEvent.conversationKey,
+                ownerEventId: ownedEvent.eventId,
+                ownerGeneration: ownedEvent.ownerGeneration,
+              },
+        );
+      } catch (err) {
+        // A recovered envelope dispatched first can take this request's queue place.
+        const error = err instanceof Error ? err.message : String(err);
+        clearInterval(keepalive);
+        controller.enqueue(frame({ type: "error", error: error }));
+        controller.close();
+        failOwnedIngress(ownedEvent, error).catch(
+          (settleErr: unknown): void => {
+            logError("Streamed run failure was not settled", {
+              eventId: ownedEvent.eventId,
+              error:
+                settleErr instanceof Error
+                  ? settleErr.message
+                  : String(settleErr),
+            });
+          },
+        );
+      }
     },
     cancel: (): void => {
       cancelled = true;
@@ -1214,10 +1241,6 @@ async function handleAsyncWorkerRequest(
       await finish(await commandOutcome(session, command));
     } else {
       const turn = await prepareDirectTurn(event);
-      if (!turn) {
-        return;
-      }
-
       ({ session } = turn);
       const { turnContext } = turn;
       if (!isRunnableModelInput(turnContext.messages.at(-1))) {
@@ -1337,15 +1360,17 @@ async function handleNatsWorkerRequest(
   if (!hasRunnableDirectEvents(event)) {
     return;
   }
-  if (!ENABLE_WEBSOCKET) {
-    throw new Error("NATS worker requires ENABLE_WEBSOCKET=true");
-  }
-  const connectionId = event.connectionId?.trim();
-  if (!connectionId) {
-    throw new Error("NATS worker event must include connectionId");
-  }
-  if (!process.env.NATS_URL?.trim()) {
-    throw new Error("NATS worker requires NATS_URL");
+  const connectionId = event.connectionId?.trim() ?? "";
+  const unavailable = !ENABLE_WEBSOCKET
+    ? "NATS worker requires ENABLE_WEBSOCKET=true"
+    : !connectionId
+      ? "NATS worker event must include connectionId"
+      : !process.env.NATS_URL?.trim()
+        ? "NATS worker requires NATS_URL"
+        : null;
+  if (unavailable) {
+    await failOwnedIngress(event, unavailable);
+    throw new Error(unavailable);
   }
 
   const publisher = new LiveNatsPublisher(
@@ -1378,12 +1403,6 @@ async function handleNatsWorkerRequest(
   let transferred = false;
   try {
     const turn = await prepareDirectTurn(event);
-    if (!turn) {
-      await publisher.close();
-
-      return;
-    }
-
     ({ session } = turn);
     const { turnContext } = turn;
     const checkOwner = ownerCheckForStream(session);
@@ -2091,7 +2110,7 @@ async function handleStatusRequest(
 
 async function prepareDirectTurn(
   event: DirectInboundEvent,
-): Promise<DirectTurn | null> {
+): Promise<DirectTurn> {
   const session = directSession(event);
   const turnStartedAt = Date.now();
   try {
@@ -2657,11 +2676,12 @@ async function startScheduledAgentRun(
     runId: run.runId,
     ...(isOneTimeSchedule(job.scheduleExpression) ? { oneShot: true } : {}),
   };
+  let ownedEvent: DirectInboundEvent | null = null;
   try {
-    const { owned: ownedEvent } = await admitInternalContinuation(
+    ({ owned: ownedEvent } = await admitInternalContinuation(
       event,
       continuationDelivery(event),
-    );
+    ));
     if (!ownedEvent) {
       throw new Error("Cron conversation is already processing another turn");
     }
@@ -2671,12 +2691,18 @@ async function startScheduledAgentRun(
     });
     await invokeAsyncWorker(ownedEvent);
   } catch (err) {
+    const error =
+      err instanceof Error ? err.message : "Failed to start cron async worker";
     await getStorage().crons.failRun(
       job.accountId,
       job.cronId,
       run.runId,
-      err instanceof Error ? err.message : "Failed to start cron async worker",
+      error,
     );
+    if (ownedEvent) {
+      await recordAsyncRun(ownedEvent, { status: "failed", error: error });
+      await failOwnedIngress(ownedEvent, error);
+    }
     throw err;
   }
 

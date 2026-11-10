@@ -1,7 +1,10 @@
-import type { Sandbox } from "e2b";
+import type { CommandResult, Sandbox } from "e2b";
 import { Buffer } from "node:buffer";
 import { setSandboxInstanceSpecs } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
+import { waitUntil } from "../../shared/in-flight.ts";
+import { logWarn } from "../../shared/log.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
@@ -58,12 +61,18 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         );
 
     try {
-      const result = await sandbox.commands.run(request.code, {
-        timeoutMs: request.timeoutSeconds * 1000,
-        envs: mergeSandboxEnv(this.#config.envVars, {
-          principal: request.principal,
-        }),
-      });
+      const { CommandExitError } = await e2bModule();
+      const result = await sandbox.commands
+        .run(request.code, {
+          timeoutMs: request.timeoutSeconds * 1000,
+          envs: mergeSandboxEnv(this.#config.envVars, {
+            principal: request.principal,
+          }),
+        })
+        .catch((error: unknown): CommandResult => {
+          if (error instanceof CommandExitError) return error;
+          throw error;
+        });
       const stdout = truncateText(
         result.stdout ?? "",
         request.outputLimitBytes,
@@ -85,8 +94,17 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       };
     } finally {
       if (!persistent) {
-        await sandbox.kill();
-        endMeter?.();
+        waitUntil(
+          sandbox.kill().then(
+            (): void => endMeter?.(),
+            (error: unknown): void => {
+              logWarn("e2b sandbox kill failed", {
+                sandboxId: sandbox.sandboxId,
+                error: toErrorMessage(error),
+              });
+            },
+          ),
+        );
       }
     }
   }
@@ -119,7 +137,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     const externalId =
       request.expectedExternalId ?? (await getSandboxExternalId("e2b", key));
     if (!externalId) return;
-    const Sandbox = await e2bSandboxApi();
+    const { Sandbox } = await e2bModule();
     try {
       await Sandbox.kill(externalId, e2bApiOptions(this.#config));
     } catch (err) {
@@ -142,7 +160,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     if (!externalId) {
       throw new Error("no reserved e2b sandbox to snapshot for this sandbox");
     }
-    const Sandbox = await e2bSandboxApi();
+    const { Sandbox } = await e2bModule();
     const snapshot = await Sandbox.createSnapshot(
       externalId,
       e2bApiOptions(this.#config),
@@ -170,7 +188,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
   }
 
   async #acquire(request: SandboxRunRequest): Promise<Sandbox> {
-    const Sandbox = await e2bSandboxApi();
+    const { Sandbox } = await e2bModule();
     if (!this.#persistent(request)) {
       await assertSnapshotBootable(
         this.#config.controlPlane,
@@ -334,10 +352,8 @@ function e2bCreateOptions(
 }
 
 // Lazy: e2b require()s the chalk the pi harness imports as ESM; one eager graph with both races.
-async function e2bSandboxApi(): Promise<typeof import("e2b").Sandbox> {
-  const { Sandbox } = await import("e2b");
-
-  return Sandbox;
+async function e2bModule(): Promise<typeof import("e2b")> {
+  return import("e2b");
 }
 
 async function e2bSpecs(sandbox: Sandbox): Promise<SandboxSpecs | undefined> {

@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { InboundMessage } from "../src/shared/channels.ts";
-import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
+import {
+  createPancakeActions,
+  createPancakeChannel,
+} from "../src/shared/pancake-channel.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -290,6 +293,37 @@ describe("pancake channel adapter", () => {
     });
 
     expect(first.eventId).not.toBe(second.eventId);
+  });
+
+  it("bounds every Pancake API call with a timeout", async () => {
+    const signals: unknown[] = [];
+    globalThis.fetch = (async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      signals.push(init?.signal);
+
+      return Response.json({ id: "content-1", success: true });
+    }) as typeof fetch;
+    const actions = createPancakeActions("page-token", {
+      pageId: "page-1",
+      conversationId: "conv-1",
+      messageId: "msg-1",
+      messageType: "INBOX",
+    });
+
+    await actions.sendText("hi");
+    await actions.sendFiles?.([
+      {
+        type: "file",
+        url: "https://example.test/a.txt",
+        name: "a.txt",
+        fetchData: async (): Promise<Buffer> => Buffer.from("a"),
+      },
+    ]);
+
+    expect(signals).toHaveLength(3);
+    expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true);
   });
 });
 
