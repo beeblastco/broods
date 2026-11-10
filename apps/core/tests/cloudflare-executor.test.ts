@@ -174,10 +174,8 @@ it("reserves one persistent container, keeps it across runs and mirrors it", asy
   expect(calls.map((call): string => call.method)).toEqual(["POST", "POST"]);
   expect(calls[0]?.url).toBe(calls[1]?.url);
   expect(calls[0]?.url).toContain(`/v1/sandboxes/${stored}/exec`);
-  expect(mirrored).toEqual([
-    "upsert acct:workspace false",
-    "upsert acct:workspace false",
-  ]);
+  // The second run's refresh is unchanged and inside the minute, so it is not sent.
+  expect(mirrored).toEqual(["upsert acct:workspace false"]);
 });
 
 it("never mirrors a reservation whose first start failed, so it is not billed", async (): Promise<void> => {

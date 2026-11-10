@@ -6,6 +6,7 @@ import {
 import type { SandboxProvider } from "../../shared/domain/sandbox-config.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
+import { DEFAULT_IDLE_TIMEOUT_SECONDS } from "../../shared/sandbox.ts";
 import type {
   SandboxControlPlane,
   SandboxRunMetadata,
@@ -17,6 +18,11 @@ export const MIRROR_WRITE_TIMEOUT_MS = 10_000;
 const MIRROR_WRITE_SLOW_MS = 2_000;
 // One warning per window, so a slow Convex does not log once per row.
 const MIRROR_WARN_EVERY_MS = 30_000;
+// A Convex write costs the same CPU whatever it changes, so an unchanged refresh inside this
+// window is not sent. The meter reads a machine as running until its last refresh plus its idle
+// timeout, so the window is also at most this part of that timeout.
+const MIRROR_REFRESH_EVERY_MS = 60_000;
+const MIRROR_REFRESH_IDLE_PART = 15;
 
 export type MirrorWriteKind =
   | "burst"
@@ -67,6 +73,8 @@ interface AccountSender {
 
 const lanes = new Map<string, Lane>();
 const senders = new Map<string, AccountSender>();
+// Each row's last upsert queued, oldest first.
+const refreshed = new Map<string, { signature: string; at: number }>();
 let lastWarnAt = 0;
 
 // One lane per row (its reservation key; an ephemeral row's key is its sandbox id): a row's
@@ -94,6 +102,24 @@ export function queueMirrorWrite(
 // Taking a pending upsert's place keeps the run fields the newer one lacks.
 export function queueMirrorUpsert(upsert: MirrorUpsert): Promise<void> {
   if (!upsert.controlPlane) return Promise.resolve();
+  const now = Date.now();
+  for (const [rowKey, sent] of refreshed) {
+    if (now - sent.at < MIRROR_REFRESH_EVERY_MS) break;
+    refreshed.delete(rowKey);
+  }
+  const signature = JSON.stringify(upsert);
+  const last = refreshed.get(upsert.reservationKey);
+  const idleSeconds =
+    upsert.controlPlane.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS;
+  const windowMs = Math.min(
+    MIRROR_REFRESH_EVERY_MS,
+    (idleSeconds * 1000) / MIRROR_REFRESH_IDLE_PART,
+  );
+  if (last?.signature === signature && now - last.at < windowMs) {
+    return Promise.resolve();
+  }
+  refreshed.delete(upsert.reservationKey);
+  refreshed.set(upsert.reservationKey, { signature: signature, at: now });
 
   return enqueue(upsert.controlPlane.accountId, upsert.reservationKey, {
     kind: "upsert",
@@ -144,6 +170,10 @@ function enqueue(
     sending: false,
   };
   lanes.set(rowKey, lane);
+  // The row is about to change under its last refresh, so the next one must be sent.
+  if (write.kind === "remove" || write.kind === "status") {
+    refreshed.delete(rowKey);
+  }
   const landed = place(lane, write);
   let sender = senders.get(accountId);
   if (!sender) {

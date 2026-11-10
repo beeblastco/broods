@@ -229,10 +229,8 @@ it("reserves one persistent sandbox, keeps its files across runs and mirrors it"
   expect(calls[0]?.url).toBe(calls[1]?.url);
   expect(calls[0]?.url).toContain(`/v1/sandboxes/${stored}/exec`);
   expect(calls[0]?.body).toMatchObject({ persist: true });
-  expect(mirrored).toEqual([
-    "upsert acct:workspace false",
-    "upsert acct:workspace false",
-  ]);
+  // The second run's refresh is unchanged and inside the minute, so it is not sent.
+  expect(mirrored).toEqual(["upsert acct:workspace false"]);
 });
 
 it("runs commands on one reservation one at a time, so none starts from stale files", async (): Promise<void> => {

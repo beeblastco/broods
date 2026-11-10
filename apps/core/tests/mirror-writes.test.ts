@@ -6,6 +6,7 @@ import {
   it,
   jest,
   mock,
+  setSystemTime,
 } from "bun:test";
 import { settleOnFakeClock } from "./helpers/fake-clock.ts";
 
@@ -14,6 +15,7 @@ const landed: Landed[] = [];
 let holds = new Map<string, PromiseWithResolvers<void>>();
 let inFlight = 0;
 let peak = 0;
+let testsRun = 0;
 
 async function arrive(entry: Landed): Promise<void> {
   inFlight += 1;
@@ -65,6 +67,9 @@ const plane = (accountId: string) => ({
 const kinds = (): string[] => landed.map((entry) => entry[0] + ":" + entry[1]);
 
 beforeEach((): void => {
+  // The queue remembers each row's last refresh for a minute: every test starts past it.
+  testsRun += 1;
+  setSystemTime(new Date(Date.now() + testsRun * 120_000));
   landed.length = 0;
   holds = new Map();
   inFlight = 0;
@@ -73,6 +78,7 @@ beforeEach((): void => {
 afterEach(async (): Promise<void> => {
   for (const h of holds.values()) h.resolve();
   jest.useRealTimers();
+  setSystemTime();
   await drainInFlight();
 });
 
@@ -118,6 +124,50 @@ describe("mirror writes", () => {
         { externalId: "m-1", traceId: "t-3", taskId: "task-2" },
       ],
     ]);
+  });
+
+  it("sends an unchanged refresh once a minute, and at once when the row changed", async () => {
+    const start = Date.now();
+    const refresh = (traceId = "t-1"): Promise<void> =>
+      upsert("acct", "row-a", "m-1", traceId);
+    await refresh();
+    await refresh();
+    setSystemTime(new Date(start + 59_000));
+    await refresh();
+    expect(landed).toHaveLength(1);
+
+    await refresh("t-2");
+    await status("acct", "row-a", "suspended");
+    await refresh("t-2");
+    setSystemTime(new Date(start + 120_000));
+    await refresh("t-2");
+    expect(kinds()).toEqual([
+      "upsert:row-a",
+      "upsert:row-a",
+      "status:row-a",
+      "upsert:row-a",
+      "upsert:row-a",
+    ]);
+    await queueMirrorRemove("acct", "row-a", "m-1");
+    await refresh("t-2");
+    expect(landed).toHaveLength(7);
+  });
+
+  it("keeps the refresh window a fifteenth of a short idle timeout", async () => {
+    const start = Date.now();
+    const refresh = (): Promise<void> =>
+      queueMirrorUpsert({
+        controlPlane: { ...plane("acct"), idleTimeoutSeconds: 30 },
+        provider: "cloudflare",
+        reservationKey: "row-a",
+        externalId: "m-1",
+      });
+    await refresh();
+    setSystemTime(new Date(start + 1_900));
+    await refresh();
+    setSystemTime(new Date(start + 2_000));
+    await refresh();
+    expect(landed).toHaveLength(2);
   });
 
   it("sends one account's rows one at a time, in turn", async () => {
