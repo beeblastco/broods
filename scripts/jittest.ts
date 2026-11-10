@@ -320,9 +320,9 @@ export function jittest(root: string, base: string, args: Args): void {
     cost += generated.cost;
     const generation = generated.output;
 
-    const candidates = generation.tests.map((test): Candidate =>
-      harvest(test, parent, root),
-    );
+    const candidates = generation.tests
+      .slice(0, 2 * MAX_TESTS_PER_WORKFLOW)
+      .map((test): Candidate => harvest(test, parent, root));
     cost += assess(generation, diff, candidates);
 
     publish(
@@ -366,9 +366,9 @@ export function diagnose(root: string, report: string, out: string): void {
       schema: DIAGNOSIS_SCHEMA,
       tools: ["--allowedTools", "Bash,Read,Edit,Write,Glob,Grep"],
     });
-    const repros = generated.output.tests.map((test): Repro =>
-      reproduce(test, tree, head),
-    );
+    const repros = generated.output.tests
+      .slice(0, MAX_TESTS_PER_WORKFLOW)
+      .map((test): Repro => reproduce(test, tree, head));
     const cause = generated.output.cause;
     publish(
       out,
