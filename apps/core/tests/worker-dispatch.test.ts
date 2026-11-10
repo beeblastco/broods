@@ -8,6 +8,8 @@ import {
   mock,
   spyOn,
 } from "bun:test";
+import * as asyncToolResult from "../src/harness/async-tool-result.ts";
+import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
 import * as continuation from "../src/harness/continuation.ts";
 import * as harness from "../src/harness/harness.ts";
 import * as ingress from "../src/harness/ingress.ts";
@@ -770,6 +772,66 @@ describe("streamed runs", (): void => {
     const statuses = [(await fire()).status, (await fire()).status];
 
     expect(statuses).toEqual([500, 500]);
+  });
+
+  it("answers 202 when some answers landed and another was already answered", async (): Promise<void> => {
+    const question = (resultId: string): AsyncToolResultRecord => ({
+      resultId: resultId,
+      parentEventId: `acct:acct_1:agent:agent_1:api:conversation-1:async-question:${resultId}`,
+      conversationKey: "acct:acct_1:agent:agent_1:api:conversation-1",
+      toolName: "ask_questions",
+      toolCallId: `call_${resultId}`,
+      input: {
+        questions: [{ id: "q", header: "Q", question: "Which?", options: [] }],
+        blocking: false,
+        answerBy: new Date(Date.now() + 60_000).toISOString(),
+      },
+      status: "processing",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+      expiresAt: Date.now() + 60_000,
+    });
+    spyOn(asyncToolResult, "getAsyncToolResult").mockImplementation(
+      async (resultId): Promise<AsyncToolResultRecord> => question(resultId),
+    );
+    spyOn(getStorage().agentDeployments, "getByAgentId").mockResolvedValue(
+      null,
+    );
+    // A was still open; someone answered B a moment earlier.
+    spyOn(
+      asyncToolResult,
+      "settleAsyncToolResultFromCallback",
+    ).mockImplementation(
+      async ({ resultId }): Promise<AsyncToolResultRecord | null> =>
+        resultId === "async_tool_a"
+          ? { ...question(resultId), status: "completed" }
+          : null,
+    );
+
+    const response = await handler(
+      coreRequest(
+        "POST",
+        "/v1/runs",
+        { authorization: "Bearer service-secret", "x-account-id": "acct_1" },
+        {
+          agentId: "agent_1",
+          eventId: "answer-1",
+          conversationKey: "conversation-1",
+          answers: [
+            { statusId: "async_tool_a", answers: { q: ["yes"] } },
+            { statusId: "async_tool_b", answers: { q: ["no"] } },
+          ],
+        },
+      ),
+    );
+
+    expect(ingress.acceptIngress).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      status: "accepted",
+      resultId: "async_tool_a",
+      alreadyAnswered: ["async_tool_b"],
+    });
   });
 
   describe("channel messages", (): void => {

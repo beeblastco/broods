@@ -842,7 +842,8 @@ async function handleDirectAnswers(
   const alreadyAnswered = open
     .filter((_question, index) => settled[index] === null)
     .map((question) => question!.record.resultId);
-  if (alreadyAnswered.length > 0) {
+  // Once one answer resumed the run, a 409 would tell the client nothing started.
+  if (!last && alreadyAnswered.length > 0) {
     return errorResponse(
       409,
       `Questions already answered: ${alreadyAnswered.join(", ")}`,
@@ -858,7 +859,7 @@ async function handleDirectAnswers(
   }
 
   return last
-    ? continuationResponse(last, outcome)
+    ? continuationResponse(last, outcome, alreadyAnswered)
     : errorResponse(400, "Request body must include answers", {
         param: "answers",
       });

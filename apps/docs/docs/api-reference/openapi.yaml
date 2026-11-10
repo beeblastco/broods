@@ -193,7 +193,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Conversation busy in reject mode (`conversation_busy`), the idempotency key is bound to a different payload (`idempotency_conflict`), or an `answers` entry names a prompt that was already answered (`question_already_answered`). JSON envelope on a background run; on a streamed run the busy and idempotency errors arrive as the first SSE `error` frame.
+          description: Conversation busy in reject mode (`conversation_busy`), the idempotency key is bound to a different payload (`idempotency_conflict`), or every `answers` entry names a prompt that was already answered (`question_already_answered`; when some landed, the request answers `202` for those). JSON envelope on a background run; on a streamed run the busy and idempotency errors arrive as the first SSE `error` frame.
           content:
             application/json:
               schema:
@@ -4536,7 +4536,9 @@ components:
       description: >-
         The 202 for a body carrying `answers`. `resultId` is the last prompt
         settled. `accepted` means the conversation resumed (`invoked`), or had
-        nothing to resume.
+        nothing to resume. A prompt that was already answered is skipped
+        when another answer in the same request landed, and listed in
+        `alreadyAnswered`.
       required: [status, resultId]
       properties:
         status:
@@ -4550,6 +4552,11 @@ components:
         invoked:
           type: boolean
           description: Present with `accepted`. True when this request started the resumed turn.
+        alreadyAnswered:
+          type: array
+          items:
+            type: string
+          description: The `statusId`s in this request that were already answered and skipped. Present only when there were any.
 
     IngressStatus:
       type: object
