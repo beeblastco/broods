@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { FETCH_TIMEOUT_MS } from "../harness/isolate/runner/pinned-fetch.mjs";
 import { timingSafeStringEqual } from "./auth.ts";
 import type { Attachment } from "chat";
 import type {
@@ -226,7 +227,11 @@ async function uploadPancakeContent(
       `pages/${encodeURIComponent(pageId)}/upload_contents`,
       pageAccessToken,
     ),
-    { method: "POST", body: form },
+    {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    },
   );
   const bodyText = await response.text();
   const body = parseJsonBody(bodyText);
@@ -263,6 +268,7 @@ async function postPancakeMessage(
           }
         : { action: "reply_inbox", ...payload },
     ),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   const bodyText = await response.text();
   const body = parseJsonBody(bodyText);

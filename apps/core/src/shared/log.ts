@@ -11,9 +11,10 @@ const BEARER_SECRET_PATTERN = /\bBearer\s+[^\s,;]+/gi;
 const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
+const SLACK_HOOK_URL_PATTERN = /\bhooks\.slack\.com\/[^\s"'<>\\]+/gi;
 // This and the next pattern are copied in apps/lambda/sandbox-log-forwarder.mjs: keep in step.
 const BROODS_CREDENTIAL_PATTERN =
-  /(?=b)(?<=^|[^A-Za-z0-9_]|\\[nrt]|%[0-9A-Fa-f]{2})b(?:sk|ask|pdk|cli|code|sts|dts|rt)_[A-Za-z0-9_.-]{20,}/g;
+  /(?=b)(?<=^|[^A-Za-z0-9_]|\\[nrt]|%[0-9A-Fa-f]{2})b(?:sk|ask|pdk|cli|code|sts|dts|rt|sig|uat|dap|dob)_[A-Za-z0-9_.-]{20,}/g;
 // A JWT never starts inside a `-`/`_` run, so its own lookbehind keeps that branch linear.
 const PROVIDER_CREDENTIAL_PATTERN =
   /(?=[gsAxey])(?:(?<=^|[^A-Za-z0-9]|\\[nrt]|%[0-9A-Fa-f]{2})(?:gh[oprsu]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-[A-Za-z0-9_-]{32,}|A[KS]IA[A-Z0-9]{16}(?![A-Za-z0-9])|xox[abcdeoprs]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35}|ya29\.[A-Za-z0-9_-]{20,})|(?<=^|[^A-Za-z0-9_-]|\\[nrt]|%[0-9A-Fa-f]{2})eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g;
@@ -349,6 +350,10 @@ function scrubSecrets(value: string, secrets: readonly string[]): string {
   redacted = redacted.replace(BEARER_SECRET_PATTERN, "Bearer [redacted]");
   redacted = redacted.replace(BASIC_SECRET_PATTERN, "Basic [redacted]");
   redacted = redacted.replace(QUERY_SECRET_PATTERN, "$1[redacted]");
+  redacted = redacted.replace(
+    SLACK_HOOK_URL_PATTERN,
+    "hooks.slack.com/[redacted]",
+  );
   redacted = redacted.replace(PROVIDER_CREDENTIAL_PATTERN, "[redacted]");
 
   return redacted;

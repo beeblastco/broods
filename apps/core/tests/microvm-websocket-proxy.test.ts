@@ -92,6 +92,51 @@ describe("MicrovmWebSocketProxy", () => {
     expect(() => proxy.getPortUrl(0)).toThrow("port is invalid");
   });
 
+  test("closes the upstream when a client drops without a close frame", async () => {
+    const upstreamClose = Promise.withResolvers<number>();
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: function (request, server) {
+        return server.upgrade(request, {
+          headers: { "Sec-WebSocket-Protocol": "lambda-microvms" },
+        })
+          ? undefined
+          : new Response("upgrade failed", { status: 400 });
+      },
+      websocket: {
+        message: function (socket, message) {
+          socket.send(message);
+        },
+        close: function (_socket, code) {
+          upstreamClose.resolve(code);
+        },
+      },
+    });
+    openedServers.push(upstream);
+    const proxy = new MicrovmWebSocketProxy({
+      endpoint: `ws://127.0.0.1:${upstream.port}`,
+      microvmId: "mvm-test-123",
+      allowedPorts: [4_321],
+      allowInsecureUpstream: true,
+      createAuthToken: async function () {
+        return SECRET_TOKEN;
+      },
+    });
+    openedProxies.push(proxy);
+
+    const client = Bun.spawn([
+      process.execPath,
+      "-e",
+      `const s = new WebSocket(${JSON.stringify(proxy.getPortUrl(4_321))});
+      s.onopen = () => s.send("ping");
+      s.onmessage = () => process.exit(0);`,
+    ]);
+    await client.exited;
+
+    expect(await withTimeout(upstreamClose.promise)).toBe(1011);
+  });
+
   test("closes generically when token minting fails", async () => {
     const proxy = new MicrovmWebSocketProxy({
       endpoint: "wss://example.lambda-microvm.us-east-1.on.aws",

@@ -110,7 +110,7 @@ export const listForOrg = query({
       keys: [
         {
           name: "Account key",
-          description: "The account API: projects, stages, members",
+          description: "The account API: projects, stages",
           keyHint: account.secretHint,
           createdAt: account.secretRotatedAt ?? account.createdAt,
           createdBy: await actorOf(ctx, account.secretRotatedBy),

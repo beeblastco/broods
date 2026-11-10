@@ -11,11 +11,7 @@ export {
   harnessAdapterVersion,
   harnessSteersMidTurn,
 } from "./adapters/index.ts";
-export {
-  harnessReservationKey,
-  openAiSdkHarnessSession,
-  parkAiSdkHarnessSession,
-} from "./session.ts";
+export { openAiSdkHarnessSession, parkAiSdkHarnessSession } from "./session.ts";
 export type {
   AiSdkHarnessSettings,
   AiSdkHarnessSessionParking,

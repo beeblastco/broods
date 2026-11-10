@@ -489,7 +489,8 @@ function bridgeFetchSync(url, init) {
       input: JSON.stringify({ url: url, init: init }),
       encoding: "utf8",
       timeout: Math.min(FETCH_TIMEOUT_MS, remainingMs),
-      maxBuffer: BODY_LIMIT_BYTES + 64 * 1024,
+      // JSON escapes a control char in bodyText to six bytes (\u0001).
+      maxBuffer: 6 * (BODY_LIMIT_BYTES + 64 * 1024),
       env: process.env,
     },
   );

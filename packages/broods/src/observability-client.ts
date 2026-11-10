@@ -271,6 +271,8 @@ export async function fetchObservabilityLogs(
   options: ObservabilityClientOptions,
   request: { limit: number; minLevel?: LogLevel; sandboxId?: string },
 ): Promise<ObservabilityLogEntry[]> {
+  // The gateway answers a zero backfill with `ready` alone, so no closing frame would come.
+  if (request.limit <= 0) return [];
   const { error, rows } = await requestBackfill<ObservabilityLogEntry>(
     options,
     {

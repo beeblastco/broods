@@ -154,7 +154,7 @@ const session = await owner.assumeRole(role.roleId, { ttlSeconds: 900 });
 const scoped = new BroodsAccountClient({ sessionToken: session.token }); // can list and read agents, nothing else
 ```
 
-- Actions are `<resource>:read` and `<resource>:write` for `account`, `agents`, `audit`, `channels`, `crons`, `env`, `hooks`, `mcp`, `policies`, `sandboxes`, `skills`, `tools` and `workspaces`.
+- Actions are `<resource>:read` and `<resource>:write` for `account`, `agents`, `audit`, `channels`, `crons`, `env`, `hooks`, `mcp`, `policies`, `sandboxes`, `skills` and `workspaces`.
 - `resources.resourceIds` limits a rule to specific ids, `"*"` for all. A deny beats an allow, and no matching allow means `403`.
 - `projectId` and `stageId` pin a role to one stage. A pinned session reaches only agents, crons, channels, MCP servers, policies, sandboxes and workspaces on that stage. Lists, creates, and account-wide resources such as the account, audit, env, hooks and skills answer `403`. A write that points one of its resources at another stage's, such as a production sandbox on a development agent or a cron moved to a production agent, answers `400`. So does an agent or workspace write that names an account env var as `${NAME}` the session may not read with `env:read` (a workspace's R2 keys are such names), which a pinned session never may, or that repoints an MCP server (its URL, transport, bundle or OAuth) whose agents send it such a name.
 - Sessions last 1 hour by default, 12 at most. Only a hash is stored, and the token is shown once.
@@ -176,7 +176,7 @@ For the CLI's MCP server, prefer a role session in `BROODS_SESSION_TOKEN` over t
 ## Code you upload
 
 - [Code hooks](hooks.md) run in an isolated V8 sandbox with no file system, no imports, and network only through a `fetch` that blocks private and metadata addresses.
-- Hosted MCP servers run outside the Broods core in a child process per bundle, with nothing but log-writing permissions. The child is containment, not a trust boundary: accounts can share a warm runner environment until per-account isolation is switched on, so treat anything the server can reach as reachable by its code and keep secrets out of the bundle.
+- Hosted MCP servers run outside the Broods core: in a Cloudflare Workers isolate per bundle, or a Lambda child process per bundle with nothing but log-writing permissions. The isolate or child is containment, not a trust boundary: accounts can share a warm runner environment until per-account isolation is switched on, so treat anything the server can reach as reachable by its code and keep secrets out of the bundle.
 - Sandbox commands start with a clean environment. Only the `envVars` you declare reach them. Workspace mounts use short-lived credentials limited to that workspace's own files.
 
 ## Outbound URLs
