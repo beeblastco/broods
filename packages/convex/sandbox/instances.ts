@@ -215,6 +215,7 @@ export const setStatus = internalMutation({
   },
 });
 
+// False when the row was not written: the reservation or the key is not this machine's.
 export const upsert = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -243,16 +244,16 @@ export const upsert = internalMutation({
     ownCredentials: sandboxInstancesFields.ownCredentials,
     idleTimeoutSeconds: sandboxInstancesFields.idleTimeoutSeconds,
   },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    if (!(await mirrorsLiveMachine(ctx, args))) return null;
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    if (!(await mirrorsLiveMachine(ctx, args))) return false;
     const existing = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_reservationKey", (q) =>
         q.eq("reservationKey", args.reservationKey),
       )
       .unique();
-    if (existing && existing.accountId !== args.accountId) return null;
+    if (existing && existing.accountId !== args.accountId) return false;
 
     const now = Date.now();
     const fields = upsertRefreshFields(args, now);
@@ -295,7 +296,7 @@ export const upsert = internalMutation({
         await recordRuntimeAction(ctx, { ...existing, ...patch }, action);
       }
 
-      return null;
+      return true;
     }
 
     const row = {
@@ -323,7 +324,7 @@ export const upsert = internalMutation({
     );
     await recordRuntimeAction(ctx, row, "reserve");
 
-    return null;
+    return true;
   },
 });
 

@@ -56,14 +56,16 @@ interface MirrorWrite {
 }
 
 interface Lane {
+  // Account and row key: two accounts may use one key.
+  id: string;
   rowKey: string;
   writes: MirrorWrite[];
   sending: boolean;
 }
 
 // Parallel writes on one account conflict on its shared usage rows in Convex and fail, so an
-// account sends one write at a time. `urgent` rows hold a status or a removal, which a caller
-// waits for: they send first.
+// account sends one write at a time. `urgent` rows send first: they hold a status or a removal,
+// which a caller waits for, or a burst, which must reach its row before a later removal.
 interface AccountSender {
   busy: boolean;
   urgent: Set<Lane>;
@@ -73,14 +75,14 @@ interface AccountSender {
 
 const lanes = new Map<string, Lane>();
 const senders = new Map<string, AccountSender>();
-// Each row's last upsert queued, oldest first.
+// Each row's last upsert that landed, oldest first.
 const refreshed = new Map<string, { signature: string; at: number }>();
 let lastWarnAt = 0;
 
 // One lane per row (its reservation key; an ephemeral row's key is its sandbox id): a row's
-// writes land in the order queued, and a write of the same kind to the same machine as the lane's
-// last pending write takes its place, so a backlog holds the latest only. An account's lanes
-// take turns on its sender, so overload makes refreshes staler, never a growing queue.
+// writes land in the order queued. A write of the same kind to the same machine as the lane's
+// last pending write takes its place (a status never does), so a backlog holds the latest only.
+// An account's lanes take turns on its sender: overload makes refreshes staler, never a queue.
 export function queueMirrorWrite(
   accountId: string,
   rowKey: string,
@@ -107,25 +109,29 @@ export function queueMirrorUpsert(upsert: MirrorUpsert): Promise<void> {
     if (now - sent.at < MIRROR_REFRESH_EVERY_MS) break;
     refreshed.delete(rowKey);
   }
-  const signature = JSON.stringify(upsert);
-  const last = refreshed.get(upsert.reservationKey);
+  const last = refreshed.get(
+    laneId(upsert.controlPlane.accountId, upsert.reservationKey),
+  );
   const idleSeconds =
     upsert.controlPlane.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS;
   const windowMs = Math.min(
     MIRROR_REFRESH_EVERY_MS,
     (idleSeconds * 1000) / MIRROR_REFRESH_IDLE_PART,
   );
-  if (last?.signature === signature && now - last.at < windowMs) {
+  // A record from the future means the clock stepped back: send.
+  if (
+    last?.signature === JSON.stringify(upsert) &&
+    now >= last.at &&
+    now - last.at < windowMs
+  ) {
     return Promise.resolve();
   }
-  refreshed.delete(upsert.reservationKey);
-  refreshed.set(upsert.reservationKey, { signature: signature, at: now });
 
   return enqueue(upsert.controlPlane.accountId, upsert.reservationKey, {
     kind: "upsert",
     externalId: upsert.externalId,
     queuedAt: Date.now(),
-    send: (): Promise<void> => sendUpsert(upsert),
+    send: (): Promise<boolean> => sendUpsert(upsert),
     upsert: upsert,
     done: Promise.withResolvers<void>(),
   });
@@ -159,21 +165,25 @@ export function mirrorQueueStats(): MirrorQueueStats {
   return { rows: lanes.size, pending: pending, oldestPendingMs: now - oldest };
 }
 
+function changesRow(write: MirrorWrite): boolean {
+  return write.kind === "remove" || write.kind === "status";
+}
+
 function enqueue(
   accountId: string,
   rowKey: string,
   write: MirrorWrite,
 ): Promise<void> {
-  const lane = lanes.get(rowKey) ?? {
+  const id = laneId(accountId, rowKey);
+  const lane = lanes.get(id) ?? {
+    id: id,
     rowKey: rowKey,
     writes: [],
     sending: false,
   };
-  lanes.set(rowKey, lane);
+  lanes.set(id, lane);
   // The row is about to change under its last refresh, so the next one must be sent.
-  if (write.kind === "remove" || write.kind === "status") {
-    refreshed.delete(rowKey);
-  }
+  if (changesRow(write)) refreshed.delete(id);
   const landed = place(lane, write);
   let sender = senders.get(accountId);
   if (!sender) {
@@ -192,22 +202,30 @@ function enqueue(
   return landed;
 }
 
-async function land(rowKey: string, write: MirrorWrite): Promise<void> {
+// A refresh counts as sent only once it landed in time with no status or removal behind it.
+async function land(lane: Lane, write: MirrorWrite): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<boolean>((resolve): void => {
-    timer = setTimeout((): void => resolve(true), MIRROR_WRITE_TIMEOUT_MS);
+  const timedOut = new Promise<undefined>((resolve): void => {
+    timer = setTimeout((): void => resolve(undefined), MIRROR_WRITE_TIMEOUT_MS);
   });
   // The executor turns a sender's synchronous throw into a rejection, so the lane moves on.
   const sent = new Promise<unknown>((resolve): void =>
     resolve(write.send()),
   ).then(
-    (): boolean => false,
+    (written): boolean => written === true,
     (): boolean => false,
   );
-  const stalled = await Promise.race([sent, timedOut]);
+  const landed = await Promise.race([sent, timedOut]);
+  const stalled = landed === undefined;
   clearTimeout(timer);
-  if (stalled && write.kind === "upsert") refreshed.delete(rowKey);
   const now = Date.now();
+  if (write.upsert && landed === true && !lane.writes.some(changesRow)) {
+    refreshed.delete(lane.id);
+    refreshed.set(lane.id, {
+      signature: JSON.stringify(write.upsert),
+      at: now,
+    });
+  }
   const waitedMs = now - write.queuedAt;
   if (
     (stalled || waitedMs > MIRROR_WRITE_SLOW_MS) &&
@@ -217,13 +235,17 @@ async function land(rowKey: string, write: MirrorWrite): Promise<void> {
     logWarn(
       stalled ? "Sandbox mirror write timed out" : "Sandbox mirror write slow",
       {
-        rowKey: rowKey,
+        rowKey: lane.rowKey,
         kind: write.kind,
         waitedMs: waitedMs,
         ...mirrorQueueStats(),
       },
     );
   }
+}
+
+function laneId(accountId: string, rowKey: string): string {
+  return `${accountId} ${rowKey}`;
 }
 
 function mergedUpsert(older: MirrorUpsert, newer: MirrorUpsert): MirrorUpsert {
@@ -251,9 +273,7 @@ function mergedUpsert(older: MirrorUpsert, newer: MirrorUpsert): MirrorUpsert {
 // Keeps a lane's place in line; a lane that gains a status or removal moves to the urgent set.
 function park(sender: AccountSender, lane: Lane): void {
   if (
-    lane.writes.some(
-      (write) => write.kind === "remove" || write.kind === "status",
-    )
+    lane.writes.some((write) => changesRow(write) || write.kind === "burst")
   ) {
     sender.ready.delete(lane);
     sender.urgent.add(lane);
@@ -264,7 +284,11 @@ function park(sender: AccountSender, lane: Lane): void {
 
 function place(lane: Lane, write: MirrorWrite): Promise<void> {
   const last = lane.writes.at(-1);
-  if (last?.kind !== write.kind || last.externalId !== write.externalId) {
+  if (
+    write.kind === "status" ||
+    last?.kind !== write.kind ||
+    last.externalId !== write.externalId
+  ) {
     lane.writes.push(write);
 
     return write.done.promise;
@@ -272,7 +296,7 @@ function place(lane: Lane, write: MirrorWrite): Promise<void> {
   if (last.upsert && write.upsert) {
     const merged = mergedUpsert(last.upsert, write.upsert);
     last.upsert = merged;
-    last.send = (): Promise<void> => sendUpsert(merged);
+    last.send = (): Promise<boolean> => sendUpsert(merged);
   } else {
     last.send = write.send;
   }
@@ -295,19 +319,18 @@ function pump(accountId: string, sender: AccountSender): void {
   sender.ready.delete(lane);
   sender.busy = true;
   lane.sending = true;
-  void land(lane.rowKey, write).then((): void => {
+  void land(lane, write).then((): void => {
     write.done.resolve();
     sender.busy = false;
     lane.sending = false;
     if (lane.writes.length > 0) park(sender, lane);
-    else lanes.delete(lane.rowKey);
+    else lanes.delete(lane.id);
     pump(accountId, sender);
   });
 }
 
-// A refresh that did not land is forgotten, so the next identical one is sent.
-async function sendUpsert(upsert: MirrorUpsert): Promise<void> {
-  const landed = await upsertSandboxInstance(
+function sendUpsert(upsert: MirrorUpsert): Promise<boolean> {
+  return upsertSandboxInstance(
     upsert.controlPlane,
     upsert.provider,
     upsert.reservationKey,
@@ -315,5 +338,4 @@ async function sendUpsert(upsert: MirrorUpsert): Promise<void> {
     upsert.metadata,
     upsert.options,
   );
-  if (!landed) refreshed.delete(upsert.reservationKey);
 }

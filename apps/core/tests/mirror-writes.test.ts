@@ -176,6 +176,54 @@ describe("mirror writes", () => {
     expect(kinds()).toEqual(["upsert:row-a", "upsert:row-b"]);
   });
 
+  it("sends a refresh queued behind one that never landed", async () => {
+    jest.useFakeTimers();
+    hold("row-a");
+    void upsert("acct", "row-a", "m-1", "t-1");
+    void upsert("acct", "row-a", "m-1", "t-1");
+    await settleOnFakeClock(upsert("acct", "row-a", "m-1", "t-1"));
+    expect(kinds()).toEqual(["upsert:row-a"]);
+  });
+
+  it("keeps both of two status writes waiting on one row", async () => {
+    const first = hold("row-a");
+    void upsert("acct", "row-a", "m-1", "t-1");
+    void status("acct", "row-a", "suspended");
+    const resumed = status("acct", "row-a", "running");
+    first.resolve();
+    await resumed;
+    expect(landed.map((entry) => entry[2])).toEqual([
+      { externalId: "m-1", traceId: "t-1", taskId: undefined },
+      "suspended",
+      "running",
+    ]);
+  });
+
+  it("sends a burst queued before a removal ahead of it", async () => {
+    const first = hold("row-a");
+    void upsert("acct", "row-a", "m-1", "t-1");
+    void queueMirrorWrite("acct", "m-1", {
+      kind: "burst",
+      externalId: "m-1",
+      send: (): Promise<void> => arrive(["burst", "m-1", undefined]),
+    });
+    const removed = queueMirrorRemove("acct", "row-a", "m-1");
+    first.resolve();
+    await removed;
+    expect(kinds()).toEqual(["upsert:row-a", "burst:m-1", "remove:row-a"]);
+  });
+
+  it("keeps two accounts' rows apart when they share a key", async () => {
+    const slow = hold("row-a");
+    void upsert("acct-1", "row-a", "m-1", "t-1");
+    void upsert("acct-1", "row-a", "m-1", "t-2");
+    await upsert("acct-2", "row-a", "m-1", "t-3");
+    expect(landed.map((entry) => entry[2])).toEqual([
+      { externalId: "m-1", traceId: "t-3", taskId: undefined },
+    ]);
+    slow.resolve();
+  });
+
   it("keeps the refresh window a fifteenth of a short idle timeout", async () => {
     const start = Date.now();
     const refresh = (): Promise<void> =>

@@ -111,7 +111,8 @@ export async function releaseReservedSandboxes(
       );
     }
     released += machines.length;
-    // Only the machines it released: a run that reserved the key since keeps its row.
+    // The machines it released, so a run that reserved the key since keeps its row; with none
+    // released, whatever row the key still has.
     const fences = machines.length > 0 ? machines : [undefined];
     for (const machine of fences) {
       removals.push(queueMirrorRemove(accountId, namespace, machine));

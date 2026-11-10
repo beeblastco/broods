@@ -30,14 +30,15 @@ test.each(["cloudflare", "worker", "lambda"] as const)(
     const accountId = await seedAccount(t);
     vi.setSystemTime(NOW);
     await reserve(t, accountId, provider, "box-1");
-    await mirror(t, accountId, provider, "box-1");
+    expect(await mirror(t, accountId, provider, "box-1")).toBe(true);
     expect((await row(t))?.externalId).toBe("box-1");
 
     vi.setSystemTime(NOW + 60_000);
     await release(t, accountId, provider, "box-1");
     const billed = await meter(t);
-    // The exec ran before the delete, but its answer reached core after the removal.
-    await mirror(t, accountId, provider, "box-1");
+    // The exec ran before the delete, but its answer reached core after the removal. Core
+    // reads the refusal, so it does not count the refresh as sent.
+    expect(await mirror(t, accountId, provider, "box-1")).toBe(false);
 
     expect(await row(t)).toBeNull();
     vi.setSystemTime(NOW + 30 * 60_000);
@@ -108,8 +109,8 @@ async function mirror(
   accountId: Id<"accounts">,
   provider: Provider,
   externalId: string,
-): Promise<void> {
-  await t.mutation(internal.sandbox.instances.upsert, {
+): Promise<boolean> {
+  return await t.mutation(internal.sandbox.instances.upsert, {
     accountId: accountId,
     provider: provider,
     reservationKey: KEY,

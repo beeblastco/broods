@@ -31,7 +31,7 @@ export type SandboxInstanceStatus =
   | "error";
 
 // Pass `specs` only when the real size is known; else the row bills the config's, unverified.
-// False when the write failed.
+// False when the write failed or Convex refused it.
 export async function upsertSandboxInstance(
   controlPlane: SandboxControlPlane | undefined,
   provider: SandboxProvider,
@@ -44,7 +44,7 @@ export async function upsertSandboxInstance(
   const meta: SandboxRunMetadata = metadata ?? {};
   const ephemeral = options?.ephemeral === true;
   try {
-    await adminMutation(
+    const written: boolean = await adminMutation(
       internal.sandbox.instances.upsert,
       {
         accountId: controlPlane.accountId,
@@ -76,7 +76,7 @@ export async function upsertSandboxInstance(
       { skipQueue: true },
     );
 
-    return true;
+    return written;
   } catch (err) {
     logError("Sandbox instance upsert mirror failed (convex)", {
       error: err instanceof Error ? err.message : String(err),
