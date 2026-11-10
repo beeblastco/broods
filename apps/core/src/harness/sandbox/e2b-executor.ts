@@ -238,7 +238,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         if (accountId) {
           void e2bSpecs(created).then((specs): void => {
             if (specs) {
-              void queueMirrorWrite(ns, {
+              void queueMirrorWrite(accountId, ns, {
                 kind: "specs",
                 externalId: created.sandboxId,
                 send: (): Promise<void> =>

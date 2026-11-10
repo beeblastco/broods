@@ -701,7 +701,7 @@ async function queueMirrorStatus(
   options?: { observed?: boolean; errorMessage?: string },
 ): Promise<boolean> {
   let changed = false;
-  await queueMirrorWrite(context.reservationKey, {
+  await queueMirrorWrite(context.accountId, context.reservationKey, {
     kind: "status",
     send: async (): Promise<void> => {
       changed = await setSandboxInstanceStatus(

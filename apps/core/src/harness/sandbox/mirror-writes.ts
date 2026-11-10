@@ -49,13 +49,32 @@ interface MirrorWrite {
   done: PromiseWithResolvers<void>;
 }
 
-const lanes = new Map<string, MirrorWrite[]>();
+interface Lane {
+  rowKey: string;
+  writes: MirrorWrite[];
+  sending: boolean;
+}
+
+// Parallel writes on one account conflict on its shared usage rows in Convex and fail, so an
+// account sends one write at a time. `urgent` rows hold a status or a removal, which a caller
+// waits for: they send first.
+interface AccountSender {
+  busy: boolean;
+  urgent: Set<Lane>;
+  ready: Set<Lane>;
+  idle: PromiseWithResolvers<void>;
+}
+
+const lanes = new Map<string, Lane>();
+const senders = new Map<string, AccountSender>();
 let lastWarnAt = 0;
 
-// One lane per row (its reservation key; an ephemeral row's key is its sandbox id): writes to
-// one row land in order, rows run in parallel. A lane holds one write in flight and at most one
-// pending per kind and machine, so memory follows rows, not writes.
+// One lane per row (its reservation key; an ephemeral row's key is its sandbox id): a row's
+// writes land in the order queued, and a write of the same kind to the same machine as the lane's
+// last pending write takes its place, so a backlog holds the latest only. An account's lanes
+// take turns on its sender, so overload makes refreshes staler, never a growing queue.
 export function queueMirrorWrite(
+  accountId: string,
   rowKey: string,
   write: {
     kind: Exclude<MirrorWriteKind, "remove" | "upsert">;
@@ -63,7 +82,7 @@ export function queueMirrorWrite(
     send: () => Promise<unknown>;
   },
 ): Promise<void> {
-  return enqueue(rowKey, {
+  return enqueue(accountId, rowKey, {
     kind: write.kind,
     externalId: write.externalId,
     queuedAt: Date.now(),
@@ -72,11 +91,11 @@ export function queueMirrorWrite(
   });
 }
 
-// Replaces the row's pending write to the same machine, keeping run fields the newer one lacks.
+// Taking a pending upsert's place keeps the run fields the newer one lacks.
 export function queueMirrorUpsert(upsert: MirrorUpsert): Promise<void> {
   if (!upsert.controlPlane) return Promise.resolve();
 
-  return enqueue(upsert.reservationKey, {
+  return enqueue(upsert.controlPlane.accountId, upsert.reservationKey, {
     kind: "upsert",
     externalId: upsert.externalId,
     queuedAt: Date.now(),
@@ -86,14 +105,13 @@ export function queueMirrorUpsert(upsert: MirrorUpsert): Promise<void> {
   });
 }
 
-// Drops the row's pending upsert and status writes for the machine it removes (all of them
-// without `externalId`). Nothing queued before it lands after it.
+// Lands after every write queued before it. `externalId` names the only machine it may remove.
 export function queueMirrorRemove(
   accountId: string,
   reservationKey: string,
   externalId?: string,
 ): Promise<void> {
-  return enqueue(reservationKey, {
+  return enqueue(accountId, reservationKey, {
     kind: "remove",
     externalId: externalId,
     queuedAt: Date.now(),
@@ -108,57 +126,40 @@ export function mirrorQueueStats(): MirrorQueueStats {
   let pending = 0;
   let oldest = now;
   for (const lane of lanes.values()) {
-    pending += lane.length;
-    for (const write of lane) oldest = Math.min(oldest, write.queuedAt);
+    pending += lane.writes.length;
+    for (const write of lane.writes) oldest = Math.min(oldest, write.queuedAt);
   }
 
   return { rows: lanes.size, pending: pending, oldestPendingMs: now - oldest };
 }
 
-function coalesce(lane: MirrorWrite[], write: MirrorWrite): MirrorWrite[] {
-  const kept: MirrorWrite[] = [];
-  let next = write;
-  for (const queued of lane) {
-    if (write.kind === "remove" && removes(write, queued)) {
-      void write.done.promise.then(queued.done.resolve);
-    } else if (
-      queued.kind === write.kind &&
-      queued.externalId === write.externalId
-    ) {
-      next =
-        write.upsert && queued.upsert
-          ? mergedUpsert(queued.upsert, write.upsert)
-          : write;
-      next.queuedAt = queued.queuedAt;
-      void next.done.promise.then(queued.done.resolve);
-    } else {
-      kept.push(queued);
-    }
+function enqueue(
+  accountId: string,
+  rowKey: string,
+  write: MirrorWrite,
+): Promise<void> {
+  const lane = lanes.get(rowKey) ?? {
+    rowKey: rowKey,
+    writes: [],
+    sending: false,
+  };
+  lanes.set(rowKey, lane);
+  const landed = place(lane, write);
+  let sender = senders.get(accountId);
+  if (!sender) {
+    sender = {
+      busy: false,
+      urgent: new Set(),
+      ready: new Set(),
+      idle: Promise.withResolvers<void>(),
+    };
+    senders.set(accountId, sender);
+    waitUntil(sender.idle.promise);
   }
-  if (next !== write) void next.done.promise.then(write.done.resolve);
+  if (!lane.sending) park(sender, lane);
+  pump(accountId, sender);
 
-  return [...kept, next];
-}
-
-async function drain(rowKey: string, lane: MirrorWrite[]): Promise<void> {
-  for (let write = lane.shift(); write; write = lanes.get(rowKey)?.shift()) {
-    await land(rowKey, write);
-    write.done.resolve();
-  }
-  lanes.delete(rowKey);
-}
-
-function enqueue(rowKey: string, write: MirrorWrite): Promise<void> {
-  const lane = lanes.get(rowKey);
-  if (lane) {
-    lanes.set(rowKey, coalesce(lane, write));
-  } else {
-    const started: MirrorWrite[] = [write];
-    lanes.set(rowKey, started);
-    waitUntil(drain(rowKey, started));
-  }
-
-  return write.done.promise;
+  return landed;
 }
 
 async function land(rowKey: string, write: MirrorWrite): Promise<void> {
@@ -194,10 +195,11 @@ async function land(rowKey: string, write: MirrorWrite): Promise<void> {
   }
 }
 
-function mergedUpsert(older: MirrorUpsert, newer: MirrorUpsert): MirrorWrite {
+function mergedUpsert(older: MirrorUpsert, newer: MirrorUpsert): MirrorUpsert {
   const was = { ...older.metadata, ...older.options };
   const now = { ...newer.metadata, ...newer.options };
-  const merged: MirrorUpsert = {
+
+  return {
     ...newer,
     metadata: {
       traceId: now.traceId ?? was.traceId,
@@ -213,24 +215,63 @@ function mergedUpsert(older: MirrorUpsert, newer: MirrorUpsert): MirrorWrite {
       specs: now.specs ?? was.specs,
     },
   };
-
-  return {
-    kind: "upsert",
-    externalId: merged.externalId,
-    queuedAt: Date.now(),
-    send: (): Promise<void> => sendUpsert(merged),
-    upsert: merged,
-    done: Promise.withResolvers<void>(),
-  };
 }
 
-// Burst and size writes still change what the removal bills, so they land first.
-function removes(removal: MirrorWrite, queued: MirrorWrite): boolean {
-  if (queued.kind !== "upsert" && queued.kind !== "status") return false;
+// Keeps a lane's place in line; a lane that gains a status or removal moves to the urgent set.
+function park(sender: AccountSender, lane: Lane): void {
+  if (
+    lane.writes.some(
+      (write) => write.kind === "remove" || write.kind === "status",
+    )
+  ) {
+    sender.ready.delete(lane);
+    sender.urgent.add(lane);
+  } else if (!sender.urgent.has(lane)) {
+    sender.ready.add(lane);
+  }
+}
 
-  return (
-    removal.externalId === undefined || queued.externalId === removal.externalId
-  );
+function place(lane: Lane, write: MirrorWrite): Promise<void> {
+  const last = lane.writes.at(-1);
+  if (last?.kind !== write.kind || last.externalId !== write.externalId) {
+    lane.writes.push(write);
+
+    return write.done.promise;
+  }
+  if (last.upsert && write.upsert) {
+    const merged = mergedUpsert(last.upsert, write.upsert);
+    last.upsert = merged;
+    last.send = (): Promise<void> => sendUpsert(merged);
+  } else {
+    last.send = write.send;
+  }
+
+  return last.done.promise;
+}
+
+function pump(accountId: string, sender: AccountSender): void {
+  if (sender.busy) return;
+  const lane: Lane | undefined =
+    sender.urgent.values().next().value ?? sender.ready.values().next().value;
+  const write = lane?.writes.shift();
+  if (!lane || !write) {
+    senders.delete(accountId);
+    sender.idle.resolve();
+
+    return;
+  }
+  sender.urgent.delete(lane);
+  sender.ready.delete(lane);
+  sender.busy = true;
+  lane.sending = true;
+  void land(lane.rowKey, write).then((): void => {
+    write.done.resolve();
+    sender.busy = false;
+    lane.sending = false;
+    if (lane.writes.length > 0) park(sender, lane);
+    else lanes.delete(lane.rowKey);
+    pump(accountId, sender);
+  });
 }
 
 function sendUpsert(upsert: MirrorUpsert): Promise<void> {

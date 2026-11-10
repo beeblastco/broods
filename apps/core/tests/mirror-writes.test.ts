@@ -10,29 +10,33 @@ import {
 import { settleOnFakeClock } from "./helpers/fake-clock.ts";
 
 type Landed = [kind: string, rowKey: string, detail: unknown];
-
 const landed: Landed[] = [];
 let holds = new Map<string, PromiseWithResolvers<void>>();
+let inFlight = 0;
+let peak = 0;
 
-// A write to a held row waits until the test releases it, like a slow Convex mutation.
 async function arrive(entry: Landed): Promise<void> {
+  inFlight += 1;
+  peak = Math.max(peak, inFlight);
   const hold = holds.get(entry[1]);
   holds.delete(entry[1]);
   if (hold) await hold.promise;
+  else await Promise.resolve();
+  inFlight -= 1;
   landed.push(entry);
 }
 
 await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   upsertSandboxInstance: (
-    _controlPlane: unknown,
-    _provider: string,
-    reservationKey: string,
+    _c: unknown,
+    _p: string,
+    key: string,
     externalId: string,
     metadata?: { traceId?: string; taskId?: string },
   ): Promise<void> =>
     arrive([
       "upsert",
-      reservationKey,
+      key,
       {
         externalId: externalId,
         traceId: metadata?.traceId,
@@ -40,12 +44,11 @@ await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
       },
     ]),
   removeSandboxInstance: (
-    _accountId: string,
-    reservationKey: string,
+    _a: string,
+    key: string,
     externalId?: string,
-  ): Promise<void> => arrive(["remove", reservationKey, externalId]),
+  ): Promise<void> => arrive(["remove", key, externalId]),
 }));
-
 const {
   mirrorQueueStats,
   queueMirrorRemove,
@@ -54,53 +57,55 @@ const {
 } = await import("../src/harness/sandbox/mirror-writes.ts");
 const { drainInFlight } = await import("../src/shared/in-flight.ts");
 
-const PLANE = {
-  accountId: "acct-1",
+const plane = (accountId: string) => ({
+  accountId: accountId,
   name: "box",
   specs: { vcpu: 1, memoryMb: 1024, storageGb: 8 },
-};
+});
+const kinds = (): string[] => landed.map((entry) => entry[0] + ":" + entry[1]);
 
 beforeEach((): void => {
   landed.length = 0;
   holds = new Map();
+  inFlight = 0;
+  peak = 0;
 });
-
 afterEach(async (): Promise<void> => {
-  for (const hold of holds.values()) hold.resolve();
+  for (const h of holds.values()) h.resolve();
   jest.useRealTimers();
   await drainInFlight();
 });
 
-describe("mirror write lanes", () => {
-  it("lands one row's writes in the order they were queued", async () => {
+describe("mirror writes", () => {
+  it("lands one row's writes in the order queued, a suspend included", async () => {
     const first = hold("row-a");
-    void upsert("row-a", "m-1", "t-1");
-    void queueMirrorWrite("row-a", {
-      kind: "status",
-      send: (): Promise<void> => arrive(["status", "row-a", "suspended"]),
-    });
-    const removed = queueMirrorRemove("acct-1", "row-a", "m-2");
+    void upsert("acct", "row-a", "m-1", "t-1");
+    void status("acct", "row-a", "suspended");
+    void upsert("acct", "row-a", "m-1", "t-2");
+    void status("acct", "row-a", "running");
+    const removed = queueMirrorRemove("acct", "row-a", "m-1");
     first.resolve();
     await removed;
-
-    expect(landed.map((entry) => entry[0])).toEqual([
+    expect(
+      landed.map((e) => (e[0] === "status" ? "status:" + String(e[2]) : e[0])),
+    ).toEqual([
       "upsert",
-      "status",
+      "status:suspended",
+      "upsert",
+      "status:running",
       "remove",
     ]);
   });
 
-  it("keeps one pending upsert per machine and merges run fields the newer lacks", async () => {
+  it("keeps the latest of consecutive upserts and the run fields it lacks", async () => {
     const first = hold("row-a");
-    void upsert("row-a", "m-1", "t-1");
-    void upsert("row-a", "m-1", "t-2", "task-2");
-    void upsert("row-a", "m-1", "t-3");
-    const last = upsert("row-a", "m-1", undefined);
-
+    void upsert("acct", "row-a", "m-1", "t-1");
+    void upsert("acct", "row-a", "m-1", "t-2", "task-2");
+    void upsert("acct", "row-a", "m-1", "t-3");
+    const last = upsert("acct", "row-a", "m-1", undefined);
     expect(mirrorQueueStats()).toMatchObject({ rows: 1, pending: 1 });
     first.resolve();
     await last;
-
     expect(landed).toEqual([
       [
         "upsert",
@@ -115,105 +120,97 @@ describe("mirror write lanes", () => {
     ]);
   });
 
-  it("drops a pending upsert and status for the removed machine, never a burst", async () => {
-    const first = hold("row-a");
-    void upsert("row-a", "m-0", "t-0");
-    const dropped = upsert("row-a", "m-1", "t-1");
-    void upsert("row-a", "m-2", "t-2");
-    void queueMirrorWrite("row-a", {
-      kind: "burst",
-      externalId: "m-1",
-      send: (): Promise<void> => arrive(["burst", "row-a", "m-1"]),
-    });
-    const removed = queueMirrorRemove("acct-1", "row-a", "m-1");
+  it("sends one account's rows one at a time, in turn", async () => {
+    const writes = [];
+    for (let round = 0; round < 3; round++)
+      for (const row of ["r1", "r2", "r3"])
+        writes.push(upsert("acct", row, "m-" + row, "t" + round));
+    await Promise.all(writes);
+    expect(peak).toBe(1);
+    expect(kinds()).toEqual([
+      "upsert:r1",
+      "upsert:r2",
+      "upsert:r3",
+      "upsert:r1",
+    ]);
+  });
+
+  it("sends two accounts side by side", async () => {
+    const slow = hold("row-a");
+    void upsert("acct-1", "row-a", "m-a", "t");
+    await upsert("acct-2", "row-b", "m-b", "t");
+    expect(kinds()).toEqual(["upsert:row-b"]);
+    slow.resolve();
+  });
+
+  it("sends a removal ahead of other rows' refreshes", async () => {
+    const first = hold("r0");
+    void upsert("acct", "r0", "m0", "t");
+    for (let i = 1; i <= 50; i++) void upsert("acct", "r" + i, "m" + i, "t");
+    const removed = queueMirrorRemove("acct", "r40", "m40");
     first.resolve();
     await removed;
-    await dropped;
-
-    expect(landed.map((entry) => [entry[0], entry[2]])).toEqual([
-      ["upsert", { externalId: "m-0", traceId: "t-0", taskId: undefined }],
-      ["upsert", { externalId: "m-2", traceId: "t-2", taskId: undefined }],
-      ["burst", "m-1"],
-      ["remove", "m-1"],
-    ]);
+    expect(kinds()).toEqual(["upsert:r0", "upsert:r40", "remove:r40"]);
   });
 
-  it("queues an upsert after a removal behind it, for a key reserved again", async () => {
-    const first = hold("row-a");
-    void upsert("row-a", "m-1", "t-1");
-    void queueMirrorRemove("acct-1", "row-a");
-    const again = upsert("row-a", "m-2", "t-2");
-    first.resolve();
-    await again;
-
-    expect(landed.map((entry) => entry[0])).toEqual([
-      "upsert",
-      "remove",
-      "upsert",
-    ]);
-  });
-
-  it("runs two sandboxes of one account side by side", async () => {
-    const slowRow = hold("row-a");
-    void upsert("row-a", "m-a", "t-a");
-    await upsert("row-b", "m-b", "t-b");
-
-    expect(landed.map((entry) => entry[1])).toEqual(["row-b"]);
-    slowRow.resolve();
-  });
-
-  it("frees a row from a hung write after the timeout, without blocking other rows", async () => {
+  it("frees the account from a hung write after the timeout, and never blocks another account", async () => {
     jest.useFakeTimers();
     hold("row-a");
-    void upsert("row-a", "m-1", "t-1");
-    const next = queueMirrorRemove("acct-1", "row-a", "m-1");
-    await upsert("row-b", "m-b", "t-b");
-
-    expect(landed.map((entry) => entry[1])).toEqual(["row-b"]);
+    void upsert("acct-1", "row-a", "m-1", "t-1");
+    const next = queueMirrorRemove("acct-1", "row-b", "m-b");
+    await upsert("acct-2", "row-c", "m-c", "t");
+    expect(kinds()).toEqual(["upsert:row-c"]);
     await settleOnFakeClock(next);
-    expect(landed.map((entry) => entry[0])).toEqual(["upsert", "remove"]);
+    expect(kinds()).toEqual(["upsert:row-c", "remove:row-b"]);
     expect(mirrorQueueStats().rows).toBe(0);
   });
 
-  it("keeps a row's lane moving when a sender throws before it returns", async () => {
-    void queueMirrorWrite("row-a", {
+  it("keeps sending when a sender throws before it returns", async () => {
+    void queueMirrorWrite("acct", "row-a", {
       kind: "status",
       send: (): Promise<void> => {
         throw new Error("sender broke");
       },
     });
-    await upsert("row-a", "m-1", "t-1");
-
-    expect(landed.map((entry) => entry[0])).toEqual(["upsert"]);
+    await upsert("acct", "row-a", "m-1", "t-1");
+    expect(kinds()).toEqual(["upsert:row-a"]);
   });
 
   it("holds shutdown's drain until every queued write landed", async () => {
     const first = hold("row-a");
-    void upsert("row-a", "m-1", "t-1");
-    void queueMirrorRemove("acct-1", "row-a", "m-1");
+    void upsert("acct", "row-a", "m-1", "t-1");
+    void queueMirrorRemove("acct", "row-b", "m-2");
     const drained = drainInFlight();
     first.resolve();
     await drained;
-
-    expect(landed.map((entry) => entry[0])).toEqual(["upsert", "remove"]);
+    expect(kinds()).toEqual(["upsert:row-a", "remove:row-b"]);
   });
 });
 
 function hold(rowKey: string): PromiseWithResolvers<void> {
   const held = Promise.withResolvers<void>();
   holds.set(rowKey, held);
-
   return held;
 }
-
+function status(
+  accountId: string,
+  rowKey: string,
+  value: string,
+): Promise<void> {
+  return queueMirrorWrite(accountId, rowKey, {
+    kind: "status",
+    send: (): Promise<void> => arrive(["status", rowKey, value]),
+  });
+}
 function upsert(
+  accountId: string,
   rowKey: string,
   externalId: string,
   traceId: string | undefined,
   taskId?: string,
 ): Promise<void> {
   return queueMirrorUpsert({
-    controlPlane: PLANE,
+    controlPlane: plane(accountId),
     provider: "cloudflare",
     reservationKey: rowKey,
     externalId: externalId,

@@ -1286,7 +1286,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       return;
     }
     // A newer report replaces a pending one, so a backlog sends the latest totals once.
-    void queueMirrorWrite(microvmId, {
+    void queueMirrorWrite(accountId, microvmId, {
       kind: "burst",
       externalId: microvmId,
       send: async (): Promise<void> => {

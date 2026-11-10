@@ -220,7 +220,7 @@ export function meterEphemeralSandbox(
   if (specs instanceof Promise) {
     void specs.then((reported): void => {
       if (!reported) return;
-      void queueMirrorWrite(sandboxId, {
+      void queueMirrorWrite(accountId, sandboxId, {
         kind: "specs",
         externalId: sandboxId,
         send: (): Promise<void> =>

@@ -111,12 +111,19 @@ await mock.module("../src/harness/sandbox/instance-store.ts", () => ({
 
 let registryOwnsReservation = true;
 let budgetUsedPercent = 0;
+const removeSandboxInstanceMock = mock(
+  async (
+    _accountId: string,
+    _key: string,
+    _externalId?: string,
+  ): Promise<void> => {},
+);
 await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   setSandboxInstanceSpecs: mock(async (): Promise<void> => {}),
   sandboxInstanceIsControllable: mock(async () => registryOwnsReservation),
   setSandboxInstanceStatus: mock(async () => {}),
   recordSandboxBurst: mock(async (): Promise<boolean> => true),
-  removeSandboxInstance: mock(async () => {}),
+  removeSandboxInstance: removeSandboxInstanceMock,
   upsertSandboxInstance: mock(async () => {}),
 }));
 
@@ -189,6 +196,7 @@ afterEach(() => {
   fetchCalls = [];
   fetchMock.mockClear();
   getSandboxExternalIdMock.mockClear();
+  removeSandboxInstanceMock.mockClear();
   claimSandboxInstanceMock.mockClear();
   saveSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
@@ -369,6 +377,41 @@ describe("account-manage sandbox endpoints", () => {
       "sandbox",
       reservationKey,
       ACCOUNT_ID,
+    ]);
+    expect(removeSandboxInstanceMock.mock.calls).toEqual([
+      [ACCOUNT_ID, reservationKey, undefined],
+    ]);
+  });
+
+  // A replacement reserved under the same key since keeps its row.
+  it("refresh removes only the machine the provider no longer has", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.WORKDIR_URL = "https://workdir.example.com";
+    process.env.WORKDIR_API_KEY = "tenant-key";
+    globalThis.fetch = (async (): Promise<Response> =>
+      fetchResponse(
+        { error: { code: "not_found", message: "gone" } },
+        404,
+      )) as unknown as typeof fetch;
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = await seedSandbox({
+      provider: "sandbox",
+      persistent: true,
+      options: { reservationKey: reservationKey },
+    });
+
+    const response = await handler(
+      createEvent(
+        "POST",
+        `/v1/sandboxes/${created.sandboxId}/refresh`,
+        { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
+        { reservationKey: reservationKey },
+      ),
+    );
+
+    expect(await responseJson(response)).toEqual({ status: "terminated" });
+    expect(removeSandboxInstanceMock.mock.calls).toEqual([
+      [ACCOUNT_ID, reservationKey, "sbx_handler"],
     ]);
   });
 
