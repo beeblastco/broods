@@ -46,7 +46,7 @@ Convex goes first so no service runs ahead of the schema it calls. npm goes last
 | `agent-context-budget.yaml`    | every pull request, and its label changes                                         | Fails when a value in `apps/core/tests/agent-context-budget.json` is above the base branch's, unless the pull request has the `agent-context-increase` label                                                                                                             |
 | `check-broods-sdk.yaml`        | PRs and `dev` pushes touching the SDK, demos, root package files or npm workflows | Typecheck, test, build and dry-run pack of the SDK                                                                                                                                                                                                                       |
 | `codeql.yml`                   | pushes and PRs to `dev` and `main`; Tuesdays 17:35 UTC                            | CodeQL analysis                                                                                                                                                                                                                                                          |
-| `deploy-convex.yaml`           | `dev` or `main` pushes touching `packages/convex`; manual                         | `convex deploy`. `main` refuses a non-`prod:` key, or a self-hosted URL other than `https://convex-api.broods.app`                                                                                                                                                       |
+| `deploy-convex.yaml`           | `dev` or `main` pushes touching `packages/convex` or root package files; manual   | `convex deploy`. `main` refuses a non-`prod:` key, or a self-hosted URL other than `https://convex-api.broods.app`                                                                                                                                                       |
 | `deploy.yaml`                  | `dev` or `main` pushes, except docs, dashboard and markdown only; manual          | SST deploy of the AWS data plane and the Cloudflare Workers. See [deploy pipeline](#deploy-pipeline)                                                                                                                                                                     |
 | `build-core.yaml`              | `dev` or `main` pushes touching core, Convex or root package files; manual        | Build `broods-core`, roll it after `deploy-convex` and `deploy`                                                                                                                                                                                                          |
 | `build-gateway.yaml`           | `dev` or `main` pushes touching the gateway or files it imports; manual           | Check, test, build `broods-gateway`, roll it after core's rollout                                                                                                                                                                                                        |
@@ -164,7 +164,7 @@ Runtime secrets for the containers are not GitHub secrets. They live in k8s secr
 
 ## SDK versioning
 
-Nobody hand-edits or commits the SDK `version`. `publish-npm.yaml` runs `packages/broods/scripts/next-version.ts` over the conventional-commit subjects since the newest `broods-v*` tag:
+Nobody hand-edits or commits the SDK `version`. `publish-npm.yaml` runs `packages/broods/scripts/next-version.ts` over the conventional-commit subjects since the newest `broods-v*` tag, of every commit that touched the package or the core and Convex files bundled into it (`SHIPPED_PATHS`, the bundled paths `check-broods-sdk.yaml` watches):
 
 | Subject                  | Bump on `0.x` | Bump from `1.0` |
 | ------------------------ | ------------- | --------------- |
@@ -172,7 +172,7 @@ Nobody hand-edits or commits the SDK `version`. `publish-npm.yaml` runs `package
 | `feat:`                  | minor         | minor           |
 | anything else            | patch         | patch           |
 
-The subject line is the release note. A `package.json` version above the last tag is released as is, which is how a major like 1.0.0 ships. The publish is skipped when no commit touched the package or the version is already on npm. Trusted Publishing is configured for organization `beeblastco`, repository `broods`, workflow `publish-npm.yaml`; never commit `.npmrc` files or npm tokens. See `packages/broods/AGENTS.md`.
+The subject line is the release note. A `package.json` version above the last tag is released as is, which is how a major like 1.0.0 ships. The publish is skipped when no commit touched those paths or the version is already on npm. Trusted Publishing is configured for organization `beeblastco`, repository `broods`, workflow `publish-npm.yaml`; never commit `.npmrc` files or npm tokens. See `packages/broods/AGENTS.md`.
 
 ## Drift cleanup
 
