@@ -283,6 +283,19 @@ function tracedName(index: number): string {
   return `${DIR}/traced${index}.ts`;
 }
 
+const LATE_MODULE = `${DIR}/late.ts`;
+// Its closure outlives `target`, so it runs under a trace of its own once `target` has returned.
+const LATE_TEXT = `${PREFIX}
+export function target(): { run: () => Promise<number>; handOff: () => Promise<number> } {
+  return {
+    run: async (): Promise<number> => { await settleLater(); return counter; },
+    handOff: async (): Promise<number> => { await withCallback(() => { registry.set("cb", 1); }); return counter; },
+  };
+}
+async function relay(cb: () => void): Promise<void> { await null; cb(); }
+export function hand(box: { sent: boolean }, cb: () => void): Promise<void> { return relay(cb); }
+`;
+
 describe("instrumentation keeps behaviour", () => {
   beforeAll(async () => {
     mkdirSync(TRACES, { recursive: true });
@@ -296,7 +309,13 @@ describe("instrumentation keeps behaviour", () => {
         `${tracedName(index)}#stash`,
         `${tracedName(index)}#withCallback`,
         `${tracedName(index)}#settleLater`,
-      ]).join("\n"),
+      ])
+        .concat(
+          ["target", "settleLater", "withCallback", "hand"].map(
+            (name) => `${LATE_MODULE}#${name}`,
+          ),
+        )
+        .join("\n"),
     );
     process.env["SPEC_CORPUS"] = join(ROOT, DIR, "corpus");
     process.env["SPEC_TRACES"] = TRACES;
@@ -306,6 +325,7 @@ describe("instrumentation keeps behaviour", () => {
       writeFileSync(join(ROOT, DIR, `plain${index}.ts`), text);
       writeFileSync(join(ROOT, tracedName(index)), text);
     });
+    writeFileSync(join(ROOT, LATE_MODULE), LATE_TEXT);
     await import("./record-preload.ts");
   });
 
@@ -381,6 +401,80 @@ describe("instrumentation keeps behaviour", () => {
       ["f", [2]],
     ]);
     expect(call.hits.length).toBeGreaterThan(0);
+  });
+
+  test("a closure running as its own trace keeps an awaited callee's window", async () => {
+    const module = (await import(join(ROOT, LATE_MODULE))) as {
+      target: () => { run: () => Promise<number> };
+    };
+    const made = module.target();
+    expect(await made.run()).toBe(1);
+    const file = join(
+      TRACES,
+      `${encodeURIComponent(`${LATE_MODULE}#target/run`)}.jsonl`,
+    );
+    const call = JSON.parse(
+      readFileSync(file, "utf8").split("\n")[0] ?? "",
+    ) as {
+      effects: {
+        fn: string;
+        moduleBefore?: Record<string, unknown>;
+        moduleAfter?: Record<string, unknown>;
+      }[];
+    };
+    const window = call.effects.find((effect) => effect.fn === "settleLater");
+    expect([
+      window?.moduleBefore?.["counter"],
+      window?.moduleAfter?.["counter"],
+    ]).toEqual([0, 1]);
+  });
+
+  test("a callback a closure hands on ends that closure's windows", async () => {
+    const module = (await import(join(ROOT, LATE_MODULE))) as {
+      target: () => { handOff: () => Promise<number> };
+    };
+    await module.target().handOff();
+    const file = join(
+      TRACES,
+      `${encodeURIComponent(`${LATE_MODULE}#target/handOff`)}.jsonl`,
+    );
+    const call = JSON.parse(
+      readFileSync(file, "utf8").split("\n")[0] ?? "",
+    ) as {
+      effects: { fn: string; moduleAfter?: Record<string, unknown> }[];
+    };
+    const window = call.effects.find((effect) => effect.fn === "withCallback");
+    expect(window?.moduleAfter?.["registry"]).toEqual({ $map: [] });
+  });
+
+  test("an effect handed the caller's callback may change any argument", async () => {
+    const module = (await import(join(ROOT, LATE_MODULE))) as {
+      hand: (box: { sent: boolean }, cb: () => void) => Promise<void>;
+    };
+    const box = { sent: false };
+    await module.hand(box, (): void => {
+      box.sent = true;
+    });
+    const file = join(
+      TRACES,
+      `${encodeURIComponent(`${LATE_MODULE}#hand`)}.jsonl`,
+    );
+    const call = JSON.parse(
+      readFileSync(file, "utf8").split("\n")[0] ?? "",
+    ) as {
+      effects: {
+        fn: string;
+        argWindows?: { index: number; after: unknown }[];
+      }[];
+    };
+    const relay = call.effects.find((effect) => effect.fn === "relay");
+    expect(relay?.argWindows).toEqual([
+      {
+        index: 0,
+        before: { sent: false },
+        after: { sent: true },
+      },
+    ]);
   });
 
   // Each callee window as [counter before, counter after, registry after].

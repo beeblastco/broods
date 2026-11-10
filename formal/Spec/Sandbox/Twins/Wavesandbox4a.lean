@@ -342,9 +342,23 @@ def spawnCommand (call : Json) : Prog Json := do
         ("env", Json.mkObj (spread (Twin.field self "#env") ++ spread (field options "env")))] ++
       (if truthy signal then [("abortSignal", signal)] else []))]
 
+/-- The session's proxy after `close` ran on it: routes and sockets dropped, the server stopped. -/
+private def closedProxy (proxy : Json) : Json :=
+  let fields := field proxy "$fields"
+  let emptyMap := Json.mkObj [("$map", .arr #[])]
+  let promise := Json.mkObj [("$opaque", toJson "Promise"), ("$fields", Json.mkObj [("$resolved", undef)])]
+  let next := fields.setObjVal! "#routes" emptyMap
+    |>.setObjVal! "#routesByPort" emptyMap
+    |>.setObjVal! "#connections" (Json.mkObj [("$set", .arr #[])])
+    |>.setObjVal! "#server" undef
+    |>.setObjVal! "#closePromise" (if isUndef (field fields "#closePromise") then promise else field fields "#closePromise")
+  proxy.setObjVal! "$fields" next
+
 private def sessionTeardown (verb message : String) (call : Json) : Prog Json := do
   let self := Twin.self call
   let _ ← Prog.effect "this.#proxy.close"
+  let proxy := Twin.field self "#proxy"
+  if closedProxy proxy != proxy then Prog.setState "self.#proxy" (closedProxy proxy)
   if truthy (Twin.field self "#shared") then return undef
   if isUndef (field (Twin.field self "#executor") verb) then
     return ← Prog.throwError "Error" message

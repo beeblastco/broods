@@ -573,11 +573,14 @@ private def harnessLoopFile : String := "apps/core/src/harness/harness.ts"
 /-- `MAX_TRACE_ATTRIBUTE_CHARS` in `harness.ts`. -/
 private def maxTraceAttributeChars : Nat := 32000
 
-/-- `traceAttribute`: a value scrubbed of the run's secrets and cut to the attribute limit. -/
-private def traceAttribute (call : Json) : Prog Json := do
+/-- `traceAttribute` on `value`: scrubbed of the run's secrets and cut to the attribute limit. -/
+private def redactAttribute (call value : Json) : Prog Json := do
   let secrets := field (Twin.observabilityContext call) "secretValues"
   Prog.effect "redactSerialized"
-    [Twin.callArg call 0, if undef secrets then Json.arr #[] else secrets, toJson maxTraceAttributeChars]
+    [value, if undef secrets then Json.arr #[] else secrets, toJson maxTraceAttributeChars]
+
+/-- `traceAttribute`, traced on its own. -/
+private def traceAttribute (call : Json) : Prog Json := redactAttribute call (Twin.callArg call 0)
 
 /-- `onChunk`: stamps the chunk type into the active step's timing. -/
 private def onChunk (call : Json) : Prog Json := do
@@ -619,6 +622,9 @@ private def restoreObservabilityContext (call : Json) : Prog Json := do
 private def rootAttributes (call : Json) : Prog Json := do
   let system ← Prog.effect "systemTraceAttributes"
     [field (Twin.moduleValue call "turnContext") "system", Json.mkObj [("$fn", toJson "traceAttribute")]]
+  -- `traceAttribute` ran inside that call. Without trace room of its own, its calls show here, in
+  -- the order they started, and each is a redaction.
+  Prog.drain (fun _ given => do let _ ← redactAttribute call (Twin.arg given 0)) 64
   let entriesOf (value : Json) : List (String × Json) :=
     match value with
     | .obj entries => entries.toList.filter fun entry => entry.1 != "$keys"

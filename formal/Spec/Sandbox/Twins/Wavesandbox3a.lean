@@ -383,13 +383,40 @@ private def readChunks (options : Json) :
     if bytes.isEmpty || offset >= size then return bytesJson collected
     readChunks options fuel (some stamp) offset collected
 
+/-- The session's proxy after `getPortUrl` ran on it: the server started and the port's route added. -/
+private def routed (proxy port : Json) (url : String) : Json :=
+  let fields := field proxy "$fields"
+  let routeId := (url.splitOn "/").getLastD ""
+  let ports := items (field (field fields "#routesByPort") "$map")
+  let routes := items (field (field fields "#routes") "$map")
+  let known := ports.any fun entry => (entry.getArrVal? 0).toOption == some port
+  let options := field fields "#options"
+  let route := Json.mkObj
+    [("endpoint", field options "endpoint"), ("microvmId", field options "microvmId"),
+     ("port", port), ("$keys", Json.arr #[toJson "endpoint", toJson "microvmId", toJson "port"])]
+  let routeEntry := Json.arr #[toJson routeId, route]
+  let portEntry := Json.arr #[port, toJson routeId]
+  let withRoute :=
+    if known then fields
+    else
+      (fields.setObjVal! "#routes" (Json.mkObj [("$map", Json.arr (routes ++ [routeEntry]).toArray)])).setObjVal!
+        "#routesByPort" (Json.mkObj [("$map", Json.arr (ports ++ [portEntry]).toArray)])
+  let server := Json.mkObj [("$opaque", toJson "Object"), ("$fields", Json.mkObj [])]
+  let started :=
+    if isUndef (field fields "#server") then withRoute.setObjVal! "#server" server else withRoute
+  proxy.setObjVal! "$fields" started
+
 /-- `MicrovmHarnessSession.getPortUrl`. -/
 private def microvmPortUrl (call : Json) : Prog Json := do
   let options := Twin.callArg call 0
   let protocol := field options "protocol"
   if !isUndef protocol && str protocol != "ws" then
     Prog.throwError "Error" "MicroVM Harness proxy supports WebSocket ports only"
-  Prog.effect "this.#proxy.getPortUrl" [field options "port"]
+  let url ← Prog.effect "this.#proxy.getPortUrl" [field options "port"]
+  let proxy := Twin.field (Twin.self call) "#proxy"
+  if routed proxy (field options "port") (str url) != proxy then
+    Prog.setState "self.#proxy" (routed proxy (field options "port") (str url))
+  return url
 
 /-- The most pages one listing walks in this model. The TypeScript loop has no bound. -/
 private def maxPages : Nat := 4096

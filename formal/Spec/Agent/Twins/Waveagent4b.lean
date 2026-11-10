@@ -133,8 +133,10 @@ def loadMemoryFile (call : Json) : Prog Json := do
   | .pending => Prog.unsupported "the read never finished"
   | .threw error _ =>
     let missing ← Prog.effect "isMissingS3Error" [error]
-    if truthy missing then return Json.null
-    throw error
+    if !truthy missing then throw error
+    Prog.setChanged "self.hasLoggedMissingMemoryFile"
+      (thisField call "hasLoggedMissingMemoryFile") (toJson true)
+    return Json.null
 
 private def memoryEnabled : List Json → Prog (List Json)
   | [] => pure []
@@ -150,6 +152,8 @@ def loadMemoryFiles (call : Json) : Prog Json := do
   if !truthy enabled then return arr []
   if !isUndef (thisField call "memoryFilesPromise") then
     return ← Prog.unsupported "a memoized promise's value is not recorded"
+  Prog.setState "self.memoryFilesPromise"
+    (Json.mkObj [("$opaque", toJson "Promise"), ("$fields", Json.mkObj [])])
   let workspaces ← Prog.effect "this.resolvedWorkspaces"
   let selected ← memoryEnabled (items workspaces)
   let outcomes ← Prog.all (selected.map fun workspace => ("this.loadMemoryFile", [workspace]))

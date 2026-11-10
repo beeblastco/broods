@@ -82,7 +82,7 @@ What earns credit, per statement rather than per function:
 - A gap excuses only calls its `gapCovers` predicate names.
 - Results are bound to a hash of the source, the Lean and the recording. Any change makes them stale.
 
-External rules must be anchored, `^...$`, and a reason must say why the answer is outside the runtime. Do not list an internal function because it is hard to record: model it from its inputs. `boundaries.tsv` lines are `external<TAB>regex<TAB>reason`, `opaque<TAB>Class<TAB>reason`, or
+External rules must be anchored, `^...$`, and a reason must say why the answer is outside the runtime. Do not list an internal function because it is hard to record: model it from its inputs. A parameter, or a hook on a parameter, is a port: its implementation is whatever the caller passes, so it may be listed with that reason. A label that names one of our own imports, classes or module objects may not. A test that mocks our own callee needs no entry: where the same call site reached the real function in another recording, the mocked calls count as that callee's. `boundaries.tsv` lines are `external<TAB>regex<TAB>reason`, `opaque<TAB>Class<TAB>reason`, or
 `internal<TAB>path#name<TAB>reason`. The reason must say why the answer can be trusted here.
 `exclusions.tsv` lines are `path#name` or `path#*`, a category, and a reason. Each excluded function
 leaves the denominator and is listed in the report, so use it only for code with nothing to verify.

@@ -3,13 +3,13 @@
     "statements": 18697,
     "excluded": 603,
     "verifiable": 18094,
-    "verified": 10601,
-    "byTwin": 10086,
-    "byReplay": 515,
+    "verified": 10983,
+    "byTwin": 10517,
+    "byReplay": 466,
     "arms": 13655,
-    "armsVerified": 7501
+    "armsVerified": 7819
   },
-  "twins": 1987,
+  "twins": 2028,
   "creditedTwins": [
     "apps/cloudflare-mcp/src/index.ts#TenantOutbound.fetch",
     "apps/cloudflare-mcp/src/index.ts#boundedMessage",
@@ -47,7 +47,11 @@
     "apps/core/src/accounts/handler.ts#errorResponseForError",
     "apps/core/src/accounts/handler.ts#errorText",
     "apps/core/src/accounts/handler.ts#execSandbox",
+    "apps/core/src/accounts/handler.ts#handleAccountRequest",
     "apps/core/src/accounts/handler.ts#handleMcpServiceRoute",
+    "apps/core/src/accounts/handler.ts#handleSandboxLifecycle",
+    "apps/core/src/accounts/handler.ts#handleSandboxLifecycleRoute",
+    "apps/core/src/accounts/handler.ts#handler",
     "apps/core/src/accounts/handler.ts#lambdaBaseImage",
     "apps/core/src/accounts/handler.ts#openSandboxTerminal",
     "apps/core/src/accounts/handler.ts#refreshSandboxStatus",
@@ -115,6 +119,7 @@
     "apps/core/src/harness/ai-sdk-harness/session.ts#startHarnessSession",
     "apps/core/src/harness/ai-sdk-harness/session.ts#steerHarnessTurn",
     "apps/core/src/harness/apply-runs.ts#applyScripts",
+    "apps/core/src/harness/apply-runs.ts#fileWrites",
     "apps/core/src/harness/async-agent-result.ts#createPendingAsyncAgentResult",
     "apps/core/src/harness/async-agent-result.ts#getAsyncAgentResult",
     "apps/core/src/harness/async-agent-result.ts#listOwedAsyncAgentResults",
@@ -176,6 +181,8 @@
     "apps/core/src/harness/compaction.ts#summarizeBlocks",
     "apps/core/src/harness/connections.ts#connectionFetch",
     "apps/core/src/harness/connections.ts#expiresSoon",
+    "apps/core/src/harness/connections.ts#loadFresh",
+    "apps/core/src/harness/connections.ts#refreshAndSave",
     "apps/core/src/harness/connections.ts#resetConnectionsForTests",
     "apps/core/src/harness/continuation.ts#isRunnableModelInput",
     "apps/core/src/harness/continuation.ts#resumeAfterYield",
@@ -186,6 +193,7 @@
     "apps/core/src/harness/deadline-policy.ts#createDeadlinePolicy",
     "apps/core/src/harness/deadline-policy.ts#createDeadlinePolicy/shouldStop",
     "apps/core/src/harness/frames.ts#FrameQueue.close",
+    "apps/core/src/harness/frames.ts#FrameQueue.push",
     "apps/core/src/harness/frames.ts#parseRunnerFrame",
     "apps/core/src/harness/frames.ts#toolBundlesBucket",
     "apps/core/src/harness/handler.ts#asyncResultEventIds",
@@ -210,6 +218,7 @@
     "apps/core/src/harness/handler.ts#onSocket",
     "apps/core/src/harness/handler.ts#openCronRun",
     "apps/core/src/harness/handler.ts#ownerCheckForStream",
+    "apps/core/src/harness/handler.ts#ownerCheckForStream/return",
     "apps/core/src/harness/handler.ts#parseAccountAgentFromScopedKey",
     "apps/core/src/harness/handler.ts#pushReplyToChannel",
     "apps/core/src/harness/handler.ts#queueFullResponse",
@@ -237,7 +246,6 @@
     "apps/core/src/harness/harness.ts#runAgentLoop/openWork",
     "apps/core/src/harness/harness.ts#runAgentLoop/release",
     "apps/core/src/harness/harness.ts#runAgentLoop/restoreObservabilityContext",
-    "apps/core/src/harness/harness.ts#runAgentLoop/rootAttributes",
     "apps/core/src/harness/harness.ts#serializeError",
     "apps/core/src/harness/harness.ts#sessionObservabilityScope",
     "apps/core/src/harness/harness.ts#startRunRoot",
@@ -543,13 +551,16 @@
     "apps/core/src/harness/responses.ts#natsStartResponse",
     "apps/core/src/harness/responses.ts#publicEventIdFromScoped",
     "apps/core/src/harness/run-finalizer.ts#createRunFinalizer",
+    "apps/core/src/harness/run-finalizer.ts#createRunFinalizer/finalize",
     "apps/core/src/harness/run-finalizer.ts#createRunFinalizer/finalized",
     "apps/core/src/harness/run-finalizer.ts#rootSpanStatus",
     "apps/core/src/harness/run-finalizer.ts#settleRun",
     "apps/core/src/harness/run-spans.ts#createRunSpanTracker",
     "apps/core/src/harness/run-spans.ts#createRunSpanTracker/close",
+    "apps/core/src/harness/run-spans.ts#createRunSpanTracker/closeOrphans",
     "apps/core/src/harness/run-spans.ts#createRunSpanTracker/get",
     "apps/core/src/harness/run-spans.ts#createRunSpanTracker/late",
+    "apps/core/src/harness/run-spans.ts#createRunSpanTracker/open",
     "apps/core/src/harness/sandbox/cloudflare-executor.ts#CloudflareSandboxExecutor.getInstanceInfo",
     "apps/core/src/harness/sandbox/cloudflare-executor.ts#CloudflareSandboxExecutor.prewarm",
     "apps/core/src/harness/sandbox/cloudflare-executor.ts#CloudflareSandboxExecutor.run",
@@ -617,10 +628,14 @@
     "apps/core/src/harness/sandbox/machine-executor.ts#isMachineConnected",
     "apps/core/src/harness/sandbox/machine-executor.ts#isMachineUpgrade",
     "apps/core/src/harness/sandbox/machine-executor.ts#machineServingMcp",
+    "apps/core/src/harness/sandbox/machine-executor.ts#refreshCredential",
     "apps/core/src/harness/sandbox/machine-executor.ts#registryKey",
     "apps/core/src/harness/sandbox/machine-executor.ts#rejectPending",
+    "apps/core/src/harness/sandbox/machine-executor.ts#revalidate",
+    "apps/core/src/harness/sandbox/machine-executor.ts#sendHeartbeats",
     "apps/core/src/harness/sandbox/machine-executor.ts#sendHeartbeats/arg0",
     "apps/core/src/harness/sandbox/machine-executor.ts#sendReady",
+    "apps/core/src/harness/sandbox/machine-executor.ts#upgradeMachineSocket",
     "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.acquireHarnessReservation",
     "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.createHarnessAuthToken",
     "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.getInstanceInfo",
@@ -862,6 +877,7 @@
     "apps/core/src/harness/tool-execute.ts#wrapToolExecute",
     "apps/core/src/harness/tool-execute.ts#wrapToolsWithOwnerFence",
     "apps/core/src/harness/tools/ask-questions.tool.ts#askQuestionsTool",
+    "apps/core/src/harness/tools/ask-questions.tool.ts#askQuestionsTool/execute",
     "apps/core/src/harness/tools/ask-questions.tool.ts#postToChannel",
     "apps/core/src/harness/tools/ask-questions.tool.ts#validateQuestions",
     "apps/core/src/harness/tools/async-status.tool.ts#asyncStatusTool",
@@ -891,13 +907,18 @@
     "apps/core/src/harness/tools/channel.tool.ts#sendFilesDescription",
     "apps/core/src/harness/tools/channel.tool.ts#sendFilesSchema",
     "apps/core/src/harness/tools/channel.tool.ts#sendFilesTool",
+    "apps/core/src/harness/tools/channel.tool.ts#sendFilesTool/execute",
     "apps/core/src/harness/tools/channel.tool.ts#sendImagesDescription",
     "apps/core/src/harness/tools/channel.tool.ts#sendImagesSchema",
     "apps/core/src/harness/tools/channel.tool.ts#sendImagesTool",
     "apps/core/src/harness/tools/channel.tool.ts#sendMessageTool",
+    "apps/core/src/harness/tools/channel.tool.ts#sendMessageTool/execute",
     "apps/core/src/harness/tools/channel.tool.ts#sendReactionsTool",
+    "apps/core/src/harness/tools/channel.tool.ts#sendReactionsTool/execute",
     "apps/core/src/harness/tools/channel.tool.ts#sendStickerTool",
+    "apps/core/src/harness/tools/channel.tool.ts#sendStickerTool/execute",
     "apps/core/src/harness/tools/channel.tool.ts#sendUpdateTool",
+    "apps/core/src/harness/tools/channel.tool.ts#sendUpdateTool/execute",
     "apps/core/src/harness/tools/channel.tool.ts#toChannelFile",
     "apps/core/src/harness/tools/channel.tool.ts#workspaceAttachment",
     "apps/core/src/harness/tools/channel.tool.ts#workspaceAttachment/fetchData",
@@ -935,6 +956,7 @@
     "apps/core/src/harness/tools/filesystem-utils.ts#s3Glob",
     "apps/core/src/harness/tools/filesystem-utils.ts#s3ReadNumbered",
     "apps/core/src/harness/tools/filesystem-utils.ts#sandboxParamChoices",
+    "apps/core/src/harness/tools/filesystem-utils.ts#sandboxRunMetadata",
     "apps/core/src/harness/tools/filesystem-utils.ts#sandboxSupportsBackgroundJobs",
     "apps/core/src/harness/tools/filesystem-utils.ts#sandboxSupportsJobControls",
     "apps/core/src/harness/tools/filesystem-utils.ts#sandboxTimeoutSeconds",
@@ -963,10 +985,12 @@
     "apps/core/src/harness/tools/index.ts#isToolEnabled",
     "apps/core/src/harness/tools/index.ts#withholdTools",
     "apps/core/src/harness/tools/load-skill.tool.ts#loadSkillTool",
+    "apps/core/src/harness/tools/load-skill.tool.ts#loadSkillTool/execute",
     "apps/core/src/harness/tools/memory.tool.ts#inputSchema",
     "apps/core/src/harness/tools/memory.tool.ts#memorySlug",
     "apps/core/src/harness/tools/memory.tool.ts#memoryTool",
     "apps/core/src/harness/tools/message-agents.tool.ts#messageAgentsTool",
+    "apps/core/src/harness/tools/message-agents.tool.ts#messageAgentsTool/execute",
     "apps/core/src/harness/tools/provider-tool.ts#availableToolNames",
     "apps/core/src/harness/tools/provider-tool.ts#descriptorId",
     "apps/core/src/harness/tools/provider-tool.ts#factoryById",
@@ -981,6 +1005,7 @@
     "apps/core/src/harness/tools/run-subagent.tool.ts#normalizeRequiredString",
     "apps/core/src/harness/tools/run-subagent.tool.ts#normalizeTask",
     "apps/core/src/harness/tools/run-subagent.tool.ts#runSubagentTool",
+    "apps/core/src/harness/tools/run-subagent.tool.ts#runSubagentTool/execute",
     "apps/core/src/harness/tools/sandbox-stand-in.ts#anthropicBash",
     "apps/core/src/harness/tools/sandbox-stand-in.ts#anthropicBash/execute",
     "apps/core/src/harness/tools/sandbox-stand-in.ts#anthropicBash/toSandboxCall",
@@ -1000,6 +1025,7 @@
     "apps/core/src/harness/tools/sandbox-stand-in.ts#openaiShell",
     "apps/core/src/harness/tools/sandbox-stand-in.ts#openaiShell/execute",
     "apps/core/src/harness/tools/sandbox-stand-in.ts#runCall",
+    "apps/core/src/harness/tools/sandbox-stand-in.ts#runCall/return",
     "apps/core/src/harness/tools/sandbox-stand-in.ts#runsOnProvider",
     "apps/core/src/harness/tools/sandbox-stand-in.ts#sandboxStandIn",
     "apps/core/src/harness/tools/sandbox-stand-in.ts#standInFor",
@@ -1039,6 +1065,7 @@
     "apps/core/src/harness/tools/utils.ts#urlToolContentPartToUserPart",
     "apps/core/src/harness/tools/utils.ts#virtualSubagentConfig",
     "apps/core/src/harness/tools/utils.ts#webpSize",
+    "apps/core/src/harness/tools/utils.ts#withImageLimits",
     "apps/core/src/harness/tools/write.tool.ts#inputSchema",
     "apps/core/src/harness/tools/write.tool.ts#writeTool",
     "apps/core/src/harness/transcribe.ts#recoveryFor",
@@ -1087,8 +1114,10 @@
     "apps/core/src/shared/auth.ts#extractBearerToken",
     "apps/core/src/shared/auth.ts#isServiceToken",
     "apps/core/src/shared/auth.ts#resolveAccountSecretAuth",
+    "apps/core/src/shared/auth.ts#resolveBearerAuth",
     "apps/core/src/shared/auth.ts#resolveRoleSessionAuth",
     "apps/core/src/shared/auth.ts#resolveRunTokenAuth",
+    "apps/core/src/shared/auth.ts#resolveRuntimeKeyAuth",
     "apps/core/src/shared/auth.ts#resolveScopedKeyAuth",
     "apps/core/src/shared/auth.ts#resolveStageSessionAuth",
     "apps/core/src/shared/auth.ts#sha256Hex",
@@ -1116,7 +1145,9 @@
     "apps/core/src/shared/commands.ts#stripCommandToken",
     "apps/core/src/shared/commands.ts#withIngressClearLease",
     "apps/core/src/shared/convex/account-keys.ts#cipherFromKeys",
+    "apps/core/src/shared/convex/account-keys.ts#decryptAccountBlob",
     "apps/core/src/shared/convex/account-keys.ts#keyringFor",
+    "apps/core/src/shared/convex/account-keys.ts#keyringHolding",
     "apps/core/src/shared/convex/account-keys.ts#loadFromConvex",
     "apps/core/src/shared/convex/account-keys.ts#resetAccountKeysForTests",
     "apps/core/src/shared/convex/client.ts#adminMutation",
@@ -1135,17 +1166,21 @@
     "apps/core/src/shared/convex/sandbox-snapshots.ts#upsertSandboxSnapshot",
     "apps/core/src/shared/convex/storage.ts#accountFromConvex",
     "apps/core/src/shared/convex/storage.ts#accountHookFromConvex",
+    "apps/core/src/shared/convex/storage.ts#agentFromConvex",
     "apps/core/src/shared/convex/storage.ts#agentPolicyFromConvex",
     "apps/core/src/shared/convex/storage.ts#channelRecordFromConvex",
     "apps/core/src/shared/convex/storage.ts#cronFromConvex",
     "apps/core/src/shared/convex/storage.ts#mcpFromConvex",
+    "apps/core/src/shared/convex/storage.ts#sandboxConfigFromConvex",
     "apps/core/src/shared/convex/storage.ts#workspaceConfigFromConvex",
     "apps/core/src/shared/discord-channel.ts#BroodsDiscordAdapter.parseCommand",
+    "apps/core/src/shared/discord-channel.ts#BroodsDiscordAdapter.runWithSlashCommandContext",
     "apps/core/src/shared/discord-channel.ts#BroodsDiscordAdapter.verifyRequestSignature",
     "apps/core/src/shared/discord-channel.ts#callDiscordApi",
     "apps/core/src/shared/discord-channel.ts#createDiscordActions",
     "apps/core/src/shared/discord-channel.ts#createDiscordActions/reactToMessage",
     "apps/core/src/shared/discord-channel.ts#createDiscordActions/sendSticker",
+    "apps/core/src/shared/discord-channel.ts#createDiscordActions/sendText",
     "apps/core/src/shared/discord-channel.ts#createDiscordActions/sendTyping",
     "apps/core/src/shared/discord-channel.ts#createDiscordChannel",
     "apps/core/src/shared/discord-channel.ts#createDiscordChannel/actions",
@@ -1211,6 +1246,7 @@
     "apps/core/src/shared/gchat-channel.ts#addOnEvent",
     "apps/core/src/shared/gchat-channel.ts#createGoogleChatChannel",
     "apps/core/src/shared/gchat-channel.ts#createGoogleChatChannel/actions",
+    "apps/core/src/shared/gchat-channel.ts#createGoogleChatChannel/parse",
     "apps/core/src/shared/gchat-channel.ts#createGoogleChatChannel/sendText",
     "apps/core/src/shared/gchat-channel.ts#googleChatIdentity",
     "apps/core/src/shared/gchat-channel.ts#parseServiceAccountKey",
@@ -1267,6 +1303,7 @@
     "apps/core/src/shared/linear-channel.ts#createLinearChannel/actions",
     "apps/core/src/shared/linear-channel.ts#createLinearChannel/authenticate",
     "apps/core/src/shared/linear-channel.ts#createLinearChannel/canHandle",
+    "apps/core/src/shared/linear-channel.ts#createLinearChannel/parse",
     "apps/core/src/shared/linear-channel.ts#formatIssueContext",
     "apps/core/src/shared/linear-channel.ts#mentions",
     "apps/core/src/shared/linear-channel.ts#toLinearSource",
@@ -1376,6 +1413,7 @@
     "apps/core/src/shared/runtime-keys.ts#subagentParentEventId",
     "apps/core/src/shared/runtime-keys.ts#subagentTaskNonce",
     "apps/core/src/shared/runtime-keys.ts#unscopedChannelConversationKey",
+    "apps/core/src/shared/s3.ts#awsClient",
     "apps/core/src/shared/s3.ts#copyS3Object",
     "apps/core/src/shared/s3.ts#deleteS3Object",
     "apps/core/src/shared/s3.ts#deleteS3Prefix",
@@ -1493,6 +1531,7 @@
     "apps/core/src/shared/telegram-channel.ts#createTelegramChannel/actions",
     "apps/core/src/shared/telegram-channel.ts#createTelegramChannel/authenticate",
     "apps/core/src/shared/telegram-channel.ts#createTelegramChannel/canHandle",
+    "apps/core/src/shared/telegram-channel.ts#createTelegramChannel/parse",
     "apps/core/src/shared/telegram-channel.ts#createTelegramChannel/reactToMessage",
     "apps/core/src/shared/telegram-channel.ts#createTelegramChannel/rehydrateAttachment",
     "apps/core/src/shared/telegram-channel.ts#createTelegramChannel/sendQuestions",
@@ -1626,6 +1665,7 @@
     "apps/discord-forwarder/src/supervisor.ts#webhookUrls",
     "apps/discord-forwarder/src/threads.ts#ThreadDirectory.fetchChannel",
     "apps/discord-forwarder/src/threads.ts#ThreadDirectory.lookup",
+    "apps/discord-forwarder/src/threads.ts#ThreadDirectory.resolve",
     "apps/edge/src/routes.ts#resolveRouter",
     "apps/edge/src/traefik.ts#headersMiddleware",
     "apps/edge/src/traefik.ts#middlewareName",
@@ -1985,6 +2025,7 @@
     "packages/convex/model/userToken.ts#userOwnsConversation",
     "packages/convex/model/workspaceIsolation.ts#isWorkspaceIsolation",
     "packages/convex/model/workspaceRules.ts#assertStorageEndpoint",
+    "packages/convex/model/workspaceRules.ts#disabledFeature",
     "packages/convex/model/workspaceRules.ts#isClusterEndpoint",
     "packages/convex/model/workspaceRules.ts#normalizeCreateWorkspaceConfigInput",
     "packages/convex/model/workspaceRules.ts#normalizeFilePath",
@@ -2019,20 +2060,20 @@
       "by replay",
       "branch arms"
     ],
-    ["access", "1977", "133", "1844", "70.0%", "1232", "58", "874/1357"],
-    ["agent", "3902", "139", "3763", "49.5%", "1769", "95", "1323/2744"],
-    ["channels", "3676", "3", "3673", "64.6%", "2321", "50", "1817/3046"],
+    ["access", "1977", "133", "1844", "74.2%", "1351", "17", "970/1357"],
+    ["agent", "3902", "139", "3763", "49.5%", "1768", "96", "1323/2744"],
+    ["channels", "3676", "3", "3673", "66.8%", "2405", "50", "1880/3046"],
     ["config", "617", "0", "617", "85.6%", "450", "78", "338/509"],
-    ["hosted", "1962", "320", "1642", "50.9%", "724", "111", "548/1084"],
-    ["runs", "1682", "8", "1674", "34.7%", "576", "5", "426/1154"],
-    ["sandbox", "4789", "0", "4789", "63.7%", "2969", "83", "2162/3729"],
+    ["hosted", "1962", "320", "1642", "50.9%", "733", "102", "550/1084"],
+    ["runs", "1682", "8", "1674", "39.2%", "651", "5", "485/1154"],
+    ["sandbox", "4789", "0", "4789", "66.8%", "3114", "83", "2260/3729"],
     ["workers", "92", "0", "92", "87.0%", "45", "35", "13/32"],
-    ["all", "18697", "603", "18094", "58.6%", "10086", "515", "7501/13655"]
+    ["all", "18697", "603", "18094", "60.7%", "10517", "466", "7819/13655"]
   ],
   "largestUnverified": [
     {
       "source": "apps/core/src/harness/harness.ts#runAgentLoop",
-      "count": 381
+      "count": 382
     },
     {
       "source": "packages/convex/agent/crons.ts#<unlisted>",
@@ -2083,10 +2124,6 @@
       "count": 55
     },
     {
-      "source": "apps/core/src/shared/telegram-channel.ts#createTelegramChannel",
-      "count": 50
-    },
-    {
       "source": "packages/convex/model/agentRules.ts#<unlisted>",
       "count": 48
     },
@@ -2115,10 +2152,6 @@
       "count": 39
     },
     {
-      "source": "apps/core/src/accounts/handler.ts#handleAccountRequest",
-      "count": 38
-    },
-    {
       "source": "apps/core/src/harness/tools/index.ts#registerMcpTools",
       "count": 37
     },
@@ -2133,10 +2166,6 @@
     {
       "source": "apps/core/src/harness/mcp/client.ts#listMcpTools",
       "count": 34
-    },
-    {
-      "source": "apps/core/src/accounts/handler.ts#handleSandboxLifecycle",
-      "count": 33
     },
     {
       "source": "apps/core/src/server.ts#<unlisted>",
@@ -2175,23 +2204,11 @@
       "count": 29
     },
     {
-      "source": "apps/core/src/shared/linear-channel.ts#createLinearChannel",
-      "count": 29
-    },
-    {
-      "source": "apps/core/src/harness/run-spans.ts#createRunSpanTracker",
-      "count": 29
-    },
-    {
       "source": "apps/core/src/harness/tools/memory.tool.ts#memoryTool",
       "count": 29
     },
     {
       "source": "apps/core/src/harness/channel-media.ts#ingestInboundAttachments",
-      "count": 28
-    },
-    {
-      "source": "apps/core/src/shared/gchat-channel.ts#createGoogleChatChannel",
       "count": 28
     },
     {
@@ -2315,10 +2332,6 @@
       "count": 23
     },
     {
-      "source": "apps/core/src/harness/tools/utils.ts#withImageLimits",
-      "count": 23
-    },
-    {
       "source": "apps/core/src/harness/provider.ts#retryingMiddleware",
       "count": 22
     },
@@ -2344,10 +2357,6 @@
     },
     {
       "source": "apps/cloudflare-sandbox/src/index.ts#<unlisted>",
-      "count": 22
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/machine-executor.ts#refreshCredential",
       "count": 22
     },
     {
@@ -2459,6 +2468,10 @@
       "count": 18
     },
     {
+      "source": "apps/core/src/shared/telegram-channel.ts#createTelegramChannel",
+      "count": 18
+    },
+    {
       "source": "apps/core/src/shared/telegram-channel.ts#readCappedFile",
       "count": 18
     },
@@ -2480,10 +2493,6 @@
     },
     {
       "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#refreshMountCredentials",
-      "count": 18
-    },
-    {
-      "source": "apps/core/src/harness/tools/ask-questions.tool.ts#askQuestionsTool",
       "count": 18
     },
     {
@@ -2516,10 +2525,6 @@
     },
     {
       "source": "apps/cloudflare-worker/src/index.ts#exec",
-      "count": 17
-    },
-    {
-      "source": "apps/core/src/harness/tools/message-agents.tool.ts#messageAgentsTool",
       "count": 17
     },
     {
@@ -2579,6 +2584,10 @@
       "count": 15
     },
     {
+      "source": "apps/core/src/shared/gchat-channel.ts#createGoogleChatChannel",
+      "count": 15
+    },
+    {
       "source": "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#readBodyBytes",
       "count": 15
     },
@@ -2599,23 +2608,15 @@
       "count": 14
     },
     {
-      "source": "apps/core/src/harness/connections.ts#refreshAndSave",
-      "count": 14
-    },
-    {
       "source": "apps/core/src/harness/handler.ts#runCommandTurn",
       "count": 14
     },
     {
+      "source": "apps/core/src/harness/run-spans.ts#createRunSpanTracker",
+      "count": 14
+    },
+    {
       "source": "apps/core/src/harness/sandbox/harness-shell-process.ts#raceWithAbort",
-      "count": 14
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/machine-executor.ts#revalidate",
-      "count": 14
-    },
-    {
-      "source": "apps/core/src/harness/tools/load-skill.tool.ts#loadSkillTool",
       "count": 14
     },
     {
@@ -2648,10 +2649,6 @@
     },
     {
       "source": "apps/core/src/harness/channel-media.ts#withOldMediaOmitted",
-      "count": 13
-    },
-    {
-      "source": "apps/core/src/shared/discord-channel.ts#createDiscordActions",
       "count": 13
     },
     {
@@ -2763,15 +2760,7 @@
       "count": 12
     },
     {
-      "source": "apps/core/src/harness/connections.ts#connectionFetch",
-      "count": 12
-    },
-    {
       "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.runBackground",
-      "count": 12
-    },
-    {
-      "source": "apps/core/src/harness/tools/channel.tool.ts#sendFilesTool",
       "count": 12
     },
     {
@@ -2781,10 +2770,6 @@
     {
       "source": "apps/core/src/shared/sandbox-sweeper.ts#sweepExpiredSandboxes",
       "count": 12
-    },
-    {
-      "source": "apps/core/src/accounts/handler.ts#handleSandboxLifecycleRoute",
-      "count": 11
     },
     {
       "source": "apps/gateway/src/observability.ts#sendTrace",
@@ -2827,8 +2812,64 @@
       "count": 11
     },
     {
+      "source": "apps/core/src/harness/connections.ts#connectionFetch",
+      "count": 11
+    },
+    {
       "source": "apps/core/src/harness/handler.ts#handleSandboxJobCompletionRequest",
       "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/handler.ts#resumeConversation",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/handler.ts#settleChannelQuestion",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/responses.ts#pipeAgentStream",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/shared/convex/budgets.ts#<unlisted>",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/sandbox/harness-shell-process.ts#HarnessShellProcess.constructor",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/sandbox/harness-shell-process.ts#HarnessShellProcess.#status",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/sandbox/machine-executor.ts#sendFrame",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#execReserved",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#reportBurst",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#assertWorkspaceMounted",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/sandbox/microvm-websocket-proxy.ts#MicrovmWebSocketProxy.#close",
+      "count": 11
+    },
+    {
+      "source": "apps/core/src/harness/tools/channel.tool.ts#sendImagesTool",
+      "count": 11
+    },
+    {
+      "source": "apps/gateway/src/observability.ts#otelValue",
+      "count": 10
     }
   ]
 }

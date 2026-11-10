@@ -293,6 +293,7 @@ def directTurnBody (call : Json) : Prog Json := do
 /-- The headers `new Headers(init?.headers)` holds, as `[name, value]` pairs sorted by name. -/
 private def headerPairs (headers : Json) : List (String × String) :=
   let pairs : List (String × String) :=
+    if undef headers then [] else
     match field headers "$headers", headers with
     | .arr items, _ => items.toList.map fun pair => (text (Twin.arg pair 0), text (Twin.arg pair 1))
     | _, .arr items => items.toList.map fun pair => (text (Twin.arg pair 0), text (Twin.arg pair 1))
@@ -308,12 +309,13 @@ def connectionFetchReturn (call : Json) : Prog Json := do
   let type := Twin.moduleValue call "type"
   let input := Twin.callArg call 0
   let init := Twin.callArg call 1
+  let spread := if undef init then obj [] else init
   let send (token : Json) : Prog Json := do
     let others := (headerPairs (field init "headers")).filter fun pair => pair.1 != "authorization"
     let pairs := ((("authorization", s!"Bearer {text token}") :: others).toArray.qsort
       fun a b => a.1 < b.1).toList
     Prog.effect "baseFetch"
-      [input, merge init (obj [("headers", Json.mkObj [("$headers",
+      [input, merge spread (obj [("headers", Json.mkObj [("$headers",
         toJson (pairs.map fun pair => toJson [pair.1, pair.2]))])])]
   let token ← Prog.effect "accessToken" [accountId, type]
   let response ← send token

@@ -117,7 +117,8 @@ const PURE_PROTOTYPES = new Set<unknown>([
 type Callee = (...args: unknown[]) => unknown;
 type Nested = boolean | "detached";
 // "awaited": the call's value goes straight to an `await` or `return` of the function itself.
-type CallSite = Nested | "awaited";
+// "awaited-late": the same in a closure, which counts only while it runs as its own trace.
+type CallSite = Nested | "awaited" | "awaited-late";
 type Outcome =
   | { returned: string }
   | { threw: string; sync: boolean }
@@ -169,6 +170,7 @@ interface Frame {
   windowsLost: boolean;
   overlapped: boolean;
   lateOf: Frame | undefined;
+  caller: Frame | undefined;
   lateLabel: string | undefined;
   readers: Record<string, () => unknown> | undefined;
   openWindows: Set<() => void>;
@@ -272,12 +274,17 @@ function observe(
   if (frame) {
     frame.self = self;
     frame.args = args;
+    frame.caller = frames.getStore();
     if (late) {
       frame.lateOf = late.of;
       frame.lateLabel = late.label;
       frame.claimed = true;
       traceModule(frame, late.readers);
     }
+  }
+  // One maker's code running again, here a closure it made, ends the windows its callers hold.
+  for (let at = frame?.caller; late && at; at = at.caller) {
+    if (at === late.of || at.lateOf === late.of) closeOpenWindows(at);
   }
   if (TRACES && !frame) count(source, "overTraceCap");
   if (frame) noteRunning(source, frame);
@@ -348,6 +355,7 @@ function newFrame(source: string): Frame {
     windowsLost: false,
     overlapped: false,
     lateOf: undefined,
+    caller: undefined,
     lateLabel: undefined,
     readers: undefined,
     openWindows: new Set(),
@@ -366,11 +374,15 @@ function claimFrame(source: string): Frame | undefined {
 
 // Hooks inside a closure hold the frame of the function that made it. Once that function has
 // returned, they belong to the closure's own trace.
+// A closure's code reaches the closed frame of its maker. While that closure runs as its own trace
+// it goes there instead, also from a callback the closure handed to a traced callee.
 function current(frame: Frame | undefined): Frame | undefined {
   if (!frame?.closed) return frame;
-  const store = frames.getStore();
+  for (let at = frames.getStore(); at; at = at.caller) {
+    if (at.lateOf === frame && !at.closed) return at;
+  }
 
-  return store?.lateOf === frame ? store : frame;
+  return frame;
 }
 
 function inCurrent<A extends unknown[], R>(
@@ -753,7 +765,9 @@ function record(
   callee?: unknown,
 ): unknown {
   if (frame.closed) count(frame.source, "lateEffects");
-  const awaited = site === "awaited";
+  const awaited =
+    site === "awaited" ||
+    (site === "awaited-late" && frame.lateOf !== undefined);
   // Starting a call is not a write, but an unawaited one hands control back mid-statement.
   if (!awaited) closeOpenWindows(frame);
   const effect: Effect = {
@@ -763,7 +777,7 @@ function record(
     outcome: { pending: true },
     start: frame.clock,
     settle: undefined,
-    nested: awaited ? false : site,
+    nested: site === "awaited" || site === "awaited-late" ? false : site,
     selfBefore: onSelf && to ? encodeText(frame.self) : undefined,
     selfAfter: undefined,
     moduleBefore: to && frame.readers ? readModule(frame.readers) : undefined,
@@ -772,11 +786,12 @@ function record(
   };
   frame.clock += 1;
   frame.effects.push(effect);
-  // A callback the caller passed in can reach anything the caller holds.
-  const reached =
-    callee !== undefined && frame.args.includes(callee)
-      ? frame.args
-      : [...args, receiver];
+  // A callback the caller passed in can reach anything the caller holds, called here or by the
+  // effect it is handed to.
+  const handsOn = [callee, ...args].some(
+    (value) => typeof value === "function" && frame.args.includes(value),
+  );
+  const reached = handsOn ? frame.args : [...args, receiver];
   for (const value of reached) openWindow(frame, effect, value);
   let result: unknown;
   const closeState = (): void => {

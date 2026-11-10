@@ -579,7 +579,7 @@ function checkTraced(twin: TwinRow, opaqueAllowed: Set<string>): TwinResult {
   const hits = new Set<number>();
   const sets: number[][] = [];
   const internal = new Set<string>();
-  const external = new Set<string>();
+  const bare = new Set<string>();
   calls.forEach((call, index) => {
     const actual = JSON.parse(
       outputs[index] ?? '{"unsupported":"no output"}',
@@ -624,9 +624,25 @@ function checkTraced(twin: TwinRow, opaqueAllowed: Set<string>): TwinResult {
       result.hollow = false;
     for (const effect of call.effects) {
       if (effect.to) internal.add(effect.to);
-      else external.add(effect.fn);
+      else bare.add(effect.fn);
     }
   });
+  // A test may mock our own callee. Where the same call site reached the real one in another
+  // recording, the mocked answer stands for that callee, which must then earn credit itself.
+  const reached = new Map<string, Set<string>>();
+  for (const effect of calls.flatMap((call) => call.effects)) {
+    if (effect.to)
+      reached.set(
+        effect.fn,
+        (reached.get(effect.fn) ?? new Set()).add(effect.to),
+      );
+  }
+  const external = new Set<string>();
+  for (const label of bare) {
+    const targets = reached.get(label);
+    if (targets) for (const target of targets) internal.add(target);
+    else external.add(label);
+  }
   result.hits = [...hits];
   result.impliedElse = impliedElse(twin.source, sets);
   result.internal = [...internal].sort();

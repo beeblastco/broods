@@ -515,8 +515,15 @@ private def thirdTwins : List Twin := [
     return Twin.undefinedJson),
   Twin.traced (core "discord-channel" "BroodsDiscordAdapter.parseCommand") (fun c =>
     Prog.effect "this.parseSlashCommand" [a c 0, a c 1]),
-  Twin.traced (core "discord-channel" "BroodsDiscordAdapter.runWithSlashCommandContext") (fun c =>
-    Prog.effect "this.requestContext.run" [Json.mkObj [("slashCommand", a c 0)], a c 1]),
+  Twin.traced (core "discord-channel" "BroodsDiscordAdapter.runWithSlashCommandContext") (fun c => do
+    let context := a c 0
+    let outcome ← Prog.attempt "this.requestContext.run"
+      [Json.mkObj [("slashCommand", context)], a c 1]
+    -- The callback it hands on answers for what it writes to the context (L18).
+    match outcome with
+    | .ok value => pure value
+    | .threw error _ => Prog.fail error
+    | .pending => Prog.fail (Json.mkObj [("pending", .bool true)])),
   Twin.traced (core "whatsapp-channel" "BroodsWhatsAppAdapter.verifyWebhookSignature") (fun c =>
     Prog.effect "this.verifySignature" [a c 0, nullish (a c 1) .null]),
   Twin.traced (core "whatsapp-channel" "BroodsWhatsAppAdapter.sendTypingIndicator") (fun c => do

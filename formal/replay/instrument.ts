@@ -5,6 +5,9 @@ import {
 } from "../scripts/functions.ts";
 
 type EditKind = "close" | "open" | "replace";
+// Whose code a node is: the function's own, a closure of it that may run as its own trace (L25),
+// or code whose awaits suspend only some inner function.
+type Scope = "own" | "late" | "none";
 
 interface Edit {
   start: number;
@@ -361,6 +364,7 @@ function callEdits(
 ): Edit[] {
   const edits: Edit[] = [];
   const locals = new Set([...localFunctions(body), ...inlined]);
+  const late = new Set(lateClosures(body, escaped).keys());
   // `x.closed = true` and similar cannot go through a read helper.
   const writeTargets = new Set<AstNode>();
   const visit = (
@@ -368,7 +372,7 @@ function callEdits(
     nested: boolean,
     detached = false,
     awaited = false,
-    own = true,
+    scope: Scope = "own",
   ): void => {
     const inside = nested || escaped.has(node);
     // Code after an `await` may run mid-statement, where no statement probe would see it.
@@ -439,22 +443,22 @@ function callEdits(
           locals,
           inside || detached,
           detached && !inside,
-          awaited && !inside,
+          awaited && !inside ? scope : "none",
         ),
       );
     }
     const unawaited =
       (node.type === "UnaryExpression" && node["operator"] === "void") ||
       node.type === "ExpressionStatement";
-    const ownBelow = own && !isClosure(node) && !SCOPES.has(node.type);
+    const below = scopeBelow(node, scope, late);
     for (const [key, value] of Object.entries(node)) {
-      const waits = ownBelow && awaitedChild(node, key, awaited);
+      const waits = below !== "none" && awaitedChild(node, key, awaited);
       if (Array.isArray(value)) {
         value.forEach((item, index) => {
           if (!isNode(item)) return;
           // A later element runs while this one's window is open.
           const quiet = !waits || !value.slice(index + 1).some(hasWrite);
-          visit(item, inside, false, waits && quiet, ownBelow);
+          visit(item, inside, false, waits && quiet, below);
         });
       } else if (isNode(value)) {
         visit(
@@ -462,7 +466,7 @@ function callEdits(
           inside,
           unawaited && value.type === "CallExpression",
           waits,
-          ownBelow,
+          below,
         );
       }
     }
@@ -642,6 +646,10 @@ function withCallbackHelpers(
 function awaitedChild(node: AstNode, key: string, awaited: boolean): boolean {
   if (node.type === "AwaitExpression" || node.type === "ReturnStatement")
     return key === "argument";
+  if (isClosure(node))
+    return (
+      key === "body" && (node["body"] as AstNode).type !== "BlockStatement"
+    );
   if (!awaited) return false;
   if (TRANSPARENT.has(node.type)) return key === "expression";
   if (node.type === "ConditionalExpression") return key !== "test";
@@ -663,6 +671,15 @@ function awaitedChild(node: AstNode, key: string, awaited: boolean): boolean {
     object["name"] === "Promise" &&
     PROMISE_COMBINATORS.has(name)
   );
+}
+
+// Only a closure directly in the function runs as a trace of its own; one inside it may run while
+// that closure is still running.
+function scopeBelow(node: AstNode, scope: Scope, late: Set<AstNode>): Scope {
+  if (late.has(node) && scope === "own") return "late";
+  if (isClosure(node) || SCOPES.has(node.type)) return "none";
+
+  return scope;
 }
 
 function isClosure(node: AstNode): boolean {
@@ -925,10 +942,11 @@ function oneNew(node: AstNode, source: string, nested: boolean): Edit[] {
 function nestedText(
   nested: boolean,
   detached: boolean,
-  awaited: boolean,
+  awaited: Scope,
 ): string {
   if (detached) return '"detached"';
-  if (awaited && !nested) return '"awaited"';
+  if (awaited === "own" && !nested) return '"awaited"';
+  if (awaited === "late" && !nested) return '"awaited-late"';
 
   return String(nested);
 }
@@ -963,7 +981,7 @@ function oneCall(
   locals: Set<string>,
   nested: boolean,
   detached: boolean,
-  awaited: boolean,
+  awaited: Scope,
 ): Edit[] {
   let callee = node["callee"] as AstNode;
   const open_ = argumentsOpen(node, source);

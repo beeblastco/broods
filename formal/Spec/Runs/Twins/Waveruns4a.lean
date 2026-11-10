@@ -512,6 +512,11 @@ def streamDirectContinuation (call : Json) : Prog Json := do
     | _ => pure ()
     drainOne "arg2" fun _ => do
       let _ ← Prog.effect "dispatchNextIngress" [session, event]
+      -- Either the next ingress took the lease or `takeNextIngress` released it, after the callback.
+      -- A session that never held a lease (`ownerGeneration` undefined) has nothing to hand off.
+      let fields := field session "$fields"
+      if field fields "ownerHandedOff" != toJson true && !undef (field fields "ownerGeneration") then
+        Prog.setState "args.1.ownerHandedOff" (toJson true)
     let settled ← Prog.attempt "settleFailedIngressAndDrain" [session, .str error, anon]
     match settled with
     | .threw settleError _ =>

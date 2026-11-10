@@ -1,5 +1,6 @@
 import Spec.Twin
 import Spec.Channels.Twins.Support
+import Spec.Channels.Twins.Wavechannels8a
 
 /-!
 Twins of closures the channel adapters return: `parse`, `authenticate`, `canHandle`, `actions` and
@@ -104,6 +105,108 @@ private def replyCallbackText (data : String) : Option String :=
     if 1 ≤ units && units ≤ 60 then some rest else none
   | none => none
 
+/-! #### What `transport.parseMessage` leaves on the adapter -/
+
+private def utf16Width (c : Char) : Nat := if c.toNat > 0xffff then 2 else 1
+
+private def dropUnits : List Char → Nat → List Char
+  | rest, 0 => rest
+  | [], _ => []
+  | c :: rest, n + 1 => dropUnits rest (n + 1 - utf16Width c)
+
+private def natOf (value : Json) : Nat :=
+  match value with
+  | .num number => ((numInt? number).getD 0).toNat
+  | _ => 0
+
+/-- The text the adapter parses a message from: `text`, `caption`, the sticker's label, or the
+description of a non-file message. `none` for a rich message, which is not modelled. -/
+private def telegramPlainText (raw : Json) : Option String :=
+  let direct := orElse (get raw "text") (get raw "caption")
+  let sticker := get raw "sticker"
+  if direct != undef && direct != .null then some ((str? direct).getD "text")
+  else if isTruthy sticker then
+    some ((str? (orElse (get sticker "emoji") (orElse (get sticker "set_name") (.str "sticker")))).getD "")
+  else if ["venue", "location", "contact", "poll", "dice", "game", "invoice", "story"].any
+      (fun key => isTruthy (get raw key)) then some "described"
+  else if isTruthy (get raw "rich_message") then none
+  else some ""
+
+/-- One entity that makes `isBotMentioned` answer before it builds the mention regex. -/
+private def entityMentionsBot (transport entity : Json) (plain username : String) : Bool :=
+  let slice := sliceUnits (String.ofList (dropUnits plain.toList (natOf (get entity "offset"))))
+    (natOf (get entity "length"))
+  let botUserId := Twin.field transport "_botUserId"
+  let kind := get entity "type"
+  (kind == .str "mention" && slice.toLower == "@" ++ username.toLower) ||
+  (kind == .str "text_mention" && isTruthy (get entity "user") && isTruthy botUserId &&
+    jsString (get (get entity "user") "id") == jsString botUserId) ||
+  (kind == .str "bot_command" && (slice.toLower).endsWith ("@" ++ username.toLower))
+
+/-- Whether parsing `raw` or the message it replies to reaches `getMentionRegex`. -/
+private def reachesMentionRegex (transport : Json) (username : String) : Nat → Json → Option Bool
+  | 0, _ => none
+  | fuel + 1, raw => do
+    let plain ← telegramPlainText raw
+    let entities := arr? (orElse (get raw "entities") (orElse (get raw "caption_entities") (.arr #[])))
+    let own := !plain.isEmpty && !(entities.getD []).any (entityMentionsBot transport · plain username)
+    if isTruthy (get raw "reply_to_message") then
+      let reply ← reachesMentionRegex transport username fuel (get raw "reply_to_message")
+      pure (reply || own)
+    else pure own
+
+private def escapeRegexSource (name : String) : String :=
+  String.join (name.toList.map fun c =>
+    if ".*+?^${}()|[]\\".contains c then "\\" ++ c.toString else c.toString)
+
+/-- `messageSequence`: the digits after the last colon of a message id, else zero. -/
+private def messageSequence (id : String) : Nat :=
+  match (id.splitOn ":").getLast? with
+  | some tail => if !tail.isEmpty && tail.all Char.isDigit then tail.toNat?.getD 0 else 0
+  | none => 0
+
+private def cacheKey (message : Json) : Int × Nat :=
+  let sent := get (Twin.field (Twin.field message "metadata") "dateSent") "$date"
+  (match sent with | .num number => (numInt? number).getD 0 | _ => 0,
+   messageSequence (jsString (Twin.field message "id")))
+
+/-- `cacheMessage`: replace the message with the same id or add it, then sort by send time. -/
+private def cacheMessage (existing : List Json) (message : Json) : List Json :=
+  let id := Twin.field message "id"
+  let merged :=
+    if existing.any (fun item => Twin.field item "id" == id) then
+      existing.map fun item => if Twin.field item "id" == id then message else item
+    else existing ++ [message]
+  merged.mergeSort fun a b =>
+    (cacheKey a).1 < (cacheKey b).1 || ((cacheKey a).1 == (cacheKey b).1 && (cacheKey a).2 ≤ (cacheKey b).2)
+
+/-- `transport.parseMessage(message)`: it caches the parsed message and, the first time a message
+with text reaches the mention test, builds the regex for the bot's user name. -/
+private def telegramParseMessage (call message : Json) : Prog Json := do
+  let transport := mod call "transport"
+  if isTruthy (Twin.field transport "mentionOnReply") then
+    return ← Prog.unsupported "mentionOnReply"
+  let parsed ← Prog.effect "transport.parseMessage" [message]
+  let cache := Twin.field transport "messageCache"
+  let threadId := Twin.field parsed "threadId"
+  let existing := match (Wavechannels8a.mapEntries cache).find? (fun entry => Twin.arg entry 0 == threadId) with
+    | some entry => (arr? (Twin.arg entry 1)).getD []
+    | none => []
+  let username := jsString (Twin.field transport "_userName")
+  let reached := (reachesMentionRegex transport username 8 message).getD false
+  let regexStale := !isTruthy (Twin.field transport "_mentionRegex") ||
+    Twin.field transport "_mentionRegexUsername" != .str username
+  let regex := Json.mkObj [("$regexp", .str s!"/@{escapeRegexSource username}(?![\\w-])/i")]
+  let withCache := setField (get transport "$fields") "messageCache"
+    (Wavechannels8a.mapSet cache threadId (jarr (cacheMessage existing parsed)))
+  let fields :=
+    if reached && regexStale then
+      setField (setField withCache "_mentionRegexUsername" (.str username)) "_mentionRegex" regex
+    else withCache
+  let after := setField transport "$fields" fields
+  if after != transport then Prog.setState "module.transport" after
+  return parsed
+
 /-- `parseQuestionClick`. -/
 private def telegramQuestionClick (call callback updateId : Json) : Prog Json := do
   let (apiUrl, botToken) := telegramCredentials call
@@ -134,7 +237,7 @@ private def telegramQuestionClick (call callback updateId : Json) : Prog Json :=
      object [("chat_id", get (get message "chat") "id"),
        ("message_id", get message "message_id"),
        ("reply_markup", Json.mkObj [("inline_keyboard", .arr #[])])]]
-  let parsed ← Prog.effect "transport.parseMessage" [message]
+  let parsed ← telegramParseMessage call message
   let envelope ← Prog.effect "telegramEnvelope" [message, parsed, get callback "from"]
   return Json.mkObj
     [("kind", .str "message"), ("redelivers", .bool true),
@@ -171,7 +274,7 @@ private def telegramParse (call : Json) : Prog Json := do
   let runAgent ←
     if isTruthy botUsername then Prog.effect "addressesTelegramBot" [message, botUsername]
     else pure (.bool true)
-  let parsed ← Prog.effect "transport.parseMessage" [message]
+  let parsed ← telegramParseMessage call message
   let attachments ← Prog.effect "telegramAttachments"
     [mod call "transport", get message "sticker", parsed]
   let commandToken ← Prog.effect "telegramCommandToken" [message, botUsername]
@@ -659,6 +762,7 @@ private def linearParse (call : Json) : Prog Json := do
   let options := mod call "options"
   let mentioned ← Prog.effect "mentions" [get comment "body", get options "userName"]
   if !isTruthy mentioned then return ignoreResult (some "not mentioned")
+  -- `loadIdentity` caches the identity it fetched on the adapter; that write is the callee's.
   let identity ← Prog.effect "transport.loadIdentity"
   if get user "id" == identity then return ignoreResult (some "own comment")
   let teamKey := get (get issue "team") "key"
@@ -1074,6 +1178,30 @@ private def gchatAuthenticate (call : Json) : Prog Json := do
         ("body", get req "body")])]]
   return .bool (get (get response "$response") "status" == toJson (200 : Nat))
 
+/-- `transport.parseMessage(event)`: the adapter remembers the sender's name in memory. A shared
+state adapter would also be written, which is not modelled. -/
+private def gchatParseMessage (call event : Json) : Prog Json := do
+  let transport := mod call "transport"
+  let cache := Twin.field transport "userInfoCache"
+  if isTruthy (Twin.field cache "state") then return ← Prog.unsupported "a shared user cache"
+  let parsed ← Prog.effect "transport.parseMessage" [event]
+  let sender := get (get (get (get event "chat") "messagePayload") "message") "sender"
+  let userId := get sender "name"
+  let displayName := get sender "displayName"
+  if isTruthy userId && userId != .str "unknown" && isTruthy displayName &&
+      displayName != .str "unknown" then
+    let entry := object
+      [("avatarUrl", get sender "avatarUrl"), ("displayName", displayName),
+       ("email", get sender "email"), ("isBot", .bool (get sender "type" == .str "BOT"))]
+    let memory := Twin.field cache "inMemoryCache"
+    let fields := setField (get transport "$fields") "userInfoCache"
+      (setField cache "$fields"
+        (setField (get cache "$fields") "inMemoryCache"
+          (Wavechannels8a.mapSet memory userId entry)))
+    let after := setField transport "$fields" fields
+    if after != transport then Prog.setState "module.transport" after
+  return parsed
+
 /-- `createGoogleChatChannel`'s `parse`. -/
 private def gchatParse (call : Json) : Prog Json := do
   let options := mod call "options"
@@ -1093,7 +1221,7 @@ private def gchatParse (call : Json) : Prog Json := do
       Prog.effect "isAllowedId" [get options "allowedUserIds", get identity "userId"]
     else pure (.bool false)
   if !isTruthy allowed then return ignoreResult (some "not allowed")
-  let parsed ← Prog.effect "transport.parseMessage" [event]
+  let parsed ← gchatParseMessage call event
   let text := jsTrim (jsString (orElse (get message "argumentText") (Twin.field parsed "text")))
   let attachments := Twin.field parsed "attachments"
   let hasAttachments : Bool := match attachments with

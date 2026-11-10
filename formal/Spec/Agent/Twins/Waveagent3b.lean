@@ -809,7 +809,9 @@ def takeNextIngress (call : Json) : Prog Json := do
       pure ()) 4)
   let outcome ← Prog.attempt "this.writeFenced" [arr [], fnRef]
   match outcome with
-  | .ok value => return value
+  | .ok value =>
+    Prog.setChanged "self.ownerHandedOff" (thisField call "ownerHandedOff") (toJson true)
+    return value
   | .threw error _ =>
     if truthy settle then
       let _ ← Prog.attempt "this.settleIngress"
@@ -1045,10 +1047,13 @@ def drainCompletionsAndDetachToParent (call : Json) : Prog Json := do
 
 /-- `SubagentCoordinator.closePasses` -/
 def closePasses (call : Json) : Prog Json := do
+  Prog.setChanged "self.closed" (thisField call "closed") (toJson true)
   let _ ← Prog.effect "this.handOverToParent"
   let unanswered := Twin.moduleValue call "unanswered"
   let waiting := ((mapPairs (thisField call "asked")).map (·.2)).filter fun question =>
     mapGet unanswered (field question "conversationKey") == some (field question "eventId")
+  if !(mapPairs (thisField call "asked")).isEmpty then
+    Prog.setState "self.asked" (Json.mkObj [("$map", arr [])])
   let outcomes ← Prog.all (waiting.map fun question => ("this.wakeChild", [question]))
   for outcome in outcomes do
     match outcome with

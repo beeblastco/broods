@@ -74,7 +74,11 @@ private def threadResolve (c : Json) : Prog Json := do
     if (mapGet? (selfField c "inFlight") channelId).isSome then
       Prog.unsupported "the answer of a lookup already in flight is not recorded"
     else do
-      Prog.effect "this.lookup" [a c 0]
+      let thread ← Prog.effect "this.lookup" [a c 0]
+      let before := selfField c "cache"
+      Spec.Channels.Wavechannels8a.stateChange "self.cache" before
+        (Spec.Channels.Wavechannels8a.threadCacheSet before (a c 0) thread)
+      pure thread
 
 private def forwarderOpen (c : Json) : Prog Json := do
   let token := a c 0
