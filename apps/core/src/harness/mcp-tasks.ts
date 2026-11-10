@@ -1,7 +1,7 @@
 /**
- * `/mcp`: each runnable agent is one tool. A client with the tasks extension gets a task whose
- * id is the run id; any other client gets the answer directly. Holds no state: every read and
- * write goes through core's own `/v1/runs` routes, so auth and limits stay in integrations.ts.
+ * `/mcp`: `list_agents` names the agents a caller can run and `ask_agent` runs one. A client
+ * with the tasks extension gets a task whose id is the run id; any other client gets the answer
+ * directly. Holds no state: every read and write goes through core's own `/v1/runs` routes.
  */
 import {
   CallToolResultV2Schema,
@@ -41,6 +41,7 @@ import {
 import { runtime } from "../shared/convex/runtime.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import { errorResponse, type CoreRequest } from "../shared/http.ts";
+import { getStorage } from "../shared/storage.ts";
 import {
   scopedDirectConversationKey,
   scopedDirectEventId,
@@ -54,25 +55,37 @@ import {
   resolveAuthKitAuth,
 } from "./mcp/authkit.ts";
 
-const AGENT_ARGS = z.object({
+const ASK_ARGS = z.object({
+  agent: z.string().trim().min(1),
   prompt: z.string().trim().min(1),
   conversationId: z.string().trim().min(1).optional(),
 });
-const AGENT_INPUT_SCHEMA: ToolV2["inputSchema"] = {
-  type: "object",
-  properties: {
-    prompt: {
-      type: "string",
-      description:
-        "The full request. The agent cannot see your conversation, so include what it needs.",
+const ASK_TOOL = "ask_agent";
+const ASK_TOOL_DEFINITION: ToolV2 = {
+  name: ASK_TOOL,
+  description:
+    "Ask one Broods agent and get its answer. Find the agents with list_agents.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      agent: {
+        type: "string",
+        description:
+          "The agent's name or id from list_agents. Use the id when a name appears twice.",
+      },
+      prompt: {
+        type: "string",
+        description:
+          "The full request. The agent cannot see your conversation, so include what it needs.",
+      },
+      conversationId: {
+        type: "string",
+        description:
+          "From an earlier answer, to continue that conversation. Omit to start a new one.",
+      },
     },
-    conversationId: {
-      type: "string",
-      description:
-        "From an earlier answer, to continue that conversation. Omit to start a new one.",
-    },
+    required: ["agent", "prompt"],
   },
-  required: ["prompt"],
 };
 const APPROVAL_KEY_PREFIX = "approval-";
 // An approval reply's event id is the waiting run's plus this, so a task can
@@ -106,10 +119,40 @@ const FINISHED_STATUSES: ReadonlySet<RunStatus["status"]> = new Set([
   "failed",
   "expired",
 ]);
+const GET_RUN_TOOL = "get_run";
+const GET_RUN_TOOL_DEFINITION: ToolV2 = {
+  name: GET_RUN_TOOL,
+  description:
+    "Read a run without waiting: its answer if it finished, what it asked if it is waiting, or that it is still working.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      runId: { type: "string", description: "The runId you were given." },
+    },
+    required: ["runId"],
+  },
+};
+const LIST_ARGS = z.object({
+  project: z.string().trim().min(1).optional(),
+  stage: z.string().trim().min(1).optional(),
+});
+const LIST_TOOL = "list_agents";
+const LIST_TOOL_DEFINITION: ToolV2 = {
+  name: LIST_TOOL,
+  description:
+    "List the Broods agents you can ask: each one's name, what it does, its project and stage, and its id. Call this first to pick an agent for ask_agent.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      project: { type: "string", description: "Only this project's agents." },
+      stage: { type: "string", description: "Only agents in this stage." },
+    },
+  },
+};
 const MAX_APPROVAL_INPUT_CHARS = 300;
-const MAX_TOOL_NAME_LENGTH = 48;
 const POLL_INTERVAL_MS = 2_000;
 const QUESTION_KEY_PREFIX = "question-";
+const RUN_ARGS = z.object({ runId: z.string().min(1) });
 const RUN_PATH = "/v1/runs";
 // Prefixes the event id and conversation key of every run a task starts.
 const RUN_PREFIX = "mcp-";
@@ -253,18 +296,16 @@ function createTaskServer(caller: McpCaller): Server {
   });
   server.setRequestHandler(
     "tools/list",
-    async (_params, ctx): Promise<{ tools: ToolV2[] }> => {
-      const agents = agentsByToolName(await listRunnableAgents(caller.auth));
-
-      return {
-        tools: [
-          ...[...agents].map(([name, agent]) => agentTool(name, agent)),
-          ...(agents.size === 0 || declaresTasks(ctx)
-            ? []
-            : [CONTINUE_TOOL_DEFINITION]),
-        ],
-      };
-    },
+    async (_params, ctx): Promise<{ tools: ToolV2[] }> => ({
+      tools: [
+        LIST_TOOL_DEFINITION,
+        ASK_TOOL_DEFINITION,
+        // A client with tasks reads and answers a run through `tasks/*` instead.
+        ...(declaresTasks(ctx)
+          ? []
+          : [GET_RUN_TOOL_DEFINITION, CONTINUE_TOOL_DEFINITION]),
+      ],
+    }),
   );
   server.setRequestHandler(
     "tools/call",
@@ -272,21 +313,28 @@ function createTaskServer(caller: McpCaller): Server {
     async (params, ctx): Promise<CreateTaskResultV2 | CallToolResultV2> => {
       const direct = !declaresTasks(ctx);
       const { signal } = ctx.mcpReq;
+      if (params.name === LIST_TOOL) {
+        return await listAgents(caller, params.arguments);
+      }
       if (direct && params.name === CONTINUE_TOOL) {
         return await continueRun(caller, params.arguments, signal);
       }
-      const agents = agentsByToolName(await listRunnableAgents(caller.auth));
-      const agent =
-        agents.get(params.name) ??
-        [...agents.values()].find(({ agentId }) => agentId === params.name);
-      if (!agent) {
+      if (direct && params.name === GET_RUN_TOOL) {
+        return await getRun(caller, params.arguments);
+      }
+      if (params.name !== ASK_TOOL) {
         throw new ProtocolError(
           ProtocolErrorCode.InvalidParams,
-          `No tool named ${params.name}. Tools are named after agents, so it may have been renamed. Current tools: ${[...agents.keys()].join(", ") || "none"}.`,
+          `No tool named ${params.name}. Call ${LIST_TOOL} to see the agents, then ${ASK_TOOL} to run one.`,
         );
       }
-      const input = AGENT_ARGS.safeParse(params.arguments);
+      const input = ASK_ARGS.safeParse(params.arguments);
       if (!input.success) return toolResult(z.prettifyError(input.error), true);
+      const agent = await findAgent(
+        await listRunnableAgents(caller.auth),
+        input.data.agent,
+      );
+      if (typeof agent === "string") return toolResult(agent, true);
       const runId = await startRun(caller, agent.agentId, input.data);
       if (typeof runId !== "string") return runId;
 
@@ -344,38 +392,6 @@ function createTaskServer(caller: McpCaller): Server {
   );
 
   return server;
-}
-
-function agentTool(name: string, agent: AgentRecord): ToolV2 {
-  return {
-    name: name,
-    title: agent.name,
-    description: agent.description ?? `Ask the ${agent.name} agent.`,
-    inputSchema: AGENT_INPUT_SCHEMA,
-  };
-}
-
-/** Models pick tools by name, so an agent is named for what it is; an account can repeat a name. */
-function agentsByToolName(agents: AgentRecord[]): Map<string, AgentRecord> {
-  const slug = ({ name }: AgentRecord): string =>
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, "_")
-      .replace(/^_+|_+$/g, "")
-      .slice(0, MAX_TOOL_NAME_LENGTH) || "agent";
-  const taken = new Map<string, number>([[CONTINUE_TOOL, 1]]);
-  for (const agent of agents) {
-    taken.set(slug(agent), (taken.get(slug(agent)) ?? 0) + 1);
-  }
-
-  return new Map(
-    agents.map((agent) => [
-      taken.get(slug(agent)) === 1
-        ? slug(agent)
-        : `${slug(agent)}_${agent.agentId.slice(-6)}`,
-      agent,
-    ]),
-  );
 }
 
 function answerResult(
@@ -581,10 +597,7 @@ async function continueRun(
 
     return await waitForRun(caller, runId, signal, current.runId);
   } catch (error) {
-    if (error instanceof ProtocolError) {
-      return toolResult(error.message, true);
-    }
-    throw error;
+    return protocolErrorResult(error);
   }
 }
 
@@ -657,6 +670,78 @@ function failedTask(
   };
 }
 
+/** The agent a name or id picks, or what to tell the caller when it picks none or several. */
+async function findAgent(
+  agents: AgentRecord[],
+  wanted: string,
+): Promise<AgentRecord | string> {
+  const named = agents.filter(
+    ({ name }) => name.toLowerCase() === wanted.toLowerCase(),
+  );
+  const agent =
+    agents.find(({ agentId }) => agentId === wanted) ??
+    (named.length === 1 ? named[0] : undefined);
+  if (agent) return agent;
+  if (named.length === 0) {
+    return `No agent named ${wanted}. Call ${LIST_TOOL} to see the agents you can ask.`;
+  }
+  const scopes = await getStorage().agents.scopes(named);
+  const choices = named.map(({ agentId }) => {
+    const scope = scopes.get(agentId);
+
+    return scope
+      ? `${agentId} (project ${scope.project}, stage ${scope.stage})`
+      : agentId;
+  });
+
+  return `${named.length} agents are named ${wanted}. Pass one of these ids as agent: ${choices.join(", ")}.`;
+}
+
+/** `get_run`: where a run stands now, without waiting for it. */
+async function getRun(
+  caller: McpCaller,
+  args: Record<string, unknown>,
+): Promise<CallToolResultV2> {
+  const input = RUN_ARGS.safeParse(args);
+  if (!input.success) return toolResult(z.prettifyError(input.error), true);
+  try {
+    return directReply(await resolveTask(caller, input.data.runId));
+  } catch (error) {
+    return protocolErrorResult(error);
+  }
+}
+
+async function listAgents(
+  caller: McpCaller,
+  args: Record<string, unknown>,
+): Promise<CallToolResultV2> {
+  const input = LIST_ARGS.safeParse(args);
+  if (!input.success) return toolResult(z.prettifyError(input.error), true);
+  const agents = await listRunnableAgents(caller.auth);
+  const scopes = await getStorage().agents.scopes(agents);
+  const matches = (wanted: string | undefined, actual?: string): boolean =>
+    wanted === undefined || wanted.toLowerCase() === actual?.toLowerCase();
+  const listed = agents
+    .map(({ agentId, name, description }) => ({
+      name: name,
+      ...(description ? { description: description } : {}),
+      ...scopes.get(agentId),
+      id: agentId,
+    }))
+    .filter(
+      ({ project, stage }) =>
+        matches(input.data.project, project) &&
+        matches(input.data.stage, stage),
+    );
+
+  return toolResult(
+    listed.length
+      ? JSON.stringify({ agents: listed })
+      : "No agents match. This credential can run none, or the project and stage filter left none.",
+    false,
+  );
+}
+
 /** A key or token core already trusts, else an AuthKit OAuth token, else the 401 or 403. */
 async function mcpAuth(request: CoreRequest): Promise<McpAuth | Response> {
   const { headers } = request;
@@ -694,6 +779,12 @@ function promptAnswers(
 }
 
 /** One form per open prompt, each of its questions an enum of the option labels. */
+/** A run call that missed, as a tool error the model can read; anything else is rethrown. */
+function protocolErrorResult(error: unknown): CallToolResultV2 {
+  if (error instanceof ProtocolError) return toolResult(error.message, true);
+  throw error;
+}
+
 function questionRequest(prompt: PendingQuestion): ElicitRequestV2 {
   return {
     method: "elicitation/create",
@@ -805,7 +896,7 @@ async function sendRunRequest(
 async function startRun(
   caller: McpCaller,
   agentId: string,
-  input: z.infer<typeof AGENT_ARGS>,
+  input: z.infer<typeof ASK_ARGS>,
 ): Promise<string | CallToolResultV2> {
   const id = `${RUN_PREFIX}${crypto.randomUUID()}`;
   const started = await caller.replay(
@@ -818,9 +909,9 @@ async function startRun(
     }),
   );
   if (started.status === 404) {
-    throw new ProtocolError(
-      ProtocolErrorCode.InvalidParams,
-      `Unknown tool: ${agentId}`,
+    return toolResult(
+      `Agent ${agentId} can no longer be run. Call ${LIST_TOOL} to see the agents you can ask.`,
+      true,
     );
   }
   if (!started.ok) {
