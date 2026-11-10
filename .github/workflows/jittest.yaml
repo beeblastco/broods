@@ -1,0 +1,66 @@
+name: JiTTest
+
+# Just-in-time catching tests (arXiv 2601.22832): Claude Code writes tests that pass on
+# the base and target what this change could break, scripts/jittest.ts runs them on both
+# sides, and a failure that survives the rules and the judges becomes one question on the
+# pull request. Never blocks a merge. Billed per run, so it runs only on request: the
+# jittest label (remove and add it again to re-run), or a manual run on a branch.
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  jittest:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'jittest'
+    # On the job, not the workflow: any other label starts a run whose job is
+    # skipped, and a workflow-level group would cancel a billed run for it.
+    concurrency:
+      group: jittest-${{ github.head_ref || github.ref_name }}
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Install Claude Code
+        run: npm install --global @anthropic-ai/claude-code@2.1.322
+
+      - name: Generate, run and assess catching tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          JITTEST_TITLE: ${{ github.event.pull_request.title }}
+          JITTEST_SUMMARY: ${{ github.event.pull_request.body }}
+        run: |
+          test -n "$ANTHROPIC_API_KEY" || { echo "ANTHROPIC_API_KEY secret is not set" >&2; exit 1; }
+          bun run jittest
+
+      - name: Ask the author about what it caught
+        if: github.event_name == 'pull_request' && hashFiles('.jittest/comment.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR" --body-file .jittest/comment.md --edit-last --create-if-none
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jittest-${{ github.run_id }}
+          path: .jittest/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 30

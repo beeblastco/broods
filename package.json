@@ -22,6 +22,7 @@
     "comments": "bun scripts/comment-density.ts",
     "comments:check": "bun scripts/comment-density.ts --check",
     "comments:verify": "bun scripts/comment-only-diff.ts",
+    "jittest": "bun scripts/jittest.ts",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "check": "bun run lint:types && bun run format:check && bun run comments:check && bun run --filter @broods/core check && bun run --filter @broods/convex check && bun run --filter @broods/gateway check && bun run --filter @broods/edge check && bun run --filter @broods/dashboard check && bun run --filter @broods/discord-forwarder check && bun run --filter @broods/cloudflare-mcp check && bun run --filter @broods/cloudflare-sandbox check && bun run --filter @broods/cloudflare-worker check && bun run --filter broods check && bun run --filter @broods/ai-sdk-sandbox check && bun run --filter @broods/docs check && bun run scripts:check && bun run bench:types && bun run lint:plugin:types && bun run verification:types",
