@@ -37,3 +37,28 @@ test("a folder renamed and renamed back during a sync syncs again", async (): Pr
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("an edit to a skill script syncs, not only .ts and .md edits", async (): Promise<void> => {
+  const root = await mkdtemp(join(tmpdir(), "broods-dev-watch-"));
+  await mkdir(join(root, "skills", "s", "scripts"), { recursive: true });
+  await writeFile(join(root, "skills", "s", "SKILL.md"), "# s\n");
+  await writeFile(join(root, "skills", "s", "scripts", "run.py"), "print(1)\n");
+  let syncs = 0;
+  const watcher = watchSource(root, async (): Promise<void> => {
+    syncs += 1;
+  });
+  try {
+    await Bun.sleep(SETTLE_MS);
+    const before = syncs;
+    await writeFile(
+      join(root, "skills", "s", "scripts", "run.py"),
+      "print(2)\n",
+    );
+    await Bun.sleep(SETTLE_MS);
+
+    expect(syncs - before).toBe(1);
+  } finally {
+    watcher.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

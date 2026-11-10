@@ -108,7 +108,7 @@ export function CopyRow({
   );
 }
 
-export function useCopied(value: string): {
+function useCopied(value: string): {
   copied: boolean;
   failed: boolean;
   copy: (event: MouseEvent<HTMLElement>) => void;
