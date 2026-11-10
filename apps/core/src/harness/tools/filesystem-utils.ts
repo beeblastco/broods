@@ -11,6 +11,7 @@ import {
 import { getHarnessPublicUrl, requireSecretsEnv } from "../../shared/env.ts";
 import { isTimeoutError, toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
+import { MAX_ATTACHMENT_BYTES } from "../../shared/media-types.ts";
 import {
   MEDIA_PATH_PREFIX,
   sealMediaTicket,
@@ -450,9 +451,12 @@ export async function s3ReadNumbered(
   const key = `${target.prefix}${rel}`;
   let text: string;
   try {
-    text = target.access
-      ? await readS3Text(target.bucket, key, target.access)
-      : await readS3Text(target.bucket, key);
+    text = await readS3Text(
+      target.bucket,
+      key,
+      target.access,
+      MAX_ATTACHMENT_BYTES,
+    );
   } catch (cause) {
     if (isMissingS3Error(cause)) {
       return toolError(`Error: file not found: ${rel}`);
@@ -551,11 +555,11 @@ export async function workspaceMediaUrl(
   return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
 }
 
-// Slack and Discord take uploads only. S3 directly, not /media, skips a hop and its 25 MB cap.
+// Slack and Discord take uploads only. S3 directly, not /media, skips a hop.
 export async function workspaceMediaBytes(
   ws: ResolvedWorkspace,
   rel: string,
-  maxBytes?: number,
+  maxBytes: number = MAX_ATTACHMENT_BYTES,
 ): Promise<Uint8Array> {
   const target = await resolveS3ReadTarget(
     workspaceReadContext(ws.config.storage, ws.namespace),
