@@ -3,6 +3,8 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { slugifyName } from "../lib/slug";
+import { orgIdOf } from "./ownership/org";
 
 type Ctx = QueryCtx | MutationCtx;
 
@@ -73,24 +75,26 @@ export async function cronsInProject(
   return crons.flat();
 }
 
+// Every CLI route names a project by its slug or by a name that slugifies to it.
 export async function resolveProject(
   ctx: Ctx,
-  account: Doc<"accounts">,
+  orgId: Id<"orgs"> | null,
   project: string,
 ): Promise<Doc<"projects"> | null> {
-  const orgId = ctx.db.normalizeId("orgs", account.orgId);
-  if (!orgId) return null;
   const name = project.trim();
-  if (!name) return null;
+  if (!orgId || !name) return null;
 
-  const projects = await ctx.db
-    .query("projects")
-    .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
-    .collect();
+  for (const slug of new Set([name, slugifyName(name, "")])) {
+    const found = await ctx.db
+      .query("projects")
+      .withIndex("by_orgId_and_slug", (q) =>
+        q.eq("orgId", orgId).eq("slug", slug),
+      )
+      .first();
+    if (found) return found;
+  }
 
-  return (
-    projects.find((entry) => entry.name === name || entry.slug === name) ?? null
-  );
+  return null;
 }
 
 export async function resolveProjectStage(
@@ -102,7 +106,7 @@ export async function resolveProjectStage(
   projectDoc: Doc<"projects">;
   stageDoc: Doc<"stages">;
 } | null> {
-  const projectDoc = await resolveProject(ctx, account, project);
+  const projectDoc = await resolveProject(ctx, orgIdOf(ctx, account), project);
   if (!projectDoc) return null;
 
   const stages = await ctx.db

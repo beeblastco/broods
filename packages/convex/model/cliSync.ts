@@ -17,7 +17,7 @@ import { defaultSandboxOf } from "./agentRules";
 import { parseInput } from "./inputSchema";
 import { configObject, parseOr } from "./storedJson";
 import { remapKeys } from "./objects";
-import { stageNameEquals } from "./projectScope";
+import { resolveProject, stageNameEquals } from "./projectScope";
 import {
   DISK_WORKSPACE_HINT,
   S3_MOUNT_PROVIDER_HINT,
@@ -339,14 +339,8 @@ export async function ensureProject(
   const org = await ctx.db.get(orgId);
   if (!org) throw new Error("Account org not found");
 
-  const existing = await ctx.db
-    .query("projects")
-    .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
-    .collect();
   const name = resourceName(project);
-  const projectDoc = existing.find(
-    (entry) => entry.name === name || entry.slug === name,
-  );
+  const projectDoc = await resolveProject(ctx, orgId, name);
   if (projectDoc) return projectDoc;
 
   const now = Date.now();

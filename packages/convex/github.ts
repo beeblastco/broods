@@ -26,7 +26,7 @@ import {
   hasDashboardPermission,
   requireDashboardPermission,
 } from "./model/access";
-import { slugifyName } from "./lib/slug";
+import { resolveProject } from "./model/projectScope";
 import { randomToken } from "./model/accountSecrets";
 import { ensureStage } from "./model/cliSync";
 import { deleteStageContents } from "./stage";
@@ -890,13 +890,7 @@ export const cliProject = internalQuery({
   args: { orgId: v.id("orgs"), slug: v.string() },
   returns: v.union(v.id("projects"), v.null()),
   handler: async (ctx, { orgId, slug }): Promise<Id<"projects"> | null> => {
-    if (!slug.trim()) return null;
-    const project = await ctx.db
-      .query("projects")
-      .withIndex("by_orgId_and_slug", (q) =>
-        q.eq("orgId", orgId).eq("slug", slugifyName(slug)),
-      )
-      .first();
+    const project = await resolveProject(ctx, orgId, slug);
 
     return project?._id ?? null;
   },
