@@ -14,7 +14,8 @@ def scalarValues : List Value :=
 def strings : List String :=
   ["", "A", "TOKEN", "_X", "a", "A_1", "${TOKEN}", "${A}${B}", "${a}",
    "Bearer ${TOKEN}", "Basic ${A}${B}", "Bearer secret${A}", "${A}literal", "${A", "${}",
-   "${1A}", "${A_${B}}", "localhost", "localhost.", "a.local", "a.internal", "[::1]",
+   "${1A}", "${A_${B}}", "localhost", "localhost.", "localhost..", "a.local", "a.local.",
+   "a.internal", "a.internal.", "10.0.0.1.", "8.8.8.8.", ".", "LOCALHOST.", "[::1]",
    "::ffff:808:808", "fc00::1", "fe80::1", "feb0::1", "fec0::1", "2001:db8::1",
    "10.0.0.1", "100.64.0.1", "100.127.0.1", "100.128.0.1", "172.16.0.1", "172.32.0.1",
    "192.168.0.1", "8.8.8.8", "tool_old", "bash", "foo-bar", "1bad", "ümlaut",
@@ -38,6 +39,8 @@ def urlCases : List (String × Option (String × String)) :=
    ("http://example.com/",some ("http:","example.com")),
    ("https://127.0.0.1/",some ("https:","127.0.0.1")),
    ("https://localhost./",some ("https:","localhost.")),
+   ("https://localhost../",some ("https:","localhost..")),
+   ("https://api.local./",some ("https:","api.local.")),
    ("broken",none),("${URL}",none)]
 
 def testUrlProblem (s : String) : Option String :=
@@ -85,7 +88,7 @@ def vectors : List Json := Id.run do
       let result := canonicalBase base alias
       out := out ++ [row "canonical" (Json.mkObj [("base_url",toJson base),("baseURL",toJson alias)])
         (Json.mkObj [("base_url",toJson result.1),("baseURL",toJson result.2)])]
-  for host in ["localhost", "localhost.", "a.local", "example.com", "10.0.0.1", "8.8.8.8", "[::1]", "[fc00::1]"] do
+  for host in ["localhost", "localhost.", "localhost..", "a.local", "a.local.", "example.com", "10.0.0.1", "8.8.8.8", "[::1]", "[fc00::1]"] do
     for protocol in ["http:","https:","file:"] do
       let parsed := some (protocol,host)
       out := out ++ [row "url" (toJson [protocol,host]) (toJson (publicHttpsProblem parsed))]
@@ -132,9 +135,15 @@ def vectors : List Json := Id.run do
   for v in scalarValues do
     let mapping := Value.obj [("x",.str "renamed"),("constructor",.str "other")]
     out := out ++ [row "remap" v.json (remapKeys (.obj (entries v)) mapping).json]
-  out := out ++ [row "canonical"
-    (Json.mkObj [("base_url",toJson ""),("baseURL",toJson "http://127.0.0.1/")])
-    (Json.mkObj [("base_url",toJson ""),("baseURL",toJson "http://127.0.0.1/")])]
+  let bases := ["", " ", "https://example.com/", "https://127.0.0.1/", "https://localhost./",
+    "https://localhost../", "broken"]
+  for base in bases do
+    for alias in bases do
+      let settings := Value.obj [("base_url",.str base),("baseURL",.str alias)]
+      let result := match normaliseProviderSettings testUrlProblem settings with
+        | .ok value => Json.mkObj [("ok",value.json)]
+        | .error error => Json.mkObj [("error",toJson error)]
+      out := out ++ [row "providerSettings" settings.json result]
   for key in ["apiKey","gatewayId","base_url","baseURL","headers","apiUrl","otherURL","other"] do
     for x in scalarValues ++ (urlCases.map fun p => Value.str p.1) ++
         [.str "  https://example.com/  ",.obj [("Authorization",.str "Bearer ${TOKEN}")]] do

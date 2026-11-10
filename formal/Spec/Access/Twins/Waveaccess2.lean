@@ -543,7 +543,8 @@ private def isDottedQuad (host : String) : Bool :=
 private def isPrivateHostname (call : Json) : Prog Json := do
   let lowered := (text (Twin.callArg call 0)).toLower
   let unopened := if startsWith lowered "[" then dropChars lowered 1 else lowered
-  let host := if endsWith unopened "]" then String.ofList unopened.toList.dropLast else unopened
+  let bare := if endsWith unopened "]" then String.ofList unopened.toList.dropLast else unopened
+  let host := if endsWith bare "." then String.ofList bare.toList.dropLast else bare
   if host == "localhost" || [".localhost", ".local", ".internal"].any (endsWith host) then
     return .bool true
   if isDottedQuad host || includes host ":" then

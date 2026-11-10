@@ -215,9 +215,24 @@ Spec.Channels.unverified_never_runs
   ∀ (s : Spec.Channels.State) (d : Spec.Channels.Delivery),
   d.verified = false → (Spec.Channels.step s (Spec.Channels.Input.webhook d)).snd = []
 
+Spec.Config.accepted_base_urls
+  ∀ {u : String → Option String} {v r : Spec.Config.Value},
+  Spec.Config.normaliseProviderSettings u v = Except.ok r →
+    ∀ {key s : String},
+      key = "base_url" ∨ key = "baseURL" →
+        v.get key = some (Spec.Config.Value.str s) → Spec.Js.trim s ≠ "" → u (Spec.Js.trim s) = none
+
+Spec.Config.accepted_provider_endpoints
+  ∀ {u : String → Option String} {v r : Spec.Config.Value},
+  Spec.Config.normaliseProviderSettings u v = Except.ok r →
+    ∀ {key s : String},
+      (key, Spec.Config.Value.str s) ∈ Spec.Config.settingsOrder v →
+        Spec.Config.endpointSetting key = true → Spec.Js.trim s ≠ "" → u (Spec.Js.trim s) = none
+
 Spec.Config.accepted_url_public_https
   ∀ {p h : String},
-  Spec.Config.publicHttpsProblem (some (p, h)) = none → p = "https:" ∧ Spec.Config.privateHostname h = false
+  Spec.Config.publicHttpsProblem (some (p, h)) = none →
+    p = "https:" ∧ Spec.Config.privateHostname h = false ∧ Spec.Config.deniedName (Spec.Config.hostKey h) = false
 
 Spec.Config.codec_fragment_roundtrip
   ∀ (v : Spec.Config.AgentFragment), Spec.Config.decodeFragment (Spec.Config.encodeFragment v) = v
@@ -237,6 +252,11 @@ Spec.Config.rejection_message_stable
             ("type", Spec.Config.Value.str (Spec.Config.apiStatus status).snd),
             ("code", Spec.Config.Value.str (code.getD (Spec.Config.apiStatus status).fst))] ++
           List.map (fun p => ("param", Spec.Config.Value.str p)) param.toList))
+
+Spec.Config.trailing_dot_same_host
+  ∀ (h : String),
+  h.toList.getLast? ≠ some '.' →
+    h.toList.getLast? ≠ some ']' → Spec.Config.privateHostname (h ++ ".") = Spec.Config.privateHostname h
 
 Spec.Hosted.every_request_one_outcome
   ∀ (ids : List String) (s : Spec.Hosted.Collection),

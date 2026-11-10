@@ -43,7 +43,7 @@ apps/core/src/harness/tools/edit.tool.ts	decision	open			Whole-file model and re
 apps/core/src/harness/tools/file-operation.ts	protocol	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.
 apps/core/src/harness/tools/filesystem-utils.ts	decision	open	Spec.Sandbox.lexicalPath; Spec.Sandbox.select; Spec.Sandbox.selectBash; Spec.Sandbox.selectComputer; Spec.Sandbox.tool_attachment	formal/replay/sandbox.test.ts	Lexical path and computer selection kernels replayed; remaining helpers, approval inputs, and full attachment/account composition open (L400,L403).
 apps/core/src/harness/tools/glob.tool.ts	decision	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.
-apps/core/src/harness/tools/grep.tool.ts	decision	open		formal/replay/sandbox.test.ts	G402 offline test.failing confirms unchecked glob-derived fallback root; full search behavior unmodelled.
+apps/core/src/harness/tools/grep.tool.ts	decision	open		formal/replay/sandbox.test.ts	Offline real-tool test checks the glob-derived search root like an explicit path; full search behavior unmodelled.
 apps/core/src/harness/tools/index.ts	decision	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.
 apps/core/src/harness/tools/load-skill.tool.ts	decision	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.
 apps/core/src/harness/tools/memory.tool.ts	decision	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.

@@ -1002,7 +1002,8 @@ private def sweepAccount (call : Json) : Prog Json := do
       throw error
     | .pending => Prog.unsupported "release never finished"
 
-/-- The glob's literal directory, `/^([^!*?[{]+)\/(?:\*\*\/)?[^/]+$/`. -/
+/-- The glob's literal directory, `/^([^!*?[{]+)\/(?:\*\*\/)?[^/]+$/`; `searchCommand` checks it
+with `toWorkspaceRelative`, as it does an explicit `path`. -/
 private def globRoot : Tools.Re :=
   Tools.Re.seqs
     [.bol, .group 1 (Tools.Re.plus (Tools.Re.noneOf "!*?[{")), Tools.Re.lit "/",
@@ -1020,7 +1021,12 @@ private def searchCommand (call : Json) : Prog Json := do
       (some ∘ text) <$> Prog.effect "toWorkspaceRelative" [get input "path"]
     else pure none
   let glob := if truthy (get input "glob") then some (text (get input "glob")) else none
-  let root := path <|> Tools.Re.firstGroup globRoot (if nullish (get input "glob") then "" else text (get input "glob"))
+  let root ← match path with
+    | some p => pure (some p)
+    | none =>
+      match Tools.Re.firstGroup globRoot (if nullish (get input "glob") then "" else text (get input "glob")) with
+      | some dir => (some ∘ text) <$> Prog.effect "toWorkspaceRelative" [toJson dir]
+      | none => pure none
   let inside := (root.map (·.splitOn "/")).getD []
   let pattern := text (get input "pattern")
   let rg := ["rg"] ++ flags ++ (match glob with | some g => ["-g", g] | none => []) ++

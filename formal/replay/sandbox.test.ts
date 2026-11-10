@@ -261,66 +261,63 @@ test("job script checks count before marker creation", (): void => {
   ).toThrow();
 });
 
-test.failing(
-  "G402 grep glob fallback root bypasses lexical traversal check",
-  async (): Promise<void> => {
-    const { default: grepTool } =
-      await import("../../apps/core/src/harness/tools/grep.tool.ts");
-    const oldUrl = process.env.CLOUDFLARE_WORKER_URL;
-    const oldKey = process.env.CLOUDFLARE_WORKER_API_KEY;
-    process.env.CLOUDFLARE_WORKER_URL = "https://worker.test";
-    process.env.CLOUDFLARE_WORKER_API_KEY = "offline";
-    const scripts: string[] = [];
-    globalThis.fetch = (async (url, options): Promise<Response> => {
-      if (
-        !String(url as string | URL).startsWith(
-          "https://worker.test/v1/sandboxes/",
-        )
+test("grep checks a glob-derived search root like an explicit path", async (): Promise<void> => {
+  const { default: grepTool } =
+    await import("../../apps/core/src/harness/tools/grep.tool.ts");
+  const oldUrl = process.env.CLOUDFLARE_WORKER_URL;
+  const oldKey = process.env.CLOUDFLARE_WORKER_API_KEY;
+  process.env.CLOUDFLARE_WORKER_URL = "https://worker.test";
+  process.env.CLOUDFLARE_WORKER_API_KEY = "offline";
+  const scripts: string[] = [];
+  globalThis.fetch = (async (url, options): Promise<Response> => {
+    if (
+      !String(url as string | URL).startsWith(
+        "https://worker.test/v1/sandboxes/",
       )
-        throw new Error("unstubbed fetch");
-      const payload = JSON.parse(options?.body as string) as { script: string };
-      scripts.push(payload.script);
-      return Response.json({
-        ok: true,
-        timed_out: false,
-        duration_ms: 0,
-        stdout: "",
-        stderr: "",
-        exit_code: 0,
-      });
+    )
+      throw new Error("unstubbed fetch");
+    const payload = JSON.parse(options?.body as string) as { script: string };
+    scripts.push(payload.script);
+    return Response.json({
+      ok: true,
+      timed_out: false,
+      duration_ms: 0,
+      stdout: "",
+      stderr: "",
+      exit_code: 0,
+    });
+  }) as typeof fetch;
+  try {
+    const tools = grepTool({
+      workspaces: [
+        {
+          name: "own",
+          workspaceId: "own",
+          namespace: "own",
+          config: { storage: { provider: "disk" } },
+          sandbox: { provider: "worker" },
+        },
+      ],
+    });
+    const options = { toolCallId: "1", messages: [] };
+    for (const glob of ["../*.ts", "src/../../x/*"])
+      await expect(
+        tools.grep?.execute?.({ pattern: "needle", glob: glob }, options),
+      ).rejects.toThrow("Invalid path: directory traversal not allowed");
+    expect(scripts).toHaveLength(0);
+    await tools.grep?.execute?.({ pattern: "needle", glob: "/etc/*" }, options);
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]).toContain("'-e' 'needle' '--' 'etc'; fi");
+  } finally {
+    globalThis.fetch = (() => {
+      throw new Error("unstubbed network call");
     }) as typeof fetch;
-    try {
-      const tools = grepTool({
-        workspaces: [
-          {
-            name: "own",
-            workspaceId: "own",
-            namespace: "own",
-            config: { storage: { provider: "disk" } },
-            sandbox: { provider: "worker" },
-          },
-        ],
-      });
-      try {
-        await tools.grep?.execute?.(
-          { pattern: "needle", glob: "../*.ts" },
-          { toolCallId: "1", messages: [] },
-        );
-      } catch {
-        // A refusal before execution is the expected intended behaviour.
-      }
-      expect(scripts).toHaveLength(0);
-    } finally {
-      globalThis.fetch = (() => {
-        throw new Error("unstubbed network call");
-      }) as typeof fetch;
-      if (oldUrl === undefined) delete process.env.CLOUDFLARE_WORKER_URL;
-      else process.env.CLOUDFLARE_WORKER_URL = oldUrl;
-      if (oldKey === undefined) delete process.env.CLOUDFLARE_WORKER_API_KEY;
-      else process.env.CLOUDFLARE_WORKER_API_KEY = oldKey;
-    }
-  },
-);
+    if (oldUrl === undefined) delete process.env.CLOUDFLARE_WORKER_URL;
+    else process.env.CLOUDFLARE_WORKER_URL = oldUrl;
+    if (oldKey === undefined) delete process.env.CLOUDFLARE_WORKER_API_KEY;
+    else process.env.CLOUDFLARE_WORKER_API_KEY = oldKey;
+  }
+});
 
 test("G401 cached externalId returns after concurrent provider deletion", async (): Promise<void> => {
   const { runtime } =

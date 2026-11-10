@@ -226,40 +226,38 @@ def modelSchema : Schema :=
 
 def gatewayIdError : String := "must be an AI Gateway id (letters, digits, - and _)"
 
-/-- The endpoint settings after `baseURL`, keyed in the parsed object's order. -/
+/-- The keys `PROVIDER_SETTINGS` declares, first in the parsed object's key order. -/
+def declaredSettings : List String := ["apiKey", "gatewayId", "base_url", "baseURL", "headers"]
+
+/-- The settings' keys, in the parsed object's order. -/
 def endpointKeys (settings : Json) : List String :=
-  let known := ["apiKey", "gatewayId", "base_url", "baseURL", "headers"]
-  let others := (Spec.Js.entries settings).map Prod.fst |>.filter (fun key => !known.contains key)
-  (known ++ others).filter (has settings)
+  let others := (Spec.Js.entries settings).map Prod.fst |>.filter
+    (fun key => !declaredSettings.contains key)
+  (declaredSettings ++ others).filter (has settings)
 
 /-- `PROVIDER_ENDPOINT_SETTING`: `/url$/i`. -/
 def isEndpointKey (key : String) : Bool :=
   (lower key).endsWith "url"
 
-/-- The refinement on `PROVIDER_SETTINGS`. A declared key keeps its place, others are unordered. -/
+/-- The refinement on `PROVIDER_SETTINGS`: every URL-named setting, `base_url` and `baseURL`
+included, is a string that is blank or a public https URL. Declared keys come first in order;
+the order of other keys is not visible, so two failing ones are unknown. -/
 def providerSettingsCheck (settings : Json) : Parsed :=
-  let baseUrl := providerBaseUrl settings
-  let label := if isStr (get settings "base_url") then "base_url" else "baseURL"
-  let baseResult : Parsed := match baseUrl with
-    | some url => urlCheck [.key label] url fun _ => .ok (some settings)
-    | none => .ok (some settings)
-  match baseResult with
-  | .ok _ =>
-    let results := (endpointKeys settings).filterMap fun key =>
-      if key == "baseURL" || (key == "base_url" && baseUrl.isSome) || !isEndpointKey key then none
-      else match field? settings key with
-        | some (.str s) =>
-          if (trim s).isEmpty then none
-          else match urlCheck [.key key] (trim s) (fun _ => .ok none) with
-            | .ok _ => none
-            | other => some other
-        | some _ => some (fail [.key key] "must be a string")
-        | none => none
-    match results with
-    | [] => .ok (some settings)
-    | [one] => one
-    | _ => .unknown "two endpoint settings fail: the first is not visible"
-  | other => other
+  let results := (endpointKeys settings).filterMap fun key =>
+    if !isEndpointKey key then none
+    else match field? settings key with
+      | some (.str s) =>
+        if (trim s).isEmpty then none
+        else match urlCheck [.key key] (trim s) (fun _ => .ok none) with
+          | .ok _ => none
+          | other => some (key, other)
+      | some _ => some (key, fail [.key key] "must be a string")
+      | none => none
+  match results with
+  | [] => .ok (some settings)
+  | (key, first) :: rest =>
+    if rest.isEmpty || declaredSettings.contains key then first
+    else .unknown "two endpoint settings fail: the first is not visible"
 
 def providerSettings : Schema :=
   .transform

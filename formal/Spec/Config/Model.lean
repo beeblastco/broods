@@ -135,11 +135,27 @@ def privateIpv4 (a b : Nat) : Bool :=
   a == 0 || a == 10 || a == 127 || (a == 100 && b ≥ 64 && b ≤ 127) ||
   (a == 169 && b == 254) || (a == 172 && b ≥ 16 && b ≤ 31) || (a == 192 && b == 168)
 
+/-- `/^\[/` in `replace(/^\[|\]$/g, "")`. -/
+def dropOpen (chars : List Char) : List Char :=
+  if chars.head? == some '[' then chars.tail else chars
+
+/-- Drops one trailing `c`, if there is one. -/
+def dropLastIf (c : Char) (chars : List Char) : List Char :=
+  if chars.getLast? == some c then chars.dropLast else chars
+
+/-- The host the deny list reads: lowercased, one leading `[` and one trailing `]` dropped, then
+one trailing DNS dot (`agentRules.ts` `isPrivateHostname`). -/
+def hostKey (hostname : String) : String :=
+  String.ofList (dropLastIf '.' (dropLastIf ']' (dropOpen (hostname.toList.map Char.toLower))))
+
+/-- The name rules of the deny list, before the address rules. -/
+def deniedName (host : String) : Bool :=
+  host == "localhost" || host.endsWith ".localhost" || host.endsWith ".local" ||
+    host.endsWith ".internal"
+
 def privateHostname (hostname : String) : Bool :=
-  let lower := hostname.toLower
-  let host := String.ofList (if lower.startsWith "[" then lower.toList.drop 1 else lower.toList)
-  let host := if host.endsWith "]" then String.ofList (host.toList.take (host.length - 1)) else host
-  if host == "localhost" || host.endsWith ".localhost" || host.endsWith ".local" || host.endsWith ".internal"
+  let host := hostKey hostname
+  if deniedName host
   then true
   else
     let parts := host.splitOn "."
@@ -367,6 +383,19 @@ def settingsOrder (v : Value) : List (String × Value) :=
   known.filterMap (fun key => (v.get key).map (fun x => (key,x))) ++
     (entries v).filter (fun p => !known.contains p.1 && p.1 != "__proto__")
 
+/-- `PROVIDER_ENDPOINT_SETTING` (`/url$/i`), ASCII case only. -/
+def endpointSetting (key : String) : Bool := key.toLower.endsWith "url"
+
+/-- The refinement's verdict on one setting: a URL-named key, `base_url` and `baseURL` included,
+holds a string whose trimmed value is blank or passes `urlProblem`. -/
+def endpointProblem (urlProblem : String → Option String) (root : String)
+    (entry : String × Value) : Option String :=
+  if !endpointSetting entry.1 then none
+  else match entry.2 with
+    | .str s => if Spec.Js.trim s == "" then none
+      else (urlProblem (Spec.Js.trim s)).map (fun e => s!"{root}.{entry.1} {e}")
+    | _ => some s!"{root}.{entry.1} must be a string"
+
 /-- PROVIDER_SETTINGS parse/refinement/transform, with WHATWG parsing supplied explicitly (L701). -/
 def normaliseProviderSettings (urlProblem : String → Option String) (v : Value) : Except String Value :=
   let root := "config.provider.openai"
@@ -385,23 +414,12 @@ def normaliseProviderSettings (urlProblem : String → Option String) (v : Value
     match shapeError with
     | some e => .error e
     | none =>
-      let base := providerBase v
-      let baseError := base.bind fun s =>
-        (urlProblem s).map fun e =>
-          let key := if (v.get "base_url").isSome then "base_url" else "baseURL"
-          s!"{root}.{key} {e}"
-      let endpointError := ordered.findSome? fun (key, value) =>
-        if key == "baseURL" || (key == "base_url" && base.isSome) || !key.toLower.endsWith "url" then none
-        else match value with
-          | .str s => if Spec.Js.trim s == "" then none
-            else (urlProblem (Spec.Js.trim s)).map (fun e => s!"{root}.{key} {e}")
-          | _ => some s!"{root}.{key} must be a string"
-      match baseError.or endpointError with
+      match ordered.findSome? (endpointProblem urlProblem root) with
       | some e => .error e
       | none =>
         let result := Value.obj (ordered.map fun (key,x) =>
           (key, if key == "headers" then objectOr x (.obj []) else x))
-        match base with
+        match providerBase v with
         | none => .ok result
         | some s => .ok (remove (put result "baseURL" (.str s)) "base_url")
   | _ => .error s!"{root} must be an object"

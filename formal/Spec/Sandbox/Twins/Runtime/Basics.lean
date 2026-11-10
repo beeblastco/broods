@@ -450,15 +450,18 @@ def parseUrl (text : String) : UrlParse :=
           | _ => .ok { protocol := s!"{scheme}:" }
       | _ => .invalid
 
-/-- agentRules.ts `isPrivateHostname`. -/
+/-- agentRules.ts `isPrivateHostname`: one trailing dot is dropped after the brackets. -/
 def isPrivateHostname (hostname : String) : Bool :=
   let lowered := (lowerAscii hostname).toList
   let noOpen := match lowered with
     | '[' :: rest => rest
     | all => all
-  let host := String.ofList (match noOpen.reverse with
+  let bare := match noOpen.reverse with
     | ']' :: rest => rest.reverse
-    | _ => noOpen)
+    | _ => noOpen
+  let host := String.ofList (match bare.reverse with
+    | '.' :: rest => rest.reverse
+    | _ => bare)
   if host == "localhost" || host.endsWith ".localhost" || host.endsWith ".local" || host.endsWith ".internal" then
     true
   else

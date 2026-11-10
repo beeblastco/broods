@@ -41,8 +41,27 @@ theorem witnesses :
 theorem envelope_accepts_resolved : envelopePlaintext (.obj [("apiKey",.str "secret")]) =
     .obj [("apiKey",.str "secret")] := rfl
 
-/-- The literal hostname deny list does not reject a trailing dot (G700). -/
-theorem trailing_dot_private_escape : privateHostname "localhost." = false := by
+/-- The deny list refuses `localhost.` and `a.local.`, and reads `localhost..` as `localhost.`,
+which no name rule matches. -/
+theorem trailing_dot_verdicts : privateHostname "localhost." = true ∧
+    privateHostname "a.local." = true ∧ privateHostname "localhost.." = false := by
   cbv
   all_goals decide
+
+/-- `accepted_provider_endpoints` has an accepted case: a public `baseURL` passes unchanged. -/
+theorem provider_endpoint_witness :
+    normaliseProviderSettings (fun _ => none) (.obj [("baseURL", .str "https://example.com/")]) =
+    .ok (.obj [("baseURL", .str "https://example.com/")]) := by
+  cbv
+  all_goals decide
+
+/-- Skipping `baseURL` when `base_url` is blank would accept a private `baseURL`. -/
+theorem blank_base_url_checks_alias : normaliseProviderSettings
+    (fun s => if s == "https://127.0.0.1/" then some "must not point to a private or internal address"
+      else none)
+    (.obj [("base_url", .str ""), ("baseURL", .str "https://127.0.0.1/")]) =
+    .error "config.provider.openai.baseURL must not point to a private or internal address" := by
+  cbv
+  all_goals decide
+
 end Spec.Config.Controls
