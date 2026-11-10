@@ -475,14 +475,19 @@ async function handleScheduledCron(
     return null;
   }
   const firedAt = scheduledFireTime(event.scheduledTime);
-  const { refusal } = await admitRun(job.accountId);
-  if (refusal) {
-    await crons.markFailed(job.accountId, job.cronId, refusal.message, firedAt);
+  const plan = await admitRun(job.accountId);
+  if (plan.refusal) {
+    await crons.markFailed(
+      job.accountId,
+      job.cronId,
+      plan.refusal.message,
+      firedAt,
+    );
     if (isOneTimeSchedule(job.scheduleExpression)) {
       await removeOneShotCron(job.accountId, job.cronId);
     }
 
-    return refusal;
+    return plan.refusal;
   }
 
   try {
@@ -495,6 +500,7 @@ async function handleScheduledCron(
       conversationKey: result.conversationKey,
     });
   } catch (err) {
+    refundRun(plan, job.accountId);
     const error = err instanceof Error ? err.message : String(err);
     logError("Cron agent run failed", {
       accountId: job.accountId,
@@ -909,9 +915,9 @@ async function settleChannelQuestion(
 async function handleDirectRequest(
   event: DirectInboundEvent,
 ): Promise<Response> {
-  const { refusal } = await admitRun(event.accountId);
-  if (refusal) {
-    return planRefusalResponse(refusal);
+  const plan = await admitRun(event.accountId);
+  if (plan.refusal) {
+    return planRefusalResponse(plan.refusal);
   }
   if (event.answers?.length) {
     return handleDirectAnswers(event);
@@ -963,6 +969,7 @@ async function handleDirectRequest(
       : {}),
   });
   await dispatchRecoveredIngress(event, admission);
+  if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(plan, event.accountId);
   if (admission.outcome !== "owner") {
     return directAdmissionResponse(
       event,
@@ -1126,9 +1133,9 @@ async function directTurnResponse(
 async function handleAsyncRequest(
   event: AsyncDirectInboundEvent,
 ): Promise<Response> {
-  const { refusal } = await admitRun(event.accountId);
-  if (refusal) {
-    return planRefusalResponse(refusal);
+  const plan = await admitRun(event.accountId);
+  if (plan.refusal) {
+    return planRefusalResponse(plan.refusal);
   }
   if (event.answers?.length) {
     return handleDirectAnswers(event);
@@ -1167,6 +1174,7 @@ async function handleAsyncRequest(
       : {}),
   });
   await dispatchRecoveredIngress(event, admission);
+  if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(plan, event.accountId);
   if (admission.outcome !== "owner") {
     return directAdmissionResponse(event, admission, true);
   }

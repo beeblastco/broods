@@ -702,6 +702,75 @@ describe("streamed runs", (): void => {
     }
   });
 
+  it("gives back the per-minute run count of a retry that started no run", async (): Promise<void> => {
+    process.env.PUBLIC_BASE_URL = "https://api.example.test";
+    spyOn(getStorage().budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 0,
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
+      runsPerMinute: 1,
+      warned: false,
+    });
+    spyOn(ingress, "acceptIngress").mockResolvedValue({
+      outcome: "duplicate",
+      eventId: "event-1",
+      runId: "run-1",
+      status: "processing",
+    });
+    try {
+      const statuses = [
+        (await streamedRun(1)).status,
+        (await streamedRun(1, true)).status,
+      ];
+
+      expect(statuses).not.toContain(429);
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
+  });
+
+  it("gives back the per-minute run count of a cron fire that failed to start", async (): Promise<void> => {
+    const storage = getStorage();
+    spyOn(storage.budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 0,
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
+      runsPerMinute: 1,
+      warned: false,
+    });
+    spyOn(storage.crons, "getById").mockResolvedValue({
+      accountId: "acct_1",
+      cronId: "cron_1",
+      name: "nightly",
+      agentId: "agent_1",
+      events: [{ role: "user", content: "run" }],
+      scheduleExpression: "cron(0 9 * * ? *)",
+      status: "active",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    });
+    // The run never opens: its agent is gone.
+    spyOn(storage.agents, "getById").mockResolvedValue(null);
+    spyOn(storage.crons, "markFailed").mockResolvedValue();
+    const fire = (): Promise<Response> =>
+      handler(
+        coreRequest(
+          "POST",
+          "/v1/cron-runs",
+          { authorization: "Bearer service-secret" },
+          { kind: "cron", accountId: "acct_1", cronId: "cron_1" },
+        ),
+      ).catch((): Response => new Response(null, { status: 500 }));
+
+    const statuses = [(await fire()).status, (await fire()).status];
+
+    expect(statuses).toEqual([500, 500]);
+  });
+
   describe("channel messages", (): void => {
     let sent: string[];
 
